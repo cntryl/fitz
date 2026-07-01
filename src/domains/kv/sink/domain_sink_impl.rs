@@ -192,10 +192,6 @@ impl KvDomainSink {
         self.state.runtime().admin_scan_committed_rows(request)
     }
 
-    pub fn active_transaction_count(&self) -> usize {
-        self.state.runtime().active_transaction_count()
-    }
-
     #[cfg(test)]
     pub(super) fn sync_admin_snapshot(&self) {
         self.state.runtime().sync_admin_snapshot();

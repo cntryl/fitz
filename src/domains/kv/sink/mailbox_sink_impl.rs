@@ -31,6 +31,9 @@ impl Actor for KvDomainActor {
                 self.state.runtime().cleanup_session(session_id);
                 let _ = reply.send(());
             }
+            KvDomainCommand::ReadActiveTransactionCount(reply) => {
+                let _ = reply.send(self.state.runtime().active_transaction_count());
+            }
         }
     }
 }

@@ -501,7 +501,7 @@ Current Notice behavior is intentionally ephemeral:
 - Persistence: committed values are durable according to the selected write policy; open transactions and watcher state are ephemeral.
 - Cleanup: disconnect cleanup is enqueued to the KV actor mailbox, which rolls back live transactions, releases session-owned locks, and drops subscriptions without implying transaction recovery.
 - `RouteFamily`/`realm`: committed rows stay partitioned by exact `RouteFamily`; `realm` remains an opaque route label and is never inferred from the family.
-- Admin path: live transaction views flow through the actor-maintained `AdminReadModel`; committed value and inventory reads go through `Runtime::kv_*` query facades.
+- Admin path: live transaction views flow through the actor-maintained `AdminReadModel`, and live transaction counts use a command/reply read to `KvDomainActor`; committed value and inventory reads go through `Runtime::kv_*` query facades.
 
 #### Queue
 - Actor owner: `QueueDomainSink` is a thin mailbox adapter; `QueueDomainActor` is the managed production actor for delivery, cleanup, runtime sweeps, live admin refresh, dead-letter replay/purge commands, broker-local watch state, and projections. `QueueActor` owns live reservation state, retry bookkeeping, and durable dead-letter mutations for one queue resource.

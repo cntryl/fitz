@@ -28,4 +28,19 @@ impl KvDomainSink {
             KvDomainCommand::CleanupSession(session_id, reply)
         });
     }
+
+    pub fn active_transaction_count(&self) -> usize {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        if let Err(error) = self
+            .actor
+            .try_send_high_priority(KvDomainCommand::ReadActiveTransactionCount(reply_tx))
+        {
+            tracing::warn!(domain = "kv", error = %error, "KV active-transaction query enqueue failed");
+            return 0;
+        }
+
+        reply_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap_or_default()
+    }
 }

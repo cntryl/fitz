@@ -481,8 +481,45 @@ fn should_route_kv_cleanup_through_managed_actor() {
 
     // Assert
     assert!(!sink.is_actor_running());
-    assert_eq!(sink.active_transaction_count(), 1);
     assert_eq!(after_cleanup.len(), 1);
+}
+
+#[test]
+fn should_route_kv_live_transaction_count_through_managed_actor() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 7;
+    let kv_route = "kv://acme/app/users";
+    let kv_address = RouteAddress::new(family, Route::new(kv_route));
+    let source_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let mailbox = Arc::new(Mailbox::new(8));
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let router = Arc::new(Router::new());
+    router.register(source_address.clone(), mailbox.clone());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = KvDomainSink::new(store, router, admin_read_model);
+    sink.deliver(Envelope::from_route(
+        source_address,
+        kv_address,
+        FrameContext::new(
+            session_id,
+            ChannelId::Sub,
+            MessageType::new(100),
+            encode_kv_begin(kv_route, 1, 0),
+            family,
+        ),
+    ))
+    .expect("begin KV transaction");
+    let _ = receive_envelope(&mailbox, "begin ack envelope");
+    assert_eq!(sink.active_transaction_count(), 1);
+
+    // Act
+    sink.stop_actor_for_tests();
+    let active_transaction_count = sink.active_transaction_count();
+
+    // Assert
+    assert!(!sink.is_actor_running());
+    assert_eq!(active_transaction_count, 0);
 }
 
 #[test]

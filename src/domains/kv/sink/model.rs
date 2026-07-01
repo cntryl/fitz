@@ -77,6 +77,7 @@ pub(super) struct KvDomainRuntime<'a> {
 pub(super) enum KvDomainCommand {
     Deliver(Envelope),
     CleanupSession(u64, crossbeam_channel::Sender<()>),
+    ReadActiveTransactionCount(crossbeam_channel::Sender<usize>),
 }
 
 pub(super) struct KvDomainActor {
