@@ -352,10 +352,10 @@ mod tests {
 
         // Act
         managed
-            .try_send(TestManagedMessage::Increment)
+            .try_send_high_priority(TestManagedMessage::Increment)
             .expect("increment should enqueue");
         managed
-            .try_send_high_priority(TestManagedMessage::Read(reply_tx))
+            .try_send(TestManagedMessage::Read(reply_tx))
             .expect("read should enqueue");
         let count = reply_rx
             .recv_timeout(Duration::from_secs(1))

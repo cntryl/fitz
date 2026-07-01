@@ -600,6 +600,15 @@ impl TestServer {
 
         runtime.begin_shutdown();
 
+        if let Some(ingress) = runtime.detach_ingress() {
+            ingress
+                .close_all_sessions(crate::session::CloseReason::ServerClose(
+                    "test server shutdown".to_string(),
+                ))
+                .await;
+            drop(ingress);
+        }
+
         let _ = tcp_shutdown.send(());
         let _ = ws_shutdown.send(());
 
@@ -619,14 +628,6 @@ impl TestServer {
         let domains = runtime.detach_domains();
         if let Some(domains) = &domains {
             domains.stop();
-        }
-        if let Some(ingress) = runtime.detach_ingress() {
-            ingress
-                .close_all_sessions(crate::session::CloseReason::ServerClose(
-                    "test server shutdown".to_string(),
-                ))
-                .await;
-            drop(ingress);
         }
         runtime.router().clear();
         drop(domains);

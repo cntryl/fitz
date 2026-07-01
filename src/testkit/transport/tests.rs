@@ -118,7 +118,10 @@ async fn should_shutdown_with_active_tcp_and_websocket_sessions() {
     let result = server.shutdown().await;
 
     // Assert
-    assert!(result.is_ok());
+    match result {
+        Ok(()) => {}
+        Err(error) => panic!("shutdown failed: {error}"),
+    }
 }
 
 #[tokio::test]

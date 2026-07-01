@@ -39,13 +39,16 @@ fn start_rpc_timeout_loop(domains: Weak<DomainHandles>) {
     };
     handle.spawn(async move {
         loop {
-            let Some(domain_handles) = domains.upgrade() else {
-                break;
+            let sleep_for = {
+                let Some(domain_handles) = domains.upgrade() else {
+                    break;
+                };
+                if !domain_handles.rpc_is_active() {
+                    break;
+                }
+                domain_handles.rpc_timeout_sweep_interval()
             };
-            if !domain_handles.rpc_is_active() {
-                break;
-            }
-            tokio::time::sleep(domain_handles.rpc_timeout_sweep_interval()).await;
+            tokio::time::sleep(sleep_for).await;
             let Some(domain_handles) = domains.upgrade() else {
                 break;
             };
