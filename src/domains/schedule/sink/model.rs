@@ -161,7 +161,7 @@ impl ScheduleSubscriptionSet {
     }
 }
 
-pub struct ScheduleDomainSink {
+pub(super) struct ScheduleDomainCore {
     pub(super) store: crate::storage::FitzStorageEngine,
     pub(super) actors: Mutex<
         HashMap<crate::runtime::routing::RouteFamily, crate::domains::schedule::ScheduleActor>,
@@ -171,7 +171,6 @@ pub struct ScheduleDomainSink {
     pub(super) router: Arc<Router>,
     #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
     pub(super) admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
-    pub(super) active: AtomicBool,
     pub(super) snapshot_dirty: AtomicBool,
     #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
     pub(super) snapshot_syncing: AtomicBool,
@@ -195,4 +194,9 @@ pub struct ScheduleDomainSink {
     /// Write options for schedule persistence.
     pub(super) write_options: cntryl_midge::WriteOptions,
     pub(super) metrics: Option<ScheduleMetrics>,
+}
+
+pub struct ScheduleDomainSink {
+    pub(super) core: ScheduleDomainCore,
+    pub(super) active: AtomicBool,
 }

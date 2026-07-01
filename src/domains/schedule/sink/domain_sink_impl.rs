@@ -1,8 +1,8 @@
 use super::model::{
     now_epoch_ms, schedule_admin_snapshot_due, Arc, AtomicBool, AtomicU64, Entry, Envelope,
-    HashMap, HashSet, Instant, Mutex, Ordering, PendingFireKey, Router, ScheduleDomainSink,
-    ScheduleMetrics, ScheduleSubscription, VecDeque, SCHEDULE_PENDING_CLAIM_CLEANUP_INTERVAL_MS,
-    SCHEDULE_PENDING_CLAIM_TTL_MS,
+    HashMap, HashSet, Instant, Mutex, Ordering, PendingFireKey, Router, ScheduleDomainCore,
+    ScheduleDomainSink, ScheduleMetrics, ScheduleSubscription, VecDeque,
+    SCHEDULE_PENDING_CLAIM_CLEANUP_INTERVAL_MS, SCHEDULE_PENDING_CLAIM_TTL_MS,
 };
 #[cfg(test)]
 use crate::protocol::frame_context::FrameContext;
@@ -40,31 +40,33 @@ impl ScheduleDomainSink {
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
     ) -> Self {
         Self {
-            store,
-            actors: Mutex::new(HashMap::new()),
-            sub_families: Mutex::new(HashMap::new()),
-            next_sub_id: AtomicU64::new(1),
-            router,
-            admin_read_model,
+            core: ScheduleDomainCore {
+                store,
+                actors: Mutex::new(HashMap::new()),
+                sub_families: Mutex::new(HashMap::new()),
+                next_sub_id: AtomicU64::new(1),
+                router,
+                admin_read_model,
+                snapshot_dirty: AtomicBool::new(false),
+                snapshot_syncing: AtomicBool::new(false),
+                last_snapshot_elapsed_us: AtomicU64::new(0),
+                snapshot_epoch: Instant::now(),
+                live_publish_failures: AtomicU64::new(0),
+                ack_failures: AtomicU64::new(0),
+                pending_ack_retries: Mutex::new(HashMap::new()),
+                pending_claim_ttl_ms: SCHEDULE_PENDING_CLAIM_TTL_MS,
+                last_pending_claim_cleanup_elapsed_ms: AtomicU64::new(0),
+                recent_acknowledgement_ms: Mutex::new(VecDeque::new()),
+                write_options: cntryl_midge::WriteOptions::buffered(),
+                metrics: None,
+            },
             active: AtomicBool::new(true),
-            snapshot_dirty: AtomicBool::new(false),
-            snapshot_syncing: AtomicBool::new(false),
-            last_snapshot_elapsed_us: AtomicU64::new(0),
-            snapshot_epoch: Instant::now(),
-            live_publish_failures: AtomicU64::new(0),
-            ack_failures: AtomicU64::new(0),
-            pending_ack_retries: Mutex::new(HashMap::new()),
-            pending_claim_ttl_ms: SCHEDULE_PENDING_CLAIM_TTL_MS,
-            last_pending_claim_cleanup_elapsed_ms: AtomicU64::new(0),
-            recent_acknowledgement_ms: Mutex::new(VecDeque::new()),
-            write_options: cntryl_midge::WriteOptions::buffered(),
-            metrics: None,
         }
     }
 
     #[must_use]
     pub fn with_write_options(mut self, write_options: cntryl_midge::WriteOptions) -> Self {
-        self.write_options = write_options;
+        self.core.write_options = write_options;
         self
     }
 
@@ -73,7 +75,7 @@ impl ScheduleDomainSink {
         mut self,
         collector: crate::observability::metrics::MetricsCollector,
     ) -> Self {
-        self.metrics = Some(ScheduleMetrics::new(collector));
+        self.core.metrics = Some(ScheduleMetrics::new(collector));
         self.refresh_metrics_gauges();
         self
     }
@@ -88,11 +90,12 @@ impl ScheduleDomainSink {
     /// schedule actor fails.
     pub fn preload_persisted_families(&self) -> Result<(), String> {
         let column_families = self
+            .core
             .store
             .list_column_families()
             .map_err(|e| format!("list schedule column families failed: {e}"))?;
 
-        let mut actors = self.actors.lock();
+        let mut actors = self.core.actors.lock();
         for column_family in column_families {
             if column_family.id() == 0 {
                 continue;
@@ -105,8 +108,8 @@ impl ScheduleDomainSink {
 
             let actor = crate::domains::schedule::ScheduleActor::try_new_with_storage(
                 family,
-                self.store.clone(),
-                self.write_options,
+                self.core.store.clone(),
+                self.core.write_options,
             )?;
             actors.insert(family, actor);
         }
@@ -117,7 +120,7 @@ impl ScheduleDomainSink {
         // that were already acknowledged within the last 60 seconds.
         let now_ms = now_epoch_ms();
         let cutoff_ms = now_ms.saturating_sub(60_000);
-        let mut deque = self.recent_acknowledgement_ms.lock();
+        let mut deque = self.core.recent_acknowledgement_ms.lock();
         for actor in actors.values() {
             for ts in actor.last_fire_timestamps_since(cutoff_ms) {
                 deque.push_back(ts);
@@ -155,7 +158,7 @@ impl ScheduleDomainSink {
 
     pub(crate) fn force_due_scan_for_tests(&self, ready_count: usize) {
         {
-            let mut actors = self.actors.lock();
+            let mut actors = self.core.actors.lock();
             for actor in actors.values_mut() {
                 actor.bench_prepare_scan(ready_count);
             }
@@ -170,8 +173,8 @@ impl ScheduleDomainSink {
         let mut ack_retry_candidates = PendingAckRetryMap::new();
         let mut snapshot_dirty = false;
         let cleanup_due = self.pending_claim_cleanup_due();
-        let mut actors = self.actors.lock();
-        let mut pending_ack_retries = self.pending_ack_retries.lock();
+        let mut actors = self.core.actors.lock();
+        let mut pending_ack_retries = self.core.pending_ack_retries.lock();
 
         for (family, actor) in actors.iter_mut() {
             if self.cleanup_stale_pending_claims_if_due(*family, actor, cleanup_due) {
@@ -208,16 +211,16 @@ impl ScheduleDomainSink {
             return false;
         }
 
-        match actor.cleanup_stale_pending_claims(self.pending_claim_ttl_ms) {
+        match actor.cleanup_stale_pending_claims(self.core.pending_claim_ttl_ms) {
             Ok(expired) if expired > 0 => {
-                if let Some(metrics) = &self.metrics {
+                if let Some(metrics) = &self.core.metrics {
                     metrics.record_pending_claims_expired(expired);
                 }
                 true
             }
             Ok(_) => false,
             Err(error) => {
-                if let Some(metrics) = &self.metrics {
+                if let Some(metrics) = &self.core.metrics {
                     metrics.record_pending_claim_cleanup_failure();
                 }
                 tracing::warn!(
@@ -283,14 +286,21 @@ impl ScheduleDomainSink {
             let event =
                 crate::runtime::DomainPublishEvent::new(family, route_value.clone(), payload);
             let destination = crate::runtime::routing::RouteAddress::new(family, route_value);
-            if self.router.route(Envelope::new(destination, event)).is_ok() {
+            if self
+                .core
+                .router
+                .route(Envelope::new(destination, event))
+                .is_ok()
+            {
                 had_live_handoffs = true;
                 ack_retry_candidates
                     .entry(family)
                     .or_default()
                     .push((fire_ms, route));
             } else {
-                self.live_publish_failures.fetch_add(1, Ordering::Relaxed);
+                self.core
+                    .live_publish_failures
+                    .fetch_add(1, Ordering::Relaxed);
             }
         }
 
@@ -304,8 +314,8 @@ impl ScheduleDomainSink {
             return false;
         }
 
-        let mut actors = self.actors.lock();
-        let mut pending_ack_retries = self.pending_ack_retries.lock();
+        let mut actors = self.core.actors.lock();
+        let mut pending_ack_retries = self.core.pending_ack_retries.lock();
         for (family, ack_candidates) in ack_retry_candidates {
             if let Some(actor) = actors.get_mut(&family) {
                 acknowledged_handoffs |= self.acknowledge_family_pending_fire_claims(
@@ -339,7 +349,7 @@ impl ScheduleDomainSink {
                 false
             }
             Err(error) => {
-                self.ack_failures.fetch_add(1, Ordering::Relaxed);
+                self.core.ack_failures.fetch_add(1, Ordering::Relaxed);
                 let tracked_retries = pending_ack_retries.entry(family_id).or_default();
                 for pending_key in ack_candidates {
                     tracked_retries.insert(pending_key);
@@ -374,7 +384,7 @@ impl ScheduleDomainSink {
     }
 
     fn record_recent_acknowledgements(&self, acked: usize, acknowledged_at_ms: u64) {
-        let mut deque = self.recent_acknowledgement_ms.lock();
+        let mut deque = self.core.recent_acknowledgement_ms.lock();
         let cutoff = acknowledged_at_ms.saturating_sub(60_000);
         while deque.front().copied().is_some_and(|t| t < cutoff) {
             deque.pop_front();
@@ -397,8 +407,8 @@ impl ScheduleDomainSink {
             Entry::Vacant(entry) => {
                 let actor = crate::domains::schedule::ScheduleActor::try_new_with_storage(
                     route_family,
-                    self.store.clone(),
-                    self.write_options,
+                    self.core.store.clone(),
+                    self.core.write_options,
                 )?;
                 Ok(entry.insert(actor))
             }
@@ -443,12 +453,12 @@ impl ScheduleDomainSink {
 
         // Subscriber notify routing is best-effort and must not redefine the
         // schedule domain's durable acknowledgement boundary.
-        let _ = self.router.route(notify_envelope);
+        let _ = self.core.router.route(notify_envelope);
     }
 
     pub(super) fn handle_domain_publish(&self, event: &crate::runtime::DomainPublishEvent) {
         let family_id = event.family_id.as_u64();
-        let families = self.sub_families.lock();
+        let families = self.core.sub_families.lock();
         if let Some(state) = families.get(&family_id) {
             state.for_each_route(event.route.as_str(), |subscription| {
                 self.route_live_notify(subscription, &event.payload);
@@ -457,7 +467,7 @@ impl ScheduleDomainSink {
     }
 
     pub fn unsubscribe_all(&self, session_id: u64) {
-        let mut families = self.sub_families.lock();
+        let mut families = self.core.sub_families.lock();
         for state in families.values_mut() {
             state.remove_session(session_id);
         }
@@ -470,7 +480,7 @@ impl ScheduleDomainSink {
     }
 
     pub fn subscription_count(&self) -> usize {
-        let families = self.sub_families.lock();
+        let families = self.core.sub_families.lock();
         families
             .values()
             .map(super::model::ScheduleSubscriptionSet::subscription_count)
@@ -478,7 +488,7 @@ impl ScheduleDomainSink {
     }
 
     pub fn schedule_count(&self) -> usize {
-        let actors = self.actors.lock();
+        let actors = self.core.actors.lock();
         actors
             .values()
             .map(crate::domains::schedule::ScheduleActor::schedule_count)
@@ -486,7 +496,7 @@ impl ScheduleDomainSink {
     }
 
     pub fn pending_fire_count(&self) -> usize {
-        let actors = self.actors.lock();
+        let actors = self.core.actors.lock();
         actors
             .values()
             .map(crate::domains::schedule::ScheduleActor::pending_fire_count)
@@ -497,7 +507,7 @@ impl ScheduleDomainSink {
     pub fn executions_per_minute(&self) -> f64 {
         let now_ms = now_epoch_ms();
         let cutoff = now_ms.saturating_sub(60_000);
-        let mut deque = self.recent_acknowledgement_ms.lock();
+        let mut deque = self.core.recent_acknowledgement_ms.lock();
         while deque.front().copied().is_some_and(|t| t < cutoff) {
             deque.pop_front();
         }
@@ -505,15 +515,15 @@ impl ScheduleDomainSink {
     }
 
     pub fn notify_failure_count(&self) -> u64 {
-        self.live_publish_failures.load(Ordering::Relaxed)
+        self.core.live_publish_failures.load(Ordering::Relaxed)
     }
 
     pub fn ack_failure_count(&self) -> u64 {
-        self.ack_failures.load(Ordering::Relaxed)
+        self.core.ack_failures.load(Ordering::Relaxed)
     }
 
     pub fn pending_ack_retry_count(&self) -> usize {
-        let pending_ack_retries = self.pending_ack_retries.lock();
+        let pending_ack_retries = self.core.pending_ack_retries.lock();
         pending_ack_retries.values().map(HashSet::len).sum()
     }
 
@@ -521,7 +531,7 @@ impl ScheduleDomainSink {
         &self,
         route_family: crate::runtime::routing::RouteFamily,
     ) -> Vec<crate::control::admin::SchedulePendingClaimInfo> {
-        let actors = self.actors.lock();
+        let actors = self.core.actors.lock();
         actors
             .get(&route_family)
             .map(crate::domains::schedule::ScheduleActor::admin_pending_claims)
@@ -530,7 +540,7 @@ impl ScheduleDomainSink {
 
     pub fn oldest_pending_claim_age_seconds(&self) -> u64 {
         let now_ms = now_epoch_ms();
-        let actors = self.actors.lock();
+        let actors = self.core.actors.lock();
         actors
             .values()
             .map(|actor| actor.oldest_pending_claim_age_seconds(now_ms))
@@ -539,7 +549,7 @@ impl ScheduleDomainSink {
     }
 
     pub fn overdue_normalization_count(&self) -> u64 {
-        let actors = self.actors.lock();
+        let actors = self.core.actors.lock();
         actors
             .values()
             .map(crate::domains::schedule::ScheduleActor::overdue_normalization_count)
@@ -549,7 +559,7 @@ impl ScheduleDomainSink {
     #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
     pub(super) fn sync_admin_snapshot(&self) {
         let snapshot = {
-            let actors = self.actors.lock();
+            let actors = self.core.actors.lock();
             let mut schedules = Vec::new();
             for actor in actors.values() {
                 schedules.extend(actor.admin_snapshot());
@@ -557,12 +567,12 @@ impl ScheduleDomainSink {
             schedules
         };
 
-        self.admin_read_model.replace_schedules(snapshot);
+        self.core.admin_read_model.replace_schedules(snapshot);
         self.refresh_metrics_gauges();
     }
 
     pub(super) fn refresh_metrics_gauges(&self) {
-        if let Some(metrics) = &self.metrics {
+        if let Some(metrics) = &self.core.metrics {
             metrics.set_schedule_count(self.schedule_count());
             metrics.set_pending_fire_count(self.pending_fire_count());
         }
@@ -570,20 +580,20 @@ impl ScheduleDomainSink {
 
     pub(super) fn pending_claim_cleanup_due(&self) -> bool {
         let now_elapsed_ms =
-            u64::try_from(self.snapshot_epoch.elapsed().as_millis()).unwrap_or(u64::MAX);
+            u64::try_from(self.core.snapshot_epoch.elapsed().as_millis()).unwrap_or(u64::MAX);
         let mut last_elapsed_ms = self
+            .core
             .last_pending_claim_cleanup_elapsed_ms
             .load(Ordering::Relaxed);
 
         loop {
             if last_elapsed_ms == 0 {
                 let first_elapsed_ms = now_elapsed_ms.max(1);
-                match self.last_pending_claim_cleanup_elapsed_ms.compare_exchange(
-                    0,
-                    first_elapsed_ms,
-                    Ordering::AcqRel,
-                    Ordering::Relaxed,
-                ) {
+                match self
+                    .core
+                    .last_pending_claim_cleanup_elapsed_ms
+                    .compare_exchange(0, first_elapsed_ms, Ordering::AcqRel, Ordering::Relaxed)
+                {
                     Ok(_) => return true,
                     Err(observed) => {
                         last_elapsed_ms = observed;
@@ -598,12 +608,15 @@ impl ScheduleDomainSink {
                 return false;
             }
 
-            match self.last_pending_claim_cleanup_elapsed_ms.compare_exchange(
-                last_elapsed_ms,
-                now_elapsed_ms,
-                Ordering::AcqRel,
-                Ordering::Relaxed,
-            ) {
+            match self
+                .core
+                .last_pending_claim_cleanup_elapsed_ms
+                .compare_exchange(
+                    last_elapsed_ms,
+                    now_elapsed_ms,
+                    Ordering::AcqRel,
+                    Ordering::Relaxed,
+                ) {
                 Ok(_) => return true,
                 Err(observed) => last_elapsed_ms = observed,
             }
@@ -620,7 +633,7 @@ impl ScheduleDomainSink {
     }
 
     pub(super) fn schedule_admin_snapshot(&self, force: bool) {
-        self.snapshot_dirty.store(true, Ordering::Relaxed);
+        self.core.snapshot_dirty.store(true, Ordering::Relaxed);
         self.maybe_sync_admin_snapshot(force);
     }
 
@@ -631,9 +644,9 @@ impl ScheduleDomainSink {
         }
 
         let now_elapsed_us =
-            u64::try_from(self.snapshot_epoch.elapsed().as_micros()).unwrap_or(u64::MAX);
-        let last_snapshot_elapsed_us = self.last_snapshot_elapsed_us.load(Ordering::Relaxed);
-        let snapshot_dirty = self.snapshot_dirty.load(Ordering::Relaxed);
+            u64::try_from(self.core.snapshot_epoch.elapsed().as_micros()).unwrap_or(u64::MAX);
+        let last_snapshot_elapsed_us = self.core.last_snapshot_elapsed_us.load(Ordering::Relaxed);
+        let snapshot_dirty = self.core.snapshot_dirty.load(Ordering::Relaxed);
 
         if !schedule_admin_snapshot_due(
             snapshot_dirty,
@@ -645,6 +658,7 @@ impl ScheduleDomainSink {
         }
 
         if self
+            .core
             .snapshot_syncing
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
             .is_err()
@@ -652,17 +666,17 @@ impl ScheduleDomainSink {
             return;
         }
 
-        if !self.snapshot_dirty.swap(false, Ordering::AcqRel) {
-            self.snapshot_syncing.store(false, Ordering::Release);
+        if !self.core.snapshot_dirty.swap(false, Ordering::AcqRel) {
+            self.core.snapshot_syncing.store(false, Ordering::Release);
             return;
         }
 
         self.sync_admin_snapshot();
-        self.last_snapshot_elapsed_us.store(
-            u64::try_from(self.snapshot_epoch.elapsed().as_micros()).unwrap_or(u64::MAX),
+        self.core.last_snapshot_elapsed_us.store(
+            u64::try_from(self.core.snapshot_epoch.elapsed().as_micros()).unwrap_or(u64::MAX),
             Ordering::Relaxed,
         );
-        self.snapshot_syncing.store(false, Ordering::Release);
+        self.core.snapshot_syncing.store(false, Ordering::Release);
     }
 
     pub(crate) fn refresh_admin_snapshot_if_dirty(&self) {

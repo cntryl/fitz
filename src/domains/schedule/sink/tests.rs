@@ -153,7 +153,7 @@ fn should_publish_schedule_notify_to_subscribers_when_due() {
         .expect("subscription id present");
 
     {
-        let mut actors = sink.actors.lock();
+        let mut actors = sink.core.actors.lock();
         let actor = actors.get_mut(&family).expect("schedule actor");
         actor.bench_prepare_scan(1);
     }
@@ -211,7 +211,7 @@ fn should_retry_pending_claim_after_restart_given_initial_live_publish_failure()
         .expect("create schedule");
 
     {
-        let mut actors = initial_sink.actors.lock();
+        let mut actors = initial_sink.core.actors.lock();
         let actor = actors.get_mut(&family).expect("schedule actor");
         actor.bench_prepare_scan(1);
     }
@@ -338,7 +338,7 @@ fn should_retry_ack_without_republishing_given_same_broker_ack_persist_failure()
     drain_mailbox(&subscriber_mailbox);
 
     {
-        let mut actors = sink.actors.lock();
+        let mut actors = sink.core.actors.lock();
         let actor = actors.get_mut(&family).expect("schedule actor");
         actor.bench_prepare_scan(1);
         let claimed = actor.bench_claim_due_fires();
@@ -388,7 +388,7 @@ fn should_store_cloud_strict_write_options_given_strict_cloud_policy() {
         .with_write_options(cntryl_midge::WriteOptions::cloud_strict());
 
     // Assert
-    assert!(sink.write_options.is_cloud_strict());
+    assert!(sink.core.write_options.is_cloud_strict());
 }
 
 #[test]
@@ -421,20 +421,20 @@ fn should_increment_expired_pending_claim_metric_when_cleanup_removes_orphans() 
     let claimed = actor.bench_claim_due_fires();
     assert_eq!(claimed.len(), 1);
     clock.advance(Duration::from_millis(11));
-    sink.pending_claim_ttl_ms = 10;
-    let now_elapsed_ms = u128_to_u64_saturating(sink.snapshot_epoch.elapsed().as_millis());
-    sink.last_pending_claim_cleanup_elapsed_ms.store(
+    sink.core.pending_claim_ttl_ms = 10;
+    let now_elapsed_ms = u128_to_u64_saturating(sink.core.snapshot_epoch.elapsed().as_millis());
+    sink.core.last_pending_claim_cleanup_elapsed_ms.store(
         now_elapsed_ms.saturating_sub(SCHEDULE_PENDING_CLAIM_CLEANUP_INTERVAL_MS),
         Ordering::Relaxed,
     );
-    sink.actors.lock().insert(family, actor);
+    sink.core.actors.lock().insert(family, actor);
 
     // Act
     sink.scan_due_schedules();
 
     // Assert
     assert_eq!(metrics.counter_get(METRIC_PENDING_CLAIMS_EXPIRED_TOTAL), 1);
-    let actors = sink.actors.lock();
+    let actors = sink.core.actors.lock();
     assert_eq!(
         actors
             .get(&family)
@@ -498,7 +498,7 @@ fn should_remove_schedule_subscriptions_given_session_cleanup() {
     ))
     .expect("cleanup session");
     {
-        let mut actors = sink.actors.lock();
+        let mut actors = sink.core.actors.lock();
         let actor = actors.get_mut(&family).expect("schedule actor");
         actor.bench_prepare_scan(1);
     }
@@ -507,7 +507,7 @@ fn should_remove_schedule_subscriptions_given_session_cleanup() {
     // Assert
     assert_eq!(sink.subscription_count(), 0);
     assert!(subscriber_mailbox.receiver().try_recv().is_err());
-    assert!(sink.sub_families.lock().is_empty());
+    assert!(sink.core.sub_families.lock().is_empty());
 }
 
 #[test]
@@ -646,7 +646,7 @@ fn should_count_live_publish_failure_given_domain_routing_error() {
     // Intentionally do NOT register the "schedule" domain handler so routing fails.
 
     {
-        let mut actors = sink.actors.lock();
+        let mut actors = sink.core.actors.lock();
         let mut actor = crate::domains::schedule::ScheduleActor::new(
             family,
             store,

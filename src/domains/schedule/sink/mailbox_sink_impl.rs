@@ -104,7 +104,8 @@ impl ScheduleDomainSink {
     }
 
     fn record_request_start(&self) -> Option<std::time::Instant> {
-        self.metrics
+        self.core
+            .metrics
             .as_ref()
             .map(crate::domains::schedule::ScheduleMetrics::record_request_start)
     }
@@ -117,7 +118,8 @@ impl ScheduleDomainSink {
         match message {
             Ok(message) => Ok(message),
             Err(error) => {
-                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started)
+                if let (Some(metrics), Some(started_at)) =
+                    (self.core.metrics.as_ref(), request_started)
                 {
                     metrics.record_failure(started_at);
                 }
@@ -141,7 +143,7 @@ impl ScheduleDomainSink {
     ) -> Option<(crate::domains::schedule::ScheduleResponse, bool)> {
         use crate::domains::schedule::ScheduleResponse;
 
-        let mut actors = self.actors.lock();
+        let mut actors = self.core.actors.lock();
         let actor = match self.get_or_create_actor(&mut actors, route_family) {
             Ok(actor) => actor,
             Err(error) => {
@@ -239,7 +241,7 @@ impl ScheduleDomainSink {
         }
 
         let fam_id = family_id.as_u64();
-        let mut families = self.sub_families.lock();
+        let mut families = self.core.sub_families.lock();
         let state = families
             .entry(fam_id)
             .or_insert_with(ScheduleSubscriptionSet::new);
@@ -254,7 +256,7 @@ impl ScheduleDomainSink {
             );
             id
         } else {
-            let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
+            let new_id = self.core.next_sub_id.fetch_add(1, Ordering::Relaxed);
             state.insert(ScheduleSubscription {
                 route: route.as_str().to_string(),
                 session_id,
@@ -292,7 +294,7 @@ impl ScheduleDomainSink {
         }
 
         let fam_id = family_id.as_u64();
-        let mut families = self.sub_families.lock();
+        let mut families = self.core.sub_families.lock();
         let remove_family = if let Some(state) = families.get_mut(&fam_id) {
             state.remove_session_route(session_id, route.as_str());
             state.is_empty()
@@ -378,10 +380,10 @@ impl ScheduleDomainSink {
             crate::domains::schedule::ScheduleClientResponse::new(meta, response.clone());
 
         if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
-            let _ = self.router.route(response_envelope);
+            let _ = self.core.router.route(response_envelope);
         }
 
-        if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+        if let (Some(metrics), Some(started_at)) = (self.core.metrics.as_ref(), request_started) {
             if Self::schedule_response_is_failure(response) {
                 metrics.record_failure(started_at);
             } else {
