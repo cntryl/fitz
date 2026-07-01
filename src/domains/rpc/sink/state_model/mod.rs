@@ -41,6 +41,7 @@ pub(super) use requests::{
     RpcWorkerCleanupResult,
 };
 pub(super) use route_state::RpcRouteState;
+pub(super) use sink::RpcDomainCore;
 pub use sink::RpcDomainSink;
 pub(super) use snapshot::rpc_admin_snapshot_due;
 pub(super) use state::RpcState;

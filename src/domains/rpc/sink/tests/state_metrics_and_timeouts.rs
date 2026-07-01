@@ -77,6 +77,7 @@ pub(super) fn should_create_rpc_domain_sink() {
 
     // Assert
     assert!(sink.active.load(Ordering::Relaxed));
+    assert_eq!(sink.core.state.lock().live_request_count(), 0);
 }
 
 #[test]

@@ -526,6 +526,7 @@ Current Notice behavior is intentionally ephemeral:
 
 #### RPC
 - Actor owner: `RpcRouteActor` and `ReplyInboxActor` own live worker registration, pending call state, reply sequencing, and timeout handling.
+- Current production boundary: `RpcDomainSink` is the mailbox adapter and `RpcDomainCore` holds live route workers, pending calls, reply forwarding, timeout sweep state, metrics, and admin projection coordination until the managed actor handoff is completed.
 - Persistence: worker registrations, pending calls, and reply assembly are ephemeral; RPC does not provide restart-safe backlog durability.
 - Cleanup: disconnect unregisters workers, expires pending session state, and never restores inflight calls or subscriptions.
 - `RouteFamily`/`realm`: dispatch and replies stay within the exact `RouteFamily`; `realm` remains an application-defined route component for operation naming and filters.

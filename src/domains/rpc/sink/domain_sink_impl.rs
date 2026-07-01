@@ -1,7 +1,7 @@
 use super::state_model::{
     route_quad, rpc_admin_snapshot_due, rpc_timeout_sweep_interval, Arc, AtomicBool, AtomicU64,
     DeliveryError, Duration, Envelope, Instant, Mutex, Ordering, Route, RouteAddress, Router,
-    RpcDomainSink, RpcPendingErrorDelivery, RpcPendingRequest, RpcRouteState,
+    RpcDomainCore, RpcDomainSink, RpcPendingErrorDelivery, RpcPendingRequest, RpcRouteState,
     RpcSessionCleanupResult, RpcState, RpcWorker, RpcWorkerCleanupResult, RPC_BACKPRESSURE_ERROR,
     RPC_DEFAULT_REQUEST_TIMEOUT, RPC_DEFAULT_ROUTE_PENDING_CAPACITY,
     RPC_MIN_TIMEOUT_SWEEP_INTERVAL, RPC_TIMEOUT_ERROR, RPC_WORKER_NOT_FOUND_ERROR,
@@ -27,17 +27,19 @@ impl RpcDomainSink {
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
     ) -> Self {
         Self {
-            state: Mutex::new(RpcState::new()),
-            router,
-            admin_read_model,
+            core: RpcDomainCore {
+                state: Mutex::new(RpcState::new()),
+                router,
+                admin_read_model,
+                request_timeout: RPC_DEFAULT_REQUEST_TIMEOUT,
+                route_pending_capacity: RPC_DEFAULT_ROUTE_PENDING_CAPACITY,
+                snapshot_dirty: AtomicBool::new(false),
+                snapshot_syncing: AtomicBool::new(false),
+                last_snapshot_elapsed_us: AtomicU64::new(0),
+                snapshot_epoch: Instant::now(),
+                metrics: None,
+            },
             active: AtomicBool::new(true),
-            request_timeout: RPC_DEFAULT_REQUEST_TIMEOUT,
-            route_pending_capacity: RPC_DEFAULT_ROUTE_PENDING_CAPACITY,
-            snapshot_dirty: AtomicBool::new(false),
-            snapshot_syncing: AtomicBool::new(false),
-            last_snapshot_elapsed_us: AtomicU64::new(0),
-            snapshot_epoch: Instant::now(),
-            metrics: None,
         }
     }
 
