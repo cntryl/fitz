@@ -45,7 +45,10 @@ fn should_encode_tlv_frame() {
     assert!(frame.len() >= 3 + b"test_value".len());
     assert_eq!(frame[0], 100); // msg_type
     assert_eq!(frame[1], 0);
-    assert_eq!(frame[2], b"test_value".len() as u8);
+    assert_eq!(
+        frame[2],
+        u8::try_from(b"test_value".len()).expect("test value length fits in u8")
+    );
     assert_eq!(&frame[3..], b"test_value");
 }
 

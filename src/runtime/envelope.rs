@@ -394,7 +394,7 @@ mod tests {
     fn should_detect_expired_deadline() {
         // Arrange
         let destination = test_address(1, "/test/actor");
-        let past_deadline = Instant::now() - Duration::from_secs(1);
+        let past_deadline = Instant::now().checked_sub(Duration::from_secs(1)).unwrap();
 
         // Act
         let envelope = Envelope::new(destination, "msg").with_deadline(past_deadline);

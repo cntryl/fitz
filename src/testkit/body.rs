@@ -1,6 +1,9 @@
 use bytes::Bytes;
 use http_body_util::BodyExt;
 
+/// # Errors
+///
+/// Returns the body collection error from the underlying HTTP body.
 pub async fn to_bytes<B>(body: B) -> Result<Bytes, B::Error>
 where
     B: BodyExt + Unpin,

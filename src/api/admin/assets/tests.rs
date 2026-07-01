@@ -31,7 +31,7 @@ fn write_asset(root: &Path, path: &str, bytes: &[u8]) {
     std::fs::write(absolute_path, bytes).expect("write asset");
 }
 
-async fn serve(
+fn serve(
     root: &Path,
     path: &str,
     accept_encoding: Option<&str>,
@@ -65,7 +65,7 @@ async fn should_lookup_asset_by_exact_path_given_file_exists() {
     let root = test_root();
 
     // Act
-    let response = serve(root.path(), "/assets/app.js", None, None).await;
+    let response = serve(root.path(), "/assets/app.js", None, None);
     let body = crate::testkit::body::to_bytes(response.into_body())
         .await
         .unwrap();
@@ -80,7 +80,7 @@ async fn should_apply_svg_mime_type() {
     let root = test_root();
 
     // Act
-    let response = serve(root.path(), "/favicon.svg", None, None).await;
+    let response = serve(root.path(), "/favicon.svg", None, None);
 
     // Assert
     assert_eq!(response.status(), StatusCode::OK);
@@ -96,7 +96,7 @@ async fn should_fallback_to_index_for_client_routes() {
     let root = test_root();
 
     // Act
-    let response = serve(root.path(), "/sessions/123", None, None).await;
+    let response = serve(root.path(), "/sessions/123", None, None);
     let status = response.status();
     let body = crate::testkit::body::to_bytes(response.into_body())
         .await
@@ -115,7 +115,7 @@ async fn should_preserve_missing_asset_fallback_behavior() {
     let root = test_root();
 
     // Act
-    let response = serve(root.path(), "/assets/missing.js", None, None).await;
+    let response = serve(root.path(), "/assets/missing.js", None, None);
     let status = response.status();
     let content_type = response
         .headers()
@@ -140,7 +140,7 @@ async fn should_preserve_missing_root_file_fallback_behavior() {
     let root = test_root();
 
     // Act
-    let response = serve(root.path(), "/missing.css", None, None).await;
+    let response = serve(root.path(), "/missing.css", None, None);
     let status = response.status();
     let body = crate::testkit::body::to_bytes(response.into_body())
         .await
@@ -160,7 +160,7 @@ async fn should_return_not_found_given_index_missing_for_root_request() {
     write_asset(root.path(), "assets/app.js", APP_JS);
 
     // Act
-    let response = serve(root.path(), "/", None, None).await;
+    let response = serve(root.path(), "/", None, None);
 
     // Assert
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
@@ -173,7 +173,7 @@ async fn should_serve_exact_asset_given_index_missing() {
     write_asset(root.path(), "assets/app.js", APP_JS);
 
     // Act
-    let response = serve(root.path(), "/assets/app.js", None, None).await;
+    let response = serve(root.path(), "/assets/app.js", None, None);
     let status = response.status();
     let body = crate::testkit::body::to_bytes(response.into_body())
         .await
@@ -190,7 +190,7 @@ async fn should_reject_path_traversal() {
     let root = test_root();
 
     // Act
-    let response = serve(root.path(), "/../secret", None, None).await;
+    let response = serve(root.path(), "/../secret", None, None);
 
     // Assert
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
@@ -211,7 +211,7 @@ async fn should_reject_file_symlink_escape_from_root() {
     .expect("create escaping file symlink");
 
     // Act
-    let response = serve(root.path(), "/assets/app.js", None, None).await;
+    let response = serve(root.path(), "/assets/app.js", None, None);
 
     // Assert
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
@@ -229,7 +229,7 @@ async fn should_reject_directory_symlink_escape_from_root() {
         .expect("create escaping directory symlink");
 
     // Act
-    let response = serve(root.path(), "/assets/secret.js", None, None).await;
+    let response = serve(root.path(), "/assets/secret.js", None, None);
 
     // Assert
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
@@ -295,7 +295,7 @@ async fn should_prefer_brotli_when_supported() {
     let root = test_root();
 
     // Act
-    let response = serve(root.path(), "/assets/app.js", Some("gzip, br"), None).await;
+    let response = serve(root.path(), "/assets/app.js", Some("gzip, br"), None);
 
     // Assert
     assert_eq!(response.status(), StatusCode::OK);
@@ -315,7 +315,7 @@ async fn should_skip_compression_for_non_compressible_assets() {
     let root = test_root();
 
     // Act
-    let response = serve(root.path(), "/logo.png", Some("br, gzip"), None).await;
+    let response = serve(root.path(), "/logo.png", Some("br, gzip"), None);
 
     // Assert
     assert_eq!(response.status(), StatusCode::OK);
@@ -330,7 +330,7 @@ async fn should_skip_compression_for_non_compressible_assets() {
 async fn should_return_not_modified_when_etag_matches_representation() {
     // Arrange
     let root = test_root();
-    let initial = serve(root.path(), "/assets/app.js", Some("gzip"), None).await;
+    let initial = serve(root.path(), "/assets/app.js", Some("gzip"), None);
     let etag = initial
         .headers()
         .get(header::ETAG)
@@ -340,7 +340,7 @@ async fn should_return_not_modified_when_etag_matches_representation() {
         .to_string();
 
     // Act
-    let response = serve(root.path(), "/assets/app.js", Some("gzip"), Some(&etag)).await;
+    let response = serve(root.path(), "/assets/app.js", Some("gzip"), Some(&etag));
 
     // Assert
     assert_eq!(response.status(), StatusCode::NOT_MODIFIED);

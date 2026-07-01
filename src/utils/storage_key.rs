@@ -303,8 +303,12 @@ mod tests {
         ];
 
         for (index, key) in keys.iter().enumerate() {
-            tx.put(key.clone(), vec![index as u8], None)
-                .expect("write test key");
+            tx.put(
+                key.clone(),
+                vec![u8::try_from(index).expect("test index fits in u8")],
+                None,
+            )
+            .expect("write test key");
         }
         tx.commit(cntryl_midge::WriteOptions::buffered())
             .expect("commit test keys");

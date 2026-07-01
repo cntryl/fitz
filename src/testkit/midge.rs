@@ -65,6 +65,11 @@ use std::sync::Arc;
 /// ```
 static ENGINE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// Creates a test Midge engine with explicit non-zero column families.
+///
+/// # Panics
+///
+/// Panics if `cf_ids` contains 0 or if the test engine cannot be opened.
 #[allow(clippy::needless_pass_by_value)]
 pub fn create_test_engine_with_cfs(cf_ids: Vec<u32>) -> Arc<Engine> {
     // Validate: CF=0 is FORBIDDEN
