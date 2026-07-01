@@ -1,7 +1,7 @@
 use super::model::{
     AdminKvPrefixScanResult, AdminKvRowsRequest, AdminKvRowsResult, Arc, AtomicBool, Bytes,
-    DeliveryError, Envelope, HashMap, KvDomainSink, KvResourceLockKey, Mutex, Ordering, Router,
-    Utc, ADMIN_INVENTORY_REFRESH_LIMIT,
+    DeliveryError, Envelope, HashMap, KvDomainCore, KvDomainSink, KvResourceLockKey, Mutex,
+    Ordering, Router, Utc, ADMIN_INVENTORY_REFRESH_LIMIT,
 };
 #[cfg(test)]
 use crate::protocol::frame_context::FrameContext;
@@ -13,20 +13,24 @@ impl KvDomainSink {
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
     ) -> Self {
         Self {
-            store,
-            actors: Arc::new(Mutex::new(HashMap::new())),
-            watch_actors: Mutex::new(HashMap::new()),
-            router,
-            projection: crate::domains::kv::projection::KvAdminProjection::new(admin_read_model),
-            metrics: None,
-            sync_write_options: cntryl_midge::WriteOptions::sync(),
+            core: KvDomainCore {
+                store,
+                actors: Arc::new(Mutex::new(HashMap::new())),
+                watch_actors: Mutex::new(HashMap::new()),
+                router,
+                projection: crate::domains::kv::projection::KvAdminProjection::new(
+                    admin_read_model,
+                ),
+                metrics: None,
+                sync_write_options: cntryl_midge::WriteOptions::sync(),
+            },
             active: AtomicBool::new(true),
         }
     }
 
     #[must_use]
     pub fn with_sync_write_options(mut self, write_options: cntryl_midge::WriteOptions) -> Self {
-        self.sync_write_options = write_options;
+        self.core.sync_write_options = write_options;
         self
     }
 
@@ -35,7 +39,7 @@ impl KvDomainSink {
         mut self,
         collector: crate::observability::metrics::MetricsCollector,
     ) -> Self {
-        self.metrics = Some(crate::domains::kv::KvMetrics::new(collector));
+        self.core.metrics = Some(crate::domains::kv::KvMetrics::new(collector));
         self.refresh_metrics_gauges();
         self
     }
@@ -56,7 +60,8 @@ impl KvDomainSink {
         let families = if let Some(family) = family {
             vec![family.id()]
         } else {
-            self.store
+            self.core
+                .store
                 .list_column_families()
                 .map_err(|error| error.to_string())?
                 .into_iter()
@@ -104,6 +109,7 @@ impl KvDomainSink {
             crate::domains::kv::KvActor::resolve_column_family(route_family, resource)?;
         let key = crate::domains::kv::KvActor::inventory_metadata_key(realm, area, resource);
         let tx = self
+            .core
             .store
             .begin_tx(column_family, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|error| error.to_string())?;
@@ -146,6 +152,7 @@ impl KvDomainSink {
         let column_family =
             crate::domains::kv::KvActor::resolve_column_family(route_family, resource)?;
         let tx = self
+            .core
             .store
             .begin_tx(column_family, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|error| error.to_string())?;
@@ -180,6 +187,7 @@ impl KvDomainSink {
         let column_family =
             crate::domains::kv::KvActor::resolve_column_family(route_family, resource)?;
         let tx = self
+            .core
             .store
             .begin_tx(column_family, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|error| error.to_string())?;
@@ -237,6 +245,7 @@ impl KvDomainSink {
             request.resource,
         )?;
         let tx = self
+            .core
             .store
             .begin_tx(column_family, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|error| error.to_string())?;
@@ -303,6 +312,7 @@ impl KvDomainSink {
         let route_family = crate::runtime::routing::RouteFamily::new(family_id);
         let column_family = crate::domains::kv::KvActor::resolve_column_family(route_family, "")?;
         let tx = self
+            .core
             .store
             .begin_tx(column_family, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|error| error.to_string())?;
@@ -350,6 +360,7 @@ impl KvDomainSink {
         let column_family =
             crate::domains::kv::KvActor::resolve_column_family(route_family, resource)?;
         let read_tx = self
+            .core
             .store
             .begin_tx(column_family, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|error| error.to_string())?;
@@ -395,6 +406,7 @@ impl KvDomainSink {
 
         if persist_empty || estimate.estimated_record_count > 0 || !estimate.estimate_complete {
             let mut write_tx = self
+                .core
                 .store
                 .begin_tx(column_family, cntryl_midge::TransactionMode::ReadWrite)
                 .map_err(|error| error.to_string())?;
@@ -406,7 +418,7 @@ impl KvDomainSink {
                 )
                 .map_err(|error| error.to_string())?;
             write_tx
-                .commit(self.sync_write_options)
+                .commit(self.core.sync_write_options)
                 .map_err(|error| error.to_string())?;
         }
 
@@ -442,6 +454,7 @@ impl KvDomainSink {
     pub(super) fn sync_admin_snapshot(&self) {
         let started_at = Utc::now().to_rfc3339();
         let transactions = self
+            .core
             .actors
             .lock()
             .iter()
@@ -461,20 +474,21 @@ impl KvDomainSink {
                 )
             })
             .collect();
-        self.projection.mark_dirty();
-        self.projection.refresh_if_dirty(|| transactions);
+        self.core.projection.mark_dirty();
+        self.core.projection.refresh_if_dirty(|| transactions);
         self.refresh_metrics_gauges();
     }
 
     pub(super) fn refresh_metrics_gauges(&self) {
-        if let Some(metrics) = &self.metrics {
+        if let Some(metrics) = &self.core.metrics {
             metrics.set_active_transactions(self.active_transaction_count());
             metrics.set_subscription_count(self.subscription_count());
         }
     }
 
     pub(super) fn subscription_count(&self) -> usize {
-        self.watch_actors
+        self.core
+            .watch_actors
             .lock()
             .values()
             .map(crate::domains::kv::watch::KvWatchActor::subscription_count)
@@ -485,7 +499,8 @@ impl KvDomainSink {
         &self,
         resource_key: &KvResourceLockKey,
     ) -> usize {
-        self.actors
+        self.core
+            .actors
             .lock()
             .values()
             .flat_map(crate::domains::kv::KvActor::active_transaction_scopes)
@@ -503,7 +518,8 @@ impl KvDomainSink {
         session_id: u64,
         resource_key: &KvResourceLockKey,
     ) -> Option<u64> {
-        self.actors
+        self.core
+            .actors
             .lock()
             .iter()
             .find_map(|(active_session_id, actor)| {
@@ -530,7 +546,7 @@ impl KvDomainSink {
         crate::control::admin::KvLatencySnapshot,
         crate::control::admin::KvLatencySnapshot,
     ) {
-        self.projection.latency_snapshots(resource_key)
+        self.core.projection.latency_snapshots(resource_key)
     }
 
     pub(super) fn record_read_latency(
@@ -538,7 +554,8 @@ impl KvDomainSink {
         resource_key: &KvResourceLockKey,
         started_at: std::time::Instant,
     ) {
-        self.projection
+        self.core
+            .projection
             .record_read_latency(resource_key, started_at.elapsed().as_secs_f64() * 1000.0);
     }
 
@@ -547,7 +564,8 @@ impl KvDomainSink {
         resource_key: &KvResourceLockKey,
         started_at: std::time::Instant,
     ) {
-        self.projection
+        self.core
+            .projection
             .record_write_latency(resource_key, started_at.elapsed().as_secs_f64() * 1000.0);
     }
 
@@ -556,7 +574,8 @@ impl KvDomainSink {
         session_id: u64,
         tx_id: u64,
     ) -> Option<KvResourceLockKey> {
-        self.actors
+        self.core
+            .actors
             .lock()
             .get(&session_id)
             .and_then(|actor| actor.resource_scope_for_tx(tx_id))
@@ -608,7 +627,7 @@ impl KvDomainSink {
                 *subscriber.family(),
             );
             let notify_envelope = Envelope::new(subscriber.clone(), notify_ctx);
-            if self.router.route(notify_envelope).is_err() {
+            if self.core.router.route(notify_envelope).is_err() {
                 crate::observability::counter_inc("fitz_kv_notify_drops_total");
             }
         }
@@ -623,7 +642,7 @@ impl KvDomainSink {
                 crate::domains::kv::KvNotification { mutation_count },
             );
             let notify_envelope = Envelope::new(subscriber.clone(), notification);
-            if self.router.route(notify_envelope).is_err() {
+            if self.core.router.route(notify_envelope).is_err() {
                 crate::observability::counter_inc("fitz_kv_notify_drops_total");
             }
         }
@@ -636,7 +655,7 @@ impl KvDomainSink {
     ) {
         let route = Self::kv_route_for_lock(resource_key);
         let watch_targets = {
-            let watch_actors = self.watch_actors.lock();
+            let watch_actors = self.core.watch_actors.lock();
             watch_actors
                 .get(&resource_key.family_id)
                 .map_or_else(Vec::new, |actor| actor.matching_targets(&route))
@@ -682,7 +701,8 @@ impl KvDomainSink {
         let response_ctx = crate::domains::kv::KvClientResponse::new(meta, response.clone());
 
         let Some(response_envelope) = envelope.try_reply_to(response_ctx) else {
-            if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+            if let (Some(metrics), Some(started_at)) = (self.core.metrics.as_ref(), request_started)
+            {
                 if matches!(response, crate::domains::kv::KvResponse::Error { .. }) {
                     metrics.record_failure(started_at);
                 } else {
@@ -697,9 +717,10 @@ impl KvDomainSink {
             return Ok(());
         };
 
-        match self.router.route(response_envelope) {
+        match self.core.router.route(response_envelope) {
             Ok(()) => {
-                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started)
+                if let (Some(metrics), Some(started_at)) =
+                    (self.core.metrics.as_ref(), request_started)
                 {
                     if matches!(response, crate::domains::kv::KvResponse::Error { .. }) {
                         metrics.record_failure(started_at);
@@ -715,7 +736,8 @@ impl KvDomainSink {
                 Ok(())
             }
             Err(error) => {
-                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started)
+                if let (Some(metrics), Some(started_at)) =
+                    (self.core.metrics.as_ref(), request_started)
                 {
                     metrics.record_failure(started_at);
                 }
@@ -736,10 +758,10 @@ impl KvDomainSink {
     /// transactions are dropped, resource locks are released, and the admin read
     /// model is refreshed so no durable recovery is implied.
     pub fn cleanup_session(&self, session_id: u64) {
-        self.actors.lock().remove(&session_id);
+        self.core.actors.lock().remove(&session_id);
 
         {
-            let mut watch_actors = self.watch_actors.lock();
+            let mut watch_actors = self.core.watch_actors.lock();
             for actor in watch_actors.values_mut() {
                 actor.remove_session(session_id);
             }
@@ -755,7 +777,8 @@ impl KvDomainSink {
     }
 
     pub fn active_transaction_count(&self) -> usize {
-        self.actors
+        self.core
+            .actors
             .lock()
             .values()
             .map(crate::domains::kv::KvActor::transaction_count)
@@ -780,7 +803,7 @@ impl KvDomainSink {
                 area,
                 resource,
                 mode,
-                write_options: self.sync_write_options,
+                write_options: self.core.sync_write_options,
             },
             message => message,
         }

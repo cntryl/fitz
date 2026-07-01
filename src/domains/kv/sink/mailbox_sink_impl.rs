@@ -81,7 +81,8 @@ impl KvDomainSink {
     }
 
     fn record_request_start(&self) -> Option<std::time::Instant> {
-        self.metrics
+        self.core
+            .metrics
             .as_ref()
             .map(super::super::metrics::KvMetrics::record_request_start)
     }
@@ -95,7 +96,8 @@ impl KvDomainSink {
         let parsed_frame = match frame {
             Ok(msg) => msg,
             Err(e) => {
-                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started)
+                if let (Some(metrics), Some(started_at)) =
+                    (self.core.metrics.as_ref(), request_started)
                 {
                     metrics.record_failure(started_at);
                 }
@@ -136,7 +138,7 @@ impl KvDomainSink {
                 subscriber,
             } => {
                 let subscription_id = {
-                    let mut watch_actors = self.watch_actors.lock();
+                    let mut watch_actors = self.core.watch_actors.lock();
                     let actor = watch_actors
                         .entry(family_id.as_u64())
                         .or_insert_with(|| crate::domains::kv::watch::KvWatchActor::new(family_id));
@@ -150,7 +152,7 @@ impl KvDomainSink {
                 session_id,
                 ..
             } => {
-                let mut watch_actors = self.watch_actors.lock();
+                let mut watch_actors = self.core.watch_actors.lock();
                 let remove_family = if let Some(actor) = watch_actors.get_mut(&family_id.as_u64()) {
                     actor.unsubscribe(session_id, pattern.as_str());
                     actor.is_empty()
@@ -260,14 +262,14 @@ impl KvDomainSink {
         parking_lot::RawMutex,
         crate::domains::kv::KvActor,
     > {
-        parking_lot::MutexGuard::map(self.actors.lock(), |actors| {
+        parking_lot::MutexGuard::map(self.core.actors.lock(), |actors| {
             actors.entry(session_id).or_insert_with(|| {
                 tracing::trace!(
                     domain = "kv",
                     session_id = session_id,
                     "Creating new KvActor instance ({context})"
                 );
-                crate::domains::kv::KvActor::new(self.store.clone())
+                crate::domains::kv::KvActor::new(self.core.store.clone())
             })
         })
     }

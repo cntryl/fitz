@@ -54,7 +54,7 @@ impl KvResourceLockKey {
     }
 }
 
-pub struct KvDomainSink {
+pub(super) struct KvDomainCore {
     pub(super) store: Arc<cntryl_midge::Engine>,
     pub(super) actors: Arc<Mutex<HashMap<u64, crate::domains::kv::KvActor>>>,
     pub(super) watch_actors: Mutex<HashMap<u64, crate::domains::kv::watch::KvWatchActor>>,
@@ -62,5 +62,9 @@ pub struct KvDomainSink {
     pub(super) projection: crate::domains::kv::projection::KvAdminProjection<KvResourceLockKey>,
     pub(super) metrics: Option<crate::domains::kv::KvMetrics>,
     pub(super) sync_write_options: cntryl_midge::WriteOptions,
+}
+
+pub struct KvDomainSink {
+    pub(super) core: KvDomainCore,
     pub(super) active: AtomicBool,
 }

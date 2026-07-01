@@ -733,5 +733,5 @@ fn should_remove_kv_subscription_given_unsubscribe() {
 
     // Assert
     assert!(watcher_mailbox.receiver().try_recv().is_err());
-    assert!(sink.watch_actors.lock().is_empty());
+    assert!(sink.core.watch_actors.lock().is_empty());
 }
