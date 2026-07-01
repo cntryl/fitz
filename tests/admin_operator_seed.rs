@@ -232,18 +232,17 @@ async fn wait_for_seed_visibility(server: &TestServer, family_count: usize) {
         }
     })
     .await;
-    if result.is_err() {
-        panic!(
-            "seed visibility: queue_inflight={} schedule_active={} lease_active={} lease_waiters={} notice_subscriptions={} rpc_workers={} rpc_pending={}",
-            server.runtime.queue_inflight_active(),
-            server.runtime.schedule_active(),
-            server.runtime.lease_active(),
-            server.runtime.lease_waiter_depth(),
-            server.runtime.notice_list_subscriptions(None, None).len(),
-            server.runtime.rpc_workers_registered(),
-            server.runtime.rpc_requests_pending(),
-        );
-    }
+    assert!(
+        !result.is_err(),
+        "seed visibility: queue_inflight={} schedule_active={} lease_active={} lease_waiters={} notice_subscriptions={} rpc_workers={} rpc_pending={}",
+        server.runtime.queue_inflight_active(),
+        server.runtime.schedule_active(),
+        server.runtime.lease_active(),
+        server.runtime.lease_waiter_depth(),
+        server.runtime.notice_list_subscriptions(None, None).len(),
+        server.runtime.rpc_workers_registered(),
+        server.runtime.rpc_requests_pending(),
+    );
 }
 
 async fn get_json(server: &TestServer, path: &str, query: &[(&str, String)]) -> Value {
@@ -301,14 +300,14 @@ fn assert_nonempty_family_array(
     assert!(!items.is_empty(), "expected nonempty {array_key}");
     assert!(items
         .iter()
-        .all(|item| item[family_key].as_u64() == Some(route_family as u64)));
+        .all(|item| item[family_key].as_u64() == Some(u64::from(route_family))));
 }
 
 fn assert_lease_contention(payload: &Value, route_family: u32) {
     let items = payload["items"].as_array().expect("lease items");
     assert!(!items.is_empty(), "expected lease search items");
     assert!(items.iter().any(|item| {
-        item["route_family"].as_u64() == Some(route_family as u64)
+        item["route_family"].as_u64() == Some(u64::from(route_family))
             && item["state"] == "owned_with_waiters"
             && item["pending_waiters"].as_u64().unwrap_or_default() > 0
     }));
@@ -320,7 +319,7 @@ fn assert_notice_delivery(payload: &Value, route_family: u32) {
         .expect("notice observations");
     assert!(!observations.is_empty(), "expected notice observations");
     assert!(observations.iter().any(|observation| {
-        observation["route_family"].as_u64() == Some(route_family as u64)
+        observation["route_family"].as_u64() == Some(u64::from(route_family))
             && observation["status"] == "active_subscription"
     }));
 }
@@ -330,9 +329,9 @@ fn assert_rpc_calls(payload: &Value, route_family: u32) {
         .as_array()
         .expect("rpc observations");
     assert!(!observations.is_empty(), "expected rpc observations");
-    assert!(observations
-        .iter()
-        .all(|observation| { observation["route_family"].as_u64() == Some(route_family as u64) }));
+    assert!(observations.iter().all(|observation| {
+        observation["route_family"].as_u64() == Some(u64::from(route_family))
+    }));
     assert!(observations
         .iter()
         .any(|observation| observation["state"] == "worker_registered"));

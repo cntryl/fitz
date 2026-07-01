@@ -45,9 +45,11 @@ fn should_return_queued_when_wait_seconds_greater_than_zero_and_lease_held() {
     };
     let response_a = actor.handle_message(acquire_a, &mut ctx).unwrap();
 
-    let _token_a = match response_a {
-        LeaseResponse::Acquired { fencing_token } => fencing_token,
-        _ => panic!("Expected Acquired for first client"),
+    let LeaseResponse::Acquired {
+        fencing_token: _token_a,
+    } = response_a
+    else {
+        panic!("Expected Acquired for first client");
     };
 
     // Act
@@ -168,9 +170,11 @@ fn should_return_already_held_when_current_holder_acquires_again() {
     };
     let response_a = actor.handle_message(acquire_a, &mut ctx).unwrap();
 
-    let token_a = match response_a {
-        LeaseResponse::Acquired { fencing_token } => fencing_token,
-        _ => panic!("Expected Acquired"),
+    let LeaseResponse::Acquired {
+        fencing_token: token_a,
+    } = response_a
+    else {
+        panic!("Expected Acquired");
     };
 
     // Act
@@ -310,9 +314,11 @@ fn should_allow_renew_with_valid_token() {
     };
     let response_a = actor.handle_message(acquire, &mut ctx).unwrap();
 
-    let token_a = match response_a {
-        LeaseResponse::Acquired { fencing_token } => fencing_token,
-        _ => panic!("Expected Acquired for holder"),
+    let LeaseResponse::Acquired {
+        fencing_token: token_a,
+    } = response_a
+    else {
+        panic!("Expected Acquired for holder");
     };
 
     // Act
@@ -383,9 +389,11 @@ fn should_allow_release_with_valid_token() {
     };
     let response_a = actor.handle_message(acquire, &mut ctx).unwrap();
 
-    let token_a = match response_a {
-        LeaseResponse::Acquired { fencing_token } => fencing_token,
-        _ => panic!("Expected Acquired"),
+    let LeaseResponse::Acquired {
+        fencing_token: token_a,
+    } = response_a
+    else {
+        panic!("Expected Acquired");
     };
 
     // Act
@@ -422,9 +430,11 @@ fn should_reset_fencing_tokens_when_actor_is_recreated() {
         .handle_message(first_acquire, &mut first_ctx)
         .unwrap();
 
-    let first_token = match first_response {
-        LeaseResponse::Acquired { fencing_token } => fencing_token,
-        _ => panic!("Expected Acquired for first actor"),
+    let LeaseResponse::Acquired {
+        fencing_token: first_token,
+    } = first_response
+    else {
+        panic!("Expected Acquired for first actor");
     };
 
     let (mut second_actor, mut second_ctx) = create_test_actor();
@@ -443,9 +453,11 @@ fn should_reset_fencing_tokens_when_actor_is_recreated() {
         .unwrap();
 
     // Assert
-    let second_token = match second_response {
-        LeaseResponse::Acquired { fencing_token } => fencing_token,
-        _ => panic!("Expected Acquired for recreated actor"),
+    let LeaseResponse::Acquired {
+        fencing_token: second_token,
+    } = second_response
+    else {
+        panic!("Expected Acquired for recreated actor");
     };
     assert_eq!(first_token, 1);
     assert_eq!(second_token, 1);
@@ -584,9 +596,11 @@ fn should_block_new_acquirers_while_waiter_is_being_granted() {
         wait_seconds: 0,
     };
     let holder_resp = actor.handle_message(acquire_holder, &mut ctx).unwrap();
-    let holder_token = match holder_resp {
-        LeaseResponse::Acquired { fencing_token } => fencing_token,
-        _ => panic!("Expected Acquired for holder"),
+    let LeaseResponse::Acquired {
+        fencing_token: holder_token,
+    } = holder_resp
+    else {
+        panic!("Expected Acquired for holder");
     };
 
     // Waiter-1 queued

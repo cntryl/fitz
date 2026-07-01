@@ -138,6 +138,16 @@ const COMPRESSED_COMPACT_REALM_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xE8];
 const COMPACT_RESOURCE_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xEA];
 const OPTIONAL_BYTES_ABSENT: u32 = u32::MAX;
 
+#[inline]
+fn usize_to_u32_saturating(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+#[inline]
+fn u32_to_usize_saturating(value: u32) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
 impl CompactAreaPageValue {
     fn encode(&self) -> Vec<u8> {
         let mut total_len = 6;
@@ -148,17 +158,19 @@ impl CompactAreaPageValue {
 
         let mut bytes = Vec::with_capacity(total_len);
         bytes.extend_from_slice(&COMPACT_AREA_PAGE_VALUE_V1_MARKER);
-        bytes.extend_from_slice(&(self.records.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&usize_to_u32_saturating(self.records.len()).to_le_bytes());
 
         for record in &self.records {
             bytes.extend_from_slice(&record.resource_offset.to_le_bytes());
             bytes.extend_from_slice(&record.created_at.to_le_bytes());
-            bytes.extend_from_slice(&(record.body.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(&usize_to_u32_saturating(record.body.len()).to_le_bytes());
             bytes.extend_from_slice(
                 &record
                     .metadata
                     .as_ref()
-                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| metadata.len() as u32)
+                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| {
+                        usize_to_u32_saturating(metadata.len())
+                    })
                     .to_le_bytes(),
             );
             bytes.extend_from_slice(&record.body);
@@ -192,18 +204,18 @@ impl CompactAreaPageValue {
             value
         };
 
-        let record_count = read_u32(bytes, &mut offset) as usize;
+        let record_count = u32_to_usize_saturating(read_u32(bytes, &mut offset));
         let mut records = Vec::with_capacity(record_count);
 
         for _ in 0..record_count {
             let resource_offset = read_u64(bytes, &mut offset);
             let created_at = read_u64(bytes, &mut offset);
-            let body_len = read_u32(bytes, &mut offset) as usize;
+            let body_len = u32_to_usize_saturating(read_u32(bytes, &mut offset));
             let metadata_len_raw = read_u32(bytes, &mut offset);
             let metadata_len = if metadata_len_raw == OPTIONAL_BYTES_ABSENT {
                 None
             } else {
-                Some(metadata_len_raw as usize)
+                Some(u32_to_usize_saturating(metadata_len_raw))
             };
 
             let body = Bytes::copy_from_slice(&bytes[offset..offset + body_len]);
@@ -238,18 +250,20 @@ impl CompactResourcePageValue {
 
         let mut bytes = Vec::with_capacity(total_len);
         bytes.extend_from_slice(&COMPACT_RESOURCE_PAGE_VALUE_V1_MARKER);
-        bytes.extend_from_slice(&(self.records.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&usize_to_u32_saturating(self.records.len()).to_le_bytes());
 
         for record in &self.records {
             bytes.extend_from_slice(&record.area_offset.to_le_bytes());
             bytes.extend_from_slice(&record.realm_offset.to_le_bytes());
             bytes.extend_from_slice(&record.created_at.to_le_bytes());
-            bytes.extend_from_slice(&(record.body.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(&usize_to_u32_saturating(record.body.len()).to_le_bytes());
             bytes.extend_from_slice(
                 &record
                     .metadata
                     .as_ref()
-                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| metadata.len() as u32)
+                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| {
+                        usize_to_u32_saturating(metadata.len())
+                    })
                     .to_le_bytes(),
             );
             bytes.extend_from_slice(&record.body);
