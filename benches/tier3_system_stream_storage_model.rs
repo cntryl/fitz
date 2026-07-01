@@ -16,7 +16,10 @@ use fitz::benchkit::{
     count_stream_read_records_from_payload, create_local_bench_store, extract_single_tlv_field,
     register_session_queue_sink, route_raw_frame, FrameQueueSink,
 };
-use fitz::domains::stream::protocol::{StreamRecord, StreamWriteMode};
+use fitz::domains::stream::protocol::{
+    StreamClientFrame, StreamClientResponse, StreamClientResponseBody, StreamMessage, StreamRecord,
+    StreamWriteMode,
+};
 use fitz::domains::stream::storage::{decode_area_offset_from_key, decode_realm_offset_from_key};
 use fitz::domains::stream::store::{
     CommitRecordsParams, EventPayload, ReadResourceParams, StreamStore,
@@ -151,6 +154,26 @@ const COMPRESSED_COMPACT_REALM_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xE8];
 const COMPACT_RESOURCE_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xEA];
 const OPTIONAL_BYTES_ABSENT: u32 = u32::MAX;
 
+fn usize_to_u32_saturating(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+fn usize_to_u64_saturating(value: usize) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
+fn u64_to_usize_saturating(value: u64) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
+fn u64_to_u32_saturating(value: u64) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+fn low_u32(value: u64) -> u32 {
+    u32::try_from(value & u64::from(u32::MAX)).expect("masked value fits in u32")
+}
+
 impl CompactAreaPageValue {
     fn encode(&self) -> Vec<u8> {
         let mut total_len = 6;
@@ -161,17 +184,19 @@ impl CompactAreaPageValue {
 
         let mut bytes = Vec::with_capacity(total_len);
         bytes.extend_from_slice(&COMPACT_AREA_PAGE_VALUE_V1_MARKER);
-        bytes.extend_from_slice(&(self.records.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&usize_to_u32_saturating(self.records.len()).to_le_bytes());
 
         for record in &self.records {
             bytes.extend_from_slice(&record.resource_offset.to_le_bytes());
             bytes.extend_from_slice(&record.created_at.to_le_bytes());
-            bytes.extend_from_slice(&(record.body.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(&usize_to_u32_saturating(record.body.len()).to_le_bytes());
             bytes.extend_from_slice(
                 &record
                     .metadata
                     .as_ref()
-                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| metadata.len() as u32)
+                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| {
+                        usize_to_u32_saturating(metadata.len())
+                    })
                     .to_le_bytes(),
             );
             bytes.extend_from_slice(&record.body);
@@ -251,18 +276,20 @@ impl CompactResourcePageValue {
 
         let mut bytes = Vec::with_capacity(total_len);
         bytes.extend_from_slice(&COMPACT_RESOURCE_PAGE_VALUE_V1_MARKER);
-        bytes.extend_from_slice(&(self.records.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&usize_to_u32_saturating(self.records.len()).to_le_bytes());
 
         for record in &self.records {
             bytes.extend_from_slice(&record.area_offset.to_le_bytes());
             bytes.extend_from_slice(&record.realm_offset.to_le_bytes());
             bytes.extend_from_slice(&record.created_at.to_le_bytes());
-            bytes.extend_from_slice(&(record.body.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(&usize_to_u32_saturating(record.body.len()).to_le_bytes());
             bytes.extend_from_slice(
                 &record
                     .metadata
                     .as_ref()
-                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| metadata.len() as u32)
+                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| {
+                        usize_to_u32_saturating(metadata.len())
+                    })
                     .to_le_bytes(),
             );
             bytes.extend_from_slice(&record.body);
@@ -344,18 +371,20 @@ impl CompactPagedRealmValue {
 
         let mut bytes = Vec::with_capacity(total_len);
         bytes.extend_from_slice(&COMPACT_REALM_PAGE_VALUE_V1_MARKER);
-        bytes.extend_from_slice(&(self.records.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&usize_to_u32_saturating(self.records.len()).to_le_bytes());
 
         for record in &self.records {
             bytes.extend_from_slice(&record.area_offset.to_le_bytes());
             bytes.extend_from_slice(&record.resource_offset.to_le_bytes());
             bytes.extend_from_slice(&record.created_at.to_le_bytes());
-            bytes.extend_from_slice(&(record.body.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(&usize_to_u32_saturating(record.body.len()).to_le_bytes());
             bytes.extend_from_slice(
                 &record
                     .metadata
                     .as_ref()
-                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| metadata.len() as u32)
+                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| {
+                        usize_to_u32_saturating(metadata.len())
+                    })
                     .to_le_bytes(),
             );
             bytes.extend_from_slice(&record.body);
@@ -445,8 +474,9 @@ fn build_ascii_fill(len: usize, seed: u64) -> Vec<u8> {
 
     while bytes.len() < len {
         state = next_deterministic_state(state);
-        let token = ASCII_TOKEN_BANK[(state as usize) % ASCII_TOKEN_BANK.len()].as_bytes();
-        let hex = format!("{:08x}", state as u32);
+        let token_count = usize_to_u64_saturating(ASCII_TOKEN_BANK.len());
+        let token = ASCII_TOKEN_BANK[u64_to_usize_saturating(state % token_count)].as_bytes();
+        let hex = format!("{:08x}", low_u32(state));
 
         for chunk in [token, b" ", hex.as_bytes(), b" "] {
             for byte in chunk {
@@ -551,7 +581,7 @@ fn build_production_like_payload(stream_index: usize, record_index: usize) -> Ev
             body: build_padded_text(
                 format!(
                     "ts={:08x} lvl=info stream={stream_index} seq={record_index} msg=",
-                    body_seed as u32
+                    low_u32(body_seed)
                 ),
                 PRODUCTION_LIKE_LOG_BODY_BYTES,
                 body_seed ^ 0xDE_AD_BE_EF,
@@ -644,7 +674,10 @@ fn persist_prototype_rows(
     writes: &[PrototypeRowWrite],
 ) -> Result<(), String> {
     let mut txn = db
-        .begin_tx(FAMILY as u32, cntryl_midge::TransactionMode::ReadWrite)
+        .begin_tx(
+            u64_to_u32_saturating(FAMILY),
+            cntryl_midge::TransactionMode::ReadWrite,
+        )
         .map_err(|error| format!("begin_tx failed: {error:?}"))?;
 
     for row in writes {
@@ -656,6 +689,7 @@ fn persist_prototype_rows(
         .map_err(|error| format!("txn commit failed: {error:?}"))
 }
 
+#[allow(clippy::too_many_lines)]
 fn seed_replay_case(
     area_count: usize,
     streams_per_area: usize,
@@ -823,7 +857,7 @@ fn read_resource_covering(
         area: &stream.area,
         resource: &stream.resource,
         from_offset: 0,
-        limit: limit as u64,
+        limit: usize_to_u64_saturating(limit),
         max_bytes: None,
     })?;
     Ok(event_records(records))
@@ -836,7 +870,10 @@ fn read_resource_compact_paged(
 ) -> Result<Vec<StreamRecord>, String> {
     let txn = case
         .db
-        .begin_tx(FAMILY as u32, cntryl_midge::TransactionMode::ReadOnly)
+        .begin_tx(
+            u64_to_u32_saturating(FAMILY),
+            cntryl_midge::TransactionMode::ReadOnly,
+        )
         .map_err(|error| format!("failed to begin tx: {error:?}"))?;
 
     let query = cntryl_midge::Query::new()
@@ -883,9 +920,14 @@ fn read_resource_compact_paged(
 }
 
 fn read_area_covering(case: &ReplayCase, area: &str) -> Result<Vec<StreamRecord>, String> {
-    let (records, _) =
-        case.store
-            .read_area(FAMILY, REALM, area, 0, case.expected_records as u64, None)?;
+    let (records, _) = case.store.read_area(
+        FAMILY,
+        REALM,
+        area,
+        0,
+        usize_to_u64_saturating(case.expected_records),
+        None,
+    )?;
     Ok(event_records(records))
 }
 
@@ -893,7 +935,10 @@ fn read_area_compact_paged(case: &ReplayCase, area: &str) -> Result<Vec<StreamRe
     let watermark = case.store.get_watermark(FAMILY, REALM, area)?;
     let txn = case
         .db
-        .begin_tx(FAMILY as u32, cntryl_midge::TransactionMode::ReadOnly)
+        .begin_tx(
+            u64_to_u32_saturating(FAMILY),
+            cntryl_midge::TransactionMode::ReadOnly,
+        )
         .map_err(|error| format!("failed to begin tx: {error:?}"))?;
 
     let query = cntryl_midge::Query::new()
@@ -932,9 +977,13 @@ fn read_area_compact_paged(case: &ReplayCase, area: &str) -> Result<Vec<StreamRe
 }
 
 fn read_realm_covering(case: &ReplayCase) -> Result<Vec<StreamRecord>, String> {
-    let (records, _) =
-        case.store
-            .read_realm(FAMILY, REALM, 0, case.expected_records as u64, None)?;
+    let (records, _) = case.store.read_realm(
+        FAMILY,
+        REALM,
+        0,
+        usize_to_u64_saturating(case.expected_records),
+        None,
+    )?;
     Ok(event_records(records))
 }
 
@@ -952,7 +1001,10 @@ fn read_realm_compressed_compact_paged(case: &ReplayCase) -> Result<Vec<StreamRe
     let watermark = case.store.get_realm_watermark(FAMILY, REALM)?;
     let txn = case
         .db
-        .begin_tx(FAMILY as u32, cntryl_midge::TransactionMode::ReadOnly)
+        .begin_tx(
+            u64_to_u32_saturating(FAMILY),
+            cntryl_midge::TransactionMode::ReadOnly,
+        )
         .map_err(|error| format!("failed to begin tx: {error:?}"))?;
 
     let query = cntryl_midge::Query::new()
@@ -1056,7 +1108,7 @@ fn encode_stream_read_data(
         .iter()
         .filter(|record| record.resource_offset >= from_offset)
     {
-        if selected.len() >= limit as usize {
+        if selected.len() >= u64_to_usize_saturating(limit) {
             has_more = true;
             break;
         }
@@ -1082,7 +1134,7 @@ fn encode_stream_read_data(
     let last_realm_offset = selected.last().and_then(|record| record.realm_offset);
 
     let mut encoder = PayloadEncoder::new();
-    encoder.put_u32(selected.len() as u32);
+    encoder.put_u32(usize_to_u32_saturating(selected.len()));
     for record in selected {
         encoder.put_u8(0); // StreamReadItem::Event
         encode_stream_record(&mut encoder, record);
@@ -1166,7 +1218,7 @@ impl PrototypeStreamReadSink {
                     read_area_covering(&self.case, &area)?
                 } else {
                     let stream = find_stream(&self.case, &area, &resource)?;
-                    read_resource_covering(&self.case, stream, limit as usize)?
+                    read_resource_covering(&self.case, stream, u64_to_usize_saturating(limit))?
                 }
             }
             RoutedReadLayout::PromotionFrontier => {
@@ -1176,7 +1228,7 @@ impl PrototypeStreamReadSink {
                     read_area_compact_paged(&self.case, &area)?
                 } else {
                     let stream = find_stream(&self.case, &area, &resource)?;
-                    read_resource_compact_paged(&self.case, stream, limit as usize)?
+                    read_resource_compact_paged(&self.case, stream, u64_to_usize_saturating(limit))?
                 }
             }
         };
@@ -1192,13 +1244,9 @@ impl PrototypeStreamReadSink {
 
 impl MailboxSink for PrototypeStreamReadSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        let request = self.request_from_envelope(&envelope)?;
+        let request = Self::request_from_envelope(&envelope)?;
         let meta = request.meta;
         let parsed = request.frame.map_err(|_| DeliveryError::ActorStopped)?;
-
-        use fitz::domains::stream::protocol::{
-            StreamClientFrame, StreamClientResponse, StreamClientResponseBody, StreamMessage,
-        };
 
         let response = match parsed {
             StreamClientFrame::Op(StreamMessage::Read {
@@ -1235,7 +1283,6 @@ impl MailboxSink for PrototypeStreamReadSink {
 
 impl PrototypeStreamReadSink {
     fn request_from_envelope(
-        &self,
         envelope: &Envelope,
     ) -> Result<fitz::domains::stream::protocol::StreamClientRequest, DeliveryError> {
         if let Some(request) =
@@ -1301,7 +1348,7 @@ fn setup_routed_context(case: Arc<ReplayCase>, layout: RoutedReadLayout) -> Rout
 
 fn build_stream_read_with_limit(route: &str, start_offset: u64, limit: u64) -> Vec<u8> {
     let mut buf = Vec::new();
-    buf.put_u32(route.len() as u32);
+    buf.put_u32(usize_to_u32_saturating(route.len()));
     buf.put_slice(route.as_bytes());
     buf.put_u64(start_offset);
     buf.put_u64(limit);
