@@ -11,6 +11,14 @@ use std::time::{Duration, Instant};
 
 const TEST_SESSION_ID: u64 = 1;
 
+fn u128_to_u64_saturating(value: u128) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
+fn usize_to_u32_saturating(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
 #[derive(Clone)]
 struct TestClock {
     state: Arc<Mutex<(Instant, u64)>>,
@@ -26,7 +34,9 @@ impl TestClock {
     fn advance(&self, duration: Duration) {
         let mut state = self.state.lock().expect("clock lock");
         state.0 += duration;
-        state.1 = state.1.saturating_add(duration.as_millis() as u64);
+        state.1 = state
+            .1
+            .saturating_add(u128_to_u64_saturating(duration.as_millis()));
     }
 }
 
@@ -93,8 +103,8 @@ impl QueueProtocolHarness {
         );
     }
 
-    fn execute(&mut self, msg_type: u16, payload: Vec<u8>) -> QueueResponse {
-        match queue_codec::parse_request(msg_type, RouteFamily::new(0), &payload)
+    fn execute(&mut self, msg_type: u16, payload: &[u8]) -> QueueResponse {
+        match queue_codec::parse_request(msg_type, RouteFamily::new(0), payload)
             .expect("parse queue request")
         {
             QueueMessage::Send {
@@ -129,14 +139,14 @@ impl QueueProtocolHarness {
     fn send(&mut self, body: &[u8]) -> QueueResponse {
         self.execute(
             queue_codec::msg_type::ENQUEUE,
-            enqueue_payload(&self.route, body, None),
+            &enqueue_payload(&self.route, body, None),
         )
     }
 
     fn reserve(&mut self, inflight_seconds: u64, batch_size: u32) -> Vec<ReservedMessage> {
         match self.execute(
             queue_codec::msg_type::RESERVE,
-            reserve_payload(&self.route, inflight_seconds, batch_size),
+            &reserve_payload(&self.route, inflight_seconds, batch_size),
         ) {
             QueueResponse::Received { messages } => messages,
             response => panic!("expected received response, got {response:?}"),
@@ -146,14 +156,14 @@ impl QueueProtocolHarness {
 
 fn route_payload(route: &str) -> Vec<u8> {
     let mut payload = Vec::new();
-    payload.extend_from_slice(&(route.len() as u32).to_be_bytes());
+    payload.extend_from_slice(&usize_to_u32_saturating(route.len()).to_be_bytes());
     payload.extend_from_slice(route.as_bytes());
     payload
 }
 
 fn enqueue_payload(route: &str, body: &[u8], delay_seconds: Option<u64>) -> Vec<u8> {
     let mut payload = route_payload(route);
-    payload.extend_from_slice(&(body.len() as u32).to_be_bytes());
+    payload.extend_from_slice(&usize_to_u32_saturating(body.len()).to_be_bytes());
     payload.extend_from_slice(body);
     payload.push(u8::from(delay_seconds.is_some()));
     if let Some(delay_seconds) = delay_seconds {
@@ -195,7 +205,7 @@ fn should_complete_enqueue_reserve_complete_cycle() {
     let reserved = harness.reserve(30, 1);
     let completed = harness.execute(
         queue_codec::msg_type::COMPLETE,
-        complete_payload(&harness.route, reserved[0].id.as_u64(), reserved[0].token),
+        &complete_payload(&harness.route, reserved[0].id.as_u64(), reserved[0].token),
     );
 
     // Assert
@@ -239,7 +249,7 @@ fn should_reject_extend_with_wrong_token() {
     // Act
     let response = harness.execute(
         queue_codec::msg_type::EXTEND,
-        extend_payload(&harness.route, id, token.wrapping_add(1), 60),
+        &extend_payload(&harness.route, id, token.wrapping_add(1), 60),
     );
 
     // Assert
@@ -256,7 +266,7 @@ fn should_extend_valid_inflight() {
     // Act
     let response = harness.execute(
         queue_codec::msg_type::EXTEND,
-        extend_payload(
+        &extend_payload(
             &harness.route,
             reserved[0].id.as_u64(),
             reserved[0].token,
@@ -299,7 +309,7 @@ fn should_persist_message_until_completed() {
     let reserved = harness.reserve(30, 1);
     let completed = harness.execute(
         queue_codec::msg_type::COMPLETE,
-        complete_payload(&harness.route, reserved[0].id.as_u64(), reserved[0].token),
+        &complete_payload(&harness.route, reserved[0].id.as_u64(), reserved[0].token),
     );
     harness.restart();
 
@@ -333,15 +343,15 @@ fn should_reject_overflowing_queue_durations_without_panicking() {
     // Act
     let delayed = harness.execute(
         queue_codec::msg_type::ENQUEUE,
-        enqueue_payload(&harness.route, b"later", Some(u64::MAX)),
+        &enqueue_payload(&harness.route, b"later", Some(u64::MAX)),
     );
     let receive = harness.execute(
         queue_codec::msg_type::RESERVE,
-        reserve_payload(&harness.route, u64::MAX, 1),
+        &reserve_payload(&harness.route, u64::MAX, 1),
     );
     let extend = harness.execute(
         queue_codec::msg_type::EXTEND,
-        extend_payload(
+        &extend_payload(
             &harness.route,
             reserved[0].id.as_u64(),
             reserved[0].token,
@@ -393,8 +403,8 @@ fn should_deduplicate_complete_for_same_inflight_token() {
     let complete = complete_payload(&harness.route, reserved[0].id.as_u64(), reserved[0].token);
 
     // Act
-    let first = harness.execute(queue_codec::msg_type::COMPLETE, complete.clone());
-    let second = harness.execute(queue_codec::msg_type::COMPLETE, complete);
+    let first = harness.execute(queue_codec::msg_type::COMPLETE, &complete);
+    let second = harness.execute(queue_codec::msg_type::COMPLETE, &complete);
 
     // Assert
     assert_eq!(first, QueueResponse::Acked);

@@ -3,11 +3,11 @@
 //! **TIER 4 GOAL: Identify E2E performance cliffs**
 //!
 //! Tests four integration levels:
-//! 1. **Direct** - Domain actor in-process using the same in-memory storage mode as TestServer
+//! 1. **Direct** - Domain actor in-process using the same in-memory storage mode as `TestServer`
 //! 2. **Encoded** - Same as direct but with TLV codec (measures serialization cost)
 //! 3. **TCP** - Full TCP stack: encode -> socket -> server -> decode -> actor -> encode -> socket
 //! 4. **WebSocket** - Full WS stack: encode -> WS frame -> server -> decode -> actor -> encode -> WS frame
-//! 5. **MultiClient** - N concurrent WS clients hitting domain concurrently
+//! 5. **`MultiClient`** - N concurrent WS clients hitting domain concurrently
 
 #[path = "stress_config.rs"]
 mod stress_config;

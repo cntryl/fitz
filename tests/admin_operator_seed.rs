@@ -233,7 +233,7 @@ async fn wait_for_seed_visibility(server: &TestServer, family_count: usize) {
     })
     .await;
     assert!(
-        !result.is_err(),
+        result.is_ok(),
         "seed visibility: queue_inflight={} schedule_active={} lease_active={} lease_waiters={} notice_subscriptions={} rpc_workers={} rpc_pending={}",
         server.runtime.queue_inflight_active(),
         server.runtime.schedule_active(),

@@ -223,9 +223,8 @@ fn spawn_rpc_ws_workers(
             let rt = shared_bench_runtime();
             rt.spawn(async move {
                 loop {
-                    let frame = match worker_client.recv_frame(RESPONSE_TIMEOUT_MS).await {
-                        Ok(frame) => frame,
-                        Err(_) => continue,
+                    let Ok(frame) = worker_client.recv_frame(RESPONSE_TIMEOUT_MS).await else {
+                        continue;
                     };
 
                     if let Some(req) = try_parse_rpc_request_frame(&frame, family) {
@@ -389,28 +388,23 @@ fn service_worker(
 
         let mut handled_request = false;
         for frame in frames {
-            match frame.msg_type.as_u16() {
-                302 => {
-                    handled_request = true;
-                    if let Ok(RpcMessage::Request(req)) =
-                        parse_request(&frame, &frame.payload, family)
-                    {
-                        let response = RpcResponse::single(req.correlation_id, req.body.clone());
-                        route_frame(
-                            router.as_ref(),
-                            worker_source,
-                            SERVICE_ROUTE,
-                            WORKER_SESSION_ID,
-                            ChannelId::Rpc,
-                            303,
-                            Bytes::from(encode_response_message(&response)),
-                            family,
-                        )
-                        .expect("rpc response");
-                    }
+            if frame.msg_type.as_u16() == 302 {
+                handled_request = true;
+                if let Ok(RpcMessage::Request(req)) = parse_request(&frame, &frame.payload, family)
+                {
+                    let response = RpcResponse::single(req.correlation_id, req.body.clone());
+                    route_frame(
+                        router.as_ref(),
+                        worker_source,
+                        SERVICE_ROUTE,
+                        WORKER_SESSION_ID,
+                        ChannelId::Rpc,
+                        303,
+                        Bytes::from(encode_response_message(&response)),
+                        family,
+                    )
+                    .expect("rpc response");
                 }
-                304 => {}
-                _ => {}
             }
         }
 
@@ -531,9 +525,8 @@ fn should_complete_tcp_request_response(ctx: &mut StressContext) {
         let rt = shared_bench_runtime();
         rt.spawn(async move {
             loop {
-                let frame = match worker_client.recv_frame(RESPONSE_TIMEOUT_MS).await {
-                    Ok(f) => f,
-                    Err(_) => continue,
+                let Ok(frame) = worker_client.recv_frame(RESPONSE_TIMEOUT_MS).await else {
+                    continue;
                 };
                 if let Some(req) = try_parse_rpc_request_frame(&frame, family) {
                     let resp_frame =
@@ -596,9 +589,8 @@ fn should_complete_ws_request_response(ctx: &mut StressContext) {
         let rt = shared_bench_runtime();
         rt.spawn(async move {
             loop {
-                let frame = match worker_client.recv_frame(RESPONSE_TIMEOUT_MS).await {
-                    Ok(f) => f,
-                    Err(_) => continue,
+                let Ok(frame) = worker_client.recv_frame(RESPONSE_TIMEOUT_MS).await else {
+                    continue;
                 };
                 if let Some(req) = try_parse_rpc_request_frame(&frame, family) {
                     let resp_frame =
