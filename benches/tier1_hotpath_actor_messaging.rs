@@ -79,7 +79,7 @@ fn bench_actor_ref_send(c: &mut Criterion) {
     group.bench_function("actor_ref_send_exact", |b| {
         b.iter(|| {
             actor_ref.send(black_box(42_u64)).expect("actor ref send");
-        })
+        });
     });
 
     black_box(sink.delivery_count());
@@ -99,7 +99,7 @@ fn bench_context_send_untracked(c: &mut Criterion) {
         b.iter(|| {
             ctx.send_untracked(addresses[0].clone(), black_box(42_u64))
                 .expect("untracked send");
-        })
+        });
     });
 
     black_box(sink.delivery_count());
@@ -119,7 +119,7 @@ fn bench_context_send(c: &mut Criterion) {
         b.iter(|| {
             ctx.send(addresses[0].clone(), black_box(42_u64))
                 .expect("context send");
-        })
+        });
     });
 
     black_box(sink.delivery_count());
@@ -142,7 +142,7 @@ fn bench_context_send_scaling(c: &mut Criterion) {
                 ctx.send(addresses[idx % addresses.len()].clone(), black_box(42_u64))
                     .expect("context send scaling");
                 idx = (idx + 1) % addresses.len();
-            })
+            });
         });
 
         black_box(sink.delivery_count());

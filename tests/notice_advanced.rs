@@ -91,7 +91,7 @@ fn should_not_exhibit_quadratic_fanout_growth() {
     let sizes = [10usize, 20usize, 40usize];
     let family = *addr("notice://realm/area/q/0").family();
 
-    for &n in sizes.iter() {
+    for &n in &sizes {
         let mut sinks = Vec::new();
         for i in 0..n {
             let sink = Arc::new(TestSink::new());
