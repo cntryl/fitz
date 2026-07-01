@@ -27,6 +27,10 @@ impl Actor for KvDomainActor {
                     tracing::warn!(domain = "kv", error = %error, "KV actor delivery failed");
                 }
             }
+            KvDomainCommand::CleanupSession(session_id, reply) => {
+                self.state.runtime().cleanup_session(session_id);
+                let _ = reply.send(());
+            }
         }
     }
 }

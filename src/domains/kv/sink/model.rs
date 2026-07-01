@@ -76,6 +76,7 @@ pub(super) struct KvDomainRuntime<'a> {
 
 pub(super) enum KvDomainCommand {
     Deliver(Envelope),
+    CleanupSession(u64, crossbeam_channel::Sender<()>),
 }
 
 pub(super) struct KvDomainActor {

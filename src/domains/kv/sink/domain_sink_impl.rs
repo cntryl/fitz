@@ -192,10 +192,6 @@ impl KvDomainSink {
         self.state.runtime().admin_scan_committed_rows(request)
     }
 
-    pub fn cleanup_session(&self, session_id: u64) {
-        self.state.runtime().cleanup_session(session_id);
-    }
-
     pub fn active_transaction_count(&self) -> usize {
         self.state.runtime().active_transaction_count()
     }

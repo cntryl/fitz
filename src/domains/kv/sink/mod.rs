@@ -1,3 +1,4 @@
+mod actor_commands;
 mod domain_sink_impl;
 mod mailbox_sink_impl;
 mod model;
