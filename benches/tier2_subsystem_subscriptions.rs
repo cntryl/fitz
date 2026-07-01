@@ -209,7 +209,7 @@ fn bench_match_double_star(c: &mut Criterion) {
         let route = Route::new("notify://realm/orders/created");
         b.iter(|| {
             black_box(index.match_all(family, black_box(&route)));
-        })
+        });
     });
     group.finish();
 }
@@ -222,7 +222,7 @@ fn bench_match_fanout_sparse_100(c: &mut Criterion) {
         let (index, route, family) = make_index_fanout_sparse(10000);
         b.iter(|| {
             black_box(index.match_all(family, black_box(&route)));
-        })
+        });
     });
     group.finish();
 }
@@ -235,7 +235,7 @@ fn bench_match_fanout_dense_100(c: &mut Criterion) {
         let (index, route, family) = make_index_fanout_dense(10000);
         b.iter(|| {
             black_box(index.match_all_with_capacity(family, black_box(&route), 10_000));
-        })
+        });
     });
     group.finish();
 }
@@ -248,7 +248,7 @@ fn bench_match_depth_3(c: &mut Criterion) {
         let (index, route, family) = make_index_with_depth(3, 1000);
         b.iter(|| {
             black_box(index.match_all(family, black_box(&route)));
-        })
+        });
     });
     group.finish();
 }
@@ -261,7 +261,7 @@ fn bench_match_depth_5(c: &mut Criterion) {
         let (index, route, family) = make_index_with_depth(5, 1000);
         b.iter(|| {
             black_box(index.match_all(family, black_box(&route)));
-        })
+        });
     });
     group.finish();
 }
@@ -274,7 +274,7 @@ fn bench_match_depth_10(c: &mut Criterion) {
         let (index, route, family) = make_index_with_depth(10, 1000);
         b.iter(|| {
             black_box(index.match_all(family, black_box(&route)));
-        })
+        });
     });
     group.finish();
 }
@@ -297,7 +297,7 @@ fn bench_remove_subscription(c: &mut Criterion) {
                 index.remove(family, black_box(&pattern), SubscriptionId(1));
             },
             criterion::BatchSize::SmallInput,
-        )
+        );
     });
     group.finish();
 }
@@ -316,7 +316,7 @@ fn bench_mixed_insert_remove_match(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let index = SubscriptionIndex::new();
-                let batch: Vec<(Route, SubscriptionId)> = (0..100)
+                let batch: Vec<(Route, SubscriptionId)> = (0_u64..100)
                     .map(|i| {
                         let pattern = match i % 4 {
                             0 => Route::new("notify://realm/orders/create"),
@@ -324,7 +324,7 @@ fn bench_mixed_insert_remove_match(c: &mut Criterion) {
                             2 => Route::new("notify://realm/**/created"),
                             _ => Route::new("notify://realm/items/*/action"),
                         };
-                        (pattern, SubscriptionId(i as u64))
+                        (pattern, SubscriptionId(i))
                     })
                     .collect();
                 (index, batch)
@@ -336,7 +336,7 @@ fn bench_mixed_insert_remove_match(c: &mut Criterion) {
                 }
             },
             criterion::BatchSize::LargeInput,
-        )
+        );
     });
     group.finish();
 }
@@ -363,7 +363,7 @@ fn bench_replace_batch_100(c: &mut Criterion) {
                 index.insert_batch(family, black_box(&new_batch));
             },
             criterion::BatchSize::LargeInput,
-        )
+        );
     });
     group.finish();
 }
@@ -392,7 +392,7 @@ fn bench_replace_then_dense_match_100(c: &mut Criterion) {
                 black_box(index.match_all_with_capacity(family, black_box(&route), 100));
             },
             criterion::BatchSize::LargeInput,
-        )
+        );
     });
     group.finish();
 }
