@@ -417,7 +417,6 @@ impl fmt::Display for ActorId {
 ///
 /// `ActorRef` maintains type safety at the API level while using the
 /// untyped router internally. Messages are wrapped in Envelopes before routing.
-#[derive(Clone)]
 pub struct ActorRef<M: Send + 'static> {
     address: RouteAddress,
     router: Arc<Router>,
@@ -462,6 +461,16 @@ impl<M: Send + 'static> ActorRef<M> {
     #[must_use]
     pub fn address(&self) -> &RouteAddress {
         &self.address
+    }
+}
+
+impl<M: Send + 'static> Clone for ActorRef<M> {
+    fn clone(&self) -> Self {
+        Self {
+            address: self.address.clone(),
+            router: self.router.clone(),
+            _phantom: std::marker::PhantomData,
+        }
     }
 }
 
