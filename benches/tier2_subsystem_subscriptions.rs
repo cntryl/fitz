@@ -126,7 +126,7 @@ fn bench_insert_single_pattern(c: &mut Criterion) {
                 index.insert(family, black_box(&pattern), SubscriptionId(1));
             },
             criterion::BatchSize::SmallInput,
-        )
+        );
     });
     group.finish();
 }
@@ -145,7 +145,7 @@ fn bench_insert_with_single_star(c: &mut Criterion) {
                 index.insert(family, black_box(&pattern), SubscriptionId(1));
             },
             criterion::BatchSize::SmallInput,
-        )
+        );
     });
     group.finish();
 }
@@ -164,7 +164,7 @@ fn bench_insert_with_double_star(c: &mut Criterion) {
                 index.insert(family, black_box(&pattern), SubscriptionId(1));
             },
             criterion::BatchSize::SmallInput,
-        )
+        );
     });
     group.finish();
 }
@@ -179,7 +179,7 @@ fn bench_match_exact_pattern(c: &mut Criterion) {
         let route = Route::new("notify://realm/orders/create");
         b.iter(|| {
             black_box(index.match_all(family, black_box(&route)));
-        })
+        });
     });
     group.finish();
 }
@@ -194,7 +194,7 @@ fn bench_match_single_star(c: &mut Criterion) {
         let route = Route::new("notify://realm/orders/create");
         b.iter(|| {
             black_box(index.match_all(family, black_box(&route)));
-        })
+        });
     });
     group.finish();
 }

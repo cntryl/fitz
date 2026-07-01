@@ -107,9 +107,11 @@ fn should_return_existing_token_for_idempotent_acquire() {
         "owner1".to_string(),
         60,
     );
-    let first_token = match first {
-        LeaseResponse::Acquired { fencing_token } => fencing_token,
-        _ => panic!("Expected Acquired"),
+    let LeaseResponse::Acquired {
+        fencing_token: first_token,
+    } = first
+    else {
+        panic!("Expected Acquired");
     };
 
     // Act
@@ -264,9 +266,11 @@ fn should_issue_monotonic_fencing_tokens() {
         "owner1".to_string(),
         5,
     );
-    let token1 = match response1 {
-        LeaseResponse::Acquired { fencing_token } => fencing_token,
-        _ => panic!("Expected Acquired"),
+    let LeaseResponse::Acquired {
+        fencing_token: token1,
+    } = response1
+    else {
+        panic!("Expected Acquired");
     };
 
     // Expire and takeover
@@ -277,9 +281,11 @@ fn should_issue_monotonic_fencing_tokens() {
         "owner2".to_string(),
         5,
     );
-    let token2 = match response2 {
-        LeaseResponse::Acquired { fencing_token } => fencing_token,
-        _ => panic!("Expected Acquired"),
+    let LeaseResponse::Acquired {
+        fencing_token: token2,
+    } = response2
+    else {
+        panic!("Expected Acquired");
     };
 
     // Assert
@@ -297,9 +303,11 @@ fn should_renew_lease_with_valid_token() {
         "owner1".to_string(),
         60,
     );
-    let token = match response {
-        LeaseResponse::Acquired { fencing_token } => fencing_token,
-        _ => panic!("Expected Acquired"),
+    let LeaseResponse::Acquired {
+        fencing_token: token,
+    } = response
+    else {
+        panic!("Expected Acquired");
     };
 
     // Act
@@ -367,9 +375,11 @@ fn should_reject_renew_of_expired_lease() {
         "owner1".to_string(),
         5,
     );
-    let token = match response {
-        LeaseResponse::Acquired { fencing_token } => fencing_token,
-        _ => panic!("Expected Acquired"),
+    let LeaseResponse::Acquired {
+        fencing_token: token,
+    } = response
+    else {
+        panic!("Expected Acquired");
     };
 
     // Advance time past expiration
@@ -398,9 +408,11 @@ fn should_release_lease_with_valid_token() {
         "owner1".to_string(),
         60,
     );
-    let token = match response {
-        LeaseResponse::Acquired { fencing_token } => fencing_token,
-        _ => panic!("Expected Acquired"),
+    let LeaseResponse::Acquired {
+        fencing_token: token,
+    } = response
+    else {
+        panic!("Expected Acquired");
     };
 
     // Act
@@ -442,9 +454,11 @@ fn should_allow_reacquire_after_release() {
         "owner1".to_string(),
         60,
     );
-    let token = match response {
-        LeaseResponse::Acquired { fencing_token } => fencing_token,
-        _ => panic!("Expected Acquired"),
+    let LeaseResponse::Acquired {
+        fencing_token: token,
+    } = response
+    else {
+        panic!("Expected Acquired");
     };
     actor.handle_release(&test_key("acme", "locks", "test1"), "owner1", token);
 
@@ -515,9 +529,11 @@ fn should_grant_lease_to_queued_waiter_on_release() {
     let r1 = actor.handle_acquire(key.clone(), "owner1".to_string(), 30, 0, None, &mut ctx);
     let queued = actor.handle_acquire(key.clone(), "owner2".to_string(), 30, 5, None, &mut ctx);
 
-    let queued_token = match queued {
-        LeaseResponse::Queued { fencing_token } => fencing_token,
-        _ => panic!("Expected Queued response"),
+    let LeaseResponse::Queued {
+        fencing_token: queued_token,
+    } = queued
+    else {
+        panic!("Expected Queued response");
     };
 
     // Act
@@ -600,13 +616,11 @@ fn should_queue_multiple_waiters_in_fifo_order() {
 
     // Assert - initial acquire succeeded, others queued
     assert!(matches!(a1, LeaseResponse::Acquired { .. }));
-    let t2 = match q2 {
-        LeaseResponse::Queued { fencing_token } => fencing_token,
-        _ => panic!("expected queued"),
+    let LeaseResponse::Queued { fencing_token: t2 } = q2 else {
+        panic!("expected queued");
     };
-    let t3 = match q3 {
-        LeaseResponse::Queued { fencing_token } => fencing_token,
-        _ => panic!("expected queued"),
+    let LeaseResponse::Queued { fencing_token: t3 } = q3 else {
+        panic!("expected queued");
     };
     assert!(t3 > t2, "queued tokens should be monotonic");
 }
@@ -622,9 +636,8 @@ fn should_promote_first_waiter_when_holder_releases() {
     let q2 = actor.handle_acquire(key.clone(), "owner2".to_string(), 30, 10, None, &mut ctx);
     let _q3 = actor.handle_acquire(key.clone(), "owner3".to_string(), 30, 10, None, &mut ctx);
 
-    let t2 = match q2 {
-        LeaseResponse::Queued { fencing_token } => fencing_token,
-        _ => panic!("expected queued"),
+    let LeaseResponse::Queued { fencing_token: t2 } = q2 else {
+        panic!("expected queued");
     };
 
     // Act - release owner1 via the public message path so the waiter is promoted

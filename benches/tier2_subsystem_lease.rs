@@ -150,7 +150,7 @@ fn bench_lease_watch_register_primary(c: &mut Criterion) {
                 );
             },
             BatchSize::SmallInput,
-        )
+        );
     });
 
     group.finish();
@@ -187,7 +187,7 @@ fn bench_lease_notify_primary(c: &mut Criterion) {
                 |b| {
                     b.iter(|| {
                         case.publish_once();
-                    })
+                    });
                 },
             );
         }

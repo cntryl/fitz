@@ -50,7 +50,9 @@ impl TestClock {
     fn advance(&self, duration: Duration) {
         let mut state = self.state.lock().expect("clock state lock");
         state.instant += duration;
-        state.epoch_ms = state.epoch_ms.saturating_add(duration.as_millis() as u64);
+        state.epoch_ms = state
+            .epoch_ms
+            .saturating_add(u64::try_from(duration.as_millis()).unwrap_or(u64::MAX));
     }
 }
 
@@ -93,15 +95,15 @@ fn should_distribute_messages_fairly_among_competing_consumers() {
     }
 
     // Act
-    let mut _consumer_a_msgs = Vec::new();
-    let mut _consumer_b_msgs = Vec::new();
-    let mut _consumer_c_msgs = Vec::new();
+    let mut consumer_a_msgs = Vec::new();
+    let mut consumer_b_msgs = Vec::new();
+    let mut consumer_c_msgs = Vec::new();
 
     // Consumer A reserves 10 messages
     match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(10)) {
         QueueResponse::Received { messages } => {
             assert_eq!(messages.len(), 10);
-            _consumer_a_msgs = messages;
+            consumer_a_msgs = messages;
         }
         _ => panic!("Expected Reserved"),
     }
@@ -110,7 +112,7 @@ fn should_distribute_messages_fairly_among_competing_consumers() {
     match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(10)) {
         QueueResponse::Received { messages } => {
             assert_eq!(messages.len(), 10);
-            _consumer_b_msgs = messages;
+            consumer_b_msgs = messages;
         }
         _ => panic!("Expected Reserved"),
     }
@@ -119,7 +121,7 @@ fn should_distribute_messages_fairly_among_competing_consumers() {
     match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(10)) {
         QueueResponse::Received { messages } => {
             assert_eq!(messages.len(), 10);
-            _consumer_c_msgs = messages;
+            consumer_c_msgs = messages;
         }
         _ => panic!("Expected Reserved"),
     }
@@ -129,10 +131,10 @@ fn should_distribute_messages_fairly_among_competing_consumers() {
     assert!(!actor.inflight.is_empty(), "Should have in-flight messages");
 
     // Verify no message was reserved twice
-    let mut all_ids: Vec<_> = _consumer_a_msgs
+    let mut all_ids: Vec<_> = consumer_a_msgs
         .iter()
-        .chain(_consumer_b_msgs.iter())
-        .chain(_consumer_c_msgs.iter())
+        .chain(consumer_b_msgs.iter())
+        .chain(consumer_c_msgs.iter())
         .map(|m| m.id)
         .collect();
     all_ids.sort_by_key(fitz::domains::queue::MessageId::as_u64);
@@ -447,7 +449,7 @@ fn should_prevent_id_collisions_across_crash() {
     // Assert
     let mut all_ids = first_batch_ids.clone();
     all_ids.extend(&second_batch_ids);
-    all_ids.sort();
+    all_ids.sort_unstable();
     all_ids.dedup();
     assert_eq!(
         all_ids.len(),
@@ -526,9 +528,8 @@ fn should_dlq_message_after_max_attempts() {
         );
 
         let send_response = actor.handle_send(Bytes::from("task"), None);
-        let msg_id = match send_response {
-            QueueResponse::Sent { id } => id,
-            _ => panic!("Expected Sent response"),
+        let QueueResponse::Sent { id: msg_id } = send_response else {
+            panic!("Expected Sent response");
         };
 
         for expected_attempt in 1..=3 {
