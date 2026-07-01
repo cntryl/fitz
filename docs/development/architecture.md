@@ -518,7 +518,8 @@ Current Notice behavior is intentionally ephemeral:
 - Admin path: admin reads use `Runtime::notice_list_subscriptions()` and `Runtime::notice_list_routes()` backed by the passive `AdminReadModel`.
 
 #### Stream
-- Actor owner: `StreamActor`, `AreaActor`, and `RealmActor` coordinate live append sessions, subscription overlays, and committed watermark projection.
+- Actor owner: `StreamDomainActor` is the managed production actor for delivery, cleanup, live append sessions, subscription overlays, and committed watermark projection; `StreamActor`, `AreaActor`, and `RealmActor` remain focused state-machine models for resource, area, and realm sequencing.
+- Current production boundary: `StreamDomainSink` is the mailbox adapter, and `StreamDomainRuntime` executes against `StreamDomainCore` inside the managed actor mailbox.
 - Persistence: committed records, metadata, and watermarks are durable; live append sessions and subscriptions are ephemeral.
 - Cleanup: disconnect aborts append sessions and drops live subscriptions without restoring them on reconnect.
 - `RouteFamily`/`realm`: committed history is partitioned by exact `RouteFamily`, while realm and area indexes stay explicit storage keys rather than family aliases.

@@ -8,7 +8,7 @@ pub(super) use crate::domains::stream::{
 pub(super) use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 pub(super) use crate::protocol::payload_codec::PayloadEncoder;
 pub(super) use crate::runtime::routing::{route_triplet, Route, RouteAddress, RouteFamily};
-pub(super) use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
+pub(super) use crate::runtime::{DeliveryError, Envelope, MailboxSink, ManagedActor, Router};
 pub(super) use parking_lot::Mutex;
 pub(super) use std::collections::{BTreeMap, BTreeSet, HashMap};
 pub(super) use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -83,7 +83,7 @@ pub(super) struct StreamSessionOwner {
     pub(super) owner_session_id: u64,
 }
 
-pub struct StreamDomainSink {
+pub struct StreamDomainCore {
     pub(super) store: crate::storage::FitzStorageEngine,
     pub(super) stream_store: Arc<StreamStore>,
     pub(super) actors: Mutex<HashMap<StreamActorKey, Arc<Mutex<StreamActor>>>>,
@@ -97,4 +97,48 @@ pub struct StreamDomainSink {
     pub(super) sync_write_mode: crate::domains::stream::protocol::StreamWriteMode,
     pub(super) metrics: Option<StreamMetrics>,
     pub(super) active: AtomicBool,
+}
+
+pub(super) enum StreamDomainCommand {
+    Deliver(
+        Envelope,
+        crossbeam_channel::Sender<Result<(), DeliveryError>>,
+    ),
+    #[cfg(test)]
+    InjectNextPromotionFrontierCommitFailure(crossbeam_channel::Sender<()>),
+}
+
+pub(super) struct StreamDomainActor {
+    pub(super) core: Arc<StreamDomainCore>,
+}
+
+pub(super) struct StreamDomainRuntime<'a> {
+    pub(super) core: &'a StreamDomainCore,
+}
+
+pub struct StreamDomainSink {
+    pub(super) core: Arc<StreamDomainCore>,
+    pub(super) actor: ManagedActor<StreamDomainCommand>,
+}
+
+impl std::ops::Deref for StreamDomainSink {
+    type Target = StreamDomainCore;
+
+    fn deref(&self) -> &Self::Target {
+        &self.core
+    }
+}
+
+impl std::ops::DerefMut for StreamDomainSink {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        Arc::get_mut(&mut self.core).expect("Stream sink builders must run before sharing the sink")
+    }
+}
+
+impl std::ops::Deref for StreamDomainRuntime<'_> {
+    type Target = StreamDomainCore;
+
+    fn deref(&self) -> &Self::Target {
+        self.core
+    }
 }

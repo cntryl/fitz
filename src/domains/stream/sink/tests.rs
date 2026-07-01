@@ -269,6 +269,30 @@ fn stream_read_response(
 }
 
 #[test]
+fn should_reject_stream_delivery_when_managed_actor_is_stopped() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let sink = StreamDomainSink::new(
+        crate::benchkit::create_bench_store(),
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+    let destination = RouteAddress::new(
+        RouteFamily::new(1),
+        Route::new("stream://bench/events/orders"),
+    );
+    let envelope = Envelope::new(destination, 42_u64);
+
+    // Act
+    sink.stop_actor_for_tests();
+    let result = sink.deliver(envelope);
+
+    // Assert
+    assert!(!sink.is_actor_running());
+    assert!(matches!(result, Err(DeliveryError::ActorStopped)));
+}
+
+#[test]
 fn should_reject_append_session_followups_from_non_owner_session() {
     // Arrange
     let context = setup_test_context();
@@ -483,7 +507,7 @@ fn should_preserve_append_session_without_notify_given_commit_failure() {
     let append_frame = build_stream_append(session_id, 0, b"retryable");
     let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
     let _append_response = request(&context, route, append_msg_type, append_payload);
-    StreamStore::fail_next_promotion_frontier_commit_for_tests();
+    context.sink.fail_next_promotion_frontier_commit_for_tests();
 
     // Act
     let failed_commit_frame = build_stream_commit(session_id, 1);

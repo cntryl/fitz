@@ -1,7 +1,8 @@
 use super::model::{
     route_triplet, AdminStreamReadRequest, Arc, AtomicBool, AtomicU64, BTreeMap, Envelope, HashMap,
-    Mutex, Ordering, PayloadEncoder, ReadResponse, Route, RouteFamily, Router, StreamActor,
-    StreamActorKey, StreamAdminRecord, StreamAreaSnapshot, StreamClientResponseBody,
+    Mutex, Ordering, PayloadEncoder, ReadResponse, Route, RouteAddress, RouteFamily, Router,
+    StreamActor, StreamActorKey, StreamAdminRecord, StreamAreaSnapshot, StreamClientResponseBody,
+    StreamDomainActor, StreamDomainCommand, StreamDomainCore, StreamDomainRuntime,
     StreamDomainSink, StreamFilteredReason, StreamMetadata, StreamMetrics, StreamReadItem,
     StreamRealmSnapshot, StreamRecord, StreamStorageLayout, StreamStore, StreamSubscription,
 };
@@ -24,6 +25,20 @@ type StreamAdminSnapshotMap =
     BTreeMap<(u64, String, String, String), crate::control::admin::StreamInfo>;
 type StreamRealmSnapshotMap = BTreeMap<String, StreamRealmSnapshot>;
 type StreamAreaSnapshotMap = BTreeMap<(String, String), StreamAreaSnapshot>;
+
+impl StreamDomainActor {
+    pub(super) fn new(core: Arc<StreamDomainCore>) -> Self {
+        Self { core }
+    }
+
+    pub(super) fn route_address() -> RouteAddress {
+        RouteAddress::new(RouteFamily::new(0), Route::new("internal://domain/stream"))
+    }
+
+    pub(super) fn runtime(&self) -> StreamDomainRuntime<'_> {
+        StreamDomainRuntime { core: &self.core }
+    }
+}
 
 impl StreamDomainSink {
     pub fn new(
@@ -83,7 +98,7 @@ impl StreamDomainSink {
         stream_store.ensure_layout_activation_for_existing_families()?;
         stream_store.validate_persisted_state_for_existing_families()?;
 
-        Ok(Self {
+        let core = Arc::new(StreamDomainCore {
             stream_store,
             store,
             actors: Mutex::new(HashMap::new()),
@@ -97,16 +112,40 @@ impl StreamDomainSink {
             sync_write_mode: crate::domains::stream::protocol::StreamWriteMode::Sync,
             metrics: None,
             active: AtomicBool::new(true),
-        })
+        });
+        let actor = Self::spawn_actor(core.clone());
+        Ok(Self { core, actor })
+    }
+
+    fn spawn_actor(
+        core: Arc<StreamDomainCore>,
+    ) -> crate::runtime::ManagedActor<StreamDomainCommand> {
+        crate::runtime::ManagedActor::spawn(
+            core.router.clone(),
+            StreamDomainActor::route_address(),
+            StreamDomainActor::new(core),
+            1024,
+        )
+    }
+
+    fn rebuild_actor(&mut self) {
+        self.actor.stop();
+        self.actor = Self::spawn_actor(self.core.clone());
+    }
+
+    fn core_for_builder(&mut self) -> &mut StreamDomainCore {
+        Arc::get_mut(&mut self.core).expect("Stream sink builders must run before sharing the sink")
     }
 
     #[must_use]
     pub fn with_sync_write_options(mut self, write_options: cntryl_midge::WriteOptions) -> Self {
-        self.sync_write_mode = if write_options.is_cloud_strict() {
+        self.actor.stop();
+        self.core_for_builder().sync_write_mode = if write_options.is_cloud_strict() {
             crate::domains::stream::protocol::StreamWriteMode::CloudStrict
         } else {
             crate::domains::stream::protocol::StreamWriteMode::Sync
         };
+        self.rebuild_actor();
         self
     }
 
@@ -115,15 +154,43 @@ impl StreamDomainSink {
         mut self,
         collector: crate::observability::metrics::MetricsCollector,
     ) -> Self {
-        self.metrics = Some(StreamMetrics::new(collector));
-        self.refresh_metrics_gauges();
+        self.actor.stop();
+        self.core_for_builder().metrics = Some(StreamMetrics::new(collector));
+        self.core.refresh_metrics_gauges();
+        self.rebuild_actor();
         self
     }
 
     pub fn stop(&self) {
         self.active.store(false, Ordering::Relaxed);
+        self.actor.stop();
     }
 
+    #[cfg(test)]
+    pub(super) fn is_actor_running(&self) -> bool {
+        self.actor.is_running()
+    }
+
+    #[cfg(test)]
+    pub(super) fn stop_actor_for_tests(&self) {
+        self.actor.stop();
+    }
+
+    #[cfg(test)]
+    pub(super) fn fail_next_promotion_frontier_commit_for_tests(&self) {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        if let Err(error) = self.actor.try_send_high_priority(
+            StreamDomainCommand::InjectNextPromotionFrontierCommitFailure(reply_tx),
+        ) {
+            tracing::warn!(domain = "stream", error = %error, "Stream failure-injection enqueue failed");
+            return;
+        }
+
+        let _ = reply_rx.recv_timeout(std::time::Duration::from_secs(1));
+    }
+}
+
+impl StreamDomainCore {
     pub fn storage_layout(&self) -> StreamStorageLayout {
         self.stream_store.storage_layout()
     }

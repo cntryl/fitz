@@ -1,6 +1,9 @@
+#[cfg(test)]
+use super::model::StreamStore;
 use super::model::{
     DeliveryError, Envelope, MailboxSink, Ordering, PayloadEncoder, Route, RoutedSubscriptionSet,
-    StreamClientFrame, StreamClientRequest, StreamClientResponseBody, StreamDomainSink,
+    StreamClientFrame, StreamClientRequest, StreamClientResponseBody, StreamDomainActor,
+    StreamDomainCommand, StreamDomainCore, StreamDomainRuntime, StreamDomainSink,
     StreamSessionOwner, StreamSubscription, STREAM_OPERATIONS_TOTAL,
 };
 use crate::domains::stream::protocol::{IngestMetadata, StreamDiscriminator};
@@ -8,26 +11,82 @@ use crate::domains::stream::protocol::{IngestMetadata, StreamDiscriminator};
 use crate::protocol::FrameContext;
 #[cfg(test)]
 use crate::runtime::routing::RouteAddress;
+use crate::runtime::{Actor, Context};
 
 impl MailboxSink for StreamDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        if self.handle_cleanup_envelope(&envelope) {
+        self.deliver_to_actor(envelope, false)
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver_to_actor(envelope, true)
+    }
+}
+
+impl Actor for StreamDomainActor {
+    type Message = StreamDomainCommand;
+
+    fn receive(&mut self, msg: Self::Message, _ctx: &mut Context<Self>) {
+        let runtime = self.runtime();
+        match msg {
+            StreamDomainCommand::Deliver(envelope, reply) => {
+                let _ = reply.send(runtime.deliver_envelope(&envelope));
+            }
+            #[cfg(test)]
+            StreamDomainCommand::InjectNextPromotionFrontierCommitFailure(reply) => {
+                StreamStore::fail_next_promotion_frontier_commit_for_tests();
+                let _ = reply.send(());
+            }
+        }
+    }
+}
+
+impl StreamDomainSink {
+    fn deliver_to_actor(
+        &self,
+        envelope: Envelope,
+        high_priority: bool,
+    ) -> Result<(), DeliveryError> {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        let command = StreamDomainCommand::Deliver(envelope, reply_tx);
+        let enqueue_result = if high_priority {
+            self.actor.try_send_high_priority(command)
+        } else {
+            self.actor.try_send(command)
+        };
+        enqueue_result?;
+
+        reply_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap_or(Err(DeliveryError::ActorStopped))
+    }
+}
+
+impl StreamDomainRuntime<'_> {
+    pub(super) fn deliver_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {
+        self.core.deliver_envelope(envelope)
+    }
+}
+
+impl StreamDomainCore {
+    fn deliver_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {
+        if self.handle_cleanup_envelope(envelope) {
             return Ok(());
         }
         self.ensure_active()?;
 
-        if self.handle_domain_publish_envelope(&envelope) {
+        if self.handle_domain_publish_envelope(envelope) {
             return Ok(());
         }
 
-        let Some(request) = Self::extract_request(&envelope)? else {
+        let Some(request) = Self::extract_request(envelope)? else {
             return Ok(());
         };
         let meta = request.meta;
         let request_started = self.record_request_start();
 
         let Some(parsed_frame) =
-            self.parse_request_frame(&envelope, meta, request.frame, request_started)
+            self.parse_request_frame(envelope, meta, request.frame, request_started)
         else {
             return Ok(());
         };
@@ -36,22 +95,16 @@ impl MailboxSink for StreamDomainSink {
 
         match parsed_frame {
             StreamClientFrame::Sub(sub_msg) => {
-                self.handle_subscription_frame(&envelope, meta, request_started, sub_msg);
+                self.handle_subscription_frame(envelope, meta, request_started, sub_msg);
                 Ok(())
             }
             StreamClientFrame::Op(stream_msg) => {
-                self.handle_actor_operation_frame(&envelope, meta, request_started, stream_msg);
+                self.handle_actor_operation_frame(envelope, meta, request_started, stream_msg);
                 Ok(())
             }
         }
     }
 
-    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        self.deliver(envelope)
-    }
-}
-
-impl StreamDomainSink {
     fn handle_cleanup_envelope(&self, envelope: &Envelope) -> bool {
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
             self.cleanup_session(cleanup.session_id);
