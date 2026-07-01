@@ -5,7 +5,7 @@
 //! Measures concurrent access patterns and lock contention
 //!
 //! Each test measures a single operation with all setup/teardown outside the measurement loop.
-//! Target: ops/sec via set_elements(count)
+//! Target: ops/sec via `set_elements(count)`
 
 #[path = "stress_config.rs"]
 mod stress_config;
@@ -46,9 +46,8 @@ fn should_complete_10_puts_same_family(ctx: &mut StressContext) {
     // Setup: Actor + store outside measurement
     let store = create_test_engine_with_cfs(vec![1]);
     let mut actor = KvActor::new(store);
-    let tx_id = match begin_transaction(&mut actor, 1, "intensive", TxMode::ReadWrite) {
-        Some(tx_id) => tx_id,
-        None => return,
+    let Some(tx_id) = begin_transaction(&mut actor, 1, "intensive", TxMode::ReadWrite) else {
+        return;
     };
 
     let iterations = ctx.measure_for(
@@ -79,13 +78,11 @@ fn should_complete_interleaved_puts_2_families(ctx: &mut StressContext) {
     // Setup: Actor + two column families
     let store = create_test_engine_with_cfs(vec![1, 2]);
     let mut actor = KvActor::new(store);
-    let tx_id1 = match begin_transaction(&mut actor, 1, "f1", TxMode::ReadWrite) {
-        Some(tx_id) => tx_id,
-        None => return,
+    let Some(tx_id1) = begin_transaction(&mut actor, 1, "f1", TxMode::ReadWrite) else {
+        return;
     };
-    let tx_id2 = match begin_transaction(&mut actor, 2, "f2", TxMode::ReadWrite) {
-        Some(tx_id) => tx_id,
-        None => return,
+    let Some(tx_id2) = begin_transaction(&mut actor, 2, "f2", TxMode::ReadWrite) else {
+        return;
     };
 
     let iterations = ctx.measure_for(
@@ -177,9 +174,8 @@ fn should_complete_mixed_read_write_families(ctx: &mut StressContext) {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx_id = match response {
-        fitz::domains::kv::KvResponse::BeginOk { tx_id } => tx_id,
-        _ => return,
+    let fitz::domains::kv::KvResponse::BeginOk { tx_id } = response else {
+        return;
     };
 
     for i in 0..5 {
@@ -194,13 +190,11 @@ fn should_complete_mixed_read_write_families(ctx: &mut StressContext) {
 
     actor.handle(KvMessage::Rollback { tx_id });
 
-    let read_tx_id = match begin_transaction(&mut actor, 1, "read_f1", TxMode::ReadOnly) {
-        Some(tx_id) => tx_id,
-        None => return,
+    let Some(read_tx_id) = begin_transaction(&mut actor, 1, "read_f1", TxMode::ReadOnly) else {
+        return;
     };
-    let write_tx_id = match begin_transaction(&mut actor, 2, "write_f2", TxMode::ReadWrite) {
-        Some(tx_id) => tx_id,
-        None => return,
+    let Some(write_tx_id) = begin_transaction(&mut actor, 2, "write_f2", TxMode::ReadWrite) else {
+        return;
     };
 
     let iterations = ctx.measure_for(

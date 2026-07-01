@@ -13,12 +13,12 @@
 ///   Use `BenchConfig::default().measure_duration` instead of hardcoding `Duration::from_secs(3)`.
 ///   Local developers may override this to `5` when they want a longer profiling pass.
 ///
-/// **set_elements(N)** in each `#[stress_test]`: N is the explicit batch size for one timed
+/// **`set_elements(N)`** in each `#[stress_test]`: N is the explicit batch size for one timed
 /// iteration inside `ctx.measure_for(cfg.measure_duration, || { ... })`. The default measured
 /// run is 3 seconds, which is usually enough to smooth scheduler noise without making Tier 3/4
 /// suites drag, and N must match the
 /// logical number of meaningful operations performed in that batch so throughput
-/// (batch_size / elapsed_time) reported by `cntryl-tools summarize-benchmarks`
+/// (`batch_size` / `elapsed_time`) reported by `cntryl-tools summarize-benchmarks`
 /// with Fitz report overrides is interpretable.
 ///
 /// If a scenario has a natural transport or fanout scope, add tags like `measurement_scope`
