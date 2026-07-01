@@ -8,18 +8,16 @@ mod rendering;
 use crate::api::http::{Body, Response};
 use crate::boot::Runtime;
 use hyper::StatusCode;
-use std::convert::Infallible;
-use std::sync::Arc;
 
 /// Handle /metrics endpoint (Prometheus format)
-pub async fn handle_metrics(runtime: Arc<Runtime>) -> Result<Response, Infallible> {
-    let metrics = generate_prometheus_metrics(&runtime);
+pub fn handle_metrics(runtime: &Runtime) -> Response {
+    let metrics = generate_prometheus_metrics(runtime);
 
-    Ok(hyper::http::Response::builder()
+    hyper::http::Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "text/plain; version=0.0.4")
         .body(Body::from(metrics))
-        .unwrap())
+        .unwrap()
 }
 
 /// Generate Prometheus-format metrics

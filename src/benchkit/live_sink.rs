@@ -120,7 +120,12 @@ pub fn register_session_counting_sink(
     (route, sink)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
+/// Route a decoded frame through the live sink benchmark path.
+///
+/// # Errors
+///
+/// Returns `RouteError` when the router rejects the envelope.
 pub fn route_frame(
     router: &Router,
     source: &RouteAddress,
@@ -156,6 +161,11 @@ pub fn route_frame(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Route a raw frame directly through the router.
+///
+/// # Errors
+///
+/// Returns `RouteError` when the router rejects the envelope.
 pub fn route_raw_frame(
     router: &Router,
     source: &RouteAddress,
@@ -177,6 +187,7 @@ pub fn route_raw_frame(
     router.route(Envelope::from_route(source.clone(), destination, frame))
 }
 
+#[allow(clippy::too_many_lines)]
 fn frame_context_from_envelope(envelope: &Envelope) -> Option<FrameContext> {
     if let Some(frame) = envelope.payload::<FrameContext>() {
         return Some(frame.clone());
@@ -470,10 +481,17 @@ pub fn create_bench_stream_sink(router: Arc<Router>) -> Arc<StreamDomainSink> {
 }
 
 #[must_use]
+/// Create a benchmark `StreamDomainSink` with an explicit storage layout.
+///
+/// # Panics
+///
+/// Panics if the benchmark stream sink cannot be constructed.
 pub fn create_bench_stream_sink_with_layout(
     router: Arc<Router>,
     stream_storage_layout: crate::domains::stream::StreamStorageLayout,
 ) -> Arc<StreamDomainSink> {
+    // Panics are acceptable here because this is benchmark-only setup and the
+    // caller cannot meaningfully recover from a sink construction failure.
     Arc::new(
         StreamDomainSink::new_with_layout(
             create_bench_store(),

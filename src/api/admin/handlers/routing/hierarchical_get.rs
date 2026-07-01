@@ -41,7 +41,7 @@ pub(super) async fn handle_hierarchical_get(
     }
 
     if let Some(response) =
-        handle_resource_detail_routes(uri, &runtime, principal, scope, scheme, tail).await?
+        handle_resource_detail_routes(uri, &runtime, principal, scope, scheme, tail)?
     {
         return Ok(response);
     }
@@ -176,7 +176,7 @@ fn handle_resource_collection_routes(
     response
 }
 
-async fn handle_resource_detail_routes(
+fn handle_resource_detail_routes(
     uri: &hyper::Uri,
     runtime: &Arc<Runtime>,
     principal: &AdminPrincipal,
@@ -185,13 +185,13 @@ async fn handle_resource_detail_routes(
     tail: &[&str],
 ) -> Result<Option<Response>, Infallible> {
     if let Some(response) =
-        handle_resource_activity_routes(uri, runtime, principal, scope, scheme, tail).await?
+        handle_resource_activity_routes(uri, runtime, principal, scope, scheme, tail)
     {
         return Ok(Some(response));
     }
 
     if let Some(response) =
-        handle_resource_state_routes(uri, runtime, principal, scope, scheme, tail).await?
+        handle_resource_state_routes(uri, runtime, principal, scope, scheme, tail)?
     {
         return Ok(Some(response));
     }
@@ -199,33 +199,31 @@ async fn handle_resource_detail_routes(
     Ok(None)
 }
 
-async fn handle_resource_activity_routes(
+fn handle_resource_activity_routes(
     uri: &hyper::Uri,
     runtime: &Arc<Runtime>,
     principal: &AdminPrincipal,
     scope: AdminFamilyScope,
     scheme: &str,
     tail: &[&str],
-) -> Result<Option<Response>, Infallible> {
+) -> Option<Response> {
     let response = match tail {
-        ["realms", realm, "areas", area, "resources", resource, "events"] => {
-            Some(handle_resource_events(uri, runtime, scope, scheme, realm, area, resource).await?)
-        }
+        ["realms", realm, "areas", area, "resources", resource, "events"] => Some(
+            handle_resource_events(uri, runtime, scope, scheme, realm, area, resource),
+        ),
         ["realms", realm, "areas", area, "resources", resource, "records"]
             if scheme == "stream" =>
         {
-            Some(
-                handle_stream_records(uri, runtime, principal, scope, realm, area, resource)
-                    .await?,
-            )
+            Some(handle_stream_records(
+                uri, runtime, principal, scope, realm, area, resource,
+            ))
         }
         ["realms", realm, "areas", area, "resources", resource, "executions"]
             if scheme == "schedule" =>
         {
-            Some(
-                handle_schedule_executions(uri, runtime, principal, scope, realm, area, resource)
-                    .await?,
-            )
+            Some(handle_schedule_executions(
+                uri, runtime, principal, scope, realm, area, resource,
+            ))
         }
         ["realms", realm, "areas", area, "resources", resource, "compare"] => {
             let path = list::ResourcePath {
@@ -253,10 +251,10 @@ async fn handle_resource_activity_routes(
         _ => None,
     };
 
-    Ok(response)
+    response
 }
 
-async fn handle_resource_state_routes(
+fn handle_resource_state_routes(
     uri: &hyper::Uri,
     runtime: &Arc<Runtime>,
     principal: &AdminPrincipal,
@@ -265,13 +263,12 @@ async fn handle_resource_state_routes(
     tail: &[&str],
 ) -> Result<Option<Response>, Infallible> {
     if let Some(response) =
-        handle_kv_resource_state_routes(uri, runtime, principal, scope, scheme, tail).await?
+        handle_kv_resource_state_routes(uri, runtime, principal, scope, scheme, tail)?
     {
         return Ok(Some(response));
     }
 
-    if let Some(response) =
-        handle_queue_notice_rpc_state_routes(uri, runtime, scope, scheme, tail).await?
+    if let Some(response) = handle_queue_notice_rpc_state_routes(uri, runtime, scope, scheme, tail)
     {
         return Ok(Some(response));
     }
@@ -279,7 +276,7 @@ async fn handle_resource_state_routes(
     Ok(None)
 }
 
-async fn handle_kv_resource_state_routes(
+fn handle_kv_resource_state_routes(
     uri: &hyper::Uri,
     runtime: &Arc<Runtime>,
     principal: &AdminPrincipal,
@@ -288,14 +285,16 @@ async fn handle_kv_resource_state_routes(
     tail: &[&str],
 ) -> Result<Option<Response>, Infallible> {
     let response = match tail {
-        ["realms", realm, "areas", area, "resources", resource, "rows"] if scheme == "kv" => {
-            Some(handle_kv_rows(uri, runtime, principal, scope, realm, area, resource).await?)
-        }
-        ["realms", realm, "areas", area, "resources", resource, "value"] if scheme == "kv" => {
-            Some(handle_kv_value(uri, runtime, principal, scope, realm, area, resource).await?)
-        }
+        ["realms", realm, "areas", area, "resources", resource, "rows"] if scheme == "kv" => Some(
+            handle_kv_rows(uri, runtime, principal, scope, realm, area, resource)?,
+        ),
+        ["realms", realm, "areas", area, "resources", resource, "value"] if scheme == "kv" => Some(
+            handle_kv_value(uri, runtime, principal, scope, realm, area, resource)?,
+        ),
         ["realms", realm, "areas", area, "resources", resource, "prefix"] if scheme == "kv" => {
-            Some(handle_kv_prefix(uri, runtime, principal, scope, realm, area, resource).await?)
+            Some(handle_kv_prefix(
+                uri, runtime, principal, scope, realm, area, resource,
+            )?)
         }
         _ => None,
     };
@@ -303,38 +302,38 @@ async fn handle_kv_resource_state_routes(
     Ok(response)
 }
 
-async fn handle_queue_notice_rpc_state_routes(
+fn handle_queue_notice_rpc_state_routes(
     uri: &hyper::Uri,
     runtime: &Arc<Runtime>,
     scope: AdminFamilyScope,
     scheme: &str,
     tail: &[&str],
-) -> Result<Option<Response>, Infallible> {
-    if let Some(response) = handle_queue_state_routes(uri, runtime, scope, scheme, tail).await? {
-        return Ok(Some(response));
+) -> Option<Response> {
+    if let Some(response) = handle_queue_state_routes(uri, runtime, scope, scheme, tail) {
+        return Some(response);
     }
 
-    if let Some(response) = handle_notice_rpc_state_routes(runtime, scope, scheme, tail).await? {
-        return Ok(Some(response));
+    if let Some(response) = handle_notice_rpc_state_routes(runtime, scope, scheme, tail) {
+        return Some(response);
     }
 
-    Ok(None)
+    None
 }
 
-async fn handle_queue_state_routes(
+fn handle_queue_state_routes(
     uri: &hyper::Uri,
     runtime: &Arc<Runtime>,
     scope: AdminFamilyScope,
     scheme: &str,
     tail: &[&str],
-) -> Result<Option<Response>, Infallible> {
+) -> Option<Response> {
     let response = match tail {
         ["realms", realm, "areas", area, "resources", resource, "inflight"]
             if scheme == "queue" =>
         {
             let family = match resource_family_filter(scope, uri, scheme) {
                 Ok(family) => family,
-                Err(response) => return Ok(Some(*response)),
+                Err(response) => return Some(*response),
             };
             Some(list::queue_inflight_for_resource(
                 runtime.as_ref(),
@@ -351,7 +350,7 @@ async fn handle_queue_state_routes(
         {
             let family = match resource_family_filter(scope, uri, scheme) {
                 Ok(family) => family,
-                Err(response) => return Ok(Some(*response)),
+                Err(response) => return Some(*response),
             };
             Some(list::queue_dead_letters_for_resource(
                 runtime.as_ref(),
@@ -366,15 +365,15 @@ async fn handle_queue_state_routes(
         _ => None,
     };
 
-    Ok(response)
+    response
 }
 
-async fn handle_notice_rpc_state_routes(
+fn handle_notice_rpc_state_routes(
     runtime: &Arc<Runtime>,
     scope: AdminFamilyScope,
     scheme: &str,
     tail: &[&str],
-) -> Result<Option<Response>, Infallible> {
+) -> Option<Response> {
     let response = match tail {
         ["realms", realm, "areas", area, "resources", resource, "subscriptions"]
             if scheme == "notice" =>
@@ -436,10 +435,10 @@ async fn handle_notice_rpc_state_routes(
         _ => None,
     };
 
-    Ok(response)
+    response
 }
 
-async fn handle_resource_events(
+fn handle_resource_events(
     uri: &hyper::Uri,
     runtime: &Arc<Runtime>,
     scope: AdminFamilyScope,
@@ -447,14 +446,14 @@ async fn handle_resource_events(
     realm: &str,
     area: &str,
     resource: &str,
-) -> Result<Response, Infallible> {
+) -> Response {
     let family = match resource_family_filter(scope, uri, scheme) {
         Ok(family) => family,
-        Err(response) => return Ok(*response),
+        Err(response) => return *response,
     };
     let limit = match parse_event_limit(uri) {
         Ok(limit) => limit,
-        Err(response) => return Ok(*response),
+        Err(response) => return *response,
     };
     let path = list::ResourcePath {
         realm,
@@ -463,53 +462,18 @@ async fn handle_resource_events(
     };
 
     match scheme {
-        "kv" => Ok(list::kv_events_for_resource(
-            runtime.as_ref(),
-            &path,
-            family,
-            limit,
-        )),
-        "queue" => Ok(list::queue_events_for_resource(
-            runtime.as_ref(),
-            &path,
-            family,
-            limit,
-        )),
-        "stream" => Ok(list::stream_events_for_resource(
-            runtime.as_ref(),
-            &path,
-            family,
-            limit,
-        )),
-        "lease" => Ok(list::lease_events_for_resource(
-            runtime.as_ref(),
-            &path,
-            family,
-            limit,
-        )),
-        "schedule" => Ok(list::schedule_events_for_resource(
-            runtime.as_ref(),
-            &path,
-            family,
-            limit,
-        )),
-        "notice" => Ok(list::notice_events_for_resource(
-            runtime.as_ref(),
-            &path,
-            family,
-            limit,
-        )),
-        "rpc" => Ok(list::rpc_events_for_resource(
-            runtime.as_ref(),
-            &path,
-            family,
-            limit,
-        )),
-        _ => Ok(not_found()),
+        "kv" => list::kv_events_for_resource(runtime.as_ref(), &path, family, limit),
+        "queue" => list::queue_events_for_resource(runtime.as_ref(), &path, family, limit),
+        "stream" => list::stream_events_for_resource(runtime.as_ref(), &path, family, limit),
+        "lease" => list::lease_events_for_resource(runtime.as_ref(), &path, family, limit),
+        "schedule" => list::schedule_events_for_resource(runtime.as_ref(), &path, family, limit),
+        "notice" => list::notice_events_for_resource(runtime.as_ref(), &path, family, limit),
+        "rpc" => list::rpc_events_for_resource(runtime.as_ref(), &path, family, limit),
+        _ => not_found(),
     }
 }
 
-async fn handle_stream_records(
+fn handle_stream_records(
     uri: &hyper::Uri,
     runtime: &Arc<Runtime>,
     principal: &AdminPrincipal,
@@ -517,21 +481,21 @@ async fn handle_stream_records(
     realm: &str,
     area: &str,
     resource: &str,
-) -> Result<Response, Infallible> {
+) -> Response {
     let family = match require_concrete_route_family(scope, uri, principal) {
         Ok(family) => family,
-        Err(response) => return Ok(*response),
+        Err(response) => return *response,
     };
     let limit = match list::parse_admin_record_limit(uri) {
         Ok(limit) => limit,
-        Err(message) => return Ok(error_response(StatusCode::BAD_REQUEST, &message)),
+        Err(message) => return error_response(StatusCode::BAD_REQUEST, &message),
     };
     let from_offset = match parse_optional_u64_param(uri, "from_offset") {
         Ok(offset) => offset.unwrap_or(0),
-        Err(response) => return Ok(*response),
+        Err(response) => return *response,
     };
 
-    Ok(list::stream_records_for_resource(
+    list::stream_records_for_resource(
         runtime.as_ref(),
         &list::ResourcePath {
             realm,
@@ -544,10 +508,10 @@ async fn handle_stream_records(
         list::parse_optional_string_query_param(uri, "discriminator")
             .or_else(|| list::parse_optional_string_query_param(uri, "q"))
             .as_deref(),
-    ))
+    )
 }
 
-async fn handle_schedule_executions(
+fn handle_schedule_executions(
     uri: &hyper::Uri,
     runtime: &Arc<Runtime>,
     principal: &AdminPrincipal,
@@ -555,17 +519,17 @@ async fn handle_schedule_executions(
     realm: &str,
     area: &str,
     resource: &str,
-) -> Result<Response, Infallible> {
+) -> Response {
     let family = match require_concrete_route_family(scope, uri, principal) {
         Ok(family) => family,
-        Err(response) => return Ok(*response),
+        Err(response) => return *response,
     };
     let limit = match list::parse_admin_record_limit(uri) {
         Ok(limit) => limit,
-        Err(message) => return Ok(error_response(StatusCode::BAD_REQUEST, &message)),
+        Err(message) => return error_response(StatusCode::BAD_REQUEST, &message),
     };
 
-    Ok(list::schedule_executions_for_resource(
+    list::schedule_executions_for_resource(
         runtime.as_ref(),
         &list::ResourcePath {
             realm,
@@ -574,7 +538,7 @@ async fn handle_schedule_executions(
         },
         family,
         limit,
-    ))
+    )
 }
 
 fn handle_resource_compare(
@@ -670,7 +634,7 @@ fn handle_resource_compare(
     json_response(comparison)
 }
 
-async fn handle_kv_rows(
+fn handle_kv_rows(
     uri: &hyper::Uri,
     runtime: &Arc<Runtime>,
     principal: &AdminPrincipal,
@@ -710,7 +674,7 @@ async fn handle_kv_rows(
     )
 }
 
-async fn handle_kv_value(
+fn handle_kv_value(
     uri: &hyper::Uri,
     runtime: &Arc<Runtime>,
     principal: &AdminPrincipal,
@@ -740,7 +704,7 @@ async fn handle_kv_value(
     )
 }
 
-async fn handle_kv_prefix(
+fn handle_kv_prefix(
     uri: &hyper::Uri,
     runtime: &Arc<Runtime>,
     principal: &AdminPrincipal,

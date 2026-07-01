@@ -3,6 +3,7 @@
 // Provides helpers for testing the complete request-response cycle:
 // Client → TCP/WebSocket → Session → Routing → Domain → Response → Client
 
+use std::fmt::Write as _;
 use std::net::SocketAddr;
 use std::sync::{Arc, Once, OnceLock};
 use std::time::Duration;
@@ -226,6 +227,7 @@ impl TestServer {
         .await
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn start_with_options(
         auth_required: bool,
         rpc_request_timeout: Option<Duration>,
@@ -399,6 +401,10 @@ impl TestServer {
     }
 
     /// Connect to the test server via TCP
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the TCP connection cannot be established or configured.
     pub async fn connect(&self) -> Result<TestClient, Box<dyn std::error::Error>> {
         let stream = TcpStream::connect(self.tcp_addr).await?;
         stream.set_nodelay(true)?;
@@ -406,11 +412,20 @@ impl TestServer {
     }
 
     /// Connect to the test server via WebSocket
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the WebSocket connection or handshake fails.
     pub async fn connect_ws(&self) -> Result<TestWebSocketClient, Box<dyn std::error::Error>> {
         let url = format!("ws://{}/", self.ws_addr);
         TestWebSocketClient::connect(&url).await
     }
 
+    /// Connect to the test server via WebSocket with an explicit `Origin` header.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the WebSocket connection or handshake fails.
     pub async fn connect_ws_with_origin(
         &self,
         origin: &str,
@@ -419,6 +434,11 @@ impl TestServer {
         TestWebSocketClient::connect_with_origin(&url, origin).await
     }
 
+    /// Attempt a WebSocket upgrade and return the resulting HTTP status code.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the socket operation, HTTP parsing, or status parsing fails.
     pub async fn websocket_upgrade_status(
         &self,
         origin: Option<&str>,
@@ -432,16 +452,21 @@ impl TestServer {
         }
     }
 
+    /// Attempt a WebSocket upgrade with explicit `Origin` headers.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the socket operation, HTTP parsing, or status parsing fails.
     pub async fn websocket_upgrade_status_with_origin_headers(
         &self,
         origins: &[&str],
     ) -> Result<u16, Box<dyn std::error::Error>> {
         let mut stream = TcpStream::connect(self.ws_addr).await?;
         stream.set_nodelay(true)?;
-        let origin_headers = origins
-            .iter()
-            .map(|origin| format!("Origin: {origin}\r\n"))
-            .collect::<String>();
+        let mut origin_headers = String::new();
+        for origin in origins {
+            let _ = write!(origin_headers, "Origin: {origin}\r\n");
+        }
         let request = format!(
             "GET / HTTP/1.1\r\n\
              Host: {}\r\n\
@@ -492,6 +517,11 @@ impl TestServer {
         })
     }
 
+    /// Wait until at least the requested number of sessions are authenticated.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the wait times out.
     pub async fn wait_for_authenticated_sessions(
         &self,
         expected_at_least: usize,
@@ -502,6 +532,11 @@ impl TestServer {
         .await
     }
 
+    /// Wait until the runtime reports the requested total session count.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the wait times out.
     pub async fn wait_for_session_count(
         &self,
         expected: usize,
@@ -512,6 +547,11 @@ impl TestServer {
         .await
     }
 
+    /// Wait until the runtime reports the requested registered route count.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the wait times out.
     pub async fn wait_for_route_count(
         &self,
         expected: usize,
@@ -522,6 +562,11 @@ impl TestServer {
         .await
     }
 
+    /// Force a schedule due-scan in tests without waiting for the normal loop.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the domain handles are unavailable.
     pub fn force_schedule_scan_for_tests(
         &self,
         ready_count: usize,
@@ -536,6 +581,11 @@ impl TestServer {
         Ok(())
     }
 
+    /// Shut down listeners and background tasks owned by the test server.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if listener shutdown or task joins fail.
     pub async fn shutdown(self) -> Result<(), Box<dyn std::error::Error>> {
         let TestServer {
             _tcp_shutdown: tcp_shutdown,

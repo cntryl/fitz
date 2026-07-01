@@ -96,12 +96,12 @@ where
     let method = req.method().clone();
 
     match (method, path.as_str()) {
-        (Method::GET, "/livez") => probes::handle_liveness().await,
-        (Method::GET, "/targetz") => probes::handle_targetz(runtime).await,
-        (Method::GET, "/healthz") => probes::handle_healthz(runtime).await,
-        (Method::GET, "/readyz") => probes::handle_readiness(runtime).await,
-        (Method::GET, "/startupz") => probes::handle_startup(runtime).await,
-        (Method::GET, "/health") => probes::handle_health(runtime).await,
+        (Method::GET, "/livez") => Ok(probes::handle_liveness()),
+        (Method::GET, "/targetz") => Ok(probes::handle_targetz(runtime.as_ref())),
+        (Method::GET, "/healthz") => Ok(probes::handle_healthz(runtime.as_ref())),
+        (Method::GET, "/readyz") => Ok(probes::handle_readiness(runtime.as_ref())),
+        (Method::GET, "/startupz") => Ok(probes::handle_startup(runtime.as_ref())),
+        (Method::GET, "/health") => Ok(probes::handle_health(runtime.as_ref())),
 
         (Method::POST, "/api/v1/session") => handle_login(req, &runtime).await,
         (Method::GET, "/api/v1/session") => handle_current_session(req, &runtime).await,
@@ -119,7 +119,7 @@ where
             if let Err(response) = require_admin_only(&req, &runtime) {
                 return Ok(*response);
             }
-            metrics::handle_metrics(runtime).await
+            Ok(metrics::handle_metrics(runtime.as_ref()))
         }
 
         (Method::GET, "/api/v1/sessions") => {

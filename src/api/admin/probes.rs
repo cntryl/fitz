@@ -4,8 +4,6 @@ use crate::api::http::{Body, Response};
 use crate::boot::Runtime;
 use hyper::StatusCode;
 use serde::{Deserialize, Serialize};
-use std::convert::Infallible;
-use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthStatus {
@@ -50,14 +48,14 @@ pub struct StartupStatus {
 
 /// Liveness probe - is the application alive?
 /// Returns 503 only if deadlocked/panicked
-pub async fn handle_liveness() -> Result<Response, Infallible> {
+pub fn handle_liveness() -> Response {
     let response = HealthStatus { status: "ok" };
 
-    Ok(hyper::http::Response::builder()
+    hyper::http::Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "application/json")
         .body(Body::from(serde_json::to_string(&response).unwrap()))
-        .unwrap())
+        .unwrap()
 }
 
 fn readiness_status(runtime: &Runtime) -> ReadyStatus {
@@ -102,58 +100,58 @@ fn target_status(runtime: &Runtime) -> TargetStatus {
 ///
 /// This mirrors readiness so load balancers do not route traffic until the
 /// broker has completed startup and can serve as the active single writer.
-pub async fn handle_healthz(runtime: Arc<Runtime>) -> Result<Response, Infallible> {
-    handle_readiness(runtime).await
+pub fn handle_healthz(runtime: &Runtime) -> Response {
+    handle_readiness(runtime)
 }
 
 /// Readiness probe - is the application ready to accept traffic?
-pub async fn handle_readiness(runtime: Arc<Runtime>) -> Result<Response, Infallible> {
-    let response = readiness_status(runtime.as_ref());
+pub fn handle_readiness(runtime: &Runtime) -> Response {
+    let response = readiness_status(runtime);
 
     if response.status != "ready" {
-        return Ok(hyper::http::Response::builder()
+        return hyper::http::Response::builder()
             .status(StatusCode::SERVICE_UNAVAILABLE)
             .header("Content-Type", "application/json")
             .body(Body::from(serde_json::to_string(&response).unwrap()))
-            .unwrap());
+            .unwrap();
     }
 
-    Ok(hyper::http::Response::builder()
+    hyper::http::Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "application/json")
         .body(Body::from(serde_json::to_string(&response).unwrap()))
-        .unwrap())
+        .unwrap()
 }
 
 /// Orchestrator target probe - is this HTTP target alive and eligible for handoff?
 ///
 /// This intentionally does not require the Midge writer lease. Data-plane
 /// readiness remains owned by `/healthz` and `/readyz`.
-pub async fn handle_targetz(runtime: Arc<Runtime>) -> Result<Response, Infallible> {
-    let response = target_status(runtime.as_ref());
+pub fn handle_targetz(runtime: &Runtime) -> Response {
+    let response = target_status(runtime);
     let status = if response.status == "ready" {
         StatusCode::OK
     } else {
         StatusCode::SERVICE_UNAVAILABLE
     };
 
-    Ok(hyper::http::Response::builder()
+    hyper::http::Response::builder()
         .status(status)
         .header("Content-Type", "application/json")
         .body(Body::from(serde_json::to_string(&response).unwrap()))
-        .unwrap())
+        .unwrap()
 }
 
 /// Startup probe - has the application completed startup?
-pub async fn handle_startup(runtime: Arc<Runtime>) -> Result<Response, Infallible> {
+pub fn handle_startup(runtime: &Runtime) -> Response {
     if !runtime.is_startup_complete() {
         let response = HealthStatus { status: "starting" };
 
-        return Ok(hyper::http::Response::builder()
+        return hyper::http::Response::builder()
             .status(StatusCode::SERVICE_UNAVAILABLE)
             .header("Content-Type", "application/json")
             .body(Body::from(serde_json::to_string(&response).unwrap()))
-            .unwrap());
+            .unwrap();
     }
 
     let response = StartupStatus {
@@ -161,14 +159,14 @@ pub async fn handle_startup(runtime: Arc<Runtime>) -> Result<Response, Infallibl
         startup_time_seconds: runtime.startup_duration().as_secs_f64(),
     };
 
-    Ok(hyper::http::Response::builder()
+    hyper::http::Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "application/json")
         .body(Body::from(serde_json::to_string(&response).unwrap()))
-        .unwrap())
+        .unwrap()
 }
 
 /// Legacy health check
-pub async fn handle_health(runtime: Arc<Runtime>) -> Result<Response, Infallible> {
-    handle_healthz(runtime).await
+pub fn handle_health(runtime: &Runtime) -> Response {
+    handle_healthz(runtime)
 }
