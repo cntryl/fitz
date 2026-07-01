@@ -55,8 +55,8 @@ const DOMAIN_PROOFS: &[DomainProof] = &[
         variant: "Notice",
         scheme: "notice",
         sink_type: "NoticeDomainSink",
-        actor_file: "src/domains/notice/actor.rs",
-        actor_marker: "pub struct NoticeRouteActor",
+        actor_file: "src/domains/notice/sink.rs",
+        actor_marker: "pub(super) struct NoticeDomainActor",
         doc_heading: "#### Notice",
         doc_phrases: &[
             "Actor owner:",

@@ -187,9 +187,9 @@ Rebuilding state after reconnect must be fast and deterministic. Fitz must keep 
 **Responsibility:** Message routing, subscription indexing, actor scheduling.
 **Components:**
 #### Router
-Current routing uses exact-address dispatch plus domain-owned subscription indexes. The bullets below are conceptual only; for Notice, the authoritative live state is the broker-local in-memory index in `NoticeDomainSink`, which is cleared on disconnect or broker restart.
+Current routing uses exact-address dispatch plus domain-owned subscription indexes. The bullets below are conceptual only; for Notice, the authoritative live state is the broker-local in-memory index owned by `NoticeDomainActor` and `NoticeDomainCore`, which is cleared on disconnect or broker restart.
 - **Subscriptions:** `{realm} → {area} → {resource} → [subscribers]`
-- **Pattern matching:** `NoticeDomainSink` matches wildcard subscriptions from its in-memory index
+- **Pattern matching:** `NoticeDomainActor` matches wildcard subscriptions from its in-memory index
 - **Fanout:** Single publish reaches all currently connected matching subscriptions
 - **Ordering:** Publish order is preserved per subscriber within the running broker process
 #### Actor Mailbox
@@ -511,7 +511,7 @@ Current Notice behavior is intentionally ephemeral:
 - Admin path: live queue snapshots flow through `Runtime::queue_list_*`; dead-letter replay and purge use explicit `Runtime::queue_*_dead_letter` commands.
 
 #### Notice
-- Actor owner: `NoticeDomainSink` owns the live in-memory subscription index and route counters for the current broker process.
+- Actor owner: `NoticeDomainActor` is the managed production actor for delivery, cleanup, live subscriptions, route counters, fanout, and admin snapshot refresh; `NoticeDomainSink` is the mailbox adapter, and `NoticeRouteActor` remains a focused matching/fanout state-machine model.
 - Persistence: Notice delivery, subscriptions, and counters are ephemeral only; there is no durable replay or broker-side subscriber recovery.
 - Cleanup: disconnect removes session subscriptions immediately, and broker restart starts from an empty Notice state.
 - `RouteFamily`/`realm`: fanout matches only within the exact `RouteFamily`; `realm` stays an opaque route segment used for filtering and admin presentation.

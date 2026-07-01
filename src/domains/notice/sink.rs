@@ -8,7 +8,9 @@ use crate::domains::notice::NoticeMetrics;
 use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 #[cfg(test)]
 use crate::protocol::frame_context::FrameContext;
-use crate::runtime::{DeliveryError, Envelope, MailboxSink, RouteError, Router};
+use crate::runtime::{
+    Actor, Context, DeliveryError, Envelope, MailboxSink, ManagedActor, RouteError, Router,
+};
 use chrono::Utc;
 use parking_lot::Mutex;
 use smallvec::SmallVec;
@@ -113,12 +115,28 @@ fn usize_to_u64(value: usize) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
 }
 
+/// Commands accepted by the managed Notice domain actor.
+pub(super) enum NoticeDomainCommand {
+    Deliver(
+        Envelope,
+        crossbeam_channel::Sender<Result<(), DeliveryError>>,
+    ),
+}
+
+pub(super) struct NoticeDomainActor {
+    core: Arc<NoticeDomainCore>,
+}
+
+pub(super) struct NoticeDomainRuntime<'a> {
+    core: &'a NoticeDomainCore,
+}
+
 /// Live notice pub/sub state for the current broker process.
 ///
-/// This sink owns the authoritative in-memory subscription index used for
+/// This core owns the authoritative in-memory subscription index used for
 /// delivery and admin snapshots. State disappears on session cleanup or broker
 /// restart and is never durably recovered or replayed.
-pub struct NoticeDomainSink {
+pub struct NoticeDomainCore {
     families: Mutex<HashMap<u64, RoutedSubscriptionSet<NoticeSubscription>>>,
     route_stats: Mutex<HashMap<NoticeRouteStatsKey, NoticeRouteStats>>,
     next_sub_id: AtomicU64,
@@ -129,12 +147,67 @@ pub struct NoticeDomainSink {
     active: AtomicBool,
 }
 
+pub struct NoticeDomainSink {
+    core: Arc<NoticeDomainCore>,
+    actor: ManagedActor<NoticeDomainCommand>,
+}
+
+impl std::ops::Deref for NoticeDomainSink {
+    type Target = NoticeDomainCore;
+
+    fn deref(&self) -> &Self::Target {
+        &self.core
+    }
+}
+
+impl std::ops::DerefMut for NoticeDomainSink {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        Arc::get_mut(&mut self.core).expect("Notice sink builders must run before sharing the sink")
+    }
+}
+
+impl NoticeDomainActor {
+    fn new(core: Arc<NoticeDomainCore>) -> Self {
+        Self { core }
+    }
+
+    fn runtime(&self) -> NoticeDomainRuntime<'_> {
+        NoticeDomainRuntime { core: &self.core }
+    }
+
+    fn route_address() -> crate::runtime::routing::RouteAddress {
+        crate::runtime::routing::RouteAddress::new(
+            crate::runtime::routing::RouteFamily::new(0),
+            crate::runtime::routing::Route::new("internal://domain/notice"),
+        )
+    }
+}
+
+impl Actor for NoticeDomainActor {
+    type Message = NoticeDomainCommand;
+
+    fn receive(&mut self, msg: Self::Message, _ctx: &mut Context<Self>) {
+        let runtime = self.runtime();
+        match msg {
+            NoticeDomainCommand::Deliver(envelope, reply) => {
+                let _ = reply.send(runtime.deliver_envelope(&envelope));
+            }
+        }
+    }
+}
+
+impl NoticeDomainRuntime<'_> {
+    fn deliver_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {
+        self.core.deliver_envelope(envelope)
+    }
+}
+
 impl NoticeDomainSink {
     pub fn new(
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
     ) -> Self {
-        Self {
+        let core = Arc::new(NoticeDomainCore {
             families: Mutex::new(HashMap::new()),
             route_stats: Mutex::new(HashMap::with_capacity(64)),
             next_sub_id: AtomicU64::new(1),
@@ -143,7 +216,29 @@ impl NoticeDomainSink {
             admin_snapshot_dirty: AtomicBool::new(false),
             metrics: None,
             active: AtomicBool::new(true),
-        }
+        });
+        let actor = Self::spawn_actor(core.clone());
+        Self { core, actor }
+    }
+
+    fn spawn_actor(
+        core: Arc<NoticeDomainCore>,
+    ) -> crate::runtime::ManagedActor<NoticeDomainCommand> {
+        crate::runtime::ManagedActor::spawn(
+            core.router.clone(),
+            NoticeDomainActor::route_address(),
+            NoticeDomainActor::new(core),
+            1024,
+        )
+    }
+
+    fn rebuild_actor(&mut self) {
+        self.actor.stop();
+        self.actor = Self::spawn_actor(self.core.clone());
+    }
+
+    fn core_for_builder(&mut self) -> &mut NoticeDomainCore {
+        Arc::get_mut(&mut self.core).expect("Notice sink builders must run before sharing the sink")
     }
 
     #[must_use]
@@ -151,15 +246,49 @@ impl NoticeDomainSink {
         mut self,
         collector: crate::observability::metrics::MetricsCollector,
     ) -> Self {
-        self.metrics = Some(NoticeMetrics::new(collector));
-        self.refresh_metrics_gauges();
+        self.actor.stop();
+        self.core_for_builder().metrics = Some(NoticeMetrics::new(collector));
+        self.core.refresh_metrics_gauges();
+        self.rebuild_actor();
         self
     }
 
     pub fn stop(&self) {
         self.active.store(false, Ordering::Relaxed);
+        self.actor.stop();
     }
 
+    #[cfg(test)]
+    pub(super) fn is_actor_running(&self) -> bool {
+        self.actor.is_running()
+    }
+
+    #[cfg(test)]
+    pub(super) fn stop_actor_for_tests(&self) {
+        self.actor.stop();
+    }
+
+    fn deliver_to_actor(
+        &self,
+        envelope: Envelope,
+        high_priority: bool,
+    ) -> Result<(), DeliveryError> {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        let command = NoticeDomainCommand::Deliver(envelope, reply_tx);
+        let enqueue_result = if high_priority {
+            self.actor.try_send_high_priority(command)
+        } else {
+            self.actor.try_send(command)
+        };
+        enqueue_result?;
+
+        reply_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap_or(Err(DeliveryError::ActorStopped))
+    }
+}
+
+impl NoticeDomainCore {
     /// Rebuild the admin read model from the current in-memory subscription
     /// state only.
     fn sync_admin_snapshot(&self) {
@@ -430,18 +559,28 @@ impl NoticeDomainSink {
 
 impl MailboxSink for NoticeDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        if self.handle_cleanup_envelope(&envelope) {
+        self.deliver_to_actor(envelope, false)
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver_to_actor(envelope, true)
+    }
+}
+
+impl NoticeDomainCore {
+    fn deliver_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {
+        if self.handle_cleanup_envelope(envelope) {
             return Ok(());
         }
         self.ensure_active()?;
 
-        if self.handle_domain_publish_envelope(&envelope) {
+        if self.handle_domain_publish_envelope(envelope) {
             return Ok(());
         }
 
-        Self::log_delivery(&envelope);
+        Self::log_delivery(envelope);
 
-        let Some(request) = Self::extract_request(&envelope)? else {
+        let Some(request) = Self::extract_request(envelope)? else {
             return Ok(());
         };
         let meta = request.meta;
@@ -457,7 +596,7 @@ impl MailboxSink for NoticeDomainSink {
         }
 
         if let Some(response) = response_opt {
-            self.route_notice_response(&envelope, meta, &response, request_started);
+            self.route_notice_response(envelope, meta, &response, request_started);
         } else if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
             metrics.record_success(started_at);
         }
@@ -465,12 +604,6 @@ impl MailboxSink for NoticeDomainSink {
         Ok(())
     }
 
-    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        self.deliver(envelope)
-    }
-}
-
-impl NoticeDomainSink {
     fn handle_cleanup_envelope(&self, envelope: &Envelope) -> bool {
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
             self.unsubscribe_all_for_session(cleanup.session_id);

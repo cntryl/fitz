@@ -190,6 +190,36 @@ fn should_create_notice_domain_sink() {
 }
 
 #[test]
+fn should_reject_notice_delivery_when_managed_actor_is_stopped() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let notice_address = RouteAddress::new(family, Route::new("notice://acme/inbound"));
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = NoticeDomainSink::new(router, admin_read_model);
+
+    // Act
+    sink.stop_actor_for_tests();
+    let result = sink.deliver(Envelope::from_route(
+        subscriber_address,
+        notice_address,
+        FrameContext::new(
+            7,
+            ChannelId::Sub,
+            MessageType::new(501),
+            encode_notice_subscribe("notice://acme/events"),
+            family,
+        ),
+    ));
+
+    // Assert
+    assert!(!sink.is_actor_running());
+    assert!(matches!(result, Err(DeliveryError::ActorStopped)));
+    assert_eq!(sink.subscription_count(), 0);
+}
+
+#[test]
 fn should_include_notice_subscription_given_flexible_route_shape() {
     // Arrange
     let family = RouteFamily::new(1);
