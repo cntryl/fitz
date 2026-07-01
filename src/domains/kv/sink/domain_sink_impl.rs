@@ -16,7 +16,6 @@ impl KvDomainSink {
             store,
             actors: Arc::new(Mutex::new(HashMap::new())),
             resource_locks: Mutex::new(HashMap::new()),
-            tx_to_resource: Mutex::new(HashMap::new()),
             families: Mutex::new(HashMap::new()),
             latencies: Mutex::new(HashMap::new()),
             next_sub_id: AtomicU64::new(1),
@@ -446,18 +445,22 @@ impl KvDomainSink {
     pub(super) fn sync_admin_snapshot(&self) {
         let started_at = Utc::now().to_rfc3339();
         let transactions = self
-            .tx_to_resource
+            .actors
             .lock()
             .iter()
-            .map(|((session_id, tx_id), resource_key)| {
-                crate::control::admin::KvTransaction::snapshot(
-                    resource_key.family_id,
-                    *tx_id,
-                    *session_id,
-                    &resource_key.realm,
-                    &resource_key.area,
-                    &resource_key.resource,
-                    &started_at,
+            .flat_map(|(session_id, actor)| {
+                actor.active_transaction_scopes().into_iter().map(
+                    |(tx_id, family_id, realm, area, resource)| {
+                        crate::control::admin::KvTransaction::snapshot(
+                            family_id,
+                            tx_id,
+                            *session_id,
+                            &realm,
+                            &area,
+                            &resource,
+                            &started_at,
+                        )
+                    },
                 )
             })
             .collect();
@@ -484,10 +487,16 @@ impl KvDomainSink {
         &self,
         resource_key: &KvResourceLockKey,
     ) -> usize {
-        self.tx_to_resource
+        self.actors
             .lock()
             .values()
-            .filter(|key| *key == resource_key)
+            .flat_map(crate::domains::kv::KvActor::active_transaction_scopes)
+            .filter(|(_tx_id, family_id, realm, area, resource)| {
+                *family_id == resource_key.family_id
+                    && realm == &resource_key.realm
+                    && area == &resource_key.area
+                    && resource == &resource_key.resource
+            })
             .count()
     }
 
@@ -536,15 +545,6 @@ impl KvDomainSink {
         session_id: u64,
         tx_id: u64,
     ) -> Option<KvResourceLockKey> {
-        if let Some(resource_key) = self
-            .tx_to_resource
-            .lock()
-            .get(&(session_id, tx_id))
-            .cloned()
-        {
-            return Some(resource_key);
-        }
-
         self.actors
             .lock()
             .get(&session_id)
@@ -731,11 +731,6 @@ impl KvDomainSink {
         }
 
         {
-            let mut tx_map = self.tx_to_resource.lock();
-            tx_map.retain(|(sid, _tx_id), _key| *sid != session_id);
-        }
-
-        {
             let mut families = self.families.lock();
             for (family_id, state) in families.iter_mut() {
                 state.remove_session(
@@ -755,7 +750,11 @@ impl KvDomainSink {
     }
 
     pub fn active_transaction_count(&self) -> usize {
-        self.tx_to_resource.lock().len()
+        self.actors
+            .lock()
+            .values()
+            .map(crate::domains::kv::KvActor::transaction_count)
+            .sum()
     }
 
     pub(super) fn apply_sync_write_options(

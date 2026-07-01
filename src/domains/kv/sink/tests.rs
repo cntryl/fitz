@@ -331,6 +331,49 @@ fn should_release_resource_lock_given_session_cleanup() {
 }
 
 #[test]
+fn should_rebuild_kv_admin_transactions_from_actor_state() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 7;
+    let kv_route = "kv://acme/app/users";
+    let kv_address = RouteAddress::new(family, Route::new(kv_route));
+    let source_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let mailbox = Arc::new(Mailbox::new(8));
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let router = Arc::new(Router::new());
+    router.register(source_address.clone(), mailbox);
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = KvDomainSink::new(store, router, admin_read_model.clone());
+
+    sink.deliver(Envelope::from_route(
+        source_address,
+        kv_address,
+        FrameContext::new(
+            session_id,
+            ChannelId::Sub,
+            MessageType::new(100),
+            encode_kv_begin(kv_route, 1, 0),
+            family,
+        ),
+    ))
+    .expect("begin KV transaction");
+
+    // Act
+    sink.sync_admin_snapshot();
+    let before_cleanup = admin_read_model.kv_transactions(None);
+    sink.cleanup_session(session_id);
+    let after_cleanup = admin_read_model.kv_transactions(None);
+
+    // Assert
+    assert_eq!(before_cleanup.len(), 1);
+    assert_eq!(before_cleanup[0].route_family, 1);
+    assert_eq!(before_cleanup[0].realm, "acme");
+    assert_eq!(before_cleanup[0].area, "app");
+    assert_eq!(before_cleanup[0].resource, "users");
+    assert!(after_cleanup.is_empty());
+}
+
+#[test]
 fn should_notify_kv_subscriber_given_committed_put() {
     // Arrange
     let family = RouteFamily::new(1);

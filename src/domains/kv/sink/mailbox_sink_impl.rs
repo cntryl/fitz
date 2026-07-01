@@ -349,9 +349,6 @@ impl KvDomainSink {
             self.resource_locks
                 .lock()
                 .insert(lock_key.clone(), session_id);
-            self.tx_to_resource
-                .lock()
-                .insert((session_id, tx_id), lock_key);
             (response, true, None)
         } else {
             (response, false, None)
@@ -378,9 +375,14 @@ impl KvDomainSink {
             "Calling actor.handle() for COMMIT"
         );
         let mutation_count = actor.mutation_count_for_tx(tx_id).unwrap_or(0);
+        let lock_key =
+            actor
+                .resource_scope_for_tx(tx_id)
+                .map(|(family_id, realm, area, resource)| {
+                    KvResourceLockKey::new(family_id, &realm, &area, &resource)
+                });
         let response = actor.handle(kv_message.clone());
         if let KvResponse::CommitOk = response {
-            let lock_key = self.tx_to_resource.lock().remove(&(session_id, tx_id));
             if let Some(lock_key) = lock_key {
                 self.resource_locks.lock().remove(&lock_key);
                 let notify = (mutation_count > 0).then_some((lock_key, mutation_count));
@@ -413,9 +415,15 @@ impl KvDomainSink {
             tx_id = tx_id,
             "Calling actor.handle() for ROLLBACK"
         );
+        let lock_key =
+            actor
+                .resource_scope_for_tx(tx_id)
+                .map(|(family_id, realm, area, resource)| {
+                    KvResourceLockKey::new(family_id, &realm, &area, &resource)
+                });
         let response = actor.handle(kv_message.clone());
         if let KvResponse::RollbackOk = response {
-            if let Some(lock_key) = self.tx_to_resource.lock().remove(&(session_id, tx_id)) {
+            if let Some(lock_key) = lock_key {
                 self.resource_locks.lock().remove(&lock_key);
             }
             crate::observability::counter_inc("fitz_kv_rollbacks_total");

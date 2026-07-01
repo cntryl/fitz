@@ -599,6 +599,27 @@ impl KvActor {
         })
     }
 
+    #[must_use]
+    pub fn active_transaction_scopes(&self) -> Vec<(u64, u64, String, String, String)> {
+        self.transactions
+            .iter()
+            .map(|(tx_id, tx)| {
+                (
+                    *tx_id,
+                    u64::from(tx.column_family),
+                    tx.bound_realm.clone(),
+                    tx.bound_area.clone(),
+                    tx.bound_resource.clone(),
+                )
+            })
+            .collect()
+    }
+
+    #[must_use]
+    pub fn transaction_count(&self) -> usize {
+        self.transactions.len()
+    }
+
     fn validate_operation_scope(
         active: &ActiveKvTx,
         route_family: RouteFamily,
