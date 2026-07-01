@@ -74,6 +74,42 @@ fn wait_for_kv_active_transaction_count(kv_sink: &KvDomainSink, expected: usize)
     assert_eq!(kv_sink.active_transaction_count(), expected);
 }
 
+fn wait_for_lease_count(lease_sink: &LeaseDomainSink, expected: usize) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    while std::time::Instant::now() < deadline {
+        if lease_sink.lease_count() == expected {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(lease_sink.lease_count(), expected);
+}
+
+fn wait_for_lease_subscription_count(lease_sink: &LeaseDomainSink, expected: usize) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    while std::time::Instant::now() < deadline {
+        if lease_sink.subscription_count() == expected {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(lease_sink.subscription_count(), expected);
+}
+
+fn wait_for_admin_lease_count(
+    admin_read_model: &crate::control::admin::read_model::AdminReadModel,
+    expected: usize,
+) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    while std::time::Instant::now() < deadline {
+        if admin_read_model.leases(None).len() == expected {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(admin_read_model.leases(None).len(), expected);
+}
+
 #[tokio::test]
 async fn should_cleanup_real_rpc_pending_request_on_close() {
     // Arrange
@@ -219,6 +255,9 @@ async fn should_cleanup_real_lease_state_on_close() {
         ))
         .expect("subscribe lease route");
 
+    wait_for_lease_count(&lease_sink, 1);
+    wait_for_lease_subscription_count(&lease_sink, 1);
+    wait_for_admin_lease_count(&admin_read_model, 1);
     assert_eq!(lease_sink.lease_count(), 1);
     assert_eq!(lease_sink.subscription_count(), 1);
     assert_eq!(admin_read_model.leases(None).len(), 1);
@@ -238,6 +277,9 @@ async fn should_cleanup_real_lease_state_on_close() {
         .expect("publish lease event after cleanup");
 
     // Assert
+    wait_for_lease_count(&lease_sink, 0);
+    wait_for_lease_subscription_count(&lease_sink, 0);
+    wait_for_admin_lease_count(&admin_read_model, 0);
     assert_eq!(lease_sink.lease_count(), 0);
     assert_eq!(lease_sink.subscription_count(), 0);
     assert!(admin_read_model.leases(None).is_empty());

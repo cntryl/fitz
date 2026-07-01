@@ -9,7 +9,9 @@
 
 pub(super) use crate::domains::lease::LeaseMetrics;
 pub(super) use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
-pub(super) use crate::runtime::{ClientChannel, DeliveryError, Envelope, MailboxSink, Router};
+pub(super) use crate::runtime::{
+    ClientChannel, DeliveryError, Envelope, MailboxSink, ManagedActor, Router,
+};
 pub(super) use chrono::Utc;
 pub(super) use parking_lot::Mutex;
 pub(super) use std::collections::{HashMap, HashSet, VecDeque};
@@ -95,10 +97,30 @@ pub(super) struct LeaseDomainCore {
     pub(super) metrics: Option<LeaseMetrics>,
 }
 
-/// Production mailbox adapter for Lease semantics.
-pub struct LeaseDomainSink {
+pub(super) struct LeaseDomainState {
     pub(super) core: LeaseDomainCore,
     pub(super) active: AtomicBool,
+}
+
+pub(super) struct LeaseDomainRuntime<'a> {
+    pub(super) core: &'a LeaseDomainCore,
+    pub(super) active: &'a AtomicBool,
+}
+
+pub(super) enum LeaseDomainCommand {
+    Deliver(Envelope),
+    CleanupSession(u64),
+    SweepExpiredState,
+}
+
+pub(super) struct LeaseDomainActor {
+    pub(super) state: Arc<LeaseDomainState>,
+}
+
+/// Production mailbox adapter for Lease semantics.
+pub struct LeaseDomainSink {
+    pub(super) state: Arc<LeaseDomainState>,
+    pub(super) actor: ManagedActor<LeaseDomainCommand>,
 }
 
 pub(super) struct LeaseSubscription {

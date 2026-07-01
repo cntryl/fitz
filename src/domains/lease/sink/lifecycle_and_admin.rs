@@ -1,11 +1,13 @@
 use super::model::{
-    Arc, AtomicBool, AtomicU64, HashMap, Instant, LeaseDomainCore, LeaseDomainSink, LeaseMetrics,
-    Mutex, Ordering, SinkLeaseState, Utc, VecDeque,
+    Arc, AtomicBool, AtomicU64, HashMap, Instant, LeaseDomainActor, LeaseDomainCommand,
+    LeaseDomainCore, LeaseDomainRuntime, LeaseDomainSink, LeaseDomainState, LeaseMetrics, Mutex,
+    Ordering, SinkLeaseState, Utc, VecDeque,
 };
+use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::runtime::Router;
 
-impl LeaseDomainSink {
-    pub fn new(
+impl LeaseDomainState {
+    fn new(
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
     ) -> Self {
@@ -26,16 +28,113 @@ impl LeaseDomainSink {
         }
     }
 
+    pub(super) fn runtime(&self) -> LeaseDomainRuntime<'_> {
+        LeaseDomainRuntime {
+            core: &self.core,
+            active: &self.active,
+        }
+    }
+}
+
+impl LeaseDomainActor {
+    pub(super) fn new(state: Arc<LeaseDomainState>) -> Self {
+        Self { state }
+    }
+
+    pub(super) fn route_address() -> RouteAddress {
+        RouteAddress::new(RouteFamily::new(0), Route::new("internal://domain/lease"))
+    }
+}
+
+impl LeaseDomainSink {
+    pub fn new(
+        router: Arc<Router>,
+        admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
+    ) -> Self {
+        let state = Arc::new(LeaseDomainState::new(router, admin_read_model));
+        let actor = Self::spawn_actor(state.clone());
+        Self { state, actor }
+    }
+
+    fn spawn_actor(
+        state: Arc<LeaseDomainState>,
+    ) -> crate::runtime::ManagedActor<LeaseDomainCommand> {
+        crate::runtime::ManagedActor::spawn(
+            state.core.router.clone(),
+            LeaseDomainActor::route_address(),
+            LeaseDomainActor::new(state),
+            1024,
+        )
+    }
+
+    fn rebuild_actor(&mut self) {
+        self.actor.stop();
+        self.actor = Self::spawn_actor(self.state.clone());
+    }
+
+    fn state_for_builder(&mut self) -> &mut LeaseDomainState {
+        Arc::get_mut(&mut self.state).expect("Lease sink builders must run before sharing the sink")
+    }
+
     #[must_use]
     pub fn with_metrics(
         mut self,
         collector: crate::observability::metrics::MetricsCollector,
     ) -> Self {
-        self.core.metrics = Some(LeaseMetrics::new(collector));
-        self.refresh_metrics_gauges();
+        self.actor.stop();
+        let state = self.state_for_builder();
+        state.core.metrics = Some(LeaseMetrics::new(collector));
+        state.runtime().refresh_metrics_gauges();
+        self.rebuild_actor();
         self
     }
 
+    pub fn stop(&self) {
+        self.state.active.store(false, Ordering::Relaxed);
+        self.actor.stop();
+    }
+
+    pub(crate) fn is_active(&self) -> bool {
+        self.state.active.load(Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
+    pub(super) fn is_actor_running(&self) -> bool {
+        self.actor.is_running()
+    }
+
+    pub fn cleanup_session(&self, session_id: u64) {
+        if let Err(error) = self
+            .actor
+            .try_send_high_priority(LeaseDomainCommand::CleanupSession(session_id))
+        {
+            tracing::warn!(domain = "lease", error = %error, "Lease cleanup enqueue failed");
+        }
+    }
+
+    pub(crate) fn sweep_expired_state(&self) {
+        if let Err(error) = self
+            .actor
+            .try_send_high_priority(LeaseDomainCommand::SweepExpiredState)
+        {
+            tracing::warn!(domain = "lease", error = %error, "Lease sweep enqueue failed");
+        }
+    }
+
+    pub fn lease_count(&self) -> usize {
+        self.state.runtime().lease_count()
+    }
+
+    pub fn subscription_count(&self) -> usize {
+        self.state.runtime().subscription_count()
+    }
+
+    pub fn admin_waiters(&self) -> Vec<crate::control::admin::LeaseWaiterInfo> {
+        self.state.runtime().admin_waiters()
+    }
+}
+
+impl LeaseDomainRuntime<'_> {
     #[cfg(test)]
     pub(super) fn session_inbox_address(
         route_family: crate::runtime::routing::RouteFamily,
@@ -46,14 +145,6 @@ impl LeaseDomainSink {
             route_family,
             crate::runtime::routing::Route::new(route.as_str()),
         )
-    }
-
-    pub fn stop(&self) {
-        self.active.store(false, Ordering::Relaxed);
-    }
-
-    pub(crate) fn is_active(&self) -> bool {
-        self.active.load(Ordering::Relaxed)
     }
 
     pub(super) fn lease_info_from_state(

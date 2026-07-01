@@ -1,24 +1,58 @@
 use super::model::{
-    DeliveryError, Envelope, LeaseAcquireRequest, LeaseDomainSink, LeaseSubscription, MailboxSink,
-    Ordering, RoutedSubscriptionSet,
+    DeliveryError, Envelope, LeaseAcquireRequest, LeaseDomainActor, LeaseDomainCommand,
+    LeaseDomainRuntime, LeaseDomainSink, LeaseSubscription, MailboxSink, Ordering,
+    RoutedSubscriptionSet,
 };
 #[cfg(test)]
 use crate::protocol::frame_context::FrameContext;
+use crate::runtime::{Actor, Context};
 
 impl MailboxSink for LeaseDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        if self.handle_cleanup_envelope(&envelope) {
+        self.actor.try_send(LeaseDomainCommand::Deliver(envelope))
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.actor
+            .try_send_high_priority(LeaseDomainCommand::Deliver(envelope))
+    }
+}
+
+impl Actor for LeaseDomainActor {
+    type Message = LeaseDomainCommand;
+
+    fn receive(&mut self, msg: Self::Message, _ctx: &mut Context<Self>) {
+        let runtime = self.state.runtime();
+        match msg {
+            LeaseDomainCommand::Deliver(envelope) => {
+                if let Err(error) = runtime.deliver_envelope(&envelope) {
+                    tracing::warn!(domain = "lease", error = %error, "Lease actor delivery failed");
+                }
+            }
+            LeaseDomainCommand::CleanupSession(session_id) => {
+                runtime.cleanup_session(session_id);
+            }
+            LeaseDomainCommand::SweepExpiredState => {
+                runtime.sweep_expired_state();
+            }
+        }
+    }
+}
+
+impl LeaseDomainRuntime<'_> {
+    pub(super) fn deliver_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {
+        if self.handle_cleanup_envelope(envelope) {
             return Ok(());
         }
         self.ensure_active()?;
 
-        if self.handle_domain_publish_envelope(&envelope) {
+        if self.handle_domain_publish_envelope(envelope) {
             return Ok(());
         }
 
-        Self::log_delivery(&envelope);
+        Self::log_delivery(envelope);
 
-        let Some(request) = Self::extract_request(&envelope)? else {
+        let Some(request) = Self::extract_request(envelope)? else {
             return Ok(());
         };
         let meta = request.meta;
@@ -28,22 +62,16 @@ impl MailboxSink for LeaseDomainSink {
 
         match parsed_frame {
             crate::domains::lease::protocol::LeaseClientFrame::Sub(sub_msg) => {
-                self.handle_subscription_frame(&envelope, meta, request_started, sub_msg);
+                self.handle_subscription_frame(envelope, meta, request_started, sub_msg);
                 Ok(())
             }
             crate::domains::lease::protocol::LeaseClientFrame::Op(lease_msg) => {
-                self.handle_actor_operation_frame(&envelope, meta, request_started, lease_msg);
+                self.handle_actor_operation_frame(envelope, meta, request_started, lease_msg);
                 Ok(())
             }
         }
     }
 
-    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        self.deliver(envelope)
-    }
-}
-
-impl LeaseDomainSink {
     fn handle_cleanup_envelope(&self, envelope: &Envelope) -> bool {
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
             self.cleanup_session(cleanup.session_id);

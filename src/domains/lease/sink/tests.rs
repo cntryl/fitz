@@ -45,6 +45,56 @@ fn drain_mailbox(mailbox: &Mailbox) {
     while mailbox.receiver().try_recv().is_ok() {}
 }
 
+fn receive_envelope(mailbox: &Mailbox, label: &str) -> Envelope {
+    mailbox
+        .receiver()
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap_or_else(|_| panic!("{label}"))
+}
+
+fn assert_no_envelope(mailbox: &Mailbox) {
+    assert!(mailbox
+        .receiver()
+        .recv_timeout(Duration::from_millis(50))
+        .is_err());
+}
+
+fn wait_for_lease_count(sink: &LeaseDomainSink, expected: usize) {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while Instant::now() < deadline {
+        if sink.lease_count() == expected {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(sink.lease_count(), expected);
+}
+
+fn wait_for_subscription_count(sink: &LeaseDomainSink, expected: usize) {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while Instant::now() < deadline {
+        if sink.subscription_count() == expected {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(sink.subscription_count(), expected);
+}
+
+fn wait_for_admin_lease_count(
+    admin_read_model: &crate::control::admin::read_model::AdminReadModel,
+    expected: usize,
+) {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while Instant::now() < deadline {
+        if admin_read_model.leases(None).len() == expected {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(admin_read_model.leases(None).len(), expected);
+}
+
 fn lease_key(family: RouteFamily, route: &str) -> LeaseKey {
     LeaseKey::from_route(family, &Route::new(route)).expect("valid lease route")
 }
@@ -59,7 +109,8 @@ fn should_create_lease_domain_sink() {
     let sink = LeaseDomainSink::new(router, admin_read_model);
 
     // Assert
-    assert!(sink.active.load(Ordering::Relaxed));
+    assert!(sink.state.active.load(Ordering::Relaxed));
+    assert!(sink.is_actor_running());
 }
 
 #[test]
@@ -88,10 +139,7 @@ fn should_clear_session_state_given_session_cleanup() {
         ),
     ))
     .expect("acquire lease");
-    let _acquire_ack = subscriber_mailbox
-        .receiver()
-        .try_recv()
-        .expect("acquire ack envelope");
+    let _acquire_ack = receive_envelope(&subscriber_mailbox, "acquire ack envelope");
     sink.deliver(Envelope::from_route(
         subscriber_address.clone(),
         lease_address,
@@ -104,10 +152,10 @@ fn should_clear_session_state_given_session_cleanup() {
         ),
     ))
     .expect("subscribe lease route");
-    let _subscribe_ack = subscriber_mailbox
-        .receiver()
-        .try_recv()
-        .expect("subscribe ack envelope");
+    let _subscribe_ack = receive_envelope(&subscriber_mailbox, "subscribe ack envelope");
+    wait_for_lease_count(&sink, 1);
+    wait_for_subscription_count(&sink, 1);
+    wait_for_admin_lease_count(&admin_read_model, 1);
     assert_eq!(sink.lease_count(), 1);
     assert_eq!(sink.subscription_count(), 1);
     assert_eq!(admin_read_model.leases(None).len(), 1);
@@ -132,13 +180,16 @@ fn should_clear_session_state_given_session_cleanup() {
         ),
     ))
     .expect("deliver lease publish event");
+    wait_for_lease_count(&sink, 0);
+    wait_for_subscription_count(&sink, 0);
+    wait_for_admin_lease_count(&admin_read_model, 0);
 
     // Assert
     assert_eq!(sink.lease_count(), 0);
     assert_eq!(sink.subscription_count(), 0);
     assert!(admin_read_model.leases(None).is_empty());
-    assert!(subscriber_mailbox.receiver().try_recv().is_err());
-    assert!(sink.core.families.lock().is_empty());
+    assert_no_envelope(&subscriber_mailbox);
+    assert!(sink.state.core.families.lock().is_empty());
 }
 
 #[test]
@@ -175,9 +226,13 @@ fn should_preserve_other_session_leases_given_session_cleanup() {
         ),
     ))
     .expect("session 8 acquire lease");
+    wait_for_lease_count(&sink, 2);
+    wait_for_admin_lease_count(&admin_read_model, 2);
 
     // Act
     sink.cleanup_session(7);
+    wait_for_lease_count(&sink, 1);
+    wait_for_admin_lease_count(&admin_read_model, 1);
     let leases = admin_read_model.leases(None);
 
     // Assert
@@ -204,7 +259,7 @@ fn should_promote_waiter_given_extend_observes_expired_lease() {
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
     let sink = LeaseDomainSink::new(router, admin_read_model.clone());
 
-    let holder_response = sink.handle_acquire(LeaseAcquireRequest {
+    let holder_response = sink.state.runtime().handle_acquire(LeaseAcquireRequest {
         key: key.clone(),
         owner_session_id: session_id,
         owner_id: "owner1".to_string(),
@@ -221,7 +276,7 @@ fn should_promote_waiter_given_extend_observes_expired_lease() {
     else {
         panic!("expected holder acquire");
     };
-    let waiter_response = sink.handle_acquire(LeaseAcquireRequest {
+    let waiter_response = sink.state.runtime().handle_acquire(LeaseAcquireRequest {
         key: key.clone(),
         owner_session_id: waiter_session_id,
         owner_id: "owner2".to_string(),
@@ -238,27 +293,39 @@ fn should_promote_waiter_given_extend_observes_expired_lease() {
     else {
         panic!("expected queued waiter");
     };
-    sink.core.leases.lock().get_mut(&key).expect("lease").expiry = Instant::now()
+    sink.state
+        .core
+        .leases
+        .lock()
+        .get_mut(&key)
+        .expect("lease")
+        .expiry = Instant::now()
         .checked_sub(Duration::from_millis(1))
         .expect("past instant");
 
     // Act
-    let response = sink.handle_extend(&key, "owner1", holder_token, 30);
+    let response = sink
+        .state
+        .runtime()
+        .handle_extend(&key, "owner1", holder_token, 30);
     let leases = admin_read_model.leases(None);
-    let waiter_delivery = waiter_mailbox
-        .receiver()
-        .try_recv()
-        .expect("waiter acquired response");
+    let waiter_delivery = receive_envelope(&waiter_mailbox, "waiter acquired response");
 
     // Assert
     assert_eq!(response, LeaseResponse::Expired);
     assert_eq!(sink.lease_count(), 1);
-    assert_eq!(sink.pending_waiter_count(&key), 0);
+    assert_eq!(sink.state.runtime().pending_waiter_count(&key), 0);
     assert_eq!(leases.len(), 1);
     assert_eq!(leases[0].owner_session_id, "owner2");
     assert_eq!(leases[0].fencing_token, waiter_token);
-    assert!(!sink.core.session_leases.lock().contains_key(&session_id));
+    assert!(!sink
+        .state
+        .core
+        .session_leases
+        .lock()
+        .contains_key(&session_id));
     assert!(sink
+        .state
         .core
         .session_leases
         .lock()
@@ -293,10 +360,7 @@ fn should_remove_admin_lease_given_release() {
         ),
     ))
     .expect("acquire lease");
-    let acquire_ack = subscriber_mailbox
-        .receiver()
-        .try_recv()
-        .expect("acquire ack envelope");
+    let acquire_ack = receive_envelope(&subscriber_mailbox, "acquire ack envelope");
     let frame_ctx = acquire_ack
         .payload::<FrameContext>()
         .cloned()
@@ -325,6 +389,9 @@ fn should_remove_admin_lease_given_release() {
         ),
     ))
     .expect("release lease");
+    let _release_ack = receive_envelope(&subscriber_mailbox, "release ack envelope");
+    wait_for_lease_count(&sink, 0);
+    wait_for_admin_lease_count(&admin_read_model, 0);
 
     // Assert
     assert!(admin_read_model.leases(None).is_empty());
@@ -357,10 +424,7 @@ fn should_track_admin_lease_renewals_given_extend() {
         ),
     ))
     .expect("acquire lease");
-    let acquire_ack = subscriber_mailbox
-        .receiver()
-        .try_recv()
-        .expect("acquire ack envelope");
+    let acquire_ack = receive_envelope(&subscriber_mailbox, "acquire ack envelope");
     let frame_ctx = acquire_ack
         .payload::<FrameContext>()
         .cloned()
@@ -389,10 +453,9 @@ fn should_track_admin_lease_renewals_given_extend() {
         ),
     ))
     .expect("extend lease");
-    let _extend_ack = subscriber_mailbox
-        .receiver()
-        .try_recv()
-        .expect("extend ack envelope");
+    let _extend_ack = receive_envelope(&subscriber_mailbox, "extend ack envelope");
+    wait_for_lease_count(&sink, 1);
+    wait_for_admin_lease_count(&admin_read_model, 1);
     let leases = admin_read_model.leases(None);
 
     // Assert

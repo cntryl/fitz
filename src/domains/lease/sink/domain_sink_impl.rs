@@ -1,5 +1,5 @@
 use super::model::{
-    Duration, Instant, LeaseAcquireRequest, LeaseDomainSink, Ordering, PendingAcquire,
+    Duration, Instant, LeaseAcquireRequest, LeaseDomainRuntime, Ordering, PendingAcquire,
     PendingAcquireRef, QueuedAcquireRequest, SinkLeaseState, Utc, LEASE_MAX_QUEUE_DEPTH,
     LEASE_MAX_WAIT_SECONDS,
 };
@@ -9,7 +9,7 @@ use crate::protocol::frame_context::FrameContext;
 use crate::runtime::Envelope;
 use std::collections::VecDeque;
 
-impl LeaseDomainSink {
+impl LeaseDomainRuntime<'_> {
     pub(super) fn track_session_lease(
         &self,
         session_id: u64,
