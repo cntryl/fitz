@@ -499,6 +499,7 @@ fn bench_rpc_worker_subscribe_primary(c: &mut Criterion) {
     group.finish();
 }
 
+#[allow(clippy::too_many_lines)]
 fn bench_rpc_dispatch_primary(c: &mut Criterion) {
     let mut group = c.benchmark_group("subsystem_rpc");
     group.sampling_mode(SamplingMode::Flat);

@@ -191,27 +191,21 @@ fn service_worker_for_route(
 
         let mut handled_request = false;
         for frame in frames {
-            match frame.msg_type.as_u16() {
-                302 => {
-                    handled_request = true;
-                    if let Ok(RpcMessage::Request(request)) =
-                        parse_request(&frame, &frame.payload, family)
-                    {
-                        route_worker_frame_to_route(
-                            router,
-                            family,
-                            worker_session_id,
-                            worker_source,
-                            route,
-                            &build_rpc_response_frame(
-                                request.correlation_id,
-                                request.body.as_ref(),
-                            ),
-                        );
-                        responses += 1;
-                    }
+            if frame.msg_type.as_u16() == 302 {
+                handled_request = true;
+                if let Ok(RpcMessage::Request(request)) =
+                    parse_request(&frame, &frame.payload, family)
+                {
+                    route_worker_frame_to_route(
+                        router,
+                        family,
+                        worker_session_id,
+                        worker_source,
+                        route,
+                        &build_rpc_response_frame(request.correlation_id, request.body.as_ref()),
+                    );
+                    responses += 1;
                 }
-                _ => {}
             }
         }
 
