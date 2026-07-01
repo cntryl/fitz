@@ -154,6 +154,11 @@ impl ScheduleDomainSink {
         self.actor.is_running()
     }
 
+    #[cfg(test)]
+    pub(super) fn stop_actor_for_tests(&self) {
+        self.actor.stop();
+    }
+
     /// # Errors
     ///
     /// Returns an error when listing column families or preloading a persisted
@@ -246,7 +251,18 @@ impl ScheduleDomainSink {
     }
 
     pub(crate) fn refresh_admin_snapshot_if_dirty(&self) {
-        self.state.runtime().refresh_admin_snapshot_if_dirty();
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        if let Err(error) = self
+            .actor
+            .try_send_high_priority(ScheduleDomainCommand::RefreshAdminSnapshotIfDirty(reply_tx))
+        {
+            tracing::warn!(domain = "schedule", error = %error, "Schedule admin snapshot refresh enqueue failed");
+            return;
+        }
+
+        if let Err(error) = reply_rx.recv_timeout(std::time::Duration::from_secs(1)) {
+            tracing::warn!(domain = "schedule", error = %error, "Schedule admin snapshot refresh reply failed");
+        }
     }
 
     #[doc(hidden)]

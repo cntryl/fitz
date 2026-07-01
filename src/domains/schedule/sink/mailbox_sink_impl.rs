@@ -35,6 +35,10 @@ impl Actor for ScheduleDomainActor {
             ScheduleDomainCommand::ReadPendingClaims(route_family, reply) => {
                 let _ = reply.send(runtime.admin_pending_claims(route_family));
             }
+            ScheduleDomainCommand::RefreshAdminSnapshotIfDirty(reply) => {
+                runtime.refresh_admin_snapshot_if_dirty();
+                let _ = reply.send(());
+            }
             ScheduleDomainCommand::ScanDueSchedules => {
                 runtime.scan_due_schedules();
             }

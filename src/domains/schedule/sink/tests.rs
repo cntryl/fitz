@@ -560,6 +560,29 @@ fn should_read_admin_pending_claims_through_actor_command() {
 }
 
 #[test]
+fn should_route_schedule_admin_refresh_through_actor_command() {
+    // Arrange
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = ScheduleDomainSink::new(store, router, admin_read_model);
+    sink.state
+        .core
+        .snapshot_dirty
+        .store(true, Ordering::Relaxed);
+    assert!(sink.state.core.snapshot_dirty.load(Ordering::Relaxed));
+
+    // Act
+    sink.stop_actor_for_tests();
+    sink.refresh_admin_snapshot_if_dirty();
+    let snapshot_dirty = sink.state.core.snapshot_dirty.load(Ordering::Relaxed);
+
+    // Assert
+    assert!(!sink.is_actor_running());
+    assert!(snapshot_dirty);
+}
+
+#[test]
 fn should_remove_schedule_subscriptions_given_session_cleanup() {
     // Arrange
     let family = RouteFamily::new(1);

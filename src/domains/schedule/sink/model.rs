@@ -213,6 +213,7 @@ pub(super) enum ScheduleDomainCommand {
         crate::runtime::routing::RouteFamily,
         crossbeam_channel::Sender<Vec<crate::control::admin::SchedulePendingClaimInfo>>,
     ),
+    RefreshAdminSnapshotIfDirty(crossbeam_channel::Sender<()>),
     ScanDueSchedules,
 }
 

@@ -542,12 +542,12 @@ Current Notice behavior is intentionally ephemeral:
 - Admin path: lease snapshots flow through `AdminReadModel`; waiter inspection uses the explicit `Runtime::lease_list_waiters()` facade, which sends a command/reply read to `LeaseDomainActor`.
 
 #### Schedule
-- Actor owner: `ScheduleDomainActor` is the production managed actor for delivery, cleanup, and due-scan commands; `ScheduleActor` owns durable definition state, next-fire tracking, pending claims, and due-scan normalization for one route family.
+- Actor owner: `ScheduleDomainActor` is the production managed actor for delivery, cleanup, due-scan commands, and admin snapshot refresh; `ScheduleActor` owns durable definition state, next-fire tracking, pending claims, and due-scan normalization for one route family.
 - Current production boundary: `ScheduleDomainSink` is the mailbox adapter, and `ScheduleDomainRuntime` executes against `ScheduleDomainCore` inside the managed actor mailbox.
 - Persistence: schedule definitions, next-fire state, and pending claims are durable timing intent; subscriber watches and transient handoff coordination are ephemeral.
 - Cleanup: disconnect removes live watches but does not erase persisted schedule intent or imply replay of every missed interval after downtime.
 - `RouteFamily`/`realm`: schedules stay partitioned by exact `RouteFamily`, while `realm` remains an application-defined route label that is never derived from the family.
-- Admin path: schedule projections flow through `Runtime::schedule_list_schedules()`; pending claim inspection uses `Runtime::schedule_list_pending_claims()`, which sends a command/reply read to `ScheduleDomainActor`.
+- Admin path: schedule projections flow through `Runtime::schedule_list_schedules()` after actor-owned snapshot refresh; pending claim inspection uses `Runtime::schedule_list_pending_claims()`, which sends a command/reply read to `ScheduleDomainActor`.
 
 **Historical sketch (outdated shape, not the current implementation):**
 ```rust
