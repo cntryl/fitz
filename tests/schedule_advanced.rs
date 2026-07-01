@@ -17,6 +17,10 @@ use std::time::{Duration, Instant};
 
 // ========== Helper ==========
 
+fn u128_to_u64_saturating(value: u128) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
 fn make_schedule_actor() -> ScheduleActor {
     let store = create_test_engine_with_cfs(vec![1, 2, 3]);
     ScheduleActor::new(
@@ -50,17 +54,23 @@ impl MockClock {
     fn advance(&self, duration: Duration) {
         let mut state = self.state.lock().expect("lock mock clock");
         state.instant += duration;
-        state.epoch_ms = state.epoch_ms.saturating_add(duration.as_millis() as u64);
+        state.epoch_ms = state
+            .epoch_ms
+            .saturating_add(u128_to_u64_saturating(duration.as_millis()));
     }
 
     fn advance_epoch(&self, duration: Duration) {
         let mut state = self.state.lock().expect("lock mock clock");
-        state.epoch_ms = state.epoch_ms.saturating_add(duration.as_millis() as u64);
+        state.epoch_ms = state
+            .epoch_ms
+            .saturating_add(u128_to_u64_saturating(duration.as_millis()));
     }
 
     fn rewind_epoch(&self, duration: Duration) {
         let mut state = self.state.lock().expect("lock mock clock");
-        state.epoch_ms = state.epoch_ms.saturating_sub(duration.as_millis() as u64);
+        state.epoch_ms = state
+            .epoch_ms
+            .saturating_sub(u128_to_u64_saturating(duration.as_millis()));
     }
 }
 
@@ -75,11 +85,12 @@ impl Clock for MockClock {
 }
 
 fn epoch_ms(year: i32, month: u32, day: u32, hour: u32, minute: u32, second: u32) -> u64 {
-    chrono::Utc
+    let millis = chrono::Utc
         .with_ymd_and_hms(year, month, day, hour, minute, second)
         .single()
         .expect("valid datetime")
-        .timestamp_millis() as u64
+        .timestamp_millis();
+    u64::try_from(millis).expect("test datetime should be after unix epoch")
 }
 
 fn make_schedule_actor_with_clock(clock: Arc<dyn Clock>) -> ScheduleActor {
@@ -302,7 +313,7 @@ fn should_skip_missed_occurrences_given_forward_epoch_jump() {
         fitz::domains::schedule::ScheduleResponse::Ok
     ));
     clock.advance(Duration::from_millis(20));
-    clock.advance_epoch(Duration::from_secs(180));
+    clock.advance_epoch(Duration::from_mins(3));
 
     // Act
     let first_fire = actor.collect_due_occurrences_for_publish();
