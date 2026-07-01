@@ -1,7 +1,7 @@
 use super::model::{
     Arc, AtomicBool, AtomicU64, HashMap, Instant, LeaseDomainActor, LeaseDomainCommand,
-    LeaseDomainCore, LeaseDomainRuntime, LeaseDomainSink, LeaseDomainState, LeaseMetrics, Mutex,
-    Ordering, SinkLeaseState, Utc, VecDeque,
+    LeaseDomainCore, LeaseDomainRuntime, LeaseDomainSink, LeaseDomainState, LeaseLiveCounts,
+    LeaseMetrics, Mutex, Ordering, SinkLeaseState, Utc, VecDeque,
 };
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::runtime::Router;
@@ -103,6 +103,11 @@ impl LeaseDomainSink {
         self.actor.is_running()
     }
 
+    #[cfg(test)]
+    pub(super) fn stop_actor_for_tests(&self) {
+        self.actor.stop();
+    }
+
     pub fn cleanup_session(&self, session_id: u64) {
         if let Err(error) = self
             .actor
@@ -122,11 +127,26 @@ impl LeaseDomainSink {
     }
 
     pub fn lease_count(&self) -> usize {
-        self.state.runtime().lease_count()
+        self.live_counts().leases
     }
 
     pub fn subscription_count(&self) -> usize {
-        self.state.runtime().subscription_count()
+        self.live_counts().subscriptions
+    }
+
+    fn live_counts(&self) -> LeaseLiveCounts {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        if let Err(error) = self
+            .actor
+            .try_send_high_priority(LeaseDomainCommand::ReadLiveCounts(reply_tx))
+        {
+            tracing::warn!(domain = "lease", error = %error, "Lease live-count query enqueue failed");
+            return LeaseLiveCounts::default();
+        }
+
+        reply_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap_or_default()
     }
 
     pub fn admin_waiters(&self) -> Vec<crate::control::admin::LeaseWaiterInfo> {
@@ -235,6 +255,13 @@ impl LeaseDomainRuntime<'_> {
             .values()
             .map(VecDeque::len)
             .sum()
+    }
+
+    pub(super) fn live_counts(&self) -> LeaseLiveCounts {
+        LeaseLiveCounts {
+            leases: self.lease_count(),
+            subscriptions: self.subscription_count(),
+        }
     }
 
     pub fn admin_waiters(&self) -> Vec<crate::control::admin::LeaseWaiterInfo> {

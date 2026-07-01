@@ -32,6 +32,9 @@ impl Actor for LeaseDomainActor {
             LeaseDomainCommand::CleanupSession(session_id) => {
                 runtime.cleanup_session(session_id);
             }
+            LeaseDomainCommand::ReadLiveCounts(reply) => {
+                let _ = reply.send(runtime.live_counts());
+            }
             LeaseDomainCommand::ReadWaiters(reply) => {
                 let _ = reply.send(runtime.admin_waiters());
             }

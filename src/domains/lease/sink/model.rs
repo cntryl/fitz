@@ -107,9 +107,16 @@ pub(super) struct LeaseDomainRuntime<'a> {
     pub(super) active: &'a AtomicBool,
 }
 
+#[derive(Default)]
+pub(super) struct LeaseLiveCounts {
+    pub(super) leases: usize,
+    pub(super) subscriptions: usize,
+}
+
 pub(super) enum LeaseDomainCommand {
     Deliver(Envelope),
     CleanupSession(u64),
+    ReadLiveCounts(crossbeam_channel::Sender<LeaseLiveCounts>),
     ReadWaiters(crossbeam_channel::Sender<Vec<crate::control::admin::LeaseWaiterInfo>>),
     SweepExpiredState,
 }
