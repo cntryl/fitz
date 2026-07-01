@@ -1,24 +1,58 @@
 use super::model::{
-    DeliveryError, Envelope, MailboxSink, Ordering, ScheduleDomainSink, ScheduleSubscription,
-    ScheduleSubscriptionSet,
+    DeliveryError, Envelope, MailboxSink, Ordering, ScheduleDomainActor, ScheduleDomainCommand,
+    ScheduleDomainRuntime, ScheduleDomainSink, ScheduleSubscription, ScheduleSubscriptionSet,
 };
 #[cfg(test)]
 use crate::protocol::frame_context::FrameContext;
+use crate::runtime::{Actor, Context};
 
 impl MailboxSink for ScheduleDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        if self.handle_cleanup_envelope(&envelope) {
+        self.actor
+            .try_send(ScheduleDomainCommand::Deliver(envelope))
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.actor
+            .try_send_high_priority(ScheduleDomainCommand::Deliver(envelope))
+    }
+}
+
+impl Actor for ScheduleDomainActor {
+    type Message = ScheduleDomainCommand;
+
+    fn receive(&mut self, msg: Self::Message, _ctx: &mut Context<Self>) {
+        let runtime = self.state.runtime();
+        match msg {
+            ScheduleDomainCommand::Deliver(envelope) => {
+                if let Err(error) = runtime.deliver_envelope(&envelope) {
+                    tracing::warn!(domain = "schedule", error = %error, "Schedule actor delivery failed");
+                }
+            }
+            ScheduleDomainCommand::CleanupSession(session_id) => {
+                runtime.unsubscribe_all(session_id);
+            }
+            ScheduleDomainCommand::ScanDueSchedules => {
+                runtime.scan_due_schedules();
+            }
+        }
+    }
+}
+
+impl ScheduleDomainRuntime<'_> {
+    pub(super) fn deliver_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {
+        if self.handle_cleanup_envelope(envelope) {
             return Ok(());
         }
         self.ensure_active()?;
 
-        if self.handle_domain_publish_envelope(&envelope) {
+        if self.handle_domain_publish_envelope(envelope) {
             return Ok(());
         }
 
-        Self::log_delivery(&envelope);
+        Self::log_delivery(envelope);
 
-        let Some(request) = Self::extract_request(&envelope)? else {
+        let Some(request) = Self::extract_request(envelope)? else {
             return Ok(());
         };
         let meta = request.meta;
@@ -30,7 +64,7 @@ impl MailboxSink for ScheduleDomainSink {
         let route_family = *route_addr.family();
 
         let Some((response, schedule_snapshot_dirty)) = self.dispatch_schedule_message(
-            &envelope,
+            envelope,
             meta,
             request_started,
             route_family,
@@ -43,17 +77,11 @@ impl MailboxSink for ScheduleDomainSink {
             self.schedule_admin_snapshot(false);
         }
 
-        self.route_schedule_response(&envelope, meta, &response, request_started);
+        self.route_schedule_response(envelope, meta, &response, request_started);
 
         Ok(())
     }
 
-    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        self.deliver(envelope)
-    }
-}
-
-impl ScheduleDomainSink {
     fn handle_cleanup_envelope(&self, envelope: &Envelope) -> bool {
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
             self.unsubscribe_all(cleanup.session_id);

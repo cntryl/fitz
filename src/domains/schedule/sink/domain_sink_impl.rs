@@ -1,11 +1,13 @@
 use super::model::{
     now_epoch_ms, schedule_admin_snapshot_due, Arc, AtomicBool, AtomicU64, Entry, Envelope,
-    HashMap, HashSet, Instant, Mutex, Ordering, PendingFireKey, Router, ScheduleDomainCore,
-    ScheduleDomainSink, ScheduleMetrics, ScheduleSubscription, VecDeque,
+    HashMap, HashSet, Instant, Mutex, Ordering, PendingFireKey, Router, ScheduleDomainActor,
+    ScheduleDomainCommand, ScheduleDomainCore, ScheduleDomainRuntime, ScheduleDomainSink,
+    ScheduleDomainState, ScheduleMetrics, ScheduleSubscription, VecDeque,
     SCHEDULE_PENDING_CLAIM_CLEANUP_INTERVAL_MS, SCHEDULE_PENDING_CLAIM_TTL_MS,
 };
 #[cfg(test)]
 use crate::protocol::frame_context::FrameContext;
+use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
 type PendingAckRetryMap = HashMap<crate::runtime::routing::RouteFamily, Vec<PendingFireKey>>;
 type LivePublishCandidate = (
@@ -19,6 +21,58 @@ struct DueScanPlan {
     live_publish_candidates: Vec<LivePublishCandidate>,
     ack_retry_candidates: PendingAckRetryMap,
     snapshot_dirty: bool,
+}
+
+impl ScheduleDomainState {
+    fn new_with_storage(
+        store: crate::storage::FitzStorageEngine,
+        router: Arc<Router>,
+        admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
+    ) -> Self {
+        Self {
+            core: ScheduleDomainCore {
+                store,
+                actors: Mutex::new(HashMap::new()),
+                sub_families: Mutex::new(HashMap::new()),
+                next_sub_id: AtomicU64::new(1),
+                router,
+                admin_read_model,
+                snapshot_dirty: AtomicBool::new(false),
+                snapshot_syncing: AtomicBool::new(false),
+                last_snapshot_elapsed_us: AtomicU64::new(0),
+                snapshot_epoch: Instant::now(),
+                live_publish_failures: AtomicU64::new(0),
+                ack_failures: AtomicU64::new(0),
+                pending_ack_retries: Mutex::new(HashMap::new()),
+                pending_claim_ttl_ms: AtomicU64::new(SCHEDULE_PENDING_CLAIM_TTL_MS),
+                last_pending_claim_cleanup_elapsed_ms: AtomicU64::new(0),
+                recent_acknowledgement_ms: Mutex::new(VecDeque::new()),
+                write_options: cntryl_midge::WriteOptions::buffered(),
+                metrics: None,
+            },
+            active: AtomicBool::new(true),
+        }
+    }
+
+    pub(super) fn runtime(&self) -> ScheduleDomainRuntime<'_> {
+        ScheduleDomainRuntime {
+            core: &self.core,
+            active: &self.active,
+        }
+    }
+}
+
+impl ScheduleDomainActor {
+    pub(super) fn new(state: Arc<ScheduleDomainState>) -> Self {
+        Self { state }
+    }
+
+    pub(super) fn route_address() -> RouteAddress {
+        RouteAddress::new(
+            RouteFamily::new(0),
+            Route::new("internal://domain/schedule"),
+        )
+    }
 }
 
 impl ScheduleDomainSink {
@@ -39,34 +93,41 @@ impl ScheduleDomainSink {
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
     ) -> Self {
-        Self {
-            core: ScheduleDomainCore {
-                store,
-                actors: Mutex::new(HashMap::new()),
-                sub_families: Mutex::new(HashMap::new()),
-                next_sub_id: AtomicU64::new(1),
-                router,
-                admin_read_model,
-                snapshot_dirty: AtomicBool::new(false),
-                snapshot_syncing: AtomicBool::new(false),
-                last_snapshot_elapsed_us: AtomicU64::new(0),
-                snapshot_epoch: Instant::now(),
-                live_publish_failures: AtomicU64::new(0),
-                ack_failures: AtomicU64::new(0),
-                pending_ack_retries: Mutex::new(HashMap::new()),
-                pending_claim_ttl_ms: SCHEDULE_PENDING_CLAIM_TTL_MS,
-                last_pending_claim_cleanup_elapsed_ms: AtomicU64::new(0),
-                recent_acknowledgement_ms: Mutex::new(VecDeque::new()),
-                write_options: cntryl_midge::WriteOptions::buffered(),
-                metrics: None,
-            },
-            active: AtomicBool::new(true),
-        }
+        let state = Arc::new(ScheduleDomainState::new_with_storage(
+            store,
+            router,
+            admin_read_model,
+        ));
+        let actor = Self::spawn_actor(state.clone());
+        Self { state, actor }
+    }
+
+    fn spawn_actor(
+        state: Arc<ScheduleDomainState>,
+    ) -> crate::runtime::ManagedActor<ScheduleDomainCommand> {
+        crate::runtime::ManagedActor::spawn(
+            state.core.router.clone(),
+            ScheduleDomainActor::route_address(),
+            ScheduleDomainActor::new(state),
+            1024,
+        )
+    }
+
+    fn rebuild_actor(&mut self) {
+        self.actor.stop();
+        self.actor = Self::spawn_actor(self.state.clone());
+    }
+
+    fn state_for_builder(&mut self) -> &mut ScheduleDomainState {
+        Arc::get_mut(&mut self.state)
+            .expect("Schedule sink builders must run before sharing the sink")
     }
 
     #[must_use]
     pub fn with_write_options(mut self, write_options: cntryl_midge::WriteOptions) -> Self {
-        self.core.write_options = write_options;
+        self.actor.stop();
+        self.state_for_builder().core.write_options = write_options;
+        self.rebuild_actor();
         self
     }
 
@@ -75,13 +136,22 @@ impl ScheduleDomainSink {
         mut self,
         collector: crate::observability::metrics::MetricsCollector,
     ) -> Self {
-        self.core.metrics = Some(ScheduleMetrics::new(collector));
-        self.refresh_metrics_gauges();
+        self.actor.stop();
+        let state = self.state_for_builder();
+        state.core.metrics = Some(ScheduleMetrics::new(collector));
+        state.runtime().refresh_metrics_gauges();
+        self.rebuild_actor();
         self
     }
 
     pub fn stop(&self) {
-        self.active.store(false, Ordering::Relaxed);
+        self.state.active.store(false, Ordering::Relaxed);
+        self.actor.stop();
+    }
+
+    #[cfg(test)]
+    pub(super) fn is_actor_running(&self) -> bool {
+        self.actor.is_running()
     }
 
     /// # Errors
@@ -89,6 +159,94 @@ impl ScheduleDomainSink {
     /// Returns an error when listing column families or preloading a persisted
     /// schedule actor fails.
     pub fn preload_persisted_families(&self) -> Result<(), String> {
+        self.state.runtime().preload_persisted_families()
+    }
+
+    pub(crate) fn is_active(&self) -> bool {
+        self.state.active.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn scan_due_schedules(&self) {
+        if let Err(error) = self
+            .actor
+            .try_send_high_priority(ScheduleDomainCommand::ScanDueSchedules)
+        {
+            tracing::warn!(domain = "schedule", error = %error, "Schedule due scan enqueue failed");
+        }
+    }
+
+    pub(crate) fn force_due_scan_for_tests(&self, ready_count: usize) {
+        self.state.runtime().force_due_scan_for_tests(ready_count);
+    }
+
+    pub fn unsubscribe_all(&self, session_id: u64) {
+        if let Err(error) = self
+            .actor
+            .try_send_high_priority(ScheduleDomainCommand::CleanupSession(session_id))
+        {
+            tracing::warn!(domain = "schedule", error = %error, "Schedule cleanup enqueue failed");
+        }
+    }
+
+    pub fn subscription_count(&self) -> usize {
+        self.state.runtime().subscription_count()
+    }
+
+    pub fn schedule_count(&self) -> usize {
+        self.state.runtime().schedule_count()
+    }
+
+    pub fn pending_fire_count(&self) -> usize {
+        self.state.runtime().pending_fire_count()
+    }
+
+    pub fn executions_per_minute(&self) -> f64 {
+        self.state.runtime().executions_per_minute()
+    }
+
+    pub fn notify_failure_count(&self) -> u64 {
+        self.state.runtime().notify_failure_count()
+    }
+
+    pub fn ack_failure_count(&self) -> u64 {
+        self.state.runtime().ack_failure_count()
+    }
+
+    pub fn pending_ack_retry_count(&self) -> usize {
+        self.state.runtime().pending_ack_retry_count()
+    }
+
+    pub fn admin_pending_claims(
+        &self,
+        route_family: crate::runtime::routing::RouteFamily,
+    ) -> Vec<crate::control::admin::SchedulePendingClaimInfo> {
+        self.state.runtime().admin_pending_claims(route_family)
+    }
+
+    pub fn oldest_pending_claim_age_seconds(&self) -> u64 {
+        self.state.runtime().oldest_pending_claim_age_seconds()
+    }
+
+    pub fn overdue_normalization_count(&self) -> u64 {
+        self.state.runtime().overdue_normalization_count()
+    }
+
+    pub(crate) fn refresh_admin_snapshot_if_dirty(&self) {
+        self.state.runtime().refresh_admin_snapshot_if_dirty();
+    }
+
+    #[doc(hidden)]
+    pub fn bench_publish_event(&self, event: &crate::runtime::DomainPublishEvent) {
+        self.state.runtime().bench_publish_event(event);
+    }
+}
+
+impl ScheduleDomainRuntime<'_> {
+    /// # Errors
+    ///
+    /// Returns an error when listing column families or preloading a persisted
+    /// schedule actor fails.
+    pub(super) fn preload_persisted_families(&self) -> Result<(), String> {
         let column_families = self
             .core
             .store
@@ -135,11 +293,7 @@ impl ScheduleDomainSink {
         Ok(())
     }
 
-    pub(crate) fn is_active(&self) -> bool {
-        self.active.load(Ordering::Relaxed)
-    }
-
-    pub(crate) fn scan_due_schedules(&self) {
+    pub(super) fn scan_due_schedules(&self) {
         let DueScanPlan {
             live_publish_candidates,
             mut ack_retry_candidates,
@@ -211,7 +365,9 @@ impl ScheduleDomainSink {
             return false;
         }
 
-        match actor.cleanup_stale_pending_claims(self.core.pending_claim_ttl_ms) {
+        match actor
+            .cleanup_stale_pending_claims(self.core.pending_claim_ttl_ms.load(Ordering::Relaxed))
+        {
             Ok(expired) if expired > 0 => {
                 if let Some(metrics) = &self.core.metrics {
                     metrics.record_pending_claims_expired(expired);

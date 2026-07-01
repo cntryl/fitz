@@ -1,5 +1,5 @@
 pub(super) use crate::domains::schedule::ScheduleMetrics;
-pub(super) use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
+pub(super) use crate::runtime::{DeliveryError, Envelope, MailboxSink, ManagedActor, Router};
 pub(super) use parking_lot::Mutex;
 pub(super) use std::collections::hash_map::Entry;
 pub(super) use std::collections::{HashMap, HashSet, VecDeque};
@@ -185,7 +185,7 @@ pub(super) struct ScheduleDomainCore {
     /// broker process but still waiting for durable acknowledgement retry.
     pub(super) pending_ack_retries: Mutex<HashMap<u64, HashSet<PendingFireKey>>>,
     /// Maximum age for a pending claimed fire before cleanup removes it.
-    pub(super) pending_claim_ttl_ms: u64,
+    pub(super) pending_claim_ttl_ms: AtomicU64,
     /// Last monotonic cleanup sweep time, measured relative to `snapshot_epoch`.
     pub(super) last_pending_claim_cleanup_elapsed_ms: AtomicU64,
     /// Rolling window of acknowledged handoff timestamps for the legacy
@@ -196,7 +196,27 @@ pub(super) struct ScheduleDomainCore {
     pub(super) metrics: Option<ScheduleMetrics>,
 }
 
-pub struct ScheduleDomainSink {
+pub(super) struct ScheduleDomainState {
     pub(super) core: ScheduleDomainCore,
     pub(super) active: AtomicBool,
+}
+
+pub(super) struct ScheduleDomainRuntime<'a> {
+    pub(super) core: &'a ScheduleDomainCore,
+    pub(super) active: &'a AtomicBool,
+}
+
+pub(super) enum ScheduleDomainCommand {
+    Deliver(Envelope),
+    CleanupSession(u64),
+    ScanDueSchedules,
+}
+
+pub(super) struct ScheduleDomainActor {
+    pub(super) state: Arc<ScheduleDomainState>,
+}
+
+pub struct ScheduleDomainSink {
+    pub(super) state: Arc<ScheduleDomainState>,
+    pub(super) actor: ManagedActor<ScheduleDomainCommand>,
 }

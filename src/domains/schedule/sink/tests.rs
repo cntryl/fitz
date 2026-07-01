@@ -74,6 +74,97 @@ fn drain_mailbox(mailbox: &Mailbox) {
     while mailbox.receiver().try_recv().is_ok() {}
 }
 
+fn receive_envelope(mailbox: &Mailbox, label: &str) -> crate::runtime::Envelope {
+    mailbox
+        .receiver()
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap_or_else(|_| panic!("{label}"))
+}
+
+fn assert_no_envelope(mailbox: &Mailbox) {
+    assert!(mailbox
+        .receiver()
+        .recv_timeout(Duration::from_millis(50))
+        .is_err());
+}
+
+fn wait_for_schedule_count(sink: &ScheduleDomainSink, expected: usize) {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while Instant::now() < deadline {
+        if sink.schedule_count() == expected {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(sink.schedule_count(), expected);
+}
+
+fn wait_for_subscription_count(sink: &ScheduleDomainSink, expected: usize) {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while Instant::now() < deadline {
+        if sink.subscription_count() == expected {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(sink.subscription_count(), expected);
+}
+
+fn wait_for_pending_fire_count(sink: &ScheduleDomainSink, expected: usize) {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while Instant::now() < deadline {
+        if sink.pending_fire_count() == expected {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(sink.pending_fire_count(), expected);
+}
+
+fn wait_for_pending_ack_retry_count(sink: &ScheduleDomainSink, expected: usize) {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while Instant::now() < deadline {
+        if sink.pending_ack_retry_count() == expected {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(sink.pending_ack_retry_count(), expected);
+}
+
+fn wait_for_notify_failure_count(sink: &ScheduleDomainSink, expected: u64) {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while Instant::now() < deadline {
+        if sink.notify_failure_count() == expected {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(sink.notify_failure_count(), expected);
+}
+
+fn wait_for_ack_failure_count(sink: &ScheduleDomainSink, expected: u64) {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while Instant::now() < deadline {
+        if sink.ack_failure_count() == expected {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(sink.ack_failure_count(), expected);
+}
+
+fn wait_for_metric_counter(metrics: &MetricsCollector, name: &str, expected: u64) {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while Instant::now() < deadline {
+        if metrics.counter_get(name) == expected {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(metrics.counter_get(name), expected);
+}
+
 #[test]
 fn should_create_schedule_domain_sink() {
     // Arrange
@@ -85,7 +176,8 @@ fn should_create_schedule_domain_sink() {
     let sink = ScheduleDomainSink::new(store, router, admin_read_model);
 
     // Assert
-    assert!(sink.active.load(Ordering::Relaxed));
+    assert!(sink.state.active.load(Ordering::Relaxed));
+    assert!(sink.is_actor_running());
 }
 
 #[test]
@@ -129,7 +221,8 @@ fn should_publish_schedule_notify_to_subscribers_when_due() {
         create_ctx,
     ))
     .expect("create schedule");
-    drain_mailbox(&subscriber_mailbox);
+    let _create_ack = receive_envelope(&subscriber_mailbox, "create ack envelope");
+    wait_for_schedule_count(&sink, 1);
 
     // Act
     sink.deliver(Envelope::from_route(
@@ -138,10 +231,7 @@ fn should_publish_schedule_notify_to_subscribers_when_due() {
         subscribe_ctx,
     ))
     .expect("subscribe schedule");
-    let subscribe_envelope = subscriber_mailbox
-        .receiver()
-        .try_recv()
-        .expect("subscribe ack envelope");
+    let subscribe_envelope = receive_envelope(&subscriber_mailbox, "subscribe ack envelope");
     let subscribe_frame = subscribe_envelope
         .into_payload::<FrameContext>()
         .expect("subscribe ack frame");
@@ -151,9 +241,10 @@ fn should_publish_schedule_notify_to_subscribers_when_due() {
         .get_optional_u64()
         .expect("subscription id")
         .expect("subscription id present");
+    wait_for_subscription_count(&sink, 1);
 
     {
-        let mut actors = sink.core.actors.lock();
+        let mut actors = sink.state.core.actors.lock();
         let actor = actors.get_mut(&family).expect("schedule actor");
         actor.bench_prepare_scan(1);
     }
@@ -161,10 +252,7 @@ fn should_publish_schedule_notify_to_subscribers_when_due() {
     sink.scan_due_schedules();
 
     // Assert
-    let notify_envelope = subscriber_mailbox
-        .receiver()
-        .try_recv()
-        .expect("schedule notify envelope");
+    let notify_envelope = receive_envelope(&subscriber_mailbox, "schedule notify envelope");
     let notify_frame = notify_envelope
         .into_payload::<FrameContext>()
         .expect("schedule notify frame");
@@ -209,15 +297,17 @@ fn should_retry_pending_claim_after_restart_given_initial_live_publish_failure()
             ),
         ))
         .expect("create schedule");
+    wait_for_schedule_count(&initial_sink, 1);
 
     {
-        let mut actors = initial_sink.core.actors.lock();
+        let mut actors = initial_sink.state.core.actors.lock();
         let actor = actors.get_mut(&family).expect("schedule actor");
         actor.bench_prepare_scan(1);
     }
 
     // Act
     initial_sink.scan_due_schedules();
+    wait_for_pending_fire_count(&initial_sink, 1);
 
     let subscriber_mailbox = Arc::new(Mailbox::new(8));
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
@@ -244,10 +334,7 @@ fn should_retry_pending_claim_after_restart_given_initial_live_publish_failure()
             ),
         ))
         .expect("subscribe schedule");
-    let subscribe_envelope = subscriber_mailbox
-        .receiver()
-        .try_recv()
-        .expect("subscribe ack envelope");
+    let subscribe_envelope = receive_envelope(&subscriber_mailbox, "subscribe ack envelope");
     let subscribe_frame = subscribe_envelope
         .into_payload::<FrameContext>()
         .expect("subscribe ack frame");
@@ -261,10 +348,7 @@ fn should_retry_pending_claim_after_restart_given_initial_live_publish_failure()
     restarted_sink.scan_due_schedules();
 
     // Assert
-    let notify_envelope = subscriber_mailbox
-        .receiver()
-        .try_recv()
-        .expect("schedule notify envelope");
+    let notify_envelope = receive_envelope(&subscriber_mailbox, "schedule notify envelope");
     let notify_frame = notify_envelope
         .into_payload::<FrameContext>()
         .expect("schedule notify frame");
@@ -279,10 +363,8 @@ fn should_retry_pending_claim_after_restart_given_initial_live_publish_failure()
     assert!(notify_decoder.is_complete());
 
     restarted_sink.scan_due_schedules();
-    assert!(
-        subscriber_mailbox.receiver().try_recv().is_err(),
-        "pending claimed occurrence should be acknowledged after a successful live handoff retry"
-    );
+    wait_for_pending_fire_count(&restarted_sink, 0);
+    assert_no_envelope(&subscriber_mailbox);
 }
 
 #[test]
@@ -317,7 +399,8 @@ fn should_retry_ack_without_republishing_given_same_broker_ack_persist_failure()
         ),
     ))
     .expect("create schedule");
-    drain_mailbox(&subscriber_mailbox);
+    let _create_ack = receive_envelope(&subscriber_mailbox, "create ack envelope");
+    wait_for_schedule_count(&sink, 1);
 
     sink.deliver(Envelope::from_route(
         subscriber_address.clone(),
@@ -331,14 +414,11 @@ fn should_retry_ack_without_republishing_given_same_broker_ack_persist_failure()
         ),
     ))
     .expect("subscribe schedule");
-    let _subscribe_ack = subscriber_mailbox
-        .receiver()
-        .try_recv()
-        .expect("subscribe ack envelope");
+    let _subscribe_ack = receive_envelope(&subscriber_mailbox, "subscribe ack envelope");
     drain_mailbox(&subscriber_mailbox);
 
     {
-        let mut actors = sink.core.actors.lock();
+        let mut actors = sink.state.core.actors.lock();
         let actor = actors.get_mut(&family).expect("schedule actor");
         actor.bench_prepare_scan(1);
         let claimed = actor.bench_claim_due_fires();
@@ -348,13 +428,15 @@ fn should_retry_ack_without_republishing_given_same_broker_ack_persist_failure()
 
     // Act
     sink.scan_due_schedules();
-    let first_notify = subscriber_mailbox
-        .receiver()
-        .try_recv()
-        .expect("first schedule notify envelope");
+    let first_notify = receive_envelope(&subscriber_mailbox, "first schedule notify envelope");
+    wait_for_ack_failure_count(&sink, 1);
+    wait_for_pending_fire_count(&sink, 1);
+    wait_for_pending_ack_retry_count(&sink, 1);
     let pending_after_failed_ack = sink.pending_fire_count();
     let pending_ack_retries = sink.pending_ack_retry_count();
     sink.scan_due_schedules();
+    wait_for_pending_fire_count(&sink, 0);
+    wait_for_pending_ack_retry_count(&sink, 0);
 
     // Assert
     let notify_frame = first_notify
@@ -370,10 +452,7 @@ fn should_retry_ack_without_republishing_given_same_broker_ack_persist_failure()
     assert_eq!(pending_after_failed_ack, 1);
     assert_eq!(pending_ack_retries, 1);
     assert_eq!(sink.pending_fire_count(), 0);
-    assert!(
-        subscriber_mailbox.receiver().try_recv().is_err(),
-        "ack retry should not republish a schedule notify on the same broker"
-    );
+    assert_no_envelope(&subscriber_mailbox);
 }
 
 #[test]
@@ -388,7 +467,7 @@ fn should_store_cloud_strict_write_options_given_strict_cloud_policy() {
         .with_write_options(cntryl_midge::WriteOptions::cloud_strict());
 
     // Assert
-    assert!(sink.core.write_options.is_cloud_strict());
+    assert!(sink.state.core.write_options.is_cloud_strict());
 }
 
 #[test]
@@ -400,7 +479,7 @@ fn should_increment_expired_pending_claim_metric_when_cleanup_removes_orphans() 
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
     let metrics = MetricsCollector::new();
-    let mut sink = ScheduleDomainSink::new(store.clone(), router, admin_read_model)
+    let sink = ScheduleDomainSink::new(store.clone(), router, admin_read_model)
         .with_metrics(metrics.clone());
     let mut actor = crate::domains::schedule::ScheduleActor::new_with_clock(
         family,
@@ -421,20 +500,24 @@ fn should_increment_expired_pending_claim_metric_when_cleanup_removes_orphans() 
     let claimed = actor.bench_claim_due_fires();
     assert_eq!(claimed.len(), 1);
     clock.advance(Duration::from_millis(11));
-    sink.core.pending_claim_ttl_ms = 10;
-    let now_elapsed_ms = u128_to_u64_saturating(sink.core.snapshot_epoch.elapsed().as_millis());
-    sink.core.last_pending_claim_cleanup_elapsed_ms.store(
+    sink.state
+        .core
+        .pending_claim_ttl_ms
+        .store(10, Ordering::Relaxed);
+    let now_elapsed_ms =
+        u128_to_u64_saturating(sink.state.core.snapshot_epoch.elapsed().as_millis());
+    sink.state.core.last_pending_claim_cleanup_elapsed_ms.store(
         now_elapsed_ms.saturating_sub(SCHEDULE_PENDING_CLAIM_CLEANUP_INTERVAL_MS),
         Ordering::Relaxed,
     );
-    sink.core.actors.lock().insert(family, actor);
+    sink.state.core.actors.lock().insert(family, actor);
 
     // Act
     sink.scan_due_schedules();
 
     // Assert
-    assert_eq!(metrics.counter_get(METRIC_PENDING_CLAIMS_EXPIRED_TOTAL), 1);
-    let actors = sink.core.actors.lock();
+    wait_for_metric_counter(&metrics, METRIC_PENDING_CLAIMS_EXPIRED_TOTAL, 1);
+    let actors = sink.state.core.actors.lock();
     assert_eq!(
         actors
             .get(&family)
@@ -476,7 +559,8 @@ fn should_remove_schedule_subscriptions_given_session_cleanup() {
         ),
     ))
     .expect("create schedule");
-    drain_mailbox(&subscriber_mailbox);
+    let _create_ack = receive_envelope(&subscriber_mailbox, "create ack envelope");
+    wait_for_schedule_count(&sink, 1);
     sink.deliver(Envelope::from_route(
         subscriber_address.clone(),
         schedule_address,
@@ -489,7 +573,8 @@ fn should_remove_schedule_subscriptions_given_session_cleanup() {
         ),
     ))
     .expect("subscribe schedule");
-    drain_mailbox(&subscriber_mailbox);
+    let _subscribe_ack = receive_envelope(&subscriber_mailbox, "subscribe ack envelope");
+    wait_for_subscription_count(&sink, 1);
 
     // Act
     sink.deliver(Envelope::new(
@@ -497,17 +582,19 @@ fn should_remove_schedule_subscriptions_given_session_cleanup() {
         crate::runtime::SessionCleanup { session_id },
     ))
     .expect("cleanup session");
+    wait_for_subscription_count(&sink, 0);
     {
-        let mut actors = sink.core.actors.lock();
+        let mut actors = sink.state.core.actors.lock();
         let actor = actors.get_mut(&family).expect("schedule actor");
         actor.bench_prepare_scan(1);
     }
     sink.scan_due_schedules();
+    wait_for_pending_fire_count(&sink, 0);
 
     // Assert
     assert_eq!(sink.subscription_count(), 0);
-    assert!(subscriber_mailbox.receiver().try_recv().is_err());
-    assert!(sink.core.sub_families.lock().is_empty());
+    assert_no_envelope(&subscriber_mailbox);
+    assert!(sink.state.core.sub_families.lock().is_empty());
 }
 
 #[test]
@@ -540,10 +627,8 @@ fn should_retain_other_schedule_subscription_given_unsubscribe_on_same_session()
         ),
     ))
     .expect("subscribe removed schedule route");
-    let _removed_subscribe_ack = subscriber_mailbox
-        .receiver()
-        .try_recv()
-        .expect("removed subscribe ack envelope");
+    let _removed_subscribe_ack =
+        receive_envelope(&subscriber_mailbox, "removed subscribe ack envelope");
 
     sink.deliver(Envelope::from_route(
         subscriber_address.clone(),
@@ -557,10 +642,9 @@ fn should_retain_other_schedule_subscription_given_unsubscribe_on_same_session()
         ),
     ))
     .expect("subscribe retained schedule route");
-    let _retained_subscribe_ack = subscriber_mailbox
-        .receiver()
-        .try_recv()
-        .expect("retained subscribe ack envelope");
+    let _retained_subscribe_ack =
+        receive_envelope(&subscriber_mailbox, "retained subscribe ack envelope");
+    wait_for_subscription_count(&sink, 2);
     assert_eq!(sink.subscription_count(), 2);
     drain_mailbox(&subscriber_mailbox);
 
@@ -577,10 +661,7 @@ fn should_retain_other_schedule_subscription_given_unsubscribe_on_same_session()
         ),
     ))
     .expect("unsubscribe removed schedule route");
-    let unsubscribe_envelope = subscriber_mailbox
-        .receiver()
-        .try_recv()
-        .expect("unsubscribe ack envelope");
+    let unsubscribe_envelope = receive_envelope(&subscriber_mailbox, "unsubscribe ack envelope");
     let unsubscribe_frame = unsubscribe_envelope
         .into_payload::<FrameContext>()
         .expect("unsubscribe ack frame");
@@ -588,6 +669,7 @@ fn should_retain_other_schedule_subscription_given_unsubscribe_on_same_session()
     let unsubscribe_status = unsubscribe_decoder.get_u8().expect("unsubscribe status");
     assert_eq!(unsubscribe_status, 0);
     assert!(unsubscribe_decoder.is_complete());
+    wait_for_subscription_count(&sink, 1);
     assert_eq!(sink.subscription_count(), 1);
 
     sink.deliver(Envelope::new(
@@ -599,7 +681,7 @@ fn should_retain_other_schedule_subscription_given_unsubscribe_on_same_session()
         ),
     ))
     .expect("deliver removed schedule event");
-    assert!(subscriber_mailbox.receiver().try_recv().is_err());
+    assert_no_envelope(&subscriber_mailbox);
 
     sink.deliver(Envelope::new(
         RouteAddress::new(family, Route::new("schedule://events/retained")),
@@ -612,10 +694,8 @@ fn should_retain_other_schedule_subscription_given_unsubscribe_on_same_session()
     .expect("deliver retained schedule event");
 
     // Assert
-    let notify_envelope = subscriber_mailbox
-        .receiver()
-        .try_recv()
-        .expect("retained schedule notify envelope");
+    let notify_envelope =
+        receive_envelope(&subscriber_mailbox, "retained schedule notify envelope");
     let notify_frame = notify_envelope
         .into_payload::<FrameContext>()
         .expect("retained schedule notify frame");
@@ -625,7 +705,7 @@ fn should_retain_other_schedule_subscription_given_unsubscribe_on_same_session()
     let notified_payload = notify_decoder.get_bytes().expect("notify payload");
     assert_eq!(notified_payload.as_ref(), b"weekly");
     assert!(notify_decoder.is_complete());
-    assert!(subscriber_mailbox.receiver().try_recv().is_err());
+    assert_no_envelope(&subscriber_mailbox);
 }
 
 #[test]
@@ -646,7 +726,7 @@ fn should_count_live_publish_failure_given_domain_routing_error() {
     // Intentionally do NOT register the "schedule" domain handler so routing fails.
 
     {
-        let mut actors = sink.core.actors.lock();
+        let mut actors = sink.state.core.actors.lock();
         let mut actor = crate::domains::schedule::ScheduleActor::new(
             family,
             store,
@@ -669,6 +749,7 @@ fn should_count_live_publish_failure_given_domain_routing_error() {
     sink.scan_due_schedules();
 
     // Assert
+    wait_for_notify_failure_count(&sink, 1);
     assert_eq!(
         sink.notify_failure_count(),
         1,

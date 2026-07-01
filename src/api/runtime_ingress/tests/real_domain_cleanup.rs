@@ -96,6 +96,28 @@ fn wait_for_lease_subscription_count(lease_sink: &LeaseDomainSink, expected: usi
     assert_eq!(lease_sink.subscription_count(), expected);
 }
 
+fn wait_for_schedule_count(schedule_sink: &ScheduleDomainSink, expected: usize) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    while std::time::Instant::now() < deadline {
+        if schedule_sink.schedule_count() == expected {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(schedule_sink.schedule_count(), expected);
+}
+
+fn wait_for_schedule_subscription_count(schedule_sink: &ScheduleDomainSink, expected: usize) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    while std::time::Instant::now() < deadline {
+        if schedule_sink.subscription_count() == expected {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(schedule_sink.subscription_count(), expected);
+}
+
 fn wait_for_admin_lease_count(
     admin_read_model: &crate::control::admin::read_model::AdminReadModel,
     expected: usize,
@@ -327,7 +349,8 @@ async fn should_cleanup_real_schedule_subscription_on_close() {
             ),
         ))
         .expect("create schedule");
-    drain_mailbox(&subscriber_mailbox);
+    let _create_ack = receive_frame(&subscriber_mailbox, "schedule create ack");
+    wait_for_schedule_count(&schedule_sink, 1);
 
     schedule_sink
         .deliver(Envelope::from_route(
@@ -342,16 +365,15 @@ async fn should_cleanup_real_schedule_subscription_on_close() {
             ),
         ))
         .expect("subscribe schedule");
-    drain_mailbox(&subscriber_mailbox);
-    assert_eq!(schedule_sink.schedule_count(), 1);
-    assert_eq!(schedule_sink.subscription_count(), 1);
+    let _subscribe_ack = receive_frame(&subscriber_mailbox, "schedule subscribe ack");
+    wait_for_schedule_subscription_count(&schedule_sink, 1);
 
     // Act
     ingress.on_close(session_id, CloseReason::ClientClose).await;
 
     // Assert
-    assert_eq!(schedule_sink.schedule_count(), 1);
-    assert_eq!(schedule_sink.subscription_count(), 0);
+    wait_for_schedule_count(&schedule_sink, 1);
+    wait_for_schedule_subscription_count(&schedule_sink, 0);
     assert!(subscriber_mailbox.receiver().try_recv().is_err());
 }
 
