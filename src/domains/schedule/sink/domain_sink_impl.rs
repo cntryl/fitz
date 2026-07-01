@@ -181,7 +181,21 @@ impl ScheduleDomainSink {
     }
 
     pub(crate) fn force_due_scan_for_tests(&self, ready_count: usize) {
-        self.state.runtime().force_due_scan_for_tests(ready_count);
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        if let Err(error) =
+            self.actor
+                .try_send_high_priority(ScheduleDomainCommand::ForceDueScanForTests(
+                    ready_count,
+                    reply_tx,
+                ))
+        {
+            tracing::warn!(domain = "schedule", error = %error, "Schedule forced due scan enqueue failed");
+            return;
+        }
+
+        if let Err(error) = reply_rx.recv_timeout(std::time::Duration::from_secs(1)) {
+            tracing::warn!(domain = "schedule", error = %error, "Schedule forced due scan reply failed");
+        }
     }
 
     pub fn unsubscribe_all(&self, session_id: u64) {

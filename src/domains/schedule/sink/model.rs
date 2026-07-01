@@ -229,6 +229,7 @@ pub(super) enum ScheduleDomainCommand {
     ),
     RefreshAdminSnapshotIfDirty(crossbeam_channel::Sender<()>),
     ScanDueSchedules,
+    ForceDueScanForTests(usize, crossbeam_channel::Sender<()>),
 }
 
 pub(super) struct ScheduleDomainActor {
