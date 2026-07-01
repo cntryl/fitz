@@ -7,10 +7,10 @@
 //! 2. **Encoded** - TLV frames built outside; in measure decode (KV codec) and call actor.
 //! 3. **TCP** - Full TCP stack: encode -> socket -> server -> decode -> actor -> encode -> socket
 //! 4. **WebSocket** - Full WS stack: encode -> WS frame -> server -> decode -> actor -> encode -> WS frame
-//! 5. **MultiClient** - N concurrent WS clients hitting domain concurrently (real concurrency).
+//! 5. **`MultiClient`** - N concurrent WS clients hitting domain concurrently (real concurrency).
 //!
 //! Each test measures a single operation with all setup/teardown outside the measurement loop.
-//! Target: ops/sec via set_elements(count), reveals performance cliffs at each layer.
+//! Target: ops/sec via `set_elements(count)`, reveals performance cliffs at each layer.
 
 #[path = "stress_config.rs"]
 mod stress_config;

@@ -6,7 +6,7 @@
 //! 1. **Direct** - Domain actor (no network) - baseline
 //! 2. **TCP** - Full TCP stack: encode -> socket -> server -> decode -> actor -> encode -> socket
 //! 3. **WebSocket** - Full WS stack: encode -> WS frame -> server -> decode -> actor -> encode -> WS frame
-//! 4. **MultiClient** - N concurrent WS clients (real concurrency)
+//! 4. **`MultiClient`** - N concurrent WS clients (real concurrency)
 
 #[path = "stress_config.rs"]
 mod stress_config;

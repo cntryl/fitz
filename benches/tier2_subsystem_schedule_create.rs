@@ -98,7 +98,7 @@ fn create_fixtures() -> ScheduleCreateFixtures {
 
 fn create_store_insert_case(fixtures: &ScheduleCreateFixtures) -> StoreInsertCase {
     let store = ScheduleStore::new(create_bench_store());
-    let next_fire_time = Instant::now() + Duration::from_secs(60 * 60);
+    let next_fire_time = Instant::now() + Duration::from_hours(1);
 
     StoreInsertCase {
         store,

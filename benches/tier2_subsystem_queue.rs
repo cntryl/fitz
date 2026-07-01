@@ -201,7 +201,7 @@ fn prepare_dequeue_case(batch_size: usize) -> PreparedDequeueCase {
     let dequeue_frame = if batch_size == 1 {
         build_queue_dequeue(ROUTE_STR)
     } else {
-        build_queue_dequeue_batch(ROUTE_STR, batch_size as u32)
+        build_queue_dequeue_batch(ROUTE_STR, u32::try_from(batch_size).unwrap_or(u32::MAX))
     };
     let (dequeue_msg_type, dequeue_payload) = extract_single_tlv_field(&dequeue_frame);
 
@@ -289,7 +289,7 @@ fn bench_queue_wait_register_primary(c: &mut Criterion) {
                 );
             },
             BatchSize::SmallInput,
-        )
+        );
     });
 
     group.finish();
@@ -335,7 +335,7 @@ fn bench_queue_enqueue_primary(c: &mut Criterion) {
                         }
                     },
                     BatchSize::SmallInput,
-                )
+                );
             },
         );
     }
@@ -374,7 +374,7 @@ fn bench_queue_dequeue_primary(c: &mut Criterion) {
                     }
                 },
                 BatchSize::SmallInput,
-            )
+            );
         });
     }
 
@@ -405,7 +405,7 @@ fn bench_queue_ack_primary(c: &mut Criterion) {
                 }
             },
             BatchSize::SmallInput,
-        )
+        );
     });
 
     group.finish();
@@ -488,7 +488,7 @@ fn bench_queue_waiter_wake_primary(c: &mut Criterion) {
                         );
                     },
                     BatchSize::SmallInput,
-                )
+                );
             },
         );
     }

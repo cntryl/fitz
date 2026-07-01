@@ -182,7 +182,7 @@ fn bench_stream_subscribe_register_primary(c: &mut Criterion) {
                 assert_stream_subscribe_success(response.as_ref());
             },
             BatchSize::SmallInput,
-        )
+        );
     });
 
     group.finish();
@@ -220,7 +220,7 @@ fn bench_stream_commit_notify_primary(c: &mut Criterion) {
                     b.iter(|| {
                         case.publish_once();
                         black_box(());
-                    })
+                    });
                 },
             );
         }

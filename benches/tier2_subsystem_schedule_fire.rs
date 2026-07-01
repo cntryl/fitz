@@ -199,7 +199,7 @@ fn bench_claim_due_persistence(c: &mut Criterion) {
                             black_box(actor.bench_claim_due_fires());
                         },
                     )
-                })
+                });
             });
         }
     }
@@ -237,7 +237,7 @@ fn bench_ack_persistence(c: &mut Criterion) {
                             );
                         },
                     )
-                })
+                });
             });
         }
     }
@@ -258,7 +258,7 @@ fn bench_publish_fanout(c: &mut Criterion) {
                 b.iter(|| {
                     sink.bench_publish_event(black_box(&event));
                     black_box(());
-                })
+                });
             },
         );
     }

@@ -15,7 +15,7 @@ fn bench_exact_match(c: &mut Criterion) {
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
     group.bench_function("exact_literal_match", |b| {
-        b.iter(|| pattern.matches(black_box(&route)))
+        b.iter(|| pattern.matches(black_box(&route)));
     });
     group.finish();
 }
@@ -33,7 +33,7 @@ fn bench_single_wildcard(c: &mut Criterion) {
         b.iter(|| {
             let _ = pattern.matches(black_box(&route_create));
             let _ = pattern.matches(black_box(&route_update));
-        })
+        });
     });
     group.finish();
 }
@@ -53,7 +53,7 @@ fn bench_double_star_end(c: &mut Criterion) {
             let _ = pattern.matches(black_box(&route_direct));
             let _ = pattern.matches(black_box(&route_level1));
             let _ = pattern.matches(black_box(&route_level3));
-        })
+        });
     });
     group.finish();
 }
@@ -73,7 +73,7 @@ fn bench_double_star_middle(c: &mut Criterion) {
             let _ = pattern.matches(black_box(&route_direct));
             let _ = pattern.matches(black_box(&route_level2));
             let _ = pattern.matches(black_box(&route_level4));
-        })
+        });
     });
     group.finish();
 }
@@ -87,7 +87,7 @@ fn bench_negative_match_late_fail(c: &mut Criterion) {
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(1));
     group.bench_function("negative_match_late_fail", |b| {
-        b.iter(|| pattern.matches(black_box(&route_fail)))
+        b.iter(|| pattern.matches(black_box(&route_fail)));
     });
     group.finish();
 }
@@ -107,19 +107,19 @@ fn bench_depth_knee(c: &mut Criterion) {
 
     group.throughput(Throughput::Elements(1));
     group.bench_function("depth_1", |b| {
-        b.iter(|| pattern.matches(black_box(&route_depth1)))
+        b.iter(|| pattern.matches(black_box(&route_depth1)));
     });
     group.throughput(Throughput::Elements(1));
     group.bench_function("depth_3", |b| {
-        b.iter(|| pattern.matches(black_box(&route_depth3)))
+        b.iter(|| pattern.matches(black_box(&route_depth3)));
     });
     group.throughput(Throughput::Elements(1));
     group.bench_function("depth_5", |b| {
-        b.iter(|| pattern.matches(black_box(&route_depth5)))
+        b.iter(|| pattern.matches(black_box(&route_depth5)));
     });
     group.throughput(Throughput::Elements(1));
     group.bench_function("depth_10", |b| {
-        b.iter(|| pattern.matches(black_box(&route_depth10)))
+        b.iter(|| pattern.matches(black_box(&route_depth10)));
     });
 
     group.finish();
@@ -140,19 +140,19 @@ fn bench_pattern_complexity_knee(c: &mut Criterion) {
     group.throughput(Throughput::Elements(1));
 
     group.bench_function("all_literals", |b| {
-        b.iter(|| pattern_literals.matches(black_box(&route)))
+        b.iter(|| pattern_literals.matches(black_box(&route)));
     });
     group.bench_function("one_star", |b| {
-        b.iter(|| pattern_one_star.matches(black_box(&route)))
+        b.iter(|| pattern_one_star.matches(black_box(&route)));
     });
     group.bench_function("two_stars", |b| {
-        b.iter(|| pattern_two_stars.matches(black_box(&route)))
+        b.iter(|| pattern_two_stars.matches(black_box(&route)));
     });
     group.bench_function("three_stars", |b| {
-        b.iter(|| pattern_three_stars.matches(black_box(&route)))
+        b.iter(|| pattern_three_stars.matches(black_box(&route)));
     });
     group.bench_function("double_star", |b| {
-        b.iter(|| pattern_double_star.matches(black_box(&route)))
+        b.iter(|| pattern_double_star.matches(black_box(&route)));
     });
 
     group.finish();
@@ -174,16 +174,16 @@ fn bench_backtracking_knee(c: &mut Criterion) {
     group.throughput(Throughput::Elements(1));
 
     group.bench_function("backtrack_0_segments", |b| {
-        b.iter(|| pattern.matches(black_box(&route_depth1)))
+        b.iter(|| pattern.matches(black_box(&route_depth1)));
     });
     group.bench_function("backtrack_1_segment", |b| {
-        b.iter(|| pattern.matches(black_box(&route_depth2)))
+        b.iter(|| pattern.matches(black_box(&route_depth2)));
     });
     group.bench_function("backtrack_2_segments", |b| {
-        b.iter(|| pattern.matches(black_box(&route_depth3)))
+        b.iter(|| pattern.matches(black_box(&route_depth3)));
     });
     group.bench_function("backtrack_4_segments", |b| {
-        b.iter(|| pattern.matches(black_box(&route_depth5)))
+        b.iter(|| pattern.matches(black_box(&route_depth5)));
     });
 
     group.finish();
