@@ -68,3 +68,22 @@ fn should_document_cleanup_retry_without_session_recovery() {
     assert!(documents_cleanup_retry);
     assert!(rejects_session_recovery);
 }
+
+#[test]
+fn should_document_queue_actor_mailbox_contract() {
+    // Arrange
+    let queue_section = section_between(ARCHITECTURE_DOC, "#### Queue", "#### Notice");
+
+    // Act
+    let documents_actor_owned_live_paths =
+        queue_section.contains("delivery, cleanup, runtime sweeps, live admin refresh");
+    let documents_dlq_command_replies = queue_section
+        .contains("dead-letter replay and purge use explicit `Runtime::queue_*_dead_letter` command/reply messages through the actor mailbox");
+    let documents_mailbox_cleanup =
+        queue_section.contains("disconnect cleanup is enqueued to the Queue actor mailbox");
+
+    // Assert
+    assert!(documents_actor_owned_live_paths);
+    assert!(documents_dlq_command_replies);
+    assert!(documents_mailbox_cleanup);
+}

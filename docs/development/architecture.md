@@ -504,11 +504,11 @@ Current Notice behavior is intentionally ephemeral:
 - Admin path: live transaction views flow through the actor-maintained `AdminReadModel`; committed value and inventory reads go through `Runtime::kv_*` query facades.
 
 #### Queue
-- Actor owner: `QueueDomainActor` is the managed production actor for delivery into `QueueActor` instances; `QueueActor` owns live reservation state, retry bookkeeping, and dead-letter mutations for one queue resource, while `QueueDomainCore` owns broker-local watch state and projections.
+- Actor owner: `QueueDomainSink` is a thin mailbox adapter; `QueueDomainActor` is the managed production actor for delivery, cleanup, runtime sweeps, live admin refresh, dead-letter replay/purge commands, broker-local watch state, and projections. `QueueActor` owns live reservation state, retry bookkeeping, and durable dead-letter mutations for one queue resource.
 - Persistence: durable backlog and dead-letter records live in storage; inflight reservations, watch subscriptions, and fast-flush state are ephemeral.
-- Cleanup: disconnect clears worker reservations and watch state, but it does not imply durable ownership continuity or hidden worker recovery.
+- Cleanup: disconnect cleanup is enqueued to the Queue actor mailbox, which clears worker reservations and watch state without implying durable ownership continuity or hidden worker recovery.
 - `RouteFamily`/`realm`: queue data is isolated by exact `RouteFamily`, while `realm` remains an application-defined namespace inside the queue route.
-- Admin path: live queue snapshots flow through `Runtime::queue_list_*`; dead-letter replay and purge use explicit `Runtime::queue_*_dead_letter` commands.
+- Admin path: live queue snapshots flow through `Runtime::queue_list_*` and the actor-maintained `AdminReadModel`; dead-letter replay and purge use explicit `Runtime::queue_*_dead_letter` command/reply messages through the actor mailbox.
 
 #### Notice
 - Actor owner: `NoticeDomainActor` is the managed production actor for delivery, cleanup, live subscriptions, live count queries, route counters, fanout, and admin snapshot refresh; `NoticeDomainSink` is the mailbox adapter, and `NoticeRouteActor` remains a focused matching/fanout state-machine model.
