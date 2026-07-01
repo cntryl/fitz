@@ -50,9 +50,8 @@ fn should_complete_direct_begin_put_rollback(ctx: &mut StressContext) {
                 mode: TxMode::ReadWrite,
                 write_options: cntryl_midge::WriteOptions::buffered(),
             });
-            let tx_id = match response {
-                fitz::domains::kv::KvResponse::BeginOk { tx_id } => tx_id,
-                _ => return,
+            let fitz::domains::kv::KvResponse::BeginOk { tx_id } = response else {
+                return;
             };
 
             actor.handle(KvMessage::Put {
@@ -92,9 +91,8 @@ fn should_complete_encoded_begin_put_rollback(ctx: &mut StressContext) {
             let mut parser = TlvFrameParser::new(&begin_frame);
             let (msg_type, payload) = parser.next_field().expect("begin field");
             let msg = kv_parse_request(msg_type, family, &payload).expect("parse begin");
-            let tx_id = match actor.handle(msg) {
-                KvResponse::BeginOk { tx_id } => tx_id,
-                _ => return,
+            let KvResponse::BeginOk { tx_id } = actor.handle(msg) else {
+                return;
             };
 
             let put_frame = build_kv_put(tx_id, route, key, value);

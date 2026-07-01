@@ -9,9 +9,9 @@ use std::time::{Duration, Instant};
 #[path = "criterion_config.rs"]
 mod criterion_config;
 
-const FAR_FUTURE_DELAY: Duration = Duration::from_secs(3600);
+const FAR_FUTURE_DELAY: Duration = Duration::from_hours(1);
 const SHORT_DELAY: Duration = Duration::from_secs(30);
-const REPEAT_INTERVAL: Duration = Duration::from_secs(60);
+const REPEAT_INTERVAL: Duration = Duration::from_mins(1);
 const ACTIVE_TIMER_COUNTS: [usize; 3] = [10, 100, 1000];
 const BENCH_BASE_OFFSET: Duration = Duration::from_secs(1);
 
@@ -69,7 +69,7 @@ fn bench_timer_manager_schedule_once_empty(c: &mut Criterion) {
                 black_box(tm.schedule_once_at(black_box(now), black_box(SHORT_DELAY)));
             },
             BatchSize::SmallInput,
-        )
+        );
     });
 
     group.finish();
@@ -94,7 +94,7 @@ fn bench_timer_manager_schedule_repeat_empty(c: &mut Criterion) {
                 ));
             },
             BatchSize::SmallInput,
-        )
+        );
     });
 
     group.finish();
@@ -113,7 +113,7 @@ fn bench_timer_manager_schedule_once_with_active_timers(c: &mut Criterion) {
                     black_box(tm.schedule_once_at(black_box(now), black_box(SHORT_DELAY)));
                 },
                 BatchSize::LargeInput,
-            )
+            );
         });
     }
 
@@ -136,7 +136,7 @@ fn bench_timer_manager_cancel_present(c: &mut Criterion) {
                 black_box(tm.cancel(black_box(timer_id)));
             },
             BatchSize::LargeInput,
-        )
+        );
     });
 
     group.finish();
@@ -152,7 +152,7 @@ fn bench_timer_manager_fired_timers_empty(c: &mut Criterion) {
     group.bench_function("fired_timers_none_ready", |b| {
         b.iter(|| {
             black_box(tm.fired_timers_at(now));
-        })
+        });
     });
 
     group.finish();
@@ -170,7 +170,7 @@ fn bench_timer_manager_fired_timers_ready(c: &mut Criterion) {
                 black_box(tm.fired_timers_at(now));
             },
             BatchSize::LargeInput,
-        )
+        );
     });
 
     group.finish();
@@ -186,7 +186,7 @@ fn bench_timer_manager_fired_timers_scaling(c: &mut Criterion) {
         group.bench_function(format!("fired_timers_none_ready_{count}"), |b| {
             b.iter(|| {
                 black_box(tm.fired_timers_at(now));
-            })
+            });
         });
     }
 
@@ -206,7 +206,7 @@ fn bench_timer_manager_next_deadline(c: &mut Criterion) {
     group.bench_function("next_deadline", |b| {
         b.iter(|| {
             black_box(tm.next_deadline());
-        })
+        });
     });
 
     group.finish();
@@ -224,7 +224,7 @@ fn bench_timer_manager_repeating_reschedule(c: &mut Criterion) {
                 black_box(tm.fired_timers_at(now));
             },
             BatchSize::LargeInput,
-        )
+        );
     });
 
     group.finish();
