@@ -94,7 +94,8 @@ impl LeaseDomainSink {
     }
 
     fn record_request_start(&self) -> Option<std::time::Instant> {
-        self.metrics
+        self.core
+            .metrics
             .as_ref()
             .map(crate::domains::lease::LeaseMetrics::record_request_start)
     }
@@ -116,7 +117,8 @@ impl LeaseDomainSink {
                 Ok(msg)
             }
             Err(error) => {
-                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started)
+                if let (Some(metrics), Some(started_at)) =
+                    (self.core.metrics.as_ref(), request_started)
                 {
                     metrics.record_failure(started_at);
                 }
@@ -144,7 +146,7 @@ impl LeaseDomainSink {
             } => {
                 let pattern_str = pattern.as_str().to_string();
                 let subscription_id = {
-                    let mut families = self.families.lock();
+                    let mut families = self.core.families.lock();
                     let state = families
                         .entry(family_id.as_u64())
                         .or_insert_with(RoutedSubscriptionSet::new);
@@ -154,7 +156,7 @@ impl LeaseDomainSink {
                     {
                         existing_id
                     } else {
-                        let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
+                        let new_id = self.core.next_sub_id.fetch_add(1, Ordering::Relaxed);
                         state.insert(
                             family_id,
                             LeaseSubscription {
@@ -177,7 +179,7 @@ impl LeaseDomainSink {
                 session_id,
                 ..
             } => {
-                let mut families = self.families.lock();
+                let mut families = self.core.families.lock();
                 let remove_family = if let Some(state) = families.get_mut(&family_id.as_u64()) {
                     state.remove_session_pattern(family_id, session_id, pattern.as_str());
                     state.is_empty()
@@ -273,7 +275,8 @@ impl LeaseDomainSink {
             }
             LeaseMessage::Tick => {
                 self.sweep_expired_state();
-                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started)
+                if let (Some(metrics), Some(started_at)) =
+                    (self.core.metrics.as_ref(), request_started)
                 {
                     metrics.record_success(started_at);
                 }

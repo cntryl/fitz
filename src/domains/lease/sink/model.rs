@@ -76,11 +76,10 @@ pub(super) struct QueuedAcquireRequest {
 
 /// Live lease coordination state for the current broker process only.
 ///
-/// This sink is the production in-memory implementation of Lease semantics.
-/// It is intentionally single-broker and non-durable: disconnect cleanup
+/// The state is intentionally single-broker and non-durable: disconnect cleanup
 /// releases session-owned state, restart clears ownership and waiters, and
 /// fencing tokens reset with the process.
-pub struct LeaseDomainSink {
+pub(super) struct LeaseDomainCore {
     pub(super) leases: Mutex<HashMap<crate::domains::lease::protocol::LeaseKey, SinkLeaseState>>,
     pub(super) session_leases:
         Mutex<HashMap<u64, HashSet<crate::domains::lease::protocol::LeaseKey>>>,
@@ -90,11 +89,16 @@ pub struct LeaseDomainSink {
     /// Process-local fencing token counter; resets on broker restart.
     pub(super) next_token: AtomicU64,
     pub(super) router: Arc<Router>,
-    pub(super) active: AtomicBool,
     pub(super) families: Mutex<HashMap<u64, RoutedSubscriptionSet<LeaseSubscription>>>,
     pub(super) next_sub_id: AtomicU64,
     pub(super) admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
     pub(super) metrics: Option<LeaseMetrics>,
+}
+
+/// Production mailbox adapter for Lease semantics.
+pub struct LeaseDomainSink {
+    pub(super) core: LeaseDomainCore,
+    pub(super) active: AtomicBool,
 }
 
 pub(super) struct LeaseSubscription {

@@ -138,7 +138,7 @@ fn should_clear_session_state_given_session_cleanup() {
     assert_eq!(sink.subscription_count(), 0);
     assert!(admin_read_model.leases(None).is_empty());
     assert!(subscriber_mailbox.receiver().try_recv().is_err());
-    assert!(sink.families.lock().is_empty());
+    assert!(sink.core.families.lock().is_empty());
 }
 
 #[test]
@@ -238,7 +238,7 @@ fn should_promote_waiter_given_extend_observes_expired_lease() {
     else {
         panic!("expected queued waiter");
     };
-    sink.leases.lock().get_mut(&key).expect("lease").expiry = Instant::now()
+    sink.core.leases.lock().get_mut(&key).expect("lease").expiry = Instant::now()
         .checked_sub(Duration::from_millis(1))
         .expect("past instant");
 
@@ -257,8 +257,9 @@ fn should_promote_waiter_given_extend_observes_expired_lease() {
     assert_eq!(leases.len(), 1);
     assert_eq!(leases[0].owner_session_id, "owner2");
     assert_eq!(leases[0].fencing_token, waiter_token);
-    assert!(!sink.session_leases.lock().contains_key(&session_id));
+    assert!(!sink.core.session_leases.lock().contains_key(&session_id));
     assert!(sink
+        .core
         .session_leases
         .lock()
         .get(&waiter_session_id)

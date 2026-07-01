@@ -533,6 +533,7 @@ Current Notice behavior is intentionally ephemeral:
 
 #### Lease
 - Actor owner: `LeaseActor` owns live ownership, waiters, expiry, and fencing token progression inside one running broker.
+- Current production boundary: `LeaseDomainSink` is the mailbox adapter and `LeaseDomainCore` holds the broker-local ownership, waiter, subscription, metrics, and admin projection state until the production actor handoff is completed.
 - Persistence: leases, waiters, and fencing tokens are ephemeral broker-local coordination state only; there is no durable lease history or restart recovery.
 - Cleanup: disconnect releases session-owned leases, clears waiters, and never implies cross-restart ownership continuity.
 - `RouteFamily`/`realm`: lease coordination is isolated by exact `RouteFamily`; `realm` stays an opaque application namespace carried by the route, not a family synonym.

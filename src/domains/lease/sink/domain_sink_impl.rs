@@ -15,7 +15,8 @@ impl LeaseDomainSink {
         session_id: u64,
         key: &crate::domains::lease::protocol::LeaseKey,
     ) {
-        self.session_leases
+        self.core
+            .session_leases
             .lock()
             .entry(session_id)
             .or_default()
@@ -27,7 +28,7 @@ impl LeaseDomainSink {
         session_id: u64,
         key: &crate::domains::lease::protocol::LeaseKey,
     ) {
-        let mut session_leases = self.session_leases.lock();
+        let mut session_leases = self.core.session_leases.lock();
         let should_remove_session = if let Some(keys) = session_leases.get_mut(&session_id) {
             keys.remove(key);
             keys.is_empty()
@@ -46,7 +47,8 @@ impl LeaseDomainSink {
         key: &crate::domains::lease::protocol::LeaseKey,
         queued_token: u64,
     ) {
-        self.session_waiters
+        self.core
+            .session_waiters
             .lock()
             .entry(session_id)
             .or_default()
@@ -62,7 +64,7 @@ impl LeaseDomainSink {
         key: &crate::domains::lease::protocol::LeaseKey,
         queued_token: u64,
     ) {
-        let mut session_waiters = self.session_waiters.lock();
+        let mut session_waiters = self.core.session_waiters.lock();
         let should_remove_session = if let Some(waiters) = session_waiters.get_mut(&session_id) {
             waiters.remove(&PendingAcquireRef {
                 key: key.clone(),
@@ -118,7 +120,7 @@ impl LeaseDomainSink {
             waiter.reply_destination.clone(),
             response_ctx,
         );
-        let _ = self.router.route(response_envelope);
+        let _ = self.core.router.route(response_envelope);
     }
 
     pub(super) fn route_lease_response(
@@ -144,10 +146,10 @@ impl LeaseDomainSink {
         let response_ctx = crate::domains::lease::LeaseClientResponse::new(meta, response.clone());
 
         if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
-            let _ = self.router.route(response_envelope);
+            let _ = self.core.router.route(response_envelope);
         }
 
-        if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+        if let (Some(metrics), Some(started_at)) = (self.core.metrics.as_ref(), request_started) {
             if Self::lease_response_is_failure(response) {
                 metrics.record_failure(started_at);
             } else {
@@ -167,6 +169,7 @@ impl LeaseDomainSink {
 
     pub(super) fn remove_session_waiters(&self, session_id: u64) -> usize {
         let waiter_refs = self
+            .core
             .session_waiters
             .lock()
             .remove(&session_id)
@@ -178,7 +181,7 @@ impl LeaseDomainSink {
         }
 
         let mut removed = 0;
-        let mut pending_acquires = self.pending_acquires.lock();
+        let mut pending_acquires = self.core.pending_acquires.lock();
         let mut empty_keys = Vec::new();
         for waiter_ref in waiter_refs {
             if let Some(queue) = pending_acquires.get_mut(&waiter_ref.key) {
@@ -208,7 +211,7 @@ impl LeaseDomainSink {
         now: Instant,
     ) {
         let expired_waiters = {
-            let mut pending_acquires = self.pending_acquires.lock();
+            let mut pending_acquires = self.core.pending_acquires.lock();
             let mut expired = Vec::new();
             let mut remove_queue = false;
 
@@ -249,7 +252,8 @@ impl LeaseDomainSink {
         &self,
         key: &crate::domains::lease::protocol::LeaseKey,
     ) -> usize {
-        self.pending_acquires
+        self.core
+            .pending_acquires
             .lock()
             .get(key)
             .map_or(0, VecDeque::len)
@@ -263,8 +267,8 @@ impl LeaseDomainSink {
         self.expire_timed_out_waiters_for_key(key, now);
 
         let granted_waiter = {
-            let mut pending_acquires = self.pending_acquires.lock();
-            let mut leases = self.leases.lock();
+            let mut pending_acquires = self.core.pending_acquires.lock();
+            let mut leases = self.core.leases.lock();
 
             if leases.contains_key(key) {
                 None
@@ -315,7 +319,7 @@ impl LeaseDomainSink {
         let now = Instant::now();
 
         let expired_waiters = {
-            let mut pending_acquires = self.pending_acquires.lock();
+            let mut pending_acquires = self.core.pending_acquires.lock();
             let mut expired = Vec::new();
             let mut empty_keys = Vec::new();
 
@@ -356,7 +360,7 @@ impl LeaseDomainSink {
         }
 
         let expired_leases = {
-            let mut leases = self.leases.lock();
+            let mut leases = self.core.leases.lock();
             let expired_keys: Vec<_> = leases
                 .iter()
                 .filter(|(_, state)| state.expiry <= now)
@@ -381,6 +385,7 @@ impl LeaseDomainSink {
         }
 
         let queued_keys = self
+            .core
             .pending_acquires
             .lock()
             .keys()
@@ -396,6 +401,7 @@ impl LeaseDomainSink {
     pub fn cleanup_session(&self, session_id: u64) {
         let now = Instant::now();
         let tracked_keys = self
+            .core
             .session_leases
             .lock()
             .remove(&session_id)
@@ -405,7 +411,7 @@ impl LeaseDomainSink {
 
         let mut removed_keys = Vec::with_capacity(tracked_keys.len());
         if !tracked_keys.is_empty() {
-            let mut leases = self.leases.lock();
+            let mut leases = self.core.leases.lock();
             for key in tracked_keys {
                 if leases.remove(&key).is_some() {
                     removed_keys.push(key);
@@ -434,11 +440,11 @@ impl LeaseDomainSink {
     }
 
     pub fn lease_count(&self) -> usize {
-        self.leases.lock().len()
+        self.core.leases.lock().len()
     }
 
     pub fn subscription_count(&self) -> usize {
-        let families = self.families.lock();
+        let families = self.core.families.lock();
         families
             .values()
             .map(RoutedSubscriptionSet::subscription_count)
@@ -447,7 +453,7 @@ impl LeaseDomainSink {
 
     pub(super) fn handle_domain_publish(&self, event: &crate::runtime::DomainPublishEvent) {
         let family_id = event.family_id.as_u64();
-        let families = self.families.lock();
+        let families = self.core.families.lock();
 
         if let Some(family_state) = families.get(&family_id) {
             #[cfg(test)]
@@ -473,7 +479,7 @@ impl LeaseDomainSink {
                     );
 
                     let notify_envelope = Envelope::new(sub.route_address.clone(), notify_ctx);
-                    let _ = self.router.route(notify_envelope);
+                    let _ = self.core.router.route(notify_envelope);
                 }
 
                 #[cfg(not(test))]
@@ -486,14 +492,14 @@ impl LeaseDomainSink {
                         event.payload.clone(),
                     );
                     let notify_envelope = Envelope::new(sub.route_address.clone(), notification);
-                    let _ = self.router.route(notify_envelope);
+                    let _ = self.core.router.route(notify_envelope);
                 }
             });
         }
     }
 
     pub(super) fn unsubscribe_all(&self, session_id: u64) -> usize {
-        let mut families = self.families.lock();
+        let mut families = self.core.families.lock();
         let mut removed = 0;
         for (family_id, state) in families.iter_mut() {
             removed += state.remove_session(
@@ -506,7 +512,7 @@ impl LeaseDomainSink {
     }
 
     pub(super) fn next_fencing_token(&self) -> u64 {
-        self.next_token.fetch_add(1, Ordering::Relaxed)
+        self.core.next_token.fetch_add(1, Ordering::Relaxed)
     }
 
     pub(super) fn handle_acquire(
@@ -538,7 +544,7 @@ impl LeaseDomainSink {
 
         let mut acquired_state = None;
         let response = {
-            let mut leases = self.leases.lock();
+            let mut leases = self.core.leases.lock();
 
             match leases.get(&key).cloned() {
                 None => {
@@ -595,7 +601,7 @@ impl LeaseDomainSink {
 
     fn prepare_acquire_key(&self, key: &crate::domains::lease::protocol::LeaseKey, now: Instant) {
         let expired_state = {
-            let mut leases = self.leases.lock();
+            let mut leases = self.core.leases.lock();
             match leases.get(key) {
                 Some(state) if state.expiry <= now => leases.remove(key),
                 _ => None,
@@ -609,7 +615,7 @@ impl LeaseDomainSink {
             self.grant_next_waiter_if_available(key, now);
         }
 
-        if !self.leases.lock().contains_key(key) {
+        if !self.core.leases.lock().contains_key(key) {
             self.grant_next_waiter_if_available(key, now);
         }
     }
@@ -638,7 +644,7 @@ impl LeaseDomainSink {
             return LeaseResponse::HeldByOther { current_owner };
         };
 
-        let mut pending_acquires = self.pending_acquires.lock();
+        let mut pending_acquires = self.core.pending_acquires.lock();
         if let Some(queue) = pending_acquires.get(key) {
             if let Some(existing) = queue.iter().find(|waiter| waiter.owner_id == owner_id) {
                 return LeaseResponse::AlreadyQueued {
@@ -693,7 +699,7 @@ impl LeaseDomainSink {
         let mut expired_state = None;
 
         let response = {
-            let mut leases = self.leases.lock();
+            let mut leases = self.core.leases.lock();
 
             match leases.get(key).cloned() {
                 None => LeaseResponse::NotHeld,
@@ -750,7 +756,7 @@ impl LeaseDomainSink {
         let mut removed_state = None;
 
         let response = {
-            let mut leases = self.leases.lock();
+            let mut leases = self.core.leases.lock();
 
             match leases.get(key).cloned() {
                 None => LeaseResponse::Released,
@@ -792,7 +798,7 @@ impl LeaseDomainSink {
         use std::time::Instant;
 
         let now = Instant::now();
-        let leases = self.leases.lock();
+        let leases = self.core.leases.lock();
 
         match leases.get(key) {
             None => LeaseResponse::NotFound,

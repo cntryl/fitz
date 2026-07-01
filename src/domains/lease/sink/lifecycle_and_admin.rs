@@ -1,6 +1,6 @@
 use super::model::{
-    Arc, AtomicBool, AtomicU64, HashMap, Instant, LeaseDomainSink, LeaseMetrics, Mutex, Ordering,
-    SinkLeaseState, Utc, VecDeque,
+    Arc, AtomicBool, AtomicU64, HashMap, Instant, LeaseDomainCore, LeaseDomainSink, LeaseMetrics,
+    Mutex, Ordering, SinkLeaseState, Utc, VecDeque,
 };
 use crate::runtime::Router;
 
@@ -10,17 +10,19 @@ impl LeaseDomainSink {
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
     ) -> Self {
         Self {
-            leases: Mutex::new(HashMap::new()),
-            session_leases: Mutex::new(HashMap::new()),
-            pending_acquires: Mutex::new(HashMap::new()),
-            session_waiters: Mutex::new(HashMap::new()),
-            next_token: AtomicU64::new(1),
-            router,
+            core: LeaseDomainCore {
+                leases: Mutex::new(HashMap::new()),
+                session_leases: Mutex::new(HashMap::new()),
+                pending_acquires: Mutex::new(HashMap::new()),
+                session_waiters: Mutex::new(HashMap::new()),
+                next_token: AtomicU64::new(1),
+                router,
+                families: Mutex::new(HashMap::new()),
+                next_sub_id: AtomicU64::new(1),
+                admin_read_model,
+                metrics: None,
+            },
             active: AtomicBool::new(true),
-            families: Mutex::new(HashMap::new()),
-            next_sub_id: AtomicU64::new(1),
-            admin_read_model,
-            metrics: None,
         }
     }
 
@@ -29,7 +31,7 @@ impl LeaseDomainSink {
         mut self,
         collector: crate::observability::metrics::MetricsCollector,
     ) -> Self {
-        self.metrics = Some(LeaseMetrics::new(collector));
+        self.core.metrics = Some(LeaseMetrics::new(collector));
         self.refresh_metrics_gauges();
         self
     }
@@ -87,13 +89,14 @@ impl LeaseDomainSink {
         key: &crate::domains::lease::protocol::LeaseKey,
         state: &SinkLeaseState,
     ) {
-        self.admin_read_model
+        self.core
+            .admin_read_model
             .upsert_lease(Self::lease_info_from_state(key, state));
         self.refresh_metrics_gauges();
     }
 
     pub(super) fn remove_admin_lease(&self, key: &crate::domains::lease::protocol::LeaseKey) {
-        self.admin_read_model.remove_lease(
+        self.core.admin_read_model.remove_lease(
             key.family.as_u64(),
             &key.realm,
             &key.area,
@@ -106,7 +109,7 @@ impl LeaseDomainSink {
         let lease_count = self.lease_count();
         let waiter_count = self.waiter_count();
 
-        if let Some(metrics) = &self.metrics {
+        if let Some(metrics) = &self.core.metrics {
             metrics.set_active_leases(lease_count);
             metrics.set_waiter_depth(waiter_count);
         } else {
@@ -116,7 +119,7 @@ impl LeaseDomainSink {
     }
 
     pub(super) fn counter_inc(&self, name: &str) {
-        if let Some(metrics) = &self.metrics {
+        if let Some(metrics) = &self.core.metrics {
             metrics.counter_inc(name);
         } else {
             crate::observability::counter_inc(name);
@@ -124,7 +127,8 @@ impl LeaseDomainSink {
     }
 
     pub(super) fn waiter_count(&self) -> usize {
-        self.pending_acquires
+        self.core
+            .pending_acquires
             .lock()
             .values()
             .map(VecDeque::len)
@@ -135,7 +139,7 @@ impl LeaseDomainSink {
         let now = Instant::now();
         let mut waiters = Vec::new();
 
-        for (key, queue) in self.pending_acquires.lock().iter() {
+        for (key, queue) in self.core.pending_acquires.lock().iter() {
             for waiter in queue {
                 let expires_at = Utc::now()
                     .checked_add_signed(chrono::TimeDelta::seconds(
