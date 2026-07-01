@@ -13,9 +13,8 @@ fn should_handle_concurrent_puts_with_conflict_detection() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx1 = match b1 {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    let KvResponse::BeginOk { tx_id: tx1 } = b1 else {
+        panic!("Expected BeginOk");
     };
 
     let b2 = actor.handle(KvMessage::Begin {
@@ -26,9 +25,8 @@ fn should_handle_concurrent_puts_with_conflict_detection() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx2 = match b2 {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    let KvResponse::BeginOk { tx_id: tx2 } = b2 else {
+        panic!("Expected BeginOk");
     };
 
     // Act
@@ -74,9 +72,8 @@ fn should_handle_concurrent_puts_with_conflict_detection() {
         mode: TxMode::ReadOnly,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx3 = match b3 {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Begin failed"),
+    let KvResponse::BeginOk { tx_id: tx3 } = b3 else {
+        panic!("Begin failed");
     };
 
     let got = actor.handle(KvMessage::Get {
@@ -112,9 +109,8 @@ fn should_reject_operations_from_wrong_area() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx1 = match r1 {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    let KvResponse::BeginOk { tx_id: tx1 } = r1 else {
+        panic!("Expected BeginOk");
     };
 
     let r2 = actor.handle(KvMessage::Begin {
@@ -125,9 +121,8 @@ fn should_reject_operations_from_wrong_area() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx2 = match r2 {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    let KvResponse::BeginOk { tx_id: tx2 } = r2 else {
+        panic!("Expected BeginOk");
     };
 
     // Act
@@ -186,9 +181,8 @@ fn should_return_not_found_when_key_never_written() {
         mode: TxMode::ReadOnly,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx_id = match begin_response {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    let KvResponse::BeginOk { tx_id } = begin_response else {
+        panic!("Expected BeginOk");
     };
 
     // Act
@@ -221,9 +215,8 @@ fn should_delete_nonexistent_key_without_error() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx_id = match begin_response {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    let KvResponse::BeginOk { tx_id } = begin_response else {
+        panic!("Expected BeginOk");
     };
 
     // Act
@@ -250,9 +243,8 @@ fn should_scan_empty_table_returns_empty_result() {
         mode: TxMode::ReadOnly,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx_id = match begin_response {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    let KvResponse::BeginOk { tx_id } = begin_response else {
+        panic!("Expected BeginOk");
     };
 
     // Act
@@ -285,7 +277,7 @@ fn should_reject_begin_with_empty_realm() {
     // Act
     let response = actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
-        realm: "".to_string(),
+        realm: String::new(),
         area: "kv".to_string(),
         resource: "table1".to_string(),
         mode: TxMode::ReadWrite,
@@ -337,9 +329,8 @@ fn should_reject_commit_on_already_committed_txid() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx_id = match begin_response {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    let KvResponse::BeginOk { tx_id } = begin_response else {
+        panic!("Expected BeginOk");
     };
     actor.handle(KvMessage::Commit { tx_id });
 
@@ -367,9 +358,8 @@ fn should_reject_rollback_on_already_rolled_back_txid() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx_id = match begin_response {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    let KvResponse::BeginOk { tx_id } = begin_response else {
+        panic!("Expected BeginOk");
     };
     actor.handle(KvMessage::Rollback { tx_id });
 
@@ -397,9 +387,8 @@ fn should_use_bound_resource_when_resource_param_is_empty() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx_id = match begin_response {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    let KvResponse::BeginOk { tx_id } = begin_response else {
+        panic!("Expected BeginOk");
     };
     actor.handle(KvMessage::Put {
         tx_id,
@@ -413,7 +402,7 @@ fn should_use_bound_resource_when_resource_param_is_empty() {
     let response = actor.handle(KvMessage::Get {
         tx_id,
         route_family: RouteFamily::new(1),
-        resource: "".to_string(),
+        resource: String::new(),
         key: Bytes::from("key"),
     });
 

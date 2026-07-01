@@ -38,9 +38,8 @@ pub(super) fn should_enforce_transaction_scope_to_single_resource() {
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
 
-    let tx_id = match begin_response {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    let KvResponse::BeginOk { tx_id } = begin_response else {
+        panic!("Expected BeginOk");
     };
 
     // Act - Try to operate on different resource
@@ -73,9 +72,8 @@ pub(super) fn should_reject_operation_with_route_family_mismatching_transaction(
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx_id = match begin_response {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    let KvResponse::BeginOk { tx_id } = begin_response else {
+        panic!("Expected BeginOk");
     };
 
     // Act
@@ -146,9 +144,8 @@ pub(super) fn should_roundtrip_value_within_transaction() {
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
 
-    let tx_id = match begin_response {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    let KvResponse::BeginOk { tx_id } = begin_response else {
+        panic!("Expected BeginOk");
     };
 
     let key = Bytes::from("testkey");
@@ -194,9 +191,8 @@ pub(super) fn should_reject_insert_when_key_exists() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx_id = match begin_response {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    let KvResponse::BeginOk { tx_id } = begin_response else {
+        panic!("Expected BeginOk");
     };
 
     let key = Bytes::from("testkey");
@@ -238,9 +234,8 @@ pub(super) fn should_validate_delete_range_parameters() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx_id = match begin_response {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    let KvResponse::BeginOk { tx_id } = begin_response else {
+        panic!("Expected BeginOk");
     };
 
     // Act - End before start
@@ -297,9 +292,8 @@ pub(super) fn should_delete_existing_key() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx_id = match begin_response {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    let KvResponse::BeginOk { tx_id } = begin_response else {
+        panic!("Expected BeginOk");
     };
 
     let key = Bytes::from("delkey");
@@ -350,9 +344,8 @@ pub(super) fn should_scan_key_range() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx_id = match begin_response {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    let KvResponse::BeginOk { tx_id } = begin_response else {
+        panic!("Expected BeginOk");
     };
 
     // Add multiple keys
@@ -417,9 +410,8 @@ pub(super) fn should_commit_empty_transaction() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx_id = match begin_response {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    let KvResponse::BeginOk { tx_id } = begin_response else {
+        panic!("Expected BeginOk");
     };
 
     // Act - Commit immediately without writing anything
@@ -441,9 +433,8 @@ pub(super) fn should_rollback_transaction() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx_id = match begin_response {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    let KvResponse::BeginOk { tx_id } = begin_response else {
+        panic!("Expected BeginOk");
     };
 
     let key = Bytes::from("rollbackkey");
@@ -490,9 +481,8 @@ pub(super) fn should_isolate_resources_in_same_family() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx_id = match begin_response {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    let KvResponse::BeginOk { tx_id } = begin_response else {
+        panic!("Expected BeginOk");
     };
 
     let key = Bytes::from("testkey");
@@ -537,9 +527,8 @@ pub(super) fn should_handle_key_scoping_correctly() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx_id1 = match begin_response1 {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    let KvResponse::BeginOk { tx_id: tx_id1 } = begin_response1 else {
+        panic!("Expected BeginOk");
     };
 
     let begin_response2 = actor2.handle(KvMessage::Begin {
@@ -550,9 +539,8 @@ pub(super) fn should_handle_key_scoping_correctly() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx_id2 = match begin_response2 {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    let KvResponse::BeginOk { tx_id: tx_id2 } = begin_response2 else {
+        panic!("Expected BeginOk");
     };
 
     let key = Bytes::from("samekey");
@@ -621,9 +609,8 @@ pub(super) fn should_enforce_realm_isolation_for_kv() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx1 = match r1 {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk for realm_a"),
+    let KvResponse::BeginOk { tx_id: tx1 } = r1 else {
+        panic!("Expected BeginOk for realm_a");
     };
 
     let r2 = actor.handle(KvMessage::Begin {
@@ -634,9 +621,8 @@ pub(super) fn should_enforce_realm_isolation_for_kv() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx2 = match r2 {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk for realm_b"),
+    let KvResponse::BeginOk { tx_id: tx2 } = r2 else {
+        panic!("Expected BeginOk for realm_b");
     };
 
     let key = Bytes::from("same_key");
@@ -701,9 +687,8 @@ pub(super) fn should_reject_delete_range_with_invalid_bounds() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx_id = match begin_response {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    let KvResponse::BeginOk { tx_id } = begin_response else {
+        panic!("Expected BeginOk");
     };
 
     // Act - End < Start
@@ -736,9 +721,8 @@ pub(super) fn should_scan_with_limit() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx_id = match begin_response {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    let KvResponse::BeginOk { tx_id } = begin_response else {
+        panic!("Expected BeginOk");
     };
 
     // Add 10 keys
@@ -786,9 +770,8 @@ pub(super) fn should_scan_reverse() {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let tx_id = match begin_response {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    let KvResponse::BeginOk { tx_id } = begin_response else {
+        panic!("Expected BeginOk");
     };
 
     // Add keys
