@@ -102,6 +102,43 @@ pub(super) fn should_reject_rpc_delivery_when_managed_actor_is_stopped() {
 }
 
 #[test]
+pub(super) fn should_route_rpc_live_count_queries_through_managed_actor() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = RpcDomainSink::new(router, admin_read_model);
+    let family = RouteFamily::new(1);
+    let route = Route::new("rpc://prod/system/resource/op");
+    let correlation_id = uuid::Uuid::new_v4();
+    {
+        let mut state = sink.core.state.lock();
+        state
+            .ensure_route_state(&route)
+            .register_worker(test_rpc_worker(family, &route, 42));
+        state.pending.track_pending(
+            correlation_id,
+            test_pending_request(
+                family,
+                &route,
+                7,
+                42,
+                Instant::now() + Duration::from_secs(30),
+            ),
+        );
+    }
+
+    // Act
+    sink.stop_actor_for_tests();
+    let worker_count = sink.worker_count();
+    let pending_request_count = sink.pending_request_count();
+
+    // Assert
+    assert!(!sink.is_actor_running());
+    assert_eq!(worker_count, 0);
+    assert_eq!(pending_request_count, 0);
+}
+
+#[test]
 pub(super) fn should_keep_rpc_mailbox_sink_impl_below_file_size_limit() {
     // Arrange
     let line_count = include_str!("../mailbox_sink_impl.rs").lines().count();

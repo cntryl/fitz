@@ -43,7 +43,9 @@ pub(super) use requests::{
 };
 pub(super) use route_state::RpcRouteState;
 pub use sink::RpcDomainSink;
-pub(super) use sink::{RpcDomainActor, RpcDomainCommand, RpcDomainCore, RpcDomainRuntime};
+pub(super) use sink::{
+    RpcDomainActor, RpcDomainCommand, RpcDomainCore, RpcDomainRuntime, RpcLiveCounts,
+};
 pub(super) use snapshot::rpc_admin_snapshot_due;
 pub(super) use state::RpcState;
 pub(super) use worker::RpcWorker;

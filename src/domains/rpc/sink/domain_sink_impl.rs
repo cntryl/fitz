@@ -2,10 +2,10 @@ use super::state_model::{
     route_quad, rpc_admin_snapshot_due, rpc_timeout_sweep_interval, Arc, AtomicBool, AtomicU64,
     DeliveryError, Duration, Envelope, Instant, Mutex, Ordering, Route, RouteAddress, Router,
     RpcDomainActor, RpcDomainCommand, RpcDomainCore, RpcDomainRuntime, RpcDomainSink,
-    RpcPendingErrorDelivery, RpcPendingRequest, RpcRouteState, RpcSessionCleanupResult, RpcState,
-    RpcWorker, RpcWorkerCleanupResult, RPC_BACKPRESSURE_ERROR, RPC_DEFAULT_REQUEST_TIMEOUT,
-    RPC_DEFAULT_ROUTE_PENDING_CAPACITY, RPC_MIN_TIMEOUT_SWEEP_INTERVAL, RPC_TIMEOUT_ERROR,
-    RPC_WORKER_NOT_FOUND_ERROR,
+    RpcLiveCounts, RpcPendingErrorDelivery, RpcPendingRequest, RpcRouteState,
+    RpcSessionCleanupResult, RpcState, RpcWorker, RpcWorkerCleanupResult, RPC_BACKPRESSURE_ERROR,
+    RPC_DEFAULT_REQUEST_TIMEOUT, RPC_DEFAULT_ROUTE_PENDING_CAPACITY,
+    RPC_MIN_TIMEOUT_SWEEP_INTERVAL, RPC_TIMEOUT_ERROR, RPC_WORKER_NOT_FOUND_ERROR,
 };
 #[cfg(not(test))]
 use crate::domains::rpc::{
@@ -171,11 +171,26 @@ impl RpcDomainSink {
     }
 
     pub fn worker_count(&self) -> usize {
-        self.runtime().worker_count()
+        self.live_counts().workers
     }
 
     pub fn pending_request_count(&self) -> usize {
-        self.runtime().pending_request_count()
+        self.live_counts().pending_requests
+    }
+
+    fn live_counts(&self) -> RpcLiveCounts {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        if let Err(error) = self
+            .actor
+            .try_send_high_priority(RpcDomainCommand::ReadLiveCounts(reply_tx))
+        {
+            tracing::warn!(domain = "rpc", error = %error, "RPC live-count query enqueue failed");
+            return RpcLiveCounts::default();
+        }
+
+        reply_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap_or_default()
     }
 
     #[cfg(test)]
@@ -228,6 +243,15 @@ impl RpcDomainRuntime<'_> {
 
     pub(crate) fn timeout_sweep_interval(&self) -> Duration {
         rpc_timeout_sweep_interval(self.request_timeout)
+    }
+
+    pub(super) fn live_counts(&self) -> RpcLiveCounts {
+        let state = self.state.lock();
+        let workers = state.routes.values().map(RpcRouteState::worker_count).sum();
+        RpcLiveCounts {
+            workers,
+            pending_requests: state.live_request_count(),
+        }
     }
 
     pub(super) fn counter_inc(&self, name: &str) {
@@ -575,16 +599,11 @@ impl RpcDomainRuntime<'_> {
     }
 
     pub fn worker_count(&self) -> usize {
-        self.state
-            .lock()
-            .routes
-            .values()
-            .map(RpcRouteState::worker_count)
-            .sum()
+        self.live_counts().workers
     }
 
     pub fn pending_request_count(&self) -> usize {
-        self.state.lock().live_request_count()
+        self.live_counts().pending_requests
     }
 
     pub(super) fn forward_request_to_worker(

@@ -33,6 +33,9 @@ impl Actor for RpcDomainActor {
                     let _ = reply.send(());
                 }
             }
+            RpcDomainCommand::ReadLiveCounts(reply) => {
+                let _ = reply.send(runtime.live_counts());
+            }
             #[cfg(test)]
             RpcDomainCommand::SyncAdminSnapshot(reply) => {
                 runtime.sync_admin_snapshot();

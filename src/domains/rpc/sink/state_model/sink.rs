@@ -27,9 +27,16 @@ pub(in crate::domains::rpc::sink) enum RpcDomainCommand {
         crossbeam_channel::Sender<Result<(), DeliveryError>>,
     ),
     ExpireTimedOutRequestsAt(Instant, Option<crossbeam_channel::Sender<()>>),
+    ReadLiveCounts(crossbeam_channel::Sender<RpcLiveCounts>),
     #[cfg(test)]
     SyncAdminSnapshot(Option<crossbeam_channel::Sender<()>>),
     RefreshAdminSnapshotIfDirty(Option<crossbeam_channel::Sender<()>>),
+}
+
+#[derive(Default)]
+pub(in crate::domains::rpc::sink) struct RpcLiveCounts {
+    pub(in crate::domains::rpc::sink) workers: usize,
+    pub(in crate::domains::rpc::sink) pending_requests: usize,
 }
 
 pub(in crate::domains::rpc::sink) struct RpcDomainActor {
