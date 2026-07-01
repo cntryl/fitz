@@ -19,6 +19,21 @@ const CREATE_BATCH_SIZE: usize = 32;
 const ROUTE_RING_SIZE: usize = 1024;
 const PAYLOAD_SIZE: usize = 32;
 
+#[inline]
+fn u128_to_u64_saturating(value: u128) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
+#[inline]
+fn usize_to_u8_saturating(value: usize) -> u8 {
+    u8::try_from(value).unwrap_or(u8::MAX)
+}
+
+#[inline]
+fn usize_to_u64_saturating(value: usize) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
 struct ScheduleCreateFixtures {
     routes: Vec<String>,
     payloads: Vec<Bytes>,
@@ -47,13 +62,17 @@ fn instant_to_epoch_ms(instant: Instant) -> u64 {
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| {
-            (elapsed.as_secs() * 1000) + elapsed.subsec_millis() as u64
+            (elapsed.as_secs() * 1000) + u64::from(elapsed.subsec_millis())
         });
 
     if instant >= now_instant {
-        now_ms.saturating_add(instant.duration_since(now_instant).as_millis() as u64)
+        now_ms.saturating_add(u128_to_u64_saturating(
+            instant.duration_since(now_instant).as_millis(),
+        ))
     } else {
-        now_ms.saturating_sub(now_instant.duration_since(instant).as_millis() as u64)
+        now_ms.saturating_sub(u128_to_u64_saturating(
+            now_instant.duration_since(instant).as_millis(),
+        ))
     }
 }
 
@@ -64,7 +83,7 @@ fn build_route(index: usize) -> String {
 fn create_fixtures() -> ScheduleCreateFixtures {
     let routes = (0..ROUTE_RING_SIZE).map(build_route).collect();
     let payloads = (0..ROUTE_RING_SIZE)
-        .map(|index| Bytes::from(vec![(index % 251) as u8; PAYLOAD_SIZE]))
+        .map(|index| Bytes::from(vec![usize_to_u8_saturating(index % 251); PAYLOAD_SIZE]))
         .collect();
     let hourly_cron = "0 * * * *".to_string();
 
@@ -79,7 +98,7 @@ fn create_fixtures() -> ScheduleCreateFixtures {
 
 fn create_store_insert_case(fixtures: &ScheduleCreateFixtures) -> StoreInsertCase {
     let store = ScheduleStore::new(create_bench_store());
-    let next_fire_time = Instant::now() + Duration::from_secs(3600);
+    let next_fire_time = Instant::now() + Duration::from_secs(60 * 60);
 
     StoreInsertCase {
         store,
@@ -103,51 +122,62 @@ fn create_actor_case(fixtures: &ScheduleCreateFixtures) -> ActorCreateCase {
     }
 }
 
-fn bench_schedule_create_breakdown(c: &mut Criterion) {
-    let fixtures = create_fixtures();
-    let mut group = c.benchmark_group("subsystem_schedule_create");
-    group.sampling_mode(SamplingMode::Flat);
-
-    group.throughput(Throughput::Elements(ROUTE_RING_SIZE as u64));
+fn bench_validate_route(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    fixtures: &ScheduleCreateFixtures,
+) {
+    group.throughput(Throughput::Elements(usize_to_u64_saturating(
+        ROUTE_RING_SIZE,
+    )));
     group.bench_function("validate_route_1024_unique", |b| {
         b.iter(|| {
             for route in &fixtures.routes {
                 black_box(validate_concrete_schedule_route(black_box(route)))
                     .expect("valid schedule route");
             }
-        })
+        });
     });
+}
 
-    group.throughput(Throughput::Elements(CREATE_BATCH_SIZE as u64));
+fn bench_next_fire(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    fixtures: &ScheduleCreateFixtures,
+) {
+    group.throughput(Throughput::Elements(usize_to_u64_saturating(
+        CREATE_BATCH_SIZE,
+    )));
     group.bench_function("next_fire_hourly_32", |b| {
         b.iter(|| {
             let start = Instant::now();
             for offset in 0..CREATE_BATCH_SIZE {
                 black_box(
-                    fixtures
-                        .hourly_schedule
-                        .next_fire_time(start + Duration::from_secs(offset as u64)),
+                    fixtures.hourly_schedule.next_fire_time(
+                        start + Duration::from_secs(usize_to_u64_saturating(offset)),
+                    ),
                 );
             }
-        })
+        });
     });
 
     group.bench_function("next_fire_daily_32", |b| {
         b.iter(|| {
             let start = Instant::now();
             for offset in 0..CREATE_BATCH_SIZE {
-                black_box(
-                    fixtures
-                        .daily_schedule
-                        .next_fire_time(start + Duration::from_secs(offset as u64 * 60)),
-                );
+                black_box(fixtures.daily_schedule.next_fire_time(
+                    start + Duration::from_secs(usize_to_u64_saturating(offset) * 60),
+                ));
             }
-        })
+        });
     });
+}
 
+fn bench_store_create(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    fixtures: &ScheduleCreateFixtures,
+) {
     group.bench_function("store_insert_unique_inmemory_32", |b| {
         b.iter_batched(
-            || create_store_insert_case(&fixtures),
+            || create_store_insert_case(fixtures),
             |case| {
                 for index in 0..CREATE_BATCH_SIZE {
                     black_box(
@@ -170,12 +200,12 @@ fn bench_schedule_create_breakdown(c: &mut Criterion) {
                 }
             },
             BatchSize::SmallInput,
-        )
+        );
     });
 
     group.bench_function("store_insert_batch_unique_inmemory_32", |b| {
         b.iter_batched(
-            || create_store_insert_case(&fixtures),
+            || create_store_insert_case(fixtures),
             |case| {
                 let items: Vec<_> = (0..CREATE_BATCH_SIZE)
                     .map(|index| ScheduleBatchInsert {
@@ -194,12 +224,17 @@ fn bench_schedule_create_breakdown(c: &mut Criterion) {
                 black_box(());
             },
             BatchSize::SmallInput,
-        )
+        );
     });
+}
 
+fn bench_actor_create(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    fixtures: &ScheduleCreateFixtures,
+) {
     group.bench_function("actor_create_unique_inmemory_32", |b| {
         b.iter_batched(
-            || create_actor_case(&fixtures),
+            || create_actor_case(fixtures),
             |mut case| {
                 for index in 0..CREATE_BATCH_SIZE {
                     black_box(
@@ -214,12 +249,12 @@ fn bench_schedule_create_breakdown(c: &mut Criterion) {
                 }
             },
             BatchSize::SmallInput,
-        )
+        );
     });
 
     group.bench_function("actor_create_batch_unique_inmemory_32", |b| {
         b.iter_batched(
-            || create_actor_case(&fixtures),
+            || create_actor_case(fixtures),
             |mut case| {
                 let entries: Vec<_> = (0..CREATE_BATCH_SIZE)
                     .map(|index| ScheduleCreateEntry {
@@ -235,8 +270,19 @@ fn bench_schedule_create_breakdown(c: &mut Criterion) {
                 );
             },
             BatchSize::SmallInput,
-        )
+        );
     });
+}
+
+fn bench_schedule_create_breakdown(c: &mut Criterion) {
+    let fixtures = create_fixtures();
+    let mut group = c.benchmark_group("subsystem_schedule_create");
+    group.sampling_mode(SamplingMode::Flat);
+
+    bench_validate_route(&mut group, &fixtures);
+    bench_next_fire(&mut group, &fixtures);
+    bench_store_create(&mut group, &fixtures);
+    bench_actor_create(&mut group, &fixtures);
 
     group.finish();
 }

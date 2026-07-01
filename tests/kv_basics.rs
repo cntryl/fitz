@@ -162,9 +162,8 @@ fn should_reject_invalid_message_type() {
         write_options: cntryl_midge::WriteOptions::buffered(),
     };
     let begin_result = kv_actor.handle(begin_msg.clone());
-    let tx_id = match begin_result {
-        KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    let KvResponse::BeginOk { tx_id } = begin_result else {
+        panic!("Expected BeginOk");
     };
 
     let msg = KvMessage::Commit { tx_id }; // Not a Begin message
@@ -199,16 +198,15 @@ fn should_allow_subsequent_operations_after_begin() {
     assert!(result.is_ok());
 
     // Extract tx_id from successful Begin
-    let tx_id = match kv_actor.handle(KvMessage::Begin {
+    let fitz::domains::kv::KvResponse::BeginOk { tx_id } = kv_actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "authed".to_string(),
         area: "kv".to_string(),
         resource: "data".to_string(),
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
-    }) {
-        fitz::domains::kv::KvResponse::BeginOk { tx_id } => tx_id,
-        _ => panic!("Expected BeginOk"),
+    }) else {
+        panic!("Expected BeginOk");
     };
 
     // Continue: Subsequent Put operation (realm already validated)

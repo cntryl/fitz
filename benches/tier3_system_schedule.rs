@@ -21,6 +21,11 @@ const SUSTAINED_ACTIVE_SCHEDULES: usize = 1024;
 const MIXED_INITIAL_SCHEDULES: usize = 256;
 const MIXED_LIST_LIMIT: u64 = 128;
 
+#[inline]
+fn u64_to_usize_saturating(value: u64) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
 fn create_test_actor() -> ScheduleActor {
     let store = create_test_engine_with_cfs(vec![1, 2, 3, 4, 5]);
     ScheduleActor::new(
@@ -277,7 +282,7 @@ fn should_complete_system_mixed_workload(ctx: &mut StressContext) {
             let (entries, total_count) = actor.list_entries(0, MIXED_LIST_LIMIT);
             assert_eq!(
                 entries.len(),
-                MIXED_LIST_LIMIT as usize,
+                u64_to_usize_saturating(MIXED_LIST_LIMIT),
                 "mixed workload list must avoid the shared full-list cache"
             );
             assert!(
