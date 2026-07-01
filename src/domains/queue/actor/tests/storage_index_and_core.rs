@@ -132,10 +132,10 @@ pub(super) fn read_ready_index_ranges(
         .expect("begin read tx");
     let prefix = QueueActor::ready_index_prefix(queue_key);
     let query = cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&prefix));
-    let mut iter = txn.scan(&query).expect("scan ready index");
+    let iter = txn.scan(&query).expect("scan ready index");
     let mut ranges = Vec::new();
 
-    while let Some((key, value)) = iter.next() {
+    for (key, value) in iter {
         let (shard, start) =
             QueueActor::parse_ready_range_key(&key, &prefix).expect("parse ready key");
         let range = QueueActor::decode_ready_range(start, &value).expect("decode ready range");
@@ -158,10 +158,10 @@ pub(super) fn read_delayed_index_entries(
         .expect("begin read tx");
     let prefix = QueueActor::delayed_index_prefix(queue_key);
     let query = cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&prefix));
-    let mut iter = txn.scan(&query).expect("scan delayed index");
+    let iter = txn.scan(&query).expect("scan delayed index");
     let mut entries = Vec::new();
 
-    while let Some((key, _value)) = iter.next() {
+    for (key, _value) in iter {
         let (visible_at_ms, id) =
             QueueActor::parse_delayed_index_key(&key, &prefix).expect("parse delayed key");
         entries.push((id, visible_at_ms));
@@ -183,10 +183,10 @@ pub(super) fn read_dlq_index_entries(
         .expect("begin read tx");
     let prefix = QueueActor::dlq_index_prefix(queue_key);
     let query = cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&prefix));
-    let mut iter = txn.scan(&query).expect("scan dlq index");
+    let iter = txn.scan(&query).expect("scan dlq index");
     let mut entries = Vec::new();
 
-    while let Some((key, _value)) = iter.next() {
+    for (key, _value) in iter {
         let (dead_lettered_at_ms, id) =
             QueueActor::parse_dlq_index_key(&key, &prefix).expect("parse dlq key");
         entries.push((id, dead_lettered_at_ms));
@@ -209,14 +209,14 @@ pub(super) fn clear_queue_index(
     let delayed_prefix = QueueActor::delayed_index_prefix(queue_key);
     let ready_query = cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&ready_prefix));
     let delayed_query = cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&delayed_prefix));
-    let mut ready_iter = txn.scan(&ready_query).expect("scan ready index");
-    let mut delayed_iter = txn.scan(&delayed_query).expect("scan delayed index");
+    let ready_iter = txn.scan(&ready_query).expect("scan ready index");
+    let delayed_iter = txn.scan(&delayed_query).expect("scan delayed index");
     let mut keys = Vec::new();
 
-    while let Some((key, _)) = ready_iter.next() {
+    for (key, _) in ready_iter {
         keys.push(key.clone());
     }
-    while let Some((key, _)) = delayed_iter.next() {
+    for (key, _) in delayed_iter {
         keys.push(key.clone());
     }
     keys.push(QueueActor::index_meta_key(queue_key));
@@ -364,7 +364,7 @@ pub(super) fn should_order_queue_ready_range_keys_by_typed_numeric_suffix() {
 pub(super) fn should_reserve_enqueued_message() {
     // Arrange
     let store = Arc::new(
-        cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+        cntryl_midge::Engine::open_with_options(&cntryl_midge::MidgeOptions::default())
             .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("jobs");
@@ -407,7 +407,7 @@ pub(super) fn should_track_success_rates_given_enqueue_then_complete() {
     // Arrange
     let clock = MockClock::new();
     let store = Arc::new(
-        cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+        cntryl_midge::Engine::open_with_options(&cntryl_midge::MidgeOptions::default())
             .expect("Failed to open Midge"),
     );
     let mut actor = QueueActor::with_clock(
@@ -457,7 +457,7 @@ pub(super) fn should_track_success_rates_given_enqueue_then_complete() {
 pub(super) fn should_bound_hot_body_cache_size() {
     // Arrange
     let store = Arc::new(
-        cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+        cntryl_midge::Engine::open_with_options(&cntryl_midge::MidgeOptions::default())
             .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("jobs-body-cache");
@@ -486,7 +486,7 @@ pub(super) fn should_bound_hot_body_cache_size() {
 pub(super) fn should_wake_waiters_given_batch_send_transitions_empty_queue_to_ready() {
     // Arrange
     let store = Arc::new(
-        cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+        cntryl_midge::Engine::open_with_options(&cntryl_midge::MidgeOptions::default())
             .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("jobs-batch-wake");
@@ -511,7 +511,7 @@ pub(super) fn should_wake_waiters_given_batch_send_transitions_empty_queue_to_re
 pub(super) fn should_not_wake_waiters_given_batch_send_only_delayed_messages() {
     // Arrange
     let store = Arc::new(
-        cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+        cntryl_midge::Engine::open_with_options(&cntryl_midge::MidgeOptions::default())
             .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("jobs-batch-delayed-no-wake");
@@ -537,7 +537,7 @@ pub(super) fn should_not_wake_waiters_given_batch_send_only_delayed_messages() {
 pub(super) fn should_bound_metadata_cache_size() {
     // Arrange
     let store = Arc::new(
-        cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+        cntryl_midge::Engine::open_with_options(&cntryl_midge::MidgeOptions::default())
             .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("jobs-record-cache");
@@ -568,7 +568,7 @@ pub(super) fn should_bound_metadata_cache_size() {
 pub(super) fn should_bound_hot_body_cache_total_bytes() {
     // Arrange
     let store = Arc::new(
-        cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+        cntryl_midge::Engine::open_with_options(&cntryl_midge::MidgeOptions::default())
             .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("jobs-body-cache-bytes");
@@ -599,7 +599,7 @@ pub(super) fn should_bound_hot_body_cache_total_bytes() {
 pub(super) fn should_not_hydrate_metadata_cache_during_recovery() {
     // Arrange
     let store = Arc::new(
-        cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+        cntryl_midge::Engine::open_with_options(&cntryl_midge::MidgeOptions::default())
             .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("jobs-recovery-meta");
@@ -645,7 +645,7 @@ pub(super) fn should_not_hydrate_metadata_cache_during_recovery() {
 pub(super) fn should_rewrite_missing_queue_index_via_fallback() {
     // Arrange
     let store = Arc::new(
-        cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+        cntryl_midge::Engine::open_with_options(&cntryl_midge::MidgeOptions::default())
             .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("jobs-missing-index");
@@ -689,7 +689,7 @@ pub(super) fn should_rewrite_missing_queue_index_via_fallback() {
 pub(super) fn should_rewrite_corrupted_queue_index_meta_via_fallback() {
     // Arrange
     let store = Arc::new(
-        cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+        cntryl_midge::Engine::open_with_options(&cntryl_midge::MidgeOptions::default())
             .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("jobs-corrupt-index");
@@ -783,7 +783,7 @@ pub(super) fn should_plan_ready_index_mutations_for_persisted_ready_ranges() {
 pub(super) fn should_remove_delayed_index_entry_after_ack_even_when_visibility_passed() {
     // Arrange
     let store = Arc::new(
-        cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+        cntryl_midge::Engine::open_with_options(&cntryl_midge::MidgeOptions::default())
             .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("jobs-delayed-index");

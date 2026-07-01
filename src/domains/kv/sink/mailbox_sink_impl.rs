@@ -34,6 +34,19 @@ impl Actor for KvDomainActor {
             KvDomainCommand::ReadActiveTransactionCount(reply) => {
                 let _ = reply.send(self.state.runtime().active_transaction_count());
             }
+            #[cfg(test)]
+            KvDomainCommand::SyncAdminSnapshot(reply) => {
+                self.state.runtime().sync_admin_snapshot();
+                let _ = reply.send(());
+            }
+            #[cfg(test)]
+            KvDomainCommand::ReadLatencySnapshots(resource_key, reply) => {
+                let _ = reply.send(self.state.runtime().latency_snapshots(&resource_key));
+            }
+            #[cfg(test)]
+            KvDomainCommand::ApplySyncWriteOptions(message, reply) => {
+                let _ = reply.send(self.state.runtime().apply_sync_write_options(message));
+            }
         }
     }
 }

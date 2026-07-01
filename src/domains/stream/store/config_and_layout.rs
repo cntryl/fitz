@@ -346,8 +346,8 @@ impl StreamStore {
         ];
 
         let query = cntryl_midge::Query::new();
-        let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
-        while let Some((key, _value)) = iter.next() {
+        let iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
+        for (key, _value) in iter {
             let suffix = crate::domains::stream::storage::stream_key_suffix(&key);
             if suffix
                 .first()

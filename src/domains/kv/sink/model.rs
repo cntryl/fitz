@@ -78,6 +78,21 @@ pub(super) enum KvDomainCommand {
     Deliver(Envelope),
     CleanupSession(u64, crossbeam_channel::Sender<()>),
     ReadActiveTransactionCount(crossbeam_channel::Sender<usize>),
+    #[cfg(test)]
+    SyncAdminSnapshot(crossbeam_channel::Sender<()>),
+    #[cfg(test)]
+    ReadLatencySnapshots(
+        KvResourceLockKey,
+        crossbeam_channel::Sender<(
+            crate::control::admin::KvLatencySnapshot,
+            crate::control::admin::KvLatencySnapshot,
+        )>,
+    ),
+    #[cfg(test)]
+    ApplySyncWriteOptions(
+        crate::domains::kv::KvMessage,
+        crossbeam_channel::Sender<crate::domains::kv::KvMessage>,
+    ),
 }
 
 pub(super) struct KvDomainActor {

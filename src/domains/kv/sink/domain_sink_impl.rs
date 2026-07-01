@@ -191,30 +191,6 @@ impl KvDomainSink {
     ) -> Result<AdminKvRowsResult, String> {
         self.state.runtime().admin_scan_committed_rows(request)
     }
-
-    #[cfg(test)]
-    pub(super) fn sync_admin_snapshot(&self) {
-        self.state.runtime().sync_admin_snapshot();
-    }
-
-    #[cfg(test)]
-    pub(super) fn latency_snapshots(
-        &self,
-        resource_key: &KvResourceLockKey,
-    ) -> (
-        crate::control::admin::KvLatencySnapshot,
-        crate::control::admin::KvLatencySnapshot,
-    ) {
-        self.state.runtime().latency_snapshots(resource_key)
-    }
-
-    #[cfg(test)]
-    pub(super) fn apply_sync_write_options(
-        &self,
-        message: crate::domains::kv::KvMessage,
-    ) -> crate::domains::kv::KvMessage {
-        self.state.runtime().apply_sync_write_options(message)
-    }
 }
 
 impl KvDomainRuntime<'_> {
@@ -373,10 +349,10 @@ impl KvDomainRuntime<'_> {
                 &scoped_prefix,
             )))
             .limit(query_limit);
-        let mut iterator = tx.scan(&midge_query).map_err(|error| error.to_string())?;
+        let iterator = tx.scan(&midge_query).map_err(|error| error.to_string())?;
         let mut rows = Vec::new();
 
-        while let Some((scoped_key, value)) = iterator.next() {
+        for (scoped_key, value) in iterator {
             let Some(user_key) =
                 crate::domains::kv::KvActor::strip_scoped_prefix(&resource_prefix, &scoped_key)
             else {
@@ -438,10 +414,10 @@ impl KvDomainRuntime<'_> {
                 &scoped_prefix,
             )))
             .limit(query_limit);
-        let mut iterator = tx.scan(&midge_query).map_err(|error| error.to_string())?;
+        let iterator = tx.scan(&midge_query).map_err(|error| error.to_string())?;
         let mut rows = Vec::new();
 
-        while let Some((scoped_key, value)) = iterator.next() {
+        for (scoped_key, value) in iterator {
             let Some(user_key) =
                 crate::domains::kv::KvActor::strip_scoped_prefix(&resource_prefix, &scoped_key)
             else {
@@ -491,7 +467,7 @@ impl KvDomainRuntime<'_> {
             .map_err(|error| error.to_string())?;
         let mut discovered = Vec::new();
 
-        while let Some((key, value)) = iterator.next() {
+        for (key, value) in iterator.by_ref() {
             let Some((realm, area, resource)) =
                 crate::domains::kv::KvActor::parse_inventory_metadata_key(&key)
             else {
@@ -549,7 +525,7 @@ impl KvDomainRuntime<'_> {
         let mut storage_bytes = 0u64;
         let mut has_more = false;
 
-        while let Some((scoped_key, value)) = iterator.next() {
+        for (scoped_key, value) in iterator.by_ref() {
             if count >= u64::try_from(ADMIN_INVENTORY_REFRESH_LIMIT).unwrap_or(u64::MAX) {
                 has_more = true;
                 break;

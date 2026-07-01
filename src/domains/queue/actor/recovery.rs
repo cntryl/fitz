@@ -129,26 +129,26 @@ impl QueueActor {
         let dlq_query =
             cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&self.dlq_index_prefix));
 
-        let mut ready_iter = txn
+        let ready_iter = txn
             .scan(&ready_query)
             .map_err(|e| format!("Failed to scan ready index for rebuild: {e:?}"))?;
-        let mut delayed_iter = txn
+        let delayed_iter = txn
             .scan(&delayed_query)
             .map_err(|e| format!("Failed to scan delayed index for rebuild: {e:?}"))?;
-        let mut dlq_iter = txn
+        let dlq_iter = txn
             .scan(&dlq_query)
             .map_err(|e| format!("Failed to scan DLQ index for rebuild: {e:?}"))?;
         let mut ready_keys = Vec::new();
         let mut delayed_keys = Vec::new();
         let mut dlq_keys = Vec::new();
 
-        while let Some((key, _)) = ready_iter.next() {
+        for (key, _) in ready_iter {
             ready_keys.push(key.clone());
         }
-        while let Some((key, _)) = delayed_iter.next() {
+        for (key, _) in delayed_iter {
             delayed_keys.push(key.clone());
         }
-        while let Some((key, _)) = dlq_iter.next() {
+        for (key, _) in dlq_iter {
             dlq_keys.push(key.clone());
         }
 
@@ -452,7 +452,7 @@ impl QueueActor {
         next_id: u64,
         stats: &mut IndexScanStats,
     ) -> Result<(), IndexRecoveryAttempt> {
-        while let Some((key_bytes, value_bytes)) = ready_iter.next() {
+        for (key_bytes, value_bytes) in ready_iter.by_ref() {
             let Some((shard, start_id)) =
                 Self::parse_ready_range_key(&key_bytes, &self.ready_index_prefix)
             else {
@@ -494,7 +494,7 @@ impl QueueActor {
         now_instant: Instant,
         stats: &mut IndexScanStats,
     ) -> Result<(), IndexRecoveryAttempt> {
-        while let Some((key_bytes, _value_bytes)) = delayed_iter.next() {
+        for (key_bytes, _value_bytes) in delayed_iter.by_ref() {
             let Some((visible_at_ms, id)) =
                 Self::parse_delayed_index_key(&key_bytes, &self.delayed_index_prefix)
             else {
@@ -539,7 +539,7 @@ impl QueueActor {
         next_id: u64,
         stats: &mut IndexScanStats,
     ) -> Result<(), IndexRecoveryAttempt> {
-        while let Some((key_bytes, _value_bytes)) = dlq_iter.next() {
+        for (key_bytes, _value_bytes) in dlq_iter.by_ref() {
             let Some((dead_lettered_at_ms, id)) =
                 Self::parse_dlq_index_key(&key_bytes, &self.dlq_index_prefix)
             else {
@@ -562,7 +562,7 @@ impl QueueActor {
 
     fn collect_scan_entries(iter: &mut cntryl_midge::ScanIterator) -> Vec<(Vec<u8>, Vec<u8>)> {
         let mut entries = Vec::new();
-        while let Some(entry) = iter.next() {
+        for entry in iter.by_ref() {
             entries.push(entry);
         }
         entries

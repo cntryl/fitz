@@ -419,7 +419,7 @@ fn should_rebuild_kv_admin_transactions_from_actor_state() {
         FrameContext::new(
             session_id,
             ChannelId::Sub,
-            MessageType::new(100),
+            MessageType::new(crate::protocol::kv::msg_type::BEGIN),
             encode_kv_begin(kv_route, 1, 0),
             family,
         ),
@@ -447,28 +447,24 @@ fn should_route_kv_cleanup_through_managed_actor() {
     // Arrange
     let family = RouteFamily::new(1);
     let session_id = 7;
-    let kv_route = "kv://acme/app/users";
-    let kv_address = RouteAddress::new(family, Route::new(kv_route));
-    let source_address = RouteAddress::new(family, Route::new("inbox://session/7"));
-    let mailbox = Arc::new(Mailbox::new(8));
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
-    router.register(source_address.clone(), mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = KvDomainSink::new(store, router, admin_read_model.clone());
-    sink.deliver(Envelope::from_route(
-        source_address,
-        kv_address,
-        FrameContext::new(
-            session_id,
-            ChannelId::Sub,
-            MessageType::new(100),
-            encode_kv_begin(kv_route, 1, 0),
-            family,
-        ),
-    ))
-    .expect("begin KV transaction");
-    let _ = receive_envelope(&mailbox, "begin ack envelope");
+    let sink = KvDomainSink::new(store.clone(), router, admin_read_model.clone());
+    let mut actor = crate::domains::kv::KvActor::new(store);
+    let begin_response = actor.handle(crate::domains::kv::KvMessage::Begin {
+        route_family: family,
+        realm: "acme".to_string(),
+        area: "app".to_string(),
+        resource: "users".to_string(),
+        mode: crate::domains::kv::TxMode::ReadWrite,
+        write_options: cntryl_midge::WriteOptions::buffered(),
+    });
+    assert!(matches!(
+        begin_response,
+        crate::domains::kv::KvResponse::BeginOk { .. }
+    ));
+    sink.state.core.actors.lock().insert(session_id, actor);
     sink.sync_admin_snapshot();
     assert_eq!(sink.active_transaction_count(), 1);
     assert_eq!(admin_read_model.kv_transactions(None).len(), 1);
@@ -520,6 +516,139 @@ fn should_route_kv_live_transaction_count_through_managed_actor() {
     // Assert
     assert!(!sink.is_actor_running());
     assert_eq!(active_transaction_count, 0);
+}
+
+#[test]
+fn should_route_kv_admin_snapshot_sync_through_managed_actor() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 7;
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = KvDomainSink::new(store.clone(), router, admin_read_model.clone());
+    let mut actor = crate::domains::kv::KvActor::new(store);
+    let begin_response = actor.handle(crate::domains::kv::KvMessage::Begin {
+        route_family: family,
+        realm: "acme".to_string(),
+        area: "app".to_string(),
+        resource: "users".to_string(),
+        mode: crate::domains::kv::TxMode::ReadWrite,
+        write_options: cntryl_midge::WriteOptions::buffered(),
+    });
+    assert!(matches!(
+        begin_response,
+        crate::domains::kv::KvResponse::BeginOk { .. }
+    ));
+    sink.state.core.actors.lock().insert(session_id, actor);
+
+    // Act
+    sink.stop_actor_for_tests();
+    sink.sync_admin_snapshot();
+    let transactions = admin_read_model.kv_transactions(None);
+
+    // Assert
+    assert!(!sink.is_actor_running());
+    assert!(transactions.is_empty());
+}
+
+#[test]
+fn should_route_kv_latency_snapshot_query_through_managed_actor() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 7;
+    let kv_route = "kv://acme/app/users";
+    let kv_address = RouteAddress::new(family, Route::new(kv_route));
+    let source_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let mailbox = Arc::new(Mailbox::new(8));
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let router = Arc::new(Router::new());
+    router.register(source_address.clone(), mailbox.clone());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = KvDomainSink::new(store, router, admin_read_model);
+    sink.deliver(Envelope::from_route(
+        source_address.clone(),
+        kv_address.clone(),
+        FrameContext::new(
+            session_id,
+            ChannelId::Pub,
+            MessageType::new(crate::protocol::kv::msg_type::BEGIN),
+            encode_kv_begin(kv_route, 1, 0),
+            family,
+        ),
+    ))
+    .expect("begin KV transaction");
+    let begin_frame = receive_frame(&mailbox, "begin ack envelope");
+    let tx_id = decode_kv_begin_tx_id(&begin_frame.payload);
+    sink.deliver(Envelope::from_route(
+        source_address.clone(),
+        kv_address.clone(),
+        FrameContext::new(
+            session_id,
+            ChannelId::Pub,
+            MessageType::new(crate::protocol::kv::msg_type::PUT),
+            encode_kv_put(tx_id, kv_route, b"user:1", b"alice"),
+            family,
+        ),
+    ))
+    .expect("put KV value");
+    let _ = receive_envelope(&mailbox, "put ack envelope");
+    sink.deliver(Envelope::from_route(
+        source_address,
+        kv_address,
+        FrameContext::new(
+            session_id,
+            ChannelId::Pub,
+            MessageType::new(crate::protocol::kv::msg_type::COMMIT),
+            encode_kv_commit(tx_id, kv_route),
+            family,
+        ),
+    ))
+    .expect("commit KV transaction");
+    let _ = receive_envelope(&mailbox, "commit ack envelope");
+    let resource_key = KvResourceLockKey::new(1, "acme", "app", "users");
+
+    // Act
+    sink.stop_actor_for_tests();
+    let (reads, writes) = sink.latency_snapshots(&resource_key);
+
+    // Assert
+    assert!(!sink.is_actor_running());
+    assert!(reads.avg_ms.abs() < f64::EPSILON);
+    assert!(reads.p95_ms.abs() < f64::EPSILON);
+    assert!(writes.avg_ms.abs() < f64::EPSILON);
+    assert!(writes.p95_ms.abs() < f64::EPSILON);
+}
+
+#[test]
+fn should_route_kv_sync_write_options_mapping_through_managed_actor() {
+    // Arrange
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = KvDomainSink::new(store, router, admin_read_model)
+        .with_sync_write_options(cntryl_midge::WriteOptions::cloud_strict());
+    let message = crate::domains::kv::KvMessage::Begin {
+        route_family: RouteFamily::new(1),
+        realm: "acme".to_string(),
+        area: "app".to_string(),
+        resource: "users".to_string(),
+        mode: crate::domains::kv::TxMode::ReadWrite,
+        write_options: cntryl_midge::WriteOptions::sync(),
+    };
+
+    // Act
+    sink.stop_actor_for_tests();
+    let mapped = sink.apply_sync_write_options(message);
+
+    // Assert
+    assert!(!sink.is_actor_running());
+    match mapped {
+        crate::domains::kv::KvMessage::Begin { write_options, .. } => {
+            assert!(!write_options.is_cloud_strict());
+        }
+        _ => panic!("expected KV begin message"),
+    }
 }
 
 #[test]

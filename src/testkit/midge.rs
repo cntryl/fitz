@@ -95,7 +95,7 @@ pub fn create_test_engine_with_cfs(cf_ids: Vec<u32>) -> Arc<Engine> {
     let _ = std::fs::create_dir_all(&db_path);
 
     let engine = Arc::new(
-        Engine::open_with_options(MidgeOptions {
+        Engine::open_with_options(&MidgeOptions {
             storage_mode: cntryl_midge::testkit::StorageMode::LocalDisk { db_path },
             ..MidgeOptions::default()
         })

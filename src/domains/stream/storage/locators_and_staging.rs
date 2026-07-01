@@ -350,7 +350,7 @@ pub fn create_test_db() -> std::sync::Arc<cntryl_midge::Engine> {
     use cntryl_midge::testkit::MidgeOptions;
     use std::sync::Arc;
     Arc::new(
-        cntryl_midge::Engine::open_with_options(MidgeOptions::default())
+        cntryl_midge::Engine::open_with_options(&MidgeOptions::default())
             .expect("create in-memory db"),
     )
 }

@@ -199,7 +199,7 @@ mod tests {
         let family = RouteFamily::new(1);
         let addr = RouteAddress::new(family, Route::new("stream://realm1/__realm__"));
         let db = Arc::new(
-            cntryl_midge::Engine::open_with_options(cntryl_midge::MidgeOptions::default())
+            cntryl_midge::Engine::open_with_options(&cntryl_midge::MidgeOptions::default())
                 .expect("Failed to open store"),
         );
         let store = Arc::new(StreamStore::new(db));

@@ -549,10 +549,10 @@ impl KvActor {
         }
 
         match active.tx.scan(&midge_query) {
-            Ok(mut iterator) => {
+            Ok(iterator) => {
                 let mut items = Vec::new();
 
-                while let Some((key, value)) = iterator.next() {
+                for (key, value) in iterator {
                     let Some(user_key) = Self::strip_scoped_prefix(&prefix, &key) else {
                         continue;
                     };
