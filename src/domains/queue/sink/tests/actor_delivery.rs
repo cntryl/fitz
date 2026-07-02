@@ -62,16 +62,7 @@ fn queue_snapshot(
     family: RouteFamily,
     queue_route: &str,
 ) -> QueueAdminSnapshot {
-    let key = crate::domains::queue::QueueKey::from_route(family, &Route::new(queue_route))
-        .expect("queue key");
-    let actors = sink.actors.lock();
-    let snapshot = actors
-        .get(&key)
-        .expect("warm queue actor")
-        .actor
-        .lock()
-        .admin_snapshot();
-    snapshot
+    sink.queue_snapshot_for_tests(family, queue_route)
 }
 
 fn seed_dead_letter(
@@ -142,7 +133,7 @@ fn should_route_queue_delivery_through_managed_actor() {
     // Assert
     assert!(!sink.is_actor_running());
     assert!(matches!(result, Err(DeliveryError::ActorStopped)));
-    assert!(sink.actors.lock().is_empty());
+    assert!(sink.actors_are_empty_for_tests());
 }
 
 #[test]
@@ -295,7 +286,7 @@ fn should_route_queue_runtime_sweep_through_managed_actor() {
     ))
     .expect("send should enqueue");
     let _send_ack = receive_queue_frame(&sender_mailbox, "send response");
-    assert!(sink.dirty_fast_flush_families.lock().contains(&1));
+    assert!(sink.dirty_fast_flush_contains_family_for_tests(1));
 
     // Act
     sink.stop_actor_for_tests();
@@ -303,7 +294,7 @@ fn should_route_queue_runtime_sweep_through_managed_actor() {
 
     // Assert
     assert!(!sink.is_actor_running());
-    assert!(sink.dirty_fast_flush_families.lock().contains(&1));
+    assert!(sink.dirty_fast_flush_contains_family_for_tests(1));
 }
 
 #[test]
@@ -336,7 +327,7 @@ fn should_route_queue_dead_letter_replay_through_managed_actor() {
     assert!(!sink.is_actor_running());
     assert!(replayed.is_err());
     assert_eq!(dead_letters, 1);
-    assert!(sink.actors.lock().is_empty());
+    assert!(sink.actors_are_empty_for_tests());
 }
 
 #[test]
@@ -369,5 +360,5 @@ fn should_route_queue_dead_letter_purge_through_managed_actor() {
     assert!(!sink.is_actor_running());
     assert!(purged.is_err());
     assert_eq!(dead_letters, 1);
-    assert!(sink.actors.lock().is_empty());
+    assert!(sink.actors_are_empty_for_tests());
 }

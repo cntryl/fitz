@@ -690,6 +690,43 @@ fn should_keep_queue_live_core_helpers_private() {
 }
 
 #[test]
+fn should_keep_queue_sink_from_deref_exposing_core() {
+    // Arrange
+    let source = read_repo_file("src/domains/queue/sink/model.rs");
+    let forbidden_deref_impls = [
+        "impl std::ops::Deref for QueueDomainSink",
+        "impl std::ops::DerefMut for QueueDomainSink",
+    ];
+
+    // Act
+    let violations = forbidden_deref_impls
+        .into_iter()
+        .filter(|impl_block| source.contains(impl_block))
+        .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        violations.is_empty(),
+        "QueueDomainSink exposes core through Deref: {violations:?}"
+    );
+}
+
+#[test]
+fn should_keep_queue_domain_core_module_private() {
+    // Arrange
+    let source = read_repo_file("src/domains/queue/sink/model.rs");
+
+    // Act
+    let exposes_public_core = source.contains("pub struct QueueDomainCore");
+
+    // Assert
+    assert!(
+        !exposes_public_core,
+        "QueueDomainCore must stay private to the queue sink module"
+    );
+}
+
+#[test]
 fn should_keep_sync_core_free_of_transport_dependencies() {
     // Arrange
     let mut files = Vec::new();

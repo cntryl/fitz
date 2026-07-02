@@ -415,13 +415,13 @@ fn should_evict_idle_queue_actor_without_losing_committed_state() {
         .receiver()
         .try_recv()
         .expect("enqueue response");
-    assert_eq!(sink.actors.lock().len(), 1);
+    assert_eq!(sink.actor_count_for_tests(), 1);
 
     // Act
     force_actor_idle(&sink, queue_route, family);
     sink.refresh_admin_snapshot_if_dirty();
     assert!(
-        sink.actors.lock().is_empty(),
+        sink.actors_are_empty_for_tests(),
         "idle actor should be evicted"
     );
     assert!(
@@ -453,7 +453,7 @@ fn should_evict_idle_queue_actor_without_losing_committed_state() {
     sink.refresh_admin_snapshot_if_dirty();
 
     // Assert
-    assert_eq!(sink.actors.lock().len(), 1);
+    assert_eq!(sink.actor_count_for_tests(), 1);
     assert_eq!(admin_read_model.queues(None)[0].messages_inflight, 1);
 }
 
@@ -521,7 +521,7 @@ fn should_not_evict_idle_queue_actor_with_live_inflight() {
 
     // Assert
     assert_eq!(
-        sink.actors.lock().len(),
+        sink.actor_count_for_tests(),
         1,
         "actors with live inflight entries must stay warm until the inflight entry is gone"
     );

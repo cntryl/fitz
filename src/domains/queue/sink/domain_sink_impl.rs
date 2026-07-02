@@ -137,7 +137,7 @@ impl QueueDomainSink {
     ) -> Self {
         self.actor.stop();
         self.core_for_builder().metrics = Some(QueueMetrics::new(collector));
-        self.refresh_metrics_gauges();
+        self.core.refresh_metrics_gauges();
         self.rebuild_actor();
         self
     }
@@ -147,19 +147,19 @@ impl QueueDomainSink {
         self.actor.stop();
         self.core_for_builder().fast_flush_interval = interval;
         if let Some(interval) = interval {
-            *self.next_fast_flush_at.lock() = Instant::now() + interval;
+            *self.core.next_fast_flush_at.lock() = Instant::now() + interval;
         }
         self.rebuild_actor();
         self
     }
 
     pub fn stop(&self) {
-        self.active.store(false, Ordering::Relaxed);
+        self.core.active.store(false, Ordering::Relaxed);
         self.actor.stop();
     }
 
     pub(crate) fn is_active(&self) -> bool {
-        self.active.load(Ordering::Relaxed)
+        self.core.active.load(Ordering::Relaxed)
     }
 
     #[cfg(test)]
@@ -170,6 +170,83 @@ impl QueueDomainSink {
     #[cfg(test)]
     pub(super) fn stop_actor_for_tests(&self) {
         self.actor.stop();
+    }
+
+    #[cfg(test)]
+    pub(super) fn actor_count_for_tests(&self) -> usize {
+        self.core.actors.lock().len()
+    }
+
+    #[cfg(test)]
+    pub(super) fn actors_are_empty_for_tests(&self) -> bool {
+        self.core.actors.lock().is_empty()
+    }
+
+    #[cfg(test)]
+    pub(super) fn queue_snapshot_for_tests(
+        &self,
+        family: crate::runtime::routing::RouteFamily,
+        queue_route: &str,
+    ) -> QueueAdminSnapshot {
+        let key = crate::domains::queue::QueueKey::from_route(
+            family,
+            &crate::runtime::routing::Route::new(queue_route),
+        )
+        .expect("queue key");
+        self.core
+            .actors
+            .lock()
+            .get(&key)
+            .expect("warm queue actor")
+            .actor
+            .lock()
+            .admin_snapshot()
+    }
+
+    #[cfg(test)]
+    pub(super) fn force_actor_idle_for_tests(
+        &self,
+        family: crate::runtime::routing::RouteFamily,
+        queue_route: &str,
+    ) {
+        let key = crate::domains::queue::QueueKey::from_route(
+            family,
+            &crate::runtime::routing::Route::new(queue_route),
+        )
+        .expect("queue key");
+        let mut actors = self.core.actors.lock();
+        let warm_actor = actors.get_mut(&key).expect("warm queue actor");
+        warm_actor.last_used = Instant::now()
+            .checked_sub(QUEUE_ACTOR_IDLE_TTL + Duration::from_secs(1))
+            .expect("idle deadline should remain representable");
+    }
+
+    #[cfg(test)]
+    pub(super) fn dirty_fast_flush_contains_family_for_tests(&self, family_id: u32) -> bool {
+        self.core
+            .dirty_fast_flush_families
+            .lock()
+            .contains(&family_id)
+    }
+
+    #[cfg(test)]
+    pub(super) fn dirty_fast_flush_is_empty_for_tests(&self) -> bool {
+        self.core.dirty_fast_flush_families.lock().is_empty()
+    }
+
+    #[cfg(test)]
+    pub(super) fn insert_dirty_fast_flush_family_for_tests(&self, family_id: u32) {
+        self.core.dirty_fast_flush_families.lock().insert(family_id);
+    }
+
+    #[cfg(test)]
+    pub(super) fn watch_families_are_empty_for_tests(&self) -> bool {
+        self.core.families.lock().is_empty()
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_next_dedup_sweep_at_for_tests(&self, now: Instant) {
+        *self.core.next_dedup_sweep_at.lock() = now;
     }
 
     fn send_unit_actor_command(

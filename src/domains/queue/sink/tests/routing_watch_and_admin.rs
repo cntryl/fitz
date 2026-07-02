@@ -166,13 +166,7 @@ pub(super) fn decode_queue_watch_delivery(frame: &FrameContext) -> (u64, String,
 }
 
 pub(super) fn force_actor_idle(sink: &QueueDomainSink, queue_route: &str, family: RouteFamily) {
-    let key = crate::domains::queue::QueueKey::from_route(family, &Route::new(queue_route))
-        .expect("queue key");
-    let mut actors = sink.actors.lock();
-    let warm_actor = actors.get_mut(&key).expect("warm queue actor");
-    warm_actor.last_used = Instant::now()
-        .checked_sub(QUEUE_ACTOR_IDLE_TTL + Duration::from_secs(1))
-        .expect("idle deadline should remain representable");
+    sink.force_actor_idle_for_tests(family, queue_route);
 }
 
 #[test]
@@ -191,7 +185,7 @@ pub(super) fn should_create_queue_domain_sink() {
     );
 
     // Assert
-    assert!(sink.active.load(Ordering::Relaxed));
+    assert!(sink.is_active());
 }
 
 #[test]
@@ -230,7 +224,7 @@ pub(super) fn should_mark_fast_queue_family_dirty_given_successful_send() {
     // Assert
     let response_frame = receive_queue_frame(&sender_mailbox, "send response");
     assert_eq!(response_frame.payload[0], 0);
-    assert!(sink.dirty_fast_flush_families.lock().contains(&1));
+    assert!(sink.dirty_fast_flush_contains_family_for_tests(1));
 }
 
 #[test]
@@ -265,13 +259,13 @@ pub(super) fn should_clear_dirty_fast_queue_family_after_flush_window() {
     ))
     .expect("send should enqueue");
     let _ = receive_queue_frame(&sender_mailbox, "send response");
-    assert!(sink.dirty_fast_flush_families.lock().contains(&1));
+    assert!(sink.dirty_fast_flush_contains_family_for_tests(1));
 
     // Act
     sink.sweep_runtime_state_at(Instant::now() + Duration::from_millis(100));
 
     // Assert
-    assert!(sink.dirty_fast_flush_families.lock().is_empty());
+    assert!(sink.dirty_fast_flush_is_empty_for_tests());
 }
 
 #[test]
@@ -287,13 +281,13 @@ pub(super) fn should_keep_dirty_fast_queue_family_when_flush_cannot_find_cf() {
         cntryl_midge::WriteOptions::best_effort(),
     )
     .with_fast_flush_interval(Some(Duration::from_millis(100)));
-    sink.dirty_fast_flush_families.lock().insert(99);
+    sink.insert_dirty_fast_flush_family_for_tests(99);
 
     // Act
     sink.sweep_runtime_state_at(Instant::now() + Duration::from_millis(100));
 
     // Assert
-    assert!(sink.dirty_fast_flush_families.lock().contains(&99));
+    assert!(sink.dirty_fast_flush_contains_family_for_tests(99));
 }
 
 #[test]
@@ -344,7 +338,7 @@ pub(super) fn should_reject_send_given_malformed_queue_route() {
         bad_request_reason(&response_frame),
         "invalid queue route: queue://acme/jobs"
     );
-    assert!(queue_sink.actors.lock().is_empty());
+    assert!(queue_sink.actors_are_empty_for_tests());
     assert!(admin_read_model.queues(None).is_empty());
 }
 
@@ -395,7 +389,7 @@ pub(super) fn should_reject_receive_given_malformed_queue_route() {
         bad_request_reason(&response_frame),
         "invalid queue route: queue://acme/jobs"
     );
-    assert!(sink.actors.lock().is_empty());
+    assert!(sink.actors_are_empty_for_tests());
     assert!(admin_read_model.queues(None).is_empty());
 }
 
@@ -446,7 +440,7 @@ pub(super) fn should_reject_extend_given_malformed_queue_route() {
         bad_request_reason(&response_frame),
         "invalid queue route: queue://acme/jobs"
     );
-    assert!(sink.actors.lock().is_empty());
+    assert!(sink.actors_are_empty_for_tests());
     assert!(admin_read_model.queues(None).is_empty());
 }
 
@@ -497,7 +491,7 @@ pub(super) fn should_reject_ack_given_malformed_queue_route() {
         bad_request_reason(&response_frame),
         "invalid queue route: queue://acme/jobs"
     );
-    assert!(sink.actors.lock().is_empty());
+    assert!(sink.actors_are_empty_for_tests());
     assert!(admin_read_model.queues(None).is_empty());
 }
 
@@ -715,7 +709,7 @@ pub(super) fn should_remove_queue_watch_given_unwatch_request() {
         .try_recv()
         .expect("send ack envelope");
     assert!(subscriber_mailbox.receiver().try_recv().is_err());
-    assert!(sink.families.lock().is_empty());
+    assert!(sink.watch_families_are_empty_for_tests());
 }
 
 #[test]
@@ -751,7 +745,7 @@ pub(super) fn should_cleanup_expired_queue_dedup_entries_during_runtime_sweep() 
     std::thread::sleep(Duration::from_millis(5));
 
     let now = Instant::now();
-    *sink.next_dedup_sweep_at.lock() = now;
+    sink.set_next_dedup_sweep_at_for_tests(now);
 
     // Act
     sink.sweep_runtime_state_at(now);

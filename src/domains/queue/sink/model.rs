@@ -59,7 +59,7 @@ pub(super) const QUEUE_DEDUP_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 /// - Returns responses
 /// - Tracks queue-local watch subscriptions for the current broker process
 /// - Exposes only warm in-memory queue/admin state for the current broker process
-pub struct QueueDomainCore {
+pub(super) struct QueueDomainCore {
     /// Fitz storage facade over the current Midge engine.
     pub(super) store: crate::storage::FitzStorageEngine,
     /// Commit policy for queue persistence on this runtime.
@@ -126,20 +126,6 @@ pub(super) struct QueueDomainRuntime<'a> {
 pub struct QueueDomainSink {
     pub(super) core: Arc<QueueDomainCore>,
     pub(super) actor: ManagedActor<QueueDomainCommand>,
-}
-
-impl std::ops::Deref for QueueDomainSink {
-    type Target = QueueDomainCore;
-
-    fn deref(&self) -> &Self::Target {
-        &self.core
-    }
-}
-
-impl std::ops::DerefMut for QueueDomainSink {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        Arc::get_mut(&mut self.core).expect("Queue sink builders must run before sharing the sink")
-    }
 }
 
 impl std::ops::Deref for QueueDomainRuntime<'_> {
