@@ -543,6 +543,43 @@ fn should_keep_stream_live_core_helpers_private() {
     );
 }
 
+#[test]
+fn should_keep_stream_sink_from_deref_exposing_core() {
+    // Arrange
+    let source = read_repo_file("src/domains/stream/sink/model.rs");
+    let forbidden_deref_impls = [
+        "impl std::ops::Deref for StreamDomainSink",
+        "impl std::ops::DerefMut for StreamDomainSink",
+    ];
+
+    // Act
+    let violations = forbidden_deref_impls
+        .into_iter()
+        .filter(|impl_block| source.contains(impl_block))
+        .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        violations.is_empty(),
+        "StreamDomainSink exposes core through Deref: {violations:?}"
+    );
+}
+
+#[test]
+fn should_keep_stream_domain_core_module_private() {
+    // Arrange
+    let source = read_repo_file("src/domains/stream/sink/model.rs");
+
+    // Act
+    let exposes_public_core = source.contains("pub struct StreamDomainCore");
+
+    // Assert
+    assert!(
+        !exposes_public_core,
+        "StreamDomainCore must stay private to the stream sink module"
+    );
+}
+
 fn notice_live_core_public_helper_violations() -> Vec<&'static str> {
     let source = read_repo_file("src/domains/notice/sink.rs");
     let core_impl = section_between(

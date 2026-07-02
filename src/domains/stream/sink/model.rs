@@ -83,7 +83,7 @@ pub(super) struct StreamSessionOwner {
     pub(super) owner_session_id: u64,
 }
 
-pub struct StreamDomainCore {
+pub(super) struct StreamDomainCore {
     pub(super) store: crate::storage::FitzStorageEngine,
     pub(super) stream_store: Arc<StreamStore>,
     pub(super) actors: Mutex<HashMap<StreamActorKey, Arc<Mutex<StreamActor>>>>,
@@ -130,20 +130,6 @@ pub(super) struct StreamDomainRuntime<'a> {
 pub struct StreamDomainSink {
     pub(super) core: Arc<StreamDomainCore>,
     pub(super) actor: ManagedActor<StreamDomainCommand>,
-}
-
-impl std::ops::Deref for StreamDomainSink {
-    type Target = StreamDomainCore;
-
-    fn deref(&self) -> &Self::Target {
-        &self.core
-    }
-}
-
-impl std::ops::DerefMut for StreamDomainSink {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        Arc::get_mut(&mut self.core).expect("Stream sink builders must run before sharing the sink")
-    }
 }
 
 impl std::ops::Deref for StreamDomainRuntime<'_> {

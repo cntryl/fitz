@@ -163,8 +163,30 @@ impl StreamDomainSink {
     }
 
     pub fn stop(&self) {
-        self.active.store(false, Ordering::Relaxed);
+        self.core.active.store(false, Ordering::Relaxed);
         self.actor.stop();
+    }
+
+    #[must_use]
+    pub fn storage_layout(&self) -> StreamStorageLayout {
+        self.core.storage_layout()
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error if the requested route cannot be read or if the stream
+    /// store rejects the read parameters.
+    pub fn admin_read_resource_records(
+        &self,
+        request: AdminStreamReadRequest<'_>,
+    ) -> Result<
+        (
+            Vec<StreamReadItem>,
+            crate::domains::stream::protocol::ReadCursor,
+        ),
+        String,
+    > {
+        self.core.admin_read_resource_records(request)
     }
 
     #[cfg(test)]
@@ -188,6 +210,92 @@ impl StreamDomainSink {
         }
 
         let _ = reply_rx.recv_timeout(std::time::Duration::from_secs(1));
+    }
+
+    #[cfg(test)]
+    pub(super) fn sync_write_mode_for_tests(
+        &self,
+    ) -> crate::domains::stream::protocol::StreamWriteMode {
+        self.core.sync_write_mode
+    }
+
+    #[cfg(test)]
+    pub(super) fn read_area_records_for_tests(
+        &self,
+        family: RouteFamily,
+        realm: &str,
+        area: &str,
+        from_offset: u64,
+        limit: u64,
+    ) -> Result<Vec<StreamReadItem>, String> {
+        self.core
+            .stream_store
+            .read_area(family.as_u64(), realm, area, from_offset, limit, None)
+            .map(|(records, _cursor)| records)
+    }
+
+    #[cfg(test)]
+    pub(super) fn read_realm_records_for_tests(
+        &self,
+        family: RouteFamily,
+        realm: &str,
+        from_offset: u64,
+        limit: u64,
+    ) -> Result<Vec<StreamReadItem>, String> {
+        self.core
+            .stream_store
+            .read_realm(family.as_u64(), realm, from_offset, limit, None)
+            .map(|(records, _cursor)| records)
+    }
+
+    #[cfg(test)]
+    pub(super) fn delete_compact_resource_page_for_tests(
+        &self,
+        family: RouteFamily,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        page_start_offset: u64,
+    ) -> Result<(), String> {
+        let mut txn = self
+            .core
+            .store
+            .begin_tx(family.id(), cntryl_midge::TransactionMode::ReadWrite)
+            .map_err(|error| error.to_string())?;
+        txn.delete(
+            crate::domains::stream::storage::encode_compact_resource_page_key(
+                realm,
+                area,
+                resource,
+                page_start_offset,
+            ),
+        )
+        .map_err(|error| error.to_string())?;
+        txn.commit(cntryl_midge::WriteOptions::sync())
+            .map_err(|error| error.to_string())
+    }
+
+    #[cfg(test)]
+    pub(super) fn encode_metadata_response_data_for_tests(
+        &self,
+        family: RouteFamily,
+        route: &Route,
+    ) -> Result<Vec<u8>, String> {
+        self.core.encode_metadata_response_data(family, route)
+    }
+
+    #[cfg(test)]
+    pub(super) fn encode_read_response_data_for_tests(
+        &self,
+        family: RouteFamily,
+        route: &Route,
+        from_offset: u64,
+        limit: u64,
+        max_bytes: Option<usize>,
+        filter: Option<&crate::domains::stream::protocol::StreamFilterSet>,
+    ) -> Result<Vec<u8>, String> {
+        self.core
+            .encode_read_response_data(family, route, from_offset, limit, max_bytes, filter)
     }
 
     pub fn refresh_admin_snapshot_if_dirty(&self) {
@@ -257,7 +365,7 @@ impl StreamDomainSink {
 }
 
 impl StreamDomainCore {
-    pub fn storage_layout(&self) -> StreamStorageLayout {
+    fn storage_layout(&self) -> StreamStorageLayout {
         self.stream_store.storage_layout()
     }
 
@@ -359,7 +467,7 @@ impl StreamDomainCore {
     ///
     /// Returns an error if the requested route cannot be read or if the stream
     /// store rejects the read parameters.
-    pub fn admin_read_resource_records(
+    fn admin_read_resource_records(
         &self,
         request: AdminStreamReadRequest<'_>,
     ) -> Result<

@@ -16,15 +16,17 @@ struct TestContext {
     source: RouteAddress,
     inbox: Arc<FrameQueueSink>,
     sink: Arc<StreamDomainSink>,
+    admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
 }
 
 fn setup_test_context() -> TestContext {
     let family = RouteFamily::new(1);
     let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
     let sink = Arc::new(StreamDomainSink::new(
         crate::benchkit::create_bench_store(),
         router.clone(),
-        crate::control::admin::read_model::AdminReadModel::new(),
+        admin_read_model.clone(),
     ));
     router.register_domain_pattern("stream", sink.clone() as Arc<dyn MailboxSink>);
     let (source, inbox) = register_session_queue_sink(&router, family, TEST_CLIENT_SESSION_ID);
@@ -35,6 +37,7 @@ fn setup_test_context() -> TestContext {
         source,
         inbox,
         sink,
+        admin_read_model,
     }
 }
 
@@ -327,8 +330,8 @@ fn should_route_stream_admin_snapshot_sync_through_managed_actor() {
     // Act
     context.sink.stop_actor_for_tests();
     context.sink.sync_admin_snapshot();
-    let streams = context.sink.admin_read_model.streams(None);
-    let events_total = context.sink.admin_read_model.stream_events_total();
+    let streams = context.admin_read_model.streams(None);
+    let events_total = context.admin_read_model.stream_events_total();
 
     // Assert
     assert!(!context.sink.is_actor_running());
@@ -345,8 +348,8 @@ fn should_route_stream_admin_dirty_refresh_through_managed_actor() {
     // Act
     context.sink.stop_actor_for_tests();
     context.sink.refresh_admin_snapshot_if_dirty();
-    let streams = context.sink.admin_read_model.streams(None);
-    let events_total = context.sink.admin_read_model.stream_events_total();
+    let streams = context.admin_read_model.streams(None);
+    let events_total = context.admin_read_model.stream_events_total();
 
     // Assert
     assert!(!context.sink.is_actor_running());
@@ -451,10 +454,8 @@ fn should_return_all_area_records_given_two_resource_batches_on_direct_sink_path
     // Act
     let area_records = context
         .sink
-        .stream_store
-        .read_area(1, "bench", "area", 0, 1000, None)
-        .expect("read area from store")
-        .0;
+        .read_area_records_for_tests(context.family, "bench", "area", 0, 1000)
+        .expect("read area from store");
 
     let read_frame = build_stream_read("stream://bench/area/*", 0);
     let (read_msg_type, read_payload) = extract_single_tlv_field(&read_frame);
@@ -589,7 +590,6 @@ fn should_preserve_append_session_without_notify_given_commit_failure() {
     let read_after_retry = stream_read_response(&context, route, 0, 10);
     context.sink.sync_admin_snapshot();
     let stream = context
-        .sink
         .admin_read_model
         .streams(None)
         .into_iter()
@@ -611,7 +611,7 @@ fn should_preserve_append_session_without_notify_given_commit_failure() {
     );
     assert_eq!(stream.offset, 0);
     assert_eq!(stream.sessions_active, 0);
-    assert_eq!(context.sink.admin_read_model.stream_events_total(), 1);
+    assert_eq!(context.admin_read_model.stream_events_total(), 1);
 }
 
 #[test]
@@ -641,8 +641,8 @@ fn should_drop_uncommitted_append_session_given_session_cleanup() {
     // Assert
     assert_eq!(context.sink.append_session_count(), 0);
     assert!(read_after_cleanup.records.is_empty());
-    assert!(context.sink.admin_read_model.streams(None).is_empty());
-    assert_eq!(context.sink.admin_read_model.stream_events_total(), 0);
+    assert!(context.admin_read_model.streams(None).is_empty());
+    assert_eq!(context.admin_read_model.stream_events_total(), 0);
 }
 
 #[test]
@@ -681,7 +681,7 @@ fn should_map_sync_commits_to_cloud_strict_given_strict_cloud_sync_policy() {
 
     // Assert
     assert_eq!(
-        sink.sync_write_mode,
+        sink.sync_write_mode_for_tests(),
         crate::domains::stream::protocol::StreamWriteMode::CloudStrict
     );
 }
@@ -701,7 +701,7 @@ fn should_keep_sync_commits_local_given_local_sync_policy() {
 
     // Assert
     assert_eq!(
-        sink.sync_write_mode,
+        sink.sync_write_mode_for_tests(),
         crate::domains::stream::protocol::StreamWriteMode::Sync
     );
 }
@@ -714,8 +714,8 @@ fn should_exclude_uncommitted_stream_from_admin_snapshot_given_active_session() 
 
     // Act
     context.sink.sync_admin_snapshot();
-    let streams = context.sink.admin_read_model.streams(None);
-    let events_total = context.sink.admin_read_model.stream_events_total();
+    let streams = context.admin_read_model.streams(None);
+    let events_total = context.admin_read_model.stream_events_total();
 
     // Assert
     assert!(streams.is_empty());
@@ -731,12 +731,12 @@ fn should_preserve_committed_snapshot_given_active_session_overlay() {
 
     // Act
     context.sink.sync_admin_snapshot();
-    let streams = context.sink.admin_read_model.streams(None);
+    let streams = context.admin_read_model.streams(None);
     let stream = streams
         .iter()
         .find(|item| item.realm == "bench" && item.area == "events" && item.resource == "orders")
         .expect("committed stream should remain visible");
-    let events_total = context.sink.admin_read_model.stream_events_total();
+    let events_total = context.admin_read_model.stream_events_total();
 
     // Assert
     assert_eq!(stream.offset, 0);
@@ -760,23 +760,20 @@ fn should_preserve_committed_watermarks_given_uncommitted_append_overlay() {
     // Act
     context.sink.sync_admin_snapshot();
     let stream = context
-        .sink
         .admin_read_model
         .streams(None)
         .into_iter()
         .find(|item| item.realm == "bench" && item.area == "events" && item.resource == "orders")
         .expect("committed stream should remain visible");
     let area_watermark = context
-        .sink
         .admin_read_model
         .stream_area_watermark("bench", "events")
         .expect("area watermark detail");
     let realm_watermark = context
-        .sink
         .admin_read_model
         .stream_realm_watermark("bench")
         .expect("realm watermark detail");
-    let events_total = context.sink.admin_read_model.stream_events_total();
+    let events_total = context.admin_read_model.stream_events_total();
 
     // Assert
     assert_eq!(stream.offset, 0);
@@ -812,18 +809,16 @@ fn should_not_inflate_admin_watermark_counts_given_uncommitted_new_resource_over
 
     // Act
     context.sink.sync_admin_snapshot();
-    let streams = context.sink.admin_read_model.streams(None);
+    let streams = context.admin_read_model.streams(None);
     let area_watermark = context
-        .sink
         .admin_read_model
         .stream_area_watermark("bench", "events")
         .expect("area watermark detail");
     let realm_watermark = context
-        .sink
         .admin_read_model
         .stream_realm_watermark("bench")
         .expect("realm watermark detail");
-    let events_total = context.sink.admin_read_model.stream_events_total();
+    let events_total = context.admin_read_model.stream_events_total();
 
     // Assert
     assert_eq!(streams.len(), 1);
@@ -851,24 +846,18 @@ fn should_return_trimmed_head_metadata_summary_given_missing_first_resource_page
         crate::domains::stream::storage::REALM_PAGE_RECORD_LIMIT + 1,
         b"persisted",
     );
-    let mut txn = context
+    context
         .sink
-        .store
-        .begin_tx(1, cntryl_midge::TransactionMode::ReadWrite)
-        .expect("begin stream metadata write tx");
-    txn.delete(
-        crate::domains::stream::storage::encode_compact_resource_page_key(
-            "bench", "events", "orders", 0,
-        ),
-    )
-    .expect("delete first resource page");
-    txn.commit(cntryl_midge::WriteOptions::sync())
-        .expect("commit trimmed stream head");
+        .delete_compact_resource_page_for_tests(context.family, "bench", "events", "orders", 0)
+        .expect("delete first resource page");
 
     // Act
     let payload = context
         .sink
-        .encode_metadata_response_data(context.family, &Route::new("stream://bench/events/orders"))
+        .encode_metadata_response_data_for_tests(
+            context.family,
+            &Route::new("stream://bench/events/orders"),
+        )
         .expect("encode stream metadata summary");
     let metadata = decode_stream_metadata_payload(&payload);
 
@@ -909,7 +898,7 @@ fn should_encode_exact_resource_read_payload_given_committed_record_with_metadat
     // Act
     let payload = context
         .sink
-        .encode_read_response_data(
+        .encode_read_response_data_for_tests(
             context.family,
             &Route::new("stream://bench/events/orders"),
             0,
@@ -945,7 +934,10 @@ fn should_encode_exact_resource_metadata_payload_given_empty_stream() {
     // Act
     let payload = context
         .sink
-        .encode_metadata_response_data(context.family, &Route::new("stream://bench/events/empty"))
+        .encode_metadata_response_data_for_tests(
+            context.family,
+            &Route::new("stream://bench/events/empty"),
+        )
         .expect("encode empty stream metadata payload");
     let metadata = decode_stream_metadata_payload(&payload);
 

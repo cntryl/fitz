@@ -20,10 +20,8 @@ fn should_return_all_realm_records_given_two_resource_batches_on_direct_sink_pat
     // Act
     let realm_records = context
         .sink
-        .stream_store
-        .read_realm(1, "bench", 0, 1000, None)
-        .expect("read realm from store")
-        .0;
+        .read_realm_records_for_tests(context.family, "bench", 0, 1000)
+        .expect("read realm from store");
 
     let read_frame = build_stream_read("stream://bench/*/*", 0);
     let (read_msg_type, read_payload) = extract_single_tlv_field(&read_frame);
