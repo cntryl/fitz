@@ -598,6 +598,21 @@ fn should_keep_notice_sink_from_deref_exposing_core() {
     );
 }
 
+#[test]
+fn should_keep_notice_domain_core_module_private() {
+    // Arrange
+    let source = read_repo_file("src/domains/notice/sink.rs");
+
+    // Act
+    let exposes_public_core = source.contains("pub struct NoticeDomainCore");
+
+    // Assert
+    assert!(
+        !exposes_public_core,
+        "NoticeDomainCore must stay private to the notice sink module"
+    );
+}
+
 fn queue_live_core_public_helper_violations() -> Vec<&'static str> {
     let source = read_repo_file("src/domains/queue/sink/domain_sink_impl.rs");
     let core_impl = section_between(

@@ -122,7 +122,7 @@ fn usize_to_u64(value: usize) -> u64 {
 /// This core owns the authoritative in-memory subscription index used for
 /// delivery and admin snapshots. State disappears on session cleanup or broker
 /// restart and is never durably recovered or replayed.
-pub struct NoticeDomainCore {
+struct NoticeDomainCore {
     families: Mutex<HashMap<u64, RoutedSubscriptionSet<NoticeSubscription>>>,
     route_stats: Mutex<HashMap<NoticeRouteStatsKey, NoticeRouteStats>>,
     next_sub_id: AtomicU64,
