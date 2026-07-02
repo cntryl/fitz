@@ -136,7 +136,7 @@ fn should_create_kv_domain_sink() {
     let sink = KvDomainSink::new(store, router, admin_read_model);
 
     // Assert
-    assert!(sink.state.active.load(Ordering::Relaxed));
+    assert!(sink.is_active_for_tests());
     assert!(sink.is_actor_running());
 }
 
@@ -464,7 +464,7 @@ fn should_route_kv_cleanup_through_managed_actor() {
         begin_response,
         crate::domains::kv::KvResponse::BeginOk { .. }
     ));
-    sink.state.core.actors.lock().insert(session_id, actor);
+    sink.insert_actor_for_tests(session_id, actor);
     sink.sync_admin_snapshot();
     assert_eq!(sink.active_transaction_count(), 1);
     assert_eq!(admin_read_model.kv_transactions(None).len(), 1);
@@ -540,7 +540,7 @@ fn should_route_kv_admin_snapshot_sync_through_managed_actor() {
         begin_response,
         crate::domains::kv::KvResponse::BeginOk { .. }
     ));
-    sink.state.core.actors.lock().insert(session_id, actor);
+    sink.insert_actor_for_tests(session_id, actor);
 
     // Act
     sink.stop_actor_for_tests();
@@ -902,5 +902,5 @@ fn should_remove_kv_subscription_given_unsubscribe() {
 
     // Assert
     assert_no_envelope(&watcher_mailbox);
-    assert!(sink.state.core.watch_actors.lock().is_empty());
+    assert!(sink.watch_actors_are_empty_for_tests());
 }

@@ -179,11 +179,7 @@ fn should_publish_schedule_notify_to_subscribers_when_due() {
         .expect("subscription id present");
     wait_for_subscription_count(&sink, 1);
 
-    {
-        let mut actors = sink.state.core.actors.lock();
-        let actor = actors.get_mut(&family).expect("schedule actor");
-        actor.bench_prepare_scan(1);
-    }
+    sink.prepare_actor_scan_for_tests(family, 1);
 
     sink.scan_due_schedules();
 
@@ -259,18 +255,14 @@ fn should_remove_schedule_subscriptions_given_session_cleanup() {
     ))
     .expect("cleanup session");
     wait_for_subscription_count(&sink, 0);
-    {
-        let mut actors = sink.state.core.actors.lock();
-        let actor = actors.get_mut(&family).expect("schedule actor");
-        actor.bench_prepare_scan(1);
-    }
+    sink.prepare_actor_scan_for_tests(family, 1);
     sink.scan_due_schedules();
     wait_for_pending_fire_count(&sink, 0);
 
     // Assert
     assert_eq!(sink.subscription_count(), 0);
     assert_no_envelope(&subscriber_mailbox);
-    assert!(sink.state.core.sub_families.lock().is_empty());
+    assert!(sink.subscriptions_are_empty_for_tests());
 }
 
 #[test]
@@ -360,23 +352,20 @@ fn should_count_live_publish_failure_given_domain_routing_error() {
         admin_read_model,
     ));
 
-    {
-        let mut actors = sink.state.core.actors.lock();
-        let mut actor = crate::domains::schedule::ScheduleActor::new(
-            family,
-            store,
-            cntryl_midge::WriteOptions::buffered(),
-        );
-        actor
-            .create_schedule(
-                schedule_route.to_string(),
-                "* * * * *".to_string(),
-                Bytes::from_static(b"orphan"),
-            )
-            .expect("create schedule");
-        actor.bench_prepare_scan(1);
-        actors.insert(family, actor);
-    }
+    let mut actor = crate::domains::schedule::ScheduleActor::new(
+        family,
+        store,
+        cntryl_midge::WriteOptions::buffered(),
+    );
+    actor
+        .create_schedule(
+            schedule_route.to_string(),
+            "* * * * *".to_string(),
+            Bytes::from_static(b"orphan"),
+        )
+        .expect("create schedule");
+    actor.bench_prepare_scan(1);
+    sink.insert_actor_for_tests(family, actor);
 
     assert_eq!(sink.notify_failure_count(), 0, "no failures before scan");
 

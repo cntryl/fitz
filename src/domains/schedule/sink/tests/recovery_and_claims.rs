@@ -32,11 +32,7 @@ fn should_retry_pending_claim_after_restart_given_initial_live_publish_failure()
         .expect("create schedule");
     wait_for_schedule_count(&initial_sink, 1);
 
-    {
-        let mut actors = initial_sink.state.core.actors.lock();
-        let actor = actors.get_mut(&family).expect("schedule actor");
-        actor.bench_prepare_scan(1);
-    }
+    initial_sink.prepare_actor_scan_for_tests(family, 1);
 
     // Act
     initial_sink.scan_due_schedules();
@@ -150,14 +146,8 @@ fn should_retry_ack_without_republishing_given_same_broker_ack_persist_failure()
     let _subscribe_ack = receive_envelope(&subscriber_mailbox, "subscribe ack envelope");
     drain_mailbox(&subscriber_mailbox);
 
-    {
-        let mut actors = sink.state.core.actors.lock();
-        let actor = actors.get_mut(&family).expect("schedule actor");
-        actor.bench_prepare_scan(1);
-        let claimed = actor.bench_claim_due_fires();
-        assert_eq!(claimed.len(), 1);
-        actor.fail_next_store_commit_for_tests();
-    }
+    let claimed_count = sink.prepare_actor_scan_claim_and_fail_next_commit_for_tests(family, 1);
+    assert_eq!(claimed_count, 1);
 
     // Act
     sink.scan_due_schedules();
@@ -218,29 +208,13 @@ fn should_increment_expired_pending_claim_metric_when_cleanup_removes_orphans() 
     let claimed = actor.bench_claim_due_fires();
     assert_eq!(claimed.len(), 1);
     clock.advance(Duration::from_millis(11));
-    sink.state
-        .core
-        .pending_claim_ttl_ms
-        .store(10, Ordering::Relaxed);
-    let now_elapsed_ms =
-        u128_to_u64_saturating(sink.state.core.snapshot_epoch.elapsed().as_millis());
-    sink.state.core.last_pending_claim_cleanup_elapsed_ms.store(
-        now_elapsed_ms.saturating_sub(SCHEDULE_PENDING_CLAIM_CLEANUP_INTERVAL_MS),
-        Ordering::Relaxed,
-    );
-    sink.state.core.actors.lock().insert(family, actor);
+    sink.force_pending_claim_cleanup_due_for_tests(10);
+    sink.insert_actor_for_tests(family, actor);
 
     // Act
     sink.scan_due_schedules();
 
     // Assert
     wait_for_metric_counter(&metrics, METRIC_PENDING_CLAIMS_EXPIRED_TOTAL, 1);
-    let actors = sink.state.core.actors.lock();
-    assert_eq!(
-        actors
-            .get(&family)
-            .expect("schedule actor")
-            .pending_fire_count(),
-        0
-    );
+    assert_eq!(sink.actor_pending_fire_count_for_tests(family), 0);
 }

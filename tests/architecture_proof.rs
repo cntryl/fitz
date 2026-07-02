@@ -177,6 +177,75 @@ const DOMAIN_PROOFS: &[DomainProof] = &[
     },
 ];
 
+const DOMAIN_SINK_SOURCES: &[(&str, &str, &str)] = &[
+    ("KV", "KvDomainSink", "src/domains/kv/sink/model.rs"),
+    (
+        "Queue",
+        "QueueDomainSink",
+        "src/domains/queue/sink/model.rs",
+    ),
+    ("Notice", "NoticeDomainSink", "src/domains/notice/sink.rs"),
+    (
+        "Stream",
+        "StreamDomainSink",
+        "src/domains/stream/sink/model.rs",
+    ),
+    (
+        "RPC",
+        "RpcDomainSink",
+        "src/domains/rpc/sink/state_model/sink.rs",
+    ),
+    (
+        "Lease",
+        "LeaseDomainSink",
+        "src/domains/lease/sink/model.rs",
+    ),
+    (
+        "Schedule",
+        "ScheduleDomainSink",
+        "src/domains/schedule/sink/model.rs",
+    ),
+];
+
+const DOMAIN_CORE_SOURCES: &[(&str, &str, &str)] = &[
+    ("KV", "KvDomainCore", "src/domains/kv/sink/model.rs"),
+    (
+        "Queue",
+        "QueueDomainCore",
+        "src/domains/queue/sink/model.rs",
+    ),
+    ("Notice", "NoticeDomainCore", "src/domains/notice/sink.rs"),
+    (
+        "Stream",
+        "StreamDomainCore",
+        "src/domains/stream/sink/model.rs",
+    ),
+    (
+        "RPC",
+        "RpcDomainCore",
+        "src/domains/rpc/sink/state_model/sink.rs",
+    ),
+    (
+        "Lease",
+        "LeaseDomainCore",
+        "src/domains/lease/sink/model.rs",
+    ),
+    (
+        "Schedule",
+        "ScheduleDomainCore",
+        "src/domains/schedule/sink/model.rs",
+    ),
+];
+
+const DOMAIN_SINK_TEST_INTERNAL_FORBIDDEN: &[&str] = &[
+    "sink.state",
+    "initial_sink.state",
+    "sink.core",
+    "queue_sink.core",
+    "rpc_sink.core",
+    "stream_sink.core",
+];
+
 const ADMIN_BOUNDARY_FORBIDDEN: &[&str] = &[
     "crate::boot::domains::",
     "crate::domains::kv::sink",
@@ -262,6 +331,100 @@ fn relative_display(path: &Path) -> String {
         .unwrap_or(path)
         .to_string_lossy()
         .replace('\\', "/")
+}
+
+fn domain_sink_test_files() -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    collect_rs_files(&repo_root().join("src/domains"), &mut files);
+    files.retain(|path| {
+        let relative = relative_display(path);
+        relative.contains("/sink/tests/") || relative.ends_with("/sink/tests.rs")
+    });
+    files.sort();
+    files
+}
+
+#[test]
+fn should_keep_every_domain_sink_from_deref_exposing_core() {
+    // Arrange
+
+    // Act
+    let violations = DOMAIN_SINK_SOURCES
+        .iter()
+        .flat_map(|(domain, sink, path)| {
+            let source = read_repo_file(path);
+            [
+                format!("impl std::ops::Deref for {sink}"),
+                format!("impl std::ops::DerefMut for {sink}"),
+            ]
+            .into_iter()
+            .filter(move |needle| source.contains(needle))
+            .map(move |needle| format!("{domain} exposes core through {needle} in {path}"))
+        })
+        .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        violations.is_empty(),
+        "domain sinks must not expose core through Deref: {violations:?}"
+    );
+}
+
+#[test]
+fn should_keep_every_domain_core_module_private() {
+    // Arrange
+
+    // Act
+    let violations = DOMAIN_CORE_SOURCES
+        .iter()
+        .filter_map(|(domain, core, path)| {
+            let source = read_repo_file(path);
+            source
+                .contains(&format!("pub struct {core}"))
+                .then(|| format!("{domain} exposes public {core} in {path}"))
+        })
+        .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        violations.is_empty(),
+        "domain cores must stay module-private: {violations:?}"
+    );
+}
+
+#[test]
+fn should_keep_domain_sink_tests_from_reaching_sink_internals() {
+    // Arrange
+
+    // Act
+    let violations = domain_sink_test_files()
+        .into_iter()
+        .flat_map(|path| {
+            let relative_path = relative_display(&path);
+            let content = fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+            let mut file_violations = Vec::new();
+            for (index, line) in content.lines().enumerate() {
+                for needle in DOMAIN_SINK_TEST_INTERNAL_FORBIDDEN {
+                    if line.contains(needle) {
+                        file_violations.push(format!(
+                            "{}:{} reaches sink internal {}",
+                            relative_path,
+                            index + 1,
+                            needle
+                        ));
+                    }
+                }
+            }
+            file_violations
+        })
+        .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        violations.is_empty(),
+        "domain sink tests must use mailbox/facade helpers instead of internals: {violations:?}"
+    );
 }
 
 #[test]
@@ -543,43 +706,6 @@ fn should_keep_stream_live_core_helpers_private() {
     );
 }
 
-#[test]
-fn should_keep_stream_sink_from_deref_exposing_core() {
-    // Arrange
-    let source = read_repo_file("src/domains/stream/sink/model.rs");
-    let forbidden_deref_impls = [
-        "impl std::ops::Deref for StreamDomainSink",
-        "impl std::ops::DerefMut for StreamDomainSink",
-    ];
-
-    // Act
-    let violations = forbidden_deref_impls
-        .into_iter()
-        .filter(|impl_block| source.contains(impl_block))
-        .collect::<Vec<_>>();
-
-    // Assert
-    assert!(
-        violations.is_empty(),
-        "StreamDomainSink exposes core through Deref: {violations:?}"
-    );
-}
-
-#[test]
-fn should_keep_stream_domain_core_module_private() {
-    // Arrange
-    let source = read_repo_file("src/domains/stream/sink/model.rs");
-
-    // Act
-    let exposes_public_core = source.contains("pub struct StreamDomainCore");
-
-    // Assert
-    assert!(
-        !exposes_public_core,
-        "StreamDomainCore must stay private to the stream sink module"
-    );
-}
-
 fn notice_live_core_public_helper_violations() -> Vec<&'static str> {
     let source = read_repo_file("src/domains/notice/sink.rs");
     let core_impl = section_between(
@@ -610,43 +736,6 @@ fn should_keep_notice_live_core_helpers_private() {
     assert!(
         violations.is_empty(),
         "NoticeDomainCore exposes live state helpers outside the mailbox facade: {violations:?}"
-    );
-}
-
-#[test]
-fn should_keep_notice_sink_from_deref_exposing_core() {
-    // Arrange
-    let source = read_repo_file("src/domains/notice/sink.rs");
-    let forbidden_deref_impls = [
-        "impl std::ops::Deref for NoticeDomainSink",
-        "impl std::ops::DerefMut for NoticeDomainSink",
-    ];
-
-    // Act
-    let violations = forbidden_deref_impls
-        .into_iter()
-        .filter(|impl_block| source.contains(impl_block))
-        .collect::<Vec<_>>();
-
-    // Assert
-    assert!(
-        violations.is_empty(),
-        "NoticeDomainSink exposes core through Deref: {violations:?}"
-    );
-}
-
-#[test]
-fn should_keep_notice_domain_core_module_private() {
-    // Arrange
-    let source = read_repo_file("src/domains/notice/sink.rs");
-
-    // Act
-    let exposes_public_core = source.contains("pub struct NoticeDomainCore");
-
-    // Assert
-    assert!(
-        !exposes_public_core,
-        "NoticeDomainCore must stay private to the notice sink module"
     );
 }
 
@@ -689,43 +778,6 @@ fn should_keep_queue_live_core_helpers_private() {
     );
 }
 
-#[test]
-fn should_keep_queue_sink_from_deref_exposing_core() {
-    // Arrange
-    let source = read_repo_file("src/domains/queue/sink/model.rs");
-    let forbidden_deref_impls = [
-        "impl std::ops::Deref for QueueDomainSink",
-        "impl std::ops::DerefMut for QueueDomainSink",
-    ];
-
-    // Act
-    let violations = forbidden_deref_impls
-        .into_iter()
-        .filter(|impl_block| source.contains(impl_block))
-        .collect::<Vec<_>>();
-
-    // Assert
-    assert!(
-        violations.is_empty(),
-        "QueueDomainSink exposes core through Deref: {violations:?}"
-    );
-}
-
-#[test]
-fn should_keep_queue_domain_core_module_private() {
-    // Arrange
-    let source = read_repo_file("src/domains/queue/sink/model.rs");
-
-    // Act
-    let exposes_public_core = source.contains("pub struct QueueDomainCore");
-
-    // Assert
-    assert!(
-        !exposes_public_core,
-        "QueueDomainCore must stay private to the queue sink module"
-    );
-}
-
 fn rpc_live_core_public_helper_violations() -> Vec<&'static str> {
     let source = read_repo_file("src/domains/rpc/sink/domain_sink_impl.rs");
     let runtime_impl = source
@@ -755,43 +807,6 @@ fn should_keep_rpc_live_core_helpers_private() {
     assert!(
         violations.is_empty(),
         "RpcDomainRuntime exposes live state helpers outside the mailbox facade: {violations:?}"
-    );
-}
-
-#[test]
-fn should_keep_rpc_sink_from_deref_exposing_core() {
-    // Arrange
-    let source = read_repo_file("src/domains/rpc/sink/state_model/sink.rs");
-    let forbidden_deref_impls = [
-        "impl std::ops::Deref for RpcDomainSink",
-        "impl std::ops::DerefMut for RpcDomainSink",
-    ];
-
-    // Act
-    let violations = forbidden_deref_impls
-        .into_iter()
-        .filter(|impl_block| source.contains(impl_block))
-        .collect::<Vec<_>>();
-
-    // Assert
-    assert!(
-        violations.is_empty(),
-        "RpcDomainSink exposes core through Deref: {violations:?}"
-    );
-}
-
-#[test]
-fn should_keep_rpc_domain_core_module_private() {
-    // Arrange
-    let source = read_repo_file("src/domains/rpc/sink/state_model/sink.rs");
-
-    // Act
-    let exposes_public_core = source.contains("pub struct RpcDomainCore");
-
-    // Assert
-    assert!(
-        !exposes_public_core,
-        "RpcDomainCore must stay private to the RPC sink module"
     );
 }
 

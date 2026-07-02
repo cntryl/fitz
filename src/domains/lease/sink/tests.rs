@@ -109,7 +109,7 @@ fn should_create_lease_domain_sink() {
     let sink = LeaseDomainSink::new(router, admin_read_model);
 
     // Assert
-    assert!(sink.state.active.load(Ordering::Relaxed));
+    assert!(sink.is_active_for_tests());
     assert!(sink.is_actor_running());
 }
 
@@ -189,7 +189,7 @@ fn should_clear_session_state_given_session_cleanup() {
     assert_eq!(sink.subscription_count(), 0);
     assert!(admin_read_model.leases(None).is_empty());
     assert_no_envelope(&subscriber_mailbox);
-    assert!(sink.state.core.families.lock().is_empty());
+    assert!(sink.watch_families_are_empty_for_tests());
 }
 
 #[test]
@@ -307,19 +307,8 @@ fn should_promote_waiter_given_extend_observes_expired_lease() {
     assert_eq!(leases.len(), 1);
     assert_eq!(leases[0].owner_session_id, "owner2");
     assert_eq!(leases[0].fencing_token, waiter_token);
-    assert!(!sink
-        .state
-        .core
-        .session_leases
-        .lock()
-        .contains_key(&session_id));
-    assert!(sink
-        .state
-        .core
-        .session_leases
-        .lock()
-        .get(&waiter_session_id)
-        .is_some_and(|leases| leases.contains(&key)));
+    assert!(!sink.session_leases_contain_for_tests(session_id, &key));
+    assert!(sink.session_leases_contain_for_tests(waiter_session_id, &key));
     assert!(waiter_delivery.payload::<FrameContext>().is_some());
 }
 
@@ -364,13 +353,7 @@ fn should_read_admin_waiters_through_actor_command() {
     // Act
     sink.stop();
     let command_waiters_after_stop = sink.admin_waiters();
-    let queued_waiter_count_after_stop = sink
-        .state
-        .core
-        .pending_acquires
-        .lock()
-        .get(&key)
-        .map_or(0, std::collections::VecDeque::len);
+    let queued_waiter_count_after_stop = sink.pending_acquire_count_for_tests(&key);
 
     // Assert
     assert!(command_waiters_after_stop.is_empty());

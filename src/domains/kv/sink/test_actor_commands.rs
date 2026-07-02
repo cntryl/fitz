@@ -1,7 +1,24 @@
 use super::model::{KvDomainCommand, KvDomainSink, KvResourceLockKey};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 impl KvDomainSink {
+    pub(super) fn is_active_for_tests(&self) -> bool {
+        self.state.active.load(Ordering::Relaxed)
+    }
+
+    pub(super) fn insert_actor_for_tests(
+        &self,
+        session_id: u64,
+        actor: crate::domains::kv::KvActor,
+    ) {
+        self.state.core.actors.lock().insert(session_id, actor);
+    }
+
+    pub(super) fn watch_actors_are_empty_for_tests(&self) -> bool {
+        self.state.core.watch_actors.lock().is_empty()
+    }
+
     pub(super) fn sync_admin_snapshot(&self) {
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         if let Err(error) = self

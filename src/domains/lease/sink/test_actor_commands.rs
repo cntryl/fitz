@@ -1,8 +1,35 @@
 use super::model::{LeaseAcquireRequest, LeaseDomainCommand, LeaseDomainSink};
 use crate::domains::lease::protocol::{LeaseKey, LeaseResponse};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 impl LeaseDomainSink {
+    pub(super) fn is_active_for_tests(&self) -> bool {
+        self.state.active.load(Ordering::Relaxed)
+    }
+
+    pub(super) fn watch_families_are_empty_for_tests(&self) -> bool {
+        self.state.core.families.lock().is_empty()
+    }
+
+    pub(super) fn session_leases_contain_for_tests(&self, session_id: u64, key: &LeaseKey) -> bool {
+        self.state
+            .core
+            .session_leases
+            .lock()
+            .get(&session_id)
+            .is_some_and(|leases| leases.contains(key))
+    }
+
+    pub(super) fn pending_acquire_count_for_tests(&self, key: &LeaseKey) -> usize {
+        self.state
+            .core
+            .pending_acquires
+            .lock()
+            .get(key)
+            .map_or(0, std::collections::VecDeque::len)
+    }
+
     pub(super) fn acquire_for_tests(&self, request: LeaseAcquireRequest) -> LeaseResponse {
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         if self
