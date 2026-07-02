@@ -34,19 +34,14 @@ fn should_reject_duplicate_live_correlation_given_rpc_sink() {
             frames: worker_frames.clone(),
         }) as Arc<dyn MailboxSink>,
     );
-    {
-        let mut state = sink.state.lock();
-        state
-            .ensure_route_state(&request_route)
-            .register_worker(RpcWorker::with_stats(
-                request_addr.clone(),
-                worker_source,
-                42,
-                "2026-03-14T12:00:00Z",
-                0,
-                0,
-            ));
-    }
+    sink.register_worker_for_tests(RpcWorker::with_stats(
+        request_addr.clone(),
+        worker_source,
+        42,
+        "2026-03-14T12:00:00Z",
+        0,
+        0,
+    ));
     let correlation_id = uuid::Uuid::new_v4();
     let mut payload_encoder = crate::protocol::payload_codec::PayloadEncoder::new();
     let caller_one_payload = crate::protocol::rpc_codec::encode_request_into(
@@ -151,12 +146,7 @@ fn should_queue_request_when_worker_is_busy_given_rpc_sink() {
             frames: worker_frames.clone(),
         }) as Arc<dyn MailboxSink>,
     );
-    {
-        let mut state = sink.state.lock();
-        state
-            .ensure_route_state(&request_route)
-            .register_worker(test_rpc_worker(family, &request_route, 42));
-    }
+    sink.register_worker_for_tests(test_rpc_worker(family, &request_route, 42));
     let caller_one_request = crate::domains::rpc::protocol::RpcRequest::new(
         family,
         uuid::Uuid::new_v4(),
@@ -214,18 +204,9 @@ fn should_queue_request_when_worker_is_busy_given_rpc_sink() {
 
     // Assert
     assert_eq!(sink.pending_request_count(), 2);
-    {
-        let mut state = sink.state.lock();
-        assert_eq!(state.pending.len(), 1);
-        assert_eq!(state.queued.len(), 1);
-        assert_eq!(
-            state
-                .route_state(&request_route)
-                .expect("route state should exist")
-                .queued_len(),
-            1,
-        );
-    }
+    assert_eq!(sink.pending_table_len_for_tests(), 1);
+    assert_eq!(sink.queued_request_count_for_tests(), 1);
+    assert_eq!(sink.route_queued_len_for_tests(&request_route), 1);
     let worker_frames = worker_frames.lock();
     assert_eq!(worker_frames.len(), 1);
     assert_eq!(worker_frames[0].msg_type.as_u16(), 302);
@@ -274,12 +255,7 @@ fn should_dispatch_queued_request_after_terminal_response_given_rpc_sink() {
             frames: worker_frames.clone(),
         }) as Arc<dyn MailboxSink>,
     );
-    {
-        let mut state = sink.state.lock();
-        state
-            .ensure_route_state(&request_route)
-            .register_worker(test_rpc_worker(family, &request_route, 42));
-    }
+    sink.register_worker_for_tests(test_rpc_worker(family, &request_route, 42));
     let caller_one_request = crate::domains::rpc::protocol::RpcRequest::new(
         family,
         uuid::Uuid::new_v4(),
@@ -355,11 +331,8 @@ fn should_dispatch_queued_request_after_terminal_response_given_rpc_sink() {
 
     // Assert
     assert_eq!(sink.pending_request_count(), 1);
-    {
-        let state = sink.state.lock();
-        assert_eq!(state.pending.len(), 1);
-        assert_eq!(state.queued.len(), 0);
-    }
+    assert_eq!(sink.pending_table_len_for_tests(), 1);
+    assert_eq!(sink.queued_request_count_for_tests(), 0);
     let caller_one_frames = caller_one_frames.lock();
     assert_eq!(caller_one_frames.len(), 2);
     assert_eq!(caller_one_frames[0].msg_type.as_u16(), 302);
@@ -425,12 +398,7 @@ fn should_reject_request_when_route_queue_capacity_reached_given_rpc_sink() {
             frames: worker_frames.clone(),
         }) as Arc<dyn MailboxSink>,
     );
-    {
-        let mut state = sink.state.lock();
-        state
-            .ensure_route_state(&request_route)
-            .register_worker(test_rpc_worker(family, &request_route, 42));
-    }
+    sink.register_worker_for_tests(test_rpc_worker(family, &request_route, 42));
     let caller_one_payload = {
         let mut encoder = crate::protocol::payload_codec::PayloadEncoder::new();
         bytes::Bytes::from(crate::protocol::rpc_codec::encode_request_into(
@@ -511,11 +479,8 @@ fn should_reject_request_when_route_queue_capacity_reached_given_rpc_sink() {
 
     // Assert
     assert_eq!(sink.pending_request_count(), 2);
-    {
-        let state = sink.state.lock();
-        assert_eq!(state.pending.len(), 1);
-        assert_eq!(state.queued.len(), 1);
-    }
+    assert_eq!(sink.pending_table_len_for_tests(), 1);
+    assert_eq!(sink.queued_request_count_for_tests(), 1);
     let worker_frames = worker_frames.lock();
     assert_eq!(worker_frames.len(), 1);
     let caller_one_frames = caller_one_frames.lock();
@@ -542,27 +507,22 @@ fn should_snapshot_queued_request_without_worker_session_id_given_rpc_admin_snap
     let family = RouteFamily::new(1);
     let route = Route::new("rpc://prod/api/users/get");
     let correlation_id = uuid::Uuid::new_v4();
-    {
-        let mut state = sink.state.lock();
-        state
-            .ensure_route_state(&route)
-            .register_worker(test_rpc_worker(family, &route, 42));
-        state.queue_request(
-            correlation_id,
-            RpcQueuedRequest::from_request(
-                crate::domains::rpc::protocol::RpcRequest::new(
-                    family,
-                    correlation_id,
-                    route.clone(),
-                    Route::new("inbox://session/7/custom"),
-                    bytes::Bytes::from_static(b"queued"),
-                ),
-                7,
-                session_inbox_address(family, 7),
-                Instant::now() + Duration::from_secs(30),
+    sink.register_worker_for_tests(test_rpc_worker(family, &route, 42));
+    sink.queue_request_for_tests(
+        correlation_id,
+        RpcQueuedRequest::from_request(
+            crate::domains::rpc::protocol::RpcRequest::new(
+                family,
+                correlation_id,
+                route.clone(),
+                Route::new("inbox://session/7/custom"),
+                bytes::Bytes::from_static(b"queued"),
             ),
-        );
-    }
+            7,
+            session_inbox_address(family, 7),
+            Instant::now() + Duration::from_secs(30),
+        ),
+    );
 
     // Act
     sink.sync_admin_snapshot();
@@ -590,12 +550,7 @@ fn should_reject_request_when_worker_disconnects_before_dispatch_given_missing_w
         frames: reply_frames.clone(),
     });
     router.register(request_source.clone(), reply_sink as Arc<dyn MailboxSink>);
-    {
-        let mut state = sink.state.lock();
-        state
-            .ensure_route_state(&request_route)
-            .register_worker(test_rpc_worker(family, &request_route, 42));
-    }
+    sink.register_worker_for_tests(test_rpc_worker(family, &request_route, 42));
     let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
     let (request_msg_type, request_payload) =
         crate::benchkit::extract_single_tlv_field(&request_frame);
@@ -648,19 +603,14 @@ fn should_forward_response_to_original_request_source_given_noncanonical_inbox_r
     });
     router.register(request_source.clone(), reply_sink as Arc<dyn MailboxSink>);
     router.register(worker_source.clone(), worker_sink as Arc<dyn MailboxSink>);
-    {
-        let mut state = sink.state.lock();
-        state
-            .ensure_route_state(&request_route)
-            .register_worker(RpcWorker::with_stats(
-                request_addr.clone(),
-                worker_source.clone(),
-                42,
-                "2026-03-14T12:00:00Z",
-                0,
-                0,
-            ));
-    }
+    sink.register_worker_for_tests(RpcWorker::with_stats(
+        request_addr.clone(),
+        worker_source.clone(),
+        42,
+        "2026-03-14T12:00:00Z",
+        0,
+        0,
+    ));
     let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
     let (request_msg_type, request_payload) =
         crate::benchkit::extract_single_tlv_field(&request_frame);

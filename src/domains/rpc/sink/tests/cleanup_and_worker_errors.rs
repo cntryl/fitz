@@ -86,19 +86,14 @@ fn should_forward_worker_disconnect_error_given_rpc_unsubscribe() {
     });
     router.register(request_source.clone(), reply_sink as Arc<dyn MailboxSink>);
     router.register(worker_source.clone(), worker_sink as Arc<dyn MailboxSink>);
-    {
-        let mut state = sink.state.lock();
-        state
-            .ensure_route_state(&request_route)
-            .register_worker(RpcWorker::with_stats(
-                request_addr.clone(),
-                worker_source.clone(),
-                42,
-                "2026-03-14T12:00:00Z",
-                0,
-                0,
-            ));
-    }
+    sink.register_worker_for_tests(RpcWorker::with_stats(
+        request_addr.clone(),
+        worker_source.clone(),
+        42,
+        "2026-03-14T12:00:00Z",
+        0,
+        0,
+    ));
     let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
     let (request_msg_type, request_payload) =
         crate::benchkit::extract_single_tlv_field(&request_frame);
@@ -185,29 +180,22 @@ fn should_retain_other_worker_route_given_rpc_unsubscribe_on_same_session() {
     });
     router.register(request_source.clone(), reply_sink as Arc<dyn MailboxSink>);
     router.register(worker_source.clone(), worker_sink as Arc<dyn MailboxSink>);
-    {
-        let mut state = sink.state.lock();
-        state
-            .ensure_route_state(&removed_route)
-            .register_worker(RpcWorker::with_stats(
-                removed_addr.clone(),
-                worker_source.clone(),
-                42,
-                "2026-03-14T12:00:00Z",
-                0,
-                0,
-            ));
-        state
-            .ensure_route_state(&retained_route)
-            .register_worker(RpcWorker::with_stats(
-                retained_addr.clone(),
-                worker_source.clone(),
-                42,
-                "2026-03-14T12:00:00Z",
-                0,
-                0,
-            ));
-    }
+    sink.register_worker_for_tests(RpcWorker::with_stats(
+        removed_addr.clone(),
+        worker_source.clone(),
+        42,
+        "2026-03-14T12:00:00Z",
+        0,
+        0,
+    ));
+    sink.register_worker_for_tests(RpcWorker::with_stats(
+        retained_addr.clone(),
+        worker_source.clone(),
+        42,
+        "2026-03-14T12:00:00Z",
+        0,
+        0,
+    ));
     let unsubscribe_payload = {
         let mut encoder = crate::protocol::payload_codec::PayloadEncoder::new();
         encoder.put_string(removed_route.as_str());
@@ -313,12 +301,7 @@ fn should_forward_worker_disconnect_error_given_rpc_session_cleanup() {
     });
     router.register(request_source.clone(), reply_sink as Arc<dyn MailboxSink>);
     router.register(worker_source.clone(), worker_sink as Arc<dyn MailboxSink>);
-    {
-        let mut state = sink.state.lock();
-        state
-            .ensure_route_state(&request_route)
-            .register_worker(test_rpc_worker(family, &request_route, 42));
-    }
+    sink.register_worker_for_tests(test_rpc_worker(family, &request_route, 42));
     let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
     let (request_msg_type, request_payload) =
         crate::benchkit::extract_single_tlv_field(&request_frame);
@@ -393,19 +376,14 @@ fn should_reject_worker_response_when_correlation_missing_given_rpc_sink() {
     });
     router.register(request_source.clone(), reply_sink as Arc<dyn MailboxSink>);
     router.register(worker_source.clone(), worker_sink as Arc<dyn MailboxSink>);
-    {
-        let mut state = sink.state.lock();
-        state
-            .ensure_route_state(&request_route)
-            .register_worker(RpcWorker::with_stats(
-                request_addr.clone(),
-                worker_source.clone(),
-                42,
-                "2026-03-14T12:00:00Z",
-                0,
-                0,
-            ));
-    }
+    sink.register_worker_for_tests(RpcWorker::with_stats(
+        request_addr.clone(),
+        worker_source.clone(),
+        42,
+        "2026-03-14T12:00:00Z",
+        0,
+        0,
+    ));
     let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
     let (request_msg_type, request_payload) =
         crate::benchkit::extract_single_tlv_field(&request_frame);
@@ -498,29 +476,22 @@ fn should_reject_worker_response_from_non_owner_session_given_rpc_sink() {
             frames: non_owner_worker_frames.clone(),
         }) as Arc<dyn MailboxSink>,
     );
-    {
-        let mut state = sink.state.lock();
-        state
-            .ensure_route_state(&request_route)
-            .register_worker(RpcWorker::with_stats(
-                request_addr.clone(),
-                owner_worker_source.clone(),
-                42,
-                "2026-03-14T12:00:00Z",
-                0,
-                0,
-            ));
-        state
-            .ensure_route_state(&request_route)
-            .register_worker(RpcWorker::with_stats(
-                request_addr.clone(),
-                non_owner_worker_source.clone(),
-                43,
-                "2026-03-14T12:00:00Z",
-                0,
-                0,
-            ));
-    }
+    sink.register_worker_for_tests(RpcWorker::with_stats(
+        request_addr.clone(),
+        owner_worker_source.clone(),
+        42,
+        "2026-03-14T12:00:00Z",
+        0,
+        0,
+    ));
+    sink.register_worker_for_tests(RpcWorker::with_stats(
+        request_addr.clone(),
+        non_owner_worker_source.clone(),
+        43,
+        "2026-03-14T12:00:00Z",
+        0,
+        0,
+    ));
     let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
     let (request_msg_type, request_payload) =
         crate::benchkit::extract_single_tlv_field(&request_frame);
@@ -631,29 +602,22 @@ fn should_reject_worker_ack_from_non_owner_session_given_rpc_sink() {
             frames: non_owner_worker_frames.clone(),
         }) as Arc<dyn MailboxSink>,
     );
-    {
-        let mut state = sink.state.lock();
-        state
-            .ensure_route_state(&request_route)
-            .register_worker(RpcWorker::with_stats(
-                request_addr.clone(),
-                owner_worker_source.clone(),
-                42,
-                "2026-03-14T12:00:00Z",
-                0,
-                0,
-            ));
-        state
-            .ensure_route_state(&request_route)
-            .register_worker(RpcWorker::with_stats(
-                request_addr.clone(),
-                non_owner_worker_source.clone(),
-                43,
-                "2026-03-14T12:00:00Z",
-                0,
-                0,
-            ));
-    }
+    sink.register_worker_for_tests(RpcWorker::with_stats(
+        request_addr.clone(),
+        owner_worker_source.clone(),
+        42,
+        "2026-03-14T12:00:00Z",
+        0,
+        0,
+    ));
+    sink.register_worker_for_tests(RpcWorker::with_stats(
+        request_addr.clone(),
+        non_owner_worker_source.clone(),
+        43,
+        "2026-03-14T12:00:00Z",
+        0,
+        0,
+    ));
     let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
     let (request_msg_type, request_payload) =
         crate::benchkit::extract_single_tlv_field(&request_frame);
@@ -746,19 +710,14 @@ fn should_drop_late_worker_response_after_requester_cleanup_without_forward_erro
     });
     router.register(request_source.clone(), reply_sink as Arc<dyn MailboxSink>);
     router.register(worker_source.clone(), worker_sink as Arc<dyn MailboxSink>);
-    {
-        let mut state = sink.state.lock();
-        state
-            .ensure_route_state(&request_route)
-            .register_worker(RpcWorker::with_stats(
-                request_addr.clone(),
-                worker_source.clone(),
-                42,
-                "2026-03-14T12:00:00Z",
-                0,
-                0,
-            ));
-    }
+    sink.register_worker_for_tests(RpcWorker::with_stats(
+        request_addr.clone(),
+        worker_source.clone(),
+        42,
+        "2026-03-14T12:00:00Z",
+        0,
+        0,
+    ));
     let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
     let (request_msg_type, request_payload) =
         crate::benchkit::extract_single_tlv_field(&request_frame);

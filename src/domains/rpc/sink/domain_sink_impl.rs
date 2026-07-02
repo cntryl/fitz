@@ -1,3 +1,5 @@
+#[cfg(test)]
+use super::state_model::RpcQueuedRequest;
 use super::state_model::{
     route_quad, rpc_admin_snapshot_due, rpc_timeout_sweep_interval, Arc, AtomicBool, AtomicU64,
     DeliveryError, Duration, Envelope, Instant, Mutex, Ordering, Route, RouteAddress, Router,
@@ -168,6 +170,59 @@ impl RpcDomainSink {
     #[cfg(test)]
     pub(super) fn stop_actor_for_tests(&self) {
         self.actor.stop();
+    }
+
+    #[cfg(test)]
+    pub(super) fn register_worker_for_tests(&self, worker: RpcWorker) {
+        let mut state = self.core.state.lock();
+        state
+            .ensure_route_state(worker.addr.route())
+            .register_worker(worker);
+    }
+
+    #[cfg(test)]
+    pub(super) fn track_pending_request_for_tests(
+        &self,
+        correlation_id: uuid::Uuid,
+        pending: RpcPendingRequest,
+    ) {
+        self.core
+            .state
+            .lock()
+            .pending
+            .track_pending(correlation_id, pending);
+    }
+
+    #[cfg(test)]
+    pub(super) fn queue_request_for_tests(
+        &self,
+        correlation_id: uuid::Uuid,
+        queued: RpcQueuedRequest,
+    ) {
+        self.core.state.lock().queue_request(correlation_id, queued);
+    }
+
+    #[cfg(test)]
+    pub(super) fn live_request_count_for_tests(&self) -> usize {
+        self.core.state.lock().live_request_count()
+    }
+
+    #[cfg(test)]
+    pub(super) fn pending_table_len_for_tests(&self) -> usize {
+        self.core.state.lock().pending.len()
+    }
+
+    #[cfg(test)]
+    pub(super) fn queued_request_count_for_tests(&self) -> usize {
+        self.core.state.lock().queued.len()
+    }
+
+    #[cfg(test)]
+    pub(super) fn route_queued_len_for_tests(&self, route: &Route) -> usize {
+        let mut state = self.core.state.lock();
+        state
+            .route_state(route)
+            .map_or(0, |route_state| route_state.queued_len())
     }
 
     pub fn worker_count(&self) -> usize {
@@ -625,11 +680,11 @@ impl RpcDomainRuntime<'_> {
         self.admin_read_model.replace_rpc_pending(pending);
     }
 
-    pub fn worker_count(&self) -> usize {
+    pub(super) fn worker_count(&self) -> usize {
         self.live_counts().workers
     }
 
-    pub fn pending_request_count(&self) -> usize {
+    pub(super) fn pending_request_count(&self) -> usize {
         self.live_counts().pending_requests
     }
 
@@ -735,7 +790,7 @@ impl RpcDomainRuntime<'_> {
         }
     }
 
-    pub fn refresh_admin_snapshot_if_dirty(&self) {
+    pub(super) fn refresh_admin_snapshot_if_dirty(&self) {
         self.maybe_sync_admin_snapshot(false);
     }
 

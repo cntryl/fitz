@@ -726,6 +726,75 @@ fn should_keep_queue_domain_core_module_private() {
     );
 }
 
+fn rpc_live_core_public_helper_violations() -> Vec<&'static str> {
+    let source = read_repo_file("src/domains/rpc/sink/domain_sink_impl.rs");
+    let runtime_impl = source
+        .split_once("impl RpcDomainRuntime<'_> {")
+        .expect("missing RPC domain runtime impl")
+        .1;
+    let forbidden_public_helpers = [
+        "pub fn worker_count(&self)",
+        "pub fn pending_request_count(&self)",
+        "pub fn refresh_admin_snapshot_if_dirty(&self)",
+    ];
+
+    forbidden_public_helpers
+        .into_iter()
+        .filter(|helper| runtime_impl.contains(helper))
+        .collect::<Vec<_>>()
+}
+
+#[test]
+fn should_keep_rpc_live_core_helpers_private() {
+    // Arrange
+
+    // Act
+    let violations = rpc_live_core_public_helper_violations();
+
+    // Assert
+    assert!(
+        violations.is_empty(),
+        "RpcDomainRuntime exposes live state helpers outside the mailbox facade: {violations:?}"
+    );
+}
+
+#[test]
+fn should_keep_rpc_sink_from_deref_exposing_core() {
+    // Arrange
+    let source = read_repo_file("src/domains/rpc/sink/state_model/sink.rs");
+    let forbidden_deref_impls = [
+        "impl std::ops::Deref for RpcDomainSink",
+        "impl std::ops::DerefMut for RpcDomainSink",
+    ];
+
+    // Act
+    let violations = forbidden_deref_impls
+        .into_iter()
+        .filter(|impl_block| source.contains(impl_block))
+        .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        violations.is_empty(),
+        "RpcDomainSink exposes core through Deref: {violations:?}"
+    );
+}
+
+#[test]
+fn should_keep_rpc_domain_core_module_private() {
+    // Arrange
+    let source = read_repo_file("src/domains/rpc/sink/state_model/sink.rs");
+
+    // Act
+    let exposes_public_core = source.contains("pub struct RpcDomainCore");
+
+    // Assert
+    assert!(
+        !exposes_public_core,
+        "RpcDomainCore must stay private to the RPC sink module"
+    );
+}
+
 #[test]
 fn should_keep_sync_core_free_of_transport_dependencies() {
     // Arrange

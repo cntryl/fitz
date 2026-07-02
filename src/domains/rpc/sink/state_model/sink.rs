@@ -5,7 +5,7 @@ use super::{
 #[cfg(test)]
 use super::{RouteAddress, RpcSessionCleanupResult, RpcWorkerCleanupResult};
 
-pub struct RpcDomainCore {
+pub(in crate::domains::rpc::sink) struct RpcDomainCore {
     pub(in crate::domains::rpc::sink) state: Mutex<RpcState>,
     pub(in crate::domains::rpc::sink) router: Arc<Router>,
     #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
@@ -63,20 +63,6 @@ pub struct RpcDomainSink {
     pub(in crate::domains::rpc::sink) core: Arc<RpcDomainCore>,
     pub(in crate::domains::rpc::sink) active: Arc<AtomicBool>,
     pub(in crate::domains::rpc::sink) actor: ManagedActor<RpcDomainCommand>,
-}
-
-impl std::ops::Deref for RpcDomainSink {
-    type Target = RpcDomainCore;
-
-    fn deref(&self) -> &Self::Target {
-        &self.core
-    }
-}
-
-impl std::ops::DerefMut for RpcDomainSink {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        Arc::get_mut(&mut self.core).expect("RPC sink builders must run before sharing the sink")
-    }
 }
 
 impl std::ops::Deref for RpcDomainRuntime<'_> {
