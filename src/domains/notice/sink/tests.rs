@@ -188,7 +188,7 @@ fn should_create_notice_domain_sink() {
     let sink = NoticeDomainSink::new(router, admin_read_model);
 
     // Assert
-    assert!(sink.active.load(Ordering::Relaxed));
+    assert!(sink.is_active());
 }
 
 #[test]
@@ -434,7 +434,7 @@ fn should_remove_notice_subscriptions_given_session_cleanup() {
     assert_eq!(sink.subscription_count(), 0);
     assert!(subscriber_mailbox.receiver().try_recv().is_err());
     assert!(publisher_mailbox.receiver().try_recv().is_err());
-    assert!(sink.families.lock().is_empty());
+    assert_eq!(sink.subscription_family_count(), 0);
 }
 
 #[test]
@@ -489,7 +489,7 @@ fn should_clear_notice_admin_snapshot_given_session_cleanup_with_mixed_subscript
     refresh_notice_admin_snapshot(&sink);
     assert!(admin_read_model.notice_subscriptions(None, None).is_empty());
     assert!(admin_read_model.notice_routes(None).is_empty());
-    assert!(sink.families.lock().is_empty());
+    assert_eq!(sink.subscription_family_count(), 0);
 }
 
 #[test]
@@ -531,7 +531,7 @@ fn should_prune_notice_route_stats_after_last_subscription_is_removed() {
         ),
     ))
     .expect("publish notice event");
-    assert_eq!(sink.route_stats.lock().len(), 1);
+    assert_eq!(sink.route_stats_count(), 1);
     drain_mailbox(&subscriber_mailbox);
     drain_mailbox(&publisher_mailbox);
 
@@ -540,7 +540,7 @@ fn should_prune_notice_route_stats_after_last_subscription_is_removed() {
     refresh_notice_admin_snapshot(&sink);
 
     // Assert
-    assert!(sink.route_stats.lock().is_empty());
+    assert_eq!(sink.route_stats_count(), 0);
 }
 
 #[test]

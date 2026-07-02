@@ -576,6 +576,28 @@ fn should_keep_notice_live_core_helpers_private() {
     );
 }
 
+#[test]
+fn should_keep_notice_sink_from_deref_exposing_core() {
+    // Arrange
+    let source = read_repo_file("src/domains/notice/sink.rs");
+    let forbidden_deref_impls = [
+        "impl std::ops::Deref for NoticeDomainSink",
+        "impl std::ops::DerefMut for NoticeDomainSink",
+    ];
+
+    // Act
+    let violations = forbidden_deref_impls
+        .into_iter()
+        .filter(|impl_block| source.contains(impl_block))
+        .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        violations.is_empty(),
+        "NoticeDomainSink exposes core through Deref: {violations:?}"
+    );
+}
+
 fn queue_live_core_public_helper_violations() -> Vec<&'static str> {
     let source = read_repo_file("src/domains/queue/sink/domain_sink_impl.rs");
     let core_impl = section_between(

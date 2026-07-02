@@ -138,20 +138,6 @@ pub struct NoticeDomainSink {
     actor: ManagedActor<NoticeDomainCommand>,
 }
 
-impl std::ops::Deref for NoticeDomainSink {
-    type Target = NoticeDomainCore;
-
-    fn deref(&self) -> &Self::Target {
-        &self.core
-    }
-}
-
-impl std::ops::DerefMut for NoticeDomainSink {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        Arc::get_mut(&mut self.core).expect("Notice sink builders must run before sharing the sink")
-    }
-}
-
 impl NoticeDomainSink {
     pub fn new(
         router: Arc<Router>,
@@ -204,8 +190,26 @@ impl NoticeDomainSink {
     }
 
     pub fn stop(&self) {
-        self.active.store(false, Ordering::Relaxed);
+        self.core.active.store(false, Ordering::Relaxed);
         self.actor.stop();
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub(super) fn is_active(&self) -> bool {
+        self.core.active.load(Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub(super) fn subscription_family_count(&self) -> usize {
+        self.core.families.lock().len()
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub(super) fn route_stats_count(&self) -> usize {
+        self.core.route_stats.lock().len()
     }
 
     #[cfg(test)]
