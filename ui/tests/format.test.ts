@@ -4,6 +4,7 @@ import {
   formatDurationSeconds,
   formatNumber,
   formatTimestamp,
+  formatTimestampMs,
 } from "@/shared/format";
 
 describe("shared format helpers", () => {
@@ -15,8 +16,14 @@ describe("shared format helpers", () => {
 
   it("formats timestamps and preserves invalid values", () => {
     const timestamp = "2026-05-22T12:34:56.000Z";
+    const expected = new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "medium",
+    }).format(new Date(timestamp));
 
-    expect(formatTimestamp(timestamp)).toBe(new Date(timestamp).toLocaleString());
+    expect(formatTimestamp(timestamp)).toBe(expected);
+    expect(formatTimestampMs(new Date(timestamp).getTime())).toBe(expected);
+    expect(formatTimestampMs()).toBe("Unknown");
     expect(formatTimestamp("not-a-date")).toBe("not-a-date");
     expect(formatTimestamp()).toBe("Unknown");
   });

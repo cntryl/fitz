@@ -22,63 +22,27 @@ import {
   Stack,
 } from "@askrjs/themes/components";
 import { VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
-import type {
-  NoticeDeliveryObservation,
-  NoticeDeliveryObservationList,
-  RpcCallObservation,
-  RpcCallObservationList,
-} from "@/adapters";
 import {
   QueryEmptyState,
   QueryErrorState,
   QueryLoadingState,
 } from "@/components/shared/query-state";
 import type { ResourceInventory } from "@/features/resource/resource-models";
-import { noticeService } from "@/features/notice/notice-service";
-import { rpcService } from "@/features/rpc/rpc-service";
+import {
+  communicationModeAdapters,
+  type CommunicationDomain,
+  type CommunicationMode,
+  type CommunicationSearchResult,
+  type NoticeCommunicationStats,
+  type RpcCommunicationStats,
+} from "@/features/communication/communication-mode-adapters";
 import { domainResourceHref, formatFitzRoute } from "@/shared/navigation/domains";
 import { parseConcreteRouteFamilyId, useOperatorContext } from "@/shared/operator-context";
-
-type CommunicationDomain = "notice" | "rpc";
-type CommunicationMode = "flow" | "participants" | "failures" | "search";
 
 interface CommunicationResourceRow {
   area: string;
   realm: string;
   resource: string;
-}
-
-interface CommunicationModeOption {
-  description: string;
-  label: string;
-  value: CommunicationMode;
-}
-
-interface FlowStage {
-  caption: string;
-  label: string;
-  tone?: "danger" | "warning";
-  value: string | number;
-}
-
-export interface NoticeCommunicationStats {
-  deliveryDropsTotal: number;
-  maxRouteSubscribers: number;
-  publishesPerSecond: number;
-  routesActive: number;
-  subscriptionsActive: number;
-  wildcardLimitRejectsTotal: number;
-}
-
-export interface RpcCommunicationStats {
-  failureTotal: number;
-  operationsPerSecond: number;
-  pendingRoutesActive: number;
-  requestsPending: number;
-  requestTimeoutsTotal: number;
-  responsesDroppedClosedCallerTotal: number;
-  responsesMissingPendingTotal: number;
-  workersRegistered: number;
 }
 
 export interface CommunicationFlowWorkspaceProps {
@@ -87,124 +51,6 @@ export interface CommunicationFlowWorkspaceProps {
   inventory?: ResourceInventory | null;
   loading?: boolean;
   stats: NoticeCommunicationStats | RpcCommunicationStats;
-}
-
-function modeOptionsFor(domain: CommunicationDomain): CommunicationModeOption[] {
-  const participantDescription =
-    domain === "notice"
-      ? "Use existing resource-level Notice subscription evidence after a route is selected."
-      : "Use existing resource-level RPC operation, worker, and pending request evidence after a route is selected.";
-  const searchLabel = domain === "notice" ? "Delivery search" : "Call search";
-  const searchDescription =
-    domain === "notice"
-      ? "Search broker-local Notice delivery-counter evidence by Route Family and scope."
-      : "Search broker-local RPC worker and pending-call evidence by Route Family and scope.";
-
-  return [
-    {
-      description: "Use existing live route, participant, rate, and failure counters.",
-      label: "Flow graph",
-      value: "flow",
-    },
-    {
-      description: participantDescription,
-      label: "Participants",
-      value: "participants",
-    },
-    {
-      description: "Use existing overview counters and resource-level bounded event timelines.",
-      label: "Failures",
-      value: "failures",
-    },
-    {
-      description: searchDescription,
-      label: searchLabel,
-      value: "search",
-    },
-  ];
-}
-
-function isNoticeStats(
-  stats: NoticeCommunicationStats | RpcCommunicationStats,
-): stats is NoticeCommunicationStats {
-  return "subscriptionsActive" in stats;
-}
-
-function formatRate(value: number) {
-  return `${value.toFixed(2)} / sec`;
-}
-
-function failureSignalCount(stats: NoticeCommunicationStats | RpcCommunicationStats) {
-  if (isNoticeStats(stats)) {
-    return stats.deliveryDropsTotal + stats.wildcardLimitRejectsTotal;
-  }
-
-  return (
-    stats.failureTotal +
-    stats.requestTimeoutsTotal +
-    stats.responsesDroppedClosedCallerTotal +
-    stats.responsesMissingPendingTotal
-  );
-}
-
-function flowStagesFor(
-  domain: CommunicationDomain,
-  stats: NoticeCommunicationStats | RpcCommunicationStats,
-): FlowStage[] {
-  if (isNoticeStats(stats)) {
-    const failures = failureSignalCount(stats);
-
-    return [
-      {
-        caption: "Live publish pressure entering Notice fanout.",
-        label: "Publishers",
-        value: formatRate(stats.publishesPerSecond),
-      },
-      {
-        caption: "Active in-memory notice routes visible to admin.",
-        label: "Routes",
-        value: stats.routesActive,
-      },
-      {
-        caption: "Session-scoped subscribers; removed on disconnect or restart.",
-        label: "Subscribers",
-        value: stats.subscriptionsActive,
-      },
-      {
-        caption: "Delivery drops plus wildcard limit rejects.",
-        label: "Failure signals",
-        tone: failures > 0 ? "danger" : undefined,
-        value: failures,
-      },
-    ];
-  }
-
-  const failures = failureSignalCount(stats);
-
-  return [
-    {
-      caption: "Live request/response throughput across RPC.",
-      label: "Calls",
-      value: formatRate(stats.operationsPerSecond),
-    },
-    {
-      caption: "Requests waiting in broker-local pending state.",
-      label: "Pending",
-      tone: stats.requestsPending > stats.workersRegistered ? "warning" : undefined,
-      value: stats.requestsPending,
-    },
-    {
-      caption: "Live workers currently registered to handle calls.",
-      label: "Workers",
-      value: stats.workersRegistered,
-    },
-    {
-      caption: "Failures, timeouts, closed callers, and missing pending responses.",
-      label: "Failure signals",
-      tone: failures > 0 ? "danger" : undefined,
-      value: failures,
-    },
-  ];
 }
 
 function flattenInventory(inventory?: ResourceInventory | null): CommunicationResourceRow[] {
@@ -253,198 +99,6 @@ function trimToUndefined(value: string) {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function resourceNoun(domain: CommunicationDomain, count: number) {
-  const singular = domain === "notice" ? "notice route" : "RPC route";
-
-  return count === 1 ? singular : `${singular}s`;
-}
-
-function actionLabel(domain: CommunicationDomain) {
-  return domain === "notice" ? "Open subscriptions" : "Open operations";
-}
-
-function exactActionLabel(domain: CommunicationDomain) {
-  return domain === "notice" ? "Open exact notice route" : "Open exact RPC route";
-}
-
-function modeDetailTitle(domain: CommunicationDomain, mode: CommunicationMode) {
-  if (mode === "participants") {
-    return domain === "notice" ? "Subscription participants" : "Operation participants";
-  }
-
-  if (mode === "failures") return "Failure trace evidence";
-
-  return domain === "notice" ? "Delivery search" : "Call search";
-}
-
-function modeDetailDescription(domain: CommunicationDomain, mode: CommunicationMode) {
-  if (mode === "participants") {
-    return domain === "notice"
-      ? "Select a notice route to inspect active in-memory subscriptions, patterns, sessions, and delivered notification counters exposed by the current resource API."
-      : "Select an RPC route to inspect operations, workers for the first operation, and broker-local pending requests exposed by the current resource API.";
-  }
-
-  if (mode === "failures") {
-    return domain === "notice"
-      ? "Notice failure tracing starts with delivery drop and wildcard reject counters, then narrows through resource-level bounded event timelines."
-      : "RPC failure tracing starts with pending, timeout, missing-pending, and closed-caller counters, then narrows through resource-level bounded event timelines.";
-  }
-
-  return domain === "notice"
-    ? "Search broker-local subscription delivery counters and route publish counters by selected Route Family and route scope."
-    : "Search broker-local RPC worker registrations and pending calls by selected Route Family and route scope.";
-}
-
-const noticeObservationColumns: readonly VirtualTableColumn<NoticeDeliveryObservation>[] = [
-  {
-    id: "route",
-    header: "Route",
-    width: "34%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate" title={row.route}>
-        {row.route}
-      </span>
-    ),
-  },
-  {
-    id: "status",
-    header: "Status",
-    width: "18%",
-    cellComponent: ({ row }) => <Badge variant="outline">{row.status}</Badge>,
-  },
-  {
-    id: "session",
-    header: "Session",
-    width: "18%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate" title={row.session_id ?? "Route"}>
-        {row.session_id ?? "Route"}
-      </span>
-    ),
-  },
-  {
-    id: "received",
-    header: "Received",
-    width: "15%",
-    cellComponent: ({ row }) => <span>{row.notifications_received}</span>,
-  },
-  {
-    id: "publishes",
-    header: "Publishes",
-    width: "15%",
-    cellComponent: ({ row }) => <span>{row.publishes_total}</span>,
-  },
-];
-
-const rpcObservationColumns: readonly VirtualTableColumn<RpcCallObservation>[] = [
-  {
-    id: "route",
-    header: "Route",
-    width: "40%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate" title={row.route}>
-        {row.route}
-      </span>
-    ),
-  },
-  {
-    id: "state",
-    header: "State",
-    width: "16%",
-    cellComponent: ({ row }) => (
-      <Badge variant={row.state === "pending" ? "warning" : "success"}>{row.state}</Badge>
-    ),
-  },
-  {
-    id: "correlation",
-    header: "Correlation",
-    width: "24%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate" title={row.correlation_id ?? "None"}>
-        {row.correlation_id ?? "None"}
-      </span>
-    ),
-  },
-  {
-    id: "worker",
-    header: "Worker",
-    width: "20%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate" title={row.worker_session_id ?? "None"}>
-        {row.worker_session_id ?? "None"}
-      </span>
-    ),
-  },
-];
-
-function NoticeObservationPanel({ result }: { result: NoticeDeliveryObservationList }) {
-  return (
-    <div class="communication-search-result" aria-live="polite">
-      <Inline justify="between" align="center" gap="3" wrap="wrap">
-        <p class="domain-muted">
-          {result.observations.length} notice observation
-          {result.observations.length === 1 ? "" : "s"} in route family {result.route_family}
-        </p>
-      </Inline>
-
-      {result.observations.length === 0 ? (
-        <QueryEmptyState
-          title="No notice delivery evidence"
-          description="No broker-local Notice observations matched the selected Route Family and scope."
-        />
-      ) : (
-        <VirtualTable<NoticeDeliveryObservation>
-          aria-label="Notice delivery observations"
-          class="communication-resource-virtual-table"
-          columns={noticeObservationColumns}
-          getKey={(row) =>
-            `${row.route_family}:${row.route}:${row.status}:${row.session_id ?? "route"}:${row.subscription_id ?? "none"}`
-          }
-          headerHeight={44}
-          overscan={6}
-          rowHeight={48}
-          rows={result.observations}
-          style={{ height: "320px" }}
-        />
-      )}
-    </div>
-  );
-}
-
-function RpcObservationPanel({ result }: { result: RpcCallObservationList }) {
-  return (
-    <div class="communication-search-result" aria-live="polite">
-      <Inline justify="between" align="center" gap="3" wrap="wrap">
-        <p class="domain-muted">
-          {result.observations.length} RPC observation
-          {result.observations.length === 1 ? "" : "s"} in route family {result.route_family}
-        </p>
-      </Inline>
-
-      {result.observations.length === 0 ? (
-        <QueryEmptyState
-          title="No RPC call evidence"
-          description="No broker-local RPC observations matched the selected Route Family and scope."
-        />
-      ) : (
-        <VirtualTable<RpcCallObservation>
-          aria-label="RPC call observations"
-          class="communication-resource-virtual-table"
-          columns={rpcObservationColumns}
-          getKey={(row) =>
-            `${row.route_family}:${row.route}:${row.state}:${row.correlation_id ?? "none"}:${row.worker_session_id ?? "none"}`
-          }
-          headerHeight={44}
-          overscan={6}
-          rowHeight={48}
-          rows={result.observations}
-          style={{ height: "320px" }}
-        />
-      )}
-    </div>
-  );
-}
-
 export default function CommunicationFlowWorkspace({
   domain,
   error,
@@ -452,6 +106,7 @@ export default function CommunicationFlowWorkspace({
   loading = false,
   stats,
 }: CommunicationFlowWorkspaceProps) {
+  const adapter = communicationModeAdapters[domain];
   const operatorContext = useOperatorContext();
   const [mode, setMode] = state<CommunicationMode>("flow");
   const [realm, setRealm] = state("");
@@ -459,16 +114,14 @@ export default function CommunicationFlowWorkspace({
   const [resource, setResource] = state("");
   const [searchLoading, setSearchLoading] = state(false);
   const [searchError, setSearchError] = state<unknown>(null);
-  const [noticeResult, setNoticeResult] = state<NoticeDeliveryObservationList | null>(null);
-  const [rpcResult, setRpcResult] = state<RpcCallObservationList | null>(null);
+  const [searchResult, setSearchResult] = state<CommunicationSearchResult | null>(null);
   const modeValue = mode();
   const realmValue = realm();
   const areaValue = area();
   const resourceValue = resource();
   const searchLoadingValue = searchLoading();
   const searchErrorValue = searchError();
-  const noticeResultValue = noticeResult();
-  const rpcResultValue = rpcResult();
+  const searchResultValue = searchResult();
   const rows = flattenInventory(inventory);
   const selectedRealmRows = realmValue ? rows.filter((row) => row.realm === realmValue) : rows;
   const selectedAreaRows = areaValue
@@ -482,8 +135,7 @@ export default function CommunicationFlowWorkspace({
     realm: realmValue,
     resource: resourceValue,
   });
-  const flowStages = flowStagesFor(domain, stats);
-  const modeOptions = modeOptionsFor(domain);
+  const flowStages = adapter.flowStages(stats);
   const routeFamily = parseConcreteRouteFamilyId(operatorContext.selectedRouteFamilyId);
   const routeFamilyReady = routeFamily !== null;
   const searchMode = modeValue === "search";
@@ -496,9 +148,9 @@ export default function CommunicationFlowWorkspace({
   );
   const badgeLabel = searchMode
     ? routeFamilyReady
-      ? "Existing API"
-      : "Select Route Family"
-    : "Existing API";
+      ? adapter.searchReadyLabel
+      : adapter.routeFamilyRequiredLabel
+    : adapter.liveDataLabel;
   const badgeVariant = searchMode ? (routeFamilyReady ? "success" : "warning") : "success";
   const columns: readonly VirtualTableColumn<CommunicationResourceRow>[] = [
     {
@@ -521,7 +173,7 @@ export default function CommunicationFlowWorkspace({
       width: "24%",
       cellComponent: ({ row }) => (
         <Link class="text-link" href={domainResourceHref(domain, row)}>
-          {actionLabel(domain)}
+          {adapter.actionLabel}
         </Link>
       ),
     },
@@ -529,8 +181,7 @@ export default function CommunicationFlowWorkspace({
 
   function resetSearchResults() {
     setSearchError(null);
-    setNoticeResult(null);
-    setRpcResult(null);
+    setSearchResult(null);
   }
 
   function selectRealm(nextRealm: string) {
@@ -558,31 +209,18 @@ export default function CommunicationFlowWorkspace({
 
     setSearchLoading(true);
     setSearchError(null);
-    setNoticeResult(null);
-    setRpcResult(null);
+    setSearchResult(null);
 
     try {
-      if (domain === "notice") {
-        setNoticeResult(
-          await noticeService.searchDeliveries({
-            area: trimmedArea,
-            limit: 50,
-            realm: trimmedRealm,
-            resource: trimmedResource,
-            routeFamily,
-          }),
-        );
-      } else {
-        setRpcResult(
-          await rpcService.searchCalls({
-            area: trimmedArea,
-            limit: 50,
-            realm: trimmedRealm,
-            resource: trimmedResource,
-            routeFamily,
-          }),
-        );
-      }
+      setSearchResult(
+        await adapter.search({
+          area: trimmedArea,
+          limit: 50,
+          realm: trimmedRealm,
+          resource: trimmedResource,
+          routeFamily,
+        }),
+      );
     } catch (caughtError) {
       setSearchError(caughtError);
     } finally {
@@ -625,7 +263,7 @@ export default function CommunicationFlowWorkspace({
           </div>
 
           <div class="domain-query-mode-grid" role="group" aria-label={`${domain} flow mode`}>
-            <For each={modeOptions} by={(modeOption) => modeOption.value}>
+            <For each={adapter.modeOptions} by={(modeOption) => modeOption.value}>
               {(modeOption) => (
                 <Button
                   type="button"
@@ -692,28 +330,20 @@ export default function CommunicationFlowWorkspace({
                 </Select>
               </div>
               <div class="auth-field">
-                <Label for={`${domain}-flow-resource`}>
-                  {domain === "notice" ? "Notice route" : "RPC route"}
-                </Label>
+                <Label for={`${domain}-flow-resource`}>{adapter.resourceLabel}</Label>
                 <Select
                   value={resourceValue}
                   onValueChange={selectResource}
                   disabled={resourceOptions.length === 0}
                 >
                   <SelectTrigger id={`${domain}-flow-resource`}>
-                    <SelectValue
-                      placeholder={domain === "notice" ? "All notice routes" : "All RPC routes"}
-                    />
+                    <SelectValue placeholder={adapter.allResourcesLabel} />
                   </SelectTrigger>
                   <SelectPortal>
                     <SelectContent align="start" sideOffset={6}>
                       <SelectGroup>
-                        <SelectLabel>
-                          {domain === "notice" ? "Notice route scope" : "RPC route scope"}
-                        </SelectLabel>
-                        <SelectItem value="">
-                          {domain === "notice" ? "All notice routes" : "All RPC routes"}
-                        </SelectItem>
+                        <SelectLabel>{adapter.resourceScopeLabel}</SelectLabel>
+                        <SelectItem value="">{adapter.allResourcesLabel}</SelectItem>
                         <For each={resourceOptions} by={(option) => option}>
                           {(option) => <SelectItem value={option}>{option}</SelectItem>}
                         </For>
@@ -745,8 +375,8 @@ export default function CommunicationFlowWorkspace({
           {modeValue !== "flow" ? (
             <Card padding="sm" variant="default">
               <CardHeader>
-                <CardTitle>{modeDetailTitle(domain, modeValue)}</CardTitle>
-                <CardDescription>{modeDetailDescription(domain, modeValue)}</CardDescription>
+                <CardTitle>{adapter.modeDetailTitle(modeValue)}</CardTitle>
+                <CardDescription>{adapter.modeDetailDescription(modeValue)}</CardDescription>
               </CardHeader>
             </Card>
           ) : null}
@@ -763,39 +393,31 @@ export default function CommunicationFlowWorkspace({
           ) : null}
           {searchMode && searchErrorValue ? (
             <QueryErrorState
-              title={`Unable to search ${domain.toUpperCase()} evidence`}
+              title={adapter.searchErrorTitle}
               error={searchErrorValue}
               onRetry={() => void runSearch()}
             />
           ) : null}
-          {domain === "notice" && searchMode && noticeResultValue && !searchLoadingValue ? (
-            <NoticeObservationPanel result={noticeResultValue} />
-          ) : null}
-          {domain === "rpc" && searchMode && rpcResultValue && !searchLoadingValue ? (
-            <RpcObservationPanel result={rpcResultValue} />
-          ) : null}
+          {searchMode && searchResultValue && !searchLoadingValue
+            ? adapter.renderSearchResult(searchResultValue)
+            : null}
 
           {loading ? (
             <QueryLoadingState description={`Loading ${domain.toUpperCase()} flow resources...`} />
           ) : null}
-          {error ? (
-            <QueryErrorState
-              title={`Unable to load ${domain.toUpperCase()} flow resources`}
-              error={error}
-            />
-          ) : null}
+          {error ? <QueryErrorState title={adapter.loadErrorTitle} error={error} /> : null}
 
           {!loading && !error ? (
             filteredRows.length === 0 ? (
               <QueryEmptyState
-                title={`No matching ${domain === "notice" ? "notice routes" : "RPC routes"}`}
-                description="Adjust the realm, area, or route selectors to find visible communication resources."
+                title={adapter.emptyResourceTitle}
+                description="Clear filters, check the selected Route Family, or broaden scope to find visible communication resources."
               />
             ) : (
               <Stack gap="3">
                 <Inline justify="between" align="center" gap="3" wrap="wrap">
                   <p class="domain-muted">
-                    {filteredRows.length} matching {resourceNoun(domain, filteredRows.length)}
+                    {filteredRows.length} matching {adapter.resourceNoun(filteredRows.length)}
                   </p>
                   {canOpenExactResource ? (
                     <Link
@@ -806,7 +428,7 @@ export default function CommunicationFlowWorkspace({
                         resource: resourceValue,
                       })}
                     >
-                      {exactActionLabel(domain)}
+                      {adapter.exactActionLabel}
                     </Link>
                   ) : null}
                 </Inline>

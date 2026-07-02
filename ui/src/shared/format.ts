@@ -6,6 +6,13 @@ export function formatDisplayValue(value: string | number) {
   return typeof value === "number" ? formatNumber(value) : value;
 }
 
+function formatDateTime(date: Date) {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "medium",
+  }).format(date);
+}
+
 export function formatTimestamp(value?: string) {
   if (!value) {
     return "Unknown";
@@ -17,7 +24,15 @@ export function formatTimestamp(value?: string) {
     return value;
   }
 
-  return date.toLocaleString();
+  return formatDateTime(date);
+}
+
+export function formatTimestampMs(value?: number | null) {
+  if (value == null || !Number.isFinite(value) || value <= 0) {
+    return "Unknown";
+  }
+
+  return formatDateTime(new Date(value));
 }
 
 export function formatRelativeTime(value?: string, reference = Date.now()) {

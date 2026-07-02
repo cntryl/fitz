@@ -38,6 +38,16 @@ export interface DomainLink {
   icon: typeof BoxesIcon;
 }
 
+export type DomainRouteScopeLevel = "realm" | "area" | "resource" | "operation";
+
+export interface DomainRouteMetadata {
+  scopeLevels: readonly DomainRouteScopeLevel[];
+}
+
+export interface DomainDefinition extends DomainLink {
+  routes: DomainRouteMetadata;
+}
+
 export interface ShellLink {
   href: string;
   title: string;
@@ -190,60 +200,34 @@ export function domainScopeHref(
   scope: Partial<ResourceRouteScope> = {},
   family = currentRouteFamilySegment(),
 ) {
-  if (segment === "notice" || segment === "rpc") {
-    if (scope.realm && scope.area && scope.resource) {
-      const base = domainResourceHref(
-        segment,
-        {
-          area: scope.area,
-          realm: scope.realm,
-          resource: scope.resource,
-        },
-        family,
-      );
+  const scopeLevels: readonly DomainRouteScopeLevel[] =
+    domainDefinitions[segment].routes.scopeLevels;
+  const hasScopeLevel = (level: DomainRouteScopeLevel) => scopeLevels.includes(level);
 
-      return scope.operation === undefined
-        ? base
-        : `${base}/${encodeURIComponent(scope.operation)}`;
-    }
+  if (hasScopeLevel("resource") && scope.realm && scope.area && scope.resource) {
+    const base = domainResourceHref(
+      segment,
+      {
+        area: scope.area,
+        realm: scope.realm,
+        resource: scope.resource,
+      },
+      family,
+    );
 
-    if (scope.realm && scope.area) {
-      return `${domainHref(segment, family)}/${encodeURIComponent(scope.realm)}/${encodeURIComponent(scope.area)}`;
-    }
-
-    if (scope.realm) {
-      return `${domainHref(segment, family)}/${encodeURIComponent(scope.realm)}`;
-    }
+    return hasScopeLevel("operation") && scope.operation !== undefined
+      ? `${base}/${encodeURIComponent(scope.operation)}`
+      : base;
   }
 
-  if (
-    segment === "queue" ||
-    segment === "kv" ||
-    segment === "lease" ||
-    segment === "stream" ||
-    segment === "schedule"
-  ) {
-    if (scope.realm && scope.area && scope.resource) {
-      return domainResourceHref(
-        segment,
-        {
-          area: scope.area,
-          realm: scope.realm,
-          resource: scope.resource,
-        },
-        family,
-      );
-    }
+  if (hasScopeLevel("area") && scope.realm && scope.area) {
+    return `${domainHref(segment, family)}/${encodeURIComponent(scope.realm)}/${encodeURIComponent(
+      scope.area,
+    )}`;
+  }
 
-    if (scope.realm && scope.area) {
-      return `${domainHref(segment, family)}/${encodeURIComponent(scope.realm)}/${encodeURIComponent(
-        scope.area,
-      )}`;
-    }
-
-    if (scope.realm) {
-      return `${domainHref(segment, family)}/${encodeURIComponent(scope.realm)}`;
-    }
+  if (hasScopeLevel("realm") && scope.realm) {
+    return `${domainHref(segment, family)}/${encodeURIComponent(scope.realm)}`;
   }
 
   if (scope.realm && scope.area && scope.resource) {
@@ -294,57 +278,84 @@ export const shellLinks: ShellLink[] = [
   },
 ];
 
-export const domainLinks: DomainLink[] = [
-  {
+export const domainDefinitions = {
+  stream: {
     href: "/stream",
     segment: "stream",
     title: "Stream",
     description: "Durable history, event exploration, and replay evidence.",
     icon: DatabaseZapIcon,
+    routes: {
+      scopeLevels: ["realm", "area", "resource"],
+    },
   },
-  {
+  kv: {
     href: "/kv",
     segment: "kv",
     title: "KV",
     description: "Current authoritative state, lookup, and validation workflows.",
     icon: DatabaseIcon,
+    routes: {
+      scopeLevels: ["realm", "area", "resource"],
+    },
   },
-  {
+  schedule: {
     href: "/schedule",
     segment: "schedule",
     title: "Schedule",
     description: "Durable timing intent, timeline review, and execution health.",
     icon: TimerResetIcon,
+    routes: {
+      scopeLevels: ["realm", "area", "resource"],
+    },
   },
-  {
+  queue: {
     href: "/queue",
     segment: "queue",
     title: "Queue",
     description: "Durable work delivery, backlog, retries, and dead letters.",
     icon: Rows3Icon,
+    routes: {
+      scopeLevels: ["realm", "area", "resource"],
+    },
   },
-  {
+  lease: {
     href: "/lease",
     segment: "lease",
     title: "Lease",
     description: "Ephemeral ownership, contention, and lease health.",
     icon: FileLockIcon,
+    routes: {
+      scopeLevels: ["realm", "area", "resource"],
+    },
   },
-  {
+  notice: {
     href: "/notice",
     segment: "notice",
     title: "Notice",
     description: "Live ephemeral fanout, participants, and delivery pressure.",
     icon: MessagesSquareIcon,
+    routes: {
+      scopeLevels: ["realm", "area", "resource", "operation"],
+    },
   },
-  {
+  rpc: {
     href: "/rpc",
     segment: "rpc",
     title: "RPC",
     description: "Live request/response flow, workers, failures, and latency.",
     icon: NetworkIcon,
+    routes: {
+      scopeLevels: ["realm", "area", "resource", "operation"],
+    },
   },
-];
+} satisfies Record<DomainSegment, DomainDefinition>;
+
+export const domainLinks: DomainLink[] = domainSegmentValues.map((segment): DomainLink => {
+  const { routes: _routes, ...link } = domainDefinitions[segment];
+
+  return link;
+});
 
 export const domainSegments = [...domainSegmentValues];
 export const genericResourceDomainSegments = domainSegments.filter(

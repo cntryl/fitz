@@ -701,7 +701,7 @@ const domainOverviews = [
     errorText: "Stream inventory unavailable",
     loadingText: "Loading stream inventory",
     resourceHref: "/admin/1/stream/default/ops/primary",
-    statLabels: ["Events", "Streams", "Subscriptions", "Watermark lag", "Ops / sec"],
+    statLabels: ["Offset", "Streams", "Subscriptions", "Watermark lag", "Ops / sec"],
   },
   {
     assertText: "Queue inventory",
@@ -2043,6 +2043,14 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("Router pressure");
     expect(text).not.toContain("Messaging flow");
     expect(text).not.toContain("Flow inspector");
+
+    const orderedSections = ["Current status", "Issues", "Domain health", "Broker vitals"];
+    let cursor = -1;
+    for (const section of orderedSections) {
+      const index = text.indexOf(section, cursor + 1);
+      expect(index).toBeGreaterThan(cursor);
+      cursor = index;
+    }
   });
 
   it("renders diagnostics as the infrastructure-internals console", async () => {
@@ -2408,6 +2416,35 @@ describe("admin page smoke tests", () => {
     expect(root.textContent).toContain("Difference");
     expect(root.textContent).toContain("Point-in-time durable backlog");
     expect(root.textContent).toContain("Snapshots match");
+    expect(root.textContent).toContain(
+      "No dead-letter messages are visible for this resource. No replay or purge action is needed.",
+    );
+
+    let text = root.textContent ?? "";
+    let order = ["Current values", "Compare scopes", "Dead letters", "Inflight", "Timeline"];
+    let cursor = -1;
+    for (const label of order) {
+      const index = text.indexOf(label, cursor + 1);
+      expect(index).toBeGreaterThan(cursor);
+      cursor = index;
+    }
+
+    cleanupApp(root);
+    document.body.innerHTML = "";
+
+    root = await mountRoute(
+      "/queue/default/ops/primary",
+      "/queue/{realm}/{area}/{resource}",
+      QueueResourcePage,
+    );
+    text = root.textContent ?? "";
+    order = ["Current values", "Dead letters", "Inflight", "Timeline", "Compare scopes"];
+    cursor = -1;
+    for (const label of order) {
+      const index = text.indexOf(label, cursor + 1);
+      expect(index).toBeGreaterThan(cursor);
+      cursor = index;
+    }
 
     cleanupApp(root);
     document.body.innerHTML = "";

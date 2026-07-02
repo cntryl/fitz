@@ -12,22 +12,31 @@ function queueVisibleCount(stats: QueueStatsSummary) {
 
 function describeQueueStats(stats: QueueStatsSummary) {
   const visible = queueVisibleCount(stats);
+  const counts = `Ready ${formatNumber(stats.messagesReady)}, delayed ${formatNumber(
+    stats.messagesDelayed,
+  )}, inflight ${formatNumber(stats.inflightActive)}, dead letters ${formatNumber(
+    stats.messagesDeadLettered,
+  )}. Oldest backlog ${formatDurationSeconds(stats.oldestBacklogAgeSeconds)}.`;
 
   if (stats.messagesDeadLettered > 0) {
-    return `${formatNumber(stats.messagesDeadLettered)} dead-lettered message(s) need explicit operator action.`;
+    return `${counts} ${formatNumber(
+      stats.messagesDeadLettered,
+    )} dead-lettered message(s) need explicit operator action.`;
   }
 
   if (stats.messagesReady > 0 || stats.messagesDelayed > 0) {
-    return `${formatNumber(visible)} message(s) are visible across ready, delayed, inflight, and dead-letter states. Oldest backlog is ${formatDurationSeconds(
-      stats.oldestBacklogAgeSeconds,
-    )}.`;
+    return `${counts} ${formatNumber(
+      visible,
+    )} message(s) are visible across ready, delayed, inflight, and dead-letter states.`;
   }
 
   if (stats.inflightActive > 0) {
-    return `${formatNumber(stats.inflightActive)} message(s) are currently in flight.`;
+    return `${counts} ${formatNumber(
+      stats.inflightActive,
+    )} live reservation(s) are currently in flight.`;
   }
 
-  return "No visible queue backlog at this level.";
+  return `${counts} No durable queue backlog is visible at this level.`;
 }
 
 function queueStatus(stats: QueueStatsSummary) {
@@ -42,21 +51,10 @@ function queueStatus(stats: QueueStatsSummary) {
   return { label: "Live" as const, tone: "success" as const };
 }
 
-function resourceCount(data: ReturnType<typeof createQueueInventoryQuery>["data"]) {
-  return (
-    data?.realms.reduce(
-      (sum, realm) =>
-        sum + realm.areas.reduce((areaSum, area) => areaSum + area.resources.length, 0),
-      0,
-    ) ?? 0
-  );
-}
-
 export default function QueuePage() {
   const overview = createQueueOverviewQuery();
   const inventory = createQueueInventoryQuery();
   const currentStatus = overview.data ? queueStatus(overview.data.stats) : null;
-  const queueCount = resourceCount(inventory.data);
   const stats = overview.data?.stats;
   const queueMetricColumns: readonly DomainResourceMetricColumn[] = [
     {
@@ -104,14 +102,17 @@ export default function QueuePage() {
       loadingDescription="Loading queue inventory..."
       errorTitle="Unable to load queue inventory"
       refreshingDescription="Refreshing queue inventory..."
-      emptyDescription="No queue resources are currently visible."
+      emptyDescription="No queue resources are currently visible. Check the selected Route Family or broaden scope."
       tableTitle="Resource inventory"
       metricColumns={queueMetricColumns}
+      stats={[
+        { label: "Ready", value: stats ? formatNumber(stats.messagesReady) : "--" },
+        { label: "In flight", value: stats ? formatNumber(stats.inflightActive) : "--" },
+        { label: "Dead letters", value: stats ? formatNumber(stats.messagesDeadLettered) : "--" },
+      ]}
       status={{
         detail: overview.data
-          ? `${formatNumber(queueCount)} queue${queueCount === 1 ? "" : "s"} visible. ${describeQueueStats(
-              overview.data.stats,
-            )}`
+          ? describeQueueStats(overview.data.stats)
           : overview.error
             ? "Queue health is unavailable. Resource inventory can still be inspected when loaded."
             : "Loading queue health.",

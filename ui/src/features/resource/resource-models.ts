@@ -24,6 +24,7 @@ export interface ResourceInventoryResource {
   estimateComplete?: boolean;
   estimatedRecordCount?: number;
   estimatedStorageBytes?: number;
+  operation?: string;
   readLatencyAvgMs?: number;
   readLatencyP95Ms?: number;
   resource: string;

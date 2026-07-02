@@ -18,10 +18,16 @@ function summarizeScheduleHealth(stats: ScheduleOverview["stats"]): ScheduleHeal
     stats.cancelPersistenceFailuresTotal;
   const handoffFailures =
     stats.ackFailuresTotal + stats.notifyFailuresTotal + stats.overdueNormalizationsTotal;
+  const failures = persistenceFailures + handoffFailures;
+  const baseDetail = `${formatNumber(stats.schedulesActive)} active schedule(s), ${formatNumber(
+    stats.pendingFireClaims,
+  )} pending fire claim(s), ${stats.executionsPerMinute.toFixed(2)} exec/min, ${formatNumber(
+    failures,
+  )} failure counter(s).`;
 
   if (persistenceFailures > 0 || handoffFailures > 0) {
     return {
-      detail: `${formatNumber(stats.schedulesActive)} active schedules are visible. Persistence and handoff failure counters need attention.`,
+      detail: `${baseDetail} Persistence and handoff failure counters need attention.`,
       label: "Attention",
       tone: "danger",
     };
@@ -29,7 +35,7 @@ function summarizeScheduleHealth(stats: ScheduleOverview["stats"]): ScheduleHeal
 
   if (stats.pendingFireClaims > 0) {
     return {
-      detail: `${formatNumber(stats.pendingFireClaims)} pending fire claim(s) are waiting for live handoff.`,
+      detail: `${baseDetail} Pending fire claims are waiting for live handoff.`,
       label: "Pressure",
       tone: "warning",
     };
@@ -38,21 +44,13 @@ function summarizeScheduleHealth(stats: ScheduleOverview["stats"]): ScheduleHeal
   return {
     detail:
       stats.subscriptionsActive > 0
-        ? `${formatNumber(stats.subscriptionsActive)} active live subscription(s) are visible for handoff.`
-        : "No live handoff subscriptions are visible.",
+        ? `${baseDetail} ${formatNumber(
+            stats.subscriptionsActive,
+          )} active live subscription(s) are visible for handoff.`
+        : `${baseDetail} No live handoff subscriptions are visible.`,
     label: "Live",
     tone: "success",
   };
-}
-
-function resourceCount(data: ReturnType<typeof createResourceInventoryQuery>["data"]) {
-  return (
-    data?.realms.reduce(
-      (sum, realm) =>
-        sum + realm.areas.reduce((areaSum, area) => areaSum + area.resources.length, 0),
-      0,
-    ) ?? 0
-  );
 }
 
 function failureCount(stats: ScheduleOverview["stats"]) {
@@ -82,7 +80,6 @@ export default function SchedulePage() {
     upsertPersistenceFailuresTotal: 0,
   };
   const health = summarizeScheduleHealth(overview.data?.stats ?? emptyStats);
-  const scheduleCount = resourceCount(inventory.data);
   const stats = overview.data?.stats;
   const scheduleMetricColumns: readonly DomainResourceMetricColumn[] = [
     {
@@ -130,14 +127,17 @@ export default function SchedulePage() {
       loadingDescription="Loading schedule inventory..."
       errorTitle="Unable to load schedule inventory"
       refreshingDescription="Refreshing schedule inventory..."
-      emptyDescription="No schedule resources are currently visible."
+      emptyDescription="No schedule resources are currently visible. Check the selected Route Family or broaden scope."
       tableTitle="Resource inventory"
       metricColumns={scheduleMetricColumns}
+      stats={[
+        { label: "Active", value: stats ? formatNumber(stats.schedulesActive) : "--" },
+        { label: "Pending claims", value: stats ? formatNumber(stats.pendingFireClaims) : "--" },
+        { label: "Exec / min", value: stats ? stats.executionsPerMinute.toFixed(2) : "--" },
+      ]}
       status={{
         detail: overview.data
-          ? `${formatNumber(scheduleCount)} schedule resource${
-              scheduleCount === 1 ? "" : "s"
-            } visible. ${health.detail} Schedule does not imply durable downstream delivery.`
+          ? `${health.detail} Schedule does not imply durable downstream delivery.`
           : overview.error
             ? "Schedule health is unavailable. Resource inventory can still be inspected when loaded."
             : "Loading schedule health.",

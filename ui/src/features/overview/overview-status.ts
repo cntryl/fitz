@@ -1,5 +1,5 @@
 import type { DiagnosticHotspot, DiagnosticSeverity, IncidentSummary } from "@/adapters";
-import type { SystemOverview, SystemDomainStatsSummary } from "@/features/system/system-models";
+import type { SystemOverview } from "@/features/system/system-models";
 import type {
   MessagingTopologyOverview,
   TopologyDomain,
@@ -7,6 +7,10 @@ import type {
   TopologyState,
 } from "@/features/topology/topology-models";
 import { hotspotHref, humanizeSeconds, scopeText } from "@/features/topology/topology-view";
+import {
+  overviewDomainIssueDescriptors,
+  overviewDomainSignal,
+} from "@/features/overview/overview-domain-rules";
 import { formatNumber } from "@/shared/format";
 import {
   adminChildHref,
@@ -206,131 +210,10 @@ function systemIssues(system: SystemOverview | null | undefined) {
   const issues = new Map<string, OverviewIssue>();
   if (!system) return issues;
 
-  const { domains } = system;
-  const queueDeadLetters = domains.queue.messagesDeadLettered;
-  if (queueDeadLetters > 0) {
+  for (const issue of overviewDomainIssueDescriptors(system.domains)) {
     addIssue(
       issues,
-      systemIssue(
-        "queue-dead-letters",
-        "queue",
-        "high",
-        "Queue dead letters",
-        `${formatNumber(queueDeadLetters)} message(s) are in dead-letter state.`,
-      ),
-    );
-  }
-
-  const rpcFailures =
-    domains.rpc.failureTotal +
-    domains.rpc.requestTimeoutsTotal +
-    domains.rpc.responsesMissingPendingTotal +
-    domains.rpc.responsesDroppedClosedCallerTotal;
-  if (rpcFailures > 0) {
-    addIssue(
-      issues,
-      systemIssue(
-        "rpc-failures",
-        "rpc",
-        "high",
-        "RPC failures",
-        `${formatNumber(rpcFailures)} timeout, failure, or late-response signal(s) are active.`,
-      ),
-    );
-  }
-
-  const scheduleFailures =
-    domains.schedule.ackFailuresTotal +
-    domains.schedule.notifyFailuresTotal +
-    domains.schedule.createPersistenceFailuresTotal +
-    domains.schedule.upsertPersistenceFailuresTotal +
-    domains.schedule.cancelPersistenceFailuresTotal;
-  if (scheduleFailures > 0) {
-    addIssue(
-      issues,
-      systemIssue(
-        "schedule-failures",
-        "schedule",
-        "high",
-        "Schedule failures",
-        `${formatNumber(scheduleFailures)} schedule persistence or delivery failure(s) are visible.`,
-      ),
-    );
-  } else if (domains.schedule.pendingFireClaims > 0) {
-    addIssue(
-      issues,
-      systemIssue(
-        "schedule-pending-claims",
-        "schedule",
-        "medium",
-        "Schedule pending claims",
-        `${formatNumber(domains.schedule.pendingFireClaims)} pending fire claim(s) need handoff confirmation.`,
-      ),
-    );
-  }
-
-  const leasePressure =
-    domains.lease.failureTotal + domains.lease.acquireTimeoutsTotal + domains.lease.waiterDepth;
-  if (leasePressure > 0) {
-    addIssue(
-      issues,
-      systemIssue(
-        "lease-pressure",
-        "lease",
-        domains.lease.failureTotal > 0 || domains.lease.acquireTimeoutsTotal > 0
-          ? "high"
-          : "medium",
-        "Lease contention",
-        `${formatNumber(leasePressure)} lease failure, timeout, or waiter signal(s) are active.`,
-      ),
-    );
-  }
-
-  const noticePressure =
-    domains.notice.failureTotal +
-    domains.notice.deliveryDropsTotal +
-    domains.notice.wildcardLimitRejectsTotal;
-  if (noticePressure > 0) {
-    addIssue(
-      issues,
-      systemIssue(
-        "notice-pressure",
-        "notice",
-        "medium",
-        "Notice delivery pressure",
-        `${formatNumber(noticePressure)} notice drop, failure, or wildcard reject signal(s) are active.`,
-      ),
-    );
-  }
-
-  const streamPressure =
-    domains.stream.failureTotal +
-    domains.stream.appendConflictsTotal +
-    domains.stream.notifyDropsTotal;
-  if (streamPressure > 0) {
-    addIssue(
-      issues,
-      systemIssue(
-        "stream-pressure",
-        "stream",
-        "medium",
-        "Stream pressure",
-        `${formatNumber(streamPressure)} stream failure, append conflict, or notify-drop signal(s) are active.`,
-      ),
-    );
-  }
-
-  const kvPressure = domains.kv.commitsFailedTotal + domains.kv.invalidTransactionRejectsTotal;
-  if (kvPressure > 0) {
-    addIssue(
-      issues,
-      systemIssue(
-        "kv-pressure",
-        "kv",
-        "medium",
-        "KV write pressure",
-        `${formatNumber(kvPressure)} failed commit or invalid transaction reject signal(s) are active.`,
-      ),
+      systemIssue(issue.id, issue.domain, issue.severity, issue.title, issue.description),
     );
   }
 
@@ -355,43 +238,6 @@ function laneSignal(lane: TopologyLane | undefined) {
   if (primary.length > 0) return primary.join(" / ");
   if (lane.activityPerSecond > 0) return `${lane.activityPerSecond.toFixed(2)} act/sec`;
   return null;
-}
-
-function systemSignal(domain: DomainSegment, domains: SystemDomainStatsSummary | undefined) {
-  if (!domains) return null;
-
-  if (domain === "queue") {
-    return `${formatNumber(domains.queue.messagesReady)} ready / ${formatNumber(
-      domains.queue.inflightActive,
-    )} inflight`;
-  }
-  if (domain === "kv") {
-    return `${formatNumber(domains.kv.keysTotal)} keys / ${formatNumber(
-      domains.kv.transactionsActive,
-    )} transactions`;
-  }
-  if (domain === "schedule") {
-    return `${formatNumber(domains.schedule.schedulesActive)} schedules / ${formatNumber(
-      domains.schedule.pendingFireClaims,
-    )} claims`;
-  }
-  if (domain === "lease") {
-    return `${formatNumber(domains.lease.leasesActive)} leases / ${formatNumber(
-      domains.lease.waiterDepth,
-    )} waiters`;
-  }
-  if (domain === "notice") {
-    return `${formatNumber(domains.notice.subscriptionsActive)} subscriptions`;
-  }
-  if (domain === "rpc") {
-    return `${formatNumber(domains.rpc.requestsPending)} pending / ${formatNumber(
-      domains.rpc.workersRegistered,
-    )} workers`;
-  }
-
-  return `${formatNumber(domains.stream.streamsActive)} streams / ${formatNumber(
-    domains.stream.eventsTotal,
-  )} events`;
 }
 
 function domainStatuses(
@@ -422,7 +268,7 @@ function domainStatuses(
       signal:
         topIssue?.description ??
         laneSignal(lane) ??
-        systemSignal(link.segment, system?.domains) ??
+        overviewDomainSignal(link.segment, system?.domains) ??
         link.description,
       state: stateLabel(lane?.state, domainIssues.length),
       title: link.title,

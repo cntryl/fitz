@@ -287,9 +287,9 @@ export default function LeaseOwnershipConsole({
   );
   const badgeLabel = searchMode
     ? routeFamilyReady
-      ? "Existing API"
-      : "Select Route Family"
-    : "Existing API";
+      ? "Lease ownership search"
+      : "Route Family required"
+    : "Live admin data";
   const badgeVariant = searchMode ? (routeFamilyReady ? "success" : "warning") : "outline";
 
   async function runLeaseSearch() {
@@ -463,7 +463,7 @@ export default function LeaseOwnershipConsole({
             filteredRows.length === 0 ? (
               <QueryEmptyState
                 title="No matching leases"
-                description="Adjust the realm, area, or resource filters to find visible lease resources."
+                description="Clear filters, check the selected Route Family, or broaden scope to find visible lease resources."
               />
             ) : (
               <Stack gap="3">

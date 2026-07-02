@@ -13,6 +13,7 @@ import type { ScheduleExecutionObservation, ScheduleMissedObservation } from "@/
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
+import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import {
   QueryEmptyState,
@@ -210,7 +211,7 @@ export default function ScheduleResourcePage() {
         <DomainHeader
           eyebrow="Schedule resource"
           title="Schedule resource inspection"
-          description={`Durable timing intent and live handoff observations for ${scopeLabel}.`}
+          description={`Durable timing intent and schedule-owned handoff evidence for ${scopeLabel}.`}
           primaryAction={{ label: "Refresh resource", onPress: () => query.refresh() }}
           status={{
             detail: data
@@ -231,6 +232,22 @@ export default function ScheduleResourcePage() {
                   ? "warning"
                   : "success",
           }}
+        />
+        <OperatorScopeStrip
+          realm={ref.realm}
+          area={ref.area}
+          resource={ref.resource}
+          freshness={
+            query.refreshing
+              ? "Refreshing"
+              : query.stale
+                ? "Stale"
+                : data
+                  ? "Live"
+                  : query.loading
+                    ? "Loading"
+                    : undefined
+          }
         />
 
         <Show when={!data && query.loading}>
@@ -254,7 +271,7 @@ export default function ScheduleResourcePage() {
 
               <DomainMetricTable
                 title="Schedule timing"
-                description="Persisted timing intent and broker-observed, non-authoritative execution counters."
+                description="Persisted timing intent and broker-observed, non-authoritative handoff counters."
                 metrics={[
                   { label: "Enabled", value: current.detail.enabled ? "yes" : "no" },
                   { label: "Cron", value: current.detail.cron ?? "unset" },
@@ -279,7 +296,7 @@ export default function ScheduleResourcePage() {
 
               <ScheduleCard
                 title="Execution observations"
-                description="Schedule-owned handoff observations, not durable downstream execution history."
+                description="Schedule-owned handoff evidence, not durable downstream execution history."
               >
                 <ExecutionRows rows={current.executionObservations.observations} />
               </ScheduleCard>

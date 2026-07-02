@@ -2,9 +2,19 @@ import { state } from "@askrjs/askr";
 import { Show } from "@askrjs/askr/control";
 import { currentRoute, Link, navigate } from "@askrjs/askr/router";
 import { Form, Input, Label, VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
-import { Button, Inline, Stack } from "@askrjs/themes/components";
+import {
+  Button,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Inline,
+  Stack,
+} from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
+import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
 import {
   QueryEmptyState,
   QueryErrorState,
@@ -155,7 +165,7 @@ export default function KvResourcePage() {
               concreteFamily === null
                 ? "Committed row browsing requires a concrete route family."
                 : rowsQuery?.data
-                  ? `${formatNumber(rows.length)} committed row${rows.length === 1 ? "" : "s"} visible on this page.`
+                  ? `${formatNumber(rows.length)} committed row${rows.length === 1 ? "" : "s"} visible for this resource.`
                   : "Loading committed KV rows.",
             label:
               concreteFamily === null
@@ -175,35 +185,63 @@ export default function KvResourcePage() {
                     : "success",
           }}
         />
+        <OperatorScopeStrip
+          realm={scope.realm}
+          area={scope.area}
+          resource={scope.resource}
+          freshness={
+            concreteFamily === null
+              ? "Route Family required"
+              : rowsQuery?.refreshing
+                ? "Refreshing"
+                : rowsQuery?.stale
+                  ? "Stale"
+                  : rowsQuery?.data
+                    ? "Live"
+                    : rowsQuery?.loading
+                      ? "Loading"
+                      : undefined
+          }
+        />
 
-        <Form onSubmit={applyFilters}>
-          <Inline align="end" gap="3" wrap="wrap">
-            <Stack gap="1">
-              <Label for="kv-starts-with">Key starts with</Label>
-              <Input
-                id="kv-starts-with"
-                value={startsWithDraft()}
-                onInput={(event: Event) =>
-                  setStartsWithDraft((event.target as HTMLInputElement).value)
-                }
-              />
-            </Stack>
-            <Stack gap="1">
-              <Label for="kv-limit">Limit</Label>
-              <Input
-                id="kv-limit"
-                min="1"
-                type="number"
-                value={limitDraft()}
-                onInput={(event: Event) => setLimitDraft((event.target as HTMLInputElement).value)}
-              />
-            </Stack>
-            <Button type="submit">Apply</Button>
-          </Inline>
-        </Form>
+        <Card padding="sm" variant="default">
+          <CardHeader>
+            <CardTitle>Row filters</CardTitle>
+            <CardDescription>Filter committed rows by key prefix and page size.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Form onSubmit={applyFilters}>
+              <Inline align="end" gap="3" wrap="wrap">
+                <Stack gap="1">
+                  <Label for="kv-starts-with">Key starts with</Label>
+                  <Input
+                    id="kv-starts-with"
+                    value={startsWithDraft()}
+                    onInput={(event: Event) =>
+                      setStartsWithDraft((event.target as HTMLInputElement).value)
+                    }
+                  />
+                </Stack>
+                <Stack gap="1">
+                  <Label for="kv-limit">Limit</Label>
+                  <Input
+                    id="kv-limit"
+                    min="1"
+                    type="number"
+                    value={limitDraft()}
+                    onInput={(event: Event) =>
+                      setLimitDraft((event.target as HTMLInputElement).value)
+                    }
+                  />
+                </Stack>
+                <Button type="submit">Apply</Button>
+              </Inline>
+            </Form>
+          </CardContent>
+        </Card>
 
         <Show when={concreteFamily === null}>
-          <QueryEmptyState description="No matching committed rows at the current level." />
+          <QueryEmptyState description="Select a concrete Route Family to browse committed KV rows." />
         </Show>
 
         <Show when={rowsQuery?.loading}>
@@ -223,21 +261,31 @@ export default function KvResourcePage() {
         </Show>
 
         <Show when={rowsQuery?.data && rows.length === 0}>
-          <QueryEmptyState description="No matching committed rows at the current level." />
+          <QueryEmptyState description="No committed KV rows match this resource and key prefix." />
         </Show>
 
         <Show when={rows.length > 0}>
-          <VirtualTable<KvCommittedPair>
-            aria-label="Committed KV rows"
-            class="domain-resource-virtual-table"
-            columns={rowColumns}
-            getKey={(row) => row.key.base64}
-            headerHeight={44}
-            overscan={6}
-            rowHeight={52}
-            rows={rows}
-            style={{ height: "420px" }}
-          />
+          <Card padding="sm" variant="default">
+            <CardHeader>
+              <CardTitle>Current authoritative KV rows</CardTitle>
+              <CardDescription>
+                Committed rows returned by the selected scope and filters.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <VirtualTable<KvCommittedPair>
+                aria-label="Committed KV rows"
+                class="domain-resource-virtual-table"
+                columns={rowColumns}
+                getKey={(row) => row.key.base64}
+                headerHeight={44}
+                overscan={6}
+                rowHeight={52}
+                rows={rows}
+                style={{ height: "420px" }}
+              />
+            </CardContent>
+          </Card>
         </Show>
 
         <Inline gap="2" wrap="wrap">

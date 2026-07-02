@@ -110,8 +110,137 @@
   font-size: var(--fitz-body-size);
 }
 
+.domain-inventory-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: var(--fitz-control-gap);
+  margin-top: var(--fitz-control-gap);
+  min-width: 0;
+}
+
+.domain-inventory-search-shell {
+  position: relative;
+  width: min(100%, 20rem);
+  min-width: min(100%, 12rem);
+}
+
+.domain-inventory-search-icon {
+  position: absolute;
+  inset-inline-start: 0.75rem;
+  top: 50%;
+  z-index: 1;
+  color: var(--fitz-text-muted);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.domain-inventory-search {
+  width: 100%;
+  padding-inline-start: 2.25rem;
+}
+
+.operator-scope-strip,
+.page-action-bar {
+  min-width: 0;
+  padding: var(--fitz-control-gap) var(--fitz-panel-padding);
+  border: 1px solid var(--fitz-border-subtle);
+  border-radius: var(--fitz-row-radius);
+  background: var(--fitz-surface-soft);
+}
+
+.operator-scope-strip dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--fitz-control-gap) var(--fitz-section-gap);
+  margin: 0;
+}
+
+.operator-scope-strip div {
+  display: grid;
+  gap: 0.125rem;
+  min-width: 0;
+}
+
+.operator-scope-strip dt {
+  color: var(--fitz-text-muted);
+  font-size: var(--fitz-caption-size);
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.operator-scope-strip dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--fitz-body-size);
+  line-height: var(--fitz-body-line-height);
+}
+
+.page-action-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--fitz-control-gap) var(--fitz-section-gap);
+}
+
+.page-action-bar p {
+  max-width: 68ch;
+  margin: 0;
+  color: var(--fitz-text-muted);
+  font-size: var(--fitz-body-size);
+  line-height: var(--fitz-body-line-height);
+  overflow-wrap: anywhere;
+}
+
+.page-action-bar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--fitz-control-gap);
+}
+
+.page-action-link {
+  display: inline-flex;
+  min-height: 2.25rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--fitz-control-gap);
+  border: 1px solid var(--fitz-border);
+  border-radius: var(--fitz-row-radius);
+  color: var(--ak-color-text, CanvasText);
+  font-size: var(--fitz-body-size);
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.page-action-link:hover {
+  background: var(--fitz-surface-muted);
+}
+
+.page-action-link:focus-visible {
+  outline: 2px solid var(--fitz-focus-ring);
+  outline-offset: 2px;
+}
+
 .domain-section {
   padding-block: var(--fitz-control-gap);
+}
+
+.domain-stat-grid {
+  min-width: 0;
+}
+
+.domain-stat-value {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 1.125rem;
+  line-height: var(--fitz-title-line-height);
 }
 
 .domain-table-wrap {
@@ -407,6 +536,31 @@
   white-space: nowrap;
 }
 
+.domain-sort-button {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  text-align: start;
+  cursor: pointer;
+}
+
+.domain-sort-button:focus-visible {
+  outline: 2px solid var(--fitz-focus-ring);
+  outline-offset: 2px;
+}
+
+.domain-sort-indicator {
+  color: var(--fitz-text-muted);
+  font-size: var(--fitz-caption-size);
+}
+
 .metrics-table-wrap {
   overflow-x: auto;
   scrollbar-gutter: stable;
@@ -691,7 +845,7 @@
 
 .domain-sidebar-stat {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
   gap: var(--ak-space-1, 0.25rem) var(--fitz-control-gap);
   align-items: baseline;
   min-width: 0;
@@ -706,7 +860,8 @@
 .domain-sidebar-stat dt,
 .domain-sidebar-stat dd {
   margin: 0;
-  overflow-wrap: normal;
+  min-width: 0;
+  overflow-wrap: anywhere;
   word-break: normal;
 }
 
@@ -717,6 +872,7 @@
 .domain-sidebar-stat dd {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  text-align: end;
 }
 
 .domain-sidebar-stat p,

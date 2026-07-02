@@ -13,6 +13,7 @@ import DomainHeader from "@/components/shared/domain-header";
 import DomainInventoryPage from "@/components/shared/domain-inventory-page";
 import type { DomainResourceMetricColumn } from "@/components/shared/domain-resource-inventory-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
+import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import {
   QueryEmptyState,
@@ -63,6 +64,11 @@ function summarizeNoticeHealth(stats: {
 }) {
   const riskCount = stats.deliveryDropsTotal + stats.wildcardLimitRejectsTotal;
   const hasRisk = riskCount > 0;
+  const baseDetail = `${formatNumber(stats.routesActive)} route(s), ${formatNumber(
+    stats.subscriptionsActive,
+  )} active subscriptions, ${stats.publishesPerSecond.toFixed(2)} publishes/sec, ${formatNumber(
+    stats.deliveryDropsTotal,
+  )} drop(s), ${formatNumber(stats.wildcardLimitRejectsTotal)} wildcard reject(s).`;
   const pressureSignals = [
     stats.deliveryDropsTotal > 0
       ? `${formatNumber(stats.deliveryDropsTotal)} delivery drop(s)`
@@ -74,29 +80,19 @@ function summarizeNoticeHealth(stats: {
 
   if (hasRisk) {
     return {
-      detail: `${formatNumber(stats.subscriptionsActive)} active subscriptions and ${stats.publishesPerSecond.toFixed(2)} publishes/sec. ${pressureSignals.join(", ")} are above healthy fanout baseline.`,
+      detail: `${baseDetail} ${pressureSignals.join(
+        ", ",
+      )} are above the healthy live fanout baseline.`,
       label: "Attention" as const,
       tone: "danger" as const,
     };
   }
 
   return {
-    detail: `${formatNumber(stats.subscriptionsActive)} active subscriptions across ${formatNumber(
-      stats.routesActive,
-    )} route(s). ${stats.publishesPerSecond.toFixed(2)} publishes/sec is moving through live fanout.`,
+    detail: `${baseDetail} Live fanout is moving without broker-visible drops.`,
     label: "Live" as const,
     tone: "success" as const,
   };
-}
-
-function resourceCount(data: ReturnType<typeof createResourceInventoryQuery>["data"]) {
-  return (
-    data?.realms.reduce(
-      (sum, realm) =>
-        sum + realm.areas.reduce((areaSum, area) => areaSum + area.resources.length, 0),
-      0,
-    ) ?? 0
-  );
 }
 
 function NoticeLandingPage() {
@@ -111,7 +107,6 @@ function NoticeLandingPage() {
       routesActive: 0,
     },
   );
-  const noticeCount = resourceCount(inventory.data);
   const stats = overview.data?.stats;
   const noticeMetricColumns: readonly DomainResourceMetricColumn[] = [
     {
@@ -159,14 +154,20 @@ function NoticeLandingPage() {
       loadingDescription="Loading notice inventory..."
       errorTitle="Unable to load notice inventory"
       refreshingDescription="Refreshing notice inventory..."
-      emptyDescription="No notice resources are currently visible."
+      emptyDescription="No notice resources are currently visible. Check the selected Route Family or broaden scope."
       tableTitle="Resource inventory"
       metricColumns={noticeMetricColumns}
+      stats={[
+        { label: "Routes", value: stats ? formatNumber(stats.routesActive) : "--" },
+        { label: "Subscriptions", value: stats ? formatNumber(stats.subscriptionsActive) : "--" },
+        {
+          label: "Publishes / sec",
+          value: stats ? stats.publishesPerSecond.toFixed(2) : "--",
+        },
+      ]}
       status={{
         detail: overview.data
-          ? `${formatNumber(noticeCount)} notice resource${noticeCount === 1 ? "" : "s"} visible. ${
-              health.detail
-            } Notice is live fanout only; subscriptions expire on disconnect or restart.`
+          ? `${health.detail} Notice is live fanout; subscriptions expire on disconnect or restart.`
           : overview.error
             ? "Notice health is unavailable. Resource inventory can still be inspected when loaded."
             : "Loading notice health.",
@@ -265,7 +266,7 @@ function NoticeResourcePage(props: { realm: string; area: string; resource: stri
   });
 
   return (
-    <DomainPageFrame>
+    <DomainPageFrame sidebar={snapshot}>
       <Stack gap="3">
         <DomainHeader
           eyebrow="Notice resource"
@@ -274,15 +275,28 @@ function NoticeResourcePage(props: { realm: string; area: string; resource: stri
           primaryAction={{ label: "Refresh operations", onPress: () => rowsQuery.refresh() }}
           status={{
             detail: data
-              ? `${data.operations.length} operation route(s) currently visible.`
+              ? `${data.operations.length} operation route(s), ${totalSubscribers} active subscriber${totalSubscribers === 1 ? "" : "s"}, ${totalMessages} rolling message${totalMessages === 1 ? "" : "s"}/min.`
               : "Loading notice operations for this resource.",
             label: rowsQuery.refreshing ? "Refreshing" : rowsQuery.stale ? "Stale" : "Live",
             tone: rowsQuery.refreshing ? "info" : rowsQuery.stale ? "warning" : "success",
           }}
         />
-
-        {snapshot}
-
+        <OperatorScopeStrip
+          realm={props.realm}
+          area={props.area}
+          resource={props.resource}
+          freshness={
+            rowsQuery.refreshing
+              ? "Refreshing"
+              : rowsQuery.stale
+                ? "Stale"
+                : data
+                  ? "Live"
+                  : rowsQuery.loading
+                    ? "Loading"
+                    : undefined
+          }
+        />
         {!data && rowsQuery.loading ? (
           <QueryLoadingState description="Loading notice operation rows..." />
         ) : null}
@@ -306,7 +320,9 @@ function NoticeResourcePage(props: { realm: string; area: string; resource: stri
               <Card padding="sm" variant="default">
                 <CardHeader>
                   <CardTitle>Notice operations</CardTitle>
-                  <CardDescription>Rows are grouped by operation route.</CardDescription>
+                  <CardDescription>
+                    Live operation routes with active subscribers and rolling messages/min.
+                  </CardDescription>
                 </CardHeader>
                 <CardContent>
                   <Table>

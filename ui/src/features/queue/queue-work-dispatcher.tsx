@@ -267,7 +267,7 @@ export default function QueueWorkDispatcher({
   const canOpenExactResource = filteredRows.some(
     (row) => row.realm === realmValue && row.area === areaValue && row.resource === resourceValue,
   );
-  const badgeLabel = "Existing API";
+  const badgeLabel = searchMode ? "Queue admin search" : "Live admin data";
   const badgeVariant = searchMode ? "success" : "outline";
 
   async function runSearch() {
@@ -443,7 +443,7 @@ export default function QueueWorkDispatcher({
             filteredRows.length === 0 ? (
               <QueryEmptyState
                 title="No matching queues"
-                description="Adjust the realm, area, or resource filters to find visible queue resources."
+                description="Clear filters, check the selected Route Family, or broaden scope to find visible queue resources."
               />
             ) : (
               <Stack gap="3">

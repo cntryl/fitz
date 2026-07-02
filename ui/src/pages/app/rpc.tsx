@@ -26,12 +26,17 @@ function summarizeRpcHealth(stats: {
 
   const hasCritical = stats.requestTimeoutsTotal > 0 || stats.failureTotal > 0;
   const hasPressure = pressureSignals.length > 0;
+  const baseDetail = `${formatNumber(stats.requestsPending)} pending request(s), ${formatNumber(
+    stats.workersRegistered,
+  )} registered worker(s), ${formatNumber(
+    stats.pendingRoutesActive,
+  )} pending route(s), ${formatNumber(
+    stats.requestTimeoutsTotal,
+  )} timeout(s), ${formatNumber(stats.failureTotal)} failure(s).`;
 
   if (hasCritical) {
     return {
-      detail: `${formatNumber(stats.requestsPending)} pending request(s), ${formatNumber(
-        stats.workersRegistered,
-      )} registered worker(s). ${pressureSignals.join(", ")}. ${
+      detail: `${baseDetail} ${pressureSignals.join(", ")}. ${
         stats.requestsPending > 0
           ? "Response reliability deserves immediate attention."
           : "No pending requests are visible."
@@ -43,31 +48,17 @@ function summarizeRpcHealth(stats: {
 
   if (hasPressure) {
     return {
-      detail: `${formatNumber(stats.requestsPending)} pending request(s), ${formatNumber(
-        stats.workersRegistered,
-      )} registered worker(s). ${pressureSignals.join(", ")}.`,
+      detail: `${baseDetail} ${pressureSignals.join(", ")}.`,
       label: "Pressure" as const,
       tone: "warning" as const,
     };
   }
 
   return {
-    detail: `${formatNumber(stats.requestsPending)} pending request(s), ${formatNumber(
-      stats.workersRegistered,
-    )} registered worker(s). Demand is healthy and live.`,
+    detail: `${baseDetail} Demand is healthy and live.`,
     label: "Live" as const,
     tone: "success" as const,
   };
-}
-
-function resourceCount(data: ReturnType<typeof createResourceInventoryQuery>["data"]) {
-  return (
-    data?.realms.reduce(
-      (sum, realm) =>
-        sum + realm.areas.reduce((areaSum, area) => areaSum + area.resources.length, 0),
-      0,
-    ) ?? 0
-  );
 }
 
 export default function RpcPage() {
@@ -90,7 +81,6 @@ export default function RpcPage() {
           workersRegistered: 0,
         },
   );
-  const rpcCount = resourceCount(inventory.data);
   const stats = overview.data?.stats;
   const rpcMetricColumns: readonly DomainResourceMetricColumn[] = [
     {
@@ -138,14 +128,17 @@ export default function RpcPage() {
       loadingDescription="Loading RPC inventory..."
       errorTitle="Unable to load RPC inventory"
       refreshingDescription="Refreshing RPC inventory..."
-      emptyDescription="No RPC resources are currently visible."
+      emptyDescription="No RPC resources are currently visible. Check the selected Route Family or broaden scope."
       tableTitle="Resource inventory"
       metricColumns={rpcMetricColumns}
+      stats={[
+        { label: "Pending", value: stats ? formatNumber(stats.requestsPending) : "--" },
+        { label: "Workers", value: stats ? formatNumber(stats.workersRegistered) : "--" },
+        { label: "Ops / sec", value: stats ? stats.operationsPerSecond.toFixed(2) : "--" },
+      ]}
       status={{
         detail: overview.data
-          ? `${formatNumber(rpcCount)} RPC resource${rpcCount === 1 ? "" : "s"} visible. ${
-              health.detail
-            } Pending work is in-memory and disappears on worker disconnect or broker restart.`
+          ? `${health.detail} Pending work is in-memory and disappears on worker disconnect or broker restart.`
           : overview.error
             ? "RPC health is unavailable. Resource inventory can still be inspected when loaded."
             : "Loading RPC health.",

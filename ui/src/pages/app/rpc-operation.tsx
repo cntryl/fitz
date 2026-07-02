@@ -12,6 +12,7 @@ import {
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
+import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
 import {
   QueryEmptyState,
   QueryErrorState,
@@ -89,6 +90,23 @@ export default function RpcOperationPage() {
             tone: query.refreshing ? "info" : query.stale ? "warning" : "success",
           }}
         />
+        <OperatorScopeStrip
+          realm={realm}
+          area={area}
+          resource={resource}
+          operation={operation}
+          freshness={
+            query.refreshing
+              ? "Refreshing"
+              : query.stale
+                ? "Stale"
+                : data
+                  ? "Live"
+                  : query.loading
+                    ? "Loading"
+                    : undefined
+          }
+        />
         {!data && query.loading ? (
           <QueryLoadingState description="Loading RPC operation..." />
         ) : null}
@@ -106,7 +124,7 @@ export default function RpcOperationPage() {
             ) : null}
             <DomainMetricTable
               title="RPC operation metrics"
-              description="Live worker capacity, pending requests, and observed latency."
+              description="Live worker capacity, pending requests, latency buckets, and call pressure."
               metrics={[
                 { label: "Workers", value: detail.workers_registered },
                 { label: "Pending requests", value: detail.requests_pending },
@@ -124,7 +142,7 @@ export default function RpcOperationPage() {
               <CardHeader>
                 <CardTitle>Live call evidence</CardTitle>
                 <CardDescription>
-                  Broker-local worker registrations and pending calls.
+                  Broker-local worker registrations, pending calls, and correlation rows.
                 </CardDescription>
               </CardHeader>
               <CardContent>

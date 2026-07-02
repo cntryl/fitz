@@ -9,6 +9,10 @@ function jsonBody(response: ReturnType<typeof mockFitzResponse>) {
   return JSON.parse(response.body);
 }
 
+function scopedRouteParts(route: string) {
+  return route.replace(/^[a-z]+:\/\//, "").split("/");
+}
+
 describe("Vite mock API", () => {
   it("returns typed Prometheus metrics", () => {
     const response = mockFitzResponse("GET", "/metrics");
@@ -36,5 +40,33 @@ describe("Vite mock API", () => {
     expect(body.realm).toBe("acme");
     expect(body.area).toBe("payments");
     expect(body.resources.length).toBeGreaterThan(1);
+  });
+
+  it("returns operation metadata for operation-domain inventory routes", () => {
+    for (const domain of ["notice", "rpc", "schedule"]) {
+      const response = mockFitzResponse(
+        "GET",
+        `/api/v1/7/${domain}/realms/acme/areas/payments/resources`,
+      );
+      const body = jsonBody(response);
+
+      expect(body.resources[0].operation).toBe("ReconcileInvoice");
+    }
+  });
+
+  it("returns four-part FITZ routes for operation domains", () => {
+    const topology = jsonBody(mockFitzResponse("GET", "/api/v1/topology"));
+
+    for (const domain of ["notice", "rpc", "schedule"]) {
+      const lane = topology.lanes.find((entry: { id: string }) => entry.id === domain);
+      const route = lane.top_scoped_resources[0].scope.route;
+
+      expect(scopedRouteParts(route)).toHaveLength(4);
+      expect(lane.top_scoped_resources[0].scope.operation).toBe("ReconcileInvoice");
+    }
+
+    const noticeDeliveries = jsonBody(mockFitzResponse("GET", "/api/v1/7/notice/deliveries"));
+
+    expect(scopedRouteParts(noticeDeliveries.observations[0].route)).toHaveLength(4);
   });
 });

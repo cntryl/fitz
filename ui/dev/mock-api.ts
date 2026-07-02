@@ -8,10 +8,35 @@ const routeFamilies = ["1", "7", "42"];
 const realms = ["acme", "platform", "ops"];
 const areas = ["payments", "messaging", "control"];
 const resources = ["invoices", "orders", "worker-pool"];
+const operations = ["ReconcileInvoice", "RefreshProjection", "ExpireWindow"];
 const now = "2026-06-29T14:30:00.000Z";
 
 const domains = ["kv", "queue", "stream", "lease", "schedule", "notice", "rpc"] as const;
 type Domain = (typeof domains)[number];
+
+function domainUsesOperationSegment(domain: Domain) {
+  return domain === "notice" || domain === "rpc" || domain === "schedule";
+}
+
+function operationForIndex(index: number) {
+  return operations[index % operations.length];
+}
+
+function fitzRoute(
+  domain: Domain,
+  realm: string,
+  area: string,
+  resource: string,
+  operation = operationForIndex(0),
+) {
+  const routeParts = [realm, area, resource];
+
+  if (domainUsesOperationSegment(domain)) {
+    routeParts.push(operation);
+  }
+
+  return `${domain}://${routeParts.join("/")}`;
+}
 
 function json(body: unknown, status = 200): MockResponse {
   return {
@@ -78,7 +103,8 @@ const incidentSummary = {
       title: "Inspect invoices queue",
     },
     {
-      endpoint: "/api/v1/7/rpc/realms/platform/areas/control/resources/worker-pool",
+      endpoint:
+        "/api/v1/7/rpc/realms/platform/areas/control/resources/worker-pool/operations/ReconcileInvoice",
       priority: 2,
       rationale: "RPC pending requests exceed registered workers.",
       remediation: "Review worker registration and latency buckets.",
@@ -308,8 +334,8 @@ const sessions = {
   ],
 };
 
-function resourceEntry(resource: string, index: number) {
-  return {
+function resourceEntry(resource: string, index: number, domain?: Domain) {
+  const entry = {
     area: areas[index % areas.length],
     complete_success_total: 420 + index * 11,
     enqueue_success_total: 510 + index * 13,
@@ -335,10 +361,14 @@ function resourceEntry(resource: string, index: number) {
     write_latency_avg_ms: 4.1 + index,
     write_latency_p95_ms: 18.3 + index * 2,
   };
+
+  return domain && domainUsesOperationSegment(domain)
+    ? { ...entry, operation: operationForIndex(index) }
+    : entry;
 }
 
-function resourceEntries() {
-  return resources.map(resourceEntry);
+function resourceEntries(domain?: Domain) {
+  return resources.map((resource, index) => resourceEntry(resource, index, domain));
 }
 
 function topologyLane(domain: Domain, index: number) {
@@ -357,22 +387,30 @@ function topologyLane(domain: Domain, index: number) {
     title: domain.toUpperCase(),
     top_scoped_resources: resourceEntries()
       .slice(0, 2)
-      .map((entry, resourceIndex) => ({
-        counters: [
-          { key: "pressure", label: "Pressure", value: resourceIndex === 0 ? 87 : 42 },
-          { key: "activity", label: "Activity/sec", value: 12 + resourceIndex },
-        ],
-        id: `${domain}:${entry.realm}:${entry.area}:${entry.resource}`,
-        label: `${entry.realm}/${entry.area}/${entry.resource}`,
-        scope: {
-          area: entry.area,
-          realm: entry.realm,
-          resource: entry.resource,
-          route: `${domain}://${entry.realm}/${entry.area}/${entry.resource}`,
-          route_family: index === 0 ? 7 : 42,
-        },
-        state: resourceIndex === 0 && state === "pressure" ? "pressure" : "flowing",
-      })),
+      .map((entry, resourceIndex) => {
+        const operation = operationForIndex(resourceIndex);
+        const route = fitzRoute(domain, entry.realm, entry.area, entry.resource, operation);
+
+        return {
+          counters: [
+            { key: "pressure", label: "Pressure", value: resourceIndex === 0 ? 87 : 42 },
+            { key: "activity", label: "Activity/sec", value: 12 + resourceIndex },
+          ],
+          id: domainUsesOperationSegment(domain)
+            ? `${domain}:${entry.realm}:${entry.area}:${entry.resource}:${operation}`
+            : `${domain}:${entry.realm}:${entry.area}:${entry.resource}`,
+          label: route.replace(`${domain}://`, ""),
+          scope: {
+            area: entry.area,
+            ...(domainUsesOperationSegment(domain) ? { operation } : {}),
+            realm: entry.realm,
+            resource: entry.resource,
+            route,
+            route_family: index === 0 ? 7 : 42,
+          },
+          state: resourceIndex === 0 && state === "pressure" ? "pressure" : "flowing",
+        };
+      }),
   };
 }
 
@@ -488,12 +526,12 @@ function areaCollection(realm: string) {
   return { areas: areas.map((area) => ({ area })), realm };
 }
 
-function resourceCollection(realm: string, area: string) {
+function resourceCollection(realm: string, area: string, domain?: Domain) {
   return {
     area,
     realm,
     resources: resources.map((resource, index) => ({
-      ...resourceEntry(resource, index),
+      ...resourceEntry(resource, index, domain),
       area,
       realm,
       resource,
@@ -735,7 +773,7 @@ function domainResponse(familyValue: string, domain: Domain, rest: string[]): Mo
     });
   }
   if (rest[4] !== "resources") return null;
-  if (rest.length === 5) return json(resourceCollection(realm, area));
+  if (rest.length === 5) return json(resourceCollection(realm, area, domain));
 
   const resource = rest[5] ?? resources[0];
   const tail = rest.slice(6);
@@ -856,7 +894,13 @@ function noticeDeliveries(family: number) {
       publishes_total: 4900 + index * 340,
       realm: realms[index % realms.length],
       resource,
-      route: `notice://${realms[index % realms.length]}/${areas[index % areas.length]}/${resource}`,
+      route: fitzRoute(
+        "notice",
+        realms[index % realms.length],
+        areas[index % areas.length],
+        resource,
+        operationForIndex(index),
+      ),
       route_family: family,
       session_id: `sess-notice-${index}`,
       status: index === 0 ? "hot" : "active",
@@ -872,7 +916,7 @@ function noticeSubscriptions(family: number, realm: string, area: string, resour
       {
         created_at: now,
         notifications_received: 248,
-        pattern: `notice://${realm}/${area}/${resource}`,
+        pattern: fitzRoute("notice", realm, area, resource),
         realm,
         route_family: family,
         session_id: "sess-admin-acme",
@@ -1118,9 +1162,9 @@ function search(url: URL) {
         area: "control",
         domain: "rpc",
         health: "pressure",
-        href: "/admin/rpc/platform/control/worker-pool",
-        id: "rpc:platform:control:worker-pool",
-        kind: "resource",
+        href: "/admin/rpc/platform/control/worker-pool/ReconcileInvoice",
+        id: "rpc:platform:control:worker-pool:ReconcileInvoice",
+        kind: "operation",
         matched_fields: ["operation", "worker"],
         metadata: { pending: "14", workers: "3" },
         operation: "ReconcileInvoice",

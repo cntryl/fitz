@@ -3,7 +3,6 @@ import { Timeline } from "@askrjs/charts/components";
 import { Link } from "@askrjs/askr/router";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
 import { VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
-import { Button } from "@askrjs/themes/components";
 import { Inline, Stack } from "@askrjs/themes/components";
 import {
   Badge,
@@ -17,6 +16,11 @@ import { formatDurationSeconds } from "@/shared/format";
 import DomainMetricTable from "./domain-metric-table";
 import { QueryEmptyState } from "./query-state";
 import type { ResourceDetail, ResourceRelatedTable } from "@/features/resource/resource-models";
+import {
+  getResourceWorkbenchAdapter,
+  type ResourceArchetypeConfig,
+  type ResourceWorkbenchAdapter,
+} from "./resource-workbench-adapters";
 
 export interface ResourceWorkbenchProps {
   detail: ResourceDetail;
@@ -239,109 +243,6 @@ export function describeResourceDetail(detail: ResourceDetail): ResourceWorkbenc
   return describeResourceState(detail);
 }
 
-type ResourceArchetypeConfig = {
-  actionLabel: string;
-  actionTitle: string;
-  diagnosticsDescription: string;
-  evidenceTitle: string;
-  failureTitle: string;
-  primaryDescription: string;
-  primaryTitle: string;
-  timelineTitle: string;
-  title: string;
-};
-
-const archetypeConfig: Record<ResourceDetail["domain"], ResourceArchetypeConfig> = {
-  kv: {
-    actionLabel: "State Explorer",
-    actionTitle: "Query workspace",
-    diagnosticsDescription: "Transaction pressure, current values, and raw resource payload.",
-    evidenceTitle: "Results and details",
-    failureTitle: "State anomalies",
-    primaryDescription: "Resource-level current authoritative state from the existing admin API.",
-    primaryTitle: "State query",
-    timelineTitle: "State timeline",
-    title: "KV State Explorer",
-  },
-  lease: {
-    actionLabel: "Ownership Console",
-    actionTitle: "Ownership",
-    diagnosticsDescription: "Broker-local lease health and contention evidence.",
-    evidenceTitle: "Contention",
-    failureTitle: "Ownership conflicts",
-    primaryDescription: "Ephemeral owner, waiter, and lease coordination signals for this scope.",
-    primaryTitle: "Current ownership",
-    timelineTitle: "Ownership history",
-    title: "Lease Ownership Console",
-  },
-  notice: {
-    actionLabel: "Communication Flow",
-    actionTitle: "Flow graph",
-    diagnosticsDescription:
-      "Live fanout pressure, participants, failures, and raw broker evidence.",
-    evidenceTitle: "Participants",
-    failureTitle: "Delivery failures",
-    primaryDescription:
-      "Live Notice route, subscription, and delivery signals for connected participants.",
-    primaryTitle: "Notice flow",
-    timelineTitle: "Delivery trace",
-    title: "Notice Communication Flow",
-  },
-  rpc: {
-    actionLabel: "Communication Flow",
-    actionTitle: "Flow graph",
-    diagnosticsDescription:
-      "Live request/response participants, failures, and pending-call evidence.",
-    evidenceTitle: "Participants",
-    failureTitle: "Call failures",
-    primaryDescription:
-      "Live RPC operations, workers, and pending request signals for this resource.",
-    primaryTitle: "RPC flow",
-    timelineTitle: "Call trace",
-    title: "RPC Communication Flow",
-  },
-  schedule: {
-    actionLabel: "Time Planner",
-    actionTitle: "Timeline",
-    diagnosticsDescription: "Durable timing intent, execution pressure, and handoff diagnostics.",
-    evidenceTitle: "Executions",
-    failureTitle: "Missed or failed execution",
-    primaryDescription:
-      "Future timing intent and recent execution evidence for this schedule resource.",
-    primaryTitle: "Execution plan",
-    timelineTitle: "Execution timeline",
-    title: "Schedule Time Planner",
-  },
-  stream: {
-    actionLabel: "History Explorer",
-    actionTitle: "Event explorer",
-    diagnosticsDescription:
-      "Durable stream indicators, consumers, replay context, and raw payload.",
-    evidenceTitle: "Consumers",
-    failureTitle: "Replay risks",
-    primaryDescription: "Durable history indicators and recent stream events for this scope.",
-    primaryTitle: "Event history",
-    timelineTitle: "Event timeline",
-    title: "Stream History Explorer",
-  },
-};
-
-function failureLikeMetric(metric: { label: string }) {
-  const label = metric.label.toLowerCase();
-
-  return ["fail", "reject", "timeout", "drop", "dead", "conflict", "invalid", "rollback"].some(
-    (word) => label.includes(word),
-  );
-}
-
-function failureLikeEvent(event: { kind: string; summary: string }) {
-  const text = `${event.kind} ${event.summary}`.toLowerCase();
-
-  return ["fail", "reject", "timeout", "drop", "dead", "conflict", "invalid", "blocked"].some(
-    (word) => text.includes(word),
-  );
-}
-
 function hierarchyMetrics(detail: ResourceDetail) {
   return [
     { label: "Realm", value: detail.ref.realm },
@@ -392,9 +293,17 @@ function ResourceTimelinePanel({ detail, title }: { detail: ResourceDetail; titl
   );
 }
 
-function FailurePanel({ detail, title }: { detail: ResourceDetail; title: string }) {
-  const failureMetrics = detail.detailMetrics.filter(failureLikeMetric);
-  const failureEvents = detail.timeline.events.filter(failureLikeEvent).slice(0, 5);
+function FailurePanel({
+  adapter,
+  detail,
+  title,
+}: {
+  adapter: ResourceWorkbenchAdapter;
+  detail: ResourceDetail;
+  title: string;
+}) {
+  const failureMetrics = detail.detailMetrics.filter(adapter.isFailureMetric);
+  const failureEvents = detail.timeline.events.filter(adapter.isFailureEvent).slice(0, 5);
 
   return (
     <Card padding="sm" variant="default">
@@ -512,47 +421,11 @@ function ArchetypeEvidencePanel({
   );
 }
 
-function ArchetypeOperationsPanel({ detail }: { detail: ResourceDetail }) {
-  if (detail.domain === "stream") {
-    return (
-      <Card padding="sm" variant="default">
-        <CardHeader>
-          <CardTitle>Replay controls</CardTitle>
-          <CardDescription>Replay remains tied to explicit Stream API support.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Button variant="outline" disabled>
-            Replay event range
-          </Button>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (detail.domain === "kv") {
-    return (
-      <Card padding="sm" variant="default">
-        <CardHeader>
-          <CardTitle>State lookup</CardTitle>
-          <CardDescription>
-            Key lookup and prefix search require a dedicated KV admin contract.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Button variant="outline" disabled>
-            Query keys
-          </Button>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  return null;
-}
-
 export default function ResourceWorkbench({ detail }: ResourceWorkbenchProps) {
   const summary = describeResourceDetail(detail);
-  const config = archetypeConfig[detail.domain];
+  const adapter = getResourceWorkbenchAdapter(detail.domain);
+  const config = adapter.copy;
+  const operationsPanel = adapter.renderOperationsPanel?.(detail);
 
   return (
     <Stack gap="4" class="resource-workbench archetype-workbench">
@@ -571,20 +444,13 @@ export default function ResourceWorkbench({ detail }: ResourceWorkbenchProps) {
       <ArchetypeActionPanel config={config} detail={detail} />
       <ResourceTimelinePanel detail={detail} title={config.timelineTitle} />
       <ArchetypeEvidencePanel config={config} detail={detail} />
-      <FailurePanel detail={detail} title={config.failureTitle} />
-      <ArchetypeOperationsPanel detail={detail} />
+      <FailurePanel adapter={adapter} detail={detail} title={config.failureTitle} />
+      {operationsPanel}
 
-      <section class="resource-workbench-raw">
-        <Card padding="sm" variant="default">
-          <CardHeader>
-            <CardTitle>Diagnostics payload</CardTitle>
-            <CardDescription>Exact API response body for this resource.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <pre class="resource-raw">{JSON.stringify(detail.raw, null, 2)}</pre>
-          </CardContent>
-        </Card>
-      </section>
+      <details class="resource-workbench-raw">
+        <summary>Raw API payload</summary>
+        <pre class="resource-raw">{JSON.stringify(detail.raw, null, 2)}</pre>
+      </details>
     </Stack>
   );
 }

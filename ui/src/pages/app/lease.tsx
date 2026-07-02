@@ -20,13 +20,20 @@ function riskSignal(stats: {
     stats.forcedReleasesTotal > 0 ? `${stats.forcedReleasesTotal} forced release(s)` : null,
     stats.invalidTokenRejectsTotal > 0 ? `${stats.invalidTokenRejectsTotal} token reject(s)` : null,
   ].filter(Boolean) as string[];
+  const pressureDetail = `${formatNumber(
+    stats.acquireTimeoutsTotal,
+  )} acquire timeout(s), ${formatNumber(stats.forcedReleasesTotal)} forced release(s), ${formatNumber(
+    stats.invalidTokenRejectsTotal,
+  )} token reject(s)`;
   const detailBase = `${formatNumber(stats.leasesActive)} active leases, ${formatNumber(
     stats.waiterDepth,
-  )} waiters, ${formatDurationSeconds(stats.oldestLeaseAgeSeconds)} oldest lease age.`;
+  )} waiters, ${formatDurationSeconds(
+    stats.oldestLeaseAgeSeconds,
+  )} oldest lease age. Pressure counters: ${pressureDetail}.`;
 
   if (pressureCount > 6) {
     return {
-      detail: `${detailBase} Attention is warranted due ${riskBits.join(", ")}.`,
+      detail: `${detailBase} Attention is warranted from ${riskBits.join(", ")}.`,
       label: "Attention" as const,
       tone: "danger" as const,
     };
@@ -43,20 +50,10 @@ function riskSignal(stats: {
   }
 
   return {
-    detail: "No immediate lease contention risk is visible.",
+    detail: `${detailBase} No immediate lease contention risk is visible.`,
     label: "Live" as const,
     tone: "success" as const,
   };
-}
-
-function resourceCount(data: ReturnType<typeof createResourceInventoryQuery>["data"]) {
-  return (
-    data?.realms.reduce(
-      (sum, realm) =>
-        sum + realm.areas.reduce((areaSum, area) => areaSum + area.resources.length, 0),
-      0,
-    ) ?? 0
-  );
 }
 
 export default function LeasePage() {
@@ -73,7 +70,6 @@ export default function LeasePage() {
       leasesActive: overview.data.stats.leasesActive,
       waiterDepth: overview.data.stats.waiterDepth,
     });
-  const leaseCount = resourceCount(inventory.data);
   const leaseMetricColumns: readonly DomainResourceMetricColumn[] = [
     {
       id: "active-leases",
@@ -127,14 +123,20 @@ export default function LeasePage() {
       loadingDescription="Loading lease inventory..."
       errorTitle="Unable to load lease inventory"
       refreshingDescription="Refreshing lease inventory..."
-      emptyDescription="No lease resources are currently visible."
+      emptyDescription="No lease resources are currently visible. Check the selected Route Family or broaden scope."
       tableTitle="Resource inventory"
       metricColumns={leaseMetricColumns}
+      stats={[
+        { label: "Active leases", value: stats ? formatNumber(stats.leasesActive) : "--" },
+        { label: "Waiters", value: stats ? formatNumber(stats.waiterDepth) : "--" },
+        {
+          label: "Oldest lease",
+          value: stats ? formatDurationSeconds(stats.oldestLeaseAgeSeconds) : "--",
+        },
+      ]}
       status={{
         detail: overview.data
-          ? `${formatNumber(leaseCount)} lease resource${leaseCount === 1 ? "" : "s"} visible. ${
-              health?.detail ?? ""
-            }`
+          ? (health?.detail ?? "")
           : overview.error
             ? "Lease health is unavailable. Resource inventory can still be inspected when loaded."
             : "Loading lease health.",

@@ -1,12 +1,22 @@
 import { state } from "@askrjs/askr";
 import { Show } from "@askrjs/askr/control";
 import { currentRoute, Link, navigate } from "@askrjs/askr/router";
-import { Button, Inline, Stack } from "@askrjs/themes/components";
+import {
+  Button,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Inline,
+  Stack,
+} from "@askrjs/themes/components";
 import { Form, Input, Label, VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
 import type { StreamAdminRecord } from "@/adapters";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
+import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
 import {
   QueryEmptyState,
   QueryErrorState,
@@ -14,7 +24,7 @@ import {
   QueryRefreshingState,
 } from "@/components/shared/query-state";
 import { createStreamResourceQuery } from "@/features/stream/stream-query";
-import { formatNumber } from "@/shared/format";
+import { formatNumber, formatTimestampMs } from "@/shared/format";
 import { domainResourceHref, domainScopeHref, formatFitzRoute } from "@/shared/navigation/domains";
 
 const DEFAULT_LIMIT = 50;
@@ -85,7 +95,11 @@ const recordColumns: readonly VirtualTableColumn<StreamAdminRecord>[] = [
     id: "created",
     header: "Created",
     width: "18%",
-    cellComponent: ({ row }) => <span>{formatNumber(row.created_at_ms)}</span>,
+    cellComponent: ({ row }) => (
+      <span class="domain-table-cell-truncate" title={formatTimestampMs(row.created_at_ms)}>
+        {formatTimestampMs(row.created_at_ms)}
+      </span>
+    ),
   },
   {
     id: "body",
@@ -147,55 +161,95 @@ export default function StreamResourcePage() {
             tone: query.refreshing ? "info" : query.stale ? "warning" : "success",
           }}
         />
+        <OperatorScopeStrip
+          realm={scope.realm}
+          area={scope.area}
+          resource={scope.resource}
+          freshness={
+            query.refreshing
+              ? "Refreshing"
+              : query.stale
+                ? "Stale"
+                : data
+                  ? "Live"
+                  : query.loading
+                    ? "Loading"
+                    : undefined
+          }
+        />
         {data ? (
           <DomainMetricTable
             title="Stream resource metrics"
-            description="Durable committed metadata and live append session count."
+            description="Durable committed metadata. Append sessions are live and separate from replay history."
             metrics={[
-              { label: "Offset", value: data.detail.offset },
-              { label: "Watermark", value: data.detail.watermark },
-              { label: "Size bytes", value: data.detail.size_bytes },
-              { label: "Append sessions", value: data.detail.sessions_active },
+              { label: "Offset", value: data.detail.offset, caption: "Durable committed metadata" },
+              {
+                label: "Watermark",
+                value: data.detail.watermark,
+                caption: "Durable committed metadata",
+              },
+              {
+                label: "Size bytes",
+                value: data.detail.size_bytes,
+                caption: "Durable committed metadata",
+              },
+              {
+                label: "Append sessions",
+                value: data.detail.sessions_active,
+                caption: "Live append sessions",
+              },
             ]}
           />
         ) : null}
-        <Form onSubmit={applyFilters}>
-          <Inline align="end" gap="3" wrap="wrap">
-            <Stack gap="1">
-              <Label for="stream-from-offset">From offset</Label>
-              <Input
-                id="stream-from-offset"
-                min="0"
-                type="number"
-                value={fromOffsetDraft()}
-                onInput={(event: Event) =>
-                  setFromOffsetDraft((event.target as HTMLInputElement).value)
-                }
-              />
-            </Stack>
-            <Stack gap="1">
-              <Label for="stream-discriminator">Discriminator</Label>
-              <Input
-                id="stream-discriminator"
-                value={discriminatorDraft()}
-                onInput={(event: Event) =>
-                  setDiscriminatorDraft((event.target as HTMLInputElement).value)
-                }
-              />
-            </Stack>
-            <Stack gap="1">
-              <Label for="stream-limit">Limit</Label>
-              <Input
-                id="stream-limit"
-                min="1"
-                type="number"
-                value={limitDraft()}
-                onInput={(event: Event) => setLimitDraft((event.target as HTMLInputElement).value)}
-              />
-            </Stack>
-            <Button type="submit">Apply</Button>
-          </Inline>
-        </Form>
+        <Card padding="sm" variant="default">
+          <CardHeader>
+            <CardTitle>Record filters</CardTitle>
+            <CardDescription>
+              Read committed records by from offset, optional discriminator, and limit.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Form onSubmit={applyFilters}>
+              <Inline align="end" gap="3" wrap="wrap">
+                <Stack gap="1">
+                  <Label for="stream-from-offset">From offset</Label>
+                  <Input
+                    id="stream-from-offset"
+                    min="0"
+                    type="number"
+                    value={fromOffsetDraft()}
+                    onInput={(event: Event) =>
+                      setFromOffsetDraft((event.target as HTMLInputElement).value)
+                    }
+                  />
+                </Stack>
+                <Stack gap="1">
+                  <Label for="stream-discriminator">Discriminator</Label>
+                  <Input
+                    id="stream-discriminator"
+                    value={discriminatorDraft()}
+                    onInput={(event: Event) =>
+                      setDiscriminatorDraft((event.target as HTMLInputElement).value)
+                    }
+                  />
+                </Stack>
+                <Stack gap="1">
+                  <Label for="stream-limit">Limit</Label>
+                  <Input
+                    id="stream-limit"
+                    min="1"
+                    type="number"
+                    value={limitDraft()}
+                    onInput={(event: Event) =>
+                      setLimitDraft((event.target as HTMLInputElement).value)
+                    }
+                  />
+                </Stack>
+                <Button type="submit">Apply</Button>
+              </Inline>
+            </Form>
+          </CardContent>
+        </Card>
         <Show when={query.loading}>
           <QueryLoadingState description="Loading committed stream records..." />
         </Show>
@@ -210,20 +264,30 @@ export default function StreamResourcePage() {
           />
         </Show>
         <Show when={data && records.length === 0}>
-          <QueryEmptyState description="No committed stream records matched this offset." />
+          <QueryEmptyState description="No committed stream records matched this offset and discriminator." />
         </Show>
         <Show when={records.length > 0}>
-          <VirtualTable<StreamAdminRecord>
-            aria-label="Stream records"
-            class="stream-record-virtual-table"
-            columns={recordColumns}
-            getKey={(record) => `${record.route_family}:${record.resource_offset}`}
-            headerHeight={44}
-            overscan={8}
-            rowHeight={48}
-            rows={records}
-            style={{ height: recordTableHeight(records.length) }}
-          />
+          <Card padding="sm" variant="default">
+            <CardHeader>
+              <CardTitle>Committed records</CardTitle>
+              <CardDescription>
+                Durable stream records returned by the current read window.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <VirtualTable<StreamAdminRecord>
+                aria-label="Stream records"
+                class="stream-record-virtual-table"
+                columns={recordColumns}
+                getKey={(record) => `${record.route_family}:${record.resource_offset}`}
+                headerHeight={44}
+                overscan={8}
+                rowHeight={48}
+                rows={records}
+                style={{ height: recordTableHeight(records.length) }}
+              />
+            </CardContent>
+          </Card>
         </Show>
         <Inline gap="2" wrap="wrap">
           <Button asChild variant="outline">

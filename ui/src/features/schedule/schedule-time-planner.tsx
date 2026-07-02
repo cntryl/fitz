@@ -363,9 +363,9 @@ export default function ScheduleTimePlanner({
   );
   const badgeLabel = observationMode
     ? routeFamilyReady
-      ? "Existing API"
-      : "Select Route Family"
-    : "Existing API";
+      ? "Schedule observation data"
+      : "Route Family required"
+    : "Live admin data";
   const badgeVariant = observationMode ? (routeFamilyReady ? "success" : "warning") : "outline";
 
   async function runObservationQuery() {
@@ -565,7 +565,7 @@ export default function ScheduleTimePlanner({
             filteredRows.length === 0 ? (
               <QueryEmptyState
                 title="No matching schedules"
-                description="Adjust the realm, area, or resource filters to find visible schedule resources."
+                description="Clear filters, check the selected Route Family, or broaden scope to find visible schedule resources."
               />
             ) : (
               <Stack gap="3">

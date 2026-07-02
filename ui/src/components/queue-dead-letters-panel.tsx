@@ -67,7 +67,7 @@ export default function QueueDeadLettersPanel({
       {!deadLetters.loading && !deadLetters.error && messages.length === 0 ? (
         <EmptyState
           class="domain-state"
-          description="No dead-letter messages are visible for this resource."
+          description="No dead-letter messages are visible for this resource. No replay or purge action is needed."
         />
       ) : null}
 

@@ -1,12 +1,14 @@
-import { Stack } from "@askrjs/themes/components";
+import { Card, CardContent, Grid, Stack, Text } from "@askrjs/themes/components";
 import DomainHeader from "./domain-header";
 import type { DomainHeaderProps } from "./domain-header";
 import DomainPageFrame from "./domain-page-frame";
+import OperatorScopeStrip from "./operator-scope-strip";
 import DomainResourceInventoryTable, {
   type DomainResourceInventory,
   type DomainResourceMetricColumn,
 } from "./domain-resource-inventory-table";
 import { QueryErrorState, QueryLoadingState, QueryRefreshingState } from "./query-state";
+import { formatDisplayValue } from "@/shared/format";
 import type { DomainSegment } from "@/shared/navigation/domains";
 
 export interface DomainInventoryQuery<TInventory extends DomainResourceInventory> {
@@ -15,6 +17,12 @@ export interface DomainInventoryQuery<TInventory extends DomainResourceInventory
   loading?: boolean;
   refresh: () => unknown;
   refreshing?: boolean;
+}
+
+export interface DomainInventoryStat {
+  caption?: string;
+  label: string;
+  value: string | number;
 }
 
 export interface DomainInventoryPageProps<TInventory extends DomainResourceInventory> {
@@ -30,6 +38,7 @@ export interface DomainInventoryPageProps<TInventory extends DomainResourceInven
   refreshers?: Array<() => unknown>;
   refreshLabel: string;
   refreshingDescription: string;
+  stats?: readonly DomainInventoryStat[];
   status?: DomainHeaderProps["status"];
   tableTitle: string;
   title: string;
@@ -54,12 +63,22 @@ export default function DomainInventoryPage<TInventory extends DomainResourceInv
   refreshers,
   refreshLabel,
   refreshingDescription,
+  stats = [],
   status,
   tableTitle,
   title,
 }: DomainInventoryPageProps<TInventory>) {
   const onRefresh = () => refreshAll(refreshers ?? [inventory.refresh]);
   const isRefreshing = refreshing ?? inventory.refreshing;
+  const freshness = isRefreshing
+    ? "Refreshing"
+    : !inventory.data && inventory.loading
+      ? "Loading"
+      : !inventory.data && inventory.error
+        ? "Unavailable"
+        : inventory.data
+          ? "Live"
+          : undefined;
 
   return (
     <DomainPageFrame>
@@ -74,6 +93,7 @@ export default function DomainInventoryPage<TInventory extends DomainResourceInv
           }}
           status={status}
         />
+        <OperatorScopeStrip freshness={freshness} />
 
         {!inventory.data && inventory.loading ? (
           <QueryLoadingState description={loadingDescription} />
@@ -86,6 +106,40 @@ export default function DomainInventoryPage<TInventory extends DomainResourceInv
         {inventory.data ? (
           <Stack gap="3">
             {isRefreshing ? <QueryRefreshingState description={refreshingDescription} /> : null}
+            {stats.length > 0 ? (
+              <Grid
+                class="domain-stat-grid"
+                columns={{ base: 1, sm: 2, lg: Math.min(stats.length, 3) }}
+                gap="md"
+                aria-label={`${title} key stats`}
+              >
+                {stats.map((stat) => (
+                  <Card key={stat.label} padding="sm" variant="default">
+                    <CardContent>
+                      <Stack gap="1">
+                        <Text as="span" class="domain-header-kicker">
+                          {stat.label}
+                        </Text>
+                        <Text
+                          as="strong"
+                          class="domain-stat-value"
+                          font="mono"
+                          numeric="tabular"
+                          weight="semibold"
+                        >
+                          {formatDisplayValue(stat.value)}
+                        </Text>
+                        {stat.caption ? (
+                          <Text as="span" class="domain-muted" size="sm">
+                            {stat.caption}
+                          </Text>
+                        ) : null}
+                      </Stack>
+                    </CardContent>
+                  </Card>
+                ))}
+              </Grid>
+            ) : null}
             <DomainResourceInventoryTable
               domain={domain}
               emptyDescription={emptyDescription}

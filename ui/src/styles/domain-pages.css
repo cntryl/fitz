@@ -1,0 +1,174 @@
+.domain-header-page,
+.domain-header-description,
+.domain-header-title-row,
+.domain-section,
+.domain-section-header,
+.domain-inventory-toolbar,
+.domain-resource-inventory,
+.domain-sidebar,
+.domain-sidebar [data-slot="card"],
+.domain-sidebar [data-slot="card-content"] {
+  min-width: 0;
+}
+
+.domain-header-description {
+  display: grid;
+  gap: 0.125rem;
+  max-width: min(100%, 72ch);
+}
+
+.domain-header-description > span,
+.domain-header-title-row > span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.domain-header-detail {
+  display: block;
+  max-width: 72ch;
+}
+
+.domain-section {
+  display: grid;
+  gap: var(--fitz-control-gap);
+  padding-block: var(--fitz-control-gap);
+}
+
+.domain-section-header {
+  flex-wrap: wrap;
+}
+
+.domain-section-header > span {
+  max-width: 100%;
+  text-align: end;
+  white-space: normal;
+}
+
+.domain-stat-grid [data-slot="card"],
+.domain-section [data-slot="card"] {
+  min-width: 0;
+}
+
+.domain-stat-value,
+.domain-resource-metric,
+.domain-metric-value,
+.domain-sidebar-stat dd {
+  font-variant-numeric: tabular-nums;
+}
+
+.domain-metric-value,
+.domain-resource-metric {
+  font-size: var(--fitz-body-size);
+  line-height: var(--fitz-body-line-height);
+}
+
+.domain-table-wrap [data-slot="table"] {
+  min-inline-size: 42rem;
+}
+
+.domain-table-wrap [data-slot="table-header-cell"],
+.domain-table-wrap th {
+  white-space: nowrap;
+}
+
+.domain-resource-virtual-table [data-slot="virtual-table-table"],
+.queue-resource-virtual-table [data-slot="virtual-table-table"],
+.stream-record-virtual-table [data-slot="virtual-table-table"],
+.rpc-operation-virtual-table [data-slot="virtual-table-table"],
+.lease-resource-virtual-table [data-slot="virtual-table-table"],
+.schedule-resource-virtual-table [data-slot="virtual-table-table"] {
+  min-inline-size: 48rem;
+}
+
+.queue-resource-virtual-table [data-slot="virtual-table-table"] {
+  min-inline-size: 60rem;
+}
+
+.domain-resource-virtual-table [data-slot="virtual-table-header-cell"],
+.domain-resource-virtual-table [data-slot="virtual-table-cell"],
+.queue-resource-virtual-table [data-slot="virtual-table-header-cell"],
+.queue-resource-virtual-table [data-slot="virtual-table-cell"],
+.stream-record-virtual-table [data-slot="virtual-table-header-cell"],
+.stream-record-virtual-table [data-slot="virtual-table-cell"],
+.rpc-operation-virtual-table [data-slot="virtual-table-header-cell"],
+.rpc-operation-virtual-table [data-slot="virtual-table-cell"] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.domain-link-cell,
+.domain-table-cell-truncate {
+  min-width: 0;
+}
+
+.queue-action-cell {
+  flex-wrap: nowrap;
+}
+
+.queue-action-cell button,
+.queue-action-cell [data-slot="button"] {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+@media (max-width: 48rem) {
+  .domain-header-title-row,
+  .domain-inventory-toolbar,
+  .domain-inventory-search-shell,
+  .domain-header-actions,
+  .domain-header-actions > button,
+  .domain-query-mode-grid,
+  .kv-encoding-controls {
+    width: 100%;
+  }
+
+  .domain-header [data-slot="badge"],
+  .domain-section-header [data-slot="badge"] {
+    max-width: 100%;
+    white-space: normal;
+  }
+
+  .domain-section-header > span {
+    text-align: start;
+  }
+
+  .domain-link-cell {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .domain-sidebar-stats {
+    gap: 0;
+  }
+
+  .domain-sidebar-stat {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .domain-sidebar-stat dd {
+    text-align: start;
+  }
+
+  .domain-table-wrap {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .domain-table-wrap [data-slot="table"] {
+    min-inline-size: 38rem;
+  }
+
+  .domain-resource-virtual-table [data-slot="virtual-table-table"],
+  .queue-resource-virtual-table [data-slot="virtual-table-table"],
+  .stream-record-virtual-table [data-slot="virtual-table-table"],
+  .rpc-operation-virtual-table [data-slot="virtual-table-table"],
+  .lease-resource-virtual-table [data-slot="virtual-table-table"],
+  .schedule-resource-virtual-table [data-slot="virtual-table-table"] {
+    min-inline-size: 42rem;
+  }
+
+  .queue-resource-virtual-table [data-slot="virtual-table-table"] {
+    min-inline-size: 52rem;
+  }
+}

@@ -19,6 +19,7 @@ import {
   QueryLoadingState,
 } from "@/components/shared/query-state";
 import type { ResourceInventory } from "@/features/resource/resource-models";
+import { formatTimestampMs } from "@/shared/format";
 import { domainResourceHref, formatFitzRoute } from "@/shared/navigation/domains";
 import { parseConcreteRouteFamilyId, useOperatorContext } from "@/shared/operator-context";
 import { streamService } from "./stream-service";
@@ -43,8 +44,8 @@ const historyModes: Array<{
   value: StreamHistoryMode;
 }> = [
   {
-    description: "Use existing stream resource events and watermark detail APIs.",
-    label: "Resource events",
+    description: "Use existing stream resource offsets and watermark detail APIs.",
+    label: "Resource offsets",
     value: "resource",
   },
   {
@@ -80,7 +81,7 @@ const streamColumns: readonly VirtualTableColumn<StreamResourceRow>[] = [
     width: "22%",
     cellComponent: ({ row }) => (
       <Link class="text-link" href={domainResourceHref("stream", row)}>
-        Open events
+        Open offsets
       </Link>
     ),
   },
@@ -114,8 +115,8 @@ const recordColumns: readonly VirtualTableColumn<StreamAdminRecord>[] = [
     header: "Created",
     width: "22%",
     cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate" title={formatTimestamp(row.created_at_ms)}>
-        {formatTimestamp(row.created_at_ms)}
+      <span class="domain-table-cell-truncate" title={formatTimestampMs(row.created_at_ms)}>
+        {formatTimestampMs(row.created_at_ms)}
       </span>
     ),
   },
@@ -201,14 +202,6 @@ function describeBytes(value: KvByteValue) {
   const format = value.utf8 === null ? "base64" : "UTF-8";
 
   return `${displayBytes(value)} (${value.len_bytes} bytes, ${format})`;
-}
-
-function formatTimestamp(timestampMs: number) {
-  if (!Number.isFinite(timestampMs) || timestampMs <= 0) {
-    return "Unknown";
-  }
-
-  return new Date(timestampMs).toISOString();
 }
 
 function isRecordMode(mode: StreamHistoryMode) {
@@ -307,9 +300,9 @@ export default function StreamHistoryExplorer({
     );
   const badgeLabel = recordMode
     ? routeFamilyReady
-      ? "Existing API"
-      : "Select Route Family"
-    : "Existing API";
+      ? "Stream record data"
+      : "Route Family required"
+    : "Live admin data";
   const badgeVariant = recordMode ? (routeFamilyReady ? "success" : "warning") : "outline";
 
   async function runRecordQuery() {
@@ -367,7 +360,7 @@ export default function StreamHistoryExplorer({
             <CardTitle>History workspace</CardTitle>
             <CardDescription>
               Locate stream resources by realm, area, and resource, then inspect resource-level
-              events and consumer watermarks through the existing admin APIs.
+              offsets and consumer watermarks through the existing admin APIs.
             </CardDescription>
           </Stack>
           <Badge variant={badgeVariant}>{badgeLabel}</Badge>
@@ -422,7 +415,7 @@ export default function StreamHistoryExplorer({
                   id="stream-history-resource"
                   value={resourceValue}
                   onInput={(event: Event) => setResource((event.target as HTMLInputElement).value)}
-                  placeholder="ledger-events"
+                  placeholder="ledger-offsets"
                 />
               </div>
               <div class="auth-field">
@@ -485,7 +478,7 @@ export default function StreamHistoryExplorer({
             filteredRows.length === 0 ? (
               <QueryEmptyState
                 title="No matching streams"
-                description="Adjust the realm, area, or resource filters to find visible stream resources."
+                description="Clear filters, check the selected Route Family, or broaden scope to find visible stream resources."
               />
             ) : (
               <Stack gap="3">

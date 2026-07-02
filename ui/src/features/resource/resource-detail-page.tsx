@@ -5,6 +5,8 @@ import { Button } from "@askrjs/themes/components";
 import { Inline, Stack } from "@askrjs/themes/components";
 import { Input, Label } from "@askrjs/ui";
 import DomainHeader from "@/components/shared/domain-header";
+import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
+import PageActionBar from "@/components/shared/page-action-bar";
 import ResourceWorkbench, { describeResourceDetail } from "@/components/shared/resource-workbench";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
@@ -18,7 +20,12 @@ import {
   type DomainId,
   type ResourceRef,
 } from "@/features/resource/resource-query";
-import { domainResourceHref, isGenericResourceDomainSegment } from "@/shared/navigation/domains";
+import {
+  domainHref,
+  domainResourceHref,
+  domainScopeHref,
+  isGenericResourceDomainSegment,
+} from "@/shared/navigation/domains";
 
 type DomainPresentation = {
   description: string;
@@ -237,6 +244,32 @@ export default function ResourceDetailPage() {
             onPress: () => query.refresh(),
           }}
           status={headerStatus}
+        />
+        <OperatorScopeStrip
+          realm={ref.realm}
+          area={ref.area}
+          resource={ref.resource}
+          freshness={
+            query.refreshing
+              ? "Refreshing"
+              : query.stale
+                ? "Stale"
+                : data
+                  ? "Live"
+                  : query.loading
+                    ? "Loading"
+                    : undefined
+          }
+        />
+        <PageActionBar
+          description="Use the nearest scope link for inventory context, or keep the current resource open while refreshing timeline and related records."
+          actions={[
+            { label: `Back to ${domain.toUpperCase()} inventory`, href: domainHref(domain) },
+            {
+              label: "Back to area",
+              href: domainScopeHref(domain, { area: ref.area, realm: ref.realm }),
+            },
+          ]}
         />
 
         <Show when={query.loading && !data}>

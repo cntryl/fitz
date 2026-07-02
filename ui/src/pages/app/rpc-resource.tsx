@@ -10,6 +10,7 @@ import {
 } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
+import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
 import { createDomainSidebar } from "@/components/shared/domain-sidebar";
 import {
   QueryEmptyState,
@@ -124,12 +125,12 @@ export default function RpcResourcePage() {
   });
 
   return (
-    <DomainPageFrame>
+    <DomainPageFrame sidebar={snapshot}>
       <Stack gap="3">
         <DomainHeader
           eyebrow="RPC resource"
           title={resource}
-          description={`${realm} / ${area}`}
+          description={`Live operation evidence for ${realm} / ${area} / ${resource}.`}
           primaryAction={{ label: "Refresh operations", onPress: () => query.refresh() }}
           status={{
             detail: data
@@ -139,7 +140,22 @@ export default function RpcResourcePage() {
             tone: query.refreshing ? "info" : query.stale ? "warning" : "success",
           }}
         />
-        {snapshot}
+        <OperatorScopeStrip
+          realm={realm}
+          area={area}
+          resource={resource}
+          freshness={
+            query.refreshing
+              ? "Refreshing"
+              : query.stale
+                ? "Stale"
+                : data
+                  ? "Live"
+                  : query.loading
+                    ? "Loading"
+                    : undefined
+          }
+        />
         {!data && query.loading ? (
           <QueryLoadingState description="Loading RPC operations..." />
         ) : null}
@@ -162,7 +178,8 @@ export default function RpcResourcePage() {
                 <CardHeader>
                   <CardTitle>RPC operations</CardTitle>
                   <CardDescription>
-                    Live worker capacity and in-memory pending request evidence.
+                    Live operation evidence: workers, handled calls, latency, and in-memory pending
+                    request evidence.
                   </CardDescription>
                 </CardHeader>
                 <CardContent>

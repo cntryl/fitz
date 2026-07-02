@@ -9,6 +9,8 @@ import DomainPageFrame from "@/components/shared/domain-page-frame";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
 import DomainResourceInventoryTable from "@/components/shared/domain-resource-inventory-table";
+import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
+import ResourceWorkbench from "@/components/shared/resource-workbench";
 import QueueInflightTable from "@/components/shared/queue-inflight-table";
 import { QueryEmptyState, QueryErrorState } from "@/components/shared/query-state";
 import { domainLinks, pathWithRouteFamily } from "@/shared/navigation/domains";
@@ -221,6 +223,60 @@ describe("shared UI polish contracts", () => {
     expect(root.textContent).toContain("No resources");
     expect(root.textContent).toContain("Network failed");
     expect(root.querySelector('[role="alert"]')).toBeTruthy();
+  });
+
+  it("displays Route Family and realm as separate scope values without fallback", async () => {
+    const root = await mount(() => (
+      <main>
+        <OperatorScopeStrip routeFamily="41" area="ops" resource="primary" freshness="Live" />
+        <OperatorScopeStrip routeFamily="7" realm="default" area="ops" resource="primary" />
+      </main>
+    ));
+
+    const strips = root.querySelectorAll(".operator-scope-strip");
+
+    expect(strips[0]?.textContent).toContain("Route Family");
+    expect(strips[0]?.textContent).toContain("Route Family 41");
+    expect(strips[0]?.textContent).not.toContain("Realm41");
+    expect(strips[0]?.textContent).not.toContain("RealmRoute Family 41");
+    expect(strips[1]?.textContent).toContain("Route Family 7");
+    expect(strips[1]?.textContent).toContain("Realmdefault");
+  });
+
+  it("collapses raw resource payloads without changing the JSON body", async () => {
+    const raw = {
+      detail: { answer: 42 },
+      rows: ["primary"],
+    };
+    const root = await mount(() => (
+      <main>
+        <ResourceWorkbench
+          detail={{
+            detailMetrics: [{ label: "Keys", value: 1 }],
+            domain: "kv",
+            raw,
+            ref: { area: "ops", realm: "default", resource: "primary" },
+            related: [],
+            timeline: {
+              area: "ops",
+              derived: false,
+              events: [],
+              limit: 10,
+              realm: "default",
+              resource: "primary",
+            },
+          }}
+        />
+      </main>
+    ));
+
+    const rawDetails = root.querySelector("details.resource-workbench-raw") as HTMLDetailsElement;
+    const rawBody = root.querySelector(".resource-raw");
+
+    expect(rawDetails).toBeTruthy();
+    expect(rawDetails.open).toBe(false);
+    expect(rawDetails.querySelector("summary")?.textContent).toBe("Raw API payload");
+    expect(rawBody?.textContent).toBe(JSON.stringify(raw, null, 2));
   });
 
   it("renders inventory failures as explicit error states", async () => {

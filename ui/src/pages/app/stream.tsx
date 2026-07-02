@@ -54,9 +54,11 @@ function summarizeStreamHealth(stats: {
 
   if (stats.watermarkLagBuckets.over100 > 0) {
     return {
-      detail: `${formatNumber(stats.subscriptionsActive)} live subscriptions are reading from ${formatNumber(
+      detail: `Offset ${formatNumber(stats.eventsTotal)} across ${formatNumber(
         stats.streamsActive,
-      )} active stream(s). ${lag.percentageBehind}% of families are behind the latest watermark, including ${formatNumber(
+      )} active stream(s); ${formatNumber(
+        stats.subscriptionsActive,
+      )} live subscriptions. ${lag.percentageBehind}% of families are behind the latest watermark, including ${formatNumber(
         stats.watermarkLagBuckets.over100,
       )} family(s) at 100+ behind.`,
       label: "Attention",
@@ -66,31 +68,25 @@ function summarizeStreamHealth(stats: {
 
   if (lag.behind > 0) {
     return {
-      detail: `${formatNumber(stats.subscriptionsActive)} live subscriptions are tracking ${formatNumber(
+      detail: `Offset ${formatNumber(stats.eventsTotal)} across ${formatNumber(
         stats.streamsActive,
-      )} active stream(s). ${lag.percentageBehind}% of families are behind the latest watermark, and replay catch-up is in progress.`,
+      )} active stream(s); ${formatNumber(
+        stats.subscriptionsActive,
+      )} live subscriptions. ${lag.percentageBehind}% of families are behind the latest watermark, and replay catch-up is in progress.`,
       label: "Pressure",
       tone: "warning",
     };
   }
 
   return {
-    detail: `${formatNumber(stats.subscriptionsActive)} live subscriptions are fully caught up across ${formatNumber(
+    detail: `Offset ${formatNumber(stats.eventsTotal)} across ${formatNumber(
       stats.streamsActive,
-    )} active stream(s). ${formatNumber(stats.eventsTotal)} committed events are durable in replay history.`,
+    )} active stream(s); ${formatNumber(
+      stats.subscriptionsActive,
+    )} live subscriptions. Watermark lag is caught up for durable replay.`,
     label: "Live",
     tone: "success",
   };
-}
-
-function resourceCount(data: ReturnType<typeof createResourceInventoryQuery>["data"]) {
-  return (
-    data?.realms.reduce(
-      (sum, realm) =>
-        sum + realm.areas.reduce((areaSum, area) => areaSum + area.resources.length, 0),
-      0,
-    ) ?? 0
-  );
 }
 
 export default function StreamPage() {
@@ -110,12 +106,11 @@ export default function StreamPage() {
       },
     },
   );
-  const streamCount = resourceCount(inventory.data);
   const stats = overview.data?.stats;
   const streamMetricColumns: readonly DomainResourceMetricColumn[] = [
     {
-      id: "events",
-      header: "Events",
+      id: "offset",
+      header: "Offset",
       width: "10%",
       cell: () => (stats ? formatNumber(stats.eventsTotal) : "--"),
     },
@@ -158,14 +153,17 @@ export default function StreamPage() {
       loadingDescription="Loading stream inventory..."
       errorTitle="Unable to load stream inventory"
       refreshingDescription="Refreshing stream inventory..."
-      emptyDescription="No stream resources are currently visible."
+      emptyDescription="No stream resources are currently visible. Check the selected Route Family or broaden scope."
       tableTitle="Resource inventory"
       metricColumns={streamMetricColumns}
+      stats={[
+        { label: "Offset", value: stats ? formatNumber(stats.eventsTotal) : "--" },
+        { label: "Streams", value: stats ? formatNumber(stats.streamsActive) : "--" },
+        { label: "Subscriptions", value: stats ? formatNumber(stats.subscriptionsActive) : "--" },
+      ]}
       status={{
         detail: overview.data
-          ? `${formatNumber(streamCount)} stream resource${streamCount === 1 ? "" : "s"} visible. ${
-              health.detail
-            }`
+          ? health.detail
           : overview.error
             ? "Stream health is unavailable. Resource inventory can still be inspected when loaded."
             : "Loading stream health.",

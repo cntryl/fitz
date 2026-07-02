@@ -48,7 +48,11 @@ export default function DomainHeader({
         title={
           <span class="domain-header-title-row">
             <span>{title}</span>
-            {status ? <Badge variant={status.tone ?? "info"}>{status.label}</Badge> : null}
+            {status ? (
+              <Badge aria-hidden={true} variant={status.tone ?? "info"}>
+                {status.label}
+              </Badge>
+            ) : null}
           </span>
         }
         description={

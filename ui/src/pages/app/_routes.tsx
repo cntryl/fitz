@@ -1,6 +1,8 @@
 import { group, lazy, route, type RouteHandler } from "@askrjs/askr/router";
 import Layout from "./_layout";
+import RouteFamilySelectorPage from "./route-family";
 import {
+  domainDefinitions,
   domainLinks,
   domainResourceRoutePath,
   legacyDomainResourceRoutePath,
@@ -17,7 +19,6 @@ const MetricsPage = lazy(() => import("./metrics"));
 const NoticePage = lazy(() => import("./notice"));
 const QueuePage = lazy(() => import("./queue"));
 const QueueResourcePage = lazy(() => import("./queue-resource"));
-const RouteFamilySelectorPage = lazy(() => import("./route-family"));
 const RpcPage = lazy(() => import("./rpc"));
 const RpcOperationPage = lazy(() => import("./rpc-operation"));
 const RpcResourcePage = lazy(() => import("./rpc-resource"));
@@ -48,6 +49,17 @@ const resourcePageBySegment: Record<DomainSegment, RouteHandler> = {
   stream: StreamResourcePage,
 };
 
+const operationPageBySegment: Partial<Record<DomainSegment, RouteHandler>> = {
+  notice: NoticePage,
+  rpc: RpcOperationPage,
+};
+
+function hasRouteScope(segment: DomainSegment, scope: "realm" | "area" | "operation") {
+  const scopeLevels: readonly string[] = domainDefinitions[segment].routes.scopeLevels;
+
+  return scopeLevels.includes(scope);
+}
+
 export function registerAppRoutes() {
   group({ layout: Layout, auth: true }, () => {
     route("/", RouteFamilySelectorPage);
@@ -65,55 +77,28 @@ export function registerAppRoutes() {
     for (const link of domainLinks) {
       route(`/${link.segment}`, RouteFamilySelectorPage);
       route(`/admin/{family}/${link.segment}`, domainPageBySegment[link.segment]);
-      if (link.segment === "queue") {
-        route("/queue/{realm}", RouteFamilySelectorPage);
-        route("/queue/{realm}/{area}", RouteFamilySelectorPage);
-        route("/admin/{family}/queue/{realm}", QueuePage);
-        route("/admin/{family}/queue/{realm}/{area}", QueuePage);
-      }
-      if (link.segment === "kv") {
-        route("/kv/{realm}", RouteFamilySelectorPage);
-        route("/kv/{realm}/{area}", RouteFamilySelectorPage);
-        route("/admin/{family}/kv/{realm}", KvPage);
-        route("/admin/{family}/kv/{realm}/{area}", KvPage);
+
+      if (hasRouteScope(link.segment, "realm")) {
+        route(`/${link.segment}/{realm}`, RouteFamilySelectorPage);
+        route(`/admin/{family}/${link.segment}/{realm}`, domainPageBySegment[link.segment]);
       }
 
-      if (link.segment === "lease") {
-        route("/lease/{realm}", RouteFamilySelectorPage);
-        route("/lease/{realm}/{area}", RouteFamilySelectorPage);
-        route("/admin/{family}/lease/{realm}", LeasePage);
-        route("/admin/{family}/lease/{realm}/{area}", LeasePage);
+      if (hasRouteScope(link.segment, "area")) {
+        route(`/${link.segment}/{realm}/{area}`, RouteFamilySelectorPage);
+        route(`/admin/{family}/${link.segment}/{realm}/{area}`, domainPageBySegment[link.segment]);
       }
-      if (link.segment === "notice") {
-        route("/notice/{realm}", RouteFamilySelectorPage);
-        route("/notice/{realm}/{area}", RouteFamilySelectorPage);
-        route("/notice/{realm}/{area}/{resource}", RouteFamilySelectorPage);
-        route("/notice/{realm}/{area}/{resource}/{operation}", RouteFamilySelectorPage);
-        route("/admin/{family}/notice/{realm}", NoticePage);
-        route("/admin/{family}/notice/{realm}/{area}", NoticePage);
-        route("/admin/{family}/notice/{realm}/{area}/{resource}", NoticePage);
-        route("/admin/{family}/notice/{realm}/{area}/{resource}/{operation}", NoticePage);
+
+      if (hasRouteScope(link.segment, "operation")) {
+        const operationPage =
+          operationPageBySegment[link.segment] ?? domainPageBySegment[link.segment];
+
+        route(`/${link.segment}/{realm}/{area}/{resource}/{operation}`, RouteFamilySelectorPage);
+        route(
+          `/admin/{family}/${link.segment}/{realm}/{area}/{resource}/{operation}`,
+          operationPage,
+        );
       }
-      if (link.segment === "rpc") {
-        route("/rpc/{realm}", RouteFamilySelectorPage);
-        route("/rpc/{realm}/{area}", RouteFamilySelectorPage);
-        route("/rpc/{realm}/{area}/{resource}/{operation}", RouteFamilySelectorPage);
-        route("/admin/{family}/rpc/{realm}", RpcPage);
-        route("/admin/{family}/rpc/{realm}/{area}", RpcPage);
-        route("/admin/{family}/rpc/{realm}/{area}/{resource}/{operation}", RpcOperationPage);
-      }
-      if (link.segment === "stream") {
-        route("/stream/{realm}", RouteFamilySelectorPage);
-        route("/stream/{realm}/{area}", RouteFamilySelectorPage);
-        route("/admin/{family}/stream/{realm}", StreamPage);
-        route("/admin/{family}/stream/{realm}/{area}", StreamPage);
-      }
-      if (link.segment === "schedule") {
-        route("/schedule/{realm}", RouteFamilySelectorPage);
-        route("/schedule/{realm}/{area}", RouteFamilySelectorPage);
-        route("/admin/{family}/schedule/{realm}", SchedulePage);
-        route("/admin/{family}/schedule/{realm}/{area}", SchedulePage);
-      }
+
       route(legacyDomainResourceRoutePath(link.segment), RouteFamilySelectorPage);
       route(domainResourceRoutePath(link.segment), resourcePageBySegment[link.segment]);
     }

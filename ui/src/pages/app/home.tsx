@@ -5,6 +5,7 @@ import { Stack } from "@askrjs/themes/components";
 import { Alert, Badge } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
+import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
 import { QueryErrorState, QueryLoadingState } from "@/components/shared/query-state";
 import {
   buildOverviewStatus,
@@ -203,6 +204,7 @@ export default function Home() {
                   : overview.overall.tone,
           }}
         />
+        <OperatorScopeStrip freshness={refreshState} />
 
         {operationalLoading ? (
           <QueryLoadingState description="Loading overview status signals..." />
@@ -237,9 +239,9 @@ export default function Home() {
             ) : null}
 
             <OverviewStatusBand overview={overview} />
-            <BrokerVitals overview={overview} />
-            <DomainHealth overview={overview} />
             <OverviewIssues overview={overview} />
+            <DomainHealth overview={overview} />
+            <BrokerVitals overview={overview} />
           </>
         ) : null}
       </Stack>

@@ -240,7 +240,7 @@ function KvLookupResultPanel({ result }: { result: KvLookupResult }) {
       {result.data.items.length === 0 ? (
         <QueryEmptyState
           title="No committed keys"
-          description="No committed KV entries matched this prefix in the selected Route Family."
+          description="No committed KV entries matched this prefix in the selected Route Family. Clear filters or broaden scope before querying again."
         />
       ) : (
         <VirtualTable<KvCommittedPair>
@@ -503,7 +503,7 @@ export default function KvStateExplorer({
             filteredRows.length === 0 ? (
               <QueryEmptyState
                 title="No matching resources"
-                description="Adjust the realm, area, or resource filters to find visible KV resources."
+                description="Clear filters, check the selected Route Family, or broaden scope to find visible KV resources."
               />
             ) : (
               <Stack gap="3">

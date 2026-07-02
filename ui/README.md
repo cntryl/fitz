@@ -22,7 +22,7 @@ Expected companion services:
 For UI-only design work without a running broker, enable the Vite mock API:
 
 ```bash
-VITE_FITZ_MOCK_API=1 vp dev
+npm run mock
 ```
 
 The mock server returns DTO-shaped admin payloads for the shell, overview, diagnostics, metrics,
