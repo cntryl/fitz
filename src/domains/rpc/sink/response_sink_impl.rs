@@ -1,7 +1,8 @@
 use super::state_model::{
     session_inbox_address, Envelope, Instant, RouteFamily, RpcDeliveryOutcome as DeliveryOutcome,
-    RpcDomainRuntime, RpcPendingErrorDelivery, RpcPendingRequest, RpcPendingResponseDisposition,
-    RpcState, RPC_CORRELATION_NOT_FOUND_ERROR, RPC_INVALID_SEQUENCE_ERROR, RPC_WRONG_WORKER_ERROR,
+    RpcDomainRuntime, RpcPendingAckDisposition, RpcPendingDispatchInfo, RpcPendingErrorDelivery,
+    RpcPendingResponseDisposition, RpcQueuedDispatch, RpcState, RPC_CORRELATION_NOT_FOUND_ERROR,
+    RPC_INVALID_SEQUENCE_ERROR, RPC_WRONG_WORKER_ERROR,
 };
 use crate::domains::rpc::protocol::RpcResponse;
 #[cfg(not(test))]
@@ -16,7 +17,7 @@ struct ResponseStateContext<'a> {
     meta: &'a crate::runtime::ClientFrameMeta,
     state: parking_lot::MutexGuard<'a, RpcState>,
     state_wait_us: u64,
-    state_hold_start: Instant,
+    state_hold_start: Option<Instant>,
     pending_route_lookup_us: u64,
 }
 
@@ -25,11 +26,16 @@ struct AckStateContext<'a> {
     meta: &'a crate::runtime::ClientFrameMeta,
     state: parking_lot::MutexGuard<'a, RpcState>,
     state_wait_us: u64,
-    state_hold_start: Instant,
+    state_hold_start: Option<Instant>,
+    pending_route_remove_us: u64,
 }
 
 fn elapsed_micros_u64(start: Instant) -> u64 {
     start.elapsed().as_micros().try_into().unwrap_or(u64::MAX)
+}
+
+fn elapsed_micros_optional(start: Option<Instant>) -> u64 {
+    start.map_or(0, elapsed_micros_u64)
 }
 
 impl RpcDomainRuntime<'_> {
@@ -41,21 +47,19 @@ impl RpcDomainRuntime<'_> {
     ) -> DeliveryOutcome {
         self.counter_inc("rpc_responses_total");
 
-        let state_wait_start = Instant::now();
+        let metrics_enabled = self.metrics.is_some();
+        let state_wait_start = metrics_enabled.then(Instant::now);
         let mut state = self.state.lock();
-        let state_wait_us = elapsed_micros_u64(state_wait_start);
-        let state_hold_start = Instant::now();
-        let pending_route_lookup_start = Instant::now();
-        let wrong_worker_owner = state
-            .pending
-            .worker_session_id(&resp.correlation_id)
-            .filter(|owner_session_id| *owner_session_id != meta.session_id);
-        let caller_info = wrong_worker_owner.is_none().then(|| {
-            state
-                .pending
-                .pending_for_response(&resp.correlation_id, resp.seq, resp.stream_end)
-        });
-        let pending_route_lookup_us = elapsed_micros_u64(pending_route_lookup_start);
+        let state_wait_us = elapsed_micros_optional(state_wait_start);
+        let state_hold_start = metrics_enabled.then(Instant::now);
+        let pending_route_lookup_start = metrics_enabled.then(Instant::now);
+        let caller_info = state.pending.pending_for_response(
+            &resp.correlation_id,
+            meta.session_id,
+            resp.seq,
+            resp.stream_end,
+        );
+        let pending_route_lookup_us = elapsed_micros_optional(pending_route_lookup_start);
         let context = ResponseStateContext {
             envelope,
             meta,
@@ -65,11 +69,10 @@ impl RpcDomainRuntime<'_> {
             pending_route_lookup_us,
         };
 
-        if let Some(owner_worker_session_id) = wrong_worker_owner {
-            return self.handle_wrong_response_worker(context, resp, owner_worker_session_id);
-        }
-
-        match caller_info.expect("caller info should be present when owner matched") {
+        match caller_info {
+            RpcPendingResponseDisposition::WrongWorker {
+                owner_worker_session_id,
+            } => self.handle_wrong_response_worker(context, resp, owner_worker_session_id),
             RpcPendingResponseDisposition::Forward {
                 pending: caller_info,
                 removed_pending,
@@ -90,27 +93,32 @@ impl RpcDomainRuntime<'_> {
         meta: &crate::runtime::ClientFrameMeta,
         correlation_id: uuid::Uuid,
     ) -> DeliveryOutcome {
-        let state_wait_start = Instant::now();
-        let state = self.state.lock();
-        let state_wait_us = elapsed_micros_u64(state_wait_start);
-        let state_hold_start = Instant::now();
-        let wrong_worker_owner = state
-            .pending
-            .worker_session_id(&correlation_id)
-            .filter(|owner_session_id| *owner_session_id != meta.session_id);
+        let metrics_enabled = self.metrics.is_some();
+        let state_wait_start = metrics_enabled.then(Instant::now);
+        let mut state = self.state.lock();
+        let state_wait_us = elapsed_micros_optional(state_wait_start);
+        let state_hold_start = metrics_enabled.then(Instant::now);
+        let pending_route_remove_start = metrics_enabled.then(Instant::now);
+        let (ack_disposition, pending_len) =
+            state.remove_pending_for_ack(&correlation_id, meta.session_id);
+        let pending_route_remove_us = elapsed_micros_optional(pending_route_remove_start);
         let context = AckStateContext {
             envelope,
             meta,
             state,
             state_wait_us,
             state_hold_start,
+            pending_route_remove_us,
         };
 
-        if let Some(owner_worker_session_id) = wrong_worker_owner {
+        if let RpcPendingAckDisposition::WrongWorker {
+            owner_worker_session_id,
+        } = ack_disposition
+        {
             return self.handle_wrong_ack_worker(context, correlation_id, owner_worker_session_id);
         }
 
-        self.handle_ack_cleanup(context, correlation_id)
+        self.handle_ack_cleanup(context, correlation_id, ack_disposition, pending_len)
     }
 
     fn handle_wrong_response_worker(
@@ -127,7 +135,7 @@ impl RpcDomainRuntime<'_> {
             state_hold_start,
             pending_route_lookup_us,
         } = context;
-        let state_hold_us = elapsed_micros_u64(state_hold_start);
+        let state_hold_us = elapsed_micros_optional(state_hold_start);
         let pending_len = state.live_request_count();
         drop(state);
 
@@ -166,7 +174,7 @@ impl RpcDomainRuntime<'_> {
         &self,
         context: ResponseStateContext<'_>,
         resp: &RpcResponse,
-        caller_info: &RpcPendingRequest,
+        caller_info: &RpcPendingDispatchInfo,
         removed_pending: bool,
     ) -> DeliveryOutcome {
         let ResponseStateContext {
@@ -178,20 +186,20 @@ impl RpcDomainRuntime<'_> {
             pending_route_lookup_us,
         } = context;
         let mut state_changed = false;
-        let mut dispatch_route = None;
+        let mut queued_dispatch = None;
 
         if removed_pending {
             let completion_latency_us = elapsed_micros_u64(caller_info.submitted_at_instant);
-            state.release_worker_for_pending(caller_info, Some(completion_latency_us));
+            state.release_worker_for_dispatch_info(caller_info, Some(completion_latency_us));
+            queued_dispatch = state.next_queued_dispatch(&caller_info.route);
             let live_request_count = state.live_request_count();
             self.histogram_observe_us("rpc_pending_route_remove_us", pending_route_lookup_us);
             self.histogram_observe_us("rpc_pending_untrack_us", pending_route_lookup_us);
             self.gauge_set("rpc_pending_requests", live_request_count as u64);
             state_changed = true;
-            dispatch_route = Some(caller_info.route.clone());
         }
 
-        let state_hold_us = elapsed_micros_u64(state_hold_start);
+        let state_hold_us = elapsed_micros_optional(state_hold_start);
         drop(state);
 
         self.histogram_observe_us("rpc_pending_route_lookup_us", pending_route_lookup_us);
@@ -208,21 +216,28 @@ impl RpcDomainRuntime<'_> {
             "Response forwarded to requester and ACK sent to worker"
         );
 
-        if let Some(route) = dispatch_route {
+        if state_changed {
             self.schedule_admin_snapshot(false);
-            self.dispatch_queued_requests_for_route(&route);
+            self.forward_selected_queued_dispatch(queued_dispatch);
         }
 
         (None, state_changed.then_some(false), false)
+    }
+
+    fn forward_selected_queued_dispatch(&self, selected: Option<RpcQueuedDispatch>) {
+        if let Some(dispatch) = selected {
+            self.forward_queued_dispatch(&dispatch);
+        }
     }
 
     fn forward_response_to_requester(
         &self,
         meta: &crate::runtime::ClientFrameMeta,
         resp: &RpcResponse,
-        caller_info: &RpcPendingRequest,
+        caller_info: &RpcPendingDispatchInfo,
     ) {
-        let response_forward_start = Instant::now();
+        let metrics_enabled = self.metrics.is_some();
+        let response_forward_start = metrics_enabled.then(Instant::now);
         #[cfg(not(test))]
         let _ = meta;
 
@@ -267,7 +282,9 @@ impl RpcDomainRuntime<'_> {
         } else {
             self.counter_inc("rpc_responses_dropped_closed_caller_total");
         }
-        self.histogram_observe_elapsed_us("rpc_response_forward_us", response_forward_start);
+        if let Some(response_forward_start) = response_forward_start {
+            self.histogram_observe_elapsed_us("rpc_response_forward_us", response_forward_start);
+        }
     }
 
     fn forward_ack_to_worker(
@@ -276,7 +293,8 @@ impl RpcDomainRuntime<'_> {
         meta: &crate::runtime::ClientFrameMeta,
         correlation_id: uuid::Uuid,
     ) {
-        let ack_forward_start = Instant::now();
+        let metrics_enabled = self.metrics.is_some();
+        let ack_forward_start = metrics_enabled.then(Instant::now);
         let worker_inbox_addr = envelope.source().cloned().unwrap_or_else(|| {
             session_inbox_address(*envelope.destination().family(), meta.session_id)
         });
@@ -317,14 +335,16 @@ impl RpcDomainRuntime<'_> {
         } else {
             self.counter_inc("rpc_worker_acks_total");
         }
-        self.histogram_observe_elapsed_us("rpc_ack_forward_us", ack_forward_start);
+        if let Some(ack_forward_start) = ack_forward_start {
+            self.histogram_observe_elapsed_us("rpc_ack_forward_us", ack_forward_start);
+        }
     }
 
     fn handle_invalid_response_sequence(
         &self,
         context: ResponseStateContext<'_>,
         resp: &RpcResponse,
-        caller_info: &RpcPendingRequest,
+        caller_info: &RpcPendingDispatchInfo,
         expected_seq: u64,
     ) -> DeliveryOutcome {
         let ResponseStateContext {
@@ -335,9 +355,9 @@ impl RpcDomainRuntime<'_> {
             state_hold_start,
             pending_route_lookup_us,
         } = context;
-        state.release_worker_for_pending(caller_info, None);
+        state.release_worker_for_dispatch_info(caller_info, None);
         let live_request_count = state.live_request_count();
-        let state_hold_us = elapsed_micros_u64(state_hold_start);
+        let state_hold_us = elapsed_micros_optional(state_hold_start);
         drop(state);
 
         self.histogram_observe_us("rpc_pending_route_lookup_us", pending_route_lookup_us);
@@ -405,7 +425,7 @@ impl RpcDomainRuntime<'_> {
             state_hold_start,
             pending_route_lookup_us,
         } = context;
-        let state_hold_us = elapsed_micros_u64(state_hold_start);
+        let state_hold_us = elapsed_micros_optional(state_hold_start);
         let live_request_count = state.live_request_count();
         drop(state);
 
@@ -449,8 +469,9 @@ impl RpcDomainRuntime<'_> {
             state,
             state_wait_us,
             state_hold_start,
+            ..
         } = context;
-        let state_hold_us = elapsed_micros_u64(state_hold_start);
+        let state_hold_us = elapsed_micros_optional(state_hold_start);
         let pending_len = state.live_request_count();
         drop(state);
 
@@ -488,27 +509,31 @@ impl RpcDomainRuntime<'_> {
         &self,
         context: AckStateContext<'_>,
         correlation_id: uuid::Uuid,
+        ack_disposition: RpcPendingAckDisposition,
+        pending_len: usize,
     ) -> DeliveryOutcome {
         let AckStateContext {
-            mut state,
+            state,
             state_wait_us,
             state_hold_start,
+            pending_route_remove_us,
             ..
         } = context;
-        let pending_route_remove_start = Instant::now();
-        let removed_pending = state.remove_pending_request(&correlation_id);
-        let pending_route_remove_us = elapsed_micros_u64(pending_route_remove_start);
-        let state_hold_us = elapsed_micros_u64(state_hold_start);
-        let dispatch_route = removed_pending
-            .as_ref()
-            .map(|(pending, _)| pending.route.clone());
+        let state_hold_us = elapsed_micros_optional(state_hold_start);
+        let dispatch_route = match ack_disposition {
+            RpcPendingAckDisposition::Removed(pending) => Some(pending.route),
+            RpcPendingAckDisposition::Missing => None,
+            RpcPendingAckDisposition::WrongWorker { .. } => {
+                unreachable!("wrong-worker ACKs are handled before cleanup")
+            }
+        };
         drop(state);
 
         self.histogram_observe_us("rpc_pending_route_remove_us", pending_route_remove_us);
         self.histogram_observe_us("rpc_ack_state_wait_us", state_wait_us);
         self.histogram_observe_us("rpc_ack_state_hold_us", state_hold_us);
-        let removed_pending_found = removed_pending.is_some();
-        if let Some((_, pending_len)) = removed_pending {
+        let removed_pending_found = dispatch_route.is_some();
+        if removed_pending_found {
             self.histogram_observe_us("rpc_pending_untrack_us", pending_route_remove_us);
             self.gauge_set("rpc_pending_requests", pending_len as u64);
             self.counter_inc("rpc_cleanup_acks_total");

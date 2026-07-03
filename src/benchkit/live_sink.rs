@@ -230,26 +230,27 @@ pub fn route_frame(
 ) -> Result<(), RouteError> {
     let destination = RouteAddress::new(family, Route::new(destination));
     let msg_type = MessageType::new(msg_type);
-    let envelope = crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::descriptor_for_msg_type(msg_type)
-        .ok()
-        .flatten()
-        .map_or_else(|| {
-            let frame = FrameContext::new(session_id, channel_id, msg_type, payload.clone(), family);
-            Envelope::from_route(source.clone(), destination.clone(), frame)
-        }, |descriptor| {
-            descriptor.build_request_envelope(
-                crate::api::runtime_ingress::domain_registry::DomainEnvelopeBuildRequest {
-                    session_id,
-                    channel_id,
-                    route_family: family,
-                    msg_type,
-                    payload: payload.clone(),
-                    source: source.clone(),
-                    destination: destination.clone(),
-                },
-            )
-        });
-    router.route(envelope)
+    if let Ok(Some(descriptor)) =
+        crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::descriptor_for_msg_type(
+            msg_type,
+        )
+    {
+        let envelope = descriptor.build_request_envelope(
+            crate::api::runtime_ingress::domain_registry::DomainEnvelopeBuildRequest {
+                session_id,
+                channel_id,
+                route_family: family,
+                msg_type,
+                payload,
+                source: source.clone(),
+                destination,
+            },
+        );
+        return router.route_to_domain(descriptor.domain_name(), envelope);
+    }
+
+    let frame = FrameContext::new(session_id, channel_id, msg_type, payload, family);
+    router.route(Envelope::from_route(source.clone(), destination, frame))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -283,6 +284,92 @@ pub fn route_raw_frame(
 fn frame_context_from_envelope(envelope: &Envelope) -> Option<FrameContext> {
     if let Some(frame) = envelope.payload::<FrameContext>() {
         return Some(frame.clone());
+    }
+
+    if let Some(response) = envelope.payload::<crate::domains::rpc::RpcClientResponse>() {
+        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(
+            crate::protocol::rpc_codec::response_body_capacity(&response.response),
+        );
+        return Some(client_response_frame(
+            response.meta,
+            Bytes::from(crate::protocol::rpc_codec::encode_response_into(
+                &response.response,
+                &mut encoder,
+            )),
+        ));
+    }
+
+    if let Some(delivery) = envelope.payload::<crate::domains::rpc::RpcWorkerRequestDelivery>() {
+        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(
+            crate::protocol::rpc_codec::request_payload_capacity(&delivery.request),
+        );
+        return Some(FrameContext::new(
+            delivery.session_id,
+            ChannelId::Rpc,
+            MessageType::new(302),
+            Bytes::from(crate::protocol::rpc_codec::encode_request_into(
+                &delivery.request,
+                &mut encoder,
+            )),
+            delivery.route_family,
+        ));
+    }
+
+    if let Some(response) = envelope.payload::<crate::domains::rpc::RpcClientForwardedResponse>() {
+        let response_payload = match &response.body {
+            crate::domains::rpc::RpcClientForwardedResponseBody::Response(response) => {
+                let mut encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(
+                    crate::protocol::rpc_codec::response_message_capacity(response),
+                );
+                crate::protocol::rpc_codec::encode_response_message_into(response, &mut encoder)
+            }
+            crate::domains::rpc::RpcClientForwardedResponseBody::TerminalError {
+                correlation_id,
+                code,
+                message,
+            } => {
+                let mut error_encoder =
+                    crate::protocol::payload_codec::PayloadEncoder::with_capacity(
+                        crate::protocol::rpc_codec::error_body_capacity(message),
+                    );
+                let mut response_encoder =
+                    crate::protocol::payload_codec::PayloadEncoder::with_capacity(
+                        crate::protocol::rpc_codec::terminal_error_response_message_capacity(
+                            message,
+                        ),
+                    );
+                crate::protocol::rpc_codec::encode_terminal_error_response_message_into(
+                    correlation_id,
+                    *code,
+                    message,
+                    &mut response_encoder,
+                    &mut error_encoder,
+                )
+            }
+        };
+        return Some(FrameContext::new(
+            response.session_id,
+            ChannelId::Rpc,
+            MessageType::new(303),
+            Bytes::from(response_payload),
+            response.route_family,
+        ));
+    }
+
+    if let Some(ack) = envelope.payload::<crate::domains::rpc::RpcWorkerAck>() {
+        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(
+            crate::protocol::rpc_codec::ack_payload_capacity(),
+        );
+        return Some(FrameContext::new(
+            ack.session_id,
+            ChannelId::Rpc,
+            MessageType::new(304),
+            Bytes::from(crate::protocol::rpc_codec::encode_ack_into(
+                &ack.correlation_id,
+                &mut encoder,
+            )),
+            ack.route_family,
+        ));
     }
 
     if let Some(response) = envelope.payload::<crate::domains::kv::KvClientResponse>() {
@@ -383,79 +470,6 @@ fn frame_context_from_envelope(envelope: &Envelope) -> Option<FrameContext> {
                 notification.payload.as_ref(),
             )),
             notification.route_family,
-        ));
-    }
-
-    if let Some(response) = envelope.payload::<crate::domains::rpc::RpcClientResponse>() {
-        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
-        return Some(client_response_frame(
-            response.meta,
-            Bytes::from(crate::protocol::rpc_codec::encode_response_into(
-                &response.response,
-                &mut encoder,
-            )),
-        ));
-    }
-
-    if let Some(delivery) = envelope.payload::<crate::domains::rpc::RpcWorkerRequestDelivery>() {
-        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
-        return Some(FrameContext::new(
-            delivery.session_id,
-            ChannelId::Rpc,
-            MessageType::new(302),
-            Bytes::from(crate::protocol::rpc_codec::encode_request_into(
-                &delivery.request,
-                &mut encoder,
-            )),
-            delivery.route_family,
-        ));
-    }
-
-    if let Some(response) = envelope.payload::<crate::domains::rpc::RpcClientForwardedResponse>() {
-        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
-        let response_payload = match &response.body {
-            crate::domains::rpc::RpcClientForwardedResponseBody::Response(response) => {
-                crate::protocol::rpc_codec::encode_response_message_into(response, &mut encoder)
-            }
-            crate::domains::rpc::RpcClientForwardedResponseBody::TerminalError {
-                correlation_id,
-                code,
-                message,
-            } => {
-                let mut error_encoder =
-                    crate::protocol::payload_codec::PayloadEncoder::with_capacity(96);
-                let error_body = crate::protocol::rpc_codec::encode_error_body_into(
-                    *code,
-                    message,
-                    &mut error_encoder,
-                );
-                let response = crate::domains::rpc::RpcResponse::single(
-                    *correlation_id,
-                    Bytes::from(error_body),
-                );
-                crate::protocol::rpc_codec::encode_response_message_into(&response, &mut encoder)
-            }
-        };
-        return Some(FrameContext::new(
-            response.session_id,
-            ChannelId::Rpc,
-            MessageType::new(303),
-            Bytes::from(response_payload),
-            response.route_family,
-        ));
-    }
-
-    if let Some(ack) = envelope.payload::<crate::domains::rpc::RpcWorkerAck>() {
-        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(64);
-        return Some(FrameContext::new(
-            ack.session_id,
-            ChannelId::Rpc,
-            MessageType::new(304),
-            Bytes::from(crate::protocol::rpc_codec::encode_ack_into(
-                &ack.correlation_id,
-                &mut encoder,
-            )),
-            ack.route_family,
         ));
     }
 

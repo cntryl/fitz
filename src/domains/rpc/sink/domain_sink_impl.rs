@@ -1,14 +1,15 @@
-#[cfg(test)]
-use super::state_model::RpcQueuedRequest;
 use super::state_model::{
     route_quad, rpc_admin_snapshot_due, rpc_timeout_sweep_interval, Arc, AtomicBool, AtomicU64,
     DeliveryError, Duration, Envelope, Instant, Mutex, Ordering, Route, RouteAddress, Router,
     RpcDomainActor, RpcDomainCommand, RpcDomainCore, RpcDomainRuntime, RpcDomainSink,
-    RpcLiveCounts, RpcPendingErrorDelivery, RpcPendingRequest, RpcRouteState,
-    RpcSessionCleanupResult, RpcState, RpcWorker, RpcWorkerCleanupResult, RPC_BACKPRESSURE_ERROR,
-    RPC_DEFAULT_REQUEST_TIMEOUT, RPC_DEFAULT_ROUTE_PENDING_CAPACITY,
-    RPC_MIN_TIMEOUT_SWEEP_INTERVAL, RPC_TIMEOUT_ERROR, RPC_WORKER_NOT_FOUND_ERROR,
+    RpcLiveCounts, RpcPendingErrorDelivery, RpcPendingRequest, RpcQueuedDispatch, RpcRouteState,
+    RpcSessionCleanupResult, RpcState, RpcWorkerCleanupResult, RpcWorkerDispatch,
+    RPC_ADMIN_SNAPSHOT_INTERVAL_US, RPC_BACKPRESSURE_ERROR, RPC_DEFAULT_REQUEST_TIMEOUT,
+    RPC_DEFAULT_ROUTE_PENDING_CAPACITY, RPC_MIN_TIMEOUT_SWEEP_INTERVAL, RPC_TIMEOUT_ERROR,
+    RPC_WORKER_NOT_FOUND_ERROR,
 };
+#[cfg(test)]
+use super::state_model::{RpcQueuedRequest, RpcWorker};
 #[cfg(not(test))]
 use crate::domains::rpc::{
     RpcClientForwardedResponse, RpcClientForwardedResponseBody, RpcWorkerRequestDelivery,
@@ -48,6 +49,7 @@ impl RpcDomainSink {
             snapshot_dirty: AtomicBool::new(false),
             snapshot_syncing: AtomicBool::new(false),
             last_snapshot_elapsed_us: AtomicU64::new(0),
+            last_inline_timeout_elapsed_us: AtomicU64::new(0),
             snapshot_epoch: Instant::now(),
             metrics: None,
         });
@@ -81,7 +83,7 @@ impl RpcDomainSink {
         Arc::get_mut(&mut self.core).expect("RPC sink builders must run before sharing the sink")
     }
 
-    fn runtime(&self) -> RpcDomainRuntime<'_> {
+    pub(super) fn runtime(&self) -> RpcDomainRuntime<'_> {
         RpcDomainRuntime {
             core: &self.core,
             active: &self.active,
@@ -374,8 +376,31 @@ impl RpcDomainRuntime<'_> {
         }
     }
 
-    pub(crate) fn expire_timed_out_requests(&self) {
-        self.expire_timed_out_requests_at(Instant::now());
+    pub(super) fn expire_timed_out_requests_inline_if_due(&self) {
+        let now_elapsed_us = Self::elapsed_us_saturating(self.snapshot_epoch);
+        let interval_us = self
+            .timeout_sweep_interval()
+            .as_micros()
+            .try_into()
+            .unwrap_or(u64::MAX);
+        let last_elapsed_us = self.last_inline_timeout_elapsed_us.load(Ordering::Relaxed);
+
+        if now_elapsed_us.saturating_sub(last_elapsed_us) < interval_us {
+            return;
+        }
+
+        if self
+            .last_inline_timeout_elapsed_us
+            .compare_exchange(
+                last_elapsed_us,
+                now_elapsed_us,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            )
+            .is_ok()
+        {
+            self.expire_timed_out_requests_at(Instant::now());
+        }
     }
 
     pub(super) fn expire_timed_out_requests_at(&self, now: Instant) {
@@ -631,13 +656,15 @@ impl RpcDomainRuntime<'_> {
                     .workers
                     .iter()
                     .filter_map(|worker| {
+                        let worker = worker.as_ref()?;
                         route_quad(route.as_str()).map(|parts| {
+                            let registered_at = worker.registered_at_rfc3339();
                             crate::control::admin::RpcWorker::snapshot(
                                 worker.addr.family().as_u64(),
                                 worker.session_id,
                                 parts.realm,
                                 route.as_str(),
-                                &worker.registered_at,
+                                &registered_at,
                                 worker.requests_handled,
                                 worker.average_latency_ms(),
                             )
@@ -654,7 +681,7 @@ impl RpcDomainRuntime<'_> {
                     queued.caller_inbox_addr.family().as_u64(),
                     correlation_id,
                     queued.request.route.as_str(),
-                    &queued.submitted_at,
+                    &queued.submitted_at_rfc3339(),
                     queued.age_seconds(snapshot_now),
                     None,
                 )
@@ -669,7 +696,7 @@ impl RpcDomainRuntime<'_> {
                             pending.worker_addr.family().as_u64(),
                             correlation_id,
                             pending.route.as_str(),
-                            &pending.submitted_at,
+                            &pending.submitted_at_rfc3339(),
                             pending.age_seconds(snapshot_now),
                             Some(pending.worker_session_id.to_string()),
                         )
@@ -691,7 +718,7 @@ impl RpcDomainRuntime<'_> {
     pub(super) fn forward_request_to_worker(
         &self,
         req: &crate::domains::rpc::protocol::RpcRequest,
-        worker: &RpcWorker,
+        worker: &RpcWorkerDispatch,
     ) -> Result<(), crate::runtime::RouteError> {
         #[cfg(test)]
         let request_envelope = {
@@ -731,51 +758,55 @@ impl RpcDomainRuntime<'_> {
                 break;
             };
 
-            self.gauge_set("rpc_pending_requests", dispatch.live_request_count as u64);
+            self.forward_queued_dispatch(&dispatch);
             snapshot_dirty = true;
-
-            match self.forward_request_to_worker(&dispatch.request, &dispatch.worker) {
-                Ok(()) => {
-                    self.counter_inc("rpc_requests_dispatched_total");
-                }
-                Err(
-                    crate::runtime::RouteError::RouteNotFound(_)
-                    | crate::runtime::RouteError::DeliveryFailed(_, DeliveryError::ActorStopped),
-                ) => {
-                    self.counter_inc("rpc_request_forward_errors_total");
-                    let cleanup_result = self.apply_session_cleanup(dispatch.worker.session_id);
-                    self.forward_worker_disconnect_errors(cleanup_result.disconnect_deliveries);
-                }
-                Err(crate::runtime::RouteError::DeliveryFailed(
-                    _,
-                    DeliveryError::MailboxFull { .. } | DeliveryError::HighLaneFull { .. },
-                )) => {
-                    self.counter_inc("rpc_request_forward_errors_total");
-                    self.counter_inc("rpc_backpressure_rejects_total");
-                    if let Some((pending, pending_len)) =
-                        self.remove_pending_request(&dispatch.request.correlation_id)
-                    {
-                        self.forward_pending_error_deliveries(
-                            vec![RpcPendingErrorDelivery {
-                                correlation_id: dispatch.request.correlation_id,
-                                caller_session_id: pending.caller_session_id,
-                                caller_inbox_addr: pending
-                                    .caller_inbox_addr
-                                    .expect("queued dispatch pending keeps caller inbox"),
-                            }],
-                            crate::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
-                            RPC_BACKPRESSURE_ERROR,
-                            "rpc_backpressure_errors_forwarded_total",
-                            "rpc_backpressure_errors_dropped_total",
-                        );
-                        self.gauge_set("rpc_pending_requests", pending_len as u64);
-                    }
-                }
-            }
         }
 
         if snapshot_dirty {
             self.schedule_admin_snapshot(false);
+        }
+    }
+
+    pub(super) fn forward_queued_dispatch(&self, dispatch: &RpcQueuedDispatch) {
+        self.gauge_set("rpc_pending_requests", dispatch.live_request_count as u64);
+
+        match self.forward_request_to_worker(&dispatch.request, &dispatch.worker) {
+            Ok(()) => {
+                self.counter_inc("rpc_requests_dispatched_total");
+            }
+            Err(
+                crate::runtime::RouteError::RouteNotFound(_)
+                | crate::runtime::RouteError::DeliveryFailed(_, DeliveryError::ActorStopped),
+            ) => {
+                self.counter_inc("rpc_request_forward_errors_total");
+                let cleanup_result = self.apply_session_cleanup(dispatch.worker.session_id);
+                self.forward_worker_disconnect_errors(cleanup_result.disconnect_deliveries);
+            }
+            Err(crate::runtime::RouteError::DeliveryFailed(
+                _,
+                DeliveryError::MailboxFull { .. } | DeliveryError::HighLaneFull { .. },
+            )) => {
+                self.counter_inc("rpc_request_forward_errors_total");
+                self.counter_inc("rpc_backpressure_rejects_total");
+                if let Some((pending, pending_len)) =
+                    self.remove_pending_request(&dispatch.request.correlation_id)
+                {
+                    self.forward_pending_error_deliveries(
+                        vec![RpcPendingErrorDelivery {
+                            correlation_id: dispatch.request.correlation_id,
+                            caller_session_id: pending.caller_session_id,
+                            caller_inbox_addr: pending
+                                .caller_inbox_addr
+                                .expect("queued dispatch pending keeps caller inbox"),
+                        }],
+                        crate::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
+                        RPC_BACKPRESSURE_ERROR,
+                        "rpc_backpressure_errors_forwarded_total",
+                        "rpc_backpressure_errors_dropped_total",
+                    );
+                    self.gauge_set("rpc_pending_requests", pending_len as u64);
+                }
+            }
         }
     }
 
@@ -796,8 +827,23 @@ impl RpcDomainRuntime<'_> {
 
     /// Mark the admin snapshot dirty and opportunistically refresh the coalesced view.
     pub(super) fn schedule_admin_snapshot(&self, force: bool) {
-        self.snapshot_dirty.store(true, Ordering::Relaxed);
-        self.maybe_sync_admin_snapshot(force);
+        if force {
+            self.snapshot_dirty.store(true, Ordering::Relaxed);
+            self.maybe_sync_admin_snapshot(true);
+            return;
+        }
+
+        let already_dirty = self.snapshot_dirty.swap(true, Ordering::Relaxed);
+        let now_elapsed_us = Self::elapsed_us_saturating(self.snapshot_epoch);
+        let last_snapshot_elapsed_us = self.last_snapshot_elapsed_us.load(Ordering::Relaxed);
+        if already_dirty
+            && now_elapsed_us.saturating_sub(last_snapshot_elapsed_us)
+                < RPC_ADMIN_SNAPSHOT_INTERVAL_US
+        {
+            return;
+        }
+
+        self.maybe_sync_admin_snapshot(false);
     }
 
     /// Sync the admin snapshot when the snapshot interval elapses or a caller forces it.

@@ -181,7 +181,13 @@ impl SessionOutboundSink {
             "Outbound sink: encoding RPC response"
         );
         let encode_start = Instant::now();
-        let payload = crate::protocol::rpc_codec::encode_response(&response.response);
+        let mut payload_encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(
+            crate::protocol::rpc_codec::response_body_capacity(&response.response),
+        );
+        let payload = crate::protocol::rpc_codec::encode_response_into(
+            &response.response,
+            &mut payload_encoder,
+        );
         let bytes = encode_single_tlv_frame(
             crate::protocol::tlv::MessageType::new(response.meta.message_type),
             &payload,
@@ -200,8 +206,9 @@ impl SessionOutboundSink {
             "Outbound sink: encoding RPC worker request delivery"
         );
         let encode_start = Instant::now();
-        let mut payload_encoder =
-            crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
+        let mut payload_encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(
+            crate::protocol::rpc_codec::request_payload_capacity(&delivery.request),
+        );
         let payload = crate::protocol::rpc_codec::encode_request_into(
             &delivery.request,
             &mut payload_encoder,
@@ -222,19 +229,37 @@ impl SessionOutboundSink {
         let encode_start = Instant::now();
         let payload = match &forwarded.body {
             crate::domains::rpc::RpcClientForwardedResponseBody::Response(response) => {
-                crate::protocol::rpc_codec::encode_response_message(response)
+                let mut response_encoder =
+                    crate::protocol::payload_codec::PayloadEncoder::with_capacity(
+                        crate::protocol::rpc_codec::response_message_capacity(response),
+                    );
+                crate::protocol::rpc_codec::encode_response_message_into(
+                    response,
+                    &mut response_encoder,
+                )
             }
             crate::domains::rpc::RpcClientForwardedResponseBody::TerminalError {
                 correlation_id,
                 code,
                 message,
             } => {
-                let error_body = crate::protocol::rpc_codec::encode_error_body(*code, message);
-                let response = crate::domains::rpc::RpcResponse::single(
-                    *correlation_id,
-                    bytes::Bytes::from(error_body),
-                );
-                crate::protocol::rpc_codec::encode_response_message(&response)
+                let mut error_encoder =
+                    crate::protocol::payload_codec::PayloadEncoder::with_capacity(
+                        crate::protocol::rpc_codec::error_body_capacity(message),
+                    );
+                let mut response_encoder =
+                    crate::protocol::payload_codec::PayloadEncoder::with_capacity(
+                        crate::protocol::rpc_codec::terminal_error_response_message_capacity(
+                            message,
+                        ),
+                    );
+                crate::protocol::rpc_codec::encode_terminal_error_response_message_into(
+                    correlation_id,
+                    *code,
+                    message,
+                    &mut response_encoder,
+                    &mut error_encoder,
+                )
             }
         };
         let bytes = encode_single_tlv_frame(crate::protocol::tlv::MessageType::new(303), &payload);
@@ -252,7 +277,11 @@ impl SessionOutboundSink {
             "Outbound sink: encoding RPC worker ACK"
         );
         let encode_start = Instant::now();
-        let payload = crate::protocol::rpc_codec::encode_ack(&ack.correlation_id);
+        let mut payload_encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(
+            crate::protocol::rpc_codec::ack_payload_capacity(),
+        );
+        let payload =
+            crate::protocol::rpc_codec::encode_ack_into(&ack.correlation_id, &mut payload_encoder);
         let bytes = encode_single_tlv_frame(crate::protocol::tlv::MessageType::new(304), &payload);
         Self::observe_encode_latency(encode_start);
         self.send_encoded_frame(ack.session_id, &bytes)

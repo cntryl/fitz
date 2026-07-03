@@ -12,6 +12,65 @@ use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use uuid::Uuid;
 
+const UUID_BYTES_LEN: usize = 16;
+const U8_LEN: usize = 1;
+const U32_LEN: usize = 4;
+const U64_LEN: usize = 8;
+
+fn encoded_bytes_len(len: usize) -> usize {
+    U32_LEN + len
+}
+
+fn encoded_string_len(value: &str) -> usize {
+    encoded_bytes_len(value.len())
+}
+
+/// Return the exact payload size for a standard RPC client response body.
+#[must_use]
+pub fn response_body_capacity(response: &RpcClientResponseBody) -> usize {
+    match response {
+        RpcClientResponseBody::Ok { data } => U8_LEN + encoded_bytes_len(data.len()),
+        RpcClientResponseBody::CodeError { message, .. }
+        | RpcClientResponseBody::Error(message) => error_body_capacity(message),
+    }
+}
+
+/// Return the exact payload size for a standard Fitz error body.
+#[must_use]
+pub fn error_body_capacity(message: &str) -> usize {
+    U8_LEN + U32_LEN + encoded_string_len(message)
+}
+
+/// Return the exact payload size for an RPC request delivery payload.
+#[must_use]
+pub fn request_payload_capacity(request: &RpcRequest) -> usize {
+    encoded_bytes_len(UUID_BYTES_LEN)
+        + encoded_string_len(request.route.as_str())
+        + encoded_string_len(request.reply_route.as_str())
+        + encoded_bytes_len(request.body.len())
+}
+
+/// Return the exact payload size for an RPC response message payload.
+#[must_use]
+pub fn response_message_capacity(response: &RpcResponse) -> usize {
+    encoded_bytes_len(UUID_BYTES_LEN) + U64_LEN + encoded_bytes_len(response.body.len()) + U8_LEN
+}
+
+/// Return the exact payload size for an RPC terminal error response payload.
+#[must_use]
+pub fn terminal_error_response_message_capacity(message: &str) -> usize {
+    encoded_bytes_len(UUID_BYTES_LEN)
+        + U64_LEN
+        + encoded_bytes_len(error_body_capacity(message))
+        + U8_LEN
+}
+
+/// Return the exact payload size for an RPC ACK payload.
+#[must_use]
+pub fn ack_payload_capacity() -> usize {
+    encoded_bytes_len(UUID_BYTES_LEN)
+}
+
 /// Parse incoming message from TLV-encoded bytes.
 ///
 /// `route_family` is injected by the session layer — it is never read
@@ -73,7 +132,7 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
 /// Encode domain response to TLV-encoded bytes
 #[must_use]
 pub fn encode_response(response: &RpcClientResponseBody) -> Vec<u8> {
-    let mut enc = PayloadEncoder::new();
+    let mut enc = PayloadEncoder::with_capacity(response_body_capacity(response));
     encode_response_into(response, &mut enc)
 }
 
@@ -104,7 +163,8 @@ pub fn encode_response_into(response: &RpcClientResponseBody, enc: &mut PayloadE
 /// Encode a standard RPC error body with numeric code and message.
 #[must_use]
 pub fn encode_error_body(code: u16, message: &str) -> Vec<u8> {
-    crate::protocol::error_codes::encode_error_body(code, message)
+    let mut enc = PayloadEncoder::with_capacity(error_body_capacity(message));
+    encode_error_body_into(code, message, &mut enc)
 }
 
 /// Encode a standard RPC error body into a reusable payload encoder.
@@ -231,7 +291,11 @@ fn parse_ack(dec: &mut PayloadDecoder) -> Result<RpcMessage, String> {
 ///
 /// This encodes the `RpcWorkItem` to be sent from route actor to worker session actor.
 pub fn encode_request_delivery(work_item: &crate::domains::rpc::protocol::RpcWorkItem) -> Vec<u8> {
-    let mut enc = PayloadEncoder::new();
+    let capacity = encoded_bytes_len(UUID_BYTES_LEN)
+        + encoded_string_len(work_item.route.as_str())
+        + encoded_string_len(work_item.reply_route.as_str())
+        + encoded_bytes_len(work_item.body.len());
+    let mut enc = PayloadEncoder::with_capacity(capacity);
     encode_request_delivery_into(work_item, &mut enc)
 }
 
@@ -279,7 +343,7 @@ fn encode_request_fields_into(
 ///
 /// Wire format: `[bytes correlation_id][u64 seq][bytes body][u8 stream_end]`
 pub fn encode_response_message(response: &RpcResponse) -> Vec<u8> {
-    let mut enc = PayloadEncoder::new();
+    let mut enc = PayloadEncoder::with_capacity(response_message_capacity(response));
     encode_response_message_into(response, &mut enc)
 }
 
@@ -293,6 +357,23 @@ pub fn encode_response_message_into(response: &RpcResponse, enc: &mut PayloadEnc
     enc.finish()
 }
 
+/// Encode an RPC terminal error response message using reusable encoders.
+pub fn encode_terminal_error_response_message_into(
+    correlation_id: &Uuid,
+    code: u16,
+    message: &str,
+    response_enc: &mut PayloadEncoder,
+    error_enc: &mut PayloadEncoder,
+) -> Vec<u8> {
+    let error_body = encode_error_body_into(code, message, error_enc);
+    response_enc.clear();
+    response_enc.put_bytes(correlation_id.as_bytes());
+    response_enc.put_u64(0);
+    response_enc.put_bytes(&error_body);
+    response_enc.put_u8(1);
+    response_enc.finish()
+}
+
 /// Encode RPC ACK to worker (message type 304)
 ///
 /// Wire format: `[bytes correlation_id]`
@@ -301,7 +382,7 @@ pub fn encode_response_message_into(response: &RpcResponse, enc: &mut PayloadEnc
 /// This unblocks the worker so they can send additional responses.
 #[must_use]
 pub fn encode_ack(correlation_id: &Uuid) -> Vec<u8> {
-    let mut enc = PayloadEncoder::new();
+    let mut enc = PayloadEncoder::with_capacity(ack_payload_capacity());
     encode_ack_into(correlation_id, &mut enc)
 }
 

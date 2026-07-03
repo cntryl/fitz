@@ -18,6 +18,7 @@ pub(in crate::domains::rpc::sink) struct RpcDomainCore {
     pub(in crate::domains::rpc::sink) snapshot_syncing: AtomicBool,
     #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
     pub(in crate::domains::rpc::sink) last_snapshot_elapsed_us: AtomicU64,
+    pub(in crate::domains::rpc::sink) last_inline_timeout_elapsed_us: AtomicU64,
     #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
     pub(in crate::domains::rpc::sink) snapshot_epoch: Instant,
     pub(in crate::domains::rpc::sink) metrics: Option<crate::domains::rpc::RpcMetrics>,

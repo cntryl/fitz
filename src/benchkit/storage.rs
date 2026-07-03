@@ -16,6 +16,12 @@ pub fn create_bench_store() -> Arc<cntryl_midge::Engine> {
 }
 
 /// Create an in-memory `MidgeEngine` with the requested explicit CF mapping.
+///
+/// # Panics
+///
+/// Panics if the in-memory engine cannot be created, if a requested benchmark
+/// column family cannot be created, or if the storage engine assigns an
+/// unexpected column family ID.
 #[must_use]
 pub fn create_bench_store_with_cfs(
     column_families: impl IntoIterator<Item = u32>,

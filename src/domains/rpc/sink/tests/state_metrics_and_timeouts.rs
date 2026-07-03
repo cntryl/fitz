@@ -33,6 +33,12 @@ pub(super) fn test_rpc_worker(family: RouteFamily, route: &Route, session_id: u6
     )
 }
 
+pub(super) fn test_rpc_timestamp() -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::parse_from_rfc3339("2026-03-14T12:00:00Z")
+        .expect("test timestamp")
+        .with_timezone(&chrono::Utc)
+}
+
 pub(super) fn test_pending_request(
     family: RouteFamily,
     route: &Route,
@@ -47,7 +53,8 @@ pub(super) fn test_pending_request(
         caller_inbox_addr: session_inbox_address(family, caller_session_id),
         worker_addr: RouteAddress::new(family, route.clone()),
         worker_session_id,
-        submitted_at: "2026-03-14T12:00:00Z".to_string(),
+        worker_slot: 0,
+        submitted_at: test_rpc_timestamp(),
         submitted_at_instant,
         expires_at,
     })
@@ -318,7 +325,8 @@ pub(super) fn should_snapshot_live_pending_request_details_given_rpc_admin_snaps
             caller_inbox_addr: session_inbox_address(family, 7),
             worker_addr: RouteAddress::new(family, route.clone()),
             worker_session_id: 42,
-            submitted_at: "2026-03-14T12:00:00Z".to_string(),
+            worker_slot: 0,
+            submitted_at: test_rpc_timestamp(),
             submitted_at_instant: Instant::now().checked_sub(Duration::from_secs(9)).unwrap(),
             expires_at: Instant::now() + Duration::from_secs(30),
         }),
@@ -401,7 +409,8 @@ pub(super) fn should_snapshot_live_worker_metrics_after_terminal_response_given_
             caller_inbox_addr: caller_addr.clone(),
             worker_addr: request_addr.clone(),
             worker_session_id: 42,
-            submitted_at: "2026-03-14T12:00:00Z".to_string(),
+            worker_slot: 0,
+            submitted_at: test_rpc_timestamp(),
             submitted_at_instant: Instant::now()
                 .checked_sub(Duration::from_millis(50))
                 .unwrap(),
@@ -591,7 +600,8 @@ pub(super) fn should_accumulate_timeout_counters_given_rpc_timeout_sweep() {
             caller_inbox_addr: caller_one,
             worker_addr: RouteAddress::new(family, Route::new("rpc://bench/system/resource/a")),
             worker_session_id: 42,
-            submitted_at: "2026-03-14T12:00:00Z".to_string(),
+            worker_slot: 0,
+            submitted_at: test_rpc_timestamp(),
             submitted_at_instant: Instant::now(),
             expires_at: Instant::now() + Duration::from_millis(5),
         }),
@@ -604,7 +614,8 @@ pub(super) fn should_accumulate_timeout_counters_given_rpc_timeout_sweep() {
             caller_inbox_addr: caller_two,
             worker_addr: RouteAddress::new(family, Route::new("rpc://bench/system/resource/b")),
             worker_session_id: 43,
-            submitted_at: "2026-03-14T12:00:00Z".to_string(),
+            worker_slot: 1,
+            submitted_at: test_rpc_timestamp(),
             submitted_at_instant: Instant::now(),
             expires_at: Instant::now() + Duration::from_millis(5),
         }),

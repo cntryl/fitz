@@ -6,7 +6,7 @@ pub(super) use crate::runtime::routing::{
     route_quad, session_inbox_address, Route, RouteAddress, RouteFamily,
 };
 pub(super) use crate::runtime::{DeliveryError, Envelope, MailboxSink, ManagedActor, Router};
-pub(super) use chrono::Utc;
+pub(super) use chrono::{DateTime, Utc};
 pub(super) use fxhash::FxBuildHasher;
 pub(super) use parking_lot::Mutex;
 pub(super) use std::cmp::Ordering as HeapOrdering;
@@ -35,11 +35,13 @@ pub(super) use constants::{
     RPC_TIMEOUT_ERROR, RPC_WORKER_NOT_FOUND_ERROR, RPC_WRONG_WORKER_ERROR,
 };
 pub(super) use expiration::{rpc_timeout_sweep_interval, ExpiringPendingRequest};
-pub(super) use pending_table::{RpcPendingResponseDisposition, RpcPendingTable};
+pub(super) use pending_table::{
+    RpcPendingAckDisposition, RpcPendingResponseDisposition, RpcPendingTable,
+};
 pub(super) use requests::{
-    RpcPendingCleanupResult, RpcPendingErrorDelivery, RpcPendingRequest, RpcPendingRequestInit,
-    RpcPendingTimeoutResult, RpcQueuedDispatch, RpcQueuedRequest, RpcSessionCleanupResult,
-    RpcWorkerCleanupResult,
+    RpcPendingCleanupResult, RpcPendingDispatchInfo, RpcPendingErrorDelivery, RpcPendingRequest,
+    RpcPendingRequestInit, RpcPendingTimeoutResult, RpcQueuedDispatch, RpcQueuedRequest,
+    RpcRequestDispatch, RpcSessionCleanupResult, RpcWorkerCleanupResult,
 };
 pub(super) use route_state::RpcRouteState;
 pub use sink::RpcDomainSink;
@@ -48,4 +50,4 @@ pub(super) use sink::{
 };
 pub(super) use snapshot::rpc_admin_snapshot_due;
 pub(super) use state::RpcState;
-pub(super) use worker::RpcWorker;
+pub(super) use worker::{RpcWorker, RpcWorkerDispatch, RpcWorkerKey};

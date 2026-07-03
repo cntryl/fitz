@@ -1,4 +1,4 @@
-use super::*;
+use super::{LatencyRow, ProofReport, RecoveryRow, RouteSensitivityRow, ThroughputEvidence};
 use std::fmt::Write as _;
 use std::fs;
 

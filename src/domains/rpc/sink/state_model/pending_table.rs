@@ -1,6 +1,6 @@
 use super::{
     BinaryHeap, ExpiringPendingRequest, FxBuildHasher, HashMap, RouteAddress, RpcFastMap,
-    RpcPendingCleanupResult, RpcPendingErrorDelivery, RpcPendingRequest,
+    RpcPendingCleanupResult, RpcPendingDispatchInfo, RpcPendingErrorDelivery, RpcPendingRequest,
 };
 
 pub(in crate::domains::rpc::sink) struct RpcPendingTable {
@@ -11,14 +11,23 @@ pub(in crate::domains::rpc::sink) struct RpcPendingTable {
 #[derive(Debug)]
 pub(in crate::domains::rpc::sink) enum RpcPendingResponseDisposition {
     Missing,
+    WrongWorker {
+        owner_worker_session_id: u64,
+    },
     Forward {
-        pending: RpcPendingRequest,
+        pending: RpcPendingDispatchInfo,
         removed_pending: bool,
     },
     InvalidSequence {
-        pending: RpcPendingRequest,
+        pending: RpcPendingDispatchInfo,
         expected_seq: u64,
     },
+}
+
+pub(in crate::domains::rpc::sink) enum RpcPendingAckDisposition {
+    Missing,
+    WrongWorker { owner_worker_session_id: u64 },
+    Removed(RpcPendingRequest),
 }
 
 impl RpcPendingTable {
@@ -46,22 +55,26 @@ impl RpcPendingTable {
     pub(in crate::domains::rpc::sink) fn pending_for_response(
         &mut self,
         correlation_id: &uuid::Uuid,
+        worker_session_id: u64,
         seq: u64,
         stream_end: bool,
     ) -> RpcPendingResponseDisposition {
-        let Some(expected_seq) = self
-            .pending
-            .get(correlation_id)
-            .map(|pending| pending.next_expected_seq)
+        let std::collections::hash_map::Entry::Occupied(mut entry) =
+            self.pending.entry(*correlation_id)
         else {
             return RpcPendingResponseDisposition::Missing;
         };
 
+        let pending = entry.get_mut();
+        if pending.worker_session_id != worker_session_id {
+            return RpcPendingResponseDisposition::WrongWorker {
+                owner_worker_session_id: pending.worker_session_id,
+            };
+        }
+
+        let expected_seq = pending.next_expected_seq;
         if seq != expected_seq {
-            let pending = self
-                .pending
-                .remove(correlation_id)
-                .expect("tracked pending request for invalid sequence");
+            let pending = entry.remove().into_dispatch_info();
             return RpcPendingResponseDisposition::InvalidSequence {
                 pending,
                 expected_seq,
@@ -69,25 +82,15 @@ impl RpcPendingTable {
         }
 
         if stream_end {
-            let pending = self
-                .pending
-                .remove(correlation_id)
-                .expect("tracked pending request for terminal response");
+            let pending = entry.remove().into_dispatch_info();
             return RpcPendingResponseDisposition::Forward {
                 pending,
                 removed_pending: true,
             };
         }
 
-        let tracked = {
-            let pending = self
-                .pending
-                .get_mut(correlation_id)
-                .expect("tracked pending request for non-terminal response");
-            let tracked = pending.clone();
-            pending.next_expected_seq = pending.next_expected_seq.saturating_add(1);
-            tracked
-        };
+        let tracked = pending.dispatch_info();
+        pending.next_expected_seq = pending.next_expected_seq.saturating_add(1);
         RpcPendingResponseDisposition::Forward {
             pending: tracked,
             removed_pending: false,
@@ -101,13 +104,24 @@ impl RpcPendingTable {
         self.pending.contains_key(correlation_id)
     }
 
-    pub(in crate::domains::rpc::sink) fn worker_session_id(
-        &self,
+    pub(in crate::domains::rpc::sink) fn remove_for_ack(
+        &mut self,
         correlation_id: &uuid::Uuid,
-    ) -> Option<u64> {
-        self.pending
-            .get(correlation_id)
-            .map(|pending| pending.worker_session_id)
+        worker_session_id: u64,
+    ) -> RpcPendingAckDisposition {
+        let std::collections::hash_map::Entry::Occupied(entry) =
+            self.pending.entry(*correlation_id)
+        else {
+            return RpcPendingAckDisposition::Missing;
+        };
+
+        if entry.get().worker_session_id != worker_session_id {
+            return RpcPendingAckDisposition::WrongWorker {
+                owner_worker_session_id: entry.get().worker_session_id,
+            };
+        }
+
+        RpcPendingAckDisposition::Removed(entry.remove())
     }
 
     pub(in crate::domains::rpc::sink) fn cleanup_session(

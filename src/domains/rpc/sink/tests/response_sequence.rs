@@ -18,14 +18,15 @@ fn should_retain_pending_request_before_stream_end_given_rpc_pending_table() {
             caller_inbox_addr: caller_inbox_addr.clone(),
             worker_addr: worker_addr.clone(),
             worker_session_id: 99,
-            submitted_at: "2026-03-14T12:00:00Z".to_string(),
+            worker_slot: 0,
+            submitted_at: test_rpc_timestamp(),
             submitted_at_instant: Instant::now(),
             expires_at: Instant::now() + Duration::from_secs(30),
         }),
     );
 
     // Act
-    let result = pending.pending_for_response(&correlation_id, 0, false);
+    let result = pending.pending_for_response(&correlation_id, 99, 0, false);
 
     // Assert
     assert_eq!(pending_len, 1);
@@ -36,8 +37,8 @@ fn should_retain_pending_request_before_stream_end_given_rpc_pending_table() {
         } => {
             assert_eq!(tracked.caller_session_id, 84);
             assert_eq!(tracked.caller_inbox_addr, Some(caller_inbox_addr));
-            assert_eq!(tracked.worker_addr, worker_addr);
-            assert_eq!(tracked.worker_session_id, 99);
+            assert_eq!(&tracked.route, worker_addr.route());
+            assert_eq!(tracked.worker_slot, 0);
             assert!(!removed_pending);
             assert_eq!(pending.len(), 1);
             assert_eq!(pending.pending[&correlation_id].next_expected_seq, 1);
@@ -64,14 +65,15 @@ fn should_reject_invalid_response_sequence_given_rpc_pending_table() {
             caller_inbox_addr,
             worker_addr,
             worker_session_id: 77,
-            submitted_at: "2026-03-14T12:00:00Z".to_string(),
+            worker_slot: 0,
+            submitted_at: test_rpc_timestamp(),
             submitted_at_instant: Instant::now(),
             expires_at: Instant::now() + Duration::from_secs(30),
         }),
     );
 
     // Act
-    let result = pending.pending_for_response(&correlation_id, 1, false);
+    let result = pending.pending_for_response(&correlation_id, 77, 1, false);
 
     // Assert
     match result {
@@ -80,7 +82,7 @@ fn should_reject_invalid_response_sequence_given_rpc_pending_table() {
             expected_seq,
         } => {
             assert_eq!(tracked.caller_session_id, 21);
-            assert_eq!(tracked.worker_session_id, 77);
+            assert_eq!(tracked.worker_slot, 0);
             assert_eq!(expected_seq, 0);
             assert_eq!(pending.len(), 0);
         }

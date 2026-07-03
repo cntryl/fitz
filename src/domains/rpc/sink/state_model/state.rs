@@ -1,7 +1,8 @@
 use super::{
     BinaryHeap, ExpiringPendingRequest, FxBuildHasher, HashMap, Instant, Route, RouteAddress,
-    RpcFastMap, RpcPendingErrorDelivery, RpcPendingRequest, RpcPendingRequestInit, RpcPendingTable,
-    RpcPendingTimeoutResult, RpcQueuedDispatch, RpcQueuedRequest, RpcRouteState,
+    RpcFastMap, RpcPendingAckDisposition, RpcPendingDispatchInfo, RpcPendingErrorDelivery,
+    RpcPendingRequest, RpcPendingRequestInit, RpcPendingTable, RpcPendingTimeoutResult,
+    RpcQueuedDispatch, RpcQueuedRequest, RpcRequestDispatch, RpcRouteState,
     RpcSessionCleanupResult, RpcWorkerCleanupResult,
 };
 
@@ -11,6 +12,12 @@ pub(in crate::domains::rpc::sink) struct RpcState {
     pub(in crate::domains::rpc::sink) queued: RpcFastMap<uuid::Uuid, RpcQueuedRequest>,
     pub(in crate::domains::rpc::sink) queued_expirations: BinaryHeap<ExpiringPendingRequest>,
 }
+
+enum DispatchAction {
+    Queue,
+    Dispatch(super::RpcWorkerDispatch),
+}
+
 impl RpcState {
     pub(in crate::domains::rpc::sink) fn new() -> Self {
         Self {
@@ -30,6 +37,7 @@ impl RpcState {
             .or_insert_with(RpcRouteState::new)
     }
 
+    #[cfg(test)]
     pub(in crate::domains::rpc::sink) fn route_state(
         &mut self,
         route: &Route,
@@ -111,12 +119,6 @@ impl RpcState {
         }
     }
 
-    pub(in crate::domains::rpc::sink) fn has_registered_workers(&self, route: &Route) -> bool {
-        self.routes
-            .get(route)
-            .is_some_and(|route_state| route_state.worker_count() > 0)
-    }
-
     pub(in crate::domains::rpc::sink) fn contains_correlation(
         &self,
         correlation_id: &uuid::Uuid,
@@ -129,6 +131,7 @@ impl RpcState {
         self.pending.len() + self.queued.len()
     }
 
+    #[cfg(test)]
     pub(in crate::domains::rpc::sink) fn queue_request(
         &mut self,
         correlation_id: uuid::Uuid,
@@ -142,6 +145,87 @@ impl RpcState {
             correlation_id,
         });
         self.queued.insert(correlation_id, request);
+    }
+
+    pub(in crate::domains::rpc::sink) fn dispatch_or_queue_request(
+        &mut self,
+        request: crate::domains::rpc::protocol::RpcRequest,
+        caller_session_id: u64,
+        caller_inbox_addr: RouteAddress,
+        request_timeout: std::time::Duration,
+        route_pending_capacity: usize,
+        global_pending_capacity: usize,
+    ) -> RpcRequestDispatch {
+        if self.contains_correlation(&request.correlation_id) {
+            return RpcRequestDispatch::Duplicate { request };
+        }
+
+        let live_request_count = self.live_request_count();
+        let route = request.route.clone();
+        let Some(route_state) = self.routes.get_mut(&route) else {
+            return RpcRequestDispatch::NoWorkers { request };
+        };
+
+        if route_state.worker_count() == 0 {
+            return RpcRequestDispatch::NoWorkers { request };
+        }
+
+        if live_request_count >= global_pending_capacity {
+            return RpcRequestDispatch::GlobalCapacityFull { request };
+        }
+
+        let correlation_id = request.correlation_id;
+        let action = if route_state.has_queued_requests() || !route_state.has_available_worker() {
+            if route_state.queued_len() >= route_pending_capacity {
+                return RpcRequestDispatch::RouteCapacityFull { request };
+            }
+            route_state.enqueue_request(correlation_id);
+            DispatchAction::Queue
+        } else {
+            let Some(worker) = route_state.claim_worker() else {
+                return RpcRequestDispatch::NoWorkers { request };
+            };
+            DispatchAction::Dispatch(worker)
+        };
+
+        let expires_at = Instant::now() + request_timeout;
+        match action {
+            DispatchAction::Queue => {
+                let queued = RpcQueuedRequest::from_request(
+                    request,
+                    caller_session_id,
+                    caller_inbox_addr,
+                    expires_at,
+                );
+                self.queued_expirations.push(ExpiringPendingRequest {
+                    expires_at,
+                    correlation_id,
+                });
+                self.queued.insert(correlation_id, queued);
+                RpcRequestDispatch::Queued {
+                    route,
+                    correlation_id,
+                    live_request_count: self.live_request_count(),
+                }
+            }
+            DispatchAction::Dispatch(worker) => {
+                self.pending.track_pending(
+                    correlation_id,
+                    RpcPendingRequest::from_dispatch(
+                        &request,
+                        caller_session_id,
+                        caller_inbox_addr,
+                        &worker,
+                        expires_at,
+                    ),
+                );
+                RpcRequestDispatch::Immediate {
+                    request,
+                    worker,
+                    live_request_count: self.live_request_count(),
+                }
+            }
+        }
     }
 
     pub(in crate::domains::rpc::sink) fn remove_queued_request(
@@ -191,6 +275,7 @@ impl RpcState {
             caller_inbox_addr,
             worker_addr: worker.addr.clone(),
             worker_session_id: worker.session_id,
+            worker_slot: worker.slot,
             submitted_at,
             submitted_at_instant,
             expires_at,
@@ -210,7 +295,7 @@ impl RpcState {
     ) -> Option<(RpcPendingRequest, usize)> {
         let pending = self.pending.pending.remove(correlation_id)?;
         if let Some(route_state) = self.routes.get_mut(&pending.route) {
-            route_state.release_worker(&pending.worker_addr, pending.worker_session_id, None);
+            route_state.release_worker_slot(pending.worker_slot, None);
         }
         self.prune_route_if_empty(&pending.route);
         Some((pending, self.live_request_count()))
@@ -222,8 +307,36 @@ impl RpcState {
         latency_us: Option<u64>,
     ) {
         if let Some(route_state) = self.routes.get_mut(&pending.route) {
-            route_state.release_worker(&pending.worker_addr, pending.worker_session_id, latency_us);
+            route_state.release_worker_slot(pending.worker_slot, latency_us);
         }
+    }
+
+    pub(in crate::domains::rpc::sink) fn release_worker_for_dispatch_info(
+        &mut self,
+        pending: &RpcPendingDispatchInfo,
+        latency_us: Option<u64>,
+    ) {
+        if let Some(route_state) = self.routes.get_mut(&pending.route) {
+            route_state.release_worker_slot(pending.worker_slot, latency_us);
+        }
+    }
+
+    pub(in crate::domains::rpc::sink) fn remove_pending_for_ack(
+        &mut self,
+        correlation_id: &uuid::Uuid,
+        worker_session_id: u64,
+    ) -> (RpcPendingAckDisposition, usize) {
+        let disposition = self
+            .pending
+            .remove_for_ack(correlation_id, worker_session_id);
+        if let RpcPendingAckDisposition::Removed(pending) = &disposition {
+            if let Some(route_state) = self.routes.get_mut(&pending.route) {
+                route_state.release_worker_slot(pending.worker_slot, None);
+            }
+            self.prune_route_if_empty(&pending.route);
+        }
+
+        (disposition, self.live_request_count())
     }
 
     pub(in crate::domains::rpc::sink) fn cleanup_queued_session(

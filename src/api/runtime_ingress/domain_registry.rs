@@ -29,6 +29,10 @@ impl IngressDomainDescriptor {
         self.manifest.kind
     }
 
+    pub(crate) fn domain_name(&self) -> &'static str {
+        self.manifest.kind.as_str()
+    }
+
     pub(super) fn extract_auth_route<'a>(
         &self,
         msg_type: u16,
@@ -327,12 +331,31 @@ fn build_stream_request_envelope(request: DomainEnvelopeBuildRequest) -> crate::
 }
 
 fn build_rpc_request_envelope(request: DomainEnvelopeBuildRequest) -> crate::runtime::Envelope {
-    let ctx = frame_context(&request);
-    let meta = client_frame_meta(&request);
-    let parsed =
-        crate::protocol::rpc_codec::parse_request(&ctx, &ctx.payload, request.route_family);
+    let DomainEnvelopeBuildRequest {
+        session_id,
+        channel_id,
+        route_family,
+        msg_type,
+        payload,
+        source,
+        destination,
+    } = request;
+    let ctx = crate::protocol::frame_context::FrameContext::new(
+        session_id,
+        channel_id,
+        msg_type,
+        payload,
+        route_family,
+    );
+    let meta = crate::runtime::ClientFrameMeta::new(
+        session_id,
+        crate::api::frame_adapter::client_channel_from_protocol(channel_id),
+        msg_type.as_u16(),
+        route_family,
+    );
+    let parsed = crate::protocol::rpc_codec::parse_request(&ctx, &ctx.payload, route_family);
     let client_request = crate::domains::rpc::RpcClientRequest::new(meta, parsed);
-    crate::runtime::Envelope::from_route(request.source, request.destination, client_request)
+    crate::runtime::Envelope::from_route(source, destination, client_request)
 }
 
 fn build_lease_request_envelope(request: DomainEnvelopeBuildRequest) -> crate::runtime::Envelope {

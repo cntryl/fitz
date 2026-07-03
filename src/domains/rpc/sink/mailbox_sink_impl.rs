@@ -1,9 +1,9 @@
 use super::state_model::{
     session_inbox_address, DeliveryError, Envelope, Instant, MailboxSink, Ordering,
     RpcClientRequest, RpcClientResponseBody, RpcDeliveryOutcome as DeliveryOutcome, RpcDomainActor,
-    RpcDomainCommand, RpcDomainRuntime, RpcDomainSink, RpcPendingRequest, RpcQueuedRequest,
-    RpcState, RpcWorker, RPC_BACKPRESSURE_ERROR, RPC_DUPLICATE_CORRELATION_ERROR,
-    RPC_MAX_PENDING_REQUESTS, RPC_NO_WORKERS_ERROR, RPC_WORKER_NOT_FOUND_ERROR,
+    RpcDomainCommand, RpcDomainRuntime, RpcDomainSink, RpcWorker, RPC_BACKPRESSURE_ERROR,
+    RPC_DUPLICATE_CORRELATION_ERROR, RPC_MAX_PENDING_REQUESTS, RPC_NO_WORKERS_ERROR,
+    RPC_WORKER_NOT_FOUND_ERROR,
 };
 use crate::domains::rpc::protocol::{RpcMessage, RpcRequest};
 use crate::runtime::{Actor, Context};
@@ -67,14 +67,16 @@ impl RpcDomainSink {
         envelope: Envelope,
         high_priority: bool,
     ) -> Result<(), DeliveryError> {
+        if !high_priority {
+            if !self.actor.is_running() {
+                return Err(DeliveryError::ActorStopped);
+            }
+            return self.runtime().deliver_envelope(&envelope);
+        }
+
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         let command = RpcDomainCommand::Deliver(envelope, reply_tx);
-        let enqueue_result = if high_priority {
-            self.actor.try_send_high_priority(command)
-        } else {
-            self.actor.try_send(command)
-        };
-        enqueue_result?;
+        self.actor.try_send_high_priority(command)?;
 
         reply_rx
             .recv_timeout(std::time::Duration::from_secs(1))
@@ -202,75 +204,55 @@ impl RpcDomainRuntime<'_> {
         meta: &crate::runtime::ClientFrameMeta,
         req: RpcRequest,
     ) -> DeliveryOutcome {
-        self.expire_timed_out_requests();
+        self.expire_timed_out_requests_inline_if_due();
         self.counter_inc("rpc_requests_total");
         let caller_inbox_addr = envelope
             .source()
             .cloned()
             .unwrap_or_else(|| session_inbox_address(meta.route_family, meta.session_id));
 
-        let state_wait_start = Instant::now();
+        let metrics_enabled = self.metrics.is_some();
+        let state_wait_start = metrics_enabled.then(Instant::now);
         let mut state = self.state.lock();
-        let state_wait_us = Self::elapsed_micros_u64(state_wait_start);
-        let state_hold_start = Instant::now();
-        let route_registry_lookup_start = Instant::now();
-        let route_registry_lookup_us = Self::elapsed_micros_u64(route_registry_lookup_start);
-        let duplicate_correlation = state.contains_correlation(&req.correlation_id);
-        let route_exists = state.has_registered_workers(&req.route);
-        let total_live_requests = state.live_request_count();
-        let route_requires_queue = state.route_state(&req.route).is_some_and(|route_state| {
-            route_state.has_queued_requests() || !route_state.has_available_worker()
-        });
-
-        if duplicate_correlation {
-            return self.reject_duplicate_request(
-                req,
-                state,
-                state_hold_start,
-                state_wait_us,
-                route_registry_lookup_us,
-            );
-        }
-        if !route_exists {
-            return self.reject_missing_worker_route(
-                req,
-                state,
-                state_hold_start,
-                state_wait_us,
-                route_registry_lookup_us,
-                0,
-            );
-        }
-        if total_live_requests >= RPC_MAX_PENDING_REQUESTS {
-            return self.reject_pending_capacity(
-                req,
-                state,
-                state_hold_start,
-                state_wait_us,
-                route_registry_lookup_us,
-            );
-        }
-        if route_requires_queue {
-            return self.handle_queued_request_path(
-                meta,
-                req,
-                caller_inbox_addr,
-                state,
-                state_hold_start,
-                state_wait_us,
-                route_registry_lookup_us,
-            );
-        }
-
-        self.handle_immediate_request_dispatch(
-            meta,
+        let state_wait_us = state_wait_start.map_or(0, Self::elapsed_micros_u64);
+        let state_hold_start = metrics_enabled.then(Instant::now);
+        let dispatch = state.dispatch_or_queue_request(
             req,
+            meta.session_id,
             caller_inbox_addr,
-            state,
-            state_hold_start,
-            state_wait_us,
-            route_registry_lookup_us,
-        )
+            self.request_timeout,
+            self.route_pending_capacity,
+            RPC_MAX_PENDING_REQUESTS,
+        );
+        let state_hold_us = state_hold_start.map_or(0, Self::elapsed_micros_u64);
+        drop(state);
+
+        self.observe_request_state_metrics(0, state_wait_us, state_hold_us, 0);
+
+        match dispatch {
+            super::state_model::RpcRequestDispatch::Duplicate { request } => {
+                self.reject_duplicate_request(request)
+            }
+            super::state_model::RpcRequestDispatch::NoWorkers { request } => {
+                self.reject_missing_worker_route(request)
+            }
+            super::state_model::RpcRequestDispatch::GlobalCapacityFull { request } => {
+                self.reject_pending_capacity(request)
+            }
+            super::state_model::RpcRequestDispatch::RouteCapacityFull { request } => {
+                self.reject_route_capacity(request)
+            }
+            super::state_model::RpcRequestDispatch::Queued {
+                route,
+                correlation_id,
+                live_request_count,
+            } => self.accept_queued_request(&route, correlation_id, live_request_count),
+            super::state_model::RpcRequestDispatch::Immediate {
+                request,
+                worker,
+                live_request_count,
+            } => self.forward_immediate_request(request, &worker, live_request_count),
+        }
     }
 
     fn observe_request_state_metrics(
@@ -288,22 +270,7 @@ impl RpcDomainRuntime<'_> {
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    fn reject_duplicate_request(
-        &self,
-        req: RpcRequest,
-        state: parking_lot::MutexGuard<'_, RpcState>,
-        state_hold_start: Instant,
-        state_wait_us: u64,
-        route_registry_lookup_us: u64,
-    ) -> DeliveryOutcome {
-        let state_hold_us = Self::elapsed_micros_u64(state_hold_start);
-        drop(state);
-        self.observe_request_state_metrics(
-            route_registry_lookup_us,
-            state_wait_us,
-            state_hold_us,
-            0,
-        );
+    fn reject_duplicate_request(&self, req: RpcRequest) -> DeliveryOutcome {
         self.counter_inc("rpc_requests_rejected_duplicate_correlation_total");
         tracing::warn!(
             domain = "rpc",
@@ -322,23 +289,7 @@ impl RpcDomainRuntime<'_> {
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    fn reject_missing_worker_route(
-        &self,
-        _req: RpcRequest,
-        state: parking_lot::MutexGuard<'_, RpcState>,
-        state_hold_start: Instant,
-        state_wait_us: u64,
-        route_registry_lookup_us: u64,
-        worker_selection_us: u64,
-    ) -> DeliveryOutcome {
-        let state_hold_us = Self::elapsed_micros_u64(state_hold_start);
-        drop(state);
-        self.observe_request_state_metrics(
-            route_registry_lookup_us,
-            state_wait_us,
-            state_hold_us,
-            worker_selection_us,
-        );
+    fn reject_missing_worker_route(&self, _req: RpcRequest) -> DeliveryOutcome {
         self.counter_inc("rpc_requests_rejected_no_worker_total");
         (
             Some(RpcClientResponseBody::CodeError {
@@ -351,22 +302,7 @@ impl RpcDomainRuntime<'_> {
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    fn reject_pending_capacity(
-        &self,
-        req: RpcRequest,
-        state: parking_lot::MutexGuard<'_, RpcState>,
-        state_hold_start: Instant,
-        state_wait_us: u64,
-        route_registry_lookup_us: u64,
-    ) -> DeliveryOutcome {
-        let state_hold_us = Self::elapsed_micros_u64(state_hold_start);
-        drop(state);
-        self.observe_request_state_metrics(
-            route_registry_lookup_us,
-            state_wait_us,
-            state_hold_us,
-            0,
-        );
+    fn reject_pending_capacity(&self, req: RpcRequest) -> DeliveryOutcome {
         self.counter_inc("rpc_requests_rejected_backpressure_total");
         tracing::warn!(
             domain = "rpc",
@@ -385,80 +321,42 @@ impl RpcDomainRuntime<'_> {
         )
     }
 
-    #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
-    fn handle_queued_request_path(
-        &self,
-        meta: &crate::runtime::ClientFrameMeta,
-        req: RpcRequest,
-        caller_inbox_addr: crate::runtime::routing::RouteAddress,
-        mut state: parking_lot::MutexGuard<'_, RpcState>,
-        state_hold_start: Instant,
-        state_wait_us: u64,
-        route_registry_lookup_us: u64,
-    ) -> DeliveryOutcome {
-        let queued_len = state
-            .route_state(&req.route)
-            .map_or(0, |route_state| route_state.queued_len());
-
-        if queued_len >= self.route_pending_capacity {
-            let state_hold_us = Self::elapsed_micros_u64(state_hold_start);
-            drop(state);
-            self.observe_request_state_metrics(
-                route_registry_lookup_us,
-                state_wait_us,
-                state_hold_us,
-                0,
-            );
-            self.counter_inc("rpc_requests_rejected_backpressure_total");
-            tracing::warn!(
-                domain = "rpc",
-                correlation_id = %req.correlation_id,
-                route = req.route.as_str(),
-                route_pending_capacity = self.route_pending_capacity,
-                "Rejected request because the route-local RPC queue is full"
-            );
-            return (
-                Some(RpcClientResponseBody::CodeError {
-                    code: crate::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
-                    message: RPC_BACKPRESSURE_ERROR.to_string(),
-                }),
-                None,
-                true,
-            );
-        }
-
-        let pending_track_start = Instant::now();
-        let expires_at = Instant::now() + self.request_timeout;
-        state.queue_request(
-            req.correlation_id,
-            RpcQueuedRequest::from_request(
-                req.clone(),
-                meta.session_id,
-                caller_inbox_addr,
-                expires_at,
-            ),
-        );
-        let live_request_count = state.live_request_count() as u64;
-        let pending_track_us = Self::elapsed_micros_u64(pending_track_start);
-        let state_hold_us = Self::elapsed_micros_u64(state_hold_start);
-        drop(state);
-
-        self.observe_request_state_metrics(
-            route_registry_lookup_us,
-            state_wait_us,
-            state_hold_us,
-            0,
-        );
-        self.histogram_observe_us("rpc_pending_track_us", pending_track_us);
-        self.histogram_observe_us("rpc_pending_route_index_us", 0);
-        self.gauge_set("rpc_pending_requests", live_request_count);
-        self.schedule_admin_snapshot(false);
-        self.dispatch_queued_requests_for_route(&req.route);
-
-        tracing::debug!(
+    #[allow(clippy::needless_pass_by_value)]
+    fn reject_route_capacity(&self, req: RpcRequest) -> DeliveryOutcome {
+        self.counter_inc("rpc_requests_rejected_backpressure_total");
+        tracing::warn!(
             domain = "rpc",
             correlation_id = %req.correlation_id,
             route = req.route.as_str(),
+            route_pending_capacity = self.route_pending_capacity,
+            "Rejected request because the route-local RPC queue is full"
+        );
+        (
+            Some(RpcClientResponseBody::CodeError {
+                code: crate::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
+                message: RPC_BACKPRESSURE_ERROR.to_string(),
+            }),
+            None,
+            true,
+        )
+    }
+
+    fn accept_queued_request(
+        &self,
+        route: &crate::runtime::routing::Route,
+        correlation_id: uuid::Uuid,
+        live_request_count: usize,
+    ) -> DeliveryOutcome {
+        self.histogram_observe_us("rpc_pending_track_us", 0);
+        self.histogram_observe_us("rpc_pending_route_index_us", 0);
+        self.gauge_set("rpc_pending_requests", live_request_count as u64);
+        self.schedule_admin_snapshot(false);
+        self.dispatch_queued_requests_for_route(route);
+
+        tracing::debug!(
+            domain = "rpc",
+            correlation_id = %correlation_id,
+            route = route.as_str(),
             live_request_count,
             "Request queued on route-local RPC pending queue"
         );
@@ -470,66 +368,23 @@ impl RpcDomainRuntime<'_> {
         )
     }
 
-    #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
-    fn handle_immediate_request_dispatch(
+    fn forward_immediate_request(
         &self,
-        meta: &crate::runtime::ClientFrameMeta,
         req: RpcRequest,
-        caller_inbox_addr: crate::runtime::routing::RouteAddress,
-        mut state: parking_lot::MutexGuard<'_, RpcState>,
-        state_hold_start: Instant,
-        state_wait_us: u64,
-        route_registry_lookup_us: u64,
+        worker: &super::state_model::RpcWorkerDispatch,
+        live_request_count: usize,
     ) -> DeliveryOutcome {
-        let worker_selection_start = Instant::now();
-        let selected_worker = state
-            .route_state(&req.route)
-            .and_then(super::state_model::RpcRouteState::claim_worker);
-        let worker_selection_us = Self::elapsed_micros_u64(worker_selection_start);
-
-        let Some(worker) = selected_worker else {
-            return self.reject_missing_worker_route(
-                req,
-                state,
-                state_hold_start,
-                state_wait_us,
-                route_registry_lookup_us,
-                worker_selection_us,
-            );
-        };
-
-        let expires_at = Instant::now() + self.request_timeout;
-        let pending_track_start = Instant::now();
-        state.pending.track_pending(
-            req.correlation_id,
-            RpcPendingRequest::from_dispatch(
-                &req,
-                meta.session_id,
-                caller_inbox_addr,
-                worker.addr.clone(),
-                worker.session_id,
-                expires_at,
-            ),
-        );
-        let live_request_count = state.live_request_count() as u64;
-        let pending_track_us = Self::elapsed_micros_u64(pending_track_start);
-        let state_hold_us = Self::elapsed_micros_u64(state_hold_start);
-        drop(state);
-
-        self.observe_request_state_metrics(
-            route_registry_lookup_us,
-            state_wait_us,
-            state_hold_us,
-            worker_selection_us,
-        );
-        self.histogram_observe_us("rpc_pending_track_us", pending_track_us);
+        self.histogram_observe_us("rpc_pending_track_us", 0);
         self.histogram_observe_us("rpc_pending_route_index_us", 0);
-        self.gauge_set("rpc_pending_requests", live_request_count);
+        self.gauge_set("rpc_pending_requests", live_request_count as u64);
         self.schedule_admin_snapshot(false);
 
-        let request_forward_start = Instant::now();
-        let forward_result = self.forward_request_to_worker(&req, &worker);
-        self.histogram_observe_elapsed_us("rpc_request_forward_us", request_forward_start);
+        let metrics_enabled = self.metrics.is_some();
+        let request_forward_start = metrics_enabled.then(Instant::now);
+        let forward_result = self.forward_request_to_worker(&req, worker);
+        if let Some(request_forward_start) = request_forward_start {
+            self.histogram_observe_elapsed_us("rpc_request_forward_us", request_forward_start);
+        }
 
         match forward_result {
             Ok(()) => {

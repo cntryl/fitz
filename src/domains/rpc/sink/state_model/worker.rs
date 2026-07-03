@@ -1,4 +1,4 @@
-use super::{RouteAddress, Utc};
+use super::{DateTime, RouteAddress, Utc};
 
 #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
 #[derive(Clone)]
@@ -6,11 +6,37 @@ pub(in crate::domains::rpc::sink) struct RpcWorker {
     pub(in crate::domains::rpc::sink) addr: RouteAddress,
     pub(in crate::domains::rpc::sink) inbox_addr: RouteAddress,
     pub(in crate::domains::rpc::sink) session_id: u64,
-    pub(in crate::domains::rpc::sink) registered_at: String,
+    pub(in crate::domains::rpc::sink) registered_at: DateTime<Utc>,
     pub(in crate::domains::rpc::sink) requests_handled: u64,
     pub(in crate::domains::rpc::sink) total_latency_us: u64,
     pub(in crate::domains::rpc::sink) in_flight: usize,
     pub(in crate::domains::rpc::sink) max_concurrent: usize,
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(in crate::domains::rpc::sink) struct RpcWorkerKey {
+    pub(in crate::domains::rpc::sink) addr: RouteAddress,
+    pub(in crate::domains::rpc::sink) session_id: u64,
+}
+
+pub(in crate::domains::rpc::sink) struct RpcWorkerDispatch {
+    pub(in crate::domains::rpc::sink) addr: RouteAddress,
+    pub(in crate::domains::rpc::sink) inbox_addr: RouteAddress,
+    pub(in crate::domains::rpc::sink) session_id: u64,
+    pub(in crate::domains::rpc::sink) slot: usize,
+}
+
+impl RpcWorkerKey {
+    pub(in crate::domains::rpc::sink) fn new(addr: RouteAddress, session_id: u64) -> Self {
+        Self { addr, session_id }
+    }
+
+    pub(in crate::domains::rpc::sink) fn from_parts(addr: &RouteAddress, session_id: u64) -> Self {
+        Self {
+            addr: addr.clone(),
+            session_id,
+        }
+    }
 }
 
 impl RpcWorker {
@@ -23,7 +49,7 @@ impl RpcWorker {
             addr,
             inbox_addr,
             session_id,
-            registered_at: Utc::now().to_rfc3339(),
+            registered_at: Utc::now(),
             requests_handled: 0,
             total_latency_us: 0,
             in_flight: 0,
@@ -40,11 +66,15 @@ impl RpcWorker {
         requests_handled: u64,
         total_latency_us: u64,
     ) -> Self {
+        let registered_at = registered_at.into();
+        let registered_at = chrono::DateTime::parse_from_rfc3339(&registered_at)
+            .expect("test RPC worker timestamp must be RFC3339")
+            .with_timezone(&Utc);
         Self {
             addr,
             inbox_addr,
             session_id,
-            registered_at: registered_at.into(),
+            registered_at,
             requests_handled,
             total_latency_us,
             in_flight: 0,
@@ -67,6 +97,21 @@ impl RpcWorker {
     pub(in crate::domains::rpc::sink) fn record_completion(&mut self, latency_us: u64) {
         self.requests_handled = self.requests_handled.saturating_add(1);
         self.total_latency_us = self.total_latency_us.saturating_add(latency_us);
+    }
+
+    #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
+    pub(in crate::domains::rpc::sink) fn registered_at_rfc3339(&self) -> String {
+        self.registered_at
+            .to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
+    }
+
+    pub(in crate::domains::rpc::sink) fn dispatch_view(&self, slot: usize) -> RpcWorkerDispatch {
+        RpcWorkerDispatch {
+            addr: self.addr.clone(),
+            inbox_addr: self.inbox_addr.clone(),
+            session_id: self.session_id,
+            slot,
+        }
     }
 
     #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
