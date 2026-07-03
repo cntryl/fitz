@@ -346,6 +346,24 @@ struct QueueMetaSnapshot {
     oldest_ready_enqueued_at_ms: Option<u64>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct QueueActorLiveCounts {
+    pub(crate) ready: usize,
+    pub(crate) delayed: usize,
+    pub(crate) inflight: usize,
+    pub(crate) dead_letters: usize,
+}
+
+impl QueueActorLiveCounts {
+    #[must_use]
+    pub(crate) fn total(self) -> usize {
+        self.ready
+            .saturating_add(self.delayed)
+            .saturating_add(self.inflight)
+            .saturating_add(self.dead_letters)
+    }
+}
+
 impl PartialOrd for DelayedMessage {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))

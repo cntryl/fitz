@@ -155,6 +155,13 @@ pub(super) fn watch_response_subscription_id(frame: &FrameContext) -> u64 {
 }
 
 pub(super) fn decode_queue_watch_delivery(frame: &FrameContext) -> (u64, String, u64) {
+    let (subscription_id, route, ready_messages, _, _) = decode_queue_watch_delivery_counts(frame);
+    (subscription_id, route, ready_messages)
+}
+
+pub(super) fn decode_queue_watch_delivery_counts(
+    frame: &FrameContext,
+) -> (u64, String, u64, u64, u64) {
     let subscription_id = u64::from_be_bytes(frame.payload[0..8].try_into().unwrap());
     let route_len = usize::try_from(u32::from_be_bytes(frame.payload[8..12].try_into().unwrap()))
         .expect("route length should fit in usize");
@@ -162,7 +169,167 @@ pub(super) fn decode_queue_watch_delivery(frame: &FrameContext) -> (u64, String,
         .expect("queue watch route should be utf-8");
     let offset = 12 + route_len;
     let ready_messages = u64::from_be_bytes(frame.payload[offset..offset + 8].try_into().unwrap());
-    (subscription_id, route, ready_messages)
+    let delayed_messages =
+        u64::from_be_bytes(frame.payload[offset + 8..offset + 16].try_into().unwrap());
+    let inflight_messages =
+        u64::from_be_bytes(frame.payload[offset + 16..offset + 24].try_into().unwrap());
+    (
+        subscription_id,
+        route,
+        ready_messages,
+        delayed_messages,
+        inflight_messages,
+    )
+}
+
+struct QueueWatchHarness {
+    family: RouteFamily,
+    queue_address: RouteAddress,
+    watcher_address: RouteAddress,
+    sender_address: RouteAddress,
+    worker_address: RouteAddress,
+    watcher_mailbox: Arc<Mailbox>,
+    sender_mailbox: Arc<Mailbox>,
+    worker_mailbox: Arc<Mailbox>,
+    sink: QueueDomainSink,
+}
+
+impl QueueWatchHarness {
+    fn new() -> Self {
+        let family = RouteFamily::new(1);
+        let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+        let watcher_address = RouteAddress::new(family, Route::new("inbox://session/1"));
+        let sender_address = RouteAddress::new(family, Route::new("inbox://session/2"));
+        let worker_address = RouteAddress::new(family, Route::new("inbox://session/3"));
+        let watcher_mailbox = Arc::new(Mailbox::new(16));
+        let sender_mailbox = Arc::new(Mailbox::new(16));
+        let worker_mailbox = Arc::new(Mailbox::new(16));
+        let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+        let router = Arc::new(Router::new());
+        router.register(watcher_address.clone(), watcher_mailbox.clone());
+        router.register(sender_address.clone(), sender_mailbox.clone());
+        router.register(worker_address.clone(), worker_mailbox.clone());
+        let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+        let sink = new_queue_domain_sink(
+            store,
+            router,
+            admin_read_model,
+            cntryl_midge::WriteOptions::best_effort(),
+        );
+
+        Self {
+            family,
+            queue_address,
+            watcher_address,
+            sender_address,
+            worker_address,
+            watcher_mailbox,
+            sender_mailbox,
+            worker_mailbox,
+            sink,
+        }
+    }
+
+    fn watch(&self, pattern: &str) -> u64 {
+        self.sink
+            .deliver(Envelope::from_route(
+                self.watcher_address.clone(),
+                self.queue_address.clone(),
+                FrameContext::new(
+                    1,
+                    ChannelId::Pub,
+                    MessageType::new(207),
+                    encode_queue_watch(pattern),
+                    self.family,
+                ),
+            ))
+            .expect("watch queue readiness");
+        let frame = receive_queue_frame(&self.watcher_mailbox, "watch response");
+        watch_response_subscription_id(&frame)
+    }
+
+    fn send(&self, route: &str, body: &[u8]) {
+        self.sink
+            .deliver(Envelope::from_route(
+                self.sender_address.clone(),
+                self.queue_address.clone(),
+                FrameContext::new(
+                    2,
+                    ChannelId::Pub,
+                    MessageType::new(200),
+                    encode_queue_send(route, body),
+                    self.family,
+                ),
+            ))
+            .expect("enqueue watched queue message");
+        let response = receive_queue_frame(&self.sender_mailbox, "send response");
+        assert_eq!(response.msg_type.as_u16(), 200);
+    }
+
+    fn send_delayed(&self, route: &str, body: &[u8], delay_seconds: u64) {
+        self.sink
+            .deliver(Envelope::from_route(
+                self.sender_address.clone(),
+                self.queue_address.clone(),
+                FrameContext::new(
+                    2,
+                    ChannelId::Pub,
+                    MessageType::new(200),
+                    encode_queue_send_with_delay(route, body, delay_seconds),
+                    self.family,
+                ),
+            ))
+            .expect("enqueue delayed watched queue message");
+        let response = receive_queue_frame(&self.sender_mailbox, "delayed send response");
+        assert_eq!(response.msg_type.as_u16(), 200);
+    }
+
+    fn reserve_one(&self, route: &str) -> (u64, u64) {
+        self.sink
+            .deliver(Envelope::from_route(
+                self.worker_address.clone(),
+                self.queue_address.clone(),
+                FrameContext::new(
+                    3,
+                    ChannelId::Pub,
+                    MessageType::new(202),
+                    encode_queue_reserve(route, 30, 1),
+                    self.family,
+                ),
+            ))
+            .expect("reserve watched queue message");
+        let response = receive_queue_frame(&self.worker_mailbox, "reserve response");
+        assert_eq!(response.msg_type.as_u16(), 202);
+        receive_response_first_message(&response)
+    }
+
+    fn complete(&self, route: &str, id: u64, token: u64) {
+        self.sink
+            .deliver(Envelope::from_route(
+                self.worker_address.clone(),
+                self.queue_address.clone(),
+                FrameContext::new(
+                    3,
+                    ChannelId::Pub,
+                    MessageType::new(204),
+                    encode_queue_ack(route, id, token),
+                    self.family,
+                ),
+            ))
+            .expect("complete watched queue message");
+        let response = receive_queue_frame(&self.worker_mailbox, "complete response");
+        assert_eq!(response.msg_type.as_u16(), 204);
+    }
+
+    fn next_watch_notification(&self) -> (u64, String, u64, u64, u64) {
+        let notify = receive_queue_frame(&self.watcher_mailbox, "queue watch notify");
+        assert_eq!(notify.msg_type.as_u16(), 209);
+        decode_queue_watch_delivery_counts(&notify)
+    }
+
+    fn assert_no_watch_notification(&self) {
+        assert!(self.watcher_mailbox.receiver().try_recv().is_err());
+    }
 }
 
 pub(super) fn force_actor_idle(sink: &QueueDomainSink, queue_route: &str, family: RouteFamily) {
@@ -576,6 +743,96 @@ pub(super) fn should_notify_queue_watch_given_queue_send_when_queue_transitions_
     assert_eq!(delivered_route, "queue://realm/area/resource/ready");
     assert_eq!(ready_messages, 1);
     assert!(receiver_mailbox.receiver().try_recv().is_err());
+}
+
+#[test]
+pub(super) fn should_emit_ready_notification_with_counts_given_first_enqueue_on_watched_queue() {
+    // Arrange
+    let harness = QueueWatchHarness::new();
+    let queue_route = "queue://acme/jobs/emails";
+    let subscription_id = harness.watch("queue://acme/jobs/emails/ready");
+
+    // Act
+    harness.send(queue_route, b"email");
+    let (delivered_subscription_id, delivered_route, ready, delayed, inflight) =
+        harness.next_watch_notification();
+
+    // Assert
+    assert_eq!(delivered_subscription_id, subscription_id);
+    assert_eq!(delivered_route, "queue://acme/jobs/emails/ready");
+    assert_eq!(ready, 1);
+    assert_eq!(delayed, 0);
+    assert_eq!(inflight, 0);
+    harness.assert_no_watch_notification();
+}
+
+#[test]
+pub(super) fn should_not_emit_duplicate_ready_notification_given_enqueue_while_already_ready() {
+    // Arrange
+    let harness = QueueWatchHarness::new();
+    let queue_route = "queue://acme/jobs/emails";
+    harness.watch("queue://acme/jobs/emails/ready");
+    harness.send(queue_route, b"first");
+    let _initial_ready = harness.next_watch_notification();
+
+    // Act
+    harness.send(queue_route, b"second");
+
+    // Assert
+    harness.assert_no_watch_notification();
+}
+
+#[test]
+pub(super) fn should_emit_ready_notification_after_queue_returns_to_empty() {
+    // Arrange
+    let harness = QueueWatchHarness::new();
+    let queue_route = "queue://acme/jobs/emails";
+    let subscription_id = harness.watch("queue://acme/jobs/emails/ready");
+    harness.send(queue_route, b"first");
+    let _initial_ready = harness.next_watch_notification();
+    let (id, token) = harness.reserve_one(queue_route);
+    harness.complete(queue_route, id, token);
+
+    // Act
+    harness.send(queue_route, b"second");
+    let (delivered_subscription_id, delivered_route, ready, delayed, inflight) =
+        harness.next_watch_notification();
+
+    // Assert
+    assert_eq!(delivered_subscription_id, subscription_id);
+    assert_eq!(delivered_route, "queue://acme/jobs/emails/ready");
+    assert_eq!(ready, 1);
+    assert_eq!(delayed, 0);
+    assert_eq!(inflight, 0);
+    harness.assert_no_watch_notification();
+}
+
+#[test]
+pub(super) fn should_delay_ready_notification_until_delayed_message_is_promoted() {
+    // Arrange
+    let harness = QueueWatchHarness::new();
+    let queue_route = "queue://acme/jobs/emails";
+    let subscription_id = harness.watch("queue://acme/jobs/emails/ready");
+
+    // Act
+    harness.send_delayed(queue_route, b"later", 1);
+
+    // Assert
+    harness.assert_no_watch_notification();
+
+    // Act
+    std::thread::sleep(Duration::from_millis(1_100));
+    harness.sink.sweep_runtime_state();
+    let (delivered_subscription_id, delivered_route, ready, delayed, inflight) =
+        harness.next_watch_notification();
+
+    // Assert
+    assert_eq!(delivered_subscription_id, subscription_id);
+    assert_eq!(delivered_route, "queue://acme/jobs/emails/ready");
+    assert_eq!(ready, 1);
+    assert_eq!(delayed, 0);
+    assert_eq!(inflight, 0);
+    harness.assert_no_watch_notification();
 }
 
 #[test]

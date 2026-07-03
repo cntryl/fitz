@@ -183,6 +183,9 @@ impl QueueActor {
                     visible_at,
                     visible_at_ms,
                 }));
+                if visible_at < self.next_delayed_deadline {
+                    self.next_delayed_deadline = visible_at;
+                }
             }
         }
         for id in plan.staged_ready_ids {
@@ -341,6 +344,9 @@ impl QueueActor {
                 visible_at,
                 visible_at_ms,
             }));
+            if visible_at < self.next_delayed_deadline {
+                self.next_delayed_deadline = visible_at;
+            }
             self.insert_persisted_delayed(id, visible_at_ms);
         }
         if !self.index_meta_written {

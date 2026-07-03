@@ -1,5 +1,6 @@
 use super::routing_watch_and_admin::{encode_queue_send, new_queue_domain_sink};
 use super::*;
+use crate::domains::queue::QueueAdminSnapshot;
 
 #[derive(Clone)]
 struct DlqSeedClock {

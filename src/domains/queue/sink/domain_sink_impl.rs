@@ -1,9 +1,9 @@
 use super::model::{
     AtomicBool, AtomicU64, Duration, Envelope, HashMap, HashSet, Instant, Mutex, Ordering,
-    QueueAdminProjection, QueueAdminSnapshot, QueueDomainActor, QueueDomainCommand,
-    QueueDomainCore, QueueDomainRuntime, QueueDomainSink, QueueLiveCounts, QueueMetrics,
-    QueueNotification, QueueProjectionEntry, QueueProjectionState, QueueReadyNotification, Router,
-    WarmQueueActor, QUEUE_ACTOR_IDLE_TTL, QUEUE_DEDUP_SWEEP_INTERVAL, QUEUE_IDLE_SWEEP_INTERVAL,
+    QueueAdminProjection, QueueDomainActor, QueueDomainCommand, QueueDomainCore,
+    QueueDomainRuntime, QueueDomainSink, QueueLiveCounts, QueueMetrics, QueueNotification,
+    QueueProjectionEntry, QueueProjectionState, QueueReadyNotification, Router, WarmQueueActor,
+    QUEUE_ACTOR_IDLE_TTL, QUEUE_DEDUP_SWEEP_INTERVAL, QUEUE_IDLE_SWEEP_INTERVAL,
 };
 #[cfg(test)]
 use crate::protocol::frame_context::FrameContext;
@@ -187,7 +187,7 @@ impl QueueDomainSink {
         &self,
         family: crate::runtime::routing::RouteFamily,
         queue_route: &str,
-    ) -> QueueAdminSnapshot {
+    ) -> crate::domains::queue::QueueAdminSnapshot {
         let key = crate::domains::queue::QueueKey::from_route(
             family,
             &crate::runtime::routing::Route::new(queue_route),
@@ -476,13 +476,13 @@ impl QueueDomainCore {
     pub(super) fn record_ready_state(
         &self,
         key: &crate::domains::queue::QueueKey,
-        snapshot: QueueAdminSnapshot,
+        counts: crate::domains::queue::QueueActorLiveCounts,
     ) -> Option<QueueReadyNotification> {
-        let is_ready = snapshot.messages_ready > 0;
+        let is_ready = counts.ready > 0;
         let mut ready_states = self.ready_states.lock();
         let was_ready = ready_states.get(key).copied().unwrap_or(false);
 
-        if snapshot.messages_total == 0 && snapshot.messages_inflight == 0 {
+        if counts.total() == 0 {
             ready_states.remove(key);
         } else {
             ready_states.insert(key.clone(), is_ready);
@@ -491,7 +491,7 @@ impl QueueDomainCore {
         if !was_ready && is_ready {
             Some(QueueReadyNotification {
                 family_id: key.family,
-                snapshot,
+                counts,
             })
         } else {
             None
@@ -504,7 +504,7 @@ impl QueueDomainCore {
         subscription_id: u64,
         subscriber: &crate::runtime::routing::RouteAddress,
         route: &crate::runtime::routing::Route,
-        snapshot: QueueAdminSnapshot,
+        counts: crate::domains::queue::QueueActorLiveCounts,
     ) {
         #[cfg(test)]
         {
@@ -512,9 +512,9 @@ impl QueueDomainCore {
                 subscription_id,
                 route,
                 QueueNotification {
-                    ready_messages: snapshot.messages_ready as u64,
-                    delayed_messages: snapshot.messages_delayed as u64,
-                    inflight_messages: snapshot.messages_inflight as u64,
+                    ready_messages: counts.ready as u64,
+                    delayed_messages: counts.delayed as u64,
+                    inflight_messages: counts.inflight as u64,
                 },
             );
             let notify_ctx = FrameContext::new(
@@ -540,9 +540,9 @@ impl QueueDomainCore {
                 subscription_id,
                 route.clone(),
                 QueueNotification {
-                    ready_messages: snapshot.messages_ready as u64,
-                    delayed_messages: snapshot.messages_delayed as u64,
-                    inflight_messages: snapshot.messages_inflight as u64,
+                    ready_messages: counts.ready as u64,
+                    delayed_messages: counts.delayed as u64,
+                    inflight_messages: counts.inflight as u64,
                 },
             );
             let notify_envelope = Envelope::new(subscriber.clone(), notification);
@@ -566,7 +566,7 @@ impl QueueDomainCore {
                     subscription.subscription_id,
                     &subscription.subscriber,
                     &route,
-                    notification.snapshot,
+                    notification.counts,
                 );
             });
         }
@@ -585,21 +585,20 @@ impl QueueDomainCore {
             .iter()
             .filter(|(key, _)| key.family == family_id)
             .filter_map(|(key, warm_actor)| {
-                let snapshot = warm_actor.actor.lock().admin_snapshot();
+                let counts = warm_actor.actor.lock().live_counts();
                 let route = Self::queue_ready_route(key);
-                (snapshot.messages_ready > 0 && pattern.matches(&route))
-                    .then_some((route, snapshot))
+                (counts.ready > 0 && pattern.matches(&route)).then_some((route, counts))
             })
             .collect();
         drop(actors);
 
-        for (route, snapshot) in ready_snapshots {
+        for (route, counts) in ready_snapshots {
             self.route_queue_notify_to_subscription(
                 session_id,
                 subscription_id,
                 subscriber,
                 &route,
-                snapshot,
+                counts,
             );
         }
     }
@@ -753,9 +752,10 @@ impl QueueDomainCore {
 
     pub(super) fn refresh_metrics_gauges(&self) {
         if let Some(metrics) = &self.metrics {
-            metrics.set_ready_messages(self.ready_message_count());
-            metrics.set_delayed_messages(self.delayed_message_count());
-            metrics.set_inflight_messages(self.active_inflight_count());
+            let counts = self.live_counts();
+            metrics.set_ready_messages(counts.ready);
+            metrics.set_delayed_messages(counts.delayed);
+            metrics.set_inflight_messages(counts.inflight);
         }
     }
 
@@ -842,19 +842,18 @@ impl QueueDomainCore {
             actor.process_due_work();
             let ready_after = actor.ready_len();
             let inflight_after = actor.inflight.len();
-            let snapshot = actor.admin_snapshot();
+            let counts = actor.live_counts();
             if ready_before != ready_after || inflight_before != inflight_after {
                 changed = true;
             }
 
-            if let Some(notification) = self.record_ready_state(key, snapshot) {
+            if let Some(notification) = self.record_ready_state(key, counts) {
                 notifications.push((key.clone(), notification));
             }
 
             let idle_for = now.saturating_duration_since(warm_actor.last_used);
-            let should_keep = idle_for < QUEUE_ACTOR_IDLE_TTL
-                || snapshot.messages_delayed > 0
-                || snapshot.messages_inflight > 0;
+            let should_keep =
+                idle_for < QUEUE_ACTOR_IDLE_TTL || counts.delayed > 0 || counts.inflight > 0;
             if !should_keep {
                 changed = true;
                 removed_keys.push(key.clone());
@@ -888,7 +887,7 @@ impl QueueDomainCore {
             let mut actor = warm_actor.actor.lock();
             if actor.cleanup_session_inflight(session_id) > 0 {
                 released_any = true;
-                if let Some(notification) = self.record_ready_state(key, actor.admin_snapshot()) {
+                if let Some(notification) = self.record_ready_state(key, actor.live_counts()) {
                     notifications.push((key.clone(), notification));
                 }
             }
@@ -920,53 +919,21 @@ impl QueueDomainCore {
         );
     }
 
-    pub(super) fn pending_message_count(&self) -> usize {
+    pub(super) fn live_counts(&self) -> QueueLiveCounts {
         let actors = self.actors.lock();
-        actors
-            .values()
-            .map(|warm_actor| {
-                let snapshot = warm_actor.actor.lock().admin_snapshot();
-                snapshot.messages_ready + snapshot.messages_delayed
-            })
-            .sum()
-    }
+        let mut counts = QueueLiveCounts::default();
 
-    pub(super) fn ready_message_count(&self) -> usize {
-        let actors = self.actors.lock();
-        actors
-            .values()
-            .map(|warm_actor| warm_actor.actor.lock().admin_snapshot().messages_ready)
-            .sum()
-    }
-
-    pub(super) fn delayed_message_count(&self) -> usize {
-        let actors = self.actors.lock();
-        actors
-            .values()
-            .map(|warm_actor| warm_actor.actor.lock().admin_snapshot().messages_delayed)
-            .sum()
-    }
-
-    pub(super) fn active_inflight_count(&self) -> usize {
-        let actors = self.actors.lock();
-        actors
-            .values()
-            .map(|warm_actor| warm_actor.actor.lock().inflight.len())
-            .sum()
-    }
-
-    pub(super) fn dead_letter_count(&self) -> usize {
-        let actors = self.actors.lock();
-        actors
-            .values()
-            .map(|warm_actor| {
-                warm_actor
-                    .actor
-                    .lock()
-                    .admin_snapshot()
-                    .messages_dead_lettered
-            })
-            .sum()
+        for warm_actor in actors.values() {
+            let actor_counts = warm_actor.actor.lock().live_counts();
+            counts.ready = counts.ready.saturating_add(actor_counts.ready);
+            counts.delayed = counts.delayed.saturating_add(actor_counts.delayed);
+            counts.inflight = counts.inflight.saturating_add(actor_counts.inflight);
+            counts.dead_letters = counts
+                .dead_letters
+                .saturating_add(actor_counts.dead_letters);
+        }
+        counts.pending = counts.ready.saturating_add(counts.delayed);
+        counts
     }
 
     /// Replays a dead-lettered message back into its queue.
@@ -987,8 +954,8 @@ impl QueueDomainCore {
 
         if matches!(result, Ok(true)) {
             self.mark_fast_flush_dirty(key.family);
-            let snapshot = actor_handle.lock().admin_snapshot();
-            let notification = self.record_ready_state(key, snapshot);
+            let counts = actor_handle.lock().live_counts();
+            let notification = self.record_ready_state(key, counts);
             self.mark_admin_snapshot_dirty();
             if let Some(notification) = notification {
                 self.route_queue_ready_notification(key, notification);
@@ -998,7 +965,7 @@ impl QueueDomainCore {
         if created_actor {
             let should_remove = {
                 let actor = actor_handle.lock();
-                actor.admin_snapshot().messages_total == 0 && actor.inflight.is_empty()
+                actor.live_counts().total() == 0
             };
             if should_remove {
                 self.actors.lock().remove(key);
@@ -1034,7 +1001,7 @@ impl QueueDomainCore {
         if created_actor {
             let should_remove = {
                 let actor = actor_handle.lock();
-                actor.admin_snapshot().messages_total == 0 && actor.inflight.is_empty()
+                actor.live_counts().total() == 0
             };
             if should_remove {
                 self.actors.lock().remove(key);

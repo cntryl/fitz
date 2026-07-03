@@ -1,6 +1,6 @@
 pub(super) use crate::domains::queue::{
     projection::{QueueAdminProjection, QueueProjectionEntry, QueueProjectionState},
-    MessageId, QueueAdminSnapshot, QueueClientFrame, QueueClientRequest, QueueKey, QueueMetrics,
+    MessageId, QueueActorLiveCounts, QueueClientFrame, QueueClientRequest, QueueKey, QueueMetrics,
     QueueNotification, QueueSubscriptionMessage,
 };
 pub(super) use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
@@ -43,7 +43,7 @@ impl RoutedSubscription for QueueSubscription {
 #[derive(Clone, Copy)]
 pub(super) struct QueueReadyNotification {
     pub(super) family_id: crate::runtime::routing::RouteFamily,
-    pub(super) snapshot: QueueAdminSnapshot,
+    pub(super) counts: QueueActorLiveCounts,
 }
 
 pub(super) const QUEUE_ACTOR_IDLE_TTL: Duration = Duration::from_mins(5);

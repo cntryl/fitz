@@ -150,6 +150,7 @@ pub mod sink;
 
 pub use crate::runtime::clock::{Clock, SystemClock};
 pub use actor::QueueActor;
+pub(crate) use actor::QueueActorLiveCounts;
 pub use core::{MessageId, QueueKey, ReservedMessage};
 pub use metrics::QueueMetrics;
 pub use projection::{QueueAdminSnapshot, QueueDeadLetterSnapshot, QueueInflightSnapshot};

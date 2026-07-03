@@ -116,13 +116,7 @@ impl QueueDomainRuntime<'_> {
     }
 
     fn live_counts(&self) -> QueueLiveCounts {
-        QueueLiveCounts {
-            pending: self.core.pending_message_count(),
-            ready: self.core.ready_message_count(),
-            delayed: self.core.delayed_message_count(),
-            inflight: self.core.active_inflight_count(),
-            dead_letters: self.core.dead_letter_count(),
-        }
+        self.core.live_counts()
     }
 
     fn cleanup_session(&self, session_id: u64) {
@@ -614,7 +608,7 @@ impl QueueDomainCore {
         let actor_exec_start = Instant::now();
         actor.process_due_work();
         let response = operation(&mut actor);
-        let notification = self.record_ready_state(key, actor.admin_snapshot());
+        let notification = self.record_ready_state(key, actor.live_counts());
         self.observe_histogram_us(
             obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
             Self::u128_to_u64_saturating(actor_exec_start.elapsed().as_micros()),

@@ -1,6 +1,6 @@
 use super::{
-    DlqReason, MessageId, QueueActor, QueueAdminSnapshot, QueueDeadLetterSnapshot,
-    QueueInflightSnapshot, QueueState,
+    DlqReason, MessageId, QueueActor, QueueActorLiveCounts, QueueAdminSnapshot,
+    QueueDeadLetterSnapshot, QueueInflightSnapshot, QueueState,
 };
 use crate::control::admin::QueueAgeBuckets;
 
@@ -8,6 +8,16 @@ impl QueueActor {
     #[must_use]
     pub fn ready_len(&self) -> usize {
         self.ready.len()
+    }
+
+    #[must_use]
+    pub(crate) fn live_counts(&self) -> QueueActorLiveCounts {
+        QueueActorLiveCounts {
+            ready: self.ready_count,
+            delayed: self.persisted_delayed.len(),
+            inflight: self.inflight.len(),
+            dead_letters: self.persisted_dlq.len(),
+        }
     }
 
     fn backlog_age_metrics(&self, now_epoch_ms: u64) -> (QueueAgeBuckets, u64) {
