@@ -7,6 +7,20 @@ pub(super) fn assert_rpc_code_error(payload: &[u8], expected_code: u16, expected
     assert_eq!(message, expected_message);
 }
 
+pub(super) fn assert_rpc_terminal_code_error(
+    frame: &FrameContext,
+    expected_correlation_id: uuid::Uuid,
+    expected_code: u16,
+    expected_message: &str,
+) {
+    assert_eq!(frame.msg_type.as_u16(), 303);
+    let response = parse_forwarded_rpc_response(frame);
+    assert_eq!(response.correlation_id, expected_correlation_id);
+    assert_eq!(response.seq, 0);
+    assert!(response.stream_end);
+    assert_rpc_code_error(&response.body, expected_code, expected_message);
+}
+
 pub(super) fn parse_forwarded_rpc_response(
     frame: &FrameContext,
 ) -> crate::domains::rpc::protocol::RpcResponse {
@@ -245,6 +259,87 @@ pub(super) fn should_claim_workers_in_registration_order_given_route_local_rpc_s
     // Assert
     assert_eq!(first, Some(10));
     assert_eq!(second, Some(11));
+}
+
+#[test]
+pub(super) fn should_consume_worker_credit_before_fanning_out_given_route_local_rpc_state() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let route = Route::new("rpc://bench/system/resource/operation");
+    let mut route_state = RpcRouteState::new();
+    route_state.register_worker(RpcWorker::new(
+        RouteAddress::new(family, route.clone()),
+        session_inbox_address(family, 10),
+        10,
+        2,
+    ));
+    route_state.register_worker(RpcWorker::new(
+        RouteAddress::new(family, route.clone()),
+        session_inbox_address(family, 11),
+        11,
+        1,
+    ));
+
+    // Act
+    let first = route_state.claim_worker().map(|worker| worker.session_id);
+    let second = route_state.claim_worker().map(|worker| worker.session_id);
+    let third = route_state.claim_worker().map(|worker| worker.session_id);
+
+    // Assert
+    assert_eq!(first, Some(10));
+    assert_eq!(second, Some(10));
+    assert_eq!(third, Some(11));
+}
+
+#[test]
+pub(super) fn should_rotate_one_credit_workers_after_release_given_route_local_rpc_state() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let route = Route::new("rpc://bench/system/resource/operation");
+    let mut route_state = RpcRouteState::new();
+    route_state.register_worker(test_rpc_worker(family, &route, 10));
+    route_state.register_worker(test_rpc_worker(family, &route, 11));
+
+    // Act
+    let first = route_state.claim_worker().expect("first worker");
+    route_state.release_worker_slot(first.slot, None);
+    let second = route_state.claim_worker().expect("second worker");
+
+    // Assert
+    assert_eq!(first.session_id, 10);
+    assert_eq!(second.session_id, 11);
+}
+
+#[test]
+pub(super) fn should_restore_multi_credit_worker_priority_after_release_given_route_local_rpc_state(
+) {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let route = Route::new("rpc://bench/system/resource/operation");
+    let mut route_state = RpcRouteState::new();
+    route_state.register_worker(RpcWorker::new(
+        RouteAddress::new(family, route.clone()),
+        session_inbox_address(family, 10),
+        10,
+        2,
+    ));
+    route_state.register_worker(RpcWorker::new(
+        RouteAddress::new(family, route.clone()),
+        session_inbox_address(family, 11),
+        11,
+        1,
+    ));
+
+    // Act
+    let first = route_state.claim_worker().expect("first credit");
+    let second = route_state.claim_worker().expect("second credit");
+    route_state.release_worker_slot(second.slot, None);
+    let third = route_state.claim_worker().expect("restored credit");
+
+    // Assert
+    assert_eq!(first.session_id, 10);
+    assert_eq!(second.session_id, 10);
+    assert_eq!(third.session_id, 10);
 }
 
 #[test]
@@ -681,11 +776,9 @@ pub(super) fn should_forward_timeout_error_given_expired_pending_request() {
     assert_eq!(sink.pending_request_count(), 0);
     assert_eq!(worker_frames.lock().len(), 1);
     let reply_frames = reply_frames.lock();
-    assert_eq!(reply_frames.len(), 2);
-    assert_eq!(reply_frames[0].msg_type.as_u16(), 302);
-    assert_eq!(reply_frames[0].payload[0], 0);
-    assert_eq!(reply_frames[1].msg_type.as_u16(), 303);
-    let error_response = parse_forwarded_rpc_response(&reply_frames[1]);
+    assert_eq!(reply_frames.len(), 1);
+    assert_eq!(reply_frames[0].msg_type.as_u16(), 303);
+    let error_response = parse_forwarded_rpc_response(&reply_frames[0]);
     assert!(error_response.stream_end);
     assert_rpc_code_error(
         error_response.body.as_ref(),
@@ -719,7 +812,6 @@ pub(super) fn should_forward_timeout_error_given_expired_queued_request() {
                 family,
                 correlation_id,
                 route.clone(),
-                Route::new("inbox://session/7/custom"),
                 bytes::Bytes::from_static(b"queued"),
             ),
             7,
@@ -800,9 +892,7 @@ pub(super) fn should_drop_timeout_error_given_requester_cleanup_before_expiratio
     assert_eq!(sink.pending_request_count(), 0);
     assert_eq!(worker_frames.lock().len(), 1);
     let reply_frames = reply_frames.lock();
-    assert_eq!(reply_frames.len(), 1);
-    assert_eq!(reply_frames[0].msg_type.as_u16(), 302);
-    assert_eq!(reply_frames[0].payload[0], 0);
+    assert_eq!(reply_frames.len(), 0);
 }
 
 #[test]
@@ -840,6 +930,8 @@ pub(super) fn should_reject_rpc_request_when_pending_capacity_reached() {
     }
     let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"payload");
     let (msg_type, payload) = crate::benchkit::extract_single_tlv_field(&request_frame);
+    let correlation_id = crate::protocol::rpc_codec::extract_request_correlation_id(&payload)
+        .expect("request correlation id");
     let frame_ctx = FrameContext::new(
         1,
         crate::protocol::frame::ChannelId::Rpc,
@@ -859,9 +951,9 @@ pub(super) fn should_reject_rpc_request_when_pending_capacity_reached() {
     assert!(worker_frames.lock().is_empty());
     let reply_frames = reply_frames.lock();
     assert_eq!(reply_frames.len(), 1);
-    assert_eq!(reply_frames[0].msg_type.as_u16(), 302);
-    assert_rpc_code_error(
-        &reply_frames[0].payload,
+    assert_rpc_terminal_code_error(
+        &reply_frames[0],
+        correlation_id,
         crate::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
         RPC_BACKPRESSURE_ERROR,
     );

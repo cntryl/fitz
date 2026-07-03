@@ -119,10 +119,81 @@ impl DomainFrameDispatcher<'_> {
         }
     }
 
+    fn encode_rpc_terminal_error_payload(
+        correlation_id: &uuid::Uuid,
+        code: u16,
+        message: &str,
+    ) -> Bytes {
+        let mut response_encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(
+            crate::protocol::rpc_codec::terminal_error_response_message_capacity(message),
+        );
+        let mut error_encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(
+            crate::protocol::rpc_codec::error_body_capacity(message),
+        );
+        Bytes::from(
+            crate::protocol::rpc_codec::encode_terminal_error_response_message_into(
+                correlation_id,
+                code,
+                message,
+                &mut response_encoder,
+                &mut error_encoder,
+            ),
+        )
+    }
+
+    fn send_rpc_submit_error_response(
+        &self,
+        dispatch: &DomainDispatchRequest<'_>,
+        request_payload: &[u8],
+        code: u16,
+        message: &'static str,
+    ) -> Result<(), IngressDecision> {
+        let correlation_id = crate::protocol::rpc_codec::extract_request_correlation_id(
+            request_payload,
+        )
+        .map_err(|error| {
+            IngressDecision::Close(format!(
+                "rpc submit error correlation extraction failed: {error}"
+            ))
+        })?;
+        let payload = Self::encode_rpc_terminal_error_payload(&correlation_id, code, message);
+        let response_ctx = crate::protocol::frame_context::FrameContext::new(
+            dispatch.session_id,
+            dispatch.channel_id,
+            crate::protocol::tlv::MessageType::new(303),
+            payload,
+            dispatch.route_family,
+        );
+        let source = crate::runtime::routing::RouteAddress::new(
+            dispatch.route_family,
+            dispatch.domain.inbound_route().clone(),
+        );
+        let destination = crate::runtime::routing::RouteAddress::new(
+            dispatch.route_family,
+            self.cached_session_inbox_route(dispatch.session_id),
+        );
+        let envelope =
+            crate::runtime::envelope::Envelope::from_route(source, destination, response_ctx);
+
+        dispatch.router.route(envelope).map_err(|error| {
+            Self::route_error_response_delivery_failure(dispatch.session_id, dispatch.domain, error)
+        })
+    }
+
     fn send_unauthorized_domain_response(
         &self,
         dispatch: &DomainDispatchRequest<'_>,
+        request_payload: &[u8],
     ) -> Result<(), IngressDecision> {
+        if dispatch.domain == DispatchDomain::Rpc && dispatch.msg_type.as_u16() == 302 {
+            return self.send_rpc_submit_error_response(
+                dispatch,
+                request_payload,
+                crate::protocol::error_codes::rpc::ERR_UNAUTHORIZED,
+                "unauthorized: permission denied",
+            );
+        }
+
         let payload = Self::encode_domain_error_body(
             Self::unauthorized_error_code(dispatch.domain),
             "unauthorized: permission denied",
@@ -321,6 +392,14 @@ impl DomainFrameDispatcher<'_> {
                     domain = dispatch.domain.as_str(),
                     "Ingress: failed to derive route for authorization"
                 );
+                if dispatch.domain == DispatchDomain::Rpc && dispatch.msg_type.as_u16() == 302 {
+                    return self.send_rpc_submit_error_response(
+                        dispatch,
+                        payload_ref,
+                        crate::protocol::error_codes::rpc::ERR_BACKEND_ERROR,
+                        "RPC request parse failed",
+                    );
+                }
                 return Err(IngressDecision::Close(format!(
                     "authorization parse failed: {error}"
                 )));
@@ -347,7 +426,7 @@ impl DomainFrameDispatcher<'_> {
                 IngressDecision::Close("unauthorized: session actor missing".to_string())
             }
             AuthorizationFailure::PermissionDenied => self
-                .send_unauthorized_domain_response(dispatch)
+                .send_unauthorized_domain_response(dispatch, payload_ref)
                 .map_or_else(|decision| decision, |()| IngressDecision::Accept),
         })?;
         self.dispatch_domain_frame(dispatch, message_payload)

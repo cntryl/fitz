@@ -33,7 +33,7 @@ use fitz::runtime::routing::{session_inbox_address, Route, RouteAddress, RouteFa
 use fitz::runtime::{DeliveryError, Envelope, MailboxSink, Router, SessionCleanup};
 use fixtures::transport::{
     build_rpc_request, build_rpc_response_delivery, build_rpc_subscribe,
-    parse_rpc_request_delivery, parse_rpc_response, parse_rpc_response_delivery,
+    parse_rpc_request_delivery, parse_rpc_response_delivery,
 };
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -54,7 +54,6 @@ fn create_request(correlation_id: Uuid) -> RpcRequest {
         RouteFamily::new(1),
         correlation_id,
         Route::new("rpc://test/area/resource/operation"),
-        Route::new("inbox://session/123"),
         Bytes::from(vec![1, 2, 3]),
     )
 }
@@ -162,17 +161,6 @@ fn rpc_frame_from_envelope(envelope: &Envelope) -> Option<FrameContext> {
             MessageType::new(303),
             Bytes::from(payload),
             forwarded.route_family,
-        ));
-    }
-
-    if let Some(ack) = envelope.payload::<fitz::domains::rpc::RpcWorkerAck>() {
-        let payload = fitz::protocol::rpc_codec::encode_ack(&ack.correlation_id);
-        return Some(FrameContext::new(
-            ack.session_id,
-            ChannelId::Rpc,
-            MessageType::new(304),
-            Bytes::from(payload),
-            ack.route_family,
         ));
     }
 
@@ -334,6 +322,7 @@ fn should_track_active_leases_when_dispatching_request() {
     actor.receive(
         fitz::domains::rpc::RpcMessage::RegisterWorker {
             worker_addr: worker_addr.clone(),
+            max_concurrent: 1,
         },
         &mut ctx,
     );
@@ -357,6 +346,7 @@ fn should_release_lease_when_receiving_stream_end_response() {
     actor.receive(
         fitz::domains::rpc::RpcMessage::RegisterWorker {
             worker_addr: worker_addr.clone(),
+            max_concurrent: 1,
         },
         &mut ctx,
     );
@@ -372,7 +362,7 @@ fn should_release_lease_when_receiving_stream_end_response() {
 }
 
 #[test]
-fn should_release_lease_when_receiving_ack() {
+fn should_release_lease_when_receiving_terminal_response() {
     // Arrange
     let mut actor = create_actor_with_timeout(5000);
     let mut ctx = create_rpc_context();
@@ -382,6 +372,7 @@ fn should_release_lease_when_receiving_ack() {
     actor.receive(
         fitz::domains::rpc::RpcMessage::RegisterWorker {
             worker_addr: worker_addr.clone(),
+            max_concurrent: 1,
         },
         &mut ctx,
     );
@@ -389,10 +380,8 @@ fn should_release_lease_when_receiving_ack() {
     actor.receive(fitz::domains::rpc::RpcMessage::Request(request), &mut ctx);
 
     // Act
-    actor.receive(
-        fitz::domains::rpc::RpcMessage::Ack { correlation_id },
-        &mut ctx,
-    );
+    let response = RpcResponseMsg::single(correlation_id, Bytes::from(vec![]));
+    actor.receive(fitz::domains::rpc::RpcMessage::Response(response), &mut ctx);
 
     // Assert
     assert_eq!(actor.active_leases(), 0);
@@ -410,6 +399,7 @@ fn should_allow_worker_to_take_next_request_after_lease_released() {
     actor.receive(
         fitz::domains::rpc::RpcMessage::RegisterWorker {
             worker_addr: worker_addr.clone(),
+            max_concurrent: 1,
         },
         &mut ctx,
     );
@@ -467,17 +457,15 @@ fn should_drop_late_response_after_lease_expired() {
     actor.receive(
         fitz::domains::rpc::RpcMessage::RegisterWorker {
             worker_addr: worker_addr.clone(),
+            max_concurrent: 1,
         },
         &mut ctx,
     );
     let request = create_request(correlation_id);
     actor.receive(fitz::domains::rpc::RpcMessage::Request(request), &mut ctx);
 
-    // Release lease manually
-    actor.receive(
-        fitz::domains::rpc::RpcMessage::Ack { correlation_id },
-        &mut ctx,
-    );
+    let terminal = RpcResponseMsg::single(correlation_id, Bytes::from(vec![]));
+    actor.receive(fitz::domains::rpc::RpcMessage::Response(terminal), &mut ctx);
 
     // Act
     let response = RpcResponseMsg::single(correlation_id, Bytes::from(vec![]));
@@ -498,6 +486,7 @@ fn should_track_multiple_concurrent_leases() {
         actor.receive(
             fitz::domains::rpc::RpcMessage::RegisterWorker {
                 worker_addr: create_worker_addr(i),
+                max_concurrent: 1,
             },
             &mut ctx,
         );
@@ -600,11 +589,13 @@ fn should_reject_rpc_request_when_pending_capacity_reached_given_rpc_sink() {
 
     let rejected_frames = rejected_caller_sink.snapshot();
     assert_eq!(rejected_frames.len(), 1);
-    let (_msg_type, status, data) = parse_rpc_response(&encode_captured_frame(&rejected_frames[0]));
-    assert_ne!(status, 0, "Expected backpressure rejection");
+    let response = parse_rpc_response_delivery(&encode_captured_frame(&rejected_frames[0]))
+        .expect("parse backpressure terminal response");
+    assert_eq!(response.seq, 0);
+    assert!(response.stream_end);
 
-    let (code, message) =
-        fitz::protocol::rpc_codec::decode_error_body(&data).expect("decode backpressure error");
+    let (code, message) = fitz::protocol::rpc_codec::decode_error_body(&response.body)
+        .expect("decode backpressure error");
     assert_eq!(code, fitz::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE);
     assert_eq!(message, "RPC backpressure: too many pending requests");
 }
@@ -651,11 +642,8 @@ fn should_forward_worker_not_found_error_given_rpc_session_cleanup() {
     assert_eq!(sink.worker_count(), 0);
 
     let caller_frames = caller_sink.snapshot();
-    assert_eq!(caller_frames.len(), 2);
-    let accepted = parse_rpc_response(&encode_captured_frame(&caller_frames[0]));
-    assert_eq!(accepted.1, 0);
-
-    let forwarded_error = parse_rpc_response_delivery(&encode_captured_frame(&caller_frames[1]))
+    assert_eq!(caller_frames.len(), 1);
+    let forwarded_error = parse_rpc_response_delivery(&encode_captured_frame(&caller_frames[0]))
         .expect("parse forwarded rpc disconnect error");
     let (code, message) = fitz::protocol::rpc_codec::decode_error_body(&forwarded_error.body)
         .expect("decode worker not found error");
@@ -730,8 +718,8 @@ async fn should_reject_late_worker_response_after_timeout_given_rpc_sink() {
     assert_eq!(sink.pending_request_count(), 0);
 
     let caller_frames = caller_sink.snapshot();
-    assert_eq!(caller_frames.len(), 2);
-    let timeout_response = parse_rpc_response_delivery(&encode_captured_frame(&caller_frames[1]))
+    assert_eq!(caller_frames.len(), 1);
+    let timeout_response = parse_rpc_response_delivery(&encode_captured_frame(&caller_frames[0]))
         .expect("parse forwarded timeout response");
     let (timeout_code, timeout_message) =
         fitz::protocol::rpc_codec::decode_error_body(&timeout_response.body)
@@ -751,6 +739,9 @@ async fn should_reject_late_worker_response_after_timeout_given_rpc_sink() {
 
     let worker_frames = worker_sink.snapshot();
     assert_eq!(worker_frames.len(), 3);
+    assert_eq!(worker_frames[0].msg_type.as_u16(), 300);
+    assert_eq!(worker_frames[1].msg_type.as_u16(), 302);
+    assert_eq!(worker_frames[2].msg_type.as_u16(), 303);
     let orphan_response = parse_rpc_response_delivery(&encode_captured_frame(&worker_frames[2]))
         .expect("parse orphan response error");
     let (orphan_code, orphan_message) =

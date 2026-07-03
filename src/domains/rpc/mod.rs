@@ -4,7 +4,7 @@
 //!
 //! - **`RpcRouteActor`** ([actor]): Manages worker pool and request queue per route
 //! - **`SessionActor`**: Enforces authentication/authorization before forwarding to `RpcRouteActor`
-//! - Workers register with routes and receive requests via round-robin assignment
+//! - Workers register with routes and receive requests while declared credit is available
 //!
 //! # Performance Characteristics (Hardened v2)
 //!
@@ -71,7 +71,7 @@ pub use metrics::RpcMetrics;
 pub use protocol::{
     RpcClientForwardedResponse, RpcClientForwardedResponseBody, RpcClientRequest,
     RpcClientResponse, RpcClientResponseBody, RpcMessage, RpcRequest, RpcResponse, RpcWorkItem,
-    RpcWorkerAck, RpcWorkerRequestDelivery,
+    RpcWorkerRequestDelivery,
 };
 pub use reply_inbox::{InboxMessage, ReplyInboxActor};
 pub use session::SessionActor;

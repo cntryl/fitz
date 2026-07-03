@@ -64,6 +64,7 @@ impl SessionActor {
         &self,
         worker_addr: RouteAddress,
         route: &Route,
+        max_concurrent: usize,
         rpc_actor: &mut RpcRouteActor,
         ctx: &mut Context<RpcRouteActor>,
     ) -> Result<(), String> {
@@ -72,7 +73,10 @@ impl SessionActor {
             return Err("unauthorized: worker register".to_string());
         }
 
-        let msg = RpcMessage::RegisterWorker { worker_addr };
+        let msg = RpcMessage::RegisterWorker {
+            worker_addr,
+            max_concurrent,
+        };
         rpc_actor.receive(msg, ctx);
         Ok(())
     }
@@ -112,7 +116,6 @@ mod tests {
             RouteFamily::new(1),
             Uuid::new_v4(),
             Route::new("rpc://realm/area/resource/create"),
-            Route::new("inbox://session/1"),
             Bytes::from(vec![1, 2, 3]),
         );
 
@@ -136,6 +139,7 @@ mod tests {
         actor.receive(
             RpcMessage::RegisterWorker {
                 worker_addr: worker_addr.clone(),
+                max_concurrent: 1,
             },
             &mut ctx,
         );
@@ -149,7 +153,6 @@ mod tests {
             RouteFamily::new(1),
             Uuid::new_v4(),
             Route::new("rpc://realm/area/resource/create"),
-            Route::new("inbox://session/1"),
             Bytes::from(vec![1, 2, 3]),
         );
 
@@ -177,7 +180,7 @@ mod tests {
         let route = Route::new("rpc://realm/area/resource/operation");
 
         // Act
-        let res = session.register_worker(worker_addr, &route, &mut actor, &mut ctx);
+        let res = session.register_worker(worker_addr, &route, 1, &mut actor, &mut ctx);
 
         // Assert
         assert!(res.is_err());
@@ -200,7 +203,7 @@ mod tests {
         let route = Route::new("rpc://realm/area/resource/operation");
 
         // Act
-        let res = session.register_worker(worker_addr, &route, &mut actor, &mut ctx);
+        let res = session.register_worker(worker_addr, &route, 1, &mut actor, &mut ctx);
 
         // Assert
         assert!(res.is_ok());

@@ -268,7 +268,9 @@ impl RuntimeIngress {
                     Ok(Some(r.route.clone()))
                 }
                 Ok(
-                    crate::domains::rpc::protocol::RpcMessage::RegisterWorker { worker_addr }
+                    crate::domains::rpc::protocol::RpcMessage::RegisterWorker {
+                        worker_addr, ..
+                    }
                     | crate::domains::rpc::protocol::RpcMessage::UnregisterWorker { worker_addr },
                 ) => Ok(Some(worker_addr.route().clone())),
                 Ok(_) => Ok(None),

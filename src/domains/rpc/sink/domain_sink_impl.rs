@@ -4,9 +4,8 @@ use super::state_model::{
     RpcDomainActor, RpcDomainCommand, RpcDomainCore, RpcDomainRuntime, RpcDomainSink,
     RpcLiveCounts, RpcPendingErrorDelivery, RpcPendingRequest, RpcQueuedDispatch, RpcRouteState,
     RpcSessionCleanupResult, RpcState, RpcWorkerCleanupResult, RpcWorkerDispatch,
-    RPC_ADMIN_SNAPSHOT_INTERVAL_US, RPC_BACKPRESSURE_ERROR, RPC_DEFAULT_REQUEST_TIMEOUT,
-    RPC_DEFAULT_ROUTE_PENDING_CAPACITY, RPC_MIN_TIMEOUT_SWEEP_INTERVAL, RPC_TIMEOUT_ERROR,
-    RPC_WORKER_NOT_FOUND_ERROR,
+    RPC_BACKPRESSURE_ERROR, RPC_DEFAULT_REQUEST_TIMEOUT, RPC_DEFAULT_ROUTE_PENDING_CAPACITY,
+    RPC_MIN_TIMEOUT_SWEEP_INTERVAL, RPC_TIMEOUT_ERROR, RPC_WORKER_NOT_FOUND_ERROR,
 };
 #[cfg(test)]
 use super::state_model::{RpcQueuedRequest, RpcWorker};
@@ -825,7 +824,8 @@ impl RpcDomainRuntime<'_> {
         self.maybe_sync_admin_snapshot(false);
     }
 
-    /// Mark the admin snapshot dirty and opportunistically refresh the coalesced view.
+    /// Mark the admin snapshot dirty. Forced calls refresh immediately; regular
+    /// hot-path updates coalesce until an admin read or another forced refresh.
     pub(super) fn schedule_admin_snapshot(&self, force: bool) {
         if force {
             self.snapshot_dirty.store(true, Ordering::Relaxed);
@@ -833,12 +833,10 @@ impl RpcDomainRuntime<'_> {
             return;
         }
 
-        let already_dirty = self.snapshot_dirty.swap(true, Ordering::Relaxed);
-        let now_elapsed_us = Self::elapsed_us_saturating(self.snapshot_epoch);
-        let last_snapshot_elapsed_us = self.last_snapshot_elapsed_us.load(Ordering::Relaxed);
-        if already_dirty
-            && now_elapsed_us.saturating_sub(last_snapshot_elapsed_us)
-                < RPC_ADMIN_SNAPSHOT_INTERVAL_US
+        if self
+            .snapshot_dirty
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+            .is_err()
         {
             return;
         }

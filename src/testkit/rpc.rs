@@ -40,20 +40,13 @@ pub fn create_test_inbox_context() -> Context<ReplyInboxActor> {
 /// # Arguments
 /// * `correlation_id` - Unique correlation ID
 /// * `route` - RPC operation route
-/// * `reply_route` - Reply inbox route
 /// * `body` - Request body bytes
 #[must_use]
-pub fn create_test_rpc_request(
-    correlation_id: Uuid,
-    route: &str,
-    reply_route: &str,
-    body: &[u8],
-) -> RpcRequest {
+pub fn create_test_rpc_request(correlation_id: Uuid, route: &str, body: &[u8]) -> RpcRequest {
     RpcRequest {
         family_id: RouteFamily::new(1),
         correlation_id,
         route: Route::new(route),
-        reply_route: Route::new(reply_route),
         body: Bytes::from(body.to_vec()),
     }
 }

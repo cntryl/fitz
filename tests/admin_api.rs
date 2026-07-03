@@ -2900,7 +2900,6 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
     let rpc_wrong_worker_before = metrics.counter_get("rpc_responses_rejected_wrong_worker_total");
     let rpc_closed_caller_before = metrics.counter_get("rpc_responses_dropped_closed_caller_total");
     let rpc_missing_pending_before = metrics.counter_get("rpc_responses_missing_pending_total");
-    let rpc_ack_wrong_worker_before = metrics.counter_get("rpc_acks_rejected_wrong_worker_total");
     let rpc_invalid_sequence_before = metrics.counter_get("rpc_response_invalid_sequence_total");
     let rpc_invalid_forwarded_before =
         metrics.counter_get("rpc_invalid_sequence_errors_forwarded_total");
@@ -2923,7 +2922,6 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
     metrics.counter_add("rpc_responses_rejected_wrong_worker_total", 7);
     metrics.counter_add("rpc_responses_dropped_closed_caller_total", 9);
     metrics.counter_add("rpc_responses_missing_pending_total", 11);
-    metrics.counter_add("rpc_acks_rejected_wrong_worker_total", 13);
     metrics.counter_add("rpc_response_invalid_sequence_total", 17);
     metrics.counter_add("rpc_invalid_sequence_errors_forwarded_total", 19);
     metrics.counter_add("rpc_invalid_sequence_errors_dropped_total", 23);
@@ -2999,10 +2997,6 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
     assert_eq!(
         rpc_payload["responses_missing_pending_total"],
         rpc_missing_pending_before + 11
-    );
-    assert_eq!(
-        rpc_payload["acks_rejected_wrong_worker_total"],
-        rpc_ack_wrong_worker_before + 13
     );
     assert_eq!(
         rpc_payload["invalid_sequence_responses_total"],

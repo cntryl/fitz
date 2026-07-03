@@ -362,7 +362,6 @@ pub(crate) fn analyze_rpc(
     wrong_worker_rejects_total: u64,
     responses_dropped_closed_caller_total: u64,
     responses_missing_pending_total: u64,
-    acks_rejected_wrong_worker_total: u64,
     now: DateTime<Utc>,
 ) -> DomainAnalysis {
     let mut worker_by_route: HashMap<(String, String, String, String), Vec<&RpcWorker>> =
@@ -401,9 +400,7 @@ pub(crate) fn analyze_rpc(
     let mut last_changed_at: Option<DateTime<Utc>> = None;
     let late_response_pressure =
         responses_dropped_closed_caller_total + responses_missing_pending_total;
-    let correlation_pressure = duplicate_correlation_rejects_total
-        + wrong_worker_rejects_total
-        + acks_rejected_wrong_worker_total;
+    let correlation_pressure = duplicate_correlation_rejects_total + wrong_worker_rejects_total;
     let transport_pressure = request_timeouts_total + backpressure_rejects_total;
     let overall_latency_summary = summarize_rpc_worker_latency(workers.iter());
 

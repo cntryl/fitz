@@ -23,15 +23,6 @@ fn parse_rpc_request(
 }
 
 fn assert_rpc_disconnect_response(caller_mailbox: &Mailbox, correlation_id: uuid::Uuid) {
-    let request_ack = caller_mailbox
-        .receiver()
-        .try_recv()
-        .expect("rpc request ack")
-        .into_payload::<FrameContext>()
-        .expect("rpc request ack frame");
-    assert_eq!(request_ack.msg_type.as_u16(), 302);
-    assert_eq!(request_ack.payload[0], 0);
-
     let disconnect_error = caller_mailbox
         .receiver()
         .try_recv()

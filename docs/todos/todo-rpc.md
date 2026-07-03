@@ -18,15 +18,19 @@ Clients can rely on the following:
 
 - Each accepted request is associated with one correlation id and one live pending request slot.
 - Responses must carry the original correlation id.
+- Requester routing is derived from the source session already tracked in pending state; callers do not send reply routes.
+- Successful request submission does not produce an immediate success frame.
+- Worker registrations carry explicit `max_concurrent` credit in the range `1..=1024`.
 - A route has a bounded pending queue.
 - If a live worker is available, a request is dispatched to one worker.
 - If no live worker is immediately available and queue capacity remains, the request may wait in the per-route pending queue.
 - Streaming responses use sequence numbers and an explicit final-chunk signal.
+- Message type 304 is unsupported. RPC has no worker ACK frame.
 
 Server guarantees:
 
 - RPC is explicitly ephemeral.
-- Worker registrations, pending requests, and reply routing live only in memory.
+- Worker registrations, pending requests, and response routing live only in memory.
 - Broker restart drops all workers and all pending requests.
 - Request timeout and backpressure are explicit contract outcomes, not hidden retries.
 - Pending request order is FIFO within one route's queue.
@@ -48,6 +52,8 @@ Intentionally unsupported:
 Worker registration semantics:
 
 - Workers register live routes on the current broker process.
+- Each registration declares explicit worker credit with `max_concurrent`.
+- Dispatch uses available worker credit before fanning out to another worker.
 - Disconnect or broker restart removes the registration.
 - A worker must re-register after reconnect.
 
@@ -61,7 +67,7 @@ Streaming response semantics:
 
 - Chunks are correlated by correlation id.
 - Sequence numbers must be in-order.
-- Final chunk closes the live stream state.
+- Final chunk closes the live stream state and releases pending state plus worker credit.
 - RPC sequence numbers are response-assembly state, not replay cursors.
 
 ## C. Non-Negotiable Invariants
@@ -69,12 +75,12 @@ Streaming response semantics:
 - Invariant: one correlation id maps to exactly one live pending request at a time.
 	- Why it matters: caller identity and response routing depend on it.
 	- How it fails: duplicate pending entries or reused correlation ids route a response to the wrong call.
-	- How to test it: [tests/rpc_basics.rs](../../tests/rpc_basics.rs) `should_correlate_response_with_request` and `should_match_response_to_request_by_correlation_id`, plus [tests/rpc_e2e.rs](../../tests/rpc_e2e.rs) `should_reject_wrong_correlation_response_after_accept_tcp` and `should_reject_wrong_correlation_response_after_accept_ws`. Sink-level regressions in [src/domains/rpc/sink.rs](../../src/domains/rpc/sink.rs): `should_reject_duplicate_live_correlation_given_rpc_sink`, `should_reject_worker_response_from_non_owner_session_given_rpc_sink`, and `should_reject_worker_ack_from_non_owner_session_given_rpc_sink`.
+	- How to test it: [tests/rpc_basics.rs](../../tests/rpc_basics.rs) `should_correlate_response_with_request` and `should_match_response_to_request_by_correlation_id`, plus [tests/rpc_e2e.rs](../../tests/rpc_e2e.rs) `should_reject_wrong_correlation_response_after_accept_tcp` and `should_reject_wrong_correlation_response_after_accept_ws`. Sink-level regressions in [src/domains/rpc/sink/tests/request_queueing.rs](../../src/domains/rpc/sink/tests/request_queueing.rs) `should_reject_duplicate_live_correlation_given_rpc_sink` and [src/domains/rpc/sink/tests/cleanup_and_worker_errors.rs](../../src/domains/rpc/sink/tests/cleanup_and_worker_errors.rs) `should_reject_worker_response_from_non_owner_session_given_rpc_sink`.
 
 - Invariant: a response cannot be delivered to the wrong caller or wrong worker route.
 	- Why it matters: misrouting is worse than a visible failure.
-	- How it fails: reply route ownership or worker registration cleanup leaks across sessions.
-	- How to test it: [tests/rpc_e2e.rs](../../tests/rpc_e2e.rs) `should_reject_wrong_correlation_response_after_accept_tcp`, `should_reject_wrong_correlation_response_after_accept_ws`, `should_return_worker_disconnect_error_after_unsubscribe_tcp`, and `should_return_worker_disconnect_error_after_unsubscribe_ws`. Sink-level regressions in [src/domains/rpc/sink.rs](../../src/domains/rpc/sink.rs): `should_reject_worker_response_from_non_owner_session_given_rpc_sink` and `should_reject_worker_ack_from_non_owner_session_given_rpc_sink`.
+	- How it fails: source-session response routing or worker registration cleanup leaks across sessions.
+	- How to test it: [tests/rpc_e2e.rs](../../tests/rpc_e2e.rs) `should_reject_wrong_correlation_response_after_accept_tcp`, `should_reject_wrong_correlation_response_after_accept_ws`, `should_return_worker_disconnect_error_after_unsubscribe_tcp`, and `should_return_worker_disconnect_error_after_unsubscribe_ws`. Sink-level regression in [src/domains/rpc/sink/tests/cleanup_and_worker_errors.rs](../../src/domains/rpc/sink/tests/cleanup_and_worker_errors.rs) `should_reject_worker_response_from_non_owner_session_given_rpc_sink`.
 
 - Invariant: a timed-out request never becomes live again.
 	- Why it matters: timeout must be a terminal caller-visible outcome.
@@ -108,7 +114,7 @@ Streaming response semantics:
 
 - Caller disconnect: live pending state may be cleaned up; Fitz does not promise durable caller recovery.
 - Worker disconnect before response: the request fails with a worker-disconnect-style error once the domain detects the loss.
-- Server restart: all worker registrations, pending requests, and reply routes are lost.
+- Server restart: all worker registrations, pending requests, and source-session response routes are lost.
 - Timeout: request completes with explicit timeout error code rather than staying pending forever.
 - Backpressure: request is rejected with explicit backpressure error when pending capacity is exhausted.
 - Invalid request: unknown service, unknown method, invalid sequence, wrong worker, and wrong correlation are explicit failures.
@@ -132,7 +138,7 @@ Current surface:
 - Global stats include `workers_registered`, `requests_pending`, and `operations_per_second`.
 - Per-domain admin stats include live workers, pending requests, oldest pending age, pending route count, worker latency buckets, timeout and backpressure counters, duplicate-correlation and wrong-worker rejects, late-response/missing-pending drops, invalid-sequence response handling, and diagnostics.
 - Prometheus exports `fitz_rpc_workers_registered`, `fitz_rpc_requests_pending`, worker latency buckets, request timeouts, backpressure rejects, duplicate-correlation rejects, wrong-worker rejects, late-response drops, missing-pending responses, and invalid-sequence response/error counters.
-- Sink-level counters are now emitted for wrong-worker and duplicate-correlation rejects: `rpc_requests_rejected_duplicate_correlation_total`, `rpc_responses_rejected_wrong_worker_total`, and `rpc_acks_rejected_wrong_worker_total`.
+- Sink-level counters are now emitted for wrong-worker and duplicate-correlation rejects: `rpc_requests_rejected_duplicate_correlation_total` and `rpc_responses_rejected_wrong_worker_total`.
 - Error codes 6007 (`ERR_RPC_DUPLICATE_CORRELATION`) and 6008 (`ERR_RPC_WRONG_WORKER`) are defined in [src/protocol/error_codes.rs](../../src/protocol/error_codes.rs) and asserted in [tests/rpc_basics.rs](../../tests/rpc_basics.rs) via `should_define_error_code_6007_rpc_duplicate_correlation` and `should_define_error_code_6008_rpc_wrong_worker`.
 
 Current gaps to keep explicit:
@@ -151,9 +157,8 @@ Current gaps to keep explicit:
 - Race and cleanup tests:
 	- [tests/rpc_advanced.rs](../../tests/rpc_advanced.rs) `should_drop_late_response_after_lease_expired`
 	- [tests/rpc_advanced.rs](../../tests/rpc_advanced.rs) `should_reject_late_worker_response_after_timeout_given_rpc_sink`
-	- [src/domains/rpc/sink.rs](../../src/domains/rpc/sink.rs) `should_reject_duplicate_live_correlation_given_rpc_sink`
-	- [src/domains/rpc/sink.rs](../../src/domains/rpc/sink.rs) `should_reject_worker_response_from_non_owner_session_given_rpc_sink`
-	- [src/domains/rpc/sink.rs](../../src/domains/rpc/sink.rs) `should_reject_worker_ack_from_non_owner_session_given_rpc_sink`
+	- [src/domains/rpc/sink/tests/request_queueing.rs](../../src/domains/rpc/sink/tests/request_queueing.rs) `should_reject_duplicate_live_correlation_given_rpc_sink`
+	- [src/domains/rpc/sink/tests/cleanup_and_worker_errors.rs](../../src/domains/rpc/sink/tests/cleanup_and_worker_errors.rs) `should_reject_worker_response_from_non_owner_session_given_rpc_sink`
 - Integration tests:
 	- [tests/rpc_e2e.rs](../../tests/rpc_e2e.rs) worker disconnect, timeout, wrong correlation, and invalid sequence cases
 - Benchmark and stress tests:

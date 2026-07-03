@@ -484,9 +484,16 @@ pub fn parse_lease_extend_token_response(data: &[u8]) -> Result<u64, String> {
 /// Build RPC SUBSCRIBE frame (`msg_type` 300)
 #[must_use]
 pub fn build_rpc_subscribe(worker_addr: &str) -> Vec<u8> {
+    build_rpc_subscribe_with_max_concurrent(worker_addr, 1)
+}
+
+/// Build RPC SUBSCRIBE frame (`msg_type` 300) with explicit worker credit.
+#[must_use]
+pub fn build_rpc_subscribe_with_max_concurrent(worker_addr: &str, max_concurrent: u32) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.put_u32(u32_len(worker_addr.len()));
     buf.put_slice(worker_addr.as_bytes());
+    buf.put_u32(max_concurrent);
 
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(300, &buf);
@@ -500,15 +507,10 @@ pub fn build_rpc_request(route: &str, payload: &[u8]) -> Vec<u8> {
 
     let mut buf = Vec::new();
     let uuid = Uuid::new_v4();
-    buf.put_u32(16);
     buf.put_slice(uuid.as_bytes());
 
     buf.put_u32(u32_len(route.len()));
     buf.put_slice(route.as_bytes());
-
-    let reply_route = format!("inbox://session/1/{uuid}");
-    buf.put_u32(u32_len(reply_route.len()));
-    buf.put_slice(reply_route.as_bytes());
 
     buf.put_u32(u32_len(payload.len()));
     buf.put_slice(payload);
@@ -521,23 +523,14 @@ pub fn build_rpc_request(route: &str, payload: &[u8]) -> Vec<u8> {
 /// Build RPC RESPONSE frame (`msg_type` 303) from worker to route
 #[must_use]
 pub fn build_rpc_response_frame(correlation_id: uuid::Uuid, body: &[u8]) -> Vec<u8> {
-    let resp = crate::domains::rpc::protocol::RpcResponse::single(
-        correlation_id,
-        bytes::Bytes::from(body.to_vec()),
-    );
-    let payload = crate::protocol::rpc_codec::encode_response_message(&resp);
-    let mut builder = TlvFrameBuilder::new();
-    builder.encode_field(303, &payload);
-    builder.build()
+    build_rpc_response_frame_bytes(correlation_id, Bytes::copy_from_slice(body)).to_vec()
 }
 
-/// Build RPC ACK frame (`msg_type` 304) from worker to route
+/// Build RPC RESPONSE frame (`msg_type` 303) from worker to route as `Bytes`.
 #[must_use]
-pub fn build_rpc_ack_frame(correlation_id: uuid::Uuid) -> Vec<u8> {
-    let payload = crate::protocol::rpc_codec::encode_ack(&correlation_id);
-    let mut builder = TlvFrameBuilder::new();
-    builder.encode_field(304, &payload);
-    builder.build()
+pub fn build_rpc_response_frame_bytes(correlation_id: uuid::Uuid, body: Bytes) -> Bytes {
+    let resp = crate::domains::rpc::protocol::RpcResponse::single(correlation_id, body);
+    crate::protocol::rpc_codec::encode_response_message_tlv_frame(&resp)
 }
 
 /// Parse RPC response

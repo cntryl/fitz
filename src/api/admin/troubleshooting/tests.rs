@@ -334,7 +334,7 @@ fn should_classify_rpc_data_loss_risk() {
     let now = Utc::now();
 
     // Act
-    let analysis = analyze_rpc(&[], &[], 0, 0, 0, 0, 3, 2, 0, now);
+    let analysis = analyze_rpc(&[], &[], 0, 0, 0, 0, 3, 2, now);
     let hotspot = analysis.hotspots.first().expect("rpc hotspot");
 
     // Assert

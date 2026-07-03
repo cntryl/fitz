@@ -229,7 +229,6 @@ await Promise.all([msg1, msg2]);
 const notice_sub = client.noticeSubscribe("notice://prod/app/*");
 const rpc_call = client.rpcRequest(
   "rpc://prod/app/worker/run",
-  "inbox://session/replies",
   correlation_id_uuid,
   Buffer.from("payload")
 );
@@ -264,7 +263,7 @@ Different domains run on independent logical channels. A single client connectio
 const kv_tx = client.kvBegin("kv://prod/app/data", TxMode.ReadWrite, Durability.Sync);
 const queue_msg = client.queueEnqueue("queue://prod/app/tasks", payload);
 const notice_sub = client.noticeSubscribe("notice://prod/app/*");
-const rpc_call = client.rpcRequest("rpc://prod/app/config/get", reply_route, correlation_id, payload);
+const rpc_call = client.rpcRequest("rpc://prod/app/config/get", correlation_id, payload);
 
 // All complete independently and concurrently
 await Promise.all([kv_tx.commit(), queue_msg, notice_sub, rpc_call]);
@@ -386,8 +385,8 @@ RPC is also explicitly ephemeral. Worker registrations and pending requests are 
 
 ```javascript
 // Multiple RPC calls in flight, responses matched by correlation_id
-const rpc1 = client.rpcRequest("rpc://prod/app/config/get", reply_route, uuid1, payload1);
-const rpc2 = client.rpcRequest("rpc://prod/app/config/get", reply_route, uuid2, payload2);
+const rpc1 = client.rpcRequest("rpc://prod/app/config/get", uuid1, payload1);
+const rpc2 = client.rpcRequest("rpc://prod/app/config/get", uuid2, payload2);
 
 // Responses arrive in any order and are matched by correlation_id
 const [resp1, resp2] = await Promise.all([rpc1, rpc2]);
@@ -613,25 +612,21 @@ Wire format specification:
 [16 bytes] correlation_id (UUID)
 [u32 BE]   route_len
 [bytes]    route
-[u32 BE]   reply_route_len
-[bytes]    reply_route
 [u32 BE]   body_len
 [bytes]    body
 ```
 
 Actual bytes on wire:
 ```
-[0x01 0x2E]                              (MessageType=302, RPC REQUEST)
-[0x00 0x3A]                              (Length=58 bytes)
+[0xFF 0x01 0x2E]                         (MessageType=302, RPC REQUEST)
+[0x00 0x30]                              (Length=48 bytes)
   [12 34 56 78 9a bc de f0 12 34 56 78 9a bc de f0]  (correlation_id, 16 bytes UUID)
-  [0x00 0x00 0x00 0x10]                  (route_len=16)
-  [72 70 63 3a 2f 2f 70 72 6f 64 2f 61 70 70 2f 77 6f 72 6b 65 72]  (route="rpc://prod/app/worker", 16 bytes)
-  [0x00 0x00 0x00 0x13]                  (reply_route_len=19)
-  [72 70 63 3a 2f 2f 70 72 6f 64 2f 61 70 70 2f 63 61 6c 6c 65 72]  (reply_route="rpc://prod/app/caller", 19 bytes)
+  [0x00 0x00 0x00 0x15]                  (route_len=21)
+  [72 70 63 3a 2f 2f 70 72 6f 64 2f 61 70 70 2f 77 6f 72 6b 65 72]  (route="rpc://prod/app/worker", 21 bytes)
   [0x00 0x00 0x00 0x03]                  (body_len=3)
   [66 6f 6f]                             (body="foo", 3 bytes)
 
-Total frame size: 2 (type) + 2 (length) + 58 (payload) = 62 bytes
+Total frame size: 3 (type) + 2 (length) + 48 (payload) = 53 bytes
 ```
 
 #### Transport Layer Framing
@@ -1412,7 +1407,6 @@ Clients MUST:
 | RPC      | UNSUBSCRIBE_WORKER |       301 | Data          | Unregister worker       |
 | RPC      | REQUEST            |       302 | Data          | Send request            |
 | RPC      | RESPONSE           |       303 | Data          | Send response           |
-| RPC      | ACK                |       304 | Data          | Acknowledge             |
 | Lease    | ACQUIRE            |       400 | Data          | Acquire lease           |
 | Lease    | RENEW              |       401 | Data          | Extend lease            |
 | Lease    | RELEASE            |       402 | Data          | Release lease           |
@@ -1559,7 +1553,7 @@ domains may still keep live server-side state where their contract requires it.
 
 ### RPC Domain (Request/Response)
 
-**Purpose:** Synchronous request/response with reply inbox pattern and optional streaming.
+**Purpose:** Synchronous request/response with session-derived caller routing and optional streaming.
 
 **Canonical Operations:**
 
@@ -1567,16 +1561,16 @@ domains may still keep live server-side state where their contract requires it.
 | --------- | --------: | --------- | ------- |
 | `Subscribe` | 300 | C→S | Register as worker |
 | `Unsubscribe` | 301 | C→S | Deregister worker |
-| `Request` | 302 | C→S | Send RPC request |
-| `Response` | 303 | S→C | Send RPC response |
-| `Ack` | 304 | C↔S | Acknowledge receipt |
-| `Deliver` | (via 303) | S→C | Server→Worker delivery |
+| `Request` | 302 | C→S and S→Worker | Send RPC request and deliver it to a worker |
+| `Response` | 303 | Worker→S and S→Caller | Send RPC response |
 
 **Constraints:**
 - Each request uses 16-byte UUID `correlation_id` for matching the live in-flight response
 - Multiple RPC requests MAY be in flight simultaneously (true multiplexing via correlation_id)
-- Workers register exact listening routes and receive DELIVER (async push)
-- Callers include reply inbox routing metadata with each request
+- Workers register exact listening routes with explicit `max_concurrent` credit and receive REQUEST frames as async pushes
+- The broker derives caller response routing from the source session; callers do not send a reply route
+- Successful REQUEST submission is silent; callers wait for RESPONSE or an error frame
+- Message type 304 is unsupported and MUST NOT be sent
 - Worker registrations and pending requests are process-local and are not recovered or replayed after broker restart
 - A worker reconnecting after disconnect or restart MUST send `Subscribe` again before it can receive new requests
 
@@ -1982,8 +1976,8 @@ When a single operation generates multiple responses:
 - Subsequent PUBLISHes → NOTIFY frames (asynchronous)
 - Client reads NOTIFYs from same connection
   **RPC REQUEST:**
-- Request → Response 1 (accepted via correlation_id)
-- Worker responses → Response 2+ (streaming, matched by correlation_id)
+- Request → no success ACK on accepted submission
+- Worker responses → RESPONSE frame(s), matched by correlation_id
 - Multiple RPC responses matched by correlation_id on same connection
   **Stream READ:**
 - Request → Response 1 (record stream)
@@ -2057,7 +2051,7 @@ Clients MUST NOT automatically retry operations unless:
 - Stream: `APPEND`, `BEGIN`, `COMMIT`, `ROLLBACK`
 - Notice: `PUBLISH`, `SUBSCRIBE`, `UNSUBSCRIBE`
 - Queue: `ENQUEUE`, `RESERVE`, `EXTEND`, `DELETE`
-- RPC: `REQUEST`, `RESPONSE`, `ACK`
+- RPC: `REQUEST`, `RESPONSE`
 - Lease: `ACQUIRE`, `RENEW`, `RELEASE`
 - Schedule: `CREATE`, `CANCEL`
   Retry behavior: Retrying these operations MAY cause duplicate execution, lost updates, or unexpected state changes.
@@ -3109,7 +3103,7 @@ Every operation includes route:
 
 ### RPC Domain (Request/Response & Streaming)
 
-**Purpose:** Low-latency request/response with reply inbox and optional streaming.
+**Purpose:** Low-latency request/response with session-derived caller routing and optional streaming.
 
 #### Message Types
 
@@ -3119,13 +3113,15 @@ Every operation includes route:
 |  301 | UNSUBSCRIBE_WORKER | Client → Server |
 |  302 | REQUEST            | Client → Server (sync: client sends request, broker delivers to worker) |
 |  303 | RESPONSE           | Server ↔ Client (sync or async: worker sends response(s) back to caller) |
-|  304 | ACK                | Client ↔ Server |
+
+Message type 304 is unsupported. Fitz has no RPC ACK frame.
 
 #### SUBSCRIBE_WORKER Request
 
 ```
 [u32 BE]  worker_route_len
 [bytes]   worker_route
+[u32 BE]  max_concurrent (must be 1..=1024)
 Response (status=0):
   [u8]     0
   [u32 BE] data_len
@@ -3155,19 +3151,15 @@ Response (status=1):
 [16 bytes] correlation_id (UUID, big-endian)
 [u32 BE]   route_len
 [bytes]    route
-[u32 BE]   reply_route_len
-[bytes]    reply_route
 [u32 BE]   body_len
 [bytes]    body
-Response from broker (status=0):
-  [u8]     0
-Response from broker (status=1):
+Immediate error response from broker (status=1):
   [u8]     1
   [u32 BE] error_len
   [bytes]  error_msg
 ```
 
-**Design Note:** `correlation_id` is always exactly 16 bytes (UUID). No length prefix needed.
+**Design Note:** `correlation_id` is always exactly 16 bytes (UUID). No length prefix needed. Successful REQUEST submission produces no immediate broker success frame.
 
 #### REQUEST Delivery (Server forwards to worker)
 
@@ -3177,8 +3169,6 @@ When the broker selects a worker for an incoming REQUEST, it delivers the same R
 [16 bytes] correlation_id (UUID, from caller)
 [u32 BE]   route_len
 [bytes]    route (the target route)
-[u32 BE]   reply_route_len
-[bytes]    reply_route (caller's reply route)
 [u32 BE]   body_len
 [bytes]    body
 ```
@@ -3190,30 +3180,12 @@ The worker MUST use `correlation_id` when sending RESPONSE frames back. The brok
 ```
 [16 bytes] correlation_id (UUID, big-endian)
 [u64 BE]   sequence
+[u8]       flags (bit 0x01 means stream_end)
 [u32 BE]   body_len
 [bytes]    body
-[u8]       stream_end (0=more, 1=end)
-Response from broker:
-  [u8]     status
-  [u32 BE] data_len
-  [bytes]  data
 ```
 
-**Design Note:** `stream_end` is a flag within the RESPONSE (303) frame payload, not a separate user frame type. It indicates whether this RESPONSE frame is the last one for that correlation_id (1=end, 0=more frames may follow).
-
-#### ACK (Acknowledge receipt)
-
-```
-[16 bytes] correlation_id (UUID, big-endian)
-Response (status=0):
-  [u8]     0
-Response (status=1):
-  [u8]     1
-  [u32 BE] error_len
-  [bytes]  error_msg
-```
-
-**Design Note:** `correlation_id` is always exactly 16 bytes (UUID). No length prefix needed (consistent with REQUEST/RESPONSE).
+**Design Note:** `stream_end` is bit `0x01` in the RESPONSE (303) flags byte, not a separate user frame type. It indicates whether this RESPONSE frame is the last one for that correlation_id. The broker releases pending state and worker credit only after a valid terminal response.
 
 #### Usage Example
 
@@ -3225,7 +3197,8 @@ client = FitzClient.connect_tcp("127.0.0.1:4091", jwt_token)
 
 # SUBSCRIBE_WORKER returns a WorkerSubscription object
 worker = client.rpc_subscribe_worker(
-    worker_route="rpc://prod/app/compute/run"
+    worker_route="rpc://prod/app/compute/run",
+    max_concurrent=32
 )
 
 # Worker: Handle incoming requests through subscription
@@ -3245,7 +3218,6 @@ worker.unsubscribe()
 correlation_id = generate_uuid()
 responses = client.rpc_request(
     route="rpc://prod/app/compute/run",
-    reply_route="inbox://session/replies",
     correlation_id=correlation_id,
     body=b"request_payload"
 )
@@ -3288,16 +3260,17 @@ class WorkerSubscription:
 
 Every operation includes full context:
 
-- `SUBSCRIBE_WORKER`: `[worker_route_len][worker_route]`
+- `SUBSCRIBE_WORKER`: `[worker_route_len][worker_route][max_concurrent]`
 - `UNSUBSCRIBE_WORKER`: `[worker_route_len][worker_route]`
-- `REQUEST`: `[16 bytes correlation_id][route_len][route][reply_route_len][reply_route][body_len][body]`
-- `RESPONSE`: `[16 bytes correlation_id][sequence][body_len][body][stream_end]`
+- `REQUEST`: `[16 bytes correlation_id][route_len][route][body_len][body]`
+- `RESPONSE`: `[16 bytes correlation_id][sequence][flags][body_len][body]`
 
 **Key Points:**
 
 - User calls `worker.unsubscribe()` - simple, no route repetition
 - Internally, client packs `[worker_route]` on wire
 - `correlation_id` is fixed 16 bytes (UUID) - no length prefix
+- Worker credit is explicit on subscribe through `max_concurrent`
 - Pattern: Same as KV Transaction, Stream Session, and Notice Subscription objects
 
 #### Semantics
@@ -3305,6 +3278,8 @@ Every operation includes full context:
 - **Self-Contained Operations**: Every SUBSCRIBE/REQUEST includes full route information
 - **Correlation**: UUID links a live in-flight request to its responses (client-generated)
 - **Streaming**: Multi-frame responses have incrementing `sequence` and `stream_end` flag
+- **Acceptance**: Successful REQUEST submission is silent; immediate failures return errors
+- **Credit**: Worker capacity is bounded by `max_concurrent` and is released by a terminal response
 - **Backpressure**: ERR_RPC_BACKPRESSURE if outbound queue full
 - **Ordering**: Responses delivered in sequence order
 - **Single-Worker Assignment**: Each accepted request is assigned to at most one live worker while tracked in memory
@@ -3313,8 +3288,8 @@ Every operation includes full context:
 
 **Multiple workers on same route:**
 
-- Server selects worker using round-robin
-- No least-connections or load-aware routing
+- Server selects the first available worker credit before fanning out to another worker
+- This is not least-connections or load-aware routing
 - Clients should register multiple workers for horizontal scaling
 
 **If all workers busy:**
@@ -4495,14 +4470,13 @@ Server pushes a schedule fire notification to a subscriber.
 | 207 | SUBSCRIBE |
 | 208 | UNSUBSCRIBE |
 | 209 | NOTIFY |
-**RPC Domain (300–304):**
+**RPC Domain (300–303):**
 | Value | Name |
 |---:|---|
 | 300 | SUBSCRIBE_WORKER |
 | 301 | UNSUBSCRIBE_WORKER |
 | 302 | REQUEST |
 | 303 | RESPONSE |
-| 304 | ACK |
 **Lease Domain (400–403):**
 | Value | Name |
 |---:|---|

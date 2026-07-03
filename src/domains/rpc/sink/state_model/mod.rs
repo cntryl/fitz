@@ -2,9 +2,7 @@ pub(super) use crate::domains::rpc::{RpcClientRequest, RpcClientResponseBody};
 pub(super) type RpcDeliveryOutcome = (Option<RpcClientResponseBody>, Option<bool>, bool);
 #[cfg(test)]
 pub(super) use crate::protocol::frame_context::FrameContext;
-pub(super) use crate::runtime::routing::{
-    route_quad, session_inbox_address, Route, RouteAddress, RouteFamily,
-};
+pub(super) use crate::runtime::routing::{route_quad, session_inbox_address, Route, RouteAddress};
 pub(super) use crate::runtime::{DeliveryError, Envelope, MailboxSink, ManagedActor, Router};
 pub(super) use chrono::{DateTime, Utc};
 pub(super) use fxhash::FxBuildHasher;
@@ -35,9 +33,7 @@ pub(super) use constants::{
     RPC_TIMEOUT_ERROR, RPC_WORKER_NOT_FOUND_ERROR, RPC_WRONG_WORKER_ERROR,
 };
 pub(super) use expiration::{rpc_timeout_sweep_interval, ExpiringPendingRequest};
-pub(super) use pending_table::{
-    RpcPendingAckDisposition, RpcPendingResponseDisposition, RpcPendingTable,
-};
+pub(super) use pending_table::{RpcPendingResponseDisposition, RpcPendingTable};
 pub(super) use requests::{
     RpcPendingCleanupResult, RpcPendingDispatchInfo, RpcPendingErrorDelivery, RpcPendingRequest,
     RpcPendingRequestInit, RpcPendingTimeoutResult, RpcQueuedDispatch, RpcQueuedRequest,

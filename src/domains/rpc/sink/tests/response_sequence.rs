@@ -162,10 +162,9 @@ fn should_reject_out_of_order_worker_response_given_rpc_sink() {
     assert_eq!(sink.pending_request_count(), 0);
 
     let reply_frames = reply_frames.lock();
-    assert_eq!(reply_frames.len(), 2);
-    assert_eq!(reply_frames[0].msg_type.as_u16(), 302);
-    assert_eq!(reply_frames[1].msg_type.as_u16(), 303);
-    let error_response = parse_forwarded_rpc_response(&reply_frames[1]);
+    assert_eq!(reply_frames.len(), 1);
+    assert_eq!(reply_frames[0].msg_type.as_u16(), 303);
+    let error_response = parse_forwarded_rpc_response(&reply_frames[0]);
     assert_eq!(error_response.correlation_id, request.correlation_id);
     assert_eq!(error_response.seq, 0);
     assert!(error_response.stream_end);
@@ -282,13 +281,12 @@ fn should_reject_duplicate_worker_response_chunk_given_rpc_sink() {
     assert_eq!(sink.pending_request_count(), 0);
 
     let reply_frames = reply_frames.lock();
-    assert_eq!(reply_frames.len(), 3);
-    assert_eq!(reply_frames[0].msg_type.as_u16(), 302);
-    let first_response = parse_forwarded_rpc_response(&reply_frames[1]);
+    assert_eq!(reply_frames.len(), 2);
+    let first_response = parse_forwarded_rpc_response(&reply_frames[0]);
     assert_eq!(first_response.correlation_id, request.correlation_id);
     assert_eq!(first_response.seq, 0);
     assert!(!first_response.stream_end);
-    let terminal_error = parse_forwarded_rpc_response(&reply_frames[2]);
+    let terminal_error = parse_forwarded_rpc_response(&reply_frames[1]);
     assert_eq!(terminal_error.correlation_id, request.correlation_id);
     assert!(terminal_error.stream_end);
     assert_rpc_code_error(
@@ -298,11 +296,10 @@ fn should_reject_duplicate_worker_response_chunk_given_rpc_sink() {
     );
 
     let worker_frames = worker_frames.lock();
-    assert_eq!(worker_frames.len(), 3);
+    assert_eq!(worker_frames.len(), 2);
     assert_eq!(worker_frames[0].msg_type.as_u16(), 302);
-    assert_eq!(worker_frames[1].msg_type.as_u16(), 304);
-    assert_eq!(worker_frames[2].msg_type.as_u16(), 303);
-    let worker_error = parse_forwarded_rpc_response(&worker_frames[2]);
+    assert_eq!(worker_frames[1].msg_type.as_u16(), 303);
+    let worker_error = parse_forwarded_rpc_response(&worker_frames[1]);
     assert_eq!(worker_error.correlation_id, request.correlation_id);
     assert!(worker_error.stream_end);
     assert_rpc_code_error(

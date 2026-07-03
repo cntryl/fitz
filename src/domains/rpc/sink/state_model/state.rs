@@ -1,9 +1,9 @@
 use super::{
     BinaryHeap, ExpiringPendingRequest, FxBuildHasher, HashMap, Instant, Route, RouteAddress,
-    RpcFastMap, RpcPendingAckDisposition, RpcPendingDispatchInfo, RpcPendingErrorDelivery,
-    RpcPendingRequest, RpcPendingRequestInit, RpcPendingTable, RpcPendingTimeoutResult,
-    RpcQueuedDispatch, RpcQueuedRequest, RpcRequestDispatch, RpcRouteState,
-    RpcSessionCleanupResult, RpcWorkerCleanupResult,
+    RpcFastMap, RpcPendingDispatchInfo, RpcPendingErrorDelivery, RpcPendingRequest,
+    RpcPendingRequestInit, RpcPendingTable, RpcPendingTimeoutResult, RpcQueuedDispatch,
+    RpcQueuedRequest, RpcRequestDispatch, RpcRouteState, RpcSessionCleanupResult,
+    RpcWorkerCleanupResult,
 };
 
 pub(in crate::domains::rpc::sink) struct RpcState {
@@ -319,24 +319,6 @@ impl RpcState {
         if let Some(route_state) = self.routes.get_mut(&pending.route) {
             route_state.release_worker_slot(pending.worker_slot, latency_us);
         }
-    }
-
-    pub(in crate::domains::rpc::sink) fn remove_pending_for_ack(
-        &mut self,
-        correlation_id: &uuid::Uuid,
-        worker_session_id: u64,
-    ) -> (RpcPendingAckDisposition, usize) {
-        let disposition = self
-            .pending
-            .remove_for_ack(correlation_id, worker_session_id);
-        if let RpcPendingAckDisposition::Removed(pending) = &disposition {
-            if let Some(route_state) = self.routes.get_mut(&pending.route) {
-                route_state.release_worker_slot(pending.worker_slot, None);
-            }
-            self.prune_route_if_empty(&pending.route);
-        }
-
-        (disposition, self.live_request_count())
     }
 
     pub(in crate::domains::rpc::sink) fn cleanup_queued_session(

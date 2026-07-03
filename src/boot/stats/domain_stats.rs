@@ -536,11 +536,6 @@ impl Runtime {
     }
 
     #[must_use]
-    pub fn rpc_acks_rejected_wrong_worker_total(&self) -> u64 {
-        metric_counter("rpc_acks_rejected_wrong_worker_total")
-    }
-
-    #[must_use]
     pub fn rpc_invalid_sequence_responses_total(&self) -> u64 {
         metric_counter("rpc_response_invalid_sequence_total")
     }

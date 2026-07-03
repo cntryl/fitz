@@ -11,9 +11,8 @@ use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use criterion::black_box;
 use fitz::benchkit::{
-    build_rpc_ack_frame, build_rpc_request, build_rpc_response_frame, build_rpc_subscribe,
-    create_bench_rpc_sink, extract_single_tlv_field, register_session_queue_sink, route_frame,
-    FrameQueueSink,
+    build_rpc_request, build_rpc_response_frame, build_rpc_subscribe, create_bench_rpc_sink,
+    extract_single_tlv_field, register_session_queue_sink, route_frame, FrameQueueSink,
 };
 use fitz::domains::rpc::protocol::RpcMessage;
 use fitz::protocol::frame::ChannelId;
@@ -266,7 +265,7 @@ fn cleanup_expected_worker_request_for_route(
         *worker_session_id,
         worker_source,
         route,
-        &build_rpc_ack_frame(correlation_id),
+        &build_rpc_response_frame(correlation_id, b"cleanup"),
     );
 }
 
@@ -310,7 +309,7 @@ fn cleanup_worker_request_on_route(
         *worker_session_id,
         worker_source,
         route,
-        &build_rpc_ack_frame(correlation_id),
+        &build_rpc_response_frame(correlation_id, b"cleanup"),
     );
 }
 
@@ -339,7 +338,7 @@ fn measure_full_roundtrip_scaling(
 ) {
     ctx.tag("scenario", scenario);
     ctx.tag("measurement_scope", "routed_roundtrip");
-    ctx.tag("operation", "dispatch_service_response_ack");
+    ctx.tag("operation", "dispatch_service_response");
     ctx.tag("batch_size", format!("{per_iteration_requests}_roundtrips"));
     ctx.tag("worker_count", worker_count.to_string());
 
@@ -380,7 +379,7 @@ fn measure_dispatch_only_scaling(
 ) {
     ctx.tag("scenario", scenario);
     ctx.tag("measurement_scope", "routed_dispatch_only");
-    ctx.tag("operation", "dispatch_ack_cleanup");
+    ctx.tag("operation", "dispatch_response_cleanup");
     ctx.tag("batch_size", format!("{per_iteration_requests}_dispatches"));
     ctx.tag("worker_count", worker_count.to_string());
 
@@ -421,7 +420,7 @@ fn measure_multi_route_full_roundtrip_scaling(
 ) {
     ctx.tag("scenario", scenario);
     ctx.tag("measurement_scope", "routed_roundtrip");
-    ctx.tag("operation", "dispatch_service_response_ack");
+    ctx.tag("operation", "dispatch_service_response");
     ctx.tag("batch_size", format!("{per_iteration_requests}_roundtrips"));
     ctx.tag("worker_count", route_count.to_string());
     ctx.tag("route_count", route_count.to_string());
@@ -485,7 +484,7 @@ fn measure_multi_route_dispatch_only_scaling(
 ) {
     ctx.tag("scenario", scenario);
     ctx.tag("measurement_scope", "routed_dispatch_only");
-    ctx.tag("operation", "dispatch_ack_cleanup");
+    ctx.tag("operation", "dispatch_response_cleanup");
     ctx.tag("batch_size", format!("{per_iteration_requests}_dispatches"));
     ctx.tag("worker_count", route_count.to_string());
     ctx.tag("route_count", route_count.to_string());
@@ -613,7 +612,7 @@ fn should_complete_request_dispatch_sustained(ctx: &mut StressContext) {
     const ITERS: u64 = 1000;
     ctx.tag("scenario", "sustained_dispatch");
     ctx.tag("measurement_scope", "routed_system");
-    ctx.tag("operation", "dispatch_service_response_ack");
+    ctx.tag("operation", "dispatch_service_response");
     ctx.tag("batch_size", "1000_roundtrips");
     ctx.tag("worker_count", "1");
 
@@ -649,7 +648,7 @@ fn should_complete_single_response_throughput(ctx: &mut StressContext) {
     const ITERS: u64 = 1000;
     ctx.tag("scenario", "single_response_throughput");
     ctx.tag("measurement_scope", "routed_system");
-    ctx.tag("operation", "dispatch_service_response_ack");
+    ctx.tag("operation", "dispatch_service_response");
     ctx.tag("batch_size", "1000_roundtrips");
     ctx.tag("worker_count", "1");
 
@@ -747,7 +746,7 @@ fn should_complete_steady_state_request_tracking(ctx: &mut StressContext) {
     const ITERS: u64 = 1000;
     ctx.tag("scenario", "steady_state_tracking");
     ctx.tag("measurement_scope", "routed_system");
-    ctx.tag("operation", "dispatch_service_response_ack");
+    ctx.tag("operation", "dispatch_service_response");
     ctx.tag("batch_size", "1000_roundtrips");
     ctx.tag("worker_count", "1");
 
@@ -782,7 +781,7 @@ fn should_complete_steady_state_request_tracking(ctx: &mut StressContext) {
 fn should_complete_short_roundtrip_batch(ctx: &mut StressContext) {
     ctx.tag("scenario", "short_roundtrip_batch");
     ctx.tag("measurement_scope", "routed_system");
-    ctx.tag("operation", "dispatch_service_response_ack");
+    ctx.tag("operation", "dispatch_service_response");
     ctx.tag("batch_size", "10_roundtrips");
     ctx.tag("worker_count", "1");
 

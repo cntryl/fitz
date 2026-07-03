@@ -117,7 +117,7 @@ impl RpcRouteState {
             worker.claim_slot();
             let dispatch = worker.dispatch_view(index);
             if worker.is_available() {
-                self.ready_queue.push_back(index);
+                self.ready_queue.push_front(index);
             }
 
             return Some(dispatch);
@@ -140,7 +140,11 @@ impl RpcRouteState {
         }
         worker.release_slot();
         if !was_available && worker.is_available() {
-            self.ready_queue.push_back(worker_slot);
+            if worker.max_concurrent > 1 {
+                self.ready_queue.push_front(worker_slot);
+            } else {
+                self.ready_queue.push_back(worker_slot);
+            }
         }
 
         true

@@ -3,7 +3,7 @@
 //!
 //! Each route key (for example, `rpc://acme/auth/user/create`) has a dedicated
 //! actor that queues inbound requests, assigns them to registered workers using
-//! round-robin distribution, and forwards responses back to clients.
+//! explicit worker credit, and forwards responses back to clients.
 //!
 //! # State Model
 //!
@@ -22,7 +22,7 @@
 //! # Invariants
 //!
 //! 1. **FIFO ordering**: Requests are dispatched in arrival order
-//! 2. **Round-robin**: Workers receive requests in rotation
+//! 2. **Worker credit**: Workers receive requests while declared credit is available
 //! 3. **Bounded queue**: Backpressure when queue is full
 //! 4. **No durability**: Worker registrations, queue state, and assignments are ephemeral
 //! 5. **Assignment timeout**: Workers must respond before assignment expiry
@@ -94,11 +94,11 @@ struct WorkerRegistration {
 }
 
 impl WorkerRegistration {
-    fn new(addr: RouteAddress) -> Self {
+    fn new(addr: RouteAddress, max_concurrent: usize) -> Self {
         Self {
             addr,
             in_flight: 0,
-            max_concurrent: 1, // Default: one request at a time
+            max_concurrent,
         }
     }
 
@@ -110,7 +110,7 @@ impl WorkerRegistration {
 /// RPC route actor managing a single RPC route
 ///
 /// Maintains a queue of pending requests and a pool of registered workers.
-/// Dispatches requests to workers in round-robin fashion with assignment tracking.
+/// Dispatches requests to workers using explicit worker credit with assignment tracking.
 /// Uses a ready queue for O(1) worker selection.
 pub struct RpcRouteActor {
     /// Route family this actor belongs to (for validation)
@@ -196,14 +196,14 @@ impl RpcRouteActor {
         self.assignments.len()
     }
 
-    fn allocate_worker_slot(&mut self, worker_addr: RouteAddress) -> usize {
+    fn allocate_worker_slot(&mut self, worker_addr: RouteAddress, max_concurrent: usize) -> usize {
         if let Some(worker_slot) = self.workers.iter().position(Option::is_none) {
-            self.workers[worker_slot] = Some(WorkerRegistration::new(worker_addr));
+            self.workers[worker_slot] = Some(WorkerRegistration::new(worker_addr, max_concurrent));
             worker_slot
         } else {
             let worker_slot = self.workers.len();
             self.workers
-                .push(Some(WorkerRegistration::new(worker_addr)));
+                .push(Some(WorkerRegistration::new(worker_addr, max_concurrent)));
             worker_slot
         }
     }
@@ -241,18 +241,27 @@ impl RpcRouteActor {
             worker.in_flight = worker.in_flight.saturating_sub(1);
 
             if was_full && worker.is_available() {
-                self.ready_queue.push_back(worker_slot);
+                if worker.max_concurrent > 1 {
+                    self.ready_queue.push_front(worker_slot);
+                } else {
+                    self.ready_queue.push_back(worker_slot);
+                }
             }
         }
     }
 
     /// Handle worker registration
-    fn handle_register_worker(&mut self, worker_addr: RouteAddress, ctx: &mut Context<Self>) {
+    fn handle_register_worker(
+        &mut self,
+        worker_addr: RouteAddress,
+        max_concurrent: usize,
+        ctx: &mut Context<Self>,
+    ) {
         if self.worker_slot_for_addr(&worker_addr).is_some() {
             return;
         }
 
-        let worker_slot = self.allocate_worker_slot(worker_addr);
+        let worker_slot = self.allocate_worker_slot(worker_addr, max_concurrent);
 
         // Add to ready queue (new workers are available)
         self.ready_queue.push_back(worker_slot);
@@ -308,18 +317,12 @@ impl RpcRouteActor {
         }
     }
 
-    /// Handle worker acknowledgment
-    fn handle_ack(&mut self, correlation_id: Uuid, ctx: &mut Context<Self>) {
-        // Worker completed processing, release the lease
-        self.release_lease(&correlation_id, ctx);
-    }
-
     /// Dispatch request to a worker using ready queue (O(1) selection)
     ///
     /// Optimized for zero-allocation hot path:
     /// - No request clone (already has ownership)
     /// - Stable worker slot avoids index-shift bugs during unregister
-    /// - Arc for `reply_route` (shared ownership)
+    /// - Stable worker slot avoids worker address cloning during release
     #[inline]
     fn dispatch_to_worker(&mut self, request: RpcRequest, ctx: &mut Context<Self>) {
         if let Some(worker_slot) = self.pop_ready_worker_slot() {
@@ -332,7 +335,7 @@ impl RpcRouteActor {
             };
 
             if should_requeue_worker {
-                self.ready_queue.push_back(worker_slot);
+                self.ready_queue.push_front(worker_slot);
             }
 
             let expires_at = Instant::now() + self.lease_timeout;
@@ -447,8 +450,11 @@ impl Actor for RpcRouteActor {
 
     fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
         match msg {
-            RpcMessage::RegisterWorker { worker_addr } => {
-                self.handle_register_worker(worker_addr, ctx);
+            RpcMessage::RegisterWorker {
+                worker_addr,
+                max_concurrent,
+            } => {
+                self.handle_register_worker(worker_addr, max_concurrent, ctx);
             }
             RpcMessage::UnregisterWorker { worker_addr } => {
                 self.handle_unregister_worker(&worker_addr);
@@ -458,9 +464,6 @@ impl Actor for RpcRouteActor {
             }
             RpcMessage::Response(response) => {
                 self.handle_response(&response, ctx);
-            }
-            RpcMessage::Ack { correlation_id } => {
-                self.handle_ack(correlation_id, ctx);
             }
             RpcMessage::Deliver(_) => {
                 // Deliver is sent TO workers, not received by route actor
@@ -507,7 +510,7 @@ mod tests {
             RouteAddress::new(RouteFamily::new(1), Route::new("worker://test/worker1"));
 
         // Act
-        actor.handle_register_worker(worker_addr, &mut ctx);
+        actor.handle_register_worker(worker_addr, 1, &mut ctx);
 
         // Assert
         assert_eq!(actor.worker_count(), 1);
@@ -524,7 +527,7 @@ mod tests {
         let worker_addr =
             RouteAddress::new(RouteFamily::new(1), Route::new("worker://test/worker1"));
 
-        actor.handle_register_worker(worker_addr.clone(), &mut ctx);
+        actor.handle_register_worker(worker_addr.clone(), 1, &mut ctx);
 
         // Act
         actor.handle_unregister_worker(&worker_addr);
@@ -545,7 +548,6 @@ mod tests {
             family_id: RouteFamily::new(1),
             correlation_id: Uuid::new_v4(),
             route: Route::new("rpc://test/route"),
-            reply_route: Route::new("inbox://session/123"),
             body: Bytes::from(vec![1, 2, 3]),
         };
 
@@ -578,7 +580,6 @@ mod tests {
             family_id: RouteFamily::new(family),
             correlation_id: Uuid::new_v4(),
             route: Route::new("rpc://test/route"),
-            reply_route: Route::new("inbox://session/1"),
             body: Bytes::from("payload"),
         }
     }
@@ -588,7 +589,7 @@ mod tests {
         // Arrange
         let mut actor = RpcRouteActor::new(RouteFamily::new(1));
         let (mut ctx, _router) = make_ctx();
-        actor.handle_register_worker(make_worker_addr(1), &mut ctx);
+        actor.handle_register_worker(make_worker_addr(1), 1, &mut ctx);
         let request = make_request(1);
 
         // Act
@@ -604,7 +605,7 @@ mod tests {
         // Arrange
         let mut actor = RpcRouteActor::new(RouteFamily::new(1));
         let (mut ctx, _router) = make_ctx();
-        actor.handle_register_worker(make_worker_addr(1), &mut ctx);
+        actor.handle_register_worker(make_worker_addr(1), 1, &mut ctx);
         // Request uses family 2, actor is family 1
         let request = make_request(2);
 
@@ -637,7 +638,7 @@ mod tests {
         // Arrange
         let mut actor = RpcRouteActor::new(RouteFamily::new(1));
         let (mut ctx, _router) = make_ctx();
-        actor.handle_register_worker(make_worker_addr(1), &mut ctx);
+        actor.handle_register_worker(make_worker_addr(1), 1, &mut ctx);
         let request = make_request(1);
         let corr = request.correlation_id;
         actor.handle_request(request, &mut ctx);
@@ -656,7 +657,7 @@ mod tests {
         // Arrange
         let mut actor = RpcRouteActor::new(RouteFamily::new(1));
         let (mut ctx, _router) = make_ctx();
-        actor.handle_register_worker(make_worker_addr(1), &mut ctx);
+        actor.handle_register_worker(make_worker_addr(1), 1, &mut ctx);
         let request = make_request(1);
         let corr = request.correlation_id;
         actor.handle_request(request, &mut ctx);
@@ -670,18 +671,20 @@ mod tests {
     }
 
     #[test]
-    fn should_release_lease_on_ack() {
+    fn should_ignore_late_response_after_terminal_response() {
         // Arrange
         let mut actor = RpcRouteActor::new(RouteFamily::new(1));
         let (mut ctx, _router) = make_ctx();
-        actor.handle_register_worker(make_worker_addr(1), &mut ctx);
+        actor.handle_register_worker(make_worker_addr(1), 1, &mut ctx);
         let request = make_request(1);
         let corr = request.correlation_id;
         actor.handle_request(request, &mut ctx);
         assert_eq!(actor.active_leases(), 1);
 
         // Act
-        actor.handle_ack(corr, &mut ctx);
+        let response = RpcResponse::single(corr, Bytes::from("result"));
+        actor.handle_response(&response, &mut ctx);
+        actor.handle_response(&response, &mut ctx);
 
         // Assert
         assert_eq!(actor.active_leases(), 0);
@@ -710,7 +713,7 @@ mod tests {
         assert_eq!(actor.pending_count(), 2);
 
         // Act — register a worker; should drain the pending queue
-        actor.handle_register_worker(make_worker_addr(1), &mut ctx);
+        actor.handle_register_worker(make_worker_addr(1), 1, &mut ctx);
 
         // Assert — worker took one pending request (max_concurrent=1)
         assert_eq!(actor.pending_count(), 1);
@@ -725,8 +728,8 @@ mod tests {
         let worker_addr = make_worker_addr(1);
 
         // Act
-        actor.handle_register_worker(worker_addr.clone(), &mut ctx);
-        actor.handle_register_worker(worker_addr, &mut ctx);
+        actor.handle_register_worker(worker_addr.clone(), 1, &mut ctx);
+        actor.handle_register_worker(worker_addr, 1, &mut ctx);
         actor.handle_request(make_request(1), &mut ctx);
         actor.handle_request(make_request(1), &mut ctx);
 
@@ -755,8 +758,8 @@ mod tests {
         // Arrange
         let mut actor = RpcRouteActor::new(RouteFamily::new(1));
         let (mut ctx, _router) = make_ctx();
-        actor.handle_register_worker(make_worker_addr(1), &mut ctx);
-        actor.handle_register_worker(make_worker_addr(2), &mut ctx);
+        actor.handle_register_worker(make_worker_addr(1), 1, &mut ctx);
+        actor.handle_register_worker(make_worker_addr(2), 1, &mut ctx);
 
         let request_one = make_request(1);
         let request_two = make_request(1);
@@ -767,7 +770,8 @@ mod tests {
         actor.handle_unregister_worker(&make_worker_addr(1));
 
         // Act
-        actor.handle_ack(request_two_correlation_id, &mut ctx);
+        let response = RpcResponse::single(request_two_correlation_id, Bytes::new());
+        actor.handle_response(&response, &mut ctx);
         actor.handle_request(make_request(1), &mut ctx);
 
         // Assert

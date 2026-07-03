@@ -626,28 +626,29 @@ For cross-language parity enforcement across fitz-go, fitz-ts, and fitz-py, run 
 
 **MUST** register as RPC worker
 **Given:** Session JWT includes `rpc:read` and `rpc:write` scopes  
-**When:** Client sends `Subscribe(route_pattern="rpc://prod/users/validate")`  
+**When:** Client sends `Subscribe(route="rpc://prod/users/validate", max_concurrent=32)`
 **Then:**
 
-- Server returns `SubscribeOk(subscription_id=<u64>)`
+- Server returns success
 - Client is registered as worker
-- Client receives REQUEST frames with this subscription_id
-- Idempotent: repeat SUBSCRIBE returns same subscription_id
+- Client receives REQUEST frames for this route
+- `max_concurrent` values outside `1..=1024` are rejected
 
 ### AC-RPC-002: RPC Call and Response
 
 **MUST** complete RPC request-response cycle
-**Given:** Worker registered for `rpc://prod/users/validate` with subscription_id=456  
+**Given:** Worker registered for `rpc://prod/users/validate`
 **When:**
 
 1. Caller sends `Call(route="rpc://prod/users/validate", payload="user:123", timeout=5s)`
-2. Worker receives REQUEST(subscription_id=456, correlation_id=<16 bytes>, payload)
+2. Worker receives REQUEST(route="rpc://prod/users/validate", correlation_id=<16 bytes>, payload)
 3. Worker sends `Reply(correlation_id, result="valid")`
    **Then:**
 
 - Caller receives response within timeout
 - Response payload matches worker's reply
 - correlation_id is fixed 16 bytes (UUID)
+- Caller does not receive a successful submit ACK before the worker response
 
 ### AC-RPC-003: RPC Timeout
 
@@ -690,10 +691,10 @@ For cross-language parity enforcement across fitz-go, fitz-ts, and fitz-py, run 
 ### AC-RPC-006: Worker Unregister
 
 **MUST** stop receiving requests after unregister
-**Given:** Worker registered with subscription_id=789  
+**Given:** Worker registered for `rpc://prod/users/validate`
 **When:**
 
-1. Worker sends `Unsubscribe(subscription_id=789)`
+1. Worker sends `Unsubscribe(route="rpc://prod/users/validate")`
 2. Caller sends RPC request to same route
    **Then:**
 

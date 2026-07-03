@@ -1,6 +1,8 @@
 use super::state_model::{Envelope, RpcClientRequest, RpcClientResponseBody, RpcDomainRuntime};
 #[cfg(not(test))]
-use crate::domains::rpc::RpcClientResponse;
+use crate::domains::rpc::{
+    RpcClientForwardedResponse, RpcClientForwardedResponseBody, RpcClientResponse,
+};
 #[cfg(test)]
 use crate::protocol::frame_context::FrameContext;
 
@@ -24,7 +26,11 @@ impl RpcDomainRuntime<'_> {
                 &frame_ctx.payload,
                 *envelope.destination().family(),
             );
-            Some(RpcClientRequest::new(meta, parsed))
+            Some(RpcClientRequest::new_with_payload(
+                meta,
+                parsed,
+                frame_ctx.payload,
+            ))
         }
 
         #[cfg(not(test))]
@@ -56,6 +62,56 @@ impl RpcDomainRuntime<'_> {
 
         #[cfg(not(test))]
         let response_ctx = RpcClientResponse::new(meta, response.clone());
+
+        if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
+            let _ = self.router.route(response_envelope);
+        }
+    }
+
+    pub(super) fn route_rpc_terminal_error_response(
+        &self,
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+        correlation_id: uuid::Uuid,
+        code: u16,
+        message: &'static str,
+    ) {
+        #[cfg(test)]
+        let response_ctx = {
+            let mut response_encoder =
+                crate::protocol::payload_codec::PayloadEncoder::with_capacity(
+                    crate::protocol::rpc_codec::terminal_error_response_message_capacity(message),
+                );
+            let mut error_encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(
+                crate::protocol::rpc_codec::error_body_capacity(message),
+            );
+            let response_bytes =
+                crate::protocol::rpc_codec::encode_terminal_error_response_message_into(
+                    &correlation_id,
+                    code,
+                    message,
+                    &mut response_encoder,
+                    &mut error_encoder,
+                );
+            FrameContext::new(
+                meta.session_id,
+                test_protocol_channel_from_client(meta.channel),
+                crate::protocol::tlv::MessageType::new(303),
+                bytes::Bytes::from(response_bytes),
+                meta.route_family,
+            )
+        };
+
+        #[cfg(not(test))]
+        let response_ctx = RpcClientForwardedResponse::new(
+            meta.session_id,
+            meta.route_family,
+            RpcClientForwardedResponseBody::TerminalError {
+                correlation_id,
+                code,
+                message,
+            },
+        );
 
         if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
             let _ = self.router.route(response_envelope);

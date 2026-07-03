@@ -122,6 +122,77 @@ fn websocket_origin_allowed<B>(
         .any(|allowed| allowed.same_origin(&origin))
 }
 
+async fn run_websocket_writer<S>(
+    mut ws_sender: futures_util::stream::SplitSink<
+        hyper_tungstenite::WebSocketStream<S>,
+        hyper_tungstenite::tungstenite::Message,
+    >,
+    mut outbound_rx: tokio::sync::mpsc::Receiver<Bytes>,
+    ws_session_id: u64,
+    runtime_for_writes: Arc<crate::boot::Runtime>,
+    ingress_for_writes: Arc<dyn Ingress>,
+) where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    use futures_util::SinkExt;
+    use hyper_tungstenite::tungstenite::Message;
+
+    const WS_OUTBOUND_BATCH_LIMIT: usize = 64;
+
+    tracing::debug!(
+        session_id = ws_session_id,
+        "WS outbound writer task started"
+    );
+    'writer: while let Some(frame) = outbound_rx.recv().await {
+        let mut sent_frames = 0usize;
+        tracing::debug!(
+            session_id = ws_session_id,
+            frame_len = frame.len(),
+            "WS outbound: sending frame to wire"
+        );
+        if let Err(e) = ws_sender.feed(Message::Binary(frame)).await {
+            tracing::error!(session_id = ws_session_id, error = %e, "WS outbound feed error");
+            break;
+        }
+        sent_frames += 1;
+
+        while sent_frames < WS_OUTBOUND_BATCH_LIMIT {
+            match outbound_rx.try_recv() {
+                Ok(frame) => {
+                    tracing::debug!(
+                        session_id = ws_session_id,
+                        frame_len = frame.len(),
+                        "WS outbound: batching queued frame to wire"
+                    );
+                    if let Err(e) = ws_sender.feed(Message::Binary(frame)).await {
+                        tracing::error!(
+                            session_id = ws_session_id,
+                            error = %e,
+                            "WS outbound feed error"
+                        );
+                        break 'writer;
+                    }
+                    sent_frames += 1;
+                }
+                Err(
+                    tokio::sync::mpsc::error::TryRecvError::Empty
+                    | tokio::sync::mpsc::error::TryRecvError::Disconnected,
+                ) => break,
+            }
+        }
+
+        if let Err(e) = ws_sender.flush().await {
+            tracing::error!(session_id = ws_session_id, error = %e, "WS outbound flush error");
+            break;
+        }
+        for _ in 0..sent_frames {
+            runtime_for_writes.increment_messages_sent();
+            ingress_for_writes.record_frame_sent(ws_session_id);
+        }
+    }
+    tracing::debug!(session_id = ws_session_id, "WS outbound writer task ended");
+}
+
 async fn run_websocket_session<S>(
     ws_stream: hyper_tungstenite::WebSocketStream<S>,
     ingress: Arc<dyn Ingress>,
@@ -132,9 +203,7 @@ async fn run_websocket_session<S>(
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
-    use futures_util::SinkExt;
     use futures_util::StreamExt;
-    use hyper_tungstenite::tungstenite::Message;
 
     let session_id = generate_session_id();
 
@@ -156,9 +225,8 @@ where
         "WebSocket session accepted by ingress"
     );
 
-    let (mut ws_sender, mut ws_receiver) = ws_stream.split();
-    let (outbound_tx, mut outbound_rx) =
-        tokio::sync::mpsc::channel::<Bytes>(config.channel_capacity);
+    let (ws_sender, mut ws_receiver) = ws_stream.split();
+    let (outbound_tx, outbound_rx) = tokio::sync::mpsc::channel::<Bytes>(config.channel_capacity);
 
     let sink = std::sync::Arc::new(crate::api::outbound::SessionOutboundSink::new(
         outbound_tx.clone(),
@@ -180,24 +248,14 @@ where
     let ingress_for_writes = ingress.clone();
     // Capture the handle so we can await graceful drain when the session closes.
     let writer_handle = tokio::spawn(async move {
-        tracing::debug!(
-            session_id = ws_session_id,
-            "WS outbound writer task started"
-        );
-        while let Some(frame) = outbound_rx.recv().await {
-            tracing::debug!(
-                session_id = ws_session_id,
-                frame_len = frame.len(),
-                "WS outbound: sending frame to wire"
-            );
-            if let Err(e) = ws_sender.send(Message::Binary(frame)).await {
-                tracing::error!(session_id = ws_session_id, error = %e, "WS outbound send error");
-                break;
-            }
-            runtime_for_writes.increment_messages_sent();
-            ingress_for_writes.record_frame_sent(ws_session_id);
-        }
-        tracing::debug!(session_id = ws_session_id, "WS outbound writer task ended");
+        run_websocket_writer(
+            ws_sender,
+            outbound_rx,
+            ws_session_id,
+            runtime_for_writes,
+            ingress_for_writes,
+        )
+        .await;
     });
 
     let result = process_websocket_frames(

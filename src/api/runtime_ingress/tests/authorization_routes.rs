@@ -106,7 +106,9 @@ fn should_map_rpc_authorization_policies() {
     let unregister = auth_spec(301);
     let call = auth_spec(302);
     let response = auth_spec(303);
-    let ack = auth_spec(304);
+    let ack = crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::dispatch_spec_for_msg_type(
+        MessageType::new(304),
+    );
 
     // Act
     let register_policy = register.policy;
@@ -125,7 +127,10 @@ fn should_map_rpc_authorization_policies() {
     );
     assert_eq!(call_policy, AuthorizationPolicy::RouteScoped(Access::Write));
     assert_eq!(response.policy, AuthorizationPolicy::SessionOwned);
-    assert_eq!(ack.policy, AuthorizationPolicy::SessionOwned);
+    assert!(matches!(
+        ack,
+        Err("invalid message type: unsupported rpc operation")
+    ));
 }
 
 #[test]
@@ -413,6 +418,52 @@ async fn should_require_all_for_rpc_worker_registration_at_ingress() {
     assert_eq!(allowed_decision, IngressDecision::Accept);
     assert_eq!(allowed_frame.msg_type, MessageType::new(300));
     assert!(all_inbox.receiver().try_recv().is_err());
+}
+
+#[tokio::test]
+async fn should_return_terminal_rpc_response_for_unauthorized_call_at_ingress() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let router = Arc::new(crate::runtime::Router::new());
+    let domain_mailbox = Arc::new(Mailbox::new(8));
+    let caller_inbox = Arc::new(Mailbox::new(8));
+    router.register_domain_pattern("rpc", domain_mailbox.clone());
+    router.register(
+        RouteAddress::new(family, Route::new("inbox://session/612")),
+        caller_inbox.clone(),
+    );
+    let ingress = runtime_ingress_with_jwks_auth().with_router(router);
+    let session = make_authenticated_session_info(
+        612,
+        TransportKind::Tcp,
+        family,
+        &["rpc://acme/tasks/worker#read"],
+    );
+    ingress.on_open(session).await.unwrap();
+    let request_frame = crate::benchkit::build_rpc_request("rpc://acme/tasks/worker", b"run");
+    let (_, request_payload) = crate::benchkit::extract_single_tlv_field(&request_frame);
+    let expected_correlation_id =
+        crate::protocol::rpc_codec::extract_request_correlation_id(&request_payload)
+            .expect("request correlation id");
+
+    // Act
+    let denied_decision = ingress
+        .on_frame(612, ChannelId::Rpc, MessageType::new(302), request_payload)
+        .await;
+    let denied_frame = receive_frame(&caller_inbox, "rpc call unauthorized response");
+    let response = parse_rpc_response_frame(&denied_frame);
+
+    // Assert
+    assert_eq!(denied_decision, IngressDecision::Accept);
+    assert_eq!(denied_frame.msg_type, MessageType::new(303));
+    assert_eq!(response.correlation_id, expected_correlation_id);
+    assert_eq!(response.seq, 0);
+    assert!(response.stream_end);
+    assert_eq!(
+        decode_domain_error_code(&response.body),
+        crate::protocol::error_codes::rpc::ERR_UNAUTHORIZED
+    );
+    assert!(domain_mailbox.receiver().try_recv().is_err());
 }
 
 #[tokio::test]

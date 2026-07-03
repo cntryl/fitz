@@ -1,4 +1,4 @@
-use bytes::{BufMut, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use futures_util::{SinkExt, StreamExt};
 use std::collections::VecDeque;
 use std::convert::TryFrom;
@@ -67,10 +67,23 @@ impl TestClient {
     /// Returns an error if the frame length cannot be encoded or the socket
     /// write fails.
     pub async fn send_frame(&mut self, frame: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+        self.send_frame_bytes(Bytes::copy_from_slice(frame)).await
+    }
+
+    /// Send an owned length-prefixed frame (TCP protocol).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the frame length cannot be encoded or the socket
+    /// write fails.
+    pub async fn send_frame_bytes(
+        &mut self,
+        frame: Bytes,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         // Write length prefix (u32 BE)
         let len = u32::try_from(frame.len())?;
         self.stream.write_all(&len.to_be_bytes()).await?;
-        self.stream.write_all(frame).await?;
+        self.stream.write_all(&frame).await?;
         self.stream.flush().await?;
         Ok(())
     }
@@ -85,23 +98,48 @@ impl TestClient {
         &mut self,
         timeout_ms: u64,
     ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        let recv_future = async {
-            // Read length prefix
-            let mut len_buf = [0u8; 4];
-            self.stream.read_exact(&mut len_buf).await?;
-            let len = usize::try_from(u32::from_be_bytes(len_buf))
-                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-
-            // Read frame
-            let mut frame = vec![0u8; len];
-            self.stream.read_exact(&mut frame).await?;
-            Ok::<Vec<u8>, std::io::Error>(frame)
-        };
-
-        timeout(Duration::from_millis(timeout_ms), recv_future)
+        self.recv_frame_bytes(timeout_ms)
             .await
-            .map_err(|_| "timeout waiting for response".to_string())?
-            .map_err(Into::into)
+            .map(|frame| frame.to_vec())
+    }
+
+    /// Receive a length-prefixed frame as `Bytes` with timeout.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the read times out, the socket read fails, or the
+    /// frame length is invalid for the current platform.
+    pub async fn recv_frame_bytes(
+        &mut self,
+        timeout_ms: u64,
+    ) -> Result<Bytes, Box<dyn std::error::Error>> {
+        timeout(
+            Duration::from_millis(timeout_ms),
+            self.recv_frame_bytes_without_timeout(),
+        )
+        .await
+        .map_err(|_| "timeout waiting for response".to_string())?
+    }
+
+    /// Receive a length-prefixed frame as `Bytes` without installing a timeout.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the socket read fails or the frame length is invalid
+    /// for the current platform.
+    pub async fn recv_frame_bytes_without_timeout(
+        &mut self,
+    ) -> Result<Bytes, Box<dyn std::error::Error>> {
+        // Read length prefix
+        let mut len_buf = [0u8; 4];
+        self.stream.read_exact(&mut len_buf).await?;
+        let len = usize::try_from(u32::from_be_bytes(len_buf))
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+
+        let mut frame = BytesMut::with_capacity(len);
+        frame.resize(len, 0);
+        self.stream.read_exact(&mut frame).await?;
+        Ok(frame.freeze())
     }
 
     /// Send a frame and wait for response
@@ -117,6 +155,21 @@ impl TestClient {
     ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         self.send_frame(frame).await?;
         self.recv_frame(timeout_ms).await
+    }
+
+    /// Send a `Bytes` frame and wait for a `Bytes` response.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if sending fails, receiving fails, or the response
+    /// times out.
+    pub async fn request_bytes(
+        &mut self,
+        frame: Bytes,
+        timeout_ms: u64,
+    ) -> Result<Bytes, Box<dyn std::error::Error>> {
+        self.send_frame_bytes(frame).await?;
+        self.recv_frame_bytes(timeout_ms).await
     }
 
     /// Gracefully close the TCP client connection.
@@ -189,7 +242,20 @@ impl TestWebSocketClient {
     ///
     /// Returns an error if the WebSocket send fails.
     pub async fn send_frame(&mut self, frame: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
-        self.ws.send(Message::Binary(frame.to_vec().into())).await?;
+        self.send_frame_bytes(Bytes::copy_from_slice(frame)).await?;
+        Ok(())
+    }
+
+    /// Send a WebSocket binary frame from an owned `Bytes` buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the WebSocket send fails.
+    pub async fn send_frame_bytes(
+        &mut self,
+        frame: Bytes,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.ws.send(Message::Binary(frame)).await?;
         Ok(())
     }
 
@@ -203,41 +269,57 @@ impl TestWebSocketClient {
         &mut self,
         timeout_ms: u64,
     ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        let recv_future = async {
-            loop {
-                // Check if we have pending frames from previous recv() calls
-                // This is a fast synchronous check that avoids async overhead
-                while let Some(msg) = self.pending_frames.pop_front() {
-                    match msg {
-                        Message::Binary(data) => return Ok(data.to_vec()),
-                        Message::Ping(_)
-                        | Message::Pong(_)
-                        | Message::Text(_)
-                        | Message::Frame(_) => {}
-                        Message::Close(_) => return Err("WebSocket closed".into()),
-                    }
-                }
+        self.recv_frame_bytes(timeout_ms)
+            .await
+            .map(|frame| frame.to_vec())
+    }
 
-                // Pending buffer empty, await next message from WebSocket stream
-                match self.ws.next().await {
-                    Some(Ok(msg)) => match msg {
-                        Message::Binary(data) => return Ok(data.to_vec()),
-                        Message::Ping(_)
-                        | Message::Pong(_)
-                        | Message::Text(_)
-                        | Message::Frame(_) => {}
-                        Message::Close(_) => return Err("WebSocket closed".into()),
-                    },
-                    Some(Err(e)) => return Err(e.into()),
-                    None => return Err("WebSocket stream ended".into()),
+    /// Receive a WebSocket binary frame as `Bytes` with timeout.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the read times out, the socket closes, or the
+    /// WebSocket stream yields an error.
+    pub async fn recv_frame_bytes(
+        &mut self,
+        timeout_ms: u64,
+    ) -> Result<Bytes, Box<dyn std::error::Error>> {
+        timeout(
+            Duration::from_millis(timeout_ms),
+            self.recv_frame_bytes_without_timeout(),
+        )
+        .await
+        .map_err(|_| "timeout waiting for response".to_string())?
+    }
+
+    /// Receive the next WebSocket binary frame without installing a per-frame timeout.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the socket closes or the WebSocket stream yields an error.
+    pub async fn recv_frame_bytes_without_timeout(
+        &mut self,
+    ) -> Result<Bytes, Box<dyn std::error::Error>> {
+        loop {
+            // Check if we have pending frames from previous recv() calls.
+            while let Some(msg) = self.pending_frames.pop_front() {
+                match msg {
+                    Message::Binary(data) => return Ok(data),
+                    Message::Ping(_) | Message::Pong(_) | Message::Text(_) | Message::Frame(_) => {}
+                    Message::Close(_) => return Err("WebSocket closed".into()),
                 }
             }
-        };
 
-        timeout(Duration::from_millis(timeout_ms), recv_future)
-            .await
-            .map_err(|_| "timeout waiting for response".to_string())?
-            .map_err(|e: Box<dyn std::error::Error>| e)
+            match self.ws.next().await {
+                Some(Ok(msg)) => match msg {
+                    Message::Binary(data) => return Ok(data),
+                    Message::Ping(_) | Message::Pong(_) | Message::Text(_) | Message::Frame(_) => {}
+                    Message::Close(_) => return Err("WebSocket closed".into()),
+                },
+                Some(Err(e)) => return Err(e.into()),
+                None => return Err("WebSocket stream ended".into()),
+            }
+        }
     }
 
     /// Send a frame and wait for response
@@ -253,6 +335,21 @@ impl TestWebSocketClient {
     ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         self.send_frame(frame).await?;
         self.recv_frame(timeout_ms).await
+    }
+
+    /// Send a `Bytes` frame and wait for a `Bytes` response.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if sending fails, receiving fails, or the response
+    /// times out.
+    pub async fn request_bytes(
+        &mut self,
+        frame: Bytes,
+        timeout_ms: u64,
+    ) -> Result<Bytes, Box<dyn std::error::Error>> {
+        self.send_frame_bytes(frame).await?;
+        self.recv_frame_bytes(timeout_ms).await
     }
 
     /// Gracefully close the websocket client connection.

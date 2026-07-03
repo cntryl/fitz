@@ -373,11 +373,13 @@ fn assert_rpc_invalid_sequence_error_frame(frame: &[u8], expected_correlation_id
 }
 
 fn assert_rpc_route_not_registered_error_response(frame: &[u8]) {
-    let (_msg_type, status, data) = parse_rpc_response(frame);
-    assert_ne!(status, 0, "Expected route-not-registered error response");
+    let response =
+        parse_rpc_response_delivery(frame).expect("parse route-not-registered terminal response");
+    assert_eq!(response.seq, 0);
+    assert!(response.stream_end);
 
     let (code, message) =
-        fitz::protocol::rpc_codec::decode_error_body(&data).expect("parse rpc error body");
+        fitz::protocol::rpc_codec::decode_error_body(&response.body).expect("parse rpc error body");
     assert_eq!(
         code,
         fitz::protocol::error_codes::rpc::ERR_ROUTE_NOT_REGISTERED
@@ -472,9 +474,6 @@ async fn exercise_worker_reregistration_after_broker_restart_tcp() {
         .send_frame(&request_after_reregister)
         .await
         .expect("send request after reregister");
-    let accepted_response = caller.recv_frame(2000).await.expect("accepted response");
-    let (_msg_type, status, _data) = parse_rpc_response(&accepted_response);
-    assert_eq!(status, 0);
 
     let delivered_request = restarted_worker
         .recv_frame(2000)
@@ -576,9 +575,6 @@ async fn exercise_worker_reregistration_after_broker_restart_ws() {
         .send_frame(&request_after_reregister)
         .await
         .expect("send request after reregister");
-    let accepted_response = caller.recv_frame(2000).await.expect("accepted response");
-    let (_msg_type, status, _data) = parse_rpc_response(&accepted_response);
-    assert_eq!(status, 0);
 
     let delivered_request = restarted_worker
         .recv_frame(2000)
@@ -630,9 +626,6 @@ async fn exercise_pending_request_loss_after_broker_restart_tcp() {
             .send_frame(&request_frame)
             .await
             .expect("send in-flight request");
-        let accepted_response = caller.recv_frame(2000).await.expect("accepted response");
-        let (_msg_type, status, _data) = parse_rpc_response(&accepted_response);
-        assert_eq!(status, 0);
 
         let _delivered_request = worker.recv_frame(2000).await.expect("request delivery");
         assert_eq!(
@@ -678,9 +671,6 @@ async fn exercise_pending_request_loss_after_broker_restart_tcp() {
         .send_frame(&request_frame)
         .await
         .expect("send fresh request");
-    let accepted_response = caller.recv_frame(2000).await.expect("accepted response");
-    let (_msg_type, status, _data) = parse_rpc_response(&accepted_response);
-    assert_eq!(status, 0);
 
     let delivered_request = worker
         .recv_frame(2000)
@@ -717,9 +707,6 @@ async fn exercise_pending_request_loss_after_broker_restart_ws() {
             .send_frame(&request_frame)
             .await
             .expect("send in-flight request");
-        let accepted_response = caller.recv_frame(2000).await.expect("accepted response");
-        let (_msg_type, status, _data) = parse_rpc_response(&accepted_response);
-        assert_eq!(status, 0);
 
         let _delivered_request = worker.recv_frame(2000).await.expect("request delivery");
         assert_eq!(
@@ -765,9 +752,6 @@ async fn exercise_pending_request_loss_after_broker_restart_ws() {
         .send_frame(&request_frame)
         .await
         .expect("send fresh request");
-    let accepted_response = caller.recv_frame(2000).await.expect("accepted response");
-    let (_msg_type, status, _data) = parse_rpc_response(&accepted_response);
-    assert_eq!(status, 0);
 
     let delivered_request = worker
         .recv_frame(2000)
@@ -801,9 +785,6 @@ async fn exercise_request_timeout_error_after_accept_tcp(server: &TestServer) {
         .send_frame(&request_frame)
         .await
         .expect("send request");
-    let accepted_response = caller.recv_frame(2000).await.expect("accepted response");
-    let (_msg_type, status, _data) = parse_rpc_response(&accepted_response);
-    assert_eq!(status, 0);
 
     let delivered_request = worker.recv_frame(2000).await.expect("request delivery");
     let delivered_request =
@@ -836,9 +817,6 @@ async fn exercise_request_timeout_error_after_accept_ws(server: &TestServer) {
         .send_frame(&request_frame)
         .await
         .expect("send request");
-    let accepted_response = caller.recv_frame(2000).await.expect("accepted response");
-    let (_msg_type, status, _data) = parse_rpc_response(&accepted_response);
-    assert_eq!(status, 0);
 
     let delivered_request = worker.recv_frame(2000).await.expect("request delivery");
     let delivered_request =
@@ -874,9 +852,6 @@ async fn exercise_wrong_correlation_error_after_accept_tcp(server: &TestServer) 
         .send_frame(&request_frame)
         .await
         .expect("send request");
-    let accepted_response = caller.recv_frame(2000).await.expect("accepted response");
-    let (_msg_type, status, _data) = parse_rpc_response(&accepted_response);
-    assert_eq!(status, 0);
 
     let delivered_request = worker.recv_frame(2000).await.expect("request delivery");
     let delivered_request =
@@ -920,9 +895,6 @@ async fn exercise_wrong_correlation_error_after_accept_ws(server: &TestServer) {
         .send_frame(&request_frame)
         .await
         .expect("send request");
-    let accepted_response = caller.recv_frame(2000).await.expect("accepted response");
-    let (_msg_type, status, _data) = parse_rpc_response(&accepted_response);
-    assert_eq!(status, 0);
 
     let delivered_request = worker.recv_frame(2000).await.expect("request delivery");
     let delivered_request =
@@ -969,9 +941,6 @@ async fn exercise_invalid_sequence_error_after_accept_tcp(server: &TestServer) {
         .send_frame(&request_frame)
         .await
         .expect("send request");
-    let accepted_response = caller.recv_frame(2000).await.expect("accepted response");
-    let (_msg_type, status, _data) = parse_rpc_response(&accepted_response);
-    assert_eq!(status, 0);
 
     let delivered_request = worker.recv_frame(2000).await.expect("request delivery");
     let delivered_request =
@@ -1033,9 +1002,6 @@ async fn exercise_invalid_sequence_error_after_accept_ws(server: &TestServer) {
         .send_frame(&request_frame)
         .await
         .expect("send request");
-    let accepted_response = caller.recv_frame(2000).await.expect("accepted response");
-    let (_msg_type, status, _data) = parse_rpc_response(&accepted_response);
-    assert_eq!(status, 0);
 
     let delivered_request = worker.recv_frame(2000).await.expect("request delivery");
     let delivered_request =
@@ -1100,9 +1066,6 @@ async fn exercise_worker_disconnect_error_after_accept_tcp(server: &TestServer) 
         .send_frame(&request_frame)
         .await
         .expect("send request");
-    let accepted_response = caller.recv_frame(2000).await.expect("accepted response");
-    let (_msg_type, status, _data) = parse_rpc_response(&accepted_response);
-    assert_eq!(status, 0);
 
     let delivered_request = worker.recv_frame(2000).await.expect("request delivery");
     let delivered_request =
@@ -1141,9 +1104,6 @@ async fn exercise_worker_disconnect_error_after_accept_ws(server: &TestServer) {
         .send_frame(&request_frame)
         .await
         .expect("send request");
-    let accepted_response = caller.recv_frame(2000).await.expect("accepted response");
-    let (_msg_type, status, _data) = parse_rpc_response(&accepted_response);
-    assert_eq!(status, 0);
 
     let delivered_request = worker.recv_frame(2000).await.expect("request delivery");
     let delivered_request =
@@ -1185,9 +1145,6 @@ async fn exercise_worker_unregister_error_after_accept_tcp(server: &TestServer) 
         .send_frame(&request_frame)
         .await
         .expect("send request");
-    let accepted_response = caller.recv_frame(2000).await.expect("accepted response");
-    let (_msg_type, status, _data) = parse_rpc_response(&accepted_response);
-    assert_eq!(status, 0);
 
     let delivered_request = worker.recv_frame(2000).await.expect("request delivery");
     let delivered_request =
@@ -1233,9 +1190,6 @@ async fn exercise_worker_unregister_error_after_accept_ws(server: &TestServer) {
         .send_frame(&request_frame)
         .await
         .expect("send request");
-    let accepted_response = caller.recv_frame(2000).await.expect("accepted response");
-    let (_msg_type, status, _data) = parse_rpc_response(&accepted_response);
-    assert_eq!(status, 0);
 
     let delivered_request = worker.recv_frame(2000).await.expect("request delivery");
     let delivered_request =
@@ -1313,9 +1267,6 @@ async fn exercise_retained_worker_route_after_unsubscribe_tcp(server: &TestServe
         .send_frame(&request_frame)
         .await
         .expect("send retained route request");
-    let accepted_response = caller.recv_frame(2000).await.expect("accepted response");
-    let (_msg_type, status, _data) = parse_rpc_response(&accepted_response);
-    assert_eq!(status, 0);
 
     let delivered_request = worker.recv_frame(2000).await.expect("request delivery");
     let delivered_request =
@@ -1395,9 +1346,6 @@ async fn exercise_retained_worker_route_after_unsubscribe_ws(server: &TestServer
         .send_frame(&request_frame)
         .await
         .expect("send retained route request");
-    let accepted_response = caller.recv_frame(2000).await.expect("accepted response");
-    let (_msg_type, status, _data) = parse_rpc_response(&accepted_response);
-    assert_eq!(status, 0);
 
     let delivered_request = worker.recv_frame(2000).await.expect("request delivery");
     let delivered_request =

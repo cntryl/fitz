@@ -141,11 +141,9 @@ fn should_forward_worker_disconnect_error_given_rpc_unsubscribe() {
     assert_eq!(sink.pending_request_count(), 0);
     assert_eq!(sink.worker_count(), 0);
     let reply_frames = reply_frames.lock();
-    assert_eq!(reply_frames.len(), 2);
-    assert_eq!(reply_frames[0].msg_type.as_u16(), 302);
-    assert_eq!(reply_frames[0].payload[0], 0);
-    assert_eq!(reply_frames[1].msg_type.as_u16(), 303);
-    let error_response = parse_forwarded_rpc_response(&reply_frames[1]);
+    assert_eq!(reply_frames.len(), 1);
+    assert_eq!(reply_frames[0].msg_type.as_u16(), 303);
+    let error_response = parse_forwarded_rpc_response(&reply_frames[0]);
     assert_eq!(error_response.correlation_id, request.correlation_id);
     assert_eq!(error_response.seq, 0);
     assert!(error_response.stream_end);
@@ -262,22 +260,19 @@ fn should_retain_other_worker_route_given_rpc_unsubscribe_on_same_session() {
     assert_eq!(sink.pending_request_count(), 0);
 
     let reply_frames = reply_frames.lock();
-    assert_eq!(reply_frames.len(), 2);
-    assert_eq!(reply_frames[0].msg_type.as_u16(), 302);
-    assert_eq!(reply_frames[0].payload[0], 0);
-    assert_eq!(reply_frames[1].msg_type.as_u16(), 303);
-    let forwarded_response = parse_forwarded_rpc_response(&reply_frames[1]);
+    assert_eq!(reply_frames.len(), 1);
+    assert_eq!(reply_frames[0].msg_type.as_u16(), 303);
+    let forwarded_response = parse_forwarded_rpc_response(&reply_frames[0]);
     assert_eq!(forwarded_response.correlation_id, request.correlation_id);
     assert_eq!(forwarded_response.seq, 0);
     assert!(forwarded_response.stream_end);
     assert_eq!(forwarded_response.body.as_ref(), b"ok");
 
     let worker_frames = worker_frames.lock();
-    assert_eq!(worker_frames.len(), 3);
+    assert_eq!(worker_frames.len(), 2);
     assert_eq!(worker_frames[0].msg_type.as_u16(), 301);
     assert_eq!(worker_frames[0].payload[0], 0);
     assert_eq!(worker_frames[1].msg_type.as_u16(), 302);
-    assert_eq!(worker_frames[2].msg_type.as_u16(), 304);
 }
 
 #[test]
@@ -337,11 +332,9 @@ fn should_forward_worker_disconnect_error_given_rpc_session_cleanup() {
     assert_eq!(sink.pending_request_count(), 0);
     assert_eq!(sink.worker_count(), 0);
     let reply_frames = reply_frames.lock();
-    assert_eq!(reply_frames.len(), 2);
-    assert_eq!(reply_frames[0].msg_type.as_u16(), 302);
-    assert_eq!(reply_frames[0].payload[0], 0);
-    assert_eq!(reply_frames[1].msg_type.as_u16(), 303);
-    let error_response = parse_forwarded_rpc_response(&reply_frames[1]);
+    assert_eq!(reply_frames.len(), 1);
+    assert_eq!(reply_frames[0].msg_type.as_u16(), 303);
+    let error_response = parse_forwarded_rpc_response(&reply_frames[0]);
     assert_eq!(error_response.correlation_id, request.correlation_id);
     assert_eq!(error_response.seq, 0);
     assert!(error_response.stream_end);
@@ -425,8 +418,7 @@ fn should_reject_worker_response_when_correlation_missing_given_rpc_sink() {
     // Assert
     assert_eq!(sink.pending_request_count(), 1);
     let reply_frames = reply_frames.lock();
-    assert_eq!(reply_frames.len(), 1);
-    assert_eq!(reply_frames[0].msg_type.as_u16(), 302);
+    assert_eq!(reply_frames.len(), 0);
     let worker_frames = worker_frames.lock();
     assert_eq!(worker_frames.len(), 2);
     assert_eq!(worker_frames[0].msg_type.as_u16(), 302);
@@ -548,129 +540,7 @@ fn should_reject_worker_response_from_non_owner_session_given_rpc_sink() {
     assert_eq!(sink.pending_request_count(), 1);
 
     let reply_frames = reply_frames.lock();
-    assert_eq!(reply_frames.len(), 1);
-    assert_eq!(reply_frames[0].msg_type.as_u16(), 302);
-
-    let owner_worker_frames = owner_worker_frames.lock();
-    assert_eq!(owner_worker_frames.len(), 1);
-    assert_eq!(owner_worker_frames[0].msg_type.as_u16(), 302);
-
-    let non_owner_worker_frames = non_owner_worker_frames.lock();
-    assert_eq!(non_owner_worker_frames.len(), 1);
-    assert_eq!(non_owner_worker_frames[0].msg_type.as_u16(), 303);
-    let error_response = parse_forwarded_rpc_response(&non_owner_worker_frames[0]);
-    assert_eq!(error_response.correlation_id, owner_request.correlation_id);
-    assert!(error_response.stream_end);
-    assert_rpc_code_error(
-        error_response.body.as_ref(),
-        crate::protocol::error_codes::rpc::ERR_RPC_WRONG_WORKER,
-        RPC_WRONG_WORKER_ERROR,
-    );
-}
-
-#[test]
-#[allow(clippy::too_many_lines)]
-fn should_reject_worker_ack_from_non_owner_session_given_rpc_sink() {
-    // Arrange
-    let router = Arc::new(Router::new());
-    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model));
-    let family = RouteFamily::new(1);
-    let request_route = Route::new("rpc://bench/system/resource/operation");
-    let request_addr = RouteAddress::new(family, request_route.clone());
-    let request_source = session_inbox_address(family, 1);
-    let owner_worker_source = session_inbox_address(family, 42);
-    let non_owner_worker_source = session_inbox_address(family, 43);
-    let reply_frames = Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
-    let owner_worker_frames = Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
-    let non_owner_worker_frames = Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
-    router.register(
-        request_source.clone(),
-        Arc::new(CaptureRpcFrameSink {
-            frames: reply_frames.clone(),
-        }) as Arc<dyn MailboxSink>,
-    );
-    router.register(
-        owner_worker_source.clone(),
-        Arc::new(CaptureRpcFrameSink {
-            frames: owner_worker_frames.clone(),
-        }) as Arc<dyn MailboxSink>,
-    );
-    router.register(
-        non_owner_worker_source.clone(),
-        Arc::new(CaptureRpcFrameSink {
-            frames: non_owner_worker_frames.clone(),
-        }) as Arc<dyn MailboxSink>,
-    );
-    sink.register_worker_for_tests(RpcWorker::with_stats(
-        request_addr.clone(),
-        owner_worker_source.clone(),
-        42,
-        "2026-03-14T12:00:00Z",
-        0,
-        0,
-    ));
-    sink.register_worker_for_tests(RpcWorker::with_stats(
-        request_addr.clone(),
-        non_owner_worker_source.clone(),
-        43,
-        "2026-03-14T12:00:00Z",
-        0,
-        0,
-    ));
-    let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
-    let (request_msg_type, request_payload) =
-        crate::benchkit::extract_single_tlv_field(&request_frame);
-    let request_ctx = FrameContext::new(
-        1,
-        crate::protocol::frame::ChannelId::Rpc,
-        crate::protocol::tlv::MessageType::new(request_msg_type),
-        request_payload,
-        family,
-    );
-
-    // Act
-    sink.deliver(Envelope::from_route(
-        request_source,
-        request_addr.clone(),
-        request_ctx,
-    ))
-    .expect("deliver request");
-    let owner_request = owner_worker_frames
-        .lock()
-        .first()
-        .cloned()
-        .expect("owner worker request delivery");
-    let owner_request = match crate::protocol::rpc_codec::parse_request(
-        &owner_request,
-        &owner_request.payload,
-        family,
-    )
-    .expect("parse owner worker request")
-    {
-        crate::domains::rpc::protocol::RpcMessage::Request(request) => request,
-        other => panic!("expected rpc request, found {other:?}"),
-    };
-    let wrong_ack_payload = crate::protocol::rpc_codec::encode_ack(&owner_request.correlation_id);
-    sink.deliver(Envelope::from_route(
-        non_owner_worker_source,
-        request_addr,
-        FrameContext::new(
-            43,
-            crate::protocol::frame::ChannelId::Rpc,
-            crate::protocol::tlv::MessageType::new(304),
-            bytes::Bytes::from(wrong_ack_payload),
-            family,
-        ),
-    ))
-    .expect("deliver non-owner ack");
-
-    // Assert
-    assert_eq!(sink.pending_request_count(), 1);
-
-    let reply_frames = reply_frames.lock();
-    assert_eq!(reply_frames.len(), 1);
-    assert_eq!(reply_frames[0].msg_type.as_u16(), 302);
+    assert_eq!(reply_frames.len(), 0);
 
     let owner_worker_frames = owner_worker_frames.lock();
     assert_eq!(owner_worker_frames.len(), 1);
@@ -770,14 +640,13 @@ fn should_drop_late_worker_response_after_requester_cleanup_without_forward_erro
 
     // Assert
     let reply_frames = reply_frames.lock();
-    assert_eq!(reply_frames.len(), 1);
-    assert_eq!(reply_frames[0].msg_type.as_u16(), 302);
+    assert_eq!(reply_frames.len(), 0);
     let worker_frames = worker_frames.lock();
     assert!(
         worker_frames
             .iter()
-            .any(|frame| frame.msg_type.as_u16() == 304),
-        "expected worker ACK even when requester has disconnected"
+            .all(|frame| frame.msg_type.as_u16() != 304),
+        "worker ACK frames must not be emitted"
     );
 }
 

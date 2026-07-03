@@ -24,12 +24,6 @@ pub(in crate::domains::rpc::sink) enum RpcPendingResponseDisposition {
     },
 }
 
-pub(in crate::domains::rpc::sink) enum RpcPendingAckDisposition {
-    Missing,
-    WrongWorker { owner_worker_session_id: u64 },
-    Removed(RpcPendingRequest),
-}
-
 impl RpcPendingTable {
     pub(in crate::domains::rpc::sink) fn new() -> Self {
         Self {
@@ -102,26 +96,6 @@ impl RpcPendingTable {
         correlation_id: &uuid::Uuid,
     ) -> bool {
         self.pending.contains_key(correlation_id)
-    }
-
-    pub(in crate::domains::rpc::sink) fn remove_for_ack(
-        &mut self,
-        correlation_id: &uuid::Uuid,
-        worker_session_id: u64,
-    ) -> RpcPendingAckDisposition {
-        let std::collections::hash_map::Entry::Occupied(entry) =
-            self.pending.entry(*correlation_id)
-        else {
-            return RpcPendingAckDisposition::Missing;
-        };
-
-        if entry.get().worker_session_id != worker_session_id {
-            return RpcPendingAckDisposition::WrongWorker {
-                owner_worker_session_id: entry.get().worker_session_id,
-            };
-        }
-
-        RpcPendingAckDisposition::Removed(entry.remove())
     }
 
     pub(in crate::domains::rpc::sink) fn cleanup_session(

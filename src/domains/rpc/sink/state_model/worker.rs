@@ -44,6 +44,7 @@ impl RpcWorker {
         addr: RouteAddress,
         inbox_addr: RouteAddress,
         session_id: u64,
+        max_concurrent: usize,
     ) -> Self {
         Self {
             addr,
@@ -53,7 +54,7 @@ impl RpcWorker {
             requests_handled: 0,
             total_latency_us: 0,
             in_flight: 0,
-            max_concurrent: 1,
+            max_concurrent,
         }
     }
 

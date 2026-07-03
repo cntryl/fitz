@@ -11,22 +11,19 @@ mod stress_config;
 use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
-    build_rpc_request, build_rpc_response_frame, build_rpc_subscribe, create_bench_rpc_sink,
-    extract_single_tlv_field, register_session_queue_sink, route_frame, shared_bench_runtime,
-    FrameQueueSink,
+    build_rpc_request, build_rpc_response_frame_bytes, build_rpc_subscribe_with_max_concurrent,
+    create_bench_rpc_sink, extract_single_tlv_field, register_session_queue_sink, route_frame,
+    shared_bench_runtime, FrameQueueSink,
 };
-use fitz::domains::rpc::protocol::{RpcMessage, RpcRequest, RpcResponse};
+use fitz::domains::rpc::protocol::RpcResponse;
 use fitz::protocol::frame::ChannelId;
-use fitz::protocol::frame_context::FrameContext;
 use fitz::protocol::rpc_codec::encode_response_message;
-use fitz::protocol::rpc_codec::parse_request;
-use fitz::protocol::tlv::MessageType;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{RouteAddress, RouteFamily};
 use fitz::testkit::transport::TlvFrameParser;
 use fitz::testkit::{TestClient, TestServer, TestWebSocketClient};
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::sync::{mpsc as std_mpsc, Arc};
+use std::time::Duration;
 use uuid::Uuid;
 
 const SERVICE_ROUTE: &str = "rpc://tier4/service";
@@ -35,43 +32,147 @@ const WORKER_SESSION_ID: u64 = 2;
 const RESPONSE_TIMEOUT_MS: u64 = 2_000;
 const MULTICLIENT_COUNT: usize = 10;
 const MULTICLIENT_REQUEST_FRAME_RING_SIZE: usize = 512;
-
-type SharedWsClient = Arc<Mutex<TestWebSocketClient>>;
+const TIER4_WORKER_MAX_CONCURRENT: u32 = 32;
 
 struct NetworkRequestFrame {
-    frame: Vec<u8>,
+    frame: Bytes,
     correlation_id: Uuid,
     body: Bytes,
 }
 
-fn try_parse_rpc_request_frame(frame: &[u8], family: RouteFamily) -> Option<RpcRequest> {
-    let mut parser = TlvFrameParser::new(frame);
-    let (msg_type, payload) = parser.next_field_ref()?;
+struct RpcRequestParts {
+    correlation_id: Uuid,
+    body: Bytes,
+}
+
+struct RpcResponseParts {
+    correlation_id: Uuid,
+    seq: u64,
+    body: Bytes,
+    stream_end: bool,
+}
+
+struct RpcRequesterDriver {
+    command_tx: tokio::sync::mpsc::UnboundedSender<usize>,
+    handle: tokio::task::JoinHandle<()>,
+}
+
+fn read_u32(input: &[u8], offset: &mut usize) -> Option<u32> {
+    let end = offset.checked_add(4)?;
+    let bytes = input.get(*offset..end)?;
+    *offset = end;
+    Some(u32::from_be_bytes(bytes.try_into().ok()?))
+}
+
+fn read_u64(input: &[u8], offset: &mut usize) -> Option<u64> {
+    let end = offset.checked_add(8)?;
+    let bytes = input.get(*offset..end)?;
+    *offset = end;
+    Some(u64::from_be_bytes(bytes.try_into().ok()?))
+}
+
+fn read_len_prefixed_range(input: &[u8], offset: &mut usize) -> Option<(usize, usize)> {
+    let len = usize::try_from(read_u32(input, offset)?).ok()?;
+    let start = *offset;
+    let end = start.checked_add(len)?;
+    input.get(start..end)?;
+    *offset = end;
+    Some((start, end))
+}
+
+fn read_uuid_field(input: &[u8], offset: &mut usize) -> Option<Uuid> {
+    let end = offset.checked_add(16)?;
+    let uuid_bytes = input.get(*offset..end)?;
+    *offset = end;
+    let uuid_array: [u8; 16] = uuid_bytes.try_into().ok()?;
+    Some(Uuid::from_bytes(uuid_array))
+}
+
+fn single_tlv_payload_range(frame: &[u8]) -> Option<(u16, usize, usize)> {
+    const ESCAPE_MARKER: u8 = 0xFF;
+
+    let mut offset = 0usize;
+    let msg_type = if *frame.get(offset)? == ESCAPE_MARKER {
+        let end = offset.checked_add(3)?;
+        let bytes = frame.get(offset + 1..end)?;
+        offset = end;
+        u16::from_be_bytes(bytes.try_into().ok()?)
+    } else {
+        let value = u16::from(*frame.get(offset)?);
+        offset += 1;
+        value
+    };
+
+    let len_end = offset.checked_add(2)?;
+    let len_bytes = frame.get(offset..len_end)?;
+    offset = len_end;
+    let len = usize::from(u16::from_be_bytes(len_bytes.try_into().ok()?));
+    let end = offset.checked_add(len)?;
+    frame.get(offset..end)?;
+    Some((msg_type, offset, end))
+}
+
+fn try_parse_rpc_request_payload_parts(payload: &Bytes) -> Option<RpcRequestParts> {
+    let mut offset = 0usize;
+    let correlation_id = read_uuid_field(payload.as_ref(), &mut offset)?;
+    read_len_prefixed_range(payload.as_ref(), &mut offset)?;
+    let (body_start, body_end) = read_len_prefixed_range(payload.as_ref(), &mut offset)?;
+    if offset != payload.len() {
+        return None;
+    }
+
+    Some(RpcRequestParts {
+        correlation_id,
+        body: payload.slice(body_start..body_end),
+    })
+}
+
+fn try_parse_rpc_request_frame_parts(frame: &Bytes) -> Option<RpcRequestParts> {
+    let (msg_type, payload_start, payload_end) = single_tlv_payload_range(frame.as_ref())?;
     if msg_type != 302 {
         return None;
     }
 
-    let frame_ctx = FrameContext::new(
-        REQUESTER_SESSION_ID,
-        ChannelId::Rpc,
-        MessageType::new(msg_type),
-        Bytes::new(),
-        family,
-    );
+    let payload = frame.slice(payload_start..payload_end);
+    try_parse_rpc_request_payload_parts(&payload)
+}
 
-    match parse_request(&frame_ctx, payload, family) {
-        Ok(RpcMessage::Request(request)) => Some(request),
-        _ => None,
+fn try_parse_rpc_response_payload_parts(payload: &Bytes) -> Option<RpcResponseParts> {
+    let mut offset = 0usize;
+    let correlation_id = read_uuid_field(payload.as_ref(), &mut offset)?;
+    let seq = read_u64(payload.as_ref(), &mut offset)?;
+    let flags = *payload.get(offset)?;
+    offset += 1;
+    let (body_start, body_end) = read_len_prefixed_range(payload.as_ref(), &mut offset)?;
+    if offset != payload.len() {
+        return None;
     }
+
+    Some(RpcResponseParts {
+        correlation_id,
+        seq,
+        body: payload.slice(body_start..body_end),
+        stream_end: flags & 0x01 != 0,
+    })
+}
+
+fn try_parse_rpc_response_frame_parts(frame: &Bytes) -> Option<RpcResponseParts> {
+    let (msg_type, payload_start, payload_end) = single_tlv_payload_range(frame.as_ref())?;
+    if msg_type != 303 {
+        return None;
+    }
+
+    let payload = frame.slice(payload_start..payload_end);
+    try_parse_rpc_response_payload_parts(&payload)
 }
 
 fn build_network_request_frame(
     route: &str,
     payload: &[u8],
-    family: RouteFamily,
+    _family: RouteFamily,
 ) -> NetworkRequestFrame {
-    let frame = build_rpc_request(route, payload);
-    let request = try_parse_rpc_request_frame(&frame, family).expect("rpc request frame");
+    let frame = Bytes::from(build_rpc_request(route, payload));
+    let request = try_parse_rpc_request_frame_parts(&frame).expect("rpc request frame");
 
     NetworkRequestFrame {
         frame,
@@ -91,51 +192,48 @@ fn build_network_request_frame_ring(
         .collect()
 }
 
-fn try_parse_rpc_worker_response_frame(frame: &[u8], family: RouteFamily) -> Option<RpcResponse> {
-    let mut parser = TlvFrameParser::new(frame);
-    let (msg_type, payload) = parser.next_field_ref()?;
-    if msg_type != 303 {
-        return None;
-    }
-
-    let frame_ctx = FrameContext::new(
-        REQUESTER_SESSION_ID,
-        ChannelId::Rpc,
-        MessageType::new(msg_type),
-        Bytes::new(),
-        family,
-    );
-
-    match parse_request(&frame_ctx, payload, family) {
-        Ok(RpcMessage::Response(response)) => Some(response),
-        _ => None,
-    }
-}
-
 fn assert_rpc_worker_response(
-    response: &RpcResponse,
+    response: &RpcResponseParts,
     expected_correlation_id: Uuid,
     expected_body: &[u8],
 ) {
-    assert_eq!(
-        response.correlation_id, expected_correlation_id,
-        "unexpected rpc correlation id"
-    );
-    assert_eq!(response.seq, 0, "single-response bench should emit seq 0");
-    assert_eq!(
-        response.body.as_ref(),
-        expected_body,
-        "unexpected rpc response body"
-    );
-    assert!(
-        response.stream_end,
-        "single-response bench should end the stream"
-    );
+    validate_rpc_worker_response(response, expected_correlation_id, expected_body)
+        .expect("valid rpc worker response");
+}
+
+fn validate_rpc_worker_response(
+    response: &RpcResponseParts,
+    expected_correlation_id: Uuid,
+    expected_body: &[u8],
+) -> Result<(), String> {
+    if response.correlation_id != expected_correlation_id {
+        return Err(format!(
+            "unexpected rpc correlation id: expected {expected_correlation_id}, got {}",
+            response.correlation_id
+        ));
+    }
+    if response.seq != 0 {
+        return Err(format!(
+            "single-response bench should emit seq 0, got {}",
+            response.seq
+        ));
+    }
+    if response.body.as_ref() != expected_body {
+        return Err(format!(
+            "unexpected rpc response body: expected {expected_body:?}, got {:?}",
+            response.body.as_ref()
+        ));
+    }
+    if !response.stream_end {
+        return Err("single-response bench should end the stream".to_string());
+    }
+
+    Ok(())
 }
 
 fn assert_requester_inbox_contains_worker_response(
-    frames: Vec<FrameContext>,
-    family: RouteFamily,
+    frames: Vec<fitz::protocol::frame_context::FrameContext>,
+    _family: RouteFamily,
     expected_correlation_id: Uuid,
     expected_body: &[u8],
 ) {
@@ -144,17 +242,43 @@ fn assert_requester_inbox_contains_worker_response(
             continue;
         }
 
-        match parse_request(&frame, &frame.payload, family) {
-            Ok(RpcMessage::Response(response)) => {
-                assert_rpc_worker_response(&response, expected_correlation_id, expected_body);
-                return;
-            }
-            Ok(other) => panic!("expected rpc response frame, found {other:?}"),
-            Err(error) => panic!("failed to parse rpc response frame: {error}"),
+        if let Some(response) = try_parse_rpc_response_payload_parts(&frame.payload) {
+            assert_rpc_worker_response(&response, expected_correlation_id, expected_body);
+            return;
         }
+
+        panic!("failed to parse rpc response frame");
     }
 
     panic!("expected worker rpc response in requester inbox");
+}
+
+async fn try_request_until_worker_response_tcp(
+    client: &mut TestClient,
+    request_frame: &NetworkRequestFrame,
+    _family: RouteFamily,
+) -> Result<(), String> {
+    client
+        .send_frame_bytes(request_frame.frame.clone())
+        .await
+        .map_err(|error| format!("send rpc request: {error}"))?;
+
+    for _ in 0..4 {
+        let frame = client
+            .recv_frame_bytes_without_timeout()
+            .await
+            .map_err(|error| format!("receive rpc response: {error}"))?;
+        if let Some(response) = try_parse_rpc_response_frame_parts(&frame) {
+            validate_rpc_worker_response(
+                &response,
+                request_frame.correlation_id,
+                request_frame.body.as_ref(),
+            )?;
+            return Ok(());
+        }
+    }
+
+    Err("expected worker rpc response frame over tcp".to_string())
 }
 
 async fn request_until_worker_response_tcp(
@@ -162,27 +286,37 @@ async fn request_until_worker_response_tcp(
     request_frame: &NetworkRequestFrame,
     family: RouteFamily,
 ) {
-    client
-        .send_frame(&request_frame.frame)
+    try_request_until_worker_response_tcp(client, request_frame, family)
         .await
-        .expect("send rpc request");
+        .expect("rpc tcp worker response");
+}
+
+async fn try_request_until_worker_response_ws(
+    client: &mut TestWebSocketClient,
+    request_frame: &NetworkRequestFrame,
+    _family: RouteFamily,
+) -> Result<(), String> {
+    client
+        .send_frame_bytes(request_frame.frame.clone())
+        .await
+        .map_err(|error| format!("send rpc request: {error}"))?;
 
     for _ in 0..4 {
         let frame = client
-            .recv_frame(RESPONSE_TIMEOUT_MS)
+            .recv_frame_bytes_without_timeout()
             .await
-            .expect("receive rpc response");
-        if let Some(response) = try_parse_rpc_worker_response_frame(&frame, family) {
-            assert_rpc_worker_response(
+            .map_err(|error| format!("receive rpc response: {error}"))?;
+        if let Some(response) = try_parse_rpc_response_frame_parts(&frame) {
+            validate_rpc_worker_response(
                 &response,
                 request_frame.correlation_id,
                 request_frame.body.as_ref(),
-            );
-            return;
+            )?;
+            return Ok(());
         }
     }
 
-    panic!("expected worker rpc response frame over tcp");
+    Err("expected worker rpc response frame over websocket".to_string())
 }
 
 async fn request_until_worker_response_ws(
@@ -190,32 +324,14 @@ async fn request_until_worker_response_ws(
     request_frame: &NetworkRequestFrame,
     family: RouteFamily,
 ) {
-    client
-        .send_frame(&request_frame.frame)
+    try_request_until_worker_response_ws(client, request_frame, family)
         .await
-        .expect("send rpc request");
-
-    for _ in 0..4 {
-        let frame = client
-            .recv_frame(RESPONSE_TIMEOUT_MS)
-            .await
-            .expect("receive rpc response");
-        if let Some(response) = try_parse_rpc_worker_response_frame(&frame, family) {
-            assert_rpc_worker_response(
-                &response,
-                request_frame.correlation_id,
-                request_frame.body.as_ref(),
-            );
-            return;
-        }
-    }
-
-    panic!("expected worker rpc response frame over websocket");
+        .expect("rpc websocket worker response");
 }
 
 fn spawn_rpc_ws_workers(
     worker_clients: Vec<TestWebSocketClient>,
-    family: RouteFamily,
+    _family: RouteFamily,
 ) -> Vec<tokio::task::JoinHandle<()>> {
     worker_clients
         .into_iter()
@@ -223,19 +339,95 @@ fn spawn_rpc_ws_workers(
             let rt = shared_bench_runtime();
             rt.spawn(async move {
                 loop {
-                    let Ok(frame) = worker_client.recv_frame(RESPONSE_TIMEOUT_MS).await else {
-                        continue;
+                    let Ok(frame) = worker_client.recv_frame_bytes_without_timeout().await else {
+                        break;
                     };
 
-                    if let Some(req) = try_parse_rpc_request_frame(&frame, family) {
+                    if let Some(req) = try_parse_rpc_request_frame_parts(&frame) {
                         let resp_frame =
-                            build_rpc_response_frame(req.correlation_id, req.body.as_ref());
-                        let _ = worker_client.send_frame(&resp_frame).await;
+                            build_rpc_response_frame_bytes(req.correlation_id, req.body);
+                        let _ = worker_client.send_frame_bytes(resp_frame).await;
                     }
                 }
             })
         })
         .collect()
+}
+
+fn spawn_rpc_ws_requesters(
+    clients: Vec<TestWebSocketClient>,
+    request_frames: Vec<Vec<NetworkRequestFrame>>,
+    family: RouteFamily,
+) -> (
+    Vec<RpcRequesterDriver>,
+    std_mpsc::Receiver<Result<usize, String>>,
+) {
+    let (completion_tx, completion_rx) = std_mpsc::channel();
+    let drivers = clients
+        .into_iter()
+        .zip(request_frames)
+        .enumerate()
+        .map(|(requester_id, (mut client, frames))| {
+            let (command_tx, mut command_rx) = tokio::sync::mpsc::unbounded_channel();
+            let completion_tx = completion_tx.clone();
+            let rt = shared_bench_runtime();
+            let handle = rt.spawn(async move {
+                while let Some(request_index) = command_rx.recv().await {
+                    let result = tokio::time::timeout(
+                        Duration::from_millis(RESPONSE_TIMEOUT_MS),
+                        try_request_until_worker_response_ws(
+                            &mut client,
+                            &frames[request_index],
+                            family,
+                        ),
+                    )
+                    .await
+                    .map_err(|_| format!("requester {requester_id} rpc response timeout"))
+                    .and_then(|inner| {
+                        inner
+                            .map(|()| requester_id)
+                            .map_err(|error| format!("requester {requester_id}: {error}"))
+                    });
+
+                    if completion_tx.send(result).is_err() {
+                        break;
+                    }
+                }
+                let _ = client.close().await;
+            });
+            RpcRequesterDriver { command_tx, handle }
+        })
+        .collect();
+    drop(completion_tx);
+
+    (drivers, completion_rx)
+}
+
+fn request_all_multiclient_ws(
+    drivers: &[RpcRequesterDriver],
+    completion_rx: &std_mpsc::Receiver<Result<usize, String>>,
+    request_index: usize,
+) {
+    assert_eq!(
+        drivers.len(),
+        MULTICLIENT_COUNT,
+        "expected exactly {MULTICLIENT_COUNT} requester drivers"
+    );
+
+    for driver in drivers {
+        driver
+            .command_tx
+            .send(request_index)
+            .expect("requester driver is running");
+    }
+
+    for _ in 0..drivers.len() {
+        match completion_rx.recv_timeout(Duration::from_millis(RESPONSE_TIMEOUT_MS)) {
+            Ok(Ok(_requester_id)) => {}
+            Ok(Err(error)) => panic!("{error}"),
+            Err(error) => panic!("multiclient rpc response timeout: {error}"),
+        }
+    }
 }
 
 fn measure_multiclient_concurrent_requests(
@@ -251,12 +443,13 @@ fn measure_multiclient_concurrent_requests(
     ctx.tag("worker_count", worker_count.to_string());
 
     let family = RouteFamily::new(1);
-    let subscribe_frame = build_rpc_subscribe(SERVICE_ROUTE);
+    let subscribe_frame =
+        build_rpc_subscribe_with_max_concurrent(SERVICE_ROUTE, TIER4_WORKER_MAX_CONCURRENT);
 
     let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
 
-    let worker_clients: Vec<TestWebSocketClient> = (0..worker_count)
+    let mut worker_clients: Vec<TestWebSocketClient> = (0..worker_count)
         .map(|_| {
             let mut worker_client = runtime
                 .block_on(TestWebSocketClient::connect(&format!(
@@ -271,16 +464,17 @@ fn measure_multiclient_concurrent_requests(
             worker_client
         })
         .collect();
+    let active_worker_client = worker_clients.remove(0);
+    let idle_worker_clients = worker_clients;
 
-    let clients: Vec<SharedWsClient> = (0..MULTICLIENT_COUNT)
+    let clients: Vec<TestWebSocketClient> = (0..MULTICLIENT_COUNT)
         .map(|_| {
-            let client = runtime
+            runtime
                 .block_on(TestWebSocketClient::connect(&format!(
                     "ws://{}",
                     server.ws_addr
                 )))
-                .expect("connect ws");
-            Arc::new(Mutex::new(client))
+                .expect("connect ws")
         })
         .collect();
     let request_frames: Vec<Vec<NetworkRequestFrame>> = (0..MULTICLIENT_COUNT)
@@ -294,7 +488,9 @@ fn measure_multiclient_concurrent_requests(
         })
         .collect();
     let mut next_request_index = 0usize;
-    let worker_handles = spawn_rpc_ws_workers(worker_clients, family);
+    let worker_handles = spawn_rpc_ws_workers(vec![active_worker_client], family);
+    let (requester_drivers, completion_rx) =
+        spawn_rpc_ws_requesters(clients, request_frames, family);
 
     let iterations = ctx.measure_for(
         stress_config::BenchConfig::default().measure_duration,
@@ -302,33 +498,30 @@ fn measure_multiclient_concurrent_requests(
             let request_index = next_request_index;
             next_request_index = (next_request_index + 1) % MULTICLIENT_REQUEST_FRAME_RING_SIZE;
 
-            runtime.block_on(futures::future::join_all(
-                clients
-                    .iter()
-                    .zip(request_frames.iter())
-                    .map(|(client, frames)| {
-                        let request_frame = &frames[request_index];
-                        async move {
-                            let mut ws_client = client.lock().await;
-                            request_until_worker_response_ws(&mut ws_client, request_frame, family)
-                                .await;
-                        }
-                    }),
-            ));
+            request_all_multiclient_ws(&requester_drivers, &completion_rx, request_index);
         },
     );
     ctx.set_elements(MULTICLIENT_COUNT as u64 * iterations as u64);
 
-    for worker_handle in worker_handles {
-        worker_handle.abort();
+    for driver in requester_drivers {
+        drop(driver.command_tx);
+        runtime
+            .block_on(driver.handle)
+            .expect("requester driver should stop cleanly");
     }
 
-    let _closed: Vec<_> = runtime.block_on(futures::future::join_all(clients.iter().map(
-        |client| async move {
-            let mut ws_client = client.lock().await;
-            ws_client.close().await.expect("close ws client");
-        },
-    )));
+    for worker_handle in worker_handles {
+        worker_handle.abort();
+        let _ = runtime.block_on(worker_handle);
+    }
+
+    for mut idle_worker_client in idle_worker_clients {
+        let _ = runtime.block_on(idle_worker_client.close());
+    }
+
+    runtime
+        .block_on(server.shutdown())
+        .expect("shutdown server");
 }
 
 fn setup_rpc_sink() -> (
@@ -349,7 +542,8 @@ fn setup_rpc_sink() -> (
     let (worker_source, worker_inbox) =
         register_session_queue_sink(&router, family, WORKER_SESSION_ID);
 
-    let subscribe_frame = build_rpc_subscribe(SERVICE_ROUTE);
+    let subscribe_frame =
+        build_rpc_subscribe_with_max_concurrent(SERVICE_ROUTE, TIER4_WORKER_MAX_CONCURRENT);
     let (subscribe_msg_type, subscribe_payload) = extract_single_tlv_field(&subscribe_frame);
     route_frame(
         router.as_ref(),
@@ -390,9 +584,8 @@ fn service_worker(
         for frame in frames {
             if frame.msg_type.as_u16() == 302 {
                 handled_request = true;
-                if let Ok(RpcMessage::Request(req)) = parse_request(&frame, &frame.payload, family)
-                {
-                    let response = RpcResponse::single(req.correlation_id, req.body.clone());
+                if let Some(req) = try_parse_rpc_request_payload_parts(&frame.payload) {
+                    let response = RpcResponse::single(req.correlation_id, req.body);
                     route_frame(
                         router.as_ref(),
                         worker_source,
@@ -503,7 +696,8 @@ fn should_complete_tcp_request_response(ctx: &mut StressContext) {
     ctx.tag("worker_count", "1");
 
     let family = RouteFamily::new(1);
-    let subscribe_frame = build_rpc_subscribe(SERVICE_ROUTE);
+    let subscribe_frame =
+        build_rpc_subscribe_with_max_concurrent(SERVICE_ROUTE, TIER4_WORKER_MAX_CONCURRENT);
     let request_frame = build_network_request_frame(SERVICE_ROUTE, b"ping", family);
 
     let runtime = shared_bench_runtime();
@@ -525,13 +719,12 @@ fn should_complete_tcp_request_response(ctx: &mut StressContext) {
         let rt = shared_bench_runtime();
         rt.spawn(async move {
             loop {
-                let Ok(frame) = worker_client.recv_frame(RESPONSE_TIMEOUT_MS).await else {
-                    continue;
+                let Ok(frame) = worker_client.recv_frame_bytes_without_timeout().await else {
+                    break;
                 };
-                if let Some(req) = try_parse_rpc_request_frame(&frame, family) {
-                    let resp_frame =
-                        build_rpc_response_frame(req.correlation_id, req.body.as_ref());
-                    let _ = worker_client.send_frame(&resp_frame).await;
+                if let Some(req) = try_parse_rpc_request_frame_parts(&frame) {
+                    let resp_frame = build_rpc_response_frame_bytes(req.correlation_id, req.body);
+                    let _ = worker_client.send_frame_bytes(resp_frame).await;
                 }
             }
         })
@@ -540,16 +733,31 @@ fn should_complete_tcp_request_response(ctx: &mut StressContext) {
     let iterations = ctx.measure_for(
         stress_config::BenchConfig::default().measure_duration,
         || {
-            runtime.block_on(request_until_worker_response_tcp(
-                &mut requester_client,
-                &request_frame,
-                family,
-            ));
+            runtime
+                .block_on(async {
+                    tokio::time::timeout(
+                        Duration::from_millis(RESPONSE_TIMEOUT_MS),
+                        request_until_worker_response_tcp(
+                            &mut requester_client,
+                            &request_frame,
+                            family,
+                        ),
+                    )
+                    .await
+                })
+                .expect("rpc tcp response timeout");
         },
     );
     ctx.set_elements(iterations as u64);
 
     worker_handle.abort();
+    let _ = runtime.block_on(worker_handle);
+    runtime
+        .block_on(requester_client.close())
+        .expect("close requester tcp");
+    runtime
+        .block_on(server.shutdown())
+        .expect("shutdown server");
 }
 
 #[stress_test]
@@ -561,7 +769,8 @@ fn should_complete_ws_request_response(ctx: &mut StressContext) {
     ctx.tag("worker_count", "1");
 
     let family = RouteFamily::new(1);
-    let subscribe_frame = build_rpc_subscribe(SERVICE_ROUTE);
+    let subscribe_frame =
+        build_rpc_subscribe_with_max_concurrent(SERVICE_ROUTE, TIER4_WORKER_MAX_CONCURRENT);
     let request_frame = build_network_request_frame(SERVICE_ROUTE, b"ping", family);
 
     let runtime = shared_bench_runtime();
@@ -589,13 +798,12 @@ fn should_complete_ws_request_response(ctx: &mut StressContext) {
         let rt = shared_bench_runtime();
         rt.spawn(async move {
             loop {
-                let Ok(frame) = worker_client.recv_frame(RESPONSE_TIMEOUT_MS).await else {
-                    continue;
+                let Ok(frame) = worker_client.recv_frame_bytes_without_timeout().await else {
+                    break;
                 };
-                if let Some(req) = try_parse_rpc_request_frame(&frame, family) {
-                    let resp_frame =
-                        build_rpc_response_frame(req.correlation_id, req.body.as_ref());
-                    let _ = worker_client.send_frame(&resp_frame).await;
+                if let Some(req) = try_parse_rpc_request_frame_parts(&frame) {
+                    let resp_frame = build_rpc_response_frame_bytes(req.correlation_id, req.body);
+                    let _ = worker_client.send_frame_bytes(resp_frame).await;
                 }
             }
         })
@@ -604,20 +812,32 @@ fn should_complete_ws_request_response(ctx: &mut StressContext) {
     let iterations = ctx.measure_for(
         stress_config::BenchConfig::default().measure_duration,
         || {
-            runtime.block_on(request_until_worker_response_ws(
-                &mut requester_client,
-                &request_frame,
-                family,
-            ));
+            runtime
+                .block_on(async {
+                    tokio::time::timeout(
+                        Duration::from_millis(RESPONSE_TIMEOUT_MS),
+                        request_until_worker_response_ws(
+                            &mut requester_client,
+                            &request_frame,
+                            family,
+                        ),
+                    )
+                    .await
+                })
+                .expect("rpc websocket response timeout");
         },
     );
     ctx.set_elements(iterations as u64);
 
     worker_handle.abort();
+    let _ = runtime.block_on(worker_handle);
 
     runtime
         .block_on(requester_client.close())
         .expect("close requester ws");
+    runtime
+        .block_on(server.shutdown())
+        .expect("shutdown server");
 }
 
 #[stress_test]

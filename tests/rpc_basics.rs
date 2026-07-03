@@ -42,6 +42,7 @@ fn should_reject_rpc_request_without_call_permission() {
     actor.receive(
         RpcMessage::RegisterWorker {
             worker_addr: worker_addr.clone(),
+            max_concurrent: 1,
         },
         &mut ctx,
     );
@@ -54,7 +55,6 @@ fn should_reject_rpc_request_without_call_permission() {
         family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/auth/user/create"),
-        reply_route: Route::new("inbox://session/unauthorized"),
         body: Bytes::from(b"{ \"username\": \"hacker\" }".to_vec()),
     };
 
@@ -79,6 +79,7 @@ fn should_allow_rpc_request_with_valid_call_permission() {
     actor.receive(
         RpcMessage::RegisterWorker {
             worker_addr: worker_addr.clone(),
+            max_concurrent: 1,
         },
         &mut ctx,
     );
@@ -93,7 +94,6 @@ fn should_allow_rpc_request_with_valid_call_permission() {
         family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/auth/user/create"),
-        reply_route: Route::new("inbox://session/authorized"),
         body: Bytes::from(b"{ \"username\": \"alice\" }".to_vec()),
     };
 
@@ -120,6 +120,7 @@ fn should_enforce_realm_isolation_in_authorization() {
     actor_acme.receive(
         RpcMessage::RegisterWorker {
             worker_addr: worker_acme.clone(),
+            max_concurrent: 1,
         },
         &mut ctx,
     );
@@ -134,7 +135,6 @@ fn should_enforce_realm_isolation_in_authorization() {
         family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/data/query/execute"),
-        reply_route: Route::new("inbox://session/corp123"),
         body: Bytes::from(b"{ \"query\": \"SELECT *\" }".to_vec()),
     };
 
@@ -164,7 +164,7 @@ fn should_allow_worker_registration_with_valid_permissions() {
     let route = Route::new("rpc://acme/inventory/item/query");
 
     // Act
-    let result = session.register_worker(worker_addr, &route, &mut actor, &mut ctx);
+    let result = session.register_worker(worker_addr, &route, 1, &mut actor, &mut ctx);
 
     // Assert
     assert!(result.is_ok());
@@ -189,7 +189,7 @@ fn should_reject_worker_registration_without_permissions() {
     let route = Route::new("rpc://acme/admin/user/delete");
 
     // Act
-    let result = session.register_worker(unauthorized_worker, &route, &mut actor, &mut ctx);
+    let result = session.register_worker(unauthorized_worker, &route, 1, &mut actor, &mut ctx);
 
     // Assert
     assert!(result.is_err());
@@ -209,6 +209,7 @@ fn should_enforce_scope_boundaries_for_rpc_calls() {
     actor.receive(
         RpcMessage::RegisterWorker {
             worker_addr: worker_addr.clone(),
+            max_concurrent: 1,
         },
         &mut ctx,
     );
@@ -223,7 +224,6 @@ fn should_enforce_scope_boundaries_for_rpc_calls() {
         family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/billing/invoice/create"),
-        reply_route: Route::new("inbox://session/limited"),
         body: Bytes::from(b"{ \"amount\": 100 }".to_vec()),
     };
 
@@ -248,6 +248,7 @@ fn should_allow_requests_within_granted_scope() {
     actor.receive(
         RpcMessage::RegisterWorker {
             worker_addr: worker_addr.clone(),
+            max_concurrent: 1,
         },
         &mut ctx,
     );
@@ -262,7 +263,6 @@ fn should_allow_requests_within_granted_scope() {
         family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://acme/billing/invoice/query"),
-        reply_route: Route::new("inbox://session/authorized"),
         body: Bytes::from(b"{ \"invoice_id\": \"inv-123\" }".to_vec()),
     };
 
@@ -299,6 +299,7 @@ fn should_route_request_to_available_worker() {
 
     let subscribe_msg = RpcMessage::RegisterWorker {
         worker_addr: worker_addr.clone(),
+        max_concurrent: 1,
     };
     actor.receive(subscribe_msg, &mut ctx);
 
@@ -306,7 +307,6 @@ fn should_route_request_to_available_worker() {
         family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://realm/service/handler/call"),
-        reply_route: Route::new("inbox://session/123"),
         body: Bytes::from(vec![1, 2, 3]),
     };
 
@@ -329,7 +329,6 @@ fn should_enqueue_request_when_no_workers_available() {
         family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://realm/auth/user/authenticate"),
-        reply_route: Route::new("inbox://session/123"),
         body: Bytes::from(vec![1, 2, 3]),
     };
 
@@ -355,6 +354,7 @@ fn should_correlate_response_with_request() {
 
     let subscribe_msg = RpcMessage::RegisterWorker {
         worker_addr: worker_addr.clone(),
+        max_concurrent: 1,
     };
     actor.receive(subscribe_msg, &mut ctx);
 
@@ -362,7 +362,6 @@ fn should_correlate_response_with_request() {
         family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://realm/auth/user/authenticate"),
-        reply_route: Route::new("inbox://session/123"),
         body: Bytes::from(vec![1, 2, 3]),
     };
     actor.receive(RpcMessage::Request(request), &mut ctx);
@@ -392,7 +391,6 @@ fn should_reject_request_when_queue_is_full() {
             family_id: RouteFamily::new(1),
             correlation_id: Uuid::new_v4(),
             route: Route::new("rpc://realm/auth/user/authenticate"),
-            reply_route: Route::new("inbox://session/123"),
             body: Bytes::from(vec![1, 2, 3]),
         };
         actor.receive(RpcMessage::Request(request), &mut ctx);
@@ -402,7 +400,6 @@ fn should_reject_request_when_queue_is_full() {
         family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://realm/auth/user/authenticate"),
-        reply_route: Route::new("inbox://session/123"),
         body: Bytes::from(vec![1, 2, 3]),
     };
 
@@ -427,6 +424,7 @@ fn should_distribute_requests_across_multiple_workers() {
         );
         let subscribe_msg = RpcMessage::RegisterWorker {
             worker_addr: worker_addr.clone(),
+            max_concurrent: 1,
         };
         actor.receive(subscribe_msg, &mut ctx);
     }
@@ -437,7 +435,6 @@ fn should_distribute_requests_across_multiple_workers() {
             family_id: RouteFamily::new(1),
             correlation_id: Uuid::new_v4(),
             route: Route::new("rpc://realm/auth/user/authenticate"),
-            reply_route: Route::new("inbox://session/123"),
             body: Bytes::from(vec![1, 2, 3]),
         };
         actor.receive(RpcMessage::Request(request), &mut ctx);
@@ -461,6 +458,7 @@ fn should_handle_worker_unsubscribe() {
 
     let subscribe_msg = RpcMessage::RegisterWorker {
         worker_addr: worker_addr.clone(),
+        max_concurrent: 1,
     };
     actor.receive(subscribe_msg, &mut ctx);
 
@@ -486,7 +484,6 @@ fn should_maintain_request_order_in_queue() {
             family_id: RouteFamily::new(1),
             correlation_id: Uuid::new_v4(),
             route: Route::new("rpc://realm/auth/user/authenticate"),
-            reply_route: Route::new("inbox://session/123"),
             body: Bytes::from(vec![i]),
         };
         actor.receive(RpcMessage::Request(request), &mut ctx);
@@ -499,6 +496,7 @@ fn should_maintain_request_order_in_queue() {
     );
     let subscribe_msg = RpcMessage::RegisterWorker {
         worker_addr: worker_addr.clone(),
+        max_concurrent: 1,
     };
     actor.receive(subscribe_msg, &mut ctx);
 
@@ -519,6 +517,7 @@ fn should_handle_streaming_response_with_multiple_chunks() {
     actor.receive(
         RpcMessage::RegisterWorker {
             worker_addr: worker_addr.clone(),
+            max_concurrent: 1,
         },
         &mut ctx,
     );
@@ -527,7 +526,6 @@ fn should_handle_streaming_response_with_multiple_chunks() {
         family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://realm/reports/monthly/generate"),
-        reply_route: Route::new("inbox://session/123"),
         body: Bytes::from(vec![1, 2, 3]),
     };
     actor.receive(RpcMessage::Request(request), &mut ctx);
@@ -558,7 +556,6 @@ fn should_isolate_requests_across_route_families() {
         family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://realm/auth/user/authenticate"),
-        reply_route: Route::new("inbox://session/123"),
         body: Bytes::from(vec![1]),
     };
 
@@ -566,7 +563,6 @@ fn should_isolate_requests_across_route_families() {
         family_id: RouteFamily::new(2),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://realm/auth/user/authenticate"),
-        reply_route: Route::new("inbox://session/456"),
         body: Bytes::from(vec![2]),
     };
 
@@ -592,6 +588,7 @@ fn should_cleanup_state_after_request_completion() {
     actor.receive(
         RpcMessage::RegisterWorker {
             worker_addr: worker_addr.clone(),
+            max_concurrent: 1,
         },
         &mut ctx,
     );
@@ -601,7 +598,6 @@ fn should_cleanup_state_after_request_completion() {
         family_id: RouteFamily::new(1),
         correlation_id,
         route: Route::new("rpc://realm/inventory/item/update"),
-        reply_route: Route::new("inbox://session/123"),
         body: Bytes::from(vec![1, 2, 3]),
     };
     actor.receive(RpcMessage::Request(request), &mut ctx);
@@ -620,7 +616,6 @@ fn should_cleanup_state_after_request_completion() {
         family_id: RouteFamily::new(1),
         correlation_id: Uuid::new_v4(),
         route: Route::new("rpc://realm/inventory/item/update"),
-        reply_route: Route::new("inbox://session/123"),
         body: Bytes::from(vec![1, 2, 3]),
     };
     actor.receive(RpcMessage::Request(request2), &mut ctx);
@@ -645,11 +640,10 @@ mod protocol_spec {
         let correlation_id = Uuid::new_v4();
         let family = RouteFamily::new(1);
         let route = Route::new("rpc://acme/auth/user/create");
-        let reply_route = Route::new("inbox://session/123");
         let body = Bytes::from("test payload");
 
         // Act
-        let request = RpcRequest::new(family, correlation_id, route, reply_route, body);
+        let request = RpcRequest::new(family, correlation_id, route, body);
 
         // Assert
         assert_eq!(
@@ -732,12 +726,11 @@ mod protocol_spec {
         // Arrange
         let family = RouteFamily::new(1);
         let route = Route::new("rpc://acme/auth/user/create");
-        let reply_route = Route::new("inbox://session/123");
         let request_body = Bytes::from("create user request");
         let response_body = Bytes::from("user created");
 
         // Act
-        let request = RpcRequest::new(family, Uuid::new_v4(), route, reply_route, request_body);
+        let request = RpcRequest::new(family, Uuid::new_v4(), route, request_body);
         let response = RpcResponse::single(Uuid::new_v4(), response_body);
 
         // Assert
@@ -827,12 +820,11 @@ mod protocol_spec {
         let family = RouteFamily::new(1);
         let correlation_id = Uuid::new_v4();
         let route = Route::new("rpc://acme/billing/invoice/create");
-        let reply_route = Route::new("inbox://session/123");
         let request_body = Bytes::from("{ \"amount\": 100 }");
         let response_body = Bytes::from("{ \"invoice_id\": 123 }");
 
         // Act
-        let request = RpcRequest::new(family, correlation_id, route, reply_route, request_body);
+        let request = RpcRequest::new(family, correlation_id, route, request_body);
         let response = RpcResponse::single(correlation_id, response_body);
 
         // Assert
@@ -847,17 +839,10 @@ mod protocol_spec {
         let correlation_id = Uuid::new_v4();
         let request_family = RouteFamily::new(1);
         let request_route = Route::new("rpc://realm/auth/user/get");
-        let reply_route = Route::new("inbox://session/456");
         let request_body = Bytes::from("{ \"user_id\": 42 }");
 
         // Act
-        let request = RpcRequest::new(
-            request_family,
-            correlation_id,
-            request_route,
-            reply_route,
-            request_body,
-        );
+        let request = RpcRequest::new(request_family, correlation_id, request_route, request_body);
         let response = RpcResponse::single(correlation_id, Bytes::from("{ \"name\": \"Alice\" }"));
 
         // Assert
@@ -918,36 +903,28 @@ mod protocol_spec {
         let family = RouteFamily::new(1);
         let correlation_id = Uuid::new_v4();
         let route = Route::new("rpc://acme/auth/user/create");
-        let reply_route = Route::new("inbox://session/123");
         let body = Bytes::from("test");
 
         // Act
-        let request = RpcRequest::new(family, correlation_id, route, reply_route, body);
+        let request = RpcRequest::new(family, correlation_id, route, body);
 
         // Assert
         assert_eq!(request.family_id, family);
     }
 
     #[test]
-    fn should_include_reply_route_in_request() {
+    fn should_not_include_reply_route_in_request() {
         // Arrange
         let family = RouteFamily::new(1);
         let correlation_id = Uuid::new_v4();
         let route = Route::new("rpc://acme/auth/user/create");
-        let reply_route = Route::new("inbox://session/123");
         let body = Bytes::from("test");
 
         // Act
-        let request = RpcRequest::new(
-            family,
-            correlation_id,
-            route,
-            reply_route.clone(),
-            body.clone(),
-        );
+        let request = RpcRequest::new(family, correlation_id, route, body.clone());
 
         // Assert
-        assert_eq!(&request.reply_route, &reply_route);
+        assert_eq!(request.body, body);
     }
 
     #[test]
@@ -956,11 +933,10 @@ mod protocol_spec {
         let family = RouteFamily::new(1);
         let correlation_id = Uuid::new_v4();
         let route = Route::new("rpc://acme/auth/user/create");
-        let reply_route = Route::new("inbox://session/123");
         let body = Bytes::from("test");
 
         // Act
-        let request = RpcRequest::new(family, correlation_id, route.clone(), reply_route, body);
+        let request = RpcRequest::new(family, correlation_id, route.clone(), body);
 
         // Assert
         assert_eq!(&request.route, &route);

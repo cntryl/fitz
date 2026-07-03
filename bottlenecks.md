@@ -7,10 +7,19 @@ by the development architecture docs.
 
 ## Source Context
 
-Primary source: `target/bench_summary.md`, generated
-`2026-07-02T20:54:57Z` from `target/bench_results.json`. The Tier 4 stress
-rows cited here use 5 samples, are marked stable, and have `authoritative`
-status in that summary.
+Current RPC refresh source: `target/bench_summary.md`, generated
+`2026-07-03T14:03:05Z` from `target/bench_results.json`. The Tier 3 RPC and
+Tier 4 RPC rows cited below use 5 samples, are marked stable, and have
+`authoritative` status in that summary.
+
+Shared WebSocket smoke evidence for this refresh: Tier 4 KV and Tier 4 Lease
+were rerun with `--runs 1 --warmup 1`; those rows are useful regression smoke
+only and are marked `insufficient_data`, not authoritative.
+
+Non-RPC domain sections below still use the previous full source:
+`target/bench_summary.md`, generated `2026-07-02T20:54:57Z` from
+`target/bench_results.json`. The Tier 4 stress rows cited in those sections use
+5 samples, are marked stable, and have `authoritative` status in that summary.
 
 Secondary caveat: `target/perf_proof/single_node.md`, generated
 `2026-07-02T21:36:46.619565+00:00`, reports `Samples: 2, warmup: 1`. Treat that
@@ -98,24 +107,47 @@ per-create persistence/indexing overhead can be amortized.
 
 ## RPC
 
-RPC is limited by request, worker dispatch, and response coordination, with
-additional transport/session overhead at the edge.
+RPC core request/worker/response coordination is no longer the dominant Tier 4
+cost in the refreshed evidence. The remaining bottleneck is the one-worker
+WebSocket multiclient path, which is dominated by WebSocket/socket I/O and the
+serialized live worker response cycle.
 
 Evidence:
 
-- Direct request/response: 70,483 ops/s.
-- Encoded request/response: 63,782 ops/s.
-- Multiclient concurrent requests: 12,502 ops/s.
-- Multiclient concurrent requests with 4 workers: 9,232 ops/s.
-- Multiclient concurrent requests with 8 workers: 18,988 ops/s.
-- TCP request/response: 9,840 ops/s.
-- WebSocket request/response: 10,494 ops/s.
+- Direct request/response: 792,502 ops/s, 1.26 us/op.
+- Encoded request/response: 777,789 ops/s, 1.29 us/op.
+- Multiclient concurrent requests, 1 worker: 17,055 ops/s, 58.63 us/op.
+- Multiclient concurrent requests, 4 workers: 28,908 ops/s, 34.59 us/op.
+- Multiclient concurrent requests, 8 workers: 25,649 ops/s, 38.99 us/op.
+- TCP request/response: 14,375 ops/s, 69.56 us/op.
+- WebSocket request/response: 15,740 ops/s, 63.53 us/op.
 
-Interpretation: the direct path is much lower than the simplest state or
-ownership paths, which makes live request/worker/response coordination a real
-domain cost. Transport then puts the end-to-end path around 10K ops/s. Worker
-scaling helps in the 8-worker case, but the current coordination path remains a
-meaningful optimization target.
+Acceptance status: direct, encoded, and single WebSocket RPC are green. TCP
+remains above the `<= 60 us/op` target, and all Tier 4 RPC multiclient rows
+remain above the `<= 26 us/op` target after preserve-semantics transport and
+testkit optimizations.
+
+Profiler evidence: `target/profiles/tier4_rpc_multiclient.sample.txt` sampled a
+filtered Tier 4 RPC multiclient run. The main benchmark thread was mostly parked
+waiting for async work. Active requester samples clustered in
+`TestWebSocketClient::recv_frame_bytes_without_timeout` through
+`tokio_tungstenite`/`TcpStream::poll_read_priv`/`__recvfrom`, plus
+`TestWebSocketClient::send_frame_bytes` through WebSocket write and `__sendto`.
+RPC domain samples were comparatively small and were mostly in response
+delivery and outbound ACK enqueueing. This points at WebSocket/socket I/O and
+single-worker serialization, not the RPC codec or in-process domain core.
+
+Attempted follow-ups: a benchmark-only blocking WebSocket client, a no-delay
+ready poll before WebSocket writer flush, and a larger pipelined multiclient
+measurement window were tried as local smoke optimizations and backed out
+because they did not improve the retained one-worker gate.
+
+Interpretation: direct and encoded RPC now run in the same class as the faster
+in-process domain paths, so the remaining work should not target RPC codec or
+core dispatch first. The stop condition is active: do not change RPC
+live/ephemeral semantics, worker ACK behavior, timeout behavior, or the
+one-worker default without new profiler evidence and an explicit
+protocol/target decision.
 
 ## Notice
 
@@ -177,6 +209,7 @@ transport/session overhead.
 
 Start with domain-local work where direct or concurrent throughput is already
 low: Queue enqueue, Stream realm wildcard reads and concurrent appends, and
-Schedule create. Treat RPC and Notice as second-tier domain targets. Treat KV
-and Lease as edge-overhead targets unless new benchmark evidence changes the
-shape of the results.
+Schedule create. For RPC, the refreshed direct/encoded rows move the remaining
+target to WebSocket/session edge overhead, especially the one-worker
+multiclient path. Treat Notice, KV, and Lease as edge-overhead targets unless
+new benchmark evidence changes the shape of the results.

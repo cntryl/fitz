@@ -264,7 +264,6 @@ Routes stored as opaque strings. No parsing into components.
 | `unsubscribe` | 301 | Worker deregistration | Write |
 | `request` | 302 | Client request | Write |
 | `response` | 303 | Worker response | Write |
-| `ack` | 304 | Worker completion | Write |
 
 #### Route Validation Rules
 
@@ -301,7 +300,7 @@ pub struct RpcRoute {
 #### Special Rules
 
 - **Worker pools**: Each route maintains independent worker pool
-- **Round-robin dispatch**: Requests distributed to available workers
+- **Credit-biased dispatch**: Requests use available worker credit before fanning out
 - **Correlation protocol**: UUID correlation_id links request/response
 - **Streaming support**: Multi-chunk responses with sequence numbers
 - **FIFO ordering**: Requests dispatched in arrival order
@@ -835,7 +834,7 @@ rpc://tenant-a/**#write   # RPC request access
 |-------|--------|-----------------|----------------|
 | 100-199 | KV | BEGIN (100) | SCAN (108) |
 | 200-299 | Queue | ENQUEUE (200) | COMPLETE (204) |
-| 300-399 | RPC | SUBSCRIBE (300) | ACK (304) |
+| 300-399 | RPC | SUBSCRIBE (300) | RESPONSE (303) |
 | 400-499 | Lease | ACQUIRE (400) | QUERY (403) |
 | 500-504 | Notice | PUBLISH (500) | NOTIFY (504) |
 | 600-699 | Stream | BEGIN (600) | UNSUBSCRIBE (608) |

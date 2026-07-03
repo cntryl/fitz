@@ -947,12 +947,18 @@ impl RpcConnector for WsRpcConnector {
 
 /// Build RPC SUBSCRIBE frame (`msg_type` 300) to register a worker
 pub fn build_rpc_subscribe(worker_addr: &str) -> Vec<u8> {
+    build_rpc_subscribe_with_max_concurrent(worker_addr, 1)
+}
+
+/// Build RPC SUBSCRIBE frame (`msg_type` 300) with explicit worker credit.
+pub fn build_rpc_subscribe_with_max_concurrent(worker_addr: &str, max_concurrent: u32) -> Vec<u8> {
     use bytes::BufMut;
 
-    // Wire format: [string worker_addr]
+    // Wire format: [string worker_addr][u32 max_concurrent]
     let mut buf = Vec::new();
     buf.put_u32(u32_len(worker_addr.len()));
     buf.put_slice(worker_addr.as_bytes());
+    buf.put_u32(max_concurrent);
 
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(300, &buf);
@@ -977,22 +983,15 @@ pub fn build_rpc_request(route: &str, _method: &str, payload: &[u8]) -> Vec<u8> 
     use bytes::BufMut;
     use uuid::Uuid;
 
-    // Wire format: [bytes correlation_id(16)][string route][string reply_route][bytes body]
+    // Wire format: [uuid16 correlation_id][string route][bytes body]
     let mut buf = Vec::new();
 
-    // Correlation ID (UUID as length-prefixed bytes: u32 len + 16 bytes)
     let uuid = Uuid::new_v4();
-    buf.put_u32(16); // Length prefix
     buf.put_slice(uuid.as_bytes());
 
     // Route (length-prefixed string)
     buf.put_u32(u32_len(route.len()));
     buf.put_slice(route.as_bytes());
-
-    // Reply route (use inbox pattern)
-    let reply_route = format!("inbox://session/1/{uuid}");
-    buf.put_u32(u32_len(reply_route.len()));
-    buf.put_slice(reply_route.as_bytes());
 
     // Body (length-prefixed bytes)
     buf.put_u32(u32_len(payload.len()));
@@ -1013,10 +1012,12 @@ pub fn build_rpc_response_delivery(
     use fitz::protocol::payload_codec::PayloadEncoder;
 
     let mut enc = PayloadEncoder::new();
-    enc.put_bytes(correlation_id.as_bytes());
+    let uuid_bytes = correlation_id.as_bytes();
+    enc.put_u64(u64::from_be_bytes(uuid_bytes[..8].try_into().unwrap()));
+    enc.put_u64(u64::from_be_bytes(uuid_bytes[8..].try_into().unwrap()));
     enc.put_u64(seq);
-    enc.put_bytes(body);
     enc.put_u8(u8::from(stream_end));
+    enc.put_bytes(body);
 
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(303, &enc.finish());
@@ -1043,7 +1044,6 @@ pub struct RpcRequestDelivery {
     pub msg_type: u16,
     pub correlation_id: uuid::Uuid,
     pub route: String,
-    pub reply_route: String,
     pub body: Vec<u8>,
 }
 
@@ -1068,16 +1068,12 @@ pub fn parse_rpc_request_delivery(frame: &[u8]) -> Result<RpcRequestDelivery, St
     }
 
     let mut dec = PayloadDecoder::new(&payload);
-    let correlation_id_bytes = dec.get_bytes()?;
-    if correlation_id_bytes.len() != 16 {
-        return Err("Correlation ID must be 16 bytes".to_string());
-    }
     let mut uuid_bytes = [0u8; 16];
-    uuid_bytes.copy_from_slice(&correlation_id_bytes);
+    uuid_bytes[..8].copy_from_slice(&dec.get_u64()?.to_be_bytes());
+    uuid_bytes[8..].copy_from_slice(&dec.get_u64()?.to_be_bytes());
     let correlation_id = uuid::Uuid::from_bytes(uuid_bytes);
 
     let route = dec.get_string()?;
-    let reply_route = dec.get_string()?;
     let body = dec.get_bytes()?.to_vec();
     if !dec.is_complete() {
         return Err("Trailing data in RPC request delivery".to_string());
@@ -1087,7 +1083,6 @@ pub fn parse_rpc_request_delivery(frame: &[u8]) -> Result<RpcRequestDelivery, St
         msg_type,
         correlation_id,
         route,
-        reply_route,
         body,
     })
 }
@@ -1105,17 +1100,15 @@ pub fn parse_rpc_response_delivery(frame: &[u8]) -> Result<RpcResponseDelivery, 
     }
 
     let mut dec = PayloadDecoder::new(&payload);
-    let correlation_id_bytes = dec.get_bytes()?;
-    if correlation_id_bytes.len() != 16 {
-        return Err("Correlation ID must be 16 bytes".to_string());
-    }
     let mut uuid_bytes = [0u8; 16];
-    uuid_bytes.copy_from_slice(&correlation_id_bytes);
+    uuid_bytes[..8].copy_from_slice(&dec.get_u64()?.to_be_bytes());
+    uuid_bytes[8..].copy_from_slice(&dec.get_u64()?.to_be_bytes());
     let correlation_id = uuid::Uuid::from_bytes(uuid_bytes);
 
     let seq = dec.get_u64()?;
+    let flags = dec.get_u8()?;
     let body = dec.get_bytes()?.to_vec();
-    let stream_end = dec.get_u8()? != 0;
+    let stream_end = flags & 0x01 != 0;
     if !dec.is_complete() {
         return Err("Trailing data in RPC response delivery".to_string());
     }

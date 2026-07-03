@@ -11,6 +11,14 @@ mod fixtures;
 use fitz::testkit::TestServer;
 use fixtures::transport::*;
 
+fn assert_rpc_delivery_ok(frame: &[u8]) {
+    let delivery = parse_rpc_response_delivery(frame).expect("parse rpc response delivery");
+    assert_eq!(delivery.msg_type, 303);
+    assert_eq!(delivery.seq, 0);
+    assert!(delivery.stream_end);
+    assert_eq!(delivery.body, b"ok");
+}
+
 // ============================================================================
 // QUEUE + LEASE COEXISTENCE TESTS
 // ============================================================================
@@ -398,7 +406,6 @@ async fn should_allow_rpc_requests_alongside_stream_appends_tcp() {
         .send_frame(&response_frame)
         .await
         .expect("rpc response send");
-    let _ = rpc_worker.recv_frame(2000).await;
 
     let rpc_response = rpc_response_handle
         .await
@@ -421,9 +428,7 @@ async fn should_allow_rpc_requests_alongside_stream_appends_tcp() {
         .expect("stream append");
 
     // Assert
-    let (_msg_type, rpc_status, _data) = parse_rpc_response(&rpc_response);
-    // RPC should succeed because worker is registered and responds
-    assert_eq!(rpc_status, 0, "RPC should succeed with registered worker");
+    assert_rpc_delivery_ok(&rpc_response);
     let (_msg_type, status, _data) = parse_stream_response(&append_response);
     assert_eq!(
         status, 0,
@@ -470,7 +475,6 @@ async fn should_allow_rpc_requests_alongside_stream_appends_ws() {
         .send_frame(&response_frame)
         .await
         .expect("rpc response send");
-    let _ = rpc_worker.recv_frame(2000).await;
 
     let rpc_response = rpc_response_handle
         .await
@@ -493,9 +497,7 @@ async fn should_allow_rpc_requests_alongside_stream_appends_ws() {
         .expect("stream append");
 
     // Assert
-    let (_msg_type, rpc_status, _data) = parse_rpc_response(&rpc_response);
-    // RPC should succeed because worker is registered and responds
-    assert_eq!(rpc_status, 0, "RPC should succeed with registered worker");
+    assert_rpc_delivery_ok(&rpc_response);
     let (_msg_type, status, _data) = parse_stream_response(&append_response);
     assert_eq!(
         status, 0,
@@ -552,7 +554,6 @@ async fn should_allow_multiple_rpc_requests_alongside_stream_operations_tcp() {
         .send_frame(&response_frame)
         .await
         .expect("rpc response 1 send");
-    let _ = rpc_worker.recv_frame(2000).await;
     let rpc1_response = rpc1_response_handle.await.expect("join").expect("rpc 1");
     let append1_frame = build_stream_append(session_id, 0, b"config-requested");
     let append1_response = stream_client
@@ -581,7 +582,6 @@ async fn should_allow_multiple_rpc_requests_alongside_stream_operations_tcp() {
         .send_frame(&response_frame)
         .await
         .expect("rpc response 2 send");
-    let _ = rpc_worker.recv_frame(2000).await;
     let rpc2_response = rpc2_response_handle.await.expect("join").expect("rpc 2");
     let append2_frame = build_stream_append(session_id, 1, b"config-updated");
     let append2_response = stream_client
@@ -590,12 +590,10 @@ async fn should_allow_multiple_rpc_requests_alongside_stream_operations_tcp() {
         .expect("append 2");
 
     // Assert
-    let (_msg_type, status1, _data) = parse_rpc_response(&rpc1_response);
-    assert_eq!(status1, 0, "RPC should succeed with registered worker");
+    assert_rpc_delivery_ok(&rpc1_response);
     let (_msg_type, status, _data) = parse_stream_response(&append1_response);
     assert_eq!(status, 0, "Stream append should succeed");
-    let (_msg_type, status2, _data) = parse_rpc_response(&rpc2_response);
-    assert_eq!(status2, 0, "RPC should succeed with registered worker");
+    assert_rpc_delivery_ok(&rpc2_response);
     let (_msg_type, status, _data) = parse_stream_response(&append2_response);
     assert_eq!(status, 0, "Interleaved Stream operations should succeed");
 }
@@ -647,7 +645,6 @@ async fn should_allow_multiple_rpc_requests_alongside_stream_operations_ws() {
         .send_frame(&response_frame)
         .await
         .expect("rpc response 1 send");
-    let _ = rpc_worker.recv_frame(2000).await;
     let rpc1_response = rpc1_response_handle.await.expect("join").expect("rpc 1");
     let append1_frame = build_stream_append(session_id, 0, b"config-requested");
     let append1_response = stream_client
@@ -676,7 +673,6 @@ async fn should_allow_multiple_rpc_requests_alongside_stream_operations_ws() {
         .send_frame(&response_frame)
         .await
         .expect("rpc response 2 send");
-    let _ = rpc_worker.recv_frame(2000).await;
     let rpc2_response = rpc2_response_handle.await.expect("join").expect("rpc 2");
     let append2_frame = build_stream_append(session_id, 1, b"config-updated");
     let append2_response = stream_client
@@ -685,12 +681,10 @@ async fn should_allow_multiple_rpc_requests_alongside_stream_operations_ws() {
         .expect("append 2");
 
     // Assert
-    let (_msg_type, status1, _data) = parse_rpc_response(&rpc1_response);
-    assert_eq!(status1, 0, "RPC should succeed with registered worker");
+    assert_rpc_delivery_ok(&rpc1_response);
     let (_msg_type, status, _data) = parse_stream_response(&append1_response);
     assert_eq!(status, 0, "Stream append should succeed");
-    let (_msg_type, status2, _data) = parse_rpc_response(&rpc2_response);
-    assert_eq!(status2, 0, "RPC should succeed with registered worker");
+    assert_rpc_delivery_ok(&rpc2_response);
     let (_msg_type, status, _data) = parse_stream_response(&append2_response);
     assert_eq!(status, 0, "Stream operations should succeed");
 }

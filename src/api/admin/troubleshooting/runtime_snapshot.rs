@@ -169,7 +169,6 @@ fn collect_runtime_domain_analyses(runtime: &Runtime, now: DateTime<Utc>) -> Run
             runtime.rpc_wrong_worker_rejects_total(),
             runtime.rpc_responses_dropped_closed_caller_total(),
             runtime.rpc_responses_missing_pending_total(),
-            runtime.rpc_acks_rejected_wrong_worker_total(),
             now,
         ),
         lease: analyze_lease(&read_model.leases(None), now),

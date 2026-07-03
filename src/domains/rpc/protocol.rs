@@ -5,7 +5,6 @@
 //! - **`UnregisterWorker`**: Worker stops handling requests for a route
 //! - **Request**: Client request routed to available worker
 //! - **Response**: Worker response forwarded to client (supports streaming)
-//! - **Ack**: Worker signals completion for cleanup
 //!
 //! # Correlation Protocol
 //!
@@ -32,7 +31,7 @@ use uuid::Uuid;
 /// RPC request from client to route actor
 ///
 /// Sent by clients to initiate request/response interaction with a worker.
-/// Contains all information needed for routing, correlation, and reply delivery.
+/// Contains all information needed for routing and correlation.
 #[derive(Debug, Clone)]
 pub struct RpcRequest {
     /// Route family for isolation
@@ -44,27 +43,17 @@ pub struct RpcRequest {
     /// Target RPC route (e.g., `<rpc://acme/auth/user/create>`)
     pub route: Route,
 
-    /// Reply inbox route (e.g., `<inbox://session/123>`)
-    pub reply_route: Route,
-
     /// Request payload (Bytes for zero-copy)
     pub body: Bytes,
 }
 
 impl RpcRequest {
     /// Create new RPC request
-    pub fn new(
-        family_id: RouteFamily,
-        correlation_id: Uuid,
-        route: Route,
-        reply_route: Route,
-        body: Bytes,
-    ) -> Self {
+    pub fn new(family_id: RouteFamily, correlation_id: Uuid, route: Route, body: Bytes) -> Self {
         Self {
             family_id,
             correlation_id,
             route,
-            reply_route,
             body,
         }
     }
@@ -123,10 +112,12 @@ pub enum RpcMessage {
     /// Worker registers to handle requests for this route
     ///
     /// Sent by workers to register as handlers for the route. Workers are
-    /// assigned requests in round-robin fashion based on availability.
+    /// assigned requests while their declared credit is available.
     RegisterWorker {
         /// Address of the worker actor
         worker_addr: RouteAddress,
+        /// Maximum number of concurrent requests this worker accepts
+        max_concurrent: usize,
     },
 
     /// Worker unregisters from this route
@@ -150,15 +141,6 @@ pub enum RpcMessage {
     /// not follow strict contiguous sequence order are terminally rejected.
     Response(RpcResponse),
 
-    /// Worker acknowledges completion (for cleanup)
-    ///
-    /// Sent by workers after processing completes to decrement in-flight count
-    /// and allow the worker to receive additional requests.
-    Ack {
-        /// Correlation ID of completed request
-        correlation_id: Uuid,
-    },
-
     /// Request delivery to worker (internal routing message)
     ///
     /// Sent from `RpcRouteActor` to worker session actor to deliver a request.
@@ -169,8 +151,11 @@ pub enum RpcMessage {
 impl RpcMessage {
     /// Create `RegisterWorker` message
     #[must_use]
-    pub fn register_worker(worker_addr: RouteAddress) -> Self {
-        Self::RegisterWorker { worker_addr }
+    pub fn register_worker(worker_addr: RouteAddress, max_concurrent: usize) -> Self {
+        Self::RegisterWorker {
+            worker_addr,
+            max_concurrent,
+        }
     }
 
     /// Create `UnregisterWorker` message
@@ -189,12 +174,6 @@ impl RpcMessage {
         Self::Response(resp)
     }
 
-    /// Create Ack message
-    #[must_use]
-    pub fn ack(correlation_id: Uuid) -> Self {
-        Self::Ack { correlation_id }
-    }
-
     /// Create Deliver message
     pub fn deliver(work_item: RpcWorkItem) -> Self {
         Self::Deliver(work_item)
@@ -206,11 +185,28 @@ impl RpcMessage {
 pub struct RpcClientRequest {
     pub meta: ClientFrameMeta,
     pub message: Result<RpcMessage, String>,
+    pub raw_payload: Bytes,
 }
 
 impl RpcClientRequest {
     pub fn new(meta: ClientFrameMeta, message: Result<RpcMessage, String>) -> Self {
-        Self { meta, message }
+        Self {
+            meta,
+            message,
+            raw_payload: Bytes::new(),
+        }
+    }
+
+    pub fn new_with_payload(
+        meta: ClientFrameMeta,
+        message: Result<RpcMessage, String>,
+        raw_payload: Bytes,
+    ) -> Self {
+        Self {
+            meta,
+            message,
+            raw_payload,
+        }
     }
 }
 
@@ -287,30 +283,10 @@ pub enum RpcClientForwardedResponseBody {
     },
 }
 
-/// ACK routed from the domain sink to a worker after receiving a response.
-#[derive(Debug, Clone)]
-pub struct RpcWorkerAck {
-    pub session_id: u64,
-    pub route_family: RouteFamily,
-    pub correlation_id: Uuid,
-}
-
-impl RpcWorkerAck {
-    #[must_use]
-    pub fn new(session_id: u64, route_family: RouteFamily, correlation_id: Uuid) -> Self {
-        Self {
-            session_id,
-            route_family,
-            correlation_id,
-        }
-    }
-}
-
 /// Work item dispatched to a worker
 ///
-/// Contains the minimal information needed for a worker to process a request
-/// and send responses back to the client. Created from `RpcRequest` before
-/// dispatching to the worker pool.
+/// Contains the minimal information needed for a worker to process a request.
+/// Created from `RpcRequest` before dispatching to the worker pool.
 #[derive(Debug, Clone)]
 pub struct RpcWorkItem {
     /// Correlation ID for tracking
@@ -318,9 +294,6 @@ pub struct RpcWorkItem {
 
     /// Target route (for worker context/logging)
     pub route: Route,
-
-    /// Reply route for sending responses
-    pub reply_route: Route,
 
     /// Request payload
     pub body: Bytes,
@@ -332,17 +305,15 @@ impl RpcWorkItem {
         Self {
             correlation_id: req.correlation_id,
             route: req.route.clone(),
-            reply_route: req.reply_route.clone(),
             body: req.body.clone(),
         }
     }
 
     /// Create work item directly
-    pub fn new(correlation_id: Uuid, route: Route, reply_route: Route, body: Bytes) -> Self {
+    pub fn new(correlation_id: Uuid, route: Route, body: Bytes) -> Self {
         Self {
             correlation_id,
             route,
-            reply_route,
             body,
         }
     }

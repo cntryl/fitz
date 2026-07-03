@@ -67,5 +67,5 @@ The wrong pattern leaves `ctx.set_elements(n)` counted while the measured work d
 
 ## Reference examples
 
-- **Tier 3 (system, no network):** [benches/tier3_system_rpc.rs](../../benches/tier3_system_rpc.rs) — real request → router → route actor → dispatch → worker actor → response/ack → route actor; setup outside `ctx.measure`; only the request + drain loop inside; `ctx.set_elements(n)` matches ops; no getters or fake work.
+- **Tier 3 (system, no network):** [benches/tier3_system_rpc.rs](../../benches/tier3_system_rpc.rs) — real request → router → route actor → dispatch → worker actor → response → route actor; setup outside `ctx.measure`; only the request + drain loop inside; `ctx.set_elements(n)` matches ops; no getters or fake work.
 - **Tier 4 (integration):** [benches/tier4_integration_kv.rs](../../benches/tier4_integration_kv.rs) — direct (actor.handle only), tcp (full roundtrip via TestClient), websocket (TestWebSocketClient), multiclient; uses `shared_bench_runtime()`; setup (server, client, frames) outside measure.

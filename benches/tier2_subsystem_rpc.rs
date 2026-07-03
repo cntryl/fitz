@@ -4,11 +4,10 @@ use criterion::{
     black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
 };
 use fitz::benchkit::{
-    build_rpc_ack_frame, build_rpc_request, build_rpc_response_frame, build_rpc_subscribe,
-    create_bench_rpc_sink, create_bench_rpc_sink_with_timeout,
-    drain_frame_queue_sinks_after_each_count, extract_single_tlv_field,
-    register_session_counting_sink, register_session_queue_sink, route_frame, CountingSink,
-    FrameQueueSink,
+    build_rpc_request, build_rpc_response_frame, build_rpc_subscribe, create_bench_rpc_sink,
+    create_bench_rpc_sink_with_timeout, drain_frame_queue_sinks_after_each_count,
+    extract_single_tlv_field, register_session_counting_sink, register_session_queue_sink,
+    route_frame, CountingSink, FrameQueueSink,
 };
 use fitz::domains::rpc::protocol::{RpcMessage, RpcResponse};
 use fitz::protocol::frame::ChannelId;
@@ -274,16 +273,16 @@ fn cleanup_worker_request_on_destination(
 ) {
     let (worker_session_id, worker_source, worker_inbox) = worker;
     let correlation_id = drain_request_correlation(worker_inbox, family);
-    let (ack_msg_type, ack_payload) =
-        extract_single_tlv_field(&build_rpc_ack_frame(correlation_id));
+    let (response_msg_type, response_payload) =
+        extract_single_tlv_field(&build_rpc_response_frame(correlation_id, b"cleanup"));
     route_worker_frame_to_destination(
         router,
         family,
         *worker_session_id,
         worker_source,
         destination,
-        ack_msg_type,
-        ack_payload,
+        response_msg_type,
+        response_payload,
     );
 }
 
@@ -508,10 +507,10 @@ fn bench_rpc_worker_subscribe_primary(c: &mut Criterion) {
                     .iter()
                     .map(|(_, _, worker_inbox)| worker_inbox.clone())
                     .collect();
-                let ack_count =
+                let subscribe_response_count =
                     drain_frame_queue_sinks_after_each_count(&inboxes, 1, Duration::from_secs(1))
                         .len();
-                assert_eq!(ack_count, WORKER_SUBSCRIBE_BATCH_SIZE);
+                assert_eq!(subscribe_response_count, WORKER_SUBSCRIBE_BATCH_SIZE);
             }
             total
         });
@@ -546,7 +545,7 @@ fn bench_rpc_dispatch_primary(c: &mut Criterion) {
             DISPATCH_BATCH_SIZE,
         )));
         group.bench_function(
-            format!("dispatch_ack_cleanup_1024_ops_{worker_count}_workers_primary"),
+            format!("dispatch_response_cleanup_1024_ops_{worker_count}_workers_primary"),
             |b| {
                 b.iter(|| {
                     for _ in 0..DISPATCH_BATCH_SIZE {
@@ -602,31 +601,35 @@ fn bench_rpc_dispatch_primary(c: &mut Criterion) {
     group.throughput(Throughput::Elements(usize_to_u64_saturating(
         DISPATCH_BATCH_SIZE,
     )));
-    group.bench_function("dispatch_ack_cleanup_1024_ops_64_routes_primary", |b| {
-        b.iter(|| {
-            for _ in 0..DISPATCH_BATCH_SIZE {
-                let route_index = next_route_index;
-                next_route_index = (next_route_index + 1) % destinations.len();
+    group.bench_function(
+        "dispatch_response_cleanup_1024_ops_64_routes_primary",
+        |b| {
+            b.iter(|| {
+                for _ in 0..DISPATCH_BATCH_SIZE {
+                    let route_index = next_route_index;
+                    next_route_index = (next_route_index + 1) % destinations.len();
 
-                let (request_msg_type, request_payload) = request_rings[route_index].next_frame();
-                dispatch_request_to_destination(
-                    &router,
-                    family,
-                    &requester_source,
-                    &destinations[route_index],
-                    request_msg_type,
-                    black_box(request_payload),
-                );
-                cleanup_worker_request_on_destination(
-                    &router,
-                    family,
-                    &destinations[route_index],
-                    &workers[route_index],
-                );
-                requester_inbox.clear();
-            }
-        });
-    });
+                    let (request_msg_type, request_payload) =
+                        request_rings[route_index].next_frame();
+                    dispatch_request_to_destination(
+                        &router,
+                        family,
+                        &requester_source,
+                        &destinations[route_index],
+                        request_msg_type,
+                        black_box(request_payload),
+                    );
+                    cleanup_worker_request_on_destination(
+                        &router,
+                        family,
+                        &destinations[route_index],
+                        &workers[route_index],
+                    );
+                    requester_inbox.clear();
+                }
+            });
+        },
+    );
 
     group.finish();
 }

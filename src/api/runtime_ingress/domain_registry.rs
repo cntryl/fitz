@@ -182,9 +182,10 @@ fn rpc_message_policy(msg_type: u16) -> Result<Option<AuthorizationPolicy>, &'st
     match msg_type {
         300 | 301 => Ok(Some(AuthorizationPolicy::RouteScoped(Access::All))),
         302 => Ok(Some(AuthorizationPolicy::RouteScoped(Access::Write))),
-        303 | 304 => Ok(Some(AuthorizationPolicy::SessionOwned)),
-        305 if msg_type == 305 => Err("invalid message type: 305 is server-to-client only"),
-        305..=399 => Ok(Some(AuthorizationPolicy::RouteScoped(Access::Read))),
+        303 => Ok(Some(AuthorizationPolicy::SessionOwned)),
+        304 => Err("invalid message type: unsupported rpc operation"),
+        305 => Err("invalid message type: 305 is server-to-client only"),
+        306..=399 => Ok(Some(AuthorizationPolicy::RouteScoped(Access::Read))),
         _ => Ok(None),
     }
 }
@@ -354,7 +355,8 @@ fn build_rpc_request_envelope(request: DomainEnvelopeBuildRequest) -> crate::run
         route_family,
     );
     let parsed = crate::protocol::rpc_codec::parse_request(&ctx, &ctx.payload, route_family);
-    let client_request = crate::domains::rpc::RpcClientRequest::new(meta, parsed);
+    let client_request =
+        crate::domains::rpc::RpcClientRequest::new_with_payload(meta, parsed, ctx.payload.clone());
     crate::runtime::Envelope::from_route(source, destination, client_request)
 }
 

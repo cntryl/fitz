@@ -49,7 +49,6 @@ fn should_reject_duplicate_live_correlation_given_rpc_sink() {
             family,
             correlation_id,
             request_route.clone(),
-            Route::new("inbox://session/1/custom"),
             bytes::Bytes::from_static(b"first"),
         ),
         &mut payload_encoder,
@@ -59,7 +58,6 @@ fn should_reject_duplicate_live_correlation_given_rpc_sink() {
             family,
             correlation_id,
             request_route.clone(),
-            Route::new("inbox://session/2/custom"),
             bytes::Bytes::from_static(b"second"),
         ),
         &mut payload_encoder,
@@ -94,15 +92,13 @@ fn should_reject_duplicate_live_correlation_given_rpc_sink() {
     // Assert
     assert_eq!(sink.pending_request_count(), 1);
     let caller_one_frames = caller_one_frames.lock();
-    assert_eq!(caller_one_frames.len(), 1);
-    assert_eq!(caller_one_frames[0].msg_type.as_u16(), 302);
-    assert_eq!(caller_one_frames[0].payload[0], 0);
+    assert_eq!(caller_one_frames.len(), 0);
 
     let caller_two_frames = caller_two_frames.lock();
     assert_eq!(caller_two_frames.len(), 1);
-    assert_eq!(caller_two_frames[0].msg_type.as_u16(), 302);
-    assert_rpc_code_error(
-        &caller_two_frames[0].payload,
+    assert_rpc_terminal_code_error(
+        &caller_two_frames[0],
+        correlation_id,
         crate::protocol::error_codes::rpc::ERR_RPC_DUPLICATE_CORRELATION,
         RPC_DUPLICATE_CORRELATION_ERROR,
     );
@@ -151,14 +147,12 @@ fn should_queue_request_when_worker_is_busy_given_rpc_sink() {
         family,
         uuid::Uuid::new_v4(),
         request_route.clone(),
-        Route::new("inbox://session/1/custom"),
         bytes::Bytes::from_static(b"first"),
     );
     let caller_two_request = crate::domains::rpc::protocol::RpcRequest::new(
         family,
         uuid::Uuid::new_v4(),
         request_route.clone(),
-        Route::new("inbox://session/2/custom"),
         bytes::Bytes::from_static(b"second"),
     );
     let caller_one_payload = {
@@ -212,13 +206,9 @@ fn should_queue_request_when_worker_is_busy_given_rpc_sink() {
     assert_eq!(worker_frames[0].msg_type.as_u16(), 302);
     assert_eq!(worker_frames[0].payload, caller_one_payload);
     let caller_one_frames = caller_one_frames.lock();
-    assert_eq!(caller_one_frames.len(), 1);
-    assert_eq!(caller_one_frames[0].msg_type.as_u16(), 302);
-    assert_eq!(caller_one_frames[0].payload[0], 0);
+    assert_eq!(caller_one_frames.len(), 0);
     let caller_two_frames = caller_two_frames.lock();
-    assert_eq!(caller_two_frames.len(), 1);
-    assert_eq!(caller_two_frames[0].msg_type.as_u16(), 302);
-    assert_eq!(caller_two_frames[0].payload[0], 0);
+    assert_eq!(caller_two_frames.len(), 0);
 }
 
 #[test]
@@ -260,14 +250,12 @@ fn should_dispatch_queued_request_after_terminal_response_given_rpc_sink() {
         family,
         uuid::Uuid::new_v4(),
         request_route.clone(),
-        Route::new("inbox://session/1/custom"),
         bytes::Bytes::from_static(b"first"),
     );
     let caller_two_request = crate::domains::rpc::protocol::RpcRequest::new(
         family,
         uuid::Uuid::new_v4(),
         request_route.clone(),
-        Route::new("inbox://session/2/custom"),
         bytes::Bytes::from_static(b"second"),
     );
     let caller_one_payload = {
@@ -334,24 +322,21 @@ fn should_dispatch_queued_request_after_terminal_response_given_rpc_sink() {
     assert_eq!(sink.pending_table_len_for_tests(), 1);
     assert_eq!(sink.queued_request_count_for_tests(), 0);
     let caller_one_frames = caller_one_frames.lock();
-    assert_eq!(caller_one_frames.len(), 2);
-    assert_eq!(caller_one_frames[0].msg_type.as_u16(), 302);
-    assert_eq!(caller_one_frames[1].msg_type.as_u16(), 303);
-    let forwarded_response = parse_forwarded_rpc_response(&caller_one_frames[1]);
+    assert_eq!(caller_one_frames.len(), 1);
+    assert_eq!(caller_one_frames[0].msg_type.as_u16(), 303);
+    let forwarded_response = parse_forwarded_rpc_response(&caller_one_frames[0]);
     assert_eq!(
         forwarded_response.correlation_id,
         caller_one_request.correlation_id,
     );
     let caller_two_frames = caller_two_frames.lock();
-    assert_eq!(caller_two_frames.len(), 1);
-    assert_eq!(caller_two_frames[0].msg_type.as_u16(), 302);
+    assert_eq!(caller_two_frames.len(), 0);
     let worker_frames = worker_frames.lock();
-    assert_eq!(worker_frames.len(), 3);
+    assert_eq!(worker_frames.len(), 2);
     assert_eq!(worker_frames[0].msg_type.as_u16(), 302);
     assert_eq!(worker_frames[0].payload, caller_one_payload);
-    assert_eq!(worker_frames[1].msg_type.as_u16(), 304);
-    assert_eq!(worker_frames[2].msg_type.as_u16(), 302);
-    assert_eq!(worker_frames[2].payload, caller_two_payload);
+    assert_eq!(worker_frames[1].msg_type.as_u16(), 302);
+    assert_eq!(worker_frames[1].payload, caller_two_payload);
 }
 
 #[test]
@@ -406,7 +391,6 @@ fn should_reject_request_when_route_queue_capacity_reached_given_rpc_sink() {
                 family,
                 uuid::Uuid::new_v4(),
                 request_route.clone(),
-                Route::new("inbox://session/1/custom"),
                 bytes::Bytes::from_static(b"first"),
             ),
             &mut encoder,
@@ -419,22 +403,21 @@ fn should_reject_request_when_route_queue_capacity_reached_given_rpc_sink() {
                 family,
                 uuid::Uuid::new_v4(),
                 request_route.clone(),
-                Route::new("inbox://session/2/custom"),
                 bytes::Bytes::from_static(b"second"),
             ),
             &mut encoder,
         ))
     };
+    let caller_three_request = crate::domains::rpc::protocol::RpcRequest::new(
+        family,
+        uuid::Uuid::new_v4(),
+        request_route.clone(),
+        bytes::Bytes::from_static(b"third"),
+    );
     let caller_three_payload = {
         let mut encoder = crate::protocol::payload_codec::PayloadEncoder::new();
         bytes::Bytes::from(crate::protocol::rpc_codec::encode_request_into(
-            &crate::domains::rpc::protocol::RpcRequest::new(
-                family,
-                uuid::Uuid::new_v4(),
-                request_route.clone(),
-                Route::new("inbox://session/3/custom"),
-                bytes::Bytes::from_static(b"third"),
-            ),
+            &caller_three_request,
             &mut encoder,
         ))
     };
@@ -484,15 +467,14 @@ fn should_reject_request_when_route_queue_capacity_reached_given_rpc_sink() {
     let worker_frames = worker_frames.lock();
     assert_eq!(worker_frames.len(), 1);
     let caller_one_frames = caller_one_frames.lock();
-    assert_eq!(caller_one_frames.len(), 1);
-    assert_eq!(caller_one_frames[0].payload[0], 0);
+    assert_eq!(caller_one_frames.len(), 0);
     let caller_two_frames = caller_two_frames.lock();
-    assert_eq!(caller_two_frames.len(), 1);
-    assert_eq!(caller_two_frames[0].payload[0], 0);
+    assert_eq!(caller_two_frames.len(), 0);
     let caller_three_frames = caller_three_frames.lock();
     assert_eq!(caller_three_frames.len(), 1);
-    assert_rpc_code_error(
-        &caller_three_frames[0].payload,
+    assert_rpc_terminal_code_error(
+        &caller_three_frames[0],
+        caller_three_request.correlation_id,
         crate::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
         RPC_BACKPRESSURE_ERROR,
     );
@@ -515,7 +497,6 @@ fn should_snapshot_queued_request_without_worker_session_id_given_rpc_admin_snap
                 family,
                 correlation_id,
                 route.clone(),
-                Route::new("inbox://session/7/custom"),
                 bytes::Bytes::from_static(b"queued"),
             ),
             7,
@@ -554,18 +535,26 @@ fn should_reject_request_when_worker_disconnects_before_dispatch_given_missing_w
     let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
     let (request_msg_type, request_payload) =
         crate::benchkit::extract_single_tlv_field(&request_frame);
+    let request_ctx = FrameContext::new(
+        1,
+        crate::protocol::frame::ChannelId::Rpc,
+        crate::protocol::tlv::MessageType::new(request_msg_type),
+        request_payload.clone(),
+        family,
+    );
+    let request =
+        match crate::protocol::rpc_codec::parse_request(&request_ctx, &request_payload, family)
+            .expect("parse rpc request")
+        {
+            crate::domains::rpc::protocol::RpcMessage::Request(request) => request,
+            other => panic!("expected rpc request, found {other:?}"),
+        };
 
     // Act
     sink.deliver(Envelope::from_route(
         request_source,
         request_addr,
-        FrameContext::new(
-            1,
-            crate::protocol::frame::ChannelId::Rpc,
-            crate::protocol::tlv::MessageType::new(request_msg_type),
-            request_payload,
-            family,
-        ),
+        request_ctx,
     ))
     .expect("deliver request");
 
@@ -574,9 +563,9 @@ fn should_reject_request_when_worker_disconnects_before_dispatch_given_missing_w
     assert_eq!(sink.worker_count(), 0);
     let reply_frames = reply_frames.lock();
     assert_eq!(reply_frames.len(), 1);
-    assert_eq!(reply_frames[0].msg_type.as_u16(), 302);
-    assert_rpc_code_error(
-        &reply_frames[0].payload,
+    assert_rpc_terminal_code_error(
+        &reply_frames[0],
+        request.correlation_id,
         crate::protocol::error_codes::rpc::ERR_WORKER_NOT_FOUND,
         RPC_WORKER_NOT_FOUND_ERROR,
     );
@@ -732,7 +721,6 @@ fn should_remove_queued_request_given_rpc_session_cleanup() {
                 family,
                 queued_correlation_id,
                 route.clone(),
-                Route::new("inbox://session/7/custom"),
                 bytes::Bytes::from_static(b"queued"),
             ),
             7,

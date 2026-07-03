@@ -356,22 +356,6 @@ fn frame_context_from_envelope(envelope: &Envelope) -> Option<FrameContext> {
         ));
     }
 
-    if let Some(ack) = envelope.payload::<crate::domains::rpc::RpcWorkerAck>() {
-        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(
-            crate::protocol::rpc_codec::ack_payload_capacity(),
-        );
-        return Some(FrameContext::new(
-            ack.session_id,
-            ChannelId::Rpc,
-            MessageType::new(304),
-            Bytes::from(crate::protocol::rpc_codec::encode_ack_into(
-                &ack.correlation_id,
-                &mut encoder,
-            )),
-            ack.route_family,
-        ));
-    }
-
     if let Some(response) = envelope.payload::<crate::domains::kv::KvClientResponse>() {
         return Some(client_response_frame(
             response.meta,

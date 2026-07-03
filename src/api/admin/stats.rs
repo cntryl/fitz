@@ -131,7 +131,6 @@ pub struct RpcStats {
     pub wrong_worker_rejects_total: u64,
     pub responses_dropped_closed_caller_total: u64,
     pub responses_missing_pending_total: u64,
-    pub acks_rejected_wrong_worker_total: u64,
     pub invalid_sequence_responses_total: u64,
     pub invalid_sequence_errors_forwarded_total: u64,
     pub invalid_sequence_errors_dropped_total: u64,
@@ -316,7 +315,6 @@ fn build_rpc_stats(runtime: &Runtime, diagnostics: troubleshooting::DomainDiagno
         wrong_worker_rejects_total: runtime.rpc_wrong_worker_rejects_total(),
         responses_dropped_closed_caller_total: runtime.rpc_responses_dropped_closed_caller_total(),
         responses_missing_pending_total: runtime.rpc_responses_missing_pending_total(),
-        acks_rejected_wrong_worker_total: runtime.rpc_acks_rejected_wrong_worker_total(),
         invalid_sequence_responses_total: runtime.rpc_invalid_sequence_responses_total(),
         invalid_sequence_errors_forwarded_total: runtime
             .rpc_invalid_sequence_errors_forwarded_total(),

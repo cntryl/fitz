@@ -66,7 +66,7 @@ The acceptance criteria in `client-acceptance-criteria.md` are the normative sou
 | Control (CONNECT) | 1 |
 | KV | 100–108 |
 | Queue | 200–209 |
-| RPC | 300–304 |
+| RPC | 300–303 |
 | Lease | 400–409 |
 | Notice | 500–504 |
 | Stream | 600–609 |
@@ -356,7 +356,7 @@ These targets apply to a loopback connection (broker and client on the same mach
 - KV: Begin → Put → Get → Scan → Commit → verify
 - Queue: Enqueue → Reserve → Extend → Complete
 - Notice: Subscribe → Publish (from second client) → receive NOTIFY → Unsubscribe
-- RPC: RegisterWorker → Call → receive REQUEST → send RESPONSE  → receive at caller
+- RPC: RegisterWorker(max_concurrent) → Call → receive REQUEST → send RESPONSE → receive at caller
 - Lease: Acquire → Query → Extend → Release
 - Stream: Begin → Append → Commit → Read → Peek → Metadata → Subscribe → receive NOTIFY
 - Schedule: Create → List → Subscribe → receive NOTIFY → Cancel
