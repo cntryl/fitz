@@ -2,9 +2,28 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::runtime::matcher::Pattern;
 use fitz::runtime::routing::Route;
+use std::time::{Duration, Instant};
 
 #[path = "criterion_config.rs"]
 mod criterion_config;
+
+const MATCHER_REPEAT_COUNT: u64 = 256;
+
+fn time_repeated<F>(iters: u64, mut measure: F) -> Duration
+where
+    F: FnMut(),
+{
+    let mut total = Duration::ZERO;
+    for _ in 0..iters {
+        let start = Instant::now();
+        for _ in 0..MATCHER_REPEAT_COUNT {
+            measure();
+        }
+        total +=
+            start.elapsed() / u32::try_from(MATCHER_REPEAT_COUNT).expect("repeat count fits u32");
+    }
+    total
+}
 
 /// Exact literal route match (best case)
 fn bench_exact_match(c: &mut Criterion) {
@@ -143,7 +162,11 @@ fn bench_pattern_complexity_knee(c: &mut Criterion) {
         b.iter(|| pattern_literals.matches(black_box(&route)));
     });
     group.bench_function("one_star", |b| {
-        b.iter(|| pattern_one_star.matches(black_box(&route)));
+        b.iter_custom(|iters| {
+            time_repeated(iters, || {
+                let _ = pattern_one_star.matches(black_box(&route));
+            })
+        });
     });
     group.bench_function("two_stars", |b| {
         b.iter(|| pattern_two_stars.matches(black_box(&route)));

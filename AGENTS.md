@@ -57,7 +57,7 @@ Right:
 ## Validation
 - Rust: `cargo test --workspace`, `cargo test test_guidelines_compliance`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cntryl-tools validate-tests`.
 - UI: run from `ui/` with `npm run test`, `npm run lint`, `npm run type-check`, and `npm run build`.
-- Benchmarks: use the relevant `cargo bench` target for Criterion suites and `scripts/run_perf_loop.ps1` for perf-loop changes.
+- Benchmarks: use direct `cargo bench` commands for the relevant tier or target, then run `cntryl-tools summarize-benchmarks` when a report is needed.
 
 ## Test Rules
 - Use `should_*` names for Rust tests.

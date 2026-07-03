@@ -795,7 +795,7 @@ Always test:
 ## CI Commands
 These are our canonical test commands for local development and CI:
 ### Run All Tests
-```powershell
+```bash
 # Full test suite
 cargo test --all
 # Quiet mode (less output)
@@ -804,7 +804,7 @@ cargo test --all --quiet
 cargo test --all -- --nocapture
 ```
 ### Run Specific Tests
-```powershell
+```bash
 # Single integration test file
 cargo test --test wal
 # Single test by name
@@ -813,22 +813,18 @@ cargo test should_resolve_put_on_get_local
 cargo test skiplist::
 ```
 ### Coverage
-```powershell
+```bash
 # Generate coverage report (requires cargo-llvm-cov)
 cargo llvm-cov --tests
 # HTML coverage report
 cargo llvm-cov --tests --html
 ```
-### Count Tests
-```powershell
-# PowerShell: Count total passing tests
-cargo test --quiet 2>&1 | Select-String "(\d+) passed" |
-    ForEach-Object { if ($_ -match '(\d+) passed') { [int]$matches[1] } } |
-    Measure-Object -Sum |
-    Select-Object -ExpandProperty Sum
+### List Tests
+```bash
+cargo test --workspace -- --list
 ```
 ### Performance
-```powershell
+```bash
 # Release mode (for benchmarks)
 cargo test --release
 # Single-threaded (for debugging)

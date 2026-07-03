@@ -5,8 +5,10 @@ use criterion::{
 };
 use fitz::benchkit::{
     build_rpc_ack_frame, build_rpc_request, build_rpc_response_frame, build_rpc_subscribe,
-    create_bench_rpc_sink, create_bench_rpc_sink_with_timeout, extract_single_tlv_field,
-    register_session_queue_sink, route_frame, FrameQueueSink,
+    create_bench_rpc_sink, create_bench_rpc_sink_with_timeout,
+    drain_frame_queue_sinks_after_each_count, extract_single_tlv_field,
+    register_session_counting_sink, register_session_queue_sink, route_frame, CountingSink,
+    FrameQueueSink,
 };
 use fitz::domains::rpc::protocol::{RpcMessage, RpcResponse};
 use fitz::protocol::frame::ChannelId;
@@ -14,27 +16,29 @@ use fitz::protocol::rpc_codec::{encode_response_message, parse_request};
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[path = "criterion_config.rs"]
 mod criterion_config;
 
 const ROUTE_STR: &str = "rpc://bench/subsystem/route";
 const REQUESTER_SESSION_ID: u64 = 1;
-const REQUEST_FRAME_RING_SIZE: usize = 1024;
-const DISPATCH_BATCH_SIZE: usize = 256;
+const REQUEST_FRAME_RING_SIZE: usize = 4096;
+const DISPATCH_BATCH_SIZE: usize = 1024;
 const MULTI_ROUTE_COUNT: usize = 64;
 const RPC_REQUEST_TIMEOUT: Duration = Duration::from_millis(10);
 const RPC_TIMEOUT_SWEEP_WAIT: Duration = Duration::from_millis(25);
-const WORKER_SUBSCRIBE_BATCH_SIZE: usize = 64;
-const RESPONSE_FORWARD_BATCH_SIZE: usize = 32;
-const STREAM_RESPONSE_BATCH_SIZE: usize = 8;
+const WORKER_SUBSCRIBE_BATCH_SIZE: usize = 2048;
+const RESPONSE_FORWARD_BATCH_SIZE: usize = 512;
+const STREAM_RESPONSE_BATCH_SIZE: usize = 32;
+const STREAM_RESPONSE_ROUTE_COUNT: usize = 8;
 
 type WorkerHandle = (u64, RouteAddress, Arc<FrameQueueSink>);
 
 struct PreparedWorkerResponse {
     worker_session_id: u64,
     worker_source: RouteAddress,
+    destination: RouteAddress,
     payload: Bytes,
 }
 
@@ -74,8 +78,7 @@ impl RequestFrameRing {
 struct PreparedResponseCase {
     router: Arc<Router>,
     family: RouteFamily,
-    destination: RouteAddress,
-    requester_inbox: Arc<FrameQueueSink>,
+    requester_inbox: Arc<CountingSink>,
     response_msg_type: u16,
     responses: Vec<PreparedWorkerResponse>,
 }
@@ -83,8 +86,7 @@ struct PreparedResponseCase {
 struct PreparedStreamingResponseCase {
     router: Arc<Router>,
     family: RouteFamily,
-    destination: RouteAddress,
-    requester_inbox: Arc<FrameQueueSink>,
+    requester_inbox: Arc<CountingSink>,
     response_msg_type: u16,
     responses: Vec<PreparedWorkerResponse>,
     expected_response_count: usize,
@@ -121,21 +123,13 @@ fn build_route_set(family: RouteFamily, route_count: usize) -> Vec<RouteAddress>
 
 fn timeout_sweep_case_batch_size(expired_pending: usize) -> usize {
     match expired_pending {
-        1 => 64,
         64 => 32,
         _ => 16,
     }
 }
 
-fn assert_requester_received_worker_responses(
-    frames: Vec<fitz::protocol::frame_context::FrameContext>,
-    expected_count: usize,
-) {
-    let response_count = frames
-        .into_iter()
-        .filter(|frame| frame.msg_type.as_u16() == 303)
-        .count();
-
+fn assert_requester_received_worker_responses(inbox: &Arc<CountingSink>, expected_count: usize) {
+    let response_count = inbox.wait_for_count(expected_count, Duration::from_secs(1));
     assert_eq!(
         response_count, expected_count,
         "expected requester inbox to contain {expected_count} worker responses"
@@ -179,6 +173,21 @@ fn setup_rpc_sink(
     (router, family, requester_source, requester_inbox)
 }
 
+fn setup_rpc_sink_with_counting_requester(
+    request_timeout: Option<Duration>,
+) -> (Arc<Router>, RouteFamily, RouteAddress, Arc<CountingSink>) {
+    let family = RouteFamily::new(1);
+    let router = Arc::new(Router::new());
+    let sink: Arc<dyn MailboxSink> = match request_timeout {
+        Some(timeout) => create_bench_rpc_sink_with_timeout(router.clone(), timeout),
+        None => create_bench_rpc_sink(router.clone()),
+    };
+    router.register_domain_pattern("rpc", sink);
+    let (requester_source, requester_inbox) =
+        register_session_counting_sink(&router, family, REQUESTER_SESSION_ID);
+    (router, family, requester_source, requester_inbox)
+}
+
 fn register_worker_for_destination(
     router: &Arc<Router>,
     family: RouteFamily,
@@ -197,7 +206,7 @@ fn register_worker_for_destination(
         payload,
         family,
     );
-    worker_inbox.clear();
+    worker_inbox.drain_after_count(1, Duration::from_secs(1));
     (session_id, worker_source, worker_inbox)
 }
 
@@ -245,7 +254,7 @@ fn drain_request_correlation(
     family: RouteFamily,
 ) -> uuid::Uuid {
     worker_inbox
-        .drain()
+        .drain_after_count(1, Duration::from_secs(1))
         .into_iter()
         .find_map(|frame| match frame.msg_type.as_u16() {
             302 => match parse_request(&frame, &frame.payload, family) {
@@ -303,7 +312,8 @@ fn prepare_worker_subscribe_case() -> PreparedWorkerSubscribeCase {
 }
 
 fn prepare_response_case() -> PreparedResponseCase {
-    let (router, family, requester_source, requester_inbox) = setup_rpc_sink(None);
+    let (router, family, requester_source, requester_inbox) =
+        setup_rpc_sink_with_counting_requester(None);
     let destination = route_address(family, ROUTE_STR);
     let workers: Vec<WorkerHandle> = (0..RESPONSE_FORWARD_BATCH_SIZE)
         .map(|index| {
@@ -339,15 +349,16 @@ fn prepare_response_case() -> PreparedResponseCase {
             PreparedWorkerResponse {
                 worker_session_id: *worker_session_id,
                 worker_source: worker_source.clone(),
+                destination: destination.clone(),
                 payload: response_payload,
             }
         })
         .collect();
+    requester_inbox.reset();
 
     PreparedResponseCase {
         router,
         family,
-        destination,
         requester_inbox,
         response_msg_type: 303,
         responses,
@@ -355,41 +366,43 @@ fn prepare_response_case() -> PreparedResponseCase {
 }
 
 fn prepare_streaming_response_case(chunk_count: usize) -> PreparedStreamingResponseCase {
-    let (router, family, requester_source, requester_inbox) = setup_rpc_sink(None);
-    let destination = route_address(family, ROUTE_STR);
-    let workers: Vec<WorkerHandle> = (0..STREAM_RESPONSE_BATCH_SIZE)
-        .map(|index| {
-            register_worker_for_destination(
+    let (router, family, requester_source, requester_inbox) =
+        setup_rpc_sink_with_counting_requester(None);
+    let mut responses =
+        Vec::with_capacity(STREAM_RESPONSE_ROUTE_COUNT * STREAM_RESPONSE_BATCH_SIZE * chunk_count);
+
+    for route_index in 0..STREAM_RESPONSE_ROUTE_COUNT {
+        let route = format!("{ROUTE_STR}/{route_index}");
+        let destination = route_address(family, &route);
+        let workers: Vec<WorkerHandle> = (0..STREAM_RESPONSE_BATCH_SIZE)
+            .map(|worker_index| {
+                let session_id = 11_000_u64
+                    .saturating_add(usize_to_u64_saturating(route_index * 1_000))
+                    .saturating_add(usize_to_u64_saturating(worker_index));
+                register_worker_for_destination(&router, family, session_id, &destination)
+            })
+            .collect();
+        let mut request_ring = RequestFrameRing::new(
+            &route,
+            b"stream response payload",
+            STREAM_RESPONSE_BATCH_SIZE,
+        );
+
+        for _ in 0..STREAM_RESPONSE_BATCH_SIZE {
+            let (request_msg_type, request_payload) = request_ring.next_frame();
+            dispatch_request_to_destination(
                 &router,
                 family,
-                11_000_u64.saturating_add(usize_to_u64_saturating(index)),
+                &requester_source,
                 &destination,
-            )
-        })
-        .collect();
-    let mut request_ring = RequestFrameRing::new(
-        ROUTE_STR,
-        b"stream response payload",
-        STREAM_RESPONSE_BATCH_SIZE,
-    );
+                request_msg_type,
+                request_payload,
+            );
+        }
 
-    for _ in 0..STREAM_RESPONSE_BATCH_SIZE {
-        let (request_msg_type, request_payload) = request_ring.next_frame();
-        dispatch_request_to_destination(
-            &router,
-            family,
-            &requester_source,
-            &destination,
-            request_msg_type,
-            request_payload,
-        );
-    }
-
-    let responses = workers
-        .iter()
-        .flat_map(|(worker_session_id, worker_source, worker_inbox)| {
-            let correlation_id = drain_request_correlation(worker_inbox, family);
-            (0..chunk_count).map(move |seq| {
+        for (worker_session_id, worker_source, worker_inbox) in workers {
+            let correlation_id = drain_request_correlation(&worker_inbox, family);
+            responses.extend((0..chunk_count).map(|seq| {
                 let response = RpcResponse::chunk(
                     correlation_id,
                     usize_to_u64_saturating(seq),
@@ -397,22 +410,25 @@ fn prepare_streaming_response_case(chunk_count: usize) -> PreparedStreamingRespo
                     seq + 1 == chunk_count,
                 );
                 PreparedWorkerResponse {
-                    worker_session_id: *worker_session_id,
+                    worker_session_id,
                     worker_source: worker_source.clone(),
+                    destination: destination.clone(),
                     payload: Bytes::from(encode_response_message(&response)),
                 }
-            })
-        })
-        .collect();
+            }));
+        }
+    }
+    requester_inbox.reset();
 
     PreparedStreamingResponseCase {
         router,
         family,
-        destination,
         requester_inbox,
         response_msg_type: 303,
         responses,
-        expected_response_count: STREAM_RESPONSE_BATCH_SIZE * chunk_count,
+        expected_response_count: STREAM_RESPONSE_ROUTE_COUNT
+            * STREAM_RESPONSE_BATCH_SIZE
+            * chunk_count,
     }
 }
 
@@ -437,7 +453,7 @@ fn prepare_timeout_sweep_case(expired_pending: usize) -> PreparedTimeoutSweepCas
         );
     }
 
-    worker_inbox.clear();
+    worker_inbox.drain_after_count(1, Duration::from_secs(1));
     requester_inbox.clear();
 
     let (request_msg_type, request_payload) = request_ring.next_frame();
@@ -464,15 +480,16 @@ fn prepare_timeout_sweep_batch_case(expired_pending: usize) -> PreparedTimeoutSw
 fn bench_rpc_worker_subscribe_primary(c: &mut Criterion) {
     let mut group = c.benchmark_group("subsystem_rpc");
     group.sampling_mode(SamplingMode::Flat);
-    group.measurement_time(Duration::from_millis(250));
     group.throughput(Throughput::Elements(usize_to_u64_saturating(
         WORKER_SUBSCRIBE_BATCH_SIZE,
     )));
 
-    group.bench_function("worker_subscribe_64_sessions_primary", |b| {
-        b.iter_batched(
-            prepare_worker_subscribe_case,
-            |case| {
+    group.bench_function("worker_subscribe_2048_sessions_primary", |b| {
+        b.iter_custom(|iters| {
+            let mut total = Duration::ZERO;
+            for _ in 0..iters {
+                let case = prepare_worker_subscribe_case();
+                let start = Instant::now();
                 for (session_id, worker_source, _) in &case.subscriptions {
                     route_frame_to_address(
                         case.router.as_ref(),
@@ -484,16 +501,20 @@ fn bench_rpc_worker_subscribe_primary(c: &mut Criterion) {
                         case.family,
                     );
                 }
+                total += start.elapsed();
 
-                let ack_count: usize = case
+                let inboxes: Vec<_> = case
                     .subscriptions
                     .iter()
-                    .map(|(_, _, worker_inbox)| worker_inbox.drain().len())
-                    .sum();
+                    .map(|(_, _, worker_inbox)| worker_inbox.clone())
+                    .collect();
+                let ack_count =
+                    drain_frame_queue_sinks_after_each_count(&inboxes, 1, Duration::from_secs(1))
+                        .len();
                 assert_eq!(ack_count, WORKER_SUBSCRIBE_BATCH_SIZE);
-            },
-            BatchSize::SmallInput,
-        );
+            }
+            total
+        });
     });
 
     group.finish();
@@ -503,7 +524,6 @@ fn bench_rpc_worker_subscribe_primary(c: &mut Criterion) {
 fn bench_rpc_dispatch_primary(c: &mut Criterion) {
     let mut group = c.benchmark_group("subsystem_rpc");
     group.sampling_mode(SamplingMode::Flat);
-    group.measurement_time(Duration::from_millis(400));
 
     for worker_count in [1usize, 64usize, 256usize] {
         let (router, family, requester_source, requester_inbox) = setup_rpc_sink(None);
@@ -526,7 +546,7 @@ fn bench_rpc_dispatch_primary(c: &mut Criterion) {
             DISPATCH_BATCH_SIZE,
         )));
         group.bench_function(
-            format!("dispatch_ack_cleanup_256_ops_{worker_count}_workers_primary"),
+            format!("dispatch_ack_cleanup_1024_ops_{worker_count}_workers_primary"),
             |b| {
                 b.iter(|| {
                     for _ in 0..DISPATCH_BATCH_SIZE {
@@ -582,7 +602,7 @@ fn bench_rpc_dispatch_primary(c: &mut Criterion) {
     group.throughput(Throughput::Elements(usize_to_u64_saturating(
         DISPATCH_BATCH_SIZE,
     )));
-    group.bench_function("dispatch_ack_cleanup_256_ops_64_routes_primary", |b| {
+    group.bench_function("dispatch_ack_cleanup_1024_ops_64_routes_primary", |b| {
         b.iter(|| {
             for _ in 0..DISPATCH_BATCH_SIZE {
                 let route_index = next_route_index;
@@ -614,63 +634,76 @@ fn bench_rpc_dispatch_primary(c: &mut Criterion) {
 fn bench_rpc_response_primary(c: &mut Criterion) {
     let mut group = c.benchmark_group("subsystem_rpc");
     group.sampling_mode(SamplingMode::Flat);
-    group.measurement_time(Duration::from_millis(250));
     group.throughput(Throughput::Elements(usize_to_u64_saturating(
         RESPONSE_FORWARD_BATCH_SIZE,
     )));
 
-    group.bench_function("response_forward_32_pending_primary", |b| {
-        b.iter_batched(
-            prepare_response_case,
-            |case| {
-                for response in &case.responses {
-                    route_worker_frame_to_destination(
-                        &case.router,
-                        case.family,
-                        response.worker_session_id,
-                        &response.worker_source,
-                        &case.destination,
-                        case.response_msg_type,
-                        black_box(response.payload.clone()),
+    group.bench_function(
+        format!("response_forward_{RESPONSE_FORWARD_BATCH_SIZE}_pending_primary"),
+        |b| {
+            b.iter_custom(|iters| {
+                let mut total = Duration::ZERO;
+                for _ in 0..iters {
+                    let case = prepare_response_case();
+                    let start = Instant::now();
+                    for response in &case.responses {
+                        route_worker_frame_to_destination(
+                            &case.router,
+                            case.family,
+                            response.worker_session_id,
+                            &response.worker_source,
+                            &response.destination,
+                            case.response_msg_type,
+                            black_box(response.payload.clone()),
+                        );
+                    }
+                    total += start.elapsed();
+                    assert_requester_received_worker_responses(
+                        &case.requester_inbox,
+                        case.responses.len(),
                     );
                 }
-                assert_requester_received_worker_responses(
-                    case.requester_inbox.drain(),
-                    case.responses.len(),
-                );
-            },
-            BatchSize::SmallInput,
-        );
-    });
+                total
+            });
+        },
+    );
 
+    group.measurement_time(Duration::from_millis(250));
     for chunk_count in [4usize, 16usize] {
         group.throughput(Throughput::Elements(usize_to_u64_saturating(
-            chunk_count.saturating_mul(STREAM_RESPONSE_BATCH_SIZE),
+            chunk_count
+                .saturating_mul(STREAM_RESPONSE_BATCH_SIZE)
+                .saturating_mul(STREAM_RESPONSE_ROUTE_COUNT),
         )));
         group.bench_function(
-            format!("response_forward_stream_8_workers_{chunk_count}_chunks_primary"),
+            format!(
+                "response_forward_stream_{STREAM_RESPONSE_BATCH_SIZE}_workers_{chunk_count}_chunks_x{STREAM_RESPONSE_ROUTE_COUNT}_routes_primary"
+            ),
             |b| {
-                b.iter_batched(
-                    || prepare_streaming_response_case(chunk_count),
-                    |case| {
+                b.iter_custom(|iters| {
+                    let mut total = Duration::ZERO;
+                    for _ in 0..iters {
+                        let case = prepare_streaming_response_case(chunk_count);
+                        let start = Instant::now();
                         for response in &case.responses {
                             route_worker_frame_to_destination(
                                 &case.router,
                                 case.family,
                                 response.worker_session_id,
                                 &response.worker_source,
-                                &case.destination,
+                                &response.destination,
                                 case.response_msg_type,
                                 black_box(response.payload.clone()),
                             );
                         }
+                        total += start.elapsed();
                         assert_requester_received_worker_responses(
-                            case.requester_inbox.drain(),
+                            &case.requester_inbox,
                             case.expected_response_count,
                         );
-                    },
-                    BatchSize::SmallInput,
-                );
+                    }
+                    total
+                });
             },
         );
     }
@@ -681,9 +714,8 @@ fn bench_rpc_response_primary(c: &mut Criterion) {
 fn bench_rpc_timeout_sweep_primary(c: &mut Criterion) {
     let mut group = c.benchmark_group("subsystem_rpc");
     group.sampling_mode(SamplingMode::Flat);
-    group.measurement_time(Duration::from_millis(500));
 
-    for expired_pending in [1usize, 64usize, 256usize] {
+    for expired_pending in [64usize, 256usize] {
         let case_batch_size = timeout_sweep_case_batch_size(expired_pending);
         group.throughput(Throughput::Elements(usize_to_u64_saturating(
             expired_pending.saturating_mul(case_batch_size),

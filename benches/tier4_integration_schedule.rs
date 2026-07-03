@@ -27,12 +27,20 @@ use fitz::testkit::{TestClient, TestServer, TestWebSocketClient};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-const DIRECT_ROUTE_RING_SIZE: usize = 65_536;
-const TRANSPORT_FRAME_RING_SIZE: usize = 8_192;
+const DIRECT_ROUTE_RING_SIZE: usize = 1_000_000;
+const TRANSPORT_FRAME_RING_SIZE: usize = 65_536;
+const BATCH_FRAME_RING_SIZE: usize = 16_384;
 const CREATE_BATCH_WIDTH: usize = 32;
 
 fn valid_schedule_route(prefix: &str, index: usize) -> String {
     format!("schedule://tier4/{prefix}/resource-{index}/run")
+}
+
+fn next_ring_item<'a, T>(ring: &'a [T], next_index: &mut usize, ring_name: &str) -> &'a T {
+    let index = *next_index;
+    *next_index += 1;
+    ring.get(index)
+        .unwrap_or_else(|| panic!("{ring_name} exhausted before measurement completed"))
 }
 
 fn make_schedule_ctx() -> Context<ScheduleActor> {
@@ -50,6 +58,7 @@ fn should_complete_direct_create(ctx: &mut StressContext) {
     ctx.tag("scenario", "create");
     ctx.tag("measurement_scope", "direct_inproc");
     ctx.tag("batch_size", "single_create");
+    ctx.tag("route_reuse", "none");
 
     let (db, _temp_dir) = create_local_bench_store();
     let mut actor = ScheduleActor::new(
@@ -76,8 +85,7 @@ fn should_complete_direct_create(ctx: &mut StressContext) {
     let iterations = ctx.measure_for(
         stress_config::BenchConfig::default().measure_duration,
         || {
-            let route = &route_ring[next_index % route_ring.len()];
-            next_index += 1;
+            let route = next_ring_item(&route_ring, &mut next_index, "direct route ring");
             actor.receive(
                 ScheduleMessage::Create {
                     route: route.clone(),
@@ -97,6 +105,7 @@ fn should_complete_tcp_create(ctx: &mut StressContext) {
     ctx.tag("scenario", "create");
     ctx.tag("measurement_scope", "tcp_e2e");
     ctx.tag("batch_size", "single_create");
+    ctx.tag("route_reuse", "none");
 
     let frame_ring: Vec<Vec<u8>> = (0..TRANSPORT_FRAME_RING_SIZE)
         .map(|index| {
@@ -120,8 +129,7 @@ fn should_complete_tcp_create(ctx: &mut StressContext) {
     let iterations = ctx.measure_for(
         stress_config::BenchConfig::default().measure_duration,
         || {
-            let frame = &frame_ring[next_index % frame_ring.len()];
-            next_index += 1;
+            let frame = next_ring_item(&frame_ring, &mut next_index, "tcp frame ring");
             let response = runtime
                 .block_on(client.request(frame, 2000))
                 .expect("create response");
@@ -137,6 +145,7 @@ fn should_complete_ws_create(ctx: &mut StressContext) {
     ctx.tag("scenario", "create");
     ctx.tag("measurement_scope", "ws_e2e");
     ctx.tag("batch_size", "single_create");
+    ctx.tag("route_reuse", "none");
 
     let frame_ring: Vec<Vec<u8>> = (0..TRANSPORT_FRAME_RING_SIZE)
         .map(|index| {
@@ -163,8 +172,7 @@ fn should_complete_ws_create(ctx: &mut StressContext) {
     let iterations = ctx.measure_for(
         stress_config::BenchConfig::default().measure_duration,
         || {
-            let frame = &frame_ring[next_index % frame_ring.len()];
-            next_index += 1;
+            let frame = next_ring_item(&frame_ring, &mut next_index, "websocket frame ring");
             let response = runtime
                 .block_on(client.request(frame, 2000))
                 .expect("create response");
@@ -184,8 +192,9 @@ fn should_complete_ws_batch_create(ctx: &mut StressContext) {
     ctx.tag("scenario", "batch_create");
     ctx.tag("measurement_scope", "ws_e2e");
     ctx.tag("batch_size", "32_creates_per_request");
+    ctx.tag("route_reuse", "none");
 
-    let frame_ring: Vec<Vec<u8>> = (0..TRANSPORT_FRAME_RING_SIZE)
+    let frame_ring: Vec<Vec<u8>> = (0..BATCH_FRAME_RING_SIZE)
         .map(|batch_index| {
             let routes: Vec<String> = (0..CREATE_BATCH_WIDTH)
                 .map(|entry_index| {
@@ -221,8 +230,7 @@ fn should_complete_ws_batch_create(ctx: &mut StressContext) {
     let iterations = ctx.measure_for(
         stress_config::BenchConfig::default().measure_duration,
         || {
-            let frame = &frame_ring[next_index % frame_ring.len()];
-            next_index += 1;
+            let frame = next_ring_item(&frame_ring, &mut next_index, "websocket batch frame ring");
             let response = runtime
                 .block_on(client.request(frame, 2000))
                 .expect("batch create response");
@@ -243,6 +251,7 @@ fn should_complete_multiclient_creates(ctx: &mut StressContext) {
     ctx.tag("measurement_scope", "ws_multiclient_e2e");
     ctx.tag("batch_size", "10_clients_1_create_each");
     ctx.tag("client_count", "10");
+    ctx.tag("route_reuse", "none");
     let frame_rings: Vec<Vec<Vec<u8>>> = (0..10)
         .map(|client_index| {
             (0..TRANSPORT_FRAME_RING_SIZE)
@@ -294,9 +303,14 @@ fn should_complete_multiclient_creates(ctx: &mut StressContext) {
                     let arc = arc.clone();
                     let frame = {
                         let mut indices = next_indices.lock().unwrap();
-                        let index = indices[client_index] % frame_rings[client_index].len();
+                        let index = indices[client_index];
                         indices[client_index] += 1;
-                        frame_rings[client_index][index].clone()
+                        frame_rings[client_index]
+                            .get(index)
+                            .unwrap_or_else(|| {
+                                panic!("multiclient frame ring exhausted for client {client_index}")
+                            })
+                            .clone()
                     };
                     async move {
                         let mut c = arc.lock().await;

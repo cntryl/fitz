@@ -1,51 +1,33 @@
-# Performance Loop Runner
+# Performance Loop
 
-Use the PowerShell runner at `scripts/run_perf_loop.ps1` to capture a full local optimization cycle with stable artifacts under `target/perf-loops/`.
+Use direct test and benchmark commands for local optimization work. Keep the same command set before and after the code change so the comparison is meaningful.
 
-## Commands
+## Baseline
 
-Initial pass:
+Run the correctness checks first:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run_perf_loop.ps1 -CycleLabel rpc-pass-01
+```bash
+cargo test --workspace
+cargo test test_guidelines_compliance
+cntryl-tools validate-tests
 ```
 
-After making the optimization change, resume from the verification half of the same cycle:
+Run the benchmark tier or target that covers the suspected hot path:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run_perf_loop.ps1 -CycleLabel rpc-pass-01 -ResumeFromOptimize
+```bash
+export FITZ_LOG_LEVEL=warn
+export OTEL_ENABLED=false
+cargo bench --no-run
+cargo bench --bench tier3_system_rpc -- --runs 5 --warmup 1
+cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"
 ```
 
-Dry-run orchestration without invoking cargo or python:
+For a full tier refresh, use the commands in [Benchmark Guidelines](benchmarks.md#stress-configuration-tier-3-and-4).
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run_perf_loop.ps1 -CycleLabel smoke-check -DryRun
-```
+## Optimize
 
-Optional benchmark filter:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run_perf_loop.ps1 -CycleLabel queue-pass-01 -BenchFilter tier3_system_queue
-```
-
-## Output
-
-Each cycle writes to `target/perf-loops/<cycle-label>/`:
-
-- `manifest.json`: phase status, commands, snapshot paths, selected optimization target, comparison result
-- `logs/`: raw command output for each test, bench, and summary phase
-- `snapshots/baseline/`: first benchmark summary, perf scorecard, and copied benchmark artifacts
-- `snapshots/verification/`: second benchmark summary, perf scorecard, and copied benchmark artifacts after optimization
-- `comparison.json`: before/after improvement summary once verification is complete
+Make one focused change, then rerun the same correctness checks and benchmark command. Compare the regenerated `target/bench_summary.md` and `target/bench_results.json` with the baseline output you captured before the change.
 
 ## Selection Rules
 
-The runner records an optimization checkpoint after the first test and benchmark pass. It selects one candidate deterministically using:
-
-- [config/perf_targets.json](../../config/perf_targets.json) as the source of truth
-- target-bucket order: `engine_core`, then `service_budget/direct_api`, then `service_budget/transport`, then `service_budget/contention`, then `internal_explainer`
-- percent over the `operational_target` inside each bucket
-- percent over the `stretch_target` as the next tie-breaker inside the bucket
-- higher current `mean_us` as the final tie-breaker inside the bucket
-
-The runner does not mutate source code during optimization. It records the target, then expects the engineer to make the code change before running the resume step.
+Use [config/perf_targets.json](../../config/perf_targets.json) and [Performance targets](bench-targets.md) to choose optimization candidates. Prefer the scenario furthest over its operational target inside the relevant bucket, then use stretch-target distance and current `mean_us` to break ties.

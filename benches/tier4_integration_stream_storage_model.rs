@@ -22,6 +22,7 @@ use fitz::runtime::router::Router;
 use fitz::runtime::routing::{RouteAddress, RouteFamily};
 use fitz::testkit::transport::{TestClient, TestServer, TestWebSocketClient};
 use std::sync::Arc;
+use std::time::Duration;
 use stream_storage_model::{
     install_stream_read_prototype_sink, prepare_area_read_case, prepare_realm_read_case,
     prepare_resource_read_case, PrototypeReadCase, PROTOTYPE_ROUTE_FAMILY,
@@ -76,7 +77,7 @@ fn direct_request(
     )
     .expect("prototype stream route");
 
-    let responses = context.inbox.drain();
+    let responses = context.inbox.drain_after_count(1, Duration::from_secs(1));
     responses
         .last()
         .map(|frame| frame.payload.clone())

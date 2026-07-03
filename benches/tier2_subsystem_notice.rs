@@ -3,7 +3,7 @@ use bytes::Bytes;
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::benchkit::{
     build_notice_subscribe, create_bench_notice_sink, extract_single_tlv_field,
-    register_session_counting_sink, route_frame, CountingSink,
+    register_session_counting_sink, route_frame, wait_for_counting_sinks_each_count, CountingSink,
 };
 use fitz::domains::notice::sink::NoticeDomainSink;
 use fitz::protocol::frame::ChannelId;
@@ -12,11 +12,13 @@ use fitz::runtime::envelope::Envelope;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 #[path = "criterion_config.rs"]
 mod criterion_config;
 
 const PUBLISH_ROUTE: &str = "notice://realm/area/orders/create";
+const PUBLISH_REPEAT_COUNT: u64 = 8;
 
 struct MatchPatternCase {
     label: &'static str,
@@ -40,13 +42,13 @@ impl NoticePublishCase {
     fn assert_single_delivery_per_subscriber(&self) {
         self.publish_once();
 
-        for subscriber_sink in &self.subscriber_sinks {
-            assert_eq!(
-                subscriber_sink.count(),
-                1,
-                "expected one notice delivery per subscriber"
-            );
-        }
+        let delivery_count =
+            wait_for_counting_sinks_each_count(&self.subscriber_sinks, 1, Duration::from_secs(1));
+        assert_eq!(
+            delivery_count,
+            self.subscriber_sinks.len(),
+            "expected one notice delivery per subscriber"
+        );
     }
 
     fn reset_subscriber_counts(&self) {
@@ -81,6 +83,11 @@ fn create_publish_case(subscriber_count: usize, pattern: &str) -> NoticePublishC
             family,
         )
         .expect("notice subscribe");
+        assert_eq!(
+            subscriber_sink.wait_for_count(1, Duration::from_secs(1)),
+            1,
+            "notice subscribe should ack before publish measurement"
+        );
         subscriber_sink.reset();
         subscriber_sinks.push(subscriber_sink);
     }
@@ -129,9 +136,18 @@ fn bench_notice_publish_fanout(c: &mut Criterion) {
                     match_case.label, subscriber_count
                 ),
                 |b| {
-                    b.iter(|| {
-                        case.publish_once();
-                        black_box(());
+                    b.iter_custom(|iters| {
+                        let mut remaining = iters.saturating_mul(PUBLISH_REPEAT_COUNT);
+                        let start = Instant::now();
+                        while remaining > 0 {
+                            case.assert_single_delivery_per_subscriber();
+                            case.reset_subscriber_counts();
+                            black_box(());
+                            remaining -= 1;
+                        }
+                        start.elapsed()
+                            / u32::try_from(PUBLISH_REPEAT_COUNT)
+                                .expect("publish repeat count fits u32")
                     });
                 },
             );

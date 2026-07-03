@@ -208,7 +208,7 @@ All Criterion benchmarks use the shared config from `benches/criterion_config.rs
 Current shared settings:
 
 - `warm_up_time`: 100ms (Tier 1), 150ms (Tier 2)
-- `measurement_time`: 500ms (Tier 1), 700ms (Tier 2)
+- `measurement_time`: 500ms (Tier 1), 1500ms (Tier 2)
 - `sample_size`: 12 (Tier 1), 10 (Tier 2)
 - `noise_threshold`: 0.05
 
@@ -242,27 +242,31 @@ Tier 3 and Tier 4 benchmarks use `cntryl-stress` and `#[stress_test]`. Configura
 | `--runs <N>`   | Number of measurement runs per stress test | 5       |
 | `--warmup <N>` | Number of warmup runs before measurement   | 1       |
 
-- **Install tooling:** Install the shared bench/report helpers once per environment with `cargo install --git https://github.com/cntryl/tools --locked`.
+- **Install tooling:** Install the shared bench/report tooling once per environment with `cargo install --git https://github.com/cntryl/tools --locked`.
 - **set_elements(N):** Set this to the logical number of operations in each `ctx.measure(|| { ... })` (e.g. 3 for begin+put+rollback, 10 for 10 puts). Throughput reported by `cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"` is elements/time, so N must match what the closure does.
-- **Minimum runtime:** Aim for 3s of measured work per scenario. Runs shorter than 3s are invalid, and the summary script flags them as such because they do not provide stable enough medians.
-- **Output:** Stress results are written under `target/stress/<bench_name>/` (e.g. `target/stress/tier3_system_kv/latest.json`). Run `cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"` after `cargo bench` and the stress bench binaries to produce `target/bench_summary.md`.
-- **Full refresh:** Run the full tier 3 / tier 4 suites, then run `cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"` to regenerate the summary in one step.
+- **Minimum runtime:** Aim for 3s of measured work per scenario. Runs shorter than 3s are invalid, and the summary tool flags them as such because they do not provide stable enough medians.
+- **Output:** Stress results are written under `target/stress/<bench_name>/` (e.g. `target/stress/tier3_system_kv/latest.json`). Run `cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"` after the benchmark commands to produce `target/bench_summary.md`.
+- **Full refresh:** Run the full tier suites directly, then run `cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"` to regenerate the summary.
 
-For local PowerShell runs, use the repo helper so Tier 3 and Tier 4 benches always carry the intended stress-sampling flags:
+Full local refresh:
 
-The helper also removes the targeted raw output directories before rerun (`target/criterion/<group>` for Criterion and `target/stress/<suite>` for stress suites) so renamed or deleted cases do not survive into the next summary.
+```bash
+export FITZ_LOG_LEVEL=warn
+export OTEL_ENABLED=false
+cargo bench --no-run
+cargo bench --bench 'tier1_*'
+cargo bench --bench 'tier2_*'
+cargo bench --bench 'tier3_*' -- --runs 5 --warmup 1
+cargo bench --bench 'tier4_*' -- --runs 5 --warmup 1
+cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"
+```
 
-Use `-FreezeBaseline` only after a trusted cleanup pass. It copies `target/bench_results.json` into `config/bench_baseline.json` and reruns the summary so the current report immediately compares against the frozen baseline.
-The refresh helper runs `scripts/verify-benchmark-trust.ps1` for selected stress
-suites. The verifier rejects orphaned target IDs, missing tracked scenarios,
-invalid stress rows, and frozen `insufficient_data` rows. A frozen Tier 3 / Tier
-4 baseline requires at least five measured samples per tracked stress scenario.
+Targeted examples:
 
-```powershell
-.\scripts\refresh-benchmarks.ps1
-.\scripts\refresh-benchmarks.ps1 -Tiers tier3,tier4 -StressRuns 5 -StressWarmup 1
-.\scripts\refresh-benchmarks.ps1 -Tiers tier2 -BenchNames tier2_subsystem_schedule_scan -SkipBuild -FreezeBaseline
-.\scripts\refresh-benchmarks.ps1 -Tiers tier3 -BenchNames tier3_system_kv -SkipSummary
+```bash
+cargo bench --bench tier2_subsystem_scheduler
+cargo bench --bench tier3_system_kv -- --runs 5 --warmup 1
+cargo bench --bench tier4_integration_kv -- --runs 5 --warmup 1
 ```
 
 For CI, the fast default is the 3s measured window; raise `BENCH_MEASURE_SECS=5` only when you are intentionally collecting a longer profile.
@@ -277,7 +281,7 @@ Numerical, testable performance targets are defined in **[Performance targets](b
 
 For a domain-by-domain production validation checklist that turns the current benchmark inventory into concrete benchmark and failure-mode questions, see **[Production credibility checklist](production-credibility-checklist.md)**.
 
-The benchmark summary script validates the collected Criterion and stress outputs before generating the report. Invalid or implausible measurements are excluded from the main tables and listed separately so they do not turn into presentation-safe numbers like `0.000 us` or absurd ops/sec.
+The benchmark summary tool validates the collected Criterion and stress outputs before generating the report. Invalid or implausible measurements are excluded from the main tables and listed separately so they do not turn into presentation-safe numbers like `0.000 us` or absurd ops/sec.
 
 Current mean-based gates are a reproducible regression signal, not a
 production-readiness claim. Record percentile, memory, and error-behavior
@@ -525,7 +529,7 @@ BENCH_TIER1_MEASUREMENT_MS=1000 cargo bench --bench tier1_hotpath_matcher
 ```bash
 cargo bench --bench tier3_system_kv
 cargo bench --bench tier4_integration_kv
-# Trust profile for stable comparisons
+# Higher-sample profile for stable comparisons
 cargo bench --bench tier4_integration_kv -- --runs 5 --warmup 1
 # Local override: use a longer measured duration for deeper profiling
 BENCH_MEASURE_SECS=5 cargo bench --bench tier4_integration_kv -- --runs 5 --warmup 1
@@ -539,7 +543,7 @@ cargo watch -x "bench --bench tier1_hotpath_routing"
 
 ### CI Pipeline
 
-The repository CI includes a **benchmarks** job that installs `cntryl-tools`, runs all Criterion benches with the shared Criterion config, runs tier 3 stress benches with `--runs 5 --warmup 1` on the shared 3s stress window, runs tier 4 stress benches with `--runs 3 --warmup 0` to stay inside the job budget, then runs `cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"` and uploads `target/bench_summary.md` as an artifact. Criterion output is under `target/criterion/`; stress output is under `target/stress/<bench_name>/` (e.g. `latest.json`).
+The repository CI includes a **benchmarks** job that installs `cntryl-tools`, runs all Criterion benches with the shared Criterion config, runs tier 3 and tier 4 stress benches with `--runs 5 --warmup 1` on the shared 3s stress window, then runs `cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"` and uploads `target/bench_summary.md` as an artifact. Criterion output is under `target/criterion/`; stress output is under `target/stress/<bench_name>/` (e.g. `latest.json`).
 
 #### Pull Request Checks:
 
@@ -547,9 +551,9 @@ The repository CI includes a **benchmarks** job that installs `cntryl-tools`, ru
 # Criterion with the shared config
 cargo bench --no-fail-fast
 
-# Stress with the CI trust profile
+# Stress with the CI sample profile
 cargo bench --bench tier3_system_kv -- --runs 5 --warmup 1
-cargo bench --bench tier4_integration_kv -- --runs 3 --warmup 0
+cargo bench --bench tier4_integration_kv -- --runs 5 --warmup 1
 ```
 
 #### Nightly Performance Runs:

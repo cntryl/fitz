@@ -20,6 +20,7 @@ use fitz::protocol::payload_codec::PayloadEncoder;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{RouteAddress, RouteFamily};
 use std::sync::Arc;
+use std::time::Duration;
 
 const CLIENT_SESSION_ID: u64 = 1;
 
@@ -84,7 +85,7 @@ fn request(
         family,
     )
     .expect("lease route");
-    let responses = inbox.drain();
+    let responses = inbox.drain_after_count(1, Duration::from_secs(1));
     responses
         .last()
         .map(|frame| frame.payload.clone())

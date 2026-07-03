@@ -5,10 +5,10 @@
 
 use bytes::Bytes;
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+use fitz::benchkit::create_bench_store_with_cfs;
 use fitz::domains::schedule::protocol::{validate_concrete_schedule_route, Clock};
 use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
 use fitz::runtime::routing::RouteFamily;
-use fitz::testkit::create_test_engine_with_cfs;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -16,7 +16,8 @@ use std::time::{Duration, Instant};
 mod criterion_config;
 
 const FIXED_BENCH_EPOCH_MS: u64 = 1_775_200_000_000;
-const TIMED_BATCH_SIZE: u64 = 8;
+const TIMED_BATCH_SIZE: u64 = 32;
+const TIMED_BATCH_REPEAT: u64 = 8;
 
 struct ScheduleFixtures {
     routes: Vec<String>,
@@ -49,7 +50,7 @@ impl Clock for FixedClock {
 }
 
 fn create_test_actor(clock: Arc<dyn Clock>) -> ScheduleActor {
-    let store = create_test_engine_with_cfs(vec![1, 2, 3, 4, 5]);
+    let store = create_bench_store_with_cfs([1, 2, 3, 4, 5]);
     ScheduleActor::new_with_clock(
         RouteFamily::new(1),
         store,
@@ -108,7 +109,7 @@ fn time_with_fresh_actors<F>(
 where
     F: FnMut() -> ScheduleActor,
 {
-    let mut remaining = iters;
+    let mut remaining = iters.saturating_mul(TIMED_BATCH_REPEAT);
     let mut total = Duration::ZERO;
 
     while remaining > 0 {
@@ -122,7 +123,7 @@ where
         remaining -= chunk_len as u64;
     }
 
-    total
+    total / u32::try_from(TIMED_BATCH_REPEAT).expect("timed batch repeat fits u32")
 }
 
 fn bench_scan_shapes(c: &mut Criterion) {

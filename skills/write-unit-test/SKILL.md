@@ -95,13 +95,13 @@ The second test's **Arrange** section performs setup that would otherwise be a s
 
 Run the meta-test to confirm compliance:
 
-```powershell
+```bash
 cargo test test_guidelines_compliance
 ```
 
 Or validate all tests at once:
 
-```powershell
+```bash
 cntryl-tools validate-tests
 ```
 

@@ -24,6 +24,7 @@ use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{RouteAddress, RouteFamily};
 use fitz::testkit::{TestClient, TestServer, TestWebSocketClient};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
 
 const DIRECT_CLIENT_SESSION_ID: u64 = 1;
@@ -67,7 +68,7 @@ fn direct_request(
         context.family,
     )
     .expect("stream route");
-    let responses = context.inbox.drain();
+    let responses = context.inbox.drain_after_count(1, Duration::from_secs(1));
     responses
         .last()
         .map(|frame| frame.payload.clone())
@@ -199,7 +200,7 @@ fn should_complete_direct_append(ctx: &mut StressContext) {
         family,
     )
     .expect("stream begin");
-    let begin_responses = inbox.drain();
+    let begin_responses = inbox.drain_after_count(1, Duration::from_secs(1));
     let session_id = parse_stream_session_id(
         begin_responses
             .last()
@@ -226,7 +227,7 @@ fn should_complete_direct_append(ctx: &mut StressContext) {
                 family,
             )
             .expect("stream append");
-            let _ = inbox.drain();
+            let _ = inbox.drain_after_count(1, Duration::from_secs(1));
         },
     );
     ctx.set_elements(iterations as u64);

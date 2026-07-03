@@ -36,6 +36,7 @@ use fitz::testkit::transport::TlvFrameBuilder;
 use lz4_flex::block::{compress_prepend_size, decompress_size_prepended};
 use std::hint::black_box;
 use std::sync::Arc;
+use std::time::Duration;
 
 const FAMILY: u64 = 1;
 const CLIENT_SESSION_ID: u64 = 1;
@@ -1377,7 +1378,7 @@ fn routed_request(
     )
     .expect("prototype stream route");
 
-    let responses = context.inbox.drain();
+    let responses = context.inbox.drain_after_count(1, Duration::from_secs(1));
     responses
         .last()
         .map(|frame| frame.payload.clone())

@@ -12,7 +12,35 @@ use std::sync::Arc;
 /// is dropped.
 #[must_use]
 pub fn create_bench_store() -> Arc<cntryl_midge::Engine> {
-    crate::testkit::create_test_engine_with_cfs(vec![1])
+    create_bench_store_with_cfs([1])
+}
+
+/// Create an in-memory `MidgeEngine` with the requested explicit CF mapping.
+#[must_use]
+pub fn create_bench_store_with_cfs(
+    column_families: impl IntoIterator<Item = u32>,
+) -> Arc<cntryl_midge::Engine> {
+    let store = Arc::new(
+        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
+            .expect("Failed to create in-memory bench store"),
+    );
+    let mut ids: Vec<_> = column_families.into_iter().collect();
+    ids.sort_unstable();
+    ids.dedup();
+
+    for expected_id in ids {
+        let handle = store
+            .create_column_family(&format!("cf_{expected_id}"))
+            .unwrap_or_else(|_| panic!("Failed to create benchmark column family {expected_id}"));
+        assert_eq!(
+            handle.id(),
+            expected_id,
+            "benchmark column family ID mismatch: expected {expected_id} but got {}",
+            handle.id()
+        );
+    }
+
+    store
 }
 
 /// Create a local disk-backed `MidgeEngine` for benchmarks

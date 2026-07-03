@@ -56,7 +56,7 @@ All rows in this section map to `target_class = engine_core`.
 | `notice` | `tier3-system-notice` | `high_subscriber_count` | `n/a` | `mean_us` | 24 | 41,667 | 16 | 62,500 | `hard` |  |
 | `notice` | `tier3-system-notice` | `pattern_matching` | `n/a` | `mean_us` | 0.55 | 1,818,182 | 0.4 | 2,500,000 | `hard` |  |
 | `notice` | `tier3-system-notice` | `sustained_fanout` | `n/a` | `mean_us` | 1.5 | 666,667 | 1 | 1,000,000 | `hard` |  |
-| `queue` | `tier3-system-queue` | `cold_start_recovery` | `n/a` | `mean_us` | 0.65 | 1,538,462 | 0.45 | 2,222,222 | `hard` |  |
+| `queue` | `tier3-system-queue` | `bulk_recovery` | `n/a` | `mean_us` | 0.65 | 1,538,462 | 0.45 | 2,222,222 | `hard` | 100-message actor recovery workload; not a capacity-throughput signal. |
 | `queue` | `tier3-system-queue` | `high_contention` | `n/a` | `mean_us` | 1.5 | 666,667 | 1 | 1,000,000 | `hard` |  |
 | `queue` | `tier3-system-queue` | `mixed_workload` | `n/a` | `mean_us` | 3.4 | 294,118 | 2.5 | 400,000 | `hard` |  |
 | `queue` | `tier3-system-queue` | `sustained_load` | `n/a` | `mean_us` | 1.5 | 666,667 | 1 | 1,000,000 | `hard` |  |

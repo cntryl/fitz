@@ -11,6 +11,8 @@ use std::sync::Arc;
 #[path = "criterion_config.rs"]
 mod criterion_config;
 
+const MAILBOX_ROUTE_BATCH_SIZE: usize = 256;
+
 struct NoopSink;
 
 impl MailboxSink for NoopSink {
@@ -88,7 +90,7 @@ fn bench_route_batch_exact_primary(c: &mut Criterion) {
     let mut group = c.benchmark_group("subsystem_router");
     group.sampling_mode(SamplingMode::Flat);
 
-    for route_count in [1usize, 64usize, 1024usize] {
+    for route_count in [16usize, 64usize, 1024usize] {
         let sink: Arc<dyn MailboxSink> = Arc::new(NoopSink);
         let (router, addresses) = make_exact_router(route_count, &sink);
         group.throughput(Throughput::Elements(route_count as u64));
@@ -113,26 +115,33 @@ fn bench_route_batch_exact_primary(c: &mut Criterion) {
 }
 
 fn bench_route_mailbox_primary(c: &mut Criterion) {
+    let router = Router::new();
+    let address = test_address(1, "rpc://acme/router/mailbox/target");
+    let mailbox = Arc::new(Mailbox::new(1));
+    router.register(address.clone(), mailbox.clone());
+
     let mut group = c.benchmark_group("subsystem_router");
     group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
+    group.throughput(Throughput::Elements(MAILBOX_ROUTE_BATCH_SIZE as u64));
 
-    group.bench_function("route_exact_mailbox_primary", |b| {
-        b.iter_batched(
-            || {
-                let router = Router::new();
-                let address = test_address(1, "rpc://acme/router/mailbox/target");
-                router.register(address.clone(), Arc::new(Mailbox::new(1)));
-                (router, address)
-            },
-            |(router, address)| {
-                router
-                    .route(Envelope::new(black_box(address), black_box(0_u64)))
-                    .expect("mailbox route should succeed");
-            },
-            BatchSize::SmallInput,
-        );
-    });
+    group.bench_function(
+        format!("route_exact_mailbox_{MAILBOX_ROUTE_BATCH_SIZE}_messages_primary"),
+        |b| {
+            let mut seq = 0_u64;
+            b.iter(|| {
+                for _ in 0..MAILBOX_ROUTE_BATCH_SIZE {
+                    router
+                        .route(Envelope::new(black_box(address.clone()), black_box(seq)))
+                        .expect("mailbox route should succeed");
+                    let _ = mailbox
+                        .receiver()
+                        .try_recv()
+                        .expect("mailbox route should enqueue message");
+                    seq = seq.wrapping_add(1);
+                }
+            });
+        },
+    );
 
     group.finish();
 }

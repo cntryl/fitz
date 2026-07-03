@@ -21,7 +21,7 @@ use bytes::Bytes;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Queue-style sink that keeps delivered frame contexts until explicitly drained.
 #[derive(Default)]
@@ -39,12 +39,55 @@ impl FrameQueueSink {
         std::mem::take(&mut *self.frames.lock())
     }
 
+    pub fn drain_after_count(&self, min_count: usize, timeout: Duration) -> Vec<FrameContext> {
+        let started = Instant::now();
+        loop {
+            {
+                let mut frames = self.frames.lock();
+                if frames.len() >= min_count || started.elapsed() >= timeout {
+                    return std::mem::take(&mut *frames);
+                }
+            }
+            std::thread::yield_now();
+        }
+    }
+
     pub fn clear(&self) {
         self.frames.lock().clear();
     }
 
     pub fn count(&self) -> usize {
         self.frames.lock().len()
+    }
+}
+
+pub fn drain_frame_queue_sinks_after_total_count(
+    sinks: &[Arc<FrameQueueSink>],
+    min_total_count: usize,
+    timeout: Duration,
+) -> Vec<FrameContext> {
+    let started = Instant::now();
+    loop {
+        let total_count: usize = sinks.iter().map(|sink| sink.count()).sum();
+        if total_count >= min_total_count || started.elapsed() >= timeout {
+            return sinks.iter().flat_map(|sink| sink.drain()).collect();
+        }
+        std::thread::yield_now();
+    }
+}
+
+pub fn drain_frame_queue_sinks_after_each_count(
+    sinks: &[Arc<FrameQueueSink>],
+    min_count_per_sink: usize,
+    timeout: Duration,
+) -> Vec<FrameContext> {
+    let started = Instant::now();
+    loop {
+        let all_sinks_ready = sinks.iter().all(|sink| sink.count() >= min_count_per_sink);
+        if all_sinks_ready || started.elapsed() >= timeout {
+            return sinks.iter().flat_map(|sink| sink.drain()).collect();
+        }
+        std::thread::yield_now();
     }
 }
 
@@ -80,6 +123,17 @@ impl CountingSink {
     pub fn reset(&self) {
         self.deliveries.store(0, Ordering::Relaxed);
     }
+
+    pub fn wait_for_count(&self, min_count: usize, timeout: Duration) -> usize {
+        let started = Instant::now();
+        loop {
+            let count = self.count();
+            if count >= min_count || started.elapsed() >= timeout {
+                return count;
+            }
+            std::thread::yield_now();
+        }
+    }
 }
 
 impl MailboxSink for CountingSink {
@@ -90,6 +144,42 @@ impl MailboxSink for CountingSink {
 
     fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
         self.deliver(envelope)
+    }
+}
+
+pub fn wait_for_counting_sinks_total_count(
+    sinks: &[Arc<CountingSink>],
+    min_total_count: usize,
+    timeout: Duration,
+) -> usize {
+    let started = Instant::now();
+    loop {
+        let total_count: usize = sinks.iter().map(|sink| sink.count()).sum();
+        if total_count >= min_total_count || started.elapsed() >= timeout {
+            return total_count;
+        }
+        std::thread::yield_now();
+    }
+}
+
+pub fn wait_for_counting_sinks_each_count(
+    sinks: &[Arc<CountingSink>],
+    min_count_per_sink: usize,
+    timeout: Duration,
+) -> usize {
+    let started = Instant::now();
+    loop {
+        let mut total_count = 0usize;
+        let mut all_sinks_ready = true;
+        for sink in sinks {
+            let count = sink.count();
+            total_count += count;
+            all_sinks_ready &= count >= min_count_per_sink;
+        }
+        if all_sinks_ready || started.elapsed() >= timeout {
+            return total_count;
+        }
+        std::thread::yield_now();
     }
 }
 

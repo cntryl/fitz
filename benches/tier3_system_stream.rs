@@ -22,6 +22,7 @@ use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{RouteAddress, RouteFamily};
 use std::cell::Cell;
 use std::sync::Arc;
+use std::time::Duration;
 
 const CLIENT_SESSION_ID: u64 = 1;
 const STREAM_SYNC_COMMIT_MODE: u8 = 1;
@@ -64,7 +65,7 @@ fn request(
         context.family,
     )
     .expect("stream route");
-    let responses = context.inbox.drain();
+    let responses = context.inbox.drain_after_count(1, Duration::from_secs(1));
     responses
         .last()
         .map(|frame| frame.payload.clone())

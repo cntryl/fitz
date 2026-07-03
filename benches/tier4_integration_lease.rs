@@ -22,6 +22,7 @@ use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::{TestClient, TestServer, TestWebSocketClient};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
 
 #[stress_test]
@@ -55,7 +56,7 @@ fn should_complete_direct_acquire_release(ctx: &mut StressContext) {
                 family,
             )
             .expect("lease acquire");
-            let responses = inbox.drain();
+            let responses = inbox.drain_after_count(1, Duration::from_secs(1));
             let response = responses.last().expect("lease acquire response");
             let token = parse_lease_token_response(response.payload.as_ref()).expect("lease token");
 
@@ -72,7 +73,7 @@ fn should_complete_direct_acquire_release(ctx: &mut StressContext) {
                 family,
             )
             .expect("lease release");
-            let _ = inbox.drain();
+            let _ = inbox.drain_after_count(1, Duration::from_secs(1));
         },
     );
     ctx.set_elements(2 * iterations as u64);

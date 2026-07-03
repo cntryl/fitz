@@ -2,9 +2,25 @@
 use bytes::Bytes;
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::protocol::tlv::{MessageType, TlvDecoder, TlvEncoder, TlvRecord};
+use std::time::{Duration, Instant};
 
 #[path = "criterion_config.rs"]
 mod criterion_config;
+
+const HOTPATH_REPEAT_COUNT: u64 = 256;
+
+fn time_repeated(iters: u64, mut measure: impl FnMut()) -> Duration {
+    let mut total = Duration::ZERO;
+    for _ in 0..iters {
+        let start = Instant::now();
+        for _ in 0..HOTPATH_REPEAT_COUNT {
+            measure();
+        }
+        total += start.elapsed();
+    }
+
+    total / u32::try_from(HOTPATH_REPEAT_COUNT).expect("hotpath repeat count fits u32")
+}
 
 /// Encode benches: reuse vs finish and payload-size sweep
 fn bench_tlv_encode_sizes(c: &mut Criterion) {
@@ -19,24 +35,27 @@ fn bench_tlv_encode_sizes(c: &mut Criterion) {
         let payload = vec![0u8; size];
 
         group.throughput(Throughput::Elements(size as u64));
-        let bench_name = format!("encode_clear_encode_{size}B");
+        let bench_name = format!("encode_clear_encode_{size}b");
         group.bench_function(&bench_name, |b| {
-            b.iter(|| {
-                encoder.clear();
-                encoder.encode(MessageType::new(42), black_box(&payload));
-                black_box(&encoder);
+            b.iter_custom(|iters| {
+                time_repeated(iters, || {
+                    encoder.clear();
+                    encoder.encode(MessageType::new(42), black_box(&payload));
+                    black_box(&encoder);
+                })
             });
         });
 
-        // include finish() cost — finish consumes the encoder, so allocate per-iteration
-        let bench_name = format!("encode_new_finish_{size}B");
+        // include finish() cost - finish consumes the encoder, so allocate per timed op
+        let bench_name = format!("encode_new_finish_{size}b");
         group.bench_function(&bench_name, |b| {
-            b.iter(|| {
-                // realistic path: build and finish the buffer
-                let mut e = TlvEncoder::with_capacity(1024);
-                e.encode(MessageType::new(42), black_box(&payload));
-                let out: Bytes = e.finish();
-                black_box(out);
+            b.iter_custom(|iters| {
+                time_repeated(iters, || {
+                    let mut e = TlvEncoder::with_capacity(1024);
+                    e.encode(MessageType::new(42), black_box(&payload));
+                    let out: Bytes = e.finish();
+                    black_box(out);
+                })
             });
         });
     }
@@ -45,7 +64,7 @@ fn bench_tlv_encode_sizes(c: &mut Criterion) {
 }
 
 /// Decode benches: `decode_all` (batch), decode-iterator with preallocated Vec.
-/// Batch size 64 keeps each iteration under the tier1 target (<10 µs per op).
+/// Batch size 64 keeps each iteration under the tier1 target (<10 us per op).
 fn bench_tlv_decode_sizes(c: &mut Criterion) {
     let sizes = [0usize, 16, 64, 256];
     let records = 64usize;
@@ -66,31 +85,32 @@ fn bench_tlv_decode_sizes(c: &mut Criterion) {
         let data = encoder.finish();
 
         group.throughput(Throughput::Elements(records as u64));
-        let bench_name = format!("decode_all_{size}B_{records}recs");
+        let bench_name = format!("decode_all_{size}b_{records}recs");
         group.bench_function(&bench_name, |b| {
             let decoder = TlvDecoder::new();
-            b.iter(|| {
-                // Ensure result escapes to black_box so it can't be optimized away
-                black_box(decoder.decode_all(&data).unwrap());
+            b.iter_custom(|iters| {
+                time_repeated(iters, || {
+                    black_box(decoder.decode_all(&data).unwrap());
+                })
             });
         });
 
         // decode-by-iter-loop but reuse a preallocated Vec to avoid Vec growth allocations
-        let bench_name = format!("decode_iter_reuse_{size}B_{records}recs");
+        let bench_name = format!("decode_iter_reuse_{size}b_{records}recs");
         group.bench_function(&bench_name, |b| {
             let decoder = TlvDecoder::new();
-            // pre-allocate outside hot path
             let mut out: Vec<TlvRecord> = Vec::with_capacity(records);
-            b.iter(|| {
-                out.clear();
-                // iterate by using decode_one repeatedly
-                let mut offset = 0usize;
-                while offset < data.len() {
-                    let (rec, consumed) = decoder.decode_one(&data[offset..]).unwrap();
-                    out.push(rec);
-                    offset += consumed;
-                }
-                black_box(&out);
+            b.iter_custom(|iters| {
+                time_repeated(iters, || {
+                    out.clear();
+                    let mut offset = 0usize;
+                    while offset < data.len() {
+                        let (rec, consumed) = decoder.decode_one(&data[offset..]).unwrap();
+                        out.push(rec);
+                        offset += consumed;
+                    }
+                    black_box(&out);
+                })
             });
         });
     }
@@ -112,11 +132,13 @@ fn bench_tlv_decode_single_record(c: &mut Criterion) {
         encoder.encode(MessageType::new(42), &payload);
         let data = encoder.finish();
 
-        let bench_name = format!("decode_one_{size}B");
+        let bench_name = format!("decode_one_{size}b");
         group.bench_function(&bench_name, |b| {
             let decoder = TlvDecoder::new();
-            b.iter(|| {
-                black_box(decoder.decode_one(black_box(&data)).unwrap());
+            b.iter_custom(|iters| {
+                time_repeated(iters, || {
+                    black_box(decoder.decode_one(black_box(&data)).unwrap());
+                })
             });
         });
     }

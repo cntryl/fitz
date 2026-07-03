@@ -1,6 +1,8 @@
 #![allow(deprecated)]
 use bytes::Bytes;
-use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+use criterion::{
+    black_box, criterion_group, criterion_main, Bencher, Criterion, SamplingMode, Throughput,
+};
 use fitz::benchkit::create_bench_store;
 use fitz::domains::stream::protocol::{StreamRecord, StreamWriteMode};
 use fitz::domains::stream::storage::{
@@ -15,6 +17,7 @@ use fitz::domains::stream::StreamReadItem;
 use lz4_flex::block::{compress_prepend_size, decompress_size_prepended};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 #[path = "criterion_config.rs"]
 mod criterion_config;
@@ -49,6 +52,7 @@ const COMPACT_AREA_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xE4];
 const COMPRESSED_COMPACT_REALM_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xE8];
 const COMPACT_RESOURCE_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xEA];
 const OPTIONAL_BYTES_ABSENT: u32 = u32::MAX;
+const REPLAY_REPEAT_COUNT: usize = 32;
 const ASCII_TOKEN_BANK: [&str; 12] = [
     "stream", "event", "commit", "cursor", "tenant", "region", "audit", "batch", "order", "delta",
     "notify", "writer",
@@ -82,6 +86,23 @@ fn event_records(items: Vec<StreamReadItem>) -> Vec<StreamRecord> {
             _ => None,
         })
         .collect()
+}
+
+fn bench_repeated_replay<T, F>(b: &mut Bencher<'_>, mut read_once: F)
+where
+    F: FnMut() -> T,
+{
+    b.iter_custom(|iters| {
+        let mut total = Duration::ZERO;
+        for _ in 0..iters {
+            let start = Instant::now();
+            for _ in 0..REPLAY_REPEAT_COUNT {
+                black_box(read_once());
+            }
+            total += start.elapsed();
+        }
+        total
+    });
 }
 
 #[derive(Clone)]
@@ -3219,18 +3240,21 @@ fn bench_stream_replay_hydration(c: &mut Criterion) {
             });
         },
     );
+    group.throughput(Throughput::Elements(usize_to_u64_saturating(
+        production_like_resource_expected_records.saturating_mul(REPLAY_REPEAT_COUNT),
+    )));
     group.bench_function(
-        "resource_mini_page_replay_128_records_1_stream_production_like",
+        format!(
+            "resource_mini_page_replay_128_records_1_stream_production_like_x{REPLAY_REPEAT_COUNT}_reads"
+        ),
         |b| {
-            b.iter(|| {
-                black_box(
-                    read_resource_compact_paged(
-                        &production_like_resource_case,
-                        &production_like_resource_stream,
-                        production_like_resource_expected_records,
-                    )
-                    .expect("resource mini-page replay production-like"),
-                );
+            bench_repeated_replay(b, || {
+                read_resource_compact_paged(
+                    &production_like_resource_case,
+                    &production_like_resource_stream,
+                    production_like_resource_expected_records,
+                )
+                .expect("resource mini-page replay production-like")
             });
         },
     );
@@ -3302,22 +3326,33 @@ fn bench_stream_replay_hydration(c: &mut Criterion) {
             black_box(read_realm_paged(&realm_case).expect("paged realm replay"));
         });
     });
-    group.bench_function("compact_paged_realm_replay_2048_records_32_streams", |b| {
-        b.iter(|| {
-            black_box(read_realm_compact_paged(&realm_case).expect("compact paged realm replay"));
-        });
-    });
+    group.throughput(Throughput::Elements(usize_to_u64_saturating(
+        realm_case
+            .expected_records
+            .saturating_mul(REPLAY_REPEAT_COUNT),
+    )));
     group.bench_function(
-        "compressed_compact_paged_realm_replay_2048_records_32_streams",
+        format!("compact_paged_realm_replay_2048_records_32_streams_x{REPLAY_REPEAT_COUNT}_reads"),
         |b| {
-            b.iter(|| {
-                black_box(
-                    read_realm_compressed_compact_paged(&realm_case)
-                        .expect("compressed compact paged realm replay"),
-                );
+            bench_repeated_replay(b, || {
+                read_realm_compact_paged(&realm_case).expect("compact paged realm replay")
             });
         },
     );
+    group.bench_function(
+        format!(
+            "compressed_compact_paged_realm_replay_2048_records_32_streams_x{REPLAY_REPEAT_COUNT}_reads"
+        ),
+        |b| {
+            bench_repeated_replay(b, || {
+                read_realm_compressed_compact_paged(&realm_case)
+                    .expect("compressed compact paged realm replay")
+            });
+        },
+    );
+    group.throughput(Throughput::Elements(usize_to_u64_saturating(
+        realm_case.expected_records,
+    )));
     group.bench_function(
         "covering_realm_replay_2048_records_32_streams_high_entropy",
         |b| {
@@ -3337,17 +3372,25 @@ fn bench_stream_replay_hydration(c: &mut Criterion) {
             });
         },
     );
+    group.throughput(Throughput::Elements(usize_to_u64_saturating(
+        high_entropy_realm_case
+            .expected_records
+            .saturating_mul(REPLAY_REPEAT_COUNT),
+    )));
     group.bench_function(
-        "compact_paged_realm_replay_2048_records_32_streams_high_entropy",
+        format!(
+            "compact_paged_realm_replay_2048_records_32_streams_high_entropy_x{REPLAY_REPEAT_COUNT}_reads"
+        ),
         |b| {
-            b.iter(|| {
-                black_box(
-                    read_realm_compact_paged(&high_entropy_realm_case)
-                        .expect("compact paged realm replay"),
-                );
+            bench_repeated_replay(b, || {
+                read_realm_compact_paged(&high_entropy_realm_case)
+                    .expect("compact paged realm replay")
             });
         },
     );
+    group.throughput(Throughput::Elements(usize_to_u64_saturating(
+        high_entropy_realm_case.expected_records,
+    )));
     group.bench_function(
         "compressed_compact_paged_realm_replay_2048_records_32_streams_high_entropy",
         |b| {
@@ -3378,28 +3421,36 @@ fn bench_stream_replay_hydration(c: &mut Criterion) {
             });
         },
     );
+    group.throughput(Throughput::Elements(usize_to_u64_saturating(
+        production_like_realm_case
+            .expected_records
+            .saturating_mul(REPLAY_REPEAT_COUNT),
+    )));
     group.bench_function(
-        "compact_paged_realm_replay_2048_records_32_streams_production_like",
+        format!(
+            "compact_paged_realm_replay_2048_records_32_streams_production_like_x{REPLAY_REPEAT_COUNT}_reads"
+        ),
         |b| {
-            b.iter(|| {
-                black_box(
-                    read_realm_compact_paged(&production_like_realm_case)
-                        .expect("compact paged realm replay"),
-                );
+            bench_repeated_replay(b, || {
+                read_realm_compact_paged(&production_like_realm_case)
+                    .expect("compact paged realm replay")
             });
         },
     );
     group.bench_function(
-        "compressed_compact_paged_realm_replay_2048_records_32_streams_production_like",
+        format!(
+            "compressed_compact_paged_realm_replay_2048_records_32_streams_production_like_x{REPLAY_REPEAT_COUNT}_reads"
+        ),
         |b| {
-            b.iter(|| {
-                black_box(
-                    read_realm_compressed_compact_paged(&production_like_realm_case)
-                        .expect("compressed compact paged realm replay"),
-                );
+            bench_repeated_replay(b, || {
+                read_realm_compressed_compact_paged(&production_like_realm_case)
+                    .expect("compressed compact paged realm replay")
             });
         },
     );
+    group.throughput(Throughput::Elements(usize_to_u64_saturating(
+        production_like_realm_case.expected_records,
+    )));
     group.bench_function("area_ref_paged_realm_replay_2048_records_32_streams", |b| {
         b.iter(|| {
             black_box(read_realm_area_ref_paged(&realm_case).expect("area-ref paged realm replay"));

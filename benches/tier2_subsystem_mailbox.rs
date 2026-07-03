@@ -12,6 +12,9 @@ use fitz::runtime::{Actor, Context};
 #[path = "criterion_config.rs"]
 mod criterion_config;
 
+const MID_FILL_BATCH_SIZE: usize = 64;
+const SEND_SMOKE_BATCH_SIZE: usize = 32;
+
 struct MessageActor;
 
 impl Actor for MessageActor {
@@ -58,22 +61,30 @@ fn bench_mailbox_deliver_primary(c: &mut Criterion) {
         );
     });
 
-    group.bench_function("deliver_mid_fill_primary", |b| {
+    group.throughput(Throughput::Elements(MID_FILL_BATCH_SIZE as u64));
+    group.bench_function("deliver_mid_fill_64_primary", |b| {
         b.iter_batched(
             || {
-                let mailbox = Mailbox::new(8);
-                prefill_normal_lane(&mailbox, &mid_fill_address, 4);
-                (mailbox, Envelope::new(mid_fill_address.clone(), 99_u64))
+                (0..MID_FILL_BATCH_SIZE)
+                    .map(|_| {
+                        let mailbox = Mailbox::new(8);
+                        prefill_normal_lane(&mailbox, &mid_fill_address, 4);
+                        (mailbox, Envelope::new(mid_fill_address.clone(), 99_u64))
+                    })
+                    .collect::<Vec<_>>()
             },
-            |(mailbox, envelope)| {
-                mailbox
-                    .deliver(envelope)
-                    .expect("deliver to mid-fill mailbox should succeed");
+            |items| {
+                for (mailbox, envelope) in items {
+                    mailbox
+                        .deliver(envelope)
+                        .expect("deliver to mid-fill mailbox should succeed");
+                }
             },
             BatchSize::SmallInput,
         );
     });
 
+    group.throughput(Throughput::Elements(1));
     group.bench_function("deliver_full_primary", |b| {
         b.iter_batched(
             || {
@@ -125,14 +136,17 @@ fn bench_mailbox_send_smoke(c: &mut Criterion) {
     let mut group = c.benchmark_group("subsystem_mailbox");
     group.sampling_mode(SamplingMode::Flat);
 
-    group.throughput(Throughput::Elements(1));
-    group.bench_function("actor_ref_send_smoke", |b| {
+    group.throughput(Throughput::Elements(SEND_SMOKE_BATCH_SIZE as u64));
+    group.bench_function("actor_ref_send_32_smoke", |b| {
         let mut idx = 0usize;
         b.iter(|| {
-            actor_refs[idx % actor_refs.len()]
-                .send(black_box(idx as u64))
-                .expect("smoke send should stay on the success path");
-            idx = (idx + 1) % actor_refs.len();
+            for offset in 0..SEND_SMOKE_BATCH_SIZE {
+                let route_idx = (idx + offset) % actor_refs.len();
+                actor_refs[route_idx]
+                    .send(black_box((idx + offset) as u64))
+                    .expect("smoke send should stay on the success path");
+            }
+            idx = (idx + SEND_SMOKE_BATCH_SIZE) % actor_refs.len();
         });
     });
 

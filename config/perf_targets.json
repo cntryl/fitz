@@ -401,11 +401,11 @@
                                                                      "gating":  "hard",
                                                                      "target_class":  "engine_core"
                                                                  },
-                    "stress:tier3-system-queue|cold_start_recovery":  {
+                    "stress:tier3-system-queue|bulk_recovery":  {
                                                                           "kind":  "stress",
                                                                           "domain":  "queue",
                                                                           "suite":  "tier3-system-queue",
-                                                                          "scenario":  "cold_start_recovery",
+                                                                          "scenario":  "bulk_recovery",
                                                                           "metric":  "mean_us",
                                                                           "current_mean_us":  0.84,
                                                                           "operational_target":  0.65,

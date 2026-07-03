@@ -26,7 +26,7 @@ fn bench_mux_route_reuse(c: &mut Criterion) {
 
         let mut mux = Mux::new(1024);
         group.throughput(Throughput::Elements(1));
-        let name = format!("route_owning_record_clone_{size}B");
+        let name = format!("route_owning_record_clone_{size}b");
         group.bench_function(&name, |b| {
             b.iter(|| {
                 let msg = mux.route(record.clone()).unwrap();
@@ -37,7 +37,7 @@ fn bench_mux_route_reuse(c: &mut Criterion) {
 
         let mut mux2 = Mux::new(1024);
         let (mt, slice, _) = decoder.decode_one_ref(&data).unwrap();
-        let name = format!("route_ref_zero_copy_{size}B");
+        let name = format!("route_ref_zero_copy_{size}b");
         group.bench_function(&name, |b| {
             b.iter(|| {
                 let cref = mux2.route_ref(mt, black_box(slice)).unwrap();
@@ -67,7 +67,7 @@ fn bench_mux_route_decode_each(c: &mut Criterion) {
         let mut mux = Mux::new(1024);
 
         group.throughput(Throughput::Elements(1));
-        let name = format!("decode_then_route_owning_{size}B");
+        let name = format!("decode_then_route_owning_{size}b");
         group.bench_function(&name, |b| {
             b.iter(|| {
                 let (record, _) = decoder.decode_one(black_box(&data)).unwrap();
@@ -97,7 +97,7 @@ fn bench_mux_release_and_backpressure(c: &mut Criterion) {
         let decoder = TlvDecoder::new();
         let (mt, slice, _) = decoder.decode_one_ref(&data).unwrap();
 
-        group.bench_function(format!("release_after_route_ref_{size}B"), |b| {
+        group.bench_function(format!("release_after_route_ref_{size}b"), |b| {
             b.iter_batched(
                 || {
                     let mut mux = Mux::new(1);
@@ -112,7 +112,7 @@ fn bench_mux_release_and_backpressure(c: &mut Criterion) {
             );
         });
 
-        group.bench_function(format!("route_ref_channel_full_{size}B"), |b| {
+        group.bench_function(format!("route_ref_channel_full_{size}b"), |b| {
             b.iter_batched(
                 || {
                     let mut mux = Mux::new(1);

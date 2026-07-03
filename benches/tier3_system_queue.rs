@@ -105,7 +105,7 @@ fn request_queue_response(
     )
     .expect("queue request");
     inbox
-        .drain()
+        .drain_after_count(1, Duration::from_secs(1))
         .last()
         .map(|frame| frame.payload.clone())
         .expect("queue response")
@@ -504,8 +504,8 @@ fn should_complete_backlog_depth_steady_state_1024(ctx: &mut StressContext) {
 }
 
 #[stress_test]
-fn should_complete_capacity_cold_start_recovery(ctx: &mut StressContext) {
-    ctx.tag("scenario", "cold_start_recovery");
+fn should_complete_bulk_recovery(ctx: &mut StressContext) {
+    ctx.tag("scenario", "bulk_recovery");
     ctx.tag("measurement_scope", "direct_actor");
     ctx.tag("operation", "recover");
     ctx.tag("cache_state", "recovered");
@@ -612,6 +612,112 @@ fn should_complete_routed_enqueue_sustained(ctx: &mut StressContext) {
         },
     );
     ctx.set_elements(iterations as u64);
+}
+
+fn measure_routed_concurrent_enqueues(ctx: &mut StressContext, client_count: usize) {
+    ctx.tag("scenario", "concurrent_enqueues_client_scaling");
+    ctx.tag("measurement_scope", "routed_sink_concurrent");
+    ctx.tag("operation", "enqueue");
+    let batch_size = format!("{client_count}_sessions_1_enqueue_each");
+    ctx.tag("batch_size", batch_size.as_str());
+    let client_count_tag = client_count.to_string();
+    ctx.tag("client_count", client_count_tag.as_str());
+
+    let (router, family, _, _) = setup_queue_request_sink();
+    let route = "queue://bench/system/concurrent-enqueue";
+    let enqueue_frame = build_queue_enqueue(route, b"routed concurrent enqueue payload");
+    let (enqueue_msg_type, enqueue_payload) = extract_single_tlv_field(&enqueue_frame);
+    let clients: Vec<(u64, RouteAddress, Arc<CountingSink>)> = (0..client_count)
+        .map(|index| {
+            let session_id = 30_000 + u64::try_from(index).expect("client index should fit u64");
+            let (source, sink) = register_session_counting_sink(&router, family, session_id);
+            (session_id, source, sink)
+        })
+        .collect();
+
+    let iterations = std::thread::scope(|scope| {
+        let (done_tx, done_rx) = crossbeam_channel::bounded(client_count);
+        let start_txs: Vec<_> = clients
+            .iter()
+            .map(|(session_id, source, _)| {
+                let (start_tx, start_rx) = crossbeam_channel::bounded(0);
+                let done_tx = done_tx.clone();
+                let router = router.clone();
+                let source = source.clone();
+                let payload = enqueue_payload.clone();
+                let session_id = *session_id;
+                scope.spawn(move || {
+                    while start_rx.recv().is_ok() {
+                        route_frame(
+                            router.as_ref(),
+                            &source,
+                            route,
+                            session_id,
+                            ChannelId::Sub,
+                            enqueue_msg_type,
+                            payload.clone(),
+                            family,
+                        )
+                        .expect("routed concurrent enqueue");
+                        done_tx
+                            .send(())
+                            .expect("completion receiver should stay open");
+                    }
+                });
+                start_tx
+            })
+            .collect();
+        drop(done_tx);
+
+        let iterations = ctx.measure_for(
+            stress_config::BenchConfig::default().measure_duration,
+            || {
+                for (_, _, sink) in &clients {
+                    sink.reset();
+                }
+
+                for start_tx in &start_txs {
+                    start_tx
+                        .send(())
+                        .expect("enqueue worker should stay active");
+                }
+
+                for _ in 0..client_count {
+                    done_rx.recv().expect("enqueue worker should complete");
+                }
+
+                let response_count: usize = clients.iter().map(|(_, _, sink)| sink.count()).sum();
+                assert_eq!(
+                    response_count, client_count,
+                    "expected every concurrent routed enqueue to receive a response"
+                );
+            },
+        );
+
+        drop(start_txs);
+        iterations
+    });
+    ctx.set_elements(client_count as u64 * iterations as u64);
+}
+
+#[stress_test]
+fn should_complete_routed_concurrent_enqueues_client_scaling_1(ctx: &mut StressContext) {
+    measure_routed_concurrent_enqueues(ctx, 1);
+}
+
+#[stress_test]
+fn should_complete_routed_concurrent_enqueues_client_scaling_4(ctx: &mut StressContext) {
+    measure_routed_concurrent_enqueues(ctx, 4);
+}
+
+#[stress_test]
+fn should_complete_routed_concurrent_enqueues_client_scaling_16(ctx: &mut StressContext) {
+    measure_routed_concurrent_enqueues(ctx, 16);
+}
+
+#[stress_test]
+fn should_complete_routed_concurrent_enqueues_client_scaling_64(ctx: &mut StressContext) {
+    measure_routed_concurrent_enqueues(ctx, 64);
 }
 
 #[stress_test]

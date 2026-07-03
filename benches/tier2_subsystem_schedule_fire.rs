@@ -1,7 +1,10 @@
 #![allow(deprecated)]
 use bytes::Bytes;
 use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
-use fitz::benchkit::{create_bench_schedule_sink, register_session_counting_sink, route_frame};
+use fitz::benchkit::{
+    create_bench_schedule_sink, create_bench_store_with_cfs, register_session_counting_sink,
+    route_frame, wait_for_counting_sinks_each_count, CountingSink,
+};
 use fitz::domains::schedule::protocol::{validate_concrete_schedule_route, Clock};
 use fitz::domains::schedule::sink::ScheduleDomainSink;
 use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
@@ -9,7 +12,6 @@ use fitz::protocol::frame::ChannelId;
 use fitz::protocol::payload_codec::PayloadEncoder;
 use fitz::runtime::routing::{Route, RouteFamily};
 use fitz::runtime::{DomainPublishEvent, Router};
-use fitz::testkit::create_test_engine_with_cfs;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -17,7 +19,10 @@ use std::time::{Duration, Instant};
 mod criterion_config;
 
 const FIXED_BENCH_EPOCH_MS: u64 = 1_775_200_000_000;
-const TIMED_BATCH_SIZE: u64 = 8;
+const TIMED_BATCH_SIZE: u64 = 32;
+const TIMED_BATCH_REPEAT: u64 = 8;
+const PUBLISH_REPEAT_COUNT: u64 = 16;
+const PUBLISH_CHUNK_SIZE: u64 = 64;
 
 struct ScheduleFixtures {
     routes: Vec<String>,
@@ -50,7 +55,7 @@ impl Clock for FixedClock {
 }
 
 fn create_test_actor(clock: Arc<dyn Clock>) -> ScheduleActor {
-    let store = create_test_engine_with_cfs(vec![1, 2, 3, 4, 5]);
+    let store = create_bench_store_with_cfs([1, 2, 3, 4, 5]);
     ScheduleActor::new_with_clock(
         RouteFamily::new(1),
         store,
@@ -110,7 +115,7 @@ where
     FCreate: FnMut() -> T,
     FMeasure: FnMut(&mut T),
 {
-    let mut remaining = iters;
+    let mut remaining = iters.saturating_mul(TIMED_BATCH_REPEAT);
     let mut total = Duration::ZERO;
 
     while remaining > 0 {
@@ -124,7 +129,7 @@ where
         remaining -= chunk_len as u64;
     }
 
-    total
+    total / u32::try_from(TIMED_BATCH_REPEAT).expect("timed batch repeat fits u32")
 }
 
 fn claim_due_deliveries(actor: &mut ScheduleActor, ready_count: usize) -> Vec<(u64, String)> {
@@ -142,12 +147,20 @@ fn encode_schedule_subscribe(pattern: &str) -> Bytes {
     Bytes::from(encoder.finish())
 }
 
-fn create_publish_case(subscriber_count: usize) -> (Arc<ScheduleDomainSink>, DomainPublishEvent) {
+fn create_publish_case(
+    subscriber_count: usize,
+) -> (
+    Arc<ScheduleDomainSink>,
+    DomainPublishEvent,
+    Vec<Arc<CountingSink>>,
+) {
     let family = RouteFamily::new(1);
     let route = build_route(0);
     let router = Arc::new(Router::new());
     let sink = create_bench_schedule_sink(router.clone());
     router.register_domain_pattern("schedule", sink.clone());
+
+    let mut subscriber_sinks = Vec::with_capacity(subscriber_count);
 
     for index in 0..subscriber_count {
         let session_id = (index + 1) as u64;
@@ -164,12 +177,19 @@ fn create_publish_case(subscriber_count: usize) -> (Arc<ScheduleDomainSink>, Dom
             family,
         )
         .expect("subscribe schedule benchmark route");
+        let subscribe_ack_count = subscriber_sink.wait_for_count(1, Duration::from_secs(1));
+        assert_eq!(
+            subscribe_ack_count, 1,
+            "schedule subscribe should ack before publish benchmark"
+        );
         subscriber_sink.reset();
+        subscriber_sinks.push(subscriber_sink);
     }
 
     (
         sink,
         DomainPublishEvent::new(family, Route::new(route), Bytes::from_static(b"payload")),
+        subscriber_sinks,
     )
 }
 
@@ -254,10 +274,46 @@ fn bench_publish_fanout(c: &mut Criterion) {
         group.bench_function(
             format!("publish_exact_route_{subscriber_count}_subscribers"),
             |b| {
-                let (sink, event) = create_publish_case(subscriber_count);
-                b.iter(|| {
-                    sink.bench_publish_event(black_box(&event));
-                    black_box(());
+                let (sink, event, subscriber_sinks) = create_publish_case(subscriber_count);
+                b.iter_custom(|iters| {
+                    let mut remaining = iters.saturating_mul(PUBLISH_REPEAT_COUNT);
+                    let mut total = Duration::ZERO;
+                    while remaining > 0 {
+                        let chunk = remaining.min(PUBLISH_CHUNK_SIZE);
+                        for subscriber_sink in &subscriber_sinks {
+                            subscriber_sink.reset();
+                        }
+                        let start = Instant::now();
+                        for _ in 0..chunk {
+                            sink.bench_publish_event(black_box(&event));
+                        }
+                        total += start.elapsed();
+                        let expected_per_subscriber =
+                            usize::try_from(chunk).expect("schedule publish count fits usize");
+                        let delivery_count = wait_for_counting_sinks_each_count(
+                            &subscriber_sinks,
+                            expected_per_subscriber,
+                            Duration::from_secs(1),
+                        );
+                        assert_eq!(
+                            delivery_count,
+                            subscriber_count * expected_per_subscriber,
+                            "schedule publish should reach every subscriber exactly once"
+                        );
+                        assert!(
+                            subscriber_sinks
+                                .iter()
+                                .all(|sink| sink.count() == expected_per_subscriber),
+                            "schedule publish should not skip or duplicate subscriber deliveries"
+                        );
+                        for subscriber_sink in &subscriber_sinks {
+                            subscriber_sink.reset();
+                        }
+                        remaining -= chunk;
+                    }
+                    total
+                        / u32::try_from(PUBLISH_REPEAT_COUNT)
+                            .expect("publish repeat count fits u32")
                 });
             },
         );

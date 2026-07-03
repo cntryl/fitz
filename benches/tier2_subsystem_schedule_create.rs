@@ -18,6 +18,7 @@ mod criterion_config;
 const CREATE_BATCH_SIZE: usize = 32;
 const ROUTE_RING_SIZE: usize = 1024;
 const PAYLOAD_SIZE: usize = 32;
+const ACTOR_CREATE_REPEAT_COUNT: u64 = 8;
 
 #[inline]
 fn u128_to_u64_saturating(value: u128) -> u64 {
@@ -120,6 +121,25 @@ fn create_actor_case(fixtures: &ScheduleCreateFixtures) -> ActorCreateCase {
         payloads: fixtures.payloads[..CREATE_BATCH_SIZE].to_vec(),
         cron: fixtures.hourly_cron.clone(),
     }
+}
+
+fn time_actor_create_cases(
+    iters: u64,
+    fixtures: &ScheduleCreateFixtures,
+    mut measure: impl FnMut(&mut ActorCreateCase),
+) -> Duration {
+    let mut remaining = iters.saturating_mul(ACTOR_CREATE_REPEAT_COUNT);
+    let mut total = Duration::ZERO;
+
+    while remaining > 0 {
+        let mut case = create_actor_case(fixtures);
+        let start = Instant::now();
+        measure(&mut case);
+        total += start.elapsed();
+        remaining -= 1;
+    }
+
+    total / u32::try_from(ACTOR_CREATE_REPEAT_COUNT).expect("actor create repeat count fits u32")
 }
 
 fn bench_validate_route(
@@ -233,9 +253,8 @@ fn bench_actor_create(
     fixtures: &ScheduleCreateFixtures,
 ) {
     group.bench_function("actor_create_unique_inmemory_32", |b| {
-        b.iter_batched(
-            || create_actor_case(fixtures),
-            |mut case| {
+        b.iter_custom(|iters| {
+            time_actor_create_cases(iters, fixtures, |case| {
                 for index in 0..CREATE_BATCH_SIZE {
                     black_box(
                         case.actor
@@ -247,15 +266,13 @@ fn bench_actor_create(
                             .expect("actor create schedule"),
                     );
                 }
-            },
-            BatchSize::SmallInput,
-        );
+            })
+        });
     });
 
     group.bench_function("actor_create_batch_unique_inmemory_32", |b| {
-        b.iter_batched(
-            || create_actor_case(fixtures),
-            |mut case| {
+        b.iter_custom(|iters| {
+            time_actor_create_cases(iters, fixtures, |case| {
                 let entries: Vec<_> = (0..CREATE_BATCH_SIZE)
                     .map(|index| ScheduleCreateEntry {
                         route: case.routes[index].clone(),
@@ -268,9 +285,8 @@ fn bench_actor_create(
                         .create_schedules(entries)
                         .expect("actor create schedule batch"),
                 );
-            },
-            BatchSize::SmallInput,
-        );
+            })
+        });
     });
 }
 

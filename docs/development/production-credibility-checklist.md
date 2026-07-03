@@ -146,7 +146,7 @@ Red flag:
 ## DOMAIN: QUEUE
 
 Performance characteristics:
-- Current targets to verify: `sustained_load` at 666,667 ops/sec, `high_contention` at 666,667 ops/sec, `mixed_workload` at 294,118 ops/sec, and `cold_start_recovery` at 1,538,462 ops/sec.
+- Current targets to verify: `sustained_load` at 666,667 ops/sec, `high_contention` at 666,667 ops/sec, `mixed_workload` at 294,118 ops/sec, and `bulk_recovery` at 1,538,462 ops/sec.
 - Measure p50, p95, and p99 for enqueue, dequeue, ack, and redelivery.
 - Measure memory cost per queued message and per in-flight lease.
 - Measure connection cost per producer and consumer.

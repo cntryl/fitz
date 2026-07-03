@@ -1,35 +1,29 @@
 #![allow(deprecated)]
 use bytes::Bytes;
-use criterion::{
-    black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
-};
+use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::benchkit::{
-    build_queue_complete, build_queue_dequeue, build_queue_dequeue_batch, build_queue_enqueue,
-    build_queue_watch, create_bench_queue_sink, extract_single_tlv_field,
-    register_session_counting_sink, register_session_queue_sink, route_frame, CountingSink,
-    FrameQueueSink,
+    build_queue_complete, build_queue_dequeue, build_queue_enqueue, build_queue_watch,
+    create_bench_queue_sink, extract_single_tlv_field, register_session_counting_sink,
+    register_session_queue_sink, route_frame, CountingSink, FrameQueueSink,
 };
 use fitz::protocol::frame::ChannelId;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{RouteAddress, RouteFamily};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[path = "criterion_config.rs"]
 mod criterion_config;
 
 const CLIENT_SESSION_ID: u64 = 1;
-const RECEIVE_BATCH_SIZE: usize = 50;
+const SETUP_SESSION_ID: u64 = 2;
 const ROUTE_STR: &str = "queue://bench/subsystem/queue";
+const SINGLE_QUEUE_ENQUEUE_BATCH_SIZE: usize = 1024;
+const MULTI_QUEUE_MESSAGES_PER_QUEUE: usize = 1;
+const DEQUEUE_OPERATION_BATCH_SIZE: usize = 256;
+const ACK_OPERATION_BATCH_SIZE: usize = 256;
 const WATCH_REGISTER_BATCH_SIZE: usize = 64;
-const DEQUEUE_OPERATION_BATCH_SIZE: usize = 32;
-const ACK_OPERATION_BATCH_SIZE: usize = 64;
-
-struct PreparedWatchRegisterCase {
-    router: Arc<Router>,
-    family: RouteFamily,
-    watchers: Vec<(u64, RouteAddress, Arc<FrameQueueSink>)>,
-}
+const WAITER_WAKEUP_COUNT: usize = 16;
 
 struct PreparedDequeueCase {
     router: Arc<Router>,
@@ -38,7 +32,6 @@ struct PreparedDequeueCase {
     inbox: Arc<FrameQueueSink>,
     dequeue_msg_type: u16,
     dequeue_payload: Bytes,
-    batch_size: usize,
 }
 
 struct PreparedAckCase {
@@ -50,13 +43,28 @@ struct PreparedAckCase {
     ack_requests: Vec<(u16, Bytes)>,
 }
 
-fn setup_queue_request_sink() -> (Arc<Router>, RouteFamily, RouteAddress, Arc<FrameQueueSink>) {
+struct PreparedWatchRegisterCase {
+    router: Arc<Router>,
+    family: RouteFamily,
+    registrations: Vec<(u64, RouteAddress, Arc<CountingSink>, u16, Bytes)>,
+}
+
+struct PreparedWaiterWakeupCase {
+    router: Arc<Router>,
+    family: RouteFamily,
+    sender_source: RouteAddress,
+    sender_sink: Arc<CountingSink>,
+    waiter_sinks: Vec<Arc<CountingSink>>,
+    enqueue_msg_type: u16,
+    enqueue_payload: Bytes,
+}
+
+fn setup_queue_domain() -> (Arc<Router>, RouteFamily) {
     let family = RouteFamily::new(1);
     let router = Arc::new(Router::new());
     let sink = create_bench_queue_sink(router.clone());
     router.register_domain_pattern("queue", sink as Arc<dyn MailboxSink>);
-    let (source, inbox) = register_session_queue_sink(&router, family, CLIENT_SESSION_ID);
-    (router, family, source, inbox)
+    (router, family)
 }
 
 fn request_queue_response(
@@ -68,36 +76,34 @@ fn request_queue_response(
     msg_type: u16,
     payload: Bytes,
 ) -> Bytes {
-    route_frame(
+    send_queue_request(
         router.as_ref(),
         source,
         destination,
         CLIENT_SESSION_ID,
-        ChannelId::Sub,
         msg_type,
         payload,
         family,
-    )
-    .expect("queue request");
+    );
 
     inbox
-        .drain()
+        .drain_after_count(1, Duration::from_secs(1))
         .last()
         .map(|frame| frame.payload.clone())
         .expect("queue response")
 }
 
-fn register_queue_watch(
-    router: &Arc<Router>,
-    family: RouteFamily,
+fn send_queue_request(
+    router: &Router,
     source: &RouteAddress,
     destination: &str,
     session_id: u64,
+    msg_type: u16,
+    payload: Bytes,
+    family: RouteFamily,
 ) {
-    let watch_frame = build_queue_watch(destination);
-    let (msg_type, payload) = extract_single_tlv_field(&watch_frame);
     route_frame(
-        router.as_ref(),
+        router,
         source,
         destination,
         session_id,
@@ -106,7 +112,7 @@ fn register_queue_watch(
         payload,
         family,
     )
-    .expect("queue wait registration");
+    .expect("queue request");
 }
 
 fn assert_queue_success(response: &[u8]) {
@@ -115,6 +121,21 @@ fn assert_queue_success(response: &[u8]) {
         Some(0),
         "expected queue success response"
     );
+}
+
+fn assert_queue_success_frames(
+    frames: Vec<fitz::protocol::frame_context::FrameContext>,
+    expected_count: usize,
+) {
+    assert_eq!(
+        frames.len(),
+        expected_count,
+        "expected {expected_count} queue responses"
+    );
+
+    for frame in frames {
+        assert_queue_success(&frame.payload);
+    }
 }
 
 fn queue_response_message_count(response: &[u8]) -> usize {
@@ -163,46 +184,32 @@ fn build_queue_routes(queue_count: usize) -> Vec<String> {
         .collect()
 }
 
-fn prepare_watch_register_case() -> PreparedWatchRegisterCase {
-    let (router, family, _, _) = setup_queue_request_sink();
-    let watchers = (0..WATCH_REGISTER_BATCH_SIZE)
-        .map(|index| {
-            let session_id = 10_000 + index as u64;
-            let (source, inbox) = register_session_queue_sink(&router, family, session_id);
-            (session_id, source, inbox)
-        })
-        .collect();
-
-    PreparedWatchRegisterCase {
-        router,
-        family,
-        watchers,
-    }
-}
-
-fn prepare_dequeue_case(batch_size: usize) -> PreparedDequeueCase {
-    let (router, family, source, inbox) = setup_queue_request_sink();
+fn prepare_dequeue_case() -> PreparedDequeueCase {
+    let (router, family) = setup_queue_domain();
+    let (source, inbox) = register_session_queue_sink(&router, family, CLIENT_SESSION_ID);
+    let (enqueue_source, enqueue_sink) =
+        register_session_counting_sink(&router, family, SETUP_SESSION_ID);
     let enqueue_frame = build_queue_enqueue(ROUTE_STR, b"queue dequeue payload");
     let (enqueue_msg_type, enqueue_payload) = extract_single_tlv_field(&enqueue_frame);
 
-    for _ in 0..(batch_size * DEQUEUE_OPERATION_BATCH_SIZE) {
-        let enqueue_response = request_queue_response(
-            &router,
-            family,
-            &source,
-            &inbox,
+    for _ in 0..DEQUEUE_OPERATION_BATCH_SIZE {
+        send_queue_request(
+            router.as_ref(),
+            &enqueue_source,
             ROUTE_STR,
+            SETUP_SESSION_ID,
             enqueue_msg_type,
             enqueue_payload.clone(),
+            family,
         );
-        assert_queue_success(&enqueue_response);
     }
+    assert_eq!(
+        enqueue_sink.wait_for_count(DEQUEUE_OPERATION_BATCH_SIZE, Duration::from_secs(1)),
+        DEQUEUE_OPERATION_BATCH_SIZE,
+        "queue dequeue setup should ack every enqueue"
+    );
 
-    let dequeue_frame = if batch_size == 1 {
-        build_queue_dequeue(ROUTE_STR)
-    } else {
-        build_queue_dequeue_batch(ROUTE_STR, u32::try_from(batch_size).unwrap_or(u32::MAX))
-    };
+    let dequeue_frame = build_queue_dequeue(ROUTE_STR);
     let (dequeue_msg_type, dequeue_payload) = extract_single_tlv_field(&dequeue_frame);
 
     PreparedDequeueCase {
@@ -212,29 +219,35 @@ fn prepare_dequeue_case(batch_size: usize) -> PreparedDequeueCase {
         inbox,
         dequeue_msg_type,
         dequeue_payload,
-        batch_size,
     }
 }
 
 fn prepare_ack_case() -> PreparedAckCase {
-    let (router, family, source, inbox) = setup_queue_request_sink();
+    let (router, family) = setup_queue_domain();
+    let (source, inbox) = register_session_queue_sink(&router, family, CLIENT_SESSION_ID);
+    let (enqueue_source, enqueue_sink) =
+        register_session_counting_sink(&router, family, SETUP_SESSION_ID);
     let enqueue_frame = build_queue_enqueue(ROUTE_STR, b"queue ack payload");
     let (enqueue_msg_type, enqueue_payload) = extract_single_tlv_field(&enqueue_frame);
     let dequeue_frame = build_queue_dequeue(ROUTE_STR);
     let (dequeue_msg_type, dequeue_payload) = extract_single_tlv_field(&dequeue_frame);
 
     for _ in 0..ACK_OPERATION_BATCH_SIZE {
-        let enqueue_response = request_queue_response(
-            &router,
-            family,
-            &source,
-            &inbox,
+        send_queue_request(
+            router.as_ref(),
+            &enqueue_source,
             ROUTE_STR,
+            SETUP_SESSION_ID,
             enqueue_msg_type,
             enqueue_payload.clone(),
+            family,
         );
-        assert_queue_success(&enqueue_response);
     }
+    assert_eq!(
+        enqueue_sink.wait_for_count(ACK_OPERATION_BATCH_SIZE, Duration::from_secs(1)),
+        ACK_OPERATION_BATCH_SIZE,
+        "queue ack setup should ack every enqueue"
+    );
 
     let ack_requests = (0..ACK_OPERATION_BATCH_SIZE)
         .map(|_| {
@@ -264,80 +277,132 @@ fn prepare_ack_case() -> PreparedAckCase {
     }
 }
 
-fn bench_queue_wait_register_primary(c: &mut Criterion) {
-    let mut group = c.benchmark_group("subsystem_queue");
-    group.sampling_mode(SamplingMode::Flat);
-    group.measurement_time(Duration::from_millis(250));
-    group.throughput(Throughput::Elements(WATCH_REGISTER_BATCH_SIZE as u64));
+fn prepare_watch_register_case() -> PreparedWatchRegisterCase {
+    let (router, family) = setup_queue_domain();
+    let registrations = (0..WATCH_REGISTER_BATCH_SIZE)
+        .map(|index| {
+            let session_id = 10_000 + u64::try_from(index).expect("watch index should fit u64");
+            let (source, sink) = register_session_counting_sink(&router, family, session_id);
+            let watch_route = format!("queue://bench/subsystem/watch/{index}/ready");
+            let watch_frame = build_queue_watch(&watch_route);
+            let (msg_type, payload) = extract_single_tlv_field(&watch_frame);
+            (session_id, source, sink, msg_type, payload)
+        })
+        .collect();
 
-    group.bench_function("watch_register_64_sessions_primary", |b| {
-        b.iter_batched(
-            prepare_watch_register_case,
-            |case| {
-                for (session_id, source, _) in &case.watchers {
-                    register_queue_watch(&case.router, case.family, source, ROUTE_STR, *session_id);
-                }
+    PreparedWatchRegisterCase {
+        router,
+        family,
+        registrations,
+    }
+}
 
-                let ack_count: usize = case
-                    .watchers
-                    .iter()
-                    .map(|(_, _, inbox)| inbox.drain().len())
-                    .sum();
-                assert_eq!(
-                    ack_count, WATCH_REGISTER_BATCH_SIZE,
-                    "watch registration should ack immediately"
-                );
-            },
-            BatchSize::SmallInput,
-        );
-    });
+fn prepare_waiter_wakeup_case() -> PreparedWaiterWakeupCase {
+    let (router, family) = setup_queue_domain();
+    let (sender_source, sender_sink) =
+        register_session_counting_sink(&router, family, CLIENT_SESSION_ID);
 
-    group.finish();
+    let waiter_sinks = (0..WAITER_WAKEUP_COUNT)
+        .map(|index| {
+            let session_id = 20_000 + u64::try_from(index).expect("waiter index should fit u64");
+            let (source, sink) = register_session_counting_sink(&router, family, session_id);
+            let watch_frame = build_queue_watch(ROUTE_STR);
+            let (watch_msg_type, watch_payload) = extract_single_tlv_field(&watch_frame);
+            send_queue_request(
+                router.as_ref(),
+                &source,
+                ROUTE_STR,
+                session_id,
+                watch_msg_type,
+                watch_payload,
+                family,
+            );
+            assert_eq!(
+                sink.wait_for_count(1, Duration::from_secs(1)),
+                1,
+                "queue waiter setup should ack watch registration"
+            );
+            sink.reset();
+            sink
+        })
+        .collect();
+
+    let enqueue_frame = build_queue_enqueue(ROUTE_STR, b"queue waiter payload");
+    let (enqueue_msg_type, enqueue_payload) = extract_single_tlv_field(&enqueue_frame);
+
+    PreparedWaiterWakeupCase {
+        router,
+        family,
+        sender_source,
+        sender_sink,
+        waiter_sinks,
+        enqueue_msg_type,
+        enqueue_payload,
+    }
 }
 
 fn bench_queue_enqueue_primary(c: &mut Criterion) {
     let mut group = c.benchmark_group("subsystem_queue");
     group.sampling_mode(SamplingMode::Flat);
-    group.measurement_time(Duration::from_millis(250));
 
-    for queue_count in [1usize, 64usize, 256usize] {
-        group.throughput(Throughput::Elements(queue_count as u64));
-        group.bench_function(
-            format!("enqueue_1_message_each_{queue_count}_queues_primary"),
-            |b| {
-                b.iter_batched(
-                    || {
-                        let (router, family, source, inbox) = setup_queue_request_sink();
-                        let queue_routes = build_queue_routes(queue_count);
-                        let enqueue_frames: Vec<(u16, Bytes)> = queue_routes
-                            .iter()
-                            .map(|route| {
-                                let frame = build_queue_enqueue(route, b"queue enqueue payload");
-                                extract_single_tlv_field(&frame)
-                            })
-                            .collect();
-                        (router, family, source, inbox, queue_routes, enqueue_frames)
-                    },
-                    |(router, family, source, inbox, queue_routes, enqueue_frames)| {
+    for queue_count in [1usize, 256usize] {
+        let messages_per_queue = if queue_count == 1 {
+            SINGLE_QUEUE_ENQUEUE_BATCH_SIZE
+        } else {
+            MULTI_QUEUE_MESSAGES_PER_QUEUE
+        };
+        group.throughput(Throughput::Elements(
+            (queue_count * messages_per_queue) as u64,
+        ));
+        let bench_name = if queue_count == 1 {
+            format!("enqueue_{messages_per_queue}_messages_{queue_count}_queue_primary")
+        } else {
+            format!("enqueue_{messages_per_queue}_messages_each_{queue_count}_queues_primary")
+        };
+        group.bench_function(bench_name, |b| {
+            b.iter_custom(|iters| {
+                let mut total = Duration::ZERO;
+                let expected_responses = queue_count * messages_per_queue;
+                for _ in 0..iters {
+                    let (router, family) = setup_queue_domain();
+                    let (source, sink) =
+                        register_session_counting_sink(&router, family, CLIENT_SESSION_ID);
+                    let queue_routes = build_queue_routes(queue_count);
+                    let enqueue_frames: Vec<(u16, Bytes)> = queue_routes
+                        .iter()
+                        .map(|route| {
+                            let frame = build_queue_enqueue(route, b"queue enqueue payload");
+                            extract_single_tlv_field(&frame)
+                        })
+                        .collect();
+
+                    let start = Instant::now();
+                    for _ in 0..messages_per_queue {
                         for (route, (msg_type, payload)) in
                             queue_routes.iter().zip(enqueue_frames.iter())
                         {
-                            let response = request_queue_response(
-                                &router,
-                                family,
+                            send_queue_request(
+                                router.as_ref(),
                                 &source,
-                                &inbox,
                                 route,
+                                CLIENT_SESSION_ID,
                                 *msg_type,
                                 black_box(payload.clone()),
+                                family,
                             );
-                            assert_queue_success(&response);
                         }
-                    },
-                    BatchSize::SmallInput,
-                );
-            },
-        );
+                    }
+                    total += start.elapsed();
+
+                    assert_eq!(
+                        sink.wait_for_count(expected_responses, Duration::from_secs(1)),
+                        expected_responses,
+                        "queue enqueue should ack every request"
+                    );
+                }
+                total
+            });
+        });
     }
 
     group.finish();
@@ -346,37 +411,49 @@ fn bench_queue_enqueue_primary(c: &mut Criterion) {
 fn bench_queue_dequeue_primary(c: &mut Criterion) {
     let mut group = c.benchmark_group("subsystem_queue");
     group.sampling_mode(SamplingMode::Flat);
-    group.measurement_time(Duration::from_millis(400));
+    group.throughput(Throughput::Elements(DEQUEUE_OPERATION_BATCH_SIZE as u64));
 
-    for batch_size in [1usize, RECEIVE_BATCH_SIZE] {
-        group.throughput(Throughput::Elements(
-            (batch_size * DEQUEUE_OPERATION_BATCH_SIZE) as u64,
-        ));
-        group.bench_function(format!("dequeue_32_ops_batch_{batch_size}_primary"), |b| {
-            b.iter_batched(
-                || prepare_dequeue_case(batch_size),
-                |case| {
+    group.bench_function(
+        format!("dequeue_{DEQUEUE_OPERATION_BATCH_SIZE}_messages_primary"),
+        |b| {
+            b.iter_custom(|iters| {
+                let mut total = Duration::ZERO;
+                for _ in 0..iters {
+                    let case = prepare_dequeue_case();
+                    let start = Instant::now();
                     for _ in 0..DEQUEUE_OPERATION_BATCH_SIZE {
-                        let response = request_queue_response(
-                            &case.router,
-                            case.family,
+                        send_queue_request(
+                            case.router.as_ref(),
                             &case.source,
-                            &case.inbox,
                             ROUTE_STR,
+                            CLIENT_SESSION_ID,
                             case.dequeue_msg_type,
                             black_box(case.dequeue_payload.clone()),
-                        );
-                        assert_eq!(
-                            queue_response_message_count(&response),
-                            case.batch_size,
-                            "expected a full queue receive batch"
+                            case.family,
                         );
                     }
-                },
-                BatchSize::SmallInput,
-            );
-        });
-    }
+                    total += start.elapsed();
+
+                    let frames = case
+                        .inbox
+                        .drain_after_count(DEQUEUE_OPERATION_BATCH_SIZE, Duration::from_secs(1));
+                    assert_eq!(
+                        frames.len(),
+                        DEQUEUE_OPERATION_BATCH_SIZE,
+                        "queue dequeue should respond to every request"
+                    );
+                    for frame in frames {
+                        assert_eq!(
+                            queue_response_message_count(&frame.payload),
+                            1,
+                            "expected a single received queue message"
+                        );
+                    }
+                }
+                total
+            });
+        },
+    );
 
     group.finish();
 }
@@ -384,114 +461,128 @@ fn bench_queue_dequeue_primary(c: &mut Criterion) {
 fn bench_queue_ack_primary(c: &mut Criterion) {
     let mut group = c.benchmark_group("subsystem_queue");
     group.sampling_mode(SamplingMode::Flat);
-    group.measurement_time(Duration::from_millis(400));
     group.throughput(Throughput::Elements(ACK_OPERATION_BATCH_SIZE as u64));
 
-    group.bench_function("ack_64_messages_primary", |b| {
-        b.iter_batched(
-            prepare_ack_case,
-            |case| {
-                for (ack_msg_type, ack_payload) in &case.ack_requests {
-                    let response = request_queue_response(
-                        &case.router,
-                        case.family,
-                        &case.source,
-                        &case.inbox,
-                        case.route,
-                        *ack_msg_type,
-                        black_box(ack_payload.clone()),
+    group.bench_function(
+        format!("ack_{ACK_OPERATION_BATCH_SIZE}_messages_primary"),
+        |b| {
+            b.iter_custom(|iters| {
+                let mut total = Duration::ZERO;
+                for _ in 0..iters {
+                    let case = prepare_ack_case();
+                    let start = Instant::now();
+                    for (ack_msg_type, ack_payload) in &case.ack_requests {
+                        send_queue_request(
+                            case.router.as_ref(),
+                            &case.source,
+                            case.route,
+                            CLIENT_SESSION_ID,
+                            *ack_msg_type,
+                            black_box(ack_payload.clone()),
+                            case.family,
+                        );
+                    }
+                    total += start.elapsed();
+
+                    assert_queue_success_frames(
+                        case.inbox
+                            .drain_after_count(case.ack_requests.len(), Duration::from_secs(1)),
+                        case.ack_requests.len(),
                     );
-                    assert_queue_success(&response);
                 }
-            },
-            BatchSize::SmallInput,
-        );
-    });
+                total
+            });
+        },
+    );
 
     group.finish();
 }
 
-fn bench_queue_waiter_wake_primary(c: &mut Criterion) {
+fn bench_queue_watch_register_primary(c: &mut Criterion) {
     let mut group = c.benchmark_group("subsystem_queue");
     group.sampling_mode(SamplingMode::Flat);
+    group.throughput(Throughput::Elements(WATCH_REGISTER_BATCH_SIZE as u64));
 
-    for waiter_count in [1usize, 16usize, 64usize] {
-        group.throughput(Throughput::Elements(waiter_count as u64));
-        group.bench_function(
-            format!("notify_{waiter_count}_waiting_receivers_primary"),
-            |b| {
-                b.iter_batched(
-                    || {
-                        let family = RouteFamily::new(1);
-                        let router = Arc::new(Router::new());
-                        let sink = create_bench_queue_sink(router.clone());
-                        router.register_domain_pattern("queue", sink as Arc<dyn MailboxSink>);
-                        let (sender_source, sender_inbox) =
-                            register_session_queue_sink(&router, family, CLIENT_SESSION_ID);
-                        let mut waiter_sinks: Vec<Arc<CountingSink>> =
-                            Vec::with_capacity(waiter_count);
-
-                        for index in 0..waiter_count {
-                            let session_id = 10_000 + index as u64;
-                            let (wait_source, wait_sink) =
-                                register_session_counting_sink(&router, family, session_id);
-                            register_queue_watch(
-                                &router,
-                                family,
-                                &wait_source,
-                                ROUTE_STR,
-                                session_id,
-                            );
-                            wait_sink.reset();
-                            waiter_sinks.push(wait_sink);
-                        }
-
-                        let enqueue_frame = build_queue_enqueue(ROUTE_STR, b"queue waiter payload");
-                        let (enqueue_msg_type, enqueue_payload) =
-                            extract_single_tlv_field(&enqueue_frame);
-                        (
-                            router,
-                            family,
-                            sender_source,
-                            sender_inbox,
-                            waiter_sinks,
-                            enqueue_msg_type,
-                            enqueue_payload,
-                        )
-                    },
-                    |(
-                        router,
-                        family,
-                        sender_source,
-                        sender_inbox,
-                        waiter_sinks,
-                        enqueue_msg_type,
-                        enqueue_payload,
-                    )| {
-                        for _ in 0..waiter_count {
-                            let response = request_queue_response(
-                                &router,
-                                family,
-                                &sender_source,
-                                &sender_inbox,
-                                ROUTE_STR,
-                                enqueue_msg_type,
-                                black_box(enqueue_payload.clone()),
-                            );
-                            assert_queue_success(&response);
-                        }
-
-                        let deliveries: usize = waiter_sinks.iter().map(|sink| sink.count()).sum();
-                        assert_eq!(
-                            deliveries, waiter_count,
-                            "expected queue send to wake all waiting receivers"
+    group.bench_function(
+        format!("watch_register_{WATCH_REGISTER_BATCH_SIZE}_sessions_primary"),
+        |b| {
+            b.iter_custom(|iters| {
+                let mut total = Duration::ZERO;
+                for _ in 0..iters {
+                    let case = prepare_watch_register_case();
+                    let start = Instant::now();
+                    for (session_id, source, _, msg_type, payload) in &case.registrations {
+                        send_queue_request(
+                            case.router.as_ref(),
+                            source,
+                            ROUTE_STR,
+                            *session_id,
+                            *msg_type,
+                            black_box(payload.clone()),
+                            case.family,
                         );
-                    },
-                    BatchSize::SmallInput,
-                );
-            },
-        );
-    }
+                    }
+                    total += start.elapsed();
+
+                    for (_, _, sink, _, _) in &case.registrations {
+                        assert_eq!(
+                            sink.wait_for_count(1, Duration::from_secs(1)),
+                            1,
+                            "queue watch registration should ack every request"
+                        );
+                    }
+                }
+                total
+            });
+        },
+    );
+
+    group.finish();
+}
+
+fn bench_queue_waiter_wakeup_primary(c: &mut Criterion) {
+    let mut group = c.benchmark_group("subsystem_queue");
+    group.sampling_mode(SamplingMode::Flat);
+    group.throughput(Throughput::Elements(WAITER_WAKEUP_COUNT as u64));
+
+    group.bench_function(
+        format!("wakeup_{WAITER_WAKEUP_COUNT}_watchers_1_enqueue_primary"),
+        |b| {
+            b.iter_custom(|iters| {
+                let mut total = Duration::ZERO;
+                for _ in 0..iters {
+                    let case = prepare_waiter_wakeup_case();
+                    let start = Instant::now();
+                    send_queue_request(
+                        case.router.as_ref(),
+                        &case.sender_source,
+                        ROUTE_STR,
+                        CLIENT_SESSION_ID,
+                        case.enqueue_msg_type,
+                        black_box(case.enqueue_payload.clone()),
+                        case.family,
+                    );
+                    total += start.elapsed();
+
+                    assert_eq!(
+                        case.sender_sink.wait_for_count(1, Duration::from_secs(1)),
+                        1,
+                        "queue wakeup enqueue should ack"
+                    );
+                    let deliveries: usize = case
+                        .waiter_sinks
+                        .iter()
+                        .map(|sink| sink.wait_for_count(1, Duration::from_secs(1)))
+                        .sum();
+                    assert_eq!(
+                        deliveries, WAITER_WAKEUP_COUNT,
+                        "queue enqueue should notify every ready watcher"
+                    );
+                }
+                total
+            });
+        },
+    );
 
     group.finish();
 }
@@ -500,10 +591,10 @@ criterion_group! {
     name = benches;
     config = criterion_config::criterion_config_for_tier2();
     targets =
-        bench_queue_wait_register_primary,
         bench_queue_enqueue_primary,
         bench_queue_dequeue_primary,
         bench_queue_ack_primary,
-        bench_queue_waiter_wake_primary
+        bench_queue_watch_register_primary,
+        bench_queue_waiter_wakeup_primary
 }
 criterion_main!(benches);

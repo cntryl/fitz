@@ -12,8 +12,8 @@
 //! NOTE: For Tier1 and Tier2, set `SamplingMode::Flat` on the benchmark group:
 //! `group.sampling_mode(SamplingMode::Flat)`.
 //!
-//! Local developers can tune Tier1/Tier2 runs with environment variables. The defaults stay short so
-//! local iteration remains snappy, and you can stretch the window when you need steadier numbers.
+//! Local developers can tune Tier1/Tier2 runs with environment variables. The defaults keep local
+//! iteration practical while collecting enough samples for report-quality Tier 2 rows.
 
 use criterion::Criterion;
 use std::time::Duration;
@@ -67,11 +67,12 @@ pub fn criterion_config_for_tier2() -> Criterion {
     // Tier 2 — Subsystem (µs → ms)
     //
     // Component-level latencies: memtable insert, block read, WAL append.
-    // Used very frequently during perf tuning, so the defaults stay short and predictable.
+    // Used frequently during perf tuning, so the defaults balance local runtime with stable
+    // report-producing signal quality.
     // ---------------------------------------------------------------
     Criterion::default()
         .warm_up_time(env_duration_ms("BENCH_TIER2_WARMUP_MS", 150))
-        .measurement_time(env_duration_ms("BENCH_TIER2_MEASUREMENT_MS", 700))
+        .measurement_time(env_duration_ms("BENCH_TIER2_MEASUREMENT_MS", 1500))
         .sample_size(env_usize("BENCH_TIER2_SAMPLE_SIZE", 10))
         .noise_threshold(env_f64("BENCH_TIER2_NOISE_THRESHOLD", 0.05))
         .without_plots()

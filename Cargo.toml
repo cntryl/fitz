@@ -139,6 +139,11 @@ harness = false
 path = "benches/tier2_subsystem_tlv_pipeline.rs"
 
 [[bench]]
+name = "tier2_subsystem_router"
+harness = false
+path = "benches/tier2_subsystem_router.rs"
+
+[[bench]]
 name = "tier2_subsystem_schedule_scan"
 harness = false
 path = "benches/tier2_subsystem_schedule_scan.rs"
@@ -274,6 +279,11 @@ path = "benches/tier4_integration_stream.rs"
 name = "tier4_integration_stream_storage_model"
 harness = false
 path = "benches/tier4_integration_stream_storage_model.rs"
+
+[[bench]]
+name = "proof_single_node"
+harness = false
+path = "benches/proof_single_node.rs"
 
 [features]
 # Feature flag to skip admin snapshot syncing in RPC domain for benchmarking

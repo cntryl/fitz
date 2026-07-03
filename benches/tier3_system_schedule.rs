@@ -182,7 +182,9 @@ fn should_complete_system_cancel_create_churn(ctx: &mut StressContext) {
 fn should_complete_system_list_uncached_9_of_10_schedules(ctx: &mut StressContext) {
     ctx.tag("scenario", "list_uncached_9_of_10");
     ctx.tag("measurement_scope", "direct_actor");
-    ctx.tag("batch_size", "9_scanned_uncached");
+    ctx.tag("batch_size", "single_list_call");
+    ctx.tag("page_size", "9");
+    ctx.tag("total_schedules", "10");
 
     let mut actor = create_test_actor();
     let (routes, crons, payloads) = precompute_data(10);
@@ -201,14 +203,16 @@ fn should_complete_system_list_uncached_9_of_10_schedules(ctx: &mut StressContex
             assert_eq!(total_count, 10, "total schedule count should remain stable");
         },
     );
-    ctx.set_elements(9 * iterations as u64);
+    ctx.set_elements(iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_system_list_uncached_99_of_100_schedules(ctx: &mut StressContext) {
     ctx.tag("scenario", "list_uncached_99_of_100");
     ctx.tag("measurement_scope", "direct_actor");
-    ctx.tag("batch_size", "99_scanned_uncached");
+    ctx.tag("batch_size", "single_list_call");
+    ctx.tag("page_size", "99");
+    ctx.tag("total_schedules", "100");
 
     let mut actor = create_test_actor();
     let (routes, crons, payloads) = precompute_data(100);
@@ -230,14 +234,16 @@ fn should_complete_system_list_uncached_99_of_100_schedules(ctx: &mut StressCont
             );
         },
     );
-    ctx.set_elements(99 * iterations as u64);
+    ctx.set_elements(iterations as u64);
 }
 
 #[stress_test]
 fn should_complete_system_list_uncached_999_of_1000_schedules(ctx: &mut StressContext) {
     ctx.tag("scenario", "list_uncached_999_of_1000");
     ctx.tag("measurement_scope", "direct_actor");
-    ctx.tag("batch_size", "999_scanned_uncached");
+    ctx.tag("batch_size", "single_list_call");
+    ctx.tag("page_size", "999");
+    ctx.tag("total_schedules", "1000");
 
     let mut actor = create_test_actor();
     let (routes, crons, payloads) = precompute_data(1000);
@@ -259,7 +265,7 @@ fn should_complete_system_list_uncached_999_of_1000_schedules(ctx: &mut StressCo
             );
         },
     );
-    ctx.set_elements(999 * iterations as u64);
+    ctx.set_elements(iterations as u64);
 }
 
 #[stress_test]
