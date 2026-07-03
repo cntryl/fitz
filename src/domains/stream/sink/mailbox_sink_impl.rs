@@ -1,5 +1,3 @@
-#[cfg(test)]
-use super::model::StreamStore;
 use super::model::{
     Arc, DeliveryError, Envelope, MailboxSink, Mutex, Ordering, PayloadEncoder, Route,
     RoutedSubscriptionSet, StreamActor, StreamClientFrame, StreamClientRequest,
@@ -16,7 +14,11 @@ use crate::runtime::{Actor, Context};
 
 impl MailboxSink for StreamDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        self.deliver_to_actor(envelope, false)
+        if !self.actor.is_running() {
+            return Err(DeliveryError::ActorStopped);
+        }
+
+        self.core.deliver_envelope(&envelope)
     }
 
     fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
@@ -43,11 +45,6 @@ impl Actor for StreamDomainActor {
             #[cfg(test)]
             StreamDomainCommand::SyncAdminSnapshot(reply) => {
                 runtime.sync_admin_snapshot();
-                let _ = reply.send(());
-            }
-            #[cfg(test)]
-            StreamDomainCommand::InjectNextPromotionFrontierCommitFailure(reply) => {
-                StreamStore::fail_next_promotion_frontier_commit_for_tests();
                 let _ = reply.send(());
             }
         }

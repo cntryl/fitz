@@ -5,9 +5,9 @@ use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
     build_queue_complete, build_queue_dequeue, build_queue_dequeue_batch, build_queue_enqueue,
-    build_queue_watch, create_bench_queue_actor, create_bench_queue_sink, extract_single_tlv_field,
-    register_session_counting_sink, register_session_queue_sink, route_frame, CountingSink,
-    FrameQueueSink,
+    build_queue_watch, create_bench_queue_actor, create_bench_queue_sink,
+    create_write_heavy_bench_store, extract_single_tlv_field, register_session_counting_sink,
+    register_session_queue_sink, route_frame, CountingSink, FrameQueueSink,
 };
 use fitz::domains::queue::{Clock, QueueActor, QueueKey, QueueResponse, ReservedMessage};
 use fitz::protocol::frame::ChannelId;
@@ -421,7 +421,7 @@ fn should_complete_capacity_mixed_workload(ctx: &mut StressContext) {
         area: "system".to_string(),
         resource: "queue".to_string(),
     };
-    let store = create_test_engine_with_cfs(vec![1]);
+    let store = create_write_heavy_bench_store();
     let mut actor = QueueActor::with_clock_and_write_options(
         RouteFamily::new(1),
         queue_key,
@@ -459,11 +459,12 @@ fn should_complete_capacity_mixed_workload(ctx: &mut StressContext) {
                 other => panic!("expected received immediate batch, got {other:?}"),
             };
             assert_eq!(immediate.len(), 80);
-            for message in immediate {
-                let response =
-                    actor.handle_ack_for_session(CLIENT_SESSION_ID, message.id, message.token);
-                assert_eq!(response, QueueResponse::Acked);
-            }
+            let immediate_acks: Vec<_> = immediate
+                .iter()
+                .map(|message| (message.id, message.token))
+                .collect();
+            let responses = actor.handle_ack_batch_for_session(CLIENT_SESSION_ID, &immediate_acks);
+            assert_eq!(responses, vec![QueueResponse::Acked; 80]);
 
             clock.advance(Duration::from_secs(6));
             actor.process_delayed_messages();
@@ -473,11 +474,12 @@ fn should_complete_capacity_mixed_workload(ctx: &mut StressContext) {
                 other => panic!("expected received delayed batch, got {other:?}"),
             };
             assert_eq!(delayed.len(), 20);
-            for message in delayed {
-                let response =
-                    actor.handle_ack_for_session(CLIENT_SESSION_ID, message.id, message.token);
-                assert_eq!(response, QueueResponse::Acked);
-            }
+            let delayed_acks: Vec<_> = delayed
+                .iter()
+                .map(|message| (message.id, message.token))
+                .collect();
+            let responses = actor.handle_ack_batch_for_session(CLIENT_SESSION_ID, &delayed_acks);
+            assert_eq!(responses, vec![QueueResponse::Acked; 20]);
         },
     );
     ctx.set_elements(300 * iterations as u64);

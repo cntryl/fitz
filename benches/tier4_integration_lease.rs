@@ -25,6 +25,40 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 
+fn shutdown_lease_test_server(runtime: &tokio::runtime::Runtime, server: TestServer) {
+    runtime
+        .block_on(server.shutdown())
+        .expect("shutdown lease bench server");
+}
+
+fn close_tcp_client(runtime: &tokio::runtime::Runtime, client: TestClient) {
+    runtime
+        .block_on(client.close())
+        .expect("close lease tcp bench client");
+}
+
+fn close_ws_client(runtime: &tokio::runtime::Runtime, client: &mut TestWebSocketClient) {
+    runtime
+        .block_on(client.close())
+        .expect("close lease websocket bench client");
+}
+
+fn close_ws_clients(
+    runtime: &tokio::runtime::Runtime,
+    clients: &[Arc<Mutex<TestWebSocketClient>>],
+) {
+    runtime.block_on(async {
+        for client in clients {
+            client
+                .lock()
+                .await
+                .close()
+                .await
+                .expect("close lease multiclient websocket bench client");
+        }
+    });
+}
+
 #[stress_test]
 fn should_complete_direct_acquire_release(ctx: &mut StressContext) {
     ctx.tag("layer", "direct");
@@ -110,6 +144,8 @@ fn should_complete_tcp_acquire_release(ctx: &mut StressContext) {
         },
     );
     ctx.set_elements(2 * iterations as u64);
+    close_tcp_client(runtime, client);
+    shutdown_lease_test_server(runtime, server);
 }
 
 #[stress_test]
@@ -146,6 +182,8 @@ fn should_complete_ws_acquire_release(ctx: &mut StressContext) {
         },
     );
     ctx.set_elements(2 * iterations as u64);
+    close_ws_client(runtime, &mut client);
+    shutdown_lease_test_server(runtime, server);
 }
 
 #[stress_test]
@@ -193,6 +231,9 @@ fn should_complete_multiclient_acquire_release(ctx: &mut StressContext) {
         },
     );
     ctx.set_elements(20 * iterations as u64);
+    close_ws_clients(runtime, &clients);
+    drop(clients);
+    shutdown_lease_test_server(runtime, server);
 }
 
 stress_main!();

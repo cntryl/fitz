@@ -5,6 +5,8 @@
 
 use std::sync::Arc;
 
+const WRITE_HEAVY_BENCH_MEMORY_BUDGET_BYTES: usize = 4 * 1024 * 1024 * 1024;
+
 /// Create an in-memory `MidgeEngine` for benchmarks with Fitz's explicit CF mapping.
 ///
 /// This eliminates disk I/O overhead and provides fast, deterministic
@@ -26,9 +28,50 @@ pub fn create_bench_store() -> Arc<cntryl_midge::Engine> {
 pub fn create_bench_store_with_cfs(
     column_families: impl IntoIterator<Item = u32>,
 ) -> Arc<cntryl_midge::Engine> {
+    create_store_with_cfs(
+        cntryl_midge::OpenOptions::in_memory().build(),
+        column_families,
+    )
+}
+
+/// Create a write-heavy in-memory `MidgeEngine` for churn-heavy benchmark scenarios.
+///
+/// This keeps benchmarks that repeatedly create and delete durable rows focused on
+/// domain operation cost instead of the default mixed-workload memory budget.
+#[must_use]
+pub fn create_write_heavy_bench_store() -> Arc<cntryl_midge::Engine> {
+    create_write_heavy_bench_store_with_cfs([1])
+}
+
+/// Create a write-heavy in-memory `MidgeEngine` with explicit CF mapping.
+///
+/// # Panics
+///
+/// Panics if the in-memory engine cannot be created, if a requested benchmark
+/// column family cannot be created, or if the storage engine assigns an
+/// unexpected column family ID.
+#[must_use]
+pub fn create_write_heavy_bench_store_with_cfs(
+    column_families: impl IntoIterator<Item = u32>,
+) -> Arc<cntryl_midge::Engine> {
+    create_store_with_cfs(
+        cntryl_midge::OpenOptions::in_memory()
+            .goal(cntryl_midge::Goal::Throughput)
+            .workload(cntryl_midge::WorkloadProfile::WriteHeavy)
+            .memory_budget(cntryl_midge::MemoryBudget::Bytes(
+                WRITE_HEAVY_BENCH_MEMORY_BUDGET_BYTES,
+            ))
+            .build(),
+        column_families,
+    )
+}
+
+fn create_store_with_cfs(
+    open_options: cntryl_midge::OpenOptions,
+    column_families: impl IntoIterator<Item = u32>,
+) -> Arc<cntryl_midge::Engine> {
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("Failed to create in-memory bench store"),
+        cntryl_midge::Engine::open(open_options).expect("Failed to create in-memory bench store"),
     );
     let mut ids: Vec<_> = column_families.into_iter().collect();
     ids.sort_unstable();

@@ -25,7 +25,10 @@ pub use live_sink::{
 pub use queue::{create_bench_queue_actor, create_local_bench_queue_actor};
 pub use rpc::create_bench_rpc_context;
 pub use runtime::shared_bench_runtime;
-pub use storage::{create_bench_store, create_bench_store_with_cfs, create_local_bench_store};
+pub use storage::{
+    create_bench_store, create_bench_store_with_cfs, create_local_bench_store,
+    create_write_heavy_bench_store, create_write_heavy_bench_store_with_cfs,
+};
 pub use stream::{
     create_bench_event_payloads, create_bench_stream_actor, create_bench_stream_actor_with_layout,
     create_local_bench_stream_actor, create_local_bench_stream_actor_with_layout,

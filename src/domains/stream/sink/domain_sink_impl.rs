@@ -200,19 +200,6 @@ impl StreamDomainSink {
     }
 
     #[cfg(test)]
-    pub(super) fn fail_next_promotion_frontier_commit_for_tests(&self) {
-        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
-        if let Err(error) = self.actor.try_send_high_priority(
-            StreamDomainCommand::InjectNextPromotionFrontierCommitFailure(reply_tx),
-        ) {
-            tracing::warn!(domain = "stream", error = %error, "Stream failure-injection enqueue failed");
-            return;
-        }
-
-        let _ = reply_rx.recv_timeout(std::time::Duration::from_secs(1));
-    }
-
-    #[cfg(test)]
     pub(super) fn sync_write_mode_for_tests(
         &self,
     ) -> crate::domains::stream::protocol::StreamWriteMode {

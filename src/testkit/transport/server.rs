@@ -6,10 +6,10 @@
 use std::fmt::Write as _;
 use std::net::SocketAddr;
 use std::sync::{Arc, Once, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::time::timeout;
+use tokio::time::{sleep, timeout};
 
 use super::{
     TestClient, TestWebSocketClient, TEST_AUDIENCE, TEST_ISSUER, TEST_RUNTIME_AUTH_SECRET,
@@ -17,6 +17,9 @@ use super::{
 
 static TEST_SERVER_SEMAPHORE: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
 static AUTH_JWT_TEST_CACHE: Once = Once::new();
+
+const STORE_SHUTDOWN_RELEASE_TIMEOUT: Duration = Duration::from_secs(2);
+const STORE_SHUTDOWN_RELEASE_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 fn test_server_semaphore() -> &'static Arc<tokio::sync::Semaphore> {
     TEST_SERVER_SEMAPHORE.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(1)))
@@ -42,6 +45,27 @@ pub(super) fn init_test_runtime_jwks_cache() {
 
         crate::auth::cache_jwks_from_json(&jwks_url, &jwks).unwrap();
     });
+}
+
+async fn wait_for_exclusive_store(
+    mut store: Arc<cntryl_midge::Engine>,
+) -> Result<cntryl_midge::Engine, String> {
+    let deadline = Instant::now() + STORE_SHUTDOWN_RELEASE_TIMEOUT;
+    loop {
+        match Arc::try_unwrap(store) {
+            Ok(engine) => return Ok(engine),
+            Err(shared_store) => {
+                if Instant::now() >= deadline {
+                    return Err(format!(
+                        "Midge shutdown blocked by {} leftover engine references",
+                        Arc::strong_count(&shared_store)
+                    ));
+                }
+                store = shared_store;
+                sleep(STORE_SHUTDOWN_RELEASE_POLL_INTERVAL).await;
+            }
+        }
+    }
 }
 
 fn default_test_route_family_mappings() -> Vec<(String, u32)> {
@@ -633,12 +657,7 @@ impl TestServer {
         drop(domains);
         drop(runtime);
         drop(permit);
-        let store = Arc::try_unwrap(store).map_err(|store| {
-            format!(
-                "Midge shutdown blocked by {} leftover engine references",
-                Arc::strong_count(&store)
-            )
-        })?;
+        let store = wait_for_exclusive_store(store).await?;
         store
             .shutdown()
             .map_err(|error| format!("Midge shutdown failed: {error}"))?;

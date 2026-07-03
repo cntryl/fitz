@@ -29,6 +29,9 @@ use tokio::sync::Mutex;
 
 const DIRECT_CLIENT_SESSION_ID: u64 = 1;
 const STREAM_SYNC_COMMIT_MODE: u8 = 1;
+const STREAM_APPEND_MSG_TYPE: u16 = 601;
+const STREAM_ROLLBACK_MSG_TYPE: u16 = 603;
+const DIRECT_APPEND_EVENTS_PER_SESSION: u64 = 10_000;
 
 struct DirectStreamBenchContext {
     router: Arc<Router>,
@@ -49,6 +52,40 @@ fn setup_direct_stream_context() -> DirectStreamBenchContext {
         source,
         inbox,
     }
+}
+
+fn shutdown_stream_test_server(runtime: &tokio::runtime::Runtime, server: TestServer) {
+    runtime
+        .block_on(server.shutdown())
+        .expect("shutdown stream bench server");
+}
+
+fn close_tcp_client(runtime: &tokio::runtime::Runtime, client: TestClient) {
+    runtime
+        .block_on(client.close())
+        .expect("close stream tcp bench client");
+}
+
+fn close_ws_client(runtime: &tokio::runtime::Runtime, client: &mut TestWebSocketClient) {
+    runtime
+        .block_on(client.close())
+        .expect("close stream websocket bench client");
+}
+
+fn close_ws_clients(
+    runtime: &tokio::runtime::Runtime,
+    clients: &[Arc<Mutex<TestWebSocketClient>>],
+) {
+    runtime.block_on(async {
+        for client in clients {
+            client
+                .lock()
+                .await
+                .close()
+                .await
+                .expect("close stream multiclient websocket bench client");
+        }
+    });
 }
 
 fn direct_request(
@@ -80,6 +117,42 @@ fn direct_begin_stream(context: &DirectStreamBenchContext, route: &str) -> u64 {
     let (msg_type, payload) = extract_single_tlv_field(&begin_frame);
     let response = direct_request(context, route, msg_type, payload);
     parse_stream_session_id(response.as_ref()).expect("stream session id")
+}
+
+fn build_stream_append_payload(session_id: u64, expected_offset: u64, body: &[u8]) -> Bytes {
+    let mut payload = Vec::with_capacity(8 + 8 + 4 + body.len() + 1);
+    payload.extend_from_slice(&session_id.to_be_bytes());
+    payload.extend_from_slice(&expected_offset.to_be_bytes());
+    payload.extend_from_slice(
+        &u32::try_from(body.len())
+            .expect("stream append body length fits u32")
+            .to_be_bytes(),
+    );
+    payload.extend_from_slice(body);
+    payload.push(0);
+    Bytes::from(payload)
+}
+
+fn build_stream_session_payload(session_id: u64) -> Bytes {
+    Bytes::copy_from_slice(&session_id.to_be_bytes())
+}
+
+fn assert_stream_direct_success(payload: &[u8], operation: &str) {
+    assert_eq!(
+        payload.first().copied(),
+        Some(0),
+        "{operation} response must succeed"
+    );
+}
+
+fn direct_rollback_stream(context: &DirectStreamBenchContext, route: &str, session_id: u64) {
+    let response = direct_request(
+        context,
+        route,
+        STREAM_ROLLBACK_MSG_TYPE,
+        build_stream_session_payload(session_id),
+    );
+    assert_stream_direct_success(response.as_ref(), "direct rollback");
 }
 
 fn direct_seed_stream_route(
@@ -180,54 +253,30 @@ fn should_complete_direct_append(ctx: &mut StressContext) {
     ctx.tag("measurement_scope", "direct_inproc");
     ctx.tag("batch_size", "single_append");
 
-    let family = RouteFamily::new(1);
+    let context = setup_direct_stream_context();
     let route = "stream://tier4/stream/direct/append";
-    let router = Arc::new(Router::new());
-    let sink = create_bench_stream_sink(router.clone());
-    router.register_domain_pattern("stream", sink as Arc<dyn MailboxSink>);
-    let (source, inbox) = register_session_queue_sink(&router, family, 1);
-
-    let begin_frame = build_stream_begin(route);
-    let (begin_msg_type, begin_payload) = extract_single_tlv_field(&begin_frame);
-    route_frame(
-        router.as_ref(),
-        &source,
-        route,
-        1,
-        ChannelId::Pub,
-        begin_msg_type,
-        begin_payload,
-        family,
-    )
-    .expect("stream begin");
-    let begin_responses = inbox.drain_after_count(1, Duration::from_secs(1));
-    let session_id = parse_stream_session_id(
-        begin_responses
-            .last()
-            .expect("begin response")
-            .payload
-            .as_ref(),
-    )
-    .expect("session_id");
-
-    let append_frame = build_stream_append(session_id, 0, Bytes::from_static(b"event").as_ref());
-    let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
+    let mut session_id = direct_begin_stream(&context, route);
+    let mut expected_offset = 0u64;
 
     let iterations = ctx.measure_for(
         stress_config::BenchConfig::default().measure_duration,
         || {
-            route_frame(
-                router.as_ref(),
-                &source,
+            if expected_offset == DIRECT_APPEND_EVENTS_PER_SESSION {
+                direct_rollback_stream(&context, route, session_id);
+                session_id = direct_begin_stream(&context, route);
+                expected_offset = 0;
+            }
+
+            let response = direct_request(
+                &context,
                 route,
-                1,
-                ChannelId::Pub,
-                append_msg_type,
-                append_payload.clone(),
-                family,
-            )
-            .expect("stream append");
-            let _ = inbox.drain_after_count(1, Duration::from_secs(1));
+                STREAM_APPEND_MSG_TYPE,
+                build_stream_append_payload(session_id, expected_offset, b"event"),
+            );
+            assert_stream_direct_success(response.as_ref(), "measured direct append");
+            expected_offset = expected_offset
+                .checked_add(1)
+                .expect("direct append expected offset overflow");
         },
     );
     ctx.set_elements(iterations as u64);
@@ -343,6 +392,8 @@ fn should_complete_tcp_append(ctx: &mut StressContext) {
         },
     );
     ctx.set_elements(iterations as u64);
+    close_tcp_client(runtime, client);
+    shutdown_stream_test_server(runtime, server);
 }
 
 #[stress_test]
@@ -379,6 +430,8 @@ fn should_complete_tcp_resource_read(ctx: &mut StressContext) {
         },
     );
     ctx.set_elements(100 * iterations as u64);
+    close_tcp_client(runtime, client);
+    shutdown_stream_test_server(runtime, server);
 }
 
 #[stress_test]
@@ -427,6 +480,8 @@ fn should_complete_tcp_area_wildcard_read(ctx: &mut StressContext) {
         },
     );
     ctx.set_elements(100 * iterations as u64);
+    close_tcp_client(runtime, client);
+    shutdown_stream_test_server(runtime, server);
 }
 
 #[stress_test]
@@ -475,6 +530,8 @@ fn should_complete_tcp_realm_wildcard_read(ctx: &mut StressContext) {
         },
     );
     ctx.set_elements(100 * iterations as u64);
+    close_tcp_client(runtime, client);
+    shutdown_stream_test_server(runtime, server);
 }
 
 #[stress_test]
@@ -512,6 +569,8 @@ fn should_complete_ws_append(ctx: &mut StressContext) {
         },
     );
     ctx.set_elements(iterations as u64);
+    close_ws_client(runtime, &mut client);
+    shutdown_stream_test_server(runtime, server);
 }
 
 #[stress_test]
@@ -551,6 +610,8 @@ fn should_complete_ws_resource_read(ctx: &mut StressContext) {
         },
     );
     ctx.set_elements(100 * iterations as u64);
+    close_ws_client(runtime, &mut client);
+    shutdown_stream_test_server(runtime, server);
 }
 
 #[stress_test]
@@ -602,6 +663,8 @@ fn should_complete_ws_area_wildcard_read(ctx: &mut StressContext) {
         },
     );
     ctx.set_elements(100 * iterations as u64);
+    close_ws_client(runtime, &mut client);
+    shutdown_stream_test_server(runtime, server);
 }
 
 #[stress_test]
@@ -653,6 +716,8 @@ fn should_complete_ws_realm_wildcard_read(ctx: &mut StressContext) {
         },
     );
     ctx.set_elements(100 * iterations as u64);
+    close_ws_client(runtime, &mut client);
+    shutdown_stream_test_server(runtime, server);
 }
 
 #[stress_test]
@@ -714,6 +779,9 @@ fn should_complete_multiclient_appends(ctx: &mut StressContext) {
         },
     );
     ctx.set_elements(10 * iterations as u64);
+    close_ws_clients(runtime, &clients);
+    drop(clients);
+    shutdown_stream_test_server(runtime, server);
 }
 
 stress_main!();

@@ -122,6 +122,41 @@ fn should_reserve_multiple_messages_in_batch() {
 }
 
 #[test]
+fn should_ack_multiple_messages_in_batch() {
+    // Arrange
+    let store = Arc::new(
+        cntryl_midge::Engine::open_with_options(&cntryl_midge::MidgeOptions::default())
+            .expect("Failed to open Midge"),
+    );
+    let queue_key = unique_queue_key("jobs-ack-batch");
+    let mut actor = QueueActor::new(
+        RouteFamily::new(0),
+        queue_key,
+        store,
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    for i in 0..3 {
+        actor.handle_send(Bytes::from(format!("message {i}")), None);
+    }
+    let reserved = match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(3)) {
+        QueueResponse::Received { messages } => messages,
+        other => panic!("Expected Received response, got {other:?}"),
+    };
+    let acknowledgements: Vec<_> = reserved
+        .iter()
+        .map(|message| (message.id, message.token))
+        .collect();
+
+    // Act
+    let responses = actor.handle_ack_batch_for_session(TEST_SESSION_ID, &acknowledgements);
+
+    // Assert
+    assert_eq!(responses, vec![QueueResponse::Acked; 3]);
+    assert_eq!(actor.inflight.len(), 0);
+}
+
+#[test]
 fn should_dequeue_all_enqueued_messages() {
     // Arrange
     let store = Arc::new(

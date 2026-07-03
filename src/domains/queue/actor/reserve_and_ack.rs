@@ -1,9 +1,19 @@
 use super::{
-    decode_cached_response, encode_cached_response, obs, Duration, Inflight, InflightExpiry,
-    MessageId, PersistedIndexMutationPlan, QueueActor, QueueResponse, ReservedMessage, Reverse,
-    StoredRecordLayout,
+    decode_cached_response, encode_cached_response, obs, Duration, HashSet, Inflight,
+    InflightExpiry, Instant, MessageId, PersistedIndexMutationPlan, PersistedReadyMutation,
+    QueueActor, QueueResponse, ReadyRange, ReservedMessage, Reverse, StoredRecordLayout, VecDeque,
 };
 use crate::utils::idempotency::{DedupIdentifier, DedupKey, Domain};
+
+struct AckBatchDelete {
+    id: MessageId,
+    dedup_key: DedupKey,
+    stored_layout: StoredRecordLayout,
+    index_plan: PersistedIndexMutationPlan,
+    header_key: Vec<u8>,
+    body_key: Vec<u8>,
+    legacy_key: Vec<u8>,
+}
 
 impl QueueActor {
     pub fn handle_receive_for_session(
@@ -211,6 +221,39 @@ impl QueueActor {
         }
     }
 
+    pub fn handle_ack_batch_for_session(
+        &mut self,
+        session_id: u64,
+        acknowledgements: &[(MessageId, u64)],
+    ) -> Vec<QueueResponse> {
+        if acknowledgements.is_empty() {
+            return Vec::new();
+        }
+        if acknowledgements.len() == 1 {
+            let (id, token) = acknowledgements[0];
+            return vec![self.handle_ack_for_session(session_id, id, token)];
+        }
+
+        let now = self.clock.now_instant();
+        let Some(deletes) = self.plan_ack_batch(session_id, acknowledgements, now) else {
+            return acknowledgements
+                .iter()
+                .map(|&(id, token)| self.handle_ack_for_session(session_id, id, token))
+                .collect();
+        };
+
+        if let Err(message) = self.commit_ack_batch_delete(&deletes) {
+            return vec![QueueResponse::Error { message }; acknowledgements.len()];
+        }
+
+        for delete in deletes {
+            self.apply_index_mutation_plan(delete.id, delete.index_plan, None);
+            let _ = self.finish_ack_success(delete.id, delete.dedup_key);
+        }
+
+        vec![QueueResponse::Acked; acknowledgements.len()]
+    }
+
     fn handle_ack_authorized(
         &mut self,
         owner_session_id: u64,
@@ -269,6 +312,97 @@ impl QueueActor {
         }
 
         self.finish_ack_success(id, dedup_key)
+    }
+
+    fn plan_ack_batch(
+        &self,
+        owner_session_id: u64,
+        acknowledgements: &[(MessageId, u64)],
+        now: Instant,
+    ) -> Option<Vec<AckBatchDelete>> {
+        let mut seen = HashSet::with_capacity(acknowledgements.len());
+        let mut staged_ready_shards = self.persisted_ready_shards.clone();
+        let mut staged_ready_count = self.persisted_ready_count;
+        let mut staged_delayed = self.persisted_delayed.clone();
+        let mut staged_next_delayed_visibility = self.persisted_next_delayed_visibility_ms;
+        let mut deletes = Vec::with_capacity(acknowledgements.len());
+
+        for &(id, token) in acknowledgements {
+            if !seen.insert(id) {
+                return None;
+            }
+
+            let dedup_key = self.ack_response_dedup_key(owner_session_id, id, token);
+            if self.dedup_store.get(&dedup_key).is_some() {
+                return None;
+            }
+
+            let inflight = self.inflight.get(&id)?;
+            if inflight.owner_session_id != Some(owner_session_id)
+                || inflight.token != token
+                || inflight.expires_at <= now
+            {
+                return None;
+            }
+
+            let ready_mutation = Self::plan_ready_index_mutation(&staged_ready_shards, id);
+            if let Some((shard, mutation)) = ready_mutation {
+                Self::apply_staged_ready_mutation(
+                    &mut staged_ready_shards,
+                    &mut staged_ready_count,
+                    shard,
+                    mutation,
+                );
+            }
+
+            let delayed_index_delete = staged_delayed.remove(&id);
+            if delayed_index_delete.is_some() {
+                staged_next_delayed_visibility = staged_delayed.values().copied().min();
+            }
+
+            deletes.push(AckBatchDelete {
+                id,
+                dedup_key,
+                stored_layout: self.load_stored_layout_for_ack(id),
+                index_plan: PersistedIndexMutationPlan {
+                    ready_mutation,
+                    delayed_index_delete,
+                    staged_ready_count,
+                    staged_delayed_count: staged_delayed.len(),
+                    staged_next_delayed_visibility,
+                },
+                header_key: self.cached_header_key(id),
+                body_key: self.cached_body_key(id),
+                legacy_key: self.cached_legacy_message_key(id),
+            });
+        }
+
+        Some(deletes)
+    }
+
+    fn apply_staged_ready_mutation(
+        staged_ready_shards: &mut [VecDeque<ReadyRange>],
+        staged_ready_count: &mut usize,
+        shard: usize,
+        mutation: PersistedReadyMutation,
+    ) {
+        let removed_len = match mutation {
+            PersistedReadyMutation::Delete { removed }
+            | PersistedReadyMutation::Replace { removed, .. }
+            | PersistedReadyMutation::Split { removed, .. } => Self::range_len(removed),
+        };
+        let inserted_len = match mutation {
+            PersistedReadyMutation::Delete { .. } => 0,
+            PersistedReadyMutation::Replace { inserted, .. } => Self::range_len(inserted),
+            PersistedReadyMutation::Split { left, right, .. } => {
+                Self::range_len(left) + Self::range_len(right)
+            }
+        };
+
+        Self::apply_ready_index_mutation_to_shards(staged_ready_shards, shard, mutation);
+        *staged_ready_count = staged_ready_count
+            .saturating_sub(removed_len)
+            .saturating_add(inserted_len);
     }
 
     fn ack_response_dedup_key(&self, owner_session_id: u64, id: MessageId, token: u64) -> DedupKey {
@@ -362,6 +496,44 @@ impl QueueActor {
                 "Failed to begin tx to delete message {id}: {error:?}"
             )),
         }
+    }
+
+    fn commit_ack_batch_delete(&self, deletes: &[AckBatchDelete]) -> Result<(), String> {
+        let mut txn = self
+            .store
+            .begin_tx(
+                self.queue_key.family.id(),
+                cntryl_midge::TransactionMode::ReadWrite,
+            )
+            .map_err(|error| format!("Failed to begin queue ack batch tx: {error:?}"))?;
+
+        for delete in deletes {
+            Self::delete_record_for_layout(
+                &mut txn,
+                delete.stored_layout,
+                delete.header_key.clone(),
+                delete.body_key.clone(),
+                delete.legacy_key.clone(),
+            )
+            .map_err(|error| {
+                format!(
+                    "Failed to delete message {} in queue ack batch tx: {error:?}",
+                    delete.id
+                )
+            })?;
+            self.write_index_mutation_plan(&mut txn, delete.id, delete.index_plan, None)?;
+        }
+
+        Self::commit_ack_transaction(txn, self.commit_write_options).map_err(|error| {
+            tracing::warn!(
+                queue = ?self.queue_key,
+                route_family = self.queue_key.family.as_u64(),
+                error_reason = %error,
+                ack_count = deletes.len(),
+                "Failed to commit queue ack batch transaction"
+            );
+            format!("Failed to commit queue ack batch transaction: {error}")
+        })
     }
 
     fn finish_ack_success(&mut self, id: MessageId, dedup_key: DedupKey) -> QueueResponse {
