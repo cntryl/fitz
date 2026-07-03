@@ -77,10 +77,11 @@ impl StreamActorKey {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(super) struct StreamSessionOwner {
     pub(super) key: StreamActorKey,
     pub(super) owner_session_id: u64,
+    pub(super) actor: Arc<Mutex<StreamActor>>,
 }
 
 pub(super) struct StreamDomainCore {

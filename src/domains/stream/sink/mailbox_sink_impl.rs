@@ -1,10 +1,11 @@
 #[cfg(test)]
 use super::model::StreamStore;
 use super::model::{
-    DeliveryError, Envelope, MailboxSink, Ordering, PayloadEncoder, Route, RoutedSubscriptionSet,
-    StreamClientFrame, StreamClientRequest, StreamClientResponseBody, StreamDomainActor,
-    StreamDomainCommand, StreamDomainCore, StreamDomainRuntime, StreamDomainSink,
-    StreamSessionOwner, StreamSubscription, STREAM_OPERATIONS_TOTAL,
+    Arc, DeliveryError, Envelope, MailboxSink, Mutex, Ordering, PayloadEncoder, Route,
+    RoutedSubscriptionSet, StreamActor, StreamClientFrame, StreamClientRequest,
+    StreamClientResponseBody, StreamDomainActor, StreamDomainCommand, StreamDomainCore,
+    StreamDomainRuntime, StreamDomainSink, StreamSessionOwner, StreamSubscription,
+    STREAM_OPERATIONS_TOTAL,
 };
 use crate::domains::stream::protocol::{IngestMetadata, StreamDiscriminator};
 #[cfg(test)]
@@ -346,6 +347,7 @@ impl StreamDomainCore {
                                 StreamSessionOwner {
                                     key,
                                     owner_session_id: meta.session_id,
+                                    actor: actor.clone(),
                                 },
                             );
                             self.counter_inc("fitz_stream_append_sessions_started_total");
@@ -382,6 +384,18 @@ impl StreamDomainCore {
             .cloned()
     }
 
+    fn session_actor_for(
+        &self,
+        owner_session_id: u64,
+        stream_session_id: u64,
+    ) -> Option<Arc<Mutex<StreamActor>>> {
+        self.session_owners
+            .lock()
+            .get(&stream_session_id)
+            .filter(|owner| owner.owner_session_id == owner_session_id)
+            .map(|owner| owner.actor.clone())
+    }
+
     fn handle_append_operation(
         &self,
         meta: crate::runtime::ClientFrameMeta,
@@ -395,36 +409,37 @@ impl StreamDomainCore {
         Option<(Route, bytes::Bytes)>,
         bool,
     ) {
-        let Some(owner) = self.session_owner_for(meta.session_id, session_id) else {
+        let Some(actor) = self.session_actor_for(meta.session_id, session_id) else {
             return (
                 Self::stream_error_response("session not found"),
                 None,
                 false,
             );
         };
-        match self.get_or_create_actor(&owner.key) {
-            Ok(actor) => match actor.lock().append_to_session_with_discriminator_for_owner(
+        let append_result = {
+            let mut actor = actor.lock();
+            actor.append_to_session_with_discriminator_for_owner(
                 meta.session_id,
                 session_id,
                 expected_offset,
                 body,
                 metadata,
                 discriminator,
-            ) {
-                Ok(assigned_offset) => {
-                    let mut encoder = PayloadEncoder::new();
-                    encoder.put_u64(assigned_offset);
-                    (
-                        StreamClientResponseBody::Ok {
-                            session_id: None,
-                            data: encoder.finish(),
-                        },
-                        None,
-                        false,
-                    )
-                }
-                Err(error) => (Self::stream_error_response(error), None, false),
-            },
+            )
+        };
+        match append_result {
+            Ok(assigned_offset) => {
+                let mut encoder = PayloadEncoder::new();
+                encoder.put_u64(assigned_offset);
+                (
+                    StreamClientResponseBody::Ok {
+                        session_id: None,
+                        data: encoder.finish(),
+                    },
+                    None,
+                    false,
+                )
+            }
             Err(error) => (Self::stream_error_response(error), None, false),
         }
     }
@@ -451,35 +466,31 @@ impl StreamDomainCore {
                 false,
             );
         };
-        match self.get_or_create_actor(&owner.key) {
-            Ok(actor) => {
-                match actor
-                    .lock()
-                    .commit_session_for_owner(meta.session_id, session_id, mode)
-                {
-                    Ok(commit) => {
-                        self.session_owners.lock().remove(&session_id);
-                        self.counter_inc("fitz_stream_append_sessions_ended_total");
-                        let payload = Self::encode_stream_commit_notify_payload(
-                            commit.first_resource_offset,
-                            commit.last_resource_offset,
-                            commit.first_area_offset,
-                            commit.last_area_offset,
-                            commit.first_realm_offset,
-                            commit.last_realm_offset,
-                            commit.batch_size,
-                        );
-                        (
-                            StreamClientResponseBody::Ok {
-                                session_id: None,
-                                data: vec![],
-                            },
-                            Some((owner.key.resource_route(), payload)),
-                            true,
-                        )
-                    }
-                    Err(error) => (Self::stream_error_response(error), None, false),
-                }
+        let commit_result = {
+            let mut actor = owner.actor.lock();
+            actor.commit_session_for_owner(meta.session_id, session_id, mode)
+        };
+        match commit_result {
+            Ok(commit) => {
+                self.session_owners.lock().remove(&session_id);
+                self.counter_inc("fitz_stream_append_sessions_ended_total");
+                let payload = Self::encode_stream_commit_notify_payload(
+                    commit.first_resource_offset,
+                    commit.last_resource_offset,
+                    commit.first_area_offset,
+                    commit.last_area_offset,
+                    commit.first_realm_offset,
+                    commit.last_realm_offset,
+                    commit.batch_size,
+                );
+                (
+                    StreamClientResponseBody::Ok {
+                        session_id: None,
+                        data: vec![],
+                    },
+                    Some((owner.key.resource_route(), payload)),
+                    true,
+                )
             }
             Err(error) => (Self::stream_error_response(error), None, false),
         }
@@ -501,25 +512,23 @@ impl StreamDomainCore {
                 false,
             );
         };
-        match self.get_or_create_actor(&owner.key) {
-            Ok(actor) => match actor
-                .lock()
-                .rollback_session_for_owner(meta.session_id, session_id)
-            {
-                Ok(()) => {
-                    self.session_owners.lock().remove(&session_id);
-                    self.counter_inc("fitz_stream_append_sessions_ended_total");
-                    (
-                        StreamClientResponseBody::Ok {
-                            session_id: None,
-                            data: vec![],
-                        },
-                        None,
-                        true,
-                    )
-                }
-                Err(error) => (Self::stream_error_response(error), None, false),
-            },
+        let rollback_result = {
+            let mut actor = owner.actor.lock();
+            actor.rollback_session_for_owner(meta.session_id, session_id)
+        };
+        match rollback_result {
+            Ok(()) => {
+                self.session_owners.lock().remove(&session_id);
+                self.counter_inc("fitz_stream_append_sessions_ended_total");
+                (
+                    StreamClientResponseBody::Ok {
+                        session_id: None,
+                        data: vec![],
+                    },
+                    None,
+                    true,
+                )
+            }
             Err(error) => (Self::stream_error_response(error), None, false),
         }
     }

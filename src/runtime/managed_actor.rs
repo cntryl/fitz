@@ -5,7 +5,7 @@ use crate::observability as obs;
 use crate::runtime::actor::{Actor, ActorError, ActorMetrics, ActorRef, Context};
 use crate::runtime::envelope::Envelope;
 use crate::runtime::mailbox::Mailbox;
-use crate::runtime::router::{DeliveryError, MailboxSink, RouteError, Router};
+use crate::runtime::router::{DeliveryError, MailboxSink, Router};
 use crate::runtime::routing::RouteAddress;
 use parking_lot::Mutex;
 use std::any::Any;
@@ -142,6 +142,7 @@ fn run_actor<A>(
 pub struct ManagedActor<M: Send + 'static> {
     address: RouteAddress,
     router: Arc<Router>,
+    mailbox: Arc<Mailbox>,
     actor_ref: ActorRef<M>,
     running: Arc<AtomicBool>,
     join_handle: Mutex<Option<thread::JoinHandle<()>>>,
@@ -186,6 +187,7 @@ impl<M: Send + 'static> ManagedActor<M> {
         Self {
             address,
             router,
+            mailbox,
             actor_ref,
             running,
             join_handle: Mutex::new(Some(join_handle)),
@@ -195,13 +197,6 @@ impl<M: Send + 'static> ManagedActor<M> {
     #[must_use]
     pub fn actor_ref(&self) -> ActorRef<M> {
         self.actor_ref.clone()
-    }
-
-    fn map_route_error(error: RouteError) -> DeliveryError {
-        match error {
-            RouteError::RouteNotFound(_) => DeliveryError::ActorStopped,
-            RouteError::DeliveryFailed(_, error) => error,
-        }
     }
 
     /// Enqueue a message to the actor's normal mailbox lane.
@@ -214,9 +209,12 @@ impl<M: Send + 'static> ManagedActor<M> {
     where
         M: Send + Sync + 'static,
     {
-        self.router
-            .route(Envelope::new(self.address.clone(), msg))
-            .map_err(Self::map_route_error)
+        if !self.is_running() {
+            return Err(DeliveryError::ActorStopped);
+        }
+
+        self.mailbox
+            .deliver(Envelope::new(self.address.clone(), msg))
     }
 
     /// Enqueue a message to the actor's high-priority mailbox lane.
@@ -229,9 +227,12 @@ impl<M: Send + 'static> ManagedActor<M> {
     where
         M: Send + Sync + 'static,
     {
-        self.router
-            .route_high_priority(Envelope::new(self.address.clone(), msg))
-            .map_err(Self::map_route_error)
+        if !self.is_running() {
+            return Err(DeliveryError::ActorStopped);
+        }
+
+        self.mailbox
+            .deliver_high_priority(Envelope::new(self.address.clone(), msg))
     }
 
     #[must_use]
@@ -384,6 +385,23 @@ mod tests {
 
         // Assert
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn should_reject_managed_actor_delivery_api_when_stopped() {
+        // Arrange
+        let router = Arc::new(Router::new());
+        let (stopped_tx, _stopped_rx) = crossbeam_channel::bounded(1);
+        let managed = ManagedActor::spawn(router, test_address(), CounterActor::new(stopped_tx), 8);
+
+        // Act
+        managed.stop();
+        let normal_result = managed.try_send(TestManagedMessage::Increment);
+        let high_result = managed.try_send_high_priority(TestManagedMessage::Increment);
+
+        // Assert
+        assert!(matches!(normal_result, Err(DeliveryError::ActorStopped)));
+        assert!(matches!(high_result, Err(DeliveryError::ActorStopped)));
     }
 
     #[test]

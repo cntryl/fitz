@@ -7,16 +7,18 @@ by the development architecture docs.
 
 ## Source Context
 
-Current RPC refresh source: `target/bench_summary.md`, generated
+Current Queue, Stream, and Notice refresh source: `target/bench_summary.md`,
+generated `2026-07-03T18:58:12Z` from `target/bench_results.json` after
+authoritative Tier 4 reruns. The Tier 4 Queue, Stream, and Notice rows cited
+below use 5 samples, are marked stable, and have `authoritative` status in that
+summary.
+
+RPC refresh source: `target/bench_summary.md`, generated
 `2026-07-03T14:03:05Z` from `target/bench_results.json`. The Tier 3 RPC and
 Tier 4 RPC rows cited below use 5 samples, are marked stable, and have
 `authoritative` status in that summary.
 
-Shared WebSocket smoke evidence for this refresh: Tier 4 KV and Tier 4 Lease
-were rerun with `--runs 1 --warmup 1`; those rows are useful regression smoke
-only and are marked `insufficient_data`, not authoritative.
-
-Non-RPC domain sections below still use the previous full source:
+Schedule, KV, and Lease sections below still use the previous full source:
 `target/bench_summary.md`, generated `2026-07-02T20:54:57Z` from
 `target/bench_results.json`. The Tier 4 stress rows cited in those sections use
 5 samples, are marked stable, and have `authoritative` status in that summary.
@@ -49,43 +51,47 @@ authoritative Tier 4 summary.
 
 ## Queue
 
-Queue is the clearest domain hot path bottleneck.
+Queue remains the first domain to validate because multiclient and client
+scaling rows are still low even though current direct rows are far better than
+older snapshots.
 
 Evidence:
 
-- Direct enqueue: 50,827 ops/s.
-- Encoded enqueue: 52,240 ops/s.
-- TCP enqueue: 6,725 ops/s.
-- WebSocket enqueue: 7,402 ops/s.
-- Multiclient concurrent enqueue: 6,645 ops/s.
-- 64-client enqueue scaling: 3,079 ops/s.
+- Direct enqueue: 46,104 ops/s.
+- Encoded enqueue: 46,300 ops/s.
+- TCP enqueue: 13,579 ops/s.
+- WebSocket enqueue: 16,031 ops/s.
+- Multiclient concurrent enqueue: 13,719 ops/s.
+- 64-client enqueue scaling: 6,376 ops/s.
 
-Interpretation: direct enqueue is already low relative to KV, Lease, Notice
-publish, Stream append, and RPC direct request/response. Transport then drops
-end-to-end throughput into the 6.7K-7.4K ops/s range, and high client counts
-drop lower. Queue optimization should start with the enqueue/write/reservation
-path before spending time on generic transport tuning.
+Interpretation: direct and encoded enqueue are no longer as weak as the older
+numbers suggested, but multiclient enqueue and especially high-client scaling
+remain the practical bottlenecks. Queue work should first validate the live-count
+and watch/gauge path, then profile the sink hot path only if the multiclient row
+remains the worst Queue row on the next authoritative run.
 
 ## Stream
 
-Stream has current-path bottlenecks around concurrent appends and realm wildcard
-reads.
+Stream no longer shows the earlier realm wildcard collapse in current
+authoritative evidence. The remaining current bottlenecks are direct append
+versus its old baseline and end-to-end append transport.
 
 Evidence:
 
-- Direct append: 144,881 ops/s.
-- Multiclient append: 5,216 ops/s.
-- Direct exact resource read: 975,018 ops/s.
-- Direct area wildcard read: 92,719 ops/s.
-- Direct realm wildcard read: 5,198 ops/s.
-- TCP append: 22,245 ops/s.
-- WebSocket append: 24,537 ops/s.
+- Direct append: 177,899 ops/s.
+- Multiclient append: 48,728 ops/s.
+- Direct exact resource read: 1,513,487 ops/s.
+- Direct area wildcard read: 145,803 ops/s.
+- Direct realm wildcard read: 121,950 ops/s.
+- TCP append: 24,826 ops/s.
+- WebSocket append: 26,567 ops/s.
 
-Interpretation: exact resource reads are not the limiting path in the current
-results. The concerning results are direct realm wildcard reads and concurrent
-appends, both around 5.2K ops/s. Those point at core Stream storage/indexing and
-concurrency behavior before transport. TCP/WS append overhead is also visible,
-but it is secondary to the low direct/concurrent Stream paths.
+Interpretation: exact resource reads are not the limiting path, and wildcard
+reads are materially healthier than the stale evidence. Direct append improved
+from the cleanup pass but is still a critical regression versus the checked-in
+baseline, while TCP/WS append remain around 25K-27K ops/s. Continue Stream work
+only from profiler-backed append-path evidence; do not use Queue results as
+Stream proof.
 
 ## Schedule
 
@@ -151,25 +157,27 @@ protocol/target decision.
 
 ## Notice
 
-Notice publish is not the primary core bottleneck; subscription churn and
-fanout paths are.
+Notice direct publish improved in the current cleanup pass, but Notice still has
+critical rows versus the checked-in baseline: WebSocket publish, direct publish,
+and the single-subscriber fanout scaling case.
 
 Evidence:
 
-- Direct publish: 261,817 ops/s.
-- Multiclient fanout publish: 100,865 ops/s.
-- Fanout publish subscriber scaling, 1 subscriber: 8,079 ops/s.
-- Fanout publish subscriber scaling, 16 subscribers: 48,723 ops/s.
-- Fanout publish subscriber scaling, 64 subscribers: 91,321 ops/s.
-- TCP publish: 21,409 ops/s.
-- WebSocket publish: 23,415 ops/s.
-- TCP subscribe/unsubscribe cycle: 12,421 ops/s.
-- WebSocket subscribe/unsubscribe cycle: 14,590 ops/s.
+- Direct publish: 318,310 ops/s.
+- Multiclient fanout publish: 109,436 ops/s.
+- Fanout publish subscriber scaling, 1 subscriber: 11,560 ops/s.
+- Fanout publish subscriber scaling, 16 subscribers: 69,869 ops/s.
+- Fanout publish subscriber scaling, 64 subscribers: 95,065 ops/s.
+- TCP publish: 25,584 ops/s.
+- WebSocket publish: 27,987 ops/s.
+- TCP subscribe/unsubscribe cycle: 14,505 ops/s.
+- WebSocket subscribe/unsubscribe cycle: 16,735 ops/s.
 
-Interpretation: direct publish is healthy compared with Queue, Schedule, and
-RPC. The weaker paths are subscribe/unsubscribe churn and fanout measurement
-shape, plus transport/session overhead for end-to-end publish. Keep Notice
-optimization focused on live subscription management and fanout mechanics.
+Interpretation: the shared managed-actor dispatch cleanup helped direct publish
+and fanout scaling, but it did not explain the WebSocket publish gap. Keep
+Notice work focused on transport/session publish overhead and subscription
+matching/fanout churn; do not bypass the managed actor or change ephemeral
+fanout semantics to chase the old baseline.
 
 ## KV
 
@@ -207,9 +215,11 @@ transport/session overhead.
 
 ## Current Focus
 
-Start with domain-local work where direct or concurrent throughput is already
-low: Queue enqueue, Stream realm wildcard reads and concurrent appends, and
-Schedule create. For RPC, the refreshed direct/encoded rows move the remaining
-target to WebSocket/session edge overhead, especially the one-worker
-multiclient path. Treat Notice, KV, and Lease as edge-overhead targets unless
-new benchmark evidence changes the shape of the results.
+Start with domain-local work where current authoritative evidence is still weak:
+Queue multiclient enqueue and high-client scaling, Stream append recovery, and
+Schedule create once it is rerun authoritatively. For Notice, the remaining
+critical signal is mostly WebSocket/session publish plus fanout churn. For RPC,
+the refreshed direct/encoded rows move the remaining target to WebSocket/session
+edge overhead, especially the one-worker multiclient path. Treat KV and Lease as
+edge-overhead targets unless new benchmark evidence changes the shape of the
+results.
