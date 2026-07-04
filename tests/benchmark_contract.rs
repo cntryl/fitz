@@ -41,3 +41,32 @@ fn should_prebuild_lease_tier3_destinations_before_measurement() {
         "Tier 3 lease request helper must use prebuilt RouteAddress values"
     );
 }
+
+#[test]
+fn should_batch_notice_tier3_fanout_delivery_confirmation() {
+    // Arrange
+    let source = read_repo_file("benches/tier3_system_notice.rs");
+    let fanout_helper = section_between(
+        &source,
+        "fn measure_notice_fanout",
+        "\nfn single_star_scaling_case",
+    );
+
+    // Act
+    let defines_batch_size = source.contains("const NOTICE_FANOUT_CONFIRM_BATCH_SIZE");
+    let routes_batched_publishes =
+        fanout_helper.contains("for _ in 0..NOTICE_FANOUT_CONFIRM_BATCH_SIZE");
+    let waits_once_per_batch =
+        fanout_helper.contains("expected_per_subscriber += NOTICE_FANOUT_CONFIRM_BATCH_SIZE");
+    let counts_batched_elements =
+        fanout_helper.contains("ctx.set_elements(iterations as u64 * batch_size)");
+
+    // Assert
+    assert!(
+        defines_batch_size
+            && routes_batched_publishes
+            && waits_once_per_batch
+            && counts_batched_elements,
+        "Tier 3 notice fanout must confirm real delivery in bounded batches instead of serializing every publish behind one wait loop"
+    );
+}

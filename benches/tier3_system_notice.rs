@@ -27,6 +27,7 @@ use std::time::Duration;
 
 const PUBLISHER_SESSION_ID: u64 = 10_000;
 const LIFECYCLE_SESSION_ID: u64 = 20_000;
+const NOTICE_FANOUT_CONFIRM_BATCH_SIZE: usize = 64;
 
 #[derive(Clone, Copy)]
 struct NoticeFanoutCase {
@@ -150,7 +151,8 @@ impl NoticeRequestHarness {
 fn measure_notice_fanout(ctx: &mut StressContext, case: NoticeFanoutCase) {
     ctx.tag("scenario", case.scenario);
     ctx.tag("measurement_scope", "routed_fanout");
-    ctx.tag("batch_size", "single_publish");
+    let batch_size_tag = format!("{NOTICE_FANOUT_CONFIRM_BATCH_SIZE}_publishes");
+    ctx.tag("batch_size", batch_size_tag.as_str());
     let subscriber_count = case.subscriber_count.to_string();
     ctx.tag("subscriber_count", subscriber_count.as_str());
     ctx.tag("match_kind", case.match_kind);
@@ -164,18 +166,20 @@ fn measure_notice_fanout(ctx: &mut StressContext, case: NoticeFanoutCase) {
     let iterations = ctx.measure_for(
         stress_config::BenchConfig::default().measure_duration,
         || {
-            route_frame(
-                router.as_ref(),
-                &publisher_source,
-                case.publish_route,
-                PUBLISHER_SESSION_ID,
-                ChannelId::Pub,
-                msg_type,
-                payload.clone(),
-                family,
-            )
-            .expect("notice publish");
-            expected_per_subscriber += 1;
+            for _ in 0..NOTICE_FANOUT_CONFIRM_BATCH_SIZE {
+                route_frame(
+                    router.as_ref(),
+                    &publisher_source,
+                    case.publish_route,
+                    PUBLISHER_SESSION_ID,
+                    ChannelId::Pub,
+                    msg_type,
+                    payload.clone(),
+                    family,
+                )
+                .expect("notice publish");
+            }
+            expected_per_subscriber += NOTICE_FANOUT_CONFIRM_BATCH_SIZE;
             let delivered = wait_for_counting_sinks_each_count(
                 &subscriber_sinks,
                 expected_per_subscriber,
@@ -188,7 +192,9 @@ fn measure_notice_fanout(ctx: &mut StressContext, case: NoticeFanoutCase) {
             );
         },
     );
-    ctx.set_elements(iterations as u64);
+    let batch_size =
+        u64::try_from(NOTICE_FANOUT_CONFIRM_BATCH_SIZE).expect("notice fanout batch size fits u64");
+    ctx.set_elements(iterations as u64 * batch_size);
 }
 
 fn single_star_scaling_case(subscriber_count: usize) -> NoticeFanoutCase {
