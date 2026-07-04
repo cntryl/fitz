@@ -5,7 +5,7 @@ This runbook describes standard operating procedures for Fitz in production.
 ## Startup Procedure
 
 1. Verify config and secrets are present. Use [production-auth.md](production-auth.md) for the auth/browser perimeter baseline and [cloud-setup.md](cloud-setup.md) for storage configuration.
-2. Start Fitz and wait for `/targetz` success when using ECS/ALB handoff, then `/startupz` and `/healthz` or `/readyz` success for data-plane readiness. `/targetz` only proves the HTTP target is available and not draining; `/healthz` stays unhealthy until Fitz has initialized storage, acquired the active single-writer lease, validated auth configuration, completed startup, and begun accepting traffic.
+2. Start Fitz and wait for `/targetz` success only when using an orchestrator handoff pattern, then `/startupz` and `/healthz` or `/readyz` success for data-plane readiness. `/targetz` only proves the HTTP target is available and not draining; `/healthz` stays unhealthy until Fitz has initialized storage, acquired the active single-writer lease, validated auth configuration, completed startup, initialized durable domains, and begun accepting traffic.
 3. Confirm metrics ingestion from `/metrics`.
 4. Validate one authenticated client round trip on `/ws`.
 
@@ -41,7 +41,9 @@ AWS references: [ECS rolling deployments](https://docs.aws.amazon.com/AmazonECS/
 
 ### Kubernetes Rolling Handoff
 
-For a single active Fitz Pod behind a Kubernetes Service, use idiomatic probes with `/targetz` as the rollout readiness gate and keep `/readyz` as the strict data-plane readiness check.
+For standard Kubernetes Service routing, use `/readyz` or `/healthz` as the Pod readiness probe. That is the idiomatic data-plane readiness signal: the Pod should not receive client traffic until storage, auth, durable domain initialization, startup completion, and traffic acceptance have all passed.
+
+For a single-active Fitz Pod with rolling replacement and `maxUnavailable=0`, `/readyz` can create a handoff deadlock because the replacement cannot acquire the writer lease while the old Pod remains active, and the Deployment will not remove the old Pod until the replacement is Ready. In that specific pattern, use `/targetz` as the rollout readiness gate and keep `/readyz` as the strict data-plane readiness check for load balancers, smoke checks, and client-facing gates. This accepts a short retry window: the replacement Pod may be Kubernetes Ready before it accepts WebSocket or TCP data-plane sessions.
 
 ```yaml
 apiVersion: apps/v1
@@ -86,7 +88,7 @@ spec:
             failureThreshold: 2
 ```
 
-During rollout, the replacement Pod may become Ready through `/targetz` before it owns the writer lease. That is intentional: WebSocket upgrades and TCP sessions still return `503` or close until `/readyz` is healthy. This avoids the single-writer rollout deadlock at the cost of a short client retry window.
+During rollout, the replacement Pod may become Ready through `/targetz` before it owns the writer lease. That is intentional only for the handoff pattern above: WebSocket upgrades and TCP sessions still return `503` or close until `/readyz` is healthy. This avoids the single-writer rollout deadlock at the cost of a short client retry window. If that retry window is unacceptable, use `/readyz` for readiness and choose a deployment strategy that can tolerate stopping the old Pod before the replacement becomes Ready.
 
 Kubernetes references: [liveness, readiness, and startup probes](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/), [Deployment rolling update settings](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/), and [Pod termination flow](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/).
 

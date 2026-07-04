@@ -2006,18 +2006,28 @@ When a single operation generates multiple responses:
 - Client MUST re-BEGIN transaction/session and retry all operations from scratch
 
 **Subscription-Specific Behavior:**
-- All active subscriptions (Notice, RPC worker) are **dropped** on disconnect
-- Clients MUST re-subscribe explicitly after reconnect
-- Clients MAY implement transparent auto-resubscribe (opt-in, with exponential backoff)
-- Servers MUST treat duplicate SUBSCRIBE as idempotent
+- All active subscriptions are **dropped** on disconnect: Notice fanout, Queue availability, Lease changes, Stream commit notifications, and Schedule fire notifications.
+- RPC worker registrations are also session-scoped and are **dropped** on disconnect.
+- Clients MUST re-subscribe or re-register explicitly after reconnect before reporting those handles as active.
+- Clients MAY implement transparent auto-resubscribe or worker re-registration from client-owned configuration, with exponential backoff.
+- Servers MUST treat duplicate SUBSCRIBE requests as idempotent for the same session and pattern.
+
+**Session-Bound Handle Behavior:**
+- Open KV transactions and Stream append sessions are invalidated; clients must begin fresh handles after reconnect.
+- Queue item handles reserved before disconnect are invalid; clients must reserve again. Durable queue messages may redeliver according to queue policy.
+- Lease handles acquired before disconnect are invalid; clients must reacquire if ownership is still required.
+- Pending RPC calls fail with a connection/interruption error instead of stalling or silently replaying.
+- Stream subscriptions are live wake signals only. Replay resumes through explicit `READ` calls from client-owned offsets.
 
 **Reconnection Flow:**
 1. Detect transport failure (connection lost, read error, timeout)
 2. Wait (exponential backoff: 1s → 2s → 4s → 8s → cap at 30s)
 3. Re-open transport connection
 4. Send new CONNECT frame (authentication may have changed)
-5. Re-establish any subscriptions if needed
-6. Resume normal operations
+5. Re-establish client-owned subscriptions and RPC worker registrations if needed
+6. Invalidate stale transaction/session/queue/lease handles and fail pending calls
+7. Resume Stream reads from client-owned offsets where applicable
+8. Resume normal operations
 
 **Clients SHOULD:**
 - Log all in-flight requests at disconnect for debugging
@@ -4726,9 +4736,11 @@ These items are **not standardized** and may require broker-specific implementat
 - But the wire protocol always remains fully explicit
 
 **Session-scoped behavior:**
-- Transactions (KV, Stream): Breaking connection triggers auto-rollback
-- Subscriptions (Notice, RPC): Breaking connection drops all subscriptions
-- Leases: In-memory only; lost on disconnect or broker restart
+- KV transactions and Stream append sessions: breaking connection aborts live handles
+- Notice, Queue, Lease, Stream, and Schedule subscriptions: breaking connection drops live subscriptions
+- RPC workers and pending RPC calls: breaking connection unregisters workers and interrupts pending calls
+- Queue item handles: breaking connection invalidates live inflight tokens from the client's perspective; reserve again
+- Leases: in-memory only; lost on disconnect or broker restart unless reacquired
 
 #### Serialization Formats (Domain-Specific)
 

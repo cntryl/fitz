@@ -846,6 +846,37 @@ async fn should_keep_healthz_unhealthy_until_readiness_checks_pass() {
 
 #[tokio::test]
 #[serial]
+async fn should_keep_readyz_unhealthy_until_domains_initialize_after_storage_ready() {
+    // Arrange
+    let runtime = test_runtime_not_ready();
+    runtime.mark_storage_ready();
+    runtime.mark_auth_config_ready();
+    runtime.mark_startup_complete();
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/readyz")
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["status"], "not_ready");
+    assert_eq!(payload["checks"]["storage"], "ok");
+    assert_eq!(payload["checks"]["storage_writer_lease"], "ok");
+    assert_eq!(payload["checks"]["auth_configuration"], "ok");
+    assert_eq!(payload["checks"]["startup_complete"], "ok");
+    assert_eq!(payload["checks"]["domains_initialized"], "not_ready");
+}
+
+#[tokio::test]
+#[serial]
 async fn should_keep_healthz_unhealthy_given_shutdown_when_runtime_was_ready() {
     // Arrange
     let runtime = test_runtime();

@@ -81,18 +81,25 @@ For cross-language parity enforcement across fitz-go, fitz-ts, and fitz-py, run 
 - Server closes connection immediately
 - Connection terminates with "unauthenticated: connect required"
 
-### AC-CONN-006: Re-subscribe on reconnect
+### AC-CONN-006: Rebuild client-owned state on reconnect
 
-**MUST** re-establish subscriptions after reconnect; clients **MUST NOT** assume subscriptions persist across disconnects
-**Given:** Client had active Notice, RPC, Stream, or Schedule subscriptions before disconnect  
-**When:** Connection is lost and client reconnects and re-authenticates  
+**MUST** re-establish reconnect-safe state after reconnect; clients **MUST NOT** assume broker session state persists across disconnects
+
+**Given:** Client had active Notice, Queue, Lease, Stream, or Schedule subscriptions, RPC worker registrations, or session-bound handles before disconnect
+
+**When:** Connection is lost and client reconnects and re-authenticates
+
 **Then:**
 
-- Client **MUST** re-send SUBSCRIBE frames for Notice/RPC/Stream/Schedule subscriptions
-- Subscription state is **NOT** preserved by broker across disconnects
+- Client **MUST** re-send SUBSCRIBE frames for Notice, Queue availability, Lease change, Stream commit, and Schedule fire subscriptions that the application still wants active
+- Client **MUST** re-send RPC worker registration frames for workers that the application still wants active
+- Subscription and worker state is **NOT** preserved by broker across disconnects
 - SUBSCRIBE is idempotent - duplicate subscription to same pattern returns same subscription_id
-- Client resumes receiving notifications/requests only after re-subscription confirmed
-- In-flight operations (KV transactions, Stream append sessions, Queue inflight entries) are lost on disconnect
+- Client resumes receiving notifications or RPC worker requests only after re-subscription or re-registration is confirmed
+- KV transactions and Stream append sessions open during disconnect are invalidated and MUST NOT be reused
+- Queue item handles and Lease handles issued before disconnect are invalidated; clients MUST reserve or acquire again instead of extending or completing old handles
+- RPC calls pending during disconnect fail promptly with a connection/interruption error and MUST NOT silently stall
+- Stream replay resumes only from client-owned offsets. Stream live subscriptions are wake signals, not durable replay cursors.
 
 ## KV Domain
 
@@ -999,8 +1006,8 @@ Clients **MUST** interpret error codes using this mapping.
 - Client detects disconnection within 5 seconds
 - Client attempts reconnection with exponential backoff
 - Client re-authenticates with CONNECT frame
-- Client re-establishes subscriptions (Notice/RPC)
-- In-flight transactions (KV, Stream sessions) are lost
+- Client re-establishes reconnect-safe subscriptions and RPC worker registrations
+- Client invalidates session-bound handles and pending operations according to AC-CONN-006
 
 ## Performance
 
@@ -1206,7 +1213,7 @@ Use this checklist to verify client implementation completeness:
 - [ ] AC-CONN-003: Auth rejection handling
 - [ ] AC-CONN-004: Anonymous mode
 - [ ] AC-CONN-005: Pre-auth frame rejection
-- [ ] AC-CONN-006: Resubscribe on reconnect
+- [ ] AC-CONN-006: Rebuild client-owned state on reconnect
 
 ### KV Domain (11 criteria)
 

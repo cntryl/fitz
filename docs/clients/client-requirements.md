@@ -206,6 +206,18 @@ The acceptance criteria in `client-acceptance-criteria.md` are the normative sou
 
 **REQ-CONN-006 (T1)** On reconnect, the client MUST treat all broker-side session state as lost. Subscriptions, worker registrations, leases, and stream resume positions MUST be explicitly re-established against the new session before the client reports them as active again. The client MAY replay cached configuration automatically, but that replay is client-side rebuild, not server-side restoration.
 
+Reconnect rebuild behavior is domain-specific:
+
+| Domain surface | Required client behavior after reconnect |
+|----------------|-------------------------------------------|
+| Notice subscriptions | Re-send SUBSCRIBE for each still-active client-owned subscription. Missed notices are not recovered. |
+| Queue availability subscriptions | Re-send SUBSCRIBE for each still-active watch. Queue item handles reserved before disconnect are stale; reserve again. |
+| RPC workers and pending calls | Re-send worker registration for each still-active worker. Pending calls fail promptly; callers retry explicitly if appropriate. |
+| Lease subscriptions and handles | Re-send change subscriptions. Acquired lease handles are stale; reacquire if ownership is still required. |
+| Stream subscriptions, sessions, and reads | Re-send live commit subscriptions. Open append sessions are stale. Resume replay only from client-owned offsets via READ. |
+| Schedule subscriptions | Re-send schedule fire subscriptions. Durable schedule definitions live on the broker, but live notification subscriptions do not. |
+| KV transactions | Treat open transactions as aborted; begin a fresh transaction if work must continue. |
+
 **REQ-CONN-006A (T1)** A failed Stream `Read` caused by malformed or unsupported filter bytes MUST NOT trigger reconnect logic by itself. The client MUST keep the connection open when the broker returns a typed stream error and continue only with subsequent valid requests.
 
 **REQ-CONN-007 (T1)** In-flight KV transactions and Stream sessions that were open at the time of disconnect MUST be cancelled and their pending `context.Context` values resolved with an error. They MUST NOT silently stall.

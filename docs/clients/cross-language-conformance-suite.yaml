@@ -40,8 +40,11 @@ contract:
       - "client detects disconnection"
       - "client reconnects using configured backoff"
       - "client sends CONNECT first on new transport"
-      - "client rebuilds connection-scoped subscriptions/workers"
-      - "client treats in-flight domain work as interrupted unless domain contract states otherwise"
+      - "client treats reconnect as a new broker session"
+      - "client rebuilds client-owned Notice, Queue, Lease, Stream, and Schedule subscriptions"
+      - "client rebuilds client-owned RPC worker registrations"
+      - "client invalidates KV transactions, Stream append sessions, Queue item handles, Lease handles, and pending RPC calls"
+      - "client resumes Stream replay only from client-owned offsets"
 
 result_schema:
   verdict: ["pass", "partial", "fail", "not_implemented", "unclear"]
@@ -163,7 +166,8 @@ scenarios:
       auth_mode: ["anonymous", "valid_jwt"]
     expected:
       - "client performs configured reconnect backoff"
-      - "client re-creates subscriptions and worker registrations"
+      - "client re-creates reconnect-safe subscriptions and worker registrations"
+      - "client fails or invalidates stale session-bound handles"
       - "new requests succeed post reconnect"
 
   - id: "CS-011"

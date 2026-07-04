@@ -1185,6 +1185,20 @@ public class Transaction : IAsyncDisposable
 - Frame batching (optional optimization)
 ```
 
+#### Reconnect State Rebuild
+
+Reconnect always creates a new Fitz broker session. Client libraries MAY hide the reconnect loop, but they MUST NOT hide the fact that broker session state was lost. Rebuild only from client-owned configuration:
+
+| Client-owned state | Reconnect behavior |
+|--------------------|--------------------|
+| Notice subscriptions | Re-send SUBSCRIBE and bind the new subscription id before reporting the subscription active. Missed notices are not replayed. |
+| Queue availability subscriptions | Re-send SUBSCRIBE. Queue items reserved before disconnect are stale; callers must reserve again. |
+| RPC workers | Re-send worker registration before reporting the worker active. Pending calls fail with a connection/interruption error. |
+| Lease change subscriptions | Re-send SUBSCRIBE. Acquired lease handles are stale; workflows that still need ownership must acquire again. |
+| Stream commit subscriptions | Re-send SUBSCRIBE as a live wake signal. Open append sessions are stale, and replay resumes only from client-owned offsets via READ. |
+| Schedule fire subscriptions | Re-send SUBSCRIBE. Durable schedule definitions remain broker state, but live notification subscriptions do not. |
+| KV transactions | Fail/close open transaction handles and require a fresh BEGIN. |
+
 ### 2. TLV Codec
 
 **Encoding:**
@@ -1528,14 +1542,14 @@ async function publishWithRetry(route: string, payload: Uint8Array, maxRetries =
 }
 ```
 
-### ❌ Pitfall 2: Forgetting to Re-subscribe
+### ❌ Pitfall 2: Treating Reconnect as Session Recovery
 
 **Problem:**
 ```python
 # Subscriptions lost on reconnect
 sub = await client.notice.subscribe("notice://prod/orders/*")
 # ... connection drops ...
-# No more notifications!
+# No more notifications unless the client rebuilds the subscription on the new session.
 ```
 
 **Solution:**
@@ -1549,6 +1563,8 @@ class ResilientSubscription:
             except Exception as e:
                 await asyncio.sleep(self._backoff())
 ```
+
+Apply the same rule to every session-scoped handle: re-register RPC workers, re-subscribe Queue/Lease/Stream/Schedule listeners, fail open KV transactions and Stream append sessions, invalidate QueueItem and Lease handles, and resume Stream history only from offsets owned by the application or client.
 
 ### ❌ Pitfall 3: Exposing tx_id to Users
 
