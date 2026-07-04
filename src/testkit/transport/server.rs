@@ -586,6 +586,21 @@ impl TestServer {
         .await
     }
 
+    /// Wait until the runtime lease admin snapshot reports the requested active lease count.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the wait times out.
+    pub async fn wait_for_lease_count(
+        &self,
+        expected: usize,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.wait_for_condition("lease count", |runtime| {
+            runtime.lease_list_leases(None).len() == expected
+        })
+        .await
+    }
+
     /// Wait until the runtime reports the requested registered route count.
     ///
     /// # Errors

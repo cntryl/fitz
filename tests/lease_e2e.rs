@@ -228,6 +228,10 @@ where
         .wait_for_session_count(0)
         .await
         .expect("disconnect cleanup");
+    server
+        .wait_for_lease_count(0)
+        .await
+        .expect("lease disconnect cleanup");
 
     // Assert
     assert!(
