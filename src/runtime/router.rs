@@ -272,9 +272,13 @@ impl Router {
         }
     }
 
-    fn record_route_match_latency(start: Instant) {
-        if let Ok(metrics) = std::panic::catch_unwind(crate::observability::metrics) {
-            metrics.histogram_observe_us(
+    fn route_match_started_at() -> Option<Instant> {
+        obs::hot_path_metrics_enabled().then(Instant::now)
+    }
+
+    fn record_route_match_latency(started_at: Option<Instant>) {
+        if let Some(start) = started_at {
+            crate::observability::histogram_observe_us(
                 obs::METRIC_ROUTE_MATCH_LATENCY,
                 u128_to_u64_saturating(start.elapsed().as_micros()),
             );
@@ -324,13 +328,13 @@ impl Router {
         dest: RouteAddress,
         sink: &Arc<dyn MailboxSink>,
         envelope: Envelope,
-        start: Instant,
+        started_at: Option<Instant>,
     ) -> Result<(), RouteError> {
         match sink.deliver(envelope) {
             Ok(()) => {
                 debug!(destination = %dest, "Router: envelope delivered successfully");
 
-                Self::record_route_match_latency(start);
+                Self::record_route_match_latency(started_at);
 
                 Ok(())
             }
@@ -351,7 +355,7 @@ impl Router {
         sink: Option<Arc<dyn MailboxSink>>,
     ) -> Result<(), RouteError> {
         let dest = envelope.destination().clone();
-        let start = Instant::now();
+        let started_at = Self::route_match_started_at();
 
         trace!(destination = %dest, domain = domain, "Router: routing envelope");
 
@@ -360,7 +364,7 @@ impl Router {
 
         let sink = sink.ok_or_else(|| Self::route_not_found(&dest, domain, missing_route_kind))?;
 
-        Self::deliver_with_sink(dest, &sink, envelope, start)
+        Self::deliver_with_sink(dest, &sink, envelope, started_at)
     }
 
     fn resolve_sink_for_route(
@@ -482,7 +486,7 @@ impl Router {
     /// - Deadlines in envelope are not enforced (sink's responsibility)
     pub fn route(&self, envelope: Envelope) -> Result<(), RouteError> {
         let dest = envelope.destination().clone();
-        let start = Instant::now();
+        let started_at = Self::route_match_started_at();
 
         trace!(destination = %dest, "Router: routing envelope");
 
@@ -501,7 +505,7 @@ impl Router {
         };
         let _route_guard = route_span.as_ref().map(|span| span.enter());
 
-        Self::deliver_with_sink(dest, &sink, envelope, start)
+        Self::deliver_with_sink(dest, &sink, envelope, started_at)
     }
 
     /// Route an envelope directly via a known domain pattern.

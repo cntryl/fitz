@@ -118,7 +118,11 @@ impl Clone for Mailbox {
 impl MailboxSink for Mailbox {
     #[inline]
     fn deliver(&self, mut envelope: Envelope) -> Result<(), DeliveryError> {
-        envelope.mark_queued(Instant::now());
+        let metrics_enabled = obs::hot_path_metrics_enabled();
+        if metrics_enabled {
+            envelope.mark_queued(Instant::now());
+        }
+
         self.sender.try_send(envelope).map_err(|e| match e {
             crossbeam_channel::TrySendError::Full(_) => DeliveryError::MailboxFull {
                 capacity: self.capacity,
@@ -127,17 +131,23 @@ impl MailboxSink for Mailbox {
             crossbeam_channel::TrySendError::Disconnected(_) => DeliveryError::ActorStopped,
         })?;
 
-        crate::observability::gauge_set(
-            obs::METRIC_MAILBOX_DEPTH,
-            self.len().saturating_add(self.high_priority_len()) as u64,
-        );
+        if metrics_enabled {
+            crate::observability::gauge_set(
+                obs::METRIC_MAILBOX_DEPTH,
+                self.len().saturating_add(self.high_priority_len()) as u64,
+            );
+        }
 
         Ok(())
     }
 
     #[inline]
     fn deliver_high_priority(&self, mut envelope: Envelope) -> Result<(), DeliveryError> {
-        envelope.mark_queued(Instant::now());
+        let metrics_enabled = obs::hot_path_metrics_enabled();
+        if metrics_enabled {
+            envelope.mark_queued(Instant::now());
+        }
+
         self.high_priority.try_send(envelope).map_err(|e| match e {
             crossbeam_channel::TrySendError::Full(_) => DeliveryError::HighLaneFull {
                 capacity: self.capacity,
@@ -146,10 +156,12 @@ impl MailboxSink for Mailbox {
             crossbeam_channel::TrySendError::Disconnected(_) => DeliveryError::ActorStopped,
         })?;
 
-        crate::observability::gauge_set(
-            obs::METRIC_MAILBOX_DEPTH,
-            self.len().saturating_add(self.high_priority_len()) as u64,
-        );
+        if metrics_enabled {
+            crate::observability::gauge_set(
+                obs::METRIC_MAILBOX_DEPTH,
+                self.len().saturating_add(self.high_priority_len()) as u64,
+            );
+        }
 
         Ok(())
     }
@@ -210,6 +222,23 @@ mod tests {
     }
 
     #[test]
+    fn should_leave_queued_at_empty_when_hot_path_metrics_are_disabled() {
+        // Arrange
+        if crate::observability::hot_path_metrics_enabled() {
+            return;
+        }
+        let mailbox = Mailbox::new(10);
+        let envelope = Envelope::new(test_address(1, "/test/actor"), 42);
+
+        // Act
+        mailbox.deliver(envelope).unwrap();
+        let delivered = mailbox.receiver().try_recv().unwrap();
+
+        // Assert
+        assert_eq!(delivered.queued_at(), None);
+    }
+
+    #[test]
     fn should_respect_mailbox_capacity() {
         // Arrange
         let mailbox = Mailbox::new(2);
@@ -244,18 +273,21 @@ mod tests {
     }
 
     #[test]
-    fn should_stamp_envelope_when_delivered() {
+    fn should_leave_high_priority_queued_at_empty_when_hot_path_metrics_are_disabled() {
         // Arrange
+        if crate::observability::hot_path_metrics_enabled() {
+            return;
+        }
         let mailbox = Mailbox::new(10);
 
         // Act
         mailbox
-            .deliver(Envelope::new(test_address(1, "/test/actor"), 42_u64))
+            .deliver_high_priority(Envelope::new(test_address(1, "/test/actor"), 42_u64))
             .unwrap();
-        let received = mailbox.receiver().try_recv().unwrap();
+        let received = mailbox.high_priority_receiver().try_recv().unwrap();
 
         // Assert
-        assert!(received.queued_at().is_some());
+        assert_eq!(received.queued_at(), None);
     }
 
     #[test]

@@ -21,6 +21,10 @@ fn u128_to_u64_saturating(value: u128) -> u64 {
 }
 
 fn record_mailbox_observability(mailbox: &Mailbox, envelope: &Envelope) {
+    if !obs::hot_path_metrics_enabled() {
+        return;
+    }
+
     if let Some(queued_at) = envelope.queued_at() {
         crate::observability::histogram_observe_us(
             obs::METRIC_QUEUE_WAIT_LATENCY,
