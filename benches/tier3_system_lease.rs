@@ -16,6 +16,7 @@ use fitz::benchkit::{
     register_session_queue_sink, route_frame_to_address, FrameQueueSink,
 };
 use fitz::protocol::frame::ChannelId;
+use fitz::protocol::frame_context::FrameContext;
 use fitz::protocol::payload_codec::PayloadEncoder;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
@@ -23,6 +24,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 const CLIENT_SESSION_ID: u64 = 1;
+const LEASE_QUERY_CONFIRM_BATCH_SIZE: usize = 64;
 
 fn build_acquire_payload(route: &str, owner_id: &str, ttl_secs: u64) -> Bytes {
     let mut enc = PayloadEncoder::new();
@@ -69,14 +71,13 @@ fn lease_address(family: RouteFamily, route: &str) -> RouteAddress {
     RouteAddress::new(family, Route::from_ref(route))
 }
 
-fn request(
+fn send_request(
     router: &Arc<Router>,
     source: &RouteAddress,
-    inbox: &Arc<FrameQueueSink>,
     destination: &RouteAddress,
     msg_type: u16,
     payload: Bytes,
-) -> Bytes {
+) {
     route_frame_to_address(
         router.as_ref(),
         source,
@@ -87,7 +88,28 @@ fn request(
         payload,
     )
     .expect("lease route");
-    let responses = inbox.drain_after_count(1, Duration::from_secs(1));
+}
+
+fn drain_responses(inbox: &Arc<FrameQueueSink>, expected_count: usize) -> Vec<FrameContext> {
+    let responses = inbox.drain_after_count(expected_count, Duration::from_secs(1));
+    assert_eq!(
+        responses.len(),
+        expected_count,
+        "lease benchmark should receive one response per routed request"
+    );
+    responses
+}
+
+fn request(
+    router: &Arc<Router>,
+    source: &RouteAddress,
+    inbox: &Arc<FrameQueueSink>,
+    destination: &RouteAddress,
+    msg_type: u16,
+    payload: Bytes,
+) -> Bytes {
+    send_request(router, source, destination, msg_type, payload);
+    let responses = drain_responses(inbox, 1);
     responses
         .last()
         .map(|frame| frame.payload.clone())
@@ -213,7 +235,8 @@ fn should_complete_alternate_renew_operations(ctx: &mut StressContext) {
 fn should_complete_round_robin_query_operations(ctx: &mut StressContext) {
     ctx.tag("scenario", "triple_route_contention");
     ctx.tag("measurement_scope", "routed_system");
-    ctx.tag("batch_size", "single_query");
+    let batch_size_tag = format!("{LEASE_QUERY_CONFIRM_BATCH_SIZE}_queries");
+    ctx.tag("batch_size", batch_size_tag.as_str());
 
     let (router, family, source, inbox) = setup_lease_sink();
     let query_routes = [
@@ -242,20 +265,24 @@ fn should_complete_round_robin_query_operations(ctx: &mut StressContext) {
     let iterations = ctx.measure_for(
         stress_config::BenchConfig::default().measure_duration,
         || {
-            let route_index = phase % query_routes.len();
-            let payload = query_payloads[route_index].clone();
-            let _ = request(
-                &router,
-                &source,
-                &inbox,
-                &query_addresses[route_index],
-                403,
-                payload,
-            );
-            phase += 1;
+            for _ in 0..LEASE_QUERY_CONFIRM_BATCH_SIZE {
+                let route_index = phase % query_routes.len();
+                let payload = query_payloads[route_index].clone();
+                send_request(
+                    &router,
+                    &source,
+                    &query_addresses[route_index],
+                    403,
+                    payload,
+                );
+                phase += 1;
+            }
+            drain_responses(&inbox, LEASE_QUERY_CONFIRM_BATCH_SIZE);
         },
     );
-    ctx.set_elements(iterations as u64);
+    let batch_size =
+        u64::try_from(LEASE_QUERY_CONFIRM_BATCH_SIZE).expect("lease query batch size fits u64");
+    ctx.set_elements(iterations as u64 * batch_size);
 }
 
 #[stress_test]

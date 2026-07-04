@@ -26,7 +26,7 @@ fn section_between<'a>(contents: &'a str, start: &str, end: &str) -> &'a str {
 fn should_prebuild_lease_tier3_destinations_before_measurement() {
     // Arrange
     let source = read_repo_file("benches/tier3_system_lease.rs");
-    let request_helper = section_between(&source, "fn request(", "\nfn acquire_token(");
+    let request_helper = section_between(&source, "fn send_request(", "\nfn drain_responses(");
 
     // Act
     let accepts_prebuilt_destination = request_helper.contains("destination: &RouteAddress");
@@ -39,6 +39,35 @@ fn should_prebuild_lease_tier3_destinations_before_measurement() {
             && uses_prebuilt_route_helper
             && !builds_destination_inside_request,
         "Tier 3 lease request helper must use prebuilt RouteAddress values"
+    );
+}
+
+#[test]
+fn should_batch_lease_tier3_query_response_confirmation() {
+    // Arrange
+    let source = read_repo_file("benches/tier3_system_lease.rs");
+    let query_benchmark = section_between(
+        &source,
+        "fn should_complete_round_robin_query_operations",
+        "\n#[stress_test]\nfn should_complete_cycling_query_renew_operations",
+    );
+
+    // Act
+    let defines_batch_size = source.contains("const LEASE_QUERY_CONFIRM_BATCH_SIZE");
+    let sends_batched_queries =
+        query_benchmark.contains("for _ in 0..LEASE_QUERY_CONFIRM_BATCH_SIZE");
+    let drains_once_per_batch =
+        query_benchmark.contains("drain_responses(&inbox, LEASE_QUERY_CONFIRM_BATCH_SIZE)");
+    let counts_batched_elements =
+        query_benchmark.contains("ctx.set_elements(iterations as u64 * batch_size)");
+
+    // Assert
+    assert!(
+        defines_batch_size
+            && sends_batched_queries
+            && drains_once_per_batch
+            && counts_batched_elements,
+        "Tier 3 lease query must confirm real routed responses in bounded batches instead of serializing every query behind one wait loop"
     );
 }
 
