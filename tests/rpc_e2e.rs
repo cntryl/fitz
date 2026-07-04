@@ -4,6 +4,7 @@
 mod fixtures;
 use fitz::testkit::TestServer;
 use fixtures::transport::*;
+use serial_test::serial;
 use std::time::Duration;
 
 // Generic test helper for request-response
@@ -29,12 +30,14 @@ where
 }
 
 #[tokio::test]
+#[serial]
 async fn should_send_rpc_request_tcp() {
     let server = TestServer::start().await.expect("start");
     should_send_rpc_request::<TcpRpcConnector>(&server).await;
 }
 
 #[tokio::test]
+#[serial]
 async fn should_send_rpc_request_ws() {
     let server = TestServer::start().await.expect("start");
     should_send_rpc_request::<WsRpcConnector>(&server).await;
@@ -60,12 +63,14 @@ where
 }
 
 #[tokio::test]
+#[serial]
 async fn should_reject_unknown_method_tcp() {
     let server = TestServer::start().await.expect("start");
     should_reject_unknown_method::<TcpRpcConnector>(&server).await;
 }
 
 #[tokio::test]
+#[serial]
 async fn should_reject_unknown_method_ws() {
     let server = TestServer::start().await.expect("start");
     should_reject_unknown_method::<WsRpcConnector>(&server).await;
@@ -89,12 +94,14 @@ where
 }
 
 #[tokio::test]
+#[serial]
 async fn should_reject_unknown_service_tcp() {
     let server = TestServer::start().await.expect("start");
     should_reject_unknown_service::<TcpRpcConnector>(&server).await;
 }
 
 #[tokio::test]
+#[serial]
 async fn should_reject_unknown_service_ws() {
     let server = TestServer::start().await.expect("start");
     should_reject_unknown_service::<WsRpcConnector>(&server).await;
@@ -121,12 +128,14 @@ where
 }
 
 #[tokio::test]
+#[serial]
 async fn should_echo_payload_in_response_tcp() {
     let server = TestServer::start().await.expect("start");
     should_echo_payload_in_response::<TcpRpcConnector>(&server).await;
 }
 
 #[tokio::test]
+#[serial]
 async fn should_echo_payload_in_response_ws() {
     let server = TestServer::start().await.expect("start");
     should_echo_payload_in_response::<WsRpcConnector>(&server).await;
@@ -172,12 +181,14 @@ where
 }
 
 #[tokio::test]
+#[serial]
 async fn should_handle_concurrent_rpc_requests_tcp() {
     let server = TestServer::start().await.expect("start");
     should_handle_concurrent_rpc_requests::<TcpRpcConnector>(&server).await;
 }
 
 #[tokio::test]
+#[serial]
 async fn should_handle_concurrent_rpc_requests_ws() {
     let server = TestServer::start().await.expect("start");
     should_handle_concurrent_rpc_requests::<WsRpcConnector>(&server).await;
@@ -203,12 +214,14 @@ where
 }
 
 #[tokio::test]
+#[serial]
 async fn should_handle_large_rpc_payload_tcp() {
     let server = TestServer::start().await.expect("start");
     should_handle_large_rpc_payload::<TcpRpcConnector>(&server).await;
 }
 
 #[tokio::test]
+#[serial]
 async fn should_handle_large_rpc_payload_ws() {
     let server = TestServer::start().await.expect("start");
     should_handle_large_rpc_payload::<WsRpcConnector>(&server).await;
@@ -258,12 +271,14 @@ where
 }
 
 #[tokio::test]
+#[serial]
 async fn should_handle_sequential_rpc_requests_on_same_connection_tcp() {
     let server = TestServer::start().await.expect("start");
     should_handle_sequential_rpc_requests_on_same_connection::<TcpRpcConnector>(&server).await;
 }
 
 #[tokio::test]
+#[serial]
 async fn should_handle_sequential_rpc_requests_on_same_connection_ws() {
     let server = TestServer::start().await.expect("start");
     should_handle_sequential_rpc_requests_on_same_connection::<WsRpcConnector>(&server).await;
@@ -304,12 +319,14 @@ where
 }
 
 #[tokio::test]
+#[serial]
 async fn should_call_multiple_methods_on_service_tcp() {
     let server = TestServer::start().await.expect("start");
     should_call_multiple_methods_on_service::<TcpRpcConnector>(&server).await;
 }
 
 #[tokio::test]
+#[serial]
 async fn should_call_multiple_methods_on_service_ws() {
     let server = TestServer::start().await.expect("start");
     should_call_multiple_methods_on_service::<WsRpcConnector>(&server).await;
@@ -1376,42 +1393,49 @@ async fn exercise_retained_worker_route_after_unsubscribe_ws(server: &TestServer
 }
 
 #[tokio::test]
+#[serial]
 async fn should_return_worker_disconnect_error_after_accept_tcp() {
     let server = TestServer::start().await.expect("start");
     exercise_worker_disconnect_error_after_accept_tcp(&server).await;
 }
 
 #[tokio::test]
+#[serial]
 async fn should_return_worker_disconnect_error_after_accept_ws() {
     let server = TestServer::start().await.expect("start");
     exercise_worker_disconnect_error_after_accept_ws(&server).await;
 }
 
 #[tokio::test]
+#[serial]
 async fn should_return_worker_disconnect_error_after_unsubscribe_tcp() {
     let server = TestServer::start().await.expect("start");
     exercise_worker_unregister_error_after_accept_tcp(&server).await;
 }
 
 #[tokio::test]
+#[serial]
 async fn should_return_worker_disconnect_error_after_unsubscribe_ws() {
     let server = TestServer::start().await.expect("start");
     exercise_worker_unregister_error_after_accept_ws(&server).await;
 }
 
 #[tokio::test]
+#[serial]
 async fn should_retain_other_worker_route_after_unsubscribe_tcp() {
     let server = TestServer::start().await.expect("start");
     exercise_retained_worker_route_after_unsubscribe_tcp(&server).await;
 }
 
 #[tokio::test]
+#[serial]
 async fn should_retain_other_worker_route_after_unsubscribe_ws() {
     let server = TestServer::start().await.expect("start");
     exercise_retained_worker_route_after_unsubscribe_ws(&server).await;
 }
 
 #[tokio::test]
+#[serial]
 async fn should_return_rpc_timeout_error_after_accept_tcp() {
     let server = TestServer::start_with_rpc_timeout(Duration::from_millis(150))
         .await
@@ -1420,6 +1444,7 @@ async fn should_return_rpc_timeout_error_after_accept_tcp() {
 }
 
 #[tokio::test]
+#[serial]
 async fn should_return_rpc_timeout_error_after_accept_ws() {
     let server = TestServer::start_with_rpc_timeout(Duration::from_millis(150))
         .await
@@ -1428,6 +1453,7 @@ async fn should_return_rpc_timeout_error_after_accept_ws() {
 }
 
 #[tokio::test]
+#[serial]
 async fn should_reject_wrong_correlation_response_after_accept_tcp() {
     let server = TestServer::start_with_rpc_timeout(Duration::from_millis(150))
         .await
@@ -1436,6 +1462,7 @@ async fn should_reject_wrong_correlation_response_after_accept_tcp() {
 }
 
 #[tokio::test]
+#[serial]
 async fn should_reject_wrong_correlation_response_after_accept_ws() {
     let server = TestServer::start_with_rpc_timeout(Duration::from_millis(150))
         .await
@@ -1444,33 +1471,39 @@ async fn should_reject_wrong_correlation_response_after_accept_ws() {
 }
 
 #[tokio::test]
+#[serial]
 async fn should_reject_invalid_sequence_response_after_accept_tcp() {
     let server = TestServer::start().await.expect("start");
     exercise_invalid_sequence_error_after_accept_tcp(&server).await;
 }
 
 #[tokio::test]
+#[serial]
 async fn should_reject_invalid_sequence_response_after_accept_ws() {
     let server = TestServer::start().await.expect("start");
     exercise_invalid_sequence_error_after_accept_ws(&server).await;
 }
 
 #[tokio::test]
+#[serial]
 async fn should_require_worker_reregistration_after_broker_restart_tcp() {
     exercise_worker_reregistration_after_broker_restart_tcp().await;
 }
 
 #[tokio::test]
+#[serial]
 async fn should_require_worker_reregistration_after_broker_restart_ws() {
     exercise_worker_reregistration_after_broker_restart_ws().await;
 }
 
 #[tokio::test]
+#[serial]
 async fn should_drop_pending_requests_on_broker_restart_tcp() {
     exercise_pending_request_loss_after_broker_restart_tcp().await;
 }
 
 #[tokio::test]
+#[serial]
 async fn should_drop_pending_requests_on_broker_restart_ws() {
     exercise_pending_request_loss_after_broker_restart_ws().await;
 }
