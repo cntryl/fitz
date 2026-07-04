@@ -70,3 +70,27 @@ fn should_batch_notice_tier3_fanout_delivery_confirmation() {
         "Tier 3 notice fanout must confirm real delivery in bounded batches instead of serializing every publish behind one wait loop"
     );
 }
+
+#[test]
+fn should_drain_schedule_tier3_cleanup_writes_outside_measurement() {
+    // Arrange
+    let source = read_repo_file("benches/tier3_system_schedule.rs");
+    let due_collection_helper = section_between(
+        &source,
+        "fn measure_prepared_due_collection",
+        "\nfn precompute_data",
+    );
+
+    // Act
+    let confirms_real_ack =
+        due_collection_helper.contains(".bench_ack_pending_fire_claims(&delivered)");
+    let drains_after_ack = due_collection_helper.contains(".bench_drain_storage()");
+    let measures_only_claim_path =
+        due_collection_helper.contains("measured += started_at.elapsed();");
+
+    // Assert
+    assert!(
+        confirms_real_ack && drains_after_ack && measures_only_claim_path,
+        "Tier 3 schedule due collection must confirm real ack delivery and drain out-of-timer cleanup writes before the next measured claim"
+    );
+}

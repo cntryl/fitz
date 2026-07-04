@@ -42,6 +42,14 @@ impl ScheduleActor {
             .unwrap_or(now);
     }
 
+    /// # Errors
+    ///
+    /// Returns an error when the backing schedule family cannot be flushed.
+    #[doc(hidden)]
+    pub fn bench_drain_storage(&self) -> Result<(), String> {
+        self.store.sync_family(self.family.as_u64())
+    }
+
     #[cfg(test)]
     pub(crate) fn fail_next_store_commit_for_tests(&self) {
         self.store.fail_next_commit_for_tests();

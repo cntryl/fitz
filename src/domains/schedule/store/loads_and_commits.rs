@@ -115,6 +115,20 @@ impl ScheduleStore {
 
     /// # Errors
     ///
+    /// Returns an error when the family id is invalid, opening the family
+    /// transaction fails, or the storage engine cannot sync buffered writes.
+    pub(crate) fn sync_family(&self, cf_id: u64) -> Result<(), String> {
+        let cf_id_u32 = Self::u64_to_u32_saturating(cf_id)?;
+        let txn = self
+            .db
+            .begin_tx(cf_id_u32, cntryl_midge::TransactionMode::ReadWrite)
+            .map_err(|e| format!("begin sync tx failed: {e:?}"))?;
+        txn.commit(WriteOptions::sync())
+            .map_err(|e| format!("sync schedule column family failed: {e:?}"))
+    }
+
+    /// # Errors
+    ///
     /// Returns an error when deleting any pending fire-claim row or committing
     /// the transaction fails.
     pub fn delete_pending_fire_claims(

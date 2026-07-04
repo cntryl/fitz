@@ -124,6 +124,9 @@ fn measure_prepared_due_collection(
                 delivered.len(),
                 "schedule due benchmark should ack every claimed occurrence after timing"
             );
+            actor
+                .bench_drain_storage()
+                .expect("schedule due benchmark cleanup writes should drain outside timing");
         }
         iterations += 1;
     }
