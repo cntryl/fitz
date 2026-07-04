@@ -47,20 +47,22 @@ fn receive_next_envelope(
     normal_receiver: &crossbeam_channel::Receiver<Envelope>,
     high_receiver: &crossbeam_channel::Receiver<Envelope>,
 ) -> Option<Envelope> {
-    if let Ok(envelope) = high_receiver.try_recv() {
-        record_mailbox_observability(mailbox, &envelope);
-        return Some(envelope);
-    }
-
-    match normal_receiver.recv_timeout(MANAGED_ACTOR_POLL_TIMEOUT) {
-        Ok(envelope) => {
-            record_mailbox_observability(mailbox, &envelope);
-            Some(envelope)
-        }
-        Err(
-            crossbeam_channel::RecvTimeoutError::Timeout
-            | crossbeam_channel::RecvTimeoutError::Disconnected,
-        ) => None,
+    crossbeam_channel::select_biased! {
+        recv(high_receiver) -> message => match message {
+            Ok(envelope) => {
+                record_mailbox_observability(mailbox, &envelope);
+                Some(envelope)
+            }
+            Err(_) => None,
+        },
+        recv(normal_receiver) -> message => match message {
+            Ok(envelope) => {
+                record_mailbox_observability(mailbox, &envelope);
+                Some(envelope)
+            }
+            Err(_) => None,
+        },
+        default(MANAGED_ACTOR_POLL_TIMEOUT) => None,
     }
 }
 
