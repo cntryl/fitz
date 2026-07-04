@@ -22,11 +22,7 @@ where
     let response = client.send_and_receive(&frame, 2000).await.expect("send");
 
     // Assert
-    let (_msg_type, status, _data) = parse_rpc_response(&response);
-    assert_ne!(
-        status, 0,
-        "Expected error for RPC request without registered workers"
-    );
+    assert_rpc_route_not_registered_error_response(&response);
 }
 
 #[tokio::test]
@@ -58,8 +54,7 @@ where
     let response = client.send_and_receive(&frame, 2000).await.expect("send");
 
     // Assert
-    let (_msg_type, status, _data) = parse_rpc_response(&response);
-    assert_ne!(status, 0, "Expected failure when no workers registered");
+    assert_rpc_route_not_registered_error_response(&response);
 }
 
 #[tokio::test]
@@ -89,8 +84,7 @@ where
     let response = client.send_and_receive(&frame, 2000).await.expect("send");
 
     // Assert
-    let (_msg_type, status, _data) = parse_rpc_response(&response);
-    assert_ne!(status, 0, "Expected failure for unknown RPC service");
+    assert_rpc_route_not_registered_error_response(&response);
 }
 
 #[tokio::test]
@@ -122,9 +116,7 @@ where
     let response = client.send_and_receive(&frame, 2000).await.expect("send");
 
     // Assert
-    let (_msg_type, status, _data) = parse_rpc_response(&response);
-    assert_ne!(status, 0, "Expected error when no workers registered");
-    // Would verify payload echo if parse included it
+    assert_rpc_route_not_registered_error_response(&response);
 }
 
 #[tokio::test]
@@ -171,13 +163,9 @@ where
         .expect("request 3");
 
     // Assert
-    let (_msg_type, status1, _data) = parse_rpc_response(&response1);
-    let (_msg_type, status2, _data) = parse_rpc_response(&response2);
-    let (_msg_type, status3, _data) = parse_rpc_response(&response3);
-
-    assert_ne!(status1, 0, "Request 1 should fail (no workers)");
-    assert_ne!(status2, 0, "Request 2 should fail (no workers)");
-    assert_ne!(status3, 0, "Request 3 should fail (no workers)");
+    assert_rpc_route_not_registered_error_response(&response1);
+    assert_rpc_route_not_registered_error_response(&response2);
+    assert_rpc_route_not_registered_error_response(&response3);
 }
 
 #[tokio::test]
@@ -209,8 +197,7 @@ where
     let response = client.send_and_receive(&frame, 2000).await.expect("send");
 
     // Assert
-    let (_msg_type, status, _data) = parse_rpc_response(&response);
-    assert_ne!(status, 0, "Should return error when no workers registered");
+    assert_rpc_route_not_registered_error_response(&response);
 }
 
 #[tokio::test]
@@ -242,8 +229,7 @@ where
         .await
         .expect("request 1");
 
-    let (_msg_type, status1, _data) = parse_rpc_response(&response1);
-    assert_ne!(status1, 0);
+    assert_rpc_route_not_registered_error_response(&response1);
 
     // Act - Send second request on same connection
     let frame2 = build_rpc_request("rpc://test/services/counter", "increment", b"");
@@ -252,8 +238,7 @@ where
         .await
         .expect("request 2");
 
-    let (_msg_type, status2, _data) = parse_rpc_response(&response2);
-    assert_ne!(status2, 0);
+    assert_rpc_route_not_registered_error_response(&response2);
 
     // Act - Send third request
     let frame3 = build_rpc_request("rpc://test/services/counter", "increment", b"");
@@ -263,11 +248,7 @@ where
         .expect("request 3");
 
     // Assert
-    let (_msg_type, status3, _data) = parse_rpc_response(&response3);
-    assert_ne!(
-        status3, 0,
-        "Sequential requests should all fail (no workers)"
-    );
+    assert_rpc_route_not_registered_error_response(&response3);
 }
 
 #[tokio::test]
@@ -296,15 +277,13 @@ where
     let frame1 = build_rpc_request("rpc://test/services/data", "get", b"key1");
     let response1 = client.send_and_receive(&frame1, 2000).await.expect("get");
 
-    let (_msg_type, status, _data) = parse_rpc_response(&response1);
-    assert_ne!(status, 0);
+    assert_rpc_route_not_registered_error_response(&response1);
 
     // Act - Call second method
     let frame2 = build_rpc_request("rpc://test/services/data", "put", b"key1:value1");
     let response2 = client.send_and_receive(&frame2, 2000).await.expect("put");
 
-    let (_msg_type, status, _data) = parse_rpc_response(&response2);
-    assert_ne!(status, 0);
+    assert_rpc_route_not_registered_error_response(&response2);
 
     // Act - Call third method
     let frame3 = build_rpc_request("rpc://test/services/data", "delete", b"key1");
@@ -314,8 +293,7 @@ where
         .expect("delete");
 
     // Assert
-    let (_msg_type, status, _data) = parse_rpc_response(&response3);
-    assert_ne!(status, 0, "Multiple methods should all fail (no workers)");
+    assert_rpc_route_not_registered_error_response(&response3);
 }
 
 #[tokio::test]
