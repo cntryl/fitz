@@ -82,6 +82,10 @@ fn assert_uncached_list_count(actor: &mut ScheduleActor, limit: u64, expected_co
     );
 }
 
+fn returned_schedule_elements(iterations: usize, returned_per_iteration: u64) -> u64 {
+    (iterations as u64).saturating_mul(returned_per_iteration)
+}
+
 fn precompute_data(count: usize) -> (Vec<String>, Vec<String>, Vec<Bytes>) {
     let routes = (0..count).map(build_route).collect();
 
@@ -183,6 +187,7 @@ fn should_complete_system_list_uncached_9_of_10_schedules(ctx: &mut StressContex
     ctx.tag("scenario", "list_uncached_9_of_10");
     ctx.tag("measurement_scope", "direct_actor");
     ctx.tag("batch_size", "single_list_call");
+    ctx.tag("reported_element", "returned_schedule");
     ctx.tag("page_size", "9");
     ctx.tag("total_schedules", "10");
 
@@ -203,7 +208,7 @@ fn should_complete_system_list_uncached_9_of_10_schedules(ctx: &mut StressContex
             assert_eq!(total_count, 10, "total schedule count should remain stable");
         },
     );
-    ctx.set_elements(iterations as u64);
+    ctx.set_elements(returned_schedule_elements(iterations, 9));
 }
 
 #[stress_test]
@@ -211,6 +216,7 @@ fn should_complete_system_list_uncached_99_of_100_schedules(ctx: &mut StressCont
     ctx.tag("scenario", "list_uncached_99_of_100");
     ctx.tag("measurement_scope", "direct_actor");
     ctx.tag("batch_size", "single_list_call");
+    ctx.tag("reported_element", "returned_schedule");
     ctx.tag("page_size", "99");
     ctx.tag("total_schedules", "100");
 
@@ -234,7 +240,7 @@ fn should_complete_system_list_uncached_99_of_100_schedules(ctx: &mut StressCont
             );
         },
     );
-    ctx.set_elements(iterations as u64);
+    ctx.set_elements(returned_schedule_elements(iterations, 99));
 }
 
 #[stress_test]
@@ -242,6 +248,7 @@ fn should_complete_system_list_uncached_999_of_1000_schedules(ctx: &mut StressCo
     ctx.tag("scenario", "list_uncached_999_of_1000");
     ctx.tag("measurement_scope", "direct_actor");
     ctx.tag("batch_size", "single_list_call");
+    ctx.tag("reported_element", "returned_schedule");
     ctx.tag("page_size", "999");
     ctx.tag("total_schedules", "1000");
 
@@ -265,7 +272,7 @@ fn should_complete_system_list_uncached_999_of_1000_schedules(ctx: &mut StressCo
             );
         },
     );
-    ctx.set_elements(iterations as u64);
+    ctx.set_elements(returned_schedule_elements(iterations, 999));
 }
 
 #[stress_test]
