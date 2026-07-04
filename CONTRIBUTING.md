@@ -16,14 +16,8 @@ Run these before opening a behavior-changing PR:
 cargo fmt --all -- --check
 cargo test --workspace
 cargo test test_guidelines_compliance
-cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic
 cntryl-tools validate-tests
-```
-
-For pedantic cleanup or repository-wide hygiene work, include:
-
-```sh
-cargo clippy --workspace --all-targets -- -D warnings -D clippy::pedantic
 ```
 
 ## Running Locally

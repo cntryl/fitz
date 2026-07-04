@@ -2,26 +2,18 @@ name: Containers
 
 on:
   workflow_dispatch:
-  # push:
-  #   branches: [main]
-  #   tags:
-  #     - "v*"
-  #   paths:
-  #     - ".github/workflows/containers.yml"
-  #     - "Dockerfile"
-  #     - "Cargo.toml"
-  #     - "Cargo.lock"
-  #     - "src/**"
-  #     - "public/**"
-  #     - "ui/**"
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  version:
+    uses: ./.github/workflows/version.yml
+
   build:
     name: Build ${{ matrix.platform }}
+    needs: version
     strategy:
       fail-fast: false
       matrix:
@@ -48,18 +40,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Extract Docker metadata
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
-
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4
         with:
@@ -74,8 +54,6 @@ jobs:
           context: .
           file: ./Dockerfile
           platforms: ${{ matrix.platform }}
-          labels: ${{ steps.meta.outputs.labels }}
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ steps.platform.outputs.platform_pair }}
           cache-to: type=gha,mode=min,scope=${{ steps.platform.outputs.platform_pair }}
@@ -96,7 +74,9 @@ jobs:
 
   merge:
     name: Merge multi-arch manifest
-    needs: build
+    needs:
+      - version
+      - build
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -121,25 +101,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract Docker metadata
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
-
       - name: Create manifest list and push
         working-directory: /tmp/digests
         run: |
-          TAG_ARGS=$(jq -cr '.tags | map("-t " + .) | join(" ")' <<< '${{ steps.meta.outputs.json }}')
-          docker buildx imagetools create $TAG_ARGS \
+          docker buildx imagetools create \
+            -t "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.version.outputs.branch }}" \
+            -t "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.version.outputs.semver }}" \
             $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)
 
       - name: Inspect image
         run: |
-          docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
+          docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.version.outputs.semver }}

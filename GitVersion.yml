@@ -1,0 +1,21 @@
+# Base version for all branches (no tags required)
+mode: ContinuousDeployment
+next-version: 0.1.0
+
+branches:
+  main:
+    regex: ^(?<BranchName>master|main)$
+    increment: Patch
+    is-mainline: true
+  develop:
+    regex: ^(?<BranchName>dev(elop)?(ment)?)$
+    label: "alpha"
+  feature:
+    regex: ^features?[/-](?<BranchName>.+)
+    label: "{BranchName}"
+  pull-request:
+    regex: ^(pull-requests|pull|pr)[/-](?<BranchName>.+)
+    label: "{BranchName}"
+  unknown:
+    regex: (?<BranchName>.+)
+    label: "{BranchName}"

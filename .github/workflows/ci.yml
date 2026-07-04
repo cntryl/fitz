@@ -1,53 +1,48 @@
 name: CI
 
 on:
-  workflow_dispatch:
-  schedule:
-    - cron: "0 0 * * *"
   push:
-    branches: [main]
+    branches:
+      - main
   pull_request:
-    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  ci:
-    name: Release Gate
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Update Rust toolchain
-        run: rustup update stable
+      - name: Update Rust
+        run: rustup update
 
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: "ci"
+      - name: Install Rust components
+        run: rustup component add rustfmt clippy
 
       - name: Install cntryl-tools
-        run: cargo install --git https://github.com/cntryl/tools --locked
+        run: cargo install --git https://github.com/cntryl/tools
 
-      - name: Validate Test Structure
+      - name: Cargo fmt check
+        run: cargo fmt --all -- --check
+
+      - name: Validate test conventions
         run: cntryl-tools validate-tests
 
-      - name: Start peas emulator
-        run: docker compose -f compose.peas.yml up -d
+      - name: Cargo clippy pedantic
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic
 
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Cargo build
+        run: cargo build --locked
 
-      - name: Check
-        run: cargo check --workspace --all-targets
+      - name: Cargo bench compile
+        run: cargo bench --locked --no-run
 
-      - name: Build
-        run: cargo build --workspace --all-targets
+      - name: Cargo test compile
+        run: cargo test --locked --no-run
 
-      - name: Test
-        run: cargo test --workspace --all-features
-
-      - name: Stop peas emulator
-        if: always()
-        run: docker compose -f compose.peas.yml down
+      - name: Cargo test
+        run: cargo test --locked
