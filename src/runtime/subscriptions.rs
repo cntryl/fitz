@@ -39,12 +39,15 @@ use crate::runtime::routing::{Route, RouteFamily};
 use ahash::AHashMap;
 use fxhash::FxBuildHasher;
 use smallvec::SmallVec;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use self::segments_cache::SegmentsCache;
 
 type FastMap<K, V> = HashMap<K, V, FxBuildHasher>;
+type FastSet<K> = HashSet<K, FxBuildHasher>;
+
+const MATCH_DEDUPE_SET_THRESHOLD: usize = 64;
 
 type NodeId = u32;
 type SegmentId = u32;
@@ -247,7 +250,7 @@ impl Node {
         &self,
         route_segments: &[CompiledRouteSegment],
         segment_index: usize,
-        results: &mut SubscriptionMatches,
+        collector: &mut MatchCollector,
     ) {
         for (subscription_id, suffix) in self
             .double_star_subs
@@ -255,14 +258,14 @@ impl Node {
             .zip(self.double_star_suffixes.iter())
         {
             if suffix.is_empty() || matches_suffix_compiled(suffix, route_segments, segment_index) {
-                push_unique_subscription(results, *subscription_id);
+                collector.push(*subscription_id);
             }
         }
     }
 
-    fn collect_final_matches(&self, results: &mut SubscriptionMatches) {
+    fn collect_final_matches(&self, collector: &mut MatchCollector) {
         if !self.terminals.is_empty() {
-            results.extend_from_slice(&self.terminals);
+            collector.extend_from_slice(&self.terminals);
         }
 
         for (subscription_id, suffix) in self
@@ -271,9 +274,70 @@ impl Node {
             .zip(self.double_star_suffixes.iter())
         {
             if suffix.is_empty() {
-                push_unique_subscription(results, *subscription_id);
+                collector.push(*subscription_id);
             }
         }
+    }
+}
+
+struct MatchCollector {
+    matches: SubscriptionMatches,
+    seen: Option<FastSet<SubscriptionId>>,
+}
+
+impl MatchCollector {
+    #[inline]
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            matches: SubscriptionMatches::with_capacity(capacity),
+            seen: None,
+        }
+    }
+
+    #[inline]
+    fn push(&mut self, subscription_id: SubscriptionId) {
+        if self.matches.is_empty() {
+            self.matches.push(subscription_id);
+            return;
+        }
+
+        if self.matches.len() < MATCH_DEDUPE_SET_THRESHOLD {
+            if !self.matches.contains(&subscription_id) {
+                self.matches.push(subscription_id);
+            }
+            return;
+        }
+
+        self.ensure_seen();
+        if let Some(seen) = self.seen.as_mut() {
+            if seen.insert(subscription_id) {
+                self.matches.push(subscription_id);
+            }
+        }
+    }
+
+    #[inline]
+    fn extend_from_slice(&mut self, subscription_ids: &[SubscriptionId]) {
+        for &subscription_id in subscription_ids {
+            self.push(subscription_id);
+        }
+    }
+
+    #[inline]
+    fn ensure_seen(&mut self) {
+        if self.seen.is_some() {
+            return;
+        }
+
+        let capacity = self.matches.capacity().max(MATCH_DEDUPE_SET_THRESHOLD);
+        let mut seen = HashSet::with_capacity_and_hasher(capacity, FxBuildHasher::default());
+        seen.extend(self.matches.iter().copied());
+        self.seen = Some(seen);
+    }
+
+    #[inline]
+    fn into_matches(self) -> SubscriptionMatches {
+        self.matches
     }
 }
 
@@ -428,7 +492,7 @@ impl SubscriptionIndex {
             return SubscriptionMatches::new();
         };
 
-        let mut results = SubscriptionMatches::with_capacity(capacity);
+        let mut collector = MatchCollector::with_capacity(capacity);
 
         // Iterative frontier traversal — no recursion.
         // Two SmallVec buffers swapped per segment. Stack-allocated for up to
@@ -457,7 +521,7 @@ impl SubscriptionIndex {
                     node.collect_double_star_matches(
                         &compiled_route_segments,
                         seg_idx,
-                        &mut results,
+                        &mut collector,
                     );
                 }
             }
@@ -466,10 +530,10 @@ impl SubscriptionIndex {
 
         // All route segments consumed — collect terminals from final frontier.
         for &node_id in &current {
-            self.nodes[node_id as usize].collect_final_matches(&mut results);
+            self.nodes[node_id as usize].collect_final_matches(&mut collector);
         }
 
-        results
+        collector.into_matches()
     }
 
     /// Count subscriptions in a specific `RouteFamily` (for diagnostics/metrics)
@@ -707,13 +771,6 @@ fn match_compiled_pattern_segments(
                     )
             }
         }
-    }
-}
-
-#[inline]
-fn push_unique_subscription(results: &mut SubscriptionMatches, subscription_id: SubscriptionId) {
-    if !results.contains(&subscription_id) {
-        results.push(subscription_id);
     }
 }
 

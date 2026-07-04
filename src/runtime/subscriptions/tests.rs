@@ -223,6 +223,85 @@ fn should_handle_mixed_patterns() {
 }
 
 #[test]
+fn should_return_unique_matches_for_overlapping_exact_star_doublestar_patterns() {
+    // Arrange
+    let mut index = SubscriptionIndex::new();
+    let f = family(1);
+    index.insert(f, &route("notify://realm/orders/create"), sub_id(1));
+    index.insert(f, &route("notify://realm/orders/*"), sub_id(2));
+    index.insert(f, &route("notify://realm/**/create"), sub_id(3));
+    index.insert(f, &route("notify://realm/**"), sub_id(4));
+
+    // Act
+    let mut matches = index.match_all(f, &route("notify://realm/orders/create"));
+    matches.sort_by_key(|id| id.0);
+
+    // Assert
+    assert_eq!(
+        matches.as_slice(),
+        &[sub_id(1), sub_id(2), sub_id(3), sub_id(4)]
+    );
+}
+
+#[test]
+fn should_deduplicate_subscription_id_across_overlapping_patterns() {
+    // Arrange
+    let mut index = SubscriptionIndex::new();
+    let f = family(1);
+    index.insert(f, &route("notify://realm/orders/create"), sub_id(7));
+    index.insert(f, &route("notify://realm/orders/*"), sub_id(7));
+    index.insert(f, &route("notify://realm/**/create"), sub_id(7));
+    index.insert(f, &route("notify://realm/**"), sub_id(7));
+
+    // Act
+    let matches = index.match_all(f, &route("notify://realm/orders/create"));
+
+    // Assert
+    assert_eq!(matches.as_slice(), &[sub_id(7)]);
+}
+
+#[test]
+fn should_match_sparse_10k_fanout_with_one_unique_id() {
+    // Arrange
+    let mut index = SubscriptionIndex::new();
+    let f = family(1);
+    for id in 0..10_000 {
+        index.insert(
+            f,
+            &route(&format!("notify://realm/orders/item{id}/action")),
+            sub_id(id),
+        );
+    }
+
+    // Act
+    let matches = index.match_all(f, &route("notify://realm/orders/item0/action"));
+
+    // Assert
+    assert_eq!(matches.as_slice(), &[sub_id(0)]);
+}
+
+#[test]
+fn should_match_dense_10k_fanout_with_all_unique_ids() {
+    // Arrange
+    let mut index = SubscriptionIndex::new();
+    let f = family(1);
+    for id in 0..10_000 {
+        index.insert(f, &route("notify://realm/**/action"), sub_id(id));
+    }
+
+    // Act
+    let mut matches =
+        index.match_all_with_capacity(f, &route("notify://realm/orders/items/action"), 10_000);
+    matches.sort_by_key(|id| id.0);
+
+    // Assert
+    assert_eq!(matches.len(), 10_000);
+    for (expected, actual) in matches.iter().enumerate() {
+        assert_eq!(actual.0, expected as u64);
+    }
+}
+
+#[test]
 fn should_match_sparse_route_family_without_preallocating_gaps() {
     // Arrange
     let mut index = SubscriptionIndex::new();
