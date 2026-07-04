@@ -146,7 +146,15 @@ impl LeaseDomainRuntime<'_> {
         let response_ctx = crate::domains::lease::LeaseClientResponse::new(meta, response.clone());
 
         if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
-            let _ = self.core.router.route(response_envelope);
+            let response_sink = self
+                .core
+                .router
+                .resolve_sink(response_envelope.destination());
+            if let Some(sink) = response_sink {
+                let _ = sink.deliver(response_envelope);
+            } else {
+                let _ = self.core.router.route(response_envelope);
+            }
         }
 
         if let (Some(metrics), Some(started_at)) = (self.core.metrics.as_ref(), request_started) {
