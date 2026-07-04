@@ -571,6 +571,21 @@ impl TestServer {
         .await
     }
 
+    /// Wait until the runtime reports the requested active KV transaction count.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the wait times out.
+    pub async fn wait_for_kv_transaction_count(
+        &self,
+        expected: usize,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.wait_for_condition("KV transaction count", |runtime| {
+            runtime.kv_list_transactions(None).len() == expected
+        })
+        .await
+    }
+
     /// Wait until the runtime reports the requested registered route count.
     ///
     /// # Errors

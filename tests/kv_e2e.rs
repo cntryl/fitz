@@ -457,6 +457,10 @@ where
         .wait_for_session_count(0)
         .await
         .expect("disconnect cleanup");
+    server
+        .wait_for_kv_transaction_count(0)
+        .await
+        .expect("KV transaction cleanup");
 
     assert!(
         server.runtime.kv_list_transactions(None).is_empty(),
@@ -493,6 +497,10 @@ where
         .wait_for_session_count(0)
         .await
         .expect("disconnect cleanup");
+    server
+        .wait_for_kv_transaction_count(0)
+        .await
+        .expect("KV transaction cleanup");
 
     let mut reconnect = C::connect(server).await.expect("failed to reconnect");
 
