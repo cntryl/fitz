@@ -481,17 +481,27 @@ impl Router {
     /// - No retries or queuing on failure
     /// - Deadlines in envelope are not enforced (sink's responsibility)
     pub fn route(&self, envelope: Envelope) -> Result<(), RouteError> {
-        let route_str = envelope.destination().route().to_string();
-        let domain = extract_domain(&route_str).unwrap_or("unknown");
-        let fallback_domain = extract_domain(&route_str).unwrap_or("");
-        let sink = self.resolve_sink_for_route(envelope.destination(), fallback_domain);
+        let dest = envelope.destination().clone();
+        let start = Instant::now();
 
-        Self::route_with_resolved_sink(
-            envelope,
-            domain,
-            MissingRouteKind::ExactOrDomainPattern,
-            sink,
-        )
+        trace!(destination = %dest, "Router: routing envelope");
+
+        let (sink, route_span) = {
+            let route_str = envelope.destination().route().as_str();
+            let extracted_domain = extract_domain(route_str);
+            let domain = extracted_domain.unwrap_or("unknown");
+            let fallback_domain = extracted_domain.unwrap_or("");
+            let route_span = Self::route_span(&dest, domain);
+            let sink = self
+                .resolve_sink_for_route(envelope.destination(), fallback_domain)
+                .ok_or_else(|| {
+                    Self::route_not_found(&dest, domain, MissingRouteKind::ExactOrDomainPattern)
+                })?;
+            (sink, route_span)
+        };
+        let _route_guard = route_span.as_ref().map(|span| span.enter());
+
+        Self::deliver_with_sink(dest, &sink, envelope, start)
     }
 
     /// Route an envelope directly via a known domain pattern.
