@@ -13,12 +13,12 @@ use bytes::Bytes;
 use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
     create_bench_lease_sink, parse_lease_extend_token_response, parse_lease_token_response,
-    register_session_queue_sink, route_frame, FrameQueueSink,
+    register_session_queue_sink, route_frame_to_address, FrameQueueSink,
 };
 use fitz::protocol::frame::ChannelId;
 use fitz::protocol::payload_codec::PayloadEncoder;
 use fitz::runtime::router::{MailboxSink, Router};
-use fitz::runtime::routing::{RouteAddress, RouteFamily};
+use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -65,16 +65,19 @@ fn setup_lease_sink() -> (Arc<Router>, RouteFamily, RouteAddress, Arc<FrameQueue
     (router, family, source, inbox)
 }
 
+fn lease_address(family: RouteFamily, route: &str) -> RouteAddress {
+    RouteAddress::new(family, Route::from_ref(route))
+}
+
 fn request(
     router: &Arc<Router>,
-    family: RouteFamily,
     source: &RouteAddress,
     inbox: &Arc<FrameQueueSink>,
-    destination: &str,
+    destination: &RouteAddress,
     msg_type: u16,
     payload: Bytes,
 ) -> Bytes {
-    route_frame(
+    route_frame_to_address(
         router.as_ref(),
         source,
         destination,
@@ -82,7 +85,6 @@ fn request(
         ChannelId::Lease,
         msg_type,
         payload,
-        family,
     )
     .expect("lease route");
     let responses = inbox.drain_after_count(1, Duration::from_secs(1));
@@ -94,18 +96,17 @@ fn request(
 
 fn acquire_token(
     router: &Arc<Router>,
-    family: RouteFamily,
     source: &RouteAddress,
     inbox: &Arc<FrameQueueSink>,
     route: &str,
+    destination: &RouteAddress,
     owner_id: &str,
 ) -> u64 {
     let response = request(
         router,
-        family,
         source,
         inbox,
-        route,
+        destination,
         400,
         build_acquire_payload(route, owner_id, 30),
     );
@@ -119,22 +120,25 @@ fn should_complete_acquire_release_sequence(ctx: &mut StressContext) {
     ctx.tag("batch_size", "acquire_release");
 
     let (router, family, source, inbox) = setup_lease_sink();
-    let lease_routes: Vec<String> = (0..100)
-        .map(|i| format!("lease://realm/area/lock{i}/acquire"))
+    let lease_routes: Vec<(String, RouteAddress)> = (0..100)
+        .map(|i| {
+            let route = format!("lease://realm/area/lock{i}/acquire");
+            let address = lease_address(family, &route);
+            (route, address)
+        })
         .collect();
 
     let mut idx = 0usize;
     let iterations = ctx.measure_for(
         stress_config::BenchConfig::default().measure_duration,
         || {
-            let route = &lease_routes[idx];
-            let token = acquire_token(&router, family, &source, &inbox, route, "client-1");
+            let (route, address) = &lease_routes[idx];
+            let token = acquire_token(&router, &source, &inbox, route, address, "client-1");
             let _ = request(
                 &router,
-                family,
                 &source,
                 &inbox,
-                route,
+                address,
                 402,
                 build_release_payload(route, "client-1", token),
             );
@@ -153,8 +157,24 @@ fn should_complete_alternate_renew_operations(ctx: &mut StressContext) {
     let (router, family, source, inbox) = setup_lease_sink();
     let renew_route_a = "lease://realm/area1/lock1/renew";
     let renew_route_b = "lease://realm/area2/lock2/renew";
-    let mut token1 = acquire_token(&router, family, &source, &inbox, renew_route_a, "client-1");
-    let mut token2 = acquire_token(&router, family, &source, &inbox, renew_route_b, "client-2");
+    let renew_address_a = lease_address(family, renew_route_a);
+    let renew_address_b = lease_address(family, renew_route_b);
+    let mut token1 = acquire_token(
+        &router,
+        &source,
+        &inbox,
+        renew_route_a,
+        &renew_address_a,
+        "client-1",
+    );
+    let mut token2 = acquire_token(
+        &router,
+        &source,
+        &inbox,
+        renew_route_b,
+        &renew_address_b,
+        "client-2",
+    );
 
     let mut phase = 0usize;
     let iterations = ctx.measure_for(
@@ -163,10 +183,9 @@ fn should_complete_alternate_renew_operations(ctx: &mut StressContext) {
             if phase.is_multiple_of(2) {
                 let response = request(
                     &router,
-                    family,
                     &source,
                     &inbox,
-                    renew_route_a,
+                    &renew_address_a,
                     401,
                     build_extend_payload(renew_route_a, "client-1", token1, 30),
                 );
@@ -175,10 +194,9 @@ fn should_complete_alternate_renew_operations(ctx: &mut StressContext) {
             } else {
                 let response = request(
                     &router,
-                    family,
                     &source,
                     &inbox,
-                    renew_route_b,
+                    &renew_address_b,
                     401,
                     build_extend_payload(renew_route_b, "client-2", token2, 30),
                 );
@@ -204,8 +222,16 @@ fn should_complete_round_robin_query_operations(ctx: &mut StressContext) {
         "lease://realm/area3/lock3/query",
     ];
     let owners = ["client-1", "client-2", "client-3"];
-    for (route, owner) in query_routes.iter().zip(owners.iter()) {
-        let _ = acquire_token(&router, family, &source, &inbox, route, owner);
+    let query_addresses: Vec<RouteAddress> = query_routes
+        .iter()
+        .map(|route| lease_address(family, route))
+        .collect();
+    for ((route, address), owner) in query_routes
+        .iter()
+        .zip(query_addresses.iter())
+        .zip(owners.iter())
+    {
+        let _ = acquire_token(&router, &source, &inbox, route, address, owner);
     }
 
     let query_payloads: Vec<Bytes> = query_routes
@@ -216,9 +242,16 @@ fn should_complete_round_robin_query_operations(ctx: &mut StressContext) {
     let iterations = ctx.measure_for(
         stress_config::BenchConfig::default().measure_duration,
         || {
-            let route = query_routes[phase % query_routes.len()];
-            let payload = query_payloads[phase % query_payloads.len()].clone();
-            let _ = request(&router, family, &source, &inbox, route, 403, payload);
+            let route_index = phase % query_routes.len();
+            let payload = query_payloads[route_index].clone();
+            let _ = request(
+                &router,
+                &source,
+                &inbox,
+                &query_addresses[route_index],
+                403,
+                payload,
+            );
             phase += 1;
         },
     );
@@ -233,8 +266,9 @@ fn should_complete_cycling_query_renew_operations(ctx: &mut StressContext) {
 
     let (router, family, source, inbox) = setup_lease_sink();
     let route = "lease://realm/area/lock1/mixed";
+    let address = lease_address(family, route);
     let query_payload = build_query_payload(route);
-    let mut token = acquire_token(&router, family, &source, &inbox, route, "client-1");
+    let mut token = acquire_token(&router, &source, &inbox, route, &address, "client-1");
 
     let mut phase = 0usize;
     let iterations = ctx.measure_for(
@@ -244,10 +278,9 @@ fn should_complete_cycling_query_renew_operations(ctx: &mut StressContext) {
                 0 | 2 => {
                     let _ = request(
                         &router,
-                        family,
                         &source,
                         &inbox,
-                        route,
+                        &address,
                         403,
                         query_payload.clone(),
                     );
@@ -255,10 +288,9 @@ fn should_complete_cycling_query_renew_operations(ctx: &mut StressContext) {
                 1 => {
                     let response = request(
                         &router,
-                        family,
                         &source,
                         &inbox,
-                        route,
+                        &address,
                         401,
                         build_extend_payload(route, "client-1", token, 30),
                     );

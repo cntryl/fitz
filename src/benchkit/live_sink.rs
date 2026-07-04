@@ -229,6 +229,35 @@ pub fn route_frame(
     family: RouteFamily,
 ) -> Result<(), RouteError> {
     let destination = RouteAddress::new(family, Route::new(destination));
+    route_frame_to_address(
+        router,
+        source,
+        &destination,
+        session_id,
+        channel_id,
+        msg_type,
+        payload,
+    )
+}
+
+/// Route a decoded frame through the live sink benchmark path to a prebuilt destination.
+///
+/// Use this in stress benches when route/address construction belongs to setup rather than the
+/// measured operation.
+///
+/// # Errors
+///
+/// Returns `RouteError` when the router rejects the envelope.
+pub fn route_frame_to_address(
+    router: &Router,
+    source: &RouteAddress,
+    destination: &RouteAddress,
+    session_id: u64,
+    channel_id: ChannelId,
+    msg_type: u16,
+    payload: Bytes,
+) -> Result<(), RouteError> {
+    let family = *destination.family();
     let msg_type = MessageType::new(msg_type);
     if let Ok(Some(descriptor)) =
         crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::descriptor_for_msg_type(
@@ -243,14 +272,18 @@ pub fn route_frame(
                 msg_type,
                 payload,
                 source: source.clone(),
-                destination,
+                destination: destination.clone(),
             },
         );
         return router.route_to_domain(descriptor.domain_name(), envelope);
     }
 
     let frame = FrameContext::new(session_id, channel_id, msg_type, payload, family);
-    router.route(Envelope::from_route(source.clone(), destination, frame))
+    router.route(Envelope::from_route(
+        source.clone(),
+        destination.clone(),
+        frame,
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
