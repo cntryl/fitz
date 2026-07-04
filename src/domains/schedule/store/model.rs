@@ -5,7 +5,9 @@ pub(super) use std::sync::Arc;
 
 pub(super) use cntryl_midge::WriteOptions;
 
-pub(super) use crate::domains::schedule::protocol::parse_concrete_schedule_route;
+pub(super) use crate::domains::schedule::protocol::{
+    parse_concrete_schedule_route, ConcreteScheduleRoute,
+};
 pub(super) use crate::utils::storage_key::{self, DomainKeyspace};
 
 pub(super) const DEFINITION_VALUE_VERSION_V1: u8 = 1;
@@ -53,6 +55,7 @@ pub(super) struct ScheduleDefinitionData<'a> {
 
 pub struct ScheduleFireClaim<'a> {
     pub route: &'a str,
+    pub route_parts: &'a ConcreteScheduleRoute,
     pub cron: &'a str,
     pub payload: &'a Bytes,
     pub claimed_at_ms: u64,

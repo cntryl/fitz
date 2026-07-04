@@ -42,6 +42,34 @@ impl ScheduleActor {
         )
     }
 
+    fn store_claims_for<'a>(
+        &'a self,
+        to_reschedule: &'a [PendingScheduleFire],
+        claimed_at_ms: u64,
+    ) -> Vec<ScheduleFireClaim<'a>> {
+        to_reschedule
+            .iter()
+            .map(|item| {
+                let schedule = self
+                    .schedules
+                    .get(&item.route)
+                    .expect("due schedule should still exist before persistence");
+
+                ScheduleFireClaim {
+                    route: &item.route,
+                    route_parts: &schedule.route_parts,
+                    cron: &schedule.cron,
+                    payload: &schedule.payload,
+                    claimed_at_ms,
+                    next_fire_ms: item.next_fire_ms,
+                    previous_fire_ms: item.previous_fire_ms,
+                    last_fire_ms: schedule.last_fire_ms,
+                    executions_total: schedule.executions_total,
+                }
+            })
+            .collect()
+    }
+
     pub(super) fn claim_due_fires_at(&mut self, now: Instant) -> Vec<PersistedPendingFireClaim> {
         if now.duration_since(self.last_scan_time) < self.scan_dedup_window {
             return Vec::new();
@@ -85,26 +113,7 @@ impl ScheduleActor {
             return Vec::new();
         }
 
-        let store_items: Vec<_> = to_reschedule
-            .iter()
-            .map(|item| {
-                let schedule = self
-                    .schedules
-                    .get(&item.route)
-                    .expect("due schedule should still exist before persistence");
-
-                ScheduleFireClaim {
-                    route: &item.route,
-                    cron: &schedule.cron,
-                    payload: &schedule.payload,
-                    claimed_at_ms: now_ms,
-                    next_fire_ms: item.next_fire_ms,
-                    previous_fire_ms: item.previous_fire_ms,
-                    last_fire_ms: schedule.last_fire_ms,
-                    executions_total: schedule.executions_total,
-                }
-            })
-            .collect();
+        let store_items = self.store_claims_for(&to_reschedule, now_ms);
 
         if let Err(error) =
             self.store

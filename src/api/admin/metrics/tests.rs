@@ -5,6 +5,7 @@ use crate::domains::lease::sink::LeaseDomainSink;
 use crate::domains::notice::sink::NoticeDomainSink;
 use crate::domains::queue::sink::QueueDomainSink;
 use crate::domains::rpc::sink::RpcDomainSink;
+use crate::domains::schedule::protocol::parse_concrete_schedule_route;
 use crate::domains::schedule::sink::ScheduleDomainSink;
 use crate::domains::schedule::store::{ScheduleFireClaim, ScheduleInsert, ScheduleStore};
 use crate::domains::stream::sink::StreamDomainSink;
@@ -39,6 +40,7 @@ fn runtime_with_preloaded_schedule_metrics() -> Arc<Runtime> {
     let claimed_fire_ms = now_ms.saturating_sub(30_000);
     let next_fire_ms = now_ms.saturating_add(30_000);
     let last_fire_ms = Some(now_ms.saturating_sub(1_000));
+    let route_parts = parse_concrete_schedule_route(route).expect("valid schedule route");
 
     schedule_store
         .insert(
@@ -60,6 +62,7 @@ fn runtime_with_preloaded_schedule_metrics() -> Arc<Runtime> {
             1,
             &[ScheduleFireClaim {
                 route,
+                route_parts: &route_parts,
                 cron: "* * * * *",
                 payload: &payload,
                 claimed_at_ms: claimed_fire_ms,

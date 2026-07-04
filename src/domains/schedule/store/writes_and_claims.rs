@@ -131,26 +131,30 @@ impl ScheduleStore {
             .map_err(|e| format!("begin_tx failed: {e:?}"))?;
 
         for item in items {
-            let parsed = parse_concrete_schedule_route(item.route)?;
-            Self::put_definition_metadata(
+            let parsed = item.route_parts;
+            Self::put_definition_metadata_from_parts(
                 &mut txn,
-                item.route,
+                parsed,
                 item.next_fire_ms,
                 item.last_fire_ms,
                 item.executions_total,
             )?;
-            let pending_fire_key = Self::encode_prefixed_timed_route_key_from_realm(
+            let pending_fire_key = Self::encode_prefixed_timed_route_key_from_parts(
                 &parsed.realm,
                 item.previous_fire_ms,
-                item.route,
+                &parsed.area,
+                &parsed.resource,
+                &parsed.operation,
                 PENDING_FIRE_PREFIX,
             );
 
             if item.previous_fire_ms != item.next_fire_ms {
-                txn.delete(Self::encode_prefixed_timed_route_key_from_realm(
+                txn.delete(Self::encode_prefixed_timed_route_key_from_parts(
                     &parsed.realm,
                     item.previous_fire_ms,
-                    item.route,
+                    &parsed.area,
+                    &parsed.resource,
+                    &parsed.operation,
                     DUE_PREFIX,
                 ))
                 .map_err(|e| format!("delete previous due key failed: {e:?}"))?;

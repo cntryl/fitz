@@ -1,9 +1,10 @@
 use super::model::{
-    parse_concrete_schedule_route, storage_key, Arc, Bytes, DecodedDefinitionRow, DomainKeyspace,
-    Encoder, LexKey, ScheduleDefinitionData, ScheduleRows, ScheduleStore, BODY_PREFIX,
-    BODY_VALUE_VERSION_V1, DEFINITION_PREFIX, DEFINITION_VALUE_VERSION_V1,
-    DEFINITION_VALUE_VERSION_V2, DEFINITION_VALUE_VERSION_V3, DUE_PREFIX, LEGACY_PREFIX,
-    PENDING_FIRE_PREFIX, PENDING_FIRE_VALUE_VERSION_V1, PENDING_FIRE_VALUE_VERSION_V2,
+    parse_concrete_schedule_route, storage_key, Arc, Bytes, ConcreteScheduleRoute,
+    DecodedDefinitionRow, DomainKeyspace, Encoder, LexKey, ScheduleDefinitionData, ScheduleRows,
+    ScheduleStore, BODY_PREFIX, BODY_VALUE_VERSION_V1, DEFINITION_PREFIX,
+    DEFINITION_VALUE_VERSION_V1, DEFINITION_VALUE_VERSION_V2, DEFINITION_VALUE_VERSION_V3,
+    DUE_PREFIX, LEGACY_PREFIX, PENDING_FIRE_PREFIX, PENDING_FIRE_VALUE_VERSION_V1,
+    PENDING_FIRE_VALUE_VERSION_V2,
 };
 
 impl ScheduleStore {
@@ -77,18 +78,29 @@ impl ScheduleStore {
     ) -> Vec<u8> {
         let parsed = parse_concrete_schedule_route(route)
             .expect("schedule storage key requires a concrete route");
+        Self::encode_prefixed_route_key_from_parts(
+            realm,
+            &parsed.area,
+            &parsed.resource,
+            &parsed.operation,
+            suffix_prefix,
+        )
+    }
+
+    pub(super) fn encode_prefixed_route_key_from_parts(
+        realm: &str,
+        area: &str,
+        resource: &str,
+        operation: &str,
+        suffix_prefix: &[u8],
+    ) -> Vec<u8> {
         let mut key = storage_key::domain_marker_encoder(
             realm,
             DomainKeyspace::Schedule,
             suffix_prefix[0],
-            parsed.area.len() + parsed.resource.len() + parsed.operation.len() + 2,
+            area.len() + resource.len() + operation.len() + 2,
         );
-        Self::encode_route_identity_into(
-            &mut key,
-            &parsed.area,
-            &parsed.resource,
-            &parsed.operation,
-        );
+        Self::encode_route_identity_into(&mut key, area, resource, operation);
         key.into_vec()
     }
 
@@ -106,20 +118,33 @@ impl ScheduleStore {
     ) -> Vec<u8> {
         let parsed = parse_concrete_schedule_route(route)
             .expect("schedule storage key requires a concrete route");
+        Self::encode_prefixed_timed_route_key_from_parts(
+            realm,
+            timestamp_ms,
+            &parsed.area,
+            &parsed.resource,
+            &parsed.operation,
+            suffix_prefix,
+        )
+    }
+
+    pub(super) fn encode_prefixed_timed_route_key_from_parts(
+        realm: &str,
+        timestamp_ms: u64,
+        area: &str,
+        resource: &str,
+        operation: &str,
+        suffix_prefix: &[u8],
+    ) -> Vec<u8> {
         let mut key = storage_key::domain_marker_encoder(
             realm,
             DomainKeyspace::Schedule,
             suffix_prefix[0],
-            9 + parsed.area.len() + parsed.resource.len() + parsed.operation.len() + 2,
+            9 + area.len() + resource.len() + operation.len() + 2,
         );
         key.encode_bytes_into(&timestamp_ms.to_be_bytes());
         key.push_separator();
-        Self::encode_route_identity_into(
-            &mut key,
-            &parsed.area,
-            &parsed.resource,
-            &parsed.operation,
-        );
+        Self::encode_route_identity_into(&mut key, area, resource, operation);
         key.into_vec()
     }
 
@@ -500,6 +525,27 @@ impl ScheduleStore {
     ) -> Result<(), String> {
         txn.put(
             Self::encode_definition_key(route),
+            Self::encode_definition_metadata_value(next_fire_ms, last_fire_ms, executions_total),
+            None,
+        )
+        .map_err(|e| format!("put schedule definition failed: {e:?}"))
+    }
+
+    pub(super) fn put_definition_metadata_from_parts(
+        txn: &mut cntryl_midge::Transaction,
+        route_parts: &ConcreteScheduleRoute,
+        next_fire_ms: u64,
+        last_fire_ms: Option<u64>,
+        executions_total: u64,
+    ) -> Result<(), String> {
+        txn.put(
+            Self::encode_prefixed_route_key_from_parts(
+                &route_parts.realm,
+                &route_parts.area,
+                &route_parts.resource,
+                &route_parts.operation,
+                DEFINITION_PREFIX,
+            ),
             Self::encode_definition_metadata_value(next_fire_ms, last_fire_ms, executions_total),
             None,
         )

@@ -20,6 +20,7 @@ use fitz::domains::notice::sink::NoticeDomainSink;
 use fitz::domains::queue::sink::QueueDomainSink;
 use fitz::domains::queue::{QueueActor, QueueKey, QueueResponse};
 use fitz::domains::rpc::sink::RpcDomainSink;
+use fitz::domains::schedule::protocol::parse_concrete_schedule_route;
 use fitz::domains::schedule::sink::ScheduleDomainSink;
 use fitz::domains::schedule::store::{ScheduleFireClaim, ScheduleInsert, ScheduleStore};
 use fitz::domains::stream::protocol::StreamWriteMode;
@@ -484,6 +485,7 @@ fn seed_pending_schedule_claim(store: Arc<cntryl_midge::Engine>) {
     let claimed_fire_ms = now_ms.saturating_sub(30_000);
     let next_fire_ms = now_ms.saturating_add(30_000);
     let last_fire_ms = Some(now_ms.saturating_sub(1_000));
+    let route_parts = parse_concrete_schedule_route(route).expect("valid schedule route");
 
     schedule_store
         .insert(
@@ -505,6 +507,7 @@ fn seed_pending_schedule_claim(store: Arc<cntryl_midge::Engine>) {
             1,
             &[ScheduleFireClaim {
                 route,
+                route_parts: &route_parts,
                 cron: "* * * * *",
                 payload: &payload,
                 claimed_at_ms: claimed_fire_ms,

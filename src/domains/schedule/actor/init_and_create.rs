@@ -157,30 +157,29 @@ impl ScheduleActor {
         let mut snapshot: Vec<_> = self
             .schedules
             .values()
-            .filter_map(|schedule| {
-                parse_concrete_schedule_route(&schedule.route)
-                    .ok()
-                    .map(|route| crate::control::admin::ScheduleInfo {
-                        route_family: self.family.as_u64(),
-                        realm: route.realm,
-                        area: route.area,
-                        resource: route.resource,
-                        operation: route.operation,
-                        cron: schedule.cron.clone(),
-                        next_run: chrono::DateTime::<chrono::Utc>::from_timestamp_millis(
-                            Self::u64_to_i64_saturating(schedule.next_fire_ms),
+            .map(|schedule| {
+                let route = &schedule.route_parts;
+                crate::control::admin::ScheduleInfo {
+                    route_family: self.family.as_u64(),
+                    realm: route.realm.clone(),
+                    area: route.area.clone(),
+                    resource: route.resource.clone(),
+                    operation: route.operation.clone(),
+                    cron: schedule.cron.clone(),
+                    next_run: chrono::DateTime::<chrono::Utc>::from_timestamp_millis(
+                        Self::u64_to_i64_saturating(schedule.next_fire_ms),
+                    )
+                    .map(|timestamp| timestamp.to_rfc3339())
+                    .unwrap_or_default(),
+                    last_run: schedule.last_fire_ms.and_then(|timestamp_ms| {
+                        chrono::DateTime::<chrono::Utc>::from_timestamp_millis(
+                            Self::u64_to_i64_saturating(timestamp_ms),
                         )
                         .map(|timestamp| timestamp.to_rfc3339())
-                        .unwrap_or_default(),
-                        last_run: schedule.last_fire_ms.and_then(|timestamp_ms| {
-                            chrono::DateTime::<chrono::Utc>::from_timestamp_millis(
-                                Self::u64_to_i64_saturating(timestamp_ms),
-                            )
-                            .map(|timestamp| timestamp.to_rfc3339())
-                        }),
-                        executions_total: schedule.executions_total,
-                        enabled: true,
-                    })
+                    }),
+                    executions_total: schedule.executions_total,
+                    enabled: true,
+                }
             })
             .collect();
 
@@ -230,6 +229,7 @@ impl ScheduleActor {
             last_fire_ms,
             executions_total,
         } = entry;
+        let route_parts = parse_concrete_schedule_route(&route)?;
         let parsed_cron = CronSchedule::parse(&cron).map_err(|error| {
             format!("parse persisted schedule cron failed for {route}: {error}")
         })?;
@@ -250,6 +250,7 @@ impl ScheduleActor {
         let list_index = self.push_list_entry(route.as_str(), cron.as_str(), &payload);
         let def = ScheduleDef {
             route: route.clone(),
+            route_parts,
             cron,
             parsed_cron,
             payload,

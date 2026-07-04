@@ -194,6 +194,8 @@ pub struct ScheduleListEntry {
 pub struct ScheduleDef {
     /// Route string (unique identity for this schedule)
     pub route: String,
+    /// Parsed concrete route parts reused by hot storage-key paths.
+    pub route_parts: ConcreteScheduleRoute,
     /// Cron expression (when to fire)
     pub cron: String,
     /// Parsed cron schedule (cached to avoid reparsing)
@@ -698,8 +700,10 @@ mod tests {
 
         // Act
         let parsed_cron = CronSchedule::parse(&cron).expect("Valid cron");
+        let route_parts = parse_concrete_schedule_route(&route).expect("valid schedule route");
         let def = ScheduleDef {
             route,
+            route_parts,
             cron,
             parsed_cron,
             payload,

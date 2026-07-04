@@ -394,6 +394,7 @@ fn should_persist_pending_fire_given_claimed_due_schedule() {
     let payload = Bytes::from_static(b"payload");
     let original_fire_ms = 1_700_000_020_000_u64;
     let next_fire_ms = 1_700_000_080_000_u64;
+    let route_parts = parse_concrete_schedule_route(route).expect("valid schedule route");
 
     store
         .insert(
@@ -417,6 +418,7 @@ fn should_persist_pending_fire_given_claimed_due_schedule() {
             1,
             &[ScheduleFireClaim {
                 route,
+                route_parts: &route_parts,
                 cron: "* * * * *",
                 payload: &payload,
                 claimed_at_ms: 1_700_000_020_500_u64,
@@ -483,6 +485,7 @@ fn should_record_acknowledgement_state_given_acknowledged_claimed_due_schedule()
     let original_fire_ms = 1_700_000_020_000_u64;
     let next_fire_ms = 1_700_000_080_000_u64;
     let acknowledged_at_ms = 1_700_000_021_500_u64;
+    let route_parts = parse_concrete_schedule_route(route).expect("valid schedule route");
 
     store
         .insert(
@@ -504,6 +507,7 @@ fn should_record_acknowledgement_state_given_acknowledged_claimed_due_schedule()
             1,
             &[ScheduleFireClaim {
                 route,
+                route_parts: &route_parts,
                 cron: "* * * * *",
                 payload: &payload,
                 claimed_at_ms: 1_700_000_020_500_u64,
@@ -569,6 +573,7 @@ fn should_remove_pending_fire_without_recreating_definition_given_missing_schedu
     let original_fire_ms = 1_700_000_020_000_u64;
     let next_fire_ms = 1_700_000_080_000_u64;
     let acknowledged_at_ms = 1_700_000_021_500_u64;
+    let route_parts = parse_concrete_schedule_route(route).expect("valid schedule route");
 
     store
         .insert(
@@ -590,6 +595,7 @@ fn should_remove_pending_fire_without_recreating_definition_given_missing_schedu
             1,
             &[ScheduleFireClaim {
                 route,
+                route_parts: &route_parts,
                 cron: "* * * * *",
                 payload: &payload,
                 claimed_at_ms: 1_700_000_020_500_u64,

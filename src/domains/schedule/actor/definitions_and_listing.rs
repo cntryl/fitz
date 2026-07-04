@@ -30,6 +30,7 @@ impl ScheduleActor {
         payload: Bytes,
         now: Instant,
     ) -> Result<bool, String> {
+        let route_parts = parse_concrete_schedule_route(&route)?;
         let (
             previous_next_fire_ms,
             previous_list_index,
@@ -82,6 +83,7 @@ impl ScheduleActor {
         let list_index = self.upsert_list_entry(previous_list_index, &route, &cron, &payload);
         let def = ScheduleDef {
             route: route.clone(),
+            route_parts,
             cron,
             parsed_cron: cron_obj,
             payload,
@@ -202,6 +204,7 @@ impl ScheduleActor {
             );
             let def = ScheduleDef {
                 route: entry.route.clone(),
+                route_parts: entry.route_parts,
                 cron: entry.cron,
                 parsed_cron: entry.parsed_cron,
                 payload: entry.payload,
@@ -270,6 +273,7 @@ impl ScheduleActor {
         last_fire_ms: Option<u64>,
         executions_total: u64,
     ) -> Result<PendingScheduleCreate, String> {
+        let route_parts = parse_concrete_schedule_route(&entry.route)?;
         let parsed_cron = self.parsed_cron_for(&entry.cron)?;
         let next_fire_time = parsed_cron.next_fire_time_with_clock(now, self.clock.as_ref());
         let next_fire_ms =
@@ -277,6 +281,7 @@ impl ScheduleActor {
 
         Ok(PendingScheduleCreate {
             route: entry.route,
+            route_parts,
             cron: entry.cron,
             parsed_cron,
             payload: entry.payload,
