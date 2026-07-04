@@ -1,37 +1,51 @@
-# Contributing to fitz
+# Contributing to Fitz
 
-Thanks for your interest! This project is in early development.
+## Dev Setup
 
-## Dev setup
-
-- Install Rust stable
+- Install Rust stable.
 - Install shared tooling:
   - `cargo install --git https://github.com/cntryl/tools --locked`
-- Clone the repo and run tests:
-  - `cargo test`
-- Lint locally:
-  - `cargo fmt --all -- --check`
-  - `cargo clippy -D warnings`
-  - `cntryl-tools validate-tests`
+- Clone the repo and run the workspace tests:
+  - `cargo test --workspace`
 
-## Running locally
+## Local Validation
 
-The broker is composed of modules under `src/`. The storage default is in-memory. Integration tests in `tests/` spawn components in-process.
+Run these before opening a behavior-changing PR:
+
+```sh
+cargo fmt --all -- --check
+cargo test --workspace
+cargo test test_guidelines_compliance
+cargo clippy --workspace --all-targets -- -D warnings
+cntryl-tools validate-tests
+```
+
+For pedantic cleanup or repository-wide hygiene work, include:
+
+```sh
+cargo clippy --workspace --all-targets -- -D warnings -D clippy::pedantic
+```
+
+## Running Locally
+
+The broker code lives under `src/`. Integration tests in `tests/` spawn broker components in-process. The repository compose files are for local development and publish ports on loopback.
 
 ## Style
 
-- Keep PRs small and focused
-- Add tests when changing behavior
-- Prefer trait abstractions for storage/transport
+- Keep PRs small and focused.
+- Add or update tests when changing behavior.
+- Prefer the nearest module that controls the behavior over broad refactors.
+- Keep async at the transport edge in `src/api/`; core runtime, domains, protocol, and session code stay synchronous.
 
-## Domain changes
+## Domain Changes
 
-- Treat [docs/development/domain-boundaries-spec.md](docs/development/domain-boundaries-spec.md) as the primary architectural contract for domain responsibility, overlap, and feature placement.
-- Treat [docs/todos/todo-all.md](docs/todos/todo-all.md) and the per-domain files under [docs/todos](docs/todos) as the concise canonical contract index and proof-oriented domain detail.
-- If a change alters a domain guarantee, boundary, or overlap rule, update the relevant docs in the same PR.
-- Use [.github/pull_request_template.md](.github/pull_request_template.md) and complete the Domain Boundary Review section whenever a PR touches domain semantics, persistence, recovery, or cross-domain composition.
+- Treat [docs/development/domain-boundaries-spec.md](docs/development/domain-boundaries-spec.md) as the authoritative domain contract.
+- Treat [docs/development/architectural-laws.md](docs/development/architectural-laws.md) as the review gate for durability, disconnect behavior, recovery, cross-domain composition, and observability semantics.
+- If a change alters a domain guarantee, boundary, storage behavior, or recovery behavior, update the relevant docs in the same PR.
+- Keep `realm` and `RouteFamily` separate. `realm` is application-visible and opaque; `RouteFamily` is broker-internal routing and isolation.
 
-## Roadmap
+## Release Work
 
-See `todo.md` for prioritized tasks.
-
+- Use [docs/operations/release-checklist.md](docs/operations/release-checklist.md).
+- Use [docs/operations/migration-guide.md](docs/operations/migration-guide.md) when compatibility risk exists.
+- Use [docs/development/format-compatibility.md](docs/development/format-compatibility.md) for wire, storage, and serialized format changes.

@@ -2,7 +2,7 @@
 
 ## Is Fitz production-ready?
 
-Not yet. Review [../README.md](../README.md) and the readiness documentation before a production rollout.
+Yes, for Fitz's stated single-node model. Review [../README.md](../README.md), [../operations/production-runbook.md](../operations/production-runbook.md), and [durability.md](durability.md) before a production rollout.
 
 ## How do I choose route family values?
 
@@ -13,12 +13,9 @@ and map verified identity values with `FITZ_ROUTE_FAMILY_MAP`, for example
 
 For authenticated mode, the JWT must also include valid signing, audience, and
 expiration claims. A missing or unmapped identity claim causes authentication
-failure and broker connection close. Use `FITZ_ROUTE_FAMILY_CLAIM=org_id` when
-using Auth0 Organizations; the default claim is `tid`, which fits Microsoft
-Entra ID. You can also configure `FITZ_AUTH_ORG_CLAIM` to check a namespaced
-identity claim first, then fall back to `FITZ_ROUTE_FAMILY_CLAIM` if it is not
-present in the token. Cognito and Okta can use `sub`, a provider custom claim,
-or an exact namespaced claim key.
+failure and broker connection close. Configure `FITZ_ROUTE_FAMILY_CLAIM` to the
+claim that identifies your application partition, and configure
+`FITZ_AUTH_ORG_CLAIM` when a namespaced override should be checked first.
 
 Keep route strings stable for application semantics.
 

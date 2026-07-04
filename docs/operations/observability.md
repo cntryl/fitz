@@ -29,8 +29,8 @@ This guide explains how to instrument each layer of Fitz with comprehensive obse
 
 During planned redeploy drain, `/livez` remains `200`, while `/targetz`,
 `/readyz`, and `/healthz` return `503` with `accepting_target_traffic` or
-`accepting_traffic` set to `"draining"`. This lets an ALB, Kubernetes Service,
-or orchestrator stop new traffic before Fitz closes existing ephemeral sessions
+`accepting_traffic` set to `"draining"`. This lets a traffic manager or
+orchestrator stop new traffic before Fitz closes existing ephemeral sessions
 after `FITZ_DRAIN_GRACE_SECONDS`.
 
 ---

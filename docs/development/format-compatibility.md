@@ -18,4 +18,4 @@ This page defines compatibility expectations for serialized data, protocol paylo
 
 1. Updated [../operations/migration-guide.md](../operations/migration-guide.md)
 2. Updated [release-policy.md](release-policy.md)
-3. Readiness impact in [one-dot-zero-readiness-scorecard.md](one-dot-zero-readiness-scorecard.md)
+3. Updated [../operations/release-checklist.md](../operations/release-checklist.md)

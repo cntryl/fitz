@@ -13,7 +13,7 @@ This page is the central reference for environment variables supported by Fitz r
 | FITZ_BIND_ADDR | IP or hostname | 0.0.0.0 | Bind address for listeners. |
 | FITZ_ASSUME_EXTERNAL_TLS | true or false | false | Enables TLS-dependent browser response behavior such as HSTS when TLS is terminated outside Fitz. Local development can leave this unset. |
 | FITZ_WS_ALLOWED_ORIGINS | Comma-separated exact browser origins, e.g. https://app.example.com | Local loopback origins for ports 3000 and 4090 | Browser WebSocket Origin allowlist. Values are HTTP origins, not wss URLs, and must not include a path, query, fragment, or trailing slash. Public browser deployments should set this to their exact SPA origins. |
-| FITZ_DRAIN_GRACE_SECONDS | Positive integer seconds | 25 | Planned redeploy drain grace. During drain, `/healthz` and `/readyz` fail and new TCP/WebSocket sessions are rejected before active sessions are closed on shutdown. Set below the ECS task `stopTimeout`. |
+| FITZ_DRAIN_GRACE_SECONDS | Positive integer seconds | 25 | Planned redeploy drain grace. During drain, `/healthz` and `/readyz` fail and new TCP/WebSocket sessions are rejected before active sessions are closed on shutdown. Set lower than the external termination grace. |
 | FITZ_DRAIN_CLOSE_REASON | Non-empty string | broker draining for redeploy | Server close reason recorded when planned drain shutdown closes active sessions. |
 | FITZ_ROUTE_FAMILIES | Comma-separated u32 list, contiguous from 1 (example: 1,2,3) | 1 | Provisioned route-family allowlist accepted after identity resolution. |
 | FITZ_ROUTE_FAMILY_MAP | Comma-separated identity=family mappings | Empty | Maps verified identity claim values to provisioned route-family numbers. Required when auth is enabled. |
@@ -24,7 +24,7 @@ This page is the central reference for environment variables supported by Fitz r
 | Key | Allowed Values / Format | Default | Description |
 | --- | --- | --- | --- |
 | FITZ_JWT_JWKS_MAP | Comma-separated issuer=jwks_url pairs | Unset | Preferred runtime token verification mode when `FITZ_AUTH_REQUIRED=true`. JWKS URLs must be absolute URLs without credentials or fragments. By default, only `https` is accepted. |
-| FITZ_JWT_HMAC_SECRET | Secret string | Unset | Testing/prototyping-only. Enables legacy HS256 tokens when JWKS is not configured. **Do not use in production**. |
+| FITZ_JWT_HMAC_SECRET | Secret string | Unset | Local-development fallback. Enables HS256 tokens when JWKS is not configured. Do not use for production traffic. |
 | FITZ_JWT_AUDIENCES | Comma-separated audience strings | fitz,fitz-broker | Audience allowlist used by runtime JWKS verification. |
 | FITZ_JWT_AUDIENCE | Single audience string | Alias fallback | Legacy/single-value fallback if FITZ_JWT_AUDIENCES is unset. |
 | FITZ_JWT_ALLOW_INSECURE_HTTP | true or false | false | Allows `http://` JWKS URLs for local mock environments when set to `true`. Never enable this outside local development. |
@@ -101,7 +101,7 @@ For the complete production auth and browser-perimeter checklist, see [../operat
 | --- | --- | --- | --- |
 | FITZ_STORAGE_MODE | memory, local, or cloud | local | Selects storage backend mode. |
 | FITZ_STORAGE_PATH | Filesystem path | ./.fitz | Local storage path when FITZ_STORAGE_MODE=local. |
-| FITZ_STORAGE_PROVIDER | Provider name | Unset | Required in cloud mode. See provider list below. |
+| FITZ_STORAGE_PROVIDER | Provider identifier | Unset | Required in cloud mode. Selects the configured blob/object storage backend. |
 | FITZ_STORAGE_PREFIX | Prefix string | Unset | Optional object key namespace prefix in cloud mode. |
 | FITZ_STORAGE_CACHE_PATH | Filesystem path | ./.fitz-cloud-cache | Local cache path for cloud-backed storage mode. |
 | FITZ_STORAGE_CLOUD_DURABILITY | background or strict | background | Cloud sync behavior for broker-selected durable writes. |
@@ -111,28 +111,16 @@ For the complete production auth and browser-perimeter checklist, see [../operat
 | FITZ_STREAM_STORAGE_LAYOUT | promotion-frontier or aliases | promotion-frontier | Stream layout selector. Legacy aliases are accepted but normalized to promotion-frontier. |
 | FITZ_MIN_MEMORY_BYTES | Unsigned integer byte count | 134217728 | Startup preflight minimum cgroup memory threshold. Set 0 to bypass memory-limit check. |
 
-Supported FITZ_STORAGE_PROVIDER values:
-- peas-s3
-- peas-azure
-- peas-gcs
-- aws-s3
-- s3-compatible
-- minio
-- wasabi
-- oci-s3
-- azure-blob
-- gcs
-
 ### Provider-Specific FITZ Keys
 
 | Key | Used By | Notes |
 | --- | --- | --- |
-| FITZ_STORAGE_BUCKET | S3-like and GCS providers | Required for aws-s3, s3-compatible, minio, wasabi, oci-s3, gcs. Optional with peas-s3 and peas-gcs. |
-| FITZ_STORAGE_CONTAINER | Azure Blob providers | Required for azure-blob. Optional with peas-azure. |
-| FITZ_STORAGE_ENDPOINT | Emulator/custom endpoint | Required for s3-compatible and minio. Optional for peas providers and other endpoint-capable providers. |
-| FITZ_STORAGE_REGION | Region string | Required for wasabi and oci-s3. Required for aws-s3 unless AWS_REGION/AWS_DEFAULT_REGION is set. |
-| FITZ_STORAGE_NAMESPACE | Namespace string | Required for oci-s3. |
-| FITZ_STORAGE_FORCE_PATH_STYLE | true or false | Path-style addressing toggle for s3-compatible and oci-s3 providers. |
+| FITZ_STORAGE_BUCKET | Bucket-shaped providers | Required when the selected provider uses bucket-style naming. |
+| FITZ_STORAGE_CONTAINER | Container-shaped providers | Required when the selected provider uses container-style naming. |
+| FITZ_STORAGE_ENDPOINT | Emulator/custom endpoint | Required when the selected provider needs an explicit endpoint. |
+| FITZ_STORAGE_REGION | Region string | Required when the selected provider needs an explicit region. |
+| FITZ_STORAGE_NAMESPACE | Namespace string | Required when the selected provider needs an explicit namespace. |
+| FITZ_STORAGE_FORCE_PATH_STYLE | true or false | Path-style addressing toggle for compatible object providers. |
 | FITZ_STORAGE_ACCOUNT | String | Reserved for compatibility references; not consumed by current runtime provider builders. |
 
 ## Observability and Telemetry
@@ -159,24 +147,17 @@ Supported FITZ_STORAGE_PROVIDER values:
 
 These keys are read in cloud provider builders when FITZ_STORAGE_MODE=cloud.
 
-| Key | Used By | Description |
-| --- | --- | --- |
-| AWS_REGION | aws-s3 region fallback | Region fallback when FITZ_STORAGE_REGION is not set. |
-| AWS_DEFAULT_REGION | aws-s3 region fallback | Secondary region fallback when FITZ_STORAGE_REGION and AWS_REGION are unset. |
-| AZURE_STORAGE_CONNECTION_STRING | azure-blob | Enables connection-string auth mode. |
-| AZURE_STORAGE_ACCOUNT_NAME | azure-blob | Account name for shared key, SAS, or default credential auth. |
-| AZURE_STORAGE_ACCOUNT_KEY | azure-blob | Shared key credential path. |
-| AZURE_STORAGE_SAS_TOKEN | azure-blob | SAS token credential path. |
-| GOOGLE_APPLICATION_CREDENTIALS | gcs | Service-account file path fallback when HMAC keys are absent. |
-| GOOGLE_CLOUD_PROJECT | gcs | Optional project id enrichment for GCS provider config. |
-| GCS_HMAC_ACCESS_ID | gcs | HMAC access key id; requires GCS_HMAC_SECRET too. |
-| GCS_HMAC_SECRET | gcs | HMAC secret; requires GCS_HMAC_ACCESS_ID too. |
+| Key | Description |
+| --- | --- |
+| Provider-native region variables | Region fallback when `FITZ_STORAGE_REGION` is not set and the provider supports native region discovery. |
+| Provider-native credential variables | Credential fallback when credentials are supplied through the process environment. |
+| Provider-native project or account variables | Optional provider metadata when the selected backend requires it. |
 
 ## Compose-Only Convenience Key
 
 | Key | Scope | Description |
 | --- | --- | --- |
-| FITZ_PEAS_PROVIDER | compose.cloud.yml only | Chooses peas-s3, peas-azure, or peas-gcs in local Peas compose flow. Not read directly by runtime code. |
+| FITZ_PEAS_PROVIDER | compose.cloud.yml only | Chooses the local emulator front door in the compose flow. Not read directly by runtime code. |
 
 ## Removed Key
 

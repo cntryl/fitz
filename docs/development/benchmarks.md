@@ -92,7 +92,6 @@ benches/
 ### Organization Principles
 
 - **One file per subsystem/domain** - Tier1/2: one module per file; Tier3/4: one domain per file.
-    - Exception: Stream currently also has a bench-only storage-model prototype file used to evaluate redesign candidates before production porting.
 - **Shared config** - Tier1/2 use `benches/criterion_config.rs` (`criterion_config_for_tier1()` / `criterion_config_for_tier2()`); Tier3/4 use `benches/stress_config.rs` and env vars (see [Stress configuration](#stress-configuration-tier-3-and-4)).
 - **Clear naming** - Files follow `tierN_{hotpath|subsystem|system|integration}_{name}.rs`.
 - **Logical grouping** - Related benchmarks in the same file; use a single Criterion group name per file (e.g. `hotpath_routing`) and `Throughput::Elements(N)` for comparability.
@@ -279,7 +278,7 @@ Tier 3 and Tier 4 stress tests must follow the **stress benchmark contract**: ru
 
 Numerical, testable performance targets are defined in **[Performance targets](bench-targets.md)** and mirrored in [`config/perf_targets.json`](../../config/perf_targets.json). The doc is the human-facing matrix; the JSON file is the machine-readable source used by the perf loop. Fitz currently gates on `mean_us`, with derived ops/sec shown only as a convenience. Latency percentiles remain out of scope until explicit percentile scenarios exist.
 
-For a domain-by-domain production validation checklist that turns the current benchmark inventory into concrete benchmark and failure-mode questions, see **[Production credibility checklist](production-credibility-checklist.md)**.
+Use [bench-targets.md](bench-targets.md) and [../../config/perf_targets.json](../../config/perf_targets.json) as the performance target sources.
 
 The benchmark summary tool validates the collected Criterion and stress outputs before generating the report. Invalid or implausible measurements are excluded from the main tables and listed separately so they do not turn into presentation-safe numbers like `0.000 us` or absurd ops/sec.
 

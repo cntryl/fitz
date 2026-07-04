@@ -1,6 +1,6 @@
 # Release Policy
 
-Fitz follows a pre-1.0 policy focused on explicit change communication and operator safety.
+Fitz release work is focused on explicit change communication and operator safety.
 
 ## Policy
 

@@ -9,7 +9,7 @@
 
 Fitz domains are intentionally narrow. Each domain owns one class of distributed systems problem and must stay narrow enough that its guarantees remain legible years from now. This document exists to stop domain drift before it becomes implementation drift.
 
-This document defines the intended architectural contract. Current implementation, current tests, and the detailed domain contract files under `docs/todos/` remain the proof surface. If they diverge from this specification, treat that as a contract bug and resolve it explicitly.
+This document defines the intended architectural contract. Current implementation and current tests are the proof surface. If they diverge from this specification, treat that as a contract bug and resolve it explicitly.
 
 This specification is prescriptive:
 
@@ -34,6 +34,18 @@ These rules apply to every domain in this document:
 - A domain may compose with another domain, but it must not silently inherit the other domain's guarantees.
 - If a workflow needs multiple guarantees, it must compose multiple domains explicitly.
 - If a guarantee is not stated here, clients must not infer it from implementation convenience.
+
+## Domain Matrix
+
+| Domain | Purpose | Durable State | Live State Lost On Disconnect Or Restart | Recovery Owner |
+| --- | --- | --- | --- | --- |
+| Notice | Live fanout to connected subscribers | None | subscriptions and delivery state | Client re-subscribes |
+| Stream | Durable append and replay | committed records, offsets, watermarks | append sessions and live subscriptions | Client resumes from its own offsets |
+| KV | Current authoritative state | committed values | open transactions and live locks | Broker recovers committed state; client restarts transactions |
+| Queue | Work delivery with reservation and redelivery | messages and indexes that reached durable storage under the selected write policy | inflight ownership, tokens, warm actors | Broker recovers durable backlog; client handles redelivery |
+| RPC | Live request and response dispatch | None | workers, pending requests, reply routing | Caller and worker retry explicitly |
+| Lease | Single-broker ownership coordination | None | ownership, fencing tokens, waiters | Client reacquires |
+| Schedule | Durable timing intent | definitions and pending fire claims | live subscriptions | Broker reloads timing intent; client rebuilds subscriptions |
 
 ## 1. Domain Responsibility
 
@@ -275,6 +287,7 @@ Queue guarantees:
 - exclusive live reservation per active inflight token
 - retry and redelivery after lease expiry
 - optional dead-letter transition when retry policy is exhausted
+- `FITZ_QUEUE_WRITE_POLICY=fast` may lose accepted recent queue mutations before the `FITZ_QUEUE_LOSS_WINDOW_MS` background flush window closes
 
 Queue does NOT guarantee:
 
@@ -294,6 +307,8 @@ RPC guarantees:
 - FIFO pending order within one route
 - explicit timeout behavior
 - in-order chunk sequencing for one streaming response
+- worker registrations declare explicit `max_concurrent` credit in the range `1..=1024`
+- successful request submission does not produce an immediate success frame
 
 RPC does NOT guarantee:
 
@@ -302,6 +317,7 @@ RPC does NOT guarantee:
 - retries after timeout or worker loss
 - replayable response history
 - queue-like backlog across restart
+- a worker ACK frame or support for message type 304
 
 ### Lease
 
@@ -330,6 +346,7 @@ Schedule guarantees:
 - overdue schedules normalize forward rather than replaying every missed interval
 - durable pending fire claims survive broker restart until resolved
 - cancel and upsert produce one durable definition outcome per route
+- persisted schedules are preloaded on broker start before schedule traffic is required
 
 Schedule does NOT guarantee:
 
@@ -469,6 +486,7 @@ Allowed complexity:
 - replay
 - watermarks and offsets
 - retention and ordering rules
+- the promotion-frontier storage layout and explicit reset or cutover errors for legacy stream rows
 
 Not allowed:
 

@@ -1,151 +1,101 @@
 # fitz
 
-Fitz is a broker project for teams that need one place to handle common application messaging patterns.
+Fitz is a production-ready, single-node application broker for teams that want common application communication primitives without running a fleet of specialized infrastructure.
 
-## What Problem Fitz Solves
+The model is simple: one broker, seven application primitives, one deployment model.
 
-Many systems end up running separate tools for:
+## What Fitz Provides
 
-- request response traffic
-- queue workloads
-- event fanout
-- stream style delivery
-- key value coordination data
+Fitz combines durable streams, queues, live fanout, RPC, KV, leases, and schedules behind one broker process and one route model. It is built for applications that need clear semantics more than distributed-system ceremony.
 
-That increases operational overhead, client complexity, and integration drift across services.
+| Domain | Use it for | Durability model |
+| --- | --- | --- |
+| Notice | live fanout to connected subscribers | ephemeral |
+| Stream | durable append and replay of committed history | durable according to write mode |
+| KV | current authoritative state | durable on commit according to write mode |
+| Queue | durable work delivery with reservation and redelivery | durable according to queue write policy |
+| RPC | live request and response dispatch to registered workers | ephemeral |
+| Lease | single-broker ownership coordination | ephemeral |
+| Schedule | durable future timing intent | durable definitions and pending fire claims |
 
-Fitz is intended to provide a single broker surface for these patterns so teams can start with one deployment model and one client contract.
+Durable paths use Midge-backed persistence. Local storage writes to disk. Blob/object-backed storage uses a local cache plus provider storage and keeps domain guarantees explicit: a domain is durable only when its contract and selected write policy say it is.
 
-## What Fitz Should Be
+## Non-Goals
 
-Fitz should be:
+Fitz is production-ready for its stated single-node model. It does not claim:
 
-- simple to start locally and in containers
-- explicit about durability and failure behavior
-- predictable to operate with health probes and metrics
-- practical to adopt from multiple client languages
+- high availability or consensus
+- transparent failover
+- session recovery after disconnect
+- exactly-once delivery
+- durable live subscription recovery
+- durable RPC pending work
+- crash-safe lease ownership
 
-It currently exposes HTTP and WebSocket on 4090, TCP framed traffic on 4091, and domain surfaces for KV, queue, notice, RPC, lease, stream, and schedule.
-
-Current status: early prototype.
+Sessions are ephemeral. Disconnect creates a new session, and clients must rebuild subscriptions, workers, leases, transactions, and stream resume positions explicitly.
 
 ## Quick Start
 
-### Option 1: Docker Run
+Run an anonymous local broker:
 
-1. Start Fitz from GHCR with auth disabled for local onboarding:
+```sh
+docker run --rm \
+  -p 4090:4090 \
+  -p 4091:4091 \
+  -e FITZ_AUTH_REQUIRED=false \
+  -e FITZ_STORAGE_MODE=local \
+  -e FITZ_STORAGE_PATH=/data \
+  ghcr.io/cntryl/fitz:latest
+```
 
-		docker run --rm -p 4090:4090 -p 4091:4091 -e FITZ_AUTH_REQUIRED=false -e RUST_LOG=info,fitz=trace ghcr.io/cntryl/fitz:latest
+Check readiness:
 
-2. Verify basic health from another terminal:
+```sh
+curl http://localhost:4090/healthz
+```
 
-		curl http://localhost:4090/healthz
+For repository-local development:
 
-Expected result: HTTP 200 with a small JSON status response.
+```sh
+docker compose up --build
+```
 
-### Option 2: Docker Compose
+The compose file starts an authenticated broker on `4090`/`4091` and an anonymous broker on `4190`/`4191`. These defaults are for local development: ports are loopback-bound, the admin surface is local, and the authenticated broker uses the shared HS256 dev secret `dev-test-secret`.
 
-The repository includes [compose.yml](compose.yml) with two services:
+## Runtime Surfaces
 
-- fitz-auth: auth required on 4090 and 4091
-- fitz-anon: auth disabled on 4190 and 4191
+- HTTP root and admin UI: `http://localhost:4090/`
+- WebSocket data plane: `ws://localhost:4090/ws`
+- TCP data plane: `localhost:4091`
+- Probes: `/livez`, `/targetz`, `/startupz`, `/healthz`, `/readyz`
+- Metrics: `/metrics`
 
-This compose file is for local development only. It publishes ports on loopback,
-keeps the admin surface open for local use, and configures `fitz-auth` with a
-shared HS256 dev secret.
+## Production Configuration
 
-Run both:
+Start production configuration with these docs:
 
-		docker compose up --build
+- Storage: [docs/operations/cloud-setup.md](docs/operations/cloud-setup.md)
+- Auth: [docs/operations/production-auth.md](docs/operations/production-auth.md)
+- Probes and metrics: [docs/operations/observability.md](docs/operations/observability.md)
+- Runbook: [docs/operations/production-runbook.md](docs/operations/production-runbook.md)
+- Environment variables: [docs/user-guides/vars.md](docs/user-guides/vars.md)
 
-If you want to exercise issuer/JWKS verification locally instead of the default
-HMAC path, layer in the JWKS mock overlay:
+Important defaults:
 
-		docker compose -f compose.yml -f compose.jwks.yml up --build
-
-If you want to use published images only, use a compose file that sets `image: ghcr.io/cntryl/fitz:latest` and removes `build`.
-
-Quick checks:
-
-		curl http://127.0.0.1:4090/healthz
-		curl http://127.0.0.1:4190/healthz
-
-Stop:
-
-		docker compose down
-
-### Option 3: Cloud Storage With Peas
-
-[compose.cloud.yml](compose.cloud.yml) starts the same two Fitz brokers against the Peas emulator. This compose file is local-emulator-only and defaults to the S3-compatible Peas front door:
-
-		docker compose -f compose.cloud.yml up --build
-
-It keeps the same local-only auth/admin defaults as `compose.yml`: loopback-only
-port publishing, open admin, and HMAC auth on `fitz-auth`.
-
-To exercise the local JWKS mock with Peas-backed storage:
-
-		docker compose -f compose.cloud.yml -f compose.jwks.yml up --build
-
-Peas provider flips stay in a compose-only environment variable:
-
-		FITZ_PEAS_PROVIDER=peas-azure docker compose -f compose.cloud.yml up --build
-		FITZ_PEAS_PROVIDER=peas-gcs docker compose -f compose.cloud.yml up --build
-
-Peas uses `http://peas:9000` inside compose and publishes `http://127.0.0.1:9000` for local host tests. The built-in access key is `admin` and the secret is `easy-peasy`. Bucket/container envs are optional in this local-emulator flow. Real cloud providers use explicit `FITZ_STORAGE_MODE=cloud` plus `FITZ_STORAGE_PROVIDER=...` runtime env instead of this Peas compose file.
-
-### Minimal Compose Example
-
-If you want a single local service, this is the smallest useful compose file:
-
-		services:
-			fitz:
-				image: ghcr.io/cntryl/fitz:latest
-				ports:
-					- "127.0.0.1:4090:4090"
-					- "127.0.0.1:4091:4091"
-				environment:
-					FITZ_AUTH_REQUIRED: "false"
-					FITZ_STORAGE_MODE: "local"
-					FITZ_STORAGE_PATH: "/data"
-					RUST_LOG: "info,fitz=trace"
-
-## Endpoints
-
-- HTTP root and static UI: http://localhost:4090/
-- WebSocket endpoint: ws://localhost:4090/ws
-- TCP endpoint: localhost:4091
-- Health probes: /healthz, /readyz, /startupz
-- Metrics: /metrics
-
-## Configuration Notes
-
-- FITZ_AUTH_REQUIRED defaults to true.
-- FITZ_ROUTE_FAMILIES defaults to `1`. Configure a non-empty contiguous list starting at `1`, such as `1,2,3`, before startup.
-- FITZ_STORAGE_MODE can be set to `memory`, `local`, or `cloud`.
-- FITZ_STORAGE_PATH is only for local disk storage and defaults to `./.fitz`.
-- Cloud mode uses throughput-oriented Midge defaults to reduce SST and object-store churn. `FITZ_STORAGE_MEMTABLE_BYTES` still overrides the runtime memtable size and flush threshold in bytes when set. Lower values make SST flushes happen sooner for diagnostics and constrained environments.
-- Cloud storage requires FITZ_STORAGE_PROVIDER plus provider-specific values. Supported providers are `peas-s3`, `peas-azure`, `peas-gcs`, `aws-s3`, `s3-compatible`, `minio`, `wasabi`, `oci-s3`, `azure-blob`, and `gcs`.
-- Cloud storage uses FITZ_STORAGE_CACHE_PATH for its local cache and defaults to `./.fitz-cloud-cache`; it does not read FITZ_STORAGE_PATH.
-- FITZ_STORAGE_CLOUD_DURABILITY can be `background` or `strict`; any other value is rejected. `background` keeps provider upload asynchronous; `strict` waits for provider acknowledgement for broker-selected durable cloud writes and request-level sync writes.
-- FITZ_QUEUE_WRITE_POLICY can be `fast`, `buffered`, or `strict` and defaults to `fast`. `fast` skips WAL on queue mutations and flushes dirty queue storage in the background, so accepted recent queue sends/completes can be lost before the flush window closes.
-- FITZ_QUEUE_LOSS_WINDOW_MS defaults to `100` and controls the target background flush interval for `FITZ_QUEUE_WRITE_POLICY=fast`.
-- Authenticated JWTs resolve to a route family server-side. Keep `FITZ_ROUTE_FAMILIES=1,2,...` as the provisioned allowlist, set `FITZ_ROUTE_FAMILY_MAP=tid-value=1,other=2`, and use `FITZ_ROUTE_FAMILY_CLAIM` to choose the default identity claim (`tid` by default).
-- `FITZ_AUTH_ORG_CLAIM` optionally overrides identity lookup before `FITZ_ROUTE_FAMILY_CLAIM` when that claim is present in the token. Example: `FITZ_AUTH_ORG_CLAIM=fitz://org_id`.
-- `FITZ_AUTH_CUSTOM_CLAIM` can point at a namespaced JWT object containing only `permissions`, for example `https://example.com/fitz`.
-- `FITZ_AUTH_PERMISSIONS_CLAIM` optionally points to a namespaced array claim of permission strings. Example: `FITZ_AUTH_PERMISSIONS_CLAIM=fitz://permissions`.
-- `FITZ_AUTH_ROLE_CLAIM` defaults to `roles` and is only used when that claim's array values are already direct Fitz permissions or recognized coarse scopes.
-- Permission normalization is fixed: configured custom permission claim, top-level `permissions`, configured `FITZ_AUTH_PERMISSIONS_CLAIM` array, configured role claim array, `scp`, then `scope`.
-- Provider setup is claim-driven: Auth0 can use `org_id` plus top-level `permissions` or namespaced claims via `FITZ_AUTH_ORG_CLAIM` and `FITZ_AUTH_PERMISSIONS_CLAIM`; Entra delegated uses `tid` plus `scp`; Entra app-only uses `tid` plus `roles`; Cognito uses `custom:tenant_id` or `sub` plus `scope`; Okta uses an exact custom or namespaced identity claim plus `scope`, a configured custom permissions claim, or a configured role claim array.
-- FITZ_MIN_MEMORY_BYTES defaults to `134217728` and rejects smaller Linux cgroup memory limits during startup. Set it higher for production headroom, or set it to `0` only when intentionally bypassing the preflight for experiments.
+- `FITZ_AUTH_REQUIRED` defaults to `true`.
+- `FITZ_ROUTE_FAMILIES` defaults to `1`; configure a contiguous allowlist such as `1,2,3` before serving multiple isolated families.
+- `FITZ_STORAGE_MODE` accepts `memory`, `local`, or `cloud`.
+- `FITZ_QUEUE_WRITE_POLICY` defaults to `fast`; accepted recent queue mutations can be lost before the background flush window closes.
+- `FITZ_STORAGE_CLOUD_DURABILITY` accepts `background` or `strict` for broker-selected durable cloud writes.
 
 ## Documentation
 
-- Full docs index: [docs/README.md](docs/README.md)
-- Environment variables reference: [docs/user-guides/vars.md](docs/user-guides/vars.md)
-- Architectural laws: [docs/development/architectural-laws.md](docs/development/architectural-laws.md)
-- Client protocol spec: [docs/clients/client-spec.md](docs/clients/client-spec.md)
-- User onboarding guides: [docs/user-guides](docs/user-guides)
-- Auth0 setup: [docs/user-guides/auth0.md](docs/user-guides/auth0.md)
-- Operations guides: [docs/operations](docs/operations)
-- Local perf loop runner: [docs/development/perf-loop.md](docs/development/perf-loop.md)
+Use [docs/README.md](docs/README.md) as the documentation index.
+
+Start here:
+
+- [docs/user-guides/overview.md](docs/user-guides/overview.md)
+- [docs/user-guides/quick-start.md](docs/user-guides/quick-start.md)
+- [docs/user-guides/api-guide.md](docs/user-guides/api-guide.md)
+- [docs/development/domain-boundaries-spec.md](docs/development/domain-boundaries-spec.md)
+- [docs/clients/client-spec.md](docs/clients/client-spec.md)

@@ -5,7 +5,7 @@
 **Authority**: These diagrams summarize the current architecture. If they conflict with
 [architectural-laws.md](architectural-laws.md),
 [domain-boundaries-spec.md](domain-boundaries-spec.md), or source, treat the conflict
-as architecture drift and resolve it explicitly.
+as a documentation or implementation defect and resolve it explicitly.
 
 These diagrams intentionally do not imply durability, replay, ownership continuity,
 recovery, exactly-once delivery, or fused domain semantics beyond the guarantees in

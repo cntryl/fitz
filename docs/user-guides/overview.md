@@ -1,21 +1,32 @@
 # Fitz Overview
 
-Fitz is a multi-domain broker designed around async network edges and a deterministic sync runtime.
+Fitz is a production-ready, single-node application broker with one route model and seven primitives.
 
-## What Fitz Provides
+## The Model
 
-- Key-value operations
-- Queue semantics with leasing flows
-- Pub/sub notice fanout
-- Request/response RPC
-- Stream append and read patterns
-- Lease and schedule control domains
+- Notice: live fanout to connected subscribers.
+- Stream: durable append and replay of committed history.
+- KV: current authoritative state.
+- Queue: durable work delivery with reservation, retry, redelivery, and optional dead-letter handling.
+- RPC: live request and response dispatch to registered workers.
+- Lease: single-broker ownership coordination.
+- Schedule: durable timing intent.
 
 ## Core Concepts
 
-- Route address: domain-oriented path for operations
-- Route family: numeric partition and isolation boundary
-- Realm: logical isolation scope for resources and permissions
-- Session: authenticated connection context
+- Route address: a domain-oriented path such as `stream://realm/area/resource`.
+- RouteFamily: broker-internal routing and isolation.
+- Realm: opaque application-visible namespace in routes, permissions, and admin payloads.
+- Session: authenticated connection context; disconnect destroys session-owned state.
 
-Read [development/the-big-idea.md](../development/the-big-idea.md) for architecture intent.
+`realm` and `RouteFamily` are separate axes. They are never inferred from each other.
+
+## Guarantees
+
+Fitz is explicit about durability:
+
+- Durable domains recover only committed persisted state.
+- Ephemeral domains do not recover live state after disconnect or restart.
+- Clients rebuild subscriptions, workers, leases, transactions, and stream resume positions explicitly.
+
+Read [domain-boundaries-spec.md](../development/domain-boundaries-spec.md) for the authoritative domain contract.

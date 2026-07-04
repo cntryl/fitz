@@ -1,85 +1,61 @@
 # Fitz Documentation
 
-Fitz is a layered broker with async transports and a sync runtime core. This documentation is organized so evaluators, contributors, and operators can follow predictable reading paths.
+Fitz is a production-ready, single-node application broker with seven clear primitives: durable streams, queues, live fanout, RPC, KV, leases, and schedules.
 
-## What To Read Before Trying Fitz
+This index is the public reading path. It keeps product usage, operations, client implementation, and contributor internals separate.
 
-1. [development/storage-invariants.md](development/storage-invariants.md)
-2. [development/architecture.md](development/architecture.md)
-3. [user-guides/durability.md](user-guides/durability.md)
-4. [development/recovery-internals.md](development/recovery-internals.md)
-5. [development/testing.md](development/testing.md)
+## Learn Fitz
 
-These documents define behavior guarantees, implementation boundaries, and how those guarantees are tested.
+- [Overview](user-guides/overview.md)
+- [Domain boundaries](development/domain-boundaries-spec.md)
+- [Architectural laws](development/architectural-laws.md)
+- [Routing model](development/route-design.md)
+- [Durability](user-guides/durability.md)
+- [Transaction durability contract](user-guides/transaction-durability-contract.md)
 
-For the hard review gate that decides whether a change preserves Fitz as a runtime of narrow primitives, read [development/architectural-laws.md](development/architectural-laws.md).
+## Build Apps
 
-For the authoritative internal contract on domain responsibilities, overlap prevention, and feature placement, read [development/domain-boundaries-spec.md](development/domain-boundaries-spec.md).
+- [Quick start](user-guides/quick-start.md)
+- [API guide](user-guides/api-guide.md)
+- [Troubleshooting](user-guides/troubleshooting.md)
+- [Environment variables](user-guides/vars.md)
+- [Auth0 setup](user-guides/auth0.md)
 
-For a short durability contract page, read [user-guides/transaction-durability-contract.md](user-guides/transaction-durability-contract.md).
+## Operate Fitz
 
-## Documentation Structure
+- [Storage setup](operations/cloud-setup.md)
+- [Production auth](operations/production-auth.md)
+- [Probes and observability](operations/observability.md)
+- [Production runbook](operations/production-runbook.md)
+- [Resource limits](operations/resource-limits.md)
+- [Performance tuning](operations/performance-tuning.md)
+- [Release checklist](operations/release-checklist.md)
+- [Migration guide](operations/migration-guide.md)
+- [Admin API](admin/admin-api.md)
+- [MCP control-plane safety](admin/mcp-control-plane.md)
 
-- [user-guides/](user-guides/) for API and operator-facing usage
-- [operations/](operations/) for deployment, runbook, and tuning
-- [development/](development/) for architecture, invariants, recovery, and release policy
-- [benchmarks/](benchmarks/) for benchmark references and future reports
-- [clients/](clients/) for client wire protocol and implementation guidance
-- [admin/](admin/) for admin API and operator controls
+## Implement Clients
 
-## Recommended Reading Paths
+- [Client specification](clients/client-spec.md)
+- [Connection flow](clients/connection-flow.md)
+- [Client requirements](clients/client-requirements.md)
+- [Client acceptance criteria](clients/client-acceptance-criteria.md)
+- [Client implementation guide](clients/client-implementation-guide.md)
+- [Cross-language conformance runner](clients/cross-language-conformance-runner.md)
 
-### Evaluating Fitz
+## Understand Internals
 
-1. [development/storage-invariants.md](development/storage-invariants.md)
-2. [development/architecture.md](development/architecture.md)
-3. [development/architectural-laws.md](development/architectural-laws.md)
-4. [user-guides/durability.md](user-guides/durability.md)
-5. [development/recovery-internals.md](development/recovery-internals.md)
-6. [development/testing.md](development/testing.md)
-
-### Contributing To Runtime Correctness
-
-1. [development/architecture.md](development/architecture.md)
-2. [development/architectural-laws.md](development/architectural-laws.md)
-3. [development/domain-boundaries-spec.md](development/domain-boundaries-spec.md)
-4. [development/route-design.md](development/route-design.md)
-5. [development/storage-invariants.md](development/storage-invariants.md)
-6. [development/recovery-internals.md](development/recovery-internals.md)
-7. [development/testing.md](development/testing.md)
-
-### General Usage
-
-1. [user-guides/overview.md](user-guides/overview.md)
-2. [user-guides/quick-start.md](user-guides/quick-start.md)
-3. [user-guides/vars.md](user-guides/vars.md)
-4. [user-guides/auth0.md](user-guides/auth0.md)
-5. [user-guides/api-guide.md](user-guides/api-guide.md)
-6. [user-guides/troubleshooting.md](user-guides/troubleshooting.md)
-
-## Important Positioning
-
-- Experimental: yes
-- Durability-tested: yes
-- Safe enough for careful evaluation: yes
-- Production-ready: not yet
-
-See [development/stability-policy.md](development/stability-policy.md) for pre-1.0 compatibility boundaries.
-
-## What To Read Before Calling It Production-Ready
-
-1. [development/one-dot-zero-contract.md](development/one-dot-zero-contract.md)
-2. [development/one-dot-zero-readiness-scorecard.md](development/one-dot-zero-readiness-scorecard.md)
-3. [development/support-matrix.md](development/support-matrix.md)
-4. [development/format-compatibility.md](development/format-compatibility.md)
-5. [development/release-policy.md](development/release-policy.md)
-6. [operations/production-runbook.md](operations/production-runbook.md)
-7. [operations/release-checklist.md](operations/release-checklist.md)
-
-## Fitz-Specific Companion Docs
-
-- [clients/client-spec.md](clients/client-spec.md)
-- [clients/client-implementation-guide.md](clients/client-implementation-guide.md)
-- [clients/client-acceptance-criteria.md](clients/client-acceptance-criteria.md)
-- [clients/connection-flow.md](clients/connection-flow.md)
-- [admin/admin-api.md](admin/admin-api.md)
+- [Architecture](development/architecture.md)
+- [Architecture modules](development/code-architecture-modules.md)
+- [Architecture runtime flows](development/code-architecture-runtime-flows.md)
+- [Architecture domain patterns](development/code-architecture-domain-patterns.md)
+- [Storage invariants](development/storage-invariants.md)
+- [Recovery internals](development/recovery-internals.md)
+- [Format compatibility](development/format-compatibility.md)
+- [Release policy](development/release-policy.md)
+- [Support matrix](development/support-matrix.md)
+- [Testing](development/testing.md)
+- [Benchmark guidelines](development/benchmarks.md)
+- [Stress benchmark contract](development/stress-bench-contract.md)
+- [Performance loop](development/perf-loop.md)
+- [Benchmark targets](development/bench-targets.md)

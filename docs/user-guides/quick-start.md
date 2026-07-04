@@ -88,15 +88,14 @@ to translate the verified identity claim value to a provisioned route family.
 Realm access is authorized by route-shaped permission patterns, not by a JWT
 realm claim.
 
-Common identity-provider setups:
+Common identity-provider shapes:
 
-| Provider | Identity claim | Permission source | Example Fitz env |
-| --- | --- | --- | --- |
-| Auth0 Organizations | `org_id` or namespaced override | top-level `permissions` or `FITZ_AUTH_PERMISSIONS_CLAIM` | `FITZ_AUTH_ORG_CLAIM=fitz://org_id` and `FITZ_ROUTE_FAMILY_MAP=org_acme=1` |
-| Microsoft Entra ID delegated | `tid` | `scp` | `FITZ_ROUTE_FAMILY_CLAIM=tid` and `FITZ_ROUTE_FAMILY_MAP=<tenant-guid>=1` |
-| Microsoft Entra ID app-only | `tid` | `roles` | `FITZ_ROUTE_FAMILY_CLAIM=tid` and `FITZ_ROUTE_FAMILY_MAP=<tenant-guid>=1` |
-| Amazon Cognito | `custom:tenant_id` or `sub` | `scope` | `FITZ_ROUTE_FAMILY_CLAIM=custom:tenant_id` and `FITZ_ROUTE_FAMILY_MAP=acme=1` |
-| Okta | exact custom or namespaced claim | `scope`, `FITZ_AUTH_CUSTOM_CLAIM`, or `FITZ_AUTH_ROLE_CLAIM` | `FITZ_ROUTE_FAMILY_CLAIM=https://example.com/identity` and `FITZ_ROUTE_FAMILY_MAP=acme=1` |
+| Identity claim | Permission source | Example Fitz env |
+| --- | --- | --- |
+| organization id or namespaced override | top-level `permissions` or `FITZ_AUTH_PERMISSIONS_CLAIM` | `FITZ_AUTH_ORG_CLAIM=fitz://org_id` and `FITZ_ROUTE_FAMILY_MAP=org_acme=1` |
+| tenant id | `scp` | `FITZ_ROUTE_FAMILY_CLAIM=tid` and `FITZ_ROUTE_FAMILY_MAP=<tenant-guid>=1` |
+| app role array | `roles` | `FITZ_AUTH_ROLE_CLAIM=roles` and `FITZ_ROUTE_FAMILY_MAP=<tenant-guid>=1` |
+| subject or custom identity claim | `scope` or custom permissions claim | `FITZ_ROUTE_FAMILY_CLAIM=https://example.com/identity` and `FITZ_ROUTE_FAMILY_MAP=acme=1` |
 
 If you configure `FITZ_AUTH_ROLE_CLAIM`, every value in that claim must
 already be a Fitz permission string such as `notice://prod/orders/**#read` or
@@ -106,7 +105,7 @@ roles to permissions server-side.
 If `FITZ_AUTH_REQUIRED=false`, anonymous mode is allowed and the broker uses
 route family `1`.
 
-For the recommended Auth0 Dashboard setup and Fitz environment, see
+For a concrete Auth0 Dashboard setup and Fitz environment, see
 [auth0.md](auth0.md).
 
 ## 4. Execute a Simple Operation

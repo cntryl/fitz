@@ -116,7 +116,7 @@ kv://                      # Missing realm/area/resource
 
 #### Parsing Logic
 
-Location: [src/protocol/kv_codec.rs](../../src/protocol/kv_codec.rs)
+Location: [src/protocol/kv_codec/mod.rs](../../src/protocol/kv_codec/mod.rs)
 
 ```rust
 // Route parsed into (realm, area, resource) triplet
@@ -405,7 +405,7 @@ impl LeaseKey {
 
 ---
 
-### 5. Notice Domain (Pub/Sub)
+### 5. Notice Domain (Live Fanout)
 
 **Prefix**: `notice://`  
 **Message Types**: 500-504  
@@ -798,7 +798,7 @@ rpc://tenant-a/**#write   # RPC request access
 3. **Authorization**: Simpler permission model
 4. **State management**: Exact keys enable better sharding
 
-**Exception**: Notice domain designed for pattern-based pub/sub, requires wildcards.
+**Exception**: Notice is designed for pattern-based live fanout and requires wildcards.
 
 ### Operation Placement Variations
 
@@ -844,13 +844,13 @@ rpc://tenant-a/**#write   # RPC request access
 
 | Domain | Protocol | Actor | Codec | Session / Sink |
 |--------|----------|-------|-------|----------------|
-| KV | [domains/kv/protocol.rs](../../src/domains/kv/protocol.rs) | [domains/kv/actor.rs](../../src/domains/kv/actor.rs) | [protocol/kv_codec.rs](../../src/protocol/kv_codec.rs) | [domains/kv/session.rs](../../src/domains/kv/session.rs) |
-| Queue | [domains/queue/protocol.rs](../../src/domains/queue/protocol.rs) | [domains/queue/actor.rs](../../src/domains/queue/actor.rs) | [protocol/queue_codec.rs](../../src/protocol/queue_codec.rs) | [domains/queue/sink.rs](../../src/domains/queue/sink.rs) |
+| KV | [domains/kv/protocol.rs](../../src/domains/kv/protocol.rs) | [domains/kv/actor.rs](../../src/domains/kv/actor.rs) | [protocol/kv_codec/mod.rs](../../src/protocol/kv_codec/mod.rs) | [domains/kv/session.rs](../../src/domains/kv/session.rs) |
+| Queue | [domains/queue/protocol.rs](../../src/domains/queue/protocol.rs) | [domains/queue/actor/mod.rs](../../src/domains/queue/actor/mod.rs) | [protocol/queue_codec.rs](../../src/protocol/queue_codec.rs) | [domains/queue/sink/mod.rs](../../src/domains/queue/sink/mod.rs) |
 | RPC | [domains/rpc/protocol.rs](../../src/domains/rpc/protocol.rs) | [domains/rpc/actor.rs](../../src/domains/rpc/actor.rs) | [protocol/rpc_codec.rs](../../src/protocol/rpc_codec.rs) | [domains/rpc/session.rs](../../src/domains/rpc/session.rs) |
 | Lease | [domains/lease/protocol.rs](../../src/domains/lease/protocol.rs) | [domains/lease/actor.rs](../../src/domains/lease/actor.rs) | [protocol/lease_codec.rs](../../src/protocol/lease_codec.rs) | [domains/lease/session.rs](../../src/domains/lease/session.rs) |
 | Notice | [domains/notice/protocol.rs](../../src/domains/notice/protocol.rs) | [domains/notice/actor.rs](../../src/domains/notice/actor.rs) | [protocol/notice_codec.rs](../../src/protocol/notice_codec.rs) | [domains/notice/session.rs](../../src/domains/notice/session.rs) |
-| Stream | [domains/stream/protocol.rs](../../src/domains/stream/protocol.rs) | [domains/stream/actor.rs](../../src/domains/stream/actor.rs) | [protocol/stream_codec.rs](../../src/protocol/stream_codec.rs) | [domains/stream/sink.rs](../../src/domains/stream/sink.rs) |
-| Schedule | [domains/schedule/protocol.rs](../../src/domains/schedule/protocol.rs) | [domains/schedule/actor.rs](../../src/domains/schedule/actor.rs) | [protocol/schedule_codec.rs](../../src/protocol/schedule_codec.rs) | [domains/schedule/session.rs](../../src/domains/schedule/session.rs) |
+| Stream | [domains/stream/protocol.rs](../../src/domains/stream/protocol.rs) | [domains/stream/actor.rs](../../src/domains/stream/actor.rs) | [protocol/stream_codec.rs](../../src/protocol/stream_codec.rs) | [domains/stream/sink/mod.rs](../../src/domains/stream/sink/mod.rs) |
+| Schedule | [domains/schedule/protocol.rs](../../src/domains/schedule/protocol.rs) | [domains/schedule/actor/mod.rs](../../src/domains/schedule/actor/mod.rs) | [protocol/schedule_codec.rs](../../src/protocol/schedule_codec.rs) | [domains/schedule/session.rs](../../src/domains/schedule/session.rs) |
 
 ---
 
@@ -874,4 +874,4 @@ When implementing or modifying route handling:
 **See Also**:
 - [Fitz Architecture](./architecture.md)
 - [Connection Flow](../clients/connection-flow.md)
-- [Copilot Instructions](../../.github/copilot-instructions.md)
+- [Agent Guide](../../AGENTS.md)

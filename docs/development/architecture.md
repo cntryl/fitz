@@ -12,10 +12,10 @@
 9. [Performance & Tuning](#performance--tuning)
 ## Overview
 Fitz is a **layered, synchronous-core broker** designed for:
-- **Low-latency domain operations** (KV, queues, pub/sub, streams, RPC, leases, scheduling)
+- **Low-latency domain operations** (KV, queues, live fanout, streams, RPC, leases, scheduling)
 - **Two-axis isolation:** hard broker isolation by `RouteFamily`, plus app-visible namespace by `realm`
 - **Deterministic message routing** (no async jitter in hot paths)
-- **High fanout** (pub/sub with wildcard patterns)
+- **High fanout** (live fanout with wildcard patterns)
 
 For the strict internal contract that defines what each domain is allowed to do, what it must not do, and how domains compose safely, see [domain-boundaries-spec.md](domain-boundaries-spec.md).
 
@@ -45,7 +45,7 @@ Layer 3: RUNTIME (100% Sync, Deterministic)
 Layer 4: DOMAINS (100% Sync Business Logic)
 ├─ KV (transactions, isolation, durability)
 ├─ Queue (FIFO, leasing, visibility)
-├─ Notice (pub/sub, wildcard matching)
+├─ Notice (live fanout, wildcard matching)
 ├─ Stream (durable append-only logs, commit-time sequencing, ephemeral append sessions)
 ├─ RPC (request/response, correlation)
 ├─ Lease (in-memory coordination)
@@ -486,7 +486,7 @@ pub fn encode_response(response: &KvResponse) -> Vec<u8> {
     enc.finish()
 }
 ```
-### Notice Domain (Pub/Sub)
+### Notice Domain (Live Fanout)
 **Current files:** `src/domains/notice/sink.rs`, `src/domains/notice/mod.rs`
 
 Current Notice behavior is intentionally ephemeral:
@@ -594,7 +594,7 @@ impl NoticeActor {
 }
 ```
 ### Pattern Matching
-For Notice (pub/sub) and Stream subscriptions, implement wildcard matching:
+For Notice live fanout and Stream subscriptions, implement wildcard matching:
 ```rust
 /// Match a route against a pattern.
 /// `*` = one segment, `**` = zero or more segments
