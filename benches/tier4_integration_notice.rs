@@ -180,7 +180,7 @@ fn should_complete_direct_publish(ctx: &mut StressContext) {
     let sink = create_bench_notice_sink(router.clone());
     router.register_domain_pattern("notice", sink as Arc<dyn MailboxSink>);
 
-    let (subscriber_source, _subscriber_sink) = register_session_counting_sink(&router, family, 1);
+    let (subscriber_source, subscriber_sink) = register_session_counting_sink(&router, family, 1);
     let subscribe_frame = build_notice_subscribe("notice://test/events");
     let (subscribe_msg_type, subscribe_payload) = extract_single_tlv_field(&subscribe_frame);
     route_frame(
@@ -194,6 +194,12 @@ fn should_complete_direct_publish(ctx: &mut StressContext) {
         family,
     )
     .expect("notice subscribe");
+    let subscribe_count = subscriber_sink.wait_for_count(1, Duration::from_secs(1));
+    assert_eq!(
+        subscribe_count, 1,
+        "notice subscribe should ack before publish benchmark"
+    );
+    subscriber_sink.reset();
 
     let (publisher_source, _publisher_sink) = register_session_counting_sink(&router, family, 2);
     let publish_frame = build_notice_publish(
@@ -201,6 +207,7 @@ fn should_complete_direct_publish(ctx: &mut StressContext) {
         Bytes::from_static(b"event").as_ref(),
     );
     let (publish_msg_type, publish_payload) = extract_single_tlv_field(&publish_frame);
+    let mut expected_deliveries = 0usize;
 
     let iterations = ctx.measure_for(
         stress_config::BenchConfig::default().measure_duration,
@@ -216,6 +223,13 @@ fn should_complete_direct_publish(ctx: &mut StressContext) {
                 family,
             )
             .expect("notice publish");
+            expected_deliveries += 1;
+            let delivered =
+                subscriber_sink.wait_for_count(expected_deliveries, Duration::from_secs(1));
+            assert_eq!(
+                delivered, expected_deliveries,
+                "notice direct publish should deliver exactly one notification"
+            );
         },
     );
     ctx.set_elements(iterations as u64);

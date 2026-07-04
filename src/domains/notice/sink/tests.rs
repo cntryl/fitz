@@ -10,6 +10,7 @@ use bytes::Bytes;
 use std::sync::Arc;
 
 mod cleanup;
+mod publish;
 
 fn encode_notice_subscribe(pattern: &str) -> Bytes {
     let mut encoder = PayloadEncoder::new();

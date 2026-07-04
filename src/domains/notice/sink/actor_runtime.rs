@@ -8,6 +8,7 @@ pub(super) enum NoticeDomainCommand {
         Envelope,
         crossbeam_channel::Sender<Result<(), DeliveryError>>,
     ),
+    DeliverAccepted(Envelope),
     ReadSubscriptionCount(crossbeam_channel::Sender<usize>),
     RefreshAdminSnapshotIfDirty(crossbeam_channel::Sender<()>),
     UnsubscribeAllForSession(u64, crossbeam_channel::Sender<usize>),
@@ -43,6 +44,9 @@ impl Actor for NoticeDomainActor {
         match msg {
             NoticeDomainCommand::Deliver(envelope, reply) => {
                 let _ = reply.send(runtime.deliver_envelope(&envelope));
+            }
+            NoticeDomainCommand::DeliverAccepted(envelope) => {
+                let _ = runtime.deliver_envelope(&envelope);
             }
             NoticeDomainCommand::ReadSubscriptionCount(reply) => {
                 let _ = reply.send(runtime.subscription_count());

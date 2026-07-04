@@ -228,7 +228,7 @@ impl NoticeDomainSink {
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         if let Err(error) = self
             .actor
-            .try_send_high_priority(NoticeDomainCommand::RefreshAdminSnapshotIfDirty(reply_tx))
+            .try_send(NoticeDomainCommand::RefreshAdminSnapshotIfDirty(reply_tx))
         {
             tracing::warn!(
                 domain = "notice",
@@ -284,6 +284,15 @@ impl NoticeDomainSink {
         envelope: Envelope,
         high_priority: bool,
     ) -> Result<(), DeliveryError> {
+        if Self::can_accept_without_reply(&envelope) {
+            let command = NoticeDomainCommand::DeliverAccepted(envelope);
+            return if high_priority {
+                self.actor.try_send_high_priority(command)
+            } else {
+                self.actor.try_send(command)
+            };
+        }
+
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         let command = NoticeDomainCommand::Deliver(envelope, reply_tx);
         let enqueue_result = if high_priority {
@@ -296,6 +305,24 @@ impl NoticeDomainSink {
         reply_rx
             .recv_timeout(Duration::from_secs(1))
             .unwrap_or(Err(DeliveryError::ActorStopped))
+    }
+
+    fn can_accept_without_reply(envelope: &Envelope) -> bool {
+        if envelope
+            .payload::<crate::runtime::DomainPublishEvent>()
+            .is_some()
+        {
+            return true;
+        }
+
+        envelope
+            .payload::<crate::domains::notice::NoticeClientRequest>()
+            .is_some_and(|request| {
+                matches!(
+                    request.message,
+                    Ok(crate::domains::notice::protocol::NotificationMessage::Publish(_))
+                )
+            })
     }
 }
 

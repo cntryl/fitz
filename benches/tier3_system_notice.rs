@@ -16,12 +16,14 @@ use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
     build_notice_publish, build_notice_subscribe, create_bench_notice_sink,
     extract_single_tlv_field, parse_notice_subscription_id, register_session_counting_sink,
-    register_session_queue_sink, route_frame, FrameQueueSink,
+    register_session_queue_sink, route_frame, wait_for_counting_sinks_each_count, CountingSink,
+    FrameQueueSink,
 };
 use fitz::protocol::frame::ChannelId;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{RouteAddress, RouteFamily};
 use std::sync::Arc;
+use std::time::Duration;
 
 const PUBLISHER_SESSION_ID: u64 = 10_000;
 const LIFECYCLE_SESSION_ID: u64 = 20_000;
@@ -47,7 +49,12 @@ struct NoticeRequestHarness {
 fn setup_notice_sink(
     subscriber_count: usize,
     pattern: &str,
-) -> (Arc<Router>, RouteFamily, RouteAddress) {
+) -> (
+    Arc<Router>,
+    RouteFamily,
+    RouteAddress,
+    Vec<Arc<CountingSink>>,
+) {
     let family = RouteFamily::new(1);
     let router = Arc::new(Router::new());
     let sink = create_bench_notice_sink(router.clone());
@@ -55,10 +62,11 @@ fn setup_notice_sink(
 
     let subscribe_frame = build_notice_subscribe(pattern);
     let (subscribe_msg_type, subscribe_payload) = extract_single_tlv_field(&subscribe_frame);
+    let mut subscriber_sinks = Vec::with_capacity(subscriber_count);
 
     for i in 0..subscriber_count {
         let session_id = i as u64 + 1;
-        let (source, _sink) = register_session_counting_sink(&router, family, session_id);
+        let (source, sink) = register_session_counting_sink(&router, family, session_id);
         route_frame(
             router.as_ref(),
             &source,
@@ -70,12 +78,19 @@ fn setup_notice_sink(
             family,
         )
         .expect("notice subscribe");
+        let ack_count = sink.wait_for_count(1, Duration::from_secs(1));
+        assert_eq!(
+            ack_count, 1,
+            "notice subscribe should ack before publish benchmark"
+        );
+        sink.reset();
+        subscriber_sinks.push(sink);
     }
 
     let (publisher_source, _publisher_sink) =
         register_session_counting_sink(&router, family, PUBLISHER_SESSION_ID);
 
-    (router, family, publisher_source)
+    (router, family, publisher_source, subscriber_sinks)
 }
 
 fn setup_notice_request_sink() -> NoticeRequestHarness {
@@ -140,9 +155,11 @@ fn measure_notice_fanout(ctx: &mut StressContext, case: NoticeFanoutCase) {
     ctx.tag("subscriber_count", subscriber_count.as_str());
     ctx.tag("match_kind", case.match_kind);
 
-    let (router, family, publisher_source) = setup_notice_sink(case.subscriber_count, case.pattern);
+    let (router, family, publisher_source, subscriber_sinks) =
+        setup_notice_sink(case.subscriber_count, case.pattern);
     let publish_frame = build_notice_publish(case.publish_route, case.payload);
     let (msg_type, payload) = extract_single_tlv_field(&publish_frame);
+    let mut expected_per_subscriber = 0usize;
 
     let iterations = ctx.measure_for(
         stress_config::BenchConfig::default().measure_duration,
@@ -158,6 +175,17 @@ fn measure_notice_fanout(ctx: &mut StressContext, case: NoticeFanoutCase) {
                 family,
             )
             .expect("notice publish");
+            expected_per_subscriber += 1;
+            let delivered = wait_for_counting_sinks_each_count(
+                &subscriber_sinks,
+                expected_per_subscriber,
+                Duration::from_secs(1),
+            );
+            assert_eq!(
+                delivered,
+                case.subscriber_count * expected_per_subscriber,
+                "notice publish should deliver exactly once per matching subscriber"
+            );
         },
     );
     ctx.set_elements(iterations as u64);
