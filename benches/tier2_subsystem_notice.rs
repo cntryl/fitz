@@ -18,7 +18,8 @@ use std::time::{Duration, Instant};
 mod criterion_config;
 
 const PUBLISH_ROUTE: &str = "notice://realm/area/orders/create";
-const PUBLISH_REPEAT_COUNT: u64 = 8;
+const PUBLISH_REPEAT_COUNT: u64 = 256;
+const PUBLISH_CHUNK_SIZE: u64 = 64;
 
 struct MatchPatternCase {
     label: &'static str,
@@ -41,13 +42,25 @@ impl NoticePublishCase {
 
     fn assert_single_delivery_per_subscriber(&self) {
         self.publish_once();
+        self.wait_for_deliveries_per_subscriber(1);
+    }
 
-        let delivery_count =
-            wait_for_counting_sinks_each_count(&self.subscriber_sinks, 1, Duration::from_secs(1));
+    fn wait_for_deliveries_per_subscriber(&self, expected_per_subscriber: usize) {
+        let delivery_count = wait_for_counting_sinks_each_count(
+            &self.subscriber_sinks,
+            expected_per_subscriber,
+            Duration::from_secs(1),
+        );
         assert_eq!(
             delivery_count,
-            self.subscriber_sinks.len(),
-            "expected one notice delivery per subscriber"
+            self.subscriber_sinks.len() * expected_per_subscriber,
+            "expected notice delivery count per subscriber"
+        );
+        assert!(
+            self.subscriber_sinks
+                .iter()
+                .all(|sink| sink.count() == expected_per_subscriber),
+            "notice publish should not skip or duplicate subscriber deliveries"
         );
     }
 
@@ -138,14 +151,23 @@ fn bench_notice_publish_fanout(c: &mut Criterion) {
                 |b| {
                     b.iter_custom(|iters| {
                         let mut remaining = iters.saturating_mul(PUBLISH_REPEAT_COUNT);
-                        let start = Instant::now();
+                        let mut total = Duration::ZERO;
                         while remaining > 0 {
-                            case.assert_single_delivery_per_subscriber();
+                            let chunk = remaining.min(PUBLISH_CHUNK_SIZE);
                             case.reset_subscriber_counts();
-                            black_box(());
-                            remaining -= 1;
+                            let start = Instant::now();
+                            for _ in 0..chunk {
+                                case.publish_once();
+                                black_box(());
+                            }
+                            let expected_per_subscriber =
+                                usize::try_from(chunk).expect("notice publish count fits usize");
+                            case.wait_for_deliveries_per_subscriber(expected_per_subscriber);
+                            total += start.elapsed();
+                            case.reset_subscriber_counts();
+                            remaining -= chunk;
                         }
-                        start.elapsed()
+                        total
                             / u32::try_from(PUBLISH_REPEAT_COUNT)
                                 .expect("publish repeat count fits u32")
                     });

@@ -1,8 +1,6 @@
 #![allow(deprecated)]
 use bytes::Bytes;
-use criterion::{
-    black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
-};
+use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
 use fitz::benchkit::{
     build_rpc_request, build_rpc_response_frame, build_rpc_subscribe, create_bench_rpc_sink,
     create_bench_rpc_sink_with_timeout, drain_frame_queue_sinks_after_each_count,
@@ -511,6 +509,7 @@ fn bench_rpc_worker_subscribe_primary(c: &mut Criterion) {
                     drain_frame_queue_sinks_after_each_count(&inboxes, 1, Duration::from_secs(1))
                         .len();
                 assert_eq!(subscribe_response_count, WORKER_SUBSCRIBE_BATCH_SIZE);
+                case.router.clear();
             }
             total
         });
@@ -665,13 +664,13 @@ fn bench_rpc_response_primary(c: &mut Criterion) {
                         &case.requester_inbox,
                         case.responses.len(),
                     );
+                    case.router.clear();
                 }
                 total
             });
         },
     );
 
-    group.measurement_time(Duration::from_millis(250));
     for chunk_count in [4usize, 16usize] {
         group.throughput(Throughput::Elements(usize_to_u64_saturating(
             chunk_count
@@ -704,6 +703,7 @@ fn bench_rpc_response_primary(c: &mut Criterion) {
                             &case.requester_inbox,
                             case.expected_response_count,
                         );
+                        case.router.clear();
                     }
                     total
                 });
@@ -728,23 +728,29 @@ fn bench_rpc_timeout_sweep_primary(c: &mut Criterion) {
                 "dispatch_timeout_sweep_{expired_pending}_expired_pending_x{case_batch_size}_cases_primary"
             ),
             |b| {
-                b.iter_batched(
-                    || prepare_timeout_sweep_batch_case(expired_pending),
-                    |batch| {
-                        for case in batch.cases {
+                b.iter_custom(|iters| {
+                    let mut total = Duration::ZERO;
+                    for _ in 0..iters {
+                        let batch = prepare_timeout_sweep_batch_case(expired_pending);
+                        let start = Instant::now();
+                        for case in &batch.cases {
                             dispatch_request_to_destination(
                                 &case.router,
                                 case.family,
                                 &case.requester_source,
                                 &case.destination,
                                 case.request_msg_type,
-                                black_box(case.request_payload),
+                                black_box(case.request_payload.clone()),
                             );
                             black_box((case.requester_inbox.count(), case.worker_inbox.count()));
                         }
-                    },
-                    BatchSize::SmallInput,
-                );
+                        total += start.elapsed();
+                        for case in batch.cases {
+                            case.router.clear();
+                        }
+                    }
+                    total
+                });
             },
         );
     }

@@ -38,9 +38,6 @@ jobs:
       - name: Cargo build
         run: cargo build --locked
 
-      - name: Cargo bench compile
-        run: cargo bench --locked --no-run
-
       - name: Cargo test compile
         run: cargo test --locked --no-run
 

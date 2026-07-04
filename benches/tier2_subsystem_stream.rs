@@ -233,7 +233,7 @@ fn bench_stream_subscribe_register_primary(c: &mut Criterion) {
                     }
                     total += start.elapsed();
 
-                    for case in cases {
+                    for case in &cases {
                         let inboxes: Vec<_> = case
                             .subscribers
                             .iter()
@@ -252,6 +252,9 @@ fn bench_stream_subscribe_register_primary(c: &mut Criterion) {
                         for response in responses {
                             assert_stream_subscribe_success(response.payload.as_ref());
                         }
+                    }
+                    for case in cases {
+                        case.router.clear();
                     }
                 }
                 total

@@ -22,7 +22,7 @@ const WATCH_ROUTE: &str = "lease://realm/locks/primary";
 const CLIENT_SESSION_ID: u64 = 1;
 const WATCH_REGISTER_BATCH_SIZE: usize = 256;
 const WATCH_REGISTER_CASE_COUNT: usize = 8;
-const NOTIFY_REPEAT_COUNT: u64 = 64;
+const NOTIFY_REPEAT_COUNT: u64 = 512;
 const NOTIFY_CHUNK_SIZE: u64 = 64;
 
 struct LeasePatternCase {
@@ -200,9 +200,8 @@ fn bench_lease_watch_register_primary(c: &mut Criterion) {
                             );
                         }
                     }
-                    total += start.elapsed();
 
-                    for case in cases {
+                    for case in &cases {
                         let sinks: Vec<_> = case
                             .watchers
                             .iter()
@@ -214,6 +213,11 @@ fn bench_lease_watch_register_primary(c: &mut Criterion) {
                             responses, WATCH_REGISTER_BATCH_SIZE,
                             "lease watch registration should ack every watcher"
                         );
+                    }
+                    total += start.elapsed();
+
+                    for case in cases {
+                        case.router.clear();
                     }
                 }
                 total
@@ -263,10 +267,10 @@ fn bench_lease_notify_primary(c: &mut Criterion) {
                             for _ in 0..chunk {
                                 case.publish_once();
                             }
-                            total += start.elapsed();
                             let expected_per_watcher =
                                 usize::try_from(chunk).expect("lease publish count fits usize");
                             case.wait_for_notifications_per_watcher(expected_per_watcher);
+                            total += start.elapsed();
                             case.reset_watcher_counts();
                             remaining -= chunk;
                         }

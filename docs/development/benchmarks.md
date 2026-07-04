@@ -42,6 +42,23 @@ Benchmarks in Fitz measure **real-world message broker performance** across rout
    - Use deterministic data, not random values
    - Document environmental factors that affect results
 
+### Suite Split
+
+Fitz keeps benchmark coverage, but only a small, stable subset is release-gating.
+
+- **Release suite:** 30-50 baseline-backed rows that cover customer-visible invariants: RPC request/response, queue enqueue/dequeue/ack, stream append/read/replay, notice publish/fanout, schedule create/claim/ack, and TCP/WS integration for each domain.
+- **Deep suite:** Nightly/manual coverage for selected sweeps, storage-model experiments, wildcard and route-depth variants, high-cardinality registration, and rows with noisy RSD. Keep it near 100-150 records.
+- **Historical experiments:** One-off profiling benches that no longer answer an active regression, throughput, scaling, or risky-subsystem question.
+
+Before adding a benchmark to the release suite, confirm it answers one of these:
+
+1. Did a core invariant regress?
+2. Did customer-visible throughput regress?
+3. Did an algorithmic scaling curve change?
+4. Did a risky subsystem get slower?
+
+The release suite is enumerated in [`config/bench_release_ids.txt`](../../config/bench_release_ids.txt). Keep that file small, baseline-backed, and reviewable. Rows that are important but not yet baseline-backed, such as schedule claim/ack and explicit stream replay rows, start as deep-suite or release-candidate coverage until a guarded baseline refresh promotes them.
+
 ## File Organization
 
 ### Tier Layout and Directory Structure
@@ -228,6 +245,10 @@ Practical rules:
 - If a measured op is below about 0.05 us median, fold it into a larger workflow or exclude it from the headline report.
 - Use `black_box()` on inputs, but do not use it to hide fake work.
 - Keep setup outside `b.iter()` or `iter_batched()`.
+- If a Tier 2 row claims actor-backed ack, registration, or fanout work, the
+  measured interval must include the response or delivery drain needed to prove
+  that work completed. Setup-only validation waits still belong outside the
+  measured interval.
 - Prefer the shared defaults for fast local iteration; increase measurement time only when diagnosing noise.
 
 The benchmark summary is median-first. Mean is still recorded, but the headline tables and regression checks use median latency or throughput.
@@ -245,18 +266,23 @@ Tier 3 and Tier 4 benchmarks use `cntryl-stress` and `#[stress_test]`. Configura
 - **set_elements(N):** Set this to the logical number of operations in each `ctx.measure(|| { ... })` (e.g. 3 for begin+put+rollback, 10 for 10 puts). Throughput reported by `cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"` is elements/time, so N must match what the closure does.
 - **Minimum runtime:** Aim for 3s of measured work per scenario. Runs shorter than 3s are invalid, and the summary tool flags them as such because they do not provide stable enough medians.
 - **Output:** Stress results are written under `target/stress/<bench_name>/` (e.g. `target/stress/tier3_system_kv/latest.json`). Run `cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"` after the benchmark commands to produce `target/bench_summary.md`.
-- **Full refresh:** Run the full tier suites directly, then run `cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"` to regenerate the summary.
+- **Suite split:** The release-gating command list lives in `.github/workflows/bench.yml` and is backed by `config/bench_release_ids.txt`. The deep suite is a curated nightly set, not a full wildcard run of every benchmark target.
 
-Full local refresh:
+Deep local refresh:
 
 ```bash
 export FITZ_LOG_LEVEL=warn
 export OTEL_ENABLED=false
-cargo bench --no-run
-cargo bench --bench 'tier1_*'
-cargo bench --bench 'tier2_*'
-cargo bench --bench 'tier3_*' -- --runs 5 --warmup 1
-cargo bench --bench 'tier4_*' -- --runs 5 --warmup 1
+cargo bench --bench tier2_subsystem_queue
+cargo bench --bench tier2_subsystem_lease
+cargo bench --bench tier2_subsystem_notice
+cargo bench --bench tier2_subsystem_rpc
+cargo bench --bench tier2_subsystem_stream
+cargo bench --bench tier2_subsystem_schedule_fire
+cargo bench --bench tier2_subsystem_stream_replay
+cargo bench --bench tier3_system_queue -- --runs 5 --warmup 1
+cargo bench --bench tier3_system_rpc -- --runs 5 --warmup 1
+cargo bench --bench tier3_system_stream_storage_model -- --runs 5 --warmup 1
 cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"
 ```
 
@@ -264,9 +290,12 @@ Targeted examples:
 
 ```bash
 cargo bench --bench tier2_subsystem_scheduler
-cargo bench --bench tier3_system_kv -- --runs 5 --warmup 1
-cargo bench --bench tier4_integration_kv -- --runs 5 --warmup 1
+cargo bench --bench tier3_system_queue -- --workload should_complete_capacity_ack_roundtrip --runs 5 --warmup 1
+cargo bench --bench tier4_integration_rpc -- --workload should_complete_ws_request_response --runs 5 --warmup 1
+cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"
 ```
+
+Do not use `cargo bench --no-run` as a preflight for CI or local benchmark work. It compiles every bench target without producing signal, and it hides which benchmark surface is actually under review.
 
 For CI, the fast default is the 3s measured window; raise `BENCH_MEASURE_SECS=5` only when you are intentionally collecting a longer profile.
 
@@ -542,36 +571,31 @@ cargo watch -x "bench --bench tier1_hotpath_routing"
 
 ### CI Pipeline
 
-The repository CI includes a **benchmarks** job that installs `cntryl-tools`, runs all Criterion benches with the shared Criterion config, runs tier 3 and tier 4 stress benches with `--runs 5 --warmup 1` on the shared 3s stress window, then runs `cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"` and uploads `target/bench_summary.md` as an artifact. Criterion output is under `target/criterion/`; stress output is under `target/stress/<bench_name>/` (e.g. `latest.json`).
+Normal CI does not compile or run the benchmark suite. `cargo bench --no-run` is intentionally absent from CI because it is expensive and does not produce a benchmark report.
 
-#### Pull Request Checks:
+The dedicated **Bench** workflow has two suites:
 
-```bash
-# Criterion with the shared config
-cargo bench --no-fail-fast
+- **release:** Manual `workflow_dispatch` default. Runs the curated release rows, filters `config/bench_baseline.json` to `config/bench_release_ids.txt`, summarizes with `cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"`, and uploads `target/bench_summary.md`, `target/bench_results.json`, Criterion output, and stress output.
+- **deep:** Nightly and manual. Runs the curated deep Tier 2 signal suites, selected Tier 3 scaling suites, and stream storage-model experiments, then summarizes as `Fitz Deep Benchmark Report`. Use this suite for scaling curves, storage-model experiments, and noisy rows that should not gate the release surface. Full wildcard runs are manual historical/profiling work, not the nightly path.
 
-# Stress with the CI sample profile
-cargo bench --bench tier3_system_kv -- --runs 5 --warmup 1
-cargo bench --bench tier4_integration_kv -- --runs 5 --warmup 1
-```
-
-#### Nightly Performance Runs:
+#### Pull Request Checks
 
 ```bash
-# Full profiling with perf feature
-cargo bench --release --features perf -- \
-  --sample-size 100 \
-  --measurement-time 10
+export FITZ_LOG_LEVEL=warn
+export OTEL_ENABLED=false
+cargo bench --bench tier3_system_queue -- --workload should_complete_capacity_ack_roundtrip --runs 5 --warmup 1
+cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"
 ```
 
-#### Baseline Comparison:
+For code or harness changes, run the correctness checks from `CONTRIBUTING.md`, then run the smallest benchmark command that covers the changed behavior. Keep the same command before and after the change.
 
-```bash
-# Save baseline
-cargo bench --bench bloom -- --save-baseline main
-# Compare against baseline
-cargo bench --bench bloom -- --baseline main
-```
+#### Nightly Performance Runs
+
+The scheduled Bench workflow runs the deep suite. Inspect `target/bench_summary.md` and `target/bench_results.json` from the uploaded artifact; do not promote noisy or untrustworthy rows into the release gate without fixing or reclassifying them.
+
+#### Baseline Refresh
+
+Refresh `config/bench_baseline.json` only after the relevant report has `critical == 0`, `missing == 0`, and no unreviewed noisy or untrustworthy risk rows. The release suite must remain fully baseline-backed; promote deep-suite rows into `config/bench_release_ids.txt` only in the same change that refreshes their baseline coverage.
 
 ### Profiling Integration
 
@@ -652,27 +676,30 @@ When reviewing benchmark PRs:
 - [ ] **Category:** Appropriately categorized (micro/subsystem/scheme/system)
 - [ ] **Async Handling:** Proper tokio runtime usage
 - [ ] **Scheme Specific:** Tests appropriate scheme semantics
-- [ ] **CI:** Heavy benchmarks gated behind `perf` feature
+- [ ] **Suite:** Release rows are baseline-backed and stable; exhaustive or noisy rows stay in the deep suite
 
 ### Common Commands
 
 ```bash
-# Run all benchmarks (fast mode)
-cargo bench -- --quick
-# Run specific subsystem
-cargo bench router
-# Run all scheme benchmarks
-cargo bench -- notice stream queue rpc inbox
-# Run with detailed output
-cargo bench -- --verbose
-# Save baseline for comparison
-cargo bench -- --save-baseline main
-# Compare against baseline
-cargo bench -- --baseline main
-# Generate flamegraph
-cargo flamegraph --bench router
-# List all benchmarks
-cargo bench -- --list
+# Run one Criterion subsystem
+cargo bench --bench tier2_subsystem_queue
+
+# Run one stress workload
+cargo bench --bench tier4_integration_rpc -- --workload should_complete_tcp_request_response --runs 5 --warmup 1
+
+# Run the deep suite locally
+cargo bench --bench tier2_subsystem_queue
+cargo bench --bench tier2_subsystem_rpc
+cargo bench --bench tier2_subsystem_stream_replay
+cargo bench --bench tier3_system_queue -- --runs 5 --warmup 1
+cargo bench --bench tier3_system_rpc -- --runs 5 --warmup 1
+cargo bench --bench tier3_system_stream_storage_model -- --runs 5 --warmup 1
+
+# Summarize collected outputs
+cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"
+
+# Generate a flamegraph for one bench target
+cargo flamegraph --bench tier2_subsystem_queue
 ```
 
 ### Performance Targets
@@ -710,6 +737,7 @@ cargo bench -- --list
 
 | Date       | Version | Changes                                          |
 | ---------- | ------- | ------------------------------------------------ |
+| 2026-07-04 | 1.1     | Split benchmark workflows into release and deep suites |
 | 2025-10-20 | 1.0     | Initial version tailored for Fitz message broker |
 
 ### Contributors

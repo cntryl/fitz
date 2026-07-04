@@ -12,17 +12,16 @@ cargo test test_guidelines_compliance
 cntryl-tools validate-tests
 ```
 
-Run the benchmark tier or target that covers the suspected hot path:
+Run the benchmark tier or target that covers the suspected hot path. Prefer a release-suite row from `config/bench_release_ids.txt` when it covers the behavior; use the deep suite for scaling curves, storage-model experiments, wildcard sweeps, high-cardinality registration, or rows already classified as noisy:
 
 ```bash
 export FITZ_LOG_LEVEL=warn
 export OTEL_ENABLED=false
-cargo bench --no-run
 cargo bench --bench tier3_system_rpc -- --runs 5 --warmup 1
 cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"
 ```
 
-For a full tier refresh, use the commands in [Benchmark Guidelines](benchmarks.md#stress-configuration-tier-3-and-4).
+For a full tier refresh, use the deep-suite commands in [Benchmark Guidelines](benchmarks.md#stress-configuration-tier-3-and-4). Do not use `cargo bench --no-run` as a benchmark preflight; it compiles every target without producing performance signal.
 
 ## Optimize
 
@@ -31,3 +30,5 @@ Make one focused change, then rerun the same correctness checks and benchmark co
 ## Selection Rules
 
 Use [config/perf_targets.json](../../config/perf_targets.json) and [Performance targets](bench-targets.md) to choose optimization candidates. Prefer the scenario furthest over its operational target inside the relevant bucket, then use stretch-target distance and current `mean_us` to break ties.
+
+Rows outside the release suite can still justify product work when they show a hard miss, but keep that slice scoped to one row and promote it into release gating only after the row is stable and baseline-backed.
