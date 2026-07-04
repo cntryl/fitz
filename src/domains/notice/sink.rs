@@ -456,6 +456,8 @@ impl NoticeDomainCore {
             payload.clone(),
         );
 
+        let subscriber_sink = self.router.resolve_sink(&target.subscriber);
+
         for attempt in 0..=MAX_RETRIES {
             #[cfg(test)]
             let notify_envelope = Envelope::new(target.subscriber.clone(), notify_ctx.clone());
@@ -463,7 +465,14 @@ impl NoticeDomainCore {
             #[cfg(not(test))]
             let notify_envelope = Envelope::new(target.subscriber.clone(), notification.clone());
 
-            match self.router.route(notify_envelope) {
+            let delivery_result = if let Some(sink) = subscriber_sink.as_ref() {
+                sink.deliver(notify_envelope)
+                    .map_err(|error| RouteError::DeliveryFailed(target.subscriber.clone(), error))
+            } else {
+                self.router.route(notify_envelope)
+            };
+
+            match delivery_result {
                 Ok(()) => return,
                 Err(RouteError::DeliveryFailed(_, DeliveryError::MailboxFull { .. }))
                     if attempt < MAX_RETRIES =>
