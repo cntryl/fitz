@@ -403,8 +403,16 @@ impl CronSchedule {
     }
 
     fn simple_candidate_seconds(&self, current_secs: u64) -> Option<u64> {
-        if !self.day_of_month.is_any() || !self.month.is_any() || !self.day_of_week.is_any() {
+        if !self.month.is_any() || !self.day_of_week.is_any() {
             return None;
+        }
+
+        if !self.day_of_month.is_any() {
+            return self.monthly_candidate_seconds(current_secs);
+        }
+
+        if self.hour.is_any() && self.minute.is_any() {
+            return Some(next_minute_start_seconds(current_secs));
         }
 
         if self.hour.is_any() {
@@ -430,6 +438,50 @@ impl CronSchedule {
         })
     }
 
+    fn monthly_candidate_seconds(&self, current_secs: u64) -> Option<u64> {
+        const MONTH_SEARCH_LIMIT: usize = 48;
+
+        let target_day = self.day_of_month.as_single()?;
+        let target_hour = self.hour.as_single()?;
+        let target_minute = self.minute.as_single()?;
+        let (mut year, mut month, current_day, _, _, _) = seconds_to_datetime(current_secs);
+        let seconds_into_day = current_secs % 86_400;
+        let current_day_start = current_secs - seconds_into_day;
+        let mut month_start = current_day_start
+            .saturating_sub(u64::from(current_day.saturating_sub(1)).saturating_mul(86_400));
+
+        if let Some(candidate) = candidate_in_month(
+            month_start,
+            year,
+            month,
+            target_day,
+            target_hour,
+            target_minute,
+        ) {
+            if candidate > current_secs {
+                return Some(candidate);
+            }
+        }
+
+        for _ in 0..MONTH_SEARCH_LIMIT {
+            month_start = month_start
+                .saturating_add(u64::from(days_in_month(year, month)).saturating_mul(86_400));
+            (year, month) = increment_month(year, month);
+            if let Some(candidate) = candidate_in_month(
+                month_start,
+                year,
+                month,
+                target_day,
+                target_hour,
+                target_minute,
+            ) {
+                return Some(candidate);
+            }
+        }
+
+        None
+    }
+
     fn matches_day_of_month(&self, day: u32) -> bool {
         self.day_of_month_matcher.matches(day)
     }
@@ -448,6 +500,34 @@ impl CronSchedule {
         }
         None
     }
+}
+
+fn next_minute_start_seconds(current_secs: u64) -> u64 {
+    current_secs
+        .checked_div(60)
+        .and_then(|minute| minute.checked_add(1))
+        .and_then(|minute| minute.checked_mul(60))
+        .unwrap_or(u64::MAX)
+}
+
+fn candidate_in_month(
+    month_start: u64,
+    year: u32,
+    month: u32,
+    target_day: u32,
+    target_hour: u32,
+    target_minute: u32,
+) -> Option<u64> {
+    if target_day > days_in_month(year, month) {
+        return None;
+    }
+
+    Some(
+        month_start
+            .saturating_add(u64::from(target_day.saturating_sub(1)).saturating_mul(86_400))
+            .saturating_add(u64::from(target_hour).saturating_mul(3_600))
+            .saturating_add(u64::from(target_minute).saturating_mul(60)),
+    )
 }
 
 fn instant_from_epoch_seconds(
@@ -777,6 +857,32 @@ mod tests {
 
         // Assert
         assert_eq!(candidate, Some(86_400 + (6 * 3_600) + (15 * 60)));
+    }
+
+    #[test]
+    fn should_fast_path_every_minute_schedule() {
+        // Arrange
+        let cron = CronSchedule::parse("* * * * *").unwrap();
+
+        // Act
+        let candidate = cron.simple_candidate_seconds((10 * 3_600) + (14 * 60) + 30);
+
+        // Assert
+        assert_eq!(candidate, Some((10 * 3_600) + (15 * 60)));
+    }
+
+    #[test]
+    fn should_fast_path_monthly_schedule_given_fixed_day_hour_and_minute() {
+        // Arrange
+        let cron = CronSchedule::parse("0 2 1 * *").unwrap();
+        let current_secs = datetime_to_seconds(2026, 3, 31, 5, 30);
+        let expected_secs = datetime_to_seconds(2026, 4, 1, 2, 0);
+
+        // Act
+        let candidate = cron.simple_candidate_seconds(current_secs);
+
+        // Assert
+        assert_eq!(candidate, Some(expected_secs));
     }
 
     #[test]
