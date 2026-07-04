@@ -376,6 +376,80 @@ fn should_track_notice_publish_activity_given_matching_publish() {
 }
 
 #[test]
+fn should_track_one_notice_publish_given_multiple_subscribers_on_same_pattern() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let notice_pattern = "notice://acme/app/*";
+    let publish_route = "notice://acme/app/events";
+    let notice_address = RouteAddress::new(family, Route::new("notice://acme/inbound"));
+    let first_subscriber = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let second_subscriber = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let publisher_address = RouteAddress::new(family, Route::new("inbox://session/11"));
+    let router = Arc::new(Router::new());
+    let first_mailbox = Arc::new(Mailbox::new(8));
+    let second_mailbox = Arc::new(Mailbox::new(8));
+    router.register(first_subscriber.clone(), first_mailbox.clone());
+    router.register(second_subscriber.clone(), second_mailbox.clone());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = NoticeDomainSink::new(router, admin_read_model.clone());
+
+    subscribe_notice_pattern(
+        &sink,
+        &first_subscriber,
+        &notice_address,
+        7,
+        notice_pattern,
+        family,
+    );
+    let first_response = decode_notice_response(&first_mailbox);
+    assert_eq!(first_response.status, 0);
+    subscribe_notice_pattern(
+        &sink,
+        &second_subscriber,
+        &notice_address,
+        8,
+        notice_pattern,
+        family,
+    );
+    let second_response = decode_notice_response(&second_mailbox);
+    assert_eq!(second_response.status, 0);
+
+    // Act
+    sink.deliver(Envelope::from_route(
+        publisher_address,
+        notice_address,
+        FrameContext::new(
+            11,
+            ChannelId::Sub,
+            MessageType::new(500),
+            encode_notice_publish(publish_route, b"hello"),
+            family,
+        ),
+    ))
+    .expect("publish notice event");
+    refresh_notice_admin_snapshot(&sink);
+
+    // Assert
+    first_mailbox
+        .receiver()
+        .try_recv()
+        .expect("first subscriber delivery");
+    second_mailbox
+        .receiver()
+        .try_recv()
+        .expect("second subscriber delivery");
+    assert!(first_mailbox.receiver().try_recv().is_err());
+    assert!(second_mailbox.receiver().try_recv().is_err());
+
+    let notice_routes = admin_read_model.notice_routes(None);
+    assert_eq!(notice_routes.len(), 1);
+    assert_eq!(notice_routes[0].route, notice_pattern);
+    assert_eq!(notice_routes[0].subscribers, 2);
+    assert_eq!(notice_routes[0].publishes_total, 1);
+    assert!((notice_routes[0].publishes_per_minute - 1.0).abs() < f64::EPSILON);
+}
+
+#[test]
 fn should_remove_notice_subscriptions_given_session_cleanup() {
     // Arrange
     let family = RouteFamily::new(1);

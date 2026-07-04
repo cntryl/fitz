@@ -12,7 +12,7 @@ use crate::runtime::{DeliveryError, Envelope, MailboxSink, ManagedActor, RouteEr
 use chrono::Utc;
 use parking_lot::Mutex;
 use smallvec::SmallVec;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -24,7 +24,8 @@ use actor_runtime::{NoticeDomainActor, NoticeDomainCommand};
 /// Per-session wildcard cap used to keep the in-memory matcher bounded.
 const MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION: usize = 128;
 type NoticeDeliveryTargets = SmallVec<[NoticeDeliveryTarget; 8]>;
-type NoticeRouteStatsKey = (u64, String);
+type NoticeMatchedRoutePatterns = SmallVec<[Arc<str>; 8]>;
+type NoticeRouteStatsKey = (u64, Arc<str>);
 
 #[derive(Clone)]
 struct NoticeDeliveryTarget {
@@ -73,6 +74,7 @@ impl NoticeRouteStats {
 
 struct NoticeSubscription {
     pattern: crate::runtime::matcher::Pattern,
+    pattern_route: Arc<str>,
     session_id: u64,
     subscription_id: u64,
     subscriber: crate::runtime::routing::RouteAddress,
@@ -318,7 +320,9 @@ impl NoticeDomainCore {
                         pattern.clone(),
                         &created_at,
                     ));
-                    *routes.entry((*route_family, pattern)).or_insert(0) += 1;
+                    *routes
+                        .entry((*route_family, Arc::clone(&subscription.pattern_route)))
+                        .or_insert(0) += 1;
                 }
             }
         }
@@ -338,13 +342,13 @@ impl NoticeDomainCore {
                 .into_iter()
                 .map(|((route_family, route), subscribers)| {
                     let (publishes_total, publishes_per_minute) = route_stats
-                        .get_mut(&(route_family, route.clone()))
+                        .get_mut(&(route_family, Arc::clone(&route)))
                         .map_or((0, 0.0), |stats| {
                             (stats.publishes_total(), stats.publishes_per_minute(now))
                         });
                     let mut entry = crate::control::admin::NoticeRouteInfo::snapshot(
                         route_family,
-                        route,
+                        route.to_string(),
                         subscribers,
                     );
                     entry.publishes_total = publishes_total;
@@ -401,7 +405,7 @@ impl NoticeDomainCore {
     fn record_route_publishes(
         &self,
         route_family: crate::runtime::routing::RouteFamily,
-        routes: &[String],
+        routes: &[Arc<str>],
     ) {
         if routes.is_empty() {
             return;
@@ -412,14 +416,10 @@ impl NoticeDomainCore {
         let family = route_family.as_u64();
 
         for route in routes {
-            let key = (family, route.clone());
-            if let Some(stats) = route_stats.get_mut(&key) {
-                stats.record_publish(now);
-            } else {
-                let mut stats = NoticeRouteStats::new();
-                stats.record_publish(now);
-                route_stats.insert(key, stats);
-            }
+            route_stats
+                .entry((family, Arc::clone(route)))
+                .or_insert_with(NoticeRouteStats::new)
+                .record_publish(now);
         }
     }
 
@@ -482,20 +482,26 @@ impl NoticeDomainCore {
         &self,
         family_id: crate::runtime::routing::RouteFamily,
         route: &str,
-    ) -> (NoticeDeliveryTargets, Vec<String>) {
+    ) -> NoticeDeliveryTargets {
         let families = self.families.lock();
         let Some(state) = families.get(&family_id.as_u64()) else {
-            return (NoticeDeliveryTargets::new(), Vec::new());
+            return NoticeDeliveryTargets::new();
         };
 
         let mut targets = NoticeDeliveryTargets::with_capacity(state.matching_capacity_hint(route));
-        let mut matching_routes: HashSet<String> =
-            HashSet::with_capacity(state.matching_capacity_hint(route));
+        let mut matching_routes = NoticeMatchedRoutePatterns::new();
         state.for_each_matching_route(family_id, route, |subscription| {
             targets.push(NoticeDeliveryTarget::from(subscription));
-            matching_routes.insert(subscription.pattern.route().to_string());
+            let pattern_route = subscription.pattern_route.as_ref();
+            if !matching_routes
+                .iter()
+                .any(|route| route.as_ref() == pattern_route)
+            {
+                matching_routes.push(Arc::clone(&subscription.pattern_route));
+            }
         });
-        (targets, matching_routes.into_iter().collect())
+        self.record_route_publishes(family_id, &matching_routes);
+        targets
     }
 
     fn publish_route_payload(
@@ -504,13 +510,10 @@ impl NoticeDomainCore {
         route: &crate::runtime::routing::Route,
         payload: &bytes::Bytes,
     ) {
-        let (targets, matching_routes) =
-            self.collect_matching_targets_for_route(family_id, route.as_str());
+        let targets = self.collect_matching_targets_for_route(family_id, route.as_str());
         if targets.is_empty() {
             return;
         }
-
-        self.record_route_publishes(family_id, &matching_routes);
 
         self.fan_out_notice_event(&targets, route, payload);
         self.mark_admin_snapshot_dirty();
@@ -808,6 +811,7 @@ impl NoticeDomainCore {
                 sub_msg.family_id,
                 NoticeSubscription {
                     pattern: crate::runtime::matcher::Pattern::new(sub_msg.pattern.as_str()),
+                    pattern_route: Arc::from(sub_msg.pattern.as_str()),
                     session_id: sub_msg.session_id.0,
                     subscription_id: new_id,
                     subscriber: sub_msg.subscriber.clone(),
