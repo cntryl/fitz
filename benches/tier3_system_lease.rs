@@ -25,6 +25,7 @@ use std::time::Duration;
 
 const CLIENT_SESSION_ID: u64 = 1;
 const LEASE_QUERY_CONFIRM_BATCH_SIZE: usize = 64;
+const LEASE_MIXED_CONFIRM_BATCH_SIZE: usize = 3;
 
 fn build_acquire_payload(route: &str, owner_id: &str, ttl_secs: u64) -> Bytes {
     let mut enc = PayloadEncoder::new();
@@ -98,6 +99,14 @@ fn drain_responses(inbox: &Arc<FrameQueueSink>, expected_count: usize) -> Vec<Fr
         "lease benchmark should receive one response per routed request"
     );
     responses
+}
+
+fn parse_renew_token(responses: &[FrameContext]) -> u64 {
+    let response = responses
+        .iter()
+        .find(|frame| frame.msg_type.as_u16() == 401)
+        .expect("lease renew response");
+    parse_lease_extend_token_response(response.payload.as_ref()).expect("extend token")
 }
 
 fn request(
@@ -289,7 +298,8 @@ fn should_complete_round_robin_query_operations(ctx: &mut StressContext) {
 fn should_complete_cycling_query_renew_operations(ctx: &mut StressContext) {
     ctx.tag("scenario", "mixed_operations_high_load");
     ctx.tag("measurement_scope", "routed_system");
-    ctx.tag("batch_size", "single_mixed_op");
+    let batch_size_tag = format!("{LEASE_MIXED_CONFIRM_BATCH_SIZE}_mixed_ops");
+    ctx.tag("batch_size", batch_size_tag.as_str());
 
     let (router, family, source, inbox) = setup_lease_sink();
     let route = "lease://realm/area/lock1/mixed";
@@ -297,39 +307,24 @@ fn should_complete_cycling_query_renew_operations(ctx: &mut StressContext) {
     let query_payload = build_query_payload(route);
     let mut token = acquire_token(&router, &source, &inbox, route, &address, "client-1");
 
-    let mut phase = 0usize;
     let iterations = ctx.measure_for(
         stress_config::BenchConfig::default().measure_duration,
         || {
-            match phase % 3 {
-                0 | 2 => {
-                    let _ = request(
-                        &router,
-                        &source,
-                        &inbox,
-                        &address,
-                        403,
-                        query_payload.clone(),
-                    );
-                }
-                1 => {
-                    let response = request(
-                        &router,
-                        &source,
-                        &inbox,
-                        &address,
-                        401,
-                        build_extend_payload(route, "client-1", token, 30),
-                    );
-                    token =
-                        parse_lease_extend_token_response(response.as_ref()).expect("extend token");
-                }
-                _ => unreachable!(),
+            for msg_type in [403, 401, 403] {
+                let payload = if msg_type == 401 {
+                    build_extend_payload(route, "client-1", token, 30)
+                } else {
+                    query_payload.clone()
+                };
+                send_request(&router, &source, &address, msg_type, payload);
             }
-            phase += 1;
+            let responses = drain_responses(&inbox, LEASE_MIXED_CONFIRM_BATCH_SIZE);
+            token = parse_renew_token(&responses);
         },
     );
-    ctx.set_elements(iterations as u64);
+    let batch_size =
+        u64::try_from(LEASE_MIXED_CONFIRM_BATCH_SIZE).expect("lease mixed batch size fits u64");
+    ctx.set_elements(iterations as u64 * batch_size);
 }
 
 stress_main!();

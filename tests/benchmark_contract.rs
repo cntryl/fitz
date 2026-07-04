@@ -72,6 +72,37 @@ fn should_batch_lease_tier3_query_response_confirmation() {
 }
 
 #[test]
+fn should_batch_lease_tier3_mixed_response_confirmation() {
+    // Arrange
+    let source = read_repo_file("benches/tier3_system_lease.rs");
+    let mixed_benchmark = section_between(
+        &source,
+        "fn should_complete_cycling_query_renew_operations",
+        "\nstress_main!();",
+    );
+
+    // Act
+    let defines_batch_size = source.contains("const LEASE_MIXED_CONFIRM_BATCH_SIZE: usize = 3");
+    let sends_query_then_renew_then_query =
+        mixed_benchmark.contains("for msg_type in [403, 401, 403]");
+    let drains_once_per_cycle =
+        mixed_benchmark.contains("drain_responses(&inbox, LEASE_MIXED_CONFIRM_BATCH_SIZE)");
+    let parses_renew_response = mixed_benchmark.contains("parse_renew_token(&responses)");
+    let counts_batched_elements =
+        mixed_benchmark.contains("ctx.set_elements(iterations as u64 * batch_size)");
+
+    // Assert
+    assert!(
+        defines_batch_size
+            && sends_query_then_renew_then_query
+            && drains_once_per_cycle
+            && parses_renew_response
+            && counts_batched_elements,
+        "Tier 3 lease mixed workload must confirm the real query/renew/query cycle in one bounded response batch"
+    );
+}
+
+#[test]
 fn should_batch_notice_tier3_fanout_delivery_confirmation() {
     // Arrange
     let source = read_repo_file("benches/tier3_system_notice.rs");
