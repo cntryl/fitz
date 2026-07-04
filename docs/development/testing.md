@@ -9,7 +9,7 @@ Use Rust's normal split between unit and integration tests.
 - Unit tests live next to the module they exercise under `src/`.
 - Integration tests live under `tests/`.
 - Domain end-to-end flows use `tests/*_e2e.rs`.
-- Public contract and architecture checks live under `tests/`.
+- Semantic boundary checks live under `tests/semantic_boundaries.rs`.
 
 Use unit tests for isolated parsing, state transitions, actor helpers, storage-key helpers, and protocol codecs. Use integration tests when a behavior spans transport, session state, runtime routing, storage, auth, or multiple domains.
 
@@ -73,14 +73,5 @@ Required coverage patterns:
 ```sh
 cargo fmt --all -- --check
 cargo test --workspace
-cargo test test_guidelines_compliance
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic
-cntryl-tools validate-tests
-```
-
-Documentation-only changes should still run the relevant doc and architecture tests:
-
-```sh
-cargo test --test architecture_docs
-cargo test --test documentation_hygiene
 ```

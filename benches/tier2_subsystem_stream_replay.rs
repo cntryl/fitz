@@ -1,8 +1,9 @@
 #![allow(deprecated)]
 use bytes::Bytes;
-use criterion::{
-    black_box, criterion_group, criterion_main, Bencher, Criterion, SamplingMode, Throughput,
-};
+#[path = "tier2_stress.rs"]
+mod tier2_stress;
+
+use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::create_bench_store;
 use fitz::domains::stream::protocol::{StreamRecord, StreamWriteMode};
 use fitz::domains::stream::storage::{
@@ -16,11 +17,9 @@ use fitz::domains::stream::store::{
 use fitz::domains::stream::StreamReadItem;
 use lz4_flex::block::{compress_prepend_size, decompress_size_prepended};
 use std::collections::HashMap;
+use std::hint::black_box;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-
-#[path = "criterion_config.rs"]
-mod criterion_config;
+use std::time::Instant;
 
 const FAMILY: u64 = 1;
 const REALM: &str = "bench-realm";
@@ -88,21 +87,28 @@ fn event_records(items: Vec<StreamReadItem>) -> Vec<StreamRecord> {
         .collect()
 }
 
-fn bench_repeated_replay<T, F>(b: &mut Bencher<'_>, mut read_once: F)
+fn measure_replay_once<T, F>(ctx: &mut StressContext, completed: u64, read_once: F)
+where
+    F: FnOnce() -> T,
+{
+    tier2_stress::measure_once(ctx, completed, || {
+        black_box(read_once());
+    });
+}
+
+fn measure_replay_repeated<T, F>(ctx: &mut StressContext, completed_per_read: u64, mut read_once: F)
 where
     F: FnMut() -> T,
 {
-    b.iter_custom(|iters| {
-        let mut total = Duration::ZERO;
-        for _ in 0..iters {
-            let start = Instant::now();
-            for _ in 0..REPLAY_REPEAT_COUNT {
-                black_box(read_once());
-            }
-            total += start.elapsed();
-        }
-        total
-    });
+    let start = Instant::now();
+    for _ in 0..REPLAY_REPEAT_COUNT {
+        black_box(read_once());
+    }
+    tier2_stress::record_duration(
+        ctx,
+        start.elapsed(),
+        completed_per_read.saturating_mul(usize_to_u64_saturating(REPLAY_REPEAT_COUNT)),
+    );
 }
 
 #[derive(Clone)]
@@ -3145,375 +3151,390 @@ fn validate_realm_local_body_case(case: &ReplayCase) {
     assert_matching_records(&covering_records, &compressed_compact_paged_records);
 }
 
-#[allow(clippy::too_many_lines)]
-fn bench_stream_replay_hydration(c: &mut Criterion) {
-    let area_case = seed_replay_case(1, 16, 128, PayloadProfile::LowEntropy);
-    let area_name = area_case.streams[0].area.clone();
-    let resource_stream = area_case.streams[0].clone();
-    let resource_expected_records = area_case.expected_records / area_case.streams.len();
-    validate_resource_case(&area_case, &resource_stream, resource_expected_records);
-    validate_area_case(&area_case, &area_name);
-
-    let production_like_resource_case =
-        seed_replay_case(1, 16, 128, PayloadProfile::ProductionLike);
-    let production_like_resource_stream = production_like_resource_case.streams[0].clone();
-    let production_like_resource_expected_records = production_like_resource_case.expected_records
-        / production_like_resource_case.streams.len();
-    validate_resource_case(
-        &production_like_resource_case,
-        &production_like_resource_stream,
-        production_like_resource_expected_records,
-    );
-
-    let realm_case = seed_replay_case(4, 8, 64, PayloadProfile::LowEntropy);
-    validate_realm_case(&realm_case);
-    let high_entropy_realm_case = seed_replay_case(4, 8, 64, PayloadProfile::HighEntropy);
-    validate_realm_local_body_case(&high_entropy_realm_case);
-    let production_like_realm_case = seed_replay_case(4, 8, 64, PayloadProfile::ProductionLike);
-    validate_realm_local_body_case(&production_like_realm_case);
-
-    let mut group = c.benchmark_group("subsystem_stream_replay");
-    group.sampling_mode(SamplingMode::Flat);
-
-    group.throughput(Throughput::Elements(usize_to_u64_saturating(
-        resource_expected_records,
-    )));
-    group.bench_function("covering_resource_replay_128_records_1_stream", |b| {
-        b.iter(|| {
-            black_box(
-                read_resource_covering(&area_case, &resource_stream, resource_expected_records)
-                    .expect("covering resource replay"),
-            );
-        });
-    });
-    group.bench_function("resource_mini_page_replay_128_records_1_stream", |b| {
-        b.iter(|| {
-            black_box(
-                read_resource_compact_paged(
-                    &area_case,
-                    &resource_stream,
-                    resource_expected_records,
-                )
-                .expect("resource mini-page replay"),
-            );
-        });
-    });
-    group.bench_function("area_page_ref_resource_replay_128_records_1_stream", |b| {
-        b.iter(|| {
-            black_box(
-                read_resource_area_page_ref(
-                    &area_case,
-                    &resource_stream,
-                    resource_expected_records,
-                )
-                .expect("resource area-page-ref replay"),
-            );
-        });
-    });
-    group.bench_function(
-        "area_page_ref_scanned_resource_replay_128_records_1_stream",
-        |b| {
-            b.iter(|| {
-                black_box(
-                    read_resource_area_page_ref_scanned(
-                        &area_case,
-                        &resource_stream,
-                        resource_expected_records,
-                    )
-                    .expect("resource area-page-ref scanned replay"),
-                );
-            });
-        },
-    );
-    group.bench_function(
-        "covering_resource_replay_128_records_1_stream_production_like",
-        |b| {
-            b.iter(|| {
-                black_box(
-                    read_resource_covering(
-                        &production_like_resource_case,
-                        &production_like_resource_stream,
-                        production_like_resource_expected_records,
-                    )
-                    .expect("covering resource replay production-like"),
-                );
-            });
-        },
-    );
-    group.throughput(Throughput::Elements(usize_to_u64_saturating(
-        production_like_resource_expected_records.saturating_mul(REPLAY_REPEAT_COUNT),
-    )));
-    group.bench_function(
-        format!(
-            "resource_mini_page_replay_128_records_1_stream_production_like_x{REPLAY_REPEAT_COUNT}_reads"
-        ),
-        |b| {
-            bench_repeated_replay(b, || {
-                read_resource_compact_paged(
-                    &production_like_resource_case,
-                    &production_like_resource_stream,
-                    production_like_resource_expected_records,
-                )
-                .expect("resource mini-page replay production-like")
-            });
-        },
-    );
-
-    group.throughput(Throughput::Elements(usize_to_u64_saturating(
-        area_case.expected_records,
-    )));
-    group.bench_function("covering_area_replay_2048_records_16_streams", |b| {
-        b.iter(|| {
-            black_box(
-                area_case
-                    .store
-                    .read_area(
-                        FAMILY,
-                        REALM,
-                        &area_name,
-                        0,
-                        usize_to_u64_saturating(area_case.expected_records),
-                        None,
-                    )
-                    .expect("covering area replay"),
-            );
-        });
-    });
-    group.bench_function("hydrated_area_replay_2048_records_16_streams", |b| {
-        b.iter(|| {
-            black_box(read_area_hydrated(&area_case, &area_name).expect("hydrated area replay"));
-        });
-    });
-    group.bench_function("paged_area_replay_2048_records_16_streams", |b| {
-        b.iter(|| {
-            black_box(read_area_paged(&area_case, &area_name).expect("paged area replay"));
-        });
-    });
-    group.bench_function("compact_paged_area_replay_2048_records_16_streams", |b| {
-        b.iter(|| {
-            black_box(
-                read_area_compact_paged(&area_case, &area_name).expect("compact paged area replay"),
-            );
-        });
-    });
-
-    group.throughput(Throughput::Elements(usize_to_u64_saturating(
-        realm_case.expected_records,
-    )));
-    group.bench_function("covering_realm_replay_2048_records_32_streams", |b| {
-        b.iter(|| {
-            black_box(
-                realm_case
-                    .store
-                    .read_realm(
-                        FAMILY,
-                        REALM,
-                        0,
-                        usize_to_u64_saturating(realm_case.expected_records),
-                        None,
-                    )
-                    .expect("covering realm replay"),
-            );
-        });
-    });
-    group.bench_function("hydrated_realm_replay_2048_records_32_streams", |b| {
-        b.iter(|| {
-            black_box(read_realm_hydrated(&realm_case).expect("hydrated realm replay"));
-        });
-    });
-    group.bench_function("paged_realm_replay_2048_records_32_streams", |b| {
-        b.iter(|| {
-            black_box(read_realm_paged(&realm_case).expect("paged realm replay"));
-        });
-    });
-    group.throughput(Throughput::Elements(usize_to_u64_saturating(
-        realm_case
-            .expected_records
-            .saturating_mul(REPLAY_REPEAT_COUNT),
-    )));
-    group.bench_function(
-        format!("compact_paged_realm_replay_2048_records_32_streams_x{REPLAY_REPEAT_COUNT}_reads"),
-        |b| {
-            bench_repeated_replay(b, || {
-                read_realm_compact_paged(&realm_case).expect("compact paged realm replay")
-            });
-        },
-    );
-    group.bench_function(
-        format!(
-            "compressed_compact_paged_realm_replay_2048_records_32_streams_x{REPLAY_REPEAT_COUNT}_reads"
-        ),
-        |b| {
-            bench_repeated_replay(b, || {
-                read_realm_compressed_compact_paged(&realm_case)
-                    .expect("compressed compact paged realm replay")
-            });
-        },
-    );
-    group.throughput(Throughput::Elements(usize_to_u64_saturating(
-        realm_case.expected_records,
-    )));
-    group.bench_function(
-        "covering_realm_replay_2048_records_32_streams_high_entropy",
-        |b| {
-            b.iter(|| {
-                black_box(
-                    high_entropy_realm_case
-                        .store
-                        .read_realm(
-                            FAMILY,
-                            REALM,
-                            0,
-                            usize_to_u64_saturating(high_entropy_realm_case.expected_records),
-                            None,
-                        )
-                        .expect("covering realm replay"),
-                );
-            });
-        },
-    );
-    group.throughput(Throughput::Elements(usize_to_u64_saturating(
-        high_entropy_realm_case
-            .expected_records
-            .saturating_mul(REPLAY_REPEAT_COUNT),
-    )));
-    group.bench_function(
-        format!(
-            "compact_paged_realm_replay_2048_records_32_streams_high_entropy_x{REPLAY_REPEAT_COUNT}_reads"
-        ),
-        |b| {
-            bench_repeated_replay(b, || {
-                read_realm_compact_paged(&high_entropy_realm_case)
-                    .expect("compact paged realm replay")
-            });
-        },
-    );
-    group.throughput(Throughput::Elements(usize_to_u64_saturating(
-        high_entropy_realm_case.expected_records,
-    )));
-    group.bench_function(
-        "compressed_compact_paged_realm_replay_2048_records_32_streams_high_entropy",
-        |b| {
-            b.iter(|| {
-                black_box(
-                    read_realm_compressed_compact_paged(&high_entropy_realm_case)
-                        .expect("compressed compact paged realm replay"),
-                );
-            });
-        },
-    );
-    group.bench_function(
-        "covering_realm_replay_2048_records_32_streams_production_like",
-        |b| {
-            b.iter(|| {
-                black_box(
-                    production_like_realm_case
-                        .store
-                        .read_realm(
-                            FAMILY,
-                            REALM,
-                            0,
-                            usize_to_u64_saturating(production_like_realm_case.expected_records),
-                            None,
-                        )
-                        .expect("covering realm replay"),
-                );
-            });
-        },
-    );
-    group.throughput(Throughput::Elements(usize_to_u64_saturating(
-        production_like_realm_case
-            .expected_records
-            .saturating_mul(REPLAY_REPEAT_COUNT),
-    )));
-    group.bench_function(
-        format!(
-            "compact_paged_realm_replay_2048_records_32_streams_production_like_x{REPLAY_REPEAT_COUNT}_reads"
-        ),
-        |b| {
-            bench_repeated_replay(b, || {
-                read_realm_compact_paged(&production_like_realm_case)
-                    .expect("compact paged realm replay")
-            });
-        },
-    );
-    group.bench_function(
-        format!(
-            "compressed_compact_paged_realm_replay_2048_records_32_streams_production_like_x{REPLAY_REPEAT_COUNT}_reads"
-        ),
-        |b| {
-            bench_repeated_replay(b, || {
-                read_realm_compressed_compact_paged(&production_like_realm_case)
-                    .expect("compressed compact paged realm replay")
-            });
-        },
-    );
-    group.throughput(Throughput::Elements(usize_to_u64_saturating(
-        production_like_realm_case.expected_records,
-    )));
-    group.bench_function("area_ref_paged_realm_replay_2048_records_32_streams", |b| {
-        b.iter(|| {
-            black_box(read_realm_area_ref_paged(&realm_case).expect("area-ref paged realm replay"));
-        });
-    });
-    group.bench_function(
-        "area_page_ref_paged_realm_replay_2048_records_32_streams",
-        |b| {
-            b.iter(|| {
-                black_box(
-                    read_realm_area_page_ref_paged(&realm_case)
-                        .expect("area-page-ref paged realm replay"),
-                );
-            });
-        },
-    );
-    group.bench_function(
-        "area_page_ref_scanned_realm_replay_2048_records_32_streams",
-        |b| {
-            b.iter(|| {
-                black_box(
-                    read_realm_area_page_ref_scanned(&realm_case)
-                        .expect("area-page-ref scanned realm replay"),
-                );
-            });
-        },
-    );
-    group.bench_function(
-        "page_id_ref_scanned_realm_replay_2048_records_32_streams",
-        |b| {
-            b.iter(|| {
-                black_box(
-                    read_realm_page_id_ref_scanned(&realm_case)
-                        .expect("page-id-ref scanned realm replay"),
-                );
-            });
-        },
-    );
-    group.bench_function(
-        "page_run_ref_scanned_realm_replay_2048_records_32_streams",
-        |b| {
-            b.iter(|| {
-                black_box(
-                    read_realm_page_run_ref_scanned(&realm_case)
-                        .expect("page-run-ref scanned realm replay"),
-                );
-            });
-        },
-    );
-    group.bench_function(
-        "page_run_ref_clustered_realm_replay_2048_records_32_streams",
-        |b| {
-            b.iter(|| {
-                black_box(
-                    read_realm_page_run_ref_clustered(&realm_case)
-                        .expect("page-run-ref clustered realm replay"),
-                );
-            });
-        },
-    );
-
-    group.finish();
+fn low_entropy_resource_case() -> (ReplayCase, PrototypeStream, usize) {
+    let case = seed_replay_case(1, 16, 128, PayloadProfile::LowEntropy);
+    let stream = case.streams[0].clone();
+    let expected = case.expected_records / case.streams.len();
+    validate_resource_case(&case, &stream, expected);
+    (case, stream, expected)
 }
+
+fn production_like_resource_case() -> (ReplayCase, PrototypeStream, usize) {
+    let case = seed_replay_case(1, 16, 128, PayloadProfile::ProductionLike);
+    let stream = case.streams[0].clone();
+    let expected = case.expected_records / case.streams.len();
+    validate_resource_case(&case, &stream, expected);
+    (case, stream, expected)
+}
+
+fn low_entropy_area_case() -> (ReplayCase, String) {
+    let case = seed_replay_case(1, 16, 128, PayloadProfile::LowEntropy);
+    let area = case.streams[0].area.clone();
+    validate_area_case(&case, &area);
+    (case, area)
+}
+
+fn low_entropy_realm_case() -> ReplayCase {
+    let case = seed_replay_case(4, 8, 64, PayloadProfile::LowEntropy);
+    validate_realm_case(&case);
+    case
+}
+
+fn high_entropy_realm_case() -> ReplayCase {
+    let case = seed_replay_case(4, 8, 64, PayloadProfile::HighEntropy);
+    validate_realm_local_body_case(&case);
+    case
+}
+
+fn production_like_realm_case() -> ReplayCase {
+    let case = seed_replay_case(4, 8, 64, PayloadProfile::ProductionLike);
+    validate_realm_local_body_case(&case);
+    case
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "covering_resource_replay_128_records_1_stream"
+)]
+fn should_covering_resource_replay_128_records_1_stream(ctx: &mut StressContext) {
+    let (case, stream, expected) = low_entropy_resource_case();
+    measure_replay_once(ctx, usize_to_u64_saturating(expected), || {
+        read_resource_covering(&case, &stream, expected).expect("covering resource replay")
+    });
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "resource_mini_page_replay_128_records_1_stream"
+)]
+fn should_resource_mini_page_replay_128_records_1_stream(ctx: &mut StressContext) {
+    let (case, stream, expected) = low_entropy_resource_case();
+    measure_replay_once(ctx, usize_to_u64_saturating(expected), || {
+        read_resource_compact_paged(&case, &stream, expected).expect("resource mini-page replay")
+    });
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "area_page_ref_resource_replay_128_records_1_stream"
+)]
+fn should_area_page_ref_resource_replay_128_records_1_stream(ctx: &mut StressContext) {
+    let (case, stream, expected) = low_entropy_resource_case();
+    measure_replay_once(ctx, usize_to_u64_saturating(expected), || {
+        read_resource_area_page_ref(&case, &stream, expected)
+            .expect("resource area-page-ref replay")
+    });
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "area_page_ref_scanned_resource_replay_128_records_1_stream"
+)]
+fn should_area_page_ref_scanned_resource_replay_128_records_1_stream(ctx: &mut StressContext) {
+    let (case, stream, expected) = low_entropy_resource_case();
+    measure_replay_once(ctx, usize_to_u64_saturating(expected), || {
+        read_resource_area_page_ref_scanned(&case, &stream, expected)
+            .expect("resource area-page-ref scanned replay")
+    });
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "covering_resource_replay_128_records_1_stream_production_like"
+)]
+fn should_covering_resource_replay_128_records_1_stream_production_like(ctx: &mut StressContext) {
+    let (case, stream, expected) = production_like_resource_case();
+    measure_replay_once(ctx, usize_to_u64_saturating(expected), || {
+        read_resource_covering(&case, &stream, expected)
+            .expect("covering resource replay production-like")
+    });
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "resource_mini_page_replay_128_records_1_stream_production_like_x32_reads"
+)]
+fn should_resource_mini_page_replay_128_records_1_stream_production_like_x32_reads(
+    ctx: &mut StressContext,
+) {
+    let (case, stream, expected) = production_like_resource_case();
+    measure_replay_repeated(ctx, usize_to_u64_saturating(expected), || {
+        read_resource_compact_paged(&case, &stream, expected)
+            .expect("resource mini-page replay production-like")
+    });
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "covering_area_replay_2048_records_16_streams"
+)]
+fn should_covering_area_replay_2048_records_16_streams(ctx: &mut StressContext) {
+    let (case, area) = low_entropy_area_case();
+    measure_replay_once(ctx, usize_to_u64_saturating(case.expected_records), || {
+        case.store
+            .read_area(
+                FAMILY,
+                REALM,
+                &area,
+                0,
+                usize_to_u64_saturating(case.expected_records),
+                None,
+            )
+            .expect("covering area replay")
+    });
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "hydrated_area_replay_2048_records_16_streams"
+)]
+fn should_hydrated_area_replay_2048_records_16_streams(ctx: &mut StressContext) {
+    let (case, area) = low_entropy_area_case();
+    measure_replay_once(ctx, usize_to_u64_saturating(case.expected_records), || {
+        read_area_hydrated(&case, &area).expect("hydrated area replay")
+    });
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "paged_area_replay_2048_records_16_streams"
+)]
+fn should_paged_area_replay_2048_records_16_streams(ctx: &mut StressContext) {
+    let (case, area) = low_entropy_area_case();
+    measure_replay_once(ctx, usize_to_u64_saturating(case.expected_records), || {
+        read_area_paged(&case, &area).expect("paged area replay")
+    });
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "compact_paged_area_replay_2048_records_16_streams"
+)]
+fn should_compact_paged_area_replay_2048_records_16_streams(ctx: &mut StressContext) {
+    let (case, area) = low_entropy_area_case();
+    measure_replay_once(ctx, usize_to_u64_saturating(case.expected_records), || {
+        read_area_compact_paged(&case, &area).expect("compact paged area replay")
+    });
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "covering_realm_replay_2048_records_32_streams"
+)]
+fn should_covering_realm_replay_2048_records_32_streams(ctx: &mut StressContext) {
+    let case = low_entropy_realm_case();
+    measure_replay_once(ctx, usize_to_u64_saturating(case.expected_records), || {
+        case.store
+            .read_realm(
+                FAMILY,
+                REALM,
+                0,
+                usize_to_u64_saturating(case.expected_records),
+                None,
+            )
+            .expect("covering realm replay")
+    });
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "hydrated_realm_replay_2048_records_32_streams"
+)]
+fn should_hydrated_realm_replay_2048_records_32_streams(ctx: &mut StressContext) {
+    let case = low_entropy_realm_case();
+    measure_replay_once(ctx, usize_to_u64_saturating(case.expected_records), || {
+        read_realm_hydrated(&case).expect("hydrated realm replay")
+    });
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "paged_realm_replay_2048_records_32_streams"
+)]
+fn should_paged_realm_replay_2048_records_32_streams(ctx: &mut StressContext) {
+    let case = low_entropy_realm_case();
+    measure_replay_once(ctx, usize_to_u64_saturating(case.expected_records), || {
+        read_realm_paged(&case).expect("paged realm replay")
+    });
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "compact_paged_realm_replay_2048_records_32_streams_x32_reads"
+)]
+fn should_compact_paged_realm_replay_2048_records_32_streams_x32_reads(ctx: &mut StressContext) {
+    let case = low_entropy_realm_case();
+    measure_replay_repeated(ctx, usize_to_u64_saturating(case.expected_records), || {
+        read_realm_compact_paged(&case).expect("compact paged realm replay")
+    });
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "compressed_compact_paged_realm_replay_2048_records_32_streams_x32_reads"
+)]
+fn should_compressed_compact_paged_realm_replay_2048_records_32_streams_x32_reads(
+    ctx: &mut StressContext,
+) {
+    let case = low_entropy_realm_case();
+    measure_replay_repeated(ctx, usize_to_u64_saturating(case.expected_records), || {
+        read_realm_compressed_compact_paged(&case).expect("compressed compact paged realm replay")
+    });
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "covering_realm_replay_2048_records_32_streams_high_entropy"
+)]
+fn should_covering_realm_replay_2048_records_32_streams_high_entropy(ctx: &mut StressContext) {
+    let case = high_entropy_realm_case();
+    measure_replay_once(ctx, usize_to_u64_saturating(case.expected_records), || {
+        case.store
+            .read_realm(
+                FAMILY,
+                REALM,
+                0,
+                usize_to_u64_saturating(case.expected_records),
+                None,
+            )
+            .expect("covering realm replay")
+    });
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "compact_paged_realm_replay_2048_records_32_streams_high_entropy_x32_reads"
+)]
+fn should_compact_paged_realm_replay_2048_records_32_streams_high_entropy_x32_reads(
+    ctx: &mut StressContext,
+) {
+    let case = high_entropy_realm_case();
+    measure_replay_repeated(ctx, usize_to_u64_saturating(case.expected_records), || {
+        read_realm_compact_paged(&case).expect("compact paged realm replay")
+    });
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "compressed_compact_paged_realm_replay_2048_records_32_streams_high_entropy"
+)]
+fn should_compressed_compact_paged_realm_replay_2048_records_32_streams_high_entropy(
+    ctx: &mut StressContext,
+) {
+    let case = high_entropy_realm_case();
+    measure_replay_once(ctx, usize_to_u64_saturating(case.expected_records), || {
+        read_realm_compressed_compact_paged(&case).expect("compressed compact paged realm replay")
+    });
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "covering_realm_replay_2048_records_32_streams_production_like"
+)]
+fn should_covering_realm_replay_2048_records_32_streams_production_like(ctx: &mut StressContext) {
+    let case = production_like_realm_case();
+    measure_replay_once(ctx, usize_to_u64_saturating(case.expected_records), || {
+        case.store
+            .read_realm(
+                FAMILY,
+                REALM,
+                0,
+                usize_to_u64_saturating(case.expected_records),
+                None,
+            )
+            .expect("covering realm replay")
+    });
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "compact_paged_realm_replay_2048_records_32_streams_production_like_x32_reads"
+)]
+fn should_compact_paged_realm_replay_2048_records_32_streams_production_like_x32_reads(
+    ctx: &mut StressContext,
+) {
+    let case = production_like_realm_case();
+    measure_replay_repeated(ctx, usize_to_u64_saturating(case.expected_records), || {
+        read_realm_compact_paged(&case).expect("compact paged realm replay")
+    });
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "compressed_compact_paged_realm_replay_2048_records_32_streams_production_like_x32_reads"
+)]
+fn should_compressed_compact_paged_realm_replay_2048_records_32_streams_production_like_x32_reads(
+    ctx: &mut StressContext,
+) {
+    let case = production_like_realm_case();
+    measure_replay_repeated(ctx, usize_to_u64_saturating(case.expected_records), || {
+        read_realm_compressed_compact_paged(&case).expect("compressed compact paged realm replay")
+    });
+}
+
+macro_rules! low_realm_once_bench {
+    ($fn_name:ident, $stress_name:literal, $read:expr) => {
+        #[stress_test(tier = 2, mode = "fixed_duration", name = $stress_name)]
+        fn $fn_name(ctx: &mut StressContext) {
+            let case = low_entropy_realm_case();
+            measure_replay_once(ctx, usize_to_u64_saturating(case.expected_records), || {
+                $read(&case).expect($stress_name)
+            });
+        }
+    };
+}
+
+low_realm_once_bench!(
+    should_area_ref_paged_realm_replay_2048_records_32_streams,
+    "area_ref_paged_realm_replay_2048_records_32_streams",
+    read_realm_area_ref_paged
+);
+low_realm_once_bench!(
+    should_area_page_ref_paged_realm_replay_2048_records_32_streams,
+    "area_page_ref_paged_realm_replay_2048_records_32_streams",
+    read_realm_area_page_ref_paged
+);
+low_realm_once_bench!(
+    should_area_page_ref_scanned_realm_replay_2048_records_32_streams,
+    "area_page_ref_scanned_realm_replay_2048_records_32_streams",
+    read_realm_area_page_ref_scanned
+);
+low_realm_once_bench!(
+    should_page_id_ref_scanned_realm_replay_2048_records_32_streams,
+    "page_id_ref_scanned_realm_replay_2048_records_32_streams",
+    read_realm_page_id_ref_scanned
+);
+low_realm_once_bench!(
+    should_page_run_ref_scanned_realm_replay_2048_records_32_streams,
+    "page_run_ref_scanned_realm_replay_2048_records_32_streams",
+    read_realm_page_run_ref_scanned
+);
+low_realm_once_bench!(
+    should_page_run_ref_clustered_realm_replay_2048_records_32_streams,
+    "page_run_ref_clustered_realm_replay_2048_records_32_streams",
+    read_realm_page_run_ref_clustered
+);
 
 #[cfg(test)]
 mod tests {
@@ -3602,9 +3623,4 @@ mod tests {
     }
 }
 
-criterion_group! {
-    name = benches;
-    config = criterion_config::criterion_config_for_tier2();
-    targets = bench_stream_replay_hydration
-}
-criterion_main!(benches);
+stress_main!();

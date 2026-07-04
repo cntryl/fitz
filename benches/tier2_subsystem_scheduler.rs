@@ -1,15 +1,17 @@
 #![allow(deprecated)]
-use criterion::{
-    black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
-};
+#[path = "tier2_stress.rs"]
+mod tier2_stress;
+
+use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::runtime::mailbox::Mailbox;
 use fitz::runtime::router::MailboxSink;
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use fitz::runtime::scheduler::Scheduler;
+use std::hint::black_box;
 use std::sync::Arc;
 
-#[path = "criterion_config.rs"]
-mod criterion_config;
+const REGISTER_SINGLE_BATCH_SIZE: usize = 512;
+const REGISTER_BATCH_BATCH_SIZE: usize = 128;
 
 fn test_address(family: u64, route: &str) -> RouteAddress {
     RouteAddress::new(RouteFamily::new(family), Route::new(route))
@@ -35,78 +37,96 @@ fn register_all(scheduler: &Scheduler, addresses: &[RouteAddress], sinks: &[Arc<
     }
 }
 
-/// Registration only (no thread). This is the primary Tier 2 scheduler signal.
-fn bench_scheduler_register_primary(c: &mut Criterion) {
-    let mut group = c.benchmark_group("subsystem_scheduler");
-    group.sampling_mode(SamplingMode::Flat);
-
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "register_single_fresh_primary"
+)]
+fn should_register_single_fresh_primary(ctx: &mut StressContext) {
     let (single_addresses, single_sinks) = make_registration_batch("/bench/reg/single", 1);
+    let schedulers = (0..REGISTER_SINGLE_BATCH_SIZE)
+        .map(|_| Scheduler::new(1))
+        .collect::<Vec<_>>();
+
+    tier2_stress::measure_once(ctx, REGISTER_SINGLE_BATCH_SIZE as u64, || {
+        for scheduler in schedulers {
+            scheduler.router().register(
+                black_box(single_addresses[0].clone()),
+                black_box(Arc::clone(&single_sinks[0])),
+            );
+        }
+    });
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "register_single_replace_primary"
+)]
+fn should_register_single_replace_primary(ctx: &mut StressContext) {
+    let (single_addresses, single_sinks) = make_registration_batch("/bench/reg/single", 1);
+    let schedulers = (0..REGISTER_SINGLE_BATCH_SIZE)
+        .map(|_| {
+            let scheduler = Scheduler::new(1);
+            scheduler
+                .router()
+                .register(single_addresses[0].clone(), Arc::clone(&single_sinks[0]));
+            scheduler
+        })
+        .collect::<Vec<_>>();
+
+    tier2_stress::measure_once(ctx, REGISTER_SINGLE_BATCH_SIZE as u64, || {
+        for scheduler in schedulers {
+            scheduler.router().register(
+                black_box(single_addresses[0].clone()),
+                black_box(Arc::clone(&single_sinks[0])),
+            );
+        }
+    });
+}
+
+#[stress_test(tier = 2, mode = "fixed_duration", name = "register_64_fresh_primary")]
+fn should_register_64_fresh_primary(ctx: &mut StressContext) {
     let (batch_addresses, batch_sinks) = make_registration_batch("/bench/reg/batch", 64);
+    let schedulers = (0..REGISTER_BATCH_BATCH_SIZE)
+        .map(|_| Scheduler::new(1))
+        .collect::<Vec<_>>();
 
-    group.throughput(Throughput::Elements(1));
-    group.bench_function("register_single_fresh_primary", |b| {
-        b.iter_batched(
-            || Scheduler::new(1),
-            |scheduler| {
-                scheduler.router().register(
-                    black_box(single_addresses[0].clone()),
-                    black_box(Arc::clone(&single_sinks[0])),
-                );
-            },
-            BatchSize::SmallInput,
-        );
-    });
-
-    group.bench_function("register_single_replace_primary", |b| {
-        b.iter_batched(
-            || {
-                let scheduler = Scheduler::new(1);
-                scheduler
-                    .router()
-                    .register(single_addresses[0].clone(), Arc::clone(&single_sinks[0]));
-                scheduler
-            },
-            |scheduler| {
-                scheduler.router().register(
-                    black_box(single_addresses[0].clone()),
-                    black_box(Arc::clone(&single_sinks[0])),
-                );
-            },
-            BatchSize::SmallInput,
-        );
-    });
-
-    group.throughput(Throughput::Elements(batch_addresses.len() as u64));
-    group.bench_function("register_64_fresh_primary", |b| {
-        b.iter_batched(
-            || Scheduler::new(1),
-            |scheduler| {
+    tier2_stress::measure_once(
+        ctx,
+        (REGISTER_BATCH_BATCH_SIZE * batch_addresses.len()) as u64,
+        || {
+            for scheduler in schedulers {
                 register_all(&scheduler, &batch_addresses, &batch_sinks);
-            },
-            BatchSize::SmallInput,
-        );
-    });
-
-    group.bench_function("register_64_replace_primary", |b| {
-        b.iter_batched(
-            || {
-                let scheduler = Scheduler::new(1);
-                register_all(&scheduler, &batch_addresses, &batch_sinks);
-                scheduler
-            },
-            |scheduler| {
-                register_all(&scheduler, &batch_addresses, &batch_sinks);
-            },
-            BatchSize::SmallInput,
-        );
-    });
-
-    group.finish();
+            }
+        },
+    );
 }
 
-criterion_group! {
-    name = benches;
-    config = criterion_config::criterion_config_for_tier2();
-    targets = bench_scheduler_register_primary
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "register_64_replace_primary"
+)]
+fn should_register_64_replace_primary(ctx: &mut StressContext) {
+    let (batch_addresses, batch_sinks) = make_registration_batch("/bench/reg/batch", 64);
+    let schedulers = (0..REGISTER_BATCH_BATCH_SIZE)
+        .map(|_| {
+            let scheduler = Scheduler::new(1);
+            register_all(&scheduler, &batch_addresses, &batch_sinks);
+            scheduler
+        })
+        .collect::<Vec<_>>();
+
+    tier2_stress::measure_once(
+        ctx,
+        (REGISTER_BATCH_BATCH_SIZE * batch_addresses.len()) as u64,
+        || {
+            for scheduler in schedulers {
+                register_all(&scheduler, &batch_addresses, &batch_sinks);
+            }
+        },
+    );
 }
-criterion_main!(benches);
+
+stress_main!();

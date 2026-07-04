@@ -1,6 +1,9 @@
 #![allow(deprecated)]
 use bytes::Bytes;
-use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+#[path = "tier2_stress.rs"]
+mod tier2_stress;
+
+use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
     build_rpc_request, build_rpc_response_frame, build_rpc_subscribe, create_bench_rpc_sink,
     create_bench_rpc_sink_with_timeout, drain_frame_queue_sinks_after_each_count,
@@ -12,11 +15,9 @@ use fitz::protocol::frame::ChannelId;
 use fitz::protocol::rpc_codec::{encode_response_message, parse_request};
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
+use std::hint::black_box;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-
-#[path = "criterion_config.rs"]
-mod criterion_config;
 
 const ROUTE_STR: &str = "rpc://bench/subsystem/route";
 const REQUESTER_SESSION_ID: u64 = 1;
@@ -474,106 +475,89 @@ fn prepare_timeout_sweep_batch_case(expired_pending: usize) -> PreparedTimeoutSw
     PreparedTimeoutSweepBatchCase { cases }
 }
 
-fn bench_rpc_worker_subscribe_primary(c: &mut Criterion) {
-    let mut group = c.benchmark_group("subsystem_rpc");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(usize_to_u64_saturating(
-        WORKER_SUBSCRIBE_BATCH_SIZE,
-    )));
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "worker_subscribe_2048_sessions_primary"
+)]
+fn should_worker_subscribe_2048_sessions_primary(ctx: &mut StressContext) {
+    let case = prepare_worker_subscribe_case();
+    let start = Instant::now();
+    for (session_id, worker_source, _) in &case.subscriptions {
+        route_frame_to_address(
+            case.router.as_ref(),
+            worker_source,
+            &case.destination,
+            *session_id,
+            case.msg_type,
+            black_box(case.payload.clone()),
+            case.family,
+        );
+    }
+    let duration = start.elapsed();
 
-    group.bench_function("worker_subscribe_2048_sessions_primary", |b| {
-        b.iter_custom(|iters| {
-            let mut total = Duration::ZERO;
-            for _ in 0..iters {
-                let case = prepare_worker_subscribe_case();
-                let start = Instant::now();
-                for (session_id, worker_source, _) in &case.subscriptions {
-                    route_frame_to_address(
-                        case.router.as_ref(),
-                        worker_source,
-                        &case.destination,
-                        *session_id,
-                        case.msg_type,
-                        black_box(case.payload.clone()),
-                        case.family,
-                    );
-                }
-                total += start.elapsed();
-
-                let inboxes: Vec<_> = case
-                    .subscriptions
-                    .iter()
-                    .map(|(_, _, worker_inbox)| worker_inbox.clone())
-                    .collect();
-                let subscribe_response_count =
-                    drain_frame_queue_sinks_after_each_count(&inboxes, 1, Duration::from_secs(1))
-                        .len();
-                assert_eq!(subscribe_response_count, WORKER_SUBSCRIBE_BATCH_SIZE);
-                case.router.clear();
-            }
-            total
-        });
-    });
-
-    group.finish();
+    let inboxes = case
+        .subscriptions
+        .iter()
+        .map(|(_, _, worker_inbox)| worker_inbox.clone())
+        .collect::<Vec<_>>();
+    let subscribe_response_count =
+        drain_frame_queue_sinks_after_each_count(&inboxes, 1, Duration::from_secs(1)).len();
+    assert_eq!(subscribe_response_count, WORKER_SUBSCRIBE_BATCH_SIZE);
+    case.router.clear();
+    tier2_stress::record_duration(
+        ctx,
+        duration,
+        usize_to_u64_saturating(WORKER_SUBSCRIBE_BATCH_SIZE),
+    );
 }
 
 #[allow(clippy::too_many_lines)]
-fn bench_rpc_dispatch_primary(c: &mut Criterion) {
-    let mut group = c.benchmark_group("subsystem_rpc");
-    group.sampling_mode(SamplingMode::Flat);
+fn dispatch_response_cleanup_workers(ctx: &mut StressContext, worker_count: usize) {
+    let (router, family, requester_source, requester_inbox) = setup_rpc_sink(None);
+    let destination = route_address(family, ROUTE_STR);
+    let workers = (0..worker_count)
+        .map(|index| {
+            register_worker_for_destination(
+                &router,
+                family,
+                40_000_u64.saturating_add(usize_to_u64_saturating(index)),
+                &destination,
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut request_ring =
+        RequestFrameRing::new(ROUTE_STR, b"dispatch payload", REQUEST_FRAME_RING_SIZE);
+    let mut next_worker_index = 0usize;
 
-    for worker_count in [1usize, 64usize, 256usize] {
-        let (router, family, requester_source, requester_inbox) = setup_rpc_sink(None);
-        let destination = route_address(family, ROUTE_STR);
-        let workers: Vec<WorkerHandle> = (0..worker_count)
-            .map(|index| {
-                register_worker_for_destination(
-                    &router,
-                    family,
-                    40_000_u64.saturating_add(usize_to_u64_saturating(index)),
-                    &destination,
-                )
-            })
-            .collect();
-        let mut request_ring =
-            RequestFrameRing::new(ROUTE_STR, b"dispatch payload", REQUEST_FRAME_RING_SIZE);
-        let mut next_worker_index = 0usize;
+    tier2_stress::measure_iterations(ctx, usize_to_u64_saturating(DISPATCH_BATCH_SIZE), || {
+        for _ in 0..DISPATCH_BATCH_SIZE {
+            let (request_msg_type, request_payload) = request_ring.next_frame();
+            dispatch_request_to_destination(
+                &router,
+                family,
+                &requester_source,
+                &destination,
+                request_msg_type,
+                black_box(request_payload),
+            );
+            cleanup_worker_request_on_destination(
+                &router,
+                family,
+                &destination,
+                &workers[next_worker_index],
+            );
+            next_worker_index = (next_worker_index + 1) % workers.len();
+            requester_inbox.clear();
+        }
+    });
+}
 
-        group.throughput(Throughput::Elements(usize_to_u64_saturating(
-            DISPATCH_BATCH_SIZE,
-        )));
-        group.bench_function(
-            format!("dispatch_response_cleanup_1024_ops_{worker_count}_workers_primary"),
-            |b| {
-                b.iter(|| {
-                    for _ in 0..DISPATCH_BATCH_SIZE {
-                        let (request_msg_type, request_payload) = request_ring.next_frame();
-                        dispatch_request_to_destination(
-                            &router,
-                            family,
-                            &requester_source,
-                            &destination,
-                            request_msg_type,
-                            black_box(request_payload),
-                        );
-                        cleanup_worker_request_on_destination(
-                            &router,
-                            family,
-                            &destination,
-                            &workers[next_worker_index],
-                        );
-                        next_worker_index = (next_worker_index + 1) % workers.len();
-                        requester_inbox.clear();
-                    }
-                });
-            },
-        );
-    }
-
+#[allow(clippy::too_many_lines)]
+fn dispatch_response_cleanup_routes(ctx: &mut StressContext) {
     let (router, family, requester_source, requester_inbox) = setup_rpc_sink(None);
     let destinations = build_route_set(family, MULTI_ROUTE_COUNT);
-    let workers: Vec<WorkerHandle> = destinations
+    let workers = destinations
         .iter()
         .enumerate()
         .map(|(index, destination)| {
@@ -584,8 +568,8 @@ fn bench_rpc_dispatch_primary(c: &mut Criterion) {
                 destination,
             )
         })
-        .collect();
-    let mut request_rings: Vec<RequestFrameRing> = destinations
+        .collect::<Vec<_>>();
+    let mut request_rings = destinations
         .iter()
         .map(|destination| {
             RequestFrameRing::new(
@@ -594,177 +578,183 @@ fn bench_rpc_dispatch_primary(c: &mut Criterion) {
                 64,
             )
         })
-        .collect();
+        .collect::<Vec<_>>();
     let mut next_route_index = 0usize;
 
-    group.throughput(Throughput::Elements(usize_to_u64_saturating(
-        DISPATCH_BATCH_SIZE,
-    )));
-    group.bench_function(
-        "dispatch_response_cleanup_1024_ops_64_routes_primary",
-        |b| {
-            b.iter(|| {
-                for _ in 0..DISPATCH_BATCH_SIZE {
-                    let route_index = next_route_index;
-                    next_route_index = (next_route_index + 1) % destinations.len();
+    tier2_stress::measure_iterations(ctx, usize_to_u64_saturating(DISPATCH_BATCH_SIZE), || {
+        for _ in 0..DISPATCH_BATCH_SIZE {
+            let route_index = next_route_index;
+            next_route_index = (next_route_index + 1) % destinations.len();
 
-                    let (request_msg_type, request_payload) =
-                        request_rings[route_index].next_frame();
-                    dispatch_request_to_destination(
-                        &router,
-                        family,
-                        &requester_source,
-                        &destinations[route_index],
-                        request_msg_type,
-                        black_box(request_payload),
-                    );
-                    cleanup_worker_request_on_destination(
-                        &router,
-                        family,
-                        &destinations[route_index],
-                        &workers[route_index],
-                    );
-                    requester_inbox.clear();
-                }
-            });
-        },
-    );
-
-    group.finish();
+            let (request_msg_type, request_payload) = request_rings[route_index].next_frame();
+            dispatch_request_to_destination(
+                &router,
+                family,
+                &requester_source,
+                &destinations[route_index],
+                request_msg_type,
+                black_box(request_payload),
+            );
+            cleanup_worker_request_on_destination(
+                &router,
+                family,
+                &destinations[route_index],
+                &workers[route_index],
+            );
+            requester_inbox.clear();
+        }
+    });
 }
 
-fn bench_rpc_response_primary(c: &mut Criterion) {
-    let mut group = c.benchmark_group("subsystem_rpc");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(usize_to_u64_saturating(
-        RESPONSE_FORWARD_BATCH_SIZE,
-    )));
-
-    group.bench_function(
-        format!("response_forward_{RESPONSE_FORWARD_BATCH_SIZE}_pending_primary"),
-        |b| {
-            b.iter_custom(|iters| {
-                let mut total = Duration::ZERO;
-                for _ in 0..iters {
-                    let case = prepare_response_case();
-                    let start = Instant::now();
-                    for response in &case.responses {
-                        route_worker_frame_to_destination(
-                            &case.router,
-                            case.family,
-                            response.worker_session_id,
-                            &response.worker_source,
-                            &response.destination,
-                            case.response_msg_type,
-                            black_box(response.payload.clone()),
-                        );
-                    }
-                    total += start.elapsed();
-                    assert_requester_received_worker_responses(
-                        &case.requester_inbox,
-                        case.responses.len(),
-                    );
-                    case.router.clear();
-                }
-                total
-            });
-        },
-    );
-
-    for chunk_count in [4usize, 16usize] {
-        group.throughput(Throughput::Elements(usize_to_u64_saturating(
-            chunk_count
-                .saturating_mul(STREAM_RESPONSE_BATCH_SIZE)
-                .saturating_mul(STREAM_RESPONSE_ROUTE_COUNT),
-        )));
-        group.bench_function(
-            format!(
-                "response_forward_stream_{STREAM_RESPONSE_BATCH_SIZE}_workers_{chunk_count}_chunks_x{STREAM_RESPONSE_ROUTE_COUNT}_routes_primary"
-            ),
-            |b| {
-                b.iter_custom(|iters| {
-                    let mut total = Duration::ZERO;
-                    for _ in 0..iters {
-                        let case = prepare_streaming_response_case(chunk_count);
-                        let start = Instant::now();
-                        for response in &case.responses {
-                            route_worker_frame_to_destination(
-                                &case.router,
-                                case.family,
-                                response.worker_session_id,
-                                &response.worker_source,
-                                &response.destination,
-                                case.response_msg_type,
-                                black_box(response.payload.clone()),
-                            );
-                        }
-                        total += start.elapsed();
-                        assert_requester_received_worker_responses(
-                            &case.requester_inbox,
-                            case.expected_response_count,
-                        );
-                        case.router.clear();
-                    }
-                    total
-                });
-            },
+fn response_forward(ctx: &mut StressContext) {
+    let case = prepare_response_case();
+    let start = Instant::now();
+    for response in &case.responses {
+        route_worker_frame_to_destination(
+            &case.router,
+            case.family,
+            response.worker_session_id,
+            &response.worker_source,
+            &response.destination,
+            case.response_msg_type,
+            black_box(response.payload.clone()),
         );
     }
-
-    group.finish();
+    let duration = start.elapsed();
+    assert_requester_received_worker_responses(&case.requester_inbox, case.responses.len());
+    case.router.clear();
+    tier2_stress::record_duration(ctx, duration, usize_to_u64_saturating(case.responses.len()));
 }
 
-fn bench_rpc_timeout_sweep_primary(c: &mut Criterion) {
-    let mut group = c.benchmark_group("subsystem_rpc");
-    group.sampling_mode(SamplingMode::Flat);
-
-    for expired_pending in [64usize, 256usize] {
-        let case_batch_size = timeout_sweep_case_batch_size(expired_pending);
-        group.throughput(Throughput::Elements(usize_to_u64_saturating(
-            expired_pending.saturating_mul(case_batch_size),
-        )));
-        group.bench_function(
-            format!(
-                "dispatch_timeout_sweep_{expired_pending}_expired_pending_x{case_batch_size}_cases_primary"
-            ),
-            |b| {
-                b.iter_custom(|iters| {
-                    let mut total = Duration::ZERO;
-                    for _ in 0..iters {
-                        let batch = prepare_timeout_sweep_batch_case(expired_pending);
-                        let start = Instant::now();
-                        for case in &batch.cases {
-                            dispatch_request_to_destination(
-                                &case.router,
-                                case.family,
-                                &case.requester_source,
-                                &case.destination,
-                                case.request_msg_type,
-                                black_box(case.request_payload.clone()),
-                            );
-                            black_box((case.requester_inbox.count(), case.worker_inbox.count()));
-                        }
-                        total += start.elapsed();
-                        for case in batch.cases {
-                            case.router.clear();
-                        }
-                    }
-                    total
-                });
-            },
+fn streaming_response_forward(ctx: &mut StressContext, chunk_count: usize) {
+    let case = prepare_streaming_response_case(chunk_count);
+    let start = Instant::now();
+    for response in &case.responses {
+        route_worker_frame_to_destination(
+            &case.router,
+            case.family,
+            response.worker_session_id,
+            &response.worker_source,
+            &response.destination,
+            case.response_msg_type,
+            black_box(response.payload.clone()),
         );
     }
-
-    group.finish();
+    let duration = start.elapsed();
+    assert_requester_received_worker_responses(&case.requester_inbox, case.expected_response_count);
+    case.router.clear();
+    tier2_stress::record_duration(
+        ctx,
+        duration,
+        usize_to_u64_saturating(case.expected_response_count),
+    );
 }
 
-criterion_group! {
-    name = benches;
-    config = criterion_config::criterion_config_for_tier2();
-    targets =
-        bench_rpc_worker_subscribe_primary,
-        bench_rpc_dispatch_primary,
-        bench_rpc_response_primary,
-        bench_rpc_timeout_sweep_primary
+fn dispatch_timeout_sweep(ctx: &mut StressContext, expired_pending: usize) {
+    let case_batch_size = timeout_sweep_case_batch_size(expired_pending);
+    let batch = prepare_timeout_sweep_batch_case(expired_pending);
+    let start = Instant::now();
+    for case in &batch.cases {
+        dispatch_request_to_destination(
+            &case.router,
+            case.family,
+            &case.requester_source,
+            &case.destination,
+            case.request_msg_type,
+            black_box(case.request_payload.clone()),
+        );
+        black_box((case.requester_inbox.count(), case.worker_inbox.count()));
+    }
+    let duration = start.elapsed();
+    for case in batch.cases {
+        case.router.clear();
+    }
+    tier2_stress::record_duration(
+        ctx,
+        duration,
+        usize_to_u64_saturating(expired_pending.saturating_mul(case_batch_size)),
+    );
 }
-criterion_main!(benches);
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "dispatch_response_cleanup_1024_ops_1_workers_primary"
+)]
+fn should_dispatch_response_cleanup_1024_ops_1_workers_primary(ctx: &mut StressContext) {
+    dispatch_response_cleanup_workers(ctx, 1);
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "dispatch_response_cleanup_1024_ops_64_workers_primary"
+)]
+fn should_dispatch_response_cleanup_1024_ops_64_workers_primary(ctx: &mut StressContext) {
+    dispatch_response_cleanup_workers(ctx, 64);
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "dispatch_response_cleanup_1024_ops_256_workers_primary"
+)]
+fn should_dispatch_response_cleanup_1024_ops_256_workers_primary(ctx: &mut StressContext) {
+    dispatch_response_cleanup_workers(ctx, 256);
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "dispatch_response_cleanup_1024_ops_64_routes_primary"
+)]
+fn should_dispatch_response_cleanup_1024_ops_64_routes_primary(ctx: &mut StressContext) {
+    dispatch_response_cleanup_routes(ctx);
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "response_forward_512_pending_primary"
+)]
+fn should_response_forward_512_pending_primary(ctx: &mut StressContext) {
+    response_forward(ctx);
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "response_forward_stream_128_workers_4_chunks_x8_routes_primary"
+)]
+fn should_response_forward_stream_128_workers_4_chunks_x8_routes_primary(ctx: &mut StressContext) {
+    streaming_response_forward(ctx, 4);
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "response_forward_stream_128_workers_16_chunks_x8_routes_primary"
+)]
+fn should_response_forward_stream_128_workers_16_chunks_x8_routes_primary(ctx: &mut StressContext) {
+    streaming_response_forward(ctx, 16);
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "dispatch_timeout_sweep_64_expired_pending_x8_cases_primary"
+)]
+fn should_dispatch_timeout_sweep_64_expired_pending_x8_cases_primary(ctx: &mut StressContext) {
+    dispatch_timeout_sweep(ctx, 64);
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "dispatch_timeout_sweep_256_expired_pending_x4_cases_primary"
+)]
+fn should_dispatch_timeout_sweep_256_expired_pending_x4_cases_primary(ctx: &mut StressContext) {
+    dispatch_timeout_sweep(ctx, 256);
+}
+
+stress_main!();

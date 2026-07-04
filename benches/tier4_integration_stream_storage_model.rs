@@ -101,83 +101,74 @@ fn prepare_validated_direct_read(
     (msg_type, payload)
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_direct_resource_read_promotion_frontier_live_prototype(ctx: &mut StressContext) {
-    ctx.tag("layer", "direct");
-    ctx.tag("scenario", "read_resource_exact");
-    ctx.tag("measurement_scope", "direct_live_prototype");
-    ctx.tag("candidate", "promotion_frontier");
-    ctx.tag("batch_size", "100_events_scanned");
+    ctx.parameter("layer", "direct");
+    ctx.parameter("scenario", "read_resource_exact");
+    ctx.parameter("measurement_scope", "direct_live_prototype");
+    ctx.parameter("candidate", "promotion_frontier");
+    ctx.parameter("batch_size", "100_events_scanned");
 
     let case = prepare_resource_read_case();
     let context = setup_direct_context(&case);
     let (msg_type, payload) =
         prepare_validated_direct_read(&context, case.route, case.expected_count);
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let _ = direct_request(&context, case.route, msg_type, payload.clone());
-        },
-    );
-    ctx.set_elements(case.expected_count as u64 * iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        let _ = direct_request(&context, case.route, msg_type, payload.clone());
+    });
+    stress_config::record_completed(ctx, case.expected_count as u64 * iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_direct_area_wildcard_read_promotion_frontier_live_prototype(
     ctx: &mut StressContext,
 ) {
-    ctx.tag("layer", "direct");
-    ctx.tag("scenario", "read_area_wildcard");
-    ctx.tag("measurement_scope", "direct_live_prototype");
-    ctx.tag("candidate", "promotion_frontier");
-    ctx.tag("batch_size", "100_events_scanned");
+    ctx.parameter("layer", "direct");
+    ctx.parameter("scenario", "read_area_wildcard");
+    ctx.parameter("measurement_scope", "direct_live_prototype");
+    ctx.parameter("candidate", "promotion_frontier");
+    ctx.parameter("batch_size", "100_events_scanned");
 
     let case = prepare_area_read_case();
     let context = setup_direct_context(&case);
     let (msg_type, payload) =
         prepare_validated_direct_read(&context, case.route, case.expected_count);
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let _ = direct_request(&context, case.route, msg_type, payload.clone());
-        },
-    );
-    ctx.set_elements(case.expected_count as u64 * iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        let _ = direct_request(&context, case.route, msg_type, payload.clone());
+    });
+    stress_config::record_completed(ctx, case.expected_count as u64 * iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_direct_realm_wildcard_read_promotion_frontier_live_prototype(
     ctx: &mut StressContext,
 ) {
-    ctx.tag("layer", "direct");
-    ctx.tag("scenario", "read_realm_wildcard");
-    ctx.tag("measurement_scope", "direct_live_prototype");
-    ctx.tag("candidate", "promotion_frontier");
-    ctx.tag("batch_size", "100_events_scanned");
+    ctx.parameter("layer", "direct");
+    ctx.parameter("scenario", "read_realm_wildcard");
+    ctx.parameter("measurement_scope", "direct_live_prototype");
+    ctx.parameter("candidate", "promotion_frontier");
+    ctx.parameter("batch_size", "100_events_scanned");
 
     let case = prepare_realm_read_case();
     let context = setup_direct_context(&case);
     let (msg_type, payload) =
         prepare_validated_direct_read(&context, case.route, case.expected_count);
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let _ = direct_request(&context, case.route, msg_type, payload.clone());
-        },
-    );
-    ctx.set_elements(case.expected_count as u64 * iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        let _ = direct_request(&context, case.route, msg_type, payload.clone());
+    });
+    stress_config::record_completed(ctx, case.expected_count as u64 * iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_tcp_resource_read_promotion_frontier_live_prototype(ctx: &mut StressContext) {
-    ctx.tag("layer", "tcp");
-    ctx.tag("scenario", "read_resource_exact");
-    ctx.tag("measurement_scope", "tcp_live_prototype");
-    ctx.tag("candidate", "promotion_frontier");
-    ctx.tag("batch_size", "100_events_scanned");
+    ctx.parameter("layer", "tcp");
+    ctx.parameter("scenario", "read_resource_exact");
+    ctx.parameter("measurement_scope", "tcp_live_prototype");
+    ctx.parameter("candidate", "promotion_frontier");
+    ctx.parameter("batch_size", "100_events_scanned");
 
     let case = prepare_resource_read_case();
     let runtime = shared_bench_runtime();
@@ -196,26 +187,23 @@ fn should_complete_tcp_resource_read_promotion_frontier_live_prototype(ctx: &mut
         "unexpected tcp resource read count"
     );
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let _ = runtime
-                .block_on(client.request(&read_frame, 2000))
-                .expect("resource read response");
-        },
-    );
-    ctx.set_elements(case.expected_count as u64 * iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        let _ = runtime
+            .block_on(client.request(&read_frame, 2000))
+            .expect("resource read response");
+    });
+    stress_config::record_completed(ctx, case.expected_count as u64 * iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_tcp_area_wildcard_read_promotion_frontier_live_prototype(
     ctx: &mut StressContext,
 ) {
-    ctx.tag("layer", "tcp");
-    ctx.tag("scenario", "read_area_wildcard");
-    ctx.tag("measurement_scope", "tcp_live_prototype");
-    ctx.tag("candidate", "promotion_frontier");
-    ctx.tag("batch_size", "100_events_scanned");
+    ctx.parameter("layer", "tcp");
+    ctx.parameter("scenario", "read_area_wildcard");
+    ctx.parameter("measurement_scope", "tcp_live_prototype");
+    ctx.parameter("candidate", "promotion_frontier");
+    ctx.parameter("batch_size", "100_events_scanned");
 
     let case = prepare_area_read_case();
     let runtime = shared_bench_runtime();
@@ -231,26 +219,23 @@ fn should_complete_tcp_area_wildcard_read_promotion_frontier_live_prototype(
         .expect("area read count");
     assert_eq!(count, case.expected_count, "unexpected tcp area read count");
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let _ = runtime
-                .block_on(client.request(&read_frame, 2000))
-                .expect("area read response");
-        },
-    );
-    ctx.set_elements(case.expected_count as u64 * iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        let _ = runtime
+            .block_on(client.request(&read_frame, 2000))
+            .expect("area read response");
+    });
+    stress_config::record_completed(ctx, case.expected_count as u64 * iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_tcp_realm_wildcard_read_promotion_frontier_live_prototype(
     ctx: &mut StressContext,
 ) {
-    ctx.tag("layer", "tcp");
-    ctx.tag("scenario", "read_realm_wildcard");
-    ctx.tag("measurement_scope", "tcp_live_prototype");
-    ctx.tag("candidate", "promotion_frontier");
-    ctx.tag("batch_size", "100_events_scanned");
+    ctx.parameter("layer", "tcp");
+    ctx.parameter("scenario", "read_realm_wildcard");
+    ctx.parameter("measurement_scope", "tcp_live_prototype");
+    ctx.parameter("candidate", "promotion_frontier");
+    ctx.parameter("batch_size", "100_events_scanned");
 
     let case = prepare_realm_read_case();
     let runtime = shared_bench_runtime();
@@ -269,24 +254,21 @@ fn should_complete_tcp_realm_wildcard_read_promotion_frontier_live_prototype(
         "unexpected tcp realm read count"
     );
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let _ = runtime
-                .block_on(client.request(&read_frame, 2000))
-                .expect("realm read response");
-        },
-    );
-    ctx.set_elements(case.expected_count as u64 * iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        let _ = runtime
+            .block_on(client.request(&read_frame, 2000))
+            .expect("realm read response");
+    });
+    stress_config::record_completed(ctx, case.expected_count as u64 * iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_ws_resource_read_promotion_frontier_live_prototype(ctx: &mut StressContext) {
-    ctx.tag("layer", "websocket");
-    ctx.tag("scenario", "read_resource_exact");
-    ctx.tag("measurement_scope", "ws_live_prototype");
-    ctx.tag("candidate", "promotion_frontier");
-    ctx.tag("batch_size", "100_events_scanned");
+    ctx.parameter("layer", "websocket");
+    ctx.parameter("scenario", "read_resource_exact");
+    ctx.parameter("measurement_scope", "ws_live_prototype");
+    ctx.parameter("candidate", "promotion_frontier");
+    ctx.parameter("batch_size", "100_events_scanned");
 
     let case = prepare_resource_read_case();
     let runtime = shared_bench_runtime();
@@ -308,26 +290,23 @@ fn should_complete_ws_resource_read_promotion_frontier_live_prototype(ctx: &mut 
         "unexpected ws resource read count"
     );
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let _ = runtime
-                .block_on(client.request(&read_frame, 2000))
-                .expect("resource read response");
-        },
-    );
-    ctx.set_elements(case.expected_count as u64 * iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        let _ = runtime
+            .block_on(client.request(&read_frame, 2000))
+            .expect("resource read response");
+    });
+    stress_config::record_completed(ctx, case.expected_count as u64 * iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_ws_area_wildcard_read_promotion_frontier_live_prototype(
     ctx: &mut StressContext,
 ) {
-    ctx.tag("layer", "websocket");
-    ctx.tag("scenario", "read_area_wildcard");
-    ctx.tag("measurement_scope", "ws_live_prototype");
-    ctx.tag("candidate", "promotion_frontier");
-    ctx.tag("batch_size", "100_events_scanned");
+    ctx.parameter("layer", "websocket");
+    ctx.parameter("scenario", "read_area_wildcard");
+    ctx.parameter("measurement_scope", "ws_live_prototype");
+    ctx.parameter("candidate", "promotion_frontier");
+    ctx.parameter("batch_size", "100_events_scanned");
 
     let case = prepare_area_read_case();
     let runtime = shared_bench_runtime();
@@ -346,26 +325,23 @@ fn should_complete_ws_area_wildcard_read_promotion_frontier_live_prototype(
         .expect("area read count");
     assert_eq!(count, case.expected_count, "unexpected ws area read count");
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let _ = runtime
-                .block_on(client.request(&read_frame, 2000))
-                .expect("area read response");
-        },
-    );
-    ctx.set_elements(case.expected_count as u64 * iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        let _ = runtime
+            .block_on(client.request(&read_frame, 2000))
+            .expect("area read response");
+    });
+    stress_config::record_completed(ctx, case.expected_count as u64 * iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_ws_realm_wildcard_read_promotion_frontier_live_prototype(
     ctx: &mut StressContext,
 ) {
-    ctx.tag("layer", "websocket");
-    ctx.tag("scenario", "read_realm_wildcard");
-    ctx.tag("measurement_scope", "ws_live_prototype");
-    ctx.tag("candidate", "promotion_frontier");
-    ctx.tag("batch_size", "100_events_scanned");
+    ctx.parameter("layer", "websocket");
+    ctx.parameter("scenario", "read_realm_wildcard");
+    ctx.parameter("measurement_scope", "ws_live_prototype");
+    ctx.parameter("candidate", "promotion_frontier");
+    ctx.parameter("batch_size", "100_events_scanned");
 
     let case = prepare_realm_read_case();
     let runtime = shared_bench_runtime();
@@ -384,15 +360,12 @@ fn should_complete_ws_realm_wildcard_read_promotion_frontier_live_prototype(
         .expect("realm read count");
     assert_eq!(count, case.expected_count, "unexpected ws realm read count");
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let _ = runtime
-                .block_on(client.request(&read_frame, 2000))
-                .expect("realm read response");
-        },
-    );
-    ctx.set_elements(case.expected_count as u64 * iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        let _ = runtime
+            .block_on(client.request(&read_frame, 2000))
+            .expect("realm read response");
+    });
+    stress_config::record_completed(ctx, case.expected_count as u64 * iterations);
 }
 
 stress_main!();

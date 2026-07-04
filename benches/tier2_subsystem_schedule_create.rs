@@ -1,8 +1,9 @@
 #![allow(deprecated)]
 use bytes::Bytes;
-use criterion::{
-    black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
-};
+#[path = "tier2_stress.rs"]
+mod tier2_stress;
+
+use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::create_bench_store;
 use fitz::domains::schedule::actor::ScheduleActor;
 use fitz::domains::schedule::protocol::{
@@ -10,10 +11,8 @@ use fitz::domains::schedule::protocol::{
 };
 use fitz::domains::schedule::store::{ScheduleBatchInsert, ScheduleInsert, ScheduleStore};
 use fitz::runtime::routing::RouteFamily;
+use std::hint::black_box;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
-#[path = "criterion_config.rs"]
-mod criterion_config;
 
 const CREATE_BATCH_SIZE: usize = 32;
 const ROUTE_RING_SIZE: usize = 1024;
@@ -123,189 +122,178 @@ fn create_actor_case(fixtures: &ScheduleCreateFixtures) -> ActorCreateCase {
     }
 }
 
-fn time_actor_create_cases(
-    iters: u64,
-    fixtures: &ScheduleCreateFixtures,
-    mut measure: impl FnMut(&mut ActorCreateCase),
-) -> Duration {
-    let mut remaining = iters.saturating_mul(ACTOR_CREATE_REPEAT_COUNT);
-    let mut total = Duration::ZERO;
-
-    while remaining > 0 {
-        let mut case = create_actor_case(fixtures);
-        let start = Instant::now();
-        measure(&mut case);
-        total += start.elapsed();
-        remaining -= 1;
-    }
-
-    total / u32::try_from(ACTOR_CREATE_REPEAT_COUNT).expect("actor create repeat count fits u32")
-}
-
-fn bench_validate_route(
-    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    fixtures: &ScheduleCreateFixtures,
-) {
-    group.throughput(Throughput::Elements(usize_to_u64_saturating(
-        ROUTE_RING_SIZE,
-    )));
-    group.bench_function("validate_route_1024_unique", |b| {
-        b.iter(|| {
-            for route in &fixtures.routes {
-                black_box(validate_concrete_schedule_route(black_box(route)))
-                    .expect("valid schedule route");
-            }
-        });
-    });
-}
-
-fn bench_next_fire(
-    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    fixtures: &ScheduleCreateFixtures,
-) {
-    group.throughput(Throughput::Elements(usize_to_u64_saturating(
-        CREATE_BATCH_SIZE,
-    )));
-    group.bench_function("next_fire_hourly_32", |b| {
-        b.iter(|| {
-            let start = Instant::now();
-            for offset in 0..CREATE_BATCH_SIZE {
-                black_box(
-                    fixtures.hourly_schedule.next_fire_time(
-                        start + Duration::from_secs(usize_to_u64_saturating(offset)),
-                    ),
-                );
-            }
-        });
-    });
-
-    group.bench_function("next_fire_daily_32", |b| {
-        b.iter(|| {
-            let start = Instant::now();
-            for offset in 0..CREATE_BATCH_SIZE {
-                black_box(fixtures.daily_schedule.next_fire_time(
-                    start + Duration::from_secs(usize_to_u64_saturating(offset) * 60),
-                ));
-            }
-        });
-    });
-}
-
-fn bench_store_create(
-    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    fixtures: &ScheduleCreateFixtures,
-) {
-    group.bench_function("store_insert_unique_inmemory_32", |b| {
-        b.iter_batched(
-            || create_store_insert_case(fixtures),
-            |case| {
-                for index in 0..CREATE_BATCH_SIZE {
-                    black_box(
-                        case.store
-                            .insert(
-                                1,
-                                ScheduleInsert {
-                                    route: &case.routes[index],
-                                    cron: &case.cron,
-                                    payload: &case.payloads[index],
-                                    next_fire_ms: case.next_fire_ms,
-                                    previous_fire_ms: None,
-                                    last_fire_ms: None,
-                                    executions_total: 0,
-                                },
-                                cntryl_midge::WriteOptions::buffered(),
-                            )
-                            .expect("schedule insert"),
-                    );
-                }
-            },
-            BatchSize::SmallInput,
-        );
-    });
-
-    group.bench_function("store_insert_batch_unique_inmemory_32", |b| {
-        b.iter_batched(
-            || create_store_insert_case(fixtures),
-            |case| {
-                let items: Vec<_> = (0..CREATE_BATCH_SIZE)
-                    .map(|index| ScheduleBatchInsert {
-                        route: case.routes[index].clone(),
-                        cron: case.cron.clone(),
-                        payload: case.payloads[index].clone(),
-                        next_fire_ms: case.next_fire_ms,
-                        previous_fire_ms: None,
-                        last_fire_ms: None,
-                        executions_total: 0,
-                    })
-                    .collect();
-                case.store
-                    .insert_batch(1, &items, cntryl_midge::WriteOptions::buffered())
-                    .expect("schedule insert batch");
-                black_box(());
-            },
-            BatchSize::SmallInput,
-        );
-    });
-}
-
-fn bench_actor_create(
-    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    fixtures: &ScheduleCreateFixtures,
-) {
-    group.bench_function("actor_create_unique_inmemory_32", |b| {
-        b.iter_custom(|iters| {
-            time_actor_create_cases(iters, fixtures, |case| {
-                for index in 0..CREATE_BATCH_SIZE {
-                    black_box(
-                        case.actor
-                            .create_schedule(
-                                case.routes[index].clone(),
-                                case.cron.clone(),
-                                case.payloads[index].clone(),
-                            )
-                            .expect("actor create schedule"),
-                    );
-                }
-            })
-        });
-    });
-
-    group.bench_function("actor_create_batch_unique_inmemory_32", |b| {
-        b.iter_custom(|iters| {
-            time_actor_create_cases(iters, fixtures, |case| {
-                let entries: Vec<_> = (0..CREATE_BATCH_SIZE)
-                    .map(|index| ScheduleCreateEntry {
-                        route: case.routes[index].clone(),
-                        cron: case.cron.clone(),
-                        payload: case.payloads[index].clone(),
-                    })
-                    .collect();
-                black_box(
-                    case.actor
-                        .create_schedules(entries)
-                        .expect("actor create schedule batch"),
-                );
-            })
-        });
-    });
-}
-
-fn bench_schedule_create_breakdown(c: &mut Criterion) {
+#[stress_test(tier = 2, mode = "fixed_duration", name = "validate_route_1024_unique")]
+fn should_validate_route_1024_unique(ctx: &mut StressContext) {
     let fixtures = create_fixtures();
-    let mut group = c.benchmark_group("subsystem_schedule_create");
-    group.sampling_mode(SamplingMode::Flat);
 
-    bench_validate_route(&mut group, &fixtures);
-    bench_next_fire(&mut group, &fixtures);
-    bench_store_create(&mut group, &fixtures);
-    bench_actor_create(&mut group, &fixtures);
-
-    group.finish();
+    tier2_stress::measure_iterations(ctx, usize_to_u64_saturating(ROUTE_RING_SIZE), || {
+        for route in &fixtures.routes {
+            black_box(validate_concrete_schedule_route(black_box(route)))
+                .expect("valid schedule route");
+        }
+    });
 }
 
-criterion_group! {
-    name = benches;
-    config = criterion_config::criterion_config_for_tier2();
-    targets = bench_schedule_create_breakdown
+#[stress_test(tier = 2, mode = "fixed_duration", name = "next_fire_hourly_32")]
+fn should_next_fire_hourly_32(ctx: &mut StressContext) {
+    let fixtures = create_fixtures();
+
+    tier2_stress::measure_iterations(ctx, usize_to_u64_saturating(CREATE_BATCH_SIZE), || {
+        let start = Instant::now();
+        for offset in 0..CREATE_BATCH_SIZE {
+            black_box(
+                fixtures
+                    .hourly_schedule
+                    .next_fire_time(start + Duration::from_secs(usize_to_u64_saturating(offset))),
+            );
+        }
+    });
 }
-criterion_main!(benches);
+
+#[stress_test(tier = 2, mode = "fixed_duration", name = "next_fire_daily_32")]
+fn should_next_fire_daily_32(ctx: &mut StressContext) {
+    let fixtures = create_fixtures();
+
+    tier2_stress::measure_iterations(ctx, usize_to_u64_saturating(CREATE_BATCH_SIZE), || {
+        let start = Instant::now();
+        for offset in 0..CREATE_BATCH_SIZE {
+            black_box(
+                fixtures.daily_schedule.next_fire_time(
+                    start + Duration::from_secs(usize_to_u64_saturating(offset) * 60),
+                ),
+            );
+        }
+    });
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "store_insert_unique_inmemory_32"
+)]
+fn should_store_insert_unique_inmemory_32(ctx: &mut StressContext) {
+    let fixtures = create_fixtures();
+    let case = create_store_insert_case(&fixtures);
+
+    tier2_stress::measure_once(ctx, usize_to_u64_saturating(CREATE_BATCH_SIZE), || {
+        for index in 0..CREATE_BATCH_SIZE {
+            black_box(
+                case.store
+                    .insert(
+                        1,
+                        ScheduleInsert {
+                            route: &case.routes[index],
+                            cron: &case.cron,
+                            payload: &case.payloads[index],
+                            next_fire_ms: case.next_fire_ms,
+                            previous_fire_ms: None,
+                            last_fire_ms: None,
+                            executions_total: 0,
+                        },
+                        cntryl_midge::WriteOptions::buffered(),
+                    )
+                    .expect("schedule insert"),
+            );
+        }
+    });
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "store_insert_batch_unique_inmemory_32"
+)]
+fn should_store_insert_batch_unique_inmemory_32(ctx: &mut StressContext) {
+    let fixtures = create_fixtures();
+    let case = create_store_insert_case(&fixtures);
+    let items = (0..CREATE_BATCH_SIZE)
+        .map(|index| ScheduleBatchInsert {
+            route: case.routes[index].clone(),
+            cron: case.cron.clone(),
+            payload: case.payloads[index].clone(),
+            next_fire_ms: case.next_fire_ms,
+            previous_fire_ms: None,
+            last_fire_ms: None,
+            executions_total: 0,
+        })
+        .collect::<Vec<_>>();
+
+    tier2_stress::measure_once(ctx, usize_to_u64_saturating(CREATE_BATCH_SIZE), || {
+        case.store
+            .insert_batch(1, &items, cntryl_midge::WriteOptions::buffered())
+            .expect("schedule insert batch");
+        black_box(());
+    });
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "actor_create_unique_inmemory_32"
+)]
+fn should_actor_create_unique_inmemory_32(ctx: &mut StressContext) {
+    let fixtures = create_fixtures();
+    let mut cases = (0..ACTOR_CREATE_REPEAT_COUNT)
+        .map(|_| create_actor_case(&fixtures))
+        .collect::<Vec<_>>();
+
+    let start = Instant::now();
+    for case in &mut cases {
+        for index in 0..CREATE_BATCH_SIZE {
+            black_box(
+                case.actor
+                    .create_schedule(
+                        case.routes[index].clone(),
+                        case.cron.clone(),
+                        case.payloads[index].clone(),
+                    )
+                    .expect("actor create schedule"),
+            );
+        }
+    }
+    tier2_stress::record_duration(
+        ctx,
+        start.elapsed(),
+        usize_to_u64_saturating(CREATE_BATCH_SIZE).saturating_mul(ACTOR_CREATE_REPEAT_COUNT),
+    );
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "actor_create_batch_unique_inmemory_32"
+)]
+fn should_actor_create_batch_unique_inmemory_32(ctx: &mut StressContext) {
+    let fixtures = create_fixtures();
+    let mut cases = (0..ACTOR_CREATE_REPEAT_COUNT)
+        .map(|_| create_actor_case(&fixtures))
+        .collect::<Vec<_>>();
+    let entries_by_case = cases
+        .iter()
+        .map(|case| {
+            (0..CREATE_BATCH_SIZE)
+                .map(|index| ScheduleCreateEntry {
+                    route: case.routes[index].clone(),
+                    cron: case.cron.clone(),
+                    payload: case.payloads[index].clone(),
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+
+    let start = Instant::now();
+    for (case, entries) in cases.iter_mut().zip(entries_by_case) {
+        black_box(
+            case.actor
+                .create_schedules(entries)
+                .expect("actor create schedule batch"),
+        );
+    }
+    tier2_stress::record_duration(
+        ctx,
+        start.elapsed(),
+        usize_to_u64_saturating(CREATE_BATCH_SIZE).saturating_mul(ACTOR_CREATE_REPEAT_COUNT),
+    );
+}
+
+stress_main!();

@@ -1,6 +1,9 @@
 #![allow(deprecated)]
 use bytes::Bytes;
-use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+#[path = "tier2_stress.rs"]
+mod tier2_stress;
+
+use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
     build_stream_subscribe, create_bench_stream_sink, drain_frame_queue_sinks_after_each_count,
     extract_single_tlv_field, register_session_counting_sink, register_session_queue_sink,
@@ -13,11 +16,9 @@ use fitz::runtime::envelope::Envelope;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use serde_json::json;
+use std::hint::black_box;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-
-#[path = "criterion_config.rs"]
-mod criterion_config;
 
 const CLIENT_SESSION_ID: u64 = 1;
 const SUBSCRIBE_REGISTER_BATCH_SIZE: usize = 2048;
@@ -26,11 +27,6 @@ const COMMIT_NOTIFY_REPEAT_COUNT: u64 = 256;
 const COMMIT_NOTIFY_CHUNK_SIZE: u64 = 64;
 const SUBSCRIBE_DESTINATION: &str = "stream://realm/area/control/append";
 const COMMIT_NOTIFY_ROUTE: &str = "stream://realm/area/orders";
-
-struct StreamPatternCase {
-    label: &'static str,
-    pattern: &'static str,
-}
 
 struct PreparedStreamNotifyCase {
     sink: Arc<StreamDomainSink>,
@@ -202,131 +198,165 @@ fn prepare_notify_case(subscriber_count: usize, pattern: &str) -> PreparedStream
     case
 }
 
-fn bench_stream_subscribe_register_primary(c: &mut Criterion) {
-    let mut group = c.benchmark_group("subsystem_stream");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(
-        (SUBSCRIBE_REGISTER_BATCH_SIZE * SUBSCRIBE_REGISTER_CASE_COUNT) as u64,
-    ));
-
-    group.bench_function(
-        format!("subscribe_register_2048_sessions_x{SUBSCRIBE_REGISTER_CASE_COUNT}_cases_primary"),
-        |b| {
-            b.iter_custom(|iters| {
-                let mut total = Duration::ZERO;
-                for _ in 0..iters {
-                    let cases: Vec<_> = (0..SUBSCRIBE_REGISTER_CASE_COUNT)
-                        .map(|_| prepare_stream_subscribe_case())
-                        .collect();
-                    let start = Instant::now();
-                    for case in &cases {
-                        for (session_id, source, _) in &case.subscribers {
-                            register_stream_subscription(
-                                &case.router,
-                                case.family,
-                                source,
-                                *session_id,
-                                case.msg_type,
-                                case.payload.clone(),
-                            );
-                        }
-                    }
-                    total += start.elapsed();
-
-                    for case in &cases {
-                        let inboxes: Vec<_> = case
-                            .subscribers
-                            .iter()
-                            .map(|(_, _, inbox)| inbox.clone())
-                            .collect();
-                        let responses = drain_frame_queue_sinks_after_each_count(
-                            &inboxes,
-                            1,
-                            Duration::from_secs(1),
-                        );
-                        assert_eq!(
-                            responses.len(),
-                            SUBSCRIBE_REGISTER_BATCH_SIZE,
-                            "stream subscribe should ack every registration"
-                        );
-                        for response in responses {
-                            assert_stream_subscribe_success(response.payload.as_ref());
-                        }
-                    }
-                    for case in cases {
-                        case.router.clear();
-                    }
-                }
-                total
-            });
-        },
-    );
-
-    group.finish();
-}
-
-fn bench_stream_commit_notify_primary(c: &mut Criterion) {
-    let pattern_cases = [
-        StreamPatternCase {
-            label: "exact_route",
-            pattern: COMMIT_NOTIFY_ROUTE,
-        },
-        StreamPatternCase {
-            label: "single_star",
-            pattern: "stream://realm/area/*",
-        },
-        StreamPatternCase {
-            label: "double_star",
-            pattern: "stream://realm/**",
-        },
-    ];
-
-    let mut group = c.benchmark_group("subsystem_stream");
-    group.sampling_mode(SamplingMode::Flat);
-
-    for pattern_case in pattern_cases {
-        for subscriber_count in [1usize, 16usize, 64usize, 256usize] {
-            let case = prepare_notify_case(subscriber_count, pattern_case.pattern);
-            group.throughput(Throughput::Elements(subscriber_count as u64));
-            group.bench_function(
-                format!(
-                    "commit_notify_{}_{}_subscribers_primary",
-                    pattern_case.label, subscriber_count
-                ),
-                |b| {
-                    b.iter_custom(|iters| {
-                        let mut remaining = iters.saturating_mul(COMMIT_NOTIFY_REPEAT_COUNT);
-                        let mut total = Duration::ZERO;
-                        while remaining > 0 {
-                            let chunk = remaining.min(COMMIT_NOTIFY_CHUNK_SIZE);
-                            case.reset_subscriber_counts();
-                            let start = Instant::now();
-                            for _ in 0..chunk {
-                                case.publish_once();
-                                black_box(());
-                            }
-                            total += start.elapsed();
-                            let expected_per_subscriber =
-                                usize::try_from(chunk).expect("stream publish count fits usize");
-                            case.wait_for_deliveries_per_subscriber(expected_per_subscriber);
-                            case.reset_subscriber_counts();
-                            remaining -= chunk;
-                        }
-                        total
-                            / u32::try_from(COMMIT_NOTIFY_REPEAT_COUNT)
-                                .expect("stream publish repeat count fits u32")
-                    });
-                },
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "subscribe_register_2048_sessions_x4_cases_primary"
+)]
+fn should_subscribe_register_2048_sessions_x4_cases_primary(ctx: &mut StressContext) {
+    let cases = (0..SUBSCRIBE_REGISTER_CASE_COUNT)
+        .map(|_| prepare_stream_subscribe_case())
+        .collect::<Vec<_>>();
+    let start = Instant::now();
+    for case in &cases {
+        for (session_id, source, _) in &case.subscribers {
+            register_stream_subscription(
+                &case.router,
+                case.family,
+                source,
+                *session_id,
+                case.msg_type,
+                case.payload.clone(),
             );
         }
     }
+    let duration = start.elapsed();
 
-    group.finish();
+    for case in &cases {
+        let inboxes = case
+            .subscribers
+            .iter()
+            .map(|(_, _, inbox)| inbox.clone())
+            .collect::<Vec<_>>();
+        let responses =
+            drain_frame_queue_sinks_after_each_count(&inboxes, 1, Duration::from_secs(1));
+        assert_eq!(
+            responses.len(),
+            SUBSCRIBE_REGISTER_BATCH_SIZE,
+            "stream subscribe should ack every registration"
+        );
+        for response in responses {
+            assert_stream_subscribe_success(response.payload.as_ref());
+        }
+    }
+    for case in cases {
+        case.router.clear();
+    }
+    tier2_stress::record_duration(
+        ctx,
+        duration,
+        (SUBSCRIBE_REGISTER_BATCH_SIZE * SUBSCRIBE_REGISTER_CASE_COUNT) as u64,
+    );
 }
 
-criterion_group! {
-    name = benches;
-    config = criterion_config::criterion_config_for_tier2();
-    targets = bench_stream_subscribe_register_primary, bench_stream_commit_notify_primary
+fn commit_notify(ctx: &mut StressContext, subscriber_count: usize, pattern: &str) {
+    let case = prepare_notify_case(subscriber_count, pattern);
+    let mut remaining = COMMIT_NOTIFY_REPEAT_COUNT;
+    let mut total = Duration::ZERO;
+    while remaining > 0 {
+        let chunk = remaining.min(COMMIT_NOTIFY_CHUNK_SIZE);
+        case.reset_subscriber_counts();
+        let start = Instant::now();
+        for _ in 0..chunk {
+            case.publish_once();
+            black_box(());
+        }
+        total += start.elapsed();
+        let expected_per_subscriber =
+            usize::try_from(chunk).expect("stream publish count fits usize");
+        case.wait_for_deliveries_per_subscriber(expected_per_subscriber);
+        case.reset_subscriber_counts();
+        remaining -= chunk;
+    }
+    tier2_stress::record_duration(
+        ctx,
+        total
+            / u32::try_from(COMMIT_NOTIFY_REPEAT_COUNT)
+                .expect("stream publish repeat count fits u32"),
+        subscriber_count as u64,
+    );
 }
-criterion_main!(benches);
+
+macro_rules! stream_commit_notify_bench {
+    ($fn_name:ident, $stress_name:literal, $subscribers:expr, $pattern:expr) => {
+        #[stress_test(tier = 2, mode = "fixed_duration", name = $stress_name)]
+        fn $fn_name(ctx: &mut StressContext) {
+            commit_notify(ctx, $subscribers, $pattern);
+        }
+    };
+}
+
+stream_commit_notify_bench!(
+    should_commit_notify_exact_route_1_subscribers_primary,
+    "commit_notify_exact_route_1_subscribers_primary",
+    1,
+    COMMIT_NOTIFY_ROUTE
+);
+stream_commit_notify_bench!(
+    should_commit_notify_exact_route_16_subscribers_primary,
+    "commit_notify_exact_route_16_subscribers_primary",
+    16,
+    COMMIT_NOTIFY_ROUTE
+);
+stream_commit_notify_bench!(
+    should_commit_notify_exact_route_64_subscribers_primary,
+    "commit_notify_exact_route_64_subscribers_primary",
+    64,
+    COMMIT_NOTIFY_ROUTE
+);
+stream_commit_notify_bench!(
+    should_commit_notify_exact_route_256_subscribers_primary,
+    "commit_notify_exact_route_256_subscribers_primary",
+    256,
+    COMMIT_NOTIFY_ROUTE
+);
+stream_commit_notify_bench!(
+    should_commit_notify_single_star_1_subscribers_primary,
+    "commit_notify_single_star_1_subscribers_primary",
+    1,
+    "stream://realm/area/*"
+);
+stream_commit_notify_bench!(
+    should_commit_notify_single_star_16_subscribers_primary,
+    "commit_notify_single_star_16_subscribers_primary",
+    16,
+    "stream://realm/area/*"
+);
+stream_commit_notify_bench!(
+    should_commit_notify_single_star_64_subscribers_primary,
+    "commit_notify_single_star_64_subscribers_primary",
+    64,
+    "stream://realm/area/*"
+);
+stream_commit_notify_bench!(
+    should_commit_notify_single_star_256_subscribers_primary,
+    "commit_notify_single_star_256_subscribers_primary",
+    256,
+    "stream://realm/area/*"
+);
+stream_commit_notify_bench!(
+    should_commit_notify_double_star_1_subscribers_primary,
+    "commit_notify_double_star_1_subscribers_primary",
+    1,
+    "stream://realm/**"
+);
+stream_commit_notify_bench!(
+    should_commit_notify_double_star_16_subscribers_primary,
+    "commit_notify_double_star_16_subscribers_primary",
+    16,
+    "stream://realm/**"
+);
+stream_commit_notify_bench!(
+    should_commit_notify_double_star_64_subscribers_primary,
+    "commit_notify_double_star_64_subscribers_primary",
+    64,
+    "stream://realm/**"
+);
+stream_commit_notify_bench!(
+    should_commit_notify_double_star_256_subscribers_primary,
+    "commit_notify_double_star_256_subscribers_primary",
+    256,
+    "stream://realm/**"
+);
+
+stress_main!();

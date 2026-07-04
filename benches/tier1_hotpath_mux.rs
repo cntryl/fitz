@@ -1,141 +1,186 @@
-#![allow(deprecated)]
-use criterion::{
-    black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
-};
+use cntryl_stress::{black_box, stress_allocator, stress_main, stress_test, StressContext};
 use fitz::protocol::mux::{Mux, MuxError};
 use fitz::protocol::tlv::{MessageType, TlvDecoder, TlvEncoder};
 
-#[path = "criterion_config.rs"]
-mod criterion_config;
+stress_allocator!();
 
-fn bench_mux_route_reuse(c: &mut Criterion) {
-    let sizes = [0usize, 16usize, 64usize];
-
-    let mut group = c.benchmark_group("hotpath_mux");
-    group.sampling_mode(SamplingMode::Flat);
-
-    for &size in &sizes {
-        // Setup - build a single record and reuse clones
-        let mut encoder = TlvEncoder::with_capacity(256);
-        let payload = vec![0u8; size];
-        encoder.encode(MessageType::new(120), &payload);
-        let data = encoder.finish();
-
-        let decoder = TlvDecoder::new();
-        let (record, _) = decoder.decode_one(&data).unwrap();
-
-        let mut mux = Mux::new(1024);
-        group.throughput(Throughput::Elements(1));
-        let name = format!("route_owning_record_clone_{size}b");
-        group.bench_function(&name, |b| {
-            b.iter(|| {
-                let msg = mux.route(record.clone()).unwrap();
-                mux.release(msg.channel);
-                black_box(&msg);
-            });
-        });
-
-        let mut mux2 = Mux::new(1024);
-        let (mt, slice, _) = decoder.decode_one_ref(&data).unwrap();
-        let name = format!("route_ref_zero_copy_{size}b");
-        group.bench_function(&name, |b| {
-            b.iter(|| {
-                let cref = mux2.route_ref(mt, black_box(slice)).unwrap();
-                mux2.release(cref.channel);
-                black_box(&cref);
-            });
-        });
-    }
-
-    group.finish();
+fn encoded_record(size: usize) -> bytes::Bytes {
+    let mut encoder = TlvEncoder::with_capacity(256);
+    let payload = vec![0_u8; size];
+    encoder.encode(MessageType::new(120), &payload);
+    encoder.finish()
 }
 
-fn bench_mux_route_decode_each(c: &mut Criterion) {
-    let sizes = [0usize, 16usize, 64usize];
+fn record_group(ctx: &mut StressContext, payload_size: usize) {
+    ctx.parameter("group", "hotpath_mux");
+    ctx.parameter("payload_size", payload_size);
+}
 
-    let mut group = c.benchmark_group("hotpath_mux");
-    group.sampling_mode(SamplingMode::Flat);
+macro_rules! route_owning_bench {
+    ($fn_name:ident, $bench_name:literal, $size:expr) => {
+        #[stress_test(tier = 1)]
+        fn $fn_name(ctx: &mut StressContext) {
+            record_group(ctx, $size);
+            let data = encoded_record($size);
+            let decoder = TlvDecoder::new();
+            let (record, _) = decoder.decode_one(&data).unwrap();
+            let mut mux = Mux::new(1024);
 
-    for &size in &sizes {
-        // Setup encoder data used each iteration for a fresh decode
-        let mut encoder = TlvEncoder::with_capacity(256);
-        let payload = vec![0u8; size];
-        encoder.encode(MessageType::new(120), &payload);
-        let data = encoder.finish();
+            ctx.measure_micro(|| {
+                let message = mux.route(record.clone()).unwrap();
+                mux.release(message.channel);
+                black_box(message);
+            });
+        }
+    };
+}
 
-        let decoder = TlvDecoder::new();
-        let mut mux = Mux::new(1024);
+macro_rules! route_ref_bench {
+    ($fn_name:ident, $bench_name:literal, $size:expr) => {
+        #[stress_test(tier = 1, max_allocs_per_op = 0, max_bytes_per_op = 0)]
+        fn $fn_name(ctx: &mut StressContext) {
+            record_group(ctx, $size);
+            let data = encoded_record($size);
+            let decoder = TlvDecoder::new();
+            let (message_type, payload, _) = decoder.decode_one_ref(&data).unwrap();
+            let mut mux = Mux::new(1024);
 
-        group.throughput(Throughput::Elements(1));
-        let name = format!("decode_then_route_owning_{size}b");
-        group.bench_function(&name, |b| {
-            b.iter(|| {
+            ctx.measure_micro(|| {
+                let message = mux.route_ref(message_type, black_box(payload)).unwrap();
+                mux.release(message.channel);
+                black_box(message);
+            });
+        }
+    };
+}
+
+macro_rules! decode_then_route_bench {
+    ($fn_name:ident, $bench_name:literal, $size:expr) => {
+        #[stress_test(tier = 1)]
+        fn $fn_name(ctx: &mut StressContext) {
+            record_group(ctx, $size);
+            let data = encoded_record($size);
+            let decoder = TlvDecoder::new();
+            let mut mux = Mux::new(1024);
+
+            ctx.measure_micro(|| {
                 let (record, _) = decoder.decode_one(black_box(&data)).unwrap();
-                let msg = mux.route(record).unwrap();
-                mux.release(msg.channel);
-                black_box(&msg);
+                let message = mux.route(record).unwrap();
+                mux.release(message.channel);
+                black_box(message);
             });
-        });
-    }
-
-    group.finish();
+        }
+    };
 }
 
-fn bench_mux_release_and_backpressure(c: &mut Criterion) {
-    let sizes = [0usize, 16usize, 64usize];
+macro_rules! release_after_route_ref_bench {
+    ($fn_name:ident, $bench_name:literal, $size:expr) => {
+        #[stress_test(tier = 1, max_allocs_per_op = 0, max_bytes_per_op = 0)]
+        fn $fn_name(ctx: &mut StressContext) {
+            record_group(ctx, $size);
+            let data = encoded_record($size);
+            let decoder = TlvDecoder::new();
+            let (message_type, payload, _) = decoder.decode_one_ref(&data).unwrap();
+            let mut mux = Mux::new(1);
 
-    let mut group = c.benchmark_group("hotpath_mux");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
-
-    for &size in &sizes {
-        let mut encoder = TlvEncoder::with_capacity(256);
-        let payload = vec![0u8; size];
-        encoder.encode(MessageType::new(120), &payload);
-        let data = encoder.finish();
-
-        let decoder = TlvDecoder::new();
-        let (mt, slice, _) = decoder.decode_one_ref(&data).unwrap();
-
-        group.bench_function(format!("release_after_route_ref_{size}b"), |b| {
-            b.iter_batched(
-                || {
-                    let mut mux = Mux::new(1);
-                    let cref = mux.route_ref(mt, slice).unwrap();
-                    (mux, cref.channel)
-                },
-                |(mut mux, channel)| {
-                    mux.release(channel);
-                    black_box(mux.occupancy(channel));
-                },
-                BatchSize::SmallInput,
-            );
-        });
-
-        group.bench_function(format!("route_ref_channel_full_{size}b"), |b| {
-            b.iter_batched(
-                || {
-                    let mut mux = Mux::new(1);
-                    mux.route_ref(mt, slice).unwrap();
-                    mux
-                },
-                |mut mux| match mux.route_ref(mt, slice) {
-                    Err(MuxError::ChannelFull(channel)) => {
-                        black_box(channel);
-                    }
-                    _ => panic!("expected ChannelFull"),
-                },
-                BatchSize::SmallInput,
-            );
-        });
-    }
-
-    group.finish();
+            ctx.measure_micro(|| {
+                let message = mux.route_ref(message_type, payload).unwrap();
+                mux.release(message.channel);
+                black_box(mux.occupancy(message.channel));
+            });
+        }
+    };
 }
 
-criterion_group! {
-    name = benches;
-    config = criterion_config::criterion_config_for_tier1();
-    targets = bench_mux_route_reuse, bench_mux_route_decode_each, bench_mux_release_and_backpressure
+macro_rules! channel_full_bench {
+    ($fn_name:ident, $bench_name:literal, $size:expr) => {
+        #[stress_test(tier = 1, max_allocs_per_op = 0, max_bytes_per_op = 0)]
+        fn $fn_name(ctx: &mut StressContext) {
+            record_group(ctx, $size);
+            let data = encoded_record($size);
+            let decoder = TlvDecoder::new();
+            let (message_type, payload, _) = decoder.decode_one_ref(&data).unwrap();
+            let mut mux = Mux::new(1);
+            mux.route_ref(message_type, payload).unwrap();
+
+            ctx.measure_micro(|| match mux.route_ref(message_type, payload) {
+                Err(MuxError::ChannelFull(channel)) => black_box(channel),
+                _ => panic!("expected ChannelFull"),
+            });
+        }
+    };
 }
-criterion_main!(benches);
+
+route_owning_bench!(
+    should_route_owning_record_clone_0b,
+    "route_owning_record_clone_0b",
+    0
+);
+route_owning_bench!(
+    should_route_owning_record_clone_16b,
+    "route_owning_record_clone_16b",
+    16
+);
+route_owning_bench!(
+    should_route_owning_record_clone_64b,
+    "route_owning_record_clone_64b",
+    64
+);
+route_ref_bench!(should_route_ref_zero_copy_0b, "route_ref_zero_copy_0b", 0);
+route_ref_bench!(
+    should_route_ref_zero_copy_16b,
+    "route_ref_zero_copy_16b",
+    16
+);
+route_ref_bench!(
+    should_route_ref_zero_copy_64b,
+    "route_ref_zero_copy_64b",
+    64
+);
+decode_then_route_bench!(
+    should_decode_then_route_owning_0b,
+    "decode_then_route_owning_0b",
+    0
+);
+decode_then_route_bench!(
+    should_decode_then_route_owning_16b,
+    "decode_then_route_owning_16b",
+    16
+);
+decode_then_route_bench!(
+    should_decode_then_route_owning_64b,
+    "decode_then_route_owning_64b",
+    64
+);
+release_after_route_ref_bench!(
+    should_release_after_route_ref_0b,
+    "release_after_route_ref_0b",
+    0
+);
+release_after_route_ref_bench!(
+    should_release_after_route_ref_16b,
+    "release_after_route_ref_16b",
+    16
+);
+release_after_route_ref_bench!(
+    should_release_after_route_ref_64b,
+    "release_after_route_ref_64b",
+    64
+);
+channel_full_bench!(
+    should_route_ref_channel_full_0b,
+    "route_ref_channel_full_0b",
+    0
+);
+channel_full_bench!(
+    should_route_ref_channel_full_16b,
+    "route_ref_channel_full_16b",
+    16
+);
+channel_full_bench!(
+    should_route_ref_channel_full_64b,
+    "route_ref_channel_full_64b",
+    64
+);
+
+stress_main!();

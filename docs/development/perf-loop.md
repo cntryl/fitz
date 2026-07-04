@@ -7,9 +7,9 @@ Use direct test and benchmark commands for local optimization work. Keep the sam
 Run the correctness checks first:
 
 ```bash
+cargo fmt --all -- --check
 cargo test --workspace
-cargo test test_guidelines_compliance
-cntryl-tools validate-tests
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic
 ```
 
 Run the benchmark tier or target that covers the suspected hot path. Prefer a release-suite row from `config/bench_release_ids.txt` when it covers the behavior; use the deep suite for scaling curves, storage-model experiments, wildcard sweeps, high-cardinality registration, or rows already classified as noisy:
@@ -17,11 +17,11 @@ Run the benchmark tier or target that covers the suspected hot path. Prefer a re
 ```bash
 export FITZ_LOG_LEVEL=warn
 export OTEL_ENABLED=false
-cargo bench --bench tier3_system_rpc -- --runs 5 --warmup 1
+cargo bench --quiet --bench tier3_system_rpc -- --workload should_complete_single_response_throughput
 cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"
 ```
 
-For a full tier refresh, use the deep-suite commands in [Benchmark Guidelines](benchmarks.md#stress-configuration-tier-3-and-4). Do not use `cargo bench --no-run` as a benchmark preflight; it compiles every target without producing performance signal.
+For a full tier refresh, use the release or deep command lists in [Benchmark Guidelines](benchmarks.md#ci-and-local-workflows). Do not use compile-only benchmark preflights; they compile every target without producing performance signal.
 
 ## Optimize
 

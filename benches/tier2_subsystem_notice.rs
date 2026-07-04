@@ -1,6 +1,9 @@
 #![allow(deprecated)]
 use bytes::Bytes;
-use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+#[path = "tier2_stress.rs"]
+mod tier2_stress;
+
+use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
     build_notice_subscribe, create_bench_notice_sink, extract_single_tlv_field,
     register_session_counting_sink, route_frame, wait_for_counting_sinks_each_count, CountingSink,
@@ -11,20 +14,13 @@ use fitz::runtime::domain_event::DomainPublishEvent;
 use fitz::runtime::envelope::Envelope;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
+use std::hint::black_box;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-
-#[path = "criterion_config.rs"]
-mod criterion_config;
 
 const PUBLISH_ROUTE: &str = "notice://realm/area/orders/create";
 const PUBLISH_REPEAT_COUNT: u64 = 256;
 const PUBLISH_CHUNK_SIZE: u64 = 64;
-
-struct MatchPatternCase {
-    label: &'static str,
-    pattern: &'static str,
-}
 
 struct NoticePublishCase {
     sink: Arc<NoticeDomainSink>,
@@ -120,68 +116,112 @@ fn create_publish_case(subscriber_count: usize, pattern: &str) -> NoticePublishC
     case
 }
 
-fn bench_notice_publish_fanout(c: &mut Criterion) {
-    let match_patterns = [
-        MatchPatternCase {
-            label: "exact_route",
-            pattern: PUBLISH_ROUTE,
-        },
-        MatchPatternCase {
-            label: "single_star",
-            pattern: "notice://realm/area/orders/*",
-        },
-        MatchPatternCase {
-            label: "double_star",
-            pattern: "notice://realm/area/**",
-        },
-    ];
-
-    let mut group = c.benchmark_group("subsystem_notice_publish");
-    group.sampling_mode(SamplingMode::Flat);
-
-    for match_case in match_patterns {
-        for subscriber_count in [1usize, 16usize, 64usize, 256usize] {
-            let case = create_publish_case(subscriber_count, match_case.pattern);
-            group.throughput(Throughput::Elements(subscriber_count as u64));
-            group.bench_function(
-                format!(
-                    "publish_{}_{}_subscribers_primary",
-                    match_case.label, subscriber_count
-                ),
-                |b| {
-                    b.iter_custom(|iters| {
-                        let mut remaining = iters.saturating_mul(PUBLISH_REPEAT_COUNT);
-                        let mut total = Duration::ZERO;
-                        while remaining > 0 {
-                            let chunk = remaining.min(PUBLISH_CHUNK_SIZE);
-                            case.reset_subscriber_counts();
-                            let start = Instant::now();
-                            for _ in 0..chunk {
-                                case.publish_once();
-                                black_box(());
-                            }
-                            let expected_per_subscriber =
-                                usize::try_from(chunk).expect("notice publish count fits usize");
-                            case.wait_for_deliveries_per_subscriber(expected_per_subscriber);
-                            total += start.elapsed();
-                            case.reset_subscriber_counts();
-                            remaining -= chunk;
-                        }
-                        total
-                            / u32::try_from(PUBLISH_REPEAT_COUNT)
-                                .expect("publish repeat count fits u32")
-                    });
-                },
-            );
+fn publish_fanout(ctx: &mut StressContext, subscriber_count: usize, pattern: &str) {
+    let case = create_publish_case(subscriber_count, pattern);
+    let mut remaining = PUBLISH_REPEAT_COUNT;
+    let mut total = Duration::ZERO;
+    while remaining > 0 {
+        let chunk = remaining.min(PUBLISH_CHUNK_SIZE);
+        case.reset_subscriber_counts();
+        let start = Instant::now();
+        for _ in 0..chunk {
+            case.publish_once();
+            black_box(());
         }
+        let expected_per_subscriber =
+            usize::try_from(chunk).expect("notice publish count fits usize");
+        case.wait_for_deliveries_per_subscriber(expected_per_subscriber);
+        total += start.elapsed();
+        case.reset_subscriber_counts();
+        remaining -= chunk;
     }
-
-    group.finish();
+    tier2_stress::record_duration(
+        ctx,
+        total / u32::try_from(PUBLISH_REPEAT_COUNT).expect("publish repeat count fits u32"),
+        subscriber_count as u64,
+    );
 }
 
-criterion_group! {
-    name = benches;
-    config = criterion_config::criterion_config_for_tier2();
-    targets = bench_notice_publish_fanout
+macro_rules! notice_publish_bench {
+    ($fn_name:ident, $stress_name:literal, $subscribers:expr, $pattern:expr) => {
+        #[stress_test(tier = 2, mode = "fixed_duration", name = $stress_name)]
+        fn $fn_name(ctx: &mut StressContext) {
+            publish_fanout(ctx, $subscribers, $pattern);
+        }
+    };
 }
-criterion_main!(benches);
+
+notice_publish_bench!(
+    should_publish_exact_route_1_subscribers_primary,
+    "publish_exact_route_1_subscribers_primary",
+    1,
+    PUBLISH_ROUTE
+);
+notice_publish_bench!(
+    should_publish_exact_route_16_subscribers_primary,
+    "publish_exact_route_16_subscribers_primary",
+    16,
+    PUBLISH_ROUTE
+);
+notice_publish_bench!(
+    should_publish_exact_route_64_subscribers_primary,
+    "publish_exact_route_64_subscribers_primary",
+    64,
+    PUBLISH_ROUTE
+);
+notice_publish_bench!(
+    should_publish_exact_route_256_subscribers_primary,
+    "publish_exact_route_256_subscribers_primary",
+    256,
+    PUBLISH_ROUTE
+);
+notice_publish_bench!(
+    should_publish_single_star_1_subscribers_primary,
+    "publish_single_star_1_subscribers_primary",
+    1,
+    "notice://realm/area/orders/*"
+);
+notice_publish_bench!(
+    should_publish_single_star_16_subscribers_primary,
+    "publish_single_star_16_subscribers_primary",
+    16,
+    "notice://realm/area/orders/*"
+);
+notice_publish_bench!(
+    should_publish_single_star_64_subscribers_primary,
+    "publish_single_star_64_subscribers_primary",
+    64,
+    "notice://realm/area/orders/*"
+);
+notice_publish_bench!(
+    should_publish_single_star_256_subscribers_primary,
+    "publish_single_star_256_subscribers_primary",
+    256,
+    "notice://realm/area/orders/*"
+);
+notice_publish_bench!(
+    should_publish_double_star_1_subscribers_primary,
+    "publish_double_star_1_subscribers_primary",
+    1,
+    "notice://realm/area/**"
+);
+notice_publish_bench!(
+    should_publish_double_star_16_subscribers_primary,
+    "publish_double_star_16_subscribers_primary",
+    16,
+    "notice://realm/area/**"
+);
+notice_publish_bench!(
+    should_publish_double_star_64_subscribers_primary,
+    "publish_double_star_64_subscribers_primary",
+    64,
+    "notice://realm/area/**"
+);
+notice_publish_bench!(
+    should_publish_double_star_256_subscribers_primary,
+    "publish_double_star_256_subscribers_primary",
+    256,
+    "notice://realm/area/**"
+);
+
+stress_main!();

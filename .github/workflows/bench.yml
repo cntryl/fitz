@@ -40,50 +40,50 @@ jobs:
         run: cargo install --git https://github.com/cntryl/tools --locked
 
       - name: Clear previous benchmark artifacts
-        run: rm -rf target/criterion target/stress target/bench_results.json target/bench_summary.md
+        run: rm -rf target/stress target/bench_results.json target/bench_summary.md
 
       - name: Run release Tier 3 benchmarks
         run: |
-          cargo bench --bench tier3_system_queue -- --workload should_complete_capacity_enqueue_isolated --runs 5 --warmup 1
-          cargo bench --bench tier3_system_queue -- --workload should_complete_capacity_receive_batch_cleanup --runs 5 --warmup 1
-          cargo bench --bench tier3_system_queue -- --workload should_complete_capacity_ack_roundtrip --runs 5 --warmup 1
-          cargo bench --bench tier3_system_queue -- --workload should_complete_routed_ack_roundtrip --runs 5 --warmup 1
-          cargo bench --bench tier3_system_rpc -- --workload should_complete_short_roundtrip_batch --runs 5 --warmup 1
-          cargo bench --bench tier3_system_rpc -- --workload should_complete_single_response_throughput --runs 5 --warmup 1
+          cargo bench --quiet --bench tier3_system_queue -- --workload should_complete_capacity_enqueue_isolated
+          cargo bench --quiet --bench tier3_system_queue -- --workload should_complete_capacity_receive_batch_cleanup
+          cargo bench --quiet --bench tier3_system_queue -- --workload should_complete_capacity_ack_roundtrip
+          cargo bench --quiet --bench tier3_system_queue -- --workload should_complete_routed_ack_roundtrip
+          cargo bench --quiet --bench tier3_system_rpc -- --workload should_complete_short_roundtrip_batch
+          cargo bench --quiet --bench tier3_system_rpc -- --workload should_complete_single_response_throughput
 
       - name: Run release Tier 4 benchmarks
         run: |
-          cargo bench --bench tier4_integration_kv -- --workload should_complete_direct_begin_put_rollback --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_kv -- --workload should_complete_tcp_begin_put_rollback --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_kv -- --workload should_complete_ws_begin_put_rollback --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_kv -- --workload should_complete_multiclient_concurrent_transactions --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_lease -- --workload should_complete_direct_acquire_release --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_lease -- --workload should_complete_tcp_acquire_release --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_lease -- --workload should_complete_ws_acquire_release --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_lease -- --workload should_complete_multiclient_acquire_release --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_notice -- --workload should_complete_direct_publish --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_notice -- --workload should_complete_tcp_publish --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_notice -- --workload should_complete_ws_publish --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_notice -- --workload should_complete_multiclient_fanout_publish --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_queue -- --workload should_complete_direct_enqueue --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_queue -- --workload should_complete_tcp_enqueue --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_queue -- --workload should_complete_ws_enqueue --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_queue -- --workload should_complete_multiclient_concurrent_enqueues --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_rpc -- --workload should_complete_direct_request --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_rpc -- --workload should_complete_tcp_request_response --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_rpc -- --workload should_complete_ws_request_response --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_rpc -- --workload should_complete_multiclient_concurrent_requests --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_schedule -- --workload should_complete_direct_create --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_schedule -- --workload should_complete_tcp_create --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_schedule -- --workload should_complete_ws_create --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_schedule -- --workload should_complete_multiclient_creates --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_stream -- --workload should_complete_direct_append --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_stream -- --workload should_complete_direct_resource_read --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_stream -- --workload should_complete_tcp_append --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_stream -- --workload should_complete_tcp_resource_read --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_stream -- --workload should_complete_ws_append --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_stream -- --workload should_complete_ws_resource_read --runs 5 --warmup 1
-          cargo bench --bench tier4_integration_stream -- --workload should_complete_multiclient_appends --runs 5 --warmup 1
+          cargo bench --quiet --bench tier4_integration_kv -- --workload should_complete_direct_begin_put_rollback
+          cargo bench --quiet --bench tier4_integration_kv -- --workload should_complete_tcp_begin_put_rollback
+          cargo bench --quiet --bench tier4_integration_kv -- --workload should_complete_ws_begin_put_rollback
+          cargo bench --quiet --bench tier4_integration_kv -- --workload should_complete_multiclient_concurrent_transactions
+          cargo bench --quiet --bench tier4_integration_lease -- --workload should_complete_direct_acquire_release
+          cargo bench --quiet --bench tier4_integration_lease -- --workload should_complete_tcp_acquire_release
+          cargo bench --quiet --bench tier4_integration_lease -- --workload should_complete_ws_acquire_release
+          cargo bench --quiet --bench tier4_integration_lease -- --workload should_complete_multiclient_acquire_release
+          cargo bench --quiet --bench tier4_integration_notice -- --workload should_complete_direct_publish
+          cargo bench --quiet --bench tier4_integration_notice -- --workload should_complete_tcp_publish
+          cargo bench --quiet --bench tier4_integration_notice -- --workload should_complete_ws_publish
+          cargo bench --quiet --bench tier4_integration_notice -- --workload should_complete_multiclient_fanout_publish
+          cargo bench --quiet --bench tier4_integration_queue -- --workload should_complete_direct_enqueue
+          cargo bench --quiet --bench tier4_integration_queue -- --workload should_complete_tcp_enqueue
+          cargo bench --quiet --bench tier4_integration_queue -- --workload should_complete_ws_enqueue
+          cargo bench --quiet --bench tier4_integration_queue -- --workload should_complete_multiclient_concurrent_enqueues
+          cargo bench --quiet --bench tier4_integration_rpc -- --workload should_complete_direct_request
+          cargo bench --quiet --bench tier4_integration_rpc -- --workload should_complete_tcp_request_response
+          cargo bench --quiet --bench tier4_integration_rpc -- --workload should_complete_ws_request_response
+          cargo bench --quiet --bench tier4_integration_rpc -- --workload should_complete_multiclient_concurrent_requests
+          cargo bench --quiet --bench tier4_integration_schedule -- --workload should_complete_direct_create
+          cargo bench --quiet --bench tier4_integration_schedule -- --workload should_complete_tcp_create
+          cargo bench --quiet --bench tier4_integration_schedule -- --workload should_complete_ws_create
+          cargo bench --quiet --bench tier4_integration_schedule -- --workload should_complete_multiclient_creates
+          cargo bench --quiet --bench tier4_integration_stream -- --workload should_complete_direct_append
+          cargo bench --quiet --bench tier4_integration_stream -- --workload should_complete_direct_resource_read
+          cargo bench --quiet --bench tier4_integration_stream -- --workload should_complete_tcp_append
+          cargo bench --quiet --bench tier4_integration_stream -- --workload should_complete_tcp_resource_read
+          cargo bench --quiet --bench tier4_integration_stream -- --workload should_complete_ws_append
+          cargo bench --quiet --bench tier4_integration_stream -- --workload should_complete_ws_resource_read
+          cargo bench --quiet --bench tier4_integration_stream -- --workload should_complete_multiclient_appends
 
       - name: Filter baseline to release surface
         run: |
@@ -101,13 +101,12 @@ jobs:
       - name: Summarize benchmark results
         run: cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"
 
-      - name: Upload Criterion artifacts
+      - name: Upload benchmark artifacts
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: release-bench-artifacts-ubuntu-latest
           path: |
-            target/criterion/**
             target/stress/**
             target/bench_results.json
             target/bench_summary.md
@@ -136,25 +135,26 @@ jobs:
         run: cargo install --git https://github.com/cntryl/tools --locked
 
       - name: Clear previous benchmark artifacts
-        run: rm -rf target/criterion target/stress target/bench_results.json target/bench_summary.md
+        run: rm -rf target/stress target/bench_results.json target/bench_summary.md
 
       - name: Run deep Tier 2 signal suites
         run: |
-          cargo bench --bench tier2_subsystem_queue
-          cargo bench --bench tier2_subsystem_lease
-          cargo bench --bench tier2_subsystem_notice
-          cargo bench --bench tier2_subsystem_rpc
-          cargo bench --bench tier2_subsystem_stream
-          cargo bench --bench tier2_subsystem_schedule_fire
-          cargo bench --bench tier2_subsystem_stream_replay
+          cargo bench --quiet --bench tier2_subsystem_queue
+          cargo bench --quiet --bench tier2_subsystem_lease
+          cargo bench --quiet --bench tier2_subsystem_notice
+          cargo bench --quiet --bench tier2_subsystem_rpc
+          cargo bench --quiet --bench tier2_subsystem_stream
+          cargo bench --quiet --bench tier2_subsystem_schedule_fire
+          cargo bench --quiet --bench tier2_subsystem_stream_replay
+          cargo bench --quiet --bench tier2_subsystem_stream_write_shape
 
       - name: Run deep Tier 3 scaling suites
         run: |
-          cargo bench --bench tier3_system_queue -- --runs 5 --warmup 1
-          cargo bench --bench tier3_system_rpc -- --runs 5 --warmup 1
+          cargo bench --quiet --bench tier3_system_queue
+          cargo bench --quiet --bench tier3_system_rpc
 
       - name: Run deep stream storage-model experiments
-        run: cargo bench --bench tier3_system_stream_storage_model -- --runs 5 --warmup 1
+        run: cargo bench --quiet --bench tier3_system_stream_storage_model
 
       - name: Summarize benchmark results
         run: cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Deep Benchmark Report"
@@ -165,7 +165,6 @@ jobs:
         with:
           name: deep-bench-artifacts-ubuntu-latest
           path: |
-            target/criterion/**
             target/stress/**
             target/bench_results.json
             target/bench_summary.md

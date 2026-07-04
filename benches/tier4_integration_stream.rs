@@ -246,48 +246,45 @@ async fn ws_seed_stream_route(
         .expect("commit response");
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_direct_append(ctx: &mut StressContext) {
-    ctx.tag("layer", "direct");
-    ctx.tag("scenario", "append");
-    ctx.tag("measurement_scope", "direct_inproc");
-    ctx.tag("batch_size", "single_append");
+    ctx.parameter("layer", "direct");
+    ctx.parameter("scenario", "append");
+    ctx.parameter("measurement_scope", "direct_inproc");
+    ctx.parameter("batch_size", "single_append");
 
     let context = setup_direct_stream_context();
     let route = "stream://tier4/stream/direct/append";
     let mut session_id = direct_begin_stream(&context, route);
     let mut expected_offset = 0u64;
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            if expected_offset == DIRECT_APPEND_EVENTS_PER_SESSION {
-                direct_rollback_stream(&context, route, session_id);
-                session_id = direct_begin_stream(&context, route);
-                expected_offset = 0;
-            }
+    let iterations = ctx.measure_workload(|| {
+        if expected_offset == DIRECT_APPEND_EVENTS_PER_SESSION {
+            direct_rollback_stream(&context, route, session_id);
+            session_id = direct_begin_stream(&context, route);
+            expected_offset = 0;
+        }
 
-            let response = direct_request(
-                &context,
-                route,
-                STREAM_APPEND_MSG_TYPE,
-                build_stream_append_payload(session_id, expected_offset, b"event"),
-            );
-            assert_stream_direct_success(response.as_ref(), "measured direct append");
-            expected_offset = expected_offset
-                .checked_add(1)
-                .expect("direct append expected offset overflow");
-        },
-    );
-    ctx.set_elements(iterations as u64);
+        let response = direct_request(
+            &context,
+            route,
+            STREAM_APPEND_MSG_TYPE,
+            build_stream_append_payload(session_id, expected_offset, b"event"),
+        );
+        assert_stream_direct_success(response.as_ref(), "measured direct append");
+        expected_offset = expected_offset
+            .checked_add(1)
+            .expect("direct append expected offset overflow");
+    });
+    stress_config::record_completed(ctx, iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_direct_area_wildcard_read(ctx: &mut StressContext) {
-    ctx.tag("layer", "direct");
-    ctx.tag("scenario", "read_area_wildcard");
-    ctx.tag("measurement_scope", "direct_inproc");
-    ctx.tag("batch_size", "100_events_scanned");
+    ctx.parameter("layer", "direct");
+    ctx.parameter("scenario", "read_area_wildcard");
+    ctx.parameter("measurement_scope", "direct_inproc");
+    ctx.parameter("batch_size", "100_events_scanned");
 
     let context = setup_direct_stream_context();
     direct_seed_stream_route(
@@ -306,21 +303,18 @@ fn should_complete_direct_area_wildcard_read(ctx: &mut StressContext) {
     let read_route = "stream://tier4/stream-area/*";
     let (read_msg_type, read_payload) = direct_prepare_validated_read(&context, read_route, 100);
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let _ = direct_request(&context, read_route, read_msg_type, read_payload.clone());
-        },
-    );
-    ctx.set_elements(100 * iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        let _ = direct_request(&context, read_route, read_msg_type, read_payload.clone());
+    });
+    stress_config::record_completed(ctx, 100 * iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_direct_resource_read(ctx: &mut StressContext) {
-    ctx.tag("layer", "direct");
-    ctx.tag("scenario", "read_resource_exact");
-    ctx.tag("measurement_scope", "direct_inproc");
-    ctx.tag("batch_size", "100_events_scanned");
+    ctx.parameter("layer", "direct");
+    ctx.parameter("scenario", "read_resource_exact");
+    ctx.parameter("measurement_scope", "direct_inproc");
+    ctx.parameter("batch_size", "100_events_scanned");
 
     let context = setup_direct_stream_context();
     let read_route = "stream://tier4/resource/orders";
@@ -328,21 +322,18 @@ fn should_complete_direct_resource_read(ctx: &mut StressContext) {
 
     let (read_msg_type, read_payload) = direct_prepare_validated_read(&context, read_route, 100);
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let _ = direct_request(&context, read_route, read_msg_type, read_payload.clone());
-        },
-    );
-    ctx.set_elements(100 * iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        let _ = direct_request(&context, read_route, read_msg_type, read_payload.clone());
+    });
+    stress_config::record_completed(ctx, 100 * iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_direct_realm_wildcard_read(ctx: &mut StressContext) {
-    ctx.tag("layer", "direct");
-    ctx.tag("scenario", "read_realm_wildcard");
-    ctx.tag("measurement_scope", "direct_inproc");
-    ctx.tag("batch_size", "100_events_scanned");
+    ctx.parameter("layer", "direct");
+    ctx.parameter("scenario", "read_realm_wildcard");
+    ctx.parameter("measurement_scope", "direct_inproc");
+    ctx.parameter("batch_size", "100_events_scanned");
 
     let context = setup_direct_stream_context();
     direct_seed_stream_route(&context, "stream://tier4/events/orders", 50, b"realm event");
@@ -351,21 +342,18 @@ fn should_complete_direct_realm_wildcard_read(ctx: &mut StressContext) {
     let read_route = "stream://tier4/*/*";
     let (read_msg_type, read_payload) = direct_prepare_validated_read(&context, read_route, 100);
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let _ = direct_request(&context, read_route, read_msg_type, read_payload.clone());
-        },
-    );
-    ctx.set_elements(100 * iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        let _ = direct_request(&context, read_route, read_msg_type, read_payload.clone());
+    });
+    stress_config::record_completed(ctx, 100 * iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_tcp_append(ctx: &mut StressContext) {
-    ctx.tag("layer", "tcp");
-    ctx.tag("scenario", "append");
-    ctx.tag("measurement_scope", "tcp_e2e");
-    ctx.tag("batch_size", "single_append");
+    ctx.parameter("layer", "tcp");
+    ctx.parameter("scenario", "append");
+    ctx.parameter("measurement_scope", "tcp_e2e");
+    ctx.parameter("batch_size", "single_append");
 
     let route = "stream://tier4/stream/tcp/append";
     let begin_frame = build_stream_begin(route);
@@ -383,25 +371,22 @@ fn should_complete_tcp_append(ctx: &mut StressContext) {
     let session_id = parse_stream_session_id(&begin_data).expect("session_id");
     let append_frame = build_stream_append(session_id, 0, b"event");
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let _ = runtime
-                .block_on(client.request(&append_frame, 2000))
-                .expect("append response");
-        },
-    );
-    ctx.set_elements(iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        let _ = runtime
+            .block_on(client.request(&append_frame, 2000))
+            .expect("append response");
+    });
+    stress_config::record_completed(ctx, iterations);
     close_tcp_client(runtime, client);
     shutdown_stream_test_server(runtime, server);
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_tcp_resource_read(ctx: &mut StressContext) {
-    ctx.tag("layer", "tcp");
-    ctx.tag("scenario", "read_resource_exact");
-    ctx.tag("measurement_scope", "tcp_e2e");
-    ctx.tag("batch_size", "100_events_scanned");
+    ctx.parameter("layer", "tcp");
+    ctx.parameter("scenario", "read_resource_exact");
+    ctx.parameter("measurement_scope", "tcp_e2e");
+    ctx.parameter("batch_size", "100_events_scanned");
 
     let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
@@ -421,25 +406,22 @@ fn should_complete_tcp_resource_read(ctx: &mut StressContext) {
     let count = parse_stream_read_record_count(&validated_response).expect("resource read count");
     assert_eq!(count, 100, "unexpected tcp resource read count");
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let _ = runtime
-                .block_on(client.request(&read_frame, 2000))
-                .expect("resource read response");
-        },
-    );
-    ctx.set_elements(100 * iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        let _ = runtime
+            .block_on(client.request(&read_frame, 2000))
+            .expect("resource read response");
+    });
+    stress_config::record_completed(ctx, 100 * iterations);
     close_tcp_client(runtime, client);
     shutdown_stream_test_server(runtime, server);
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_tcp_area_wildcard_read(ctx: &mut StressContext) {
-    ctx.tag("layer", "tcp");
-    ctx.tag("scenario", "read_area_wildcard");
-    ctx.tag("measurement_scope", "tcp_e2e");
-    ctx.tag("batch_size", "100_events_scanned");
+    ctx.parameter("layer", "tcp");
+    ctx.parameter("scenario", "read_area_wildcard");
+    ctx.parameter("measurement_scope", "tcp_e2e");
+    ctx.parameter("batch_size", "100_events_scanned");
 
     let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
@@ -471,25 +453,22 @@ fn should_complete_tcp_area_wildcard_read(ctx: &mut StressContext) {
     let count = parse_stream_read_record_count(&validated_response).expect("area read count");
     assert_eq!(count, 100, "unexpected tcp area read count");
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let _ = runtime
-                .block_on(client.request(&read_frame, 2000))
-                .expect("area read response");
-        },
-    );
-    ctx.set_elements(100 * iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        let _ = runtime
+            .block_on(client.request(&read_frame, 2000))
+            .expect("area read response");
+    });
+    stress_config::record_completed(ctx, 100 * iterations);
     close_tcp_client(runtime, client);
     shutdown_stream_test_server(runtime, server);
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_tcp_realm_wildcard_read(ctx: &mut StressContext) {
-    ctx.tag("layer", "tcp");
-    ctx.tag("scenario", "read_realm_wildcard");
-    ctx.tag("measurement_scope", "tcp_e2e");
-    ctx.tag("batch_size", "100_events_scanned");
+    ctx.parameter("layer", "tcp");
+    ctx.parameter("scenario", "read_realm_wildcard");
+    ctx.parameter("measurement_scope", "tcp_e2e");
+    ctx.parameter("batch_size", "100_events_scanned");
 
     let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
@@ -521,25 +500,22 @@ fn should_complete_tcp_realm_wildcard_read(ctx: &mut StressContext) {
     let count = parse_stream_read_record_count(&validated_response).expect("realm read count");
     assert_eq!(count, 100, "unexpected tcp realm read count");
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let _ = runtime
-                .block_on(client.request(&read_frame, 2000))
-                .expect("realm read response");
-        },
-    );
-    ctx.set_elements(100 * iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        let _ = runtime
+            .block_on(client.request(&read_frame, 2000))
+            .expect("realm read response");
+    });
+    stress_config::record_completed(ctx, 100 * iterations);
     close_tcp_client(runtime, client);
     shutdown_stream_test_server(runtime, server);
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_ws_append(ctx: &mut StressContext) {
-    ctx.tag("layer", "websocket");
-    ctx.tag("scenario", "append");
-    ctx.tag("measurement_scope", "ws_e2e");
-    ctx.tag("batch_size", "single_append");
+    ctx.parameter("layer", "websocket");
+    ctx.parameter("scenario", "append");
+    ctx.parameter("measurement_scope", "ws_e2e");
+    ctx.parameter("batch_size", "single_append");
 
     let route = "stream://tier4/stream/ws/append";
     let begin_frame = build_stream_begin(route);
@@ -560,25 +536,22 @@ fn should_complete_ws_append(ctx: &mut StressContext) {
     let session_id = parse_stream_session_id(&begin_data).expect("session_id");
     let append_frame = build_stream_append(session_id, 0, b"event");
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let _ = runtime
-                .block_on(client.request(&append_frame, 2000))
-                .expect("append response");
-        },
-    );
-    ctx.set_elements(iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        let _ = runtime
+            .block_on(client.request(&append_frame, 2000))
+            .expect("append response");
+    });
+    stress_config::record_completed(ctx, iterations);
     close_ws_client(runtime, &mut client);
     shutdown_stream_test_server(runtime, server);
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_ws_resource_read(ctx: &mut StressContext) {
-    ctx.tag("layer", "websocket");
-    ctx.tag("scenario", "read_resource_exact");
-    ctx.tag("measurement_scope", "ws_e2e");
-    ctx.tag("batch_size", "100_events_scanned");
+    ctx.parameter("layer", "websocket");
+    ctx.parameter("scenario", "read_resource_exact");
+    ctx.parameter("measurement_scope", "ws_e2e");
+    ctx.parameter("batch_size", "100_events_scanned");
 
     let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
@@ -601,25 +574,22 @@ fn should_complete_ws_resource_read(ctx: &mut StressContext) {
     let count = parse_stream_read_record_count(&validated_response).expect("resource read count");
     assert_eq!(count, 100, "unexpected ws resource read count");
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let _ = runtime
-                .block_on(client.request(&read_frame, 2000))
-                .expect("resource read response");
-        },
-    );
-    ctx.set_elements(100 * iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        let _ = runtime
+            .block_on(client.request(&read_frame, 2000))
+            .expect("resource read response");
+    });
+    stress_config::record_completed(ctx, 100 * iterations);
     close_ws_client(runtime, &mut client);
     shutdown_stream_test_server(runtime, server);
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_ws_area_wildcard_read(ctx: &mut StressContext) {
-    ctx.tag("layer", "websocket");
-    ctx.tag("scenario", "read_area_wildcard");
-    ctx.tag("measurement_scope", "ws_e2e");
-    ctx.tag("batch_size", "100_events_scanned");
+    ctx.parameter("layer", "websocket");
+    ctx.parameter("scenario", "read_area_wildcard");
+    ctx.parameter("measurement_scope", "ws_e2e");
+    ctx.parameter("batch_size", "100_events_scanned");
 
     let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
@@ -654,25 +624,22 @@ fn should_complete_ws_area_wildcard_read(ctx: &mut StressContext) {
     let count = parse_stream_read_record_count(&validated_response).expect("area read count");
     assert_eq!(count, 100, "unexpected ws area read count");
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let _ = runtime
-                .block_on(client.request(&read_frame, 2000))
-                .expect("area read response");
-        },
-    );
-    ctx.set_elements(100 * iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        let _ = runtime
+            .block_on(client.request(&read_frame, 2000))
+            .expect("area read response");
+    });
+    stress_config::record_completed(ctx, 100 * iterations);
     close_ws_client(runtime, &mut client);
     shutdown_stream_test_server(runtime, server);
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_ws_realm_wildcard_read(ctx: &mut StressContext) {
-    ctx.tag("layer", "websocket");
-    ctx.tag("scenario", "read_realm_wildcard");
-    ctx.tag("measurement_scope", "ws_e2e");
-    ctx.tag("batch_size", "100_events_scanned");
+    ctx.parameter("layer", "websocket");
+    ctx.parameter("scenario", "read_realm_wildcard");
+    ctx.parameter("measurement_scope", "ws_e2e");
+    ctx.parameter("batch_size", "100_events_scanned");
 
     let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
@@ -707,26 +674,23 @@ fn should_complete_ws_realm_wildcard_read(ctx: &mut StressContext) {
     let count = parse_stream_read_record_count(&validated_response).expect("realm read count");
     assert_eq!(count, 100, "unexpected ws realm read count");
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let _ = runtime
-                .block_on(client.request(&read_frame, 2000))
-                .expect("realm read response");
-        },
-    );
-    ctx.set_elements(100 * iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        let _ = runtime
+            .block_on(client.request(&read_frame, 2000))
+            .expect("realm read response");
+    });
+    stress_config::record_completed(ctx, 100 * iterations);
     close_ws_client(runtime, &mut client);
     shutdown_stream_test_server(runtime, server);
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_multiclient_appends(ctx: &mut StressContext) {
-    ctx.tag("layer", "multiclient");
-    ctx.tag("scenario", "concurrent_appends");
-    ctx.tag("measurement_scope", "ws_multiclient_e2e");
-    ctx.tag("batch_size", "10_clients_1_append_each");
-    ctx.tag("client_count", "10");
+    ctx.parameter("layer", "multiclient");
+    ctx.parameter("scenario", "concurrent_appends");
+    ctx.parameter("measurement_scope", "ws_multiclient_e2e");
+    ctx.parameter("batch_size", "10_clients_1_append_each");
+    ctx.parameter("client_count", "10");
 
     let begin_frames: Vec<Vec<u8>> = (0..10)
         .map(|index| build_stream_begin(&format!("stream://tier4/stream/multi-{index}/append")))
@@ -760,25 +724,22 @@ fn should_complete_multiclient_appends(ctx: &mut StressContext) {
         }),
     ));
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let _results: Vec<_> = runtime.block_on(futures::future::join_all(
-                clients
-                    .iter()
-                    .zip(append_frames.iter())
-                    .map(|(arc, frame)| {
-                        let arc = arc.clone();
-                        let frame = frame.clone();
-                        async move {
-                            let mut c = arc.lock().await;
-                            c.request(&frame, 2000).await.expect("append");
-                        }
-                    }),
-            ));
-        },
-    );
-    ctx.set_elements(10 * iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        let _results: Vec<_> = runtime.block_on(futures::future::join_all(
+            clients
+                .iter()
+                .zip(append_frames.iter())
+                .map(|(arc, frame)| {
+                    let arc = arc.clone();
+                    let frame = frame.clone();
+                    async move {
+                        let mut c = arc.lock().await;
+                        c.request(&frame, 2000).await.expect("append");
+                    }
+                }),
+        ));
+    });
+    stress_config::record_completed(ctx, 10 * iterations);
     close_ws_clients(runtime, &clients);
     drop(clients);
     shutdown_stream_test_server(runtime, server);

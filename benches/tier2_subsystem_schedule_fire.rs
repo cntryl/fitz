@@ -1,6 +1,9 @@
 #![allow(deprecated)]
 use bytes::Bytes;
-use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+#[path = "tier2_stress.rs"]
+mod tier2_stress;
+
+use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
     create_bench_schedule_sink, create_bench_store_with_cfs, register_session_counting_sink,
     route_frame, wait_for_counting_sinks_each_count, CountingSink,
@@ -12,11 +15,9 @@ use fitz::protocol::frame::ChannelId;
 use fitz::protocol::payload_codec::PayloadEncoder;
 use fitz::runtime::routing::{Route, RouteFamily};
 use fitz::runtime::{DomainPublishEvent, Router};
+use std::hint::black_box;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-
-#[path = "criterion_config.rs"]
-mod criterion_config;
 
 const FIXED_BENCH_EPOCH_MS: u64 = 1_775_200_000_000;
 const TIMED_BATCH_SIZE: u64 = 32;
@@ -193,138 +194,185 @@ fn create_publish_case(
     )
 }
 
-fn bench_claim_due_persistence(c: &mut Criterion) {
+fn claim_due(ctx: &mut StressContext, count: usize, ready_count: usize) {
     let bench_clock: Arc<dyn Clock> = Arc::new(FixedClock::new(FIXED_BENCH_EPOCH_MS));
-    let mut group = c.benchmark_group("subsystem_schedule_fire_claim");
-    group.sampling_mode(SamplingMode::Flat);
-
-    for count in [100usize, 1000usize] {
-        let fixtures = precompute_data(count);
-        let partial_ready = (count / 10).max(1);
-
-        for (label, ready_count) in [("partial_ready", partial_ready), ("all_ready", count)] {
-            group.throughput(Throughput::Elements(ready_count as u64));
-            group.bench_function(format!("claim_due_{label}_{count}_mixed_crons"), |b| {
-                let bench_clock = bench_clock.clone();
-                let fixtures = &fixtures;
-                b.iter_custom(|iters| {
-                    time_with_fresh_inputs(
-                        iters,
-                        || {
-                            let mut actor = create_populated_actor(fixtures, bench_clock.clone());
-                            actor.bench_prepare_scan(ready_count);
-                            actor
-                        },
-                        |actor| {
-                            black_box(actor.bench_claim_due_fires());
-                        },
-                    )
-                });
-            });
-        }
-    }
-
-    group.finish();
+    let fixtures = precompute_data(count);
+    let duration = time_with_fresh_inputs(
+        1,
+        || {
+            let mut actor = create_populated_actor(&fixtures, bench_clock.clone());
+            actor.bench_prepare_scan(ready_count);
+            actor
+        },
+        |actor| {
+            black_box(actor.bench_claim_due_fires());
+        },
+    );
+    tier2_stress::record_duration(ctx, duration, ready_count as u64);
 }
 
-fn bench_ack_persistence(c: &mut Criterion) {
+fn ack_claims(ctx: &mut StressContext, count: usize, ready_count: usize) {
     let bench_clock: Arc<dyn Clock> = Arc::new(FixedClock::new(FIXED_BENCH_EPOCH_MS));
-    let mut group = c.benchmark_group("subsystem_schedule_fire_ack");
-    group.sampling_mode(SamplingMode::Flat);
-
-    for count in [100usize, 1000usize] {
-        let fixtures = precompute_data(count);
-        let partial_ready = (count / 10).max(1);
-
-        for (label, ready_count) in [("partial_ready", partial_ready), ("all_ready", count)] {
-            group.throughput(Throughput::Elements(ready_count as u64));
-            group.bench_function(format!("ack_claims_{label}_{count}_mixed_crons"), |b| {
-                let bench_clock = bench_clock.clone();
-                let fixtures = &fixtures;
-                b.iter_custom(|iters| {
-                    time_with_fresh_inputs(
-                        iters,
-                        || {
-                            let mut actor = create_populated_actor(fixtures, bench_clock.clone());
-                            let deliveries = claim_due_deliveries(&mut actor, ready_count);
-                            (actor, deliveries)
-                        },
-                        |(actor, deliveries)| {
-                            black_box(
-                                actor
-                                    .bench_ack_pending_fire_claims(deliveries)
-                                    .expect("ack pending fire claims"),
-                            );
-                        },
-                    )
-                });
-            });
-        }
-    }
-
-    group.finish();
+    let fixtures = precompute_data(count);
+    let duration = time_with_fresh_inputs(
+        1,
+        || {
+            let mut actor = create_populated_actor(&fixtures, bench_clock.clone());
+            let deliveries = claim_due_deliveries(&mut actor, ready_count);
+            (actor, deliveries)
+        },
+        |(actor, deliveries)| {
+            black_box(
+                actor
+                    .bench_ack_pending_fire_claims(deliveries)
+                    .expect("ack pending fire claims"),
+            );
+        },
+    );
+    tier2_stress::record_duration(ctx, duration, ready_count as u64);
 }
 
-fn bench_publish_fanout(c: &mut Criterion) {
-    let mut group = c.benchmark_group("subsystem_schedule_fire_publish");
-    group.sampling_mode(SamplingMode::Flat);
-
-    for subscriber_count in [1usize, 10usize, 100usize] {
-        group.throughput(Throughput::Elements(subscriber_count as u64));
-        group.bench_function(
-            format!("publish_exact_route_{subscriber_count}_subscribers"),
-            |b| {
-                let (sink, event, subscriber_sinks) = create_publish_case(subscriber_count);
-                b.iter_custom(|iters| {
-                    let mut remaining = iters.saturating_mul(PUBLISH_REPEAT_COUNT);
-                    let mut total = Duration::ZERO;
-                    while remaining > 0 {
-                        let chunk = remaining.min(PUBLISH_CHUNK_SIZE);
-                        for subscriber_sink in &subscriber_sinks {
-                            subscriber_sink.reset();
-                        }
-                        let start = Instant::now();
-                        for _ in 0..chunk {
-                            sink.bench_publish_event(black_box(&event));
-                        }
-                        total += start.elapsed();
-                        let expected_per_subscriber =
-                            usize::try_from(chunk).expect("schedule publish count fits usize");
-                        let delivery_count = wait_for_counting_sinks_each_count(
-                            &subscriber_sinks,
-                            expected_per_subscriber,
-                            Duration::from_secs(1),
-                        );
-                        assert_eq!(
-                            delivery_count,
-                            subscriber_count * expected_per_subscriber,
-                            "schedule publish should reach every subscriber exactly once"
-                        );
-                        assert!(
-                            subscriber_sinks
-                                .iter()
-                                .all(|sink| sink.count() == expected_per_subscriber),
-                            "schedule publish should not skip or duplicate subscriber deliveries"
-                        );
-                        for subscriber_sink in &subscriber_sinks {
-                            subscriber_sink.reset();
-                        }
-                        remaining -= chunk;
-                    }
-                    total
-                        / u32::try_from(PUBLISH_REPEAT_COUNT)
-                            .expect("publish repeat count fits u32")
-                });
-            },
+fn publish_exact_route(ctx: &mut StressContext, subscriber_count: usize) {
+    let (sink, event, subscriber_sinks) = create_publish_case(subscriber_count);
+    let mut remaining = PUBLISH_REPEAT_COUNT;
+    let mut total = Duration::ZERO;
+    while remaining > 0 {
+        let chunk = remaining.min(PUBLISH_CHUNK_SIZE);
+        for subscriber_sink in &subscriber_sinks {
+            subscriber_sink.reset();
+        }
+        let start = Instant::now();
+        for _ in 0..chunk {
+            sink.bench_publish_event(black_box(&event));
+        }
+        total += start.elapsed();
+        let expected_per_subscriber =
+            usize::try_from(chunk).expect("schedule publish count fits usize");
+        let delivery_count = wait_for_counting_sinks_each_count(
+            &subscriber_sinks,
+            expected_per_subscriber,
+            Duration::from_secs(1),
         );
+        assert_eq!(
+            delivery_count,
+            subscriber_count * expected_per_subscriber,
+            "schedule publish should reach every subscriber exactly once"
+        );
+        assert!(
+            subscriber_sinks
+                .iter()
+                .all(|sink| sink.count() == expected_per_subscriber),
+            "schedule publish should not skip or duplicate subscriber deliveries"
+        );
+        for subscriber_sink in &subscriber_sinks {
+            subscriber_sink.reset();
+        }
+        remaining -= chunk;
     }
-
-    group.finish();
+    tier2_stress::record_duration(
+        ctx,
+        total / u32::try_from(PUBLISH_REPEAT_COUNT).expect("publish repeat count fits u32"),
+        subscriber_count as u64,
+    );
 }
 
-criterion_group! {
-    name = benches;
-    config = criterion_config::criterion_config_for_tier2();
-    targets = bench_claim_due_persistence, bench_ack_persistence, bench_publish_fanout
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "claim_due_partial_ready_100_mixed_crons"
+)]
+fn should_claim_due_partial_ready_100_mixed_crons(ctx: &mut StressContext) {
+    claim_due(ctx, 100, 10);
 }
-criterion_main!(benches);
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "claim_due_all_ready_100_mixed_crons"
+)]
+fn should_claim_due_all_ready_100_mixed_crons(ctx: &mut StressContext) {
+    claim_due(ctx, 100, 100);
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "claim_due_partial_ready_1000_mixed_crons"
+)]
+fn should_claim_due_partial_ready_1000_mixed_crons(ctx: &mut StressContext) {
+    claim_due(ctx, 1000, 100);
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "claim_due_all_ready_1000_mixed_crons"
+)]
+fn should_claim_due_all_ready_1000_mixed_crons(ctx: &mut StressContext) {
+    claim_due(ctx, 1000, 1000);
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "ack_claims_partial_ready_100_mixed_crons"
+)]
+fn should_ack_claims_partial_ready_100_mixed_crons(ctx: &mut StressContext) {
+    ack_claims(ctx, 100, 10);
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "ack_claims_all_ready_100_mixed_crons"
+)]
+fn should_ack_claims_all_ready_100_mixed_crons(ctx: &mut StressContext) {
+    ack_claims(ctx, 100, 100);
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "ack_claims_partial_ready_1000_mixed_crons"
+)]
+fn should_ack_claims_partial_ready_1000_mixed_crons(ctx: &mut StressContext) {
+    ack_claims(ctx, 1000, 100);
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "ack_claims_all_ready_1000_mixed_crons"
+)]
+fn should_ack_claims_all_ready_1000_mixed_crons(ctx: &mut StressContext) {
+    ack_claims(ctx, 1000, 1000);
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "publish_exact_route_1_subscribers"
+)]
+fn should_publish_exact_route_1_subscribers(ctx: &mut StressContext) {
+    publish_exact_route(ctx, 1);
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "publish_exact_route_10_subscribers"
+)]
+fn should_publish_exact_route_10_subscribers(ctx: &mut StressContext) {
+    publish_exact_route(ctx, 10);
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "publish_exact_route_100_subscribers"
+)]
+fn should_publish_exact_route_100_subscribers(ctx: &mut StressContext) {
+    publish_exact_route(ctx, 100);
+}
+
+stress_main!();

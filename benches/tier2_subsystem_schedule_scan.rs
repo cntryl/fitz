@@ -1,19 +1,20 @@
 #![allow(deprecated)]
-//! Criterion benchmark for schedule due-occurrence collection on the production scan path.
+//! Stress benchmark for schedule due-occurrence collection on the production scan path.
 //! This intentionally measures only `collect_due_occurrences_for_publish` and avoids
 //! benchmark-only shortcut paths.
 
 use bytes::Bytes;
-use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+#[path = "tier2_stress.rs"]
+mod tier2_stress;
+
+use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::create_bench_store_with_cfs;
 use fitz::domains::schedule::protocol::{validate_concrete_schedule_route, Clock};
 use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
 use fitz::runtime::routing::RouteFamily;
+use std::hint::black_box;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-
-#[path = "criterion_config.rs"]
-mod criterion_config;
 
 const FIXED_BENCH_EPOCH_MS: u64 = 1_775_200_000_000;
 const TIMED_BATCH_SIZE: u64 = 32;
@@ -126,43 +127,57 @@ where
     total / u32::try_from(TIMED_BATCH_REPEAT).expect("timed batch repeat fits u32")
 }
 
-fn bench_scan_shapes(c: &mut Criterion) {
+fn scan_shape(ctx: &mut StressContext, count: usize, ready_count: usize) {
     let bench_clock: Arc<dyn Clock> = Arc::new(FixedClock::new(FIXED_BENCH_EPOCH_MS));
-    let mut group = c.benchmark_group("subsystem_schedule_scan");
-    group.sampling_mode(SamplingMode::Flat);
-
-    for count in [100usize, 1000usize] {
-        let fixtures = precompute_data(count);
-        group.throughput(Throughput::Elements(count as u64));
-        let partial_ready = (count / 10).max(1);
-
-        for (label, ready_count) in [("partial_ready", partial_ready), ("all_ready", count)] {
-            group.bench_function(format!("scan_{label}_{count}_mixed_crons"), |b| {
-                let bench_clock = bench_clock.clone();
-                let fixtures = &fixtures;
-                b.iter_custom(|iters| {
-                    time_with_fresh_actors(
-                        iters,
-                        || {
-                            let mut actor = create_populated_actor(fixtures, bench_clock.clone());
-                            actor.bench_prepare_scan(ready_count);
-                            actor
-                        },
-                        |actor| {
-                            black_box(actor.collect_due_occurrences_for_publish());
-                        },
-                    )
-                });
-            });
-        }
-    }
-
-    group.finish();
+    let fixtures = precompute_data(count);
+    let duration = time_with_fresh_actors(
+        1,
+        || {
+            let mut actor = create_populated_actor(&fixtures, bench_clock.clone());
+            actor.bench_prepare_scan(ready_count);
+            actor
+        },
+        |actor| {
+            black_box(actor.collect_due_occurrences_for_publish());
+        },
+    );
+    tier2_stress::record_duration(ctx, duration, count as u64);
 }
 
-criterion_group! {
-    name = benches;
-    config = criterion_config::criterion_config_for_tier2();
-    targets = bench_scan_shapes
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "scan_partial_ready_100_mixed_crons"
+)]
+fn should_scan_partial_ready_100_mixed_crons(ctx: &mut StressContext) {
+    scan_shape(ctx, 100, 10);
 }
-criterion_main!(benches);
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "scan_all_ready_100_mixed_crons"
+)]
+fn should_scan_all_ready_100_mixed_crons(ctx: &mut StressContext) {
+    scan_shape(ctx, 100, 100);
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "scan_partial_ready_1000_mixed_crons"
+)]
+fn should_scan_partial_ready_1000_mixed_crons(ctx: &mut StressContext) {
+    scan_shape(ctx, 1000, 100);
+}
+
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "scan_all_ready_1000_mixed_crons"
+)]
+fn should_scan_all_ready_1000_mixed_crons(ctx: &mut StressContext) {
+    scan_shape(ctx, 1000, 1000);
+}
+
+stress_main!();

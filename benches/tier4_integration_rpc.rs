@@ -435,12 +435,12 @@ fn measure_multiclient_concurrent_requests(
     worker_count: usize,
     scenario: &'static str,
 ) {
-    ctx.tag("layer", "multiclient");
-    ctx.tag("scenario", scenario);
-    ctx.tag("measurement_scope", "ws_multiclient_e2e");
-    ctx.tag("batch_size", "10_clients_1_roundtrip_each");
-    ctx.tag("client_count", MULTICLIENT_COUNT.to_string());
-    ctx.tag("worker_count", worker_count.to_string());
+    ctx.parameter("layer", "multiclient");
+    ctx.parameter("scenario", scenario);
+    ctx.parameter("measurement_scope", "ws_multiclient_e2e");
+    ctx.parameter("batch_size", "10_clients_1_roundtrip_each");
+    ctx.parameter("client_count", MULTICLIENT_COUNT.to_string());
+    ctx.parameter("worker_count", worker_count.to_string());
 
     let family = RouteFamily::new(1);
     let subscribe_frame =
@@ -492,16 +492,13 @@ fn measure_multiclient_concurrent_requests(
     let (requester_drivers, completion_rx) =
         spawn_rpc_ws_requesters(clients, request_frames, family);
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let request_index = next_request_index;
-            next_request_index = (next_request_index + 1) % MULTICLIENT_REQUEST_FRAME_RING_SIZE;
+    let iterations = ctx.measure_workload(|| {
+        let request_index = next_request_index;
+        next_request_index = (next_request_index + 1) % MULTICLIENT_REQUEST_FRAME_RING_SIZE;
 
-            request_all_multiclient_ws(&requester_drivers, &completion_rx, request_index);
-        },
-    );
-    ctx.set_elements(MULTICLIENT_COUNT as u64 * iterations as u64);
+        request_all_multiclient_ws(&requester_drivers, &completion_rx, request_index);
+    });
+    stress_config::record_completed(ctx, MULTICLIENT_COUNT as u64 * iterations);
 
     for driver in requester_drivers {
         drop(driver.command_tx);
@@ -607,93 +604,87 @@ fn service_worker(
     }
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_direct_request(ctx: &mut StressContext) {
-    ctx.tag("layer", "direct");
-    ctx.tag("scenario", "request_response");
-    ctx.tag("measurement_scope", "direct_inproc");
-    ctx.tag("batch_size", "single_roundtrip");
-    ctx.tag("worker_count", "1");
+    ctx.parameter("layer", "direct");
+    ctx.parameter("scenario", "request_response");
+    ctx.parameter("measurement_scope", "direct_inproc");
+    ctx.parameter("batch_size", "single_roundtrip");
+    ctx.parameter("worker_count", "1");
 
     let request = build_network_request_frame(SERVICE_ROUTE, b"ping", RouteFamily::new(1));
     let (router, family, requester_source, requester_inbox, worker_source, worker_inbox) =
         setup_rpc_sink();
     let (request_msg_type, request_payload) = extract_single_tlv_field(&request.frame);
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            route_frame(
-                router.as_ref(),
-                &requester_source,
-                SERVICE_ROUTE,
-                REQUESTER_SESSION_ID,
-                ChannelId::Rpc,
-                request_msg_type,
-                request_payload.clone(),
-                family,
-            )
-            .expect("rpc request");
-            service_worker(&router, family, &worker_source, &worker_inbox);
-            assert_requester_inbox_contains_worker_response(
-                requester_inbox.drain(),
-                family,
-                request.correlation_id,
-                request.body.as_ref(),
-            );
-        },
-    );
-    ctx.set_elements(iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        route_frame(
+            router.as_ref(),
+            &requester_source,
+            SERVICE_ROUTE,
+            REQUESTER_SESSION_ID,
+            ChannelId::Rpc,
+            request_msg_type,
+            request_payload.clone(),
+            family,
+        )
+        .expect("rpc request");
+        service_worker(&router, family, &worker_source, &worker_inbox);
+        assert_requester_inbox_contains_worker_response(
+            requester_inbox.drain(),
+            family,
+            request.correlation_id,
+            request.body.as_ref(),
+        );
+    });
+    stress_config::record_completed(ctx, iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_encoded_request(ctx: &mut StressContext) {
-    ctx.tag("layer", "encoded");
-    ctx.tag("scenario", "request_response");
-    ctx.tag("measurement_scope", "encoded_inproc");
-    ctx.tag("batch_size", "single_roundtrip");
-    ctx.tag("worker_count", "1");
+    ctx.parameter("layer", "encoded");
+    ctx.parameter("scenario", "request_response");
+    ctx.parameter("measurement_scope", "encoded_inproc");
+    ctx.parameter("batch_size", "single_roundtrip");
+    ctx.parameter("worker_count", "1");
 
     let request = build_network_request_frame(SERVICE_ROUTE, b"ping", RouteFamily::new(1));
     let (router, family, requester_source, requester_inbox, worker_source, worker_inbox) =
         setup_rpc_sink();
     let request_frame = &request.frame;
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let mut parser = TlvFrameParser::new(request_frame);
-            let (msg_type, payload) = parser.next_field_ref().expect("one field");
-            route_frame(
-                router.as_ref(),
-                &requester_source,
-                SERVICE_ROUTE,
-                REQUESTER_SESSION_ID,
-                ChannelId::Rpc,
-                msg_type,
-                Bytes::copy_from_slice(payload),
-                family,
-            )
-            .expect("rpc request");
-            service_worker(&router, family, &worker_source, &worker_inbox);
-            assert_requester_inbox_contains_worker_response(
-                requester_inbox.drain(),
-                family,
-                request.correlation_id,
-                request.body.as_ref(),
-            );
-        },
-    );
-    ctx.set_elements(iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        let mut parser = TlvFrameParser::new(request_frame);
+        let (msg_type, payload) = parser.next_field_ref().expect("one field");
+        route_frame(
+            router.as_ref(),
+            &requester_source,
+            SERVICE_ROUTE,
+            REQUESTER_SESSION_ID,
+            ChannelId::Rpc,
+            msg_type,
+            Bytes::copy_from_slice(payload),
+            family,
+        )
+        .expect("rpc request");
+        service_worker(&router, family, &worker_source, &worker_inbox);
+        assert_requester_inbox_contains_worker_response(
+            requester_inbox.drain(),
+            family,
+            request.correlation_id,
+            request.body.as_ref(),
+        );
+    });
+    stress_config::record_completed(ctx, iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_tcp_request_response(ctx: &mut StressContext) {
-    ctx.tag("layer", "tcp");
-    ctx.tag("scenario", "request_response");
-    ctx.tag("measurement_scope", "tcp_e2e");
-    ctx.tag("batch_size", "single_roundtrip");
-    ctx.tag("worker_count", "1");
+    ctx.parameter("layer", "tcp");
+    ctx.parameter("scenario", "request_response");
+    ctx.parameter("measurement_scope", "tcp_e2e");
+    ctx.parameter("batch_size", "single_roundtrip");
+    ctx.parameter("worker_count", "1");
 
     let family = RouteFamily::new(1);
     let subscribe_frame =
@@ -730,25 +721,22 @@ fn should_complete_tcp_request_response(ctx: &mut StressContext) {
         })
     };
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            runtime
-                .block_on(async {
-                    tokio::time::timeout(
-                        Duration::from_millis(RESPONSE_TIMEOUT_MS),
-                        request_until_worker_response_tcp(
-                            &mut requester_client,
-                            &request_frame,
-                            family,
-                        ),
-                    )
-                    .await
-                })
-                .expect("rpc tcp response timeout");
-        },
-    );
-    ctx.set_elements(iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        runtime
+            .block_on(async {
+                tokio::time::timeout(
+                    Duration::from_millis(RESPONSE_TIMEOUT_MS),
+                    request_until_worker_response_tcp(
+                        &mut requester_client,
+                        &request_frame,
+                        family,
+                    ),
+                )
+                .await
+            })
+            .expect("rpc tcp response timeout");
+    });
+    stress_config::record_completed(ctx, iterations);
 
     worker_handle.abort();
     let _ = runtime.block_on(worker_handle);
@@ -760,13 +748,13 @@ fn should_complete_tcp_request_response(ctx: &mut StressContext) {
         .expect("shutdown server");
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_ws_request_response(ctx: &mut StressContext) {
-    ctx.tag("layer", "websocket");
-    ctx.tag("scenario", "request_response");
-    ctx.tag("measurement_scope", "ws_e2e");
-    ctx.tag("batch_size", "single_roundtrip");
-    ctx.tag("worker_count", "1");
+    ctx.parameter("layer", "websocket");
+    ctx.parameter("scenario", "request_response");
+    ctx.parameter("measurement_scope", "ws_e2e");
+    ctx.parameter("batch_size", "single_roundtrip");
+    ctx.parameter("worker_count", "1");
 
     let family = RouteFamily::new(1);
     let subscribe_frame =
@@ -809,25 +797,18 @@ fn should_complete_ws_request_response(ctx: &mut StressContext) {
         })
     };
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            runtime
-                .block_on(async {
-                    tokio::time::timeout(
-                        Duration::from_millis(RESPONSE_TIMEOUT_MS),
-                        request_until_worker_response_ws(
-                            &mut requester_client,
-                            &request_frame,
-                            family,
-                        ),
-                    )
-                    .await
-                })
-                .expect("rpc websocket response timeout");
-        },
-    );
-    ctx.set_elements(iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        runtime
+            .block_on(async {
+                tokio::time::timeout(
+                    Duration::from_millis(RESPONSE_TIMEOUT_MS),
+                    request_until_worker_response_ws(&mut requester_client, &request_frame, family),
+                )
+                .await
+            })
+            .expect("rpc websocket response timeout");
+    });
+    stress_config::record_completed(ctx, iterations);
 
     worker_handle.abort();
     let _ = runtime.block_on(worker_handle);
@@ -840,17 +821,17 @@ fn should_complete_ws_request_response(ctx: &mut StressContext) {
         .expect("shutdown server");
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_multiclient_concurrent_requests(ctx: &mut StressContext) {
     measure_multiclient_concurrent_requests(ctx, 1, "concurrent_requests");
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_multiclient_concurrent_requests_4_workers(ctx: &mut StressContext) {
     measure_multiclient_concurrent_requests(ctx, 4, "concurrent_requests");
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_multiclient_concurrent_requests_8_workers(ctx: &mut StressContext) {
     measure_multiclient_concurrent_requests(ctx, 8, "concurrent_requests");
 }

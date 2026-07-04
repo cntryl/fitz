@@ -1,151 +1,98 @@
-#![allow(deprecated)]
-use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+use cntryl_stress::{black_box, stress_allocator, stress_main, stress_test, StressContext};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
-use std::time::{Duration, Instant};
 
-#[path = "criterion_config.rs"]
-mod criterion_config;
+stress_allocator!();
 
-const HOTPATH_REPEAT_COUNT: u64 = 256;
+fn record_group(ctx: &mut StressContext) {
+    ctx.parameter("group", "hotpath_routing");
+}
 
-fn time_repeated(iters: u64, mut measure: impl FnMut()) -> Duration {
-    let mut total = Duration::ZERO;
-    for _ in 0..iters {
-        let start = Instant::now();
-        for _ in 0..HOTPATH_REPEAT_COUNT {
-            measure();
+macro_rules! route_new_bench {
+    ($fn_name:ident, $bench_name:literal, $segments:expr, [$($route:literal),+ $(,)?]) => {
+        #[stress_test(tier = 1)]
+        fn $fn_name(ctx: &mut StressContext) {
+            record_group(ctx);
+            ctx.parameter("segments", $segments);
+            let routes = [$($route.to_string()),+];
+            let mut index = 0usize;
+
+            ctx.measure_micro(|| {
+                let route = &routes[index];
+                index = (index + 1) % routes.len();
+                black_box(Route::new(black_box(route)));
+            });
         }
-        total += start.elapsed();
-    }
-
-    total / u32::try_from(HOTPATH_REPEAT_COUNT).expect("hotpath repeat count fits u32")
+    };
 }
 
-fn bench_route_parsing(c: &mut Criterion) {
-    // Setup OUTSIDE benchmark - precompute test routes with varying depths
-    let routes_2_segments = [
-        "rpc://acme/auth".to_string(),
-        "notify://prod/events".to_string(),
-        "queue://staging/jobs".to_string(),
-    ];
+route_new_bench!(
+    should_route_new_2_segments,
+    "route_new_2_segments",
+    2,
+    [
+        "rpc://acme/auth",
+        "notify://prod/events",
+        "queue://staging/jobs",
+    ]
+);
+route_new_bench!(
+    should_route_new_3_segments,
+    "route_new_3_segments",
+    3,
+    [
+        "rpc://acme/auth/users",
+        "notify://prod/events/orders",
+        "queue://staging/jobs/worker",
+    ]
+);
+route_new_bench!(
+    should_route_new_4_segments,
+    "route_new_4_segments",
+    4,
+    [
+        "rpc://acme/auth/users/authenticate",
+        "notify://prod/events/orders/created",
+        "queue://staging/jobs/worker/process",
+    ]
+);
+route_new_bench!(
+    should_route_new_5_segments,
+    "route_new_5_segments",
+    5,
+    [
+        "rpc://acme/auth/users/session/create",
+        "notify://prod/events/orders/items/added",
+        "queue://staging/jobs/worker/task/execute",
+    ]
+);
+route_new_bench!(
+    should_route_new_6_segments,
+    "route_new_6_segments",
+    6,
+    [
+        "rpc://acme/auth/users/session/token/refresh",
+        "notify://prod/events/orders/items/status/changed",
+        "queue://staging/jobs/worker/task/result/complete",
+    ]
+);
 
-    let routes_3_segments = [
-        "rpc://acme/auth/users".to_string(),
-        "notify://prod/events/orders".to_string(),
-        "queue://staging/jobs/worker".to_string(),
-    ];
-
-    let routes_4_segments = [
-        "rpc://acme/auth/users/authenticate".to_string(),
-        "notify://prod/events/orders/created".to_string(),
-        "queue://staging/jobs/worker/process".to_string(),
-    ];
-
-    let routes_5_segments = [
-        "rpc://acme/auth/users/session/create".to_string(),
-        "notify://prod/events/orders/items/added".to_string(),
-        "queue://staging/jobs/worker/task/execute".to_string(),
-    ];
-
-    let routes_6_segments = [
-        "rpc://acme/auth/users/session/token/refresh".to_string(),
-        "notify://prod/events/orders/items/status/changed".to_string(),
-        "queue://staging/jobs/worker/task/result/complete".to_string(),
-    ];
-
-    let mut group = c.benchmark_group("hotpath_routing");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
-
-    // Benchmark route parsing at different depths
-    group.bench_function("route_new_2_segments", |b| {
-        let mut idx = 0;
-        b.iter_custom(|iters| {
-            // ONLY hot path - route creation from &str
-            time_repeated(iters, || {
-                let route_str = &routes_2_segments[idx % routes_2_segments.len()];
-                black_box(Route::new(black_box(route_str)));
-                idx += 1;
-            })
-        });
-    });
-
-    group.bench_function("route_new_3_segments", |b| {
-        let mut idx = 0;
-        b.iter_custom(|iters| {
-            time_repeated(iters, || {
-                let route_str = &routes_3_segments[idx % routes_3_segments.len()];
-                black_box(Route::new(black_box(route_str)));
-                idx += 1;
-            })
-        });
-    });
-
-    group.bench_function("route_new_4_segments", |b| {
-        let mut idx = 0;
-        b.iter_custom(|iters| {
-            time_repeated(iters, || {
-                let route_str = &routes_4_segments[idx % routes_4_segments.len()];
-                black_box(Route::new(black_box(route_str)));
-                idx += 1;
-            })
-        });
-    });
-
-    group.bench_function("route_new_5_segments", |b| {
-        let mut idx = 0;
-        b.iter_custom(|iters| {
-            time_repeated(iters, || {
-                let route_str = &routes_5_segments[idx % routes_5_segments.len()];
-                black_box(Route::new(black_box(route_str)));
-                idx += 1;
-            })
-        });
-    });
-
-    group.bench_function("route_new_6_segments", |b| {
-        let mut idx = 0;
-        b.iter_custom(|iters| {
-            time_repeated(iters, || {
-                let route_str = &routes_6_segments[idx % routes_6_segments.len()];
-                black_box(Route::new(black_box(route_str)));
-                idx += 1;
-            })
-        });
-    });
-
-    group.finish();
-}
-
-fn bench_route_address_creation(c: &mut Criterion) {
-    // Setup OUTSIDE benchmark
+#[stress_test(
+    tier = 1,
+    name = "route_address_new",
+    max_allocs_per_op = 0,
+    max_bytes_per_op = 0
+)]
+fn should_route_address_new(ctx: &mut StressContext) {
+    record_group(ctx);
     let family = RouteFamily::new(1);
     let route = Route::new("rpc://acme/auth/users/authenticate");
 
-    let mut group = c.benchmark_group("hotpath_routing");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
-
-    group.bench_function("route_address_new", |b| {
-        b.iter_custom(|iters| {
-            // ONLY hot path - RouteAddress construction
-            time_repeated(iters, || {
-                black_box(RouteAddress::new(
-                    black_box(family),
-                    black_box(route.clone()),
-                ));
-            })
-        });
+    ctx.measure_micro(|| {
+        black_box(RouteAddress::new(
+            black_box(family),
+            black_box(route.clone()),
+        ));
     });
-
-    group.finish();
 }
 
-criterion_group! {
-    name = benches;
-    config = criterion_config::criterion_config_for_tier1();
-    targets =
-        bench_route_parsing,
-        bench_route_address_creation,
-}
-criterion_main!(benches);
+stress_main!();

@@ -1,14 +1,15 @@
 #![allow(deprecated)]
 use bytes::Bytes;
-use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+#[path = "tier2_stress.rs"]
+mod tier2_stress;
+
+use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::domains::stream::storage::{
     encode_area_key, encode_realm_key, encode_resource_key, AreaValue, RealmValue, ResourceValue,
 };
 use lz4_flex::block::compress_prepend_size;
 use std::collections::HashMap;
-
-#[path = "criterion_config.rs"]
-mod criterion_config;
+use std::hint::black_box;
 
 const REALM: &str = "bench-realm";
 const AREA_COUNT: usize = 4;
@@ -1530,8 +1531,15 @@ fn summarize_area_paged_compressed_realm_body_layout(records: &[LayoutRecord]) -
     }
 }
 
+struct WriteShapeFixtures {
+    records: Vec<LayoutRecord>,
+    high_entropy_records: Vec<LayoutRecord>,
+    production_like_records: Vec<LayoutRecord>,
+    event_count: u64,
+}
+
 #[allow(clippy::too_many_lines)]
-fn bench_stream_write_shape(c: &mut Criterion) {
+fn write_shape_fixtures() -> WriteShapeFixtures {
     let records = build_records(PayloadProfile::LowEntropy);
     let high_entropy_records = build_records(PayloadProfile::HighEntropy);
     let production_like_records = build_records(PayloadProfile::ProductionLike);
@@ -1540,8 +1548,6 @@ fn bench_stream_write_shape(c: &mut Criterion) {
     let area_paged_realm_body = summarize_area_paged_realm_body_hybrid_layout(&records);
     let area_paged_compressed_realm_body =
         summarize_area_paged_compressed_realm_body_layout(&records);
-    let high_entropy_area_paged_compressed_realm_body =
-        summarize_area_paged_compressed_realm_body_layout(&high_entropy_records);
     let production_like_current = summarize_current_layout(&production_like_records);
     let production_like_area_paged_realm_body =
         summarize_area_paged_realm_body_hybrid_layout(&production_like_records);
@@ -1557,114 +1563,19 @@ fn bench_stream_write_shape(c: &mut Criterion) {
     let area_page_ref = summarize_area_page_ref_layout(&records);
     let area_page_id_ref = summarize_area_page_id_ref_layout(&records);
     let area_page_run_ref = summarize_area_page_run_ref_layout(&records);
-    let reduction = percent_reduction(hybrid.total_bytes, current.total_bytes);
-    let area_paged_realm_body_reduction =
-        percent_reduction(area_paged_realm_body.total_bytes, current.total_bytes);
-    let area_paged_compressed_realm_body_reduction = percent_reduction(
-        area_paged_compressed_realm_body.total_bytes,
-        current.total_bytes,
-    );
-    let two_body_reduction = percent_reduction(two_body_hybrid.total_bytes, current.total_bytes);
-    let area_page_ref_reduction = percent_reduction(area_page_ref.total_bytes, current.total_bytes);
-    let area_page_id_ref_reduction =
-        percent_reduction(area_page_id_ref.total_bytes, current.total_bytes);
-    let area_page_run_ref_reduction =
-        percent_reduction(area_page_run_ref.total_bytes, current.total_bytes);
-    let area_body_canonical_reduction =
-        percent_reduction(area_body_canonical.total_bytes, current.total_bytes);
-    let resource_mini_page_reduction =
-        percent_reduction(resource_mini_page.total_bytes, current.total_bytes);
-    let resource_mini_page_compressed_realm_reduction = percent_reduction(
-        resource_mini_page_compressed_realm.total_bytes,
-        current.total_bytes,
-    );
-    let production_like_reduction = percent_reduction(
+    let _production_like_reduction = percent_reduction(
         production_like_area_paged_compressed_realm_body.total_bytes,
         production_like_current.total_bytes,
     );
-    let production_like_vs_uncompressed_reduction = percent_reduction(
+    let _production_like_vs_uncompressed_reduction = percent_reduction(
         production_like_area_paged_compressed_realm_body.total_bytes,
         production_like_area_paged_realm_body.total_bytes,
     );
-    let production_like_resource_mini_page_compressed_realm_reduction = percent_reduction(
+    let _production_like_resource_mini_page_compressed_realm_reduction = percent_reduction(
         production_like_resource_mini_page_compressed_realm.total_bytes,
         production_like_current.total_bytes,
     );
     let event_count = u64::try_from(records.len()).unwrap_or(u64::MAX);
-
-    eprintln!(
-        "stream write-shape economics: current {:.2} B/event (resource {} area {} realm {}), hybrid {:.2} B/event (resource {} area {} realm {}), reduction {:.2}%, area-paged realm-body hybrid {:.2} B/event (resource {} area {} realm {}), reduction {:.2}%, area-paged compressed realm-body hybrid {:.2} B/event (resource {} area {} realm {}), reduction {:.2}%, two-body hybrid {:.2} B/event (resource {} area {} realm {}), reduction {:.2}%, area-page-ref hybrid {:.2} B/event (resource {} area {} realm {}), reduction {:.2}%, area-page-id-ref hybrid {:.2} B/event (resource {} area {} realm {}), reduction {:.2}%, area-page-run-ref hybrid {:.2} B/event (resource {} area {} realm {}), reduction {:.2}%, area-body canonical {:.2} B/event (resource {} area {} realm {}), reduction {:.2}%, resource mini-page {:.2} B/event (resource {} area {} realm {}), reduction {:.2}%, resource mini-page + compressed realm {:.2} B/event (resource {} area {} realm {}), reduction {:.2}%",
-        current.bytes_per_event,
-        current.resource_plane_bytes,
-        current.area_plane_bytes,
-        current.realm_plane_bytes,
-        hybrid.bytes_per_event,
-        hybrid.resource_plane_bytes,
-        hybrid.area_plane_bytes,
-        hybrid.realm_plane_bytes,
-        reduction,
-        area_paged_realm_body.bytes_per_event,
-        area_paged_realm_body.resource_plane_bytes,
-        area_paged_realm_body.area_plane_bytes,
-        area_paged_realm_body.realm_plane_bytes,
-        area_paged_realm_body_reduction,
-        area_paged_compressed_realm_body.bytes_per_event,
-        area_paged_compressed_realm_body.resource_plane_bytes,
-        area_paged_compressed_realm_body.area_plane_bytes,
-        area_paged_compressed_realm_body.realm_plane_bytes,
-        area_paged_compressed_realm_body_reduction,
-        two_body_hybrid.bytes_per_event,
-        two_body_hybrid.resource_plane_bytes,
-        two_body_hybrid.area_plane_bytes,
-        two_body_hybrid.realm_plane_bytes,
-        two_body_reduction,
-        area_page_ref.bytes_per_event,
-        area_page_ref.resource_plane_bytes,
-        area_page_ref.area_plane_bytes,
-        area_page_ref.realm_plane_bytes,
-        area_page_ref_reduction,
-        area_page_id_ref.bytes_per_event,
-        area_page_id_ref.resource_plane_bytes,
-        area_page_id_ref.area_plane_bytes,
-        area_page_id_ref.realm_plane_bytes,
-        area_page_id_ref_reduction,
-        area_page_run_ref.bytes_per_event,
-        area_page_run_ref.resource_plane_bytes,
-        area_page_run_ref.area_plane_bytes,
-        area_page_run_ref.realm_plane_bytes,
-        area_page_run_ref_reduction,
-        area_body_canonical.bytes_per_event,
-        area_body_canonical.resource_plane_bytes,
-        area_body_canonical.area_plane_bytes,
-        area_body_canonical.realm_plane_bytes,
-        area_body_canonical_reduction,
-        resource_mini_page.bytes_per_event,
-        resource_mini_page.resource_plane_bytes,
-        resource_mini_page.area_plane_bytes,
-        resource_mini_page.realm_plane_bytes,
-        resource_mini_page_reduction,
-        resource_mini_page_compressed_realm.bytes_per_event,
-        resource_mini_page_compressed_realm.resource_plane_bytes,
-        resource_mini_page_compressed_realm.area_plane_bytes,
-        resource_mini_page_compressed_realm.realm_plane_bytes,
-        resource_mini_page_compressed_realm_reduction,
-    );
-    eprintln!(
-        "stream write-shape compression sensitivity: uncompressed area-paged realm-body {:.2} B/event, compressed low-entropy {:.2} B/event, compressed high-entropy {:.2} B/event",
-        area_paged_realm_body.bytes_per_event,
-        area_paged_compressed_realm_body.bytes_per_event,
-        high_entropy_area_paged_compressed_realm_body.bytes_per_event,
-    );
-    eprintln!(
-        "stream write-shape production-like corpus: current {:.2} B/event, uncompressed area-paged realm-body {:.2} B/event, compressed realm-body {:.2} B/event, resource mini-page + compressed realm {:.2} B/event, compressed reduction vs current {:.2}%, compressed reduction vs uncompressed {:.2}%, mini-page + compressed reduction vs current {:.2}%",
-        production_like_current.bytes_per_event,
-        production_like_area_paged_realm_body.bytes_per_event,
-        production_like_area_paged_compressed_realm_body.bytes_per_event,
-        production_like_resource_mini_page_compressed_realm.bytes_per_event,
-        production_like_reduction,
-        production_like_vs_uncompressed_reduction,
-        production_like_resource_mini_page_compressed_realm_reduction,
-    );
 
     assert!(
         hybrid.total_bytes < current.total_bytes,
@@ -1722,121 +1633,129 @@ fn bench_stream_write_shape(c: &mut Criterion) {
         "resource mini-page plus compressed realm layout should still beat the covering-resource compressed-realm hybrid on the production-like corpus"
     );
 
-    let mut group = c.benchmark_group("subsystem_stream_write_shape");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(event_count));
-
-    group.bench_function("assemble_current_layout_2048_records", |b| {
-        b.iter(|| black_box(summarize_current_layout(black_box(&records))));
-    });
-
-    group.bench_function("assemble_hybrid_layout_2048_records", |b| {
-        b.iter(|| black_box(summarize_hybrid_layout(black_box(&records))));
-    });
-
-    group.bench_function(
-        "assemble_area_paged_realm_body_hybrid_layout_2048_records",
-        |b| {
-            b.iter(|| {
-                black_box(summarize_area_paged_realm_body_hybrid_layout(black_box(
-                    &records,
-                )));
-            });
-        },
-    );
-
-    group.bench_function(
-        "assemble_area_paged_compressed_realm_body_hybrid_layout_2048_records",
-        |b| {
-            b.iter(|| {
-                black_box(summarize_area_paged_compressed_realm_body_layout(
-                    black_box(&records),
-                ));
-            });
-        },
-    );
-    group.bench_function(
-        "assemble_area_paged_compressed_realm_body_hybrid_layout_2048_records_high_entropy",
-        |b| {
-            b.iter(|| {
-                black_box(summarize_area_paged_compressed_realm_body_layout(
-                    black_box(&high_entropy_records),
-                ));
-            });
-        },
-    );
-    group.bench_function(
-        "assemble_area_paged_realm_body_hybrid_layout_2048_records_production_like",
-        |b| {
-            b.iter(|| {
-                black_box(summarize_area_paged_realm_body_hybrid_layout(black_box(
-                    &production_like_records,
-                )));
-            });
-        },
-    );
-    group.bench_function(
-        "assemble_area_paged_compressed_realm_body_hybrid_layout_2048_records_production_like",
-        |b| {
-            b.iter(|| {
-                black_box(summarize_area_paged_compressed_realm_body_layout(
-                    black_box(&production_like_records),
-                ));
-            });
-        },
-    );
-
-    group.bench_function("assemble_two_body_hybrid_layout_2048_records", |b| {
-        b.iter(|| black_box(summarize_two_body_hybrid_layout(black_box(&records))));
-    });
-
-    group.bench_function("assemble_area_page_ref_layout_2048_records", |b| {
-        b.iter(|| black_box(summarize_area_page_ref_layout(black_box(&records))));
-    });
-
-    group.bench_function("assemble_area_page_id_ref_layout_2048_records", |b| {
-        b.iter(|| black_box(summarize_area_page_id_ref_layout(black_box(&records))));
-    });
-
-    group.bench_function("assemble_area_page_run_ref_layout_2048_records", |b| {
-        b.iter(|| black_box(summarize_area_page_run_ref_layout(black_box(&records))));
-    });
-
-    group.bench_function("assemble_area_body_canonical_layout_2048_records", |b| {
-        b.iter(|| black_box(summarize_area_body_canonical_layout(black_box(&records))));
-    });
-
-    group.bench_function("assemble_resource_mini_page_layout_2048_records", |b| {
-        b.iter(|| black_box(summarize_resource_mini_page_layout(black_box(&records))));
-    });
-
-    group.bench_function(
-        "assemble_resource_mini_page_compressed_realm_layout_2048_records",
-        |b| {
-            b.iter(|| {
-                black_box(summarize_resource_mini_page_compressed_realm_layout(
-                    black_box(&records),
-                ));
-            });
-        },
-    );
-    group.bench_function(
-        "assemble_resource_mini_page_compressed_realm_layout_2048_records_production_like",
-        |b| {
-            b.iter(|| {
-                black_box(summarize_resource_mini_page_compressed_realm_layout(
-                    black_box(&production_like_records),
-                ));
-            });
-        },
-    );
-
-    group.finish();
+    WriteShapeFixtures {
+        records,
+        high_entropy_records,
+        production_like_records,
+        event_count,
+    }
 }
 
-criterion_group! {
-    name = benches;
-    config = criterion_config::criterion_config_for_tier2();
-    targets = bench_stream_write_shape
+fn measure_layout<F>(ctx: &mut StressContext, records: &[LayoutRecord], event_count: u64, mut f: F)
+where
+    F: FnMut(&[LayoutRecord]) -> LayoutSummary,
+{
+    let summary = f(records);
+    ctx.metadata("total_bytes", summary.total_bytes);
+    ctx.metadata("resource_plane_bytes", summary.resource_plane_bytes);
+    ctx.metadata("area_plane_bytes", summary.area_plane_bytes);
+    ctx.metadata("realm_plane_bytes", summary.realm_plane_bytes);
+    ctx.metadata("bytes_per_event", format!("{:.2}", summary.bytes_per_event));
+
+    tier2_stress::measure_iterations(ctx, event_count, || {
+        black_box(f(black_box(records)));
+    });
 }
-criterion_main!(benches);
+
+macro_rules! write_shape_bench {
+    ($fn_name:ident, $stress_name:literal, $records:ident, $summarize:path) => {
+        #[stress_test(tier = 2, mode = "fixed_duration", name = $stress_name)]
+        fn $fn_name(ctx: &mut StressContext) {
+            let fixtures = write_shape_fixtures();
+            measure_layout(ctx, &fixtures.$records, fixtures.event_count, $summarize);
+        }
+    };
+}
+
+write_shape_bench!(
+    should_assemble_current_layout_2048_records,
+    "assemble_current_layout_2048_records",
+    records,
+    summarize_current_layout
+);
+write_shape_bench!(
+    should_assemble_hybrid_layout_2048_records,
+    "assemble_hybrid_layout_2048_records",
+    records,
+    summarize_hybrid_layout
+);
+write_shape_bench!(
+    should_assemble_area_paged_realm_body_hybrid_layout_2048_records,
+    "assemble_area_paged_realm_body_hybrid_layout_2048_records",
+    records,
+    summarize_area_paged_realm_body_hybrid_layout
+);
+write_shape_bench!(
+    should_assemble_area_paged_compressed_realm_body_hybrid_layout_2048_records,
+    "assemble_area_paged_compressed_realm_body_hybrid_layout_2048_records",
+    records,
+    summarize_area_paged_compressed_realm_body_layout
+);
+write_shape_bench!(
+    should_assemble_area_paged_compressed_realm_body_hybrid_layout_2048_records_high_entropy,
+    "assemble_area_paged_compressed_realm_body_hybrid_layout_2048_records_high_entropy",
+    high_entropy_records,
+    summarize_area_paged_compressed_realm_body_layout
+);
+write_shape_bench!(
+    should_assemble_area_paged_realm_body_hybrid_layout_2048_records_production_like,
+    "assemble_area_paged_realm_body_hybrid_layout_2048_records_production_like",
+    production_like_records,
+    summarize_area_paged_realm_body_hybrid_layout
+);
+write_shape_bench!(
+    should_assemble_area_paged_compressed_realm_body_hybrid_layout_2048_records_production_like,
+    "assemble_area_paged_compressed_realm_body_hybrid_layout_2048_records_production_like",
+    production_like_records,
+    summarize_area_paged_compressed_realm_body_layout
+);
+write_shape_bench!(
+    should_assemble_two_body_hybrid_layout_2048_records,
+    "assemble_two_body_hybrid_layout_2048_records",
+    records,
+    summarize_two_body_hybrid_layout
+);
+write_shape_bench!(
+    should_assemble_area_page_ref_layout_2048_records,
+    "assemble_area_page_ref_layout_2048_records",
+    records,
+    summarize_area_page_ref_layout
+);
+write_shape_bench!(
+    should_assemble_area_page_id_ref_layout_2048_records,
+    "assemble_area_page_id_ref_layout_2048_records",
+    records,
+    summarize_area_page_id_ref_layout
+);
+write_shape_bench!(
+    should_assemble_area_page_run_ref_layout_2048_records,
+    "assemble_area_page_run_ref_layout_2048_records",
+    records,
+    summarize_area_page_run_ref_layout
+);
+write_shape_bench!(
+    should_assemble_area_body_canonical_layout_2048_records,
+    "assemble_area_body_canonical_layout_2048_records",
+    records,
+    summarize_area_body_canonical_layout
+);
+write_shape_bench!(
+    should_assemble_resource_mini_page_layout_2048_records,
+    "assemble_resource_mini_page_layout_2048_records",
+    records,
+    summarize_resource_mini_page_layout
+);
+write_shape_bench!(
+    should_assemble_resource_mini_page_compressed_realm_layout_2048_records,
+    "assemble_resource_mini_page_compressed_realm_layout_2048_records",
+    records,
+    summarize_resource_mini_page_compressed_realm_layout
+);
+write_shape_bench!(
+    should_assemble_resource_mini_page_compressed_realm_layout_2048_records_production_like,
+    "assemble_resource_mini_page_compressed_realm_layout_2048_records_production_like",
+    production_like_records,
+    summarize_resource_mini_page_compressed_realm_layout
+);
+
+stress_main!();

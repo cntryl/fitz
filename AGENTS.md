@@ -55,7 +55,7 @@ Right:
 - When `public/openapi.yml` or the UI client changes, regenerate adapters with `npm run gen:adapters` from `ui/`.
 
 ## Validation
-- Rust: `cargo test --workspace`, `cargo test test_guidelines_compliance`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cntryl-tools validate-tests`.
+- Rust: `cargo fmt --all -- --check`, `cargo test --workspace`, `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic`.
 - UI: run from `ui/` with `npm run test`, `npm run lint`, `npm run type-check`, and `npm run build`.
 - Benchmarks: use direct `cargo bench` commands for the relevant tier or target, then run `cntryl-tools summarize-benchmarks` when a report is needed.
 

@@ -4,7 +4,7 @@
 // Tests sustained schedule operations with mixed workloads.
 //
 // Each test measures a single operation with all setup/teardown outside the measurement loop.
-// Target: ops/sec via set_elements(count)
+// Target: ops/sec via record_completed(count)
 
 #[path = "stress_config.rs"]
 mod stress_config;
@@ -16,7 +16,6 @@ use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
 use std::collections::VecDeque;
-use std::time::{Duration, Instant};
 
 const SUSTAINED_ACTIVE_SCHEDULES: usize = 1024;
 const MIXED_INITIAL_SCHEDULES: usize = 256;
@@ -83,8 +82,8 @@ fn assert_uncached_list_count(actor: &mut ScheduleActor, limit: u64, expected_co
     );
 }
 
-fn returned_schedule_elements(iterations: usize, returned_per_iteration: u64) -> u64 {
-    (iterations as u64).saturating_mul(returned_per_iteration)
+fn returned_schedule_elements(iterations: u64, returned_per_iteration: u64) -> u64 {
+    iterations.saturating_mul(returned_per_iteration)
 }
 
 fn measure_prepared_due_collection(
@@ -92,14 +91,9 @@ fn measure_prepared_due_collection(
     actor: &mut ScheduleActor,
     ready_count: usize,
     expected_fired_count: usize,
-) -> usize {
-    let mut measured = Duration::ZERO;
-    let mut iterations = 0usize;
-    let target_duration = stress_config::BenchConfig::default().measure_duration;
-
-    while measured < target_duration {
+) -> u64 {
+    let iterations = ctx.measure_workload(|| {
         actor.bench_prepare_scan(ready_count);
-        let started_at = Instant::now();
         let claims = actor.bench_claim_due_fires();
         let mut delivered = Vec::with_capacity(claims.len());
         let fired: Vec<_> = claims
@@ -109,7 +103,6 @@ fn measure_prepared_due_collection(
                 (claim.route, claim.payload)
             })
             .collect();
-        measured += started_at.elapsed();
         assert_eq!(
             fired.len(),
             expected_fired_count,
@@ -126,12 +119,10 @@ fn measure_prepared_due_collection(
             );
             actor
                 .bench_drain_storage()
-                .expect("schedule due benchmark cleanup writes should drain outside timing");
+                .expect("schedule due benchmark cleanup writes should drain");
         }
-        iterations += 1;
-    }
+    });
 
-    ctx.record_duration(measured);
     iterations
 }
 
@@ -180,252 +171,231 @@ fn create_scan_actor(count: usize) -> ScheduleActor {
     actor
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_system_create(ctx: &mut StressContext) {
-    ctx.tag("scenario", "create_operation");
-    ctx.tag("measurement_scope", "direct_actor");
-    ctx.tag("batch_size", "single_unique_create");
+    ctx.parameter("scenario", "create_operation");
+    ctx.parameter("measurement_scope", "direct_actor");
+    ctx.parameter("batch_size", "single_unique_create");
 
     let mut actor = create_test_actor();
 
     let mut next_index = 0usize;
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let _route = create_unique_schedule(&mut actor, next_index);
-            next_index += 1;
-        },
-    );
-    ctx.set_elements(iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        let _route = create_unique_schedule(&mut actor, next_index);
+        next_index += 1;
+    });
+    stress_config::record_completed(ctx, iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_system_cancel_create_churn(ctx: &mut StressContext) {
-    ctx.tag("scenario", "cancel_create_churn");
-    ctx.tag("measurement_scope", "direct_actor");
-    ctx.tag("batch_size", "1_cancel_1_create");
+    ctx.parameter("scenario", "cancel_create_churn");
+    ctx.parameter("measurement_scope", "direct_actor");
+    ctx.parameter("batch_size", "1_cancel_1_create");
 
     let mut actor = create_test_actor();
     let mut live_routes = populate_live_routes(&mut actor, 0, SUSTAINED_ACTIVE_SCHEDULES);
     let mut next_index = SUSTAINED_ACTIVE_SCHEDULES;
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let route = live_routes
-                .pop_front()
-                .expect("schedule churn must keep at least one live route");
-            let deleted = actor
-                .delete_schedule(&route)
-                .expect("schedule cancel should succeed");
-            assert!(
-                deleted,
-                "schedule churn cancel must remove an existing route"
-            );
+    let iterations = ctx.measure_workload(|| {
+        let route = live_routes
+            .pop_front()
+            .expect("schedule churn must keep at least one live route");
+        let deleted = actor
+            .delete_schedule(&route)
+            .expect("schedule cancel should succeed");
+        assert!(
+            deleted,
+            "schedule churn cancel must remove an existing route"
+        );
 
-            let route = create_unique_schedule(&mut actor, next_index);
-            next_index += 1;
-            live_routes.push_back(route);
-        },
-    );
-    ctx.set_elements(2 * iterations as u64);
+        let route = create_unique_schedule(&mut actor, next_index);
+        next_index += 1;
+        live_routes.push_back(route);
+    });
+    stress_config::record_completed(ctx, 2 * iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_system_list_uncached_9_of_10_schedules(ctx: &mut StressContext) {
-    ctx.tag("scenario", "list_uncached_9_of_10");
-    ctx.tag("measurement_scope", "direct_actor");
-    ctx.tag("batch_size", "single_list_call");
-    ctx.tag("reported_element", "returned_schedule");
-    ctx.tag("page_size", "9");
-    ctx.tag("total_schedules", "10");
+    ctx.parameter("scenario", "list_uncached_9_of_10");
+    ctx.parameter("measurement_scope", "direct_actor");
+    ctx.parameter("batch_size", "single_list_call");
+    ctx.parameter("reported_element", "returned_schedule");
+    ctx.parameter("page_size", "9");
+    ctx.parameter("total_schedules", "10");
 
     let mut actor = create_test_actor();
     let (routes, crons, payloads) = precompute_data(10);
     populate_actor(&mut actor, &routes, &crons, &payloads, 10);
     assert_uncached_list_count(&mut actor, 9, 9);
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let (entries, total_count) = actor.list_entries(0, 9);
-            assert_eq!(
-                entries.len(),
-                9,
-                "uncached list should return nine schedules"
-            );
-            assert_eq!(total_count, 10, "total schedule count should remain stable");
-        },
-    );
-    ctx.set_elements(returned_schedule_elements(iterations, 9));
+    let iterations = ctx.measure_workload(|| {
+        let (entries, total_count) = actor.list_entries(0, 9);
+        assert_eq!(
+            entries.len(),
+            9,
+            "uncached list should return nine schedules"
+        );
+        assert_eq!(total_count, 10, "total schedule count should remain stable");
+    });
+    stress_config::record_completed(ctx, returned_schedule_elements(iterations, 9));
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_system_list_uncached_99_of_100_schedules(ctx: &mut StressContext) {
-    ctx.tag("scenario", "list_uncached_99_of_100");
-    ctx.tag("measurement_scope", "direct_actor");
-    ctx.tag("batch_size", "single_list_call");
-    ctx.tag("reported_element", "returned_schedule");
-    ctx.tag("page_size", "99");
-    ctx.tag("total_schedules", "100");
+    ctx.parameter("scenario", "list_uncached_99_of_100");
+    ctx.parameter("measurement_scope", "direct_actor");
+    ctx.parameter("batch_size", "single_list_call");
+    ctx.parameter("reported_element", "returned_schedule");
+    ctx.parameter("page_size", "99");
+    ctx.parameter("total_schedules", "100");
 
     let mut actor = create_test_actor();
     let (routes, crons, payloads) = precompute_data(100);
     populate_actor(&mut actor, &routes, &crons, &payloads, 100);
     assert_uncached_list_count(&mut actor, 99, 99);
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let (entries, total_count) = actor.list_entries(0, 99);
-            assert_eq!(
-                entries.len(),
-                99,
-                "uncached list should return ninety-nine schedules"
-            );
-            assert_eq!(
-                total_count, 100,
-                "total schedule count should remain stable"
-            );
-        },
-    );
-    ctx.set_elements(returned_schedule_elements(iterations, 99));
+    let iterations = ctx.measure_workload(|| {
+        let (entries, total_count) = actor.list_entries(0, 99);
+        assert_eq!(
+            entries.len(),
+            99,
+            "uncached list should return ninety-nine schedules"
+        );
+        assert_eq!(
+            total_count, 100,
+            "total schedule count should remain stable"
+        );
+    });
+    stress_config::record_completed(ctx, returned_schedule_elements(iterations, 99));
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_system_list_uncached_999_of_1000_schedules(ctx: &mut StressContext) {
-    ctx.tag("scenario", "list_uncached_999_of_1000");
-    ctx.tag("measurement_scope", "direct_actor");
-    ctx.tag("batch_size", "single_list_call");
-    ctx.tag("reported_element", "returned_schedule");
-    ctx.tag("page_size", "999");
-    ctx.tag("total_schedules", "1000");
+    ctx.parameter("scenario", "list_uncached_999_of_1000");
+    ctx.parameter("measurement_scope", "direct_actor");
+    ctx.parameter("batch_size", "single_list_call");
+    ctx.parameter("reported_element", "returned_schedule");
+    ctx.parameter("page_size", "999");
+    ctx.parameter("total_schedules", "1000");
 
     let mut actor = create_test_actor();
     let (routes, crons, payloads) = precompute_data(1000);
     populate_actor(&mut actor, &routes, &crons, &payloads, 1000);
     assert_uncached_list_count(&mut actor, 999, 999);
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let (entries, total_count) = actor.list_entries(0, 999);
-            assert_eq!(
-                entries.len(),
-                999,
-                "uncached list should return nine hundred ninety-nine schedules"
-            );
-            assert_eq!(
-                total_count, 1000,
-                "total schedule count should remain stable"
-            );
-        },
-    );
-    ctx.set_elements(returned_schedule_elements(iterations, 999));
+    let iterations = ctx.measure_workload(|| {
+        let (entries, total_count) = actor.list_entries(0, 999);
+        assert_eq!(
+            entries.len(),
+            999,
+            "uncached list should return nine hundred ninety-nine schedules"
+        );
+        assert_eq!(
+            total_count, 1000,
+            "total schedule count should remain stable"
+        );
+    });
+    stress_config::record_completed(ctx, returned_schedule_elements(iterations, 999));
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_system_mixed_workload(ctx: &mut StressContext) {
-    ctx.tag("scenario", "mixed_workload");
-    ctx.tag("measurement_scope", "direct_actor");
-    ctx.tag("batch_size", "2_create_1_uncached_list_1_cancel");
+    ctx.parameter("scenario", "mixed_workload");
+    ctx.parameter("measurement_scope", "direct_actor");
+    ctx.parameter("batch_size", "2_create_1_uncached_list_1_cancel");
 
     let mut actor = create_test_actor();
     let mut live_routes = populate_live_routes(&mut actor, 0, MIXED_INITIAL_SCHEDULES);
     let mut next_index = MIXED_INITIAL_SCHEDULES;
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let first_route = create_unique_schedule(&mut actor, next_index);
-            next_index += 1;
-            live_routes.push_back(first_route);
+    let iterations = ctx.measure_workload(|| {
+        let first_route = create_unique_schedule(&mut actor, next_index);
+        next_index += 1;
+        live_routes.push_back(first_route);
 
-            let (entries, total_count) = actor.list_entries(0, MIXED_LIST_LIMIT);
-            assert_eq!(
-                entries.len(),
-                u64_to_usize_saturating(MIXED_LIST_LIMIT),
-                "mixed workload list must avoid the shared full-list cache"
-            );
-            assert!(
-                total_count >= MIXED_LIST_LIMIT,
-                "mixed workload list must retain enough schedules for uncached paging"
-            );
+        let (entries, total_count) = actor.list_entries(0, MIXED_LIST_LIMIT);
+        assert_eq!(
+            entries.len(),
+            u64_to_usize_saturating(MIXED_LIST_LIMIT),
+            "mixed workload list must avoid the shared full-list cache"
+        );
+        assert!(
+            total_count >= MIXED_LIST_LIMIT,
+            "mixed workload list must retain enough schedules for uncached paging"
+        );
 
-            let second_route = create_unique_schedule(&mut actor, next_index);
-            next_index += 1;
-            live_routes.push_back(second_route);
+        let second_route = create_unique_schedule(&mut actor, next_index);
+        next_index += 1;
+        live_routes.push_back(second_route);
 
-            let route = live_routes
-                .pop_front()
-                .expect("mixed workload must keep at least one live schedule");
-            let deleted = actor
-                .delete_schedule(&route)
-                .expect("mixed workload cancel should succeed");
-            assert!(
-                deleted,
-                "mixed workload cancel must remove an existing route"
-            );
-        },
-    );
-    ctx.set_elements(4 * iterations as u64); // CREATE + LIST + CREATE + CANCEL
+        let route = live_routes
+            .pop_front()
+            .expect("mixed workload must keep at least one live schedule");
+        let deleted = actor
+            .delete_schedule(&route)
+            .expect("mixed workload cancel should succeed");
+        assert!(
+            deleted,
+            "mixed workload cancel must remove an existing route"
+        );
+    });
+    stress_config::record_completed(ctx, 4 * iterations); // CREATE + LIST + CREATE + CANCEL
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_system_collect_due_occurrences_not_ready_1000_schedules(
     ctx: &mut StressContext,
 ) {
-    ctx.tag("scenario", "collect_due_occurrences_not_ready_1000");
-    ctx.tag("measurement_scope", "direct_actor");
-    ctx.tag("batch_size", "1000_scanned");
-    ctx.tag("ready_state", "none_ready");
+    ctx.parameter("scenario", "collect_due_occurrences_not_ready_1000");
+    ctx.parameter("measurement_scope", "direct_actor");
+    ctx.parameter("batch_size", "1000_scanned");
+    ctx.parameter("ready_state", "none_ready");
 
     let mut actor = create_scan_actor(1000);
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            actor.bench_prepare_scan(0);
-            let fired = actor.collect_due_occurrences_for_publish();
-            assert!(
-                fired.is_empty(),
-                "not-ready schedule due benchmark must not publish occurrences"
-            );
-        },
-    );
-    ctx.set_elements(1000 * iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        actor.bench_prepare_scan(0);
+        let fired = actor.collect_due_occurrences_for_publish();
+        assert!(
+            fired.is_empty(),
+            "not-ready schedule due benchmark must not publish occurrences"
+        );
+    });
+    stress_config::record_completed(ctx, 1000 * iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_system_collect_due_occurrences_partially_ready_1000_schedules(
     ctx: &mut StressContext,
 ) {
-    ctx.tag("scenario", "collect_due_occurrences_partial_ready_1000");
-    ctx.tag("measurement_scope", "direct_actor");
-    ctx.tag("batch_size", "1000_scanned");
-    ctx.tag("ready_state", "partial_ready");
-    ctx.tag("setup_scope", "prepared_scan_reset_outside_timer");
+    ctx.parameter("scenario", "collect_due_occurrences_partial_ready_1000");
+    ctx.parameter("measurement_scope", "direct_actor");
+    ctx.parameter("batch_size", "1000_scanned");
+    ctx.parameter("ready_state", "partial_ready");
+    ctx.parameter("setup_scope", "prepared_scan_reset_outside_timer");
 
     let mut actor = create_scan_actor(1000);
 
     let iterations = measure_prepared_due_collection(ctx, &mut actor, 100, 100);
-    ctx.set_elements(1000 * iterations as u64);
+    stress_config::record_completed(ctx, 1000 * iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_system_collect_due_occurrences_all_ready_1000_schedules(
     ctx: &mut StressContext,
 ) {
-    ctx.tag("scenario", "collect_due_occurrences_all_ready_1000");
-    ctx.tag("measurement_scope", "direct_actor");
-    ctx.tag("batch_size", "1000_scanned");
-    ctx.tag("ready_state", "all_ready");
-    ctx.tag("setup_scope", "prepared_scan_reset_outside_timer");
+    ctx.parameter("scenario", "collect_due_occurrences_all_ready_1000");
+    ctx.parameter("measurement_scope", "direct_actor");
+    ctx.parameter("batch_size", "1000_scanned");
+    ctx.parameter("ready_state", "all_ready");
+    ctx.parameter("setup_scope", "prepared_scan_reset_outside_timer");
 
     let mut actor = create_scan_actor(1000);
 
     let iterations = measure_prepared_due_collection(ctx, &mut actor, 1000, 1000);
-    ctx.set_elements(1000 * iterations as u64);
+    stress_config::record_completed(ctx, 1000 * iterations);
 }
 
 stress_main!();

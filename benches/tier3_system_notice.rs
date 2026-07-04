@@ -5,7 +5,7 @@
 // server uses in-process.
 //
 // Each test measures a single operation with all setup/teardown outside the measurement loop.
-// Target: ops/sec via set_elements(count)
+// Target: ops/sec via record_completed(count)
 
 #[path = "stress_config.rs"]
 mod stress_config;
@@ -149,13 +149,13 @@ impl NoticeRequestHarness {
 }
 
 fn measure_notice_fanout(ctx: &mut StressContext, case: NoticeFanoutCase) {
-    ctx.tag("scenario", case.scenario);
-    ctx.tag("measurement_scope", "routed_fanout");
+    ctx.parameter("scenario", case.scenario);
+    ctx.parameter("measurement_scope", "routed_fanout");
     let batch_size_tag = format!("{NOTICE_FANOUT_CONFIRM_BATCH_SIZE}_publishes");
-    ctx.tag("batch_size", batch_size_tag.as_str());
+    ctx.parameter("batch_size", batch_size_tag.as_str());
     let subscriber_count = case.subscriber_count.to_string();
-    ctx.tag("subscriber_count", subscriber_count.as_str());
-    ctx.tag("match_kind", case.match_kind);
+    ctx.parameter("subscriber_count", subscriber_count.as_str());
+    ctx.parameter("match_kind", case.match_kind);
 
     let (router, family, publisher_source, subscriber_sinks) =
         setup_notice_sink(case.subscriber_count, case.pattern);
@@ -163,38 +163,35 @@ fn measure_notice_fanout(ctx: &mut StressContext, case: NoticeFanoutCase) {
     let (msg_type, payload) = extract_single_tlv_field(&publish_frame);
     let mut expected_per_subscriber = 0usize;
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            for _ in 0..NOTICE_FANOUT_CONFIRM_BATCH_SIZE {
-                route_frame(
-                    router.as_ref(),
-                    &publisher_source,
-                    case.publish_route,
-                    PUBLISHER_SESSION_ID,
-                    ChannelId::Pub,
-                    msg_type,
-                    payload.clone(),
-                    family,
-                )
-                .expect("notice publish");
-            }
-            expected_per_subscriber += NOTICE_FANOUT_CONFIRM_BATCH_SIZE;
-            let delivered = wait_for_counting_sinks_each_count(
-                &subscriber_sinks,
-                expected_per_subscriber,
-                Duration::from_secs(1),
-            );
-            assert_eq!(
-                delivered,
-                case.subscriber_count * expected_per_subscriber,
-                "notice publish should deliver exactly once per matching subscriber"
-            );
-        },
-    );
+    let iterations = ctx.measure_workload(|| {
+        for _ in 0..NOTICE_FANOUT_CONFIRM_BATCH_SIZE {
+            route_frame(
+                router.as_ref(),
+                &publisher_source,
+                case.publish_route,
+                PUBLISHER_SESSION_ID,
+                ChannelId::Pub,
+                msg_type,
+                payload.clone(),
+                family,
+            )
+            .expect("notice publish");
+        }
+        expected_per_subscriber += NOTICE_FANOUT_CONFIRM_BATCH_SIZE;
+        let delivered = wait_for_counting_sinks_each_count(
+            &subscriber_sinks,
+            expected_per_subscriber,
+            Duration::from_secs(1),
+        );
+        assert_eq!(
+            delivered,
+            case.subscriber_count * expected_per_subscriber,
+            "notice publish should deliver exactly once per matching subscriber"
+        );
+    });
     let batch_size =
         u64::try_from(NOTICE_FANOUT_CONFIRM_BATCH_SIZE).expect("notice fanout batch size fits u64");
-    ctx.set_elements(iterations as u64 * batch_size);
+    stress_config::record_completed(ctx, iterations * batch_size);
 }
 
 fn single_star_scaling_case(subscriber_count: usize) -> NoticeFanoutCase {
@@ -219,7 +216,7 @@ fn double_star_scaling_case(subscriber_count: usize) -> NoticeFanoutCase {
     }
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_fanout_sustained_load(ctx: &mut StressContext) {
     measure_notice_fanout(
         ctx,
@@ -234,7 +231,7 @@ fn should_complete_fanout_sustained_load(ctx: &mut StressContext) {
     );
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_pattern_matching_scaling(ctx: &mut StressContext) {
     measure_notice_fanout(
         ctx,
@@ -249,7 +246,7 @@ fn should_complete_pattern_matching_scaling(ctx: &mut StressContext) {
     );
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_fanout_high_subscriber_count(ctx: &mut StressContext) {
     measure_notice_fanout(
         ctx,
@@ -264,84 +261,81 @@ fn should_complete_fanout_high_subscriber_count(ctx: &mut StressContext) {
     );
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_fanout_subscriber_scaling_1(ctx: &mut StressContext) {
     measure_notice_fanout(ctx, single_star_scaling_case(1));
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_fanout_subscriber_scaling_16(ctx: &mut StressContext) {
     measure_notice_fanout(ctx, single_star_scaling_case(16));
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_fanout_subscriber_scaling_64(ctx: &mut StressContext) {
     measure_notice_fanout(ctx, single_star_scaling_case(64));
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_fanout_subscriber_scaling_256(ctx: &mut StressContext) {
     measure_notice_fanout(ctx, single_star_scaling_case(256));
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_fanout_subscriber_scaling_1000(ctx: &mut StressContext) {
     measure_notice_fanout(ctx, single_star_scaling_case(1000));
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_double_star_fanout_subscriber_scaling_1(ctx: &mut StressContext) {
     measure_notice_fanout(ctx, double_star_scaling_case(1));
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_double_star_fanout_subscriber_scaling_16(ctx: &mut StressContext) {
     measure_notice_fanout(ctx, double_star_scaling_case(16));
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_double_star_fanout_subscriber_scaling_64(ctx: &mut StressContext) {
     measure_notice_fanout(ctx, double_star_scaling_case(64));
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_double_star_fanout_subscriber_scaling_256(ctx: &mut StressContext) {
     measure_notice_fanout(ctx, double_star_scaling_case(256));
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_double_star_fanout_subscriber_scaling_1000(ctx: &mut StressContext) {
     measure_notice_fanout(ctx, double_star_scaling_case(1000));
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_wildcard_subscribe_unsubscribe_cycle(ctx: &mut StressContext) {
-    ctx.tag("scenario", "wildcard_subscribe_unsubscribe_cycle");
-    ctx.tag("measurement_scope", "routed_lifecycle");
-    ctx.tag("batch_size", "1_subscribe_1_unsubscribe");
-    ctx.tag("subscriber_count", "1");
+    ctx.parameter("scenario", "wildcard_subscribe_unsubscribe_cycle");
+    ctx.parameter("measurement_scope", "routed_lifecycle");
+    ctx.parameter("batch_size", "1_subscribe_1_unsubscribe");
+    ctx.parameter("subscriber_count", "1");
 
     let pattern = "notice://realm/area/orders/*";
     let subscribe_frame = build_notice_subscribe(pattern);
     let (subscribe_msg_type, subscribe_payload) = extract_single_tlv_field(&subscribe_frame);
     let harness = setup_notice_request_sink();
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let subscribe_response =
-                harness.request(pattern, subscribe_msg_type, subscribe_payload.clone());
-            let subscription_id = parse_notice_subscribe_ok(&subscribe_response);
+    let iterations = ctx.measure_workload(|| {
+        let subscribe_response =
+            harness.request(pattern, subscribe_msg_type, subscribe_payload.clone());
+        let subscription_id = parse_notice_subscribe_ok(&subscribe_response);
 
-            let unsubscribe_response = harness.request(
-                pattern,
-                502,
-                encode_notice_unsubscribe_payload(subscription_id),
-            );
-            assert_notice_success(&unsubscribe_response);
-        },
-    );
-    ctx.set_elements(2 * iterations as u64);
+        let unsubscribe_response = harness.request(
+            pattern,
+            502,
+            encode_notice_unsubscribe_payload(subscription_id),
+        );
+        assert_notice_success(&unsubscribe_response);
+    });
+    stress_config::record_completed(ctx, 2 * iterations);
 }
 
 stress_main!();

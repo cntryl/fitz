@@ -91,18 +91,20 @@ assert_eq!(response.ttl,  original.ttl);
 If verifying two sequential actions (e.g. upload then download), split into two tests.
 The second test's **Arrange** section performs setup that would otherwise be a second Act.
 
-### Step 7 — Validate
+### Step 7 — Validate the touched behavior
 
-Run the meta-test to confirm compliance:
+Run the focused test you added or changed:
 
 ```bash
-cargo test test_guidelines_compliance
+cargo test <test_name>
 ```
 
-Or validate all tests at once:
+For broader Rust changes, run the default repo validation:
 
 ```bash
-cntryl-tools validate-tests
+cargo fmt --all -- --check
+cargo test --workspace
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic
 ```
 
 ---

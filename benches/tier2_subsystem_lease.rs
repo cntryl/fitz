@@ -1,5 +1,8 @@
 use bytes::Bytes;
-use criterion::{criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+#[path = "tier2_stress.rs"]
+mod tier2_stress;
+
+use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
     create_bench_lease_sink, register_session_counting_sink, route_frame,
     wait_for_counting_sinks_each_count, CountingSink,
@@ -15,20 +18,12 @@ use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-#[path = "criterion_config.rs"]
-mod criterion_config;
-
 const WATCH_ROUTE: &str = "lease://realm/locks/primary";
 const CLIENT_SESSION_ID: u64 = 1;
 const WATCH_REGISTER_BATCH_SIZE: usize = 256;
 const WATCH_REGISTER_CASE_COUNT: usize = 8;
 const NOTIFY_REPEAT_COUNT: u64 = 512;
 const NOTIFY_CHUNK_SIZE: u64 = 64;
-
-struct LeasePatternCase {
-    label: &'static str,
-    pattern: &'static str,
-}
 
 struct PreparedLeaseNotifyCase {
     sink: Arc<LeaseDomainSink>,
@@ -171,124 +166,156 @@ fn prepare_notify_case(watcher_count: usize, pattern: &str) -> PreparedLeaseNoti
     case
 }
 
-fn bench_lease_watch_register_primary(c: &mut Criterion) {
-    let mut group = c.benchmark_group("subsystem_lease");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(
-        (WATCH_REGISTER_BATCH_SIZE * WATCH_REGISTER_CASE_COUNT) as u64,
-    ));
-
-    group.bench_function(
-        format!("watch_register_256_sessions_x{WATCH_REGISTER_CASE_COUNT}_cases_primary"),
-        |b| {
-            b.iter_custom(|iters| {
-                let mut total = Duration::ZERO;
-                for _ in 0..iters {
-                    let cases: Vec<_> = (0..WATCH_REGISTER_CASE_COUNT)
-                        .map(|_| prepare_watch_register_case())
-                        .collect();
-                    let start = Instant::now();
-                    for case in &cases {
-                        for (session_id, source, _) in &case.watchers {
-                            register_lease_watch(
-                                &case.router,
-                                case.family,
-                                source,
-                                WATCH_ROUTE,
-                                *session_id,
-                                WATCH_ROUTE,
-                            );
-                        }
-                    }
-
-                    for case in &cases {
-                        let sinks: Vec<_> = case
-                            .watchers
-                            .iter()
-                            .map(|(_, _, sink)| sink.clone())
-                            .collect();
-                        let responses =
-                            wait_for_counting_sinks_each_count(&sinks, 1, Duration::from_secs(1));
-                        assert_eq!(
-                            responses, WATCH_REGISTER_BATCH_SIZE,
-                            "lease watch registration should ack every watcher"
-                        );
-                    }
-                    total += start.elapsed();
-
-                    for case in cases {
-                        case.router.clear();
-                    }
-                }
-                total
-            });
-        },
-    );
-
-    group.finish();
-}
-
-fn bench_lease_notify_primary(c: &mut Criterion) {
-    let pattern_cases = [
-        LeasePatternCase {
-            label: "exact_route",
-            pattern: WATCH_ROUTE,
-        },
-        LeasePatternCase {
-            label: "single_star",
-            pattern: "lease://realm/locks/*",
-        },
-        LeasePatternCase {
-            label: "double_star",
-            pattern: "lease://realm/**",
-        },
-    ];
-
-    let mut group = c.benchmark_group("subsystem_lease");
-    group.sampling_mode(SamplingMode::Flat);
-
-    for pattern_case in pattern_cases {
-        for watcher_count in [1usize, 16usize, 64usize, 256usize] {
-            let case = prepare_notify_case(watcher_count, pattern_case.pattern);
-            group.throughput(Throughput::Elements(watcher_count as u64));
-            group.bench_function(
-                format!(
-                    "notify_{}_{}_watchers_primary",
-                    pattern_case.label, watcher_count
-                ),
-                |b| {
-                    b.iter_custom(|iters| {
-                        let mut remaining = iters.saturating_mul(NOTIFY_REPEAT_COUNT);
-                        let mut total = Duration::ZERO;
-                        while remaining > 0 {
-                            let chunk = remaining.min(NOTIFY_CHUNK_SIZE);
-                            case.reset_watcher_counts();
-                            let start = Instant::now();
-                            for _ in 0..chunk {
-                                case.publish_once();
-                            }
-                            let expected_per_watcher =
-                                usize::try_from(chunk).expect("lease publish count fits usize");
-                            case.wait_for_notifications_per_watcher(expected_per_watcher);
-                            total += start.elapsed();
-                            case.reset_watcher_counts();
-                            remaining -= chunk;
-                        }
-                        total
-                            / u32::try_from(NOTIFY_REPEAT_COUNT)
-                                .expect("notify repeat count fits u32")
-                    });
-                },
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "watch_register_256_sessions_x8_cases_primary"
+)]
+fn should_watch_register_256_sessions_x8_cases_primary(ctx: &mut StressContext) {
+    let cases = (0..WATCH_REGISTER_CASE_COUNT)
+        .map(|_| prepare_watch_register_case())
+        .collect::<Vec<_>>();
+    let start = Instant::now();
+    for case in &cases {
+        for (session_id, source, _) in &case.watchers {
+            register_lease_watch(
+                &case.router,
+                case.family,
+                source,
+                WATCH_ROUTE,
+                *session_id,
+                WATCH_ROUTE,
             );
         }
     }
+    let duration = start.elapsed();
 
-    group.finish();
+    for case in &cases {
+        let sinks = case
+            .watchers
+            .iter()
+            .map(|(_, _, sink)| sink.clone())
+            .collect::<Vec<_>>();
+        let responses = wait_for_counting_sinks_each_count(&sinks, 1, Duration::from_secs(1));
+        assert_eq!(
+            responses, WATCH_REGISTER_BATCH_SIZE,
+            "lease watch registration should ack every watcher"
+        );
+    }
+    for case in cases {
+        case.router.clear();
+    }
+    tier2_stress::record_duration(
+        ctx,
+        duration,
+        (WATCH_REGISTER_BATCH_SIZE * WATCH_REGISTER_CASE_COUNT) as u64,
+    );
 }
 
-criterion_group! {
-    name = benches;
-    config = criterion_config::criterion_config_for_tier2();
-    targets = bench_lease_watch_register_primary, bench_lease_notify_primary
+fn notify_watchers(ctx: &mut StressContext, watcher_count: usize, pattern: &str) {
+    let case = prepare_notify_case(watcher_count, pattern);
+    let mut remaining = NOTIFY_REPEAT_COUNT;
+    let mut total = Duration::ZERO;
+    while remaining > 0 {
+        let chunk = remaining.min(NOTIFY_CHUNK_SIZE);
+        case.reset_watcher_counts();
+        let start = Instant::now();
+        for _ in 0..chunk {
+            case.publish_once();
+        }
+        let expected_per_watcher = usize::try_from(chunk).expect("lease publish count fits usize");
+        case.wait_for_notifications_per_watcher(expected_per_watcher);
+        total += start.elapsed();
+        case.reset_watcher_counts();
+        remaining -= chunk;
+    }
+    tier2_stress::record_duration(
+        ctx,
+        total / u32::try_from(NOTIFY_REPEAT_COUNT).expect("notify repeat count fits u32"),
+        watcher_count as u64,
+    );
 }
-criterion_main!(benches);
+
+macro_rules! lease_notify_bench {
+    ($fn_name:ident, $stress_name:literal, $watchers:expr, $pattern:expr) => {
+        #[stress_test(tier = 2, mode = "fixed_duration", name = $stress_name)]
+        fn $fn_name(ctx: &mut StressContext) {
+            notify_watchers(ctx, $watchers, $pattern);
+        }
+    };
+}
+
+lease_notify_bench!(
+    should_notify_exact_route_1_watchers_primary,
+    "notify_exact_route_1_watchers_primary",
+    1,
+    WATCH_ROUTE
+);
+lease_notify_bench!(
+    should_notify_exact_route_16_watchers_primary,
+    "notify_exact_route_16_watchers_primary",
+    16,
+    WATCH_ROUTE
+);
+lease_notify_bench!(
+    should_notify_exact_route_64_watchers_primary,
+    "notify_exact_route_64_watchers_primary",
+    64,
+    WATCH_ROUTE
+);
+lease_notify_bench!(
+    should_notify_exact_route_256_watchers_primary,
+    "notify_exact_route_256_watchers_primary",
+    256,
+    WATCH_ROUTE
+);
+lease_notify_bench!(
+    should_notify_single_star_1_watchers_primary,
+    "notify_single_star_1_watchers_primary",
+    1,
+    "lease://realm/locks/*"
+);
+lease_notify_bench!(
+    should_notify_single_star_16_watchers_primary,
+    "notify_single_star_16_watchers_primary",
+    16,
+    "lease://realm/locks/*"
+);
+lease_notify_bench!(
+    should_notify_single_star_64_watchers_primary,
+    "notify_single_star_64_watchers_primary",
+    64,
+    "lease://realm/locks/*"
+);
+lease_notify_bench!(
+    should_notify_single_star_256_watchers_primary,
+    "notify_single_star_256_watchers_primary",
+    256,
+    "lease://realm/locks/*"
+);
+lease_notify_bench!(
+    should_notify_double_star_1_watchers_primary,
+    "notify_double_star_1_watchers_primary",
+    1,
+    "lease://realm/**"
+);
+lease_notify_bench!(
+    should_notify_double_star_16_watchers_primary,
+    "notify_double_star_16_watchers_primary",
+    16,
+    "lease://realm/**"
+);
+lease_notify_bench!(
+    should_notify_double_star_64_watchers_primary,
+    "notify_double_star_64_watchers_primary",
+    64,
+    "lease://realm/**"
+);
+lease_notify_bench!(
+    should_notify_double_star_256_watchers_primary,
+    "notify_double_star_256_watchers_primary",
+    256,
+    "lease://realm/**"
+);
+
+stress_main!();

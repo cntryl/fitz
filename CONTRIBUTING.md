@@ -3,7 +3,7 @@
 ## Dev Setup
 
 - Install Rust stable.
-- Install shared tooling:
+- Install shared tooling when working on benchmark reports:
   - `cargo install --git https://github.com/cntryl/tools --locked`
 - Clone the repo and run the workspace tests:
   - `cargo test --workspace`
@@ -15,9 +15,7 @@ Run these before opening a behavior-changing PR:
 ```sh
 cargo fmt --all -- --check
 cargo test --workspace
-cargo test test_guidelines_compliance
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic
-cntryl-tools validate-tests
 ```
 
 ## Running Locally

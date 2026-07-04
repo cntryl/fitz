@@ -4,7 +4,7 @@
 // These benches drive the same in-proc sink/runtime path as the live server.
 //
 // Each test measures a single operation with all setup/teardown outside the measurement loop.
-// Target: ops/sec via set_elements(count)
+// Target: ops/sec via record_completed(count)
 
 #[path = "stress_config.rs"]
 mod stress_config;
@@ -158,11 +158,11 @@ fn prepare_validated_read(
     (read_msg_type, read_payload)
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_append_sustained_load(ctx: &mut StressContext) {
-    ctx.tag("scenario", "sustained_append");
-    ctx.tag("measurement_scope", "routed_system");
-    ctx.tag("batch_size", "single_append");
+    ctx.parameter("scenario", "sustained_append");
+    ctx.parameter("measurement_scope", "routed_system");
+    ctx.parameter("batch_size", "single_append");
 
     let context = setup_stream_sink();
     let route = "stream://bench/system/append/append";
@@ -170,20 +170,17 @@ fn should_complete_append_sustained_load(ctx: &mut StressContext) {
     let append_frame = build_stream_append(session_id, 0, b"sustained append event");
     let (msg_type, payload) = extract_single_tlv_field(&append_frame);
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let _ = request(&context, route, msg_type, payload.clone());
-        },
-    );
-    ctx.set_elements(iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        let _ = request(&context, route, msg_type, payload.clone());
+    });
+    stress_config::record_completed(ctx, iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_read_scan_throughput(ctx: &mut StressContext) {
-    ctx.tag("scenario", "read_scan");
-    ctx.tag("measurement_scope", "routed_system");
-    ctx.tag("batch_size", "100_events_scanned");
+    ctx.parameter("scenario", "read_scan");
+    ctx.parameter("measurement_scope", "routed_system");
+    ctx.parameter("batch_size", "100_events_scanned");
 
     let context = setup_stream_sink();
     let route = "stream://bench/system/read/read";
@@ -200,21 +197,18 @@ fn should_complete_read_scan_throughput(ctx: &mut StressContext) {
     let read_frame = build_stream_read(route, 0);
     let (read_msg_type, read_payload) = extract_single_tlv_field(&read_frame);
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let _ = request(&context, route, read_msg_type, read_payload.clone());
-        },
-    );
-    ctx.set_elements(100 * iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        let _ = request(&context, route, read_msg_type, read_payload.clone());
+    });
+    stress_config::record_completed(ctx, 100 * iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_area_wildcard_read_throughput(ctx: &mut StressContext) {
-    ctx.tag("scenario", "read_area_wildcard");
-    ctx.tag("measurement_scope", "routed_system");
-    ctx.tag("read_scope", "area");
-    ctx.tag("batch_size", "100_events_scanned");
+    ctx.parameter("scenario", "read_area_wildcard");
+    ctx.parameter("measurement_scope", "routed_system");
+    ctx.parameter("read_scope", "area");
+    ctx.parameter("batch_size", "100_events_scanned");
 
     let context = setup_stream_sink();
     seed_committed_stream_route(
@@ -233,21 +227,18 @@ fn should_complete_area_wildcard_read_throughput(ctx: &mut StressContext) {
     let read_route = "stream://bench/area/*";
     let (read_msg_type, read_payload) = prepare_validated_read(&context, read_route, 100);
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let _ = request(&context, read_route, read_msg_type, read_payload.clone());
-        },
-    );
-    ctx.set_elements(100 * iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        let _ = request(&context, read_route, read_msg_type, read_payload.clone());
+    });
+    stress_config::record_completed(ctx, 100 * iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_realm_wildcard_read_throughput(ctx: &mut StressContext) {
-    ctx.tag("scenario", "read_realm_wildcard");
-    ctx.tag("measurement_scope", "routed_system");
-    ctx.tag("read_scope", "realm");
-    ctx.tag("batch_size", "100_events_scanned");
+    ctx.parameter("scenario", "read_realm_wildcard");
+    ctx.parameter("measurement_scope", "routed_system");
+    ctx.parameter("read_scope", "realm");
+    ctx.parameter("batch_size", "100_events_scanned");
 
     let context = setup_stream_sink();
     seed_committed_stream_route(
@@ -266,20 +257,17 @@ fn should_complete_realm_wildcard_read_throughput(ctx: &mut StressContext) {
     let read_route = "stream://bench/*/*";
     let (read_msg_type, read_payload) = prepare_validated_read(&context, read_route, 100);
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let _ = request(&context, read_route, read_msg_type, read_payload.clone());
-        },
-    );
-    ctx.set_elements(100 * iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        let _ = request(&context, read_route, read_msg_type, read_payload.clone());
+    });
+    stress_config::record_completed(ctx, 100 * iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_batch_write_operations(ctx: &mut StressContext) {
-    ctx.tag("scenario", "batch_write");
-    ctx.tag("measurement_scope", "routed_system");
-    ctx.tag("batch_size", "100_appends");
+    ctx.parameter("scenario", "batch_write");
+    ctx.parameter("measurement_scope", "routed_system");
+    ctx.parameter("batch_size", "100_appends");
 
     let context = setup_stream_sink();
     let route = "stream://bench/system/batch/append";
@@ -287,23 +275,20 @@ fn should_complete_batch_write_operations(ctx: &mut StressContext) {
     let append_frame = build_stream_append(session_id, 0, b"batch event");
     let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            for _ in 0..100 {
-                let _ = request(&context, route, append_msg_type, append_payload.clone());
-            }
-        },
-    );
-    ctx.set_elements(100 * iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        for _ in 0..100 {
+            let _ = request(&context, route, append_msg_type, append_payload.clone());
+        }
+    });
+    stress_config::record_completed(ctx, 100 * iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_multiarea_concurrent_writes(ctx: &mut StressContext) {
-    ctx.tag("scenario", "multiarea_writes");
-    ctx.tag("measurement_scope", "routed_system");
-    ctx.tag("batch_size", "10_appends");
-    ctx.tag("area_count", "10");
+    ctx.parameter("scenario", "multiarea_writes");
+    ctx.parameter("measurement_scope", "routed_system");
+    ctx.parameter("batch_size", "10_appends");
+    ctx.parameter("area_count", "10");
 
     let context = setup_stream_sink();
     let routes: Vec<String> = (0..10)
@@ -319,23 +304,20 @@ fn should_complete_multiarea_concurrent_writes(ctx: &mut StressContext) {
         })
         .collect();
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            for (route, msg_type, payload) in &append_requests {
-                let _ = request(&context, route, *msg_type, payload.clone());
-            }
-        },
-    );
-    ctx.set_elements(10 * iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        for (route, msg_type, payload) in &append_requests {
+            let _ = request(&context, route, *msg_type, payload.clone());
+        }
+    });
+    stress_config::record_completed(ctx, 10 * iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_publish_fanout_with_subscribers(ctx: &mut StressContext) {
-    ctx.tag("scenario", "publish_fanout");
-    ctx.tag("measurement_scope", "routed_fanout");
-    ctx.tag("batch_size", "10_publishes");
-    ctx.tag("subscriber_count", "16");
+    ctx.parameter("scenario", "publish_fanout");
+    ctx.parameter("measurement_scope", "routed_fanout");
+    ctx.parameter("batch_size", "10_publishes");
+    ctx.parameter("subscriber_count", "16");
 
     let context = setup_write_heavy_stream_sink();
     let subscribe_destination = "stream://bench/system/fanout-control/append";
@@ -361,35 +343,32 @@ fn should_complete_publish_fanout_with_subscribers(ctx: &mut StressContext) {
         })
         .collect();
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            for (route, expected_offset) in publish_routes.iter().zip(expected_offsets.iter()) {
-                let stream_session = begin_stream(&context, route);
+    let iterations = ctx.measure_workload(|| {
+        for (route, expected_offset) in publish_routes.iter().zip(expected_offsets.iter()) {
+            let stream_session = begin_stream(&context, route);
 
-                let append_frame =
-                    build_stream_append(stream_session, expected_offset.get(), b"fanout event");
-                let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
-                let append_response = request(&context, route, append_msg_type, append_payload);
-                assert_stream_success("append", route, &append_response);
+            let append_frame =
+                build_stream_append(stream_session, expected_offset.get(), b"fanout event");
+            let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
+            let append_response = request(&context, route, append_msg_type, append_payload);
+            assert_stream_success("append", route, &append_response);
 
-                let commit_frame = build_stream_commit(stream_session, STREAM_SYNC_COMMIT_MODE);
-                let (commit_msg_type, commit_payload) = extract_single_tlv_field(&commit_frame);
-                let commit_response = request(&context, route, commit_msg_type, commit_payload);
-                assert_stream_success("commit", route, &commit_response);
+            let commit_frame = build_stream_commit(stream_session, STREAM_SYNC_COMMIT_MODE);
+            let (commit_msg_type, commit_payload) = extract_single_tlv_field(&commit_frame);
+            let commit_response = request(&context, route, commit_msg_type, commit_payload);
+            assert_stream_success("commit", route, &commit_response);
 
-                expected_offset.set(expected_offset.get().saturating_add(1));
-            }
-        },
-    );
-    ctx.set_elements(publish_routes.len() as u64 * iterations as u64);
+            expected_offset.set(expected_offset.get().saturating_add(1));
+        }
+    });
+    stress_config::record_completed(ctx, publish_routes.len() as u64 * iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 3, mode = "fixed_duration")]
 fn should_complete_offset_tracking_overhead(ctx: &mut StressContext) {
-    ctx.tag("scenario", "offset_tracking");
-    ctx.tag("measurement_scope", "routed_system");
-    ctx.tag("batch_size", "single_last_read");
+    ctx.parameter("scenario", "offset_tracking");
+    ctx.parameter("measurement_scope", "routed_system");
+    ctx.parameter("batch_size", "single_last_read");
 
     let context = setup_stream_sink();
     let route = "stream://bench/system/offset/append";
@@ -404,13 +383,10 @@ fn should_complete_offset_tracking_overhead(ctx: &mut StressContext) {
     let last_frame = build_stream_last(route);
     let (last_msg_type, last_payload) = extract_single_tlv_field(&last_frame);
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let _ = request(&context, route, last_msg_type, last_payload.clone());
-        },
-    );
-    ctx.set_elements(iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        let _ = request(&context, route, last_msg_type, last_payload.clone());
+    });
+    stress_config::record_completed(ctx, iterations);
 }
 
 stress_main!();

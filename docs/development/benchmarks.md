@@ -1,789 +1,229 @@
 # Benchmark Guidelines
 
-**Version:** 1.0  
-**Last Updated:** October 20, 2025  
+**Version:** 2.0
+**Last Updated:** July 4, 2026
 **Project:** Fitz Message Broker
 
-## Table of Contents
-
-- [Philosophy](#philosophy)
-- [File Organization](#file-organization)
-- [Benchmark Structure](#benchmark-structure)
-- [Naming Conventions](#naming-conventions)
-- [Configuration Patterns](#configuration-patterns)
-- [Best Practices](#best-practices)
-- [Benchmark Categories](#benchmark-categories)
-- [CI and Local Workflows](#ci-and-local-workflows)
-- [Stress benchmark contract (Tier 3/4)](#stress-benchmark-contract-tier-34)
-- [Performance targets](#performance-targets)
-- [Quick Reference](#quick-reference)
-- [Document History](#document-history)
+Fitz benchmarks use one framework: `cntryl-stress`. Tier 1 through Tier N write
+`cntryl-stress.v1` artifacts under `target/stress/`, and
+`cntryl-tools summarize-benchmarks` turns those artifacts into
+`target/bench_results.json` and `target/bench_summary.md`.
 
 ## Philosophy
 
-Benchmarks in Fitz measure **real-world message broker performance** across routes, schemes, and transports while maintaining **fast feedback loops** for daily development.
+Benchmarks measure real broker performance across routes, domains, and
+transports. Tests prove correctness; benchmarks quantify cost, scaling, and
+regression risk.
 
-### Core Principles
+Use benchmark rows for one of these questions:
 
-1. **Benchmarks ≠ Tests**
-   - Tests verify correctness, benchmarks measure speed and scaling
-   - Benchmarks should not test functionality (that's what tests are for)
-   - Focus on realistic messaging workloads, not edge cases
-2. **Fast Feedback First**
-   - Default configuration runs in seconds, not minutes
-   - Developers should run benchmarks frequently during development
-   - Long, statistically rigorous runs reserved for release profiling
-3. **Measure What Matters**
-   - Focus on user-facing performance (message throughput, publish latency, routing speed)
-   - Avoid micro-optimizing insignificant code paths
-   - Profile first, benchmark second
-4. **Reproducibility**
-   - Benchmarks must produce consistent results across runs
-   - Use deterministic data, not random values
-   - Document environmental factors that affect results
+- Did a core invariant regress?
+- Did customer-visible throughput regress?
+- Did an algorithmic scaling curve change?
+- Did a risky subsystem get slower?
 
-### Suite Split
+Do not benchmark fake work, setup-only loops, or getters that cannot inform an
+optimization decision. Keep setup outside the timed section unless the row name
+explicitly says construction/setup is part of the measured behavior.
 
-Fitz keeps benchmark coverage, but only a small, stable subset is release-gating.
+## Suite Split
 
-- **Release suite:** 30-50 baseline-backed rows that cover customer-visible invariants: RPC request/response, queue enqueue/dequeue/ack, stream append/read/replay, notice publish/fanout, schedule create/claim/ack, and TCP/WS integration for each domain.
-- **Deep suite:** Nightly/manual coverage for selected sweeps, storage-model experiments, wildcard and route-depth variants, high-cardinality registration, and rows with noisy RSD. Keep it near 100-150 records.
-- **Historical experiments:** One-off profiling benches that no longer answer an active regression, throughput, scaling, or risky-subsystem question.
+Fitz uses the stress default profile for every documented and CI benchmark
+command. The default is the trustworthy release profile from `cntryl-stress`.
+Do not pass `--profile` in Fitz workflow or documentation commands.
 
-Before adding a benchmark to the release suite, confirm it answers one of these:
+- **Release suite:** 30-50 baseline-backed rows that cover customer-visible
+  invariants: RPC request/response, queue enqueue/dequeue/ack, stream
+  append/read/replay, notice publish/fanout, schedule create/claim/ack, and
+  TCP/WS integration for each domain.
+- **Deep suite:** Broader nightly/manual coverage for scaling curves,
+  storage-model experiments, wildcard and route-depth variants, high-cardinality
+  registration, and noisy rows. It uses the same default stress profile; it is
+  deeper coverage, not a different profile.
+- **Historical experiments:** One-off profiling benches that no longer answer
+  an active regression, throughput, scaling, or risky-subsystem question.
 
-1. Did a core invariant regress?
-2. Did customer-visible throughput regress?
-3. Did an algorithmic scaling curve change?
-4. Did a risky subsystem get slower?
-
-The release suite is enumerated in [`config/bench_release_ids.txt`](../../config/bench_release_ids.txt). Keep that file small, baseline-backed, and reviewable. Rows that are important but not yet baseline-backed, such as schedule claim/ack and explicit stream replay rows, start as deep-suite or release-candidate coverage until a guarded baseline refresh promotes them.
+The release suite is enumerated in
+[`config/bench_release_ids.txt`](../../config/bench_release_ids.txt). Keep that
+file small, baseline-backed, and reviewable.
 
 ## File Organization
 
-### Tier Layout and Directory Structure
+| Tier | Kind | Tool | Location | Scope |
+| --- | --- | --- | --- | --- |
+| **Tier 1** | Hotpath | Stress micro | `benches/tier1_hotpath_*.rs` | Pure synchronous internals using `#[stress_test(tier = 1)]` and `ctx.measure_micro`. |
+| **Tier 2** | Subsystem | Stress | `benches/tier2_subsystem_*.rs` | Component and domain subsystem rows with explicit correctness counters. |
+| **Tier 3** | System | Stress | `benches/tier3_system_*.rs` | In-process domain actor + test engine, no network. |
+| **Tier 4** | Integration | Stress | `benches/tier4_integration_*.rs` | Full stack direct/TCP/WebSocket/multiclient scenarios. |
 
-Benchmarks are organized in four tiers. Use the shared config and naming below.
+Shared helper files:
 
-| Tier       | Kind        | Tool      | Location                         | Scope                                                                                                                                     |
-| ---------- | ----------- | --------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| **Tier 1** | Hotpath     | Criterion | `benches/tier1_hotpath_*.rs`     | Pure sync internals (routing, envelope, matcher, TLV, mux, permissions, context, actor_messaging). Target: stable medians; avoid headline results below 0.05µs. |
-| **Tier 2** | Subsystem   | Criterion | `benches/tier2_subsystem_*.rs`   | Scheduler, mailbox, subscriptions, TLV pipeline. Target: &lt;3s.                                                                          |
-| **Tier 3** | System      | Stress    | `benches/tier3_system_*.rs`      | One bench per domain (kv, lease, notice, queue, rpc, schedule, stream). In-process actor + test engine, no network. Target: &lt;10s.      |
-| **Tier 4** | Integration | Stress    | `benches/tier4_integration_*.rs` | Same domains; full stack (direct → encoded → TCP → WebSocket → multiclient). Target: identify E2E performance cliffs.                     |
+- `benches/tier2_stress.rs`: small Tier 2 counter helpers around direct stress
+  context calls.
+- `benches/stress_config.rs`: shared correctness counter recording only.
 
-```
-benches/
-├── criterion_config.rs    # Shared Criterion config (use criterion_config_for_tier1/2())
-├── stress_config.rs       # Stress run configuration helper
-├── tier1_hotpath_matcher.rs
-├── tier1_hotpath_tlv.rs
-├── tier1_hotpath_mux.rs
-├── tier1_hotpath_actor_messaging.rs
-├── tier1_hotpath_envelope.rs
-├── tier1_hotpath_routing.rs
-├── tier1_hotpath_permissions.rs
-├── tier1_hotpath_context.rs
-├── tier2_subsystem_mailbox.rs
-├── tier2_subsystem_scheduler.rs
-├── tier2_subsystem_subscriptions.rs
-├── tier2_subsystem_tlv_pipeline.rs
-├── tier3_system_kv.rs
-├── tier3_system_lease.rs
-├── tier3_system_notice.rs
-├── tier3_system_queue.rs
-├── tier3_system_rpc.rs
-├── tier3_system_schedule.rs
-├── tier3_system_stream.rs
-├── tier3_system_stream_storage_model.rs
-├── tier4_integration_kv.rs
-├── tier4_integration_lease.rs
-├── tier4_integration_notice.rs
-├── tier4_integration_queue.rs
-├── tier4_integration_rpc.rs
-├── tier4_integration_schedule.rs
-├── tier4_integration_stream.rs
-└── tier4_integration_stream_storage_model.rs
-```
-
-### Organization Principles
-
-- **One file per subsystem/domain** - Tier1/2: one module per file; Tier3/4: one domain per file.
-- **Shared config** - Tier1/2 use `benches/criterion_config.rs` (`criterion_config_for_tier1()` / `criterion_config_for_tier2()`); Tier3/4 use `benches/stress_config.rs` and env vars (see [Stress configuration](#stress-configuration-tier-3-and-4)).
-- **Clear naming** - Files follow `tierN_{hotpath|subsystem|system|integration}_{name}.rs`.
-- **Logical grouping** - Related benchmarks in the same file; use a single Criterion group name per file (e.g. `hotpath_routing`) and `Throughput::Elements(N)` for comparability.
+The manifest sets `autobenches = false`; every runnable bench target must be
+listed explicitly in `Cargo.toml`.
 
 ## Benchmark Structure
 
-### Standard Template
-
-Every benchmark should follow the AAA (Arrange-Act-Assert) pattern:
+Stress benchmarks follow this shape:
 
 ```rust
-use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+use cntryl_stress::{black_box, stress_main, stress_test, StressContext};
 
-#[path = "criterion_config.rs"]
-mod criterion_config;
+#[stress_test(tier = 1, name = "decode_one_64b", max_allocs_per_op = 0, max_bytes_per_op = 0)]
+fn should_decode_one_64b(ctx: &mut StressContext) {
+    let frame = build_frame(64);
+    let decoder = TlvDecoder::new();
 
-fn bench_router_match_1k_routes(c: &mut Criterion) {
-    // Arrange: Setup (outside b.iter for minimal overhead)
-    let router = setup_router_with_routes(1000);
-    let test_routes: Vec<String> = (0..1000)
-        .map(|i| format!("notice://realm{}/area/resource", i))
-        .collect();
+    ctx.parameter("payload_size", 64);
+    ctx.measure_micro(|| black_box(decoder.decode_one(black_box(&frame)).unwrap()));
+}
 
-    let mut group = c.benchmark_group("hotpath_router");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
+#[stress_test(tier = 3, mode = "fixed_duration")]
+fn should_complete_capacity_ack_roundtrip(ctx: &mut StressContext) {
+    let mut actor = build_actor();
 
-    group.bench_function("router_match_1k_routes", |b| {
-        let mut idx = 0;
-        b.iter(|| {
-            // Act: The operation being measured
-            let route = &test_routes[idx % test_routes.len()];
-            let matches = black_box(router.find_subscribers(route));
-            idx += 1;
-            black_box(matches)
-        });
+    ctx.parameter("scenario", "capacity_ack_roundtrip");
+    let iterations = ctx.measure_workload(|| {
+        complete_one_ack_roundtrip(&mut actor);
     });
-    group.finish();
+    let _ = ctx.correctness().attempted(iterations).completed(iterations);
 }
-criterion_group! {
-    name = benches;
-    config = criterion_config::criterion_config_for_tier1();
-    targets = bench_router_match_1k_routes
-}
-criterion_main!(benches);
+
+stress_main!();
 ```
 
-### Key Components
-
-1. **Setup (Arrange)** - Create test data outside `b.iter()`
-2. **Measurement (Act)** - The operation being benchmarked inside `b.iter()`
-3. **Prevention** - Use `black_box()` to prevent compiler optimizations
-4. **Configuration** - Custom Criterion config for fast iteration
-
-## Naming Conventions
-
-### Format
-
-Use the pattern: `{subsystem}_{operation}_{scale}_{variant?}`
-**Examples:**
-
-```rust
-// Routing
-router_match_1k_routes           // Match against 1K registered routes
-router_wildcard_match_10k        // Wildcard matching with 10K routes
-router_dispatch_fanout_100       // Fan-out to 100 subscribers
-// Protocol
-frame_encode_pub_1k              // Encode 1K PUB frames
-frame_decode_dat_10k             // Decode 10K DAT frames
-frame_parse_tlv_nested           // Parse nested TLV structures
-// Schemes
-notice_publish_fanout_10         // Publish to 10 notice subscribers
-stream_append_sequential_1k      // Sequential stream appends (1K)
-queue_lease_batch_100            // Lease 100 queue messages
-rpc_request_response_latency     // RPC round-trip latency
-inbox_ephemeral_delivery         // Inbox message delivery
-// Storage
-memstore_append_1k               // Append 1K messages
-memstore_reserve_extend_ack      // Queue reserve/extend/ack cycle
-memstore_stream_consume_10k      // Consume 10K stream events
-// Transport
-ws_frame_throughput_1k           // WebSocket frame throughput (1K msgs)
-session_handshake_latency        // Session AUTH handshake time
-mux_channel_demux_1k             // Demux 1K frames across channels
-// Authorization
-authz_permission_check_1k        // 1K permission checks
-authz_grant_match_wildcard       // Wildcard grant matching
-authz_tenant_isolation_check     // Tenant isolation verification
-```
-
-### Scale Indicators
-
-- `1k`, `10k`, `50k`, `100k` - Number of operations/messages
-- `small`, `medium`, `large` - Relative sizes
-- `sequential`, `random` - Access patterns
-- `fanout_N` - Number of subscribers/consumers
-
-### Variant Suffixes
-
-- `_latency` - Single operation latency
-- `_throughput` - Operations per second
-- `_fanout` - One-to-many delivery
-- `_batch` - Batched operations
-- `_concurrent` - Concurrent access
-- `_wildcard` - Wildcard pattern matching
-
-## Configuration Patterns
-
-### Criterion (Tier 1 and 2)
-
-All Criterion benchmarks use the shared config from `benches/criterion_config.rs`. Do not define a local `configure_criterion()`; use the shared helper so the report stays comparable across files.
-
-Current shared settings:
-
-- `warm_up_time`: 100ms (Tier 1), 150ms (Tier 2)
-- `measurement_time`: 500ms (Tier 1), 1500ms (Tier 2)
-- `sample_size`: 12 (Tier 1), 10 (Tier 2)
-- `noise_threshold`: 0.05
-
-Local tuning environment variables:
-
-- `BENCH_TIER1_WARMUP_MS`
-- `BENCH_TIER1_MEASUREMENT_MS`
-- `BENCH_TIER1_SAMPLE_SIZE`
-- `BENCH_TIER1_NOISE_THRESHOLD`
-- `BENCH_TIER2_WARMUP_MS`
-- `BENCH_TIER2_MEASUREMENT_MS`
-- `BENCH_TIER2_SAMPLE_SIZE`
-- `BENCH_TIER2_NOISE_THRESHOLD`
-
-Practical rules:
-
-- Do not benchmark trivial getters, clones, or ID constructors on their own.
-- If a measured op is below about 0.05 us median, fold it into a larger workflow or exclude it from the headline report.
-- Use `black_box()` on inputs, but do not use it to hide fake work.
-- Keep setup outside `b.iter()` or `iter_batched()`.
-- If a Tier 2 row claims actor-backed ack, registration, or fanout work, the
-  measured interval must include the response or delivery drain needed to prove
-  that work completed. Setup-only validation waits still belong outside the
-  measured interval.
-- Prefer the shared defaults for fast local iteration; increase measurement time only when diagnosing noise.
-
-The benchmark summary is median-first. Mean is still recorded, but the headline tables and regression checks use median latency or throughput.
-
-### Stress configuration (Tier 3 and 4)
-
-Tier 3 and Tier 4 benchmarks use `cntryl-stress` and `#[stress_test]`. Configuration is passed after `--` to the bench command (see `benches/stress_config.rs`):
-
-| Argument       | Meaning                                    | Default |
-| -------------- | ------------------------------------------ | ------- |
-| `--runs <N>`   | Number of measurement runs per stress test | 5       |
-| `--warmup <N>` | Number of warmup runs before measurement   | 1       |
-
-- **Install tooling:** Install the shared bench/report tooling once per environment with `cargo install --git https://github.com/cntryl/tools --locked`.
-- **set_elements(N):** Set this to the logical number of operations in each `ctx.measure(|| { ... })` (e.g. 3 for begin+put+rollback, 10 for 10 puts). Throughput reported by `cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"` is elements/time, so N must match what the closure does.
-- **Minimum runtime:** Aim for 3s of measured work per scenario. Runs shorter than 3s are invalid, and the summary tool flags them as such because they do not provide stable enough medians.
-- **Output:** Stress results are written under `target/stress/<bench_name>/` (e.g. `target/stress/tier3_system_kv/latest.json`). Run `cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"` after the benchmark commands to produce `target/bench_summary.md`.
-- **Suite split:** The release-gating command list lives in `.github/workflows/bench.yml` and is backed by `config/bench_release_ids.txt`. The deep suite is a curated nightly set, not a full wildcard run of every benchmark target.
-
-Deep local refresh:
-
-```bash
-export FITZ_LOG_LEVEL=warn
-export OTEL_ENABLED=false
-cargo bench --bench tier2_subsystem_queue
-cargo bench --bench tier2_subsystem_lease
-cargo bench --bench tier2_subsystem_notice
-cargo bench --bench tier2_subsystem_rpc
-cargo bench --bench tier2_subsystem_stream
-cargo bench --bench tier2_subsystem_schedule_fire
-cargo bench --bench tier2_subsystem_stream_replay
-cargo bench --bench tier3_system_queue -- --runs 5 --warmup 1
-cargo bench --bench tier3_system_rpc -- --runs 5 --warmup 1
-cargo bench --bench tier3_system_stream_storage_model -- --runs 5 --warmup 1
-cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"
-```
-
-Targeted examples:
-
-```bash
-cargo bench --bench tier2_subsystem_scheduler
-cargo bench --bench tier3_system_queue -- --workload should_complete_capacity_ack_roundtrip --runs 5 --warmup 1
-cargo bench --bench tier4_integration_rpc -- --workload should_complete_ws_request_response --runs 5 --warmup 1
-cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"
-```
-
-Do not use `cargo bench --no-run` as a preflight for CI or local benchmark work. It compiles every bench target without producing signal, and it hides which benchmark surface is actually under review.
-
-For CI, the fast default is the 3s measured window; raise `BENCH_MEASURE_SECS=5` only when you are intentionally collecting a longer profile.
-
-### Stress benchmark contract (Tier 3/4)
-
-Tier 3 and Tier 4 stress tests must follow the **stress benchmark contract**: rules for what goes inside vs outside `ctx.measure`, how to implement direct/encoded/tcp/websocket/multiclient layers, use of `shared_bench_runtime()`, and real actor logic (no fake work). See **[Stress benchmark contract](stress-bench-contract.md)** for the full contract and reference examples.
-
-### Performance targets
-
-Numerical, testable performance targets are defined in **[Performance targets](bench-targets.md)** and mirrored in [`config/perf_targets.json`](../../config/perf_targets.json). The doc is the human-facing matrix; the JSON file is the machine-readable source used by the perf loop. Fitz currently gates on `mean_us`, with derived ops/sec shown only as a convenience. Latency percentiles remain out of scope until explicit percentile scenarios exist.
-
-Use [bench-targets.md](bench-targets.md) and [../../config/perf_targets.json](../../config/perf_targets.json) as the performance target sources.
-
-The benchmark summary tool validates the collected Criterion and stress outputs before generating the report. Invalid or implausible measurements are excluded from the main tables and listed separately so they do not turn into presentation-safe numbers like `0.000 us` or absurd ops/sec.
-
-Current mean-based gates are a reproducible regression signal, not a
-production-readiness claim. Record percentile, memory, and error-behavior
-scenarios as the next credibility milestone before describing any domain as
-production-ready.
-
-## Best Practices
-
-### DO ✅
-
-| Practice                     | Rationale                                         | Example                                   |
-| ---------------------------- | ------------------------------------------------- | ----------------------------------------- |
-| **Use `black_box()`**        | Prevents compiler from optimizing away the work   | `black_box(engine.publish(&route, body))` |
-| **Pre-allocate inputs**      | Measure only the target operation, not allocation | Setup routes/messages before `b.iter()`   |
-| **Use deterministic data**   | Ensures reproducible results                      | `format!("notice://realm{}/area", i)`     |
-| **Warm the cache**           | Measure steady-state performance                  | Multiple iterations before measurement    |
-| **Document what's measured** | Makes intent clear for reviewers                  | `// Measures notice fanout throughput`    |
-| **Group related benchmarks** | Easier to compare and analyze                     | All router benchmarks in `router.rs`      |
-| **Use realistic scales**     | 1K-10K for most benchmarks                        | Avoid 1M+ unless profiling                |
-| **Test scheme semantics**    | Benchmark each scheme separately                  | Notice vs Stream vs Queue vs RPC          |
-
-### DON'T ❌
-
-| Anti-pattern                 | Problem                        | Fix                                  |
-| ---------------------------- | ------------------------------ | ------------------------------------ |
-| **Allocate in `b.iter()`**   | Measures allocation, not logic | Move allocation outside              |
-| **Use random data**          | Results vary across runs       | Use deterministic sequences          |
-| **Ignore warm-up**           | First-run effects skew results | Configure proper warm-up time        |
-| **Benchmark too much**       | Slow feedback loop             | Break into smaller benchmarks        |
-| **Test correctness**         | That's what tests are for      | Only measure performance             |
-| **Forget `black_box()`**     | Compiler removes "dead" code   | Wrap inputs and outputs              |
-| **Mix I/O unnecessarily**    | Introduces variability         | Use in-memory storage when possible  |
-| **Include network overhead** | Non-deterministic latency      | Use loopback or in-process transport |
-
-### Common Patterns
-
-#### Pattern 1: Message Throughput
-
-```rust
-fn bench_notice_publish_throughput(c: &mut Criterion) {
-    let engine = setup_test_engine();
-    let route = "notice://test/area/resource";
-    let messages: Vec<Vec<u8>> = (0..10000)
-        .map(|i| format!("msg{:08}", i).into_bytes())
-        .collect();
-
-    c.bench_function("notice_publish_10k", |b| {
-        b.iter(|| {
-            for msg in &messages {
-                black_box(engine.publish(route, msg).await.unwrap());
-            }
-        });
-    });
-}
-```
-
-#### Pattern 2: Routing Latency
-
-```rust
-fn bench_router_match_latency(c: &mut Criterion) {
-    // Setup: Pre-populate router with subscriptions
-    let mut router = Router::new();
-    for i in 0..1000 {
-        let route = format!("notice://realm{}/area/resource", i);
-        router.subscribe(&route, dummy_sender()).await.unwrap();
-    }
-
-    c.bench_function("router_match_latency", |b| {
-        let mut i = 0;
-        b.iter(|| {
-            let route = format!("notice://realm{}/area/resource", i % 1000);
-            black_box(router.find_subscribers(&route));
-            i += 1;
-        });
-    });
-}
-```
-
-#### Pattern 3: Scheme Comparison
-
-```rust
-fn bench_scheme_comparison(c: &mut Criterion) {
-    let mut group = c.benchmark_group("scheme_publish_latency");
-
-    let schemes = ["notice", "stream", "queue", "rpc"];
-
-    for scheme in schemes {
-        let engine = setup_test_engine();
-        let route = format!("{}://test/area/resource", scheme);
-
-        group.bench_with_input(
-            BenchmarkId::from_parameter(scheme),
-            &route,
-            |b, route| {
-                b.iter(|| {
-                    black_box(engine.publish(route, b"test").await.unwrap());
-                });
-            },
-        );
-    }
-
-    group.finish();
-}
-```
-
-#### Pattern 4: Concurrent Sessions
-
-```rust
-fn bench_concurrent_sessions(c: &mut Criterion) {
-    let mut group = c.benchmark_group("session_concurrent");
-
-    for num_sessions in [1, 10, 50, 100] {
-        group.bench_with_input(
-            BenchmarkId::from_parameter(num_sessions),
-            &num_sessions,
-            |b, &sessions| {
-                b.iter(|| {
-                    let handles: Vec<_> = (0..sessions)
-                        .map(|_| spawn_session_task())
-                        .collect();
-                    // Measure concurrent session handling
-                    futures::future::join_all(handles).await
-                });
-            },
-        );
-    }
-
-    group.finish();
-}
-```
-
-## Benchmark Categories
-
-### 1. Microbenchmarks
-
-**Purpose:** Measure single operations in isolation
-**Characteristics:**
-
-- Focus on one method or function
-- Minimal setup overhead
-- Runs in < 100ms per iteration
-- Used for algorithmic optimization
-  **Examples:**
-
-```rust
-// Single method performance
-frame_encode_single_pub
-frame_decode_single_dat
-router_match_exact_route
-authz_check_single_permission
-route_parse_normalize
-```
-
-### 2. Subsystem Benchmarks
-
-**Purpose:** Measure combined component performance
-**Characteristics:**
-
-- Multiple operations in sequence
-- Representative of real usage
-- Runs in 1-5 seconds total
-- Used for feature development
-  **Examples:**
-
-```rust
-// Combined operations
-session_handshake_auth_subscribe
-stream_append_consume_ack
-queue_lease_extend_complete
-rpc_publish_wait_reply
-notice_subscribe_dispatch_fanout
-```
-
-### 3. Scheme Benchmarks
-
-**Purpose:** Measure scheme-specific performance
-**Characteristics:**
-
-- Full scheme workflow end-to-end
-- Includes routing and storage
-- Tests scheme semantics
-- 5-10 seconds per benchmark
-  **Examples:**
-
-```rust
-// Scheme workflows
-notice_best_effort_fanout_100
-stream_append_ordered_1k
-queue_visibility_timeout_workflow
-rpc_request_response_timeout
-inbox_ephemeral_lifecycle
-```
-
-### 4. System Benchmarks
-
-**Purpose:** Measure end-to-end broker performance
-**Characteristics:**
-
-- Full engine workflows
-- Multiple transports and sessions
-- Runs in 10-60 seconds
-- Used for release profiling
-- Gated behind `perf` feature
-  **Examples:**
-
-```rust
-#[cfg(feature = "perf")]
-// Full system workflows
-engine_multi_tenant_isolation_10k
-engine_mixed_schemes_concurrent
-transport_ws_10k_messages
-broker_session_churn_100
-end_to_end_publish_subscribe_1m
-```
+Use the narrowest direct stress API that describes the row:
+
+- `ctx.measure_micro`: calibrated Tier 1 micro samples.
+- `ctx.measure_workload`: default-profile fixed-duration or fixed-operation
+  workload samples.
+- `ctx.measure`: one measured operation or batch.
+- `ctx.measure_for`: explicit wall-clock loops only when the row requires a
+  custom local duration independent of the profile.
+- `ctx.record_duration`: externally timed systems where the benchmark body owns
+  timing.
+
+Do not write benchmark diagnostics with `println!`, `eprintln!`, or `dbg!`.
+Use `ctx.parameter` for fields that define the workload identity and
+`ctx.metadata` for descriptive facts that should appear in artifacts without
+changing IDs. The terminal output should be the stress console report.
+
+## Tier 1 Micro Semantics
+
+Tier 1 rows use `#[stress_test(tier = 1)]`, which defaults to stress micro mode.
+Use `ctx.measure_micro` exactly once per row.
+
+Micro rows record calibrated net nanoseconds per operation. When the operation
+should be allocation-free, install `cntryl_stress::stress_allocator!()` in the
+bench binary and set `max_allocs_per_op = 0` and `max_bytes_per_op = 0`.
+Do not add allocation budgets to rows where construction or allocation is the
+behavior under review.
+
+Use `cntryl_stress::black_box`, not `std::hint::black_box` directly in new
+bench code.
+
+## Stress Configuration
+
+Fitz commands rely on the stress default profile. Do not pass `--profile` in
+repo docs, CI, or release/deep command lists.
+
+Common arguments:
+
+| Argument | Meaning |
+| --- | --- |
+| `--workload <PATTERN>` | Run one workload name/module pattern. |
+| `--tier <N>` | Run one stress tier. |
+| `--samples <N>` | Local diagnostic override for measured sample count. |
+| `--warmup-samples <N>` | Local diagnostic override for warmup sample count. |
+| `--console <MODE>` | Local diagnostic output mode. |
+
+Local `smoke` or `lab` profile experiments are framework diagnostics, not Fitz
+workflow defaults. Keep such commands out of committed Fitz docs and CI.
 
 ## CI and Local Workflows
 
-### Local Development
-
-#### Quick iteration during development:
-
-```bash
-# Run a single benchmark for a faster feedback loop
-cargo bench --bench tier1_hotpath_routing
-
-# Or run a single tier / benchmark
-cargo bench -- tier1_hotpath
-```
-
-> Note: optional heavy proof benches such as the stream write-shape benchmark are not included in the standard `tier2_*` wildcard run. Use `cargo bench --bench bench_stream_write_shape` when you need the storage-model proof case.
-
-#### Single benchmark:
-
-```bash
-# Run specific benchmark
-cargo bench --bench tier1_hotpath_matcher
-# With filter (all hotpath routing)
-cargo bench -- hotpath_routing
-# Local override: stretch Tier1 measurement when you need a longer window
-BENCH_TIER1_MEASUREMENT_MS=1000 cargo bench --bench tier1_hotpath_matcher
-```
-
-#### Stress (Tier 3 / Tier 4):
-
-```bash
-cargo bench --bench tier3_system_kv
-cargo bench --bench tier4_integration_kv
-# Higher-sample profile for stable comparisons
-cargo bench --bench tier4_integration_kv -- --runs 5 --warmup 1
-# Local override: use a longer measured duration for deeper profiling
-BENCH_MEASURE_SECS=5 cargo bench --bench tier4_integration_kv -- --runs 5 --warmup 1
-```
-
-#### Watch mode for TDD:
-
-```bash
-cargo watch -x "bench --bench tier1_hotpath_routing"
-```
-
-### CI Pipeline
-
-Normal CI does not compile or run the benchmark suite. `cargo bench --no-run` is intentionally absent from CI because it is expensive and does not produce a benchmark report.
-
-The dedicated **Bench** workflow has two suites:
-
-- **release:** Manual `workflow_dispatch` default. Runs the curated release rows, filters `config/bench_baseline.json` to `config/bench_release_ids.txt`, summarizes with `cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"`, and uploads `target/bench_summary.md`, `target/bench_results.json`, Criterion output, and stress output.
-- **deep:** Nightly and manual. Runs the curated deep Tier 2 signal suites, selected Tier 3 scaling suites, and stream storage-model experiments, then summarizes as `Fitz Deep Benchmark Report`. Use this suite for scaling curves, storage-model experiments, and noisy rows that should not gate the release surface. Full wildcard runs are manual historical/profiling work, not the nightly path.
-
-#### Pull Request Checks
+Run a targeted benchmark:
 
 ```bash
 export FITZ_LOG_LEVEL=warn
 export OTEL_ENABLED=false
-cargo bench --bench tier3_system_queue -- --workload should_complete_capacity_ack_roundtrip --runs 5 --warmup 1
+cargo bench --quiet --bench tier1_hotpath_tlv -- --workload decode_one
+cargo bench --quiet --bench tier2_subsystem_queue -- --workload ack_256_messages_primary
+cargo bench --quiet --bench tier4_integration_rpc -- --workload should_complete_direct_request
 cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"
 ```
 
-For code or harness changes, run the correctness checks from `CONTRIBUTING.md`, then run the smallest benchmark command that covers the changed behavior. Keep the same command before and after the change.
+Use `cargo bench --quiet` so Cargo build progress does not bury the stress
+table. Keep the stress console mode at its default unless a local diagnostic run
+needs `--console verbose`, `--console json`, or `--console markdown`.
 
-#### Nightly Performance Runs
-
-The scheduled Bench workflow runs the deep suite. Inspect `target/bench_summary.md` and `target/bench_results.json` from the uploaded artifact; do not promote noisy or untrustworthy rows into the release gate without fixing or reclassifying them.
-
-#### Baseline Refresh
-
-Refresh `config/bench_baseline.json` only after the relevant report has `critical == 0`, `missing == 0`, and no unreviewed noisy or untrustworthy risk rows. The release suite must remain fully baseline-backed; promote deep-suite rows into `config/bench_release_ids.txt` only in the same change that refreshes their baseline coverage.
-
-### Profiling Integration
-
-#### With flamegraph:
+Run the release suite locally by using the release command list in
+[`.github/workflows/bench.yml`](../../.github/workflows/bench.yml), then
+summarize:
 
 ```bash
-# Generate flamegraph
-cargo flamegraph --bench bloom -- --bench
-# Or with perf
-perf record --call-graph dwarf cargo bench --bench bloom
-perf report
-```
-
-#### With criterion:
-
-```bash
-# HTML reports generated automatically
-# View at: target/criterion/report/index.html
-cargo bench
-# Open report
-open target/criterion/report/index.html  # macOS
-xdg-open target/criterion/report/index.html  # Linux
-start target/criterion/report/index.html  # Windows
-```
-
-## Quick Reference
-
-### Criterion file template (Tier 1 / Tier 2)
-
-Use shared config from `benches/criterion_config.rs`; do not define a local `configure_criterion()`.
-
-```rust
-use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
-
-#[path = "criterion_config.rs"]
-mod criterion_config;
-
-fn bench_my_operation(c: &mut Criterion) {
-    // Arrange: all setup outside b.iter()
-    let data = precompute_test_data();
-
-    let mut group = c.benchmark_group("hotpath_my_domain");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
-
-    group.bench_function("operation_name", |b| {
-        let mut idx = 0usize;
-        b.iter(|| {
-            let x = &data[idx % data.len()];
-            black_box(do_operation(x))
-        });
-    });
-    group.finish();
-}
-
-criterion_group! {
-    name = benches;
-    config = criterion_config::criterion_config_for_tier1();
-    targets = bench_my_operation
-}
-criterion_main!(benches);
-```
-
-**Example files:** `benches/tier1_hotpath_routing.rs`, `benches/tier2_subsystem_scheduler.rs`
-
-### Reviewer Checklist
-
-When reviewing benchmark PRs:
-
-- [ ] **Performance:** Benchmark runs in < 5 seconds locally
-- [ ] **Focus:** Measures one clear behavior/operation
-- [ ] **Reproducibility:** Uses deterministic data (no randomness)
-- [ ] **Configuration:** Appropriate warm-up and measurement times
-- [ ] **Stability:** Results stable across runs (< 5% variance)
-- [ ] **Prevention:** Uses `black_box()` on inputs and outputs
-- [ ] **Naming:** Descriptive name following conventions
-- [ ] **Documentation:** Clear comments explaining what's measured
-- [ ] **Category:** Appropriately categorized (micro/subsystem/scheme/system)
-- [ ] **Async Handling:** Proper tokio runtime usage
-- [ ] **Scheme Specific:** Tests appropriate scheme semantics
-- [ ] **Suite:** Release rows are baseline-backed and stable; exhaustive or noisy rows stay in the deep suite
-
-### Common Commands
-
-```bash
-# Run one Criterion subsystem
-cargo bench --bench tier2_subsystem_queue
-
-# Run one stress workload
-cargo bench --bench tier4_integration_rpc -- --workload should_complete_tcp_request_response --runs 5 --warmup 1
-
-# Run the deep suite locally
-cargo bench --bench tier2_subsystem_queue
-cargo bench --bench tier2_subsystem_rpc
-cargo bench --bench tier2_subsystem_stream_replay
-cargo bench --bench tier3_system_queue -- --runs 5 --warmup 1
-cargo bench --bench tier3_system_rpc -- --runs 5 --warmup 1
-cargo bench --bench tier3_system_stream_storage_model -- --runs 5 --warmup 1
-
-# Summarize collected outputs
 cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"
-
-# Generate a flamegraph for one bench target
-cargo flamegraph --bench tier2_subsystem_queue
 ```
 
-### Performance Targets
+Run the deep suite locally with the deep command list in the same workflow. The
+deep suite is broader coverage and still uses the stress default profile.
 
-| Benchmark Type | Target Runtime | Sample Size | Measurement Time |
-| -------------- | -------------- | ----------- | ---------------- |
-| Microbenchmark | < 2 seconds    | 10          | 1 second         |
-| Subsystem      | 2-5 seconds    | 20          | 2 seconds        |
-| Scheme         | 5-10 seconds   | 20          | 3 seconds        |
-| System         | 10-60 seconds  | 50          | 10 seconds       |
+Do not use compile-only benchmark preflights. They compile every bench target
+without producing performance signal and hide which benchmark surface is under
+review.
 
-### Scale Guidelines
+## Stress Benchmark Contract
 
-| Scale      | Use Case                | Message/Route Count |
-| ---------- | ----------------------- | ------------------- |
-| **Small**  | Quick iteration         | 100 - 1,000         |
-| **Medium** | Representative workload | 1,000 - 10,000      |
-| **Large**  | Stress testing          | 10,000 - 50,000     |
-| **XLarge** | Release profiling only  | 50,000+             |
+Tier 3 and Tier 4 stress tests must follow the
+[stress benchmark contract](stress-bench-contract.md): setup outside timed
+sections, real actor/domain logic inside timed sections, explicit correctness
+counters, and valid direct/TCP/WebSocket/multiclient semantics.
 
-### Message Broker Specific Metrics
+## Performance Targets
 
-| Metric               | What It Measures                   | Key Benchmarks                                    |
-| -------------------- | ---------------------------------- | ------------------------------------------------- |
-| **Publish Latency**  | Time to accept and route a message | `notice_publish_latency`, `stream_append_latency` |
-| **Throughput**       | Messages per second                | `notice_throughput_10k`, `queue_throughput_5k`    |
-| **Fanout**           | One-to-many delivery time          | `notice_fanout_100`, `router_dispatch_fanout`     |
-| **Routing Speed**    | Route matching performance         | `router_match_1k`, `router_wildcard_10k`          |
-| **Session Overhead** | Session management cost            | `session_handshake_latency`, `session_concurrent` |
-| **Frame Encoding**   | Protocol overhead                  | `frame_encode_pub`, `frame_decode_dat`            |
-| **Authorization**    | AuthZ check cost                   | `authz_permission_check`, `authz_grant_match`     |
-| **Storage Latency**  | Backend operation time             | `memstore_append`, `memstore_reserve_ack`         |
+Numerical targets live in
+[`config/perf_targets.json`](../../config/perf_targets.json) and are mirrored in
+[Performance targets](bench-targets.md). Generated IDs come from current
+`cntryl-stress.v1` artifacts and use the current tool format, for example:
+
+```text
+benchmark_id|metric|scenario=...|parameter=...
+```
+
+Do not hand-convert stale legacy IDs into current targets. Regenerate targets,
+release IDs, `bench-targets.md`, and the baseline from clean current stress
+artifacts.
+
+## Baseline Refresh
+
+Refresh `config/bench_baseline.json` only after the relevant report has:
+
+- `critical == 0`
+- release `missing == 0`
+- no unreviewed untrustworthy release rows
+- no legacy-adapter records
+
+After copying `target/bench_results.json` to `config/bench_baseline.json`,
+summarize again and require `new == 0`, `missing == 0`, and `critical == 0`.
+
+## Reviewer Checklist
+
+- The row measures one clear behavior.
+- Setup is outside timing unless setup is part of the named behavior.
+- Correctness counters match actual completed work.
+- Tier 1 rows use `ctx.measure_micro`.
+- Tier 2+ rows use direct stress context APIs.
+- Commands omit `--profile`.
+- Artifacts are current `cntryl-stress.v1`.
+- Release rows are baseline-backed and stable.
 
 ## Document History
 
-| Date       | Version | Changes                                          |
-| ---------- | ------- | ------------------------------------------------ |
-| 2026-07-04 | 1.1     | Split benchmark workflows into release and deep suites |
-| 2025-10-20 | 1.0     | Initial version tailored for Fitz message broker |
-
-### Contributors
-
-- Fitz development team
-- Adapted from Shale benchmark guidelines
-
-## Appendix: Fitz-Specific Considerations
-
-### Scheme Semantics to Benchmark
-
-Each scheme has different performance characteristics:
-
-1. **notice://** - Best-effort, drop-on-backpressure
-   - Benchmark: fanout speed, subscriber count impact, backpressure handling
-2. **stream://** - Append-only log with ordering
-   - Benchmark: append throughput, consume latency, offset seeking
-3. **queue://** - Visibility timeout, at-least-once
-   - Benchmark: lease latency, extend/ack cycles, DLQ movement
-4. **rpc://** - Request/response with timeout
-   - Benchmark: round-trip latency, timeout handling, concurrent requests
-5. **inbox://** - Ephemeral per-session
-   - Benchmark: creation/cleanup overhead, delivery latency
-
-### Multi-Tenant Benchmarking
-
-When benchmarking tenant isolation:
-
-- Use distinct tenant IDs in test data
-- Measure cross-tenant permission checks
-- Benchmark tenant namespace lookup overhead
-- Test storage isolation performance impact
-
-### Transport Agnostic
-
-Benchmarks should work with any transport:
-
-- Use in-process/loopback for determinism
-- WebSocket benchmarks measure framing overhead
-- Test frame multiplexing (mux) separately from transport
-
-### Tier 4 expectations
-
-- **Direct** (in-process) is the in-process baseline; use it to compare domains and for regression.
-- **network_roundtrip** and **concurrent\_\*** scenarios are expected to be roughly **2–3 orders of magnitude** lower throughput than direct (network and concurrency overhead). Use them for **regression and relative comparison**, not for absolute ops/sec targets.
-
-### High variance (Criterion)
-
-The benchmark summary flags entries with relative standard deviation &gt; 10%. Some benches (e.g. matcher, send_to_self) can remain above ~15% due to CPU cache and scheduling effects. Treat those as inherently variable; for release profiling you can increase sample size for those groups only, or document them as variable in commit messages.
+| Date | Version | Changes |
+| --- | --- | --- |
+| 2026-07-04 | 2.0 | Migrated all tiers to `cntryl-stress`; removed the previous adapter and Fitz profile-default helpers. |
+| 2026-07-04 | 1.1 | Split benchmark workflows into release and deep suites. |
+| 2025-10-20 | 1.0 | Initial version tailored for Fitz message broker. |

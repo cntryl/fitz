@@ -1,13 +1,9 @@
-#![allow(deprecated)]
-use criterion::{
-    black_box, criterion_group, criterion_main, BatchSize, Criterion, SamplingMode, Throughput,
-};
+use cntryl_stress::{black_box, stress_allocator, stress_main, stress_test, StressContext};
 use fitz::auth::{Access, Permission};
 use fitz::runtime::routing::Route;
 use fitz::session::permissions::SessionPermissions;
 
-#[path = "criterion_config.rs"]
-mod criterion_config;
+stress_allocator!();
 
 const EXACT_PERMISSION_RAW: [&str; 3] = [
     "rpc://acme/auth/users#write",
@@ -41,172 +37,167 @@ fn parse_permissions(raws: &[&str]) -> Vec<Permission> {
         .collect()
 }
 
-fn bench_permission_compilation(c: &mut Criterion) {
-    let mut group = c.benchmark_group("hotpath_permissions_compile");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
-
-    group.bench_function("compile_exact_3_rules", |b| {
-        b.iter_batched(
-            || parse_permissions(&EXACT_PERMISSION_RAW),
-            |perms| {
-                black_box(SessionPermissions::from_permissions(perms));
-            },
-            BatchSize::SmallInput,
-        );
-    });
-
-    group.bench_function("compile_wildcard_3_rules", |b| {
-        b.iter_batched(
-            || parse_permissions(&WILDCARD_PERMISSION_RAW),
-            |perms| {
-                black_box(SessionPermissions::from_permissions(perms));
-            },
-            BatchSize::SmallInput,
-        );
-    });
-
-    group.bench_function("compile_doublestar_3_rules", |b| {
-        b.iter_batched(
-            || parse_permissions(&DOUBLESTAR_PERMISSION_RAW),
-            |perms| {
-                black_box(SessionPermissions::from_permissions(perms));
-            },
-            BatchSize::SmallInput,
-        );
-    });
-
-    group.finish();
+fn record_group(ctx: &mut StressContext, group: &str) {
+    ctx.parameter("group", group);
 }
 
-fn bench_permission_allows_cache_hit(c: &mut Criterion) {
-    let exact_perms =
-        SessionPermissions::from_permissions(parse_permissions(&EXACT_PERMISSION_RAW));
-    let wildcard_perms =
-        SessionPermissions::from_permissions(parse_permissions(&WILDCARD_PERMISSION_RAW));
-    let doublestar_perms =
-        SessionPermissions::from_permissions(parse_permissions(&DOUBLESTAR_PERMISSION_RAW));
-    let large_perms =
-        SessionPermissions::from_permissions(parse_permissions(&LARGE_PERMISSION_RAW));
-    let allow_all = SessionPermissions::all();
-    let deny_all = SessionPermissions::empty();
+macro_rules! compile_bench {
+    ($fn_name:ident, $bench_name:literal, $raw:ident) => {
+        #[stress_test(tier = 1)]
+        fn $fn_name(ctx: &mut StressContext) {
+            record_group(ctx, "hotpath_permissions_compile");
 
-    let exact_route = Route::new("rpc://acme/auth/users");
-    let wildcard_route = Route::new("rpc://acme/admin/users");
-    let doublestar_route = Route::new("rpc://acme/auth/users/session/create");
-    let late_match_route = Route::new("kv://acme/app/users");
-
-    let _ = exact_perms.allows(&exact_route, Access::Write);
-    let _ = wildcard_perms.allows(&wildcard_route, Access::Write);
-    let _ = doublestar_perms.allows(&doublestar_route, Access::Write);
-    let _ = large_perms.allows(&late_match_route, Access::Write);
-    let _ = allow_all.allows(&exact_route, Access::Write);
-    let _ = deny_all.allows(&exact_route, Access::Read);
-
-    let mut group = c.benchmark_group("hotpath_permissions_hit");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
-
-    group.bench_function("allows_exact_granted_cache_hit", |b| {
-        b.iter(|| {
-            black_box(exact_perms.allows(black_box(&exact_route), black_box(Access::Write)));
-        });
-    });
-
-    group.bench_function("allows_wildcard_granted_cache_hit", |b| {
-        b.iter(|| {
-            black_box(wildcard_perms.allows(black_box(&wildcard_route), black_box(Access::Write)));
-        });
-    });
-
-    group.bench_function("allows_doublestar_deep_cache_hit", |b| {
-        b.iter(|| {
-            black_box(
-                doublestar_perms.allows(black_box(&doublestar_route), black_box(Access::Write)),
-            );
-        });
-    });
-
-    group.bench_function("allows_large_set_last_match_cache_hit", |b| {
-        b.iter(|| {
-            black_box(large_perms.allows(black_box(&late_match_route), black_box(Access::Write)));
-        });
-    });
-
-    group.bench_function("allows_allow_all_cache_hit", |b| {
-        b.iter(|| {
-            black_box(allow_all.allows(black_box(&exact_route), black_box(Access::Write)));
-        });
-    });
-
-    group.bench_function("allows_deny_by_default_cache_hit", |b| {
-        b.iter(|| {
-            black_box(deny_all.allows(black_box(&exact_route), black_box(Access::Read)));
-        });
-    });
-
-    group.finish();
+            ctx.measure_micro(|| {
+                black_box(SessionPermissions::from_permissions(parse_permissions(
+                    &$raw,
+                )));
+            });
+        }
+    };
 }
 
-fn bench_permission_allows_cache_miss(c: &mut Criterion) {
-    let exact_route = Route::new("rpc://acme/auth/users");
-    let wildcard_route = Route::new("rpc://acme/admin/users");
-    let doublestar_route = Route::new("rpc://acme/auth/users/session/create");
-    let late_match_route = Route::new("kv://acme/app/users");
+compile_bench!(
+    should_compile_exact_3_rules,
+    "compile_exact_3_rules",
+    EXACT_PERMISSION_RAW
+);
+compile_bench!(
+    should_compile_wildcard_3_rules,
+    "compile_wildcard_3_rules",
+    WILDCARD_PERMISSION_RAW
+);
+compile_bench!(
+    should_compile_doublestar_3_rules,
+    "compile_doublestar_3_rules",
+    DOUBLESTAR_PERMISSION_RAW
+);
 
-    let mut group = c.benchmark_group("hotpath_permissions_miss");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
-
-    group.bench_function("allows_exact_granted_cache_miss", |b| {
-        b.iter_batched(
-            || SessionPermissions::from_permissions(parse_permissions(&EXACT_PERMISSION_RAW)),
-            |perms| {
-                black_box(perms.allows(black_box(&exact_route), black_box(Access::Write)));
-            },
-            BatchSize::SmallInput,
-        );
-    });
-
-    group.bench_function("allows_wildcard_granted_cache_miss", |b| {
-        b.iter_batched(
-            || SessionPermissions::from_permissions(parse_permissions(&WILDCARD_PERMISSION_RAW)),
-            |perms| {
-                black_box(perms.allows(black_box(&wildcard_route), black_box(Access::Write)));
-            },
-            BatchSize::SmallInput,
-        );
-    });
-
-    group.bench_function("allows_doublestar_deep_cache_miss", |b| {
-        b.iter_batched(
-            || SessionPermissions::from_permissions(parse_permissions(&DOUBLESTAR_PERMISSION_RAW)),
-            |perms| {
-                black_box(perms.allows(black_box(&doublestar_route), black_box(Access::Write)));
-            },
-            BatchSize::SmallInput,
-        );
-    });
-
-    group.bench_function("allows_large_set_last_match_cache_miss", |b| {
-        b.iter_batched(
-            || SessionPermissions::from_permissions(parse_permissions(&LARGE_PERMISSION_RAW)),
-            |perms| {
-                black_box(perms.allows(black_box(&late_match_route), black_box(Access::Write)));
-            },
-            BatchSize::SmallInput,
-        );
-    });
-
-    group.finish();
+fn warmed_permissions(raws: &[&str], route: &Route, access: Access) -> SessionPermissions {
+    let permissions = SessionPermissions::from_permissions(parse_permissions(raws));
+    let _ = permissions.allows(route, access);
+    permissions
 }
 
-criterion_group! {
-    name = benches;
-    config = criterion_config::criterion_config_for_tier1();
-    targets =
-        bench_permission_compilation,
-        bench_permission_allows_cache_hit,
-        bench_permission_allows_cache_miss
+macro_rules! cache_hit_bench {
+    ($fn_name:ident, $bench_name:literal, $raw:ident, $route:literal, $access:expr) => {
+        #[stress_test(tier = 1, max_allocs_per_op = 0, max_bytes_per_op = 0)]
+        fn $fn_name(ctx: &mut StressContext) {
+            record_group(ctx, "hotpath_permissions_hit");
+            let route = Route::new($route);
+            let permissions = warmed_permissions(&$raw, &route, $access);
+
+            ctx.measure_micro(|| {
+                black_box(permissions.allows(black_box(&route), black_box($access)));
+            });
+        }
+    };
 }
-criterion_main!(benches);
+
+cache_hit_bench!(
+    should_allows_exact_granted_cache_hit,
+    "allows_exact_granted_cache_hit",
+    EXACT_PERMISSION_RAW,
+    "rpc://acme/auth/users",
+    Access::Write
+);
+cache_hit_bench!(
+    should_allows_wildcard_granted_cache_hit,
+    "allows_wildcard_granted_cache_hit",
+    WILDCARD_PERMISSION_RAW,
+    "rpc://acme/admin/users",
+    Access::Write
+);
+cache_hit_bench!(
+    should_allows_doublestar_deep_cache_hit,
+    "allows_doublestar_deep_cache_hit",
+    DOUBLESTAR_PERMISSION_RAW,
+    "rpc://acme/auth/users/session/create",
+    Access::Write
+);
+cache_hit_bench!(
+    should_allows_large_set_last_match_cache_hit,
+    "allows_large_set_last_match_cache_hit",
+    LARGE_PERMISSION_RAW,
+    "kv://acme/app/users",
+    Access::Write
+);
+
+#[stress_test(
+    tier = 1,
+    name = "allows_allow_all_cache_hit",
+    max_allocs_per_op = 0,
+    max_bytes_per_op = 0
+)]
+fn should_allows_allow_all_cache_hit(ctx: &mut StressContext) {
+    record_group(ctx, "hotpath_permissions_hit");
+    let permissions = SessionPermissions::all();
+    let route = Route::new("rpc://acme/auth/users");
+    let _ = permissions.allows(&route, Access::Write);
+
+    ctx.measure_micro(|| {
+        black_box(permissions.allows(black_box(&route), black_box(Access::Write)));
+    });
+}
+
+#[stress_test(
+    tier = 1,
+    name = "allows_deny_by_default_cache_hit",
+    max_allocs_per_op = 0,
+    max_bytes_per_op = 0
+)]
+fn should_allows_deny_by_default_cache_hit(ctx: &mut StressContext) {
+    record_group(ctx, "hotpath_permissions_hit");
+    let permissions = SessionPermissions::empty();
+    let route = Route::new("rpc://acme/auth/users");
+    let _ = permissions.allows(&route, Access::Read);
+
+    ctx.measure_micro(|| {
+        black_box(permissions.allows(black_box(&route), black_box(Access::Read)));
+    });
+}
+
+macro_rules! cache_miss_bench {
+    ($fn_name:ident, $bench_name:literal, $raw:ident, $route:literal, $access:expr) => {
+        #[stress_test(tier = 1)]
+        fn $fn_name(ctx: &mut StressContext) {
+            record_group(ctx, "hotpath_permissions_miss");
+            let route = Route::new($route);
+
+            ctx.measure_micro(|| {
+                let permissions = SessionPermissions::from_permissions(parse_permissions(&$raw));
+                black_box(permissions.allows(black_box(&route), black_box($access)));
+            });
+        }
+    };
+}
+
+cache_miss_bench!(
+    should_allows_exact_granted_cache_miss,
+    "allows_exact_granted_cache_miss",
+    EXACT_PERMISSION_RAW,
+    "rpc://acme/auth/users",
+    Access::Write
+);
+cache_miss_bench!(
+    should_allows_wildcard_granted_cache_miss,
+    "allows_wildcard_granted_cache_miss",
+    WILDCARD_PERMISSION_RAW,
+    "rpc://acme/admin/users",
+    Access::Write
+);
+cache_miss_bench!(
+    should_allows_doublestar_deep_cache_miss,
+    "allows_doublestar_deep_cache_miss",
+    DOUBLESTAR_PERMISSION_RAW,
+    "rpc://acme/auth/users/session/create",
+    Access::Write
+);
+cache_miss_bench!(
+    should_allows_large_set_last_match_cache_miss,
+    "allows_large_set_last_match_cache_miss",
+    LARGE_PERMISSION_RAW,
+    "kv://acme/app/users",
+    Access::Write
+);
+
+stress_main!();

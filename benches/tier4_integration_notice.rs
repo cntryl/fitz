@@ -167,13 +167,13 @@ fn spawn_ws_subscriber_counter(
     (stop_tx, subscriber_handle)
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_direct_publish(ctx: &mut StressContext) {
-    ctx.tag("layer", "direct");
-    ctx.tag("scenario", "publish");
-    ctx.tag("measurement_scope", "direct_inproc");
-    ctx.tag("batch_size", "single_publish");
-    ctx.tag("subscriber_count", "1");
+    ctx.parameter("layer", "direct");
+    ctx.parameter("scenario", "publish");
+    ctx.parameter("measurement_scope", "direct_inproc");
+    ctx.parameter("batch_size", "single_publish");
+    ctx.parameter("subscriber_count", "1");
 
     let family = RouteFamily::new(1);
     let router = Arc::new(Router::new());
@@ -209,39 +209,35 @@ fn should_complete_direct_publish(ctx: &mut StressContext) {
     let (publish_msg_type, publish_payload) = extract_single_tlv_field(&publish_frame);
     let mut expected_deliveries = 0usize;
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            route_frame(
-                router.as_ref(),
-                &publisher_source,
-                "notice://test/events",
-                2,
-                ChannelId::Pub,
-                publish_msg_type,
-                publish_payload.clone(),
-                family,
-            )
-            .expect("notice publish");
-            expected_deliveries += 1;
-            let delivered =
-                subscriber_sink.wait_for_count(expected_deliveries, Duration::from_secs(1));
-            assert_eq!(
-                delivered, expected_deliveries,
-                "notice direct publish should deliver exactly one notification"
-            );
-        },
-    );
-    ctx.set_elements(iterations as u64);
+    let iterations = ctx.measure_workload(|| {
+        route_frame(
+            router.as_ref(),
+            &publisher_source,
+            "notice://test/events",
+            2,
+            ChannelId::Pub,
+            publish_msg_type,
+            publish_payload.clone(),
+            family,
+        )
+        .expect("notice publish");
+        expected_deliveries += 1;
+        let delivered = subscriber_sink.wait_for_count(expected_deliveries, Duration::from_secs(1));
+        assert_eq!(
+            delivered, expected_deliveries,
+            "notice direct publish should deliver exactly one notification"
+        );
+    });
+    stress_config::record_completed(ctx, iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_tcp_publish(ctx: &mut StressContext) {
-    ctx.tag("layer", "tcp");
-    ctx.tag("scenario", "publish");
-    ctx.tag("measurement_scope", "tcp_e2e");
-    ctx.tag("batch_size", "single_publish");
-    ctx.tag("subscriber_count", "1");
+    ctx.parameter("layer", "tcp");
+    ctx.parameter("scenario", "publish");
+    ctx.parameter("measurement_scope", "tcp_e2e");
+    ctx.parameter("batch_size", "single_publish");
+    ctx.parameter("subscriber_count", "1");
 
     let subscribe_frame = build_notice_subscribe("notice://test/events");
     let publish_frame: Arc<[u8]> = build_notice_publish("notice://test/events", b"event").into();
@@ -264,35 +260,32 @@ fn should_complete_tcp_publish(ctx: &mut StressContext) {
         spawn_tcp_subscriber_counter(runtime, subscriber, delivered.clone());
 
     let mut expected_deliveries = 0_u64;
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            runtime
-                .block_on(publisher.send_frame(publish_frame.as_ref()))
-                .expect("publish frame");
-            expected_deliveries += 1;
-            wait_for_delivery_count(
-                runtime,
-                &delivered,
-                expected_deliveries,
-                "tcp notice deliveries",
-            );
-        },
-    );
+    let iterations = ctx.measure_workload(|| {
+        runtime
+            .block_on(publisher.send_frame(publish_frame.as_ref()))
+            .expect("publish frame");
+        expected_deliveries += 1;
+        wait_for_delivery_count(
+            runtime,
+            &delivered,
+            expected_deliveries,
+            "tcp notice deliveries",
+        );
+    });
     stop_tx.send(true).expect("stop tcp subscriber");
     runtime.block_on(async {
         subscriber_handle.await.expect("subscriber task");
     });
-    ctx.set_elements(iterations as u64);
+    stress_config::record_completed(ctx, iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_ws_publish(ctx: &mut StressContext) {
-    ctx.tag("layer", "websocket");
-    ctx.tag("scenario", "publish");
-    ctx.tag("measurement_scope", "ws_e2e");
-    ctx.tag("batch_size", "single_publish");
-    ctx.tag("subscriber_count", "1");
+    ctx.parameter("layer", "websocket");
+    ctx.parameter("scenario", "publish");
+    ctx.parameter("measurement_scope", "ws_e2e");
+    ctx.parameter("batch_size", "single_publish");
+    ctx.parameter("subscriber_count", "1");
 
     let subscribe_frame = build_notice_subscribe("notice://test/events");
     let publish_frame: Arc<[u8]> = build_notice_publish("notice://test/events", b"event").into();
@@ -321,21 +314,18 @@ fn should_complete_ws_publish(ctx: &mut StressContext) {
         spawn_ws_subscriber_counter(runtime, subscriber, delivered.clone());
 
     let mut expected_deliveries = 0_u64;
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            runtime
-                .block_on(publisher.send_frame(publish_frame.as_ref()))
-                .expect("publish frame");
-            expected_deliveries += 1;
-            wait_for_delivery_count(
-                runtime,
-                &delivered,
-                expected_deliveries,
-                "ws notice deliveries",
-            );
-        },
-    );
+    let iterations = ctx.measure_workload(|| {
+        runtime
+            .block_on(publisher.send_frame(publish_frame.as_ref()))
+            .expect("publish frame");
+        expected_deliveries += 1;
+        wait_for_delivery_count(
+            runtime,
+            &delivered,
+            expected_deliveries,
+            "ws notice deliveries",
+        );
+    });
     stop_tx.send(true).expect("stop ws subscriber");
     runtime.block_on(async {
         publisher
@@ -344,16 +334,16 @@ fn should_complete_ws_publish(ctx: &mut StressContext) {
             .expect("close ws publisher gracefully");
         subscriber_handle.await.expect("subscriber task");
     });
-    ctx.set_elements(iterations as u64);
+    stress_config::record_completed(ctx, iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_tcp_subscribe_unsubscribe_cycle(ctx: &mut StressContext) {
-    ctx.tag("layer", "tcp");
-    ctx.tag("scenario", "subscribe_unsubscribe_cycle");
-    ctx.tag("measurement_scope", "tcp_e2e");
-    ctx.tag("batch_size", "1_subscribe_1_unsubscribe");
-    ctx.tag("subscriber_count", "1");
+    ctx.parameter("layer", "tcp");
+    ctx.parameter("scenario", "subscribe_unsubscribe_cycle");
+    ctx.parameter("measurement_scope", "tcp_e2e");
+    ctx.parameter("batch_size", "1_subscribe_1_unsubscribe");
+    ctx.parameter("subscriber_count", "1");
 
     let subscribe_frame = build_notice_subscribe("notice://test/lifecycle/events");
 
@@ -363,36 +353,33 @@ fn should_complete_tcp_subscribe_unsubscribe_cycle(ctx: &mut StressContext) {
         .block_on(TestClient::new(server.tcp_addr))
         .expect("connect tcp");
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let subscribe_response = runtime
-                .block_on(client.request(&subscribe_frame, 2000))
-                .expect("subscribe response");
-            let (_msg_type, status, data) = parse_notice_response(&subscribe_response);
-            assert_eq!(status, 0, "expected notice subscribe success");
-            let subscription_id = parse_notice_subscription_id(&data)
-                .expect("parse subscribe response")
-                .expect("subscription id");
+    let iterations = ctx.measure_workload(|| {
+        let subscribe_response = runtime
+            .block_on(client.request(&subscribe_frame, 2000))
+            .expect("subscribe response");
+        let (_msg_type, status, data) = parse_notice_response(&subscribe_response);
+        assert_eq!(status, 0, "expected notice subscribe success");
+        let subscription_id = parse_notice_subscription_id(&data)
+            .expect("parse subscribe response")
+            .expect("subscription id");
 
-            let unsubscribe_frame = build_notice_unsubscribe(subscription_id);
-            let unsubscribe_response = runtime
-                .block_on(client.request(&unsubscribe_frame, 2000))
-                .expect("unsubscribe response");
-            let (_msg_type, status, _data) = parse_notice_response(&unsubscribe_response);
-            assert_eq!(status, 0, "expected notice unsubscribe success");
-        },
-    );
-    ctx.set_elements(2 * iterations as u64);
+        let unsubscribe_frame = build_notice_unsubscribe(subscription_id);
+        let unsubscribe_response = runtime
+            .block_on(client.request(&unsubscribe_frame, 2000))
+            .expect("unsubscribe response");
+        let (_msg_type, status, _data) = parse_notice_response(&unsubscribe_response);
+        assert_eq!(status, 0, "expected notice unsubscribe success");
+    });
+    stress_config::record_completed(ctx, 2 * iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_ws_subscribe_unsubscribe_cycle(ctx: &mut StressContext) {
-    ctx.tag("layer", "websocket");
-    ctx.tag("scenario", "subscribe_unsubscribe_cycle");
-    ctx.tag("measurement_scope", "ws_e2e");
-    ctx.tag("batch_size", "1_subscribe_1_unsubscribe");
-    ctx.tag("subscriber_count", "1");
+    ctx.parameter("layer", "websocket");
+    ctx.parameter("scenario", "subscribe_unsubscribe_cycle");
+    ctx.parameter("measurement_scope", "ws_e2e");
+    ctx.parameter("batch_size", "1_subscribe_1_unsubscribe");
+    ctx.parameter("subscriber_count", "1");
 
     let subscribe_frame = build_notice_subscribe("notice://test/lifecycle/events");
 
@@ -405,34 +392,31 @@ fn should_complete_ws_subscribe_unsubscribe_cycle(ctx: &mut StressContext) {
         )))
         .expect("connect ws");
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            let subscribe_response = runtime
-                .block_on(client.request(&subscribe_frame, 2000))
-                .expect("subscribe response");
-            let (_msg_type, status, data) = parse_notice_response(&subscribe_response);
-            assert_eq!(status, 0, "expected notice subscribe success");
-            let subscription_id = parse_notice_subscription_id(&data)
-                .expect("parse subscribe response")
-                .expect("subscription id");
+    let iterations = ctx.measure_workload(|| {
+        let subscribe_response = runtime
+            .block_on(client.request(&subscribe_frame, 2000))
+            .expect("subscribe response");
+        let (_msg_type, status, data) = parse_notice_response(&subscribe_response);
+        assert_eq!(status, 0, "expected notice subscribe success");
+        let subscription_id = parse_notice_subscription_id(&data)
+            .expect("parse subscribe response")
+            .expect("subscription id");
 
-            let unsubscribe_frame = build_notice_unsubscribe(subscription_id);
-            let unsubscribe_response = runtime
-                .block_on(client.request(&unsubscribe_frame, 2000))
-                .expect("unsubscribe response");
-            let (_msg_type, status, _data) = parse_notice_response(&unsubscribe_response);
-            assert_eq!(status, 0, "expected notice unsubscribe success");
-        },
-    );
-    ctx.set_elements(2 * iterations as u64);
+        let unsubscribe_frame = build_notice_unsubscribe(subscription_id);
+        let unsubscribe_response = runtime
+            .block_on(client.request(&unsubscribe_frame, 2000))
+            .expect("unsubscribe response");
+        let (_msg_type, status, _data) = parse_notice_response(&unsubscribe_response);
+        assert_eq!(status, 0, "expected notice unsubscribe success");
+    });
+    stress_config::record_completed(ctx, 2 * iterations);
 
     runtime
         .block_on(client.close())
         .expect("close ws client gracefully");
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_multiclient_fanout_publish(ctx: &mut StressContext) {
     measure_multiclient_fanout_publish(ctx, "fanout_publish", 10);
 }
@@ -442,14 +426,14 @@ fn measure_multiclient_fanout_publish(
     scenario: &'static str,
     subscriber_count: usize,
 ) {
-    ctx.tag("layer", "multiclient");
-    ctx.tag("scenario", scenario);
-    ctx.tag("measurement_scope", "ws_multiclient_e2e");
-    ctx.tag("publisher_count", "1");
+    ctx.parameter("layer", "multiclient");
+    ctx.parameter("scenario", scenario);
+    ctx.parameter("measurement_scope", "ws_multiclient_e2e");
+    ctx.parameter("publisher_count", "1");
     let batch_size = format!("1_publish_{subscriber_count}_notifications");
-    ctx.tag("batch_size", batch_size.as_str());
+    ctx.parameter("batch_size", batch_size.as_str());
     let subscriber_count_tag = subscriber_count.to_string();
-    ctx.tag("subscriber_count", subscriber_count_tag.as_str());
+    ctx.parameter("subscriber_count", subscriber_count_tag.as_str());
 
     let subscribe_frame = build_notice_subscribe("notice://test/events");
     let publish_frame: Arc<[u8]> = build_notice_publish("notice://test/events", b"event").into();
@@ -483,23 +467,20 @@ fn measure_multiclient_fanout_publish(
         subscriber_handles.push(handle);
     }
     let mut expected_per_subscriber = 0_u64;
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            runtime
-                .block_on(publisher.send_frame(publish_frame.as_ref()))
-                .expect("publish frame");
+    let iterations = ctx.measure_workload(|| {
+        runtime
+            .block_on(publisher.send_frame(publish_frame.as_ref()))
+            .expect("publish frame");
 
-            expected_per_subscriber += 1;
-            // Aggregate delivery counts can hide one lagging subscriber and fill its mailbox.
-            wait_for_all_delivery_counts(
-                runtime,
-                &subscriber_deliveries,
-                expected_per_subscriber,
-                "multiclient notice deliveries",
-            );
-        },
-    );
+        expected_per_subscriber += 1;
+        // Aggregate delivery counts can hide one lagging subscriber and fill its mailbox.
+        wait_for_all_delivery_counts(
+            runtime,
+            &subscriber_deliveries,
+            expected_per_subscriber,
+            "multiclient notice deliveries",
+        );
+    });
 
     for stop_tx in subscriber_stops {
         stop_tx.send(true).expect("stop ws subscriber");
@@ -513,20 +494,20 @@ fn measure_multiclient_fanout_publish(
             handle.await.expect("subscriber task");
         }
     });
-    ctx.set_elements(subscriber_count as u64 * iterations as u64);
+    stress_config::record_completed(ctx, subscriber_count as u64 * iterations);
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_multiclient_fanout_publish_subscriber_scaling_1(ctx: &mut StressContext) {
     measure_multiclient_fanout_publish(ctx, "fanout_publish_subscriber_scaling", 1);
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_multiclient_fanout_publish_subscriber_scaling_16(ctx: &mut StressContext) {
     measure_multiclient_fanout_publish(ctx, "fanout_publish_subscriber_scaling", 16);
 }
 
-#[stress_test]
+#[stress_test(tier = 4, mode = "fixed_duration")]
 fn should_complete_multiclient_fanout_publish_subscriber_scaling_64(ctx: &mut StressContext) {
     measure_multiclient_fanout_publish(ctx, "fanout_publish_subscriber_scaling", 64);
 }

@@ -1,10 +1,14 @@
 #![allow(deprecated)]
-use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode, Throughput};
+#[path = "tier2_stress.rs"]
+mod tier2_stress;
+
+use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::runtime::routing::{Route, RouteFamily};
 use fitz::runtime::subscriptions::{SubscriptionId, SubscriptionIndex};
+use std::hint::black_box;
 
-#[path = "criterion_config.rs"]
-mod criterion_config;
+const SINGLE_PATTERN_BATCH_SIZE: usize = 512;
+const REMOVE_BATCH_SIZE: usize = 512;
 
 fn make_subscriptions_with_patterns(pattern_count: usize) -> SubscriptionIndex {
     let mut index = SubscriptionIndex::new();
@@ -112,309 +116,185 @@ fn make_index_with_depth(
     (index, route, family)
 }
 
-fn bench_insert_single_pattern(c: &mut Criterion) {
+fn insert_single_pattern(ctx: &mut StressContext, pattern: &Route) {
     let family = RouteFamily::new(1);
-    let pattern = Route::new("notify://realm/orders/create");
+    let indexes = (0..SINGLE_PATTERN_BATCH_SIZE)
+        .map(|_| SubscriptionIndex::new())
+        .collect::<Vec<_>>();
 
-    let mut group = c.benchmark_group("subsystem_subscriptions");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
-    group.bench_function("exact_pattern", |b| {
-        b.iter_batched(
-            SubscriptionIndex::new,
-            |mut index| {
-                index.insert(family, black_box(&pattern), SubscriptionId(1));
-            },
-            criterion::BatchSize::SmallInput,
-        );
+    tier2_stress::measure_once(ctx, SINGLE_PATTERN_BATCH_SIZE as u64, || {
+        for mut index in indexes {
+            index.insert(family, black_box(pattern), SubscriptionId(1));
+        }
     });
-    group.finish();
 }
 
-fn bench_insert_with_single_star(c: &mut Criterion) {
+#[stress_test(tier = 2, mode = "fixed_duration", name = "exact_pattern")]
+fn should_insert_exact_pattern(ctx: &mut StressContext) {
+    insert_single_pattern(ctx, &Route::new("notify://realm/orders/create"));
+}
+
+#[stress_test(tier = 2, mode = "fixed_duration", name = "single_star_pattern")]
+fn should_insert_single_star_pattern(ctx: &mut StressContext) {
+    insert_single_pattern(ctx, &Route::new("notify://realm/orders/*"));
+}
+
+#[stress_test(tier = 2, mode = "fixed_duration", name = "double_star_pattern")]
+fn should_insert_double_star_pattern(ctx: &mut StressContext) {
+    insert_single_pattern(ctx, &Route::new("notify://realm/**/created"));
+}
+
+#[stress_test(tier = 2, mode = "fixed_duration", name = "exact")]
+fn should_match_exact(ctx: &mut StressContext) {
+    let index = make_subscriptions_with_patterns(100);
     let family = RouteFamily::new(1);
-    let pattern = Route::new("notify://realm/orders/*");
-
-    let mut group = c.benchmark_group("subsystem_subscriptions");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
-    group.bench_function("single_star_pattern", |b| {
-        b.iter_batched(
-            SubscriptionIndex::new,
-            |mut index| {
-                index.insert(family, black_box(&pattern), SubscriptionId(1));
-            },
-            criterion::BatchSize::SmallInput,
-        );
+    let route = Route::new("notify://realm/orders/create");
+    tier2_stress::measure_iterations(ctx, 1, || {
+        black_box(index.match_all(family, black_box(&route)));
     });
-    group.finish();
 }
 
-fn bench_insert_with_double_star(c: &mut Criterion) {
+#[stress_test(tier = 2, mode = "fixed_duration", name = "single_star")]
+fn should_match_single_star(ctx: &mut StressContext) {
+    let index = make_subscriptions_with_patterns(100);
     let family = RouteFamily::new(1);
-    let pattern = Route::new("notify://realm/**/created");
-
-    let mut group = c.benchmark_group("subsystem_subscriptions");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
-    group.bench_function("double_star_pattern", |b| {
-        b.iter_batched(
-            SubscriptionIndex::new,
-            |mut index| {
-                index.insert(family, black_box(&pattern), SubscriptionId(1));
-            },
-            criterion::BatchSize::SmallInput,
-        );
+    let route = Route::new("notify://realm/orders/create");
+    tier2_stress::measure_iterations(ctx, 1, || {
+        black_box(index.match_all(family, black_box(&route)));
     });
-    group.finish();
 }
 
-fn bench_match_exact_pattern(c: &mut Criterion) {
-    let mut group = c.benchmark_group("subsystem_subscriptions");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
-    group.bench_function("exact", |b| {
-        let index = make_subscriptions_with_patterns(100);
-        let family = RouteFamily::new(1);
-        let route = Route::new("notify://realm/orders/create");
-        b.iter(|| {
-            black_box(index.match_all(family, black_box(&route)));
-        });
+#[stress_test(tier = 2, mode = "fixed_duration", name = "double_star")]
+fn should_match_double_star(ctx: &mut StressContext) {
+    let index = make_subscriptions_with_patterns(100);
+    let family = RouteFamily::new(1);
+    let route = Route::new("notify://realm/orders/created");
+    tier2_stress::measure_iterations(ctx, 1, || {
+        black_box(index.match_all(family, black_box(&route)));
     });
-    group.finish();
 }
 
-fn bench_match_single_star(c: &mut Criterion) {
-    let mut group = c.benchmark_group("subsystem_subscriptions");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
-    group.bench_function("single_star", |b| {
-        let index = make_subscriptions_with_patterns(100);
-        let family = RouteFamily::new(1);
-        let route = Route::new("notify://realm/orders/create");
-        b.iter(|| {
-            black_box(index.match_all(family, black_box(&route)));
-        });
+#[stress_test(tier = 2, mode = "fixed_duration", name = "10k_subs_1_match")]
+fn should_match_10k_subs_1_match(ctx: &mut StressContext) {
+    let (index, route, family) = make_index_fanout_sparse(10000);
+    tier2_stress::measure_iterations(ctx, 1, || {
+        black_box(index.match_all(family, black_box(&route)));
     });
-    group.finish();
 }
 
-fn bench_match_double_star(c: &mut Criterion) {
-    let mut group = c.benchmark_group("subsystem_subscriptions");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
-    group.bench_function("double_star", |b| {
-        let index = make_subscriptions_with_patterns(100);
-        let family = RouteFamily::new(1);
-        let route = Route::new("notify://realm/orders/created");
-        b.iter(|| {
-            black_box(index.match_all(family, black_box(&route)));
-        });
+#[stress_test(tier = 2, mode = "fixed_duration", name = "10k_subs_10k_matches")]
+fn should_match_10k_subs_10k_matches(ctx: &mut StressContext) {
+    let (index, route, family) = make_index_fanout_dense(10000);
+    tier2_stress::measure_iterations(ctx, 1, || {
+        black_box(index.match_all_with_capacity(family, black_box(&route), 10_000));
     });
-    group.finish();
 }
 
-fn bench_match_fanout_sparse_100(c: &mut Criterion) {
-    let mut group = c.benchmark_group("subsystem_subscriptions");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
-    group.bench_function("10k_subs_1_match", |b| {
-        let (index, route, family) = make_index_fanout_sparse(10000);
-        b.iter(|| {
-            black_box(index.match_all(family, black_box(&route)));
-        });
+fn match_depth(ctx: &mut StressContext, depth: usize) {
+    let (index, route, family) = make_index_with_depth(depth, 1000);
+    tier2_stress::measure_iterations(ctx, 1, || {
+        black_box(index.match_all(family, black_box(&route)));
     });
-    group.finish();
 }
 
-fn bench_match_fanout_dense_100(c: &mut Criterion) {
-    let mut group = c.benchmark_group("subsystem_subscriptions");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
-    group.bench_function("10k_subs_10k_matches", |b| {
-        let (index, route, family) = make_index_fanout_dense(10000);
-        b.iter(|| {
-            black_box(index.match_all_with_capacity(family, black_box(&route), 10_000));
-        });
-    });
-    group.finish();
+#[stress_test(tier = 2, mode = "fixed_duration", name = "depth_3")]
+fn should_match_depth_3(ctx: &mut StressContext) {
+    match_depth(ctx, 3);
 }
 
-fn bench_match_depth_3(c: &mut Criterion) {
-    let mut group = c.benchmark_group("subsystem_subscriptions");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
-    group.bench_function("depth_3", |b| {
-        let (index, route, family) = make_index_with_depth(3, 1000);
-        b.iter(|| {
-            black_box(index.match_all(family, black_box(&route)));
-        });
-    });
-    group.finish();
+#[stress_test(tier = 2, mode = "fixed_duration", name = "depth_5")]
+fn should_match_depth_5(ctx: &mut StressContext) {
+    match_depth(ctx, 5);
 }
 
-fn bench_match_depth_5(c: &mut Criterion) {
-    let mut group = c.benchmark_group("subsystem_subscriptions");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
-    group.bench_function("depth_5", |b| {
-        let (index, route, family) = make_index_with_depth(5, 1000);
-        b.iter(|| {
-            black_box(index.match_all(family, black_box(&route)));
-        });
-    });
-    group.finish();
+#[stress_test(tier = 2, mode = "fixed_duration", name = "depth_10")]
+fn should_match_depth_10(ctx: &mut StressContext) {
+    match_depth(ctx, 10);
 }
 
-fn bench_match_depth_10(c: &mut Criterion) {
-    let mut group = c.benchmark_group("subsystem_subscriptions");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
-    group.bench_function("depth_10", |b| {
-        let (index, route, family) = make_index_with_depth(10, 1000);
-        b.iter(|| {
-            black_box(index.match_all(family, black_box(&route)));
-        });
-    });
-    group.finish();
-}
-
-fn bench_remove_subscription(c: &mut Criterion) {
+#[stress_test(tier = 2, mode = "fixed_duration", name = "remove_from_index")]
+fn should_remove_from_index(ctx: &mut StressContext) {
     let family = RouteFamily::new(1);
     let pattern = Route::new("notify://realm/orders/*");
+    let indexes = (0..REMOVE_BATCH_SIZE)
+        .map(|_| {
+            let mut index = SubscriptionIndex::new();
+            index.insert(family, &pattern, SubscriptionId(1));
+            index
+        })
+        .collect::<Vec<_>>();
 
-    let mut group = c.benchmark_group("subsystem_subscriptions");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(1));
-    group.bench_function("remove_from_index", |b| {
-        b.iter_batched(
-            || {
-                let mut index = SubscriptionIndex::new();
-                index.insert(family, &pattern, SubscriptionId(1));
-                index
-            },
-            |mut index| {
-                index.remove(family, black_box(&pattern), SubscriptionId(1));
-            },
-            criterion::BatchSize::SmallInput,
-        );
+    tier2_stress::measure_once(ctx, REMOVE_BATCH_SIZE as u64, || {
+        for mut index in indexes {
+            index.remove(family, black_box(&pattern), SubscriptionId(1));
+        }
     });
-    group.finish();
 }
 
-fn bench_mixed_insert_remove_match(c: &mut Criterion) {
+#[stress_test(tier = 2, mode = "fixed_duration", name = "insert_100_match_2")]
+fn should_insert_100_match_2(ctx: &mut StressContext) {
     let family = RouteFamily::new(1);
     let routes = vec![
         Route::new("notify://realm/orders/create"),
         Route::new("notify://realm/items/remove/action"),
     ];
+    let mut index = SubscriptionIndex::new();
+    let batch = (0_u64..100)
+        .map(|i| {
+            let pattern = match i % 4 {
+                0 => Route::new("notify://realm/orders/create"),
+                1 => Route::new("notify://realm/orders/*"),
+                2 => Route::new("notify://realm/**/created"),
+                _ => Route::new("notify://realm/items/*/action"),
+            };
+            (pattern, SubscriptionId(i))
+        })
+        .collect::<Vec<_>>();
 
-    let mut group = c.benchmark_group("subsystem_subscriptions");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(100));
-    group.bench_function("insert_100_match_2", |b| {
-        b.iter_batched(
-            || {
-                let index = SubscriptionIndex::new();
-                let batch: Vec<(Route, SubscriptionId)> = (0_u64..100)
-                    .map(|i| {
-                        let pattern = match i % 4 {
-                            0 => Route::new("notify://realm/orders/create"),
-                            1 => Route::new("notify://realm/orders/*"),
-                            2 => Route::new("notify://realm/**/created"),
-                            _ => Route::new("notify://realm/items/*/action"),
-                        };
-                        (pattern, SubscriptionId(i))
-                    })
-                    .collect();
-                (index, batch)
-            },
-            |(mut index, batch)| {
-                index.insert_batch(family, &batch);
-                for route in &routes {
-                    black_box(index.match_all(family, black_box(route)));
-                }
-            },
-            criterion::BatchSize::LargeInput,
-        );
+    tier2_stress::measure_once(ctx, 100, || {
+        index.insert_batch(family, &batch);
+        for route in &routes {
+            black_box(index.match_all(family, black_box(route)));
+        }
     });
-    group.finish();
 }
 
-fn bench_replace_batch_100(c: &mut Criterion) {
+#[stress_test(tier = 2, mode = "fixed_duration", name = "replace_100_patterns")]
+fn should_replace_100_patterns(ctx: &mut StressContext) {
     let family = RouteFamily::new(1);
     let old_batch = make_subscription_batch(100, 0);
     let new_batch = make_subscription_batch(100, 10_000);
+    let mut index = SubscriptionIndex::new();
+    index.insert_batch(family, &old_batch);
 
-    let mut group = c.benchmark_group("subsystem_subscriptions");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(200));
-    group.bench_function("replace_100_patterns", |b| {
-        b.iter_batched(
-            || {
-                let mut index = SubscriptionIndex::new();
-                index.insert_batch(family, &old_batch);
-                index
-            },
-            |mut index| {
-                for (pattern, subscription_id) in &old_batch {
-                    index.remove(family, black_box(pattern), *subscription_id);
-                }
-                index.insert_batch(family, black_box(&new_batch));
-            },
-            criterion::BatchSize::LargeInput,
-        );
+    tier2_stress::measure_once(ctx, 200, || {
+        for (pattern, subscription_id) in &old_batch {
+            index.remove(family, black_box(pattern), *subscription_id);
+        }
+        index.insert_batch(family, black_box(&new_batch));
     });
-    group.finish();
 }
 
-fn bench_replace_then_dense_match_100(c: &mut Criterion) {
+#[stress_test(
+    tier = 2,
+    mode = "fixed_duration",
+    name = "replace_100_patterns_then_dense_match"
+)]
+fn should_replace_100_patterns_then_dense_match(ctx: &mut StressContext) {
     let family = RouteFamily::new(1);
     let old_batch = make_dense_match_batch(100, 0);
     let new_batch = make_dense_match_batch(100, 10_000);
     let route = Route::new("notify://realm/orders/items/action");
+    let mut index = SubscriptionIndex::new();
+    index.insert_batch(family, &old_batch);
 
-    let mut group = c.benchmark_group("subsystem_subscriptions");
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(100));
-    group.bench_function("replace_100_patterns_then_dense_match", |b| {
-        b.iter_batched(
-            || {
-                let mut index = SubscriptionIndex::new();
-                index.insert_batch(family, &old_batch);
-                index
-            },
-            |mut index| {
-                for (pattern, subscription_id) in &old_batch {
-                    index.remove(family, black_box(pattern), *subscription_id);
-                }
-                index.insert_batch(family, black_box(&new_batch));
-                black_box(index.match_all_with_capacity(family, black_box(&route), 100));
-            },
-            criterion::BatchSize::LargeInput,
-        );
+    tier2_stress::measure_once(ctx, 100, || {
+        for (pattern, subscription_id) in &old_batch {
+            index.remove(family, black_box(pattern), *subscription_id);
+        }
+        index.insert_batch(family, black_box(&new_batch));
+        black_box(index.match_all_with_capacity(family, black_box(&route), 100));
     });
-    group.finish();
 }
 
-criterion_group! {
-    name = benches;
-    config = criterion_config::criterion_config_for_tier2();
-    targets =
-        bench_insert_single_pattern,
-        bench_insert_with_single_star,
-        bench_insert_with_double_star,
-        bench_match_exact_pattern,
-        bench_match_single_star,
-        bench_match_double_star,
-        bench_match_fanout_sparse_100,
-        bench_match_fanout_dense_100,
-        bench_match_depth_3,
-        bench_match_depth_5,
-        bench_match_depth_10,
-        bench_remove_subscription,
-        bench_mixed_insert_remove_match,
-        bench_replace_batch_100,
-        bench_replace_then_dense_match_100
-}
-criterion_main!(benches);
+stress_main!();
