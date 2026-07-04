@@ -7,6 +7,30 @@ use super::model::{
 use crate::protocol::frame_context::FrameContext;
 use crate::runtime::{Actor, Context};
 
+enum LeaseRequestView<'a> {
+    Borrowed(&'a crate::domains::lease::LeaseClientRequest),
+    #[cfg(test)]
+    Owned(crate::domains::lease::LeaseClientRequest),
+}
+
+impl LeaseRequestView<'_> {
+    fn meta(&self) -> crate::runtime::ClientFrameMeta {
+        match self {
+            Self::Borrowed(request) => request.meta,
+            #[cfg(test)]
+            Self::Owned(request) => request.meta,
+        }
+    }
+
+    fn frame(&self) -> &Result<crate::domains::lease::protocol::LeaseClientFrame, String> {
+        match self {
+            Self::Borrowed(request) => &request.frame,
+            #[cfg(test)]
+            Self::Owned(request) => &request.frame,
+        }
+    }
+}
+
 impl MailboxSink for LeaseDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
         self.actor.try_send(LeaseDomainCommand::Deliver(envelope))
@@ -96,10 +120,10 @@ impl LeaseDomainRuntime<'_> {
         let Some(request) = Self::extract_request(envelope)? else {
             return Ok(());
         };
-        let meta = request.meta;
+        let meta = request.meta();
         let request_started = self.record_request_start();
 
-        let parsed_frame = self.parse_request_frame(meta, request.frame, request_started)?;
+        let parsed_frame = self.parse_request_frame(meta, request.frame(), request_started)?;
 
         match parsed_frame {
             crate::domains::lease::protocol::LeaseClientFrame::Sub(sub_msg) => {
@@ -148,9 +172,7 @@ impl LeaseDomainRuntime<'_> {
         );
     }
 
-    fn extract_request(
-        envelope: &Envelope,
-    ) -> Result<Option<crate::domains::lease::LeaseClientRequest>, DeliveryError> {
+    fn extract_request(envelope: &Envelope) -> Result<Option<LeaseRequestView<'_>>, DeliveryError> {
         if let Some(request) = Self::request_from_envelope(envelope) {
             Ok(Some(request))
         } else {
@@ -169,12 +191,12 @@ impl LeaseDomainRuntime<'_> {
             .map(crate::domains::lease::LeaseMetrics::record_request_start)
     }
 
-    fn parse_request_frame(
+    fn parse_request_frame<'a>(
         &self,
         meta: crate::runtime::ClientFrameMeta,
-        frame: Result<crate::domains::lease::protocol::LeaseClientFrame, String>,
+        frame: &'a Result<crate::domains::lease::protocol::LeaseClientFrame, String>,
         request_started: Option<std::time::Instant>,
-    ) -> Result<crate::domains::lease::protocol::LeaseClientFrame, DeliveryError> {
+    ) -> Result<&'a crate::domains::lease::protocol::LeaseClientFrame, DeliveryError> {
         match frame {
             Ok(msg) => {
                 tracing::debug!(
@@ -202,7 +224,7 @@ impl LeaseDomainRuntime<'_> {
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         request_started: Option<std::time::Instant>,
-        sub_msg: crate::domains::lease::protocol::LeaseSubscriptionMessage,
+        sub_msg: &crate::domains::lease::protocol::LeaseSubscriptionMessage,
     ) {
         use crate::domains::lease::protocol::{LeaseResponse, LeaseSubscriptionMessage};
 
@@ -221,19 +243,19 @@ impl LeaseDomainRuntime<'_> {
                         .or_insert_with(RoutedSubscriptionSet::new);
 
                     if let Some(existing_id) =
-                        state.find_existing_id(session_id, pattern_str.as_str())
+                        state.find_existing_id(*session_id, pattern_str.as_str())
                     {
                         existing_id
                     } else {
                         let new_id = self.core.next_sub_id.fetch_add(1, Ordering::Relaxed);
                         state.insert(
-                            family_id,
+                            *family_id,
                             LeaseSubscription {
                                 pattern: crate::runtime::matcher::Pattern::new(
                                     pattern_str.as_str(),
                                 ),
-                                session_id,
-                                route_address: subscriber,
+                                session_id: *session_id,
+                                route_address: subscriber.clone(),
                                 subscription_id: new_id,
                             },
                         );
@@ -250,7 +272,7 @@ impl LeaseDomainRuntime<'_> {
             } => {
                 let mut families = self.core.families.lock();
                 let remove_family = if let Some(state) = families.get_mut(&family_id.as_u64()) {
-                    state.remove_session_pattern(family_id, session_id, pattern.as_str());
+                    state.remove_session_pattern(*family_id, *session_id, pattern.as_str());
                     state.is_empty()
                 } else {
                     false
@@ -271,12 +293,12 @@ impl LeaseDomainRuntime<'_> {
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         request_started: Option<std::time::Instant>,
-        lease_msg: crate::domains::lease::protocol::LeaseMessage,
+        lease_msg: &crate::domains::lease::protocol::LeaseMessage,
     ) {
         use crate::domains::lease::protocol::{LeaseKey, LeaseMessage, LeaseResponse};
 
         let session_prefix = meta.session_id.to_string();
-        let effective_owner = |owner_id: String| {
+        let effective_owner = |owner_id: &str| {
             if owner_id.is_empty() {
                 let mut scoped = String::with_capacity("session:".len() + session_prefix.len());
                 scoped.push_str("session:");
@@ -289,7 +311,7 @@ impl LeaseDomainRuntime<'_> {
                 scoped.push_str("session:");
                 scoped.push_str(&session_prefix);
                 scoped.push(':');
-                scoped.push_str(&owner_id);
+                scoped.push_str(owner_id);
                 scoped
             }
         };
@@ -301,13 +323,13 @@ impl LeaseDomainRuntime<'_> {
                 owner_id,
                 ttl_secs,
                 wait_seconds,
-            } => match LeaseKey::from_route(family_id, &route) {
+            } => match LeaseKey::from_route(*family_id, route) {
                 Some(key) => self.handle_acquire(LeaseAcquireRequest {
                     key,
                     owner_session_id: meta.session_id,
                     owner_id: effective_owner(owner_id),
-                    ttl_secs,
-                    wait_seconds,
+                    ttl_secs: *ttl_secs,
+                    wait_seconds: *wait_seconds,
                     reply_source: envelope.destination().clone(),
                     reply_destination: envelope.source().cloned(),
                     channel: meta.channel,
@@ -321,9 +343,9 @@ impl LeaseDomainRuntime<'_> {
                 owner_id,
                 fencing_token,
                 ttl_secs,
-            } => match LeaseKey::from_route(family_id, &route) {
+            } => match LeaseKey::from_route(*family_id, route) {
                 Some(key) => {
-                    self.handle_extend(&key, &effective_owner(owner_id), fencing_token, ttl_secs)
+                    self.handle_extend(&key, &effective_owner(owner_id), *fencing_token, *ttl_secs)
                 }
                 None => LeaseResponse::NotFound,
             },
@@ -332,12 +354,12 @@ impl LeaseDomainRuntime<'_> {
                 route,
                 owner_id,
                 fencing_token,
-            } => match LeaseKey::from_route(family_id, &route) {
-                Some(key) => self.handle_release(&key, &effective_owner(owner_id), fencing_token),
+            } => match LeaseKey::from_route(*family_id, route) {
+                Some(key) => self.handle_release(&key, &effective_owner(owner_id), *fencing_token),
                 None => LeaseResponse::NotFound,
             },
             LeaseMessage::Query { family_id, route } => {
-                match LeaseKey::from_route(family_id, &route) {
+                match LeaseKey::from_route(*family_id, route) {
                     Some(key) => self.handle_query(&key),
                     None => LeaseResponse::NotFound,
                 }
@@ -356,11 +378,9 @@ impl LeaseDomainRuntime<'_> {
         self.route_lease_response(envelope, meta, &domain_response, request_started);
     }
 
-    fn request_from_envelope(
-        envelope: &Envelope,
-    ) -> Option<crate::domains::lease::LeaseClientRequest> {
+    fn request_from_envelope(envelope: &Envelope) -> Option<LeaseRequestView<'_>> {
         if let Some(request) = envelope.payload::<crate::domains::lease::LeaseClientRequest>() {
-            return Some(request.clone());
+            return Some(LeaseRequestView::Borrowed(request));
         }
 
         #[cfg(test)]
@@ -390,7 +410,9 @@ impl LeaseDomainRuntime<'_> {
                     crate::domains::lease::LeaseClientFrame::Sub(message)
                 }
             });
-            Some(crate::domains::lease::LeaseClientRequest::new(meta, parsed))
+            Some(LeaseRequestView::Owned(
+                crate::domains::lease::LeaseClientRequest::new(meta, parsed),
+            ))
         }
 
         #[cfg(not(test))]
