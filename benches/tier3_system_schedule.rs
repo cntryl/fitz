@@ -16,6 +16,7 @@ use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
 use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
 const SUSTAINED_ACTIVE_SCHEDULES: usize = 1024;
 const MIXED_INITIAL_SCHEDULES: usize = 256;
@@ -84,6 +85,51 @@ fn assert_uncached_list_count(actor: &mut ScheduleActor, limit: u64, expected_co
 
 fn returned_schedule_elements(iterations: usize, returned_per_iteration: u64) -> u64 {
     (iterations as u64).saturating_mul(returned_per_iteration)
+}
+
+fn measure_prepared_due_collection(
+    ctx: &mut StressContext,
+    actor: &mut ScheduleActor,
+    ready_count: usize,
+    expected_fired_count: usize,
+) -> usize {
+    let mut measured = Duration::ZERO;
+    let mut iterations = 0usize;
+    let target_duration = stress_config::BenchConfig::default().measure_duration;
+
+    while measured < target_duration {
+        actor.bench_prepare_scan(ready_count);
+        let started_at = Instant::now();
+        let claims = actor.bench_claim_due_fires();
+        let mut delivered = Vec::with_capacity(claims.len());
+        let fired: Vec<_> = claims
+            .into_iter()
+            .map(|claim| {
+                delivered.push((claim.fire_ms, claim.route.clone()));
+                (claim.route, claim.payload)
+            })
+            .collect();
+        measured += started_at.elapsed();
+        assert_eq!(
+            fired.len(),
+            expected_fired_count,
+            "schedule due benchmark must publish the expected ready occurrence count"
+        );
+        if !delivered.is_empty() {
+            let (acked, _) = actor
+                .bench_ack_pending_fire_claims(&delivered)
+                .expect("schedule due benchmark ack should succeed");
+            assert_eq!(
+                acked,
+                delivered.len(),
+                "schedule due benchmark should ack every claimed occurrence after timing"
+            );
+        }
+        iterations += 1;
+    }
+
+    ctx.record_duration(measured);
+    iterations
 }
 
 fn precompute_data(count: usize) -> (Vec<String>, Vec<String>, Vec<Bytes>) {
@@ -337,7 +383,11 @@ fn should_complete_system_collect_due_occurrences_not_ready_1000_schedules(
         stress_config::BenchConfig::default().measure_duration,
         || {
             actor.bench_prepare_scan(0);
-            let _fired = actor.collect_due_occurrences_for_publish();
+            let fired = actor.collect_due_occurrences_for_publish();
+            assert!(
+                fired.is_empty(),
+                "not-ready schedule due benchmark must not publish occurrences"
+            );
         },
     );
     ctx.set_elements(1000 * iterations as u64);
@@ -351,16 +401,11 @@ fn should_complete_system_collect_due_occurrences_partially_ready_1000_schedules
     ctx.tag("measurement_scope", "direct_actor");
     ctx.tag("batch_size", "1000_scanned");
     ctx.tag("ready_state", "partial_ready");
+    ctx.tag("setup_scope", "prepared_scan_reset_outside_timer");
 
     let mut actor = create_scan_actor(1000);
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            actor.bench_prepare_scan(100);
-            let _fired = actor.collect_due_occurrences_for_publish();
-        },
-    );
+    let iterations = measure_prepared_due_collection(ctx, &mut actor, 100, 100);
     ctx.set_elements(1000 * iterations as u64);
 }
 
@@ -372,16 +417,11 @@ fn should_complete_system_collect_due_occurrences_all_ready_1000_schedules(
     ctx.tag("measurement_scope", "direct_actor");
     ctx.tag("batch_size", "1000_scanned");
     ctx.tag("ready_state", "all_ready");
+    ctx.tag("setup_scope", "prepared_scan_reset_outside_timer");
 
     let mut actor = create_scan_actor(1000);
 
-    let iterations = ctx.measure_for(
-        stress_config::BenchConfig::default().measure_duration,
-        || {
-            actor.bench_prepare_scan(1000);
-            let _fired = actor.collect_due_occurrences_for_publish();
-        },
-    );
+    let iterations = measure_prepared_due_collection(ctx, &mut actor, 1000, 1000);
     ctx.set_elements(1000 * iterations as u64);
 }
 
