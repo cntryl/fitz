@@ -287,8 +287,8 @@ fn parse_acquire(
     dec: &mut PayloadDecoder,
     route_family: RouteFamily,
 ) -> Result<LeaseMessage, String> {
-    let route_str = dec.get_string()?;
-    let route = Route::new(route_str);
+    let route_str = dec.get_string_ref()?;
+    let route = Route::from_ref(route_str);
     let owner_id = dec.get_string()?;
     let ttl_secs = dec.get_u64()?;
     // wait_seconds is optional for backward compatibility; defaults to 0
@@ -316,8 +316,8 @@ fn parse_extend(
     dec: &mut PayloadDecoder,
     route_family: RouteFamily,
 ) -> Result<LeaseMessage, String> {
-    let route_str = dec.get_string()?;
-    let route = Route::new(route_str);
+    let route_str = dec.get_string_ref()?;
+    let route = Route::from_ref(route_str);
     let owner_id = dec.get_string()?;
     let fencing_token = dec.get_u64()?;
     let ttl_secs = dec.get_u64()?;
@@ -340,8 +340,8 @@ fn parse_release(
     dec: &mut PayloadDecoder,
     route_family: RouteFamily,
 ) -> Result<LeaseMessage, String> {
-    let route_str = dec.get_string()?;
-    let route = Route::new(route_str);
+    let route_str = dec.get_string_ref()?;
+    let route = Route::from_ref(route_str);
     let owner_id = dec.get_string()?;
     let fencing_token = dec.get_u64()?;
 
@@ -362,8 +362,8 @@ fn parse_query(
     dec: &mut PayloadDecoder,
     route_family: RouteFamily,
 ) -> Result<LeaseMessage, String> {
-    let route_str = dec.get_string()?;
-    let route = Route::new(route_str);
+    let route_str = dec.get_string_ref()?;
+    let route = Route::from_ref(route_str);
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
@@ -382,7 +382,7 @@ fn parse_subscribe(
     session_id: u64,
     subscriber: RouteAddress,
 ) -> Result<LeaseSubscriptionMessage, String> {
-    let pattern = dec.get_string()?;
+    let pattern = dec.get_string_ref()?;
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
@@ -390,7 +390,7 @@ fn parse_subscribe(
 
     Ok(LeaseSubscriptionMessage::Subscribe {
         family_id: route_family,
-        pattern: Route::new(pattern.as_str()),
+        pattern: Route::from_ref(pattern),
         session_id,
         subscriber,
     })
@@ -403,7 +403,7 @@ fn parse_unsubscribe(
     session_id: u64,
     subscriber: RouteAddress,
 ) -> Result<LeaseSubscriptionMessage, String> {
-    let pattern = dec.get_string()?;
+    let pattern = dec.get_string_ref()?;
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
@@ -411,7 +411,7 @@ fn parse_unsubscribe(
 
     Ok(LeaseSubscriptionMessage::Unsubscribe {
         family_id: route_family,
-        pattern: Route::new(pattern.as_str()),
+        pattern: Route::from_ref(pattern),
         session_id,
         subscriber,
     })
