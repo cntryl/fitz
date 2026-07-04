@@ -3,7 +3,7 @@
 //! These helpers let benchmarks drive the same `FrameContext -> Envelope -> Router ->
 //! DomainSink` path that the live server uses, without standing up TCP/WS transport.
 
-use super::create_bench_store;
+use super::{create_bench_store, create_write_heavy_bench_store};
 use crate::domains::lease::sink::LeaseDomainSink;
 use crate::domains::notice::sink::NoticeDomainSink;
 use crate::domains::queue::sink::QueueDomainSink;
@@ -567,6 +567,26 @@ pub fn create_bench_stream_sink(router: Arc<Router>) -> Arc<StreamDomainSink> {
     create_bench_stream_sink_with_layout(
         router,
         crate::domains::stream::StreamStorageLayout::default(),
+    )
+}
+
+#[must_use]
+/// Create a benchmark `StreamDomainSink` backed by a write-heavy bench store.
+///
+/// # Panics
+///
+/// Panics if the benchmark stream sink cannot be constructed.
+pub fn create_write_heavy_bench_stream_sink(router: Arc<Router>) -> Arc<StreamDomainSink> {
+    // Panics are acceptable here because this is benchmark-only setup and the
+    // caller cannot meaningfully recover from a sink construction failure.
+    Arc::new(
+        StreamDomainSink::new_with_layout(
+            create_write_heavy_bench_store(),
+            router,
+            crate::control::admin::read_model::AdminReadModel::new(),
+            crate::domains::stream::StreamStorageLayout::default(),
+        )
+        .expect("create write-heavy bench stream sink"),
     )
 }
 

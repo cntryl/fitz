@@ -14,8 +14,9 @@ use cntryl_stress::{stress_main, stress_test, StressContext};
 use fitz::benchkit::{
     build_stream_append, build_stream_begin, build_stream_commit, build_stream_last,
     build_stream_read, build_stream_subscribe, count_stream_read_records_from_payload,
-    create_bench_stream_sink, extract_single_tlv_field, parse_stream_session_id,
-    register_session_counting_sink, register_session_queue_sink, route_frame, FrameQueueSink,
+    create_bench_stream_sink, create_write_heavy_bench_stream_sink, extract_single_tlv_field,
+    parse_stream_session_id, register_session_counting_sink, register_session_queue_sink,
+    route_frame, FrameQueueSink,
 };
 use fitz::protocol::frame::ChannelId;
 use fitz::runtime::router::{MailboxSink, Router};
@@ -35,9 +36,21 @@ struct StreamBenchContext {
 }
 
 fn setup_stream_sink() -> StreamBenchContext {
+    setup_stream_sink_with(false)
+}
+
+fn setup_write_heavy_stream_sink() -> StreamBenchContext {
+    setup_stream_sink_with(true)
+}
+
+fn setup_stream_sink_with(write_heavy: bool) -> StreamBenchContext {
     let family = RouteFamily::new(1);
     let router = Arc::new(Router::new());
-    let sink = create_bench_stream_sink(router.clone());
+    let sink = if write_heavy {
+        create_write_heavy_bench_stream_sink(router.clone())
+    } else {
+        create_bench_stream_sink(router.clone())
+    };
     router.register_domain_pattern("stream", sink as Arc<dyn MailboxSink>);
     let (source, inbox) = register_session_queue_sink(&router, family, CLIENT_SESSION_ID);
     StreamBenchContext {
@@ -76,7 +89,16 @@ fn begin_stream(context: &StreamBenchContext, route: &str) -> u64 {
     let begin_frame = build_stream_begin(route);
     let (msg_type, payload) = extract_single_tlv_field(&begin_frame);
     let response = request(context, route, msg_type, payload);
-    parse_stream_session_id(response.as_ref()).expect("stream session id")
+    parse_stream_session_id(response.as_ref()).unwrap_or_else(|error| {
+        panic!("stream session id for {route}: {error}; response={response:?}");
+    })
+}
+
+fn assert_stream_success(operation: &str, route: &str, response: &Bytes) {
+    assert!(
+        response.first().copied() == Some(0),
+        "stream {operation} failed for {route}; response={response:?}"
+    );
 }
 
 fn subscribe_stream(
@@ -315,7 +337,7 @@ fn should_complete_publish_fanout_with_subscribers(ctx: &mut StressContext) {
     ctx.tag("batch_size", "10_publishes");
     ctx.tag("subscriber_count", "16");
 
-    let context = setup_stream_sink();
+    let context = setup_write_heavy_stream_sink();
     let subscribe_destination = "stream://bench/system/fanout-control/append";
     // Stream commit notifications are published on the committed resource route, not the append route.
     let notify_pattern = "stream://bench/system/*";
@@ -348,11 +370,13 @@ fn should_complete_publish_fanout_with_subscribers(ctx: &mut StressContext) {
                 let append_frame =
                     build_stream_append(stream_session, expected_offset.get(), b"fanout event");
                 let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
-                let _ = request(&context, route, append_msg_type, append_payload);
+                let append_response = request(&context, route, append_msg_type, append_payload);
+                assert_stream_success("append", route, &append_response);
 
-                let commit_frame = build_stream_commit(stream_session, 0);
+                let commit_frame = build_stream_commit(stream_session, STREAM_SYNC_COMMIT_MODE);
                 let (commit_msg_type, commit_payload) = extract_single_tlv_field(&commit_frame);
-                let _ = request(&context, route, commit_msg_type, commit_payload);
+                let commit_response = request(&context, route, commit_msg_type, commit_payload);
+                assert_stream_success("commit", route, &commit_response);
 
                 expected_offset.set(expected_offset.get().saturating_add(1));
             }
