@@ -47,7 +47,7 @@ macro_rules! compile_bench {
         fn $fn_name(ctx: &mut StressContext) {
             record_group(ctx, "hotpath_permissions_compile");
 
-            ctx.measure("operation", || {
+            ctx.measure($bench_name, || {
                 black_box(SessionPermissions::from_permissions(parse_permissions(
                     &$raw,
                 )));
@@ -86,7 +86,7 @@ macro_rules! cache_hit_bench {
             let route = Route::new($route);
             let permissions = warmed_permissions(&$raw, &route, $access);
 
-            ctx.measure("operation", || {
+            ctx.measure($bench_name, || {
                 black_box(permissions.allows(black_box(&route), black_box($access)));
             });
         }
@@ -134,7 +134,7 @@ fn should_allows_deny_by_default_cache_hit(ctx: &mut StressContext) {
     let route = Route::new("rpc://acme/auth/users");
     let _ = permissions.allows(&route, Access::Read);
 
-    ctx.measure("operation", || {
+    ctx.measure("allows_deny_by_default_cache_hit", || {
         black_box(permissions.allows(black_box(&route), black_box(Access::Read)));
     });
 }
@@ -146,7 +146,7 @@ macro_rules! cache_miss_bench {
             record_group(ctx, "hotpath_permissions_miss");
             let route = Route::new($route);
 
-            ctx.measure("operation", || {
+            ctx.measure($bench_name, || {
                 let permissions = SessionPermissions::from_permissions(parse_permissions(&$raw));
                 black_box(permissions.allows(black_box(&route), black_box($access)));
             });

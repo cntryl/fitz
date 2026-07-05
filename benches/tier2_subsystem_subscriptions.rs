@@ -123,11 +123,16 @@ fn insert_single_pattern(ctx: &mut StressContext, pattern: &Route) {
         .map(|_| SubscriptionIndex::new())
         .collect::<Vec<_>>();
 
-    tier2_stress::measure_once(ctx, SINGLE_PATTERN_BATCH_SIZE as u64, || {
-        for mut index in indexes {
-            index.insert(family, black_box(pattern), SubscriptionId(1));
-        }
-    });
+    tier2_stress::measure_once(
+        ctx,
+        "insert_single_pattern",
+        SINGLE_PATTERN_BATCH_SIZE as u64,
+        || {
+            for mut index in indexes {
+                index.insert(family, black_box(pattern), SubscriptionId(1));
+            }
+        },
+    );
 }
 
 fn match_repeated(
@@ -136,7 +141,7 @@ fn match_repeated(
     family: RouteFamily,
     route: &Route,
 ) {
-    tier2_stress::measure_iterations(ctx, MATCH_REPEAT_COUNT as u64, || {
+    tier2_stress::measure_iterations(ctx, "match_repeated", MATCH_REPEAT_COUNT as u64, || {
         for _ in 0..MATCH_REPEAT_COUNT {
             black_box(index.match_all(family, black_box(route)));
         }
@@ -191,7 +196,7 @@ fn should_match_10k_subs_1_match(ctx: &mut StressContext) {
 #[stress(tier = 2, name = "10k_subs_10k_matches")]
 fn should_match_10k_subs_10k_matches(ctx: &mut StressContext) {
     let (index, route, family) = make_index_fanout_dense(10000);
-    tier2_stress::measure_iterations(ctx, 1, || {
+    tier2_stress::measure_iterations(ctx, "10k_subs_10k_matches", 1, || {
         black_box(index.match_all_with_capacity(family, black_box(&route), 10_000));
     });
 }
@@ -228,7 +233,7 @@ fn should_remove_from_index(ctx: &mut StressContext) {
         })
         .collect::<Vec<_>>();
 
-    tier2_stress::measure_once(ctx, REMOVE_BATCH_SIZE as u64, || {
+    tier2_stress::measure_once(ctx, "remove_from_index", REMOVE_BATCH_SIZE as u64, || {
         for mut index in indexes {
             index.remove(family, black_box(&pattern), SubscriptionId(1));
         }
@@ -255,7 +260,7 @@ fn should_insert_100_match_2(ctx: &mut StressContext) {
         })
         .collect::<Vec<_>>();
 
-    tier2_stress::measure_once(ctx, 100, || {
+    tier2_stress::measure_once(ctx, "insert_100_match_2", 100, || {
         index.insert_batch(family, &batch);
         for route in &routes {
             black_box(index.match_all(family, black_box(route)));
@@ -271,7 +276,7 @@ fn should_replace_100_patterns(ctx: &mut StressContext) {
     let mut index = SubscriptionIndex::new();
     index.insert_batch(family, &old_batch);
 
-    tier2_stress::measure_once(ctx, 200, || {
+    tier2_stress::measure_once(ctx, "replace_100_patterns", 200, || {
         for (pattern, subscription_id) in &old_batch {
             index.remove(family, black_box(pattern), *subscription_id);
         }
@@ -288,7 +293,7 @@ fn should_replace_100_patterns_then_dense_match(ctx: &mut StressContext) {
     let mut index = SubscriptionIndex::new();
     index.insert_batch(family, &old_batch);
 
-    tier2_stress::measure_once(ctx, 100, || {
+    tier2_stress::measure_once(ctx, "replace_100_patterns_then_dense_match", 100, || {
         for (pattern, subscription_id) in &old_batch {
             index.remove(family, black_box(pattern), *subscription_id);
         }

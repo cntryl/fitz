@@ -116,7 +116,7 @@ fn create_publish_case(subscriber_count: usize, pattern: &str) -> NoticePublishC
     case
 }
 
-fn publish_fanout(ctx: &mut StressContext, subscriber_count: usize, pattern: &str) {
+fn publish_fanout(ctx: &mut StressContext, name: &str, subscriber_count: usize, pattern: &str) {
     let case = create_publish_case(subscriber_count, pattern);
     let mut remaining = PUBLISH_REPEAT_COUNT;
     let mut total = Duration::ZERO;
@@ -137,6 +137,7 @@ fn publish_fanout(ctx: &mut StressContext, subscriber_count: usize, pattern: &st
     }
     tier2_stress::record_duration(
         ctx,
+        name,
         total,
         PUBLISH_REPEAT_COUNT.saturating_mul(subscriber_count as u64),
     );
@@ -144,9 +145,9 @@ fn publish_fanout(ctx: &mut StressContext, subscriber_count: usize, pattern: &st
 
 macro_rules! notice_publish_bench {
     ($fn_name:ident, $stress_name:literal, $subscribers:expr, $pattern:expr) => {
-        #[stress(tier = 2, name = $stress_name)]
+        #[stress(tier = 2)]
         fn $fn_name(ctx: &mut StressContext) {
-            publish_fanout(ctx, $subscribers, $pattern);
+            publish_fanout(ctx, $stress_name, $subscribers, $pattern);
         }
     };
 }

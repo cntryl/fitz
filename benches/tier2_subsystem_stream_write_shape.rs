@@ -1641,8 +1641,13 @@ fn write_shape_fixtures() -> WriteShapeFixtures {
     }
 }
 
-fn measure_layout<F>(ctx: &mut StressContext, records: &[LayoutRecord], event_count: u64, mut f: F)
-where
+fn measure_layout<F>(
+    ctx: &mut StressContext,
+    name: &str,
+    records: &[LayoutRecord],
+    event_count: u64,
+    mut f: F,
+) where
     F: FnMut(&[LayoutRecord]) -> LayoutSummary,
 {
     let summary = f(records);
@@ -1652,17 +1657,23 @@ where
     ctx.metadata("realm_plane_bytes", summary.realm_plane_bytes);
     ctx.metadata("bytes_per_event", format!("{:.2}", summary.bytes_per_event));
 
-    tier2_stress::measure_iterations(ctx, event_count, || {
+    tier2_stress::measure_iterations(ctx, name, event_count, || {
         black_box(f(black_box(records)));
     });
 }
 
 macro_rules! write_shape_bench {
     ($fn_name:ident, $stress_name:literal, $records:ident, $summarize:path) => {
-        #[stress(tier = 2, name = $stress_name)]
+        #[stress(tier = 2)]
         fn $fn_name(ctx: &mut StressContext) {
             let fixtures = write_shape_fixtures();
-            measure_layout(ctx, &fixtures.$records, fixtures.event_count, $summarize);
+            measure_layout(
+                ctx,
+                $stress_name,
+                &fixtures.$records,
+                fixtures.event_count,
+                $summarize,
+            );
         }
     };
 }

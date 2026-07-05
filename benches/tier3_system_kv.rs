@@ -52,7 +52,7 @@ fn should_complete_10_puts_same_family(ctx: &mut StressContext) {
         return;
     };
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_10_puts_same_family", || {
         for i in 0..10 {
             actor.handle(KvMessage::Put {
                 tx_id,
@@ -84,7 +84,7 @@ fn should_complete_interleaved_puts_2_families(ctx: &mut StressContext) {
         return;
     };
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_interleaved_puts_2_families", || {
         for i in 0..10 {
             actor.handle(KvMessage::Put {
                 tx_id: tx_id1,
@@ -128,7 +128,7 @@ fn should_complete_10_puts_per_3_families(ctx: &mut StressContext) {
         })
         .collect();
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_10_puts_per_3_families", || {
         for (family_id, tx_id, resource) in &txs {
             for i in 0..10 {
                 actor.handle(KvMessage::Put {
@@ -190,7 +190,7 @@ fn should_complete_mixed_read_write_families(ctx: &mut StressContext) {
         return;
     };
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_mixed_read_write_families", || {
         for i in 0..5 {
             actor.handle(KvMessage::Get {
                 tx_id: read_tx_id,

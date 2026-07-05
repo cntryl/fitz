@@ -213,7 +213,7 @@ fn should_complete_direct_publish(ctx: &mut StressContext) {
     let (publish_msg_type, publish_payload) = extract_single_tlv_field(&publish_frame);
     let mut expected_deliveries = 0usize;
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_direct_publish", || {
         route_frame(
             router.as_ref(),
             &publisher_source,
@@ -264,7 +264,7 @@ fn should_complete_tcp_publish(ctx: &mut StressContext) {
         spawn_tcp_subscriber_counter(runtime, subscriber, delivered.clone());
 
     let mut expected_deliveries = 0_u64;
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_tcp_publish", || {
         runtime
             .block_on(publisher.send_frame(publish_frame.as_ref()))
             .expect("publish frame");
@@ -318,7 +318,7 @@ fn should_complete_ws_publish(ctx: &mut StressContext) {
         spawn_ws_subscriber_counter(runtime, subscriber, delivered.clone());
 
     let mut expected_deliveries = 0_u64;
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_ws_publish", || {
         for _ in 0..WS_PUBLISHES_PER_ITERATION {
             runtime
                 .block_on(publisher.send_frame(publish_frame.as_ref()))
@@ -359,7 +359,7 @@ fn should_complete_tcp_subscribe_unsubscribe_cycle(ctx: &mut StressContext) {
         .block_on(TestClient::new(server.tcp_addr))
         .expect("connect tcp");
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_tcp_subscribe_unsubscribe_cycle", || {
         let subscribe_response = runtime
             .block_on(client.request(&subscribe_frame, 2000))
             .expect("subscribe response");
@@ -398,7 +398,7 @@ fn should_complete_ws_subscribe_unsubscribe_cycle(ctx: &mut StressContext) {
         )))
         .expect("connect ws");
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_ws_subscribe_unsubscribe_cycle", || {
         let subscribe_response = runtime
             .block_on(client.request(&subscribe_frame, 2000))
             .expect("subscribe response");
@@ -424,11 +424,17 @@ fn should_complete_ws_subscribe_unsubscribe_cycle(ctx: &mut StressContext) {
 
 #[stress(tier = 4)]
 fn should_complete_multiclient_fanout_publish(ctx: &mut StressContext) {
-    measure_multiclient_fanout_publish(ctx, "fanout_publish", 10);
+    measure_multiclient_fanout_publish(
+        ctx,
+        "complete_multiclient_fanout_publish",
+        "fanout_publish",
+        10,
+    );
 }
 
 fn measure_multiclient_fanout_publish(
     ctx: &mut StressContext,
+    name: &str,
     scenario: &'static str,
     subscriber_count: usize,
 ) {
@@ -473,7 +479,7 @@ fn measure_multiclient_fanout_publish(
         subscriber_handles.push(handle);
     }
     let mut expected_per_subscriber = 0_u64;
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload(name, || {
         for _ in 0..MULTICLIENT_FANOUT_PUBLISHES_PER_ITERATION {
             runtime
                 .block_on(publisher.send_frame(publish_frame.as_ref()))
@@ -510,17 +516,32 @@ fn measure_multiclient_fanout_publish(
 
 #[stress(tier = 4)]
 fn should_complete_multiclient_fanout_publish_subscriber_scaling_1(ctx: &mut StressContext) {
-    measure_multiclient_fanout_publish(ctx, "fanout_publish_subscriber_scaling", 1);
+    measure_multiclient_fanout_publish(
+        ctx,
+        "complete_multiclient_fanout_publish_subscriber_scaling_1",
+        "fanout_publish_subscriber_scaling",
+        1,
+    );
 }
 
 #[stress(tier = 4)]
 fn should_complete_multiclient_fanout_publish_subscriber_scaling_16(ctx: &mut StressContext) {
-    measure_multiclient_fanout_publish(ctx, "fanout_publish_subscriber_scaling", 16);
+    measure_multiclient_fanout_publish(
+        ctx,
+        "complete_multiclient_fanout_publish_subscriber_scaling_16",
+        "fanout_publish_subscriber_scaling",
+        16,
+    );
 }
 
 #[stress(tier = 4)]
 fn should_complete_multiclient_fanout_publish_subscriber_scaling_64(ctx: &mut StressContext) {
-    measure_multiclient_fanout_publish(ctx, "fanout_publish_subscriber_scaling", 64);
+    measure_multiclient_fanout_publish(
+        ctx,
+        "complete_multiclient_fanout_publish_subscriber_scaling_64",
+        "fanout_publish_subscriber_scaling",
+        64,
+    );
 }
 
 stress_main!();

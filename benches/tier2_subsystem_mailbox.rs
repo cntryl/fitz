@@ -38,13 +38,18 @@ fn should_deliver_empty_primary(ctx: &mut StressContext) {
         })
         .collect::<Vec<_>>();
 
-    tier2_stress::measure_once(ctx, FRESH_DELIVER_BATCH_SIZE as u64, || {
-        for (mailbox, envelope) in items {
-            mailbox
-                .deliver(envelope)
-                .expect("deliver to empty mailbox should succeed");
-        }
-    });
+    tier2_stress::measure_once(
+        ctx,
+        "deliver_empty_primary",
+        FRESH_DELIVER_BATCH_SIZE as u64,
+        || {
+            for (mailbox, envelope) in items {
+                mailbox
+                    .deliver(envelope)
+                    .expect("deliver to empty mailbox should succeed");
+            }
+        },
+    );
 }
 
 #[stress(tier = 2, name = "deliver_mid_fill_64_primary")]
@@ -58,13 +63,18 @@ fn should_deliver_mid_fill_64_primary(ctx: &mut StressContext) {
         })
         .collect::<Vec<_>>();
 
-    tier2_stress::measure_once(ctx, MID_FILL_BATCH_SIZE as u64, || {
-        for (mailbox, envelope) in items {
-            mailbox
-                .deliver(envelope)
-                .expect("deliver to mid-fill mailbox should succeed");
-        }
-    });
+    tier2_stress::measure_once(
+        ctx,
+        "deliver_mid_fill_64_primary",
+        MID_FILL_BATCH_SIZE as u64,
+        || {
+            for (mailbox, envelope) in items {
+                mailbox
+                    .deliver(envelope)
+                    .expect("deliver to mid-fill mailbox should succeed");
+            }
+        },
+    );
 }
 
 #[stress(tier = 2, name = "deliver_full_primary")]
@@ -78,16 +88,21 @@ fn should_deliver_full_primary(ctx: &mut StressContext) {
         })
         .collect::<Vec<_>>();
 
-    tier2_stress::measure_once(ctx, ERROR_DELIVER_BATCH_SIZE as u64, || {
-        for (mailbox, envelope) in items {
-            match mailbox.deliver(envelope) {
-                Err(DeliveryError::MailboxFull { .. }) => {
-                    black_box(());
+    tier2_stress::measure_once(
+        ctx,
+        "deliver_full_primary",
+        ERROR_DELIVER_BATCH_SIZE as u64,
+        || {
+            for (mailbox, envelope) in items {
+                match mailbox.deliver(envelope) {
+                    Err(DeliveryError::MailboxFull { .. }) => {
+                        black_box(());
+                    }
+                    other => panic!("expected MailboxFull, got {other:?}"),
                 }
-                other => panic!("expected MailboxFull, got {other:?}"),
             }
-        }
-    });
+        },
+    );
 }
 
 #[stress(tier = 2, name = "deliver_high_priority_when_normal_lane_full_primary")]
@@ -101,13 +116,18 @@ fn should_deliver_high_priority_when_normal_lane_full_primary(ctx: &mut StressCo
         })
         .collect::<Vec<_>>();
 
-    tier2_stress::measure_once(ctx, ERROR_DELIVER_BATCH_SIZE as u64, || {
-        for (mailbox, envelope) in items {
-            mailbox
-                .deliver_high_priority(envelope)
-                .expect("high-priority lane should remain independent from normal saturation");
-        }
-    });
+    tier2_stress::measure_once(
+        ctx,
+        "deliver_high_priority_when_normal_lane_full_primary",
+        ERROR_DELIVER_BATCH_SIZE as u64,
+        || {
+            for (mailbox, envelope) in items {
+                mailbox
+                    .deliver_high_priority(envelope)
+                    .expect("high-priority lane should remain independent from normal saturation");
+            }
+        },
+    );
 }
 
 stress_main!();

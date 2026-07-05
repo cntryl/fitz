@@ -205,27 +205,32 @@ fn dispatch_response_cleanup_workers(ctx: &mut StressContext, worker_count: usiz
         RequestFrameRing::new(ROUTE_STR, b"dispatch payload", REQUEST_FRAME_RING_SIZE);
     let mut next_worker_index = 0usize;
 
-    tier2_stress::measure_iterations(ctx, usize_to_u64_saturating(DISPATCH_BATCH_SIZE), || {
-        for _ in 0..DISPATCH_BATCH_SIZE {
-            let (request_msg_type, request_payload) = request_ring.next_frame();
-            dispatch_request_to_destination(
-                &router,
-                family,
-                &requester_source,
-                &destination,
-                request_msg_type,
-                black_box(request_payload),
-            );
-            cleanup_worker_request_on_destination(
-                &router,
-                family,
-                &destination,
-                &workers[next_worker_index],
-            );
-            next_worker_index = (next_worker_index + 1) % workers.len();
-            requester_inbox.clear();
-        }
-    });
+    tier2_stress::measure_iterations(
+        ctx,
+        "dispatch_response_cleanup_workers",
+        usize_to_u64_saturating(DISPATCH_BATCH_SIZE),
+        || {
+            for _ in 0..DISPATCH_BATCH_SIZE {
+                let (request_msg_type, request_payload) = request_ring.next_frame();
+                dispatch_request_to_destination(
+                    &router,
+                    family,
+                    &requester_source,
+                    &destination,
+                    request_msg_type,
+                    black_box(request_payload),
+                );
+                cleanup_worker_request_on_destination(
+                    &router,
+                    family,
+                    &destination,
+                    &workers[next_worker_index],
+                );
+                next_worker_index = (next_worker_index + 1) % workers.len();
+                requester_inbox.clear();
+            }
+        },
+    );
 }
 
 #[stress(

@@ -25,18 +25,23 @@ fn should_route_exact_mailbox_32768_messages_primary(ctx: &mut StressContext) {
     router.register(address.clone(), mailbox.clone());
     let mut seq = 0_u64;
 
-    tier2_stress::measure_iterations(ctx, MAILBOX_ROUTE_BATCH_SIZE as u64, || {
-        for _ in 0..MAILBOX_ROUTE_BATCH_SIZE {
-            router
-                .route(Envelope::new(black_box(address.clone()), black_box(seq)))
-                .expect("mailbox route should succeed");
-            let _ = mailbox
-                .receiver()
-                .try_recv()
-                .expect("mailbox route should enqueue message");
-            seq = seq.wrapping_add(1);
-        }
-    });
+    tier2_stress::measure_iterations(
+        ctx,
+        "route_exact_mailbox_32768_messages_primary",
+        MAILBOX_ROUTE_BATCH_SIZE as u64,
+        || {
+            for _ in 0..MAILBOX_ROUTE_BATCH_SIZE {
+                router
+                    .route(Envelope::new(black_box(address.clone()), black_box(seq)))
+                    .expect("mailbox route should succeed");
+                let _ = mailbox
+                    .receiver()
+                    .try_recv()
+                    .expect("mailbox route should enqueue message");
+                seq = seq.wrapping_add(1);
+            }
+        },
+    );
 }
 
 #[stress(tier = 2, name = "route_exact_backpressure_mailbox_primary")]
@@ -54,16 +59,21 @@ fn should_route_exact_backpressure_mailbox_primary(ctx: &mut StressContext) {
         })
         .collect::<Vec<_>>();
 
-    tier2_stress::measure_once(ctx, BACKPRESSURE_BATCH_SIZE as u64, || {
-        for (router, address) in items {
-            match router.route(Envelope::new(black_box(address), black_box(1_u64))) {
-                Err(RouteError::DeliveryFailed(_, DeliveryError::MailboxFull { .. })) => {
-                    black_box(());
+    tier2_stress::measure_once(
+        ctx,
+        "route_exact_backpressure_mailbox_primary",
+        BACKPRESSURE_BATCH_SIZE as u64,
+        || {
+            for (router, address) in items {
+                match router.route(Envelope::new(black_box(address), black_box(1_u64))) {
+                    Err(RouteError::DeliveryFailed(_, DeliveryError::MailboxFull { .. })) => {
+                        black_box(());
+                    }
+                    other => panic!("expected MailboxFull, got {other:?}"),
                 }
-                other => panic!("expected MailboxFull, got {other:?}"),
             }
-        }
-    });
+        },
+    );
 }
 
 stress_main!();

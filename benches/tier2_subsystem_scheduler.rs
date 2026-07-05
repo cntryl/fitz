@@ -43,15 +43,20 @@ fn should_register_single_fresh_primary(ctx: &mut StressContext) {
     let scheduler = Scheduler::new(1);
     let router = scheduler.router();
 
-    tier2_stress::measure_iterations(ctx, REGISTER_SINGLE_REPEAT_COUNT as u64, || {
-        for _ in 0..REGISTER_SINGLE_REPEAT_COUNT {
-            router.register(
-                black_box(single_addresses[0].clone()),
-                black_box(Arc::clone(&single_sinks[0])),
-            );
-            router.clear();
-        }
-    });
+    tier2_stress::measure_iterations(
+        ctx,
+        "register_single_fresh_primary",
+        REGISTER_SINGLE_REPEAT_COUNT as u64,
+        || {
+            for _ in 0..REGISTER_SINGLE_REPEAT_COUNT {
+                router.register(
+                    black_box(single_addresses[0].clone()),
+                    black_box(Arc::clone(&single_sinks[0])),
+                );
+                router.clear();
+            }
+        },
+    );
 }
 
 #[stress(tier = 2, name = "register_64_fresh_primary")]
@@ -63,6 +68,7 @@ fn should_register_64_fresh_primary(ctx: &mut StressContext) {
 
     tier2_stress::measure_iterations(
         ctx,
+        "register_64_fresh_primary",
         (REGISTER_BATCH_SIZE * REGISTER_BATCH_REPEAT_COUNT) as u64,
         || {
             for _ in 0..REGISTER_BATCH_REPEAT_COUNT {
@@ -83,6 +89,7 @@ fn should_register_64_replace_primary(ctx: &mut StressContext) {
 
     tier2_stress::measure_iterations(
         ctx,
+        "register_64_replace_primary",
         (REGISTER_BATCH_SIZE * REGISTER_BATCH_REPEAT_COUNT) as u64,
         || {
             for _ in 0..REGISTER_BATCH_REPEAT_COUNT {

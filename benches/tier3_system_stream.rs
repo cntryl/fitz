@@ -172,7 +172,7 @@ fn should_complete_append_sustained_load(ctx: &mut StressContext) {
     let append_frame = build_stream_append(session_id, 0, b"sustained append event");
     let (msg_type, payload) = extract_single_tlv_field(&append_frame);
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_append_sustained_load", || {
         let _ = request(&context, route, msg_type, payload.clone());
     });
     stress_config::record_completed(ctx, iterations);
@@ -199,7 +199,7 @@ fn should_complete_read_scan_throughput(ctx: &mut StressContext) {
     let read_frame = build_stream_read(route, 0);
     let (read_msg_type, read_payload) = extract_single_tlv_field(&read_frame);
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_read_scan_throughput", || {
         let _ = request(&context, route, read_msg_type, read_payload.clone());
     });
     stress_config::record_completed(ctx, 100 * iterations);
@@ -229,7 +229,7 @@ fn should_complete_area_wildcard_read_throughput(ctx: &mut StressContext) {
     let read_route = "stream://bench/area/*";
     let (read_msg_type, read_payload) = prepare_validated_read(&context, read_route, 100);
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_area_wildcard_read_throughput", || {
         let _ = request(&context, read_route, read_msg_type, read_payload.clone());
     });
     stress_config::record_completed(ctx, 100 * iterations);
@@ -259,7 +259,7 @@ fn should_complete_realm_wildcard_read_throughput(ctx: &mut StressContext) {
     let read_route = "stream://bench/*/*";
     let (read_msg_type, read_payload) = prepare_validated_read(&context, read_route, 100);
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_realm_wildcard_read_throughput", || {
         let _ = request(&context, read_route, read_msg_type, read_payload.clone());
     });
     stress_config::record_completed(ctx, 100 * iterations);
@@ -277,7 +277,7 @@ fn should_complete_batch_write_operations(ctx: &mut StressContext) {
     let append_frame = build_stream_append(session_id, 0, b"batch event");
     let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_batch_write_operations", || {
         for _ in 0..100 {
             let _ = request(&context, route, append_msg_type, append_payload.clone());
         }
@@ -306,7 +306,7 @@ fn should_complete_multiarea_concurrent_writes(ctx: &mut StressContext) {
         })
         .collect();
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_multiarea_concurrent_writes", || {
         for (route, msg_type, payload) in &append_requests {
             let _ = request(&context, route, *msg_type, payload.clone());
         }
@@ -345,7 +345,7 @@ fn should_complete_publish_fanout_with_subscribers(ctx: &mut StressContext) {
         })
         .collect();
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_publish_fanout_with_subscribers", || {
         for (route, expected_offset) in publish_routes.iter().zip(expected_offsets.iter()) {
             let stream_session = begin_stream(&context, route);
 
@@ -385,7 +385,7 @@ fn should_complete_offset_tracking_overhead(ctx: &mut StressContext) {
     let last_frame = build_stream_last(route);
     let (last_msg_type, last_payload) = extract_single_tlv_field(&last_frame);
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_offset_tracking_overhead", || {
         let _ = request(&context, route, last_msg_type, last_payload.clone());
     });
     stress_config::record_completed(ctx, iterations);

@@ -238,6 +238,7 @@ fn ack_reserved_messages(actor: &mut QueueActor, messages: Vec<ReservedMessage>)
 
 fn measure_backlog_depth_steady_state(
     ctx: &mut StressContext,
+    name: &str,
     backlog_depth: usize,
     per_iteration_cycles: u64,
 ) {
@@ -257,7 +258,7 @@ fn measure_backlog_depth_steady_state(
         assert!(matches!(response, QueueResponse::Sent { .. }));
     }
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload(name, || {
         for _ in 0..per_iteration_cycles {
             let message = receive_single_message(&mut actor);
             let response =
@@ -284,7 +285,7 @@ fn should_complete_capacity_enqueue_isolated(ctx: &mut StressContext) {
         .collect();
     let mut actor_index = 0usize;
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_capacity_enqueue_isolated", || {
         let response = actors[actor_index].handle_send(payload.clone(), None);
         assert!(matches!(response, QueueResponse::Sent { .. }));
         actor_index = (actor_index + 1) % actors.len();
@@ -306,7 +307,7 @@ fn should_complete_capacity_receive_batch_cleanup(ctx: &mut StressContext) {
         .map(|_| (payload.clone(), None))
         .collect();
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_capacity_receive_batch_cleanup", || {
         let response = actor.handle_send_batch(&batch);
         assert!(matches!(response, QueueResponse::SentBatch { .. }));
 
@@ -327,7 +328,7 @@ fn should_complete_capacity_ack_roundtrip(ctx: &mut StressContext) {
     let mut actor = create_bench_queue_actor("bench", "ack", "queue", None);
     let payload = Bytes::from_static(b"ack roundtrip message");
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_capacity_ack_roundtrip", || {
         let response = actor.handle_send(payload.clone(), None);
         assert!(matches!(response, QueueResponse::Sent { .. }));
 
@@ -349,7 +350,7 @@ fn should_complete_capacity_extend_roundtrip(ctx: &mut StressContext) {
     let mut actor = create_bench_queue_actor("bench", "extend", "queue", None);
     let payload = Bytes::from_static(b"extend roundtrip message");
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_capacity_extend_roundtrip", || {
         let response = actor.handle_send(payload.clone(), None);
         assert!(matches!(response, QueueResponse::Sent { .. }));
 
@@ -380,7 +381,7 @@ fn should_complete_capacity_sustained_load(ctx: &mut StressContext) {
         .map(|p| (p.clone(), None))
         .collect();
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_capacity_sustained_load", || {
         let _ = actor.handle_send_batch(&batch_50);
         for _ in 0..50 {
             let _ = actor.handle_receive_for_session(CLIENT_SESSION_ID, 30, Some(1));
@@ -430,7 +431,7 @@ fn should_complete_capacity_mixed_workload(ctx: &mut StressContext) {
         .chain(payloads.iter().skip(90).take(10).map(|p| (p.clone(), None)))
         .collect();
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_capacity_mixed_workload", || {
         let _ = actor.handle_send_batch(&batch_mixed);
 
         let immediate = match actor.handle_receive_for_session(CLIENT_SESSION_ID, 30, Some(80)) {
@@ -465,22 +466,22 @@ fn should_complete_capacity_mixed_workload(ctx: &mut StressContext) {
 
 #[stress(tier = 3)]
 fn should_complete_backlog_depth_steady_state_1(ctx: &mut StressContext) {
-    measure_backlog_depth_steady_state(ctx, 1, 100);
+    measure_backlog_depth_steady_state(ctx, "complete_backlog_depth_steady_state_1", 1, 100);
 }
 
 #[stress(tier = 3)]
 fn should_complete_backlog_depth_steady_state_64(ctx: &mut StressContext) {
-    measure_backlog_depth_steady_state(ctx, 64, 100);
+    measure_backlog_depth_steady_state(ctx, "complete_backlog_depth_steady_state_64", 64, 100);
 }
 
 #[stress(tier = 3)]
 fn should_complete_backlog_depth_steady_state_256(ctx: &mut StressContext) {
-    measure_backlog_depth_steady_state(ctx, 256, 100);
+    measure_backlog_depth_steady_state(ctx, "complete_backlog_depth_steady_state_256", 256, 100);
 }
 
 #[stress(tier = 3)]
 fn should_complete_backlog_depth_steady_state_1024(ctx: &mut StressContext) {
-    measure_backlog_depth_steady_state(ctx, 1024, 100);
+    measure_backlog_depth_steady_state(ctx, "complete_backlog_depth_steady_state_1024", 1024, 100);
 }
 
 #[stress(tier = 3)]
@@ -514,7 +515,7 @@ fn should_complete_bulk_recovery(ctx: &mut StressContext) {
     }
     drop(pre_actor);
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_bulk_recovery", || {
         let _actor = QueueActor::new(
             RouteFamily::new(1),
             queue_key.clone(),
@@ -538,7 +539,7 @@ fn should_complete_capacity_high_contention(ctx: &mut StressContext) {
     let payloads: Vec<Bytes> = (0..50).map(|_| payload.clone()).collect();
     let batch_50: Vec<(Bytes, Option<u64>)> = payloads.iter().map(|p| (p.clone(), None)).collect();
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_capacity_high_contention", || {
         let _ = actor.handle_send_batch(&batch_50);
         for _ in 0..50 {
             let _ = actor.handle_receive_for_session(CLIENT_SESSION_ID, 30, Some(1));
@@ -567,7 +568,7 @@ fn should_complete_routed_enqueue_sustained(ctx: &mut StressContext) {
         .collect();
     let mut route_index = 0usize;
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_routed_enqueue_sustained", || {
         let route = &queue_routes[route_index];
         let (msg_type, payload) = &enqueue_frames[route_index];
         let response = request_queue_response(
@@ -585,7 +586,7 @@ fn should_complete_routed_enqueue_sustained(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, iterations);
 }
 
-fn measure_routed_concurrent_enqueues(ctx: &mut StressContext, client_count: usize) {
+fn measure_routed_concurrent_enqueues(ctx: &mut StressContext, name: &str, client_count: usize) {
     ctx.parameter("scenario", "concurrent_enqueues_client_scaling");
     ctx.parameter("measurement_scope", "routed_sink_concurrent");
     ctx.parameter("operation", "enqueue");
@@ -640,7 +641,7 @@ fn measure_routed_concurrent_enqueues(ctx: &mut StressContext, client_count: usi
             .collect();
         drop(done_tx);
 
-        let iterations = ctx.measure_workload(|| {
+        let iterations = ctx.measure_workload(name, || {
             for (_, _, sink) in &clients {
                 sink.reset();
             }
@@ -670,22 +671,38 @@ fn measure_routed_concurrent_enqueues(ctx: &mut StressContext, client_count: usi
 
 #[stress(tier = 3)]
 fn should_complete_routed_concurrent_enqueues_client_scaling_1(ctx: &mut StressContext) {
-    measure_routed_concurrent_enqueues(ctx, 1);
+    measure_routed_concurrent_enqueues(
+        ctx,
+        "complete_routed_concurrent_enqueues_client_scaling_1",
+        1,
+    );
 }
 
 #[stress(tier = 3)]
 fn should_complete_routed_concurrent_enqueues_client_scaling_4(ctx: &mut StressContext) {
-    measure_routed_concurrent_enqueues(ctx, 4);
+    measure_routed_concurrent_enqueues(
+        ctx,
+        "complete_routed_concurrent_enqueues_client_scaling_4",
+        4,
+    );
 }
 
 #[stress(tier = 3)]
 fn should_complete_routed_concurrent_enqueues_client_scaling_16(ctx: &mut StressContext) {
-    measure_routed_concurrent_enqueues(ctx, 16);
+    measure_routed_concurrent_enqueues(
+        ctx,
+        "complete_routed_concurrent_enqueues_client_scaling_16",
+        16,
+    );
 }
 
 #[stress(tier = 3)]
 fn should_complete_routed_concurrent_enqueues_client_scaling_64(ctx: &mut StressContext) {
-    measure_routed_concurrent_enqueues(ctx, 64);
+    measure_routed_concurrent_enqueues(
+        ctx,
+        "complete_routed_concurrent_enqueues_client_scaling_64",
+        64,
+    );
 }
 
 #[stress(tier = 3)]
@@ -703,7 +720,7 @@ fn should_complete_routed_receive_batch_cleanup(ctx: &mut StressContext) {
         build_queue_dequeue_batch(route, usize_to_u32_saturating(RECEIVE_BATCH_SIZE));
     let (receive_msg_type, receive_payload) = extract_single_tlv_field(&receive_frame);
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_routed_receive_batch_cleanup", || {
         for _ in 0..RECEIVE_BATCH_SIZE {
             let response = request_queue_response(
                 &router,
@@ -765,7 +782,7 @@ fn should_complete_routed_ack_roundtrip(ctx: &mut StressContext) {
     let dequeue_frame = build_queue_dequeue(route);
     let (dequeue_msg_type, dequeue_payload) = extract_single_tlv_field(&dequeue_frame);
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_routed_ack_roundtrip", || {
         let enqueue_response = request_queue_response(
             &router,
             family,
@@ -832,7 +849,7 @@ fn should_complete_wait_wakeup_with_waiters(ctx: &mut StressContext) {
         sink.reset();
     }
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_wait_wakeup_with_waiters", || {
         for (_, _, sink) in &waiters {
             sink.reset();
         }

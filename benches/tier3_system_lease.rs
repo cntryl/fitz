@@ -162,7 +162,7 @@ fn should_complete_acquire_release_sequence(ctx: &mut StressContext) {
         .collect();
 
     let mut idx = 0usize;
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_acquire_release_sequence", || {
         let (route, address) = &lease_routes[idx];
         let token = acquire_token(&router, &source, &inbox, route, address, "client-1");
         let _ = request(
@@ -207,7 +207,7 @@ fn should_complete_alternate_renew_operations(ctx: &mut StressContext) {
     );
 
     let mut phase = 0usize;
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_alternate_renew_operations", || {
         if phase.is_multiple_of(2) {
             let response = request(
                 &router,
@@ -267,7 +267,7 @@ fn should_complete_round_robin_query_operations(ctx: &mut StressContext) {
         .map(|route| build_query_payload(route))
         .collect();
     let mut phase = 0usize;
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_round_robin_query_operations", || {
         for _ in 0..LEASE_QUERY_CONFIRM_BATCH_SIZE {
             let route_index = phase % query_routes.len();
             let payload = query_payloads[route_index].clone();
@@ -300,7 +300,7 @@ fn should_complete_cycling_query_renew_operations(ctx: &mut StressContext) {
     let query_payload = build_query_payload(route);
     let mut token = acquire_token(&router, &source, &inbox, route, &address, "client-1");
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_cycling_query_renew_operations", || {
         for msg_type in [403, 401, 403] {
             let payload = if msg_type == 401 {
                 build_extend_payload(route, "client-1", token, 30)

@@ -137,7 +137,7 @@ fn prepare_notify_case(watcher_count: usize, pattern: &str) -> PreparedLeaseNoti
     case
 }
 
-fn notify_watchers(ctx: &mut StressContext, watcher_count: usize, pattern: &str) {
+fn notify_watchers(ctx: &mut StressContext, name: &str, watcher_count: usize, pattern: &str) {
     let case = prepare_notify_case(watcher_count, pattern);
     let mut remaining = NOTIFY_REPEAT_COUNT;
     let mut total = Duration::ZERO;
@@ -156,6 +156,7 @@ fn notify_watchers(ctx: &mut StressContext, watcher_count: usize, pattern: &str)
     }
     tier2_stress::record_duration(
         ctx,
+        name,
         total,
         NOTIFY_REPEAT_COUNT.saturating_mul(watcher_count as u64),
     );
@@ -163,9 +164,9 @@ fn notify_watchers(ctx: &mut StressContext, watcher_count: usize, pattern: &str)
 
 macro_rules! lease_notify_bench {
     ($fn_name:ident, $stress_name:literal, $watchers:expr, $pattern:expr) => {
-        #[stress(tier = 2, name = $stress_name)]
+        #[stress(tier = 2)]
         fn $fn_name(ctx: &mut StressContext) {
-            notify_watchers(ctx, $watchers, $pattern);
+            notify_watchers(ctx, $stress_name, $watchers, $pattern);
         }
     };
 }

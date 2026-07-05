@@ -261,7 +261,7 @@ fn should_complete_direct_append(ctx: &mut StressContext) {
     let mut session_id = direct_begin_stream(&context, route);
     let mut expected_offset = 0u64;
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_direct_append", || {
         if expected_offset == DIRECT_APPEND_EVENTS_PER_SESSION {
             direct_rollback_stream(&context, route, session_id);
             session_id = direct_begin_stream(&context, route);
@@ -306,7 +306,7 @@ fn should_complete_direct_area_wildcard_read(ctx: &mut StressContext) {
     let read_route = "stream://tier4/stream-area/*";
     let (read_msg_type, read_payload) = direct_prepare_validated_read(&context, read_route, 100);
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_direct_area_wildcard_read", || {
         let _ = direct_request(&context, read_route, read_msg_type, read_payload.clone());
     });
     stress_config::record_completed(ctx, 100 * iterations);
@@ -325,7 +325,7 @@ fn should_complete_direct_resource_read(ctx: &mut StressContext) {
 
     let (read_msg_type, read_payload) = direct_prepare_validated_read(&context, read_route, 100);
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_direct_resource_read", || {
         let _ = direct_request(&context, read_route, read_msg_type, read_payload.clone());
     });
     stress_config::record_completed(ctx, 100 * iterations);
@@ -345,7 +345,7 @@ fn should_complete_direct_realm_wildcard_read(ctx: &mut StressContext) {
     let read_route = "stream://tier4/*/*";
     let (read_msg_type, read_payload) = direct_prepare_validated_read(&context, read_route, 100);
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_direct_realm_wildcard_read", || {
         let _ = direct_request(&context, read_route, read_msg_type, read_payload.clone());
     });
     stress_config::record_completed(ctx, 100 * iterations);
@@ -374,7 +374,7 @@ fn should_complete_tcp_append(ctx: &mut StressContext) {
     let session_id = parse_stream_session_id(&begin_data).expect("session_id");
     let append_frame = build_stream_append(session_id, 0, b"event");
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_tcp_append", || {
         let _ = runtime
             .block_on(client.request(&append_frame, 2000))
             .expect("append response");
@@ -409,7 +409,7 @@ fn should_complete_tcp_resource_read(ctx: &mut StressContext) {
     let count = parse_stream_read_record_count(&validated_response).expect("resource read count");
     assert_eq!(count, 100, "unexpected tcp resource read count");
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_tcp_resource_read", || {
         let _ = runtime
             .block_on(client.request(&read_frame, 2000))
             .expect("resource read response");
@@ -456,7 +456,7 @@ fn should_complete_tcp_area_wildcard_read(ctx: &mut StressContext) {
     let count = parse_stream_read_record_count(&validated_response).expect("area read count");
     assert_eq!(count, 100, "unexpected tcp area read count");
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_tcp_area_wildcard_read", || {
         let _ = runtime
             .block_on(client.request(&read_frame, 2000))
             .expect("area read response");
@@ -503,7 +503,7 @@ fn should_complete_tcp_realm_wildcard_read(ctx: &mut StressContext) {
     let count = parse_stream_read_record_count(&validated_response).expect("realm read count");
     assert_eq!(count, 100, "unexpected tcp realm read count");
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_tcp_realm_wildcard_read", || {
         let _ = runtime
             .block_on(client.request(&read_frame, 2000))
             .expect("realm read response");
@@ -539,7 +539,7 @@ fn should_complete_ws_append(ctx: &mut StressContext) {
     let session_id = parse_stream_session_id(&begin_data).expect("session_id");
     let append_frame = build_stream_append(session_id, 0, b"event");
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_ws_append", || {
         let _ = runtime
             .block_on(client.request(&append_frame, 2000))
             .expect("append response");
@@ -577,7 +577,7 @@ fn should_complete_ws_resource_read(ctx: &mut StressContext) {
     let count = parse_stream_read_record_count(&validated_response).expect("resource read count");
     assert_eq!(count, 100, "unexpected ws resource read count");
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_ws_resource_read", || {
         let _ = runtime
             .block_on(client.request(&read_frame, 2000))
             .expect("resource read response");
@@ -627,7 +627,7 @@ fn should_complete_ws_area_wildcard_read(ctx: &mut StressContext) {
     let count = parse_stream_read_record_count(&validated_response).expect("area read count");
     assert_eq!(count, 100, "unexpected ws area read count");
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_ws_area_wildcard_read", || {
         let _ = runtime
             .block_on(client.request(&read_frame, 2000))
             .expect("area read response");
@@ -677,7 +677,7 @@ fn should_complete_ws_realm_wildcard_read(ctx: &mut StressContext) {
     let count = parse_stream_read_record_count(&validated_response).expect("realm read count");
     assert_eq!(count, 100, "unexpected ws realm read count");
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_ws_realm_wildcard_read", || {
         let _ = runtime
             .block_on(client.request(&read_frame, 2000))
             .expect("realm read response");
@@ -727,7 +727,7 @@ fn should_complete_multiclient_appends(ctx: &mut StressContext) {
         }),
     ));
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_multiclient_appends", || {
         for _ in 0..MULTICLIENT_APPEND_ROUNDS_PER_ITERATION {
             let _results: Vec<_> = runtime.block_on(futures::future::join_all(
                 clients

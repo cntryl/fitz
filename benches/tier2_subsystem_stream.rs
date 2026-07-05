@@ -240,12 +240,13 @@ fn should_subscribe_register_2048_sessions_x4_cases_primary(ctx: &mut StressCont
     }
     tier2_stress::record_duration(
         ctx,
+        "subscribe_register_2048_sessions_x4_cases_primary",
         duration,
         (SUBSCRIBE_REGISTER_BATCH_SIZE * SUBSCRIBE_REGISTER_CASE_COUNT) as u64,
     );
 }
 
-fn commit_notify(ctx: &mut StressContext, subscriber_count: usize, pattern: &str) {
+fn commit_notify(ctx: &mut StressContext, name: &str, subscriber_count: usize, pattern: &str) {
     let case = prepare_notify_case(subscriber_count, pattern);
     let mut remaining = COMMIT_NOTIFY_REPEAT_COUNT;
     let mut total = Duration::ZERO;
@@ -266,6 +267,7 @@ fn commit_notify(ctx: &mut StressContext, subscriber_count: usize, pattern: &str
     }
     tier2_stress::record_duration(
         ctx,
+        name,
         total,
         COMMIT_NOTIFY_REPEAT_COUNT.saturating_mul(subscriber_count as u64),
     );
@@ -273,9 +275,9 @@ fn commit_notify(ctx: &mut StressContext, subscriber_count: usize, pattern: &str
 
 macro_rules! stream_commit_notify_bench {
     ($fn_name:ident, $stress_name:literal, $subscribers:expr, $pattern:expr) => {
-        #[stress(tier = 2, name = $stress_name)]
+        #[stress(tier = 2)]
         fn $fn_name(ctx: &mut StressContext) {
-            commit_notify(ctx, $subscribers, $pattern);
+            commit_notify(ctx, $stress_name, $subscribers, $pattern);
         }
     };
 }

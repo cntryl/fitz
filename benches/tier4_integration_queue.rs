@@ -45,7 +45,7 @@ fn should_complete_direct_enqueue(ctx: &mut StressContext) {
 
     let mut actor = setup_queue_actor();
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_direct_enqueue", || {
         let response = actor.handle_send(Bytes::from_static(b"msg"), None);
         assert!(matches!(
             response,
@@ -67,7 +67,7 @@ fn should_complete_encoded_enqueue(ctx: &mut StressContext) {
     let enqueue_frame = build_queue_enqueue(route, b"msg");
     let family = RouteFamily::new(1);
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_encoded_enqueue", || {
         for _ in 0..ENCODED_ENQUEUE_ROUNDS_PER_ITERATION {
             let mut parser = TlvFrameParser::new(&enqueue_frame);
             let (msg_type, payload) = parser.next_field_ref().expect("enqueue field");
@@ -109,7 +109,7 @@ fn should_complete_tcp_enqueue(ctx: &mut StressContext) {
         .block_on(TestClient::new(server.tcp_addr))
         .expect("connect tcp");
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_tcp_enqueue", || {
         for _ in 0..TCP_ENQUEUE_ROUNDS_PER_ITERATION {
             let response = runtime
                 .block_on(client.request(&enqueue_frame, 2000))
@@ -139,7 +139,7 @@ fn should_complete_ws_enqueue(ctx: &mut StressContext) {
         )))
         .expect("connect ws");
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_ws_enqueue", || {
         for _ in 0..WS_ENQUEUE_ROUNDS_PER_ITERATION {
             let response = runtime
                 .block_on(client.request(&enqueue_frame, 2000))
@@ -152,11 +152,17 @@ fn should_complete_ws_enqueue(ctx: &mut StressContext) {
 
 #[stress(tier = 4)]
 fn should_complete_multiclient_concurrent_enqueues(ctx: &mut StressContext) {
-    measure_multiclient_concurrent_enqueues(ctx, "concurrent_enqueues", 10);
+    measure_multiclient_concurrent_enqueues(
+        ctx,
+        "complete_multiclient_concurrent_enqueues",
+        "concurrent_enqueues",
+        10,
+    );
 }
 
 fn measure_multiclient_concurrent_enqueues(
     ctx: &mut StressContext,
+    name: &str,
     scenario: &'static str,
     client_count: usize,
 ) {
@@ -186,7 +192,7 @@ fn measure_multiclient_concurrent_enqueues(
         })
         .collect();
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload(name, || {
         for _ in 0..MULTICLIENT_ENQUEUE_ROUNDS_PER_ITERATION {
             let _results: Vec<_> =
                 runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
@@ -208,7 +214,12 @@ fn measure_multiclient_concurrent_enqueues(
 
 #[stress(tier = 4)]
 fn should_complete_multiclient_concurrent_enqueues_client_scaling_4(ctx: &mut StressContext) {
-    measure_multiclient_concurrent_enqueues(ctx, "concurrent_enqueues_client_scaling", 4);
+    measure_multiclient_concurrent_enqueues(
+        ctx,
+        "complete_multiclient_concurrent_enqueues_client_scaling_4",
+        "concurrent_enqueues_client_scaling",
+        4,
+    );
 }
 
 stress_main!();

@@ -288,7 +288,12 @@ fn prepare_watch_register_case() -> PreparedWatchRegisterCase {
     }
 }
 
-fn queue_enqueue(ctx: &mut StressContext, queue_count: usize, messages_per_queue: usize) {
+fn queue_enqueue(
+    ctx: &mut StressContext,
+    name: &str,
+    queue_count: usize,
+    messages_per_queue: usize,
+) {
     let mut total = Duration::ZERO;
     let expected_responses = queue_count * messages_per_queue;
     for _ in 0..QUEUE_MEASUREMENT_REPEAT_COUNT {
@@ -328,6 +333,7 @@ fn queue_enqueue(ctx: &mut StressContext, queue_count: usize, messages_per_queue
     }
     tier2_stress::record_duration(
         ctx,
+        name,
         total / QUEUE_MEASUREMENT_REPEAT_COUNT,
         expected_responses as u64,
     );
@@ -335,12 +341,22 @@ fn queue_enqueue(ctx: &mut StressContext, queue_count: usize, messages_per_queue
 
 #[stress(tier = 2, name = "enqueue_1024_messages_1_queue_primary")]
 fn should_enqueue_1024_messages_1_queue_primary(ctx: &mut StressContext) {
-    queue_enqueue(ctx, 1, SINGLE_QUEUE_ENQUEUE_BATCH_SIZE);
+    queue_enqueue(
+        ctx,
+        "enqueue_1024_messages_1_queue_primary",
+        1,
+        SINGLE_QUEUE_ENQUEUE_BATCH_SIZE,
+    );
 }
 
 #[stress(tier = 2, name = "enqueue_1_messages_each_256_queues_primary")]
 fn should_enqueue_1_messages_each_256_queues_primary(ctx: &mut StressContext) {
-    queue_enqueue(ctx, 256, MULTI_QUEUE_MESSAGES_PER_QUEUE);
+    queue_enqueue(
+        ctx,
+        "enqueue_1_messages_each_256_queues_primary",
+        256,
+        MULTI_QUEUE_MESSAGES_PER_QUEUE,
+    );
 }
 
 #[stress(tier = 2, name = "dequeue_256_messages_primary")]
@@ -381,6 +397,7 @@ fn should_dequeue_256_messages_primary(ctx: &mut StressContext) {
     }
     tier2_stress::record_duration(
         ctx,
+        "dequeue_256_messages_primary",
         total / QUEUE_MEASUREMENT_REPEAT_COUNT,
         DEQUEUE_OPERATION_BATCH_SIZE as u64,
     );
@@ -414,6 +431,7 @@ fn should_ack_256_messages_primary(ctx: &mut StressContext) {
     }
     tier2_stress::record_duration(
         ctx,
+        "ack_256_messages_primary",
         total / QUEUE_MEASUREMENT_REPEAT_COUNT,
         ACK_OPERATION_BATCH_SIZE as u64,
     );
@@ -449,6 +467,7 @@ fn should_watch_register_64_sessions_primary(ctx: &mut StressContext) {
     }
     tier2_stress::record_duration(
         ctx,
+        "watch_register_64_sessions_primary",
         total / QUEUE_MEASUREMENT_REPEAT_COUNT,
         WATCH_REGISTER_BATCH_SIZE as u64,
     );

@@ -17,7 +17,7 @@ macro_rules! encode_clear_bench {
             let payload = vec![0_u8; $size];
             let mut encoder = TlvEncoder::with_capacity(1024);
 
-            ctx.measure("operation", || {
+            ctx.measure($bench_name, || {
                 encoder.clear();
                 encoder.encode(MessageType::new(42), black_box(&payload));
                 black_box(&encoder);
@@ -33,7 +33,7 @@ macro_rules! encode_new_finish_bench {
             record_group(ctx, "hotpath_tlv_encode_sizes", $size);
             let payload = vec![0_u8; $size];
 
-            ctx.measure("operation", || {
+            ctx.measure($bench_name, || {
                 let mut encoder = TlvEncoder::with_capacity(1024);
                 encoder.encode(MessageType::new(42), black_box(&payload));
                 let out: Bytes = encoder.finish();
@@ -75,7 +75,7 @@ macro_rules! decode_all_bench {
             let data = encoded_records($size, RECORDS);
             let decoder = TlvDecoder::new();
 
-            ctx.measure("operation", || {
+            ctx.measure($bench_name, || {
                 black_box(decoder.decode_all(black_box(&data)).unwrap());
             });
         }
@@ -93,7 +93,7 @@ macro_rules! decode_iter_reuse_bench {
             let decoder = TlvDecoder::new();
             let mut out: Vec<TlvRecord> = Vec::with_capacity(RECORDS);
 
-            ctx.measure("operation", || {
+            ctx.measure($bench_name, || {
                 out.clear();
                 let mut offset = 0usize;
                 while offset < data.len() {
@@ -143,7 +143,7 @@ macro_rules! decode_one_bench {
             let data = encoder.finish();
             let decoder = TlvDecoder::new();
 
-            ctx.measure("operation", || {
+            ctx.measure($bench_name, || {
                 black_box(decoder.decode_one(black_box(&data)).unwrap());
             });
         }

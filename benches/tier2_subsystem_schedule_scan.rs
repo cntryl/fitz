@@ -127,7 +127,7 @@ where
     total / u32::try_from(TIMED_BATCH_REPEAT).expect("timed batch repeat fits u32")
 }
 
-fn scan_shape(ctx: &mut StressContext, count: usize, ready_count: usize) {
+fn scan_shape(ctx: &mut StressContext, name: &str, count: usize, ready_count: usize) {
     let bench_clock: Arc<dyn Clock> = Arc::new(FixedClock::new(FIXED_BENCH_EPOCH_MS));
     let fixtures = precompute_data(count);
     let duration = time_with_fresh_actors(
@@ -141,27 +141,27 @@ fn scan_shape(ctx: &mut StressContext, count: usize, ready_count: usize) {
             black_box(actor.collect_due_occurrences_for_publish());
         },
     );
-    tier2_stress::record_duration(ctx, duration, count as u64);
+    tier2_stress::record_duration(ctx, name, duration, count as u64);
 }
 
 #[stress(tier = 2, name = "scan_partial_ready_100_mixed_crons")]
 fn should_scan_partial_ready_100_mixed_crons(ctx: &mut StressContext) {
-    scan_shape(ctx, 100, 10);
+    scan_shape(ctx, "scan_partial_ready_100_mixed_crons", 100, 10);
 }
 
 #[stress(tier = 2, name = "scan_all_ready_100_mixed_crons")]
 fn should_scan_all_ready_100_mixed_crons(ctx: &mut StressContext) {
-    scan_shape(ctx, 100, 100);
+    scan_shape(ctx, "scan_all_ready_100_mixed_crons", 100, 100);
 }
 
 #[stress(tier = 2, name = "scan_partial_ready_1000_mixed_crons")]
 fn should_scan_partial_ready_1000_mixed_crons(ctx: &mut StressContext) {
-    scan_shape(ctx, 1000, 100);
+    scan_shape(ctx, "scan_partial_ready_1000_mixed_crons", 1000, 100);
 }
 
 #[stress(tier = 2, name = "scan_all_ready_1000_mixed_crons")]
 fn should_scan_all_ready_1000_mixed_crons(ctx: &mut StressContext) {
-    scan_shape(ctx, 1000, 1000);
+    scan_shape(ctx, "scan_all_ready_1000_mixed_crons", 1000, 1000);
 }
 
 stress_main!();

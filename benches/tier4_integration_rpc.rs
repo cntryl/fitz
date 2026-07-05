@@ -435,6 +435,7 @@ fn request_all_multiclient_ws(
 
 fn measure_multiclient_concurrent_requests(
     ctx: &mut StressContext,
+    name: &str,
     worker_count: usize,
     scenario: &'static str,
 ) {
@@ -495,7 +496,7 @@ fn measure_multiclient_concurrent_requests(
     let (requester_drivers, completion_rx) =
         spawn_rpc_ws_requesters(clients, request_frames, family);
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload(name, || {
         let request_index = next_request_index;
         next_request_index = (next_request_index + 1) % MULTICLIENT_REQUEST_FRAME_RING_SIZE;
 
@@ -620,7 +621,7 @@ fn should_complete_direct_request(ctx: &mut StressContext) {
         setup_rpc_sink();
     let (request_msg_type, request_payload) = extract_single_tlv_field(&request.frame);
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_direct_request", || {
         route_frame(
             router.as_ref(),
             &requester_source,
@@ -656,7 +657,7 @@ fn should_complete_encoded_request(ctx: &mut StressContext) {
         setup_rpc_sink();
     let request_frame = &request.frame;
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_encoded_request", || {
         let mut parser = TlvFrameParser::new(request_frame);
         let (msg_type, payload) = parser.next_field_ref().expect("one field");
         route_frame(
@@ -724,7 +725,7 @@ fn should_complete_tcp_request_response(ctx: &mut StressContext) {
         })
     };
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_tcp_request_response", || {
         runtime
             .block_on(async {
                 tokio::time::timeout(
@@ -806,7 +807,7 @@ fn should_complete_ws_request_response(ctx: &mut StressContext) {
     };
 
     let mut next_request_index = 0usize;
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_ws_request_response", || {
         for _ in 0..WS_ROUNDTRIPS_PER_ITERATION {
             let request_frame = &request_frames[next_request_index];
             next_request_index = (next_request_index + 1) % request_frames.len();
@@ -840,17 +841,32 @@ fn should_complete_ws_request_response(ctx: &mut StressContext) {
 
 #[stress(tier = 4)]
 fn should_complete_multiclient_concurrent_requests(ctx: &mut StressContext) {
-    measure_multiclient_concurrent_requests(ctx, 1, "concurrent_requests");
+    measure_multiclient_concurrent_requests(
+        ctx,
+        "complete_multiclient_concurrent_requests",
+        1,
+        "concurrent_requests",
+    );
 }
 
 #[stress(tier = 4)]
 fn should_complete_multiclient_concurrent_requests_4_workers(ctx: &mut StressContext) {
-    measure_multiclient_concurrent_requests(ctx, 4, "concurrent_requests");
+    measure_multiclient_concurrent_requests(
+        ctx,
+        "complete_multiclient_concurrent_requests_4_workers",
+        4,
+        "concurrent_requests",
+    );
 }
 
 #[stress(tier = 4)]
 fn should_complete_multiclient_concurrent_requests_8_workers(ctx: &mut StressContext) {
-    measure_multiclient_concurrent_requests(ctx, 8, "concurrent_requests");
+    measure_multiclient_concurrent_requests(
+        ctx,
+        "complete_multiclient_concurrent_requests_8_workers",
+        8,
+        "concurrent_requests",
+    );
 }
 
 stress_main!();

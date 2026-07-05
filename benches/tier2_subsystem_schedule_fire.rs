@@ -194,7 +194,7 @@ fn create_publish_case(
     )
 }
 
-fn claim_due(ctx: &mut StressContext, count: usize, ready_count: usize) {
+fn claim_due(ctx: &mut StressContext, name: &str, count: usize, ready_count: usize) {
     let bench_clock: Arc<dyn Clock> = Arc::new(FixedClock::new(FIXED_BENCH_EPOCH_MS));
     let fixtures = precompute_data(count);
     let duration = time_with_fresh_inputs(
@@ -210,12 +210,13 @@ fn claim_due(ctx: &mut StressContext, count: usize, ready_count: usize) {
     );
     tier2_stress::record_duration(
         ctx,
+        name,
         duration,
         (ready_count as u64).saturating_mul(TIMED_BATCH_REPEAT),
     );
 }
 
-fn ack_claims(ctx: &mut StressContext, count: usize, ready_count: usize) {
+fn ack_claims(ctx: &mut StressContext, name: &str, count: usize, ready_count: usize) {
     let bench_clock: Arc<dyn Clock> = Arc::new(FixedClock::new(FIXED_BENCH_EPOCH_MS));
     let fixtures = precompute_data(count);
     let duration = time_with_fresh_inputs(
@@ -235,12 +236,13 @@ fn ack_claims(ctx: &mut StressContext, count: usize, ready_count: usize) {
     );
     tier2_stress::record_duration(
         ctx,
+        name,
         duration,
         (ready_count as u64).saturating_mul(TIMED_BATCH_REPEAT),
     );
 }
 
-fn publish_exact_route(ctx: &mut StressContext, subscriber_count: usize) {
+fn publish_exact_route(ctx: &mut StressContext, name: &str, subscriber_count: usize) {
     let (sink, event, subscriber_sinks) = create_publish_case(subscriber_count);
     let mut remaining = PUBLISH_REPEAT_COUNT;
     let mut total = Duration::ZERO;
@@ -279,6 +281,7 @@ fn publish_exact_route(ctx: &mut StressContext, subscriber_count: usize) {
     }
     tier2_stress::record_duration(
         ctx,
+        name,
         total,
         PUBLISH_REPEAT_COUNT.saturating_mul(subscriber_count as u64),
     );
@@ -286,47 +289,47 @@ fn publish_exact_route(ctx: &mut StressContext, subscriber_count: usize) {
 
 #[stress(tier = 2, name = "claim_due_all_ready_100_mixed_crons")]
 fn should_claim_due_all_ready_100_mixed_crons(ctx: &mut StressContext) {
-    claim_due(ctx, 100, 100);
+    claim_due(ctx, "claim_due_all_ready_100_mixed_crons", 100, 100);
 }
 
 #[stress(tier = 2, name = "claim_due_partial_ready_1000_mixed_crons")]
 fn should_claim_due_partial_ready_1000_mixed_crons(ctx: &mut StressContext) {
-    claim_due(ctx, 1000, 100);
+    claim_due(ctx, "claim_due_partial_ready_1000_mixed_crons", 1000, 100);
 }
 
 #[stress(tier = 2, name = "claim_due_all_ready_1000_mixed_crons")]
 fn should_claim_due_all_ready_1000_mixed_crons(ctx: &mut StressContext) {
-    claim_due(ctx, 1000, 1000);
+    claim_due(ctx, "claim_due_all_ready_1000_mixed_crons", 1000, 1000);
 }
 
 #[stress(tier = 2, name = "ack_claims_all_ready_100_mixed_crons")]
 fn should_ack_claims_all_ready_100_mixed_crons(ctx: &mut StressContext) {
-    ack_claims(ctx, 100, 100);
+    ack_claims(ctx, "ack_claims_all_ready_100_mixed_crons", 100, 100);
 }
 
 #[stress(tier = 2, name = "ack_claims_partial_ready_1000_mixed_crons")]
 fn should_ack_claims_partial_ready_1000_mixed_crons(ctx: &mut StressContext) {
-    ack_claims(ctx, 1000, 100);
+    ack_claims(ctx, "ack_claims_partial_ready_1000_mixed_crons", 1000, 100);
 }
 
 #[stress(tier = 2, name = "ack_claims_all_ready_1000_mixed_crons")]
 fn should_ack_claims_all_ready_1000_mixed_crons(ctx: &mut StressContext) {
-    ack_claims(ctx, 1000, 1000);
+    ack_claims(ctx, "ack_claims_all_ready_1000_mixed_crons", 1000, 1000);
 }
 
 #[stress(tier = 2, name = "publish_exact_route_1_subscribers")]
 fn should_publish_exact_route_1_subscribers(ctx: &mut StressContext) {
-    publish_exact_route(ctx, 1);
+    publish_exact_route(ctx, "publish_exact_route_1_subscribers", 1);
 }
 
 #[stress(tier = 2, name = "publish_exact_route_10_subscribers")]
 fn should_publish_exact_route_10_subscribers(ctx: &mut StressContext) {
-    publish_exact_route(ctx, 10);
+    publish_exact_route(ctx, "publish_exact_route_10_subscribers", 10);
 }
 
 #[stress(tier = 2, name = "publish_exact_route_100_subscribers")]
 fn should_publish_exact_route_100_subscribers(ctx: &mut StressContext) {
-    publish_exact_route(ctx, 100);
+    publish_exact_route(ctx, "publish_exact_route_100_subscribers", 100);
 }
 
 stress_main!();

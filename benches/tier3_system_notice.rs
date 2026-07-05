@@ -151,7 +151,7 @@ impl NoticeRequestHarness {
     }
 }
 
-fn measure_notice_fanout(ctx: &mut StressContext, case: NoticeFanoutCase) {
+fn measure_notice_fanout(ctx: &mut StressContext, name: &str, case: NoticeFanoutCase) {
     ctx.parameter("scenario", case.scenario);
     ctx.parameter("measurement_scope", "routed_fanout");
     let batch_size_tag = format!("{NOTICE_FANOUT_CONFIRM_BATCH_SIZE}_publishes");
@@ -166,7 +166,7 @@ fn measure_notice_fanout(ctx: &mut StressContext, case: NoticeFanoutCase) {
     let (msg_type, payload) = extract_single_tlv_field(&publish_frame);
     let mut expected_per_subscriber = 0usize;
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload(name, || {
         for _ in 0..NOTICE_FANOUT_CONFIRM_BATCH_SIZE {
             route_frame(
                 router.as_ref(),
@@ -223,6 +223,7 @@ fn double_star_scaling_case(subscriber_count: usize) -> NoticeFanoutCase {
 fn should_complete_fanout_sustained_load(ctx: &mut StressContext) {
     measure_notice_fanout(
         ctx,
+        "complete_fanout_sustained_load",
         NoticeFanoutCase {
             scenario: "sustained_fanout",
             subscriber_count: 1,
@@ -238,6 +239,7 @@ fn should_complete_fanout_sustained_load(ctx: &mut StressContext) {
 fn should_complete_pattern_matching_scaling(ctx: &mut StressContext) {
     measure_notice_fanout(
         ctx,
+        "complete_pattern_matching_scaling",
         NoticeFanoutCase {
             scenario: "pattern_matching",
             subscriber_count: 1,
@@ -253,6 +255,7 @@ fn should_complete_pattern_matching_scaling(ctx: &mut StressContext) {
 fn should_complete_fanout_high_subscriber_count(ctx: &mut StressContext) {
     measure_notice_fanout(
         ctx,
+        "complete_fanout_high_subscriber_count",
         NoticeFanoutCase {
             scenario: "high_subscriber_count",
             subscriber_count: 100,
@@ -266,22 +269,38 @@ fn should_complete_fanout_high_subscriber_count(ctx: &mut StressContext) {
 
 #[stress(tier = 3)]
 fn should_complete_fanout_subscriber_scaling_1(ctx: &mut StressContext) {
-    measure_notice_fanout(ctx, single_star_scaling_case(1));
+    measure_notice_fanout(
+        ctx,
+        "complete_fanout_subscriber_scaling_1",
+        single_star_scaling_case(1),
+    );
 }
 
 #[stress(tier = 3)]
 fn should_complete_fanout_subscriber_scaling_1000(ctx: &mut StressContext) {
-    measure_notice_fanout(ctx, single_star_scaling_case(1000));
+    measure_notice_fanout(
+        ctx,
+        "complete_fanout_subscriber_scaling_1000",
+        single_star_scaling_case(1000),
+    );
 }
 
 #[stress(tier = 3)]
 fn should_complete_double_star_fanout_subscriber_scaling_1(ctx: &mut StressContext) {
-    measure_notice_fanout(ctx, double_star_scaling_case(1));
+    measure_notice_fanout(
+        ctx,
+        "complete_double_star_fanout_subscriber_scaling_1",
+        double_star_scaling_case(1),
+    );
 }
 
 #[stress(tier = 3)]
 fn should_complete_double_star_fanout_subscriber_scaling_1000(ctx: &mut StressContext) {
-    measure_notice_fanout(ctx, double_star_scaling_case(1000));
+    measure_notice_fanout(
+        ctx,
+        "complete_double_star_fanout_subscriber_scaling_1000",
+        double_star_scaling_case(1000),
+    );
 }
 
 #[stress(tier = 3)]
@@ -297,7 +316,7 @@ fn should_complete_wildcard_subscribe_unsubscribe_cycle(ctx: &mut StressContext)
     let harness = setup_notice_request_sink();
 
     let completed = ctx.measure_batch(
-        "workload",
+        "complete_wildcard_subscribe_unsubscribe_cycle",
         2 * NOTICE_LIFECYCLE_CYCLES_PER_ITERATION,
         || {
             for _ in 0..NOTICE_LIFECYCLE_CYCLES_PER_ITERATION {

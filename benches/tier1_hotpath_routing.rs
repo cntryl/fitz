@@ -16,7 +16,7 @@ macro_rules! route_new_bench {
             let routes = [$($route.to_string()),+];
             let mut index = 0usize;
 
-            ctx.measure("operation", || {
+            ctx.measure($bench_name, || {
                 let route = &routes[index];
                 index = (index + 1) % routes.len();
                 black_box(Route::new(black_box(route)));

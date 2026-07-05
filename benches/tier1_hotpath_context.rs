@@ -60,7 +60,7 @@ fn should_schedule_once_empty(ctx: &mut StressContext) {
     let start = bench_start_instant();
     let now = start + BENCH_BASE_OFFSET;
 
-    ctx.measure("operation", || {
+    ctx.measure("schedule_once_empty", || {
         let mut manager = TimerManager::new_at(start);
         black_box(manager.schedule_once_at(black_box(now), black_box(SHORT_DELAY)));
     });
@@ -72,7 +72,7 @@ fn should_schedule_repeat_empty(ctx: &mut StressContext) {
     let start = bench_start_instant();
     let now = start + BENCH_BASE_OFFSET;
 
-    ctx.measure("operation", || {
+    ctx.measure("schedule_repeat_empty", || {
         let mut manager = TimerManager::new_at(start);
         black_box(manager.schedule_repeat_at(
             black_box(now),
@@ -84,12 +84,12 @@ fn should_schedule_repeat_empty(ctx: &mut StressContext) {
 
 macro_rules! schedule_once_with_active_bench {
     ($fn_name:ident, $bench_name:literal, $count:expr) => {
-        #[stress(tier = 1, name = $bench_name)]
+        #[stress(tier = 1)]
         fn $fn_name(ctx: &mut StressContext) {
             record_group(ctx, "schedule_once_with_active");
             ctx.parameter("active_timers", $count);
 
-            ctx.measure("operation", || {
+            ctx.measure($bench_name, || {
                 let (mut manager, now) = timer_manager_with_active_timers($count, FAR_FUTURE_DELAY);
                 black_box(manager.schedule_once_at(black_box(now), black_box(SHORT_DELAY)));
             });
@@ -112,7 +112,7 @@ schedule_once_with_active_bench!(
 fn should_cancel_present_1001_timers(ctx: &mut StressContext) {
     record_group(ctx, "cancel_present");
 
-    ctx.measure("operation", || {
+    ctx.measure("cancel_present_1001_timers", || {
         let (mut manager, now) = timer_manager_with_active_timers(1000, FAR_FUTURE_DELAY);
         let timer_id = manager.schedule_once_at(now, FAR_FUTURE_DELAY);
         black_box(manager.cancel(black_box(timer_id)));
@@ -124,7 +124,7 @@ fn should_collect_fired_timers_10_ready(ctx: &mut StressContext) {
     record_group(ctx, "fired_timers");
     ctx.parameter("ready_timers", 10);
 
-    ctx.measure("operation", || {
+    ctx.measure("fired_timers_10_ready", || {
         let (mut manager, now) = timer_manager_with_due_once_timers(10);
         black_box(manager.fired_timers_at(now));
     });
@@ -134,7 +134,7 @@ fn should_collect_fired_timers_10_ready(ctx: &mut StressContext) {
 fn should_collect_fired_timers_repeat_reschedule(ctx: &mut StressContext) {
     record_group(ctx, "fired_timers_repeat");
 
-    ctx.measure("operation", || {
+    ctx.measure("fired_timers_repeat_reschedule", || {
         let (mut manager, now) = timer_manager_with_due_repeating_timer();
         black_box(manager.fired_timers_at(now));
     });
@@ -144,7 +144,7 @@ fn should_collect_fired_timers_repeat_reschedule(ctx: &mut StressContext) {
 fn should_clear_all_timers(ctx: &mut StressContext) {
     record_group(ctx, "clear");
 
-    ctx.measure("operation", || {
+    ctx.measure("clear_all_timers", || {
         let (mut manager, _now) = timer_manager_with_active_timers(100, FAR_FUTURE_DELAY);
         manager.clear();
     });

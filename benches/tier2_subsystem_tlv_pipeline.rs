@@ -22,13 +22,14 @@ fn encode_frame(records: usize, size: usize) -> bytes::Bytes {
     encoder.finish()
 }
 
-fn decode_only(ctx: &mut StressContext, size: usize) {
+fn decode_only(ctx: &mut StressContext, name: &str, size: usize) {
     let data = encode_frame(PIPELINE_RECORDS, size);
     let decoder = TlvDecoder::new();
     let mut refs = Vec::with_capacity(PIPELINE_RECORDS);
 
     tier2_stress::measure_iterations(
         ctx,
+        name,
         (PIPELINE_RECORDS * PIPELINE_REPEAT_COUNT) as u64,
         || {
             for _ in 0..PIPELINE_REPEAT_COUNT {
@@ -42,7 +43,7 @@ fn decode_only(ctx: &mut StressContext, size: usize) {
     );
 }
 
-fn decode_then_mux_route_ref(ctx: &mut StressContext, size: usize) {
+fn decode_then_mux_route_ref(ctx: &mut StressContext, name: &str, size: usize) {
     let data = encode_frame(PIPELINE_RECORDS, size);
     let decoder = TlvDecoder::new();
     let mut refs = Vec::with_capacity(PIPELINE_RECORDS);
@@ -57,6 +58,7 @@ fn decode_then_mux_route_ref(ctx: &mut StressContext, size: usize) {
 
     tier2_stress::measure_iterations(
         ctx,
+        name,
         (PIPELINE_RECORDS * PIPELINE_REPEAT_COUNT) as u64,
         || {
             for _ in 0..PIPELINE_REPEAT_COUNT {
@@ -76,32 +78,32 @@ fn decode_then_mux_route_ref(ctx: &mut StressContext, size: usize) {
 
 #[stress(tier = 2, name = "decode_only_16b")]
 fn should_decode_only_16b(ctx: &mut StressContext) {
-    decode_only(ctx, 16);
+    decode_only(ctx, "decode_only_16b", 16);
 }
 
 #[stress(tier = 2, name = "decode_only_64b")]
 fn should_decode_only_64b(ctx: &mut StressContext) {
-    decode_only(ctx, 64);
+    decode_only(ctx, "decode_only_64b", 64);
 }
 
 #[stress(tier = 2, name = "decode_only_256b")]
 fn should_decode_only_256b(ctx: &mut StressContext) {
-    decode_only(ctx, 256);
+    decode_only(ctx, "decode_only_256b", 256);
 }
 
 #[stress(tier = 2, name = "decode_then_mux_route_ref_16b")]
 fn should_decode_then_mux_route_ref_16b(ctx: &mut StressContext) {
-    decode_then_mux_route_ref(ctx, 16);
+    decode_then_mux_route_ref(ctx, "decode_then_mux_route_ref_16b", 16);
 }
 
 #[stress(tier = 2, name = "decode_then_mux_route_ref_64b")]
 fn should_decode_then_mux_route_ref_64b(ctx: &mut StressContext) {
-    decode_then_mux_route_ref(ctx, 64);
+    decode_then_mux_route_ref(ctx, "decode_then_mux_route_ref_64b", 64);
 }
 
 #[stress(tier = 2, name = "decode_then_mux_route_ref_256b")]
 fn should_decode_then_mux_route_ref_256b(ctx: &mut StressContext) {
-    decode_then_mux_route_ref(ctx, 256);
+    decode_then_mux_route_ref(ctx, "decode_then_mux_route_ref_256b", 256);
 }
 
 stress_main!();

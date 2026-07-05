@@ -64,21 +64,21 @@ fn populate_actor(
     }
 }
 
-fn cancel_existing(ctx: &mut StressContext, count: usize) {
+fn cancel_existing(ctx: &mut StressContext, name: &str, count: usize) {
     let (routes, crons, payloads) = precompute_data(count);
     let victim_index = count / 2;
     let mut actor = create_test_actor();
     populate_actor(&mut actor, &routes, &crons, &payloads, count);
     let route = routes[victim_index].clone();
 
-    tier2_stress::measure_once(ctx, count as u64, || {
+    tier2_stress::measure_once(ctx, name, count as u64, || {
         let response = actor.handle(ScheduleMessage::Cancel { route });
         assert!(matches!(response, ScheduleResponse::Ok));
         black_box(actor.schedule_count());
     });
 }
 
-fn delete_then_full_list_shared_cache(ctx: &mut StressContext, count: usize) {
+fn delete_then_full_list_shared_cache(ctx: &mut StressContext, name: &str, count: usize) {
     let (routes, crons, payloads) = precompute_data(count);
     let victim_index = count / 2;
     let route = routes[victim_index].clone();
@@ -91,7 +91,7 @@ fn delete_then_full_list_shared_cache(ctx: &mut StressContext, count: usize) {
         })
         .collect::<Vec<_>>();
 
-    tier2_stress::measure_once(ctx, CHURN_CASE_COUNT as u64, || {
+    tier2_stress::measure_once(ctx, name, CHURN_CASE_COUNT as u64, || {
         for (actor, cached_len) in &mut cases {
             black_box(*cached_len);
             let response = actor.handle(ScheduleMessage::Cancel {
@@ -104,7 +104,7 @@ fn delete_then_full_list_shared_cache(ctx: &mut StressContext, count: usize) {
     });
 }
 
-fn upsert_then_full_list_shared_cache(ctx: &mut StressContext, count: usize) {
+fn upsert_then_full_list_shared_cache(ctx: &mut StressContext, name: &str, count: usize) {
     let (routes, crons, payloads) = precompute_data(count);
     let victim_index = count / 2;
     let route = routes[victim_index].clone();
@@ -117,7 +117,7 @@ fn upsert_then_full_list_shared_cache(ctx: &mut StressContext, count: usize) {
         })
         .collect::<Vec<_>>();
 
-    tier2_stress::measure_once(ctx, CHURN_CASE_COUNT as u64, || {
+    tier2_stress::measure_once(ctx, name, CHURN_CASE_COUNT as u64, || {
         for (actor, cached_len) in &mut cases {
             black_box(*cached_len);
             let response = actor.handle(ScheduleMessage::Create {
@@ -134,32 +134,48 @@ fn upsert_then_full_list_shared_cache(ctx: &mut StressContext, count: usize) {
 
 #[stress(tier = 2, name = "cancel_existing_100_mixed_crons")]
 fn should_cancel_existing_100_mixed_crons(ctx: &mut StressContext) {
-    cancel_existing(ctx, 100);
+    cancel_existing(ctx, "cancel_existing_100_mixed_crons", 100);
 }
 
 #[stress(tier = 2, name = "cancel_existing_1000_mixed_crons")]
 fn should_cancel_existing_1000_mixed_crons(ctx: &mut StressContext) {
-    cancel_existing(ctx, 1000);
+    cancel_existing(ctx, "cancel_existing_1000_mixed_crons", 1000);
 }
 
 #[stress(tier = 2, name = "delete_then_full_list_shared_cache_100_mixed_crons")]
 fn should_delete_then_full_list_shared_cache_100_mixed_crons(ctx: &mut StressContext) {
-    delete_then_full_list_shared_cache(ctx, 100);
+    delete_then_full_list_shared_cache(
+        ctx,
+        "delete_then_full_list_shared_cache_100_mixed_crons",
+        100,
+    );
 }
 
 #[stress(tier = 2, name = "delete_then_full_list_shared_cache_1000_mixed_crons")]
 fn should_delete_then_full_list_shared_cache_1000_mixed_crons(ctx: &mut StressContext) {
-    delete_then_full_list_shared_cache(ctx, 1000);
+    delete_then_full_list_shared_cache(
+        ctx,
+        "delete_then_full_list_shared_cache_1000_mixed_crons",
+        1000,
+    );
 }
 
 #[stress(tier = 2, name = "upsert_then_full_list_shared_cache_100_mixed_crons")]
 fn should_upsert_then_full_list_shared_cache_100_mixed_crons(ctx: &mut StressContext) {
-    upsert_then_full_list_shared_cache(ctx, 100);
+    upsert_then_full_list_shared_cache(
+        ctx,
+        "upsert_then_full_list_shared_cache_100_mixed_crons",
+        100,
+    );
 }
 
 #[stress(tier = 2, name = "upsert_then_full_list_shared_cache_1000_mixed_crons")]
 fn should_upsert_then_full_list_shared_cache_1000_mixed_crons(ctx: &mut StressContext) {
-    upsert_then_full_list_shared_cache(ctx, 1000);
+    upsert_then_full_list_shared_cache(
+        ctx,
+        "upsert_then_full_list_shared_cache_1000_mixed_crons",
+        1000,
+    );
 }
 
 stress_main!();

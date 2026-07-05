@@ -33,7 +33,7 @@ fn should_create_owning_new_struct_payload(ctx: &mut StressContext) {
         .collect();
     let mut index = 0usize;
 
-    ctx.measure("operation", || {
+    ctx.measure("owning_new_struct_payload", || {
         let (destination, message) = &pairs[index];
         index = (index + 1) % pairs.len();
         black_box(Envelope::new(
@@ -57,7 +57,7 @@ fn should_create_owning_from_route_struct_payload(ctx: &mut StressContext) {
         .collect();
     let mut index = 0usize;
 
-    ctx.measure("operation", || {
+    ctx.measure("owning_from_route_struct_payload", || {
         let (source, destination, message) = &triples[index];
         index = (index + 1) % triples.len();
         black_box(Envelope::from_route(
@@ -82,7 +82,7 @@ fn should_create_owning_new_with_deadline_struct_payload(ctx: &mut StressContext
         .collect();
     let mut index = 0usize;
 
-    ctx.measure("operation", || {
+    ctx.measure("owning_new_with_deadline_struct_payload", || {
         let (destination, message) = &pairs[index];
         index = (index + 1) % pairs.len();
         black_box(
@@ -106,7 +106,7 @@ fn should_create_owning_new_with_causation_struct_payload(ctx: &mut StressContex
         .collect();
     let mut index = 0usize;
 
-    ctx.measure("operation", || {
+    ctx.measure("owning_new_with_causation_struct_payload", || {
         let (destination, message) = &pairs[index];
         index = (index + 1) % pairs.len();
         black_box(
@@ -129,7 +129,7 @@ fn should_create_owning_new_vec_payload_1_u64(ctx: &mut StressContext) {
         .collect();
     let mut index = 0usize;
 
-    ctx.measure("operation", || {
+    ctx.measure("owning_new_vec_payload_1_u64", || {
         let (destination, message) = &pool[index];
         index = (index + 1) % pool.len();
         black_box(Envelope::new(
@@ -153,7 +153,7 @@ fn should_create_owning_new_vec_payload_100_u64(ctx: &mut StressContext) {
         .collect();
     let mut index = 0usize;
 
-    ctx.measure("operation", || {
+    ctx.measure("owning_new_vec_payload_100_u64", || {
         let (destination, message) = &pool[index];
         index = (index + 1) % pool.len();
         black_box(Envelope::new(

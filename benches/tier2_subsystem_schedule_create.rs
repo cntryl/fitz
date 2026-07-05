@@ -127,44 +127,57 @@ fn create_actor_case(fixtures: &ScheduleCreateFixtures) -> ActorCreateCase {
 fn should_validate_route_1024_unique(ctx: &mut StressContext) {
     let fixtures = create_fixtures();
 
-    tier2_stress::measure_iterations(ctx, usize_to_u64_saturating(ROUTE_RING_SIZE), || {
-        for route in &fixtures.routes {
-            black_box(validate_concrete_schedule_route(black_box(route)))
-                .expect("valid schedule route");
-        }
-    });
+    tier2_stress::measure_iterations(
+        ctx,
+        "validate_route_1024_unique",
+        usize_to_u64_saturating(ROUTE_RING_SIZE),
+        || {
+            for route in &fixtures.routes {
+                black_box(validate_concrete_schedule_route(black_box(route)))
+                    .expect("valid schedule route");
+            }
+        },
+    );
 }
 
 #[stress(tier = 2, name = "next_fire_hourly_32")]
 fn should_next_fire_hourly_32(ctx: &mut StressContext) {
     let fixtures = create_fixtures();
 
-    tier2_stress::measure_iterations(ctx, usize_to_u64_saturating(CREATE_BATCH_SIZE), || {
-        let start = Instant::now();
-        for offset in 0..CREATE_BATCH_SIZE {
-            black_box(
-                fixtures
-                    .hourly_schedule
-                    .next_fire_time(start + Duration::from_secs(usize_to_u64_saturating(offset))),
-            );
-        }
-    });
+    tier2_stress::measure_iterations(
+        ctx,
+        "next_fire_hourly_32",
+        usize_to_u64_saturating(CREATE_BATCH_SIZE),
+        || {
+            let start = Instant::now();
+            for offset in 0..CREATE_BATCH_SIZE {
+                black_box(
+                    fixtures.hourly_schedule.next_fire_time(
+                        start + Duration::from_secs(usize_to_u64_saturating(offset)),
+                    ),
+                );
+            }
+        },
+    );
 }
 
 #[stress(tier = 2, name = "next_fire_daily_32")]
 fn should_next_fire_daily_32(ctx: &mut StressContext) {
     let fixtures = create_fixtures();
 
-    tier2_stress::measure_iterations(ctx, usize_to_u64_saturating(CREATE_BATCH_SIZE), || {
-        let start = Instant::now();
-        for offset in 0..CREATE_BATCH_SIZE {
-            black_box(
-                fixtures.daily_schedule.next_fire_time(
+    tier2_stress::measure_iterations(
+        ctx,
+        "next_fire_daily_32",
+        usize_to_u64_saturating(CREATE_BATCH_SIZE),
+        || {
+            let start = Instant::now();
+            for offset in 0..CREATE_BATCH_SIZE {
+                black_box(fixtures.daily_schedule.next_fire_time(
                     start + Duration::from_secs(usize_to_u64_saturating(offset) * 60),
-                ),
-            );
-        }
-    });
+                ));
+            }
+        },
+    );
 }
 
 #[stress(tier = 2, name = "store_insert_unique_inmemory_32")]
@@ -176,6 +189,7 @@ fn should_store_insert_unique_inmemory_32(ctx: &mut StressContext) {
 
     tier2_stress::measure_once(
         ctx,
+        "store_insert_unique_inmemory_32",
         usize_to_u64_saturating(CREATE_BATCH_SIZE * STORE_INSERT_CASE_COUNT),
         || {
             for case in &cases {
@@ -219,12 +233,17 @@ fn should_store_insert_batch_unique_inmemory_32(ctx: &mut StressContext) {
         })
         .collect::<Vec<_>>();
 
-    tier2_stress::measure_once(ctx, usize_to_u64_saturating(CREATE_BATCH_SIZE), || {
-        case.store
-            .insert_batch(1, &items, cntryl_midge::WriteOptions::buffered())
-            .expect("schedule insert batch");
-        black_box(());
-    });
+    tier2_stress::measure_once(
+        ctx,
+        "store_insert_batch_unique_inmemory_32",
+        usize_to_u64_saturating(CREATE_BATCH_SIZE),
+        || {
+            case.store
+                .insert_batch(1, &items, cntryl_midge::WriteOptions::buffered())
+                .expect("schedule insert batch");
+            black_box(());
+        },
+    );
 }
 
 #[stress(tier = 2, name = "actor_create_unique_inmemory_32")]
@@ -250,6 +269,7 @@ fn should_actor_create_unique_inmemory_32(ctx: &mut StressContext) {
     }
     tier2_stress::record_duration(
         ctx,
+        "actor_create_unique_inmemory_32",
         start.elapsed(),
         usize_to_u64_saturating(CREATE_BATCH_SIZE).saturating_mul(ACTOR_CREATE_REPEAT_COUNT),
     );
@@ -284,6 +304,7 @@ fn should_actor_create_batch_unique_inmemory_32(ctx: &mut StressContext) {
     }
     tier2_stress::record_duration(
         ctx,
+        "actor_create_batch_unique_inmemory_32",
         start.elapsed(),
         usize_to_u64_saturating(CREATE_BATCH_SIZE).saturating_mul(ACTOR_CREATE_REPEAT_COUNT),
     );

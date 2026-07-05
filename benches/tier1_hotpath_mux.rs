@@ -25,7 +25,7 @@ macro_rules! decode_then_route_bench {
             let decoder = TlvDecoder::new();
             let mut mux = Mux::new(1024);
 
-            ctx.measure("operation", || {
+            ctx.measure($bench_name, || {
                 let (record, _) = decoder.decode_one(black_box(&data)).unwrap();
                 let message = mux.route(record).unwrap();
                 mux.release(message.channel);

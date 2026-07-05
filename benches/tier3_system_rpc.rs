@@ -334,6 +334,7 @@ fn drain_request_correlation(
 
 fn measure_full_roundtrip_scaling(
     ctx: &mut StressContext,
+    name: &str,
     worker_count: usize,
     per_iteration_requests: u64,
     scenario: &'static str,
@@ -352,7 +353,7 @@ fn measure_full_roundtrip_scaling(
         RequestFrameRing::new(ROUTE_STR, b"scaling payload", REQUEST_FRAME_RING_SIZE);
     let mut next_worker_index = 0usize;
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload(name, || {
         for _ in 0..per_iteration_requests {
             let (request_msg_type, request_payload) = request_ring.next_frame();
             dispatch_request(
@@ -372,6 +373,7 @@ fn measure_full_roundtrip_scaling(
 
 fn measure_dispatch_only_scaling(
     ctx: &mut StressContext,
+    name: &str,
     worker_count: usize,
     per_iteration_requests: u64,
     scenario: &'static str,
@@ -390,7 +392,7 @@ fn measure_dispatch_only_scaling(
         RequestFrameRing::new(ROUTE_STR, b"scaling payload", REQUEST_FRAME_RING_SIZE);
     let mut next_worker_index = 0usize;
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload(name, || {
         for _ in 0..per_iteration_requests {
             let (request_msg_type, request_payload) = request_ring.next_frame();
             dispatch_request(
@@ -410,6 +412,7 @@ fn measure_dispatch_only_scaling(
 
 fn measure_multi_route_full_roundtrip_scaling(
     ctx: &mut StressContext,
+    name: &str,
     route_count: usize,
     per_iteration_requests: u64,
     scenario: &'static str,
@@ -442,7 +445,7 @@ fn measure_multi_route_full_roundtrip_scaling(
         .collect();
     let mut next_route_index = 0usize;
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload(name, || {
         for _ in 0..per_iteration_requests {
             let route_index = next_route_index;
             next_route_index = (next_route_index + 1) % rpc_routes.len();
@@ -471,6 +474,7 @@ fn measure_multi_route_full_roundtrip_scaling(
 
 fn measure_multi_route_dispatch_only_scaling(
     ctx: &mut StressContext,
+    name: &str,
     route_count: usize,
     per_iteration_requests: u64,
     scenario: &'static str,
@@ -503,7 +507,7 @@ fn measure_multi_route_dispatch_only_scaling(
         .collect();
     let mut next_route_index = 0usize;
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload(name, || {
         for _ in 0..per_iteration_requests {
             let route_index = next_route_index;
             next_route_index = (next_route_index + 1) % rpc_routes.len();
@@ -532,6 +536,7 @@ fn measure_multi_route_dispatch_only_scaling(
 
 fn measure_pending_cardinality_steady_state(
     ctx: &mut StressContext,
+    name: &str,
     pending_count: usize,
     per_iteration_cycles: u64,
 ) {
@@ -564,7 +569,7 @@ fn measure_pending_cardinality_steady_state(
     let mut current_correlation_id = drain_request_correlation(worker_inbox, family);
     let _ = requester_inbox.drain();
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload(name, || {
         for _ in 0..per_iteration_cycles {
             route_worker_frame_to_route(
                 &router,
@@ -606,7 +611,7 @@ fn should_complete_request_dispatch_sustained(ctx: &mut StressContext) {
         RequestFrameRing::new(ROUTE_STR, b"rpc request payload", REQUEST_FRAME_RING_SIZE);
     let mut next_worker_index = 0usize;
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_request_dispatch_sustained", || {
         for _ in 0..ITERS {
             let (request_msg_type, request_payload) = request_ring.next_frame();
             dispatch_request(
@@ -639,7 +644,7 @@ fn should_complete_single_response_throughput(ctx: &mut StressContext) {
         RequestFrameRing::new(ROUTE_STR, b"streaming request", REQUEST_FRAME_RING_SIZE);
     let mut next_worker_index = 0usize;
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_single_response_throughput", || {
         for _ in 0..ITERS {
             let (request_msg_type, request_payload) = request_ring.next_frame();
             dispatch_request(
@@ -659,18 +664,31 @@ fn should_complete_single_response_throughput(ctx: &mut StressContext) {
 
 #[stress(tier = 3)]
 fn should_complete_worker_pool_scaling_64_workers(ctx: &mut StressContext) {
-    measure_full_roundtrip_scaling(ctx, 64, 500, "scaling_64_full_roundtrip");
+    measure_full_roundtrip_scaling(
+        ctx,
+        "complete_worker_pool_scaling_64_workers",
+        64,
+        500,
+        "scaling_64_full_roundtrip",
+    );
 }
 
 #[stress(tier = 3)]
 fn should_complete_worker_pool_scaling_256_workers(ctx: &mut StressContext) {
-    measure_full_roundtrip_scaling(ctx, 256, 200, "scaling_256_full_roundtrip");
+    measure_full_roundtrip_scaling(
+        ctx,
+        "complete_worker_pool_scaling_256_workers",
+        256,
+        200,
+        "scaling_256_full_roundtrip",
+    );
 }
 
 #[stress(tier = 3)]
 fn should_complete_multi_route_worker_pool_scaling_64_routes(ctx: &mut StressContext) {
     measure_multi_route_full_roundtrip_scaling(
         ctx,
+        "complete_multi_route_worker_pool_scaling_64_routes",
         MULTI_ROUTE_COUNT,
         512,
         "scaling_64_routes_full_roundtrip",
@@ -679,12 +697,24 @@ fn should_complete_multi_route_worker_pool_scaling_64_routes(ctx: &mut StressCon
 
 #[stress(tier = 3)]
 fn should_complete_worker_pool_dispatch_only_scaling_64_workers(ctx: &mut StressContext) {
-    measure_dispatch_only_scaling(ctx, 64, 500, "scaling_64_dispatch_only");
+    measure_dispatch_only_scaling(
+        ctx,
+        "complete_worker_pool_dispatch_only_scaling_64_workers",
+        64,
+        500,
+        "scaling_64_dispatch_only",
+    );
 }
 
 #[stress(tier = 3)]
 fn should_complete_worker_pool_dispatch_only_scaling_256_workers(ctx: &mut StressContext) {
-    measure_dispatch_only_scaling(ctx, 256, 200, "scaling_256_dispatch_only");
+    measure_dispatch_only_scaling(
+        ctx,
+        "complete_worker_pool_dispatch_only_scaling_256_workers",
+        256,
+        200,
+        "scaling_256_dispatch_only",
+    );
 }
 
 #[stress(tier = 3)]
@@ -693,6 +723,7 @@ fn should_complete_multi_route_worker_pool_dispatch_only_scaling_64_routes(
 ) {
     measure_multi_route_dispatch_only_scaling(
         ctx,
+        "complete_multi_route_worker_pool_dispatch_only_scaling_64_routes",
         MULTI_ROUTE_COUNT,
         512,
         "scaling_64_routes_dispatch_only",
@@ -701,22 +732,42 @@ fn should_complete_multi_route_worker_pool_dispatch_only_scaling_64_routes(
 
 #[stress(tier = 3)]
 fn should_complete_pending_cardinality_steady_state_1(ctx: &mut StressContext) {
-    measure_pending_cardinality_steady_state(ctx, 1, 100);
+    measure_pending_cardinality_steady_state(
+        ctx,
+        "complete_pending_cardinality_steady_state_1",
+        1,
+        100,
+    );
 }
 
 #[stress(tier = 3)]
 fn should_complete_pending_cardinality_steady_state_64(ctx: &mut StressContext) {
-    measure_pending_cardinality_steady_state(ctx, 64, 100);
+    measure_pending_cardinality_steady_state(
+        ctx,
+        "complete_pending_cardinality_steady_state_64",
+        64,
+        100,
+    );
 }
 
 #[stress(tier = 3)]
 fn should_complete_pending_cardinality_steady_state_256(ctx: &mut StressContext) {
-    measure_pending_cardinality_steady_state(ctx, 256, 100);
+    measure_pending_cardinality_steady_state(
+        ctx,
+        "complete_pending_cardinality_steady_state_256",
+        256,
+        100,
+    );
 }
 
 #[stress(tier = 3)]
 fn should_complete_pending_cardinality_steady_state_1000(ctx: &mut StressContext) {
-    measure_pending_cardinality_steady_state(ctx, 1000, 100);
+    measure_pending_cardinality_steady_state(
+        ctx,
+        "complete_pending_cardinality_steady_state_1000",
+        1000,
+        100,
+    );
 }
 
 #[stress(tier = 3)]
@@ -734,7 +785,7 @@ fn should_complete_steady_state_request_tracking(ctx: &mut StressContext) {
         RequestFrameRing::new(ROUTE_STR, b"concurrent request", REQUEST_FRAME_RING_SIZE);
     let mut next_worker_index = 0usize;
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_steady_state_request_tracking", || {
         for _ in 0..ITERS {
             let (request_msg_type, request_payload) = request_ring.next_frame();
             dispatch_request(
@@ -766,7 +817,7 @@ fn should_complete_short_roundtrip_batch(ctx: &mut StressContext) {
         RequestFrameRing::new(ROUTE_STR, b"mixed workload", REQUEST_FRAME_RING_SIZE);
     let mut next_worker_index = 0usize;
 
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_short_roundtrip_batch", || {
         for _ in 0..10 {
             let (request_msg_type, request_payload) = request_ring.next_frame();
             dispatch_request(

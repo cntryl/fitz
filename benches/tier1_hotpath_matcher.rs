@@ -19,7 +19,7 @@ fn should_exact_literal_match(ctx: &mut StressContext) {
     let pattern = Pattern::new("notify://acme/orders/create");
     let route = Route::new("notify://acme/orders/create");
 
-    ctx.measure("operation", || {
+    ctx.measure("exact_literal_match", || {
         black_box(pattern.matches(black_box(&route)))
     });
 }
@@ -39,7 +39,7 @@ fn should_single_star_match(ctx: &mut StressContext) {
     ];
     let mut index = 0usize;
 
-    ctx.measure("operation", || {
+    ctx.measure("single_star_match", || {
         let matched = pattern.matches(black_box(&routes[index]));
         index = (index + 1) % routes.len();
         black_box(matched)
@@ -62,7 +62,7 @@ fn should_double_star_at_end(ctx: &mut StressContext) {
     ];
     let mut index = 0usize;
 
-    ctx.measure("operation", || {
+    ctx.measure("double_star_at_end", || {
         let matched = pattern.matches(black_box(&routes[index]));
         index = (index + 1) % routes.len();
         black_box(matched)
@@ -85,7 +85,7 @@ fn should_double_star_in_middle(ctx: &mut StressContext) {
     ];
     let mut index = 0usize;
 
-    ctx.measure("operation", || {
+    ctx.measure("double_star_in_middle", || {
         let matched = pattern.matches(black_box(&routes[index]));
         index = (index + 1) % routes.len();
         black_box(matched)
@@ -103,7 +103,7 @@ fn should_negative_match_late_fail(ctx: &mut StressContext) {
     let pattern = Pattern::new("notify://acme/*/items/history/created");
     let route_fail = Route::new("notify://acme/orders/items/history/updated");
 
-    ctx.measure("operation", || {
+    ctx.measure("negative_match_late_fail", || {
         black_box(pattern.matches(black_box(&route_fail)))
     });
 }
@@ -116,7 +116,7 @@ macro_rules! depth_bench {
             let pattern = Pattern::new("notify://acme/orders/**");
             let route = Route::new($route);
 
-            ctx.measure("operation", || {
+            ctx.measure($bench_name, || {
                 black_box(pattern.matches(black_box(&route)))
             });
         }
@@ -148,7 +148,7 @@ macro_rules! pattern_complexity_bench {
             let pattern = Pattern::new($pattern);
             let route = Route::new("notify://acme/orders/items/history/created");
 
-            ctx.measure("operation", || {
+            ctx.measure($bench_name, || {
                 black_box(pattern.matches(black_box(&route)))
             });
         }
@@ -189,7 +189,7 @@ macro_rules! backtracking_bench {
             let pattern = Pattern::new("notify://acme/**/items/created");
             let route = Route::new($route);
 
-            ctx.measure("operation", || {
+            ctx.measure($bench_name, || {
                 black_box(pattern.matches(black_box(&route)))
             });
         }

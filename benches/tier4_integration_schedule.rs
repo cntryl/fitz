@@ -85,7 +85,7 @@ fn should_complete_direct_create(ctx: &mut StressContext) {
     );
 
     let mut next_index = 1usize;
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_direct_create", || {
         for _ in 0..DIRECT_CREATE_OPERATIONS_PER_ITERATION {
             let route = next_ring_item(&route_ring, &mut next_index, "direct route ring");
             actor.receive(
@@ -131,7 +131,7 @@ fn should_complete_tcp_create(ctx: &mut StressContext) {
     ensure_schedule_ok(&warmup).expect("warmup create should succeed");
 
     let mut next_index = 1usize;
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_tcp_create", || {
         let frame = next_ring_item(&frame_ring, &mut next_index, "tcp frame ring");
         let response = runtime
             .block_on(client.request(frame, 2000))
@@ -171,7 +171,7 @@ fn should_complete_ws_create(ctx: &mut StressContext) {
     ensure_schedule_ok(&warmup).expect("warmup create should succeed");
 
     let mut next_index = 1usize;
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_ws_create", || {
         let frame = next_ring_item(&frame_ring, &mut next_index, "websocket frame ring");
         let response = runtime
             .block_on(client.request(frame, 2000))
@@ -226,7 +226,7 @@ fn should_complete_ws_batch_create(ctx: &mut StressContext) {
     ensure_schedule_ok(&warmup).expect("warmup batch create should succeed");
 
     let mut next_index = 1usize;
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_ws_batch_create", || {
         let frame = next_ring_item(&frame_ring, &mut next_index, "websocket batch frame ring");
         let response = runtime
             .block_on(client.request(frame, 2000))
@@ -290,7 +290,7 @@ fn should_complete_multiclient_creates(ctx: &mut StressContext) {
     ));
 
     let next_indices = Arc::new(std::sync::Mutex::new(vec![1usize; clients.len()]));
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload("complete_multiclient_creates", || {
         let next_indices = next_indices.clone();
         let _results: Vec<_> = runtime.block_on(futures::future::join_all(
             clients.iter().enumerate().map(|(client_index, arc)| {

@@ -54,11 +54,12 @@ fn returned_schedule_elements(iterations: u64, returned_per_iteration: u64) -> u
 
 fn measure_prepared_due_collection(
     ctx: &mut StressContext,
+    name: &str,
     actor: &mut ScheduleActor,
     ready_count: usize,
     expected_fired_count: usize,
 ) -> u64 {
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_workload(name, || {
         actor.bench_prepare_scan(ready_count);
         let claims = actor.bench_claim_due_fires();
         let mut delivered = Vec::with_capacity(claims.len());
@@ -151,15 +152,16 @@ fn should_complete_system_list_uncached_9_of_10_schedules(ctx: &mut StressContex
     populate_actor(&mut actor, &routes, &crons, &payloads, 10);
     assert_uncached_list_count(&mut actor, 9, 9);
 
-    let iterations = ctx.measure_workload(|| {
-        let (entries, total_count) = actor.list_entries(0, 9);
-        assert_eq!(
-            entries.len(),
-            9,
-            "uncached list should return nine schedules"
-        );
-        assert_eq!(total_count, 10, "total schedule count should remain stable");
-    });
+    let iterations =
+        ctx.measure_workload("complete_system_list_uncached_9_of_10_schedules", || {
+            let (entries, total_count) = actor.list_entries(0, 9);
+            assert_eq!(
+                entries.len(),
+                9,
+                "uncached list should return nine schedules"
+            );
+            assert_eq!(total_count, 10, "total schedule count should remain stable");
+        });
     stress_config::record_completed(ctx, returned_schedule_elements(iterations, 9));
 }
 
@@ -177,18 +179,19 @@ fn should_complete_system_list_uncached_99_of_100_schedules(ctx: &mut StressCont
     populate_actor(&mut actor, &routes, &crons, &payloads, 100);
     assert_uncached_list_count(&mut actor, 99, 99);
 
-    let iterations = ctx.measure_workload(|| {
-        let (entries, total_count) = actor.list_entries(0, 99);
-        assert_eq!(
-            entries.len(),
-            99,
-            "uncached list should return ninety-nine schedules"
-        );
-        assert_eq!(
-            total_count, 100,
-            "total schedule count should remain stable"
-        );
-    });
+    let iterations =
+        ctx.measure_workload("complete_system_list_uncached_99_of_100_schedules", || {
+            let (entries, total_count) = actor.list_entries(0, 99);
+            assert_eq!(
+                entries.len(),
+                99,
+                "uncached list should return ninety-nine schedules"
+            );
+            assert_eq!(
+                total_count, 100,
+                "total schedule count should remain stable"
+            );
+        });
     stress_config::record_completed(ctx, returned_schedule_elements(iterations, 99));
 }
 
@@ -207,7 +210,7 @@ fn should_complete_system_list_uncached_999_of_1000_schedules(ctx: &mut StressCo
     assert_uncached_list_count(&mut actor, 999, 999);
 
     let completed = ctx.measure_batch(
-        "workload",
+        "complete_system_list_uncached_999_of_1000_schedules",
         returned_schedule_elements(UNCACHED_LIST_BATCH_REPEAT_COUNT, 999),
         || {
             for _ in 0..UNCACHED_LIST_BATCH_REPEAT_COUNT {
@@ -238,14 +241,17 @@ fn should_complete_system_collect_due_occurrences_not_ready_1000_schedules(
 
     let mut actor = create_scan_actor(1000);
 
-    let iterations = ctx.measure_workload(|| {
-        actor.bench_prepare_scan(0);
-        let fired = actor.collect_due_occurrences_for_publish();
-        assert!(
-            fired.is_empty(),
-            "not-ready schedule due benchmark must not publish occurrences"
-        );
-    });
+    let iterations = ctx.measure_workload(
+        "complete_system_collect_due_occurrences_not_ready_1000_schedules",
+        || {
+            actor.bench_prepare_scan(0);
+            let fired = actor.collect_due_occurrences_for_publish();
+            assert!(
+                fired.is_empty(),
+                "not-ready schedule due benchmark must not publish occurrences"
+            );
+        },
+    );
     stress_config::record_completed(ctx, 1000 * iterations);
 }
 
@@ -261,7 +267,13 @@ fn should_complete_system_collect_due_occurrences_partially_ready_1000_schedules
 
     let mut actor = create_scan_actor(1000);
 
-    let iterations = measure_prepared_due_collection(ctx, &mut actor, 100, 100);
+    let iterations = measure_prepared_due_collection(
+        ctx,
+        "complete_system_collect_due_occurrences_partially_ready_1000_schedules",
+        &mut actor,
+        100,
+        100,
+    );
     stress_config::record_completed(ctx, 1000 * iterations);
 }
 

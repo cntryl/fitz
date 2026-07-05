@@ -14,17 +14,17 @@
 /// If a scenario has a natural transport or fanout scope, add tags like `measurement_scope`
 /// and `batch_size` so the report can distinguish direct, transport, and delivery cost.
 pub trait StressContextExt {
-    fn measure_workload<F, R>(&mut self, f: F) -> u64
+    fn measure_workload<F, R>(&mut self, name: &str, f: F) -> u64
     where
         F: FnMut() -> R;
 }
 
 impl StressContextExt for cntryl_stress::StressContext {
-    fn measure_workload<F, R>(&mut self, f: F) -> u64
+    fn measure_workload<F, R>(&mut self, name: &str, f: F) -> u64
     where
         F: FnMut() -> R,
     {
-        self.measure_batch("workload", 1, f)
+        self.measure_batch(name, 1, f)
     }
 }
 
