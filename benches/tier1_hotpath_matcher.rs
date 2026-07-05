@@ -1,4 +1,4 @@
-use cntryl_stress::{black_box, stress_allocator, stress_main, stress_test, StressContext};
+use cntryl_stress::{black_box, stress, stress_allocator, stress_main, StressContext};
 use fitz::runtime::matcher::Pattern;
 use fitz::runtime::routing::Route;
 
@@ -8,7 +8,7 @@ fn record_group(ctx: &mut StressContext) {
     ctx.parameter("group", "hotpath_matcher");
 }
 
-#[stress_test(
+#[stress(
     tier = 1,
     name = "exact_literal_match",
     max_allocs_per_op = 0,
@@ -19,10 +19,12 @@ fn should_exact_literal_match(ctx: &mut StressContext) {
     let pattern = Pattern::new("notify://acme/orders/create");
     let route = Route::new("notify://acme/orders/create");
 
-    ctx.measure_micro(|| black_box(pattern.matches(black_box(&route))));
+    ctx.measure("operation", || {
+        black_box(pattern.matches(black_box(&route)))
+    });
 }
 
-#[stress_test(
+#[stress(
     tier = 1,
     name = "single_star_match",
     max_allocs_per_op = 0,
@@ -37,14 +39,14 @@ fn should_single_star_match(ctx: &mut StressContext) {
     ];
     let mut index = 0usize;
 
-    ctx.measure_micro(|| {
+    ctx.measure("operation", || {
         let matched = pattern.matches(black_box(&routes[index]));
         index = (index + 1) % routes.len();
         black_box(matched)
     });
 }
 
-#[stress_test(
+#[stress(
     tier = 1,
     name = "double_star_at_end",
     max_allocs_per_op = 0,
@@ -60,14 +62,14 @@ fn should_double_star_at_end(ctx: &mut StressContext) {
     ];
     let mut index = 0usize;
 
-    ctx.measure_micro(|| {
+    ctx.measure("operation", || {
         let matched = pattern.matches(black_box(&routes[index]));
         index = (index + 1) % routes.len();
         black_box(matched)
     });
 }
 
-#[stress_test(
+#[stress(
     tier = 1,
     name = "double_star_in_middle",
     max_allocs_per_op = 0,
@@ -83,14 +85,14 @@ fn should_double_star_in_middle(ctx: &mut StressContext) {
     ];
     let mut index = 0usize;
 
-    ctx.measure_micro(|| {
+    ctx.measure("operation", || {
         let matched = pattern.matches(black_box(&routes[index]));
         index = (index + 1) % routes.len();
         black_box(matched)
     });
 }
 
-#[stress_test(
+#[stress(
     tier = 1,
     name = "negative_match_late_fail",
     max_allocs_per_op = 0,
@@ -101,18 +103,22 @@ fn should_negative_match_late_fail(ctx: &mut StressContext) {
     let pattern = Pattern::new("notify://acme/*/items/history/created");
     let route_fail = Route::new("notify://acme/orders/items/history/updated");
 
-    ctx.measure_micro(|| black_box(pattern.matches(black_box(&route_fail))));
+    ctx.measure("operation", || {
+        black_box(pattern.matches(black_box(&route_fail)))
+    });
 }
 
 macro_rules! depth_bench {
     ($fn_name:ident, $bench_name:literal, $route:literal) => {
-        #[stress_test(tier = 1, max_allocs_per_op = 0, max_bytes_per_op = 0)]
+        #[stress(tier = 1, max_allocs_per_op = 0, max_bytes_per_op = 0)]
         fn $fn_name(ctx: &mut StressContext) {
             record_group(ctx);
             let pattern = Pattern::new("notify://acme/orders/**");
             let route = Route::new($route);
 
-            ctx.measure_micro(|| black_box(pattern.matches(black_box(&route))));
+            ctx.measure("operation", || {
+                black_box(pattern.matches(black_box(&route)))
+            });
         }
     };
 }
@@ -136,13 +142,15 @@ depth_bench!(
 
 macro_rules! pattern_complexity_bench {
     ($fn_name:ident, $bench_name:literal, $pattern:literal) => {
-        #[stress_test(tier = 1, max_allocs_per_op = 0, max_bytes_per_op = 0)]
+        #[stress(tier = 1, max_allocs_per_op = 0, max_bytes_per_op = 0)]
         fn $fn_name(ctx: &mut StressContext) {
             record_group(ctx);
             let pattern = Pattern::new($pattern);
             let route = Route::new("notify://acme/orders/items/history/created");
 
-            ctx.measure_micro(|| black_box(pattern.matches(black_box(&route))));
+            ctx.measure("operation", || {
+                black_box(pattern.matches(black_box(&route)))
+            });
         }
     };
 }
@@ -175,13 +183,15 @@ pattern_complexity_bench!(
 
 macro_rules! backtracking_bench {
     ($fn_name:ident, $bench_name:literal, $route:literal) => {
-        #[stress_test(tier = 1, max_allocs_per_op = 0, max_bytes_per_op = 0)]
+        #[stress(tier = 1, max_allocs_per_op = 0, max_bytes_per_op = 0)]
         fn $fn_name(ctx: &mut StressContext) {
             record_group(ctx);
             let pattern = Pattern::new("notify://acme/**/items/created");
             let route = Route::new($route);
 
-            ctx.measure_micro(|| black_box(pattern.matches(black_box(&route))));
+            ctx.measure("operation", || {
+                black_box(pattern.matches(black_box(&route)))
+            });
         }
     };
 }

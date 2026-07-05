@@ -1,8 +1,10 @@
 #[path = "stress_config.rs"]
 mod stress_config;
 
+use stress_config::StressContextExt;
+
 use bytes::Bytes;
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{stress, stress_main, StressContext};
 use fitz::benchkit::{
     build_queue_complete, build_queue_dequeue, build_queue_dequeue_batch, build_queue_enqueue,
     build_queue_watch, create_bench_queue_actor, create_bench_queue_sink,
@@ -269,7 +271,7 @@ fn measure_backlog_depth_steady_state(
     stress_config::record_completed(ctx, (per_iteration_cycles * 3) * iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_capacity_enqueue_isolated(ctx: &mut StressContext) {
     ctx.parameter("scenario", "enqueue_isolated");
     ctx.parameter("measurement_scope", "direct_actor");
@@ -290,7 +292,7 @@ fn should_complete_capacity_enqueue_isolated(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_capacity_receive_batch_cleanup(ctx: &mut StressContext) {
     ctx.parameter("scenario", "receive_batch_cleanup");
     ctx.parameter("measurement_scope", "direct_actor");
@@ -314,7 +316,7 @@ fn should_complete_capacity_receive_batch_cleanup(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, ((RECEIVE_BATCH_SIZE as u64) * 2 + 1) * iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_capacity_ack_roundtrip(ctx: &mut StressContext) {
     ctx.parameter("scenario", "ack_roundtrip");
     ctx.parameter("measurement_scope", "direct_actor");
@@ -336,7 +338,7 @@ fn should_complete_capacity_ack_roundtrip(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 3 * iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_capacity_extend_roundtrip(ctx: &mut StressContext) {
     ctx.parameter("scenario", "extend_roundtrip");
     ctx.parameter("measurement_scope", "direct_actor");
@@ -362,7 +364,7 @@ fn should_complete_capacity_extend_roundtrip(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 4 * iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_capacity_sustained_load(ctx: &mut StressContext) {
     ctx.parameter("scenario", "sustained_load");
     ctx.parameter("measurement_scope", "direct_actor");
@@ -387,7 +389,7 @@ fn should_complete_capacity_sustained_load(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 100 * iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_capacity_mixed_workload(ctx: &mut StressContext) {
     ctx.parameter("scenario", "mixed_steady_state");
     ctx.parameter("measurement_scope", "direct_actor");
@@ -461,27 +463,27 @@ fn should_complete_capacity_mixed_workload(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 300 * iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_backlog_depth_steady_state_1(ctx: &mut StressContext) {
     measure_backlog_depth_steady_state(ctx, 1, 100);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_backlog_depth_steady_state_64(ctx: &mut StressContext) {
     measure_backlog_depth_steady_state(ctx, 64, 100);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_backlog_depth_steady_state_256(ctx: &mut StressContext) {
     measure_backlog_depth_steady_state(ctx, 256, 100);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_backlog_depth_steady_state_1024(ctx: &mut StressContext) {
     measure_backlog_depth_steady_state(ctx, 1024, 100);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_bulk_recovery(ctx: &mut StressContext) {
     ctx.parameter("scenario", "bulk_recovery");
     ctx.parameter("measurement_scope", "direct_actor");
@@ -524,7 +526,7 @@ fn should_complete_bulk_recovery(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 100 * iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_capacity_high_contention(ctx: &mut StressContext) {
     ctx.parameter("scenario", "high_contention");
     ctx.parameter("measurement_scope", "direct_actor");
@@ -545,7 +547,7 @@ fn should_complete_capacity_high_contention(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 100 * iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_routed_enqueue_sustained(ctx: &mut StressContext) {
     ctx.parameter("scenario", "routed_enqueue_sustained");
     ctx.parameter("measurement_scope", "routed_sink");
@@ -666,27 +668,27 @@ fn measure_routed_concurrent_enqueues(ctx: &mut StressContext, client_count: usi
     stress_config::record_completed(ctx, client_count as u64 * iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_routed_concurrent_enqueues_client_scaling_1(ctx: &mut StressContext) {
     measure_routed_concurrent_enqueues(ctx, 1);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_routed_concurrent_enqueues_client_scaling_4(ctx: &mut StressContext) {
     measure_routed_concurrent_enqueues(ctx, 4);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_routed_concurrent_enqueues_client_scaling_16(ctx: &mut StressContext) {
     measure_routed_concurrent_enqueues(ctx, 16);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_routed_concurrent_enqueues_client_scaling_64(ctx: &mut StressContext) {
     measure_routed_concurrent_enqueues(ctx, 64);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_routed_receive_batch_cleanup(ctx: &mut StressContext) {
     ctx.parameter("scenario", "routed_receive_batch_cleanup");
     ctx.parameter("measurement_scope", "routed_sink");
@@ -749,7 +751,7 @@ fn should_complete_routed_receive_batch_cleanup(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, ((RECEIVE_BATCH_SIZE as u64) * 2 + 1) * iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_routed_ack_roundtrip(ctx: &mut StressContext) {
     ctx.parameter("scenario", "routed_ack_roundtrip");
     ctx.parameter("measurement_scope", "routed_sink");
@@ -802,7 +804,7 @@ fn should_complete_routed_ack_roundtrip(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 3 * iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_wait_wakeup_with_waiters(ctx: &mut StressContext) {
     ctx.parameter("scenario", "wait_wakeup");
     ctx.parameter("measurement_scope", "routed_waiters");

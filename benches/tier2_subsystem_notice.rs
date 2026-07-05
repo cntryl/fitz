@@ -3,7 +3,7 @@ use bytes::Bytes;
 #[path = "tier2_stress.rs"]
 mod tier2_stress;
 
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{stress, stress_main, StressContext};
 use fitz::benchkit::{
     build_notice_subscribe, create_bench_notice_sink, extract_single_tlv_field,
     register_session_counting_sink, route_frame, wait_for_counting_sinks_each_count, CountingSink,
@@ -144,7 +144,7 @@ fn publish_fanout(ctx: &mut StressContext, subscriber_count: usize, pattern: &st
 
 macro_rules! notice_publish_bench {
     ($fn_name:ident, $stress_name:literal, $subscribers:expr, $pattern:expr) => {
-        #[stress_test(tier = 2, name = $stress_name)]
+        #[stress(tier = 2, name = $stress_name)]
         fn $fn_name(ctx: &mut StressContext) {
             publish_fanout(ctx, $subscribers, $pattern);
         }

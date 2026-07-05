@@ -5,7 +5,7 @@ use bytes::Bytes;
 #[path = "tier2_stress.rs"]
 mod tier2_stress;
 
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{stress, stress_main, StressContext};
 use fitz::domains::schedule::protocol::validate_concrete_schedule_route;
 use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
 use fitz::runtime::routing::RouteFamily;
@@ -132,32 +132,32 @@ fn upsert_then_full_list_shared_cache(ctx: &mut StressContext, count: usize) {
     });
 }
 
-#[stress_test(tier = 2, name = "cancel_existing_100_mixed_crons")]
+#[stress(tier = 2, name = "cancel_existing_100_mixed_crons")]
 fn should_cancel_existing_100_mixed_crons(ctx: &mut StressContext) {
     cancel_existing(ctx, 100);
 }
 
-#[stress_test(tier = 2, name = "cancel_existing_1000_mixed_crons")]
+#[stress(tier = 2, name = "cancel_existing_1000_mixed_crons")]
 fn should_cancel_existing_1000_mixed_crons(ctx: &mut StressContext) {
     cancel_existing(ctx, 1000);
 }
 
-#[stress_test(tier = 2, name = "delete_then_full_list_shared_cache_100_mixed_crons")]
+#[stress(tier = 2, name = "delete_then_full_list_shared_cache_100_mixed_crons")]
 fn should_delete_then_full_list_shared_cache_100_mixed_crons(ctx: &mut StressContext) {
     delete_then_full_list_shared_cache(ctx, 100);
 }
 
-#[stress_test(tier = 2, name = "delete_then_full_list_shared_cache_1000_mixed_crons")]
+#[stress(tier = 2, name = "delete_then_full_list_shared_cache_1000_mixed_crons")]
 fn should_delete_then_full_list_shared_cache_1000_mixed_crons(ctx: &mut StressContext) {
     delete_then_full_list_shared_cache(ctx, 1000);
 }
 
-#[stress_test(tier = 2, name = "upsert_then_full_list_shared_cache_100_mixed_crons")]
+#[stress(tier = 2, name = "upsert_then_full_list_shared_cache_100_mixed_crons")]
 fn should_upsert_then_full_list_shared_cache_100_mixed_crons(ctx: &mut StressContext) {
     upsert_then_full_list_shared_cache(ctx, 100);
 }
 
-#[stress_test(tier = 2, name = "upsert_then_full_list_shared_cache_1000_mixed_crons")]
+#[stress(tier = 2, name = "upsert_then_full_list_shared_cache_1000_mixed_crons")]
 fn should_upsert_then_full_list_shared_cache_1000_mixed_crons(ctx: &mut StressContext) {
     upsert_then_full_list_shared_cache(ctx, 1000);
 }

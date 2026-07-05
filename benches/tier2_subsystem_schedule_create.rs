@@ -3,7 +3,7 @@ use bytes::Bytes;
 #[path = "tier2_stress.rs"]
 mod tier2_stress;
 
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{stress, stress_main, StressContext};
 use fitz::benchkit::create_bench_store;
 use fitz::domains::schedule::actor::ScheduleActor;
 use fitz::domains::schedule::protocol::{
@@ -123,7 +123,7 @@ fn create_actor_case(fixtures: &ScheduleCreateFixtures) -> ActorCreateCase {
     }
 }
 
-#[stress_test(tier = 2, name = "validate_route_1024_unique")]
+#[stress(tier = 2, name = "validate_route_1024_unique")]
 fn should_validate_route_1024_unique(ctx: &mut StressContext) {
     let fixtures = create_fixtures();
 
@@ -135,7 +135,7 @@ fn should_validate_route_1024_unique(ctx: &mut StressContext) {
     });
 }
 
-#[stress_test(tier = 2, name = "next_fire_hourly_32")]
+#[stress(tier = 2, name = "next_fire_hourly_32")]
 fn should_next_fire_hourly_32(ctx: &mut StressContext) {
     let fixtures = create_fixtures();
 
@@ -151,7 +151,7 @@ fn should_next_fire_hourly_32(ctx: &mut StressContext) {
     });
 }
 
-#[stress_test(tier = 2, name = "next_fire_daily_32")]
+#[stress(tier = 2, name = "next_fire_daily_32")]
 fn should_next_fire_daily_32(ctx: &mut StressContext) {
     let fixtures = create_fixtures();
 
@@ -167,7 +167,7 @@ fn should_next_fire_daily_32(ctx: &mut StressContext) {
     });
 }
 
-#[stress_test(tier = 2, name = "store_insert_unique_inmemory_32")]
+#[stress(tier = 2, name = "store_insert_unique_inmemory_32")]
 fn should_store_insert_unique_inmemory_32(ctx: &mut StressContext) {
     let fixtures = create_fixtures();
     let cases = (0..STORE_INSERT_CASE_COUNT)
@@ -203,7 +203,7 @@ fn should_store_insert_unique_inmemory_32(ctx: &mut StressContext) {
     );
 }
 
-#[stress_test(tier = 2, name = "store_insert_batch_unique_inmemory_32")]
+#[stress(tier = 2, name = "store_insert_batch_unique_inmemory_32")]
 fn should_store_insert_batch_unique_inmemory_32(ctx: &mut StressContext) {
     let fixtures = create_fixtures();
     let case = create_store_insert_case(&fixtures);
@@ -227,7 +227,7 @@ fn should_store_insert_batch_unique_inmemory_32(ctx: &mut StressContext) {
     });
 }
 
-#[stress_test(tier = 2, name = "actor_create_unique_inmemory_32")]
+#[stress(tier = 2, name = "actor_create_unique_inmemory_32")]
 fn should_actor_create_unique_inmemory_32(ctx: &mut StressContext) {
     let fixtures = create_fixtures();
     let mut cases = (0..ACTOR_CREATE_REPEAT_COUNT)
@@ -255,7 +255,7 @@ fn should_actor_create_unique_inmemory_32(ctx: &mut StressContext) {
     );
 }
 
-#[stress_test(tier = 2, name = "actor_create_batch_unique_inmemory_32")]
+#[stress(tier = 2, name = "actor_create_batch_unique_inmemory_32")]
 fn should_actor_create_batch_unique_inmemory_32(ctx: &mut StressContext) {
     let fixtures = create_fixtures();
     let mut cases = (0..ACTOR_CREATE_REPEAT_COUNT)

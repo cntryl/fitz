@@ -8,8 +8,10 @@
 #[path = "stress_config.rs"]
 mod stress_config;
 
+use stress_config::StressContextExt;
+
 use bytes::Bytes;
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{stress, stress_main, StressContext};
 use fitz::benchkit::{
     build_rpc_request, build_rpc_response_frame_bytes, build_rpc_subscribe_with_max_concurrent,
     create_bench_rpc_sink, extract_single_tlv_field, register_session_queue_sink, route_frame,
@@ -605,7 +607,7 @@ fn service_worker(
     }
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_direct_request(ctx: &mut StressContext) {
     ctx.parameter("layer", "direct");
     ctx.parameter("scenario", "request_response");
@@ -641,7 +643,7 @@ fn should_complete_direct_request(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, iterations);
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_encoded_request(ctx: &mut StressContext) {
     ctx.parameter("layer", "encoded");
     ctx.parameter("scenario", "request_response");
@@ -679,7 +681,7 @@ fn should_complete_encoded_request(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, iterations);
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_tcp_request_response(ctx: &mut StressContext) {
     ctx.parameter("layer", "tcp");
     ctx.parameter("scenario", "request_response");
@@ -749,7 +751,7 @@ fn should_complete_tcp_request_response(ctx: &mut StressContext) {
         .expect("shutdown server");
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_ws_request_response(ctx: &mut StressContext) {
     ctx.parameter("layer", "websocket");
     ctx.parameter("scenario", "request_response");
@@ -836,17 +838,17 @@ fn should_complete_ws_request_response(ctx: &mut StressContext) {
         .expect("shutdown server");
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_multiclient_concurrent_requests(ctx: &mut StressContext) {
     measure_multiclient_concurrent_requests(ctx, 1, "concurrent_requests");
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_multiclient_concurrent_requests_4_workers(ctx: &mut StressContext) {
     measure_multiclient_concurrent_requests(ctx, 4, "concurrent_requests");
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_multiclient_concurrent_requests_8_workers(ctx: &mut StressContext) {
     measure_multiclient_concurrent_requests(ctx, 8, "concurrent_requests");
 }

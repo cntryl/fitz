@@ -12,8 +12,10 @@
 #[path = "stress_config.rs"]
 mod stress_config;
 
+use stress_config::StressContextExt;
+
 use bytes::Bytes;
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{stress, stress_main, StressContext};
 use fitz::benchkit::{
     build_queue_enqueue, create_bench_queue_actor, parse_queue_response, shared_bench_runtime,
 };
@@ -34,7 +36,7 @@ fn setup_queue_actor() -> fitz::domains::queue::QueueActor {
     create_bench_queue_actor("tier4", "queue", "main", None)
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_direct_enqueue(ctx: &mut StressContext) {
     ctx.parameter("layer", "direct");
     ctx.parameter("scenario", "enqueue");
@@ -53,7 +55,7 @@ fn should_complete_direct_enqueue(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, iterations);
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_encoded_enqueue(ctx: &mut StressContext) {
     ctx.parameter("layer", "encoded");
     ctx.parameter("scenario", "enqueue");
@@ -91,7 +93,7 @@ fn should_complete_encoded_enqueue(ctx: &mut StressContext) {
     );
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_tcp_enqueue(ctx: &mut StressContext) {
     ctx.parameter("layer", "tcp");
     ctx.parameter("scenario", "enqueue");
@@ -118,7 +120,7 @@ fn should_complete_tcp_enqueue(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, TCP_ENQUEUE_ROUNDS_PER_ITERATION as u64 * iterations);
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_ws_enqueue(ctx: &mut StressContext) {
     ctx.parameter("layer", "websocket");
     ctx.parameter("scenario", "enqueue");
@@ -148,7 +150,7 @@ fn should_complete_ws_enqueue(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, WS_ENQUEUE_ROUNDS_PER_ITERATION as u64 * iterations);
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_multiclient_concurrent_enqueues(ctx: &mut StressContext) {
     measure_multiclient_concurrent_enqueues(ctx, "concurrent_enqueues", 10);
 }
@@ -204,7 +206,7 @@ fn measure_multiclient_concurrent_enqueues(
     );
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_multiclient_concurrent_enqueues_client_scaling_4(ctx: &mut StressContext) {
     measure_multiclient_concurrent_enqueues(ctx, "concurrent_enqueues_client_scaling", 4);
 }

@@ -1,4 +1,4 @@
-use cntryl_stress::{black_box, stress_allocator, stress_main, stress_test, StressContext};
+use cntryl_stress::{black_box, stress, stress_allocator, stress_main, StressContext};
 use fitz::auth::{Access, Permission};
 use fitz::runtime::routing::Route;
 use fitz::session::permissions::SessionPermissions;
@@ -43,11 +43,11 @@ fn record_group(ctx: &mut StressContext, group: &str) {
 
 macro_rules! compile_bench {
     ($fn_name:ident, $bench_name:literal, $raw:ident) => {
-        #[stress_test(tier = 1)]
+        #[stress(tier = 1)]
         fn $fn_name(ctx: &mut StressContext) {
             record_group(ctx, "hotpath_permissions_compile");
 
-            ctx.measure_micro(|| {
+            ctx.measure("operation", || {
                 black_box(SessionPermissions::from_permissions(parse_permissions(
                     &$raw,
                 )));
@@ -80,13 +80,13 @@ fn warmed_permissions(raws: &[&str], route: &Route, access: Access) -> SessionPe
 
 macro_rules! cache_hit_bench {
     ($fn_name:ident, $bench_name:literal, $raw:ident, $route:literal, $access:expr) => {
-        #[stress_test(tier = 1, max_allocs_per_op = 0, max_bytes_per_op = 0)]
+        #[stress(tier = 1, max_allocs_per_op = 0, max_bytes_per_op = 0)]
         fn $fn_name(ctx: &mut StressContext) {
             record_group(ctx, "hotpath_permissions_hit");
             let route = Route::new($route);
             let permissions = warmed_permissions(&$raw, &route, $access);
 
-            ctx.measure_micro(|| {
+            ctx.measure("operation", || {
                 black_box(permissions.allows(black_box(&route), black_box($access)));
             });
         }
@@ -122,7 +122,7 @@ cache_hit_bench!(
     Access::Write
 );
 
-#[stress_test(
+#[stress(
     tier = 1,
     name = "allows_deny_by_default_cache_hit",
     max_allocs_per_op = 0,
@@ -134,19 +134,19 @@ fn should_allows_deny_by_default_cache_hit(ctx: &mut StressContext) {
     let route = Route::new("rpc://acme/auth/users");
     let _ = permissions.allows(&route, Access::Read);
 
-    ctx.measure_micro(|| {
+    ctx.measure("operation", || {
         black_box(permissions.allows(black_box(&route), black_box(Access::Read)));
     });
 }
 
 macro_rules! cache_miss_bench {
     ($fn_name:ident, $bench_name:literal, $raw:ident, $route:literal, $access:expr) => {
-        #[stress_test(tier = 1)]
+        #[stress(tier = 1)]
         fn $fn_name(ctx: &mut StressContext) {
             record_group(ctx, "hotpath_permissions_miss");
             let route = Route::new($route);
 
-            ctx.measure_micro(|| {
+            ctx.measure("operation", || {
                 let permissions = SessionPermissions::from_permissions(parse_permissions(&$raw));
                 black_box(permissions.allows(black_box(&route), black_box($access)));
             });

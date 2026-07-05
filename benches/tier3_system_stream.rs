@@ -9,8 +9,10 @@
 #[path = "stress_config.rs"]
 mod stress_config;
 
+use stress_config::StressContextExt;
+
 use bytes::Bytes;
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{stress, stress_main, StressContext};
 use fitz::benchkit::{
     build_stream_append, build_stream_begin, build_stream_commit, build_stream_last,
     build_stream_read, build_stream_subscribe, count_stream_read_records_from_payload,
@@ -158,7 +160,7 @@ fn prepare_validated_read(
     (read_msg_type, read_payload)
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_append_sustained_load(ctx: &mut StressContext) {
     ctx.parameter("scenario", "sustained_append");
     ctx.parameter("measurement_scope", "routed_system");
@@ -176,7 +178,7 @@ fn should_complete_append_sustained_load(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_read_scan_throughput(ctx: &mut StressContext) {
     ctx.parameter("scenario", "read_scan");
     ctx.parameter("measurement_scope", "routed_system");
@@ -203,7 +205,7 @@ fn should_complete_read_scan_throughput(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 100 * iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_area_wildcard_read_throughput(ctx: &mut StressContext) {
     ctx.parameter("scenario", "read_area_wildcard");
     ctx.parameter("measurement_scope", "routed_system");
@@ -233,7 +235,7 @@ fn should_complete_area_wildcard_read_throughput(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 100 * iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_realm_wildcard_read_throughput(ctx: &mut StressContext) {
     ctx.parameter("scenario", "read_realm_wildcard");
     ctx.parameter("measurement_scope", "routed_system");
@@ -263,7 +265,7 @@ fn should_complete_realm_wildcard_read_throughput(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 100 * iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_batch_write_operations(ctx: &mut StressContext) {
     ctx.parameter("scenario", "batch_write");
     ctx.parameter("measurement_scope", "routed_system");
@@ -283,7 +285,7 @@ fn should_complete_batch_write_operations(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 100 * iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_multiarea_concurrent_writes(ctx: &mut StressContext) {
     ctx.parameter("scenario", "multiarea_writes");
     ctx.parameter("measurement_scope", "routed_system");
@@ -312,7 +314,7 @@ fn should_complete_multiarea_concurrent_writes(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 10 * iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_publish_fanout_with_subscribers(ctx: &mut StressContext) {
     ctx.parameter("scenario", "publish_fanout");
     ctx.parameter("measurement_scope", "routed_fanout");
@@ -364,7 +366,7 @@ fn should_complete_publish_fanout_with_subscribers(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, publish_routes.len() as u64 * iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_offset_tracking_overhead(ctx: &mut StressContext) {
     ctx.parameter("scenario", "offset_tracking");
     ctx.parameter("measurement_scope", "routed_system");

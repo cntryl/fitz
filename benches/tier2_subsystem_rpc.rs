@@ -3,7 +3,7 @@ use bytes::Bytes;
 #[path = "tier2_stress.rs"]
 mod tier2_stress;
 
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{stress, stress_main, StressContext};
 use fitz::benchkit::{
     build_rpc_request, build_rpc_response_frame, build_rpc_subscribe, create_bench_rpc_sink,
     extract_single_tlv_field, register_session_queue_sink, route_frame, FrameQueueSink,
@@ -228,7 +228,7 @@ fn dispatch_response_cleanup_workers(ctx: &mut StressContext, worker_count: usiz
     });
 }
 
-#[stress_test(
+#[stress(
     tier = 2,
     name = "dispatch_response_cleanup_8192_ops_1_workers_primary"
 )]
@@ -236,7 +236,7 @@ fn should_dispatch_response_cleanup_8192_ops_1_workers_primary(ctx: &mut StressC
     dispatch_response_cleanup_workers(ctx, 1);
 }
 
-#[stress_test(
+#[stress(
     tier = 2,
     name = "dispatch_response_cleanup_8192_ops_64_workers_primary"
 )]
@@ -244,7 +244,7 @@ fn should_dispatch_response_cleanup_8192_ops_64_workers_primary(ctx: &mut Stress
     dispatch_response_cleanup_workers(ctx, 64);
 }
 
-#[stress_test(
+#[stress(
     tier = 2,
     name = "dispatch_response_cleanup_8192_ops_256_workers_primary"
 )]

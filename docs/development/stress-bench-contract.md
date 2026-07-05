@@ -1,11 +1,11 @@
 # Stress benchmark contract (cntryl_stress)
 
-This document defines the contract for Tier 2 through Tier N benchmarks using the `cntryl_stress` framework with `#[stress_test]` macros. Tier 1 hotpath rows use the micro-benchmark rules in [Benchmark Guidelines](benchmarks.md#tier-1-micro-semantics). All stress benches must follow these rules.
+This document defines the contract for Tier 2 through Tier N benchmarks using the `cntryl_stress` framework with `#[stress]` macros. Tier 1 hotpath rows use the micro-benchmark rules in [Benchmark Guidelines](benchmarks.md#tier-1-micro-semantics). All stress benches must follow these rules.
 
 ## Tier 2 rules (subsystem benchmarks — fixed operations)
 
 - Tier 2 rows use stress fixed-operation samples. Omit `mode = "fixed_duration"`; explicit modes must match the tier-derived `fixed_operations` mode.
-- Use `ctx.measure` for one subsystem operation, `ctx.measure_counted` when one operation returns logical work completed, or `ctx.measure_batch` / `benches/tier2_stress.rs` helpers when each framework iteration performs a known batch size.
+- Use `ctx.measure("name", ...)` for one subsystem operation, `ctx.measure_batch("name", logical_ops, ...)` / `benches/tier2_stress.rs` helpers when each framework iteration performs a known batch size, or `ctx.record_external("name", duration, completed)` when the row owns timing.
 - If a Tier 2 row owns external timing, record it with explicit completed work through `ctx.record_external` or the shared Tier 2 helper.
 - Correctness counters must represent the logical work completed by the measured operation or batch, not setup work.
 
@@ -48,7 +48,7 @@ This document defines the contract for Tier 2 through Tier N benchmarks using th
 Wrong:
 
 ```rust
-ctx.measure(|| {
+ctx.measure("workload", || {
 	let response = actor.handle(request);
 	let tx_id = match response {
 		Ok(tx_id) => tx_id,
@@ -61,7 +61,7 @@ ctx.measure(|| {
 Correct:
 
 ```rust
-ctx.measure(|| {
+ctx.measure("workload", || {
 	let response = actor.handle(request);
 	assert!(response.is_ok(), "benchmark setup must not fail");
 

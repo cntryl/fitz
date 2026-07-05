@@ -9,8 +9,10 @@
 #[path = "stress_config.rs"]
 mod stress_config;
 
+use stress_config::StressContextExt;
+
 use bytes::Bytes;
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{stress, stress_main, StressContext};
 use fitz::benchkit::{
     create_bench_lease_sink, parse_lease_extend_token_response, parse_lease_token_response,
     register_session_queue_sink, route_frame_to_address, FrameQueueSink,
@@ -144,7 +146,7 @@ fn acquire_token(
     parse_lease_token_response(response.as_ref()).expect("lease token")
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_acquire_release_sequence(ctx: &mut StressContext) {
     ctx.parameter("scenario", "single_route_intensive");
     ctx.parameter("measurement_scope", "routed_system");
@@ -176,7 +178,7 @@ fn should_complete_acquire_release_sequence(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 2 * iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_alternate_renew_operations(ctx: &mut StressContext) {
     ctx.parameter("scenario", "dual_route_concurrent");
     ctx.parameter("measurement_scope", "routed_system");
@@ -234,7 +236,7 @@ fn should_complete_alternate_renew_operations(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_round_robin_query_operations(ctx: &mut StressContext) {
     ctx.parameter("scenario", "triple_route_contention");
     ctx.parameter("measurement_scope", "routed_system");
@@ -285,7 +287,7 @@ fn should_complete_round_robin_query_operations(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, iterations * batch_size);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_cycling_query_renew_operations(ctx: &mut StressContext) {
     ctx.parameter("scenario", "mixed_operations_high_load");
     ctx.parameter("measurement_scope", "routed_system");

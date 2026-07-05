@@ -1,4 +1,4 @@
-use cntryl_stress::{black_box, stress_allocator, stress_main, stress_test, StressContext};
+use cntryl_stress::{black_box, stress, stress_allocator, stress_main, StressContext};
 use fitz::runtime::routing::Route;
 
 stress_allocator!();
@@ -9,14 +9,14 @@ fn record_group(ctx: &mut StressContext) {
 
 macro_rules! route_new_bench {
     ($fn_name:ident, $bench_name:literal, $segments:expr, [$($route:literal),+ $(,)?]) => {
-        #[stress_test(tier = 1)]
+        #[stress(tier = 1)]
         fn $fn_name(ctx: &mut StressContext) {
             record_group(ctx);
             ctx.parameter("segments", $segments);
             let routes = [$($route.to_string()),+];
             let mut index = 0usize;
 
-            ctx.measure_micro(|| {
+            ctx.measure("operation", || {
                 let route = &routes[index];
                 index = (index + 1) % routes.len();
                 black_box(Route::new(black_box(route)));

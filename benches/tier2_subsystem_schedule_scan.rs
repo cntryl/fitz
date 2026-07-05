@@ -7,7 +7,7 @@ use bytes::Bytes;
 #[path = "tier2_stress.rs"]
 mod tier2_stress;
 
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{stress, stress_main, StressContext};
 use fitz::benchkit::create_bench_store_with_cfs;
 use fitz::domains::schedule::protocol::{validate_concrete_schedule_route, Clock};
 use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
@@ -144,22 +144,22 @@ fn scan_shape(ctx: &mut StressContext, count: usize, ready_count: usize) {
     tier2_stress::record_duration(ctx, duration, count as u64);
 }
 
-#[stress_test(tier = 2, name = "scan_partial_ready_100_mixed_crons")]
+#[stress(tier = 2, name = "scan_partial_ready_100_mixed_crons")]
 fn should_scan_partial_ready_100_mixed_crons(ctx: &mut StressContext) {
     scan_shape(ctx, 100, 10);
 }
 
-#[stress_test(tier = 2, name = "scan_all_ready_100_mixed_crons")]
+#[stress(tier = 2, name = "scan_all_ready_100_mixed_crons")]
 fn should_scan_all_ready_100_mixed_crons(ctx: &mut StressContext) {
     scan_shape(ctx, 100, 100);
 }
 
-#[stress_test(tier = 2, name = "scan_partial_ready_1000_mixed_crons")]
+#[stress(tier = 2, name = "scan_partial_ready_1000_mixed_crons")]
 fn should_scan_partial_ready_1000_mixed_crons(ctx: &mut StressContext) {
     scan_shape(ctx, 1000, 100);
 }
 
-#[stress_test(tier = 2, name = "scan_all_ready_1000_mixed_crons")]
+#[stress(tier = 2, name = "scan_all_ready_1000_mixed_crons")]
 fn should_scan_all_ready_1000_mixed_crons(ctx: &mut StressContext) {
     scan_shape(ctx, 1000, 1000);
 }

@@ -11,7 +11,9 @@
 #[path = "stress_config.rs"]
 mod stress_config;
 
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use stress_config::StressContextExt;
+
+use cntryl_stress::{stress, stress_main, StressContext};
 use fitz::benchkit::{
     build_lease_acquire_immediate, build_lease_release, create_bench_lease_sink,
     extract_single_tlv_field, parse_lease_response, parse_lease_token_response,
@@ -59,7 +61,7 @@ fn close_ws_clients(
     });
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_direct_acquire_release(ctx: &mut StressContext) {
     ctx.parameter("layer", "direct");
     ctx.parameter("scenario", "acquire_release");
@@ -110,7 +112,7 @@ fn should_complete_direct_acquire_release(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 2 * iterations);
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_tcp_acquire_release(ctx: &mut StressContext) {
     ctx.parameter("layer", "tcp");
     ctx.parameter("scenario", "acquire_release");
@@ -142,7 +144,7 @@ fn should_complete_tcp_acquire_release(ctx: &mut StressContext) {
     shutdown_lease_test_server(runtime, server);
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_ws_acquire_release(ctx: &mut StressContext) {
     ctx.parameter("layer", "websocket");
     ctx.parameter("scenario", "acquire_release");
@@ -177,7 +179,7 @@ fn should_complete_ws_acquire_release(ctx: &mut StressContext) {
     shutdown_lease_test_server(runtime, server);
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_multiclient_acquire_release(ctx: &mut StressContext) {
     ctx.parameter("layer", "multiclient");
     ctx.parameter("scenario", "concurrent_acquire_release");

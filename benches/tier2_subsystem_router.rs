@@ -2,7 +2,7 @@
 #[path = "tier2_stress.rs"]
 mod tier2_stress;
 
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{stress, stress_main, StressContext};
 use fitz::runtime::envelope::Envelope;
 use fitz::runtime::mailbox::Mailbox;
 use fitz::runtime::router::{DeliveryError, MailboxSink, RouteError, Router};
@@ -17,7 +17,7 @@ fn test_address(family: u64, route: &str) -> RouteAddress {
     RouteAddress::new(RouteFamily::new(family), Route::new(route))
 }
 
-#[stress_test(tier = 2, name = "route_exact_mailbox_32768_messages_primary")]
+#[stress(tier = 2, name = "route_exact_mailbox_32768_messages_primary")]
 fn should_route_exact_mailbox_32768_messages_primary(ctx: &mut StressContext) {
     let router = Router::new();
     let address = test_address(1, "rpc://acme/router/mailbox/target");
@@ -39,7 +39,7 @@ fn should_route_exact_mailbox_32768_messages_primary(ctx: &mut StressContext) {
     });
 }
 
-#[stress_test(tier = 2, name = "route_exact_backpressure_mailbox_primary")]
+#[stress(tier = 2, name = "route_exact_backpressure_mailbox_primary")]
 fn should_route_exact_backpressure_mailbox_primary(ctx: &mut StressContext) {
     let items = (0..BACKPRESSURE_BATCH_SIZE)
         .map(|_| {

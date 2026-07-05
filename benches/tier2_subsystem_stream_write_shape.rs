@@ -3,7 +3,7 @@ use bytes::Bytes;
 #[path = "tier2_stress.rs"]
 mod tier2_stress;
 
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{stress, stress_main, StressContext};
 use fitz::domains::stream::storage::{
     encode_area_key, encode_realm_key, encode_resource_key, AreaValue, RealmValue, ResourceValue,
 };
@@ -1659,7 +1659,7 @@ where
 
 macro_rules! write_shape_bench {
     ($fn_name:ident, $stress_name:literal, $records:ident, $summarize:path) => {
-        #[stress_test(tier = 2, name = $stress_name)]
+        #[stress(tier = 2, name = $stress_name)]
         fn $fn_name(ctx: &mut StressContext) {
             let fixtures = write_shape_fixtures();
             measure_layout(ctx, &fixtures.$records, fixtures.event_count, $summarize);

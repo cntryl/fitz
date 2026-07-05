@@ -3,7 +3,7 @@ use bytes::Bytes;
 #[path = "tier2_stress.rs"]
 mod tier2_stress;
 
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{stress, stress_main, StressContext};
 use fitz::benchkit::{
     build_queue_complete, build_queue_dequeue, build_queue_enqueue, build_queue_watch,
     create_bench_queue_sink, extract_single_tlv_field, register_session_counting_sink,
@@ -333,17 +333,17 @@ fn queue_enqueue(ctx: &mut StressContext, queue_count: usize, messages_per_queue
     );
 }
 
-#[stress_test(tier = 2, name = "enqueue_1024_messages_1_queue_primary")]
+#[stress(tier = 2, name = "enqueue_1024_messages_1_queue_primary")]
 fn should_enqueue_1024_messages_1_queue_primary(ctx: &mut StressContext) {
     queue_enqueue(ctx, 1, SINGLE_QUEUE_ENQUEUE_BATCH_SIZE);
 }
 
-#[stress_test(tier = 2, name = "enqueue_1_messages_each_256_queues_primary")]
+#[stress(tier = 2, name = "enqueue_1_messages_each_256_queues_primary")]
 fn should_enqueue_1_messages_each_256_queues_primary(ctx: &mut StressContext) {
     queue_enqueue(ctx, 256, MULTI_QUEUE_MESSAGES_PER_QUEUE);
 }
 
-#[stress_test(tier = 2, name = "dequeue_256_messages_primary")]
+#[stress(tier = 2, name = "dequeue_256_messages_primary")]
 fn should_dequeue_256_messages_primary(ctx: &mut StressContext) {
     let mut total = Duration::ZERO;
     for _ in 0..QUEUE_MEASUREMENT_REPEAT_COUNT {
@@ -386,7 +386,7 @@ fn should_dequeue_256_messages_primary(ctx: &mut StressContext) {
     );
 }
 
-#[stress_test(tier = 2, name = "ack_256_messages_primary")]
+#[stress(tier = 2, name = "ack_256_messages_primary")]
 fn should_ack_256_messages_primary(ctx: &mut StressContext) {
     let mut total = Duration::ZERO;
     for _ in 0..QUEUE_MEASUREMENT_REPEAT_COUNT {
@@ -419,7 +419,7 @@ fn should_ack_256_messages_primary(ctx: &mut StressContext) {
     );
 }
 
-#[stress_test(tier = 2, name = "watch_register_64_sessions_primary")]
+#[stress(tier = 2, name = "watch_register_64_sessions_primary")]
 fn should_watch_register_64_sessions_primary(ctx: &mut StressContext) {
     let mut total = Duration::ZERO;
     for _ in 0..QUEUE_MEASUREMENT_REPEAT_COUNT {

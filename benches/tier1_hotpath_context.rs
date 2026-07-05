@@ -1,4 +1,4 @@
-use cntryl_stress::{black_box, stress_allocator, stress_main, stress_test, StressContext};
+use cntryl_stress::{black_box, stress, stress_allocator, stress_main, StressContext};
 use fitz::runtime::context::TimerManager;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -54,25 +54,25 @@ fn record_group(ctx: &mut StressContext, operation: &str) {
     ctx.parameter("operation", operation);
 }
 
-#[stress_test(tier = 1, name = "schedule_once_empty")]
+#[stress(tier = 1, name = "schedule_once_empty")]
 fn should_schedule_once_empty(ctx: &mut StressContext) {
     record_group(ctx, "schedule_once");
     let start = bench_start_instant();
     let now = start + BENCH_BASE_OFFSET;
 
-    ctx.measure_micro(|| {
+    ctx.measure("operation", || {
         let mut manager = TimerManager::new_at(start);
         black_box(manager.schedule_once_at(black_box(now), black_box(SHORT_DELAY)));
     });
 }
 
-#[stress_test(tier = 1, name = "schedule_repeat_empty")]
+#[stress(tier = 1, name = "schedule_repeat_empty")]
 fn should_schedule_repeat_empty(ctx: &mut StressContext) {
     record_group(ctx, "schedule_repeat");
     let start = bench_start_instant();
     let now = start + BENCH_BASE_OFFSET;
 
-    ctx.measure_micro(|| {
+    ctx.measure("operation", || {
         let mut manager = TimerManager::new_at(start);
         black_box(manager.schedule_repeat_at(
             black_box(now),
@@ -84,12 +84,12 @@ fn should_schedule_repeat_empty(ctx: &mut StressContext) {
 
 macro_rules! schedule_once_with_active_bench {
     ($fn_name:ident, $bench_name:literal, $count:expr) => {
-        #[stress_test(tier = 1, name = $bench_name)]
+        #[stress(tier = 1, name = $bench_name)]
         fn $fn_name(ctx: &mut StressContext) {
             record_group(ctx, "schedule_once_with_active");
             ctx.parameter("active_timers", $count);
 
-            ctx.measure_micro(|| {
+            ctx.measure("operation", || {
                 let (mut manager, now) = timer_manager_with_active_timers($count, FAR_FUTURE_DELAY);
                 black_box(manager.schedule_once_at(black_box(now), black_box(SHORT_DELAY)));
             });
@@ -108,43 +108,43 @@ schedule_once_with_active_bench!(
     1000
 );
 
-#[stress_test(tier = 1, name = "cancel_present_1001_timers")]
+#[stress(tier = 1, name = "cancel_present_1001_timers")]
 fn should_cancel_present_1001_timers(ctx: &mut StressContext) {
     record_group(ctx, "cancel_present");
 
-    ctx.measure_micro(|| {
+    ctx.measure("operation", || {
         let (mut manager, now) = timer_manager_with_active_timers(1000, FAR_FUTURE_DELAY);
         let timer_id = manager.schedule_once_at(now, FAR_FUTURE_DELAY);
         black_box(manager.cancel(black_box(timer_id)));
     });
 }
 
-#[stress_test(tier = 1, name = "fired_timers_10_ready")]
+#[stress(tier = 1, name = "fired_timers_10_ready")]
 fn should_collect_fired_timers_10_ready(ctx: &mut StressContext) {
     record_group(ctx, "fired_timers");
     ctx.parameter("ready_timers", 10);
 
-    ctx.measure_micro(|| {
+    ctx.measure("operation", || {
         let (mut manager, now) = timer_manager_with_due_once_timers(10);
         black_box(manager.fired_timers_at(now));
     });
 }
 
-#[stress_test(tier = 1, name = "fired_timers_repeat_reschedule")]
+#[stress(tier = 1, name = "fired_timers_repeat_reschedule")]
 fn should_collect_fired_timers_repeat_reschedule(ctx: &mut StressContext) {
     record_group(ctx, "fired_timers_repeat");
 
-    ctx.measure_micro(|| {
+    ctx.measure("operation", || {
         let (mut manager, now) = timer_manager_with_due_repeating_timer();
         black_box(manager.fired_timers_at(now));
     });
 }
 
-#[stress_test(tier = 1, name = "clear_all_timers")]
+#[stress(tier = 1, name = "clear_all_timers")]
 fn should_clear_all_timers(ctx: &mut StressContext) {
     record_group(ctx, "clear");
 
-    ctx.measure_micro(|| {
+    ctx.measure("operation", || {
         let (mut manager, _now) = timer_manager_with_active_timers(100, FAR_FUTURE_DELAY);
         manager.clear();
     });

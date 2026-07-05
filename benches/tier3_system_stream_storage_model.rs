@@ -10,8 +10,10 @@
 #[path = "stress_config.rs"]
 mod stress_config;
 
+use stress_config::StressContextExt;
+
 use bytes::{BufMut, Bytes};
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{stress, stress_main, StressContext};
 use fitz::benchkit::{
     count_stream_read_records_from_payload, create_local_bench_store, extract_single_tlv_field,
     register_session_queue_sink, route_raw_frame, FrameQueueSink,
@@ -1435,7 +1437,7 @@ fn prepare_realm_case() -> ReplayCase {
     case
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_covering_resource_replay_production_like_model(ctx: &mut StressContext) {
     ctx.parameter("scenario", "read_resource_exact");
     ctx.parameter("measurement_scope", "prototype_storage_model");
@@ -1452,7 +1454,7 @@ fn should_complete_covering_resource_replay_production_like_model(ctx: &mut Stre
     stress_config::record_completed(ctx, resource_expected_records as u64 * iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_resource_mini_page_replay_production_like_model(ctx: &mut StressContext) {
     ctx.parameter("scenario", "read_resource_exact");
     ctx.parameter("measurement_scope", "prototype_storage_model");
@@ -1469,7 +1471,7 @@ fn should_complete_resource_mini_page_replay_production_like_model(ctx: &mut Str
     stress_config::record_completed(ctx, resource_expected_records as u64 * iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_covering_area_replay_production_like_model(ctx: &mut StressContext) {
     ctx.parameter("scenario", "read_area_wildcard");
     ctx.parameter("measurement_scope", "prototype_storage_model");
@@ -1485,7 +1487,7 @@ fn should_complete_covering_area_replay_production_like_model(ctx: &mut StressCo
     stress_config::record_completed(ctx, case.expected_records as u64 * iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_compact_area_page_replay_production_like_model(ctx: &mut StressContext) {
     ctx.parameter("scenario", "read_area_wildcard");
     ctx.parameter("measurement_scope", "prototype_storage_model");
@@ -1501,7 +1503,7 @@ fn should_complete_compact_area_page_replay_production_like_model(ctx: &mut Stre
     stress_config::record_completed(ctx, case.expected_records as u64 * iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_covering_realm_replay_production_like_model(ctx: &mut StressContext) {
     ctx.parameter("scenario", "read_realm_wildcard");
     ctx.parameter("measurement_scope", "prototype_storage_model");
@@ -1517,7 +1519,7 @@ fn should_complete_covering_realm_replay_production_like_model(ctx: &mut StressC
     stress_config::record_completed(ctx, case.expected_records as u64 * iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_compressed_realm_replay_production_like_model(ctx: &mut StressContext) {
     ctx.parameter("scenario", "read_realm_wildcard");
     ctx.parameter("measurement_scope", "prototype_storage_model");
@@ -1534,7 +1536,7 @@ fn should_complete_compressed_realm_replay_production_like_model(ctx: &mut Stres
     stress_config::record_completed(ctx, case.expected_records as u64 * iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_covering_resource_replay_production_like_routed_model(ctx: &mut StressContext) {
     ctx.parameter("scenario", "read_resource_exact");
     ctx.parameter("measurement_scope", "prototype_routed_model");
@@ -1559,7 +1561,7 @@ fn should_complete_covering_resource_replay_production_like_routed_model(ctx: &m
     stress_config::record_completed(ctx, resource_expected_records as u64 * iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_covering_area_replay_production_like_routed_model(ctx: &mut StressContext) {
     ctx.parameter("scenario", "read_area_wildcard");
     ctx.parameter("measurement_scope", "prototype_routed_model");
@@ -1584,7 +1586,7 @@ fn should_complete_covering_area_replay_production_like_routed_model(ctx: &mut S
     stress_config::record_completed(ctx, case.expected_records as u64 * iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_covering_realm_replay_production_like_routed_model(ctx: &mut StressContext) {
     ctx.parameter("scenario", "read_realm_wildcard");
     ctx.parameter("measurement_scope", "prototype_routed_model");

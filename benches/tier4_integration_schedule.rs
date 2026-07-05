@@ -11,8 +11,10 @@
 #[path = "stress_config.rs"]
 mod stress_config;
 
+use stress_config::StressContextExt;
+
 use bytes::Bytes;
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{stress, stress_main, StressContext};
 use fitz::benchkit::{
     build_schedule_create, build_schedule_create_batch, create_local_bench_store,
     ensure_schedule_ok, shared_bench_runtime,
@@ -53,7 +55,7 @@ fn make_schedule_ctx() -> Context<ScheduleActor> {
     Context::new(addr, Arc::new(router))
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_direct_create(ctx: &mut StressContext) {
     ctx.parameter("layer", "direct");
     ctx.parameter("scenario", "create");
@@ -102,7 +104,7 @@ fn should_complete_direct_create(ctx: &mut StressContext) {
     );
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_tcp_create(ctx: &mut StressContext) {
     ctx.parameter("layer", "tcp");
     ctx.parameter("scenario", "create");
@@ -139,7 +141,7 @@ fn should_complete_tcp_create(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, iterations);
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_ws_create(ctx: &mut StressContext) {
     ctx.parameter("layer", "websocket");
     ctx.parameter("scenario", "create");
@@ -183,7 +185,7 @@ fn should_complete_ws_create(ctx: &mut StressContext) {
         .expect("close ws client gracefully");
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_ws_batch_create(ctx: &mut StressContext) {
     ctx.parameter("layer", "websocket");
     ctx.parameter("scenario", "batch_create");
@@ -238,7 +240,7 @@ fn should_complete_ws_batch_create(ctx: &mut StressContext) {
         .expect("close ws client gracefully");
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_multiclient_creates(ctx: &mut StressContext) {
     ctx.parameter("layer", "multiclient");
     ctx.parameter("scenario", "concurrent_creates");

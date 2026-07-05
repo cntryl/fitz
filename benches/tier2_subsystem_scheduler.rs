@@ -2,7 +2,7 @@
 #[path = "tier2_stress.rs"]
 mod tier2_stress;
 
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{stress, stress_main, StressContext};
 use fitz::runtime::mailbox::Mailbox;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
@@ -37,7 +37,7 @@ fn register_all(router: &Router, addresses: &[RouteAddress], sinks: &[Arc<dyn Ma
     }
 }
 
-#[stress_test(tier = 2, name = "register_single_fresh_primary")]
+#[stress(tier = 2, name = "register_single_fresh_primary")]
 fn should_register_single_fresh_primary(ctx: &mut StressContext) {
     let (single_addresses, single_sinks) = make_registration_batch("/bench/reg/single", 1);
     let scheduler = Scheduler::new(1);
@@ -54,7 +54,7 @@ fn should_register_single_fresh_primary(ctx: &mut StressContext) {
     });
 }
 
-#[stress_test(tier = 2, name = "register_64_fresh_primary")]
+#[stress(tier = 2, name = "register_64_fresh_primary")]
 fn should_register_64_fresh_primary(ctx: &mut StressContext) {
     let (batch_addresses, batch_sinks) =
         make_registration_batch("/bench/reg/batch", REGISTER_BATCH_SIZE);
@@ -73,7 +73,7 @@ fn should_register_64_fresh_primary(ctx: &mut StressContext) {
     );
 }
 
-#[stress_test(tier = 2, name = "register_64_replace_primary")]
+#[stress(tier = 2, name = "register_64_replace_primary")]
 fn should_register_64_replace_primary(ctx: &mut StressContext) {
     let (batch_addresses, batch_sinks) =
         make_registration_batch("/bench/reg/batch", REGISTER_BATCH_SIZE);

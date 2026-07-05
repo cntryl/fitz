@@ -1,4 +1,4 @@
-use cntryl_stress::{black_box, stress_allocator, stress_main, stress_test, StressContext};
+use cntryl_stress::{black_box, stress, stress_allocator, stress_main, StressContext};
 use fitz::protocol::mux::Mux;
 use fitz::protocol::tlv::{MessageType, TlvDecoder, TlvEncoder};
 
@@ -18,14 +18,14 @@ fn record_group(ctx: &mut StressContext, payload_size: usize) {
 
 macro_rules! decode_then_route_bench {
     ($fn_name:ident, $bench_name:literal, $size:expr) => {
-        #[stress_test(tier = 1)]
+        #[stress(tier = 1)]
         fn $fn_name(ctx: &mut StressContext) {
             record_group(ctx, $size);
             let data = encoded_record($size);
             let decoder = TlvDecoder::new();
             let mut mux = Mux::new(1024);
 
-            ctx.measure_micro(|| {
+            ctx.measure("operation", || {
                 let (record, _) = decoder.decode_one(black_box(&data)).unwrap();
                 let message = mux.route(record).unwrap();
                 mux.release(message.channel);

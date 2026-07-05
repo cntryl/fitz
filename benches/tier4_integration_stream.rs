@@ -11,8 +11,10 @@
 #[path = "stress_config.rs"]
 mod stress_config;
 
+use stress_config::StressContextExt;
+
 use bytes::Bytes;
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{stress, stress_main, StressContext};
 use fitz::benchkit::{
     build_stream_append, build_stream_begin, build_stream_commit, build_stream_read,
     create_bench_stream_sink, extract_single_tlv_field, parse_stream_read_record_count,
@@ -247,7 +249,7 @@ async fn ws_seed_stream_route(
         .expect("commit response");
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_direct_append(ctx: &mut StressContext) {
     ctx.parameter("layer", "direct");
     ctx.parameter("scenario", "append");
@@ -280,7 +282,7 @@ fn should_complete_direct_append(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, iterations);
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_direct_area_wildcard_read(ctx: &mut StressContext) {
     ctx.parameter("layer", "direct");
     ctx.parameter("scenario", "read_area_wildcard");
@@ -310,7 +312,7 @@ fn should_complete_direct_area_wildcard_read(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 100 * iterations);
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_direct_resource_read(ctx: &mut StressContext) {
     ctx.parameter("layer", "direct");
     ctx.parameter("scenario", "read_resource_exact");
@@ -329,7 +331,7 @@ fn should_complete_direct_resource_read(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 100 * iterations);
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_direct_realm_wildcard_read(ctx: &mut StressContext) {
     ctx.parameter("layer", "direct");
     ctx.parameter("scenario", "read_realm_wildcard");
@@ -349,7 +351,7 @@ fn should_complete_direct_realm_wildcard_read(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 100 * iterations);
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_tcp_append(ctx: &mut StressContext) {
     ctx.parameter("layer", "tcp");
     ctx.parameter("scenario", "append");
@@ -382,7 +384,7 @@ fn should_complete_tcp_append(ctx: &mut StressContext) {
     shutdown_stream_test_server(runtime, server);
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_tcp_resource_read(ctx: &mut StressContext) {
     ctx.parameter("layer", "tcp");
     ctx.parameter("scenario", "read_resource_exact");
@@ -417,7 +419,7 @@ fn should_complete_tcp_resource_read(ctx: &mut StressContext) {
     shutdown_stream_test_server(runtime, server);
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_tcp_area_wildcard_read(ctx: &mut StressContext) {
     ctx.parameter("layer", "tcp");
     ctx.parameter("scenario", "read_area_wildcard");
@@ -464,7 +466,7 @@ fn should_complete_tcp_area_wildcard_read(ctx: &mut StressContext) {
     shutdown_stream_test_server(runtime, server);
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_tcp_realm_wildcard_read(ctx: &mut StressContext) {
     ctx.parameter("layer", "tcp");
     ctx.parameter("scenario", "read_realm_wildcard");
@@ -511,7 +513,7 @@ fn should_complete_tcp_realm_wildcard_read(ctx: &mut StressContext) {
     shutdown_stream_test_server(runtime, server);
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_ws_append(ctx: &mut StressContext) {
     ctx.parameter("layer", "websocket");
     ctx.parameter("scenario", "append");
@@ -547,7 +549,7 @@ fn should_complete_ws_append(ctx: &mut StressContext) {
     shutdown_stream_test_server(runtime, server);
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_ws_resource_read(ctx: &mut StressContext) {
     ctx.parameter("layer", "websocket");
     ctx.parameter("scenario", "read_resource_exact");
@@ -585,7 +587,7 @@ fn should_complete_ws_resource_read(ctx: &mut StressContext) {
     shutdown_stream_test_server(runtime, server);
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_ws_area_wildcard_read(ctx: &mut StressContext) {
     ctx.parameter("layer", "websocket");
     ctx.parameter("scenario", "read_area_wildcard");
@@ -635,7 +637,7 @@ fn should_complete_ws_area_wildcard_read(ctx: &mut StressContext) {
     shutdown_stream_test_server(runtime, server);
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_ws_realm_wildcard_read(ctx: &mut StressContext) {
     ctx.parameter("layer", "websocket");
     ctx.parameter("scenario", "read_realm_wildcard");
@@ -685,7 +687,7 @@ fn should_complete_ws_realm_wildcard_read(ctx: &mut StressContext) {
     shutdown_stream_test_server(runtime, server);
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_multiclient_appends(ctx: &mut StressContext) {
     ctx.parameter("layer", "multiclient");
     ctx.parameter("scenario", "concurrent_appends");

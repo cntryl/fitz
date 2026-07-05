@@ -3,7 +3,7 @@ use bytes::Bytes;
 #[path = "tier2_stress.rs"]
 mod tier2_stress;
 
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{stress, stress_main, StressContext};
 use fitz::benchkit::{
     create_bench_schedule_sink, create_bench_store_with_cfs, register_session_counting_sink,
     route_frame, wait_for_counting_sinks_each_count, CountingSink,
@@ -284,47 +284,47 @@ fn publish_exact_route(ctx: &mut StressContext, subscriber_count: usize) {
     );
 }
 
-#[stress_test(tier = 2, name = "claim_due_all_ready_100_mixed_crons")]
+#[stress(tier = 2, name = "claim_due_all_ready_100_mixed_crons")]
 fn should_claim_due_all_ready_100_mixed_crons(ctx: &mut StressContext) {
     claim_due(ctx, 100, 100);
 }
 
-#[stress_test(tier = 2, name = "claim_due_partial_ready_1000_mixed_crons")]
+#[stress(tier = 2, name = "claim_due_partial_ready_1000_mixed_crons")]
 fn should_claim_due_partial_ready_1000_mixed_crons(ctx: &mut StressContext) {
     claim_due(ctx, 1000, 100);
 }
 
-#[stress_test(tier = 2, name = "claim_due_all_ready_1000_mixed_crons")]
+#[stress(tier = 2, name = "claim_due_all_ready_1000_mixed_crons")]
 fn should_claim_due_all_ready_1000_mixed_crons(ctx: &mut StressContext) {
     claim_due(ctx, 1000, 1000);
 }
 
-#[stress_test(tier = 2, name = "ack_claims_all_ready_100_mixed_crons")]
+#[stress(tier = 2, name = "ack_claims_all_ready_100_mixed_crons")]
 fn should_ack_claims_all_ready_100_mixed_crons(ctx: &mut StressContext) {
     ack_claims(ctx, 100, 100);
 }
 
-#[stress_test(tier = 2, name = "ack_claims_partial_ready_1000_mixed_crons")]
+#[stress(tier = 2, name = "ack_claims_partial_ready_1000_mixed_crons")]
 fn should_ack_claims_partial_ready_1000_mixed_crons(ctx: &mut StressContext) {
     ack_claims(ctx, 1000, 100);
 }
 
-#[stress_test(tier = 2, name = "ack_claims_all_ready_1000_mixed_crons")]
+#[stress(tier = 2, name = "ack_claims_all_ready_1000_mixed_crons")]
 fn should_ack_claims_all_ready_1000_mixed_crons(ctx: &mut StressContext) {
     ack_claims(ctx, 1000, 1000);
 }
 
-#[stress_test(tier = 2, name = "publish_exact_route_1_subscribers")]
+#[stress(tier = 2, name = "publish_exact_route_1_subscribers")]
 fn should_publish_exact_route_1_subscribers(ctx: &mut StressContext) {
     publish_exact_route(ctx, 1);
 }
 
-#[stress_test(tier = 2, name = "publish_exact_route_10_subscribers")]
+#[stress(tier = 2, name = "publish_exact_route_10_subscribers")]
 fn should_publish_exact_route_10_subscribers(ctx: &mut StressContext) {
     publish_exact_route(ctx, 10);
 }
 
-#[stress_test(tier = 2, name = "publish_exact_route_100_subscribers")]
+#[stress(tier = 2, name = "publish_exact_route_100_subscribers")]
 fn should_publish_exact_route_100_subscribers(ctx: &mut StressContext) {
     publish_exact_route(ctx, 100);
 }

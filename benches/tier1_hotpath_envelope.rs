@@ -1,4 +1,4 @@
-use cntryl_stress::{black_box, stress_allocator, stress_main, stress_test, StressContext};
+use cntryl_stress::{black_box, stress, stress_allocator, stress_main, StressContext};
 use fitz::runtime::envelope::{Envelope, MessageId};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use std::time::{Duration, Instant};
@@ -20,7 +20,7 @@ fn record_group(ctx: &mut StressContext, payload: &str) {
     ctx.parameter("payload", payload);
 }
 
-#[stress_test(tier = 1, name = "owning_new_struct_payload")]
+#[stress(tier = 1, name = "owning_new_struct_payload")]
 fn should_create_owning_new_struct_payload(ctx: &mut StressContext) {
     record_group(ctx, "struct");
     let pairs: Vec<(RouteAddress, TestMessage)> = (0_u64..4)
@@ -33,7 +33,7 @@ fn should_create_owning_new_struct_payload(ctx: &mut StressContext) {
         .collect();
     let mut index = 0usize;
 
-    ctx.measure_micro(|| {
+    ctx.measure("operation", || {
         let (destination, message) = &pairs[index];
         index = (index + 1) % pairs.len();
         black_box(Envelope::new(
@@ -43,7 +43,7 @@ fn should_create_owning_new_struct_payload(ctx: &mut StressContext) {
     });
 }
 
-#[stress_test(tier = 1, name = "owning_from_route_struct_payload")]
+#[stress(tier = 1, name = "owning_from_route_struct_payload")]
 fn should_create_owning_from_route_struct_payload(ctx: &mut StressContext) {
     record_group(ctx, "struct");
     let triples: Vec<(RouteAddress, RouteAddress, TestMessage)> = (0_u64..4)
@@ -57,7 +57,7 @@ fn should_create_owning_from_route_struct_payload(ctx: &mut StressContext) {
         .collect();
     let mut index = 0usize;
 
-    ctx.measure_micro(|| {
+    ctx.measure("operation", || {
         let (source, destination, message) = &triples[index];
         index = (index + 1) % triples.len();
         black_box(Envelope::from_route(
@@ -68,7 +68,7 @@ fn should_create_owning_from_route_struct_payload(ctx: &mut StressContext) {
     });
 }
 
-#[stress_test(tier = 1, name = "owning_new_with_deadline_struct_payload")]
+#[stress(tier = 1, name = "owning_new_with_deadline_struct_payload")]
 fn should_create_owning_new_with_deadline_struct_payload(ctx: &mut StressContext) {
     record_group(ctx, "struct");
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -82,7 +82,7 @@ fn should_create_owning_new_with_deadline_struct_payload(ctx: &mut StressContext
         .collect();
     let mut index = 0usize;
 
-    ctx.measure_micro(|| {
+    ctx.measure("operation", || {
         let (destination, message) = &pairs[index];
         index = (index + 1) % pairs.len();
         black_box(
@@ -92,7 +92,7 @@ fn should_create_owning_new_with_deadline_struct_payload(ctx: &mut StressContext
     });
 }
 
-#[stress_test(tier = 1, name = "owning_new_with_causation_struct_payload")]
+#[stress(tier = 1, name = "owning_new_with_causation_struct_payload")]
 fn should_create_owning_new_with_causation_struct_payload(ctx: &mut StressContext) {
     record_group(ctx, "struct");
     let parent_id = MessageId::new();
@@ -106,7 +106,7 @@ fn should_create_owning_new_with_causation_struct_payload(ctx: &mut StressContex
         .collect();
     let mut index = 0usize;
 
-    ctx.measure_micro(|| {
+    ctx.measure("operation", || {
         let (destination, message) = &pairs[index];
         index = (index + 1) % pairs.len();
         black_box(
@@ -116,7 +116,7 @@ fn should_create_owning_new_with_causation_struct_payload(ctx: &mut StressContex
     });
 }
 
-#[stress_test(tier = 1, name = "owning_new_vec_payload_1_u64")]
+#[stress(tier = 1, name = "owning_new_vec_payload_1_u64")]
 fn should_create_owning_new_vec_payload_1_u64(ctx: &mut StressContext) {
     record_group(ctx, "vec_1_u64");
     let pool: Vec<(RouteAddress, Vec<u64>)> = (0_u64..4)
@@ -129,7 +129,7 @@ fn should_create_owning_new_vec_payload_1_u64(ctx: &mut StressContext) {
         .collect();
     let mut index = 0usize;
 
-    ctx.measure_micro(|| {
+    ctx.measure("operation", || {
         let (destination, message) = &pool[index];
         index = (index + 1) % pool.len();
         black_box(Envelope::new(
@@ -139,7 +139,7 @@ fn should_create_owning_new_vec_payload_1_u64(ctx: &mut StressContext) {
     });
 }
 
-#[stress_test(tier = 1, name = "owning_new_vec_payload_100_u64")]
+#[stress(tier = 1, name = "owning_new_vec_payload_100_u64")]
 fn should_create_owning_new_vec_payload_100_u64(ctx: &mut StressContext) {
     record_group(ctx, "vec_100_u64");
     let large_message = (0..100).collect::<Vec<u64>>();
@@ -153,7 +153,7 @@ fn should_create_owning_new_vec_payload_100_u64(ctx: &mut StressContext) {
         .collect();
     let mut index = 0usize;
 
-    ctx.measure_micro(|| {
+    ctx.measure("operation", || {
         let (destination, message) = &pool[index];
         index = (index + 1) % pool.len();
         black_box(Envelope::new(

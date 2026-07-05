@@ -9,8 +9,10 @@
 #[path = "stress_config.rs"]
 mod stress_config;
 
+use stress_config::StressContextExt;
+
 use bytes::Bytes;
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{stress, stress_main, StressContext};
 use fitz::domains::schedule::protocol::validate_concrete_schedule_route;
 use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
 use fitz::runtime::routing::RouteFamily;
@@ -135,7 +137,7 @@ fn create_scan_actor(count: usize) -> ScheduleActor {
     actor
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_system_list_uncached_9_of_10_schedules(ctx: &mut StressContext) {
     ctx.parameter("scenario", "list_uncached_9_of_10");
     ctx.parameter("measurement_scope", "direct_actor");
@@ -161,7 +163,7 @@ fn should_complete_system_list_uncached_9_of_10_schedules(ctx: &mut StressContex
     stress_config::record_completed(ctx, returned_schedule_elements(iterations, 9));
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_system_list_uncached_99_of_100_schedules(ctx: &mut StressContext) {
     ctx.parameter("scenario", "list_uncached_99_of_100");
     ctx.parameter("measurement_scope", "direct_actor");
@@ -190,7 +192,7 @@ fn should_complete_system_list_uncached_99_of_100_schedules(ctx: &mut StressCont
     stress_config::record_completed(ctx, returned_schedule_elements(iterations, 99));
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_system_list_uncached_999_of_1000_schedules(ctx: &mut StressContext) {
     ctx.parameter("scenario", "list_uncached_999_of_1000");
     ctx.parameter("measurement_scope", "direct_actor");
@@ -205,6 +207,7 @@ fn should_complete_system_list_uncached_999_of_1000_schedules(ctx: &mut StressCo
     assert_uncached_list_count(&mut actor, 999, 999);
 
     let completed = ctx.measure_batch(
+        "workload",
         returned_schedule_elements(UNCACHED_LIST_BATCH_REPEAT_COUNT, 999),
         || {
             for _ in 0..UNCACHED_LIST_BATCH_REPEAT_COUNT {
@@ -224,7 +227,7 @@ fn should_complete_system_list_uncached_999_of_1000_schedules(ctx: &mut StressCo
     stress_config::record_completed(ctx, completed);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_system_collect_due_occurrences_not_ready_1000_schedules(
     ctx: &mut StressContext,
 ) {
@@ -246,7 +249,7 @@ fn should_complete_system_collect_due_occurrences_not_ready_1000_schedules(
     stress_config::record_completed(ctx, 1000 * iterations);
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_system_collect_due_occurrences_partially_ready_1000_schedules(
     ctx: &mut StressContext,
 ) {

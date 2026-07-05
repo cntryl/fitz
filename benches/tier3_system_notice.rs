@@ -10,9 +10,11 @@
 #[path = "stress_config.rs"]
 mod stress_config;
 
+use stress_config::StressContextExt;
+
 use bytes::BufMut;
 use bytes::Bytes;
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{stress, stress_main, StressContext};
 use fitz::benchkit::{
     build_notice_publish, build_notice_subscribe, create_bench_notice_sink,
     extract_single_tlv_field, parse_notice_subscription_id, register_session_counting_sink,
@@ -217,7 +219,7 @@ fn double_star_scaling_case(subscriber_count: usize) -> NoticeFanoutCase {
     }
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_fanout_sustained_load(ctx: &mut StressContext) {
     measure_notice_fanout(
         ctx,
@@ -232,7 +234,7 @@ fn should_complete_fanout_sustained_load(ctx: &mut StressContext) {
     );
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_pattern_matching_scaling(ctx: &mut StressContext) {
     measure_notice_fanout(
         ctx,
@@ -247,7 +249,7 @@ fn should_complete_pattern_matching_scaling(ctx: &mut StressContext) {
     );
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_fanout_high_subscriber_count(ctx: &mut StressContext) {
     measure_notice_fanout(
         ctx,
@@ -262,27 +264,27 @@ fn should_complete_fanout_high_subscriber_count(ctx: &mut StressContext) {
     );
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_fanout_subscriber_scaling_1(ctx: &mut StressContext) {
     measure_notice_fanout(ctx, single_star_scaling_case(1));
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_fanout_subscriber_scaling_1000(ctx: &mut StressContext) {
     measure_notice_fanout(ctx, single_star_scaling_case(1000));
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_double_star_fanout_subscriber_scaling_1(ctx: &mut StressContext) {
     measure_notice_fanout(ctx, double_star_scaling_case(1));
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_double_star_fanout_subscriber_scaling_1000(ctx: &mut StressContext) {
     measure_notice_fanout(ctx, double_star_scaling_case(1000));
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_wildcard_subscribe_unsubscribe_cycle(ctx: &mut StressContext) {
     ctx.parameter("scenario", "wildcard_subscribe_unsubscribe_cycle");
     ctx.parameter("measurement_scope", "routed_lifecycle");
@@ -294,20 +296,24 @@ fn should_complete_wildcard_subscribe_unsubscribe_cycle(ctx: &mut StressContext)
     let (subscribe_msg_type, subscribe_payload) = extract_single_tlv_field(&subscribe_frame);
     let harness = setup_notice_request_sink();
 
-    let completed = ctx.measure_batch(2 * NOTICE_LIFECYCLE_CYCLES_PER_ITERATION, || {
-        for _ in 0..NOTICE_LIFECYCLE_CYCLES_PER_ITERATION {
-            let subscribe_response =
-                harness.request(pattern, subscribe_msg_type, subscribe_payload.clone());
-            let subscription_id = parse_notice_subscribe_ok(&subscribe_response);
+    let completed = ctx.measure_batch(
+        "workload",
+        2 * NOTICE_LIFECYCLE_CYCLES_PER_ITERATION,
+        || {
+            for _ in 0..NOTICE_LIFECYCLE_CYCLES_PER_ITERATION {
+                let subscribe_response =
+                    harness.request(pattern, subscribe_msg_type, subscribe_payload.clone());
+                let subscription_id = parse_notice_subscribe_ok(&subscribe_response);
 
-            let unsubscribe_response = harness.request(
-                pattern,
-                502,
-                encode_notice_unsubscribe_payload(subscription_id),
-            );
-            assert_notice_success(&unsubscribe_response);
-        }
-    });
+                let unsubscribe_response = harness.request(
+                    pattern,
+                    502,
+                    encode_notice_unsubscribe_payload(subscription_id),
+                );
+                assert_notice_success(&unsubscribe_response);
+            }
+        },
+    );
     stress_config::record_completed(ctx, completed);
 }
 

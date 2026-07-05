@@ -15,8 +15,10 @@
 #[path = "stress_config.rs"]
 mod stress_config;
 
+use stress_config::StressContextExt;
+
 use bytes::Bytes;
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{stress, stress_main, StressContext};
 use fitz::benchkit::{
     build_kv_begin, build_kv_put, build_kv_rollback, create_local_bench_store, parse_kv_response,
     parse_kv_tx_id, shared_bench_runtime,
@@ -31,7 +33,7 @@ use tokio::sync::Mutex;
 
 const DIRECT_TRANSACTION_ROUNDS_PER_ITERATION: u64 = 16;
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_direct_begin_put_rollback(ctx: &mut StressContext) {
     ctx.parameter("layer", "direct");
     ctx.parameter("scenario", "transaction_sequence");
@@ -72,7 +74,7 @@ fn should_complete_direct_begin_put_rollback(ctx: &mut StressContext) {
     );
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_encoded_begin_put_rollback(ctx: &mut StressContext) {
     ctx.parameter("layer", "encoded");
     ctx.parameter("scenario", "transaction_sequence");
@@ -112,7 +114,7 @@ fn should_complete_encoded_begin_put_rollback(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 3 * iterations);
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_tcp_begin_put_rollback(ctx: &mut StressContext) {
     ctx.parameter("layer", "tcp");
     ctx.parameter("scenario", "transaction_sequence");
@@ -150,7 +152,7 @@ fn should_complete_tcp_begin_put_rollback(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 3 * iterations);
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_ws_begin_put_rollback(ctx: &mut StressContext) {
     ctx.parameter("layer", "websocket");
     ctx.parameter("scenario", "transaction_sequence");
@@ -191,7 +193,7 @@ fn should_complete_ws_begin_put_rollback(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 3 * iterations);
 }
 
-#[stress_test(tier = 4)]
+#[stress(tier = 4)]
 fn should_complete_multiclient_concurrent_transactions(ctx: &mut StressContext) {
     ctx.parameter("layer", "multiclient");
     ctx.parameter("scenario", "concurrent_transactions");

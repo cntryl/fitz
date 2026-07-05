@@ -2,7 +2,7 @@
 #[path = "tier2_stress.rs"]
 mod tier2_stress;
 
-use cntryl_stress::{stress_main, stress_test, StressContext};
+use cntryl_stress::{stress, stress_main, StressContext};
 use fitz::protocol::mux::Mux;
 use fitz::protocol::tlv::{MessageType, TlvDecoder, TlvEncoder};
 use std::hint::black_box;
@@ -74,32 +74,32 @@ fn decode_then_mux_route_ref(ctx: &mut StressContext, size: usize) {
     );
 }
 
-#[stress_test(tier = 2, name = "decode_only_16b")]
+#[stress(tier = 2, name = "decode_only_16b")]
 fn should_decode_only_16b(ctx: &mut StressContext) {
     decode_only(ctx, 16);
 }
 
-#[stress_test(tier = 2, name = "decode_only_64b")]
+#[stress(tier = 2, name = "decode_only_64b")]
 fn should_decode_only_64b(ctx: &mut StressContext) {
     decode_only(ctx, 64);
 }
 
-#[stress_test(tier = 2, name = "decode_only_256b")]
+#[stress(tier = 2, name = "decode_only_256b")]
 fn should_decode_only_256b(ctx: &mut StressContext) {
     decode_only(ctx, 256);
 }
 
-#[stress_test(tier = 2, name = "decode_then_mux_route_ref_16b")]
+#[stress(tier = 2, name = "decode_then_mux_route_ref_16b")]
 fn should_decode_then_mux_route_ref_16b(ctx: &mut StressContext) {
     decode_then_mux_route_ref(ctx, 16);
 }
 
-#[stress_test(tier = 2, name = "decode_then_mux_route_ref_64b")]
+#[stress(tier = 2, name = "decode_then_mux_route_ref_64b")]
 fn should_decode_then_mux_route_ref_64b(ctx: &mut StressContext) {
     decode_then_mux_route_ref(ctx, 64);
 }
 
-#[stress_test(tier = 2, name = "decode_then_mux_route_ref_256b")]
+#[stress(tier = 2, name = "decode_then_mux_route_ref_256b")]
 fn should_decode_then_mux_route_ref_256b(ctx: &mut StressContext) {
     decode_then_mux_route_ref(ctx, 256);
 }

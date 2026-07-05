@@ -1,11 +1,11 @@
 # Benchmark Guidelines
 
-**Version:** 2.0
-**Last Updated:** July 4, 2026
+**Version:** 2.1
+**Last Updated:** July 5, 2026
 **Project:** Fitz Message Broker
 
 Fitz benchmarks use one framework: `cntryl-stress`. Tier 1 through Tier N write
-`cntryl-stress.v1` artifacts under `target/stress/`, and
+`cntryl-stress.v2` artifacts under `target/stress/`, and
 `cntryl-tools summarize-benchmarks` turns those artifacts into
 `target/bench_results.json` and `target/bench_summary.md`.
 
@@ -51,7 +51,7 @@ file small, baseline-backed, and reviewable.
 
 | Tier | Kind | Tool | Location | Scope |
 | --- | --- | --- | --- | --- |
-| **Tier 1** | Hotpath | Stress micro | `benches/tier1_hotpath_*.rs` | Pure synchronous internals using `#[stress_test(tier = 1)]` and `ctx.measure_micro`. |
+| **Tier 1** | Hotpath | Stress micro | `benches/tier1_hotpath_*.rs` | Pure synchronous internals using `#[stress(tier = 1)]` and one named `ctx.measure("operation", ...)`. |
 | **Tier 2** | Subsystem | Stress | `benches/tier2_subsystem_*.rs` | Component and domain subsystem rows using stress fixed-operation samples and explicit correctness counters. |
 | **Tier 3** | System | Stress | `benches/tier3_system_*.rs` | In-process domain actor + test engine, no network. |
 | **Tier 4** | Integration | Stress | `benches/tier4_integration_*.rs` | Full stack direct/TCP/WebSocket/multiclient scenarios. |
@@ -60,7 +60,8 @@ Shared helper files:
 
 - `benches/tier2_stress.rs`: small Tier 2 counter helpers around direct stress
   context calls.
-- `benches/stress_config.rs`: shared correctness counter recording only.
+- `benches/stress_config.rs`: shared correctness counter recording and a
+  benchmark-only `measure_workload` adapter for existing Tier 3/4 rows.
 
 The manifest sets `autobenches = false`; every runnable bench target must be
 listed explicitly in `Cargo.toml`.
@@ -70,23 +71,23 @@ listed explicitly in `Cargo.toml`.
 Stress benchmarks follow this shape:
 
 ```rust
-use cntryl_stress::{black_box, stress_main, stress_test, StressContext};
+use cntryl_stress::{black_box, stress_main, stress, StressContext};
 
-#[stress_test(tier = 1, name = "decode_one_64b", max_allocs_per_op = 0, max_bytes_per_op = 0)]
+#[stress(tier = 1, name = "decode_one_64b", max_allocs_per_op = 0, max_bytes_per_op = 0)]
 fn should_decode_one_64b(ctx: &mut StressContext) {
     let frame = build_frame(64);
     let decoder = TlvDecoder::new();
 
     ctx.parameter("payload_size", 64);
-    ctx.measure_micro(|| black_box(decoder.decode_one(black_box(&frame)).unwrap()));
+    ctx.measure("operation", || black_box(decoder.decode_one(black_box(&frame)).unwrap()));
 }
 
-#[stress_test(tier = 3)]
+#[stress(tier = 3)]
 fn should_complete_capacity_ack_roundtrip(ctx: &mut StressContext) {
     let mut actor = build_actor();
 
     ctx.parameter("scenario", "capacity_ack_roundtrip");
-    let iterations = ctx.measure_workload(|| {
+    let iterations = ctx.measure_batch("workload", 1, || {
         complete_one_ack_roundtrip(&mut actor);
     });
     let _ = ctx.correctness().attempted(iterations).completed(iterations);
@@ -97,17 +98,13 @@ stress_main!();
 
 Use the narrowest direct stress API that describes the row:
 
-- `ctx.measure_micro`: calibrated Tier 1 micro samples.
-- `ctx.measure`: one Tier 2 measured operation.
-- `ctx.measure_counted`: one Tier 2 measured operation that returns logical
-  work completed.
-- `ctx.measure_batch`: repeated logical work where each framework iteration
-  performs a known operation count.
-- `ctx.measure_workload`: default-profile fixed-operation or fixed-duration
-  workload samples when the completed operation count is one per framework
-  iteration.
-- `ctx.record_external`: externally timed systems where the benchmark body owns
-  timing and completed-operation counting.
+- `ctx.measure("name", ...)`: one named measurement using the tier-derived mode.
+- `ctx.measure_batch("name", logical_ops, ...)`: repeated logical work where
+  each framework iteration performs a known operation count.
+- `ctx.record_external("name", duration, completed)`: externally timed systems
+  where the benchmark body owns timing and completed-operation counting.
+- `ctx.measure_io("name", ...)`, `ctx.measure_pipeline("name", ...)`, and
+  `ctx.measure_async("name", ...)`: named measurements with a specific intent.
 
 Do not write benchmark diagnostics with `println!`, `eprintln!`, or `dbg!`.
 Use `ctx.parameter` for fields that define the workload identity and
@@ -116,8 +113,8 @@ changing IDs. The terminal output should be the stress console report.
 
 ## Tier 1 Micro Semantics
 
-Tier 1 rows use `#[stress_test(tier = 1)]`, which defaults to stress micro mode.
-Use `ctx.measure_micro` exactly once per row.
+Tier 1 rows use `#[stress(tier = 1)]`, which defaults to stress micro mode.
+Use `ctx.measure("operation", ...)` exactly once per row.
 
 Micro rows record calibrated net nanoseconds per operation. When the operation
 should be allocation-free, install `cntryl_stress::stress_allocator!()` in the
@@ -195,7 +192,7 @@ counters, and valid direct/TCP/WebSocket/multiclient semantics.
 Numerical targets live in
 [`config/perf_targets.json`](../../config/perf_targets.json) and are mirrored in
 [Performance targets](bench-targets.md). Generated IDs come from current
-`cntryl-stress.v1` artifacts and use the current tool format, for example:
+`cntryl-stress.v2` artifacts and use the current tool format, for example:
 
 ```text
 benchmark_id|metric|scenario=...|parameter=...
@@ -204,6 +201,8 @@ benchmark_id|metric|scenario=...|parameter=...
 Do not hand-convert stale legacy IDs into current targets. Regenerate targets,
 release IDs, `bench-targets.md`, and the baseline from clean current stress
 artifacts.
+Stress v2 benchmark IDs include the named measurement suffix, such as
+`/operation` for Tier 1 rows and `/workload` for the current Tier 2+ rows.
 
 ## Baseline Refresh
 
@@ -222,17 +221,18 @@ summarize again and require `new == 0`, `missing == 0`, and `critical == 0`.
 - The row measures one clear behavior.
 - Setup is outside timing unless setup is part of the named behavior.
 - Correctness counters match actual completed work.
-- Tier 1 rows use `ctx.measure_micro`.
+- Tier 1 rows use one named `ctx.measure("operation", ...)`.
 - Tier 2 rows omit `mode = "fixed_duration"` and use fixed-operation timing.
 - Tier 2+ rows use direct stress context APIs.
 - Commands omit `--profile`.
-- Artifacts are current `cntryl-stress.v1`.
+- Artifacts are current `cntryl-stress.v2`.
 - Release rows are baseline-backed and stable.
 
 ## Document History
 
 | Date | Version | Changes |
 | --- | --- | --- |
+| 2026-07-05 | 2.1 | Updated benches and docs for `cntryl-stress` v2 named measurements and schema. |
 | 2026-07-04 | 2.0 | Migrated all tiers to `cntryl-stress`; removed the previous adapter and Fitz profile-default helpers. |
 | 2026-07-04 | 1.1 | Split benchmark workflows into release and deep suites. |
 | 2025-10-20 | 1.0 | Initial version tailored for Fitz message broker. |
