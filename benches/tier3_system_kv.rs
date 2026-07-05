@@ -37,7 +37,7 @@ fn begin_transaction(
     }
 }
 
-#[stress_test(tier = 3, mode = "fixed_duration")]
+#[stress_test(tier = 3)]
 fn should_complete_10_puts_same_family(ctx: &mut StressContext) {
     ctx.parameter("scenario", "single_family_intensive");
     ctx.parameter("measurement_scope", "direct_actor");
@@ -66,7 +66,7 @@ fn should_complete_10_puts_same_family(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 10 * iterations);
 }
 
-#[stress_test(tier = 3, mode = "fixed_duration")]
+#[stress_test(tier = 3)]
 fn should_complete_interleaved_puts_2_families(ctx: &mut StressContext) {
     ctx.parameter("scenario", "dual_family_concurrent");
     ctx.parameter("measurement_scope", "direct_actor");
@@ -108,7 +108,7 @@ fn should_complete_interleaved_puts_2_families(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 20 * iterations); // 10 per family
 }
 
-#[stress_test(tier = 3, mode = "fixed_duration")]
+#[stress_test(tier = 3)]
 fn should_complete_10_puts_per_3_families(ctx: &mut StressContext) {
     ctx.parameter("scenario", "triple_family_contention");
     ctx.parameter("measurement_scope", "direct_actor");
@@ -146,7 +146,7 @@ fn should_complete_10_puts_per_3_families(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 30 * iterations); // 10 per family
 }
 
-#[stress_test(tier = 3, mode = "fixed_duration")]
+#[stress_test(tier = 3)]
 fn should_complete_mixed_read_write_families(ctx: &mut StressContext) {
     ctx.parameter("scenario", "mixed_read_write_families");
     ctx.parameter("measurement_scope", "direct_actor");

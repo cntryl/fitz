@@ -9,6 +9,7 @@ use std::hint::black_box;
 
 const SINGLE_PATTERN_BATCH_SIZE: usize = 512;
 const REMOVE_BATCH_SIZE: usize = 512;
+const MATCH_REPEAT_COUNT: usize = 4_096;
 
 fn make_subscriptions_with_patterns(pattern_count: usize) -> SubscriptionIndex {
     let mut index = SubscriptionIndex::new();
@@ -129,6 +130,19 @@ fn insert_single_pattern(ctx: &mut StressContext, pattern: &Route) {
     });
 }
 
+fn match_repeated(
+    ctx: &mut StressContext,
+    index: &SubscriptionIndex,
+    family: RouteFamily,
+    route: &Route,
+) {
+    tier2_stress::measure_iterations(ctx, MATCH_REPEAT_COUNT as u64, || {
+        for _ in 0..MATCH_REPEAT_COUNT {
+            black_box(index.match_all(family, black_box(route)));
+        }
+    });
+}
+
 #[stress_test(tier = 2, name = "exact_pattern")]
 fn should_insert_exact_pattern(ctx: &mut StressContext) {
     insert_single_pattern(ctx, &Route::new("notify://realm/orders/create"));
@@ -149,9 +163,7 @@ fn should_match_exact(ctx: &mut StressContext) {
     let index = make_subscriptions_with_patterns(100);
     let family = RouteFamily::new(1);
     let route = Route::new("notify://realm/orders/create");
-    tier2_stress::measure_iterations(ctx, 1, || {
-        black_box(index.match_all(family, black_box(&route)));
-    });
+    match_repeated(ctx, &index, family, &route);
 }
 
 #[stress_test(tier = 2, name = "single_star")]
@@ -159,9 +171,7 @@ fn should_match_single_star(ctx: &mut StressContext) {
     let index = make_subscriptions_with_patterns(100);
     let family = RouteFamily::new(1);
     let route = Route::new("notify://realm/orders/create");
-    tier2_stress::measure_iterations(ctx, 1, || {
-        black_box(index.match_all(family, black_box(&route)));
-    });
+    match_repeated(ctx, &index, family, &route);
 }
 
 #[stress_test(tier = 2, name = "double_star")]
@@ -169,17 +179,13 @@ fn should_match_double_star(ctx: &mut StressContext) {
     let index = make_subscriptions_with_patterns(100);
     let family = RouteFamily::new(1);
     let route = Route::new("notify://realm/orders/created");
-    tier2_stress::measure_iterations(ctx, 1, || {
-        black_box(index.match_all(family, black_box(&route)));
-    });
+    match_repeated(ctx, &index, family, &route);
 }
 
 #[stress_test(tier = 2, name = "10k_subs_1_match")]
 fn should_match_10k_subs_1_match(ctx: &mut StressContext) {
     let (index, route, family) = make_index_fanout_sparse(10000);
-    tier2_stress::measure_iterations(ctx, 1, || {
-        black_box(index.match_all(family, black_box(&route)));
-    });
+    match_repeated(ctx, &index, family, &route);
 }
 
 #[stress_test(tier = 2, name = "10k_subs_10k_matches")]
@@ -192,9 +198,7 @@ fn should_match_10k_subs_10k_matches(ctx: &mut StressContext) {
 
 fn match_depth(ctx: &mut StressContext, depth: usize) {
     let (index, route, family) = make_index_with_depth(depth, 1000);
-    tier2_stress::measure_iterations(ctx, 1, || {
-        black_box(index.match_all(family, black_box(&route)));
-    });
+    match_repeated(ctx, &index, family, &route);
 }
 
 #[stress_test(tier = 2, name = "depth_3")]

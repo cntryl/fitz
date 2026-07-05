@@ -7,6 +7,9 @@ use fitz::protocol::mux::Mux;
 use fitz::protocol::tlv::{MessageType, TlvDecoder, TlvEncoder};
 use std::hint::black_box;
 
+const PIPELINE_RECORDS: usize = 256;
+const PIPELINE_REPEAT_COUNT: usize = 65_536;
+
 fn encode_frame(records: usize, size: usize) -> bytes::Bytes {
     let mut encoder = TlvEncoder::with_capacity(1024 * 8);
     let payload = vec![0u8; size];
@@ -20,66 +23,55 @@ fn encode_frame(records: usize, size: usize) -> bytes::Bytes {
 }
 
 fn decode_only(ctx: &mut StressContext, size: usize) {
-    let records = 256usize;
-    let data = encode_frame(records, size);
+    let data = encode_frame(PIPELINE_RECORDS, size);
     let decoder = TlvDecoder::new();
-    let mut refs = Vec::with_capacity(records);
+    let mut refs = Vec::with_capacity(PIPELINE_RECORDS);
 
-    tier2_stress::measure_iterations(ctx, records as u64, || {
-        refs.clear();
-        decoder
-            .decode_refs_into(black_box(&data), &mut refs)
-            .unwrap();
-        black_box(&refs);
-    });
-}
-
-fn mux_route_ref_only(ctx: &mut StressContext, size: usize) {
-    let records = 256usize;
-    let data = encode_frame(records, size);
-    let decoder = TlvDecoder::new();
-    let mut refs = Vec::with_capacity(records);
-    decoder.decode_refs_into(&data, &mut refs).unwrap();
-    let mut mux = Mux::new(records);
-
-    for tlv_ref in &refs {
-        let cref = mux.route_ref(tlv_ref.ty, tlv_ref.value).unwrap();
-        mux.release(cref.channel);
-    }
-
-    tier2_stress::measure_iterations(ctx, records as u64, || {
-        for tlv_ref in &refs {
-            let cref = mux.route_ref(tlv_ref.ty, black_box(tlv_ref.value)).unwrap();
-            mux.release(cref.channel);
-        }
-    });
+    tier2_stress::measure_iterations(
+        ctx,
+        (PIPELINE_RECORDS * PIPELINE_REPEAT_COUNT) as u64,
+        || {
+            for _ in 0..PIPELINE_REPEAT_COUNT {
+                refs.clear();
+                decoder
+                    .decode_refs_into(black_box(&data), &mut refs)
+                    .unwrap();
+                black_box(&refs);
+            }
+        },
+    );
 }
 
 fn decode_then_mux_route_ref(ctx: &mut StressContext, size: usize) {
-    let records = 256usize;
-    let data = encode_frame(records, size);
+    let data = encode_frame(PIPELINE_RECORDS, size);
     let decoder = TlvDecoder::new();
-    let mut refs = Vec::with_capacity(records);
-    let mut warm_refs = Vec::with_capacity(records);
+    let mut refs = Vec::with_capacity(PIPELINE_RECORDS);
+    let mut warm_refs = Vec::with_capacity(PIPELINE_RECORDS);
     decoder.decode_refs_into(&data, &mut warm_refs).unwrap();
 
-    let mut mux = Mux::new(records);
+    let mut mux = Mux::new(PIPELINE_RECORDS);
     for tlv_ref in &warm_refs {
         let cref = mux.route_ref(tlv_ref.ty, tlv_ref.value).unwrap();
         mux.release(cref.channel);
     }
 
-    tier2_stress::measure_iterations(ctx, records as u64, || {
-        refs.clear();
-        decoder
-            .decode_refs_into(black_box(&data), &mut refs)
-            .unwrap();
+    tier2_stress::measure_iterations(
+        ctx,
+        (PIPELINE_RECORDS * PIPELINE_REPEAT_COUNT) as u64,
+        || {
+            for _ in 0..PIPELINE_REPEAT_COUNT {
+                refs.clear();
+                decoder
+                    .decode_refs_into(black_box(&data), &mut refs)
+                    .unwrap();
 
-        for tlv_ref in &refs {
-            let cref = mux.route_ref(tlv_ref.ty, tlv_ref.value).unwrap();
-            mux.release(cref.channel);
-        }
-    });
+                for tlv_ref in &refs {
+                    let cref = mux.route_ref(tlv_ref.ty, tlv_ref.value).unwrap();
+                    mux.release(cref.channel);
+                }
+            }
+        },
+    );
 }
 
 #[stress_test(tier = 2, name = "decode_only_16b")]
@@ -95,21 +87,6 @@ fn should_decode_only_64b(ctx: &mut StressContext) {
 #[stress_test(tier = 2, name = "decode_only_256b")]
 fn should_decode_only_256b(ctx: &mut StressContext) {
     decode_only(ctx, 256);
-}
-
-#[stress_test(tier = 2, name = "mux_route_ref_only_16b")]
-fn should_mux_route_ref_only_16b(ctx: &mut StressContext) {
-    mux_route_ref_only(ctx, 16);
-}
-
-#[stress_test(tier = 2, name = "mux_route_ref_only_64b")]
-fn should_mux_route_ref_only_64b(ctx: &mut StressContext) {
-    mux_route_ref_only(ctx, 64);
-}
-
-#[stress_test(tier = 2, name = "mux_route_ref_only_256b")]
-fn should_mux_route_ref_only_256b(ctx: &mut StressContext) {
-    mux_route_ref_only(ctx, 256);
 }
 
 #[stress_test(tier = 2, name = "decode_then_mux_route_ref_16b")]

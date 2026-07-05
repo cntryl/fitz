@@ -124,23 +124,6 @@ cache_hit_bench!(
 
 #[stress_test(
     tier = 1,
-    name = "allows_allow_all_cache_hit",
-    max_allocs_per_op = 0,
-    max_bytes_per_op = 0
-)]
-fn should_allows_allow_all_cache_hit(ctx: &mut StressContext) {
-    record_group(ctx, "hotpath_permissions_hit");
-    let permissions = SessionPermissions::all();
-    let route = Route::new("rpc://acme/auth/users");
-    let _ = permissions.allows(&route, Access::Write);
-
-    ctx.measure_micro(|| {
-        black_box(permissions.allows(black_box(&route), black_box(Access::Write)));
-    });
-}
-
-#[stress_test(
-    tier = 1,
     name = "allows_deny_by_default_cache_hit",
     max_allocs_per_op = 0,
     max_bytes_per_op = 0

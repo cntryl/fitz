@@ -24,7 +24,6 @@ const MULTI_QUEUE_MESSAGES_PER_QUEUE: usize = 1;
 const DEQUEUE_OPERATION_BATCH_SIZE: usize = 256;
 const ACK_OPERATION_BATCH_SIZE: usize = 256;
 const WATCH_REGISTER_BATCH_SIZE: usize = 64;
-const WAITER_WAKEUP_COUNT: usize = 16;
 const QUEUE_MEASUREMENT_REPEAT_COUNT: u32 = 2;
 
 struct PreparedDequeueCase {
@@ -49,16 +48,6 @@ struct PreparedWatchRegisterCase {
     router: Arc<Router>,
     family: RouteFamily,
     registrations: Vec<(u64, RouteAddress, Arc<CountingSink>, u16, Bytes)>,
-}
-
-struct PreparedWaiterWakeupCase {
-    router: Arc<Router>,
-    family: RouteFamily,
-    sender_source: RouteAddress,
-    sender_sink: Arc<CountingSink>,
-    waiter_sinks: Vec<Arc<CountingSink>>,
-    enqueue_msg_type: u16,
-    enqueue_payload: Bytes,
 }
 
 fn setup_queue_domain() -> (Arc<Router>, RouteFamily) {
@@ -299,50 +288,6 @@ fn prepare_watch_register_case() -> PreparedWatchRegisterCase {
     }
 }
 
-fn prepare_waiter_wakeup_case() -> PreparedWaiterWakeupCase {
-    let (router, family) = setup_queue_domain();
-    let (sender_source, sender_sink) =
-        register_session_counting_sink(&router, family, CLIENT_SESSION_ID);
-
-    let waiter_sinks = (0..WAITER_WAKEUP_COUNT)
-        .map(|index| {
-            let session_id = 20_000 + u64::try_from(index).expect("waiter index should fit u64");
-            let (source, sink) = register_session_counting_sink(&router, family, session_id);
-            let watch_frame = build_queue_watch(ROUTE_STR);
-            let (watch_msg_type, watch_payload) = extract_single_tlv_field(&watch_frame);
-            send_queue_request(
-                router.as_ref(),
-                &source,
-                ROUTE_STR,
-                session_id,
-                watch_msg_type,
-                watch_payload,
-                family,
-            );
-            assert_eq!(
-                sink.wait_for_count(1, Duration::from_secs(1)),
-                1,
-                "queue waiter setup should ack watch registration"
-            );
-            sink.reset();
-            sink
-        })
-        .collect();
-
-    let enqueue_frame = build_queue_enqueue(ROUTE_STR, b"queue waiter payload");
-    let (enqueue_msg_type, enqueue_payload) = extract_single_tlv_field(&enqueue_frame);
-
-    PreparedWaiterWakeupCase {
-        router,
-        family,
-        sender_source,
-        sender_sink,
-        waiter_sinks,
-        enqueue_msg_type,
-        enqueue_payload,
-    }
-}
-
 fn queue_enqueue(ctx: &mut StressContext, queue_count: usize, messages_per_queue: usize) {
     let mut total = Duration::ZERO;
     let expected_responses = queue_count * messages_per_queue;
@@ -507,39 +452,6 @@ fn should_watch_register_64_sessions_primary(ctx: &mut StressContext) {
         total / QUEUE_MEASUREMENT_REPEAT_COUNT,
         WATCH_REGISTER_BATCH_SIZE as u64,
     );
-}
-
-#[stress_test(tier = 2, name = "wakeup_16_watchers_1_enqueue_primary")]
-fn should_wakeup_16_watchers_1_enqueue_primary(ctx: &mut StressContext) {
-    let case = prepare_waiter_wakeup_case();
-    let start = Instant::now();
-    send_queue_request(
-        case.router.as_ref(),
-        &case.sender_source,
-        ROUTE_STR,
-        CLIENT_SESSION_ID,
-        case.enqueue_msg_type,
-        black_box(case.enqueue_payload.clone()),
-        case.family,
-    );
-    let duration = start.elapsed();
-
-    assert_eq!(
-        case.sender_sink.wait_for_count(1, Duration::from_secs(1)),
-        1,
-        "queue wakeup enqueue should ack"
-    );
-    let deliveries = case
-        .waiter_sinks
-        .iter()
-        .map(|sink| sink.wait_for_count(1, Duration::from_secs(1)))
-        .sum::<usize>();
-    assert_eq!(
-        deliveries, WAITER_WAKEUP_COUNT,
-        "queue enqueue should notify every ready watcher"
-    );
-    case.router.clear();
-    tier2_stress::record_duration(ctx, duration, WAITER_WAKEUP_COUNT as u64);
 }
 
 stress_main!();

@@ -31,6 +31,8 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 const DELIVERY_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
+const WS_PUBLISHES_PER_ITERATION: u64 = 4;
+const MULTICLIENT_FANOUT_PUBLISHES_PER_ITERATION: u64 = 4;
 
 fn is_recv_timeout(error: &dyn std::error::Error) -> bool {
     error.to_string().contains("timeout waiting for response")
@@ -167,7 +169,7 @@ fn spawn_ws_subscriber_counter(
     (stop_tx, subscriber_handle)
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_direct_publish(ctx: &mut StressContext) {
     ctx.parameter("layer", "direct");
     ctx.parameter("scenario", "publish");
@@ -231,7 +233,7 @@ fn should_complete_direct_publish(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, iterations);
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_tcp_publish(ctx: &mut StressContext) {
     ctx.parameter("layer", "tcp");
     ctx.parameter("scenario", "publish");
@@ -279,7 +281,7 @@ fn should_complete_tcp_publish(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, iterations);
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_ws_publish(ctx: &mut StressContext) {
     ctx.parameter("layer", "websocket");
     ctx.parameter("scenario", "publish");
@@ -315,10 +317,12 @@ fn should_complete_ws_publish(ctx: &mut StressContext) {
 
     let mut expected_deliveries = 0_u64;
     let iterations = ctx.measure_workload(|| {
-        runtime
-            .block_on(publisher.send_frame(publish_frame.as_ref()))
-            .expect("publish frame");
-        expected_deliveries += 1;
+        for _ in 0..WS_PUBLISHES_PER_ITERATION {
+            runtime
+                .block_on(publisher.send_frame(publish_frame.as_ref()))
+                .expect("publish frame");
+        }
+        expected_deliveries += WS_PUBLISHES_PER_ITERATION;
         wait_for_delivery_count(
             runtime,
             &delivered,
@@ -334,10 +338,10 @@ fn should_complete_ws_publish(ctx: &mut StressContext) {
             .expect("close ws publisher gracefully");
         subscriber_handle.await.expect("subscriber task");
     });
-    stress_config::record_completed(ctx, iterations);
+    stress_config::record_completed(ctx, WS_PUBLISHES_PER_ITERATION * iterations);
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_tcp_subscribe_unsubscribe_cycle(ctx: &mut StressContext) {
     ctx.parameter("layer", "tcp");
     ctx.parameter("scenario", "subscribe_unsubscribe_cycle");
@@ -373,7 +377,7 @@ fn should_complete_tcp_subscribe_unsubscribe_cycle(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 2 * iterations);
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_ws_subscribe_unsubscribe_cycle(ctx: &mut StressContext) {
     ctx.parameter("layer", "websocket");
     ctx.parameter("scenario", "subscribe_unsubscribe_cycle");
@@ -416,7 +420,7 @@ fn should_complete_ws_subscribe_unsubscribe_cycle(ctx: &mut StressContext) {
         .expect("close ws client gracefully");
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_multiclient_fanout_publish(ctx: &mut StressContext) {
     measure_multiclient_fanout_publish(ctx, "fanout_publish", 10);
 }
@@ -468,11 +472,13 @@ fn measure_multiclient_fanout_publish(
     }
     let mut expected_per_subscriber = 0_u64;
     let iterations = ctx.measure_workload(|| {
-        runtime
-            .block_on(publisher.send_frame(publish_frame.as_ref()))
-            .expect("publish frame");
+        for _ in 0..MULTICLIENT_FANOUT_PUBLISHES_PER_ITERATION {
+            runtime
+                .block_on(publisher.send_frame(publish_frame.as_ref()))
+                .expect("publish frame");
+        }
 
-        expected_per_subscriber += 1;
+        expected_per_subscriber += MULTICLIENT_FANOUT_PUBLISHES_PER_ITERATION;
         // Aggregate delivery counts can hide one lagging subscriber and fill its mailbox.
         wait_for_all_delivery_counts(
             runtime,
@@ -494,20 +500,23 @@ fn measure_multiclient_fanout_publish(
             handle.await.expect("subscriber task");
         }
     });
-    stress_config::record_completed(ctx, subscriber_count as u64 * iterations);
+    stress_config::record_completed(
+        ctx,
+        subscriber_count as u64 * MULTICLIENT_FANOUT_PUBLISHES_PER_ITERATION * iterations,
+    );
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_multiclient_fanout_publish_subscriber_scaling_1(ctx: &mut StressContext) {
     measure_multiclient_fanout_publish(ctx, "fanout_publish_subscriber_scaling", 1);
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_multiclient_fanout_publish_subscriber_scaling_16(ctx: &mut StressContext) {
     measure_multiclient_fanout_publish(ctx, "fanout_publish_subscriber_scaling", 16);
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_multiclient_fanout_publish_subscriber_scaling_64(ctx: &mut StressContext) {
     measure_multiclient_fanout_publish(ctx, "fanout_publish_subscriber_scaling", 64);
 }

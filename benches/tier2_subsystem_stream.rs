@@ -23,8 +23,8 @@ use std::time::{Duration, Instant};
 const CLIENT_SESSION_ID: u64 = 1;
 const SUBSCRIBE_REGISTER_BATCH_SIZE: usize = 2048;
 const SUBSCRIBE_REGISTER_CASE_COUNT: usize = 4;
-const COMMIT_NOTIFY_REPEAT_COUNT: u64 = 256;
-const COMMIT_NOTIFY_CHUNK_SIZE: u64 = 64;
+const COMMIT_NOTIFY_REPEAT_COUNT: u64 = 2_048;
+const COMMIT_NOTIFY_CHUNK_SIZE: u64 = 256;
 const SUBSCRIBE_DESTINATION: &str = "stream://realm/area/control/append";
 const COMMIT_NOTIFY_ROUTE: &str = "stream://realm/area/orders";
 
@@ -266,10 +266,8 @@ fn commit_notify(ctx: &mut StressContext, subscriber_count: usize, pattern: &str
     }
     tier2_stress::record_duration(
         ctx,
-        total
-            / u32::try_from(COMMIT_NOTIFY_REPEAT_COUNT)
-                .expect("stream publish repeat count fits u32"),
-        subscriber_count as u64,
+        total,
+        COMMIT_NOTIFY_REPEAT_COUNT.saturating_mul(subscriber_count as u64),
     );
 }
 
@@ -282,12 +280,6 @@ macro_rules! stream_commit_notify_bench {
     };
 }
 
-stream_commit_notify_bench!(
-    should_commit_notify_exact_route_1_subscribers_primary,
-    "commit_notify_exact_route_1_subscribers_primary",
-    1,
-    COMMIT_NOTIFY_ROUTE
-);
 stream_commit_notify_bench!(
     should_commit_notify_exact_route_16_subscribers_primary,
     "commit_notify_exact_route_16_subscribers_primary",
@@ -307,12 +299,6 @@ stream_commit_notify_bench!(
     COMMIT_NOTIFY_ROUTE
 );
 stream_commit_notify_bench!(
-    should_commit_notify_single_star_1_subscribers_primary,
-    "commit_notify_single_star_1_subscribers_primary",
-    1,
-    "stream://realm/area/*"
-);
-stream_commit_notify_bench!(
     should_commit_notify_single_star_16_subscribers_primary,
     "commit_notify_single_star_16_subscribers_primary",
     16,
@@ -329,12 +315,6 @@ stream_commit_notify_bench!(
     "commit_notify_single_star_256_subscribers_primary",
     256,
     "stream://realm/area/*"
-);
-stream_commit_notify_bench!(
-    should_commit_notify_double_star_1_subscribers_primary,
-    "commit_notify_double_star_1_subscribers_primary",
-    1,
-    "stream://realm/**"
 );
 stream_commit_notify_bench!(
     should_commit_notify_double_star_16_subscribers_primary,

@@ -32,6 +32,7 @@ const STREAM_SYNC_COMMIT_MODE: u8 = 1;
 const STREAM_APPEND_MSG_TYPE: u16 = 601;
 const STREAM_ROLLBACK_MSG_TYPE: u16 = 603;
 const DIRECT_APPEND_EVENTS_PER_SESSION: u64 = 10_000;
+const MULTICLIENT_APPEND_ROUNDS_PER_ITERATION: u64 = 4;
 
 struct DirectStreamBenchContext {
     router: Arc<Router>,
@@ -246,7 +247,7 @@ async fn ws_seed_stream_route(
         .expect("commit response");
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_direct_append(ctx: &mut StressContext) {
     ctx.parameter("layer", "direct");
     ctx.parameter("scenario", "append");
@@ -279,7 +280,7 @@ fn should_complete_direct_append(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, iterations);
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_direct_area_wildcard_read(ctx: &mut StressContext) {
     ctx.parameter("layer", "direct");
     ctx.parameter("scenario", "read_area_wildcard");
@@ -309,7 +310,7 @@ fn should_complete_direct_area_wildcard_read(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 100 * iterations);
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_direct_resource_read(ctx: &mut StressContext) {
     ctx.parameter("layer", "direct");
     ctx.parameter("scenario", "read_resource_exact");
@@ -328,7 +329,7 @@ fn should_complete_direct_resource_read(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 100 * iterations);
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_direct_realm_wildcard_read(ctx: &mut StressContext) {
     ctx.parameter("layer", "direct");
     ctx.parameter("scenario", "read_realm_wildcard");
@@ -348,7 +349,7 @@ fn should_complete_direct_realm_wildcard_read(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 100 * iterations);
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_tcp_append(ctx: &mut StressContext) {
     ctx.parameter("layer", "tcp");
     ctx.parameter("scenario", "append");
@@ -381,7 +382,7 @@ fn should_complete_tcp_append(ctx: &mut StressContext) {
     shutdown_stream_test_server(runtime, server);
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_tcp_resource_read(ctx: &mut StressContext) {
     ctx.parameter("layer", "tcp");
     ctx.parameter("scenario", "read_resource_exact");
@@ -416,7 +417,7 @@ fn should_complete_tcp_resource_read(ctx: &mut StressContext) {
     shutdown_stream_test_server(runtime, server);
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_tcp_area_wildcard_read(ctx: &mut StressContext) {
     ctx.parameter("layer", "tcp");
     ctx.parameter("scenario", "read_area_wildcard");
@@ -463,7 +464,7 @@ fn should_complete_tcp_area_wildcard_read(ctx: &mut StressContext) {
     shutdown_stream_test_server(runtime, server);
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_tcp_realm_wildcard_read(ctx: &mut StressContext) {
     ctx.parameter("layer", "tcp");
     ctx.parameter("scenario", "read_realm_wildcard");
@@ -510,7 +511,7 @@ fn should_complete_tcp_realm_wildcard_read(ctx: &mut StressContext) {
     shutdown_stream_test_server(runtime, server);
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_ws_append(ctx: &mut StressContext) {
     ctx.parameter("layer", "websocket");
     ctx.parameter("scenario", "append");
@@ -546,7 +547,7 @@ fn should_complete_ws_append(ctx: &mut StressContext) {
     shutdown_stream_test_server(runtime, server);
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_ws_resource_read(ctx: &mut StressContext) {
     ctx.parameter("layer", "websocket");
     ctx.parameter("scenario", "read_resource_exact");
@@ -584,7 +585,7 @@ fn should_complete_ws_resource_read(ctx: &mut StressContext) {
     shutdown_stream_test_server(runtime, server);
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_ws_area_wildcard_read(ctx: &mut StressContext) {
     ctx.parameter("layer", "websocket");
     ctx.parameter("scenario", "read_area_wildcard");
@@ -634,7 +635,7 @@ fn should_complete_ws_area_wildcard_read(ctx: &mut StressContext) {
     shutdown_stream_test_server(runtime, server);
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_ws_realm_wildcard_read(ctx: &mut StressContext) {
     ctx.parameter("layer", "websocket");
     ctx.parameter("scenario", "read_realm_wildcard");
@@ -684,7 +685,7 @@ fn should_complete_ws_realm_wildcard_read(ctx: &mut StressContext) {
     shutdown_stream_test_server(runtime, server);
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_multiclient_appends(ctx: &mut StressContext) {
     ctx.parameter("layer", "multiclient");
     ctx.parameter("scenario", "concurrent_appends");
@@ -725,21 +726,26 @@ fn should_complete_multiclient_appends(ctx: &mut StressContext) {
     ));
 
     let iterations = ctx.measure_workload(|| {
-        let _results: Vec<_> = runtime.block_on(futures::future::join_all(
-            clients
-                .iter()
-                .zip(append_frames.iter())
-                .map(|(arc, frame)| {
-                    let arc = arc.clone();
-                    let frame = frame.clone();
-                    async move {
-                        let mut c = arc.lock().await;
-                        c.request(&frame, 2000).await.expect("append");
-                    }
-                }),
-        ));
+        for _ in 0..MULTICLIENT_APPEND_ROUNDS_PER_ITERATION {
+            let _results: Vec<_> = runtime.block_on(futures::future::join_all(
+                clients
+                    .iter()
+                    .zip(append_frames.iter())
+                    .map(|(arc, frame)| {
+                        let arc = arc.clone();
+                        let frame = frame.clone();
+                        async move {
+                            let mut c = arc.lock().await;
+                            c.request(&frame, 2000).await.expect("append");
+                        }
+                    }),
+            ));
+        }
     });
-    stress_config::record_completed(ctx, 10 * iterations);
+    stress_config::record_completed(
+        ctx,
+        10 * MULTICLIENT_APPEND_ROUNDS_PER_ITERATION * iterations,
+    );
     close_ws_clients(runtime, &clients);
     drop(clients);
     shutdown_stream_test_server(runtime, server);

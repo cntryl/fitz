@@ -12,6 +12,8 @@ use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
 use std::hint::black_box;
 
+const CHURN_CASE_COUNT: usize = 4;
+
 fn create_test_actor() -> ScheduleActor {
     let store = create_test_engine_with_cfs(vec![1, 2, 3, 4, 5]);
     ScheduleActor::new(
@@ -79,38 +81,54 @@ fn cancel_existing(ctx: &mut StressContext, count: usize) {
 fn delete_then_full_list_shared_cache(ctx: &mut StressContext, count: usize) {
     let (routes, crons, payloads) = precompute_data(count);
     let victim_index = count / 2;
-    let mut actor = create_test_actor();
-    populate_actor(&mut actor, &routes, &crons, &payloads, count);
-    let (cached, _) = actor.list_entries(0, 0);
     let route = routes[victim_index].clone();
+    let mut cases = (0..CHURN_CASE_COUNT)
+        .map(|_| {
+            let mut actor = create_test_actor();
+            populate_actor(&mut actor, &routes, &crons, &payloads, count);
+            let (cached, _) = actor.list_entries(0, 0);
+            (actor, cached.len())
+        })
+        .collect::<Vec<_>>();
 
-    tier2_stress::measure_once(ctx, count as u64, || {
-        black_box(cached.len());
-        let response = actor.handle(ScheduleMessage::Cancel { route });
-        assert!(matches!(response, ScheduleResponse::Ok));
-        let (entries, total_count) = actor.list_entries(0, 0);
-        black_box((entries.len(), total_count));
+    tier2_stress::measure_once(ctx, CHURN_CASE_COUNT as u64, || {
+        for (actor, cached_len) in &mut cases {
+            black_box(*cached_len);
+            let response = actor.handle(ScheduleMessage::Cancel {
+                route: route.clone(),
+            });
+            assert!(matches!(response, ScheduleResponse::Ok));
+            let (entries, total_count) = actor.list_entries(0, 0);
+            black_box((entries.len(), total_count));
+        }
     });
 }
 
 fn upsert_then_full_list_shared_cache(ctx: &mut StressContext, count: usize) {
     let (routes, crons, payloads) = precompute_data(count);
     let victim_index = count / 2;
-    let mut actor = create_test_actor();
-    populate_actor(&mut actor, &routes, &crons, &payloads, count);
-    let (cached, _) = actor.list_entries(0, 0);
     let route = routes[victim_index].clone();
+    let mut cases = (0..CHURN_CASE_COUNT)
+        .map(|_| {
+            let mut actor = create_test_actor();
+            populate_actor(&mut actor, &routes, &crons, &payloads, count);
+            let (cached, _) = actor.list_entries(0, 0);
+            (actor, cached.len())
+        })
+        .collect::<Vec<_>>();
 
-    tier2_stress::measure_once(ctx, count as u64, || {
-        black_box(cached.len());
-        let response = actor.handle(ScheduleMessage::Create {
-            route,
-            cron: "0 5 * * *".to_string(),
-            payload: Bytes::from_static(b"replacement"),
-        });
-        assert!(matches!(response, ScheduleResponse::Ok));
-        let (entries, total_count) = actor.list_entries(0, 0);
-        black_box((entries.len(), total_count));
+    tier2_stress::measure_once(ctx, CHURN_CASE_COUNT as u64, || {
+        for (actor, cached_len) in &mut cases {
+            black_box(*cached_len);
+            let response = actor.handle(ScheduleMessage::Create {
+                route: route.clone(),
+                cron: "0 5 * * *".to_string(),
+                payload: Bytes::from_static(b"replacement"),
+            });
+            assert!(matches!(response, ScheduleResponse::Ok));
+            let (entries, total_count) = actor.list_entries(0, 0);
+            black_box((entries.len(), total_count));
+        }
     });
 }
 

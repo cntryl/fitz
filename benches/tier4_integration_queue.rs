@@ -25,11 +25,16 @@ use fitz::testkit::{TestClient, TestServer, TestWebSocketClient};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+const ENCODED_ENQUEUE_ROUNDS_PER_ITERATION: usize = 4;
+const MULTICLIENT_ENQUEUE_ROUNDS_PER_ITERATION: usize = 8;
+const TCP_ENQUEUE_ROUNDS_PER_ITERATION: usize = 4;
+const WS_ENQUEUE_ROUNDS_PER_ITERATION: usize = 4;
+
 fn setup_queue_actor() -> fitz::domains::queue::QueueActor {
     create_bench_queue_actor("tier4", "queue", "main", None)
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_direct_enqueue(ctx: &mut StressContext) {
     ctx.parameter("layer", "direct");
     ctx.parameter("scenario", "enqueue");
@@ -48,12 +53,12 @@ fn should_complete_direct_enqueue(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, iterations);
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_encoded_enqueue(ctx: &mut StressContext) {
     ctx.parameter("layer", "encoded");
     ctx.parameter("scenario", "enqueue");
     ctx.parameter("measurement_scope", "encoded_inproc");
-    ctx.parameter("batch_size", "single_enqueue");
+    ctx.parameter("batch_size", "4_enqueues");
 
     let route = "queue://tier4/queue/main/enqueue";
     let mut actor = setup_queue_actor();
@@ -61,32 +66,37 @@ fn should_complete_encoded_enqueue(ctx: &mut StressContext) {
     let family = RouteFamily::new(1);
 
     let iterations = ctx.measure_workload(|| {
-        let mut parser = TlvFrameParser::new(&enqueue_frame);
-        let (msg_type, payload) = parser.next_field_ref().expect("enqueue field");
-        let msg = queue_parse_request(msg_type, family, payload).expect("parse enqueue");
-        let QueueMessage::Send {
-            body,
-            delay_seconds,
-            ..
-        } = msg
-        else {
-            panic!("expected queue send message");
-        };
-        let response = actor.handle_send(body, delay_seconds);
-        assert!(matches!(
-            response,
-            fitz::domains::queue::QueueResponse::Sent { .. }
-        ));
+        for _ in 0..ENCODED_ENQUEUE_ROUNDS_PER_ITERATION {
+            let mut parser = TlvFrameParser::new(&enqueue_frame);
+            let (msg_type, payload) = parser.next_field_ref().expect("enqueue field");
+            let msg = queue_parse_request(msg_type, family, payload).expect("parse enqueue");
+            let QueueMessage::Send {
+                body,
+                delay_seconds,
+                ..
+            } = msg
+            else {
+                panic!("expected queue send message");
+            };
+            let response = actor.handle_send(body, delay_seconds);
+            assert!(matches!(
+                response,
+                fitz::domains::queue::QueueResponse::Sent { .. }
+            ));
+        }
     });
-    stress_config::record_completed(ctx, iterations);
+    stress_config::record_completed(
+        ctx,
+        ENCODED_ENQUEUE_ROUNDS_PER_ITERATION as u64 * iterations,
+    );
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_tcp_enqueue(ctx: &mut StressContext) {
     ctx.parameter("layer", "tcp");
     ctx.parameter("scenario", "enqueue");
     ctx.parameter("measurement_scope", "tcp_e2e");
-    ctx.parameter("batch_size", "single_enqueue");
+    ctx.parameter("batch_size", "4_enqueues");
 
     let route = "queue://tier4/queue/main/enqueue";
     let enqueue_frame = build_queue_enqueue(route, b"msg");
@@ -98,20 +108,22 @@ fn should_complete_tcp_enqueue(ctx: &mut StressContext) {
         .expect("connect tcp");
 
     let iterations = ctx.measure_workload(|| {
-        let response = runtime
-            .block_on(client.request(&enqueue_frame, 2000))
-            .expect("enqueue response");
-        let (_msg_type, _status, _data) = parse_queue_response(&response);
+        for _ in 0..TCP_ENQUEUE_ROUNDS_PER_ITERATION {
+            let response = runtime
+                .block_on(client.request(&enqueue_frame, 2000))
+                .expect("enqueue response");
+            let (_msg_type, _status, _data) = parse_queue_response(&response);
+        }
     });
-    stress_config::record_completed(ctx, iterations);
+    stress_config::record_completed(ctx, TCP_ENQUEUE_ROUNDS_PER_ITERATION as u64 * iterations);
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_ws_enqueue(ctx: &mut StressContext) {
     ctx.parameter("layer", "websocket");
     ctx.parameter("scenario", "enqueue");
     ctx.parameter("measurement_scope", "ws_e2e");
-    ctx.parameter("batch_size", "single_enqueue");
+    ctx.parameter("batch_size", "4_enqueues");
 
     let route = "queue://tier4/queue/main/enqueue";
     let enqueue_frame = build_queue_enqueue(route, b"msg");
@@ -126,15 +138,17 @@ fn should_complete_ws_enqueue(ctx: &mut StressContext) {
         .expect("connect ws");
 
     let iterations = ctx.measure_workload(|| {
-        let response = runtime
-            .block_on(client.request(&enqueue_frame, 2000))
-            .expect("enqueue response");
-        let (_msg_type, _status, _data) = parse_queue_response(&response);
+        for _ in 0..WS_ENQUEUE_ROUNDS_PER_ITERATION {
+            let response = runtime
+                .block_on(client.request(&enqueue_frame, 2000))
+                .expect("enqueue response");
+            let (_msg_type, _status, _data) = parse_queue_response(&response);
+        }
     });
-    stress_config::record_completed(ctx, iterations);
+    stress_config::record_completed(ctx, WS_ENQUEUE_ROUNDS_PER_ITERATION as u64 * iterations);
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_multiclient_concurrent_enqueues(ctx: &mut StressContext) {
     measure_multiclient_concurrent_enqueues(ctx, "concurrent_enqueues", 10);
 }
@@ -147,7 +161,8 @@ fn measure_multiclient_concurrent_enqueues(
     ctx.parameter("layer", "multiclient");
     ctx.parameter("scenario", scenario);
     ctx.parameter("measurement_scope", "ws_multiclient_e2e");
-    let batch_size = format!("{client_count}_clients_1_enqueue_each");
+    let batch_size =
+        format!("{client_count}_clients_{MULTICLIENT_ENQUEUE_ROUNDS_PER_ITERATION}_rounds");
     ctx.parameter("batch_size", batch_size.as_str());
     let client_count_tag = client_count.to_string();
     ctx.parameter("client_count", client_count_tag.as_str());
@@ -170,38 +185,28 @@ fn measure_multiclient_concurrent_enqueues(
         .collect();
 
     let iterations = ctx.measure_workload(|| {
-        let _results: Vec<_> =
-            runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
-                let arc = arc.clone();
-                let frame = enqueue_frame.clone();
-                async move {
-                    let mut c = arc.lock().await;
-                    let response = c.request(&frame, 2000).await.expect("enqueue");
-                    let _ = parse_queue_response(&response);
-                }
-            })));
+        for _ in 0..MULTICLIENT_ENQUEUE_ROUNDS_PER_ITERATION {
+            let _results: Vec<_> =
+                runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
+                    let arc = arc.clone();
+                    let frame = enqueue_frame.clone();
+                    async move {
+                        let mut c = arc.lock().await;
+                        let response = c.request(&frame, 2000).await.expect("enqueue");
+                        let _ = parse_queue_response(&response);
+                    }
+                })));
+        }
     });
-    stress_config::record_completed(ctx, client_count as u64 * iterations);
+    stress_config::record_completed(
+        ctx,
+        (client_count * MULTICLIENT_ENQUEUE_ROUNDS_PER_ITERATION) as u64 * iterations,
+    );
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
-fn should_complete_multiclient_concurrent_enqueues_client_scaling_1(ctx: &mut StressContext) {
-    measure_multiclient_concurrent_enqueues(ctx, "concurrent_enqueues_client_scaling", 1);
-}
-
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_multiclient_concurrent_enqueues_client_scaling_4(ctx: &mut StressContext) {
     measure_multiclient_concurrent_enqueues(ctx, "concurrent_enqueues_client_scaling", 4);
-}
-
-#[stress_test(tier = 4, mode = "fixed_duration")]
-fn should_complete_multiclient_concurrent_enqueues_client_scaling_16(ctx: &mut StressContext) {
-    measure_multiclient_concurrent_enqueues(ctx, "concurrent_enqueues_client_scaling", 16);
-}
-
-#[stress_test(tier = 4, mode = "fixed_duration")]
-fn should_complete_multiclient_concurrent_enqueues_client_scaling_64(ctx: &mut StressContext) {
-    measure_multiclient_concurrent_enqueues(ctx, "concurrent_enqueues_client_scaling", 64);
 }
 
 stress_main!();

@@ -32,6 +32,7 @@ const WORKER_SESSION_ID: u64 = 2;
 const RESPONSE_TIMEOUT_MS: u64 = 2_000;
 const MULTICLIENT_COUNT: usize = 10;
 const MULTICLIENT_REQUEST_FRAME_RING_SIZE: usize = 512;
+const WS_ROUNDTRIPS_PER_ITERATION: usize = 32;
 const TIER4_WORKER_MAX_CONCURRENT: u32 = 32;
 
 struct NetworkRequestFrame {
@@ -604,7 +605,7 @@ fn service_worker(
     }
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_direct_request(ctx: &mut StressContext) {
     ctx.parameter("layer", "direct");
     ctx.parameter("scenario", "request_response");
@@ -640,7 +641,7 @@ fn should_complete_direct_request(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, iterations);
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_encoded_request(ctx: &mut StressContext) {
     ctx.parameter("layer", "encoded");
     ctx.parameter("scenario", "request_response");
@@ -678,7 +679,7 @@ fn should_complete_encoded_request(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, iterations);
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_tcp_request_response(ctx: &mut StressContext) {
     ctx.parameter("layer", "tcp");
     ctx.parameter("scenario", "request_response");
@@ -748,7 +749,7 @@ fn should_complete_tcp_request_response(ctx: &mut StressContext) {
         .expect("shutdown server");
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_ws_request_response(ctx: &mut StressContext) {
     ctx.parameter("layer", "websocket");
     ctx.parameter("scenario", "request_response");
@@ -759,7 +760,12 @@ fn should_complete_ws_request_response(ctx: &mut StressContext) {
     let family = RouteFamily::new(1);
     let subscribe_frame =
         build_rpc_subscribe_with_max_concurrent(SERVICE_ROUTE, TIER4_WORKER_MAX_CONCURRENT);
-    let request_frame = build_network_request_frame(SERVICE_ROUTE, b"ping", family);
+    let request_frames = build_network_request_frame_ring(
+        SERVICE_ROUTE,
+        b"ping",
+        family,
+        MULTICLIENT_REQUEST_FRAME_RING_SIZE,
+    );
 
     let runtime = shared_bench_runtime();
     let server = runtime.block_on(TestServer::start()).expect("start server");
@@ -797,18 +803,27 @@ fn should_complete_ws_request_response(ctx: &mut StressContext) {
         })
     };
 
+    let mut next_request_index = 0usize;
     let iterations = ctx.measure_workload(|| {
-        runtime
-            .block_on(async {
-                tokio::time::timeout(
-                    Duration::from_millis(RESPONSE_TIMEOUT_MS),
-                    request_until_worker_response_ws(&mut requester_client, &request_frame, family),
-                )
-                .await
-            })
-            .expect("rpc websocket response timeout");
+        for _ in 0..WS_ROUNDTRIPS_PER_ITERATION {
+            let request_frame = &request_frames[next_request_index];
+            next_request_index = (next_request_index + 1) % request_frames.len();
+            runtime
+                .block_on(async {
+                    tokio::time::timeout(
+                        Duration::from_millis(RESPONSE_TIMEOUT_MS),
+                        request_until_worker_response_ws(
+                            &mut requester_client,
+                            request_frame,
+                            family,
+                        ),
+                    )
+                    .await
+                })
+                .expect("rpc websocket response timeout");
+        }
     });
-    stress_config::record_completed(ctx, iterations);
+    stress_config::record_completed(ctx, WS_ROUNDTRIPS_PER_ITERATION as u64 * iterations);
 
     worker_handle.abort();
     let _ = runtime.block_on(worker_handle);
@@ -821,17 +836,17 @@ fn should_complete_ws_request_response(ctx: &mut StressContext) {
         .expect("shutdown server");
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_multiclient_concurrent_requests(ctx: &mut StressContext) {
     measure_multiclient_concurrent_requests(ctx, 1, "concurrent_requests");
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_multiclient_concurrent_requests_4_workers(ctx: &mut StressContext) {
     measure_multiclient_concurrent_requests(ctx, 4, "concurrent_requests");
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_multiclient_concurrent_requests_8_workers(ctx: &mut StressContext) {
     measure_multiclient_concurrent_requests(ctx, 8, "concurrent_requests");
 }

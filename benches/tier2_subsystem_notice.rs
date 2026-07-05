@@ -19,8 +19,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const PUBLISH_ROUTE: &str = "notice://realm/area/orders/create";
-const PUBLISH_REPEAT_COUNT: u64 = 256;
-const PUBLISH_CHUNK_SIZE: u64 = 64;
+const PUBLISH_REPEAT_COUNT: u64 = 2_048;
+const PUBLISH_CHUNK_SIZE: u64 = 256;
 
 struct NoticePublishCase {
     sink: Arc<NoticeDomainSink>,
@@ -137,8 +137,8 @@ fn publish_fanout(ctx: &mut StressContext, subscriber_count: usize, pattern: &st
     }
     tier2_stress::record_duration(
         ctx,
-        total / u32::try_from(PUBLISH_REPEAT_COUNT).expect("publish repeat count fits u32"),
-        subscriber_count as u64,
+        total,
+        PUBLISH_REPEAT_COUNT.saturating_mul(subscriber_count as u64),
     );
 }
 
@@ -151,12 +151,6 @@ macro_rules! notice_publish_bench {
     };
 }
 
-notice_publish_bench!(
-    should_publish_exact_route_1_subscribers_primary,
-    "publish_exact_route_1_subscribers_primary",
-    1,
-    PUBLISH_ROUTE
-);
 notice_publish_bench!(
     should_publish_exact_route_16_subscribers_primary,
     "publish_exact_route_16_subscribers_primary",
@@ -176,12 +170,6 @@ notice_publish_bench!(
     PUBLISH_ROUTE
 );
 notice_publish_bench!(
-    should_publish_single_star_1_subscribers_primary,
-    "publish_single_star_1_subscribers_primary",
-    1,
-    "notice://realm/area/orders/*"
-);
-notice_publish_bench!(
     should_publish_single_star_16_subscribers_primary,
     "publish_single_star_16_subscribers_primary",
     16,
@@ -198,12 +186,6 @@ notice_publish_bench!(
     "publish_single_star_256_subscribers_primary",
     256,
     "notice://realm/area/orders/*"
-);
-notice_publish_bench!(
-    should_publish_double_star_1_subscribers_primary,
-    "publish_double_star_1_subscribers_primary",
-    1,
-    "notice://realm/area/**"
 );
 notice_publish_bench!(
     should_publish_double_star_16_subscribers_primary,

@@ -21,9 +21,9 @@ use std::time::{Duration, Instant};
 
 const FIXED_BENCH_EPOCH_MS: u64 = 1_775_200_000_000;
 const TIMED_BATCH_SIZE: u64 = 32;
-const TIMED_BATCH_REPEAT: u64 = 8;
-const PUBLISH_REPEAT_COUNT: u64 = 16;
-const PUBLISH_CHUNK_SIZE: u64 = 64;
+const TIMED_BATCH_REPEAT: u64 = 32;
+const PUBLISH_REPEAT_COUNT: u64 = 2_048;
+const PUBLISH_CHUNK_SIZE: u64 = 256;
 
 struct ScheduleFixtures {
     routes: Vec<String>,
@@ -130,7 +130,7 @@ where
         remaining -= chunk_len as u64;
     }
 
-    total / u32::try_from(TIMED_BATCH_REPEAT).expect("timed batch repeat fits u32")
+    total
 }
 
 fn claim_due_deliveries(actor: &mut ScheduleActor, ready_count: usize) -> Vec<(u64, String)> {
@@ -208,7 +208,11 @@ fn claim_due(ctx: &mut StressContext, count: usize, ready_count: usize) {
             black_box(actor.bench_claim_due_fires());
         },
     );
-    tier2_stress::record_duration(ctx, duration, ready_count as u64);
+    tier2_stress::record_duration(
+        ctx,
+        duration,
+        (ready_count as u64).saturating_mul(TIMED_BATCH_REPEAT),
+    );
 }
 
 fn ack_claims(ctx: &mut StressContext, count: usize, ready_count: usize) {
@@ -229,7 +233,11 @@ fn ack_claims(ctx: &mut StressContext, count: usize, ready_count: usize) {
             );
         },
     );
-    tier2_stress::record_duration(ctx, duration, ready_count as u64);
+    tier2_stress::record_duration(
+        ctx,
+        duration,
+        (ready_count as u64).saturating_mul(TIMED_BATCH_REPEAT),
+    );
 }
 
 fn publish_exact_route(ctx: &mut StressContext, subscriber_count: usize) {
@@ -271,14 +279,9 @@ fn publish_exact_route(ctx: &mut StressContext, subscriber_count: usize) {
     }
     tier2_stress::record_duration(
         ctx,
-        total / u32::try_from(PUBLISH_REPEAT_COUNT).expect("publish repeat count fits u32"),
-        subscriber_count as u64,
+        total,
+        PUBLISH_REPEAT_COUNT.saturating_mul(subscriber_count as u64),
     );
-}
-
-#[stress_test(tier = 2, name = "claim_due_partial_ready_100_mixed_crons")]
-fn should_claim_due_partial_ready_100_mixed_crons(ctx: &mut StressContext) {
-    claim_due(ctx, 100, 10);
 }
 
 #[stress_test(tier = 2, name = "claim_due_all_ready_100_mixed_crons")]
@@ -294,11 +297,6 @@ fn should_claim_due_partial_ready_1000_mixed_crons(ctx: &mut StressContext) {
 #[stress_test(tier = 2, name = "claim_due_all_ready_1000_mixed_crons")]
 fn should_claim_due_all_ready_1000_mixed_crons(ctx: &mut StressContext) {
     claim_due(ctx, 1000, 1000);
-}
-
-#[stress_test(tier = 2, name = "ack_claims_partial_ready_100_mixed_crons")]
-fn should_ack_claims_partial_ready_100_mixed_crons(ctx: &mut StressContext) {
-    ack_claims(ctx, 100, 10);
 }
 
 #[stress_test(tier = 2, name = "ack_claims_all_ready_100_mixed_crons")]

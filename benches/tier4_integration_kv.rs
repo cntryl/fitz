@@ -29,7 +29,9 @@ use fitz::testkit::{TestClient, TestServer, TestWebSocketClient};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+const DIRECT_TRANSACTION_ROUNDS_PER_ITERATION: u64 = 16;
+
+#[stress_test(tier = 4)]
 fn should_complete_direct_begin_put_rollback(ctx: &mut StressContext) {
     ctx.parameter("layer", "direct");
     ctx.parameter("scenario", "transaction_sequence");
@@ -40,32 +42,37 @@ fn should_complete_direct_begin_put_rollback(ctx: &mut StressContext) {
     let mut actor = KvActor::new(store);
 
     let iterations = ctx.measure_workload(|| {
-        let response = actor.handle(KvMessage::Begin {
-            route_family: RouteFamily::new(1),
-            realm: "tier4".to_string(),
-            area: "kv".to_string(),
-            resource: "direct".to_string(),
-            mode: TxMode::ReadWrite,
-            write_options: cntryl_midge::WriteOptions::buffered(),
-        });
-        let fitz::domains::kv::KvResponse::BeginOk { tx_id } = response else {
-            return;
-        };
+        for _ in 0..DIRECT_TRANSACTION_ROUNDS_PER_ITERATION {
+            let response = actor.handle(KvMessage::Begin {
+                route_family: RouteFamily::new(1),
+                realm: "tier4".to_string(),
+                area: "kv".to_string(),
+                resource: "direct".to_string(),
+                mode: TxMode::ReadWrite,
+                write_options: cntryl_midge::WriteOptions::buffered(),
+            });
+            let fitz::domains::kv::KvResponse::BeginOk { tx_id } = response else {
+                panic!("expected direct kv begin success");
+            };
 
-        actor.handle(KvMessage::Put {
-            tx_id,
-            route_family: RouteFamily::new(1),
-            resource: "direct".to_string(),
-            key: Bytes::from_static(b"key1"),
-            value: Bytes::from_static(b"value1"),
-        });
+            actor.handle(KvMessage::Put {
+                tx_id,
+                route_family: RouteFamily::new(1),
+                resource: "direct".to_string(),
+                key: Bytes::from_static(b"key1"),
+                value: Bytes::from_static(b"value1"),
+            });
 
-        actor.handle(KvMessage::Rollback { tx_id });
+            actor.handle(KvMessage::Rollback { tx_id });
+        }
     });
-    stress_config::record_completed(ctx, 3 * iterations); // begin + put + rollback
+    stress_config::record_completed(
+        ctx,
+        3 * DIRECT_TRANSACTION_ROUNDS_PER_ITERATION * iterations,
+    );
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_encoded_begin_put_rollback(ctx: &mut StressContext) {
     ctx.parameter("layer", "encoded");
     ctx.parameter("scenario", "transaction_sequence");
@@ -105,7 +112,7 @@ fn should_complete_encoded_begin_put_rollback(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 3 * iterations);
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_tcp_begin_put_rollback(ctx: &mut StressContext) {
     ctx.parameter("layer", "tcp");
     ctx.parameter("scenario", "transaction_sequence");
@@ -143,7 +150,7 @@ fn should_complete_tcp_begin_put_rollback(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 3 * iterations);
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_ws_begin_put_rollback(ctx: &mut StressContext) {
     ctx.parameter("layer", "websocket");
     ctx.parameter("scenario", "transaction_sequence");
@@ -184,7 +191,7 @@ fn should_complete_ws_begin_put_rollback(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 3 * iterations);
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_multiclient_concurrent_transactions(ctx: &mut StressContext) {
     ctx.parameter("layer", "multiclient");
     ctx.parameter("scenario", "concurrent_transactions");

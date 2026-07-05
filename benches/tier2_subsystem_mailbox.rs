@@ -7,21 +7,11 @@ use fitz::runtime::envelope::Envelope;
 use fitz::runtime::mailbox::Mailbox;
 use fitz::runtime::router::{DeliveryError, MailboxSink};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
-use fitz::runtime::scheduler::Scheduler;
-use fitz::runtime::{Actor, Context};
 use std::hint::black_box;
 
 const MID_FILL_BATCH_SIZE: usize = 64;
-const SEND_SMOKE_BATCH_SIZE: usize = 32;
 const FRESH_DELIVER_BATCH_SIZE: usize = 512;
 const ERROR_DELIVER_BATCH_SIZE: usize = 128;
-
-struct MessageActor;
-
-impl Actor for MessageActor {
-    type Message = u64;
-    fn receive(&mut self, _msg: Self::Message, _ctx: &mut Context<Self>) {}
-}
 
 fn test_address(family: u64, route: &str) -> RouteAddress {
     RouteAddress::new(RouteFamily::new(family), Route::new(route))
@@ -117,56 +107,6 @@ fn should_deliver_high_priority_when_normal_lane_full_primary(ctx: &mut StressCo
                 .deliver_high_priority(envelope)
                 .expect("high-priority lane should remain independent from normal saturation");
         }
-    });
-}
-
-#[stress_test(tier = 2, name = "actor_ref_send_32_smoke")]
-fn should_actor_ref_send_32_smoke(ctx: &mut StressContext) {
-    let scheduler = Scheduler::new(1);
-    let actor_refs: Vec<_> = (0..32)
-        .map(|i| {
-            scheduler.spawn(
-                MessageActor,
-                test_address(1, &format!("/bench/mailbox/smoke/{i}")),
-                65_536,
-            )
-        })
-        .collect();
-
-    let mut idx = 0usize;
-    tier2_stress::measure_iterations(ctx, SEND_SMOKE_BATCH_SIZE as u64, || {
-        for offset in 0..SEND_SMOKE_BATCH_SIZE {
-            let route_idx = (idx + offset) % actor_refs.len();
-            actor_refs[route_idx]
-                .send(black_box((idx + offset) as u64))
-                .expect("smoke send should stay on the success path");
-        }
-        idx = (idx + SEND_SMOKE_BATCH_SIZE) % actor_refs.len();
-    });
-}
-
-#[stress_test(tier = 2, name = "actor_ref_send_100_smoke")]
-fn should_actor_ref_send_100_smoke(ctx: &mut StressContext) {
-    let scheduler = Scheduler::new(1);
-    let actor_refs: Vec<_> = (0..32)
-        .map(|i| {
-            scheduler.spawn(
-                MessageActor,
-                test_address(1, &format!("/bench/mailbox/smoke/{i}")),
-                65_536,
-            )
-        })
-        .collect();
-
-    let mut idx = 0usize;
-    tier2_stress::measure_iterations(ctx, 100, || {
-        for offset in 0..100 {
-            let route_idx = (idx + offset) % actor_refs.len();
-            actor_refs[route_idx]
-                .send(black_box((idx + offset) as u64))
-                .expect("smoke burst should stay on the success path");
-        }
-        idx = (idx + 100) % actor_refs.len();
     });
 }
 

@@ -589,7 +589,7 @@ fn measure_pending_cardinality_steady_state(
     stress_config::record_completed(ctx, per_iteration_cycles * iterations);
 }
 
-#[stress_test(tier = 3, mode = "fixed_duration")]
+#[stress_test(tier = 3)]
 fn should_complete_request_dispatch_sustained(ctx: &mut StressContext) {
     const ITERS: u64 = 1000;
     ctx.parameter("scenario", "sustained_dispatch");
@@ -622,7 +622,7 @@ fn should_complete_request_dispatch_sustained(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, ITERS * iterations);
 }
 
-#[stress_test(tier = 3, mode = "fixed_duration")]
+#[stress_test(tier = 3)]
 fn should_complete_single_response_throughput(ctx: &mut StressContext) {
     const ITERS: u64 = 1000;
     ctx.parameter("scenario", "single_response_throughput");
@@ -655,17 +655,17 @@ fn should_complete_single_response_throughput(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, ITERS * iterations);
 }
 
-#[stress_test(tier = 3, mode = "fixed_duration")]
+#[stress_test(tier = 3)]
 fn should_complete_worker_pool_scaling_64_workers(ctx: &mut StressContext) {
     measure_full_roundtrip_scaling(ctx, 64, 500, "scaling_64_full_roundtrip");
 }
 
-#[stress_test(tier = 3, mode = "fixed_duration")]
+#[stress_test(tier = 3)]
 fn should_complete_worker_pool_scaling_256_workers(ctx: &mut StressContext) {
     measure_full_roundtrip_scaling(ctx, 256, 200, "scaling_256_full_roundtrip");
 }
 
-#[stress_test(tier = 3, mode = "fixed_duration")]
+#[stress_test(tier = 3)]
 fn should_complete_multi_route_worker_pool_scaling_64_routes(ctx: &mut StressContext) {
     measure_multi_route_full_roundtrip_scaling(
         ctx,
@@ -675,17 +675,17 @@ fn should_complete_multi_route_worker_pool_scaling_64_routes(ctx: &mut StressCon
     );
 }
 
-#[stress_test(tier = 3, mode = "fixed_duration")]
+#[stress_test(tier = 3)]
 fn should_complete_worker_pool_dispatch_only_scaling_64_workers(ctx: &mut StressContext) {
     measure_dispatch_only_scaling(ctx, 64, 500, "scaling_64_dispatch_only");
 }
 
-#[stress_test(tier = 3, mode = "fixed_duration")]
+#[stress_test(tier = 3)]
 fn should_complete_worker_pool_dispatch_only_scaling_256_workers(ctx: &mut StressContext) {
     measure_dispatch_only_scaling(ctx, 256, 200, "scaling_256_dispatch_only");
 }
 
-#[stress_test(tier = 3, mode = "fixed_duration")]
+#[stress_test(tier = 3)]
 fn should_complete_multi_route_worker_pool_dispatch_only_scaling_64_routes(
     ctx: &mut StressContext,
 ) {
@@ -697,27 +697,27 @@ fn should_complete_multi_route_worker_pool_dispatch_only_scaling_64_routes(
     );
 }
 
-#[stress_test(tier = 3, mode = "fixed_duration")]
+#[stress_test(tier = 3)]
 fn should_complete_pending_cardinality_steady_state_1(ctx: &mut StressContext) {
     measure_pending_cardinality_steady_state(ctx, 1, 100);
 }
 
-#[stress_test(tier = 3, mode = "fixed_duration")]
+#[stress_test(tier = 3)]
 fn should_complete_pending_cardinality_steady_state_64(ctx: &mut StressContext) {
     measure_pending_cardinality_steady_state(ctx, 64, 100);
 }
 
-#[stress_test(tier = 3, mode = "fixed_duration")]
+#[stress_test(tier = 3)]
 fn should_complete_pending_cardinality_steady_state_256(ctx: &mut StressContext) {
     measure_pending_cardinality_steady_state(ctx, 256, 100);
 }
 
-#[stress_test(tier = 3, mode = "fixed_duration")]
+#[stress_test(tier = 3)]
 fn should_complete_pending_cardinality_steady_state_1000(ctx: &mut StressContext) {
     measure_pending_cardinality_steady_state(ctx, 1000, 100);
 }
 
-#[stress_test(tier = 3, mode = "fixed_duration")]
+#[stress_test(tier = 3)]
 fn should_complete_steady_state_request_tracking(ctx: &mut StressContext) {
     const ITERS: u64 = 1000;
     ctx.parameter("scenario", "steady_state_tracking");
@@ -750,7 +750,7 @@ fn should_complete_steady_state_request_tracking(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, ITERS * iterations);
 }
 
-#[stress_test(tier = 3, mode = "fixed_duration")]
+#[stress_test(tier = 3)]
 fn should_complete_short_roundtrip_batch(ctx: &mut StressContext) {
     ctx.parameter("scenario", "short_roundtrip_batch");
     ctx.parameter("measurement_scope", "routed_system");

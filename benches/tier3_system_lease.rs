@@ -144,7 +144,7 @@ fn acquire_token(
     parse_lease_token_response(response.as_ref()).expect("lease token")
 }
 
-#[stress_test(tier = 3, mode = "fixed_duration")]
+#[stress_test(tier = 3)]
 fn should_complete_acquire_release_sequence(ctx: &mut StressContext) {
     ctx.parameter("scenario", "single_route_intensive");
     ctx.parameter("measurement_scope", "routed_system");
@@ -176,7 +176,7 @@ fn should_complete_acquire_release_sequence(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 2 * iterations);
 }
 
-#[stress_test(tier = 3, mode = "fixed_duration")]
+#[stress_test(tier = 3)]
 fn should_complete_alternate_renew_operations(ctx: &mut StressContext) {
     ctx.parameter("scenario", "dual_route_concurrent");
     ctx.parameter("measurement_scope", "routed_system");
@@ -234,7 +234,7 @@ fn should_complete_alternate_renew_operations(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, iterations);
 }
 
-#[stress_test(tier = 3, mode = "fixed_duration")]
+#[stress_test(tier = 3)]
 fn should_complete_round_robin_query_operations(ctx: &mut StressContext) {
     ctx.parameter("scenario", "triple_route_contention");
     ctx.parameter("measurement_scope", "routed_system");
@@ -285,7 +285,7 @@ fn should_complete_round_robin_query_operations(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, iterations * batch_size);
 }
 
-#[stress_test(tier = 3, mode = "fixed_duration")]
+#[stress_test(tier = 3)]
 fn should_complete_cycling_query_renew_operations(ctx: &mut StressContext) {
     ctx.parameter("scenario", "mixed_operations_high_load");
     ctx.parameter("measurement_scope", "routed_system");

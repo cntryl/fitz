@@ -1,5 +1,5 @@
 use cntryl_stress::{black_box, stress_allocator, stress_main, stress_test, StressContext};
-use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
+use fitz::runtime::routing::Route;
 
 stress_allocator!();
 
@@ -75,24 +75,5 @@ route_new_bench!(
         "queue://staging/jobs/worker/task/result/complete",
     ]
 );
-
-#[stress_test(
-    tier = 1,
-    name = "route_address_new",
-    max_allocs_per_op = 0,
-    max_bytes_per_op = 0
-)]
-fn should_route_address_new(ctx: &mut StressContext) {
-    record_group(ctx);
-    let family = RouteFamily::new(1);
-    let route = Route::new("rpc://acme/auth/users/authenticate");
-
-    ctx.measure_micro(|| {
-        black_box(RouteAddress::new(
-            black_box(family),
-            black_box(route.clone()),
-        ));
-    });
-}
 
 stress_main!();

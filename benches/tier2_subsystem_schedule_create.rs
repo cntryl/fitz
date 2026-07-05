@@ -15,6 +15,7 @@ use std::hint::black_box;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const CREATE_BATCH_SIZE: usize = 32;
+const STORE_INSERT_CASE_COUNT: usize = 16;
 const ROUTE_RING_SIZE: usize = 1024;
 const PAYLOAD_SIZE: usize = 32;
 const ACTOR_CREATE_REPEAT_COUNT: u64 = 8;
@@ -169,29 +170,37 @@ fn should_next_fire_daily_32(ctx: &mut StressContext) {
 #[stress_test(tier = 2, name = "store_insert_unique_inmemory_32")]
 fn should_store_insert_unique_inmemory_32(ctx: &mut StressContext) {
     let fixtures = create_fixtures();
-    let case = create_store_insert_case(&fixtures);
+    let cases = (0..STORE_INSERT_CASE_COUNT)
+        .map(|_| create_store_insert_case(&fixtures))
+        .collect::<Vec<_>>();
 
-    tier2_stress::measure_once(ctx, usize_to_u64_saturating(CREATE_BATCH_SIZE), || {
-        for index in 0..CREATE_BATCH_SIZE {
-            black_box(
-                case.store
-                    .insert(
-                        1,
-                        ScheduleInsert {
-                            route: &case.routes[index],
-                            cron: &case.cron,
-                            payload: &case.payloads[index],
-                            next_fire_ms: case.next_fire_ms,
-                            previous_fire_ms: None,
-                            last_fire_ms: None,
-                            executions_total: 0,
-                        },
-                        cntryl_midge::WriteOptions::buffered(),
-                    )
-                    .expect("schedule insert"),
-            );
-        }
-    });
+    tier2_stress::measure_once(
+        ctx,
+        usize_to_u64_saturating(CREATE_BATCH_SIZE * STORE_INSERT_CASE_COUNT),
+        || {
+            for case in &cases {
+                for index in 0..CREATE_BATCH_SIZE {
+                    black_box(
+                        case.store
+                            .insert(
+                                1,
+                                ScheduleInsert {
+                                    route: &case.routes[index],
+                                    cron: &case.cron,
+                                    payload: &case.payloads[index],
+                                    next_fire_ms: case.next_fire_ms,
+                                    previous_fire_ms: None,
+                                    last_fire_ms: None,
+                                    executions_total: 0,
+                                },
+                                cntryl_midge::WriteOptions::buffered(),
+                            )
+                            .expect("schedule insert"),
+                    );
+                }
+            }
+        },
+    );
 }
 
 #[stress_test(tier = 2, name = "store_insert_batch_unique_inmemory_32")]

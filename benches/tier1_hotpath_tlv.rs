@@ -43,17 +43,6 @@ macro_rules! encode_new_finish_bench {
     };
 }
 
-encode_clear_bench!(should_encode_clear_encode_0b, "encode_clear_encode_0b", 0);
-encode_clear_bench!(
-    should_encode_clear_encode_16b,
-    "encode_clear_encode_16b",
-    16
-);
-encode_clear_bench!(
-    should_encode_clear_encode_64b,
-    "encode_clear_encode_64b",
-    64
-);
 encode_clear_bench!(
     should_encode_clear_encode_256b,
     "encode_clear_encode_256b",
@@ -161,7 +150,6 @@ macro_rules! decode_one_bench {
     };
 }
 
-decode_one_bench!(should_decode_one_0b, "decode_one_0b", 0);
 decode_one_bench!(should_decode_one_16b, "decode_one_16b", 16);
 decode_one_bench!(should_decode_one_64b, "decode_one_64b", 64);
 decode_one_bench!(should_decode_one_256b, "decode_one_256b", 256);

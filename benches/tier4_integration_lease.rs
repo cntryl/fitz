@@ -59,7 +59,7 @@ fn close_ws_clients(
     });
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_direct_acquire_release(ctx: &mut StressContext) {
     ctx.parameter("layer", "direct");
     ctx.parameter("scenario", "acquire_release");
@@ -110,7 +110,7 @@ fn should_complete_direct_acquire_release(ctx: &mut StressContext) {
     stress_config::record_completed(ctx, 2 * iterations);
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_tcp_acquire_release(ctx: &mut StressContext) {
     ctx.parameter("layer", "tcp");
     ctx.parameter("scenario", "acquire_release");
@@ -142,7 +142,7 @@ fn should_complete_tcp_acquire_release(ctx: &mut StressContext) {
     shutdown_lease_test_server(runtime, server);
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_ws_acquire_release(ctx: &mut StressContext) {
     ctx.parameter("layer", "websocket");
     ctx.parameter("scenario", "acquire_release");
@@ -177,7 +177,7 @@ fn should_complete_ws_acquire_release(ctx: &mut StressContext) {
     shutdown_lease_test_server(runtime, server);
 }
 
-#[stress_test(tier = 4, mode = "fixed_duration")]
+#[stress_test(tier = 4)]
 fn should_complete_multiclient_acquire_release(ctx: &mut StressContext) {
     ctx.parameter("layer", "multiclient");
     ctx.parameter("scenario", "concurrent_acquire_release");
