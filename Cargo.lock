@@ -373,7 +373,7 @@ dependencies = [
 [[package]]
 name = "cntryl-stress"
 version = "0.3.0"
-source = "git+https://github.com/cntryl/stress?branch=main#04f40fa0326598d8cd3a587e55f684d215925697"
+source = "git+https://github.com/cntryl/stress?branch=main#2cc6d6121412b80cc2e83aa96cb722d7fbd0d15b"
 dependencies = [
  "cntryl-stress-macros",
  "linkme",
@@ -384,7 +384,7 @@ dependencies = [
 [[package]]
 name = "cntryl-stress-macros"
 version = "0.3.0"
-source = "git+https://github.com/cntryl/stress?branch=main#04f40fa0326598d8cd3a587e55f684d215925697"
+source = "git+https://github.com/cntryl/stress?branch=main#2cc6d6121412b80cc2e83aa96cb722d7fbd0d15b"
 dependencies = [
  "proc-macro2",
  "quote",
