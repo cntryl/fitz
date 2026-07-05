@@ -35,7 +35,7 @@ fn prefill_normal_lane(mailbox: &Mailbox, address: &RouteAddress, count: usize) 
     }
 }
 
-#[stress_test(tier = 2, mode = "fixed_duration", name = "deliver_empty_primary")]
+#[stress_test(tier = 2, name = "deliver_empty_primary")]
 fn should_deliver_empty_primary(ctx: &mut StressContext) {
     let empty_address = test_address(1, "/bench/mailbox/primary/empty");
 
@@ -57,11 +57,7 @@ fn should_deliver_empty_primary(ctx: &mut StressContext) {
     });
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "deliver_mid_fill_64_primary"
-)]
+#[stress_test(tier = 2, name = "deliver_mid_fill_64_primary")]
 fn should_deliver_mid_fill_64_primary(ctx: &mut StressContext) {
     let mid_fill_address = test_address(1, "/bench/mailbox/primary/mid-fill");
     let items = (0..MID_FILL_BATCH_SIZE)
@@ -81,7 +77,7 @@ fn should_deliver_mid_fill_64_primary(ctx: &mut StressContext) {
     });
 }
 
-#[stress_test(tier = 2, mode = "fixed_duration", name = "deliver_full_primary")]
+#[stress_test(tier = 2, name = "deliver_full_primary")]
 fn should_deliver_full_primary(ctx: &mut StressContext) {
     let full_address = test_address(1, "/bench/mailbox/primary/full");
     let items = (0..ERROR_DELIVER_BATCH_SIZE)
@@ -104,11 +100,7 @@ fn should_deliver_full_primary(ctx: &mut StressContext) {
     });
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "deliver_high_priority_when_normal_lane_full_primary"
-)]
+#[stress_test(tier = 2, name = "deliver_high_priority_when_normal_lane_full_primary")]
 fn should_deliver_high_priority_when_normal_lane_full_primary(ctx: &mut StressContext) {
     let high_priority_address = test_address(1, "/bench/mailbox/primary/high-priority");
     let items = (0..ERROR_DELIVER_BATCH_SIZE)
@@ -128,7 +120,7 @@ fn should_deliver_high_priority_when_normal_lane_full_primary(ctx: &mut StressCo
     });
 }
 
-#[stress_test(tier = 2, mode = "fixed_duration", name = "actor_ref_send_32_smoke")]
+#[stress_test(tier = 2, name = "actor_ref_send_32_smoke")]
 fn should_actor_ref_send_32_smoke(ctx: &mut StressContext) {
     let scheduler = Scheduler::new(1);
     let actor_refs: Vec<_> = (0..32)
@@ -153,7 +145,7 @@ fn should_actor_ref_send_32_smoke(ctx: &mut StressContext) {
     });
 }
 
-#[stress_test(tier = 2, mode = "fixed_duration", name = "actor_ref_send_100_smoke")]
+#[stress_test(tier = 2, name = "actor_ref_send_100_smoke")]
 fn should_actor_ref_send_100_smoke(ctx: &mut StressContext) {
     let scheduler = Scheduler::new(1);
     let actor_refs: Vec<_> = (0..32)

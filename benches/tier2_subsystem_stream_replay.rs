@@ -3192,11 +3192,7 @@ fn production_like_realm_case() -> ReplayCase {
     case
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "covering_resource_replay_128_records_1_stream"
-)]
+#[stress_test(tier = 2, name = "covering_resource_replay_128_records_1_stream")]
 fn should_covering_resource_replay_128_records_1_stream(ctx: &mut StressContext) {
     let (case, stream, expected) = low_entropy_resource_case();
     measure_replay_once(ctx, usize_to_u64_saturating(expected), || {
@@ -3204,11 +3200,7 @@ fn should_covering_resource_replay_128_records_1_stream(ctx: &mut StressContext)
     });
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "resource_mini_page_replay_128_records_1_stream"
-)]
+#[stress_test(tier = 2, name = "resource_mini_page_replay_128_records_1_stream")]
 fn should_resource_mini_page_replay_128_records_1_stream(ctx: &mut StressContext) {
     let (case, stream, expected) = low_entropy_resource_case();
     measure_replay_once(ctx, usize_to_u64_saturating(expected), || {
@@ -3216,11 +3208,7 @@ fn should_resource_mini_page_replay_128_records_1_stream(ctx: &mut StressContext
     });
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "area_page_ref_resource_replay_128_records_1_stream"
-)]
+#[stress_test(tier = 2, name = "area_page_ref_resource_replay_128_records_1_stream")]
 fn should_area_page_ref_resource_replay_128_records_1_stream(ctx: &mut StressContext) {
     let (case, stream, expected) = low_entropy_resource_case();
     measure_replay_once(ctx, usize_to_u64_saturating(expected), || {
@@ -3231,7 +3219,6 @@ fn should_area_page_ref_resource_replay_128_records_1_stream(ctx: &mut StressCon
 
 #[stress_test(
     tier = 2,
-    mode = "fixed_duration",
     name = "area_page_ref_scanned_resource_replay_128_records_1_stream"
 )]
 fn should_area_page_ref_scanned_resource_replay_128_records_1_stream(ctx: &mut StressContext) {
@@ -3244,7 +3231,6 @@ fn should_area_page_ref_scanned_resource_replay_128_records_1_stream(ctx: &mut S
 
 #[stress_test(
     tier = 2,
-    mode = "fixed_duration",
     name = "covering_resource_replay_128_records_1_stream_production_like"
 )]
 fn should_covering_resource_replay_128_records_1_stream_production_like(ctx: &mut StressContext) {
@@ -3257,7 +3243,6 @@ fn should_covering_resource_replay_128_records_1_stream_production_like(ctx: &mu
 
 #[stress_test(
     tier = 2,
-    mode = "fixed_duration",
     name = "resource_mini_page_replay_128_records_1_stream_production_like_x32_reads"
 )]
 fn should_resource_mini_page_replay_128_records_1_stream_production_like_x32_reads(
@@ -3270,11 +3255,7 @@ fn should_resource_mini_page_replay_128_records_1_stream_production_like_x32_rea
     });
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "covering_area_replay_2048_records_16_streams"
-)]
+#[stress_test(tier = 2, name = "covering_area_replay_2048_records_16_streams")]
 fn should_covering_area_replay_2048_records_16_streams(ctx: &mut StressContext) {
     let (case, area) = low_entropy_area_case();
     measure_replay_once(ctx, usize_to_u64_saturating(case.expected_records), || {
@@ -3291,11 +3272,7 @@ fn should_covering_area_replay_2048_records_16_streams(ctx: &mut StressContext) 
     });
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "hydrated_area_replay_2048_records_16_streams"
-)]
+#[stress_test(tier = 2, name = "hydrated_area_replay_2048_records_16_streams")]
 fn should_hydrated_area_replay_2048_records_16_streams(ctx: &mut StressContext) {
     let (case, area) = low_entropy_area_case();
     measure_replay_once(ctx, usize_to_u64_saturating(case.expected_records), || {
@@ -3303,11 +3280,7 @@ fn should_hydrated_area_replay_2048_records_16_streams(ctx: &mut StressContext) 
     });
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "paged_area_replay_2048_records_16_streams"
-)]
+#[stress_test(tier = 2, name = "paged_area_replay_2048_records_16_streams")]
 fn should_paged_area_replay_2048_records_16_streams(ctx: &mut StressContext) {
     let (case, area) = low_entropy_area_case();
     measure_replay_once(ctx, usize_to_u64_saturating(case.expected_records), || {
@@ -3315,11 +3288,7 @@ fn should_paged_area_replay_2048_records_16_streams(ctx: &mut StressContext) {
     });
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "compact_paged_area_replay_2048_records_16_streams"
-)]
+#[stress_test(tier = 2, name = "compact_paged_area_replay_2048_records_16_streams")]
 fn should_compact_paged_area_replay_2048_records_16_streams(ctx: &mut StressContext) {
     let (case, area) = low_entropy_area_case();
     measure_replay_once(ctx, usize_to_u64_saturating(case.expected_records), || {
@@ -3327,11 +3296,7 @@ fn should_compact_paged_area_replay_2048_records_16_streams(ctx: &mut StressCont
     });
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "covering_realm_replay_2048_records_32_streams"
-)]
+#[stress_test(tier = 2, name = "covering_realm_replay_2048_records_32_streams")]
 fn should_covering_realm_replay_2048_records_32_streams(ctx: &mut StressContext) {
     let case = low_entropy_realm_case();
     measure_replay_once(ctx, usize_to_u64_saturating(case.expected_records), || {
@@ -3347,11 +3312,7 @@ fn should_covering_realm_replay_2048_records_32_streams(ctx: &mut StressContext)
     });
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "hydrated_realm_replay_2048_records_32_streams"
-)]
+#[stress_test(tier = 2, name = "hydrated_realm_replay_2048_records_32_streams")]
 fn should_hydrated_realm_replay_2048_records_32_streams(ctx: &mut StressContext) {
     let case = low_entropy_realm_case();
     measure_replay_once(ctx, usize_to_u64_saturating(case.expected_records), || {
@@ -3359,11 +3320,7 @@ fn should_hydrated_realm_replay_2048_records_32_streams(ctx: &mut StressContext)
     });
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "paged_realm_replay_2048_records_32_streams"
-)]
+#[stress_test(tier = 2, name = "paged_realm_replay_2048_records_32_streams")]
 fn should_paged_realm_replay_2048_records_32_streams(ctx: &mut StressContext) {
     let case = low_entropy_realm_case();
     measure_replay_once(ctx, usize_to_u64_saturating(case.expected_records), || {
@@ -3373,7 +3330,6 @@ fn should_paged_realm_replay_2048_records_32_streams(ctx: &mut StressContext) {
 
 #[stress_test(
     tier = 2,
-    mode = "fixed_duration",
     name = "compact_paged_realm_replay_2048_records_32_streams_x32_reads"
 )]
 fn should_compact_paged_realm_replay_2048_records_32_streams_x32_reads(ctx: &mut StressContext) {
@@ -3385,7 +3341,6 @@ fn should_compact_paged_realm_replay_2048_records_32_streams_x32_reads(ctx: &mut
 
 #[stress_test(
     tier = 2,
-    mode = "fixed_duration",
     name = "compressed_compact_paged_realm_replay_2048_records_32_streams_x32_reads"
 )]
 fn should_compressed_compact_paged_realm_replay_2048_records_32_streams_x32_reads(
@@ -3399,7 +3354,6 @@ fn should_compressed_compact_paged_realm_replay_2048_records_32_streams_x32_read
 
 #[stress_test(
     tier = 2,
-    mode = "fixed_duration",
     name = "covering_realm_replay_2048_records_32_streams_high_entropy"
 )]
 fn should_covering_realm_replay_2048_records_32_streams_high_entropy(ctx: &mut StressContext) {
@@ -3419,7 +3373,6 @@ fn should_covering_realm_replay_2048_records_32_streams_high_entropy(ctx: &mut S
 
 #[stress_test(
     tier = 2,
-    mode = "fixed_duration",
     name = "compact_paged_realm_replay_2048_records_32_streams_high_entropy_x32_reads"
 )]
 fn should_compact_paged_realm_replay_2048_records_32_streams_high_entropy_x32_reads(
@@ -3433,7 +3386,6 @@ fn should_compact_paged_realm_replay_2048_records_32_streams_high_entropy_x32_re
 
 #[stress_test(
     tier = 2,
-    mode = "fixed_duration",
     name = "compressed_compact_paged_realm_replay_2048_records_32_streams_high_entropy"
 )]
 fn should_compressed_compact_paged_realm_replay_2048_records_32_streams_high_entropy(
@@ -3447,7 +3399,6 @@ fn should_compressed_compact_paged_realm_replay_2048_records_32_streams_high_ent
 
 #[stress_test(
     tier = 2,
-    mode = "fixed_duration",
     name = "covering_realm_replay_2048_records_32_streams_production_like"
 )]
 fn should_covering_realm_replay_2048_records_32_streams_production_like(ctx: &mut StressContext) {
@@ -3467,7 +3418,6 @@ fn should_covering_realm_replay_2048_records_32_streams_production_like(ctx: &mu
 
 #[stress_test(
     tier = 2,
-    mode = "fixed_duration",
     name = "compact_paged_realm_replay_2048_records_32_streams_production_like_x32_reads"
 )]
 fn should_compact_paged_realm_replay_2048_records_32_streams_production_like_x32_reads(
@@ -3481,7 +3431,6 @@ fn should_compact_paged_realm_replay_2048_records_32_streams_production_like_x32
 
 #[stress_test(
     tier = 2,
-    mode = "fixed_duration",
     name = "compressed_compact_paged_realm_replay_2048_records_32_streams_production_like_x32_reads"
 )]
 fn should_compressed_compact_paged_realm_replay_2048_records_32_streams_production_like_x32_reads(
@@ -3495,7 +3444,7 @@ fn should_compressed_compact_paged_realm_replay_2048_records_32_streams_producti
 
 macro_rules! low_realm_once_bench {
     ($fn_name:ident, $stress_name:literal, $read:expr) => {
-        #[stress_test(tier = 2, mode = "fixed_duration", name = $stress_name)]
+        #[stress_test(tier = 2, name = $stress_name)]
         fn $fn_name(ctx: &mut StressContext) {
             let case = low_entropy_realm_case();
             measure_replay_once(ctx, usize_to_u64_saturating(case.expected_records), || {

@@ -129,22 +129,22 @@ fn insert_single_pattern(ctx: &mut StressContext, pattern: &Route) {
     });
 }
 
-#[stress_test(tier = 2, mode = "fixed_duration", name = "exact_pattern")]
+#[stress_test(tier = 2, name = "exact_pattern")]
 fn should_insert_exact_pattern(ctx: &mut StressContext) {
     insert_single_pattern(ctx, &Route::new("notify://realm/orders/create"));
 }
 
-#[stress_test(tier = 2, mode = "fixed_duration", name = "single_star_pattern")]
+#[stress_test(tier = 2, name = "single_star_pattern")]
 fn should_insert_single_star_pattern(ctx: &mut StressContext) {
     insert_single_pattern(ctx, &Route::new("notify://realm/orders/*"));
 }
 
-#[stress_test(tier = 2, mode = "fixed_duration", name = "double_star_pattern")]
+#[stress_test(tier = 2, name = "double_star_pattern")]
 fn should_insert_double_star_pattern(ctx: &mut StressContext) {
     insert_single_pattern(ctx, &Route::new("notify://realm/**/created"));
 }
 
-#[stress_test(tier = 2, mode = "fixed_duration", name = "exact")]
+#[stress_test(tier = 2, name = "exact")]
 fn should_match_exact(ctx: &mut StressContext) {
     let index = make_subscriptions_with_patterns(100);
     let family = RouteFamily::new(1);
@@ -154,7 +154,7 @@ fn should_match_exact(ctx: &mut StressContext) {
     });
 }
 
-#[stress_test(tier = 2, mode = "fixed_duration", name = "single_star")]
+#[stress_test(tier = 2, name = "single_star")]
 fn should_match_single_star(ctx: &mut StressContext) {
     let index = make_subscriptions_with_patterns(100);
     let family = RouteFamily::new(1);
@@ -164,7 +164,7 @@ fn should_match_single_star(ctx: &mut StressContext) {
     });
 }
 
-#[stress_test(tier = 2, mode = "fixed_duration", name = "double_star")]
+#[stress_test(tier = 2, name = "double_star")]
 fn should_match_double_star(ctx: &mut StressContext) {
     let index = make_subscriptions_with_patterns(100);
     let family = RouteFamily::new(1);
@@ -174,7 +174,7 @@ fn should_match_double_star(ctx: &mut StressContext) {
     });
 }
 
-#[stress_test(tier = 2, mode = "fixed_duration", name = "10k_subs_1_match")]
+#[stress_test(tier = 2, name = "10k_subs_1_match")]
 fn should_match_10k_subs_1_match(ctx: &mut StressContext) {
     let (index, route, family) = make_index_fanout_sparse(10000);
     tier2_stress::measure_iterations(ctx, 1, || {
@@ -182,7 +182,7 @@ fn should_match_10k_subs_1_match(ctx: &mut StressContext) {
     });
 }
 
-#[stress_test(tier = 2, mode = "fixed_duration", name = "10k_subs_10k_matches")]
+#[stress_test(tier = 2, name = "10k_subs_10k_matches")]
 fn should_match_10k_subs_10k_matches(ctx: &mut StressContext) {
     let (index, route, family) = make_index_fanout_dense(10000);
     tier2_stress::measure_iterations(ctx, 1, || {
@@ -197,22 +197,22 @@ fn match_depth(ctx: &mut StressContext, depth: usize) {
     });
 }
 
-#[stress_test(tier = 2, mode = "fixed_duration", name = "depth_3")]
+#[stress_test(tier = 2, name = "depth_3")]
 fn should_match_depth_3(ctx: &mut StressContext) {
     match_depth(ctx, 3);
 }
 
-#[stress_test(tier = 2, mode = "fixed_duration", name = "depth_5")]
+#[stress_test(tier = 2, name = "depth_5")]
 fn should_match_depth_5(ctx: &mut StressContext) {
     match_depth(ctx, 5);
 }
 
-#[stress_test(tier = 2, mode = "fixed_duration", name = "depth_10")]
+#[stress_test(tier = 2, name = "depth_10")]
 fn should_match_depth_10(ctx: &mut StressContext) {
     match_depth(ctx, 10);
 }
 
-#[stress_test(tier = 2, mode = "fixed_duration", name = "remove_from_index")]
+#[stress_test(tier = 2, name = "remove_from_index")]
 fn should_remove_from_index(ctx: &mut StressContext) {
     let family = RouteFamily::new(1);
     let pattern = Route::new("notify://realm/orders/*");
@@ -231,7 +231,7 @@ fn should_remove_from_index(ctx: &mut StressContext) {
     });
 }
 
-#[stress_test(tier = 2, mode = "fixed_duration", name = "insert_100_match_2")]
+#[stress_test(tier = 2, name = "insert_100_match_2")]
 fn should_insert_100_match_2(ctx: &mut StressContext) {
     let family = RouteFamily::new(1);
     let routes = vec![
@@ -259,7 +259,7 @@ fn should_insert_100_match_2(ctx: &mut StressContext) {
     });
 }
 
-#[stress_test(tier = 2, mode = "fixed_duration", name = "replace_100_patterns")]
+#[stress_test(tier = 2, name = "replace_100_patterns")]
 fn should_replace_100_patterns(ctx: &mut StressContext) {
     let family = RouteFamily::new(1);
     let old_batch = make_subscription_batch(100, 0);
@@ -275,11 +275,7 @@ fn should_replace_100_patterns(ctx: &mut StressContext) {
     });
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "replace_100_patterns_then_dense_match"
-)]
+#[stress_test(tier = 2, name = "replace_100_patterns_then_dense_match")]
 fn should_replace_100_patterns_then_dense_match(ctx: &mut StressContext) {
     let family = RouteFamily::new(1);
     let old_batch = make_dense_match_batch(100, 0);

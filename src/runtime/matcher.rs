@@ -32,7 +32,7 @@
 use crate::runtime::routing::Route;
 use smallvec::SmallVec;
 
-type RouteSegments<'a> = SmallVec<[&'a str; 8]>;
+type RouteSegments<'a> = SmallVec<[&'a str; 16]>;
 
 /// Wildcard pattern for route subscriptions
 ///

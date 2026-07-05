@@ -42,7 +42,7 @@ fn make_exact_router(count: usize, sink: &Arc<dyn MailboxSink>) -> (Router, Vec<
     (router, addresses)
 }
 
-#[stress_test(tier = 2, mode = "fixed_duration", name = "route_exact_noop_primary")]
+#[stress_test(tier = 2, name = "route_exact_noop_primary")]
 fn should_route_exact_noop_primary(ctx: &mut StressContext) {
     let sink: Arc<dyn MailboxSink> = Arc::new(NoopSink);
     let (router, addresses) = make_exact_router(1, &sink);
@@ -57,11 +57,7 @@ fn should_route_exact_noop_primary(ctx: &mut StressContext) {
     });
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "route_domain_fallback_noop_primary"
-)]
+#[stress_test(tier = 2, name = "route_domain_fallback_noop_primary")]
 fn should_route_domain_fallback_noop_primary(ctx: &mut StressContext) {
     let router = Router::new();
     router.register_domain_pattern("rpc", Arc::new(NoopSink));
@@ -91,38 +87,22 @@ fn route_batch_exact(ctx: &mut StressContext, route_count: usize) {
     });
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "route_batch_exact_16_noop_primary"
-)]
+#[stress_test(tier = 2, name = "route_batch_exact_16_noop_primary")]
 fn should_route_batch_exact_16_noop_primary(ctx: &mut StressContext) {
     route_batch_exact(ctx, 16);
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "route_batch_exact_64_noop_primary"
-)]
+#[stress_test(tier = 2, name = "route_batch_exact_64_noop_primary")]
 fn should_route_batch_exact_64_noop_primary(ctx: &mut StressContext) {
     route_batch_exact(ctx, 64);
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "route_batch_exact_1024_noop_primary"
-)]
+#[stress_test(tier = 2, name = "route_batch_exact_1024_noop_primary")]
 fn should_route_batch_exact_1024_noop_primary(ctx: &mut StressContext) {
     route_batch_exact(ctx, 1024);
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "route_exact_mailbox_256_messages_primary"
-)]
+#[stress_test(tier = 2, name = "route_exact_mailbox_256_messages_primary")]
 fn should_route_exact_mailbox_256_messages_primary(ctx: &mut StressContext) {
     let router = Router::new();
     let address = test_address(1, "rpc://acme/router/mailbox/target");
@@ -144,11 +124,7 @@ fn should_route_exact_mailbox_256_messages_primary(ctx: &mut StressContext) {
     });
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "route_exact_backpressure_mailbox_primary"
-)]
+#[stress_test(tier = 2, name = "route_exact_backpressure_mailbox_primary")]
 fn should_route_exact_backpressure_mailbox_primary(ctx: &mut StressContext) {
     let items = (0..BACKPRESSURE_BATCH_SIZE)
         .map(|_| {

@@ -475,11 +475,7 @@ fn prepare_timeout_sweep_batch_case(expired_pending: usize) -> PreparedTimeoutSw
     PreparedTimeoutSweepBatchCase { cases }
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "worker_subscribe_2048_sessions_primary"
-)]
+#[stress_test(tier = 2, name = "worker_subscribe_2048_sessions_primary")]
 fn should_worker_subscribe_2048_sessions_primary(ctx: &mut StressContext) {
     let case = prepare_worker_subscribe_case();
     let start = Instant::now();
@@ -678,7 +674,6 @@ fn dispatch_timeout_sweep(ctx: &mut StressContext, expired_pending: usize) {
 
 #[stress_test(
     tier = 2,
-    mode = "fixed_duration",
     name = "dispatch_response_cleanup_1024_ops_1_workers_primary"
 )]
 fn should_dispatch_response_cleanup_1024_ops_1_workers_primary(ctx: &mut StressContext) {
@@ -687,7 +682,6 @@ fn should_dispatch_response_cleanup_1024_ops_1_workers_primary(ctx: &mut StressC
 
 #[stress_test(
     tier = 2,
-    mode = "fixed_duration",
     name = "dispatch_response_cleanup_1024_ops_64_workers_primary"
 )]
 fn should_dispatch_response_cleanup_1024_ops_64_workers_primary(ctx: &mut StressContext) {
@@ -696,7 +690,6 @@ fn should_dispatch_response_cleanup_1024_ops_64_workers_primary(ctx: &mut Stress
 
 #[stress_test(
     tier = 2,
-    mode = "fixed_duration",
     name = "dispatch_response_cleanup_1024_ops_256_workers_primary"
 )]
 fn should_dispatch_response_cleanup_1024_ops_256_workers_primary(ctx: &mut StressContext) {
@@ -705,25 +698,19 @@ fn should_dispatch_response_cleanup_1024_ops_256_workers_primary(ctx: &mut Stres
 
 #[stress_test(
     tier = 2,
-    mode = "fixed_duration",
     name = "dispatch_response_cleanup_1024_ops_64_routes_primary"
 )]
 fn should_dispatch_response_cleanup_1024_ops_64_routes_primary(ctx: &mut StressContext) {
     dispatch_response_cleanup_routes(ctx);
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "response_forward_512_pending_primary"
-)]
+#[stress_test(tier = 2, name = "response_forward_512_pending_primary")]
 fn should_response_forward_512_pending_primary(ctx: &mut StressContext) {
     response_forward(ctx);
 }
 
 #[stress_test(
     tier = 2,
-    mode = "fixed_duration",
     name = "response_forward_stream_128_workers_4_chunks_x8_routes_primary"
 )]
 fn should_response_forward_stream_128_workers_4_chunks_x8_routes_primary(ctx: &mut StressContext) {
@@ -732,7 +719,6 @@ fn should_response_forward_stream_128_workers_4_chunks_x8_routes_primary(ctx: &m
 
 #[stress_test(
     tier = 2,
-    mode = "fixed_duration",
     name = "response_forward_stream_128_workers_16_chunks_x8_routes_primary"
 )]
 fn should_response_forward_stream_128_workers_16_chunks_x8_routes_primary(ctx: &mut StressContext) {
@@ -741,7 +727,6 @@ fn should_response_forward_stream_128_workers_16_chunks_x8_routes_primary(ctx: &
 
 #[stress_test(
     tier = 2,
-    mode = "fixed_duration",
     name = "dispatch_timeout_sweep_64_expired_pending_x8_cases_primary"
 )]
 fn should_dispatch_timeout_sweep_64_expired_pending_x8_cases_primary(ctx: &mut StressContext) {
@@ -750,7 +735,6 @@ fn should_dispatch_timeout_sweep_64_expired_pending_x8_cases_primary(ctx: &mut S
 
 #[stress_test(
     tier = 2,
-    mode = "fixed_duration",
     name = "dispatch_timeout_sweep_256_expired_pending_x4_cases_primary"
 )]
 fn should_dispatch_timeout_sweep_256_expired_pending_x4_cases_primary(ctx: &mut StressContext) {

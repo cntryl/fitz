@@ -37,11 +37,7 @@ fn register_all(scheduler: &Scheduler, addresses: &[RouteAddress], sinks: &[Arc<
     }
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "register_single_fresh_primary"
-)]
+#[stress_test(tier = 2, name = "register_single_fresh_primary")]
 fn should_register_single_fresh_primary(ctx: &mut StressContext) {
     let (single_addresses, single_sinks) = make_registration_batch("/bench/reg/single", 1);
     let schedulers = (0..REGISTER_SINGLE_BATCH_SIZE)
@@ -58,11 +54,7 @@ fn should_register_single_fresh_primary(ctx: &mut StressContext) {
     });
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "register_single_replace_primary"
-)]
+#[stress_test(tier = 2, name = "register_single_replace_primary")]
 fn should_register_single_replace_primary(ctx: &mut StressContext) {
     let (single_addresses, single_sinks) = make_registration_batch("/bench/reg/single", 1);
     let schedulers = (0..REGISTER_SINGLE_BATCH_SIZE)
@@ -85,7 +77,7 @@ fn should_register_single_replace_primary(ctx: &mut StressContext) {
     });
 }
 
-#[stress_test(tier = 2, mode = "fixed_duration", name = "register_64_fresh_primary")]
+#[stress_test(tier = 2, name = "register_64_fresh_primary")]
 fn should_register_64_fresh_primary(ctx: &mut StressContext) {
     let (batch_addresses, batch_sinks) = make_registration_batch("/bench/reg/batch", 64);
     let schedulers = (0..REGISTER_BATCH_BATCH_SIZE)
@@ -103,11 +95,7 @@ fn should_register_64_fresh_primary(ctx: &mut StressContext) {
     );
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "register_64_replace_primary"
-)]
+#[stress_test(tier = 2, name = "register_64_replace_primary")]
 fn should_register_64_replace_primary(ctx: &mut StressContext) {
     let (batch_addresses, batch_sinks) = make_registration_batch("/bench/reg/batch", 64);
     let schedulers = (0..REGISTER_BATCH_BATCH_SIZE)

@@ -7,11 +7,7 @@ pub fn measure_iterations<F>(ctx: &mut StressContext, logical_operations_per_ite
 where
     F: FnMut(),
 {
-    let iterations = ctx.measure_workload(f);
-    record_completed(
-        ctx,
-        iterations.saturating_mul(logical_operations_per_iteration.max(1)),
-    );
+    let _ = ctx.measure_batch(logical_operations_per_iteration.max(1), f);
 }
 
 pub fn measure_once<F, R>(ctx: &mut StressContext, logical_operations: u64, f: F) -> R
@@ -24,8 +20,7 @@ where
 }
 
 pub fn record_duration(ctx: &mut StressContext, duration: Duration, completed: u64) {
-    ctx.record_duration(duration);
-    record_completed(ctx, completed.max(1));
+    let _ = ctx.record_external(duration, completed.max(1));
 }
 
 pub fn record_completed(ctx: &mut StressContext, completed: u64) {

@@ -388,29 +388,17 @@ fn queue_enqueue(ctx: &mut StressContext, queue_count: usize, messages_per_queue
     );
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "enqueue_1024_messages_1_queue_primary"
-)]
+#[stress_test(tier = 2, name = "enqueue_1024_messages_1_queue_primary")]
 fn should_enqueue_1024_messages_1_queue_primary(ctx: &mut StressContext) {
     queue_enqueue(ctx, 1, SINGLE_QUEUE_ENQUEUE_BATCH_SIZE);
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "enqueue_1_messages_each_256_queues_primary"
-)]
+#[stress_test(tier = 2, name = "enqueue_1_messages_each_256_queues_primary")]
 fn should_enqueue_1_messages_each_256_queues_primary(ctx: &mut StressContext) {
     queue_enqueue(ctx, 256, MULTI_QUEUE_MESSAGES_PER_QUEUE);
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "dequeue_256_messages_primary"
-)]
+#[stress_test(tier = 2, name = "dequeue_256_messages_primary")]
 fn should_dequeue_256_messages_primary(ctx: &mut StressContext) {
     let mut total = Duration::ZERO;
     for _ in 0..QUEUE_MEASUREMENT_REPEAT_COUNT {
@@ -453,7 +441,7 @@ fn should_dequeue_256_messages_primary(ctx: &mut StressContext) {
     );
 }
 
-#[stress_test(tier = 2, mode = "fixed_duration", name = "ack_256_messages_primary")]
+#[stress_test(tier = 2, name = "ack_256_messages_primary")]
 fn should_ack_256_messages_primary(ctx: &mut StressContext) {
     let mut total = Duration::ZERO;
     for _ in 0..QUEUE_MEASUREMENT_REPEAT_COUNT {
@@ -486,11 +474,7 @@ fn should_ack_256_messages_primary(ctx: &mut StressContext) {
     );
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "watch_register_64_sessions_primary"
-)]
+#[stress_test(tier = 2, name = "watch_register_64_sessions_primary")]
 fn should_watch_register_64_sessions_primary(ctx: &mut StressContext) {
     let mut total = Duration::ZERO;
     for _ in 0..QUEUE_MEASUREMENT_REPEAT_COUNT {
@@ -525,11 +509,7 @@ fn should_watch_register_64_sessions_primary(ctx: &mut StressContext) {
     );
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "wakeup_16_watchers_1_enqueue_primary"
-)]
+#[stress_test(tier = 2, name = "wakeup_16_watchers_1_enqueue_primary")]
 fn should_wakeup_16_watchers_1_enqueue_primary(ctx: &mut StressContext) {
     let case = prepare_waiter_wakeup_case();
     let start = Instant::now();

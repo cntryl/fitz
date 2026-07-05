@@ -144,7 +144,7 @@ fn publish_fanout(ctx: &mut StressContext, subscriber_count: usize, pattern: &st
 
 macro_rules! notice_publish_bench {
     ($fn_name:ident, $stress_name:literal, $subscribers:expr, $pattern:expr) => {
-        #[stress_test(tier = 2, mode = "fixed_duration", name = $stress_name)]
+        #[stress_test(tier = 2, name = $stress_name)]
         fn $fn_name(ctx: &mut StressContext) {
             publish_fanout(ctx, $subscribers, $pattern);
         }

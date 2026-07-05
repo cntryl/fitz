@@ -198,11 +198,7 @@ fn prepare_notify_case(subscriber_count: usize, pattern: &str) -> PreparedStream
     case
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "subscribe_register_2048_sessions_x4_cases_primary"
-)]
+#[stress_test(tier = 2, name = "subscribe_register_2048_sessions_x4_cases_primary")]
 fn should_subscribe_register_2048_sessions_x4_cases_primary(ctx: &mut StressContext) {
     let cases = (0..SUBSCRIBE_REGISTER_CASE_COUNT)
         .map(|_| prepare_stream_subscribe_case())
@@ -279,7 +275,7 @@ fn commit_notify(ctx: &mut StressContext, subscriber_count: usize, pattern: &str
 
 macro_rules! stream_commit_notify_bench {
     ($fn_name:ident, $stress_name:literal, $subscribers:expr, $pattern:expr) => {
-        #[stress_test(tier = 2, mode = "fixed_duration", name = $stress_name)]
+        #[stress_test(tier = 2, name = $stress_name)]
         fn $fn_name(ctx: &mut StressContext) {
             commit_notify(ctx, $subscribers, $pattern);
         }

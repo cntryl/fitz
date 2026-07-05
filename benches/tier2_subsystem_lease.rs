@@ -166,11 +166,7 @@ fn prepare_notify_case(watcher_count: usize, pattern: &str) -> PreparedLeaseNoti
     case
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "watch_register_256_sessions_x8_cases_primary"
-)]
+#[stress_test(tier = 2, name = "watch_register_256_sessions_x8_cases_primary")]
 fn should_watch_register_256_sessions_x8_cases_primary(ctx: &mut StressContext) {
     let cases = (0..WATCH_REGISTER_CASE_COUNT)
         .map(|_| prepare_watch_register_case())
@@ -238,7 +234,7 @@ fn notify_watchers(ctx: &mut StressContext, watcher_count: usize, pattern: &str)
 
 macro_rules! lease_notify_bench {
     ($fn_name:ident, $stress_name:literal, $watchers:expr, $pattern:expr) => {
-        #[stress_test(tier = 2, mode = "fixed_duration", name = $stress_name)]
+        #[stress_test(tier = 2, name = $stress_name)]
         fn $fn_name(ctx: &mut StressContext) {
             notify_watchers(ctx, $watchers, $pattern);
         }

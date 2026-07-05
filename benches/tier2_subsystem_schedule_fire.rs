@@ -276,101 +276,57 @@ fn publish_exact_route(ctx: &mut StressContext, subscriber_count: usize) {
     );
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "claim_due_partial_ready_100_mixed_crons"
-)]
+#[stress_test(tier = 2, name = "claim_due_partial_ready_100_mixed_crons")]
 fn should_claim_due_partial_ready_100_mixed_crons(ctx: &mut StressContext) {
     claim_due(ctx, 100, 10);
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "claim_due_all_ready_100_mixed_crons"
-)]
+#[stress_test(tier = 2, name = "claim_due_all_ready_100_mixed_crons")]
 fn should_claim_due_all_ready_100_mixed_crons(ctx: &mut StressContext) {
     claim_due(ctx, 100, 100);
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "claim_due_partial_ready_1000_mixed_crons"
-)]
+#[stress_test(tier = 2, name = "claim_due_partial_ready_1000_mixed_crons")]
 fn should_claim_due_partial_ready_1000_mixed_crons(ctx: &mut StressContext) {
     claim_due(ctx, 1000, 100);
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "claim_due_all_ready_1000_mixed_crons"
-)]
+#[stress_test(tier = 2, name = "claim_due_all_ready_1000_mixed_crons")]
 fn should_claim_due_all_ready_1000_mixed_crons(ctx: &mut StressContext) {
     claim_due(ctx, 1000, 1000);
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "ack_claims_partial_ready_100_mixed_crons"
-)]
+#[stress_test(tier = 2, name = "ack_claims_partial_ready_100_mixed_crons")]
 fn should_ack_claims_partial_ready_100_mixed_crons(ctx: &mut StressContext) {
     ack_claims(ctx, 100, 10);
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "ack_claims_all_ready_100_mixed_crons"
-)]
+#[stress_test(tier = 2, name = "ack_claims_all_ready_100_mixed_crons")]
 fn should_ack_claims_all_ready_100_mixed_crons(ctx: &mut StressContext) {
     ack_claims(ctx, 100, 100);
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "ack_claims_partial_ready_1000_mixed_crons"
-)]
+#[stress_test(tier = 2, name = "ack_claims_partial_ready_1000_mixed_crons")]
 fn should_ack_claims_partial_ready_1000_mixed_crons(ctx: &mut StressContext) {
     ack_claims(ctx, 1000, 100);
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "ack_claims_all_ready_1000_mixed_crons"
-)]
+#[stress_test(tier = 2, name = "ack_claims_all_ready_1000_mixed_crons")]
 fn should_ack_claims_all_ready_1000_mixed_crons(ctx: &mut StressContext) {
     ack_claims(ctx, 1000, 1000);
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "publish_exact_route_1_subscribers"
-)]
+#[stress_test(tier = 2, name = "publish_exact_route_1_subscribers")]
 fn should_publish_exact_route_1_subscribers(ctx: &mut StressContext) {
     publish_exact_route(ctx, 1);
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "publish_exact_route_10_subscribers"
-)]
+#[stress_test(tier = 2, name = "publish_exact_route_10_subscribers")]
 fn should_publish_exact_route_10_subscribers(ctx: &mut StressContext) {
     publish_exact_route(ctx, 10);
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "publish_exact_route_100_subscribers"
-)]
+#[stress_test(tier = 2, name = "publish_exact_route_100_subscribers")]
 fn should_publish_exact_route_100_subscribers(ctx: &mut StressContext) {
     publish_exact_route(ctx, 100);
 }

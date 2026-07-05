@@ -3,9 +3,10 @@
 /// Tier 3: System-level (domain + plumbing, single family/concurrent access patterns)
 /// Tier 4: Integration-level (full TCP/WS to domain, complete pipeline)
 ///
-/// The stress harness owns profile defaults, sample counts, warmups, and fixed-duration windows.
-/// Fitz benchmarks should use `ctx.measure_workload`, `ctx.measure`, `ctx.measure_for`, or
-/// `ctx.record_duration` directly instead of carrying a second profile-default layer.
+/// The stress harness owns profile defaults, sample counts, warmups, fixed-operation Tier 2
+/// samples, and fixed-duration Tier 3+ windows. Fitz benchmarks should use
+/// `ctx.measure_workload`, `ctx.measure_batch`, or `ctx.record_external` directly instead of
+/// carrying a second profile-default layer.
 ///
 /// **`record_completed(N)`**: N is the explicit completed-operation count for one sample.
 /// It must match the logical number of meaningful operations performed in the timed body so

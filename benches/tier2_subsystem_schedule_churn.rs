@@ -114,56 +114,32 @@ fn upsert_then_full_list_shared_cache(ctx: &mut StressContext, count: usize) {
     });
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "cancel_existing_100_mixed_crons"
-)]
+#[stress_test(tier = 2, name = "cancel_existing_100_mixed_crons")]
 fn should_cancel_existing_100_mixed_crons(ctx: &mut StressContext) {
     cancel_existing(ctx, 100);
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "cancel_existing_1000_mixed_crons"
-)]
+#[stress_test(tier = 2, name = "cancel_existing_1000_mixed_crons")]
 fn should_cancel_existing_1000_mixed_crons(ctx: &mut StressContext) {
     cancel_existing(ctx, 1000);
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "delete_then_full_list_shared_cache_100_mixed_crons"
-)]
+#[stress_test(tier = 2, name = "delete_then_full_list_shared_cache_100_mixed_crons")]
 fn should_delete_then_full_list_shared_cache_100_mixed_crons(ctx: &mut StressContext) {
     delete_then_full_list_shared_cache(ctx, 100);
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "delete_then_full_list_shared_cache_1000_mixed_crons"
-)]
+#[stress_test(tier = 2, name = "delete_then_full_list_shared_cache_1000_mixed_crons")]
 fn should_delete_then_full_list_shared_cache_1000_mixed_crons(ctx: &mut StressContext) {
     delete_then_full_list_shared_cache(ctx, 1000);
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "upsert_then_full_list_shared_cache_100_mixed_crons"
-)]
+#[stress_test(tier = 2, name = "upsert_then_full_list_shared_cache_100_mixed_crons")]
 fn should_upsert_then_full_list_shared_cache_100_mixed_crons(ctx: &mut StressContext) {
     upsert_then_full_list_shared_cache(ctx, 100);
 }
 
-#[stress_test(
-    tier = 2,
-    mode = "fixed_duration",
-    name = "upsert_then_full_list_shared_cache_1000_mixed_crons"
-)]
+#[stress_test(tier = 2, name = "upsert_then_full_list_shared_cache_1000_mixed_crons")]
 fn should_upsert_then_full_list_shared_cache_1000_mixed_crons(ctx: &mut StressContext) {
     upsert_then_full_list_shared_cache(ctx, 1000);
 }

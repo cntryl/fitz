@@ -1659,7 +1659,7 @@ where
 
 macro_rules! write_shape_bench {
     ($fn_name:ident, $stress_name:literal, $records:ident, $summarize:path) => {
-        #[stress_test(tier = 2, mode = "fixed_duration", name = $stress_name)]
+        #[stress_test(tier = 2, name = $stress_name)]
         fn $fn_name(ctx: &mut StressContext) {
             let fixtures = write_shape_fixtures();
             measure_layout(ctx, &fixtures.$records, fixtures.event_count, $summarize);

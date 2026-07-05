@@ -52,7 +52,7 @@ file small, baseline-backed, and reviewable.
 | Tier | Kind | Tool | Location | Scope |
 | --- | --- | --- | --- | --- |
 | **Tier 1** | Hotpath | Stress micro | `benches/tier1_hotpath_*.rs` | Pure synchronous internals using `#[stress_test(tier = 1)]` and `ctx.measure_micro`. |
-| **Tier 2** | Subsystem | Stress | `benches/tier2_subsystem_*.rs` | Component and domain subsystem rows with explicit correctness counters. |
+| **Tier 2** | Subsystem | Stress | `benches/tier2_subsystem_*.rs` | Component and domain subsystem rows using stress fixed-operation samples and explicit correctness counters. |
 | **Tier 3** | System | Stress | `benches/tier3_system_*.rs` | In-process domain actor + test engine, no network. |
 | **Tier 4** | Integration | Stress | `benches/tier4_integration_*.rs` | Full stack direct/TCP/WebSocket/multiclient scenarios. |
 
@@ -81,7 +81,7 @@ fn should_decode_one_64b(ctx: &mut StressContext) {
     ctx.measure_micro(|| black_box(decoder.decode_one(black_box(&frame)).unwrap()));
 }
 
-#[stress_test(tier = 3, mode = "fixed_duration")]
+#[stress_test(tier = 3)]
 fn should_complete_capacity_ack_roundtrip(ctx: &mut StressContext) {
     let mut actor = build_actor();
 
@@ -98,13 +98,16 @@ stress_main!();
 Use the narrowest direct stress API that describes the row:
 
 - `ctx.measure_micro`: calibrated Tier 1 micro samples.
-- `ctx.measure_workload`: default-profile fixed-duration or fixed-operation
-  workload samples.
-- `ctx.measure`: one measured operation or batch.
-- `ctx.measure_for`: explicit wall-clock loops only when the row requires a
-  custom local duration independent of the profile.
-- `ctx.record_duration`: externally timed systems where the benchmark body owns
-  timing.
+- `ctx.measure`: one Tier 2 measured operation.
+- `ctx.measure_counted`: one Tier 2 measured operation that returns logical
+  work completed.
+- `ctx.measure_batch`: repeated logical work where each framework iteration
+  performs a known operation count.
+- `ctx.measure_workload`: default-profile fixed-operation or fixed-duration
+  workload samples when the completed operation count is one per framework
+  iteration.
+- `ctx.record_external`: externally timed systems where the benchmark body owns
+  timing and completed-operation counting.
 
 Do not write benchmark diagnostics with `println!`, `eprintln!`, or `dbg!`.
 Use `ctx.parameter` for fields that define the workload identity and
@@ -128,7 +131,11 @@ bench code.
 ## Stress Configuration
 
 Fitz commands rely on the stress default profile. Do not pass `--profile` in
-repo docs, CI, or release/deep command lists.
+repo docs, CI, or release/deep command lists. Stress derives mode from tier:
+Tier 1 is `micro`, Tier 2 is `fixed_operations`, and Tiers 3+ are
+`fixed_duration`. Omit `mode` on new rows unless compatibility with older
+examples requires spelling it out, and never set a mode that conflicts with the
+tier.
 
 Common arguments:
 
@@ -138,6 +145,7 @@ Common arguments:
 | `--tier <N>` | Run one stress tier. |
 | `--samples <N>` | Local diagnostic override for measured sample count. |
 | `--warmup-samples <N>` | Local diagnostic override for warmup sample count. |
+| `--operations-per-sample <N>` | Local diagnostic override for Tier 2 fixed-operation sample size. |
 | `--console <MODE>` | Local diagnostic output mode. |
 
 Local `smoke` or `lab` profile experiments are framework diagnostics, not Fitz
@@ -215,6 +223,7 @@ summarize again and require `new == 0`, `missing == 0`, and `critical == 0`.
 - Setup is outside timing unless setup is part of the named behavior.
 - Correctness counters match actual completed work.
 - Tier 1 rows use `ctx.measure_micro`.
+- Tier 2 rows omit `mode = "fixed_duration"` and use fixed-operation timing.
 - Tier 2+ rows use direct stress context APIs.
 - Commands omit `--profile`.
 - Artifacts are current `cntryl-stress.v1`.
