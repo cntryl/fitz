@@ -35,7 +35,18 @@ impl LeaseKey {
     /// Returns None if the route doesn't match the expected format.
     #[must_use]
     pub fn from_route(family: RouteFamily, route: &Route) -> Option<Self> {
-        let parts = route_triplet(route.as_str())?;
+        Self::from_route_str(family, route.as_str())
+    }
+
+    /// Parse a route string into a lease key without constructing a `Route`.
+    ///
+    /// Expected route format: `lease://{realm}/{area}/{resource}`
+    /// or `{realm}/{area}/{resource}`.
+    ///
+    /// Returns None if the route doesn't match the expected format.
+    #[must_use]
+    pub fn from_route_str(family: RouteFamily, route: &str) -> Option<Self> {
+        let parts = route_triplet(route)?;
 
         if !parts.realm.is_empty() && !parts.area.is_empty() && !parts.resource.is_empty() {
             Some(LeaseKey {
@@ -61,6 +72,25 @@ impl LeaseKey {
         s.push('/');
         s.push_str(&self.resource);
         Route::new(&s)
+    }
+}
+
+#[must_use]
+pub(crate) fn session_scoped_owner_id(session_id: u64, owner_id: &str) -> String {
+    let session_prefix = session_id.to_string();
+    if owner_id.is_empty() {
+        let mut scoped = String::with_capacity("session:".len() + session_prefix.len());
+        scoped.push_str("session:");
+        scoped.push_str(&session_prefix);
+        scoped
+    } else {
+        let mut scoped =
+            String::with_capacity("session::".len() + session_prefix.len() + owner_id.len());
+        scoped.push_str("session:");
+        scoped.push_str(&session_prefix);
+        scoped.push(':');
+        scoped.push_str(owner_id);
+        scoped
     }
 }
 
@@ -241,6 +271,49 @@ impl LeaseClientRequest {
     pub fn new(meta: ClientFrameMeta, frame: Result<LeaseClientFrame, String>) -> Self {
         Self { meta, frame }
     }
+}
+
+/// Crate-private lease request with hot-path fields resolved before actor dispatch.
+#[derive(Debug, Clone)]
+pub(crate) struct PreparedLeaseClientRequest {
+    pub(crate) meta: ClientFrameMeta,
+    pub(crate) frame: Result<PreparedLeaseOperation, String>,
+}
+
+impl PreparedLeaseClientRequest {
+    #[must_use]
+    pub(crate) fn new(
+        meta: ClientFrameMeta,
+        frame: Result<PreparedLeaseOperation, String>,
+    ) -> Self {
+        Self { meta, frame }
+    }
+}
+
+/// Lease operation classified after wire parsing and session owner scoping.
+#[derive(Debug, Clone)]
+pub(crate) enum PreparedLeaseOperation {
+    Acquire {
+        key: LeaseKey,
+        owner_id: String,
+        ttl_secs: u64,
+        wait_seconds: u32,
+    },
+    Extend {
+        key: LeaseKey,
+        owner_id: String,
+        fencing_token: u64,
+        ttl_secs: u64,
+    },
+    Release {
+        key: LeaseKey,
+        owner_id: String,
+        fencing_token: u64,
+    },
+    Query {
+        key: LeaseKey,
+    },
+    NotFound,
 }
 
 /// Lease request classified after wire parsing.

@@ -14,7 +14,8 @@
 //! Lease fencing tokens are process-local; a restart resets the token lineage.
 
 use crate::domains::lease::protocol::{
-    LeaseMessage, LeaseResponse as DomainLeaseResponse, LeaseSubscriptionMessage,
+    session_scoped_owner_id, LeaseKey, LeaseMessage, LeaseResponse as DomainLeaseResponse,
+    LeaseSubscriptionMessage, PreparedLeaseOperation,
 };
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
@@ -106,6 +107,23 @@ pub fn parse_request(
         msg_type::RENEW => parse_extend(&mut dec, route_family),
         msg_type::RELEASE => parse_release(&mut dec, route_family),
         msg_type::QUERY => parse_query(&mut dec, route_family),
+        _ => Err(format!("Unknown operation: {msg_type}")),
+    }
+}
+
+pub(crate) fn parse_prepared_request(
+    msg_type: u16,
+    route_family: RouteFamily,
+    session_id: u64,
+    payload: &[u8],
+) -> Result<PreparedLeaseOperation, String> {
+    let mut dec = PayloadDecoder::new(payload);
+
+    match msg_type {
+        msg_type::ACQUIRE => parse_prepared_acquire(&mut dec, route_family, session_id),
+        msg_type::RENEW => parse_prepared_extend(&mut dec, route_family, session_id),
+        msg_type::RELEASE => parse_prepared_release(&mut dec, route_family, session_id),
+        msg_type::QUERY => parse_prepared_query(&mut dec, route_family),
         _ => Err(format!("Unknown operation: {msg_type}")),
     }
 }
@@ -311,6 +329,36 @@ fn parse_acquire(
     })
 }
 
+fn parse_prepared_acquire(
+    dec: &mut PayloadDecoder,
+    route_family: RouteFamily,
+    session_id: u64,
+) -> Result<PreparedLeaseOperation, String> {
+    let route = dec.get_string_ref()?;
+    let key = LeaseKey::from_route_str(route_family, route);
+    let owner_id = session_scoped_owner_id(session_id, dec.get_string_ref()?);
+    let ttl_secs = dec.get_u64()?;
+    let wait_seconds = if dec.is_complete() {
+        0
+    } else {
+        dec.get_u32().unwrap_or(0)
+    };
+
+    if !dec.is_complete() {
+        return Err("Trailing data in message".to_string());
+    }
+
+    Ok(match key {
+        Some(key) => PreparedLeaseOperation::Acquire {
+            key,
+            owner_id,
+            ttl_secs,
+            wait_seconds,
+        },
+        None => PreparedLeaseOperation::NotFound,
+    })
+}
+
 /// Wire format: `[string route][string owner_id][u64 fencing_token][u64 ttl_secs]`
 fn parse_extend(
     dec: &mut PayloadDecoder,
@@ -332,6 +380,32 @@ fn parse_extend(
         owner_id,
         fencing_token,
         ttl_secs,
+    })
+}
+
+fn parse_prepared_extend(
+    dec: &mut PayloadDecoder,
+    route_family: RouteFamily,
+    session_id: u64,
+) -> Result<PreparedLeaseOperation, String> {
+    let route = dec.get_string_ref()?;
+    let key = LeaseKey::from_route_str(route_family, route);
+    let owner_id = session_scoped_owner_id(session_id, dec.get_string_ref()?);
+    let fencing_token = dec.get_u64()?;
+    let ttl_secs = dec.get_u64()?;
+
+    if !dec.is_complete() {
+        return Err("Trailing data in message".to_string());
+    }
+
+    Ok(match key {
+        Some(key) => PreparedLeaseOperation::Extend {
+            key,
+            owner_id,
+            fencing_token,
+            ttl_secs,
+        },
+        None => PreparedLeaseOperation::NotFound,
     })
 }
 
@@ -357,6 +431,30 @@ fn parse_release(
     })
 }
 
+fn parse_prepared_release(
+    dec: &mut PayloadDecoder,
+    route_family: RouteFamily,
+    session_id: u64,
+) -> Result<PreparedLeaseOperation, String> {
+    let route = dec.get_string_ref()?;
+    let key = LeaseKey::from_route_str(route_family, route);
+    let owner_id = session_scoped_owner_id(session_id, dec.get_string_ref()?);
+    let fencing_token = dec.get_u64()?;
+
+    if !dec.is_complete() {
+        return Err("Trailing data in message".to_string());
+    }
+
+    Ok(match key {
+        Some(key) => PreparedLeaseOperation::Release {
+            key,
+            owner_id,
+            fencing_token,
+        },
+        None => PreparedLeaseOperation::NotFound,
+    })
+}
+
 /// Wire format: `[string route]`
 fn parse_query(
     dec: &mut PayloadDecoder,
@@ -372,6 +470,23 @@ fn parse_query(
     Ok(LeaseMessage::Query {
         family_id: route_family,
         route,
+    })
+}
+
+fn parse_prepared_query(
+    dec: &mut PayloadDecoder,
+    route_family: RouteFamily,
+) -> Result<PreparedLeaseOperation, String> {
+    let route = dec.get_string_ref()?;
+    let key = LeaseKey::from_route_str(route_family, route);
+
+    if !dec.is_complete() {
+        return Err("Trailing data in message".to_string());
+    }
+
+    Ok(match key {
+        Some(key) => PreparedLeaseOperation::Query { key },
+        None => PreparedLeaseOperation::NotFound,
     })
 }
 

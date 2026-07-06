@@ -361,8 +361,32 @@ fn build_rpc_request_envelope(request: DomainEnvelopeBuildRequest) -> crate::run
 }
 
 fn build_lease_request_envelope(request: DomainEnvelopeBuildRequest) -> crate::runtime::Envelope {
-    let ctx = frame_context(&request);
     let meta = client_frame_meta(&request);
+    let msg_type = request.msg_type.as_u16();
+
+    if matches!(
+        msg_type,
+        crate::protocol::lease_codec::msg_type::ACQUIRE
+            | crate::protocol::lease_codec::msg_type::RENEW
+            | crate::protocol::lease_codec::msg_type::RELEASE
+            | crate::protocol::lease_codec::msg_type::QUERY
+    ) {
+        let parsed = crate::protocol::lease_codec::parse_prepared_request(
+            msg_type,
+            request.route_family,
+            request.session_id,
+            &request.payload,
+        );
+        let client_request =
+            crate::domains::lease::protocol::PreparedLeaseClientRequest::new(meta, parsed);
+        return crate::runtime::Envelope::from_route(
+            request.source,
+            request.destination,
+            client_request,
+        );
+    }
+
+    let ctx = frame_context(&request);
     let parsed = crate::protocol::lease_codec::parse_frame(
         &ctx,
         &ctx.payload,
@@ -403,6 +427,34 @@ mod tests {
     use super::*;
     use crate::runtime::DomainKind;
     use std::collections::HashSet;
+
+    fn lease_build_request(msg_type: u16, payload: Bytes) -> DomainEnvelopeBuildRequest {
+        let family = crate::runtime::routing::RouteFamily::new(41);
+        DomainEnvelopeBuildRequest {
+            session_id: 7,
+            channel_id: ChannelId::Lease,
+            route_family: family,
+            msg_type: crate::protocol::tlv::MessageType::new(msg_type),
+            payload,
+            source: crate::runtime::routing::RouteAddress::new(
+                family,
+                crate::runtime::routing::Route::new("inbox://session/7"),
+            ),
+            destination: crate::runtime::routing::RouteAddress::new(
+                family,
+                crate::runtime::routing::Route::new("lease://acme/locks/resource"),
+            ),
+        }
+    }
+
+    fn lease_acquire_payload(route: &str, owner_id: &str) -> Bytes {
+        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::new();
+        encoder.put_string(route);
+        encoder.put_string(owner_id);
+        encoder.put_u64(30);
+        encoder.put_u32(0);
+        Bytes::from(encoder.finish())
+    }
 
     #[test]
     fn should_define_exactly_one_ingress_descriptor_for_every_domain_kind() {
@@ -529,5 +581,59 @@ mod tests {
 
         // Assert
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn should_build_prepared_lease_request_for_operation_frame() {
+        // Arrange
+        let descriptor = IngressDomainRegistry::descriptor_for_domain(DispatchDomain::Lease);
+        let payload = lease_acquire_payload("lease://acme/locks/resource", "owner");
+
+        // Act
+        let envelope = descriptor.build_request_envelope(lease_build_request(400, payload));
+        let request = envelope
+            .payload::<crate::domains::lease::protocol::PreparedLeaseClientRequest>()
+            .expect("prepared lease request");
+
+        // Assert
+        assert_eq!(request.meta.session_id, 7);
+        assert_eq!(request.meta.message_type, 400);
+        let operation = request.frame.as_ref().expect("prepared lease operation");
+        match operation {
+            crate::domains::lease::protocol::PreparedLeaseOperation::Acquire {
+                key,
+                owner_id,
+                ttl_secs,
+                wait_seconds,
+            } => {
+                assert_eq!(key.realm, "acme");
+                assert_eq!(key.area, "locks");
+                assert_eq!(key.resource, "resource");
+                assert_eq!(owner_id, "session:7:owner");
+                assert_eq!(*ttl_secs, 30);
+                assert_eq!(*wait_seconds, 0);
+            }
+            other => panic!("expected prepared acquire, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn should_keep_lease_subscription_on_public_request_path() {
+        // Arrange
+        let descriptor = IngressDomainRegistry::descriptor_for_domain(DispatchDomain::Lease);
+        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::new();
+        encoder.put_string("lease://acme/locks/resource");
+
+        // Act
+        let envelope = descriptor
+            .build_request_envelope(lease_build_request(407, Bytes::from(encoder.finish())));
+
+        // Assert
+        assert!(envelope
+            .payload::<crate::domains::lease::protocol::PreparedLeaseClientRequest>()
+            .is_none());
+        assert!(envelope
+            .payload::<crate::domains::lease::LeaseClientRequest>()
+            .is_some());
     }
 }

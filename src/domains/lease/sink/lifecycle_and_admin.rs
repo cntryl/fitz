@@ -248,7 +248,6 @@ impl LeaseDomainRuntime<'_> {
         self.core
             .admin_read_model
             .upsert_lease(Self::lease_info_from_state(key, state));
-        self.refresh_metrics_gauges();
     }
 
     pub(super) fn remove_admin_lease(&self, key: &crate::domains::lease::protocol::LeaseKey) {
@@ -258,7 +257,6 @@ impl LeaseDomainRuntime<'_> {
             &key.area,
             &key.resource,
         );
-        self.refresh_metrics_gauges();
     }
 
     pub(super) fn refresh_metrics_gauges(&self) {

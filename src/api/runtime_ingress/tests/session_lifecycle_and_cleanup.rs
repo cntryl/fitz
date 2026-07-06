@@ -137,6 +137,12 @@ pub(super) fn receive_frame(mailbox: &Mailbox, label: &str) -> FrameContext {
         return frame_context_from_client_meta(request.meta);
     }
 
+    if let Some(request) =
+        envelope.payload::<crate::domains::lease::protocol::PreparedLeaseClientRequest>()
+    {
+        return frame_context_from_client_meta(request.meta);
+    }
+
     if let Some(request) = envelope.payload::<crate::domains::lease::LeaseClientRequest>() {
         return frame_context_from_client_meta(request.meta);
     }

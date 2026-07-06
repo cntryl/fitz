@@ -435,6 +435,12 @@ fn frame_context_from_envelope(envelope: &Envelope) -> Option<FrameContext> {
         ));
     }
 
+    if let Some(request) =
+        envelope.payload::<crate::domains::lease::protocol::PreparedLeaseClientRequest>()
+    {
+        return Some(client_response_frame(request.meta, Bytes::new()));
+    }
+
     if let Some(response) = envelope.payload::<crate::domains::notice::NoticeClientResponse>() {
         let mut encoder = crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
         return Some(client_response_frame(

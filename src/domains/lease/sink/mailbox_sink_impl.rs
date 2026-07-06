@@ -117,6 +117,13 @@ impl LeaseDomainRuntime<'_> {
 
         Self::log_delivery(envelope);
 
+        if let Some(request) =
+            envelope.payload::<crate::domains::lease::protocol::PreparedLeaseClientRequest>()
+        {
+            self.handle_prepared_request(envelope, request)?;
+            return Ok(());
+        }
+
         let Some(request) = Self::extract_request(envelope)? else {
             return Ok(());
         };
@@ -135,6 +142,18 @@ impl LeaseDomainRuntime<'_> {
                 Ok(())
             }
         }
+    }
+
+    fn handle_prepared_request(
+        &self,
+        envelope: &Envelope,
+        request: &crate::domains::lease::protocol::PreparedLeaseClientRequest,
+    ) -> Result<(), DeliveryError> {
+        let meta = request.meta;
+        let request_started = self.record_request_start();
+        let operation = self.parse_prepared_request_frame(meta, &request.frame, request_started)?;
+        self.handle_prepared_operation_frame(envelope, meta, request_started, operation);
+        Ok(())
     }
 
     fn handle_cleanup_envelope(&self, envelope: &Envelope) -> bool {
@@ -214,6 +233,34 @@ impl LeaseDomainRuntime<'_> {
                     metrics.record_failure(started_at);
                 }
                 tracing::warn!(domain = "lease", error = %error, "Failed to parse lease message");
+                Err(DeliveryError::ActorStopped)
+            }
+        }
+    }
+
+    fn parse_prepared_request_frame<'a>(
+        &self,
+        meta: crate::runtime::ClientFrameMeta,
+        frame: &'a Result<crate::domains::lease::protocol::PreparedLeaseOperation, String>,
+        request_started: Option<std::time::Instant>,
+    ) -> Result<&'a crate::domains::lease::protocol::PreparedLeaseOperation, DeliveryError> {
+        match frame {
+            Ok(operation) => {
+                tracing::debug!(
+                    domain = "lease",
+                    session = meta.session_id,
+                    msg_type = meta.message_type,
+                    "Lease: prepared message successfully"
+                );
+                Ok(operation)
+            }
+            Err(error) => {
+                if let (Some(metrics), Some(started_at)) =
+                    (self.core.metrics.as_ref(), request_started)
+                {
+                    metrics.record_failure(started_at);
+                }
+                tracing::warn!(domain = "lease", error = %error, "Failed to prepare lease message");
                 Err(DeliveryError::ActorStopped)
             }
         }
@@ -375,6 +422,56 @@ impl LeaseDomainRuntime<'_> {
             }
         };
 
+        self.route_lease_response(envelope, meta, &domain_response, request_started);
+    }
+
+    fn handle_prepared_operation_frame(
+        &self,
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+        request_started: Option<std::time::Instant>,
+        operation: &crate::domains::lease::protocol::PreparedLeaseOperation,
+    ) {
+        use crate::domains::lease::protocol::{LeaseResponse, PreparedLeaseOperation};
+
+        let domain_response = match operation {
+            PreparedLeaseOperation::Acquire {
+                key,
+                owner_id,
+                ttl_secs,
+                wait_seconds,
+            } => self.handle_acquire(LeaseAcquireRequest {
+                key: key.clone(),
+                owner_session_id: meta.session_id,
+                owner_id: owner_id.clone(),
+                ttl_secs: *ttl_secs,
+                wait_seconds: *wait_seconds,
+                reply_source: envelope.destination().clone(),
+                reply_destination: envelope.source().cloned(),
+                channel: meta.channel,
+                route_family: meta.route_family,
+            }),
+            PreparedLeaseOperation::Extend {
+                key,
+                owner_id,
+                fencing_token,
+                ttl_secs,
+            } => self.handle_extend(key, owner_id, *fencing_token, *ttl_secs),
+            PreparedLeaseOperation::Release {
+                key,
+                owner_id,
+                fencing_token,
+            } => self.handle_release(key, owner_id, *fencing_token),
+            PreparedLeaseOperation::Query { key } => self.handle_query(key),
+            PreparedLeaseOperation::NotFound => LeaseResponse::NotFound,
+        };
+
+        if matches!(domain_response, LeaseResponse::NotFound) {
+            tracing::debug!(
+                domain = "lease",
+                "Lease prepared operation returned not found"
+            );
+        }
         self.route_lease_response(envelope, meta, &domain_response, request_started);
     }
 
