@@ -51,7 +51,7 @@ All rows in this section map to `target_class = engine_core`.
 | kv | tier3-system-kv | mixed_read_write_families | 0.09141 | 1.3 | 769,231 | 0.9 | 1,111,111 | hard |  |
 | kv | tier3-system-kv | single_family_intensive | 0.233772 | 15 | 66,667 | 10 | 100,000 | hard |  |
 | kv | tier3-system-kv | triple_family_contention | 0.09963 | 1.3 | 769,231 | 0.9 | 1,111,111 | hard |  |
-| lease | tier3-system-lease | dual_route_concurrent | 6.506417 | 7.9 | 126,582 | 1.8 | 555,556 | hard | Operational gate reset from 2026-07-06 lease rerun; 1.8us retained as stretch-only future optimization target. |
+| lease | tier3-system-lease | dual_route_concurrent | 5.954408 | 1.8 | 555,556 | 1.3 | 769,231 | hard | 2026-07-06 matrix did not confirm 6.506us as stable; current/pre-audit matched within 10%, but row was noisy and remains unresolved against the 4.616us baseline. |
 | lease | tier3-system-lease | mixed_operations_high_load | 1.787775 | 1.3 | 769,231 | 1 | 1,000,000 | hard |  |
 | lease | tier3-system-lease | single_route_intensive | 4.504248 | 2.2 | 454,545 | 1.6 | 625,000 | hard |  |
 | lease | tier3-system-lease | triple_route_contention | 0.503941 | 1.05 | 952,381 | 0.8 | 1,250,000 | hard |  |
