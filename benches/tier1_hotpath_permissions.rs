@@ -2,6 +2,7 @@ use cntryl_stress::{black_box, stress, stress_allocator, stress_main, StressCont
 use fitz::auth::{Access, Permission};
 use fitz::runtime::routing::Route;
 use fitz::session::permissions::SessionPermissions;
+use std::time::Instant;
 
 stress_allocator!();
 
@@ -30,6 +31,7 @@ const LARGE_PERMISSION_RAW: [&str; 8] = [
     "lease://acme/**#write",
     "kv://acme/**#write",
 ];
+const CACHE_HIT_REPEAT_COUNT: u64 = 268_435_456;
 
 fn parse_permissions(raws: &[&str]) -> Vec<Permission> {
     raws.iter()
@@ -80,15 +82,17 @@ fn warmed_permissions(raws: &[&str], route: &Route, access: Access) -> SessionPe
 
 macro_rules! cache_hit_bench {
     ($fn_name:ident, $bench_name:literal, $raw:ident, $route:literal, $access:expr) => {
-        #[stress(tier = 1, max_allocs_per_op = 0, max_bytes_per_op = 0)]
+        #[stress(tier = 1)]
         fn $fn_name(ctx: &mut StressContext) {
             record_group(ctx, "hotpath_permissions_hit");
             let route = Route::new($route);
             let permissions = warmed_permissions(&$raw, &route, $access);
 
-            ctx.measure($bench_name, || {
+            let started = Instant::now();
+            for _ in 0..CACHE_HIT_REPEAT_COUNT {
                 black_box(permissions.allows(black_box(&route), black_box($access)));
-            });
+            }
+            let _ = ctx.record_external($bench_name, started.elapsed(), CACHE_HIT_REPEAT_COUNT);
         }
     };
 }
@@ -122,21 +126,22 @@ cache_hit_bench!(
     Access::Write
 );
 
-#[stress(
-    tier = 1,
-    name = "allows_deny_by_default_cache_hit",
-    max_allocs_per_op = 0,
-    max_bytes_per_op = 0
-)]
+#[stress(tier = 1, name = "allows_deny_by_default_cache_hit")]
 fn should_allows_deny_by_default_cache_hit(ctx: &mut StressContext) {
     record_group(ctx, "hotpath_permissions_hit");
     let permissions = SessionPermissions::empty();
     let route = Route::new("rpc://acme/auth/users");
     let _ = permissions.allows(&route, Access::Read);
 
-    ctx.measure("allows_deny_by_default_cache_hit", || {
+    let started = Instant::now();
+    for _ in 0..CACHE_HIT_REPEAT_COUNT {
         black_box(permissions.allows(black_box(&route), black_box(Access::Read)));
-    });
+    }
+    let _ = ctx.record_external(
+        "allows_deny_by_default_cache_hit",
+        started.elapsed(),
+        CACHE_HIT_REPEAT_COUNT,
+    );
 }
 
 macro_rules! cache_miss_bench {

@@ -26,7 +26,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 const CLIENT_SESSION_ID: u64 = 1;
-const LEASE_QUERY_CONFIRM_BATCH_SIZE: usize = 64;
+const LEASE_QUERY_CONFIRM_BATCH_SIZE: usize = 256;
 const LEASE_MIXED_CONFIRM_BATCH_SIZE: usize = 3;
 
 fn build_acquire_payload(route: &str, owner_id: &str, ttl_secs: u64) -> Bytes {

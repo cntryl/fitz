@@ -27,10 +27,11 @@ use fitz::testkit::{TestClient, TestServer, TestWebSocketClient};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+const DIRECT_ENQUEUE_ROUNDS_PER_ITERATION: usize = 64;
 const ENCODED_ENQUEUE_ROUNDS_PER_ITERATION: usize = 4;
-const MULTICLIENT_ENQUEUE_ROUNDS_PER_ITERATION: usize = 8;
+const MULTICLIENT_ENQUEUE_ROUNDS_PER_ITERATION: usize = 32;
 const TCP_ENQUEUE_ROUNDS_PER_ITERATION: usize = 4;
-const WS_ENQUEUE_ROUNDS_PER_ITERATION: usize = 4;
+const WS_ENQUEUE_ROUNDS_PER_ITERATION: usize = 16;
 
 fn setup_queue_actor() -> fitz::domains::queue::QueueActor {
     create_bench_queue_actor("tier4", "queue", "main", None)
@@ -41,18 +42,23 @@ fn should_complete_direct_enqueue(ctx: &mut StressContext) {
     ctx.parameter("layer", "direct");
     ctx.parameter("scenario", "enqueue");
     ctx.parameter("measurement_scope", "direct_inproc");
-    ctx.parameter("batch_size", "single_enqueue");
+    ctx.parameter(
+        "batch_size",
+        format!("{DIRECT_ENQUEUE_ROUNDS_PER_ITERATION}_enqueues"),
+    );
 
     let mut actor = setup_queue_actor();
 
     let iterations = ctx.measure_workload("complete_direct_enqueue", || {
-        let response = actor.handle_send(Bytes::from_static(b"msg"), None);
-        assert!(matches!(
-            response,
-            fitz::domains::queue::QueueResponse::Sent { .. }
-        ));
+        for _ in 0..DIRECT_ENQUEUE_ROUNDS_PER_ITERATION {
+            let response = actor.handle_send(Bytes::from_static(b"msg"), None);
+            assert!(matches!(
+                response,
+                fitz::domains::queue::QueueResponse::Sent { .. }
+            ));
+        }
     });
-    stress_config::record_completed(ctx, iterations);
+    stress_config::record_completed(ctx, DIRECT_ENQUEUE_ROUNDS_PER_ITERATION as u64 * iterations);
 }
 
 #[stress(tier = 4)]
@@ -125,7 +131,10 @@ fn should_complete_ws_enqueue(ctx: &mut StressContext) {
     ctx.parameter("layer", "websocket");
     ctx.parameter("scenario", "enqueue");
     ctx.parameter("measurement_scope", "ws_e2e");
-    ctx.parameter("batch_size", "4_enqueues");
+    ctx.parameter(
+        "batch_size",
+        format!("{WS_ENQUEUE_ROUNDS_PER_ITERATION}_enqueues"),
+    );
 
     let route = "queue://tier4/queue/main/enqueue";
     let enqueue_frame = build_queue_enqueue(route, b"msg");

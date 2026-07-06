@@ -10,7 +10,7 @@ mod stress_config;
 use stress_config::StressContextExt;
 
 use bytes::Bytes;
-use cntryl_stress::{stress, stress_main, StressContext};
+use cntryl_stress::{black_box, stress, stress_main, StressContext};
 use fitz::benchkit::{
     build_rpc_request, build_rpc_response_frame, build_rpc_subscribe, create_bench_rpc_sink,
     extract_single_tlv_field, register_session_queue_sink, route_frame, FrameQueueSink,
@@ -20,7 +20,6 @@ use fitz::protocol::frame::ChannelId;
 use fitz::protocol::rpc_codec::parse_request;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{RouteAddress, RouteFamily};
-use std::hint::black_box;
 use std::sync::Arc;
 
 const ROUTE_STR: &str = "rpc://bench/system/route";

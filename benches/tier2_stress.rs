@@ -1,7 +1,6 @@
 #![allow(dead_code, clippy::pedantic)]
 
-use cntryl_stress::StressContext;
-use std::hint::black_box;
+use cntryl_stress::{black_box, StressContext};
 use std::time::{Duration, Instant};
 
 pub fn measure_iterations<F>(

@@ -3,7 +3,7 @@ use bytes::Bytes;
 #[path = "tier2_stress.rs"]
 mod tier2_stress;
 
-use cntryl_stress::{stress, stress_main, StressContext};
+use cntryl_stress::{black_box, stress, stress_main, StressContext};
 use fitz::benchkit::{
     build_rpc_request, build_rpc_response_frame, build_rpc_subscribe, create_bench_rpc_sink,
     extract_single_tlv_field, register_session_queue_sink, route_frame, FrameQueueSink,
@@ -13,14 +13,13 @@ use fitz::protocol::frame::ChannelId;
 use fitz::protocol::rpc_codec::parse_request;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
-use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
 
 const ROUTE_STR: &str = "rpc://bench/subsystem/route";
 const REQUESTER_SESSION_ID: u64 = 1;
 const REQUEST_FRAME_RING_SIZE: usize = 4096;
-const DISPATCH_BATCH_SIZE: usize = 8192;
+const DISPATCH_BATCH_SIZE: usize = 32_768;
 
 type WorkerHandle = (u64, RouteAddress, Arc<FrameQueueSink>);
 
@@ -235,25 +234,9 @@ fn dispatch_response_cleanup_workers(ctx: &mut StressContext, worker_count: usiz
 
 #[stress(
     tier = 2,
-    name = "dispatch_response_cleanup_8192_ops_1_workers_primary"
+    name = "dispatch_response_cleanup_32768_ops_256_workers_primary"
 )]
-fn should_dispatch_response_cleanup_8192_ops_1_workers_primary(ctx: &mut StressContext) {
-    dispatch_response_cleanup_workers(ctx, 1);
-}
-
-#[stress(
-    tier = 2,
-    name = "dispatch_response_cleanup_8192_ops_64_workers_primary"
-)]
-fn should_dispatch_response_cleanup_8192_ops_64_workers_primary(ctx: &mut StressContext) {
-    dispatch_response_cleanup_workers(ctx, 64);
-}
-
-#[stress(
-    tier = 2,
-    name = "dispatch_response_cleanup_8192_ops_256_workers_primary"
-)]
-fn should_dispatch_response_cleanup_8192_ops_256_workers_primary(ctx: &mut StressContext) {
+fn should_dispatch_response_cleanup_32768_ops_256_workers_primary(ctx: &mut StressContext) {
     dispatch_response_cleanup_workers(ctx, 256);
 }
 

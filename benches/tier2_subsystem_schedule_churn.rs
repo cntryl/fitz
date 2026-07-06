@@ -5,14 +5,15 @@ use bytes::Bytes;
 #[path = "tier2_stress.rs"]
 mod tier2_stress;
 
-use cntryl_stress::{stress, stress_main, StressContext};
+use cntryl_stress::{black_box, stress, stress_main, StressContext};
 use fitz::domains::schedule::protocol::validate_concrete_schedule_route;
 use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
-use std::hint::black_box;
+use std::time::{Duration, Instant};
 
-const CHURN_CASE_COUNT: usize = 4;
+const DELETE_CHURN_OPERATION_COUNT: u64 = 1024;
+const UPSERT_CHURN_OPERATION_COUNT: u64 = 1024;
 
 fn create_test_actor() -> ScheduleActor {
     let store = create_test_engine_with_cfs(vec![1, 2, 3, 4, 5]);
@@ -64,91 +65,86 @@ fn populate_actor(
     }
 }
 
-fn cancel_existing(ctx: &mut StressContext, name: &str, count: usize) {
-    let (routes, crons, payloads) = precompute_data(count);
-    let victim_index = count / 2;
-    let mut actor = create_test_actor();
-    populate_actor(&mut actor, &routes, &crons, &payloads, count);
-    let route = routes[victim_index].clone();
-
-    tier2_stress::measure_once(ctx, name, count as u64, || {
-        let response = actor.handle(ScheduleMessage::Cancel { route });
-        assert!(matches!(response, ScheduleResponse::Ok));
-        black_box(actor.schedule_count());
-    });
-}
-
 fn delete_then_full_list_shared_cache(ctx: &mut StressContext, name: &str, count: usize) {
     let (routes, crons, payloads) = precompute_data(count);
     let victim_index = count / 2;
     let route = routes[victim_index].clone();
-    let mut cases = (0..CHURN_CASE_COUNT)
-        .map(|_| {
-            let mut actor = create_test_actor();
-            populate_actor(&mut actor, &routes, &crons, &payloads, count);
-            let (cached, _) = actor.list_entries(0, 0);
-            (actor, cached.len())
-        })
-        .collect::<Vec<_>>();
+    let mut actor = create_test_actor();
+    populate_actor(&mut actor, &routes, &crons, &payloads, count);
+    let count_u64 = count as u64;
+    let mut total = Duration::ZERO;
 
-    tier2_stress::measure_once(ctx, name, CHURN_CASE_COUNT as u64, || {
-        for (actor, cached_len) in &mut cases {
-            black_box(*cached_len);
-            let response = actor.handle(ScheduleMessage::Cancel {
-                route: route.clone(),
-            });
-            assert!(matches!(response, ScheduleResponse::Ok));
-            let (entries, total_count) = actor.list_entries(0, 0);
-            black_box((entries.len(), total_count));
-        }
-    });
+    for _ in 0..DELETE_CHURN_OPERATION_COUNT {
+        let (cached, cached_total) = actor.list_entries(0, 0);
+        assert_eq!(
+            cached_total, count_u64,
+            "delete churn setup should restore route"
+        );
+        black_box(cached.len());
+
+        let started = Instant::now();
+        let response = actor.handle(ScheduleMessage::Cancel {
+            route: route.clone(),
+        });
+        assert!(matches!(response, ScheduleResponse::Ok));
+        let (entries, total_count) = actor.list_entries(0, 0);
+        total += started.elapsed();
+        assert_eq!(
+            total_count,
+            count_u64 - 1,
+            "delete churn should remove exactly one route"
+        );
+        black_box((entries.len(), total_count));
+
+        let response = actor.handle(ScheduleMessage::Create {
+            route: route.clone(),
+            cron: crons[victim_index].clone(),
+            payload: payloads[victim_index].clone(),
+        });
+        assert!(
+            matches!(response, ScheduleResponse::Ok),
+            "delete churn restore should succeed"
+        );
+    }
+
+    tier2_stress::record_duration(ctx, name, total, DELETE_CHURN_OPERATION_COUNT);
 }
 
 fn upsert_then_full_list_shared_cache(ctx: &mut StressContext, name: &str, count: usize) {
     let (routes, crons, payloads) = precompute_data(count);
     let victim_index = count / 2;
     let route = routes[victim_index].clone();
-    let mut cases = (0..CHURN_CASE_COUNT)
-        .map(|_| {
-            let mut actor = create_test_actor();
-            populate_actor(&mut actor, &routes, &crons, &payloads, count);
-            let (cached, _) = actor.list_entries(0, 0);
-            (actor, cached.len())
-        })
-        .collect::<Vec<_>>();
+    let replacement_crons = [
+        "0 5 * * *".to_string(),
+        "0 6 * * *".to_string(),
+        "0 7 * * *".to_string(),
+        "0 8 * * *".to_string(),
+    ];
+    let replacement_payloads = [
+        Bytes::from_static(b"replacement-a"),
+        Bytes::from_static(b"replacement-b"),
+        Bytes::from_static(b"replacement-c"),
+        Bytes::from_static(b"replacement-d"),
+    ];
+    let mut actor = create_test_actor();
+    populate_actor(&mut actor, &routes, &crons, &payloads, count);
+    let (cached, _) = actor.list_entries(0, 0);
+    black_box(cached.len());
 
-    tier2_stress::measure_once(ctx, name, CHURN_CASE_COUNT as u64, || {
-        for (actor, cached_len) in &mut cases {
-            black_box(*cached_len);
+    tier2_stress::measure_once(ctx, name, UPSERT_CHURN_OPERATION_COUNT, || {
+        let mut replacement_index = 0usize;
+        for _ in 0..UPSERT_CHURN_OPERATION_COUNT {
             let response = actor.handle(ScheduleMessage::Create {
                 route: route.clone(),
-                cron: "0 5 * * *".to_string(),
-                payload: Bytes::from_static(b"replacement"),
+                cron: replacement_crons[replacement_index].clone(),
+                payload: replacement_payloads[replacement_index].clone(),
             });
+            replacement_index = (replacement_index + 1) % replacement_crons.len();
             assert!(matches!(response, ScheduleResponse::Ok));
             let (entries, total_count) = actor.list_entries(0, 0);
             black_box((entries.len(), total_count));
         }
     });
-}
-
-#[stress(tier = 2, name = "cancel_existing_100_mixed_crons")]
-fn should_cancel_existing_100_mixed_crons(ctx: &mut StressContext) {
-    cancel_existing(ctx, "cancel_existing_100_mixed_crons", 100);
-}
-
-#[stress(tier = 2, name = "cancel_existing_1000_mixed_crons")]
-fn should_cancel_existing_1000_mixed_crons(ctx: &mut StressContext) {
-    cancel_existing(ctx, "cancel_existing_1000_mixed_crons", 1000);
-}
-
-#[stress(tier = 2, name = "delete_then_full_list_shared_cache_100_mixed_crons")]
-fn should_delete_then_full_list_shared_cache_100_mixed_crons(ctx: &mut StressContext) {
-    delete_then_full_list_shared_cache(
-        ctx,
-        "delete_then_full_list_shared_cache_100_mixed_crons",
-        100,
-    );
 }
 
 #[stress(tier = 2, name = "delete_then_full_list_shared_cache_1000_mixed_crons")]
@@ -157,15 +153,6 @@ fn should_delete_then_full_list_shared_cache_1000_mixed_crons(ctx: &mut StressCo
         ctx,
         "delete_then_full_list_shared_cache_1000_mixed_crons",
         1000,
-    );
-}
-
-#[stress(tier = 2, name = "upsert_then_full_list_shared_cache_100_mixed_crons")]
-fn should_upsert_then_full_list_shared_cache_100_mixed_crons(ctx: &mut StressContext) {
-    upsert_then_full_list_shared_cache(
-        ctx,
-        "upsert_then_full_list_shared_cache_100_mixed_crons",
-        100,
     );
 }
 

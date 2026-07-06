@@ -29,8 +29,8 @@ use std::time::Duration;
 
 const PUBLISHER_SESSION_ID: u64 = 10_000;
 const LIFECYCLE_SESSION_ID: u64 = 20_000;
-const NOTICE_FANOUT_CONFIRM_BATCH_SIZE: usize = 64;
-const NOTICE_LIFECYCLE_CYCLES_PER_ITERATION: u64 = 16;
+const NOTICE_FANOUT_CONFIRM_BATCH_SIZE: usize = 256;
+const NOTICE_LIFECYCLE_CYCLES_PER_ITERATION: u64 = 128;
 
 #[derive(Clone, Copy)]
 struct NoticeFanoutCase {
@@ -307,7 +307,10 @@ fn should_complete_double_star_fanout_subscriber_scaling_1000(ctx: &mut StressCo
 fn should_complete_wildcard_subscribe_unsubscribe_cycle(ctx: &mut StressContext) {
     ctx.parameter("scenario", "wildcard_subscribe_unsubscribe_cycle");
     ctx.parameter("measurement_scope", "routed_lifecycle");
-    ctx.parameter("batch_size", "16_subscribe_unsubscribe_cycles");
+    ctx.parameter(
+        "batch_size",
+        format!("{NOTICE_LIFECYCLE_CYCLES_PER_ITERATION}_subscribe_unsubscribe_cycles"),
+    );
     ctx.parameter("subscriber_count", "1");
 
     let pattern = "notice://realm/area/orders/*";

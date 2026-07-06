@@ -18,6 +18,9 @@ use fitz::domains::kv::{KvActor, KvMessage, KvResponse, TxMode};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
 
+const SAME_FAMILY_WRITE_BATCH_COUNT: u64 = 16;
+const SAME_FAMILY_PUTS_PER_BATCH: u64 = 10;
+
 fn begin_transaction(
     actor: &mut KvActor,
     family_id: u64,
@@ -43,29 +46,47 @@ fn begin_transaction(
 fn should_complete_10_puts_same_family(ctx: &mut StressContext) {
     ctx.parameter("scenario", "single_family_intensive");
     ctx.parameter("measurement_scope", "direct_actor");
-    ctx.parameter("batch_size", "10_puts");
+    ctx.parameter(
+        "batch_size",
+        format!("{SAME_FAMILY_WRITE_BATCH_COUNT}_transactions_x{SAME_FAMILY_PUTS_PER_BATCH}_puts"),
+    );
 
     // Setup: Actor + store outside measurement
     let store = create_test_engine_with_cfs(vec![1]);
     let mut actor = KvActor::new(store);
-    let Some(tx_id) = begin_transaction(&mut actor, 1, "intensive", TxMode::ReadWrite) else {
-        return;
-    };
+    let writes: Vec<(Bytes, Bytes)> = (0..SAME_FAMILY_PUTS_PER_BATCH)
+        .map(|i| {
+            (
+                Bytes::from(format!("key{i}").into_bytes()),
+                Bytes::from(format!("value{i}").into_bytes()),
+            )
+        })
+        .collect();
 
-    let iterations = ctx.measure_workload("complete_10_puts_same_family", || {
-        for i in 0..10 {
-            actor.handle(KvMessage::Put {
-                tx_id,
-                route_family: RouteFamily::new(1),
-                resource: "intensive".to_string(),
-                key: Bytes::from(format!("key{i}").into_bytes()),
-                value: Bytes::from(format!("value{i}").into_bytes()),
-            });
+    let iterations = ctx.measure_workload("complete_same_family_write_batches", || {
+        for batch in 0..SAME_FAMILY_WRITE_BATCH_COUNT {
+            let resource = format!("intensive-{batch}");
+            let Some(tx_id) = begin_transaction(&mut actor, 1, &resource, TxMode::ReadWrite) else {
+                continue;
+            };
+
+            for (key, value) in &writes {
+                actor.handle(KvMessage::Put {
+                    tx_id,
+                    route_family: RouteFamily::new(1),
+                    resource: resource.clone(),
+                    key: key.clone(),
+                    value: value.clone(),
+                });
+            }
+
+            actor.handle(KvMessage::Rollback { tx_id });
         }
     });
 
-    actor.handle(KvMessage::Rollback { tx_id });
-    stress_config::record_completed(ctx, 10 * iterations);
+    let completions_per_iteration =
+        SAME_FAMILY_WRITE_BATCH_COUNT * (SAME_FAMILY_PUTS_PER_BATCH + 2);
+    stress_config::record_completed(ctx, completions_per_iteration * iterations);
 }
 
 #[stress(tier = 3)]
@@ -77,12 +98,10 @@ fn should_complete_interleaved_puts_2_families(ctx: &mut StressContext) {
     // Setup: Actor + two column families
     let store = create_test_engine_with_cfs(vec![1, 2]);
     let mut actor = KvActor::new(store);
-    let Some(tx_id1) = begin_transaction(&mut actor, 1, "f1", TxMode::ReadWrite) else {
-        return;
-    };
-    let Some(tx_id2) = begin_transaction(&mut actor, 2, "f2", TxMode::ReadWrite) else {
-        return;
-    };
+    let tx_id1 =
+        begin_transaction(&mut actor, 1, "f1", TxMode::ReadWrite).expect("begin family 1 tx");
+    let tx_id2 =
+        begin_transaction(&mut actor, 2, "f2", TxMode::ReadWrite).expect("begin family 2 tx");
 
     let iterations = ctx.measure_workload("complete_interleaved_puts_2_families", || {
         for i in 0..10 {
@@ -167,8 +186,9 @@ fn should_complete_mixed_read_write_families(ctx: &mut StressContext) {
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
-    let fitz::domains::kv::KvResponse::BeginOk { tx_id } = response else {
-        return;
+    let tx_id = match response {
+        fitz::domains::kv::KvResponse::BeginOk { tx_id } => tx_id,
+        other => panic!("expected setup begin ok, got {other:?}"),
     };
 
     for i in 0..5 {
@@ -183,12 +203,10 @@ fn should_complete_mixed_read_write_families(ctx: &mut StressContext) {
 
     actor.handle(KvMessage::Rollback { tx_id });
 
-    let Some(read_tx_id) = begin_transaction(&mut actor, 1, "read_f1", TxMode::ReadOnly) else {
-        return;
-    };
-    let Some(write_tx_id) = begin_transaction(&mut actor, 2, "write_f2", TxMode::ReadWrite) else {
-        return;
-    };
+    let read_tx_id =
+        begin_transaction(&mut actor, 1, "read_f1", TxMode::ReadOnly).expect("begin read tx");
+    let write_tx_id =
+        begin_transaction(&mut actor, 2, "write_f2", TxMode::ReadWrite).expect("begin write tx");
 
     let iterations = ctx.measure_workload("complete_mixed_read_write_families", || {
         for i in 0..5 {

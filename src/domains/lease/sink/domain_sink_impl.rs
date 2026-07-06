@@ -608,11 +608,12 @@ impl LeaseDomainRuntime<'_> {
     }
 
     fn prepare_acquire_key(&self, key: &crate::domains::lease::protocol::LeaseKey, now: Instant) {
-        let expired_state = {
+        let (expired_state, lease_exists) = {
             let mut leases = self.core.leases.lock();
             match leases.get(key) {
-                Some(state) if state.expiry <= now => leases.remove(key),
-                _ => None,
+                Some(state) if state.expiry <= now => (leases.remove(key), false),
+                Some(_) => (None, true),
+                None => (None, false),
             }
         };
 
@@ -621,9 +622,10 @@ impl LeaseDomainRuntime<'_> {
             self.remove_admin_lease(key);
             self.notify_lease_change(key);
             self.grant_next_waiter_if_available(key, now);
+            return;
         }
 
-        if !self.core.leases.lock().contains_key(key) {
+        if !lease_exists && self.pending_waiter_count(key) > 0 {
             self.grant_next_waiter_if_available(key, now);
         }
     }

@@ -21,7 +21,7 @@ pub use live_sink::{
     drain_frame_queue_sinks_after_total_count, register_session_counting_sink,
     register_session_queue_sink, route_frame, route_frame_to_address, route_raw_frame,
     session_inbox_route, wait_for_counting_sinks_each_count, wait_for_counting_sinks_total_count,
-    CountingSink, FrameQueueSink,
+    CountingSink, DirectLeaseAcquireRelease, FrameQueueSink,
 };
 pub use queue::{create_bench_queue_actor, create_local_bench_queue_actor};
 pub use rpc::create_bench_rpc_context;

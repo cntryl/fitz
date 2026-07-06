@@ -2,7 +2,7 @@ use bytes::Bytes;
 #[path = "tier2_stress.rs"]
 mod tier2_stress;
 
-use cntryl_stress::{stress, stress_main, StressContext};
+use cntryl_stress::{black_box, stress, stress_main, StressContext};
 use fitz::benchkit::{
     create_bench_lease_sink, register_session_counting_sink, route_frame,
     wait_for_counting_sinks_each_count, CountingSink,
@@ -19,8 +19,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const WATCH_ROUTE: &str = "lease://realm/locks/primary";
-const NOTIFY_REPEAT_COUNT: u64 = 16_384;
-const NOTIFY_CHUNK_SIZE: u64 = 1_024;
+const NOTIFY_REPEAT_COUNT: u64 = 32_768;
+const EXACT_ROUTE_64_NOTIFY_REPEAT_COUNT: u64 = 131_072;
+const NOTIFY_CHUNK_SIZE: u64 = 512;
 
 struct PreparedLeaseNotifyCase {
     sink: Arc<LeaseDomainSink>,
@@ -139,7 +140,8 @@ fn prepare_notify_case(watcher_count: usize, pattern: &str) -> PreparedLeaseNoti
 
 fn notify_watchers(ctx: &mut StressContext, name: &str, watcher_count: usize, pattern: &str) {
     let case = prepare_notify_case(watcher_count, pattern);
-    let mut remaining = NOTIFY_REPEAT_COUNT;
+    let repeat_count = notify_repeat_count(watcher_count, pattern);
+    let mut remaining = repeat_count;
     let mut total = Duration::ZERO;
     while remaining > 0 {
         let chunk = remaining.min(NOTIFY_CHUNK_SIZE);
@@ -147,6 +149,7 @@ fn notify_watchers(ctx: &mut StressContext, name: &str, watcher_count: usize, pa
         let start = Instant::now();
         for _ in 0..chunk {
             case.publish_once();
+            black_box(());
         }
         let expected_per_watcher = usize::try_from(chunk).expect("lease publish count fits usize");
         case.wait_for_notifications_per_watcher(expected_per_watcher);
@@ -158,8 +161,16 @@ fn notify_watchers(ctx: &mut StressContext, name: &str, watcher_count: usize, pa
         ctx,
         name,
         total,
-        NOTIFY_REPEAT_COUNT.saturating_mul(watcher_count as u64),
+        repeat_count.saturating_mul(watcher_count as u64),
     );
+}
+
+fn notify_repeat_count(watcher_count: usize, pattern: &str) -> u64 {
+    if watcher_count == 64 && pattern == WATCH_ROUTE {
+        EXACT_ROUTE_64_NOTIFY_REPEAT_COUNT
+    } else {
+        NOTIFY_REPEAT_COUNT
+    }
 }
 
 macro_rules! lease_notify_bench {

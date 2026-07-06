@@ -1,7 +1,7 @@
 use super::model::{
-    Arc, AtomicBool, AtomicU64, HashMap, Instant, LeaseDomainActor, LeaseDomainCommand,
-    LeaseDomainCore, LeaseDomainRuntime, LeaseDomainSink, LeaseDomainState, LeaseLiveCounts,
-    LeaseMetrics, Mutex, Ordering, SinkLeaseState, Utc, VecDeque,
+    Arc, AtomicBool, AtomicU64, HashMap, Instant, LeaseAcquireRequest, LeaseDomainActor,
+    LeaseDomainCommand, LeaseDomainCore, LeaseDomainRuntime, LeaseDomainSink, LeaseDomainState,
+    LeaseLiveCounts, LeaseMetrics, Mutex, Ordering, SinkLeaseState, Utc, VecDeque,
 };
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::runtime::Router;
@@ -162,6 +162,40 @@ impl LeaseDomainSink {
         reply_rx
             .recv_timeout(std::time::Duration::from_secs(1))
             .unwrap_or_default()
+    }
+
+    #[must_use]
+    pub(crate) fn acquire_direct_for_bench(
+        &self,
+        key: &crate::domains::lease::protocol::LeaseKey,
+        owner_session_id: u64,
+        owner_id: &str,
+        ttl_secs: u64,
+        route_family: RouteFamily,
+    ) -> crate::domains::lease::protocol::LeaseResponse {
+        self.state.runtime().handle_acquire(LeaseAcquireRequest {
+            key: key.clone(),
+            owner_session_id,
+            owner_id: owner_id.to_owned(),
+            ttl_secs,
+            wait_seconds: 0,
+            reply_source: LeaseDomainActor::route_address(),
+            reply_destination: None,
+            channel: crate::runtime::ClientChannel::Lease,
+            route_family,
+        })
+    }
+
+    #[must_use]
+    pub(crate) fn release_direct_for_bench(
+        &self,
+        key: &crate::domains::lease::protocol::LeaseKey,
+        owner_id: &str,
+        fencing_token: u64,
+    ) -> crate::domains::lease::protocol::LeaseResponse {
+        self.state
+            .runtime()
+            .handle_release(key, owner_id, fencing_token)
     }
 }
 

@@ -37,8 +37,8 @@ Do not pass `--profile` in Fitz workflow or documentation commands.
   append/read/replay, notice publish/fanout, schedule create/claim/ack, and
   TCP/WS integration for each domain.
 - **Deep suite:** Broader nightly/manual coverage for scaling curves,
-  storage-model experiments, wildcard and route-depth variants, high-cardinality
-  registration, and noisy rows. It uses the same default stress profile; it is
+  wildcard and route-depth variants, high-cardinality registration, and rows
+  under active signal review. It uses the same default stress profile; it is
   deeper coverage, not a different profile.
 - **Historical experiments:** One-off profiling benches that no longer answer
   an active regression, throughput, scaling, or risky-subsystem question.

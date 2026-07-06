@@ -22,6 +22,11 @@ use std::time::{Duration, Instant};
 
 const CLIENT_SESSION_ID: u64 = 1;
 const RECEIVE_BATCH_SIZE: usize = 50;
+const CAPACITY_ACK_ROUNDTRIP_REPEAT_COUNT: u64 = 16;
+const CAPACITY_ENQUEUE_ISOLATED_REPEAT_COUNT: u64 = 64;
+const CAPACITY_EXTEND_ROUNDTRIP_REPEAT_COUNT: u64 = 16;
+const ROUTED_ACK_ROUNDTRIP_REPEAT_COUNT: u64 = 16;
+const ROUTED_CONCURRENT_ENQUEUE_REPEAT_COUNT: usize = 16;
 
 #[inline]
 fn u128_to_u64_saturating(value: u128) -> u64 {
@@ -277,7 +282,10 @@ fn should_complete_capacity_enqueue_isolated(ctx: &mut StressContext) {
     ctx.parameter("scenario", "enqueue_isolated");
     ctx.parameter("measurement_scope", "direct_actor");
     ctx.parameter("operation", "enqueue");
-    ctx.parameter("batch_size", "single_enqueue");
+    ctx.parameter(
+        "batch_size",
+        format!("{CAPACITY_ENQUEUE_ISOLATED_REPEAT_COUNT}_enqueues"),
+    );
 
     let payload = Bytes::from_static(b"enqueue isolated message");
     let mut actors: Vec<QueueActor> = (0..64)
@@ -286,11 +294,13 @@ fn should_complete_capacity_enqueue_isolated(ctx: &mut StressContext) {
     let mut actor_index = 0usize;
 
     let iterations = ctx.measure_workload("complete_capacity_enqueue_isolated", || {
-        let response = actors[actor_index].handle_send(payload.clone(), None);
-        assert!(matches!(response, QueueResponse::Sent { .. }));
-        actor_index = (actor_index + 1) % actors.len();
+        for _ in 0..CAPACITY_ENQUEUE_ISOLATED_REPEAT_COUNT {
+            let response = actors[actor_index].handle_send(payload.clone(), None);
+            assert!(matches!(response, QueueResponse::Sent { .. }));
+            actor_index = (actor_index + 1) % actors.len();
+        }
     });
-    stress_config::record_completed(ctx, iterations);
+    stress_config::record_completed(ctx, CAPACITY_ENQUEUE_ISOLATED_REPEAT_COUNT * iterations);
 }
 
 #[stress(tier = 3)]
@@ -323,20 +333,26 @@ fn should_complete_capacity_ack_roundtrip(ctx: &mut StressContext) {
     ctx.parameter("measurement_scope", "direct_actor");
     ctx.parameter("operation", "ack");
     ctx.parameter("cache_state", "warm");
-    ctx.parameter("batch_size", "1_enqueue_1_receive_1_ack");
+    ctx.parameter(
+        "batch_size",
+        format!("{CAPACITY_ACK_ROUNDTRIP_REPEAT_COUNT}_enqueue_receive_ack_roundtrips"),
+    );
 
     let mut actor = create_bench_queue_actor("bench", "ack", "queue", None);
     let payload = Bytes::from_static(b"ack roundtrip message");
 
     let iterations = ctx.measure_workload("complete_capacity_ack_roundtrip", || {
-        let response = actor.handle_send(payload.clone(), None);
-        assert!(matches!(response, QueueResponse::Sent { .. }));
+        for _ in 0..CAPACITY_ACK_ROUNDTRIP_REPEAT_COUNT {
+            let response = actor.handle_send(payload.clone(), None);
+            assert!(matches!(response, QueueResponse::Sent { .. }));
 
-        let message = receive_single_message(&mut actor);
-        let response = actor.handle_ack_for_session(CLIENT_SESSION_ID, message.id, message.token);
-        assert_eq!(response, QueueResponse::Acked);
+            let message = receive_single_message(&mut actor);
+            let response =
+                actor.handle_ack_for_session(CLIENT_SESSION_ID, message.id, message.token);
+            assert_eq!(response, QueueResponse::Acked);
+        }
     });
-    stress_config::record_completed(ctx, 3 * iterations);
+    stress_config::record_completed(ctx, 3 * CAPACITY_ACK_ROUNDTRIP_REPEAT_COUNT * iterations);
 }
 
 #[stress(tier = 3)]
@@ -345,24 +361,30 @@ fn should_complete_capacity_extend_roundtrip(ctx: &mut StressContext) {
     ctx.parameter("measurement_scope", "direct_actor");
     ctx.parameter("operation", "extend");
     ctx.parameter("cache_state", "warm");
-    ctx.parameter("batch_size", "1_enqueue_1_receive_1_extend_1_ack");
+    ctx.parameter(
+        "batch_size",
+        format!("{CAPACITY_EXTEND_ROUNDTRIP_REPEAT_COUNT}_enqueue_receive_extend_ack_roundtrips"),
+    );
 
     let mut actor = create_bench_queue_actor("bench", "extend", "queue", None);
     let payload = Bytes::from_static(b"extend roundtrip message");
 
     let iterations = ctx.measure_workload("complete_capacity_extend_roundtrip", || {
-        let response = actor.handle_send(payload.clone(), None);
-        assert!(matches!(response, QueueResponse::Sent { .. }));
+        for _ in 0..CAPACITY_EXTEND_ROUNDTRIP_REPEAT_COUNT {
+            let response = actor.handle_send(payload.clone(), None);
+            assert!(matches!(response, QueueResponse::Sent { .. }));
 
-        let message = receive_single_message(&mut actor);
-        let response =
-            actor.handle_extend_for_session(CLIENT_SESSION_ID, message.id, message.token, 60);
-        assert_eq!(response, QueueResponse::Extended);
+            let message = receive_single_message(&mut actor);
+            let response =
+                actor.handle_extend_for_session(CLIENT_SESSION_ID, message.id, message.token, 60);
+            assert_eq!(response, QueueResponse::Extended);
 
-        let response = actor.handle_ack_for_session(CLIENT_SESSION_ID, message.id, message.token);
-        assert_eq!(response, QueueResponse::Acked);
+            let response =
+                actor.handle_ack_for_session(CLIENT_SESSION_ID, message.id, message.token);
+            assert_eq!(response, QueueResponse::Acked);
+        }
     });
-    stress_config::record_completed(ctx, 4 * iterations);
+    stress_config::record_completed(ctx, 4 * CAPACITY_EXTEND_ROUNDTRIP_REPEAT_COUNT * iterations);
 }
 
 #[stress(tier = 3)]
@@ -590,10 +612,15 @@ fn measure_routed_concurrent_enqueues(ctx: &mut StressContext, name: &str, clien
     ctx.parameter("scenario", "concurrent_enqueues_client_scaling");
     ctx.parameter("measurement_scope", "routed_sink_concurrent");
     ctx.parameter("operation", "enqueue");
-    let batch_size = format!("{client_count}_sessions_1_enqueue_each");
+    let batch_size =
+        format!("{client_count}_sessions_{ROUTED_CONCURRENT_ENQUEUE_REPEAT_COUNT}_enqueues_each");
     ctx.parameter("batch_size", batch_size.as_str());
     let client_count_tag = client_count.to_string();
     ctx.parameter("client_count", client_count_tag.as_str());
+    ctx.parameter(
+        "enqueues_per_client",
+        ROUTED_CONCURRENT_ENQUEUE_REPEAT_COUNT.to_string(),
+    );
 
     let (router, family, _, _) = setup_queue_request_sink();
     let route = "queue://bench/system/concurrent-enqueue";
@@ -619,18 +646,20 @@ fn measure_routed_concurrent_enqueues(ctx: &mut StressContext, name: &str, clien
                 let payload = enqueue_payload.clone();
                 let session_id = *session_id;
                 scope.spawn(move || {
-                    while start_rx.recv().is_ok() {
-                        route_frame(
-                            router.as_ref(),
-                            &source,
-                            route,
-                            session_id,
-                            ChannelId::Sub,
-                            enqueue_msg_type,
-                            payload.clone(),
-                            family,
-                        )
-                        .expect("routed concurrent enqueue");
+                    while let Ok(enqueue_count) = start_rx.recv() {
+                        for _ in 0..enqueue_count {
+                            route_frame(
+                                router.as_ref(),
+                                &source,
+                                route,
+                                session_id,
+                                ChannelId::Sub,
+                                enqueue_msg_type,
+                                payload.clone(),
+                                family,
+                            )
+                            .expect("routed concurrent enqueue");
+                        }
                         done_tx
                             .send(())
                             .expect("completion receiver should stay open");
@@ -648,7 +677,7 @@ fn measure_routed_concurrent_enqueues(ctx: &mut StressContext, name: &str, clien
 
             for start_tx in &start_txs {
                 start_tx
-                    .send(())
+                    .send(ROUTED_CONCURRENT_ENQUEUE_REPEAT_COUNT)
                     .expect("enqueue worker should stay active");
             }
 
@@ -657,8 +686,9 @@ fn measure_routed_concurrent_enqueues(ctx: &mut StressContext, name: &str, clien
             }
 
             let response_count: usize = clients.iter().map(|(_, _, sink)| sink.count()).sum();
+            let expected_response_count = client_count * ROUTED_CONCURRENT_ENQUEUE_REPEAT_COUNT;
             assert_eq!(
-                response_count, client_count,
+                response_count, expected_response_count,
                 "expected every concurrent routed enqueue to receive a response"
             );
         });
@@ -666,15 +696,9 @@ fn measure_routed_concurrent_enqueues(ctx: &mut StressContext, name: &str, clien
         drop(start_txs);
         iterations
     });
-    stress_config::record_completed(ctx, client_count as u64 * iterations);
-}
-
-#[stress(tier = 3)]
-fn should_complete_routed_concurrent_enqueues_client_scaling_1(ctx: &mut StressContext) {
-    measure_routed_concurrent_enqueues(
+    stress_config::record_completed(
         ctx,
-        "complete_routed_concurrent_enqueues_client_scaling_1",
-        1,
+        (client_count as u64) * (ROUTED_CONCURRENT_ENQUEUE_REPEAT_COUNT as u64) * iterations,
     );
 }
 
@@ -773,7 +797,10 @@ fn should_complete_routed_ack_roundtrip(ctx: &mut StressContext) {
     ctx.parameter("scenario", "routed_ack_roundtrip");
     ctx.parameter("measurement_scope", "routed_sink");
     ctx.parameter("operation", "ack");
-    ctx.parameter("batch_size", "1_enqueue_1_receive_1_ack");
+    ctx.parameter(
+        "batch_size",
+        format!("{ROUTED_ACK_ROUNDTRIP_REPEAT_COUNT}_enqueue_receive_ack_roundtrips"),
+    );
 
     let (router, family, source, inbox) = setup_queue_request_sink();
     let route = "queue://bench/system/ack";
@@ -783,42 +810,44 @@ fn should_complete_routed_ack_roundtrip(ctx: &mut StressContext) {
     let (dequeue_msg_type, dequeue_payload) = extract_single_tlv_field(&dequeue_frame);
 
     let iterations = ctx.measure_workload("complete_routed_ack_roundtrip", || {
-        let enqueue_response = request_queue_response(
-            &router,
-            family,
-            &source,
-            &inbox,
-            route,
-            enqueue_msg_type,
-            enqueue_payload.clone(),
-        );
-        assert_queue_success(&enqueue_response);
+        for _ in 0..ROUTED_ACK_ROUNDTRIP_REPEAT_COUNT {
+            let enqueue_response = request_queue_response(
+                &router,
+                family,
+                &source,
+                &inbox,
+                route,
+                enqueue_msg_type,
+                enqueue_payload.clone(),
+            );
+            assert_queue_success(&enqueue_response);
 
-        let dequeue_response = request_queue_response(
-            &router,
-            family,
-            &source,
-            &inbox,
-            route,
-            dequeue_msg_type,
-            dequeue_payload.clone(),
-        );
-        let (message_id, token) = parse_single_received_message(&dequeue_response);
+            let dequeue_response = request_queue_response(
+                &router,
+                family,
+                &source,
+                &inbox,
+                route,
+                dequeue_msg_type,
+                dequeue_payload.clone(),
+            );
+            let (message_id, token) = parse_single_received_message(&dequeue_response);
 
-        let ack_frame = build_queue_complete(route, message_id, token);
-        let (ack_msg_type, ack_payload) = extract_single_tlv_field(&ack_frame);
-        let ack_response = request_queue_response(
-            &router,
-            family,
-            &source,
-            &inbox,
-            route,
-            ack_msg_type,
-            ack_payload,
-        );
-        assert_queue_success(&ack_response);
+            let ack_frame = build_queue_complete(route, message_id, token);
+            let (ack_msg_type, ack_payload) = extract_single_tlv_field(&ack_frame);
+            let ack_response = request_queue_response(
+                &router,
+                family,
+                &source,
+                &inbox,
+                route,
+                ack_msg_type,
+                ack_payload,
+            );
+            assert_queue_success(&ack_response);
+        }
     });
-    stress_config::record_completed(ctx, 3 * iterations);
+    stress_config::record_completed(ctx, 3 * ROUTED_ACK_ROUNDTRIP_REPEAT_COUNT * iterations);
 }
 
 #[stress(tier = 3)]

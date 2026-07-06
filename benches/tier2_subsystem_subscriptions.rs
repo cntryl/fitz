@@ -2,14 +2,14 @@
 #[path = "tier2_stress.rs"]
 mod tier2_stress;
 
-use cntryl_stress::{stress, stress_main, StressContext};
+use cntryl_stress::{black_box, stress, stress_main, StressContext};
 use fitz::runtime::routing::{Route, RouteFamily};
 use fitz::runtime::subscriptions::{SubscriptionId, SubscriptionIndex};
-use std::hint::black_box;
 
 const SINGLE_PATTERN_BATCH_SIZE: usize = 512;
 const REMOVE_BATCH_SIZE: usize = 512;
 const MATCH_REPEAT_COUNT: usize = 4_096;
+const REPLACE_CASE_COUNT: usize = 64;
 
 fn make_subscriptions_with_patterns(pattern_count: usize) -> SubscriptionIndex {
     let mut index = SubscriptionIndex::new();
@@ -273,15 +273,27 @@ fn should_replace_100_patterns(ctx: &mut StressContext) {
     let family = RouteFamily::new(1);
     let old_batch = make_subscription_batch(100, 0);
     let new_batch = make_subscription_batch(100, 10_000);
-    let mut index = SubscriptionIndex::new();
-    index.insert_batch(family, &old_batch);
+    let mut indexes = (0..REPLACE_CASE_COUNT)
+        .map(|_| {
+            let mut index = SubscriptionIndex::new();
+            index.insert_batch(family, &old_batch);
+            index
+        })
+        .collect::<Vec<_>>();
 
-    tier2_stress::measure_once(ctx, "replace_100_patterns", 200, || {
-        for (pattern, subscription_id) in &old_batch {
-            index.remove(family, black_box(pattern), *subscription_id);
-        }
-        index.insert_batch(family, black_box(&new_batch));
-    });
+    tier2_stress::measure_once(
+        ctx,
+        "replace_100_patterns",
+        (REPLACE_CASE_COUNT as u64) * 200,
+        || {
+            for index in &mut indexes {
+                for (pattern, subscription_id) in &old_batch {
+                    index.remove(family, black_box(pattern), *subscription_id);
+                }
+                index.insert_batch(family, black_box(&new_batch));
+            }
+        },
+    );
 }
 
 #[stress(tier = 2, name = "replace_100_patterns_then_dense_match")]
@@ -290,16 +302,28 @@ fn should_replace_100_patterns_then_dense_match(ctx: &mut StressContext) {
     let old_batch = make_dense_match_batch(100, 0);
     let new_batch = make_dense_match_batch(100, 10_000);
     let route = Route::new("notify://realm/orders/items/action");
-    let mut index = SubscriptionIndex::new();
-    index.insert_batch(family, &old_batch);
+    let mut indexes = (0..REPLACE_CASE_COUNT)
+        .map(|_| {
+            let mut index = SubscriptionIndex::new();
+            index.insert_batch(family, &old_batch);
+            index
+        })
+        .collect::<Vec<_>>();
 
-    tier2_stress::measure_once(ctx, "replace_100_patterns_then_dense_match", 100, || {
-        for (pattern, subscription_id) in &old_batch {
-            index.remove(family, black_box(pattern), *subscription_id);
-        }
-        index.insert_batch(family, black_box(&new_batch));
-        black_box(index.match_all_with_capacity(family, black_box(&route), 100));
-    });
+    tier2_stress::measure_once(
+        ctx,
+        "replace_100_patterns_then_dense_match",
+        (REPLACE_CASE_COUNT as u64) * 101,
+        || {
+            for index in &mut indexes {
+                for (pattern, subscription_id) in &old_batch {
+                    index.remove(family, black_box(pattern), *subscription_id);
+                }
+                index.insert_batch(family, black_box(&new_batch));
+                black_box(index.match_all_with_capacity(family, black_box(&route), 100));
+            }
+        },
+    );
 }
 
 stress_main!();

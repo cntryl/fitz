@@ -31,14 +31,21 @@ use fitz::testkit::{TestClient, TestServer, TestWebSocketClient};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-const DIRECT_TRANSACTION_ROUNDS_PER_ITERATION: u64 = 16;
+const DIRECT_TRANSACTION_ROUNDS_PER_ITERATION: u64 = 256;
+const ENCODED_TRANSACTION_ROUNDS_PER_ITERATION: u64 = 128;
+const MULTICLIENT_TRANSACTION_ROUNDS_PER_ITERATION: u64 = 8;
+const TCP_TRANSACTION_ROUNDS_PER_ITERATION: u64 = 16;
+const WS_TRANSACTION_ROUNDS_PER_ITERATION: u64 = 16;
 
 #[stress(tier = 4)]
 fn should_complete_direct_begin_put_rollback(ctx: &mut StressContext) {
     ctx.parameter("layer", "direct");
     ctx.parameter("scenario", "transaction_sequence");
     ctx.parameter("measurement_scope", "direct_inproc");
-    ctx.parameter("batch_size", "3_ops");
+    ctx.parameter(
+        "batch_size",
+        format!("{DIRECT_TRANSACTION_ROUNDS_PER_ITERATION}_begin_put_rollback_sequences"),
+    );
 
     let (store, _temp_dir) = create_local_bench_store();
     let mut actor = KvActor::new(store);
@@ -79,7 +86,10 @@ fn should_complete_encoded_begin_put_rollback(ctx: &mut StressContext) {
     ctx.parameter("layer", "encoded");
     ctx.parameter("scenario", "transaction_sequence");
     ctx.parameter("measurement_scope", "encoded_inproc");
-    ctx.parameter("batch_size", "3_ops");
+    ctx.parameter(
+        "batch_size",
+        format!("{ENCODED_TRANSACTION_ROUNDS_PER_ITERATION}_begin_put_rollback_sequences"),
+    );
 
     let route = "kv://tier4/kv/encoded";
     let begin_frame = build_kv_begin(route, 1, 0);
@@ -91,27 +101,33 @@ fn should_complete_encoded_begin_put_rollback(ctx: &mut StressContext) {
     let mut actor = KvActor::new(store);
 
     let iterations = ctx.measure_workload("complete_encoded_begin_put_rollback", || {
-        let begin_frame = begin_frame.clone();
-        let mut parser = TlvFrameParser::new(&begin_frame);
-        let (msg_type, payload) = parser.next_field().expect("begin field");
-        let msg = kv_parse_request(msg_type, family, &payload).expect("parse begin");
-        let KvResponse::BeginOk { tx_id } = actor.handle(msg) else {
-            return;
-        };
+        for _ in 0..ENCODED_TRANSACTION_ROUNDS_PER_ITERATION {
+            let begin_frame = begin_frame.clone();
+            let mut parser = TlvFrameParser::new(&begin_frame);
+            let (msg_type, payload) = parser.next_field().expect("begin field");
+            let msg = kv_parse_request(msg_type, family, &payload).expect("parse begin");
+            let tx_id = match actor.handle(msg) {
+                KvResponse::BeginOk { tx_id } => tx_id,
+                other => panic!("expected begin ok response, got {other:?}"),
+            };
 
-        let put_frame = build_kv_put(tx_id, route, key, value);
-        let mut parser = TlvFrameParser::new(&put_frame);
-        let (msg_type, payload) = parser.next_field().expect("put field");
-        let msg = kv_parse_request(msg_type, family, &payload).expect("parse put");
-        actor.handle(msg);
+            let put_frame = build_kv_put(tx_id, route, key, value);
+            let mut parser = TlvFrameParser::new(&put_frame);
+            let (msg_type, payload) = parser.next_field().expect("put field");
+            let msg = kv_parse_request(msg_type, family, &payload).expect("parse put");
+            actor.handle(msg);
 
-        let rollback_frame = build_kv_rollback(tx_id, route);
-        let mut parser = TlvFrameParser::new(&rollback_frame);
-        let (msg_type, payload) = parser.next_field().expect("rollback field");
-        let msg = kv_parse_request(msg_type, family, &payload).expect("parse rollback");
-        actor.handle(msg);
+            let rollback_frame = build_kv_rollback(tx_id, route);
+            let mut parser = TlvFrameParser::new(&rollback_frame);
+            let (msg_type, payload) = parser.next_field().expect("rollback field");
+            let msg = kv_parse_request(msg_type, family, &payload).expect("parse rollback");
+            actor.handle(msg);
+        }
     });
-    stress_config::record_completed(ctx, 3 * iterations);
+    stress_config::record_completed(
+        ctx,
+        3 * ENCODED_TRANSACTION_ROUNDS_PER_ITERATION * iterations,
+    );
 }
 
 #[stress(tier = 4)]
@@ -119,7 +135,10 @@ fn should_complete_tcp_begin_put_rollback(ctx: &mut StressContext) {
     ctx.parameter("layer", "tcp");
     ctx.parameter("scenario", "transaction_sequence");
     ctx.parameter("measurement_scope", "tcp_e2e");
-    ctx.parameter("batch_size", "3_ops");
+    ctx.parameter(
+        "batch_size",
+        format!("{TCP_TRANSACTION_ROUNDS_PER_ITERATION}_begin_put_rollback_sequences"),
+    );
 
     let route = "kv://tier4/kv/tcp";
     let begin_frame = build_kv_begin(route, 1, 0);
@@ -133,23 +152,25 @@ fn should_complete_tcp_begin_put_rollback(ctx: &mut StressContext) {
         .expect("connect tcp");
 
     let iterations = ctx.measure_workload("complete_tcp_begin_put_rollback", || {
-        let response = runtime
-            .block_on(client.request(&begin_frame, 2000))
-            .expect("begin response");
-        let (_msg_type, _status, data) = parse_kv_response(&response);
-        let tx_id = parse_kv_tx_id(&data).expect("tx_id");
+        for _ in 0..TCP_TRANSACTION_ROUNDS_PER_ITERATION {
+            let response = runtime
+                .block_on(client.request(&begin_frame, 2000))
+                .expect("begin response");
+            let (_msg_type, _status, data) = parse_kv_response(&response);
+            let tx_id = parse_kv_tx_id(&data).expect("tx_id");
 
-        let put_frame = build_kv_put(tx_id, route, key, value);
-        runtime
-            .block_on(client.request(&put_frame, 2000))
-            .expect("put response");
+            let put_frame = build_kv_put(tx_id, route, key, value);
+            runtime
+                .block_on(client.request(&put_frame, 2000))
+                .expect("put response");
 
-        let rollback_frame = build_kv_rollback(tx_id, route);
-        runtime
-            .block_on(client.request(&rollback_frame, 2000))
-            .expect("rollback response");
+            let rollback_frame = build_kv_rollback(tx_id, route);
+            runtime
+                .block_on(client.request(&rollback_frame, 2000))
+                .expect("rollback response");
+        }
     });
-    stress_config::record_completed(ctx, 3 * iterations);
+    stress_config::record_completed(ctx, 3 * TCP_TRANSACTION_ROUNDS_PER_ITERATION * iterations);
 }
 
 #[stress(tier = 4)]
@@ -157,7 +178,10 @@ fn should_complete_ws_begin_put_rollback(ctx: &mut StressContext) {
     ctx.parameter("layer", "websocket");
     ctx.parameter("scenario", "transaction_sequence");
     ctx.parameter("measurement_scope", "ws_e2e");
-    ctx.parameter("batch_size", "3_ops");
+    ctx.parameter(
+        "batch_size",
+        format!("{WS_TRANSACTION_ROUNDS_PER_ITERATION}_begin_put_rollback_sequences"),
+    );
 
     let route = "kv://tier4/kv/ws";
     let begin_frame = build_kv_begin(route, 1, 0);
@@ -174,23 +198,25 @@ fn should_complete_ws_begin_put_rollback(ctx: &mut StressContext) {
         .expect("connect ws");
 
     let iterations = ctx.measure_workload("complete_ws_begin_put_rollback", || {
-        let response = runtime
-            .block_on(client.request(&begin_frame, 2000))
-            .expect("begin response");
-        let (_msg_type, _status, data) = parse_kv_response(&response);
-        let tx_id = parse_kv_tx_id(&data).expect("tx_id");
+        for _ in 0..WS_TRANSACTION_ROUNDS_PER_ITERATION {
+            let response = runtime
+                .block_on(client.request(&begin_frame, 2000))
+                .expect("begin response");
+            let (_msg_type, _status, data) = parse_kv_response(&response);
+            let tx_id = parse_kv_tx_id(&data).expect("tx_id");
 
-        let put_frame = build_kv_put(tx_id, route, key, value);
-        runtime
-            .block_on(client.request(&put_frame, 2000))
-            .expect("put response");
+            let put_frame = build_kv_put(tx_id, route, key, value);
+            runtime
+                .block_on(client.request(&put_frame, 2000))
+                .expect("put response");
 
-        let rollback_frame = build_kv_rollback(tx_id, route);
-        runtime
-            .block_on(client.request(&rollback_frame, 2000))
-            .expect("rollback response");
+            let rollback_frame = build_kv_rollback(tx_id, route);
+            runtime
+                .block_on(client.request(&rollback_frame, 2000))
+                .expect("rollback response");
+        }
     });
-    stress_config::record_completed(ctx, 3 * iterations);
+    stress_config::record_completed(ctx, 3 * WS_TRANSACTION_ROUNDS_PER_ITERATION * iterations);
 }
 
 #[stress(tier = 4)]
@@ -198,7 +224,12 @@ fn should_complete_multiclient_concurrent_transactions(ctx: &mut StressContext) 
     ctx.parameter("layer", "multiclient");
     ctx.parameter("scenario", "concurrent_transactions");
     ctx.parameter("measurement_scope", "ws_multiclient_e2e");
-    ctx.parameter("batch_size", "10_clients_3_ops_each");
+    ctx.parameter(
+        "batch_size",
+        format!(
+            "10_clients_{MULTICLIENT_TRANSACTION_ROUNDS_PER_ITERATION}_begin_put_rollback_sequences_each"
+        ),
+    );
     ctx.parameter("client_count", "10");
 
     let route = "kv://tier4/kv/multiclient";
@@ -222,26 +253,31 @@ fn should_complete_multiclient_concurrent_transactions(ctx: &mut StressContext) 
         .collect();
 
     let iterations = ctx.measure_workload("complete_multiclient_concurrent_transactions", || {
-        let _results: Vec<_> =
-            runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
-                let arc = arc.clone();
-                let begin = begin_frame.clone();
-                let r = route_owned.clone();
-                let k = key.clone();
-                let v = value.clone();
-                async move {
-                    let mut c = arc.lock().await;
-                    let response = c.request(&begin, 2000).await.expect("begin");
-                    let (_msg_type, _status, data) = parse_kv_response(&response);
-                    let tx_id = parse_kv_tx_id(&data).expect("tx_id");
-                    let put_frame = build_kv_put(tx_id, &r, &k, &v);
-                    c.request(&put_frame, 2000).await.expect("put");
-                    let rollback_frame = build_kv_rollback(tx_id, &r);
-                    c.request(&rollback_frame, 2000).await.expect("rollback");
-                }
-            })));
+        for _ in 0..MULTICLIENT_TRANSACTION_ROUNDS_PER_ITERATION {
+            let _results: Vec<_> =
+                runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
+                    let arc = arc.clone();
+                    let begin = begin_frame.clone();
+                    let r = route_owned.clone();
+                    let k = key.clone();
+                    let v = value.clone();
+                    async move {
+                        let mut c = arc.lock().await;
+                        let response = c.request(&begin, 2000).await.expect("begin");
+                        let (_msg_type, _status, data) = parse_kv_response(&response);
+                        let tx_id = parse_kv_tx_id(&data).expect("tx_id");
+                        let put_frame = build_kv_put(tx_id, &r, &k, &v);
+                        c.request(&put_frame, 2000).await.expect("put");
+                        let rollback_frame = build_kv_rollback(tx_id, &r);
+                        c.request(&rollback_frame, 2000).await.expect("rollback");
+                    }
+                })));
+        }
     });
-    stress_config::record_completed(ctx, 30 * iterations);
+    stress_config::record_completed(
+        ctx,
+        30 * MULTICLIENT_TRANSACTION_ROUNDS_PER_ITERATION * iterations,
+    );
 }
 
 stress_main!();

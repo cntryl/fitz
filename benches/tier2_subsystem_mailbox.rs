@@ -2,16 +2,15 @@
 #[path = "tier2_stress.rs"]
 mod tier2_stress;
 
-use cntryl_stress::{stress, stress_main, StressContext};
+use cntryl_stress::{black_box, stress, stress_main, StressContext};
 use fitz::runtime::envelope::Envelope;
 use fitz::runtime::mailbox::Mailbox;
 use fitz::runtime::router::{DeliveryError, MailboxSink};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
-use std::hint::black_box;
 
-const MID_FILL_BATCH_SIZE: usize = 64;
+const MID_FILL_BATCH_SIZE: usize = 512;
 const FRESH_DELIVER_BATCH_SIZE: usize = 512;
-const ERROR_DELIVER_BATCH_SIZE: usize = 128;
+const ERROR_DELIVER_BATCH_SIZE: usize = 512;
 
 fn test_address(family: u64, route: &str) -> RouteAddress {
     RouteAddress::new(RouteFamily::new(family), Route::new(route))

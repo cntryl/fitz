@@ -12,7 +12,7 @@ cargo test --workspace
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic
 ```
 
-Run the benchmark tier or target that covers the suspected hot path. Prefer a release-suite row from `config/bench_release_ids.txt` when it covers the behavior; use the deep suite for scaling curves, storage-model experiments, wildcard sweeps, high-cardinality registration, or rows already classified as noisy:
+Run the benchmark tier or target that covers the suspected hot path. Prefer a release-suite row from `config/bench_release_ids.txt` when it covers the behavior; use the deep suite for scaling curves, wildcard sweeps, high-cardinality registration, or rows under active signal review:
 
 ```bash
 export FITZ_LOG_LEVEL=warn

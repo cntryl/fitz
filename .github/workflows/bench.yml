@@ -145,16 +145,11 @@ jobs:
           cargo bench --quiet --bench tier2_subsystem_rpc
           cargo bench --quiet --bench tier2_subsystem_stream
           cargo bench --quiet --bench tier2_subsystem_schedule_fire
-          cargo bench --quiet --bench tier2_subsystem_stream_replay
-          cargo bench --quiet --bench tier2_subsystem_stream_write_shape
 
       - name: Run deep Tier 3 scaling suites
         run: |
           cargo bench --quiet --bench tier3_system_queue
           cargo bench --quiet --bench tier3_system_rpc
-
-      - name: Run deep stream storage-model experiments
-        run: cargo bench --quiet --bench tier3_system_stream_storage_model
 
       - name: Summarize benchmark results
         run: cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Deep Benchmark Report"

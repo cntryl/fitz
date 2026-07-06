@@ -2,12 +2,11 @@
 #[path = "tier2_stress.rs"]
 mod tier2_stress;
 
-use cntryl_stress::{stress, stress_main, StressContext};
+use cntryl_stress::{black_box, stress, stress_main, StressContext};
 use fitz::runtime::mailbox::Mailbox;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use fitz::runtime::scheduler::Scheduler;
-use std::hint::black_box;
 use std::sync::Arc;
 
 const REGISTER_BATCH_SIZE: usize = 64;

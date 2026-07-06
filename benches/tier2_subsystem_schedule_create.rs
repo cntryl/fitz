@@ -3,7 +3,7 @@ use bytes::Bytes;
 #[path = "tier2_stress.rs"]
 mod tier2_stress;
 
-use cntryl_stress::{stress, stress_main, StressContext};
+use cntryl_stress::{black_box, stress, stress_main, StressContext};
 use fitz::benchkit::create_bench_store;
 use fitz::domains::schedule::actor::ScheduleActor;
 use fitz::domains::schedule::protocol::{
@@ -11,14 +11,14 @@ use fitz::domains::schedule::protocol::{
 };
 use fitz::domains::schedule::store::{ScheduleBatchInsert, ScheduleInsert, ScheduleStore};
 use fitz::runtime::routing::RouteFamily;
-use std::hint::black_box;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const CREATE_BATCH_SIZE: usize = 32;
 const STORE_INSERT_CASE_COUNT: usize = 16;
+const STORE_BATCH_CASE_COUNT: usize = 16;
 const ROUTE_RING_SIZE: usize = 1024;
 const PAYLOAD_SIZE: usize = 32;
-const ACTOR_CREATE_REPEAT_COUNT: u64 = 8;
+const ACTOR_CREATE_REPEAT_COUNT: u64 = 32;
 
 #[inline]
 fn u128_to_u64_saturating(value: u128) -> u64 {
@@ -41,6 +41,7 @@ struct ScheduleCreateFixtures {
     hourly_cron: String,
     hourly_schedule: CronSchedule,
     daily_schedule: CronSchedule,
+    next_fire_start: Instant,
 }
 
 struct StoreInsertCase {
@@ -94,6 +95,7 @@ fn create_fixtures() -> ScheduleCreateFixtures {
         hourly_schedule: CronSchedule::parse(&hourly_cron).expect("valid hourly cron"),
         daily_schedule: CronSchedule::parse("15 6 * * *").expect("valid daily cron"),
         hourly_cron,
+        next_fire_start: Instant::now() + Duration::from_mins(1),
     }
 }
 
@@ -149,13 +151,10 @@ fn should_next_fire_hourly_32(ctx: &mut StressContext) {
         "next_fire_hourly_32",
         usize_to_u64_saturating(CREATE_BATCH_SIZE),
         || {
-            let start = Instant::now();
             for offset in 0..CREATE_BATCH_SIZE {
-                black_box(
-                    fixtures.hourly_schedule.next_fire_time(
-                        start + Duration::from_secs(usize_to_u64_saturating(offset)),
-                    ),
-                );
+                black_box(fixtures.hourly_schedule.next_fire_time(
+                    fixtures.next_fire_start + Duration::from_secs(usize_to_u64_saturating(offset)),
+                ));
             }
         },
     );
@@ -170,10 +169,10 @@ fn should_next_fire_daily_32(ctx: &mut StressContext) {
         "next_fire_daily_32",
         usize_to_u64_saturating(CREATE_BATCH_SIZE),
         || {
-            let start = Instant::now();
             for offset in 0..CREATE_BATCH_SIZE {
                 black_box(fixtures.daily_schedule.next_fire_time(
-                    start + Duration::from_secs(usize_to_u64_saturating(offset) * 60),
+                    fixtures.next_fire_start
+                        + Duration::from_secs(usize_to_u64_saturating(offset) * 60),
                 ));
             }
         },
@@ -220,28 +219,37 @@ fn should_store_insert_unique_inmemory_32(ctx: &mut StressContext) {
 #[stress(tier = 2, name = "store_insert_batch_unique_inmemory_32")]
 fn should_store_insert_batch_unique_inmemory_32(ctx: &mut StressContext) {
     let fixtures = create_fixtures();
-    let case = create_store_insert_case(&fixtures);
-    let items = (0..CREATE_BATCH_SIZE)
-        .map(|index| ScheduleBatchInsert {
-            route: case.routes[index].clone(),
-            cron: case.cron.clone(),
-            payload: case.payloads[index].clone(),
-            next_fire_ms: case.next_fire_ms,
-            previous_fire_ms: None,
-            last_fire_ms: None,
-            executions_total: 0,
+    let cases = (0..STORE_BATCH_CASE_COUNT)
+        .map(|_| create_store_insert_case(&fixtures))
+        .collect::<Vec<_>>();
+    let items_by_case = cases
+        .iter()
+        .map(|case| {
+            (0..CREATE_BATCH_SIZE)
+                .map(|index| ScheduleBatchInsert {
+                    route: case.routes[index].clone(),
+                    cron: case.cron.clone(),
+                    payload: case.payloads[index].clone(),
+                    next_fire_ms: case.next_fire_ms,
+                    previous_fire_ms: None,
+                    last_fire_ms: None,
+                    executions_total: 0,
+                })
+                .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
 
     tier2_stress::measure_once(
         ctx,
         "store_insert_batch_unique_inmemory_32",
-        usize_to_u64_saturating(CREATE_BATCH_SIZE),
+        usize_to_u64_saturating(CREATE_BATCH_SIZE * STORE_BATCH_CASE_COUNT),
         || {
-            case.store
-                .insert_batch(1, &items, cntryl_midge::WriteOptions::buffered())
-                .expect("schedule insert batch");
-            black_box(());
+            for (case, items) in cases.iter().zip(&items_by_case) {
+                case.store
+                    .insert_batch(1, items, cntryl_midge::WriteOptions::buffered())
+                    .expect("schedule insert batch");
+                black_box(());
+            }
         },
     );
 }

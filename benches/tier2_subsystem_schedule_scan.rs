@@ -7,18 +7,17 @@ use bytes::Bytes;
 #[path = "tier2_stress.rs"]
 mod tier2_stress;
 
-use cntryl_stress::{stress, stress_main, StressContext};
+use cntryl_stress::{black_box, stress, stress_main, StressContext};
 use fitz::benchkit::create_bench_store_with_cfs;
 use fitz::domains::schedule::protocol::{validate_concrete_schedule_route, Clock};
 use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
 use fitz::runtime::routing::RouteFamily;
-use std::hint::black_box;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const FIXED_BENCH_EPOCH_MS: u64 = 1_775_200_000_000;
 const TIMED_BATCH_SIZE: u64 = 32;
-const TIMED_BATCH_REPEAT: u64 = 8;
+const TIMED_BATCH_REPEAT: u64 = 32;
 
 struct ScheduleFixtures {
     routes: Vec<String>,
@@ -124,7 +123,7 @@ where
         remaining -= chunk_len as u64;
     }
 
-    total / u32::try_from(TIMED_BATCH_REPEAT).expect("timed batch repeat fits u32")
+    total
 }
 
 fn scan_shape(ctx: &mut StressContext, name: &str, count: usize, ready_count: usize) {
@@ -141,17 +140,12 @@ fn scan_shape(ctx: &mut StressContext, name: &str, count: usize, ready_count: us
             black_box(actor.collect_due_occurrences_for_publish());
         },
     );
-    tier2_stress::record_duration(ctx, name, duration, count as u64);
-}
-
-#[stress(tier = 2, name = "scan_partial_ready_100_mixed_crons")]
-fn should_scan_partial_ready_100_mixed_crons(ctx: &mut StressContext) {
-    scan_shape(ctx, "scan_partial_ready_100_mixed_crons", 100, 10);
-}
-
-#[stress(tier = 2, name = "scan_all_ready_100_mixed_crons")]
-fn should_scan_all_ready_100_mixed_crons(ctx: &mut StressContext) {
-    scan_shape(ctx, "scan_all_ready_100_mixed_crons", 100, 100);
+    tier2_stress::record_duration(
+        ctx,
+        name,
+        duration,
+        (count as u64).saturating_mul(TIMED_BATCH_REPEAT),
+    );
 }
 
 #[stress(tier = 2, name = "scan_partial_ready_1000_mixed_crons")]

@@ -3,7 +3,7 @@ use bytes::Bytes;
 #[path = "tier2_stress.rs"]
 mod tier2_stress;
 
-use cntryl_stress::{stress, stress_main, StressContext};
+use cntryl_stress::{black_box, stress, stress_main, StressContext};
 use fitz::benchkit::{
     build_queue_complete, build_queue_dequeue, build_queue_enqueue, build_queue_watch,
     create_bench_queue_sink, extract_single_tlv_field, register_session_counting_sink,
@@ -12,7 +12,6 @@ use fitz::benchkit::{
 use fitz::protocol::frame::ChannelId;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{RouteAddress, RouteFamily};
-use std::hint::black_box;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 

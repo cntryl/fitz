@@ -3,7 +3,7 @@ use bytes::Bytes;
 #[path = "tier2_stress.rs"]
 mod tier2_stress;
 
-use cntryl_stress::{stress, stress_main, StressContext};
+use cntryl_stress::{black_box, stress, stress_main, StressContext};
 use fitz::benchkit::{
     create_bench_schedule_sink, create_bench_store_with_cfs, register_session_counting_sink,
     route_frame, wait_for_counting_sinks_each_count, CountingSink,
@@ -15,13 +15,13 @@ use fitz::protocol::frame::ChannelId;
 use fitz::protocol::payload_codec::PayloadEncoder;
 use fitz::runtime::routing::{Route, RouteFamily};
 use fitz::runtime::{DomainPublishEvent, Router};
-use std::hint::black_box;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const FIXED_BENCH_EPOCH_MS: u64 = 1_775_200_000_000;
 const TIMED_BATCH_SIZE: u64 = 32;
 const TIMED_BATCH_REPEAT: u64 = 32;
+const CLAIM_DUE_ALL_READY_1000_REPEAT: u64 = 256;
 const PUBLISH_REPEAT_COUNT: u64 = 2_048;
 const PUBLISH_CHUNK_SIZE: u64 = 256;
 
@@ -108,7 +108,7 @@ fn create_populated_actor(fixtures: &ScheduleFixtures, clock: Arc<dyn Clock>) ->
 }
 
 fn time_with_fresh_inputs<T, FCreate, FMeasure>(
-    iters: u64,
+    repeat_count: u64,
     mut create_input: FCreate,
     mut measure: FMeasure,
 ) -> Duration
@@ -116,7 +116,7 @@ where
     FCreate: FnMut() -> T,
     FMeasure: FnMut(&mut T),
 {
-    let mut remaining = iters.saturating_mul(TIMED_BATCH_REPEAT);
+    let mut remaining = repeat_count;
     let mut total = Duration::ZERO;
 
     while remaining > 0 {
@@ -131,6 +131,14 @@ where
     }
 
     total
+}
+
+fn claim_due_repeat_count(count: usize, ready_count: usize) -> u64 {
+    if count == 1000 && ready_count == 1000 {
+        CLAIM_DUE_ALL_READY_1000_REPEAT
+    } else {
+        TIMED_BATCH_REPEAT
+    }
 }
 
 fn claim_due_deliveries(actor: &mut ScheduleActor, ready_count: usize) -> Vec<(u64, String)> {
@@ -197,8 +205,9 @@ fn create_publish_case(
 fn claim_due(ctx: &mut StressContext, name: &str, count: usize, ready_count: usize) {
     let bench_clock: Arc<dyn Clock> = Arc::new(FixedClock::new(FIXED_BENCH_EPOCH_MS));
     let fixtures = precompute_data(count);
+    let repeat_count = claim_due_repeat_count(count, ready_count);
     let duration = time_with_fresh_inputs(
-        1,
+        repeat_count,
         || {
             let mut actor = create_populated_actor(&fixtures, bench_clock.clone());
             actor.bench_prepare_scan(ready_count);
@@ -212,7 +221,7 @@ fn claim_due(ctx: &mut StressContext, name: &str, count: usize, ready_count: usi
         ctx,
         name,
         duration,
-        (ready_count as u64).saturating_mul(TIMED_BATCH_REPEAT),
+        (ready_count as u64).saturating_mul(repeat_count),
     );
 }
 
@@ -220,7 +229,7 @@ fn ack_claims(ctx: &mut StressContext, name: &str, count: usize, ready_count: us
     let bench_clock: Arc<dyn Clock> = Arc::new(FixedClock::new(FIXED_BENCH_EPOCH_MS));
     let fixtures = precompute_data(count);
     let duration = time_with_fresh_inputs(
-        1,
+        TIMED_BATCH_REPEAT,
         || {
             let mut actor = create_populated_actor(&fixtures, bench_clock.clone());
             let deliveries = claim_due_deliveries(&mut actor, ready_count);

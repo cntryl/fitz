@@ -3,7 +3,7 @@ use bytes::Bytes;
 #[path = "tier2_stress.rs"]
 mod tier2_stress;
 
-use cntryl_stress::{stress, stress_main, StressContext};
+use cntryl_stress::{black_box, stress, stress_main, StressContext};
 use fitz::benchkit::{
     build_notice_subscribe, create_bench_notice_sink, extract_single_tlv_field,
     register_session_counting_sink, route_frame, wait_for_counting_sinks_each_count, CountingSink,
@@ -14,13 +14,15 @@ use fitz::runtime::domain_event::DomainPublishEvent;
 use fitz::runtime::envelope::Envelope;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
-use std::hint::black_box;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const PUBLISH_ROUTE: &str = "notice://realm/area/orders/create";
-const PUBLISH_REPEAT_COUNT: u64 = 2_048;
-const PUBLISH_CHUNK_SIZE: u64 = 256;
+const PUBLISH_REPEAT_COUNT: u64 = 32_768;
+const EXACT_ROUTE_16_PUBLISH_REPEAT_COUNT: u64 = 262_144;
+const EXACT_ROUTE_64_PUBLISH_REPEAT_COUNT: u64 = 131_072;
+const DOUBLE_STAR_64_PUBLISH_REPEAT_COUNT: u64 = 131_072;
+const PUBLISH_CHUNK_SIZE: u64 = 512;
 
 struct NoticePublishCase {
     sink: Arc<NoticeDomainSink>,
@@ -118,7 +120,8 @@ fn create_publish_case(subscriber_count: usize, pattern: &str) -> NoticePublishC
 
 fn publish_fanout(ctx: &mut StressContext, name: &str, subscriber_count: usize, pattern: &str) {
     let case = create_publish_case(subscriber_count, pattern);
-    let mut remaining = PUBLISH_REPEAT_COUNT;
+    let repeat_count = publish_repeat_count(subscriber_count, pattern);
+    let mut remaining = repeat_count;
     let mut total = Duration::ZERO;
     while remaining > 0 {
         let chunk = remaining.min(PUBLISH_CHUNK_SIZE);
@@ -139,8 +142,20 @@ fn publish_fanout(ctx: &mut StressContext, name: &str, subscriber_count: usize, 
         ctx,
         name,
         total,
-        PUBLISH_REPEAT_COUNT.saturating_mul(subscriber_count as u64),
+        repeat_count.saturating_mul(subscriber_count as u64),
     );
+}
+
+fn publish_repeat_count(subscriber_count: usize, pattern: &str) -> u64 {
+    if subscriber_count == 16 && pattern == PUBLISH_ROUTE {
+        EXACT_ROUTE_16_PUBLISH_REPEAT_COUNT
+    } else if subscriber_count == 64 && pattern == PUBLISH_ROUTE {
+        EXACT_ROUTE_64_PUBLISH_REPEAT_COUNT
+    } else if subscriber_count == 64 && pattern == "notice://realm/area/**" {
+        DOUBLE_STAR_64_PUBLISH_REPEAT_COUNT
+    } else {
+        PUBLISH_REPEAT_COUNT
+    }
 }
 
 macro_rules! notice_publish_bench {

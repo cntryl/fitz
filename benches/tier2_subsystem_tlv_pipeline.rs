@@ -2,10 +2,9 @@
 #[path = "tier2_stress.rs"]
 mod tier2_stress;
 
-use cntryl_stress::{stress, stress_main, StressContext};
+use cntryl_stress::{black_box, stress, stress_main, StressContext};
 use fitz::protocol::mux::Mux;
 use fitz::protocol::tlv::{MessageType, TlvDecoder, TlvEncoder};
-use std::hint::black_box;
 
 const PIPELINE_RECORDS: usize = 256;
 const PIPELINE_REPEAT_COUNT: usize = 65_536;

@@ -30,10 +30,13 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 const DIRECT_ROUTE_RING_SIZE: usize = 1_000_000;
-const DIRECT_CREATE_OPERATIONS_PER_ITERATION: usize = 16;
+const DIRECT_CREATE_OPERATIONS_PER_ITERATION: usize = 128;
 const TRANSPORT_FRAME_RING_SIZE: usize = 65_536;
 const BATCH_FRAME_RING_SIZE: usize = 16_384;
 const CREATE_BATCH_WIDTH: usize = 32;
+const MULTICLIENT_CREATE_ROUNDS_PER_ITERATION: usize = 4;
+const TCP_CREATE_ROUNDS_PER_ITERATION: usize = 16;
+const WS_CREATE_ROUNDS_PER_ITERATION: usize = 16;
 
 fn valid_schedule_route(prefix: &str, index: usize) -> String {
     format!("schedule://tier4/{prefix}/resource-{index}/run")
@@ -60,7 +63,10 @@ fn should_complete_direct_create(ctx: &mut StressContext) {
     ctx.parameter("layer", "direct");
     ctx.parameter("scenario", "create");
     ctx.parameter("measurement_scope", "direct_inproc");
-    ctx.parameter("batch_size", "single_create");
+    ctx.parameter(
+        "batch_size",
+        format!("{DIRECT_CREATE_OPERATIONS_PER_ITERATION}_creates"),
+    );
     ctx.parameter("route_reuse", "none");
 
     let (db, _temp_dir) = create_local_bench_store();
@@ -109,7 +115,10 @@ fn should_complete_tcp_create(ctx: &mut StressContext) {
     ctx.parameter("layer", "tcp");
     ctx.parameter("scenario", "create");
     ctx.parameter("measurement_scope", "tcp_e2e");
-    ctx.parameter("batch_size", "single_create");
+    ctx.parameter(
+        "batch_size",
+        format!("{TCP_CREATE_ROUNDS_PER_ITERATION}_creates"),
+    );
     ctx.parameter("route_reuse", "none");
 
     let frame_ring: Vec<Vec<u8>> = (0..TRANSPORT_FRAME_RING_SIZE)
@@ -132,13 +141,15 @@ fn should_complete_tcp_create(ctx: &mut StressContext) {
 
     let mut next_index = 1usize;
     let iterations = ctx.measure_workload("complete_tcp_create", || {
-        let frame = next_ring_item(&frame_ring, &mut next_index, "tcp frame ring");
-        let response = runtime
-            .block_on(client.request(frame, 2000))
-            .expect("create response");
-        ensure_schedule_ok(&response).expect("create should succeed");
+        for _ in 0..TCP_CREATE_ROUNDS_PER_ITERATION {
+            let frame = next_ring_item(&frame_ring, &mut next_index, "tcp frame ring");
+            let response = runtime
+                .block_on(client.request(frame, 2000))
+                .expect("create response");
+            ensure_schedule_ok(&response).expect("create should succeed");
+        }
     });
-    stress_config::record_completed(ctx, iterations);
+    stress_config::record_completed(ctx, TCP_CREATE_ROUNDS_PER_ITERATION as u64 * iterations);
 }
 
 #[stress(tier = 4)]
@@ -146,7 +157,10 @@ fn should_complete_ws_create(ctx: &mut StressContext) {
     ctx.parameter("layer", "websocket");
     ctx.parameter("scenario", "create");
     ctx.parameter("measurement_scope", "ws_e2e");
-    ctx.parameter("batch_size", "single_create");
+    ctx.parameter(
+        "batch_size",
+        format!("{WS_CREATE_ROUNDS_PER_ITERATION}_creates"),
+    );
     ctx.parameter("route_reuse", "none");
 
     let frame_ring: Vec<Vec<u8>> = (0..TRANSPORT_FRAME_RING_SIZE)
@@ -172,13 +186,15 @@ fn should_complete_ws_create(ctx: &mut StressContext) {
 
     let mut next_index = 1usize;
     let iterations = ctx.measure_workload("complete_ws_create", || {
-        let frame = next_ring_item(&frame_ring, &mut next_index, "websocket frame ring");
-        let response = runtime
-            .block_on(client.request(frame, 2000))
-            .expect("create response");
-        ensure_schedule_ok(&response).expect("create should succeed");
+        for _ in 0..WS_CREATE_ROUNDS_PER_ITERATION {
+            let frame = next_ring_item(&frame_ring, &mut next_index, "websocket frame ring");
+            let response = runtime
+                .block_on(client.request(frame, 2000))
+                .expect("create response");
+            ensure_schedule_ok(&response).expect("create should succeed");
+        }
     });
-    stress_config::record_completed(ctx, iterations);
+    stress_config::record_completed(ctx, WS_CREATE_ROUNDS_PER_ITERATION as u64 * iterations);
 
     runtime
         .block_on(client.close())
@@ -245,7 +261,10 @@ fn should_complete_multiclient_creates(ctx: &mut StressContext) {
     ctx.parameter("layer", "multiclient");
     ctx.parameter("scenario", "concurrent_creates");
     ctx.parameter("measurement_scope", "ws_multiclient_e2e");
-    ctx.parameter("batch_size", "10_clients_1_create_each");
+    ctx.parameter(
+        "batch_size",
+        format!("10_clients_{MULTICLIENT_CREATE_ROUNDS_PER_ITERATION}_creates_each"),
+    );
     ctx.parameter("client_count", "10");
     ctx.parameter("route_reuse", "none");
     let frame_rings: Vec<Vec<Vec<u8>>> = (0..10)
@@ -291,30 +310,35 @@ fn should_complete_multiclient_creates(ctx: &mut StressContext) {
 
     let next_indices = Arc::new(std::sync::Mutex::new(vec![1usize; clients.len()]));
     let iterations = ctx.measure_workload("complete_multiclient_creates", || {
-        let next_indices = next_indices.clone();
-        let _results: Vec<_> = runtime.block_on(futures::future::join_all(
-            clients.iter().enumerate().map(|(client_index, arc)| {
-                let arc = arc.clone();
-                let frame = {
-                    let mut indices = next_indices.lock().unwrap();
-                    let index = indices[client_index];
-                    indices[client_index] += 1;
-                    frame_rings[client_index]
-                        .get(index)
-                        .unwrap_or_else(|| {
-                            panic!("multiclient frame ring exhausted for client {client_index}")
-                        })
-                        .clone()
-                };
-                async move {
-                    let mut c = arc.lock().await;
-                    let response = c.request(&frame, 2000).await.expect("create");
-                    ensure_schedule_ok(&response).expect("create should succeed");
-                }
-            }),
-        ));
+        for _ in 0..MULTICLIENT_CREATE_ROUNDS_PER_ITERATION {
+            let next_indices = next_indices.clone();
+            let _results: Vec<_> = runtime.block_on(futures::future::join_all(
+                clients.iter().enumerate().map(|(client_index, arc)| {
+                    let arc = arc.clone();
+                    let frame = {
+                        let mut indices = next_indices.lock().unwrap();
+                        let index = indices[client_index];
+                        indices[client_index] += 1;
+                        frame_rings[client_index]
+                            .get(index)
+                            .unwrap_or_else(|| {
+                                panic!("multiclient frame ring exhausted for client {client_index}")
+                            })
+                            .clone()
+                    };
+                    async move {
+                        let mut c = arc.lock().await;
+                        let response = c.request(&frame, 2000).await.expect("create");
+                        ensure_schedule_ok(&response).expect("create should succeed");
+                    }
+                }),
+            ));
+        }
     });
-    stress_config::record_completed(ctx, 10 * iterations);
+    stress_config::record_completed(
+        ctx,
+        10 * MULTICLIENT_CREATE_ROUNDS_PER_ITERATION as u64 * iterations,
+    );
 
     let _closed: Vec<_> = runtime.block_on(futures::future::join_all(clients.iter().map(|arc| {
         let arc = arc.clone();

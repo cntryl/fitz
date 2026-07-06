@@ -4,6 +4,7 @@
 //! DomainSink` path that the live server uses, without standing up TCP/WS transport.
 
 use super::{create_bench_store, create_write_heavy_bench_store};
+use crate::domains::lease::protocol::{LeaseKey, LeaseResponse};
 use crate::domains::lease::sink::LeaseDomainSink;
 use crate::domains::notice::sink::NoticeDomainSink;
 use crate::domains::queue::sink::QueueDomainSink;
@@ -593,6 +594,81 @@ pub fn create_bench_lease_sink(router: Arc<Router>) -> Arc<LeaseDomainSink> {
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
     ))
+}
+
+pub struct DirectLeaseAcquireRelease {
+    sink: Arc<LeaseDomainSink>,
+    key: LeaseKey,
+    route_family: RouteFamily,
+    owner_session_id: u64,
+    owner_id: String,
+    ttl_secs: u64,
+}
+
+impl DirectLeaseAcquireRelease {
+    /// Create a direct lease acquire/release benchmark driver.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `route` is not a valid lease route.
+    #[must_use]
+    pub fn new(
+        route_family: RouteFamily,
+        route: &str,
+        owner_session_id: u64,
+        owner_id: &str,
+        ttl_secs: u64,
+    ) -> Self {
+        let router = Arc::new(Router::new());
+        let sink = create_bench_lease_sink(router);
+        let route = Route::new(route);
+        let key = LeaseKey::from_route(route_family, &route).expect("valid lease route");
+
+        Self {
+            sink,
+            key,
+            route_family,
+            owner_session_id,
+            owner_id: scoped_lease_owner(owner_session_id, owner_id),
+            ttl_secs,
+        }
+    }
+
+    /// Complete one acquire/release roundtrip against the direct lease domain path.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the lease domain does not acquire or release the lease.
+    pub fn complete_roundtrip(&self) {
+        let acquire_response = self.sink.acquire_direct_for_bench(
+            &self.key,
+            self.owner_session_id,
+            self.owner_id.as_str(),
+            self.ttl_secs,
+            self.route_family,
+        );
+        let token = match acquire_response {
+            LeaseResponse::Acquired { fencing_token } => fencing_token,
+            other => panic!("expected direct lease acquire, got {other:?}"),
+        };
+
+        let release_response =
+            self.sink
+                .release_direct_for_bench(&self.key, self.owner_id.as_str(), token);
+        assert!(
+            matches!(release_response, LeaseResponse::Released),
+            "expected direct lease release, got {release_response:?}"
+        );
+    }
+}
+
+#[must_use]
+fn scoped_lease_owner(session_id: u64, owner_id: &str) -> String {
+    if owner_id.is_empty() {
+        format!("session:{session_id}")
+    } else {
+        format!("session:{session_id}:{owner_id}")
+    }
 }
 
 #[must_use]

@@ -15,17 +15,17 @@ use stress_config::StressContextExt;
 
 use cntryl_stress::{stress, stress_main, StressContext};
 use fitz::benchkit::{
-    build_lease_acquire_immediate, build_lease_release, create_bench_lease_sink,
-    extract_single_tlv_field, parse_lease_response, parse_lease_token_response,
-    register_session_queue_sink, route_frame, shared_bench_runtime,
+    build_lease_acquire_immediate, build_lease_release, parse_lease_response,
+    parse_lease_token_response, shared_bench_runtime, DirectLeaseAcquireRelease,
 };
-use fitz::protocol::frame::ChannelId;
-use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::{TestClient, TestServer, TestWebSocketClient};
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::Mutex;
+
+const DIRECT_ACQUIRE_RELEASE_ROUNDS_PER_ITERATION: u64 = 64;
+const TCP_ACQUIRE_RELEASE_ROUNDS_PER_ITERATION: u64 = 16;
+const WS_ACQUIRE_RELEASE_ROUNDS_PER_ITERATION: u64 = 16;
 
 fn shutdown_lease_test_server(runtime: &tokio::runtime::Runtime, server: TestServer) {
     runtime
@@ -66,50 +66,28 @@ fn should_complete_direct_acquire_release(ctx: &mut StressContext) {
     ctx.parameter("layer", "direct");
     ctx.parameter("scenario", "acquire_release");
     ctx.parameter("measurement_scope", "direct_inproc");
-    ctx.parameter("batch_size", "acquire_release");
+    ctx.parameter(
+        "batch_size",
+        format!("{DIRECT_ACQUIRE_RELEASE_ROUNDS_PER_ITERATION}_acquire_release_roundtrips"),
+    );
 
-    let family = RouteFamily::new(1);
-    let route = "lease://tier4/locks/primary";
-    let owner = "owner1";
-    let router = Arc::new(Router::new());
-    let sink = create_bench_lease_sink(router.clone());
-    router.register_domain_pattern("lease", sink as Arc<dyn MailboxSink>);
-    let (source, inbox) = register_session_queue_sink(&router, family, 1);
-    let acquire_frame = build_lease_acquire_immediate(route, owner, 30);
-    let (msg_type, payload) = extract_single_tlv_field(&acquire_frame);
+    let driver = DirectLeaseAcquireRelease::new(
+        RouteFamily::new(1),
+        "lease://tier4/locks/primary",
+        1,
+        "owner1",
+        30,
+    );
 
     let iterations = ctx.measure_workload("complete_direct_acquire_release", || {
-        route_frame(
-            router.as_ref(),
-            &source,
-            route,
-            1,
-            ChannelId::Lease,
-            msg_type,
-            payload.clone(),
-            family,
-        )
-        .expect("lease acquire");
-        let responses = inbox.drain_after_count(1, Duration::from_secs(1));
-        let response = responses.last().expect("lease acquire response");
-        let token = parse_lease_token_response(response.payload.as_ref()).expect("lease token");
-
-        let release_frame = build_lease_release(route, owner, token);
-        let (release_msg_type, release_payload) = extract_single_tlv_field(&release_frame);
-        route_frame(
-            router.as_ref(),
-            &source,
-            route,
-            1,
-            ChannelId::Lease,
-            release_msg_type,
-            release_payload,
-            family,
-        )
-        .expect("lease release");
-        let _ = inbox.drain_after_count(1, Duration::from_secs(1));
+        for _ in 0..DIRECT_ACQUIRE_RELEASE_ROUNDS_PER_ITERATION {
+            driver.complete_roundtrip();
+        }
     });
-    stress_config::record_completed(ctx, 2 * iterations);
+    stress_config::record_completed(
+        ctx,
+        2 * DIRECT_ACQUIRE_RELEASE_ROUNDS_PER_ITERATION * iterations,
+    );
 }
 
 #[stress(tier = 4)]
@@ -117,7 +95,10 @@ fn should_complete_tcp_acquire_release(ctx: &mut StressContext) {
     ctx.parameter("layer", "tcp");
     ctx.parameter("scenario", "acquire_release");
     ctx.parameter("measurement_scope", "tcp_e2e");
-    ctx.parameter("batch_size", "acquire_release");
+    ctx.parameter(
+        "batch_size",
+        format!("{TCP_ACQUIRE_RELEASE_ROUNDS_PER_ITERATION}_acquire_release_roundtrips"),
+    );
 
     let acquire_frame = build_lease_acquire_immediate("lease://tier4/locks/primary", "owner1", 30);
 
@@ -128,18 +109,23 @@ fn should_complete_tcp_acquire_release(ctx: &mut StressContext) {
         .expect("connect tcp");
 
     let iterations = ctx.measure_workload("complete_tcp_acquire_release", || {
-        let response = runtime
-            .block_on(client.request(&acquire_frame, 2000))
-            .expect("acquire response");
-        let (_msg_type, _status, data) = parse_lease_response(&response);
-        let token = parse_lease_token_response(&data).expect("lease token");
+        for _ in 0..TCP_ACQUIRE_RELEASE_ROUNDS_PER_ITERATION {
+            let response = runtime
+                .block_on(client.request(&acquire_frame, 2000))
+                .expect("acquire response");
+            let (_msg_type, _status, data) = parse_lease_response(&response);
+            let token = parse_lease_token_response(&data).expect("lease token");
 
-        let release_frame = build_lease_release("lease://tier4/locks/primary", "owner1", token);
-        let _ = runtime
-            .block_on(client.request(&release_frame, 2000))
-            .expect("release response");
+            let release_frame = build_lease_release("lease://tier4/locks/primary", "owner1", token);
+            let _ = runtime
+                .block_on(client.request(&release_frame, 2000))
+                .expect("release response");
+        }
     });
-    stress_config::record_completed(ctx, 2 * iterations);
+    stress_config::record_completed(
+        ctx,
+        2 * TCP_ACQUIRE_RELEASE_ROUNDS_PER_ITERATION * iterations,
+    );
     close_tcp_client(runtime, client);
     shutdown_lease_test_server(runtime, server);
 }
@@ -149,7 +135,10 @@ fn should_complete_ws_acquire_release(ctx: &mut StressContext) {
     ctx.parameter("layer", "websocket");
     ctx.parameter("scenario", "acquire_release");
     ctx.parameter("measurement_scope", "ws_e2e");
-    ctx.parameter("batch_size", "acquire_release");
+    ctx.parameter(
+        "batch_size",
+        format!("{WS_ACQUIRE_RELEASE_ROUNDS_PER_ITERATION}_acquire_release_roundtrips"),
+    );
 
     let acquire_frame = build_lease_acquire_immediate("lease://tier4/locks/primary", "owner1", 30);
 
@@ -163,18 +152,23 @@ fn should_complete_ws_acquire_release(ctx: &mut StressContext) {
         .expect("connect ws");
 
     let iterations = ctx.measure_workload("complete_ws_acquire_release", || {
-        let response = runtime
-            .block_on(client.request(&acquire_frame, 2000))
-            .expect("acquire response");
-        let (_msg_type, _status, data) = parse_lease_response(&response);
-        let token = parse_lease_token_response(&data).expect("lease token");
+        for _ in 0..WS_ACQUIRE_RELEASE_ROUNDS_PER_ITERATION {
+            let response = runtime
+                .block_on(client.request(&acquire_frame, 2000))
+                .expect("acquire response");
+            let (_msg_type, _status, data) = parse_lease_response(&response);
+            let token = parse_lease_token_response(&data).expect("lease token");
 
-        let release_frame = build_lease_release("lease://tier4/locks/primary", "owner1", token);
-        let _ = runtime
-            .block_on(client.request(&release_frame, 2000))
-            .expect("release response");
+            let release_frame = build_lease_release("lease://tier4/locks/primary", "owner1", token);
+            let _ = runtime
+                .block_on(client.request(&release_frame, 2000))
+                .expect("release response");
+        }
     });
-    stress_config::record_completed(ctx, 2 * iterations);
+    stress_config::record_completed(
+        ctx,
+        2 * WS_ACQUIRE_RELEASE_ROUNDS_PER_ITERATION * iterations,
+    );
     close_ws_client(runtime, &mut client);
     shutdown_lease_test_server(runtime, server);
 }

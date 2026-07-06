@@ -3,7 +3,7 @@ use bytes::Bytes;
 #[path = "tier2_stress.rs"]
 mod tier2_stress;
 
-use cntryl_stress::{stress, stress_main, StressContext};
+use cntryl_stress::{black_box, stress, stress_main, StressContext};
 use fitz::benchkit::{
     build_stream_subscribe, create_bench_stream_sink, drain_frame_queue_sinks_after_each_count,
     extract_single_tlv_field, register_session_counting_sink, register_session_queue_sink,
@@ -16,7 +16,6 @@ use fitz::runtime::envelope::Envelope;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use serde_json::json;
-use std::hint::black_box;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -24,7 +23,8 @@ const CLIENT_SESSION_ID: u64 = 1;
 const SUBSCRIBE_REGISTER_BATCH_SIZE: usize = 2048;
 const SUBSCRIBE_REGISTER_CASE_COUNT: usize = 4;
 const COMMIT_NOTIFY_REPEAT_COUNT: u64 = 2_048;
-const COMMIT_NOTIFY_CHUNK_SIZE: u64 = 256;
+const SINGLE_STAR_16_COMMIT_NOTIFY_REPEAT_COUNT: u64 = 262_144;
+const COMMIT_NOTIFY_CHUNK_SIZE: u64 = 512;
 const SUBSCRIBE_DESTINATION: &str = "stream://realm/area/control/append";
 const COMMIT_NOTIFY_ROUTE: &str = "stream://realm/area/orders";
 
@@ -248,7 +248,8 @@ fn should_subscribe_register_2048_sessions_x4_cases_primary(ctx: &mut StressCont
 
 fn commit_notify(ctx: &mut StressContext, name: &str, subscriber_count: usize, pattern: &str) {
     let case = prepare_notify_case(subscriber_count, pattern);
-    let mut remaining = COMMIT_NOTIFY_REPEAT_COUNT;
+    let repeat_count = commit_notify_repeat_count(subscriber_count, pattern);
+    let mut remaining = repeat_count;
     let mut total = Duration::ZERO;
     while remaining > 0 {
         let chunk = remaining.min(COMMIT_NOTIFY_CHUNK_SIZE);
@@ -269,8 +270,16 @@ fn commit_notify(ctx: &mut StressContext, name: &str, subscriber_count: usize, p
         ctx,
         name,
         total,
-        COMMIT_NOTIFY_REPEAT_COUNT.saturating_mul(subscriber_count as u64),
+        repeat_count.saturating_mul(subscriber_count as u64),
     );
+}
+
+fn commit_notify_repeat_count(subscriber_count: usize, pattern: &str) -> u64 {
+    if subscriber_count == 16 && pattern == "stream://realm/area/*" {
+        SINGLE_STAR_16_COMMIT_NOTIFY_REPEAT_COUNT
+    } else {
+        COMMIT_NOTIFY_REPEAT_COUNT
+    }
 }
 
 macro_rules! stream_commit_notify_bench {
