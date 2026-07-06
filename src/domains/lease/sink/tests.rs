@@ -35,6 +35,12 @@ fn encode_lease_release(route: &str, owner_id: &str, fencing_token: u64) -> Byte
     Bytes::from(encoder.finish())
 }
 
+fn encode_lease_query(route: &str) -> Bytes {
+    let mut encoder = PayloadEncoder::new();
+    encoder.put_string(route);
+    Bytes::from(encoder.finish())
+}
+
 fn encode_lease_subscribe(pattern: &str) -> Bytes {
     let mut encoder = PayloadEncoder::new();
     encoder.put_string(pattern);
@@ -99,6 +105,63 @@ fn lease_key(family: RouteFamily, route: &str) -> LeaseKey {
     LeaseKey::from_route(family, &Route::new(route)).expect("valid lease route")
 }
 
+fn lease_response_payloads(prepared: bool, frames: &[(u16, Bytes)]) -> Vec<Bytes> {
+    let family = RouteFamily::new(1);
+    let session_id = 7;
+    let lease_route = "lease://acme/locks/resource";
+    let lease_address = RouteAddress::new(family, Route::new(lease_route));
+    let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let subscriber_mailbox = Arc::new(Mailbox::new(8));
+    let router = Arc::new(Router::new());
+    router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = LeaseDomainSink::new(router, admin_read_model);
+    let mut responses = Vec::new();
+
+    for (msg_type, payload) in frames {
+        let envelope = if prepared {
+            let meta = crate::runtime::ClientFrameMeta::new(
+                session_id,
+                ClientChannel::Lease,
+                *msg_type,
+                family,
+            );
+            let parsed = crate::protocol::lease_codec::parse_prepared_request(
+                *msg_type, family, session_id, payload,
+            );
+            Envelope::from_route(
+                subscriber_address.clone(),
+                lease_address.clone(),
+                crate::domains::lease::protocol::PreparedLeaseClientRequest::new(meta, parsed),
+            )
+        } else {
+            Envelope::from_route(
+                subscriber_address.clone(),
+                lease_address.clone(),
+                FrameContext::new(
+                    session_id,
+                    ChannelId::Lease,
+                    MessageType::new(*msg_type),
+                    payload.clone(),
+                    family,
+                ),
+            )
+        };
+
+        sink.deliver(envelope).expect("deliver lease frame");
+        let response = receive_envelope(&subscriber_mailbox, "lease response");
+        responses.push(
+            response
+                .payload::<FrameContext>()
+                .expect("frame response")
+                .payload
+                .clone(),
+        );
+    }
+
+    responses
+}
+
 #[test]
 fn should_create_lease_domain_sink() {
     // Arrange
@@ -111,6 +174,104 @@ fn should_create_lease_domain_sink() {
     // Assert
     assert!(sink.is_active_for_tests());
     assert!(sink.is_actor_running());
+}
+
+#[test]
+fn should_match_fallback_for_prepared_lease_acquire() {
+    // Arrange
+    let frames = vec![(
+        crate::protocol::lease_codec::msg_type::ACQUIRE,
+        encode_lease_acquire("lease://acme/locks/resource", "owner", 30),
+    )];
+
+    // Act
+    let fallback = lease_response_payloads(false, &frames);
+    let prepared = lease_response_payloads(true, &frames);
+
+    // Assert
+    assert_eq!(prepared, fallback);
+}
+
+#[test]
+fn should_match_fallback_for_prepared_lease_extend() {
+    // Arrange
+    let frames = vec![
+        (
+            crate::protocol::lease_codec::msg_type::ACQUIRE,
+            encode_lease_acquire("lease://acme/locks/resource", "owner", 30),
+        ),
+        (
+            crate::protocol::lease_codec::msg_type::RENEW,
+            encode_lease_extend("lease://acme/locks/resource", "owner", 1, 60),
+        ),
+    ];
+
+    // Act
+    let fallback = lease_response_payloads(false, &frames);
+    let prepared = lease_response_payloads(true, &frames);
+
+    // Assert
+    assert_eq!(prepared, fallback);
+}
+
+#[test]
+fn should_match_fallback_for_prepared_lease_release() {
+    // Arrange
+    let frames = vec![
+        (
+            crate::protocol::lease_codec::msg_type::ACQUIRE,
+            encode_lease_acquire("lease://acme/locks/resource", "owner", 30),
+        ),
+        (
+            crate::protocol::lease_codec::msg_type::RELEASE,
+            encode_lease_release("lease://acme/locks/resource", "owner", 1),
+        ),
+    ];
+
+    // Act
+    let fallback = lease_response_payloads(false, &frames);
+    let prepared = lease_response_payloads(true, &frames);
+
+    // Assert
+    assert_eq!(prepared, fallback);
+}
+
+#[test]
+fn should_match_fallback_for_prepared_lease_query() {
+    // Arrange
+    let frames = vec![
+        (
+            crate::protocol::lease_codec::msg_type::ACQUIRE,
+            encode_lease_acquire("lease://acme/locks/resource", "owner", 30),
+        ),
+        (
+            crate::protocol::lease_codec::msg_type::QUERY,
+            encode_lease_query("lease://acme/locks/resource"),
+        ),
+    ];
+
+    // Act
+    let fallback = lease_response_payloads(false, &frames);
+    let prepared = lease_response_payloads(true, &frames);
+
+    // Assert
+    assert_eq!(prepared, fallback);
+}
+
+#[test]
+fn should_match_fallback_not_found_for_prepared_invalid_lease_route() {
+    // Arrange
+    let frames = vec![(
+        crate::protocol::lease_codec::msg_type::ACQUIRE,
+        encode_lease_acquire("lease://acme/locks", "owner", 30),
+    )];
+
+    // Act
+    let fallback = lease_response_payloads(false, &frames);
+    let prepared = lease_response_payloads(true, &frames);
+
+    // Assert
+    assert_eq!(prepared, fallback);
 }
 
 #[test]

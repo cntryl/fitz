@@ -56,6 +56,10 @@ impl Actor for ScheduleDomainActor {
                 runtime.force_due_scan_for_tests(ready_count);
                 let _ = reply.send(());
             }
+            #[cfg(test)]
+            ScheduleDomainCommand::PanicForTests => {
+                panic!("test Schedule domain actor panic");
+            }
         }
     }
 }

@@ -322,6 +322,7 @@ impl TestServer {
             cloud_durability: crate::boot::runtime::CloudDurabilityMode::Background,
             storage_memtable: crate::boot::runtime::StorageMemtableConfig::Auto,
             queue_write_policy: crate::boot::runtime::QueueWritePolicy::Fast,
+            queue_write_policy_source: crate::boot::runtime::QueueWritePolicySource::Explicit,
             queue_loss_window_ms: 100,
             queue_loss_window_error: None,
             assume_external_tls: false,

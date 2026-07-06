@@ -68,6 +68,27 @@ pub struct DomainHandles {
     schedule: Arc<ScheduleDomainSink>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DomainHealthSnapshot {
+    pub domain: &'static str,
+    pub actor_running: bool,
+    pub restart_count: u64,
+    pub panic_count: u64,
+    pub restart_exhausted: bool,
+}
+
+impl DomainHealthSnapshot {
+    fn new(domain: DomainKind, actor: crate::runtime::ManagedActorHealthSnapshot) -> Self {
+        Self {
+            domain: domain.as_str(),
+            actor_running: actor.running,
+            restart_count: actor.restart_count,
+            panic_count: actor.panic_count,
+            restart_exhausted: actor.restart_exhausted,
+        }
+    }
+}
+
 impl DomainHandles {
     #[must_use]
     pub fn new(
@@ -98,6 +119,42 @@ impl DomainHandles {
         self.rpc.stop();
         self.lease.stop();
         self.schedule.stop();
+    }
+
+    #[must_use]
+    pub fn health_snapshots(&self) -> Vec<DomainHealthSnapshot> {
+        vec![
+            DomainHealthSnapshot::new(DomainKind::Kv, self.kv.actor_health_snapshot()),
+            DomainHealthSnapshot::new(DomainKind::Queue, self.queue.actor_health_snapshot()),
+            DomainHealthSnapshot::new(DomainKind::Notice, self.notice.actor_health_snapshot()),
+            DomainHealthSnapshot::new(DomainKind::Stream, self.stream.actor_health_snapshot()),
+            DomainHealthSnapshot::new(DomainKind::Rpc, self.rpc.actor_health_snapshot()),
+            DomainHealthSnapshot::new(DomainKind::Lease, self.lease.actor_health_snapshot()),
+            DomainHealthSnapshot::new(DomainKind::Schedule, self.schedule.actor_health_snapshot()),
+        ]
+    }
+
+    #[must_use]
+    pub fn has_permanently_failed_domain(&self) -> bool {
+        self.health_snapshots()
+            .iter()
+            .any(|snapshot| snapshot.restart_exhausted)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn mark_kv_permanently_failed_for_tests(&self) {
+        self.kv.mark_actor_permanently_failed_for_tests();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn panic_all_domain_actors_for_tests(&self) {
+        self.kv.panic_actor_for_tests();
+        self.queue.panic_actor_for_tests();
+        self.notice.panic_actor_for_tests();
+        self.stream.panic_actor_for_tests();
+        self.rpc.panic_actor_for_tests();
+        self.lease.panic_actor_for_tests();
+        self.schedule.panic_actor_for_tests();
     }
 
     pub(crate) fn queue_is_active(&self) -> bool {
@@ -479,6 +536,23 @@ pub fn setup(
 mod tests {
     use super::*;
 
+    fn wait_for_domain_restarts(domains: &DomainHandles, expected: u64) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while std::time::Instant::now() < deadline {
+            if domains
+                .health_snapshots()
+                .iter()
+                .all(|snapshot| snapshot.restart_count == expected)
+            {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        let snapshots = domains.health_snapshots();
+        panic!("domain restarts did not reach {expected}: {snapshots:?}");
+    }
+
     #[test]
     fn should_define_domain_setup() {
         // Placeholder: Domain setup structure is well-defined
@@ -607,5 +681,44 @@ mod tests {
                 domain.as_str()
             );
         }
+    }
+
+    #[test]
+    fn should_restart_all_domain_actors_after_test_panic_commands() {
+        // Arrange
+        let store = crate::testkit::midge::create_test_engine_with_cfs(vec![1, 2, 3, 4, 5, 6, 7]);
+        let router = Arc::new(Router::new());
+        let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+        let domains = setup(
+            &router,
+            &store,
+            &admin_read_model,
+            &DomainSetupOptions {
+                server_write_options: cntryl_midge::WriteOptions::best_effort(),
+                queue_write_options: cntryl_midge::WriteOptions::best_effort(),
+                queue_fast_flush_interval: Some(std::time::Duration::from_millis(100)),
+                request_sync_write_options: cntryl_midge::WriteOptions::sync(),
+                rpc_request_timeout: None,
+                stream_storage_layout: crate::domains::stream::StreamStorageLayout::default(),
+            },
+        )
+        .expect("setup domains");
+
+        // Act
+        domains.panic_all_domain_actors_for_tests();
+        wait_for_domain_restarts(&domains, 1);
+        let snapshots = domains.health_snapshots();
+
+        // Assert
+        assert_eq!(snapshots.len(), DomainKind::ALL.len());
+        assert!(snapshots.iter().all(|snapshot| snapshot.actor_running));
+        assert!(snapshots.iter().all(|snapshot| snapshot.panic_count == 1));
+        assert!(!domains.has_permanently_failed_domain());
+        assert_eq!(domains.kv_active_transaction_count(), 0);
+        assert_eq!(domains.queue_ready_message_count(), 0);
+        assert_eq!(domains.stream_count(), 0);
+        assert_eq!(domains.rpc_worker_count(), 0);
+        assert_eq!(domains.lease_count(), 0);
+        assert_eq!(domains.schedule_count(), 0);
     }
 }

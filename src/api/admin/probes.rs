@@ -27,6 +27,7 @@ pub struct CheckResults {
     pub storage: &'static str,
     pub storage_writer_lease: &'static str,
     pub domains_initialized: &'static str,
+    pub domains_healthy: &'static str,
     pub auth_configuration: &'static str,
     pub startup_complete: &'static str,
     pub accepting_traffic: &'static str,
@@ -48,11 +49,19 @@ pub struct StartupStatus {
 
 /// Liveness probe - is the application alive?
 /// Returns 503 only if deadlocked/panicked
-pub fn handle_liveness() -> Response {
-    let response = HealthStatus { status: "ok" };
+pub fn handle_liveness(runtime: &Runtime) -> Response {
+    let permanently_failed = runtime.has_permanently_failed_domain();
+    let response = HealthStatus {
+        status: if permanently_failed { "failed" } else { "ok" },
+    };
+    let status = if permanently_failed {
+        StatusCode::SERVICE_UNAVAILABLE
+    } else {
+        StatusCode::OK
+    };
 
     hyper::http::Response::builder()
-        .status(StatusCode::OK)
+        .status(status)
         .header("Content-Type", "application/json")
         .body(Body::from(serde_json::to_string(&response).unwrap()))
         .unwrap()
@@ -62,6 +71,7 @@ fn readiness_status(runtime: &Runtime) -> ReadyStatus {
     let storage_ready = runtime.is_storage_ready();
     let auth_ready = runtime.is_auth_config_ready();
     let domains_ready = runtime.are_domains_ready();
+    let domains_healthy = !runtime.has_permanently_failed_domain();
     let startup_complete = runtime.is_startup_complete();
     let ready = runtime.is_ready_for_traffic();
 
@@ -73,6 +83,13 @@ fn readiness_status(runtime: &Runtime) -> ReadyStatus {
             // includes holding the single-writer lease for the active engine.
             storage_writer_lease: if storage_ready { "ok" } else { "not_ready" },
             domains_initialized: if domains_ready { "ok" } else { "not_ready" },
+            domains_healthy: if !domains_ready {
+                "not_ready"
+            } else if domains_healthy {
+                "ok"
+            } else {
+                "failed"
+            },
             auth_configuration: if auth_ready { "ok" } else { "not_ready" },
             startup_complete: if startup_complete { "ok" } else { "not_ready" },
             accepting_traffic: runtime.traffic_status(),
@@ -169,4 +186,83 @@ pub fn handle_startup(runtime: &Runtime) -> Response {
 /// Legacy health check
 pub fn handle_health(runtime: &Runtime) -> Response {
     handle_healthz(runtime)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_domain_setup() -> Runtime {
+        Runtime::with_test_domains_for_tests()
+    }
+
+    fn mark_runtime_ready(runtime: &Runtime) {
+        runtime.mark_storage_ready();
+        runtime.mark_auth_config_ready();
+        runtime.mark_domains_ready();
+        runtime.mark_startup_complete();
+    }
+
+    fn wait_for_restarts(runtime: &Runtime, expected: u64) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while std::time::Instant::now() < deadline {
+            if runtime
+                .domain_health_snapshots()
+                .iter()
+                .all(|snapshot| snapshot.restart_count == expected)
+            {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        panic!("domain restarts did not reach {expected}");
+    }
+
+    #[test]
+    fn should_keep_livez_ok_before_domains_ready_even_if_domain_failed() {
+        // Arrange
+        let runtime = test_domain_setup();
+        runtime.mark_kv_domain_permanently_failed_for_tests();
+
+        // Act
+        let response = handle_liveness(&runtime);
+
+        // Assert
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[test]
+    fn should_keep_livez_ok_after_successful_domain_restart() {
+        // Arrange
+        let runtime = test_domain_setup();
+        mark_runtime_ready(&runtime);
+        runtime.panic_all_domain_actors_for_tests();
+        wait_for_restarts(&runtime, 1);
+
+        // Act
+        let response = handle_liveness(&runtime);
+
+        // Assert
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(!runtime.has_permanently_failed_domain());
+    }
+
+    #[test]
+    fn should_fail_livez_readyz_and_healthz_after_permanent_domain_failure() {
+        // Arrange
+        let runtime = test_domain_setup();
+        mark_runtime_ready(&runtime);
+        runtime.mark_kv_domain_permanently_failed_for_tests();
+
+        // Act
+        let livez = handle_liveness(&runtime);
+        let readyz = handle_readiness(&runtime);
+        let healthz = handle_healthz(&runtime);
+
+        // Assert
+        assert_eq!(livez.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(readyz.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(healthz.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(runtime.has_permanently_failed_domain());
+    }
 }

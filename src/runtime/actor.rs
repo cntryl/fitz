@@ -28,6 +28,7 @@ fn delivery_error_to_send_error(target: RouteAddress, error: &DeliveryError) -> 
             occupancy: usize_to_f64_saturating(*current_len) / usize_to_f64_saturating(*capacity),
         },
         DeliveryError::ActorStopped => SendError::ActorStopped { target },
+        DeliveryError::SinkPanicked => SendError::SinkPanicked { target },
     }
 }
 
@@ -532,6 +533,8 @@ pub enum SendError {
     },
     /// Actor has stopped
     ActorStopped { target: RouteAddress },
+    /// Sink panicked while accepting the message
+    SinkPanicked { target: RouteAddress },
     /// Route not registered
     RouteNotFound { target: RouteAddress },
 }
@@ -543,6 +546,7 @@ impl SendError {
         match self {
             SendError::MailboxFull { target, .. }
             | SendError::ActorStopped { target }
+            | SendError::SinkPanicked { target }
             | SendError::RouteNotFound { target } => target,
         }
     }
@@ -561,6 +565,9 @@ impl fmt::Display for SendError {
             }
             SendError::ActorStopped { target } => {
                 write!(f, "Actor {target} has stopped")
+            }
+            SendError::SinkPanicked { target } => {
+                write!(f, "Sink for {target} panicked during delivery")
             }
             SendError::RouteNotFound { target } => {
                 write!(f, "Route {target} not found")

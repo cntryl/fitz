@@ -142,6 +142,8 @@ pub(super) enum LeaseDomainCommand {
         crate::domains::lease::protocol::LeaseKey,
         crossbeam_channel::Sender<usize>,
     ),
+    #[cfg(test)]
+    PanicForTests,
 }
 
 pub(super) struct LeaseDomainActor {

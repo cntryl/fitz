@@ -70,6 +70,7 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
 
     tracing::info!("Starting Fitz broker");
     config.validate()?;
+    warn_defaulted_fast_queue_policy(&config);
 
     // Step 1: Create runtime infrastructure before opening storage so HTTP
     // target health can participate in ECS handoff while Midge waits for the
@@ -203,6 +204,20 @@ fn log_ready_endpoints(config: &BootConfig) {
         tracing::info!("  TCP:  disabled");
     }
     tracing::info!("  HTTP: {}:{}", config.bind_addr, config.http_port);
+}
+
+fn warn_defaulted_fast_queue_policy(config: &BootConfig) {
+    if !config.queue_write_policy_defaulted_fast() {
+        return;
+    }
+
+    tracing::warn!(
+        queue_write_policy_env = "FITZ_QUEUE_WRITE_POLICY",
+        queue_loss_window_env = "FITZ_QUEUE_LOSS_WINDOW_MS",
+        loss_window_ms = config.queue_loss_window_ms,
+        loss_window = ?config.queue_fast_flush_interval(),
+        "FITZ_QUEUE_WRITE_POLICY is unset; defaulting Queue to fast best-effort writes"
+    );
 }
 
 async fn start_http_listener(

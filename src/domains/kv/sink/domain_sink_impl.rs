@@ -60,10 +60,11 @@ impl KvDomainSink {
     }
 
     fn spawn_actor(state: Arc<KvDomainState>) -> crate::runtime::ManagedActor<KvDomainCommand> {
-        crate::runtime::ManagedActor::spawn(
-            state.core.router.clone(),
+        let router = state.core.router.clone();
+        crate::runtime::ManagedActor::spawn_supervised(
+            router,
             KvDomainActor::route_address(),
-            KvDomainActor::new(state),
+            move || KvDomainActor::new(state.clone()),
             1024,
         )
     }
@@ -103,9 +104,25 @@ impl KvDomainSink {
         self.actor.stop();
     }
 
+    pub(crate) fn actor_health_snapshot(&self) -> crate::runtime::ManagedActorHealthSnapshot {
+        self.actor.health_snapshot()
+    }
+
     #[cfg(test)]
     pub(super) fn is_actor_running(&self) -> bool {
         self.actor.is_running()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn mark_actor_permanently_failed_for_tests(&self) {
+        self.actor.mark_permanently_failed_for_tests();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn panic_actor_for_tests(&self) {
+        let _ = self
+            .actor
+            .try_send_high_priority(KvDomainCommand::PanicForTests);
     }
 
     /// Build an admin inventory snapshot for the requested route family scope.

@@ -57,6 +57,10 @@ impl Actor for RpcDomainActor {
             RpcDomainCommand::ApplyWorkerUnsubscribeForTests(worker_addr, session_id, reply) => {
                 let _ = reply.send(runtime.apply_worker_unsubscribe(&worker_addr, session_id));
             }
+            #[cfg(test)]
+            RpcDomainCommand::PanicForTests => {
+                panic!("test RPC domain actor panic");
+            }
         }
     }
 }
@@ -421,7 +425,10 @@ impl RpcDomainRuntime<'_> {
             }
             Err(
                 crate::runtime::RouteError::RouteNotFound(_)
-                | crate::runtime::RouteError::DeliveryFailed(_, DeliveryError::ActorStopped),
+                | crate::runtime::RouteError::DeliveryFailed(
+                    _,
+                    DeliveryError::ActorStopped | DeliveryError::SinkPanicked,
+                ),
             ) => self.handle_disconnected_worker_dispatch(envelope, meta, req, worker.session_id),
             Err(crate::runtime::RouteError::DeliveryFailed(
                 _,

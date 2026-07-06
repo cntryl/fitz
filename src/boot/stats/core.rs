@@ -87,6 +87,49 @@ impl Runtime {
         *self.domains.write() = Some(domains);
     }
 
+    #[cfg(test)]
+    /// Build a runtime with the standard test domain fixture attached.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the in-memory test domain fixture cannot be initialized.
+    #[must_use]
+    pub fn with_test_domains_for_tests() -> Self {
+        let router = Arc::new(Router::new());
+        let runtime = Self::new(router.clone());
+        let store = crate::testkit::midge::create_test_engine_with_cfs(vec![1, 2, 3, 4, 5, 6, 7]);
+        let domains = crate::boot::domains::setup(
+            &router,
+            &store,
+            &runtime.admin_read_model(),
+            &crate::boot::domains::DomainSetupOptions {
+                server_write_options: cntryl_midge::WriteOptions::best_effort(),
+                queue_write_options: cntryl_midge::WriteOptions::best_effort(),
+                queue_fast_flush_interval: Some(Duration::from_millis(100)),
+                request_sync_write_options: cntryl_midge::WriteOptions::sync(),
+                rpc_request_timeout: None,
+                stream_storage_layout: crate::domains::stream::StreamStorageLayout::default(),
+            },
+        )
+        .expect("setup domains");
+        runtime.attach_domains(domains);
+        runtime
+    }
+
+    #[cfg(test)]
+    pub fn mark_kv_domain_permanently_failed_for_tests(&self) {
+        if let Some(domains) = self.domains.read().as_ref() {
+            domains.mark_kv_permanently_failed_for_tests();
+        }
+    }
+
+    #[cfg(test)]
+    pub fn panic_all_domain_actors_for_tests(&self) {
+        if let Some(domains) = self.domains.read().as_ref() {
+            domains.panic_all_domain_actors_for_tests();
+        }
+    }
+
     #[must_use]
     pub fn detach_domains(&self) -> Option<Arc<DomainHandles>> {
         self.domains.write().take()
@@ -138,6 +181,21 @@ impl Runtime {
     #[must_use]
     pub fn are_domains_ready(&self) -> bool {
         self.domains_ready.load(Ordering::SeqCst) == 1
+    }
+
+    #[must_use]
+    pub fn domain_health_snapshots(&self) -> Vec<crate::boot::domains::DomainHealthSnapshot> {
+        self.domains
+            .read()
+            .as_ref()
+            .map_or_else(Vec::new, |domains| domains.health_snapshots())
+    }
+
+    #[must_use]
+    pub fn has_permanently_failed_domain(&self) -> bool {
+        self.domains.read().as_ref().is_some_and(|domains| {
+            self.are_domains_ready() && domains.has_permanently_failed_domain()
+        })
     }
 
     pub fn mark_auth_config_ready(&self) {
@@ -210,6 +268,7 @@ impl Runtime {
             && self.is_auth_config_ready()
             && self.is_startup_complete()
             && self.is_accepting_traffic()
+            && !self.has_permanently_failed_domain()
     }
 
     #[must_use]

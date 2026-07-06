@@ -81,6 +81,10 @@ impl Actor for QueueDomainActor {
             QueueDomainCommand::PurgeDeadLetter(key, id, reply) => {
                 let _ = reply.send(runtime.purge_dead_letter(&key, id));
             }
+            #[cfg(test)]
+            QueueDomainCommand::PanicForTests => {
+                panic!("test Queue domain actor panic");
+            }
         }
     }
 }

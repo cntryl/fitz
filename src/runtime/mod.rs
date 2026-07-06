@@ -48,7 +48,7 @@ pub use domain_event::{DomainPublishEvent, SessionCleanup};
 pub use domain_manifest::{DomainDescriptor, DomainKind, DomainRegistry};
 pub use envelope::{Envelope, MessageId};
 pub use mailbox::Mailbox;
-pub use managed_actor::ManagedActor;
+pub use managed_actor::{ManagedActor, ManagedActorHealthSnapshot};
 pub use matcher::{Pattern, PatternSegment};
 pub use router::{DeliveryError, MailboxSink, RouteError, Router};
 pub use scheduler::Scheduler;

@@ -47,6 +47,10 @@ impl Actor for KvDomainActor {
             KvDomainCommand::ApplySyncWriteOptions(message, reply) => {
                 let _ = reply.send(self.state.runtime().apply_sync_write_options(message));
             }
+            #[cfg(test)]
+            KvDomainCommand::PanicForTests => {
+                panic!("test KV domain actor panic");
+            }
         }
     }
 }

@@ -9,8 +9,8 @@ use tracing::info;
 mod config;
 
 pub use config::{
-    BootConfig, CloudDurabilityMode, CloudStorageConfig, QueueWritePolicy, StorageMemtableConfig,
-    StorageMode,
+    BootConfig, CloudDurabilityMode, CloudStorageConfig, QueueWritePolicy, QueueWritePolicySource,
+    StorageMemtableConfig, StorageMode,
 };
 
 pub type BootResult<T> = Result<T, Box<dyn std::error::Error>>;

@@ -105,10 +105,11 @@ impl ScheduleDomainSink {
     fn spawn_actor(
         state: Arc<ScheduleDomainState>,
     ) -> crate::runtime::ManagedActor<ScheduleDomainCommand> {
-        crate::runtime::ManagedActor::spawn(
-            state.core.router.clone(),
+        let router = state.core.router.clone();
+        crate::runtime::ManagedActor::spawn_supervised(
+            router,
             ScheduleDomainActor::route_address(),
-            ScheduleDomainActor::new(state),
+            move || ScheduleDomainActor::new(state.clone()),
             1024,
         )
     }
@@ -152,6 +153,17 @@ impl ScheduleDomainSink {
     #[cfg(test)]
     pub(super) fn is_actor_running(&self) -> bool {
         self.actor.is_running()
+    }
+
+    pub(crate) fn actor_health_snapshot(&self) -> crate::runtime::ManagedActorHealthSnapshot {
+        self.actor.health_snapshot()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn panic_actor_for_tests(&self) {
+        let _ = self
+            .actor
+            .try_send_high_priority(ScheduleDomainCommand::PanicForTests);
     }
 
     #[cfg(test)]

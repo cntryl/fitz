@@ -47,6 +47,10 @@ impl Actor for StreamDomainActor {
                 runtime.sync_admin_snapshot();
                 let _ = reply.send(());
             }
+            #[cfg(test)]
+            StreamDomainCommand::PanicForTests => {
+                panic!("test Stream domain actor panic");
+            }
         }
     }
 }

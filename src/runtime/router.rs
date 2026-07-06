@@ -99,6 +99,8 @@ pub enum DeliveryError {
     HighLaneFull { capacity: usize, current_len: usize },
     /// Mailbox receiver has been dropped (actor stopped)
     ActorStopped,
+    /// A sink panicked while accepting an envelope.
+    SinkPanicked,
 }
 
 impl DeliveryError {
@@ -114,7 +116,7 @@ impl DeliveryError {
                 capacity,
                 current_len,
             } => usize_to_f64_saturating(*current_len) / usize_to_f64_saturating(*capacity),
-            DeliveryError::ActorStopped => 1.0,
+            DeliveryError::ActorStopped | DeliveryError::SinkPanicked => 1.0,
         }
     }
 }
@@ -138,6 +140,7 @@ impl std::fmt::Display for DeliveryError {
                 )
             }
             DeliveryError::ActorStopped => write!(f, "Actor has stopped"),
+            DeliveryError::SinkPanicked => write!(f, "Sink panicked during delivery"),
         }
     }
 }
@@ -295,9 +298,16 @@ impl Router {
                 DeliveryError::HighLaneFull { .. } => {
                     metrics.counter_inc(obs::METRIC_ROUTER_HIGH_LANE_BACKPRESSURE);
                 }
-                DeliveryError::ActorStopped => {}
+                DeliveryError::ActorStopped | DeliveryError::SinkPanicked => {}
             }
         }
+    }
+
+    fn catch_sink_panic(
+        delivery: impl FnOnce() -> Result<(), DeliveryError>,
+    ) -> Result<(), DeliveryError> {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(delivery))
+            .unwrap_or(Err(DeliveryError::SinkPanicked))
     }
 
     fn record_route_mismatch() {
@@ -330,7 +340,7 @@ impl Router {
         envelope: Envelope,
         started_at: Option<Instant>,
     ) -> Result<(), RouteError> {
-        match sink.deliver(envelope) {
+        match Self::catch_sink_panic(|| sink.deliver(envelope)) {
             Ok(()) => {
                 debug!(destination = %dest, "Router: envelope delivered successfully");
 
@@ -550,7 +560,7 @@ impl Router {
             .get(&dest)
             .ok_or_else(|| RouteError::RouteNotFound(dest.clone()))?;
 
-        match sink.deliver_high_priority(envelope) {
+        match Self::catch_sink_panic(|| sink.deliver_high_priority(envelope)) {
             Ok(()) => Ok(()),
             Err(e) => {
                 warn!(destination = %dest, error = %e, "Router: high-priority delivery failed");

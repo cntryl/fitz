@@ -167,6 +167,11 @@ pub(super) fn should_create_default_boot_config() {
     assert_eq!(config.cloud_durability, CloudDurabilityMode::Background);
     assert_eq!(config.storage_memtable, StorageMemtableConfig::Auto);
     assert_eq!(config.queue_write_policy, QueueWritePolicy::Fast);
+    assert_eq!(
+        config.queue_write_policy_source,
+        QueueWritePolicySource::Defaulted
+    );
+    assert!(config.queue_write_policy_defaulted_fast());
     assert_eq!(config.queue_loss_window_ms, DEFAULT_QUEUE_LOSS_WINDOW_MS);
     assert!(config.queue_write_options().is_best_effort());
     assert_eq!(config.drain_grace_seconds, DEFAULT_DRAIN_GRACE_SECONDS);
@@ -182,6 +187,25 @@ pub(super) fn should_create_default_boot_config() {
         config.stream_storage_layout,
         StreamStorageLayout::PromotionFrontier
     );
+}
+
+#[test]
+#[serial]
+fn should_distinguish_explicit_queue_fast_policy_from_defaulted_fast() {
+    with_storage_env(&[(ENV_QUEUE_WRITE_POLICY, "fast")], || {
+        // Arrange
+
+        // Act
+        let config = BootConfig::default();
+
+        // Assert
+        assert_eq!(config.queue_write_policy, QueueWritePolicy::Fast);
+        assert_eq!(
+            config.queue_write_policy_source,
+            QueueWritePolicySource::Explicit
+        );
+        assert!(!config.queue_write_policy_defaulted_fast());
+    });
 }
 
 #[test]

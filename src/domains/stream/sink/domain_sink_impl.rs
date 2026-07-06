@@ -121,10 +121,11 @@ impl StreamDomainSink {
     fn spawn_actor(
         core: Arc<StreamDomainCore>,
     ) -> crate::runtime::ManagedActor<StreamDomainCommand> {
-        crate::runtime::ManagedActor::spawn(
-            core.router.clone(),
+        let router = core.router.clone();
+        crate::runtime::ManagedActor::spawn_supervised(
+            router,
             StreamDomainActor::route_address(),
-            StreamDomainActor::new(core),
+            move || StreamDomainActor::new(core.clone()),
             1024,
         )
     }
@@ -192,6 +193,17 @@ impl StreamDomainSink {
     #[cfg(test)]
     pub(super) fn is_actor_running(&self) -> bool {
         self.actor.is_running()
+    }
+
+    pub(crate) fn actor_health_snapshot(&self) -> crate::runtime::ManagedActorHealthSnapshot {
+        self.actor.health_snapshot()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn panic_actor_for_tests(&self) {
+        let _ = self
+            .actor
+            .try_send_high_priority(StreamDomainCommand::PanicForTests);
     }
 
     #[cfg(test)]

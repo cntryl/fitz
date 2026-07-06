@@ -67,12 +67,16 @@ pub enum QueueWritePolicy {
 }
 
 impl QueueWritePolicy {
-    fn from_env() -> Self {
-        match env_non_empty(ENV_QUEUE_WRITE_POLICY)
-            .unwrap_or_else(|| "fast".to_string())
-            .to_ascii_lowercase()
-            .as_str()
-        {
+    fn from_env_with_source() -> (Self, QueueWritePolicySource) {
+        let raw_value = env_non_empty(ENV_QUEUE_WRITE_POLICY);
+        let source = if raw_value.is_none() {
+            QueueWritePolicySource::Defaulted
+        } else {
+            QueueWritePolicySource::Explicit
+        };
+        let value = raw_value.unwrap_or_else(|| "fast".to_string());
+
+        let policy = match value.to_ascii_lowercase().as_str() {
             "fast" => Self::Fast,
             "buffered" => Self::Buffered,
             "strict" => Self::Strict,
@@ -81,7 +85,9 @@ impl QueueWritePolicy {
                     "unsupported {ENV_QUEUE_WRITE_POLICY}='{other}'; expected fast, buffered, or strict"
                 ),
             },
-        }
+        };
+
+        (policy, source)
     }
 
     fn validate(&self) -> Result<(), String> {
@@ -89,6 +95,22 @@ impl QueueWritePolicy {
             Self::Fast | Self::Buffered | Self::Strict => Ok(()),
             Self::Invalid { reason } => Err(reason.clone()),
         }
+    }
+}
+
+/// Source for the resolved queue write policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueueWritePolicySource {
+    /// The operator set `FITZ_QUEUE_WRITE_POLICY`.
+    Explicit,
+    /// `FITZ_QUEUE_WRITE_POLICY` was absent and the default policy was used.
+    Defaulted,
+}
+
+impl QueueWritePolicySource {
+    #[must_use]
+    pub fn is_defaulted(self) -> bool {
+        matches!(self, Self::Defaulted)
     }
 }
 
@@ -330,6 +352,8 @@ pub struct BootConfig {
     pub storage_memtable: StorageMemtableConfig,
     /// Commit policy for queue durable mutations.
     pub queue_write_policy: QueueWritePolicy,
+    /// Whether queue write policy was explicit or resolved through the default.
+    pub queue_write_policy_source: QueueWritePolicySource,
     /// Target dirty-data window before best-effort queue writes are flushed.
     pub queue_loss_window_ms: u64,
     pub(crate) queue_loss_window_error: Option<String>,
@@ -398,6 +422,12 @@ impl BootConfig {
         matches!(self.queue_write_policy, QueueWritePolicy::Fast)
             .then(|| Duration::from_millis(self.queue_loss_window_ms))
     }
+
+    #[must_use]
+    pub fn queue_write_policy_defaulted_fast(&self) -> bool {
+        self.queue_write_policy_source.is_defaulted()
+            && matches!(self.queue_write_policy, QueueWritePolicy::Fast)
+    }
 }
 
 impl Default for BootConfig {
@@ -427,6 +457,8 @@ impl Default for BootConfig {
             parse_ws_allowed_origins_from_env().unwrap_or_else(default_local_ws_allowed_origins);
         let (drain_grace_seconds, drain_config_error) = drain_grace_seconds_from_env();
         let (queue_loss_window_ms, queue_loss_window_error) = queue_loss_window_ms_from_env();
+        let (queue_write_policy, queue_write_policy_source) =
+            QueueWritePolicy::from_env_with_source();
         let drain_close_reason = drain_close_reason_from_env();
         let route_families = std::env::var("FITZ_ROUTE_FAMILIES")
             .unwrap_or_else(|_| "1".to_string())
@@ -451,7 +483,8 @@ impl Default for BootConfig {
             channel_capacity: 1000,
             cloud_durability: CloudDurabilityMode::from_env(),
             storage_memtable: StorageMemtableConfig::from_env(),
-            queue_write_policy: QueueWritePolicy::from_env(),
+            queue_write_policy,
+            queue_write_policy_source,
             queue_loss_window_ms,
             queue_loss_window_error,
             assume_external_tls,

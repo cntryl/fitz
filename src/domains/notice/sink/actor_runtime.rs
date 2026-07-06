@@ -12,6 +12,8 @@ pub(super) enum NoticeDomainCommand {
     ReadSubscriptionCount(crossbeam_channel::Sender<usize>),
     RefreshAdminSnapshotIfDirty(crossbeam_channel::Sender<()>),
     UnsubscribeAllForSession(u64, crossbeam_channel::Sender<usize>),
+    #[cfg(test)]
+    PanicForTests,
 }
 
 pub(super) struct NoticeDomainActor {
@@ -57,6 +59,10 @@ impl Actor for NoticeDomainActor {
             }
             NoticeDomainCommand::UnsubscribeAllForSession(session_id, reply) => {
                 let _ = reply.send(runtime.unsubscribe_all_for_session(session_id));
+            }
+            #[cfg(test)]
+            NoticeDomainCommand::PanicForTests => {
+                panic!("test Notice domain actor panic");
             }
         }
     }

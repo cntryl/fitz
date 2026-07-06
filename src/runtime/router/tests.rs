@@ -14,6 +14,8 @@ struct MockSink {
     should_fail: bool,
 }
 
+struct PanicSink;
+
 impl MockSink {
     fn new() -> Self {
         Self {
@@ -31,6 +33,16 @@ impl MockSink {
 
     fn count(&self) -> usize {
         self.delivered.lock().len()
+    }
+}
+
+impl MailboxSink for PanicSink {
+    fn deliver(&self, _envelope: Envelope) -> Result<(), DeliveryError> {
+        panic!("router sink panic");
+    }
+
+    fn deliver_high_priority(&self, _envelope: Envelope) -> Result<(), DeliveryError> {
+        panic!("router high-priority sink panic");
     }
 }
 
@@ -204,6 +216,48 @@ fn should_return_error_for_failed_delivery() {
             _,
             DeliveryError::MailboxFull { .. }
         ))
+    ));
+}
+
+#[test]
+fn should_catch_panicking_sink_during_delivery() {
+    // Arrange
+    let router = Router::new();
+    let address = test_address(1, "/user/panic");
+    router.register(address.clone(), Arc::new(PanicSink));
+    let envelope = Envelope::new(address.clone(), "test message");
+
+    // Act
+    let result = router.route(envelope);
+
+    // Assert
+    assert!(matches!(
+        result,
+        Err(RouteError::DeliveryFailed(
+            target,
+            DeliveryError::SinkPanicked
+        )) if target == address
+    ));
+}
+
+#[test]
+fn should_catch_panicking_sink_during_high_priority_delivery() {
+    // Arrange
+    let router = Router::new();
+    let address = test_address(1, "/system/panic");
+    router.register(address.clone(), Arc::new(PanicSink));
+    let envelope = Envelope::new(address.clone(), "test message");
+
+    // Act
+    let result = router.route_high_priority(envelope);
+
+    // Assert
+    assert!(matches!(
+        result,
+        Err(RouteError::DeliveryFailed(
+            target,
+            DeliveryError::SinkPanicked
+        )) if target == address
     ));
 }
 

@@ -96,7 +96,7 @@ where
     let method = req.method().clone();
 
     match (method, path.as_str()) {
-        (Method::GET, "/livez") => Ok(probes::handle_liveness()),
+        (Method::GET, "/livez") => Ok(probes::handle_liveness(runtime.as_ref())),
         (Method::GET, "/targetz") => Ok(probes::handle_targetz(runtime.as_ref())),
         (Method::GET, "/healthz") => Ok(probes::handle_healthz(runtime.as_ref())),
         (Method::GET, "/readyz") => Ok(probes::handle_readiness(runtime.as_ref())),

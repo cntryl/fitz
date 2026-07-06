@@ -103,6 +103,8 @@ pub(super) enum QueueDomainCommand {
         MessageId,
         crossbeam_channel::Sender<Result<bool, String>>,
     ),
+    #[cfg(test)]
+    PanicForTests,
 }
 
 #[derive(Default)]

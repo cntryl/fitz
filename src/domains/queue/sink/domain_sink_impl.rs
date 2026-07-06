@@ -113,10 +113,11 @@ impl QueueDomainSink {
     }
 
     fn spawn_actor(core: Arc<QueueDomainCore>) -> crate::runtime::ManagedActor<QueueDomainCommand> {
-        crate::runtime::ManagedActor::spawn(
-            core.router.clone(),
+        let router = core.router.clone();
+        crate::runtime::ManagedActor::spawn_supervised(
+            router,
             QueueDomainActor::route_address(),
-            QueueDomainActor::new(core),
+            move || QueueDomainActor::new(core.clone()),
             1024,
         )
     }
@@ -162,9 +163,20 @@ impl QueueDomainSink {
         self.core.active.load(Ordering::Relaxed)
     }
 
+    pub(crate) fn actor_health_snapshot(&self) -> crate::runtime::ManagedActorHealthSnapshot {
+        self.actor.health_snapshot()
+    }
+
     #[cfg(test)]
     pub(super) fn is_actor_running(&self) -> bool {
         self.actor.is_running()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn panic_actor_for_tests(&self) {
+        let _ = self
+            .actor
+            .try_send_high_priority(QueueDomainCommand::PanicForTests);
     }
 
     #[cfg(test)]

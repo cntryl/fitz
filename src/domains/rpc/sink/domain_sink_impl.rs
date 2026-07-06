@@ -65,10 +65,11 @@ impl RpcDomainSink {
         core: Arc<RpcDomainCore>,
         active: Arc<AtomicBool>,
     ) -> crate::runtime::ManagedActor<RpcDomainCommand> {
-        crate::runtime::ManagedActor::spawn(
-            core.router.clone(),
+        let router = core.router.clone();
+        crate::runtime::ManagedActor::spawn_supervised(
+            router,
             RpcDomainActor::route_address(),
-            RpcDomainActor::new(core, active),
+            move || RpcDomainActor::new(core.clone(), active.clone()),
             1024,
         )
     }
@@ -166,6 +167,17 @@ impl RpcDomainSink {
     #[cfg(test)]
     pub(super) fn is_actor_running(&self) -> bool {
         self.actor.is_running()
+    }
+
+    pub(crate) fn actor_health_snapshot(&self) -> crate::runtime::ManagedActorHealthSnapshot {
+        self.actor.health_snapshot()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn panic_actor_for_tests(&self) {
+        let _ = self
+            .actor
+            .try_send_high_priority(RpcDomainCommand::PanicForTests);
     }
 
     #[cfg(test)]
@@ -775,7 +787,10 @@ impl RpcDomainRuntime<'_> {
             }
             Err(
                 crate::runtime::RouteError::RouteNotFound(_)
-                | crate::runtime::RouteError::DeliveryFailed(_, DeliveryError::ActorStopped),
+                | crate::runtime::RouteError::DeliveryFailed(
+                    _,
+                    DeliveryError::ActorStopped | DeliveryError::SinkPanicked,
+                ),
             ) => {
                 self.counter_inc("rpc_request_forward_errors_total");
                 let cleanup_result = self.apply_session_cleanup(dispatch.worker.session_id);

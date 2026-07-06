@@ -93,6 +93,8 @@ pub(super) enum KvDomainCommand {
         crate::domains::kv::KvMessage,
         crossbeam_channel::Sender<crate::domains::kv::KvMessage>,
     ),
+    #[cfg(test)]
+    PanicForTests,
 }
 
 pub(super) struct KvDomainActor {

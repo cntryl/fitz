@@ -109,6 +109,8 @@ pub(super) enum StreamDomainCommand {
     RefreshAdminSnapshotIfDirty(crossbeam_channel::Sender<()>),
     #[cfg(test)]
     SyncAdminSnapshot(crossbeam_channel::Sender<()>),
+    #[cfg(test)]
+    PanicForTests,
 }
 
 #[derive(Default)]
