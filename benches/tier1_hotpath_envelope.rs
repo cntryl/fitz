@@ -5,6 +5,8 @@ use std::time::{Duration, Instant};
 
 stress_allocator!();
 
+const ENVELOPE_BATCH_OPS: u64 = 256;
+
 #[derive(Clone)]
 #[allow(dead_code)]
 struct TestMessage {
@@ -57,15 +59,21 @@ fn should_create_owning_from_route_struct_payload(ctx: &mut StressContext) {
         .collect();
     let mut index = 0usize;
 
-    ctx.measure("owning_from_route_struct_payload", || {
-        let (source, destination, message) = &triples[index];
-        index = (index + 1) % triples.len();
-        black_box(Envelope::from_route(
-            black_box(source.clone()),
-            black_box(destination.clone()),
-            black_box(message.clone()),
-        ));
-    });
+    ctx.measure_batch(
+        "owning_from_route_struct_payload",
+        ENVELOPE_BATCH_OPS,
+        || {
+            for _ in 0..ENVELOPE_BATCH_OPS {
+                let (source, destination, message) = &triples[index];
+                index = (index + 1) % triples.len();
+                black_box(Envelope::from_route(
+                    black_box(source.clone()),
+                    black_box(destination.clone()),
+                    black_box(message.clone()),
+                ));
+            }
+        },
+    );
 }
 
 #[stress(tier = 1, name = "owning_new_with_deadline_struct_payload")]
@@ -82,14 +90,20 @@ fn should_create_owning_new_with_deadline_struct_payload(ctx: &mut StressContext
         .collect();
     let mut index = 0usize;
 
-    ctx.measure("owning_new_with_deadline_struct_payload", || {
-        let (destination, message) = &pairs[index];
-        index = (index + 1) % pairs.len();
-        black_box(
-            Envelope::new(black_box(destination.clone()), black_box(message.clone()))
-                .with_deadline(black_box(deadline)),
-        );
-    });
+    ctx.measure_batch(
+        "owning_new_with_deadline_struct_payload",
+        ENVELOPE_BATCH_OPS,
+        || {
+            for _ in 0..ENVELOPE_BATCH_OPS {
+                let (destination, message) = &pairs[index];
+                index = (index + 1) % pairs.len();
+                black_box(
+                    Envelope::new(black_box(destination.clone()), black_box(message.clone()))
+                        .with_deadline(black_box(deadline)),
+                );
+            }
+        },
+    );
 }
 
 #[stress(tier = 1, name = "owning_new_with_causation_struct_payload")]

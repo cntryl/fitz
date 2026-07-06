@@ -10,6 +10,7 @@ const SINGLE_PATTERN_BATCH_SIZE: usize = 512;
 const REMOVE_BATCH_SIZE: usize = 512;
 const MATCH_REPEAT_COUNT: usize = 4_096;
 const REPLACE_CASE_COUNT: usize = 64;
+const INSERT_100_MATCH_2_REPEAT_COUNT: u64 = 1_024;
 
 fn make_subscriptions_with_patterns(pattern_count: usize) -> SubscriptionIndex {
     let mut index = SubscriptionIndex::new();
@@ -247,7 +248,6 @@ fn should_insert_100_match_2(ctx: &mut StressContext) {
         Route::new("notify://realm/orders/create"),
         Route::new("notify://realm/items/remove/action"),
     ];
-    let mut index = SubscriptionIndex::new();
     let batch = (0_u64..100)
         .map(|i| {
             let pattern = match i % 4 {
@@ -260,10 +260,14 @@ fn should_insert_100_match_2(ctx: &mut StressContext) {
         })
         .collect::<Vec<_>>();
 
-    tier2_stress::measure_once(ctx, "insert_100_match_2", 100, || {
-        index.insert_batch(family, &batch);
-        for route in &routes {
-            black_box(index.match_all(family, black_box(route)));
+    let completed_inserts = 100 * INSERT_100_MATCH_2_REPEAT_COUNT;
+    tier2_stress::measure_iterations(ctx, "insert_100_match_2", completed_inserts, || {
+        for _ in 0..INSERT_100_MATCH_2_REPEAT_COUNT {
+            let mut index = SubscriptionIndex::new();
+            index.insert_batch(family, black_box(&batch));
+            for route in &routes {
+                black_box(index.match_all(family, black_box(route)));
+            }
         }
     });
 }

@@ -1,10 +1,10 @@
 # Benchmark Guidelines
 
-**Version:** 2.1
-**Last Updated:** July 5, 2026
+**Version:** 2.2
+**Last Updated:** July 6, 2026
 **Project:** Fitz Message Broker
 
-Fitz benchmarks use one framework: `cntryl-stress`. Tier 1 through Tier N write
+Fitz benchmarks use one framework: `cntryl-stress`. Tier 1 through Tier 4 write
 `cntryl-stress.v2` artifacts under `target/stress/`, and
 `cntryl-tools summarize-benchmarks` turns those artifacts into
 `target/bench_results.json` and `target/bench_summary.md`.
@@ -29,8 +29,10 @@ explicitly says construction/setup is part of the measured behavior.
 ## Suite Split
 
 Fitz uses the stress default profile for every documented and CI benchmark
-command. The default is the trustworthy release profile from `cntryl-stress`.
-Do not pass `--profile` in Fitz workflow or documentation commands.
+command. The default profile is the acceptance surface for Fitz even when the
+summary reports `authoritative: false`; do not switch docs or CI to a release
+or lab profile just to force an authoritative flag. Do not pass `--profile` in
+Fitz workflow or documentation commands.
 
 - **Release suite:** 30-50 baseline-backed rows that cover customer-visible
   invariants: RPC request/response, queue enqueue/dequeue/ack, stream
@@ -51,7 +53,7 @@ file small, baseline-backed, and reviewable.
 
 | Tier | Kind | Tool | Location | Scope |
 | --- | --- | --- | --- | --- |
-| **Tier 1** | Hotpath | Stress micro | `benches/tier1_hotpath_*.rs` | Pure synchronous internals using `#[stress(tier = 1)]` and one named `ctx.measure("operation", ...)`. |
+| **Tier 1** | Hotpath | Stress micro | `benches/tier1_hotpath_*.rs` | Pure synchronous internals using `#[stress(tier = 1)]` and one named measurement. |
 | **Tier 2** | Subsystem | Stress | `benches/tier2_subsystem_*.rs` | Component and domain subsystem rows using stress fixed-operation samples and explicit correctness counters. |
 | **Tier 3** | System | Stress | `benches/tier3_system_*.rs` | In-process domain actor + test engine, no network. |
 | **Tier 4** | Integration | Stress | `benches/tier4_integration_*.rs` | Full stack direct/TCP/WebSocket/multiclient scenarios. |
@@ -79,7 +81,7 @@ fn should_decode_one_64b(ctx: &mut StressContext) {
     let decoder = TlvDecoder::new();
 
     ctx.parameter("payload_size", 64);
-    ctx.measure("operation", || black_box(decoder.decode_one(black_box(&frame)).unwrap()));
+    ctx.measure("decode_one_64b", || black_box(decoder.decode_one(black_box(&frame)).unwrap()));
 }
 
 #[stress(tier = 3)]
@@ -87,7 +89,7 @@ fn should_complete_capacity_ack_roundtrip(ctx: &mut StressContext) {
     let mut actor = build_actor();
 
     ctx.parameter("scenario", "capacity_ack_roundtrip");
-    let iterations = ctx.measure_batch("workload", 1, || {
+    let iterations = ctx.measure_batch("complete_capacity_ack_roundtrip", 1, || {
         complete_one_ack_roundtrip(&mut actor);
     });
     let _ = ctx.correctness().attempted(iterations).completed(iterations);
@@ -107,20 +109,29 @@ Use the narrowest direct stress API that describes the row:
   `ctx.measure_async("name", ...)`: named measurements with a specific intent.
 
 Do not write benchmark diagnostics with `println!`, `eprintln!`, or `dbg!`.
-Use `ctx.parameter` for fields that define the workload identity and
+Use readable measurement names that describe the measured behavior. The name is
+part of the artifact ID, so keep the current name unless the measured workload
+or a workload-defining parameter changes. Use `ctx.parameter` for fields that
+define the workload identity and
 `ctx.metadata` for descriptive facts that should appear in artifacts without
 changing IDs. The terminal output should be the stress console report.
 
 ## Tier 1 Micro Semantics
 
 Tier 1 rows use `#[stress(tier = 1)]`, which defaults to stress micro mode.
-Use `ctx.measure("operation", ...)` exactly once per row.
+Use one named measurement per row. Prefer `ctx.measure("readable_name", ...)`
+for single-operation rows; use batched measurement only when the row explicitly
+counts repeated logical work.
 
 Micro rows record calibrated net nanoseconds per operation. When the operation
 should be allocation-free, install `cntryl_stress::stress_allocator!()` in the
 bench binary and set `max_allocs_per_op = 0` and `max_bytes_per_op = 0`.
 Do not add allocation budgets to rows where construction or allocation is the
 behavior under review.
+Rows whose measured behavior is construction, parsing, or allocation may emit
+`high_allocations` diagnostics. Those warnings are advisory for that class of
+row; keep allocation statistics visible and do not hide them with
+`record_external` only to silence the diagnostic.
 
 Use `cntryl_stress::black_box`, not `std::hint::black_box` directly in new
 bench code.
@@ -200,28 +211,41 @@ benchmark_id|metric|scenario=...|parameter=...
 
 Do not hand-convert stale legacy IDs into current targets. Regenerate targets,
 release IDs, `bench-targets.md`, and the baseline from clean current stress
-artifacts.
-Stress v2 benchmark IDs include the named measurement suffix, such as
-`/operation` for Tier 1 rows and `/workload` for the current Tier 2+ rows.
+artifacts only.
+Stress v2 benchmark IDs include the named measurement suffix exactly as the
+bench records it, such as `/owning_from_route_struct_payload` or
+`/complete_capacity_ack_roundtrip`. Do not churn readable names into generic
+`/operation` or `/workload` suffixes unless the workload itself has changed.
 
 ## Baseline Refresh
 
-Refresh `config/bench_baseline.json` only after the relevant report has:
+Before a full validation or baseline refresh, remove ignored benchmark artifacts
+so stale partial `latest.json` files cannot mix with the current run:
+
+```bash
+rm -rf target/stress target/bench_results.json target/bench_summary.md
+```
+
+Refresh `config/bench_baseline.json` only after a fresh full default run and the
+relevant report has:
 
 - `critical == 0`
 - release `missing == 0`
 - no unreviewed untrustworthy release rows
 - no legacy-adapter records
+- no noisy or untrustworthy current rows
 
 After copying `target/bench_results.json` to `config/bench_baseline.json`,
 summarize again and require `new == 0`, `missing == 0`, and `critical == 0`.
+Never refresh the baseline from a targeted benchmark run or a partial
+`target/stress/**/latest.json` artifact.
 
 ## Reviewer Checklist
 
 - The row measures one clear behavior.
 - Setup is outside timing unless setup is part of the named behavior.
 - Correctness counters match actual completed work.
-- Tier 1 rows use one named `ctx.measure("operation", ...)`.
+- Tier 1 rows use one named measurement.
 - Tier 2 rows omit `mode = "fixed_duration"` and use fixed-operation timing.
 - Tier 2+ rows use direct stress context APIs.
 - Commands omit `--profile`.
@@ -232,6 +256,7 @@ summarize again and require `new == 0`, `missing == 0`, and `critical == 0`.
 
 | Date | Version | Changes |
 | --- | --- | --- |
+| 2026-07-06 | 2.2 | Clarified default-profile acceptance, readable measurement IDs, partial-artifact hazards, and allocation diagnostics. |
 | 2026-07-05 | 2.1 | Updated benches and docs for `cntryl-stress` v2 named measurements and schema. |
 | 2026-07-04 | 2.0 | Migrated all tiers to `cntryl-stress`; removed the previous adapter and Fitz profile-default helpers. |
 | 2026-07-04 | 1.1 | Split benchmark workflows into release and deep suites. |

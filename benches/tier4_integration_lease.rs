@@ -23,7 +23,7 @@ use fitz::testkit::{TestClient, TestServer, TestWebSocketClient};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-const DIRECT_ACQUIRE_RELEASE_ROUNDS_PER_ITERATION: u64 = 64;
+const DIRECT_ACQUIRE_RELEASE_ROUNDS_PER_ITERATION: u64 = 1024;
 const TCP_ACQUIRE_RELEASE_ROUNDS_PER_ITERATION: u64 = 16;
 const WS_ACQUIRE_RELEASE_ROUNDS_PER_ITERATION: u64 = 16;
 

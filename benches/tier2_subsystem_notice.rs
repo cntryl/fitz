@@ -21,6 +21,7 @@ const PUBLISH_ROUTE: &str = "notice://realm/area/orders/create";
 const PUBLISH_REPEAT_COUNT: u64 = 32_768;
 const EXACT_ROUTE_16_PUBLISH_REPEAT_COUNT: u64 = 262_144;
 const EXACT_ROUTE_64_PUBLISH_REPEAT_COUNT: u64 = 131_072;
+const DOUBLE_STAR_16_PUBLISH_REPEAT_COUNT: u64 = 131_072;
 const DOUBLE_STAR_64_PUBLISH_REPEAT_COUNT: u64 = 131_072;
 const PUBLISH_CHUNK_SIZE: u64 = 512;
 
@@ -151,6 +152,8 @@ fn publish_repeat_count(subscriber_count: usize, pattern: &str) -> u64 {
         EXACT_ROUTE_16_PUBLISH_REPEAT_COUNT
     } else if subscriber_count == 64 && pattern == PUBLISH_ROUTE {
         EXACT_ROUTE_64_PUBLISH_REPEAT_COUNT
+    } else if subscriber_count == 16 && pattern == "notice://realm/area/**" {
+        DOUBLE_STAR_16_PUBLISH_REPEAT_COUNT
     } else if subscriber_count == 64 && pattern == "notice://realm/area/**" {
         DOUBLE_STAR_64_PUBLISH_REPEAT_COUNT
     } else {

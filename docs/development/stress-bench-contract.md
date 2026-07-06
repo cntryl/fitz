@@ -1,6 +1,6 @@
 # Stress benchmark contract (cntryl_stress)
 
-This document defines the contract for Tier 2 through Tier N benchmarks using the `cntryl_stress` framework with `#[stress]` macros. Tier 1 hotpath rows use the micro-benchmark rules in [Benchmark Guidelines](benchmarks.md#tier-1-micro-semantics). All stress benches must follow these rules.
+This document defines the contract for Tier 2 through Tier 4 benchmarks using the `cntryl_stress` framework with `#[stress]` macros. Tier 1 hotpath rows use the micro-benchmark rules in [Benchmark Guidelines](benchmarks.md#tier-1-micro-semantics). All stress benches must follow these rules.
 
 ## Tier 2 rules (subsystem benchmarks — fixed operations)
 
@@ -41,7 +41,26 @@ This document defines the contract for Tier 2 through Tier N benchmarks using th
 - Never let a failure short-circuit the measured work; if setup can fail, record it and assert after the measurement block.
 - Never `return` early from `ctx.measure`. If the measured work can fail, record the failure in a local flag or result and assert after the closure so the timer still covers the full intended work.
 - Scenario names in `ctx.parameter("scenario", "...")` must match what appears in the stress results output.
+- Measurement names are part of the artifact ID. Keep readable names stable unless the measured workload or a workload-defining parameter changes.
 - Each test must be independently runnable and deterministic.
+
+## Artifact and baseline contract
+
+- Fitz accepts the `cntryl-stress` default profile for docs and CI. A default
+  five-sample report may have `authoritative: false`; that flag alone is not a
+  reason to change the committed profile.
+- Before full validation or baseline refresh, clear `target/stress`,
+  `target/bench_results.json`, and `target/bench_summary.md`.
+- Never refresh `config/bench_baseline.json`, `config/perf_targets.json`, or
+  `docs/development/bench-targets.md` from targeted runs or partial
+  `latest.json` artifacts.
+- Regenerate release IDs only for real ID changes, such as a workload-defining
+  parameter change. Do not rename readable measurements to generic
+  `operation` or `workload` suffixes.
+- `high_allocations` diagnostics are advisory for rows whose measured behavior
+  is construction, parsing, or allocation. Keep allocation statistics visible;
+  do not switch those rows to `record_external` solely to hide allocation
+  diagnostics.
 
 ### Early-return trap
 
