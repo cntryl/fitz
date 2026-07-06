@@ -61,7 +61,7 @@ pub(super) struct PendingClaim {
 pub struct ScheduleActor {
     /// `RouteFamily` for storage column family mapping.
     pub(super) family: RouteFamily,
-    /// Durable schedule storage plus legacy migration helpers.
+    /// Durable schedule storage for current schedule definitions and claims.
     pub(super) store: ScheduleStore,
     /// In-memory schedule cache: route -> `ScheduleDef`.
     pub(super) schedules: FastMap<String, ScheduleDef>,

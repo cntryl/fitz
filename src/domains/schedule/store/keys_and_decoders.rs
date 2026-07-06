@@ -3,8 +3,7 @@ use super::model::{
     DecodedDefinitionRow, DomainKeyspace, Encoder, LexKey, ScheduleDefinitionData, ScheduleRows,
     ScheduleStore, BODY_PREFIX, BODY_VALUE_VERSION_V1, DEFINITION_PREFIX,
     DEFINITION_VALUE_VERSION_V1, DEFINITION_VALUE_VERSION_V2, DEFINITION_VALUE_VERSION_V3,
-    DUE_PREFIX, LEGACY_PREFIX, PENDING_FIRE_PREFIX, PENDING_FIRE_VALUE_VERSION_V1,
-    PENDING_FIRE_VALUE_VERSION_V2,
+    DUE_PREFIX, PENDING_FIRE_PREFIX, PENDING_FIRE_VALUE_VERSION_V1, PENDING_FIRE_VALUE_VERSION_V2,
 };
 
 impl ScheduleStore {
@@ -223,15 +222,6 @@ impl ScheduleStore {
         key: &[u8],
         prefix: &[u8],
     ) -> Result<(u64, String), String> {
-        if prefix == LEGACY_PREFIX {
-            let suffix = Self::schedule_key_suffix(key);
-            if !suffix.starts_with(prefix) {
-                return Err("Invalid schedule due key prefix".to_string());
-            }
-
-            return Self::decode_legacy_timed_suffix(&suffix[prefix.len()..]);
-        }
-
         let Some((realm, suffix)) = storage_key::split_domain_key(key, DomainKeyspace::Schedule)
         else {
             return Err("Invalid schedule due key prefix".to_string());
@@ -254,65 +244,9 @@ impl ScheduleStore {
         Ok((fire_ms, route))
     }
 
-    pub(super) fn decode_legacy_timed_suffix(remaining: &[u8]) -> Result<(u64, String), String> {
-        if remaining.len() < 18 {
-            return Err("Schedule due key too short".to_string());
-        }
-
-        let minute_bytes = &remaining[0..8];
-        let minute_epoch = u64::from_be_bytes([
-            minute_bytes[0],
-            minute_bytes[1],
-            minute_bytes[2],
-            minute_bytes[3],
-            minute_bytes[4],
-            minute_bytes[5],
-            minute_bytes[6],
-            minute_bytes[7],
-        ]);
-
-        if remaining[8] != b'/' {
-            return Err("Missing minute/offset separator".to_string());
-        }
-
-        let ms_offset = if remaining.len() > 17 && remaining[17] == b':' {
-            let offset_bytes = &remaining[9..17];
-            u64::from_be_bytes(offset_bytes.try_into().unwrap())
-        } else if remaining.len() > 15 && remaining[15] == b':' {
-            let offset_bytes = &remaining[9..15];
-            u64::from_be_bytes([
-                0,
-                0,
-                offset_bytes[0],
-                offset_bytes[1],
-                offset_bytes[2],
-                offset_bytes[3],
-                offset_bytes[4],
-                offset_bytes[5],
-            ])
-        } else {
-            return Err("Missing offset/route separator".to_string());
-        };
-
-        let route_start = if remaining.len() > 17 && remaining[17] == b':' {
-            18
-        } else {
-            16
-        };
-
-        let route = String::from_utf8(remaining[route_start..].to_vec())
-            .map_err(|e| format!("Invalid route encoding: {e}"))?;
-
-        Ok(((minute_epoch * 60_000) + ms_offset, route))
-    }
-
     #[allow(dead_code)]
     pub(crate) fn decode_due_key(key: &[u8]) -> Result<(u64, String), String> {
         Self::decode_due_key_with_prefix(key, DUE_PREFIX)
-    }
-
-    pub(super) fn decode_legacy_key(key: &[u8]) -> Result<(u64, String), String> {
-        Self::decode_due_key_with_prefix(key, LEGACY_PREFIX)
     }
 
     pub(super) fn decode_pending_fire_key(key: &[u8]) -> Result<(u64, String), String> {
@@ -471,18 +405,6 @@ impl ScheduleStore {
                 "Unsupported schedule definition body value version: {other}"
             )),
         }
-    }
-
-    pub(super) fn decode_legacy_value(value: &[u8]) -> Result<(String, Bytes), String> {
-        let sep_pos = value
-            .iter()
-            .position(|&b| b == b'|')
-            .ok_or_else(|| "Invalid legacy schedule value format".to_string())?;
-
-        let cron = String::from_utf8(value[..sep_pos].to_vec())
-            .map_err(|e| format!("Invalid cron encoding: {e}"))?;
-        let payload = Bytes::copy_from_slice(&value[sep_pos + 1..]);
-        Ok((cron, payload))
     }
 
     pub(super) fn encode_pending_fire_value(payload: &Bytes, claimed_at_ms: u64) -> Vec<u8> {

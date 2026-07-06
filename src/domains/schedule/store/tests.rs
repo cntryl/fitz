@@ -217,11 +217,11 @@ fn should_rebuild_due_index_from_inserted_schedule_definitions_on_load() {
 }
 
 #[test]
-fn should_rebuild_due_index_from_definitions_after_legacy_import() {
+fn should_reject_unsupported_legacy_schedule_storage_layout() {
     // Arrange
     let (store, db) = make_store();
     let route = "schedule://acme/jobs/legacy/run";
-    let legacy_due_key = {
+    let legacy_definition_key = {
         let minute_epoch = 1_700_000_002_000_u64 / 60_000;
         let ms_offset = 1_700_000_002_000_u64 % 60_000;
         let mut key = Vec::new();
@@ -233,7 +233,17 @@ fn should_rebuild_due_index_from_definitions_after_legacy_import() {
         key.extend_from_slice(route.as_bytes());
         key
     };
-    put_raw(&db, 1, legacy_due_key, b"*/5 * * * *|legacy".to_vec()).expect("write legacy row");
+    let mut legacy_index_key = Vec::from(LEGACY_INDEX_PREFIX);
+    legacy_index_key.extend_from_slice(route.as_bytes());
+
+    put_raw(
+        &db,
+        1,
+        legacy_definition_key,
+        b"*/5 * * * *|legacy".to_vec(),
+    )
+    .expect("write legacy row");
+    put_raw(&db, 1, legacy_index_key, DUE_INDEX_VALUE.to_vec()).expect("write legacy index row");
     put_raw(
         &db,
         1,
@@ -243,42 +253,26 @@ fn should_rebuild_due_index_from_definitions_after_legacy_import() {
     .expect("write stale due row");
 
     // Act
-    let loaded = store
+    let error = store
         .load_all(1, WriteOptions::buffered())
-        .expect("load schedules");
+        .expect_err("legacy layout should be unsupported");
 
     // Assert
-    assert_eq!(loaded.len(), 1);
-    assert_eq!(loaded[0].route, route);
-    assert_eq!(loaded[0].cron, "*/5 * * * *");
-    assert_eq!(loaded[0].payload, Bytes::from_static(b"legacy"));
-    assert_eq!(count_prefix(&db, 1, LEGACY_PREFIX), 0);
-    assert_eq!(count_prefix(&db, 1, LEGACY_INDEX_PREFIX), 0);
+    assert!(error.contains("unsupported legacy schedule storage layout"));
+    assert_eq!(count_prefix(&db, 1, LEGACY_PREFIX), 1);
+    assert_eq!(count_prefix(&db, 1, LEGACY_INDEX_PREFIX), 1);
     assert!(
         read_raw_value(
             &db,
             1,
-            &ScheduleStore::encode_due_key(loaded[0].next_fire_ms, route),
+            &ScheduleStore::encode_due_key(9_999_999_999_999, "schedule://stale/index/only/run"),
         )
         .is_some(),
-        "rebuilt due index should exist for the imported schedule"
+        "stale due index row should be untouched when legacy layout is rejected"
     );
     assert!(
-        read_raw_value(
-            &db,
-            1,
-            &ScheduleStore::encode_due_key(9_999_999_999_999, "schedule://stale/index/only/run",),
-        )
-        .is_none(),
-        "stale due index rows should be removed during rebuild"
-    );
-    assert!(
-        read_raw_value(&db, 1, &ScheduleStore::encode_definition_key(route)).is_some(),
-        "definition row should exist after legacy import"
-    );
-    assert!(
-        read_raw_value(&db, 1, &ScheduleStore::encode_body_key(route)).is_some(),
-        "body row should exist after legacy import"
+        read_raw_value(&db, 1, &ScheduleStore::encode_definition_key(route)).is_none(),
+        "legacy row must not be imported into current definition storage"
     );
 }
 

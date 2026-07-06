@@ -5,14 +5,13 @@ use super::model::{
 };
 
 impl ScheduleStore {
-    /// Load authoritative durable schedule definitions, migrate any legacy TTL-backed
-    /// rows that are still present, rebuild the full due index, and delete stale
-    /// legacy rows and indexes for the current family.
+    /// Load authoritative durable schedule definitions and rebuild the full due index.
     ///
     /// # Errors
     ///
     /// Returns an error when stored schedule rows cannot be read, decoded,
-    /// normalized, or durably rewritten for the current family.
+    /// normalized, or durably rewritten for the current family. Legacy schedule
+    /// storage layouts are rejected instead of migrated.
     pub fn load_all(
         &self,
         cf_id: u64,
@@ -31,6 +30,8 @@ impl ScheduleStore {
         let definition_rows = Self::scan_schedule_rows(&read_tx, DEFINITION_PREFIX)?;
         let body_rows = Self::scan_schedule_rows(&read_tx, super::model::BODY_PREFIX)?;
         let legacy_rows = Self::scan_schedule_rows(&read_tx, LEGACY_PREFIX)?;
+        let legacy_index_rows = Self::scan_schedule_rows(&read_tx, LEGACY_INDEX_PREFIX)?;
+        Self::reject_legacy_schedule_rows(&legacy_rows, &legacy_index_rows)?;
 
         Self::decode_definition_rows(
             definition_rows,
@@ -44,29 +45,16 @@ impl ScheduleStore {
 
         Self::merge_metadata_rows(metadata_rows, &body_definitions, &mut schedules)?;
 
-        Self::decode_legacy_rows(&legacy_rows, &mut schedules, &mut normalized_definitions)?;
-
         let due_rows = Self::scan_schedule_rows(&read_tx, DUE_PREFIX)?;
-        let legacy_index_rows = Self::scan_schedule_rows(&read_tx, LEGACY_INDEX_PREFIX)?;
         drop(read_tx);
 
         let mut write_tx = self
             .db
             .begin_tx(cf_id_u32, cntryl_midge::TransactionMode::ReadWrite)
-            .map_err(|e| format!("begin migration tx failed: {e:?}"))?;
+            .map_err(|e| format!("begin schedule load tx failed: {e:?}"))?;
 
         Self::rewrite_normalized_definitions(&mut write_tx, &normalized_definitions)?;
         Self::rewrite_due_index(&mut write_tx, due_rows, schedules.values())?;
-        Self::delete_rows(
-            &mut write_tx,
-            legacy_index_rows,
-            "delete legacy schedule index failed",
-        )?;
-        Self::delete_rows(
-            &mut write_tx,
-            legacy_rows,
-            "delete legacy schedule row failed",
-        )?;
 
         self.commit_or_inject(write_tx, write_options)?;
         Ok(schedules.into_values().collect())
@@ -266,39 +254,19 @@ impl ScheduleStore {
         Ok(())
     }
 
-    fn decode_legacy_rows(
+    fn reject_legacy_schedule_rows(
         legacy_rows: &[(Vec<u8>, Vec<u8>)],
-        schedules: &mut BTreeMap<String, PersistedSchedule>,
-        normalized_definitions: &mut Vec<PersistedSchedule>,
+        legacy_index_rows: &[(Vec<u8>, Vec<u8>)],
     ) -> Result<(), String> {
-        for (key, value) in legacy_rows {
-            match (
-                Self::decode_legacy_key(key),
-                Self::decode_legacy_value(value),
-            ) {
-                (Ok((next_fire_ms, route)), Ok((cron, payload))) => {
-                    if schedules.contains_key(&route) {
-                        continue;
-                    }
-
-                    let persisted = PersistedSchedule {
-                        route: route.clone(),
-                        cron,
-                        payload,
-                        next_fire_ms,
-                        last_fire_ms: None,
-                        executions_total: 0,
-                    };
-                    normalized_definitions.push(persisted.clone());
-                    schedules.insert(route.clone(), persisted);
-                }
-                (Err(error), _) | (_, Err(error)) => {
-                    return Err(format!("decode legacy schedule row failed: {error}"));
-                }
-            }
+        if legacy_rows.is_empty() && legacy_index_rows.is_empty() {
+            return Ok(());
         }
 
-        Ok(())
+        Err(format!(
+            "unsupported legacy schedule storage layout: found {} legacy definition row(s) and {} legacy index row(s)",
+            legacy_rows.len(),
+            legacy_index_rows.len()
+        ))
     }
 
     fn rewrite_normalized_definitions(
@@ -317,7 +285,7 @@ impl ScheduleStore {
                     payload: &schedule.payload,
                 },
             )
-            .map_err(|error| format!("import schedule definition failed: {error}"))?;
+            .map_err(|error| format!("write schedule definition failed: {error}"))?;
         }
 
         Ok(())

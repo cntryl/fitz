@@ -188,8 +188,7 @@ pub(super) struct ScheduleDomainCore {
     pub(super) pending_claim_ttl_ms: AtomicU64,
     /// Last monotonic cleanup sweep time, measured relative to `snapshot_epoch`.
     pub(super) last_pending_claim_cleanup_elapsed_ms: AtomicU64,
-    /// Rolling window of acknowledged handoff timestamps for the legacy
-    /// executions-per-minute metric.
+    /// Rolling window of acknowledged handoff timestamps for executions-per-minute.
     pub(super) recent_acknowledgement_ms: Mutex<VecDeque<u64>>,
     /// Write options for schedule persistence.
     pub(super) write_options: cntryl_midge::WriteOptions,

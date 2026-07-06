@@ -368,9 +368,8 @@ impl ScheduleDomainRuntime<'_> {
         }
 
         // Seed the rolling-window acknowledgement counter from persisted
-        // last_fire_ms values. This preserves the legacy
-        // executions-per-minute metric across broker restarts for occurrences
-        // that were already acknowledged within the last 60 seconds.
+        // last_fire_ms values so executions-per-minute survives restarts for
+        // occurrences already acknowledged within the last 60 seconds.
         let now_ms = now_epoch_ms();
         let cutoff_ms = now_ms.saturating_sub(60_000);
         let mut deque = self.core.recent_acknowledgement_ms.lock();

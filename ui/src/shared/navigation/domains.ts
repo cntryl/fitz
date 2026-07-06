@@ -173,10 +173,6 @@ export function domainResourceRoutePath(segment: DomainSegment) {
   return `/admin/{family}/${segment}/${RESOURCE_ROUTE_SHAPE}`;
 }
 
-export function legacyDomainResourceRoutePath(segment: DomainSegment) {
-  return `/${segment}/${RESOURCE_ROUTE_SHAPE}`;
-}
-
 export function domainResourceHref(
   segment: DomainSegment,
   scope: ResourceRouteScope,

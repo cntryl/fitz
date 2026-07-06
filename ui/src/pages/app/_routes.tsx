@@ -5,7 +5,6 @@ import {
   domainDefinitions,
   domainLinks,
   domainResourceRoutePath,
-  legacyDomainResourceRoutePath,
   type DomainSegment,
 } from "@/shared/navigation/domains";
 
@@ -92,14 +91,12 @@ export function registerAppRoutes() {
         const operationPage =
           operationPageBySegment[link.segment] ?? domainPageBySegment[link.segment];
 
-        route(`/${link.segment}/{realm}/{area}/{resource}/{operation}`, RouteFamilySelectorPage);
         route(
           `/admin/{family}/${link.segment}/{realm}/{area}/{resource}/{operation}`,
           operationPage,
         );
       }
 
-      route(legacyDomainResourceRoutePath(link.segment), RouteFamilySelectorPage);
       route(domainResourceRoutePath(link.segment), resourcePageBySegment[link.segment]);
     }
   });
