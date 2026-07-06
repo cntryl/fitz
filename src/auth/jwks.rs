@@ -59,6 +59,33 @@ fn is_cache_entry_stale(entry: &CachedJwksEntry, now: u64) -> bool {
     now > entry.fetched_at.saturating_add(entry.ttl_seconds)
 }
 
+fn usable_key_from_jwk(jwk: Jwk) -> Result<Option<(String, CachedJwk)>, String> {
+    let kid = jwk.kid.unwrap_or_default();
+    match jwk.kty.as_str() {
+        "oct" => {
+            let Some(kval) = jwk.k else {
+                return Err("invalid oct secret: missing k".to_string());
+            };
+            let secret = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(kval)
+                .map_err(|e| format!("invalid oct secret: {e}"))?;
+            Ok(Some((kid, CachedJwk::Oct(secret))))
+        }
+        "RSA" | "rsa" => {
+            let (Some(n), Some(e)) = (jwk.n, jwk.e) else {
+                return Err("invalid RSA key: missing n or e".to_string());
+            };
+            jsonwebtoken::DecodingKey::from_rsa_components(&n, &e)
+                .map_err(|error| format!("invalid RSA key material: {error}"))?;
+            Ok(Some((kid, CachedJwk::Rsa { n, e })))
+        }
+        other => {
+            tracing::warn!(kty = other, "Skipping unsupported JWKS key type");
+            Ok(None)
+        }
+    }
+}
+
 /// Parse JWKS JSON and insert into the in-memory cache under the supplied `jwks_url` key.
 /// This allows tests to inject JWKS without running an HTTP server.
 ///
@@ -85,28 +112,14 @@ pub fn cache_jwks_from_json_with_ttl(
         serde_json::from_str(jwks_json).map_err(|e| format!("jwks json parse error: {e}"))?;
 
     let mut map: HashMap<String, CachedJwk> = HashMap::new();
-    for k in jwks.keys {
-        let kid = k.kid.clone().unwrap_or_else(String::new);
-        match k.kty.as_str() {
-            "oct" => {
-                if let Some(kval) = k.k {
-                    // base64url decode (no pad)
-                    let secret = base64::engine::general_purpose::URL_SAFE_NO_PAD
-                        .decode(kval)
-                        .map_err(|e| format!("invalid oct secret: {e}"))?;
-                    map.insert(kid, CachedJwk::Oct(secret));
-                }
-            }
-            "RSA" | "rsa" => {
-                if let (Some(n), Some(e)) = (k.n.clone(), k.e.clone()) {
-                    map.insert(kid, CachedJwk::Rsa { n, e });
-                }
-            }
-            other => {
-                // Skip unsupported types for now
-                tracing::debug!("skipping unsupported jwk kty={}", other);
-            }
+    for jwk in jwks.keys {
+        if let Some((kid, cached_jwk)) = usable_key_from_jwk(jwk)? {
+            map.insert(kid, cached_jwk);
         }
+    }
+
+    if map.is_empty() {
+        return Err("jwks contains zero usable keys".to_string());
     }
 
     let entry = CachedJwksEntry {
@@ -257,6 +270,66 @@ mod tests {
 
         // Assert
         assert!(!is_jwks_stale("inline://local"));
+    }
+
+    #[test]
+    fn should_reject_ec_only_jwks_as_zero_usable_keys() {
+        // Arrange
+        let jwks_json = serde_json::json!({
+            "keys": [
+                { "kty": "EC", "kid": "ec1", "crv": "P-256", "x": "abc", "y": "def" }
+            ]
+        })
+        .to_string();
+
+        // Act
+        let result = cache_jwks_from_json_with_ttl("inline://ec-only", &jwks_json, 1);
+
+        // Assert
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("zero usable keys"));
+        assert!(is_jwks_stale("inline://ec-only"));
+    }
+
+    #[test]
+    fn should_cache_mixed_ec_and_oct_jwks_given_one_usable_key() {
+        // Arrange
+        let secret = b"test_secret".to_vec();
+        let k_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&secret);
+        let jwks_json = serde_json::json!({
+            "keys": [
+                { "kty": "EC", "kid": "ec1", "crv": "P-256", "x": "abc", "y": "def" },
+                { "kty": "oct", "kid": "oct1", "k": k_b64 }
+            ]
+        })
+        .to_string();
+
+        // Act
+        let result = cache_jwks_from_json_with_ttl("inline://mixed-ec-oct", &jwks_json, 1);
+
+        // Assert
+        assert!(result.is_ok());
+        assert!(get_decoding_key_from_cache("inline://mixed-ec-oct", "oct1").is_some());
+    }
+
+    #[test]
+    fn should_reject_malformed_oct_key_even_when_unsupported_keys_are_present() {
+        // Arrange
+        let jwks_json = serde_json::json!({
+            "keys": [
+                { "kty": "EC", "kid": "ec1", "crv": "P-256", "x": "abc", "y": "def" },
+                { "kty": "oct", "kid": "bad-oct", "k": "not valid base64url!" }
+            ]
+        })
+        .to_string();
+
+        // Act
+        let result = cache_jwks_from_json_with_ttl("inline://mixed-bad-oct", &jwks_json, 1);
+
+        // Assert
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("invalid oct secret"));
+        assert!(is_jwks_stale("inline://mixed-bad-oct"));
     }
 
     #[test]

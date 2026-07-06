@@ -434,6 +434,16 @@ impl RpcDomainRuntime<'_> {
             "rpc_cleanup_pending_removed_total",
             timeout_result.removed_pending as u64,
         );
+        if timeout_result.closed_caller_drops > 0 {
+            self.counter_add(
+                "rpc_timeout_errors_dropped_total",
+                timeout_result.closed_caller_drops as u64,
+            );
+            self.counter_add(
+                "rpc_responses_dropped_closed_caller_total",
+                timeout_result.closed_caller_drops as u64,
+            );
+        }
         self.schedule_admin_snapshot(false);
         self.dispatch_all_queued_requests();
 
@@ -441,6 +451,7 @@ impl RpcDomainRuntime<'_> {
             domain = "rpc",
             removed_pending = timeout_result.removed_pending,
             delivered_timeouts = timeout_delivery_count,
+            closed_caller_drops = timeout_result.closed_caller_drops,
             pending_len = timeout_result.pending_len,
             "RPC request timeout sweep applied"
         );
@@ -805,19 +816,27 @@ impl RpcDomainRuntime<'_> {
                 if let Some((pending, pending_len)) =
                     self.remove_pending_request(&dispatch.request.correlation_id)
                 {
-                    self.forward_pending_error_deliveries(
-                        vec![RpcPendingErrorDelivery {
-                            correlation_id: dispatch.request.correlation_id,
-                            caller_session_id: pending.caller_session_id,
-                            caller_inbox_addr: pending
-                                .caller_inbox_addr
-                                .expect("queued dispatch pending keeps caller inbox"),
-                        }],
-                        crate::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
-                        RPC_BACKPRESSURE_ERROR,
-                        "rpc_backpressure_errors_forwarded_total",
-                        "rpc_backpressure_errors_dropped_total",
-                    );
+                    if let Some(caller_inbox_addr) = pending.caller_inbox_addr {
+                        self.forward_pending_error_deliveries(
+                            vec![RpcPendingErrorDelivery {
+                                correlation_id: dispatch.request.correlation_id,
+                                caller_session_id: pending.caller_session_id,
+                                caller_inbox_addr,
+                            }],
+                            crate::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
+                            RPC_BACKPRESSURE_ERROR,
+                            "rpc_backpressure_errors_forwarded_total",
+                            "rpc_backpressure_errors_dropped_total",
+                        );
+                    } else {
+                        self.counter_inc("rpc_backpressure_errors_dropped_total");
+                        self.counter_inc("rpc_responses_dropped_closed_caller_total");
+                        tracing::warn!(
+                            domain = "rpc",
+                            correlation_id = %dispatch.request.correlation_id,
+                            "Dropped RPC backpressure error because caller session was already closed"
+                        );
+                    }
                     self.gauge_set("rpc_pending_requests", pending_len as u64);
                 }
             }

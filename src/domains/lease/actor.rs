@@ -646,7 +646,16 @@ impl Actor for LeaseActor {
             self.notify_timer = None;
             let events = std::mem::take(&mut self.pending_publish);
             for event in events {
-                ctx.publish_event(event).ok();
+                if let Err(error) = ctx.publish_event(event.clone()) {
+                    crate::observability::counter_inc("fitz_lease_publish_events_dropped_total");
+                    tracing::warn!(
+                        domain = "lease",
+                        route_family = event.family_id.as_u64(),
+                        route = %event.route,
+                        error = %error,
+                        "Dropped best-effort lease publish event"
+                    );
+                }
             }
             return;
         }

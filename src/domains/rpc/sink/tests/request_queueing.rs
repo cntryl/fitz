@@ -1,5 +1,78 @@
 use super::*;
 
+struct BackpressuredWorkerSink {
+    error: DeliveryError,
+}
+
+impl MailboxSink for BackpressuredWorkerSink {
+    fn deliver(&self, _envelope: Envelope) -> Result<(), DeliveryError> {
+        Err(self.error.clone())
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
+fn exercise_detached_caller_queued_dispatch_backpressure(error: DeliveryError) {
+    let router = Arc::new(Router::new());
+    let metrics = crate::observability::metrics::MetricsCollector::new();
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = RpcDomainSink::new(router.clone(), admin_read_model).with_metrics(metrics.clone());
+    let family = RouteFamily::new(1);
+    let route = Route::new("rpc://bench/system/resource/queued-disconnect");
+    let worker_inbox = session_inbox_address(family, 42);
+    router.register(
+        worker_inbox.clone(),
+        Arc::new(BackpressuredWorkerSink { error }) as Arc<dyn MailboxSink>,
+    );
+    sink.register_worker_for_tests(RpcWorker::with_stats(
+        RouteAddress::new(family, route.clone()),
+        worker_inbox,
+        42,
+        "2026-03-14T12:00:00Z",
+        0,
+        0,
+    ));
+    let correlation_id = uuid::Uuid::new_v4();
+    sink.queue_request_for_tests(
+        correlation_id,
+        RpcQueuedRequest::from_request(
+            crate::domains::rpc::protocol::RpcRequest::new(
+                family,
+                correlation_id,
+                route.clone(),
+                bytes::Bytes::from_static(b"queued"),
+            ),
+            7,
+            session_inbox_address(family, 7),
+            Instant::now() + Duration::from_secs(30),
+        ),
+    );
+    let dispatch = {
+        let mut state = sink.core.state.lock();
+        state.next_queued_dispatch(&route).expect("queued dispatch")
+    };
+    let cleanup = sink.apply_session_cleanup(7);
+
+    sink.runtime().forward_queued_dispatch(&dispatch);
+
+    assert_eq!(cleanup.detached_callers, 1);
+    assert_eq!(sink.pending_request_count(), 0);
+    assert_eq!(
+        metrics.counter_get("rpc_backpressure_errors_forwarded_total"),
+        0
+    );
+    assert_eq!(
+        metrics.counter_get("rpc_backpressure_errors_dropped_total"),
+        1
+    );
+    assert_eq!(
+        metrics.counter_get("rpc_responses_dropped_closed_caller_total"),
+        1
+    );
+}
+
 #[test]
 #[allow(clippy::too_many_lines)]
 fn should_reject_duplicate_live_correlation_given_rpc_sink() {
@@ -652,6 +725,30 @@ fn should_forward_response_to_original_request_source_given_noncanonical_inbox_r
             .any(|frame| frame.msg_type.as_u16() == 303),
         "expected worker response on original request source route"
     );
+}
+
+#[test]
+fn should_drop_backpressure_error_without_unwind_given_detached_queued_request_caller() {
+    // Arrange
+    let error = DeliveryError::MailboxFull {
+        capacity: 1,
+        current_len: 1,
+    };
+
+    // Act / Assert
+    exercise_detached_caller_queued_dispatch_backpressure(error);
+}
+
+#[test]
+fn should_drop_high_lane_error_without_unwind_given_detached_queued_request_caller() {
+    // Arrange
+    let error = DeliveryError::HighLaneFull {
+        capacity: 1,
+        current_len: 1,
+    };
+
+    // Act / Assert
+    exercise_detached_caller_queued_dispatch_backpressure(error);
 }
 
 #[test]

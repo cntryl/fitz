@@ -17,6 +17,13 @@ use std::time::{Duration, Instant};
 
 const MANAGED_ACTOR_POLL_TIMEOUT: Duration = Duration::from_millis(1);
 
+fn route_error_to_delivery_error(error: crate::runtime::router::RouteError) -> DeliveryError {
+    match error {
+        crate::runtime::router::RouteError::RouteNotFound(_) => DeliveryError::ActorStopped,
+        crate::runtime::router::RouteError::DeliveryFailed(_, delivery_error) => delivery_error,
+    }
+}
+
 fn u128_to_u64_saturating(value: u128) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
 }
@@ -590,8 +597,9 @@ impl<M: Send + 'static> ManagedActor<M> {
             return Err(DeliveryError::ActorStopped);
         }
 
-        self.mailbox
-            .deliver_high_priority(Envelope::new(self.address.clone(), msg))
+        self.router
+            .route_high_priority(Envelope::new(self.address.clone(), msg))
+            .map_err(route_error_to_delivery_error)
     }
 
     #[must_use]

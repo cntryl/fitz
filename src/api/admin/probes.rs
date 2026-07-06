@@ -48,7 +48,8 @@ pub struct StartupStatus {
 }
 
 /// Liveness probe - is the application alive?
-/// Returns 503 only if deadlocked/panicked
+/// Returns 503 only after an initialized domain permanently fails by exhausting
+/// supervised restarts.
 pub fn handle_liveness(runtime: &Runtime) -> Response {
     let permanently_failed = runtime.has_permanently_failed_domain();
     let response = HealthStatus {

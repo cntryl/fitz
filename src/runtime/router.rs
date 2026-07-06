@@ -78,9 +78,11 @@ pub trait MailboxSink: Send + Sync {
 
     /// Attempt to deliver an envelope to the high-priority lane
     ///
-    /// **Runtime-internal use only**. This method is used by the runtime
-    /// for control-plane operations (timers, supervision, leases) that must
-    /// not be starved by data-plane message saturation.
+    /// **Runtime-internal use only**. This method is used for messages the
+    /// runtime or a domain sink explicitly marks as control-plane work, such as
+    /// cleanup, live-count reads, admin snapshot refreshes, and test-only panic
+    /// probes. Timer callbacks and supervision decisions are handled inside the
+    /// managed actor worker unless a concrete domain routes a message here.
     ///
     /// # Errors
     ///
@@ -536,9 +538,10 @@ impl Router {
     /// Route an envelope to the high-priority lane (runtime-internal use only)
     ///
     /// **CRITICAL**: This method is for runtime-internal use only and should
-    /// never be exposed to user code. It's used by the runtime for control-plane
-    /// operations (timers, supervision, leases) that must not be starved by
-    /// data-plane saturation.
+    /// never be exposed to user code. It is used for envelopes explicitly marked
+    /// as runtime or domain control-plane messages. Timer callbacks and actor
+    /// supervision are not router-routed unless a concrete domain sends an
+    /// envelope through this path.
     ///
     /// # Errors
     ///
@@ -550,8 +553,7 @@ impl Router {
     ///
     /// - High-priority lane has the SAME capacity as normal lane (no extra buffer)
     /// - Caller must handle `HighLaneFull` as a critical error (control plane saturated)
-    /// - Scheduler guarantees high-priority messages process first (capped at 4/tick)
-    #[allow(dead_code)]
+    /// - Managed actors read high-priority envelopes before normal data messages
     pub(crate) fn route_high_priority(&self, envelope: Envelope) -> Result<(), RouteError> {
         let dest = envelope.destination().clone();
 

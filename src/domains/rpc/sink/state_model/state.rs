@@ -345,6 +345,7 @@ impl RpcState {
     ) -> RpcPendingTimeoutResult {
         let mut timeout_deliveries = Vec::new();
         let mut removed_pending = 0usize;
+        let mut closed_caller_drops = 0usize;
 
         while let Some(expiring) = self.pending.expirations.peek() {
             if expiring.expires_at > now {
@@ -379,6 +380,8 @@ impl RpcState {
                     caller_session_id: pending.caller_session_id,
                     caller_inbox_addr,
                 });
+            } else {
+                closed_caller_drops = closed_caller_drops.saturating_add(1);
             }
         }
 
@@ -413,6 +416,7 @@ impl RpcState {
         RpcPendingTimeoutResult {
             removed_pending,
             pending_len: self.live_request_count(),
+            closed_caller_drops,
             timeout_deliveries,
         }
     }

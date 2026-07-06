@@ -39,7 +39,7 @@ GET /livez
 **Purpose**: Indicates if the application is alive and should be restarted if unhealthy.
 **Response**: 
 - `200 OK` - Application is alive
-- `503 Service Unavailable` - Application is stuck/deadlocked, should be restarted
+- `503 Service Unavailable` - An initialized domain has permanently failed after exhausting supervised restarts.
 ```json
 {
   "status": "ok"
@@ -47,7 +47,7 @@ GET /livez
 ```
 **Criteria**: 
 - Runtime is responsive
-- No critical failures (panics, deadlocks)
+- No initialized domain has permanently failed after supervised restart exhaustion
 - Does NOT check downstream dependencies
 #### Orchestrator Target Health Gate
 ```

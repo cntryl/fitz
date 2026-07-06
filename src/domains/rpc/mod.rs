@@ -2,9 +2,15 @@
 //!
 //! # Architecture
 //!
-//! - **`RpcRouteActor`** ([actor]): Manages worker pool and request queue per route
-//! - **`SessionActor`**: Enforces authentication/authorization before forwarding to `RpcRouteActor`
+//! - **`RpcDomainSink`** ([sink]): Production ingress path used by the live broker
+//! - **`RpcRouteActor`** ([actor]): Lightweight in-process semantics, test, and bench actor
+//! - **`SessionActor`**: Legacy semantics helper for route-actor tests
 //! - Workers register with routes and receive requests while declared credit is available
+//!
+//! Production request forwarding, terminal error delivery, and caller-disconnect
+//! handling live in `RpcDomainSink`. `RpcRouteActor` remains available for
+//! focused semantics tests and benchmark helpers, but it does not represent the
+//! production reply-routing API.
 //!
 //! # Performance Characteristics (Hardened v2)
 //!

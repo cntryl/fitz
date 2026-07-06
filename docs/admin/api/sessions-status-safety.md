@@ -150,7 +150,7 @@ use hyper::{Body, Response, StatusCode};
 use serde_json::json;
 pub async fn handle_liveness() -> Result<Response<Body>, Infallible> {
     // Check if runtime is responsive
-    // Return 503 only if deadlocked/panicked
+    // Return 503 only after an initialized domain exhausts supervised restarts.
     let response = json!({ "status": "ok" });
     Ok(Response::builder()
         .status(StatusCode::OK)

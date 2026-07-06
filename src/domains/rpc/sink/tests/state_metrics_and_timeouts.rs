@@ -841,10 +841,12 @@ pub(super) fn should_forward_timeout_error_given_expired_queued_request() {
 pub(super) fn should_drop_timeout_error_given_requester_cleanup_before_expiration() {
     // Arrange
     let router = Arc::new(Router::new());
+    let metrics = crate::observability::metrics::MetricsCollector::new();
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
     let sink = Arc::new(
         RpcDomainSink::new(router.clone(), admin_read_model)
-            .with_request_timeout(Duration::from_millis(10)),
+            .with_request_timeout(Duration::from_millis(10))
+            .with_metrics(metrics.clone()),
     );
     let family = RouteFamily::new(1);
     let request_route = Route::new("rpc://bench/system/resource/timeout");
@@ -893,6 +895,11 @@ pub(super) fn should_drop_timeout_error_given_requester_cleanup_before_expiratio
     assert_eq!(worker_frames.lock().len(), 1);
     let reply_frames = reply_frames.lock();
     assert_eq!(reply_frames.len(), 0);
+    assert_eq!(metrics.counter_get("rpc_timeout_errors_dropped_total"), 1);
+    assert_eq!(
+        metrics.counter_get("rpc_responses_dropped_closed_caller_total"),
+        1
+    );
 }
 
 #[test]

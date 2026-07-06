@@ -1,16 +1,20 @@
 //! `RpcRouteActor`: manages the worker pool and request queue for one exact RPC
 //! route inside the current broker process.
 //!
-//! Each route key (for example, `rpc://acme/auth/user/create`) has a dedicated
-//! actor that queues inbound requests, assigns them to registered workers using
-//! explicit worker credit, and forwards responses back to clients.
+//! This is the lightweight in-process semantics/test/bench actor. Production
+//! broker ingress uses `RpcDomainSink`, which owns request forwarding, terminal
+//! error delivery, and caller-disconnect handling.
+//!
+//! Each route key (for example, `rpc://acme/auth/user/create`) has a route-local
+//! state machine that queues inbound requests and assigns them to registered
+//! workers using explicit worker credit.
 //!
 //! # State Model
 //!
 //! ```text
 //! [Client Request] → [Queue] → [Worker Assignment + Timeout] → [Worker Processing]
 //!                                                              ↓
-//!                      [Client Inbox] ← [Response Forwarding] ←
+//!                      [Semantics-only lease release] ← [Worker Response] ←
 //! ```
 //!
 //! # Failure Model
@@ -291,7 +295,7 @@ impl RpcRouteActor {
                     request.family_id, self.family
                 ),
             );
-            Self::send_error(error);
+            Self::observe_semantics_only_error_drop(&error);
             return;
         }
 
@@ -302,7 +306,7 @@ impl RpcRouteActor {
         if self.pending.len() >= self.capacity {
             // Send backpressure error to client
             let error = RpcError::backpressure(request.correlation_id);
-            Self::send_error(error);
+            Self::observe_semantics_only_error_drop(&error);
             return;
         }
 
@@ -402,10 +406,10 @@ impl RpcRouteActor {
 
                 self.release_worker_capacity(assignment.worker_slot);
 
-                // Timeout is currently observed only through lease release.
-                // Error forwarding remains a no-op until reply inbox routing lands.
+                // Timeout is observed only through this semantics-only actor.
+                // Production terminal errors are delivered by RpcDomainSink.
                 let error = RpcError::timeout(correlation_id);
-                Self::send_error(error);
+                Self::observe_semantics_only_error_drop(&error);
 
                 // NOTE: We don't re-enqueue for retry since we don't have the original request
                 // (removed request clone for performance). Client should retry if needed.
@@ -418,11 +422,13 @@ impl RpcRouteActor {
         }
     }
 
-    /// Send error to client inbox
-    fn send_error(_error: RpcError) {
-        // NOTE: This actor is a semantics reference used in tests and benchmarks.
-        // Production RPC reply and error forwarding happens in RpcDomainSink,
-        // which still treats all worker and pending-request state as ephemeral.
+    fn observe_semantics_only_error_drop(error: &RpcError) {
+        tracing::debug!(
+            domain = "rpc",
+            correlation_id = %error.correlation_id,
+            error_code = %error.code,
+            "RPC route actor dropped semantics-only error; production delivery is owned by RpcDomainSink"
+        );
     }
 
     /// Try to dispatch pending requests to available workers

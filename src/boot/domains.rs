@@ -535,6 +535,41 @@ pub fn setup(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::FrameContext;
+    use bytes::{BufMut, Bytes};
+
+    fn usize_to_u32_saturating(value: usize) -> u32 {
+        u32::try_from(value).unwrap_or(u32::MAX)
+    }
+
+    fn domain_setup_options() -> DomainSetupOptions {
+        DomainSetupOptions {
+            server_write_options: cntryl_midge::WriteOptions::best_effort(),
+            queue_write_options: cntryl_midge::WriteOptions::best_effort(),
+            queue_fast_flush_interval: Some(std::time::Duration::from_millis(100)),
+            request_sync_write_options: cntryl_midge::WriteOptions::sync(),
+            rpc_request_timeout: None,
+            stream_storage_layout: crate::domains::stream::StreamStorageLayout::default(),
+        }
+    }
+
+    fn encode_kv_begin(route: &str) -> Bytes {
+        let mut payload = Vec::new();
+        payload.put_u32(usize_to_u32_saturating(route.len()));
+        payload.put_slice(route.as_bytes());
+        payload.put_u8(1);
+        payload.put_u8(0);
+        Bytes::from(payload)
+    }
+
+    fn receive_kv_response(mailbox: &crate::runtime::Mailbox, label: &str) -> FrameContext {
+        mailbox
+            .receiver()
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap_or_else(|_| panic!("{label}"))
+            .into_payload::<FrameContext>()
+            .unwrap_or_else(|| panic!("{label} frame"))
+    }
 
     fn wait_for_domain_restarts(domains: &DomainHandles, expected: u64) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
@@ -551,6 +586,23 @@ mod tests {
 
         let snapshots = domains.health_snapshots();
         panic!("domain restarts did not reach {expected}: {snapshots:?}");
+    }
+
+    fn wait_for_named_domain_restart(domains: &DomainHandles, domain: &str, expected: u64) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while std::time::Instant::now() < deadline {
+            if domains
+                .health_snapshots()
+                .iter()
+                .any(|snapshot| snapshot.domain == domain && snapshot.restart_count == expected)
+            {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        let snapshots = domains.health_snapshots();
+        panic!("{domain} restarts did not reach {expected}: {snapshots:?}");
     }
 
     #[test]
@@ -628,19 +680,7 @@ mod tests {
         let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
 
         // Act
-        let result = setup(
-            &router,
-            &store,
-            &admin_read_model,
-            &DomainSetupOptions {
-                server_write_options: cntryl_midge::WriteOptions::best_effort(),
-                queue_write_options: cntryl_midge::WriteOptions::best_effort(),
-                queue_fast_flush_interval: Some(std::time::Duration::from_millis(100)),
-                request_sync_write_options: cntryl_midge::WriteOptions::sync(),
-                rpc_request_timeout: None,
-                stream_storage_layout: crate::domains::stream::StreamStorageLayout::default(),
-            },
-        );
+        let result = setup(&router, &store, &admin_read_model, &domain_setup_options());
 
         // Assert
         assert!(result.is_ok());
@@ -654,20 +694,7 @@ mod tests {
         let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
 
         // Act
-        setup(
-            &router,
-            &store,
-            &admin_read_model,
-            &DomainSetupOptions {
-                server_write_options: cntryl_midge::WriteOptions::best_effort(),
-                queue_write_options: cntryl_midge::WriteOptions::best_effort(),
-                queue_fast_flush_interval: Some(std::time::Duration::from_millis(100)),
-                request_sync_write_options: cntryl_midge::WriteOptions::sync(),
-                rpc_request_timeout: None,
-                stream_storage_layout: crate::domains::stream::StreamStorageLayout::default(),
-            },
-        )
-        .expect("setup domains");
+        setup(&router, &store, &admin_read_model, &domain_setup_options()).expect("setup domains");
 
         // Assert
         for domain in DomainKind::ALL {
@@ -689,20 +716,8 @@ mod tests {
         let store = crate::testkit::midge::create_test_engine_with_cfs(vec![1, 2, 3, 4, 5, 6, 7]);
         let router = Arc::new(Router::new());
         let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-        let domains = setup(
-            &router,
-            &store,
-            &admin_read_model,
-            &DomainSetupOptions {
-                server_write_options: cntryl_midge::WriteOptions::best_effort(),
-                queue_write_options: cntryl_midge::WriteOptions::best_effort(),
-                queue_fast_flush_interval: Some(std::time::Duration::from_millis(100)),
-                request_sync_write_options: cntryl_midge::WriteOptions::sync(),
-                rpc_request_timeout: None,
-                stream_storage_layout: crate::domains::stream::StreamStorageLayout::default(),
-            },
-        )
-        .expect("setup domains");
+        let domains = setup(&router, &store, &admin_read_model, &domain_setup_options())
+            .expect("setup domains");
 
         // Act
         domains.panic_all_domain_actors_for_tests();
@@ -720,5 +735,69 @@ mod tests {
         assert_eq!(domains.rpc_worker_count(), 0);
         assert_eq!(domains.lease_count(), 0);
         assert_eq!(domains.schedule_count(), 0);
+    }
+
+    #[test]
+    fn should_serve_second_session_after_test_panic_restarts_initialized_domain() {
+        // Arrange
+        let store = crate::testkit::midge::create_test_engine_with_cfs(vec![1, 2, 3, 4, 5, 6, 7]);
+        let router = Arc::new(Router::new());
+        let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+        let domains = setup(&router, &store, &admin_read_model, &domain_setup_options())
+            .expect("setup domains");
+        let family = RouteFamily::new(1);
+        let warmup_route = "kv://acme/app/restart-regression-a";
+        let recovery_route = "kv://acme/app/restart-regression-b";
+        let warmup_kv_address = RouteAddress::new(family, Route::new(warmup_route));
+        let recovery_kv_address = RouteAddress::new(family, Route::new(recovery_route));
+        let warmup_session = 101;
+        let recovery_session = 202;
+        let warmup_inbox = RouteAddress::new(family, Route::new("inbox://session/a"));
+        let recovery_inbox = RouteAddress::new(family, Route::new("inbox://session/b"));
+        let warmup_mailbox = Arc::new(crate::runtime::Mailbox::new(16));
+        let recovery_mailbox = Arc::new(crate::runtime::Mailbox::new(16));
+        router.register(warmup_inbox.clone(), warmup_mailbox.clone());
+        router.register(recovery_inbox.clone(), recovery_mailbox.clone());
+        router
+            .route(Envelope::from_route(
+                warmup_inbox,
+                warmup_kv_address,
+                FrameContext::new(
+                    warmup_session,
+                    crate::protocol::frame::ChannelId::Pub,
+                    crate::protocol::tlv::MessageType::new(crate::protocol::kv::msg_type::BEGIN),
+                    encode_kv_begin(warmup_route),
+                    family,
+                ),
+            ))
+            .expect("route session A begin");
+        let warmup_response = receive_kv_response(&warmup_mailbox, "session A begin response");
+        assert_eq!(warmup_response.payload.first(), Some(&0));
+
+        // Act
+        domains.kv.panic_actor_for_tests();
+        wait_for_named_domain_restart(&domains, "kv", 1);
+        router
+            .route(Envelope::from_route(
+                recovery_inbox,
+                recovery_kv_address,
+                FrameContext::new(
+                    recovery_session,
+                    crate::protocol::frame::ChannelId::Pub,
+                    crate::protocol::tlv::MessageType::new(crate::protocol::kv::msg_type::BEGIN),
+                    encode_kv_begin(recovery_route),
+                    family,
+                ),
+            ))
+            .expect("route session B begin after restart");
+        let recovery_response = receive_kv_response(&recovery_mailbox, "session B begin response");
+
+        // Assert
+        assert!(domains
+            .health_snapshots()
+            .iter()
+            .any(|snapshot| snapshot.domain == "kv" && snapshot.restart_count == 1));
+        assert_eq!(recovery_response.payload.first(), Some(&0));
+        assert!(!domains.has_permanently_failed_domain());
     }
 }

@@ -191,6 +191,7 @@ pub(in crate::domains::rpc::sink) struct RpcWorkerCleanupResult {
 pub(in crate::domains::rpc::sink) struct RpcPendingTimeoutResult {
     pub(in crate::domains::rpc::sink) removed_pending: usize,
     pub(in crate::domains::rpc::sink) pending_len: usize,
+    pub(in crate::domains::rpc::sink) closed_caller_drops: usize,
     pub(in crate::domains::rpc::sink) timeout_deliveries: Vec<RpcPendingErrorDelivery>,
 }
 

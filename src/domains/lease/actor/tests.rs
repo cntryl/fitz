@@ -36,12 +36,27 @@ struct CapturedPublishSink {
     events: Arc<Mutex<Vec<crate::runtime::DomainPublishEvent>>>,
 }
 
+struct DroppingPublishSink;
+
 impl MailboxSink for CapturedPublishSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
         if let Some(event) = envelope.payload::<crate::runtime::DomainPublishEvent>() {
             self.events.lock().push(event.clone());
         }
         Ok(())
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
+impl MailboxSink for DroppingPublishSink {
+    fn deliver(&self, _envelope: Envelope) -> Result<(), DeliveryError> {
+        Err(DeliveryError::MailboxFull {
+            capacity: 1,
+            current_len: 1,
+        })
     }
 
     fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
@@ -245,6 +260,46 @@ fn should_publish_each_expired_lease_route_given_batched_tick() {
             "lease://acme/locks/resource-b".to_string(),
         ]
     );
+}
+
+#[test]
+fn should_record_dropped_publish_event_without_retry_given_route_backpressure() {
+    // Arrange
+    let metrics = crate::observability::metrics();
+    let drop_counter = "fitz_lease_publish_events_dropped_total";
+    let before = metrics.counter_get(drop_counter);
+    let mut actor = LeaseActor::new(RouteFamily::new(1));
+    let router = Arc::new(crate::runtime::router::Router::new());
+    router.register_domain_pattern("lease", Arc::new(DroppingPublishSink));
+    let address = crate::runtime::routing::RouteAddress::new(
+        RouteFamily::new(1),
+        crate::runtime::routing::Route::new("lease://actor"),
+    );
+    let mut ctx = Context::new(address, router);
+    let key = test_key("acme", "locks", "drop-visibility");
+    let acquired = actor.handle_acquire(key.clone(), "owner-a".to_string(), 60, 0, None, &mut ctx);
+    let LeaseResponse::Acquired { fencing_token } = acquired else {
+        panic!("expected acquire response");
+    };
+    let released = actor.handle_message(
+        LeaseMessage::Release {
+            family_id: RouteFamily::new(1),
+            route: key.to_route(),
+            owner_id: "owner-a".to_string(),
+            fencing_token,
+        },
+        &mut ctx,
+    );
+    let timer_id = actor.notify_timer.expect("notification timer");
+
+    // Act
+    actor.on_timer(timer_id, &mut ctx);
+
+    // Assert
+    assert_eq!(released, Some(LeaseResponse::Released));
+    assert_eq!(metrics.counter_get(drop_counter), before + 1);
+    assert!(actor.pending_publish.is_empty());
+    assert!(actor.notify_timer.is_none());
 }
 
 #[test]

@@ -17,11 +17,11 @@ use std::time::Instant;
 /// # Priority Lanes
 ///
 /// Mailboxes have two independent channels:
-/// - **High Priority**: For runtime-internal messages (timers, supervision, leases)
+/// - **High Priority**: For explicitly marked runtime/domain control messages
 /// - **Normal Priority**: For user messages
 ///
-/// The scheduler processes high-priority messages first (capped at 4 per tick)
-/// to ensure control-plane operations aren't starved by data-plane saturation.
+/// Managed actors read high-priority messages first so explicitly marked
+/// control-plane envelopes are not starved by data-plane saturation.
 pub struct Mailbox {
     high_priority: Sender<Envelope>,
     high_receiver: Receiver<Envelope>,
@@ -34,7 +34,7 @@ impl Mailbox {
     /// Create a new mailbox with the specified capacity
     ///
     /// Creates two independent bounded channels with the same capacity:
-    /// - High-priority lane for runtime-internal messages
+    /// - High-priority lane for explicitly marked runtime/domain control messages
     /// - Normal-priority lane for user messages
     #[must_use]
     pub fn new(capacity: usize) -> Self {

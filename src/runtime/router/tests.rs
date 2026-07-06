@@ -1,6 +1,8 @@
 use super::*;
 use crate::observability as obs;
+use crate::runtime::actor::{Actor, Context};
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+use crate::runtime::ManagedActor;
 use parking_lot::Mutex;
 
 /// Helper to create test route addresses
@@ -15,6 +17,14 @@ struct MockSink {
 }
 
 struct PanicSink;
+
+struct ManagedHighLaneFullSink;
+
+enum ManagedRouterTestMessage {
+    Work,
+}
+
+struct ManagedRouterTestActor;
 
 impl MockSink {
     fn new() -> Self {
@@ -44,6 +54,25 @@ impl MailboxSink for PanicSink {
     fn deliver_high_priority(&self, _envelope: Envelope) -> Result<(), DeliveryError> {
         panic!("router high-priority sink panic");
     }
+}
+
+impl MailboxSink for ManagedHighLaneFullSink {
+    fn deliver(&self, _envelope: Envelope) -> Result<(), DeliveryError> {
+        Ok(())
+    }
+
+    fn deliver_high_priority(&self, _envelope: Envelope) -> Result<(), DeliveryError> {
+        Err(DeliveryError::HighLaneFull {
+            capacity: 1,
+            current_len: 1,
+        })
+    }
+}
+
+impl Actor for ManagedRouterTestActor {
+    type Message = ManagedRouterTestMessage;
+
+    fn receive(&mut self, _msg: Self::Message, _ctx: &mut Context<Self>) {}
 }
 
 impl MailboxSink for MockSink {
@@ -300,6 +329,59 @@ fn should_record_high_lane_backpressure_metric_on_high_priority_delivery_failure
         metrics.counter_get(obs::METRIC_ROUTER_HIGH_LANE_BACKPRESSURE) > before,
         "expected router high-lane backpressure metric to increase"
     );
+}
+
+#[test]
+fn should_route_managed_actor_high_priority_delivery_through_router() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let address = test_address(1, "managed://router/high-priority");
+    let managed = ManagedActor::spawn(router.clone(), address.clone(), ManagedRouterTestActor, 8);
+    let replacement_sink = Arc::new(MockSink::new());
+    router.register(address, replacement_sink.clone());
+
+    // Act
+    let result = managed.try_send_high_priority(ManagedRouterTestMessage::Work);
+
+    // Assert
+    assert!(result.is_ok());
+    assert_eq!(replacement_sink.count(), 1);
+}
+
+#[test]
+fn should_report_high_lane_full_from_managed_actor_high_priority_router_path() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let address = test_address(1, "managed://router/high-lane-full");
+    let managed = ManagedActor::spawn(router.clone(), address.clone(), ManagedRouterTestActor, 8);
+    router.register(address, Arc::new(ManagedHighLaneFullSink));
+
+    // Act
+    let result = managed.try_send_high_priority(ManagedRouterTestMessage::Work);
+
+    // Assert
+    assert!(matches!(
+        result,
+        Err(DeliveryError::HighLaneFull {
+            capacity: 1,
+            current_len: 1
+        })
+    ));
+}
+
+#[test]
+fn should_contain_sink_panic_from_managed_actor_high_priority_router_path() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let address = test_address(1, "managed://router/panic");
+    let managed = ManagedActor::spawn(router.clone(), address.clone(), ManagedRouterTestActor, 8);
+    router.register(address, Arc::new(PanicSink));
+
+    // Act
+    let result = managed.try_send_high_priority(ManagedRouterTestMessage::Work);
+
+    // Assert
+    assert!(matches!(result, Err(DeliveryError::SinkPanicked)));
 }
 
 #[test]
