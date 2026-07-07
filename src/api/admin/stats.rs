@@ -174,7 +174,7 @@ pub struct ScheduleStats {
     pub diagnostics: troubleshooting::DomainDiagnostics,
 }
 
-/// Handle /admin/stats endpoint
+/// Build the `/api/v1/stats` response body.
 pub(crate) fn build_global_stats(runtime: &Runtime) -> GlobalStats {
     let troubleshooting::TroubleshootingSnapshot {
         global,
@@ -378,12 +378,12 @@ pub(crate) fn build_global_troubleshooting(
     global
 }
 
-/// Handle /admin/stats endpoint
+/// Handle `/api/v1/stats`.
 pub fn handle_global_stats(runtime: &Runtime) -> Response {
     crate::api::admin::json_response(build_global_stats(runtime))
 }
 
-/// Handle /admin/troubleshooting endpoint
+/// Handle `/api/v1/troubleshooting`.
 pub fn handle_global_troubleshooting(runtime: &Runtime) -> Response {
     super::json_response(build_global_troubleshooting(runtime))
 }

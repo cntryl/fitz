@@ -1,4 +1,11 @@
 ## Domain-Specific Endpoints
+
+Admin domain routes are mounted under `/api/v1`. The examples below use the
+aggregate form `/api/v1/{domain}/...`; callers that need a concrete route family
+can put it before the domain as `/api/v1/{route_family}/{domain}/...`. Wildcard
+admin sessions may use `/api/v1/all/{domain}/...` for aggregate reads. Paths
+under `/admin/{domain}/...` or `/api/v1/admin/{domain}/...` are not mounted.
+
 ### KV Domain
 All KV admin responses separate durable committed data from live transaction
 coordination. Committed values persist according to storage commit semantics,
@@ -96,11 +103,30 @@ GET /api/v1/stream/realms/{realm}/areas/{area}/resources/{resource}
 ### Notice Domain
 All Notice admin responses reflect live in-memory broker state only. Notice subscriptions are session-scoped, disappear on disconnect, and are not restored after broker restart.
 
-#### List Active Subscriptions
+#### Get Notice Resource Detail
 ```
-GET /admin/notice/subscriptions?realm={realm}&route_pattern={pattern}
+GET /api/v1/notice/realms/{realm}/areas/{area}/resources/{resource}
 ```
-`created_at` is the time the current in-memory subscription was created. `notifications_received` is a live delivery counter for the current in-memory subscription and resets when the client reconnects or the broker restarts.
+`subscriptions_active` counts only current in-memory subscriptions matching this
+resource. It resets on disconnect cleanup and broker restart.
+
+**Response**:
+```json
+{
+  "realm": "prod",
+  "area": "events",
+  "resource": "orders",
+  "subscriptions_active": 3
+}
+```
+
+#### List Active Resource Subscriptions
+```
+GET /api/v1/notice/realms/{realm}/areas/{area}/resources/{resource}/subscriptions
+```
+`created_at` is the time the current in-memory subscription was created.
+`notifications_received` is a live delivery counter for the current in-memory
+subscription and resets when the client reconnects or the broker restarts.
 
 **Response**:
 ```json
@@ -117,28 +143,18 @@ GET /admin/notice/subscriptions?realm={realm}&route_pattern={pattern}
   ]
 }
 ```
-#### List Routes with Subscriber Counts
-```
-GET /admin/notice/routes?realm={realm}
-```
-`publishes_total` and `publishes_per_minute` describe live broker-observed activity for the current process lifetime. They are not durable replay or history counters.
 
-**Response**:
-```json
-{
-  "routes": [
-    {
-      "route": "notice://prod/events/orders",
-      "subscribers": 23,
-      "publishes_total": 8456,
-      "publishes_per_minute": 45
-    }
-  ]
-}
+#### Search Notice Delivery Observations
 ```
+GET /api/v1/{route_family}/notice/deliveries?realm={realm}&area={area}&resource={resource}&q={query}&limit={limit}
+```
+This route requires a concrete route family, either as the path segment above or
+as `route_family` when using `/api/v1/notice/deliveries`. It returns current
+broker observations for active subscriptions and live route counters.
+
 #### Notice Statistics
 ```
-GET /admin/notice/stats?realm={realm}
+GET /api/v1/notice/stats
 ```
 These values are point-in-time in-memory statistics for the running broker instance.
 
@@ -152,14 +168,6 @@ These values are point-in-time in-memory statistics for the running broker insta
   "fanout_ratio": 4.2
 }
 ```
-#### Force Cancel Subscription (Admin)
-```
-POST /admin/notice/subscriptions/{subscription_id}/cancel
-```
-Force-removes an active in-memory notice subscription from the current broker instance. This endpoint does not cancel durable state and has no effect after the owning session disconnects.
-
-**Headers**: `X-Confirm: true`
-**Response**: 200 OK or 404 Not Found
 ### Queue Domain
 Queue admin responses reflect only the current broker's warm in-memory actor state unless otherwise noted. Queue data remains durable according to the configured queue write policy, but warm resource counts and live lease rows can disappear after disconnect cleanup, idle actor eviction, or broker restart until traffic rehydrates that queue.
 
@@ -258,9 +266,42 @@ DELETE /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/dead-lette
 All RPC admin endpoints expose live in-memory state for the current broker instance only. Worker registrations and pending requests disappear on disconnect or broker restart and are not durable recovery queues.
 The broker updates this read model as a coalesced operational snapshot, so very recent subscribe, unsubscribe, timeout, and cleanup events can lag briefly in admin responses. Treat these endpoints as near-live diagnostics, not strongly consistent reads of the hot path.
 
-#### List Registered Workers
+#### List Operations For A Resource
 ```
-GET /admin/rpc/workers?realm={realm}
+GET /api/v1/rpc/realms/{realm}/areas/{area}/resources/{resource}/operations
+```
+**Response**:
+```json
+{
+  "realm": "prod",
+  "area": "compute",
+  "resource": "tasks",
+  "operations": [{ "operation": "heavy-task" }]
+}
+```
+
+#### Get RPC Operation Detail
+```
+GET /api/v1/rpc/realms/{realm}/areas/{area}/resources/{resource}/operations/{operation}
+```
+The counts are point-in-time in-memory values for the running broker process.
+
+**Response**:
+```json
+{
+  "realm": "prod",
+  "area": "compute",
+  "resource": "tasks",
+  "operation": "heavy-task",
+  "workers_registered": 2,
+  "requests_pending": 1,
+  "slowest_worker_average_latency_ms": 145.0
+}
+```
+
+#### List Registered Workers For An Operation
+```
+GET /api/v1/rpc/realms/{realm}/areas/{area}/resources/{resource}/operations/{operation}/workers
 ```
 **Response**:
 ```json
@@ -277,9 +318,10 @@ GET /admin/rpc/workers?realm={realm}
   ]
 }
 ```
+
 #### List Pending Requests
 ```
-GET /admin/rpc/pending?realm={realm}
+GET /api/v1/rpc/pending
 ```
 Pending requests shown here are only those still tracked in memory by the running broker. A restart clears this list immediately.
 
@@ -297,9 +339,37 @@ Pending requests shown here are only those still tracked in memory by the runnin
   ]
 }
 ```
+
+#### Search RPC Call Observations
+```
+GET /api/v1/{route_family}/rpc/calls?realm={realm}&area={area}&resource={resource}&operation={operation}&q={query}&limit={limit}
+```
+This route requires a concrete route family. It combines current pending
+requests and worker registrations into a single near-live diagnostic list.
+
+**Response**:
+```json
+{
+  "route_family": 1,
+  "limit": 100,
+  "observations": [
+    {
+      "route_family": 1,
+      "realm": "prod",
+      "area": "compute",
+      "resource": "tasks",
+      "operation": "heavy-task",
+      "route": "rpc://prod/compute/tasks/heavy-task",
+      "correlation_id": "0123456789abcdef",
+      "state": "pending",
+      "age_seconds": 10
+    }
+  ]
+}
+```
 #### RPC Statistics
 ```
-GET /admin/rpc/stats?realm={realm}
+GET /api/v1/rpc/stats
 ```
 `workers_registered` and `requests_pending` are point-in-time in-memory counts for the running broker process. They reset on restart and should not be interpreted as durable backlog or recovery state.
 Like the worker and pending endpoints, these counters are served from the current broker's coalesced admin snapshot and can lag the latest in-flight mutations briefly.
@@ -315,41 +385,60 @@ Like the worker and pending endpoints, these counters are served from the curren
   "average_latency_ms": 125
 }
 ```
-#### Cancel Request (Admin)
-```
-POST /admin/rpc/requests/{correlation_id}/cancel
-```
-**Headers**: `X-Confirm: true`
-**Response**: 200 OK or 404 Not Found
 ### Lease Domain
 All Lease admin responses reflect live in-memory state for the current broker process only. Lease ownership disappears on disconnect cleanup or broker restart, and `fencing_token` values are process-local rather than durable or cross-node identifiers.
 
-#### List Active Leases
+#### Get Lease Resource Detail
 ```
-GET /admin/lease/leases?realm={realm}
+GET /api/v1/lease/realms/{realm}/areas/{area}/resources/{resource}
 ```
-`acquired_at` and `expires_at` describe the current in-memory lease window only. `fencing_token` is valid only within the running broker process and resets after restart.
+`active_leases` counts only leases currently tracked in memory for this
+resource. It resets on disconnect cleanup and broker restart.
 
 **Response**:
 ```json
 {
-  "leases": [
+  "realm": "prod",
+  "area": "locks",
+  "resource": "job-executor",
+  "active_leases": 1,
+  "oldest_lease_age_seconds": 42
+}
+```
+
+#### Search Active Leases And Waiters
+```
+GET /api/v1/{route_family}/lease/search?realm={realm}&area={area}&resource={resource}&owner={owner}&state={state}&limit={limit}
+```
+`acquired_at` and `expires_at` describe the current in-memory lease window only.
+Fencing tokens are valid only within the running broker process and reset after
+restart. This route requires a concrete route family.
+
+**Response**:
+```json
+{
+  "route_family": 1,
+  "limit": 100,
+  "items": [
     {
+      "route_family": 1,
       "realm": "prod",
       "area": "locks",
       "resource": "job-executor",
-      "owner_session_id": "sess_abc123",
-      "acquired_at": "2026-01-31T10:30:00Z",
+      "state": "owned",
+      "owner_id": "worker-1",
+      "owner_session_id": "12345",
       "expires_at": "2026-01-31T10:35:00Z",
+      "acquired_at": "2026-01-31T10:30:00Z",
       "renewals": 5,
-      "fencing_token": 42
+      "pending_waiters": 0
     }
   ]
 }
 ```
 #### Lease Statistics
 ```
-GET /admin/lease/stats?realm={realm}
+GET /api/v1/lease/stats
 ```
 These values are point-in-time in-memory counts for the running broker process and should not be interpreted as durable recovery state.
 
@@ -362,14 +451,6 @@ These values are point-in-time in-memory counts for the running broker process a
   "operations_per_second": 5
 }
 ```
-#### Force Release Lease (Admin)
-```
-POST /admin/lease/leases/{lease_id}/release
-```
-Force-releases an active in-memory lease on the current broker instance only. This endpoint does not recover or revoke durable state, and it has no effect after the owning session has already disconnected or the broker has restarted.
-
-**Headers**: `X-Confirm: true`
-**Response**: 200 OK or 404 Not Found
 ### Schedule Domain
 Schedule definitions are durable and are preloaded into per-family Schedule actors during broker boot. Admin schedule views therefore reflect persisted definitions before any schedule-domain traffic reaches that family. Schedule notifications and subscriptions remain live session-scoped delivery only, and `last_run` / `executions_total` are still non-authoritative placeholders in this round.
 
