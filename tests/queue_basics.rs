@@ -61,7 +61,7 @@ struct QueueProtocolHarness {
 impl QueueProtocolHarness {
     fn new(resource: &str) -> Self {
         let store = Arc::new(
-            cntryl_midge::Engine::open_with_options(&cntryl_midge::MidgeOptions::default())
+            cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
                 .expect("open queue store"),
         );
         Self::with_store(resource, store)

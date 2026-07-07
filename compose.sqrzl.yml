@@ -1,0 +1,24 @@
+#
+# Sqrzl emulator - local development only
+#
+# This file is a loopback-only example for local development.
+# It is not a production deployment manifest.
+#
+name: sqrzl
+services:
+  sqrzl:
+    container_name: sqrzl
+    hostname: sqrzl
+    image: sqrzl/sqrzl-emulator:latest
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    environment:
+      SQRZL_BLOBS_PATH: /app/blobs
+      SQRZL_ACCESS_KEY_ID: admin
+      SQRZL_SECRET_ACCESS_KEY: sqrzl-secret
+    volumes:
+      - sqrzl_blobs:/app/blobs
+
+volumes:
+  sqrzl_blobs:

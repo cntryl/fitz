@@ -5,10 +5,10 @@ use std::time::Duration;
 
 const DEFAULT_LOCAL_STORAGE_PATH: &str = "./.fitz";
 const DEFAULT_CLOUD_CACHE_PATH: &str = "./.fitz-cloud-cache";
-const DEFAULT_PEAS_ENDPOINT: &str = "http://127.0.0.1:9000";
-const DEFAULT_PEAS_ACCESS_KEY: &str = "admin";
-const DEFAULT_PEAS_SECRET_KEY: &str = "easy-peasy";
-const DEFAULT_PEAS_BUCKET: &str = "fitz";
+const DEFAULT_SQRZL_EMULATOR_ENDPOINT: &str = "http://127.0.0.1:9000";
+const DEFAULT_SQRZL_EMULATOR_ACCESS_KEY: &str = "admin";
+const DEFAULT_SQRZL_EMULATOR_SECRET_KEY: &str = "sqrzl-secret";
+const DEFAULT_SQRZL_EMULATOR_BUCKET: &str = "fitz";
 const ENV_STORAGE_MEMTABLE_BYTES: &str = "FITZ_STORAGE_MEMTABLE_BYTES";
 const ENV_QUEUE_WRITE_POLICY: &str = "FITZ_QUEUE_WRITE_POLICY";
 const ENV_QUEUE_LOSS_WINDOW_MS: &str = "FITZ_QUEUE_LOSS_WINDOW_MS";

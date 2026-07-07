@@ -37,8 +37,7 @@
 //! 3. **Production parity**: Tests must match production behavior
 //! 4. **Architectural invariant**: Explicit mapping is foundational to Fitz design
 
-use cntryl_midge::testkit::MidgeOptions;
-use cntryl_midge::Engine;
+use cntryl_midge::{Engine, OpenOptions};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -95,11 +94,7 @@ pub fn create_test_engine_with_cfs(cf_ids: Vec<u32>) -> Arc<Engine> {
     let _ = std::fs::create_dir_all(&db_path);
 
     let engine = Arc::new(
-        Engine::open_with_options(&MidgeOptions {
-            storage_mode: cntryl_midge::testkit::StorageMode::LocalDisk { db_path },
-            ..MidgeOptions::default()
-        })
-        .expect("Failed to create test engine"),
+        Engine::open(OpenOptions::local(db_path).build()).expect("Failed to create test engine"),
     );
 
     // Explicitly create each requested column family.

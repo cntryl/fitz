@@ -22,7 +22,7 @@ use tracing::{debug, info, trace, warn};
 use types_and_helpers::{
     canonicalize_dispatch_route_str, dispatch_session_cleanup, extract_auth_route_for_domain,
     AuthorizationFailure, AuthorizationPolicy, AuthorizationTargets, DomainAuthorizationSpec,
-    DomainDispatchRequest, PendingSessionCleanup,
+    DomainDispatchPayload, DomainDispatchRequest, PendingSessionCleanup,
 };
 
 pub use types_and_helpers::{Ingress, IngressDecision, RuntimeIngress, SessionEvent, SessionFrame};

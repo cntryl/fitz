@@ -2,7 +2,7 @@ use super::*;
 
 fn new_actor(resource_prefix: &str) -> QueueActor {
     let store = Arc::new(
-        cntryl_midge::Engine::open_with_options(&cntryl_midge::MidgeOptions::default())
+        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
             .expect("Failed to open Midge"),
     );
     QueueActor::new(
@@ -87,7 +87,7 @@ fn should_report_live_counts_after_dead_letter_transition() {
     // Arrange
     let clock = MockClock::new();
     let store = Arc::new(
-        cntryl_midge::Engine::open_with_options(&cntryl_midge::MidgeOptions::default())
+        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
             .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("live-counts-dlq");

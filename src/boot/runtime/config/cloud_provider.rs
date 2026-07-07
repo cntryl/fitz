@@ -1,41 +1,45 @@
 use super::env::{env_bool, env_non_empty, required_env, required_region};
 use super::{
-    DEFAULT_PEAS_ACCESS_KEY, DEFAULT_PEAS_BUCKET, DEFAULT_PEAS_ENDPOINT, DEFAULT_PEAS_SECRET_KEY,
+    DEFAULT_SQRZL_EMULATOR_ACCESS_KEY, DEFAULT_SQRZL_EMULATOR_BUCKET,
+    DEFAULT_SQRZL_EMULATOR_ENDPOINT, DEFAULT_SQRZL_EMULATOR_SECRET_KEY,
 };
 
 pub(super) fn build_cloud_provider_config(
     provider: &str,
 ) -> Result<cntryl_midge::CloudProviderConfig, String> {
     match provider {
-        "peas-s3" => Ok(cntryl_midge::CloudProviderConfig::s3_compatible_static(
-            env_non_empty("FITZ_STORAGE_BUCKET").unwrap_or_else(|| DEFAULT_PEAS_BUCKET.to_string()),
+        "sqrzl-s3" => Ok(cntryl_midge::CloudProviderConfig::s3_compatible_static(
+            env_non_empty("FITZ_STORAGE_BUCKET")
+                .unwrap_or_else(|| DEFAULT_SQRZL_EMULATOR_BUCKET.to_string()),
             env_non_empty("FITZ_STORAGE_ENDPOINT")
-                .unwrap_or_else(|| DEFAULT_PEAS_ENDPOINT.to_string()),
-            DEFAULT_PEAS_ACCESS_KEY,
-            DEFAULT_PEAS_SECRET_KEY,
+                .unwrap_or_else(|| DEFAULT_SQRZL_EMULATOR_ENDPOINT.to_string()),
+            DEFAULT_SQRZL_EMULATOR_ACCESS_KEY,
+            DEFAULT_SQRZL_EMULATOR_SECRET_KEY,
         )),
-        "peas-azure" => Ok(cntryl_midge::CloudProviderConfig::AzureBlob {
-            account: DEFAULT_PEAS_ACCESS_KEY.to_string(),
+        "sqrzl-azure" => Ok(cntryl_midge::CloudProviderConfig::AzureBlob {
+            account: DEFAULT_SQRZL_EMULATOR_ACCESS_KEY.to_string(),
             container: env_non_empty("FITZ_STORAGE_CONTAINER")
-                .unwrap_or_else(|| DEFAULT_PEAS_BUCKET.to_string()),
+                .unwrap_or_else(|| DEFAULT_SQRZL_EMULATOR_BUCKET.to_string()),
             endpoint: Some(
                 env_non_empty("FITZ_STORAGE_ENDPOINT")
-                    .unwrap_or_else(|| DEFAULT_PEAS_ENDPOINT.to_string()),
+                    .unwrap_or_else(|| DEFAULT_SQRZL_EMULATOR_ENDPOINT.to_string()),
             ),
-            credential: cntryl_midge::AzureCredentialSource::shared_key(DEFAULT_PEAS_SECRET_KEY),
+            credential: cntryl_midge::AzureCredentialSource::shared_key(
+                DEFAULT_SQRZL_EMULATOR_SECRET_KEY,
+            ),
         }),
-        "peas-gcs" => Ok(cntryl_midge::CloudProviderConfig::Gcs {
+        "sqrzl-gcs" => Ok(cntryl_midge::CloudProviderConfig::Gcs {
             bucket: env_non_empty("FITZ_STORAGE_BUCKET")
-                .unwrap_or_else(|| DEFAULT_PEAS_BUCKET.to_string()),
-            project_id: "peas".to_string(),
+                .unwrap_or_else(|| DEFAULT_SQRZL_EMULATOR_BUCKET.to_string()),
+            project_id: "sqrzl".to_string(),
             endpoint: Some(
                 env_non_empty("FITZ_STORAGE_ENDPOINT")
-                    .unwrap_or_else(|| DEFAULT_PEAS_ENDPOINT.to_string()),
+                    .unwrap_or_else(|| DEFAULT_SQRZL_EMULATOR_ENDPOINT.to_string()),
             ),
             api: cntryl_midge::GcsApiStyle::Xml,
             credential: cntryl_midge::GcsCredentialSource::hmac_key(
-                DEFAULT_PEAS_ACCESS_KEY,
-                DEFAULT_PEAS_SECRET_KEY,
+                DEFAULT_SQRZL_EMULATOR_ACCESS_KEY,
+                DEFAULT_SQRZL_EMULATOR_SECRET_KEY,
             ),
         }),
         "aws-s3" => Ok(cntryl_midge::CloudProviderConfig::aws_s3(
@@ -50,29 +54,44 @@ pub(super) fn build_cloud_provider_config(
             path_style: env_bool("FITZ_STORAGE_FORCE_PATH_STYLE", true)?,
             credentials: cntryl_midge::S3CredentialSource::environment(),
         }),
-        "minio" => Ok(cntryl_midge::CloudProviderConfig::Minio {
-            bucket: required_env("FITZ_STORAGE_BUCKET")?,
-            endpoint: required_env("FITZ_STORAGE_ENDPOINT")?,
-            credentials: cntryl_midge::S3CredentialSource::environment(),
-        }),
-        "wasabi" => Ok(cntryl_midge::CloudProviderConfig::Wasabi {
-            bucket: required_env("FITZ_STORAGE_BUCKET")?,
-            region: required_env("FITZ_STORAGE_REGION")?,
-            endpoint: env_non_empty("FITZ_STORAGE_ENDPOINT"),
-            credentials: cntryl_midge::S3CredentialSource::environment(),
-        }),
-        "oci-s3" => Ok(cntryl_midge::CloudProviderConfig::OciS3Compatible {
-            bucket: required_env("FITZ_STORAGE_BUCKET")?,
-            namespace: required_env("FITZ_STORAGE_NAMESPACE")?,
-            region: required_env("FITZ_STORAGE_REGION")?,
-            endpoint: env_non_empty("FITZ_STORAGE_ENDPOINT"),
-            path_style: env_bool("FITZ_STORAGE_FORCE_PATH_STYLE", false)?,
-            credentials: cntryl_midge::S3CredentialSource::environment(),
-        }),
+        "minio" => Ok(cntryl_midge::CloudProviderConfig::s3_compatible_env(
+            required_env("FITZ_STORAGE_BUCKET")?,
+            required_env("FITZ_STORAGE_ENDPOINT")?,
+        )),
+        "wasabi" => {
+            let bucket = required_env("FITZ_STORAGE_BUCKET")?;
+            let region = required_env("FITZ_STORAGE_REGION")?;
+            let endpoint = env_non_empty("FITZ_STORAGE_ENDPOINT")
+                .unwrap_or_else(|| format!("https://s3.{region}.wasabisys.com"));
+
+            Ok(cntryl_midge::CloudProviderConfig::S3Compatible {
+                bucket,
+                region,
+                endpoint,
+                path_style: true,
+                credentials: cntryl_midge::S3CredentialSource::environment(),
+            })
+        }
+        "oci-s3" => {
+            let bucket = required_env("FITZ_STORAGE_BUCKET")?;
+            let namespace = required_env("FITZ_STORAGE_NAMESPACE")?;
+            let region = required_env("FITZ_STORAGE_REGION")?;
+            let endpoint = env_non_empty("FITZ_STORAGE_ENDPOINT").unwrap_or_else(|| {
+                format!("https://{namespace}.compat.objectstorage.{region}.oraclecloud.com")
+            });
+
+            Ok(cntryl_midge::CloudProviderConfig::S3Compatible {
+                bucket,
+                region,
+                endpoint,
+                path_style: env_bool("FITZ_STORAGE_FORCE_PATH_STYLE", false)?,
+                credentials: cntryl_midge::S3CredentialSource::environment(),
+            })
+        }
         "azure-blob" => build_azure_blob_provider(),
         "gcs" => build_gcs_provider(),
         other => Err(format!(
-            "unsupported FITZ_STORAGE_PROVIDER='{other}'; expected peas-s3, peas-azure, peas-gcs, aws-s3, s3-compatible, minio, wasabi, oci-s3, azure-blob, or gcs"
+            "unsupported FITZ_STORAGE_PROVIDER='{other}'; expected sqrzl-s3, sqrzl-azure, sqrzl-gcs, aws-s3, s3-compatible, minio, wasabi, oci-s3, azure-blob, or gcs"
         )),
     }
 }

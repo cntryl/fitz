@@ -40,7 +40,7 @@ Use only the keys required by the selected provider. `FITZ_STORAGE_BUCKET` and `
 
 ## Local Emulator Flow
 
-Use [../../compose.cloud.yml](../../compose.cloud.yml) for local blob/object storage testing against the repository emulator. This compose file is local-only and keeps the same loopback-bound auth/admin defaults as `compose.yml`.
+Use [../../compose.cloud.yml](../../compose.cloud.yml) for local blob/object storage testing against `sqrzl-emulator`. This compose file is local-only and keeps the same loopback-bound auth/admin defaults as `compose.yml`.
 
 ```sh
 docker compose -f compose.cloud.yml up --build

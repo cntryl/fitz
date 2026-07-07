@@ -25,6 +25,8 @@ use super::storage::{
 std::thread_local! {
     static FAIL_NEXT_AREA_WATERMARK_GUARD_READ: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FAIL_NEXT_REALM_WATERMARK_GUARD_READ: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static FAIL_NEXT_AREA_WATERMARK_PERSIST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static FAIL_NEXT_REALM_WATERMARK_PERSIST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FAIL_NEXT_PROMOTION_FRONTIER_COMMIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 

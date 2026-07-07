@@ -1,6 +1,6 @@
 use super::{
-    debug, info, obs, trace, Bytes, ChannelId, CloseReason, DispatchDomain, Ingress,
-    IngressDecision, RuntimeIngress, SessionEvent, SessionFrame,
+    debug, info, obs, trace, Bytes, ChannelId, CloseReason, DispatchDomain, DomainDispatchPayload,
+    Ingress, IngressDecision, RuntimeIngress, SessionEvent, SessionFrame,
 };
 use crate::session::SessionInfo;
 
@@ -42,17 +42,15 @@ impl Ingress for RuntimeIngress {
         );
 
         let should_notify_handler = self.event_handler.is_some();
-        let mut message_payload = Some(message_payload);
 
         let (route_family, notify_frame) = {
-            let payload = message_payload.as_ref().unwrap();
             match self
                 .session_authenticator()
                 .authenticate_frame(
                     session_id,
                     channel_id,
                     msg_type,
-                    payload,
+                    &message_payload,
                     should_notify_handler,
                 )
                 .await
@@ -74,30 +72,41 @@ impl Ingress for RuntimeIngress {
             // and should continue processing the current message.
         }
 
-        if let Err(decision) = self
+        let should_notify_handler_late = should_notify_handler && notify_frame.is_none();
+        if should_notify_handler_late {
+            if let Err(decision) = self
+                .domain_frame_dispatcher()
+                .dispatch_if_domain(
+                    session_id,
+                    channel_id,
+                    route_family,
+                    msg_type,
+                    DomainDispatchPayload::Shared(&message_payload),
+                )
+                .await
+            {
+                return decision;
+            }
+
+            if let Some(handler) = &self.event_handler {
+                handler(SessionEvent::Frame(SessionFrame {
+                    session_id,
+                    channel_id,
+                    payload: message_payload,
+                }));
+            }
+        } else if let Err(decision) = self
             .domain_frame_dispatcher()
             .dispatch_if_domain(
                 session_id,
                 channel_id,
                 route_family,
                 msg_type,
-                should_notify_handler && notify_frame.is_none(),
-                &mut message_payload,
+                DomainDispatchPayload::Owned(message_payload),
             )
             .await
         {
             return decision;
-        }
-
-        // Notify handler if present (if we haven't already notified via `notify_frame`)
-        if should_notify_handler && notify_frame.is_none() {
-            if let Some(handler) = &self.event_handler {
-                handler(SessionEvent::Frame(SessionFrame {
-                    session_id,
-                    channel_id,
-                    payload: message_payload.take().unwrap(),
-                }));
-            }
         }
 
         trace!(

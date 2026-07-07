@@ -78,6 +78,11 @@ pub(super) enum AuthorizationTargets<'a> {
     Multiple(Vec<Cow<'a, str>>),
 }
 
+pub(super) enum DomainDispatchPayload<'a> {
+    Owned(Bytes),
+    Shared(&'a Bytes),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum AuthorizationPolicy {
     RouteScoped(crate::auth::Access),
@@ -107,7 +112,7 @@ pub(super) struct DomainDispatchRequest<'a> {
     pub(super) domain: DispatchDomain,
     pub(super) policy: AuthorizationPolicy,
     pub(super) msg_type: crate::protocol::tlv::MessageType,
-    pub(super) preserve_payload_for_handler: bool,
+    pub(super) payload: DomainDispatchPayload<'a>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -153,6 +158,22 @@ impl AuthorizationTargets<'_> {
                     routes.len(),
                 )
             }
+        }
+    }
+}
+
+impl DomainDispatchPayload<'_> {
+    pub(super) fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::Owned(bytes) => bytes.as_ref(),
+            Self::Shared(bytes) => bytes.as_ref(),
+        }
+    }
+
+    pub(super) fn into_dispatch_bytes(self) -> Bytes {
+        match self {
+            Self::Owned(bytes) => bytes,
+            Self::Shared(bytes) => bytes.clone(),
         }
     }
 }

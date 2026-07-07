@@ -68,7 +68,7 @@ Identity claim lookup precedence is fixed:
 
 The repo compose files are local-development examples only:
 
-- `compose.yml`, `compose.cloud.yml`, and `compose.peas.yml` publish only to loopback and are not production deployment manifests.
+- `compose.yml`, `compose.cloud.yml`, and `compose.sqrzl.yml` publish only to loopback and are not production deployment manifests.
 - `compose.yml` and `compose.cloud.yml` keep `fitz-auth` on `FITZ_JWT_HMAC_SECRET` by default so `docker compose up` stays the shortest successful path.
 - Those same compose files keep `FITZ_ADMIN_AUTH_MODE=open` because the admin surface is loopback-only and meant for local inspection.
 - The built-in loopback defaults for `FITZ_WS_ALLOWED_ORIGINS` are only for local development.
@@ -157,7 +157,7 @@ These keys are read in cloud provider builders when FITZ_STORAGE_MODE=cloud.
 
 | Key | Scope | Description |
 | --- | --- | --- |
-| FITZ_PEAS_PROVIDER | compose.cloud.yml only | Chooses the local emulator front door in the compose flow. Not read directly by runtime code. |
+| FITZ_SQRZL_PROVIDER | compose.cloud.yml only | Chooses the local emulator front door in the compose flow. Not read directly by runtime code. |
 
 ## Removed Key
 

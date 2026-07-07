@@ -1,7 +1,8 @@
 use super::{
     canonicalize_dispatch_route_str, extract_auth_route_for_domain, AuthorizationFailure,
     AuthorizationPolicy, AuthorizationTargets, ChannelId, Cow, DispatchDomain,
-    DomainAuthorizationSpec, DomainDispatchRequest, IngressDecision, RuntimeIngress,
+    DomainAuthorizationSpec, DomainDispatchPayload, DomainDispatchRequest, IngressDecision,
+    RuntimeIngress,
 };
 use crate::observability as obs;
 use bytes::Bytes;
@@ -51,8 +52,7 @@ impl DomainFrameDispatcher<'_> {
         channel_id: ChannelId,
         route_family: crate::runtime::routing::RouteFamily,
         msg_type: crate::protocol::tlv::MessageType,
-        should_preserve_payload: bool,
-        message_payload: &mut Option<Bytes>,
+        payload: DomainDispatchPayload<'_>,
     ) -> Result<(), IngressDecision> {
         let Some(router) = &self.ingress.router else {
             return Ok(());
@@ -77,10 +77,9 @@ impl DomainFrameDispatcher<'_> {
                     domain: spec.domain,
                     policy: spec.policy,
                     msg_type,
-                    preserve_payload_for_handler: should_preserve_payload,
+                    payload,
                 };
-                self.authorize_and_dispatch_domain_frame(&dispatch, message_payload)
-                    .await
+                self.authorize_and_dispatch_domain_frame(dispatch).await
             }
             Ok(None) => Ok(()),
         }
@@ -345,23 +344,28 @@ impl DomainFrameDispatcher<'_> {
 
     async fn dispatch_domain_frame(
         &self,
-        dispatch: &DomainDispatchRequest<'_>,
-        message_payload: &mut Option<Bytes>,
+        dispatch: DomainDispatchRequest<'_>,
     ) -> Result<(), IngressDecision> {
-        let route = dispatch.domain.inbound_route().clone();
-        let addr = crate::runtime::routing::RouteAddress::new(dispatch.route_family, route);
-        let dispatch_payload = if dispatch.preserve_payload_for_handler {
-            message_payload.as_ref().unwrap().clone()
-        } else {
-            message_payload.take().unwrap()
-        };
+        let DomainDispatchRequest {
+            router,
+            session_id,
+            channel_id,
+            route_family,
+            domain,
+            policy: _,
+            msg_type,
+            payload,
+        } = dispatch;
+        let route = domain.inbound_route().clone();
+        let addr = crate::runtime::routing::RouteAddress::new(route_family, route);
+        let dispatch_payload = payload.into_dispatch_bytes();
         let source = crate::runtime::routing::RouteAddress::new(
-            dispatch.route_family,
-            self.cached_session_inbox_route(dispatch.session_id),
+            route_family,
+            self.cached_session_inbox_route(session_id),
         );
         let descriptor =
             crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::descriptor_for_domain(
-                dispatch.domain,
+                domain,
             );
 
         let backpressure_started_at = Instant::now();
@@ -371,10 +375,10 @@ impl DomainFrameDispatcher<'_> {
         loop {
             let envelope = descriptor.build_request_envelope(
                 crate::api::runtime_ingress::domain_registry::DomainEnvelopeBuildRequest {
-                    session_id: dispatch.session_id,
-                    channel_id: dispatch.channel_id,
-                    route_family: dispatch.route_family,
-                    msg_type: dispatch.msg_type,
+                    session_id,
+                    channel_id,
+                    route_family,
+                    msg_type,
                     payload: dispatch_payload.clone(),
                     source: source.clone(),
                     destination: addr.clone(),
@@ -382,18 +386,16 @@ impl DomainFrameDispatcher<'_> {
             );
 
             debug!(
-                session_id = dispatch.session_id,
-                domain = dispatch.domain.as_str(),
-                msg_type = dispatch.msg_type.as_u16(),
+                session_id = session_id,
+                domain = domain.as_str(),
+                msg_type = msg_type.as_u16(),
                 route = %addr,
                 source = ?source,
                 "Ingress: routing envelope to domain"
             );
 
             let dispatch_start = Instant::now();
-            let dispatch_result = dispatch
-                .router
-                .route_to_domain(dispatch.domain.as_str(), envelope);
+            let dispatch_result = router.route_to_domain(domain.as_str(), envelope);
             if let Ok(collector) = std::panic::catch_unwind(crate::observability::metrics) {
                 collector.histogram_observe_us(
                     obs::METRIC_INGRESS_DOMAIN_DISPATCH_LATENCY,
@@ -417,8 +419,8 @@ impl DomainFrameDispatcher<'_> {
                 Err(error) if Self::domain_dispatch_backpressured(&error) => {
                     Self::record_backpressure_exhausted(backpressure_started_at);
                     warn!(
-                        session_id = dispatch.session_id,
-                        domain = dispatch.domain.as_str(),
+                        session_id = session_id,
+                        domain = domain.as_str(),
                         retries = retries,
                         waited_us = Self::elapsed_micros_u64(backpressure_started_at),
                         "Ingress: domain dispatch backpressure"
@@ -427,8 +429,8 @@ impl DomainFrameDispatcher<'_> {
                 }
                 Err(error) => {
                     error!(
-                        session_id = dispatch.session_id,
-                        domain = dispatch.domain.as_str(),
+                        session_id = session_id,
+                        domain = domain.as_str(),
                         error = %error,
                         "Ingress: router.route failed for domain dispatch"
                     );
@@ -442,8 +444,7 @@ impl DomainFrameDispatcher<'_> {
 
     async fn authorize_and_dispatch_domain_frame(
         &self,
-        dispatch: &DomainDispatchRequest<'_>,
-        message_payload: &mut Option<Bytes>,
+        dispatch: DomainDispatchRequest<'_>,
     ) -> Result<(), IngressDecision> {
         debug!(
             session_id = dispatch.session_id,
@@ -452,12 +453,11 @@ impl DomainFrameDispatcher<'_> {
             "Ingress: resolved domain for msg_type"
         );
 
-        let payload_ref = message_payload.as_deref().unwrap();
         let auth_route_start = Instant::now();
         let targets = match Self::resolve_authorization_targets(
             dispatch.domain,
             dispatch.msg_type,
-            payload_ref,
+            dispatch.payload.as_bytes(),
             dispatch.policy,
         ) {
             Ok((targets, access)) => (targets, access),
@@ -470,8 +470,8 @@ impl DomainFrameDispatcher<'_> {
                 );
                 if dispatch.domain == DispatchDomain::Rpc && dispatch.msg_type.as_u16() == 302 {
                     return self.send_rpc_submit_error_response(
-                        dispatch,
-                        payload_ref,
+                        &dispatch,
+                        dispatch.payload.as_bytes(),
                         crate::protocol::error_codes::rpc::ERR_BACKEND_ERROR,
                         "RPC request parse failed",
                     );
@@ -490,22 +490,24 @@ impl DomainFrameDispatcher<'_> {
             );
         }
 
-        self.authorize_domain_targets(
+        if let Err(failure) = self.authorize_domain_targets(
             dispatch.session_id,
             dispatch.msg_type,
             dispatch.domain,
             access,
             &targets,
-        )
-        .map_err(|failure| match failure {
-            AuthorizationFailure::MissingSessionActor => {
-                IngressDecision::Close("unauthorized: session actor missing".to_string())
-            }
-            AuthorizationFailure::PermissionDenied => self
-                .send_unauthorized_domain_response(dispatch, payload_ref)
-                .map_or_else(|decision| decision, |()| IngressDecision::Accept),
-        })?;
-        self.dispatch_domain_frame(dispatch, message_payload).await
+        ) {
+            return Err(match failure {
+                AuthorizationFailure::MissingSessionActor => {
+                    IngressDecision::Close("unauthorized: session actor missing".to_string())
+                }
+                AuthorizationFailure::PermissionDenied => self
+                    .send_unauthorized_domain_response(&dispatch, dispatch.payload.as_bytes())
+                    .map_or_else(|decision| decision, |()| IngressDecision::Accept),
+            });
+        }
+
+        self.dispatch_domain_frame(dispatch).await
     }
 
     pub(super) fn resolve_authorization_targets(

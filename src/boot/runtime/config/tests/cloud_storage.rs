@@ -47,7 +47,7 @@ fn should_ignore_storage_path_given_cloud_cache_path() {
     with_storage_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
-            ("FITZ_STORAGE_PROVIDER", "peas-s3"),
+            ("FITZ_STORAGE_PROVIDER", "sqrzl-s3"),
             ("FITZ_STORAGE_BUCKET", "   "),
             ("FITZ_STORAGE_PATH", "/legacy/path"),
             ("FITZ_STORAGE_CACHE_PATH", "/cache/path"),
@@ -63,7 +63,7 @@ fn should_ignore_storage_path_given_cloud_cache_path() {
             assert_eq!(cloud.local_cache_path, "/cache/path");
             assert_eq!(
                 cloud.provider_config.bucket_or_container(),
-                DEFAULT_PEAS_BUCKET
+                DEFAULT_SQRZL_EMULATOR_BUCKET
             );
         },
     );
@@ -75,7 +75,7 @@ fn should_map_cloud_durability_to_write_options() {
     with_storage_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
-            ("FITZ_STORAGE_PROVIDER", "peas-s3"),
+            ("FITZ_STORAGE_PROVIDER", "sqrzl-s3"),
             ("FITZ_STORAGE_CLOUD_DURABILITY", "strict"),
         ],
         || {
@@ -97,7 +97,7 @@ fn should_accept_background_cloud_durability() {
     with_storage_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
-            ("FITZ_STORAGE_PROVIDER", "peas-s3"),
+            ("FITZ_STORAGE_PROVIDER", "sqrzl-s3"),
             ("FITZ_STORAGE_CLOUD_DURABILITY", "background"),
         ],
         || {
@@ -121,7 +121,7 @@ fn should_reject_invalid_cloud_durability() {
     with_storage_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
-            ("FITZ_STORAGE_PROVIDER", "peas-s3"),
+            ("FITZ_STORAGE_PROVIDER", "sqrzl-s3"),
             ("FITZ_STORAGE_CLOUD_DURABILITY", "stict"),
         ],
         || {
@@ -164,7 +164,7 @@ fn should_map_queue_strict_write_policy_to_cloud_strict() {
     with_storage_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
-            ("FITZ_STORAGE_PROVIDER", "peas-s3"),
+            ("FITZ_STORAGE_PROVIDER", "sqrzl-s3"),
             ("FITZ_QUEUE_WRITE_POLICY", "strict"),
         ],
         || {

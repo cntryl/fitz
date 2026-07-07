@@ -3,6 +3,9 @@
 /// Debounce interval for watermark/commit notifications (milliseconds)
 pub const NOTICE_DEBOUNCE_MS: u64 = 25;
 
+/// Retry interval for failed watermark persistence attempts (milliseconds)
+pub const WATERMARK_PERSIST_RETRY_MS: u64 = 25;
+
 /// Default lease size for resource-level offsets
 pub const DEFAULT_LEASE_SIZE: u64 = 10_000;
 

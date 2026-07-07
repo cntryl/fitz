@@ -462,11 +462,11 @@ fn should_reject_blank_provider_given_cloud_mode() {
 
 #[test]
 #[serial]
-fn should_parse_peas_s3_defaults_given_explicit_provider() {
+fn should_parse_sqrzl_s3_defaults_given_explicit_provider() {
     with_storage_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
-            ("FITZ_STORAGE_PROVIDER", "peas-s3"),
+            ("FITZ_STORAGE_PROVIDER", "sqrzl-s3"),
         ],
         || {
             // Arrange
@@ -476,7 +476,7 @@ fn should_parse_peas_s3_defaults_given_explicit_provider() {
             let cloud = cloud_config(&config);
 
             // Assert
-            assert_eq!(cloud.provider_name, "peas-s3");
+            assert_eq!(cloud.provider_name, "sqrzl-s3");
             assert_eq!(cloud.local_cache_path, DEFAULT_CLOUD_CACHE_PATH);
             assert_eq!(cloud.prefix, None);
             match &cloud.provider_config {
@@ -487,17 +487,17 @@ fn should_parse_peas_s3_defaults_given_explicit_provider() {
                     credentials,
                     ..
                 } => {
-                    assert_eq!(bucket, DEFAULT_PEAS_BUCKET);
-                    assert_eq!(endpoint, DEFAULT_PEAS_ENDPOINT);
+                    assert_eq!(bucket, DEFAULT_SQRZL_EMULATOR_BUCKET);
+                    assert_eq!(endpoint, DEFAULT_SQRZL_EMULATOR_ENDPOINT);
                     assert!(*path_style);
                     assert!(matches!(
                         credentials,
                         cntryl_midge::S3CredentialSource::Static { access_key, secret_key, .. }
-                            if access_key == DEFAULT_PEAS_ACCESS_KEY
-                                && secret_key == DEFAULT_PEAS_SECRET_KEY
+                            if access_key == DEFAULT_SQRZL_EMULATOR_ACCESS_KEY
+                                && secret_key == DEFAULT_SQRZL_EMULATOR_SECRET_KEY
                     ));
                 }
-                other => panic!("expected Peas S3-compatible config, got {other:?}"),
+                other => panic!("expected Sqrzl emulator S3-compatible config, got {other:?}"),
             }
         },
     );
@@ -505,11 +505,11 @@ fn should_parse_peas_s3_defaults_given_explicit_provider() {
 
 #[test]
 #[serial]
-fn should_parse_peas_azure_defaults_given_explicit_provider() {
+fn should_parse_sqrzl_azure_defaults_given_explicit_provider() {
     with_storage_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
-            ("FITZ_STORAGE_PROVIDER", "peas-azure"),
+            ("FITZ_STORAGE_PROVIDER", "sqrzl-azure"),
             ("FITZ_STORAGE_BUCKET", "ignored-by-azure"),
         ],
         || {
@@ -520,7 +520,7 @@ fn should_parse_peas_azure_defaults_given_explicit_provider() {
             let cloud = cloud_config(&config);
 
             // Assert
-            assert_eq!(cloud.provider_name, "peas-azure");
+            assert_eq!(cloud.provider_name, "sqrzl-azure");
             assert!(matches!(
                 &cloud.provider_config,
                 cntryl_midge::CloudProviderConfig::AzureBlob {
@@ -528,9 +528,9 @@ fn should_parse_peas_azure_defaults_given_explicit_provider() {
                     container,
                     credential: cntryl_midge::AzureCredentialSource::SharedKey { account_key },
                     ..
-                } if account == DEFAULT_PEAS_ACCESS_KEY
-                    && container == DEFAULT_PEAS_BUCKET
-                    && account_key == DEFAULT_PEAS_SECRET_KEY
+                } if account == DEFAULT_SQRZL_EMULATOR_ACCESS_KEY
+                    && container == DEFAULT_SQRZL_EMULATOR_BUCKET
+                    && account_key == DEFAULT_SQRZL_EMULATOR_SECRET_KEY
             ));
         },
     );
@@ -538,11 +538,11 @@ fn should_parse_peas_azure_defaults_given_explicit_provider() {
 
 #[test]
 #[serial]
-fn should_parse_peas_gcs_defaults_given_explicit_provider() {
+fn should_parse_sqrzl_gcs_defaults_given_explicit_provider() {
     with_storage_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
-            ("FITZ_STORAGE_PROVIDER", "peas-gcs"),
+            ("FITZ_STORAGE_PROVIDER", "sqrzl-gcs"),
         ],
         || {
             // Arrange
@@ -552,7 +552,7 @@ fn should_parse_peas_gcs_defaults_given_explicit_provider() {
             let cloud = cloud_config(&config);
 
             // Assert
-            assert_eq!(cloud.provider_name, "peas-gcs");
+            assert_eq!(cloud.provider_name, "sqrzl-gcs");
             assert!(matches!(
                 &cloud.provider_config,
                 cntryl_midge::CloudProviderConfig::Gcs {
@@ -561,10 +561,10 @@ fn should_parse_peas_gcs_defaults_given_explicit_provider() {
                     api: cntryl_midge::GcsApiStyle::Xml,
                     credential: cntryl_midge::GcsCredentialSource::HmacKey { access_id, secret, },
                     ..
-                } if bucket == DEFAULT_PEAS_BUCKET
-                    && project_id == "peas"
-                    && access_id == DEFAULT_PEAS_ACCESS_KEY
-                    && secret == DEFAULT_PEAS_SECRET_KEY
+                } if bucket == DEFAULT_SQRZL_EMULATOR_BUCKET
+                    && project_id == "sqrzl"
+                    && access_id == DEFAULT_SQRZL_EMULATOR_ACCESS_KEY
+                    && secret == DEFAULT_SQRZL_EMULATOR_SECRET_KEY
             ));
         },
     );
@@ -657,8 +657,15 @@ fn should_parse_s3_family_vendor_providers_given_cloud_env() {
             // Assert
             assert!(matches!(
                 &cloud.provider_config,
-                cntryl_midge::CloudProviderConfig::Minio { bucket, endpoint, .. }
-                    if bucket == "fitz-minio" && endpoint == "http://minio:9000"
+                cntryl_midge::CloudProviderConfig::S3Compatible {
+                    bucket,
+                    region,
+                    endpoint,
+                    path_style: true,
+                    credentials: cntryl_midge::S3CredentialSource::Environment,
+                } if bucket == "fitz-minio"
+                    && region == "us-east-1"
+                    && endpoint == "http://minio:9000"
             ));
         },
     );
@@ -680,8 +687,15 @@ fn should_parse_s3_family_vendor_providers_given_cloud_env() {
             // Assert
             assert!(matches!(
                 &cloud.provider_config,
-                cntryl_midge::CloudProviderConfig::Wasabi { bucket, region, .. }
-                    if bucket == "fitz-wasabi" && region == "us-east-1"
+                cntryl_midge::CloudProviderConfig::S3Compatible {
+                    bucket,
+                    region,
+                    endpoint,
+                    path_style: true,
+                    credentials: cntryl_midge::S3CredentialSource::Environment,
+                } if bucket == "fitz-wasabi"
+                    && region == "us-east-1"
+                    && endpoint == "https://s3.us-east-1.wasabisys.com"
             ));
         },
     );
@@ -705,15 +719,16 @@ fn should_parse_s3_family_vendor_providers_given_cloud_env() {
             // Assert
             assert!(matches!(
                 &cloud.provider_config,
-                cntryl_midge::CloudProviderConfig::OciS3Compatible {
+                cntryl_midge::CloudProviderConfig::S3Compatible {
                     bucket,
-                    namespace,
                     region,
+                    endpoint,
                     path_style: true,
-                    ..
+                    credentials: cntryl_midge::S3CredentialSource::Environment,
                 } if bucket == "fitz-oci"
-                    && namespace == "fitzns"
                     && region == "us-phoenix-1"
+                    && endpoint
+                        == "https://fitzns.compat.objectstorage.us-phoenix-1.oraclecloud.com"
             ));
         },
     );

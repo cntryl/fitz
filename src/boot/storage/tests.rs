@@ -135,8 +135,8 @@ fn should_apply_cloud_throughput_defaults_when_memtable_is_auto() {
     // Arrange
     let mut config = BootConfig::default().with_storage_mode(StorageMode::CloudBacked(Box::new(
         CloudStorageConfig {
-            provider_name: "peas-s3".to_string(),
-            provider_config: cntryl_midge::CloudProviderConfig::peas_s3("fitz-cost-tuning"),
+            provider_name: "sqrzl-s3".to_string(),
+            provider_config: sqrzl_s3_provider("fitz-cost-tuning"),
             prefix: Some("tests".to_string()),
             local_cache_path: "./.fitz-cloud-cache".to_string(),
         },
@@ -169,8 +169,8 @@ fn should_respect_cloud_memtable_override_before_tuning() {
     let config = BootConfig::default()
         .with_storage_memtable_bytes(memtable_bytes)
         .with_storage_mode(StorageMode::CloudBacked(Box::new(CloudStorageConfig {
-            provider_name: "peas-s3".to_string(),
-            provider_config: cntryl_midge::CloudProviderConfig::peas_s3("fitz-cost-tuning"),
+            provider_name: "sqrzl-s3".to_string(),
+            provider_config: sqrzl_s3_provider("fitz-cost-tuning"),
             prefix: Some("tests".to_string()),
             local_cache_path: tempdir.path().join("cache").to_string_lossy().to_string(),
         })));
@@ -203,8 +203,8 @@ fn should_reduce_cloud_wal_flush_churn_with_throughput_tuning_on_cloud_simulated
 
     let mut config = BootConfig::default().with_storage_mode(StorageMode::CloudBacked(Box::new(
         CloudStorageConfig {
-            provider_name: "peas-s3".to_string(),
-            provider_config: cntryl_midge::CloudProviderConfig::peas_s3("fitz-cost-tuning"),
+            provider_name: "sqrzl-s3".to_string(),
+            provider_config: sqrzl_s3_provider("fitz-cost-tuning"),
             prefix: Some("tests".to_string()),
             local_cache_path: tempdir.path().join("cache").to_string_lossy().to_string(),
         },
@@ -352,12 +352,13 @@ fn should_not_retry_storage_open_error_given_non_lease_failure() {
 }
 
 #[test]
-fn should_skip_peas_test_for_transport_errors() {
+fn should_skip_sqrzl_test_for_transport_errors() {
     // Arrange
-    let error = "prepare Peas namespace failed: error sending request for url (http://127.0.0.1:9000/fitz-peas-s3)";
+    let error =
+        "prepare Sqrzl namespace failed: error sending request for url (http://127.0.0.1:9000/fitz-sqrzl-s3)";
 
     // Act
-    let should_skip = should_skip_peas_test(error);
+    let should_skip = should_skip_sqrzl_test(error);
 
     // Assert
     assert!(
@@ -371,8 +372,8 @@ fn should_reject_cloud_storage_without_bucket() {
     // Arrange
     let config = BootConfig::default().with_storage_mode(StorageMode::CloudBacked(Box::new(
         CloudStorageConfig {
-            provider_name: "peas-s3".to_string(),
-            provider_config: cntryl_midge::CloudProviderConfig::peas_s3(""),
+            provider_name: "sqrzl-s3".to_string(),
+            provider_config: sqrzl_s3_provider(""),
             prefix: Some("prod".to_string()),
             local_cache_path: "./.fitz-cloud-cache".to_string(),
         },
@@ -421,18 +422,18 @@ async fn should_return_error_given_cloud_open_failure_when_called_inside_async_r
 }
 
 #[tokio::test]
-async fn should_recover_marker_from_peas_s3_after_cache_loss() {
+async fn should_recover_marker_from_sqrzl_s3_after_cache_loss() {
     // Arrange
-    let provider = cntryl_midge::CloudProviderConfig::peas_s3("fitz-peas-s3");
+    let provider = sqrzl_s3_provider("fitz-sqrzl-s3");
 
     // Act
-    let recovered = match recover_marker_from_peas("peas-s3", provider).await {
+    let recovered = match recover_marker_from_sqrzl("sqrzl-s3", provider).await {
         Ok(value) => value,
-        Err(error) if should_skip_peas_test(&error) => {
-            eprintln!("Skipping peas-s3 recovery test: {error}");
+        Err(error) if should_skip_sqrzl_test(&error) => {
+            eprintln!("Skipping sqrzl-s3 recovery test: {error}");
             return;
         }
-        Err(error) => panic!("peas-s3 recovery failed: {error}"),
+        Err(error) => panic!("sqrzl-s3 recovery failed: {error}"),
     };
 
     // Assert
@@ -440,18 +441,18 @@ async fn should_recover_marker_from_peas_s3_after_cache_loss() {
 }
 
 #[tokio::test]
-async fn should_recover_marker_from_peas_azure_after_cache_loss() {
+async fn should_recover_marker_from_sqrzl_azure_after_cache_loss() {
     // Arrange
-    let provider = cntryl_midge::CloudProviderConfig::peas_azure("fitz-peas-azure");
+    let provider = sqrzl_azure_provider("fitz-sqrzl-azure");
 
     // Act
-    let recovered = match recover_marker_from_peas("peas-azure", provider).await {
+    let recovered = match recover_marker_from_sqrzl("sqrzl-azure", provider).await {
         Ok(value) => value,
-        Err(error) if should_skip_peas_test(&error) => {
-            eprintln!("Skipping peas-azure recovery test: {error}");
+        Err(error) if should_skip_sqrzl_test(&error) => {
+            eprintln!("Skipping sqrzl-azure recovery test: {error}");
             return;
         }
-        Err(error) => panic!("peas-azure recovery failed: {error}"),
+        Err(error) => panic!("sqrzl-azure recovery failed: {error}"),
     };
 
     // Assert
@@ -459,18 +460,18 @@ async fn should_recover_marker_from_peas_azure_after_cache_loss() {
 }
 
 #[tokio::test]
-async fn should_recover_marker_from_peas_gcs_after_cache_loss() {
+async fn should_recover_marker_from_sqrzl_gcs_after_cache_loss() {
     // Arrange
-    let provider = cntryl_midge::CloudProviderConfig::peas_gcs("fitz-peas-gcs");
+    let provider = sqrzl_gcs_provider("fitz-sqrzl-gcs");
 
     // Act
-    let recovered = match recover_marker_from_peas("peas-gcs", provider).await {
+    let recovered = match recover_marker_from_sqrzl("sqrzl-gcs", provider).await {
         Ok(value) => value,
-        Err(error) if should_skip_peas_test(&error) => {
-            eprintln!("Skipping peas-gcs recovery test: {error}");
+        Err(error) if should_skip_sqrzl_test(&error) => {
+            eprintln!("Skipping sqrzl-gcs recovery test: {error}");
             return;
         }
-        Err(error) => panic!("peas-gcs recovery failed: {error}"),
+        Err(error) => panic!("sqrzl-gcs recovery failed: {error}"),
     };
 
     // Assert
@@ -493,7 +494,7 @@ fn exercise_cloud_burst(
         let key = format!("cloud-cost-key-{index:04}");
         tx.put(key.into_bytes(), value.to_vec(), None)
             .expect("write burst value");
-        tx.commit(WriteOptions::buffered())
+        tx.commit(WriteOptions::cloud_async())
             .expect("commit burst value");
     }
 
@@ -501,19 +502,19 @@ fn exercise_cloud_burst(
     engine.get_runtime_metrics().expect("runtime metrics")
 }
 
-async fn recover_marker_from_peas(
+async fn recover_marker_from_sqrzl(
     provider_name: &str,
     provider_config: cntryl_midge::CloudProviderConfig,
 ) -> Result<Option<Vec<u8>>, String> {
-    ensure_peas_namespace(&provider_config)
+    ensure_sqrzl_namespace(&provider_config)
         .await
-        .map_err(|error| format!("prepare Peas namespace failed: {error}"))?;
+        .map_err(|error| format!("prepare Sqrzl namespace failed: {error}"))?;
 
     let tempdir = TempDir::new().expect("tempdir");
     let prefix = format!("manual/{}/", uuid::Uuid::new_v4());
     let first_cache = tempdir.path().join("first-cache");
     let second_cache = tempdir.path().join("second-cache");
-    let first_config = peas_boot_config(
+    let first_config = sqrzl_boot_config(
         provider_name,
         provider_config.clone(),
         &prefix,
@@ -538,7 +539,7 @@ async fn recover_marker_from_peas(
     std::fs::remove_dir_all(first_cache)
         .map_err(|error| format!("delete first cloud cache: {error}"))?;
 
-    let second_config = peas_boot_config(provider_name, provider_config, &prefix, &second_cache);
+    let second_config = sqrzl_boot_config(provider_name, provider_config, &prefix, &second_cache);
     let reopened = init(&second_config)
         .await
         .map_err(|error| format!("reopen cloud store: {error}"))?;
@@ -548,7 +549,7 @@ async fn recover_marker_from_peas(
     Ok(read_marker(reopened.as_ref(), reopened_cf.id(), b"marker"))
 }
 
-fn should_skip_peas_test(error: &str) -> bool {
+fn should_skip_sqrzl_test(error: &str) -> bool {
     let lower = error.to_ascii_lowercase();
     lower.contains("connection refused")
         || lower.contains("error sending request")
@@ -562,7 +563,7 @@ fn should_skip_peas_test(error: &str) -> bool {
         || lower.contains("lease acquisition i/o error")
 }
 
-fn peas_boot_config(
+fn sqrzl_boot_config(
     provider_name: &str,
     provider_config: cntryl_midge::CloudProviderConfig,
     prefix: &str,
@@ -588,25 +589,24 @@ fn shutdown_store(store: Arc<cntryl_midge::Engine>) {
     engine.shutdown().expect("shutdown Midge");
 }
 
-async fn ensure_peas_namespace(provider: &cntryl_midge::CloudProviderConfig) -> Result<(), String> {
+async fn ensure_sqrzl_namespace(
+    provider: &cntryl_midge::CloudProviderConfig,
+) -> Result<(), String> {
     match provider {
         cntryl_midge::CloudProviderConfig::AwsS3 { .. } => Ok(()),
-        cntryl_midge::CloudProviderConfig::S3Compatible { bucket, .. }
-        | cntryl_midge::CloudProviderConfig::Minio { bucket, .. }
-        | cntryl_midge::CloudProviderConfig::Wasabi { bucket, .. }
-        | cntryl_midge::CloudProviderConfig::OciS3Compatible { bucket, .. } => {
-            ensure_peas_s3_bucket(bucket).await
+        cntryl_midge::CloudProviderConfig::S3Compatible { bucket, .. } => {
+            ensure_sqrzl_s3_bucket(bucket).await
         }
         cntryl_midge::CloudProviderConfig::Gcs { bucket, .. } => {
-            ensure_peas_gcs_bucket(bucket).await
+            ensure_sqrzl_gcs_bucket(bucket).await
         }
         cntryl_midge::CloudProviderConfig::AzureBlob { container, .. } => {
-            ensure_peas_azure_container(container).await
+            ensure_sqrzl_azure_container(container).await
         }
     }
 }
 
-async fn ensure_peas_s3_bucket(bucket: &str) -> Result<(), String> {
+async fn ensure_sqrzl_s3_bucket(bucket: &str) -> Result<(), String> {
     signed_s3_request("PUT", &format!("/{bucket}"), b"")
         .await
         .map(|_| ())
@@ -642,14 +642,14 @@ async fn signed_s3_request(method: &str, path: &str, body: &[u8]) -> Result<Vec<
         scope,
         hex::encode(Sha256::digest(canonical_request.as_bytes()))
     );
-    let k_date = hmac_sha256(format!("AWS{}", peas_secret_key()).as_bytes(), &date);
+    let k_date = hmac_sha256(format!("AWS{}", sqrzl_secret_key()).as_bytes(), &date);
     let k_region = hmac_sha256(&k_date, region);
     let k_service = hmac_sha256(&k_region, "s3");
     let k_signing = hmac_sha256(&k_service, "aws4_request");
     let signature = hex::encode(hmac_sha256(&k_signing, &string_to_sign));
     let authorization = format!(
         "AWS4-HMAC-SHA256 Credential={}/{}, SignedHeaders={}, Signature={}",
-        peas_access_key(),
+        sqrzl_access_key(),
         scope,
         signed_headers,
         signature
@@ -660,7 +660,7 @@ async fn signed_s3_request(method: &str, path: &str, body: &[u8]) -> Result<Vec<
         .map_err(|error| error.to_string())?
         .request(
             reqwest::Method::from_bytes(method.as_bytes()).map_err(|error| error.to_string())?,
-            format!("{}{}", peas_endpoint(), path),
+            format!("{}{}", sqrzl_endpoint(), path),
         )
         .header("host", host)
         .header("x-amz-content-sha256", payload_hash)
@@ -682,7 +682,7 @@ fn hmac_sha256(key: &[u8], data: &str) -> Vec<u8> {
     mac.finalize().into_bytes().to_vec()
 }
 
-async fn ensure_peas_gcs_bucket(bucket: &str) -> Result<(), String> {
+async fn ensure_sqrzl_gcs_bucket(bucket: &str) -> Result<(), String> {
     signed_gcs_request("PUT", &format!("/{bucket}"), "", b"")
         .await
         .map(|_| ())
@@ -701,7 +701,7 @@ async fn signed_gcs_request(
         .format("%a, %d %b %Y %H:%M:%S GMT")
         .to_string();
     let string_to_sign = format!("{method}\n\n{content_type}\n{date}\n{path}");
-    let mut mac = Hmac::<Sha1>::new_from_slice(peas_secret_key().as_bytes())
+    let mut mac = Hmac::<Sha1>::new_from_slice(sqrzl_secret_key().as_bytes())
         .map_err(|error| error.to_string())?;
     mac.update(string_to_sign.as_bytes());
     let signature = base64::Engine::encode(
@@ -714,12 +714,12 @@ async fn signed_gcs_request(
         .map_err(|error| error.to_string())?
         .request(
             reqwest::Method::from_bytes(method.as_bytes()).map_err(|error| error.to_string())?,
-            format!("{}{}", peas_endpoint(), path),
+            format!("{}{}", sqrzl_endpoint(), path),
         )
         .header("date", date)
         .header(
             "authorization",
-            format!("GOOG1 {}:{signature}", peas_access_key()),
+            format!("GOOG1 {}:{signature}", sqrzl_access_key()),
         )
         .body(body.to_vec());
     if !content_type.is_empty() {
@@ -729,10 +729,10 @@ async fn signed_gcs_request(
     cloud_setup_response("GCS", method, path, response).await
 }
 
-async fn ensure_peas_azure_container(container: &str) -> Result<(), String> {
+async fn ensure_sqrzl_azure_container(container: &str) -> Result<(), String> {
     signed_azure_request(
         "PUT",
-        &format!("/{}/{container}", peas_access_key()),
+        &format!("/{}/{container}", sqrzl_access_key()),
         "restype=container",
         b"",
         vec![],
@@ -776,7 +776,7 @@ async fn signed_azure_request(
         body.len().to_string()
     };
     let canonical_headers = canonicalize_x_ms_headers(&headers);
-    let mut canonical_resource = format!("/{}{}", peas_access_key(), path);
+    let mut canonical_resource = format!("/{}{}", sqrzl_access_key(), path);
     if !query.is_empty() {
         let mut query_pairs = query
             .split('&')
@@ -809,9 +809,9 @@ async fn signed_azure_request(
     .join("\n");
     let key = base64::Engine::decode(
         &base64::engine::general_purpose::STANDARD,
-        peas_secret_key(),
+        sqrzl_secret_key(),
     )
-    .unwrap_or_else(|_| peas_secret_key().as_bytes().to_vec());
+    .unwrap_or_else(|_| sqrzl_secret_key().as_bytes().to_vec());
     let mut mac = Hmac::<Sha256>::new_from_slice(&key).map_err(|error| error.to_string())?;
     mac.update(string_to_sign.as_bytes());
     let signature = base64::Engine::encode(
@@ -819,9 +819,9 @@ async fn signed_azure_request(
         mac.finalize().into_bytes(),
     );
     let url = if query.is_empty() {
-        format!("{}{}", peas_endpoint(), path)
+        format!("{}{}", sqrzl_endpoint(), path)
     } else {
-        format!("{}{}?{query}", peas_endpoint(), path)
+        format!("{}{}?{query}", sqrzl_endpoint(), path)
     };
     let mut request = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
@@ -833,7 +833,7 @@ async fn signed_azure_request(
         )
         .header(
             "authorization",
-            format!("SharedKey {}:{signature}", peas_access_key()),
+            format!("SharedKey {}:{signature}", sqrzl_access_key()),
         )
         .body(body.to_vec());
     for (name, value) in headers {
@@ -894,12 +894,43 @@ async fn cloud_setup_response(
     }
 }
 
-fn peas_endpoint() -> &'static str {
+fn sqrzl_s3_provider(bucket: &str) -> cntryl_midge::CloudProviderConfig {
+    cntryl_midge::CloudProviderConfig::s3_compatible_static(
+        bucket,
+        sqrzl_endpoint(),
+        sqrzl_access_key(),
+        sqrzl_secret_key(),
+    )
+}
+
+fn sqrzl_azure_provider(container: &str) -> cntryl_midge::CloudProviderConfig {
+    cntryl_midge::CloudProviderConfig::AzureBlob {
+        account: sqrzl_access_key().to_string(),
+        container: container.to_string(),
+        endpoint: Some(sqrzl_endpoint().to_string()),
+        credential: cntryl_midge::AzureCredentialSource::shared_key(sqrzl_secret_key()),
+    }
+}
+
+fn sqrzl_gcs_provider(bucket: &str) -> cntryl_midge::CloudProviderConfig {
+    cntryl_midge::CloudProviderConfig::Gcs {
+        bucket: bucket.to_string(),
+        project_id: "sqrzl".to_string(),
+        endpoint: Some(sqrzl_endpoint().to_string()),
+        api: cntryl_midge::GcsApiStyle::Xml,
+        credential: cntryl_midge::GcsCredentialSource::hmac_key(
+            sqrzl_access_key(),
+            sqrzl_secret_key(),
+        ),
+    }
+}
+
+fn sqrzl_endpoint() -> &'static str {
     "http://127.0.0.1:9000"
 }
-fn peas_access_key() -> &'static str {
+fn sqrzl_access_key() -> &'static str {
     "admin"
 }
-fn peas_secret_key() -> &'static str {
-    "easy-peasy"
+fn sqrzl_secret_key() -> &'static str {
+    "sqrzl-secret"
 }

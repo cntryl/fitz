@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -260,6 +261,85 @@ fn should_keep_domain_actor_mailbox_capacity_centralized() {
     );
 }
 
+#[test]
+fn should_document_all_rpc_error_codes_in_client_spec() {
+    // Arrange
+    let repo_root = repo_root();
+    let error_codes = repo_root
+        .join("src")
+        .join("protocol")
+        .join("error_codes.rs");
+    let client_spec = repo_root
+        .join("docs")
+        .join("clients")
+        .join("spec")
+        .join("queue-rpc-kv.md");
+    let constants = rpc_error_constants(&error_codes);
+    let documented_rows = rpc_error_rows_from_markdown(&client_spec);
+
+    // Act
+    let missing_rows = constants
+        .iter()
+        .filter(|row| !documented_rows.contains(*row))
+        .map(|(code, name)| format!("{code} {name} missing from docs/clients/spec/queue-rpc-kv.md"))
+        .collect::<Vec<_>>();
+    let report = format_violation_report(&missing_rows);
+
+    // Assert
+    assert!(
+        report.is_empty(),
+        "RPC client spec must list every RPC error code/name from src/protocol/error_codes.rs:\n{report}"
+    );
+}
+
+#[test]
+fn should_keep_runtime_ingress_payload_dispatch_free_of_payload_unwraps() {
+    // Arrange
+    let repo_root = repo_root();
+    let files = [
+        repo_root
+            .join("src")
+            .join("api")
+            .join("runtime_ingress")
+            .join("trait_impls.rs"),
+        repo_root
+            .join("src")
+            .join("api")
+            .join("runtime_ingress")
+            .join("domain_frame_dispatcher.rs"),
+    ];
+
+    // Act
+    let violations = files
+        .iter()
+        .flat_map(|path| {
+            let relative_path = relative_display_path(&repo_root, path);
+            read_source_file(path)
+                .lines()
+                .enumerate()
+                .filter(|(_, line)| line.contains("payload") && line.contains(".unwrap()"))
+                .map({
+                    let relative_path = relative_path.clone();
+                    move |(line_index, _)| {
+                        format!(
+                            "{}:{} contains a payload unwrap invariant",
+                            relative_path,
+                            line_index + 1
+                        )
+                    }
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let report = format_violation_report(&violations);
+
+    // Assert
+    assert!(
+        report.is_empty(),
+        "runtime ingress payload dispatch must stay free of payload unwrap invariants:\n{report}"
+    );
+}
+
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
@@ -492,6 +572,69 @@ fn report_for_patterns_with_allowed(
 fn read_source_file(path: &Path) -> String {
     fs::read_to_string(path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()))
+}
+
+fn rpc_error_constants(path: &Path) -> Vec<(u16, String)> {
+    let mut in_rpc_section = false;
+    let mut rows = Vec::new();
+
+    for line in read_source_file(path).lines() {
+        let trimmed = line.trim();
+        if trimmed == "pub mod rpc {" {
+            in_rpc_section = true;
+            continue;
+        }
+        if in_rpc_section && trimmed == "}" {
+            break;
+        }
+        if !in_rpc_section || !trimmed.starts_with("pub const ") {
+            continue;
+        }
+
+        let definition = &trimmed["pub const ".len()..];
+        let Some((name, value_suffix)) = definition.split_once(": u16 = ") else {
+            continue;
+        };
+        let digits = value_suffix
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect::<String>();
+        if let Ok(code) = digits.parse::<u16>() {
+            rows.push((code, name.to_string()));
+        }
+    }
+
+    rows
+}
+
+fn rpc_error_rows_from_markdown(path: &Path) -> BTreeSet<(u16, String)> {
+    read_source_file(path)
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if !trimmed.starts_with('|') {
+                return None;
+            }
+
+            let columns = trimmed
+                .trim_matches('|')
+                .split('|')
+                .map(str::trim)
+                .collect::<Vec<_>>();
+            if columns.len() < 2 {
+                return None;
+            }
+
+            let Ok(code) = columns[0].parse::<u16>() else {
+                return None;
+            };
+            if !(6001..=6010).contains(&code) {
+                return None;
+            }
+
+            Some((code, columns[1].to_string()))
+        })
+        .collect()
 }
 
 fn relative_display_path(repo_root: &Path, path: &Path) -> String {

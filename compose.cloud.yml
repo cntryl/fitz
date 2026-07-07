@@ -1,7 +1,7 @@
 #
-# Fitz Message Broker + Peas - local development only
+# Fitz Message Broker + Sqrzl Emulator - local development only
 #
-# This file is a loopback-only example for local development with the Peas emulator.
+# This file is a loopback-only example for local development with sqrzl-emulator.
 # It is not a production deployment manifest.
 # Cloud-backed local brokers may restart briefly while writer leases settle;
 # wait for /readyz instead of expecting immediate first-boot readiness.
@@ -19,31 +19,31 @@ x-broker-common: &broker-common
 
 x-broker-common-env: &broker-common-env
   FITZ_STORAGE_MODE: "cloud"
-  FITZ_STORAGE_PROVIDER: "${FITZ_PEAS_PROVIDER:-peas-s3}"
-  FITZ_STORAGE_ENDPOINT: "http://peas:9000"
+  FITZ_STORAGE_PROVIDER: "${FITZ_SQRZL_PROVIDER:-sqrzl-s3}"
+  FITZ_STORAGE_ENDPOINT: "http://sqrzl:9000"
   FITZ_STORAGE_CLOUD_DURABILITY: "${FITZ_STORAGE_CLOUD_DURABILITY:-background}"
   RUST_LOG: "info,fitz=trace"
 
 services:
-  peas:
-    container_name: peas
-    hostname: peas
-    image: ghcr.io/sqrzl/peas-emulator:latest
+  sqrzl:
+    container_name: sqrzl
+    hostname: sqrzl
+    image: sqrzl/sqrzl-emulator:latest
     ports:
       - "127.0.0.1:9000:9000"
       - "127.0.0.1:9001:9001"
     environment:
-      BLOBS_PATH: /app/blobs
-      ACCESS_KEY_ID: admin
-      SECRET_ACCESS_KEY: easy-peasy
+      SQRZL_BLOBS_PATH: /app/blobs
+      SQRZL_ACCESS_KEY_ID: admin
+      SQRZL_SECRET_ACCESS_KEY: sqrzl-secret
     volumes:
-      - peas_blobs:/app/blobs
+      - sqrzl_blobs:/app/blobs
 
   fitz-auth:
     <<: *broker-common
     container_name: fitz-auth
     depends_on:
-      - peas
+      - sqrzl
     ports:
       - "127.0.0.1:${FITZ_AUTH_HOST_HTTP_PORT:-4090}:${FITZ_AUTH_HTTP_PORT:-4090}"
       - "127.0.0.1:${FITZ_AUTH_HOST_TCP_PORT:-4091}:${FITZ_AUTH_TCP_PORT:-4091}"
@@ -66,7 +66,7 @@ services:
     <<: *broker-common
     container_name: fitz-anon
     depends_on:
-      - peas
+      - sqrzl
     ports:
       - "127.0.0.1:${FITZ_ANON_HOST_HTTP_PORT:-4190}:${FITZ_ANON_HTTP_PORT:-4090}"
       - "127.0.0.1:${FITZ_ANON_HOST_TCP_PORT:-4191}:${FITZ_ANON_TCP_PORT:-4091}"
@@ -82,4 +82,4 @@ services:
       FITZ_STORAGE_CACHE_PATH: "/tmp/fitz-cloud-cache/anon"
 
 volumes:
-  peas_blobs:
+  sqrzl_blobs:

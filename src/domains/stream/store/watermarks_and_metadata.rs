@@ -4,6 +4,9 @@ use super::{
     Bytes, CompactResourcePageValue, RealmCounterValue, StreamStore, WatermarkValue,
 };
 
+#[cfg(test)]
+use super::{FAIL_NEXT_AREA_WATERMARK_PERSIST, FAIL_NEXT_REALM_WATERMARK_PERSIST};
+
 impl StreamStore {
     /// Get the current area watermark.
     ///
@@ -83,6 +86,20 @@ impl StreamStore {
         let value = WatermarkValue { watermark };
         txn.put(key, value.encode(), None)
             .map_err(|e| format!("txn put failed: {e:?}"))?;
+        #[cfg(test)]
+        {
+            let should_fail = FAIL_NEXT_AREA_WATERMARK_PERSIST.with(|cell| {
+                let should_fail = cell.get();
+                if should_fail {
+                    cell.set(false);
+                }
+                should_fail
+            });
+
+            if should_fail {
+                return Err("Injected area watermark persistence failure".to_string());
+            }
+        }
         let opts = cntryl_midge::WriteOptions::sync();
         txn.commit(opts)
             .map_err(|e| format!("midge commit error: {e:?}"))
@@ -164,6 +181,20 @@ impl StreamStore {
         let value = WatermarkValue { watermark };
         txn.put(key, value.encode(), None)
             .map_err(|e| format!("txn put failed: {e:?}"))?;
+        #[cfg(test)]
+        {
+            let should_fail = FAIL_NEXT_REALM_WATERMARK_PERSIST.with(|cell| {
+                let should_fail = cell.get();
+                if should_fail {
+                    cell.set(false);
+                }
+                should_fail
+            });
+
+            if should_fail {
+                return Err("Injected realm watermark persistence failure".to_string());
+            }
+        }
         let opts = cntryl_midge::WriteOptions::sync();
         txn.commit(opts)
             .map_err(|e| format!("midge commit error: {e:?}"))
@@ -227,6 +258,16 @@ impl StreamStore {
         self.ensure_layout_activation_for_family(family)?;
 
         self.get_last_resource_offset_promotion_frontier(family, realm, area, resource)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_next_area_watermark_persist_for_tests() {
+        FAIL_NEXT_AREA_WATERMARK_PERSIST.with(|cell| cell.set(true));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_next_realm_watermark_persist_for_tests() {
+        FAIL_NEXT_REALM_WATERMARK_PERSIST.with(|cell| cell.set(true));
     }
 
     pub(in crate::domains::stream::store) fn get_last_resource_offset_promotion_frontier(

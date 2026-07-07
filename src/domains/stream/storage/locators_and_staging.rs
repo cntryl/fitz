@@ -347,10 +347,9 @@ impl RealmLocatorValue {
 ///
 /// Panics if the in-memory test database cannot be created.
 pub fn create_test_db() -> std::sync::Arc<cntryl_midge::Engine> {
-    use cntryl_midge::testkit::MidgeOptions;
     use std::sync::Arc;
     Arc::new(
-        cntryl_midge::Engine::open_with_options(&MidgeOptions::default())
+        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
             .expect("create in-memory db"),
     )
 }

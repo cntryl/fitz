@@ -316,12 +316,16 @@ Error codes follow the format `XXYY` where:
 
 | Code | Name | Description | Retryable |
 |------|------|-------------|-----------|
-| 6001 | ERR_RPC_TIMEOUT | No response within timeout period | Yes (with backoff) |
-| 6002 | ERR_WORKER_NOT_FOUND | Worker disconnected or unregistered | Yes |
+| 6001 | ERR_RPC_TIMEOUT | Worker accepted the request but did not finish before timeout | Yes, if safe (with backoff) |
+| 6002 | ERR_WORKER_NOT_FOUND | Assigned worker disconnected or unregistered before completion | Yes, if safe (with backoff) |
 | 6003 | ERR_RPC_BACKPRESSURE | RPC queue at capacity (backpressure) | Yes (with backoff) |
 | 6004 | ERR_ROUTE_NOT_REGISTERED | No workers registered for route (AC-RPC-003) | Yes (with backoff) |
-| 6005 | ERR_CORRELATION_NOT_FOUND | Correlation ID not found (orphaned response) | No |
+| 6005 | ERR_CORRELATION_NOT_FOUND | Response, ACK, or cancellation referenced an unknown or finished correlation | No |
+| 6006 | ERR_RPC_INVALID_SEQUENCE | Response chunks did not start at sequence 0 or advance contiguously | No |
+| 6007 | ERR_RPC_DUPLICATE_CORRELATION | Caller reused a correlation ID that is still live | Only with a new correlation ID if safe |
+| 6008 | ERR_RPC_WRONG_WORKER | Response or ACK came from a worker that does not own the request | No |
 | 6009 | ERR_UNAUTHORIZED | Permission denied for RPC operation | No |
+| 6010 | ERR_BACKEND_ERROR | Broker-side parse or backend failure while handling the RPC | Only when the error text indicates a transient backend or infrastructure failure |
 
 ### Schedule Domain (7000-7999)
 

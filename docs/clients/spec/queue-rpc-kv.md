@@ -468,11 +468,18 @@ Every operation includes full context:
 
 #### Error Codes (6xxx range)
 
-- 6001 = ERR_RPC_TIMEOUT
-- 6002 = ERR_WORKER_NOT_FOUND
-- 6003 = ERR_RPC_BACKPRESSURE
-- 6004 = ERR_ROUTE_NOT_REGISTERED
-- 6005 = ERR_CORRELATION_NOT_FOUND
+| Code | Name | Meaning | Client Guidance |
+| ---: | --- | --- | --- |
+| 6001 | ERR_RPC_TIMEOUT | Worker accepted the request but did not finish before the timeout | Retry with backoff only if the operation is safe to retry |
+| 6002 | ERR_WORKER_NOT_FOUND | The assigned worker disconnected or unregistered before completion | Retry with backoff only if the operation is safe to retry |
+| 6003 | ERR_RPC_BACKPRESSURE | The broker's RPC pending queue is full | Retry with exponential backoff and jitter |
+| 6004 | ERR_ROUTE_NOT_REGISTERED | No live worker is registered for the route | Retry with backoff after allowing workers to register |
+| 6005 | ERR_CORRELATION_NOT_FOUND | Response, ACK, or cancellation referenced an unknown or finished correlation | Treat the correlation as invalid or finished; do not blindly retry the same correlation |
+| 6006 | ERR_RPC_INVALID_SEQUENCE | Worker response chunks were out of sequence | Fatal for the current correlation; do not retry the same correlation |
+| 6007 | ERR_RPC_DUPLICATE_CORRELATION | Caller reused a correlation ID that is still live | Fatal for the current correlation; retry only with a fresh correlation ID if the operation is safe to retry |
+| 6008 | ERR_RPC_WRONG_WORKER | Response or ACK came from a worker that does not own the request | Fatal for the current correlation; do not retry the same correlation |
+| 6009 | ERR_UNAUTHORIZED | Permissions do not allow this RPC operation | Fatal until credentials or permissions change |
+| 6010 | ERR_BACKEND_ERROR | Broker-side parse or backend failure while handling the RPC | Inspect the error text; do not blindly retry malformed-request parse failures, and retry only when the message indicates a transient backend or infrastructure failure |
 
 #### Acceptance Tests
 
