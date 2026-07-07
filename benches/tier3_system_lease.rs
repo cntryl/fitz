@@ -111,6 +111,22 @@ fn parse_renew_token(responses: &[FrameContext]) -> u64 {
     parse_lease_extend_token_response(response.payload.as_ref()).expect("extend token")
 }
 
+fn parse_dual_renew_tokens(responses: &[FrameContext]) -> (u64, u64) {
+    let tokens = responses
+        .iter()
+        .filter(|frame| frame.msg_type.as_u16() == 401)
+        .map(|frame| {
+            parse_lease_extend_token_response(frame.payload.as_ref()).expect("extend token")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        tokens.len(),
+        2,
+        "dual-route renew benchmark should receive two renew responses"
+    );
+    (tokens[0], tokens[1])
+}
+
 fn request(
     router: &Arc<Router>,
     source: &RouteAddress,
@@ -179,10 +195,10 @@ fn should_complete_acquire_release_sequence(ctx: &mut StressContext) {
 }
 
 #[stress(tier = 3)]
-fn should_complete_alternate_renew_operations(ctx: &mut StressContext) {
+fn should_complete_dual_route_renew_operations(ctx: &mut StressContext) {
     ctx.parameter("scenario", "dual_route_concurrent");
     ctx.parameter("measurement_scope", "routed_system");
-    ctx.parameter("batch_size", "single_renew");
+    ctx.parameter("batch_size", "2_renews");
 
     let (router, family, source, inbox) = setup_lease_sink();
     let renew_route_a = "lease://realm/area1/lock1/renew";
@@ -206,34 +222,25 @@ fn should_complete_alternate_renew_operations(ctx: &mut StressContext) {
         "client-2",
     );
 
-    let mut phase = 0usize;
-    let iterations = ctx.measure_workload("complete_alternate_renew_operations", || {
-        if phase.is_multiple_of(2) {
-            let response = request(
-                &router,
-                &source,
-                &inbox,
-                &renew_address_a,
-                401,
-                build_extend_payload(renew_route_a, "client-1", token1, 30),
-            );
-            token1 =
-                parse_lease_extend_token_response(response.as_ref()).expect("extend token route1");
-        } else {
-            let response = request(
-                &router,
-                &source,
-                &inbox,
-                &renew_address_b,
-                401,
-                build_extend_payload(renew_route_b, "client-2", token2, 30),
-            );
-            token2 =
-                parse_lease_extend_token_response(response.as_ref()).expect("extend token route2");
-        }
-        phase += 1;
+    let iterations = ctx.measure_workload("complete_dual_route_renew_operations", || {
+        send_request(
+            &router,
+            &source,
+            &renew_address_a,
+            401,
+            build_extend_payload(renew_route_a, "client-1", token1, 30),
+        );
+        send_request(
+            &router,
+            &source,
+            &renew_address_b,
+            401,
+            build_extend_payload(renew_route_b, "client-2", token2, 30),
+        );
+        let responses = drain_responses(&inbox, 2);
+        (token1, token2) = parse_dual_renew_tokens(&responses);
     });
-    stress_config::record_completed(ctx, iterations);
+    stress_config::record_completed(ctx, 2 * iterations);
 }
 
 #[stress(tier = 3)]

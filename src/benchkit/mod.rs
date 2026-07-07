@@ -6,7 +6,6 @@
 
 pub mod live_sink;
 pub mod queue;
-pub mod rpc;
 pub mod runtime;
 pub mod storage;
 pub mod stream;
@@ -24,7 +23,6 @@ pub use live_sink::{
     CountingSink, DirectLeaseAcquireRelease, FrameQueueSink,
 };
 pub use queue::{create_bench_queue_actor, create_local_bench_queue_actor};
-pub use rpc::create_bench_rpc_context;
 pub use runtime::shared_bench_runtime;
 pub use storage::{
     create_bench_store, create_bench_store_with_cfs, create_local_bench_store,

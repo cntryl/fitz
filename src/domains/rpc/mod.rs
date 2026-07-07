@@ -3,14 +3,10 @@
 //! # Architecture
 //!
 //! - **`RpcDomainSink`** ([sink]): Production ingress path used by the live broker
-//! - **`RpcRouteActor`** ([actor]): Lightweight in-process semantics, test, and bench actor
-//! - **`SessionActor`**: Legacy semantics helper for route-actor tests
 //! - Workers register with routes and receive requests while declared credit is available
 //!
 //! Production request forwarding, terminal error delivery, and caller-disconnect
-//! handling live in `RpcDomainSink`. `RpcRouteActor` remains available for
-//! focused semantics tests and benchmark helpers, but it does not represent the
-//! production reply-routing API.
+//! handling live in `RpcDomainSink`.
 //!
 //! # Performance Characteristics (Hardened v2)
 //!
@@ -60,18 +56,14 @@
 //! - `rpc://acme/inventory/item/update`
 //! - `rpc://acme/reports/monthly/generate`
 
-pub mod actor;
 pub mod errors;
 pub mod events;
 pub mod metrics;
 pub mod projection;
 pub mod protocol;
 pub mod reply_inbox;
-pub mod session;
 pub mod sink;
 
-// Re-export primary types
-pub use actor::RpcRouteActor;
 pub use errors::{RpcError, RpcErrorCode};
 pub use metrics::RpcMetrics;
 pub use protocol::{
@@ -80,4 +72,3 @@ pub use protocol::{
     RpcWorkerRequestDelivery,
 };
 pub use reply_inbox::{InboxMessage, ReplyInboxActor};
-pub use session::SessionActor;

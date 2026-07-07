@@ -167,6 +167,54 @@ fn should_keep_admin_api_on_runtime_facades() {
 }
 
 #[test]
+fn should_keep_rpc_route_actor_removed_from_default_surface() {
+    // Arrange
+    let repo_root = repo_root();
+    let rpc_mod = repo_root
+        .join("src")
+        .join("domains")
+        .join("rpc")
+        .join("mod.rs");
+    let content = read_source_file(&rpc_mod);
+    let forbidden_exports = [
+        "\npub mod actor;",
+        "\npub mod session;",
+        "\npub(crate) mod actor;",
+        "\npub(crate) mod session;",
+        "\npub use actor::RpcRouteActor;",
+        "\npub use session::SessionActor;",
+        "legacy_actor_tests",
+    ];
+
+    // Act
+    let mut violations = forbidden_exports
+        .iter()
+        .filter(|forbidden| content.contains(**forbidden))
+        .map(|forbidden| format!("src/domains/rpc/mod.rs exposes `{}`", forbidden.trim()))
+        .collect::<Vec<_>>();
+    for file_name in ["actor.rs", "session.rs", "legacy_actor_tests.rs"] {
+        let path = repo_root
+            .join("src")
+            .join("domains")
+            .join("rpc")
+            .join(file_name);
+        if path.exists() {
+            violations.push(format!(
+                "{} still exists",
+                relative_display_path(&repo_root, &path)
+            ));
+        }
+    }
+    let report = format_violation_report(&violations);
+
+    // Assert
+    assert!(
+        report.is_empty(),
+        "RPC route actor and legacy session helper must stay pruned from the default surface:\n{report}"
+    );
+}
+
+#[test]
 fn should_keep_production_rust_files_below_line_budget() {
     // Arrange
     let repo_root = repo_root();

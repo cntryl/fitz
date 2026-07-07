@@ -5,119 +5,30 @@
 //! restored after broker restart.
 
 use crate::domains::notice::NoticeMetrics;
-use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
+use crate::domains::subscription_state::RoutedSubscriptionSet;
 #[cfg(test)]
 use crate::protocol::frame_context::FrameContext;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, ManagedActor, RouteError, Router};
 use chrono::Utc;
 use parking_lot::Mutex;
-use smallvec::SmallVec;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 mod actor_runtime;
+mod model;
+#[cfg(test)]
+mod test_channels;
 
 use actor_runtime::{NoticeDomainActor, NoticeDomainCommand};
-
-/// Per-session wildcard cap used to keep the in-memory matcher bounded.
-const MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION: usize = 128;
-type NoticeDeliveryTargets = SmallVec<[NoticeDeliveryTarget; 8]>;
-type NoticeMatchedRoutePatterns = SmallVec<[Arc<str>; 8]>;
-type NoticeRouteStatsKey = (u64, Arc<str>);
-
-#[derive(Clone)]
-struct NoticeDeliveryTarget {
-    session_id: u64,
-    subscription_id: u64,
-    subscriber: crate::runtime::routing::RouteAddress,
-}
-
-struct NoticeRouteStats {
-    publishes_total: u64,
-    recent_publishes: VecDeque<Instant>,
-}
-
-impl NoticeRouteStats {
-    fn new() -> Self {
-        Self {
-            publishes_total: 0,
-            recent_publishes: VecDeque::new(),
-        }
-    }
-
-    fn record_publish(&mut self, now: Instant) {
-        self.prune_recent_publishes(now);
-        self.publishes_total = self.publishes_total.saturating_add(1);
-        self.recent_publishes.push_back(now);
-    }
-
-    fn publishes_total(&self) -> u64 {
-        self.publishes_total
-    }
-
-    fn publishes_per_minute(&mut self, now: Instant) -> f64 {
-        self.prune_recent_publishes(now);
-        usize_to_f64(self.recent_publishes.len())
-    }
-
-    fn prune_recent_publishes(&mut self, now: Instant) {
-        while let Some(oldest) = self.recent_publishes.front().copied() {
-            if now.saturating_duration_since(oldest) <= Duration::from_mins(1) {
-                break;
-            }
-            self.recent_publishes.pop_front();
-        }
-    }
-}
-
-struct NoticeSubscription {
-    pattern: crate::runtime::matcher::Pattern,
-    pattern_route: Arc<str>,
-    session_id: u64,
-    subscription_id: u64,
-    subscriber: crate::runtime::routing::RouteAddress,
-}
-
-impl RoutedSubscription for NoticeSubscription {
-    fn pattern(&self) -> &crate::runtime::matcher::Pattern {
-        &self.pattern
-    }
-
-    fn session_id(&self) -> u64 {
-        self.session_id
-    }
-
-    fn subscription_id(&self) -> u64 {
-        self.subscription_id
-    }
-}
-
-impl From<&NoticeSubscription> for NoticeDeliveryTarget {
-    fn from(subscription: &NoticeSubscription) -> Self {
-        Self {
-            session_id: subscription.session_id,
-            subscription_id: subscription.subscription_id,
-            subscriber: subscription.subscriber.clone(),
-        }
-    }
-}
-
-fn notice_route_realm(route: &str) -> Option<&str> {
-    let path = route.split_once("://").map_or(route, |(_, path)| path);
-    path.trim_start_matches('/')
-        .split('/')
-        .find(|segment| !segment.is_empty())
-}
-
-fn usize_to_f64(value: usize) -> f64 {
-    f64::from(u32::try_from(value).unwrap_or(u32::MAX))
-}
-
-fn usize_to_u64(value: usize) -> u64 {
-    u64::try_from(value).unwrap_or(u64::MAX)
-}
+use model::{
+    notice_route_realm, usize_to_u64, NoticeDeliveryTarget, NoticeDeliveryTargets,
+    NoticeMatchedRoutePatterns, NoticeRouteStats, NoticeRouteStatsKey, NoticeSubscription,
+    MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION,
+};
+#[cfg(test)]
+use test_channels::{test_client_channel_from_protocol, test_protocol_channel_from_client};
 
 /// Live notice pub/sub state for the current broker process.
 ///
@@ -964,34 +875,6 @@ impl NoticeDomainCore {
         {
             None
         }
-    }
-}
-
-#[cfg(test)]
-fn test_client_channel_from_protocol(
-    channel: crate::protocol::frame::ChannelId,
-) -> crate::runtime::ClientChannel {
-    match channel {
-        crate::protocol::frame::ChannelId::Control => crate::runtime::ClientChannel::Control,
-        crate::protocol::frame::ChannelId::Pub => crate::runtime::ClientChannel::Pub,
-        crate::protocol::frame::ChannelId::Sub => crate::runtime::ClientChannel::Sub,
-        crate::protocol::frame::ChannelId::Rpc => crate::runtime::ClientChannel::Rpc,
-        crate::protocol::frame::ChannelId::Lease => crate::runtime::ClientChannel::Lease,
-        crate::protocol::frame::ChannelId::Internal => crate::runtime::ClientChannel::Internal,
-    }
-}
-
-#[cfg(test)]
-fn test_protocol_channel_from_client(
-    channel: crate::runtime::ClientChannel,
-) -> crate::protocol::frame::ChannelId {
-    match channel {
-        crate::runtime::ClientChannel::Control => crate::protocol::frame::ChannelId::Control,
-        crate::runtime::ClientChannel::Pub => crate::protocol::frame::ChannelId::Pub,
-        crate::runtime::ClientChannel::Sub => crate::protocol::frame::ChannelId::Sub,
-        crate::runtime::ClientChannel::Rpc => crate::protocol::frame::ChannelId::Rpc,
-        crate::runtime::ClientChannel::Lease => crate::protocol::frame::ChannelId::Lease,
-        crate::runtime::ClientChannel::Internal => crate::protocol::frame::ChannelId::Internal,
     }
 }
 

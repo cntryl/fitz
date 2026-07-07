@@ -4,6 +4,7 @@ mod analysis_queue_rpc;
 mod comparison;
 mod model;
 mod resource_diagnostics;
+mod resource_timeline_model;
 mod resource_timelines_core;
 mod resource_timelines_domains;
 mod runtime_snapshot;
@@ -34,13 +35,14 @@ pub(crate) use model::RECENT_WINDOW_SECS;
 pub use model::{
     DiagnosisLabel, DiagnosticHotspot, DiagnosticSeverity, DiagnosticSnapshot, DiagnosticTrend,
     DomainDiagnostics, GlobalTroubleshootingDiagnostics, IncidentStatus, IncidentSummary,
-    ResourceTimeline, ResourceTimelineEvent, ResourceTimelineKind, RuntimeDiagnostics,
+    RuntimeDiagnostics,
 };
 pub(crate) use resource_diagnostics::{
     kv_resource_diagnostics, lease_resource_diagnostics, notice_resource_diagnostics,
     queue_resource_diagnostics, rpc_operation_diagnostics, schedule_resource_diagnostics,
     stream_resource_diagnostics,
 };
+pub use resource_timeline_model::{ResourceTimeline, ResourceTimelineEvent, ResourceTimelineKind};
 pub(crate) use resource_timelines_core::{
     build_resource_timeline, kv_resource_timeline, matches_resource_path, matches_resource_route,
     parse_rpc_operation, timeline_candidate,

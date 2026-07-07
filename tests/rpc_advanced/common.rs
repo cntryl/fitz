@@ -22,8 +22,7 @@ pub(crate) use fitz::domains::notice::sink::NoticeDomainSink;
 pub(crate) use fitz::domains::queue::sink::QueueDomainSink;
 pub(crate) use fitz::domains::rpc::sink::RpcDomainSink;
 pub(crate) use fitz::domains::rpc::{
-    InboxMessage, ReplyInboxActor, RpcError, RpcErrorCode, RpcRequest,
-    RpcResponse as RpcResponseMsg, RpcRouteActor,
+    InboxMessage, ReplyInboxActor, RpcError, RpcErrorCode, RpcResponse as RpcResponseMsg,
 };
 pub(crate) use fitz::domains::schedule::sink::ScheduleDomainSink;
 pub(crate) use fitz::domains::stream::sink::StreamDomainSink;
@@ -40,30 +39,6 @@ pub(crate) use std::time::Duration;
 pub(crate) use uuid::Uuid;
 
 // ============================================================================
-//                         LEASE & FAULT TOLERANCE HELPERS
-// ============================================================================
-
-pub(crate) fn create_actor_with_timeout(timeout_ms: u64) -> RpcRouteActor {
-    RpcRouteActor::with_timeout(RouteFamily::new(1), 1000, Duration::from_millis(timeout_ms))
-}
-
-pub(crate) fn create_request(correlation_id: Uuid) -> RpcRequest {
-    RpcRequest::new(
-        RouteFamily::new(1),
-        correlation_id,
-        Route::new("rpc://test/area/resource/operation"),
-        Bytes::from(vec![1, 2, 3]),
-    )
-}
-
-pub(crate) fn create_worker_addr(id: u64) -> RouteAddress {
-    RouteAddress::new(
-        RouteFamily::new(1),
-        Route::new(format!("worker://test/worker{id}")),
-    )
-}
-
-// ============================================================================
 //                         STREAMING & ORDERING HELPERS
 // ============================================================================
 
@@ -78,15 +53,6 @@ pub(crate) fn create_response(correlation_id: Uuid, seq: u64, stream_end: bool) 
         Bytes::from(vec![u8::try_from(seq).unwrap_or(u8::MAX)]),
         stream_end,
     )
-}
-
-pub(crate) fn create_rpc_context() -> Context<RpcRouteActor> {
-    let router = std::sync::Arc::new(fitz::runtime::router::Router::new());
-    let addr = RouteAddress::new(
-        RouteFamily::new(1),
-        Route::new("rpc://test/area/resource/operation"),
-    );
-    Context::new(addr, router)
 }
 
 pub(crate) fn create_inbox_context() -> Context<ReplyInboxActor> {

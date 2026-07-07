@@ -36,7 +36,7 @@ impl StreamState {
 /// Messages handled by `ReplyInboxActor`
 #[derive(Debug, Clone)]
 pub enum InboxMessage {
-    /// Response chunk from worker via `RpcRouteActor`
+    /// Response chunk from worker via RPC routing state.
     Response(RpcResponse),
     /// Error to be delivered to client
     Error(RpcError),

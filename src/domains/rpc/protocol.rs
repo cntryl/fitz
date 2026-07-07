@@ -104,7 +104,7 @@ impl RpcResponse {
     }
 }
 
-/// Messages handled by `RpcRouteActor`
+/// Messages handled by RPC route state machines.
 ///
 /// These messages coordinate worker registration, request routing, and response delivery.
 #[derive(Debug, Clone)]
@@ -143,8 +143,8 @@ pub enum RpcMessage {
 
     /// Request delivery to worker (internal routing message)
     ///
-    /// Sent from `RpcRouteActor` to worker session actor to deliver a request.
-    /// The session actor encodes this as message type 302 (REQUEST) on the wire.
+    /// Sent from RPC routing state to a worker session to deliver a request.
+    /// The session encodes this as message type 302 (REQUEST) on the wire.
     Deliver(RpcWorkItem),
 }
 

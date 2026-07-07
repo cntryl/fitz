@@ -10,6 +10,3 @@ pub mod stream;
 pub(crate) mod subscription_state;
 
 pub(crate) const DOMAIN_ACTOR_MAILBOX_CAPACITY: usize = 16_384;
-
-// Backwards compatibility alias
-pub use notice as notification;
