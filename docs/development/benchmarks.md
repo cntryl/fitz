@@ -1,7 +1,7 @@
 # Benchmark Guidelines
 
-**Version:** 2.2
-**Last Updated:** July 6, 2026
+**Version:** 2.3
+**Last Updated:** July 7, 2026
 **Project:** Fitz Message Broker
 
 Fitz benchmarks use one framework: `cntryl-stress`. Tier 1 through Tier 4 write
@@ -48,6 +48,22 @@ Fitz workflow or documentation commands.
 The release suite is enumerated in
 [`config/bench_release_ids.txt`](../../config/bench_release_ids.txt). Keep that
 file small, baseline-backed, and reviewable.
+
+## External Comparison Labels
+
+Use rows with matching completion semantics when comparing Fitz to NATS or
+another broker.
+
+- NATS Core pub/sub send-throughput comparisons should use Notice rows with
+  `mode=fire_and_forget_unacked`. These rows measure publish send completion and
+  drain subscribers after the timed section; they do not imply durable or
+  guaranteed delivery.
+- NATS sync request/reply comparisons should use RPC rows with
+  `mode=sync_single_inflight`, `completion_mode=response_wait`, and
+  `inflight_per_client=1`. These rows are RTT-bound.
+- High-throughput request/reply comparisons should use RPC rows with
+  `mode=async_pipelined` or `mode=concurrent_pipelined`, where the benchmark
+  validates every response correlation ID before counting completions.
 
 ## File Organization
 
@@ -256,6 +272,7 @@ Never refresh the baseline from a targeted benchmark run or a partial
 
 | Date | Version | Changes |
 | --- | --- | --- |
+| 2026-07-07 | 2.3 | Added RPC/Notice comparison labels for sync, pipelined, delivery-confirmed, and unacked benchmark rows. |
 | 2026-07-06 | 2.2 | Clarified default-profile acceptance, readable measurement IDs, partial-artifact hazards, and allocation diagnostics. |
 | 2026-07-05 | 2.1 | Updated benches and docs for `cntryl-stress` v2 named measurements and schema. |
 | 2026-07-04 | 2.0 | Migrated all tiers to `cntryl-stress`; removed the previous adapter and Fitz profile-default helpers. |

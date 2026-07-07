@@ -74,14 +74,18 @@ impl Ingress for RuntimeIngress {
             // and should continue processing the current message.
         }
 
-        if let Err(decision) = self.domain_frame_dispatcher().dispatch_if_domain(
-            session_id,
-            channel_id,
-            route_family,
-            msg_type,
-            should_notify_handler && notify_frame.is_none(),
-            &mut message_payload,
-        ) {
+        if let Err(decision) = self
+            .domain_frame_dispatcher()
+            .dispatch_if_domain(
+                session_id,
+                channel_id,
+                route_family,
+                msg_type,
+                should_notify_handler && notify_frame.is_none(),
+                &mut message_payload,
+            )
+            .await
+        {
             return decision;
         }
 

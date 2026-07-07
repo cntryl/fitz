@@ -64,7 +64,7 @@ impl LeaseDomainSink {
             router,
             LeaseDomainActor::route_address(),
             move || LeaseDomainActor::new(state.clone()),
-            1024,
+            crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
         )
     }
 

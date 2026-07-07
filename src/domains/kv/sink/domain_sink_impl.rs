@@ -65,7 +65,7 @@ impl KvDomainSink {
             router,
             KvDomainActor::route_address(),
             move || KvDomainActor::new(state.clone()),
-            1024,
+            crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
         )
     }
 

@@ -70,7 +70,7 @@ impl RpcDomainSink {
             router,
             RpcDomainActor::route_address(),
             move || RpcDomainActor::new(core.clone(), active.clone()),
-            1024,
+            crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
         )
     }
 

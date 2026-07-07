@@ -110,7 +110,7 @@ impl ScheduleDomainSink {
             router,
             ScheduleDomainActor::route_address(),
             move || ScheduleDomainActor::new(state.clone()),
-            1024,
+            crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
         )
     }
 

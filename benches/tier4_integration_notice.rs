@@ -25,6 +25,7 @@ use fitz::protocol::frame::ChannelId;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::{TestClient, TestServer, TestWebSocketClient};
+use futures_util::future::try_join_all;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -39,10 +40,9 @@ const TCP_SUBSCRIBE_CYCLES_PER_ITERATION: u64 = 16;
 const WS_PUBLISHES_PER_ITERATION: u64 = 16;
 const WS_SUBSCRIBE_CYCLES_PER_ITERATION: u64 = 16;
 const MULTICLIENT_FANOUT_PUBLISHES_PER_ITERATION: u64 = 4;
-
-fn is_recv_timeout(error: &dyn std::error::Error) -> bool {
-    error.to_string().contains("timeout waiting for response")
-}
+const UNACKED_PUBLISHES_PER_ITERATION: u64 = 512;
+const MULTIPUBLISHER_COUNT: usize = 4;
+const MULTIPUBLISHER_UNACKED_PUBLISHES_PER_ITERATION: u64 = 256;
 
 fn wait_for_delivery_count(
     runtime: &'static Runtime,
@@ -112,7 +112,7 @@ fn spawn_tcp_subscriber_counter(
                         break;
                     }
                 }
-                result = subscriber.recv_frame(5000) => {
+                result = subscriber.recv_frame_bytes_without_timeout() => {
                     match result {
                         Ok(_frame) => {
                             delivered.fetch_add(1, Ordering::Relaxed);
@@ -120,9 +120,6 @@ fn spawn_tcp_subscriber_counter(
                         Err(error) => {
                             if *stop_rx.borrow() {
                                 break;
-                            }
-                            if is_recv_timeout(error.as_ref()) {
-                                continue;
                             }
                             panic!("publish notification: {error}");
                         }
@@ -148,7 +145,7 @@ fn spawn_ws_subscriber_counter(
                         break;
                     }
                 }
-                result = subscriber.recv_frame(5000) => {
+                result = subscriber.recv_frame_bytes_without_timeout() => {
                     match result {
                         Ok(_frame) => {
                             delivered.fetch_add(1, Ordering::Relaxed);
@@ -156,9 +153,6 @@ fn spawn_ws_subscriber_counter(
                         Err(error) => {
                             if *stop_rx.borrow() {
                                 break;
-                            }
-                            if is_recv_timeout(error.as_ref()) {
-                                continue;
                             }
                             panic!("publish notification: {error}");
                         }
@@ -175,15 +169,79 @@ fn spawn_ws_subscriber_counter(
     (stop_tx, subscriber_handle)
 }
 
+async fn send_tcp_publish_batch(
+    publisher: &mut TestClient,
+    publish_frame: Arc<[u8]>,
+    publish_count: u64,
+) -> Result<(), String> {
+    for _ in 0..publish_count {
+        publisher
+            .send_frame(publish_frame.as_ref())
+            .await
+            .map_err(|error| format!("publish frame: {error}"))?;
+    }
+    Ok(())
+}
+
+async fn send_ws_publish_batch(
+    publisher: &mut TestWebSocketClient,
+    publish_frame: Arc<[u8]>,
+    publish_count: u64,
+) -> Result<(), String> {
+    for _ in 0..publish_count {
+        publisher
+            .send_frame(publish_frame.as_ref())
+            .await
+            .map_err(|error| format!("publish frame: {error}"))?;
+    }
+    Ok(())
+}
+
+async fn send_tcp_publish_batches(
+    publishers: &mut [TestClient],
+    publish_frame: Arc<[u8]>,
+    publishes_per_publisher: u64,
+) -> Result<(), String> {
+    try_join_all(
+        publishers.iter_mut().map(|publisher| {
+            let publish_frame = publish_frame.clone();
+            async move {
+                send_tcp_publish_batch(publisher, publish_frame, publishes_per_publisher).await
+            }
+        }),
+    )
+    .await
+    .map(|_| ())
+}
+
+async fn send_ws_publish_batches(
+    publishers: &mut [TestWebSocketClient],
+    publish_frame: Arc<[u8]>,
+    publishes_per_publisher: u64,
+) -> Result<(), String> {
+    try_join_all(publishers.iter_mut().map(|publisher| {
+        let publish_frame = publish_frame.clone();
+        async move {
+            send_ws_publish_batch(publisher, publish_frame, publishes_per_publisher).await
+        }
+    }))
+    .await
+    .map(|_| ())
+}
+
 #[stress(tier = 4)]
 fn should_complete_direct_publish(ctx: &mut StressContext) {
     ctx.parameter("layer", "direct");
     ctx.parameter("scenario", "publish");
     ctx.parameter("measurement_scope", "direct_inproc");
+    ctx.parameter("mode", "delivery_confirmed");
+    ctx.parameter("completion_mode", "subscriber_drained_per_batch");
+    ctx.parameter("completed_unit", "published_messages");
     ctx.parameter(
         "batch_size",
         format!("{DIRECT_PUBLISHES_PER_ITERATION}_publishes"),
     );
+    ctx.parameter("publisher_count", "1");
     ctx.parameter("subscriber_count", "1");
 
     let family = RouteFamily::new(1);
@@ -251,10 +309,14 @@ fn should_complete_tcp_publish(ctx: &mut StressContext) {
     ctx.parameter("layer", "tcp");
     ctx.parameter("scenario", "publish");
     ctx.parameter("measurement_scope", "tcp_e2e");
+    ctx.parameter("mode", "delivery_confirmed");
+    ctx.parameter("completion_mode", "subscriber_drained_per_batch");
+    ctx.parameter("completed_unit", "published_messages");
     ctx.parameter(
         "batch_size",
         format!("{TCP_PUBLISHES_PER_ITERATION}_publishes"),
     );
+    ctx.parameter("publisher_count", "1");
     ctx.parameter("subscriber_count", "1");
 
     let subscribe_frame = build_notice_subscribe("notice://test/events");
@@ -296,6 +358,12 @@ fn should_complete_tcp_publish(ctx: &mut StressContext) {
     runtime.block_on(async {
         subscriber_handle.await.expect("subscriber task");
     });
+    runtime
+        .block_on(publisher.close())
+        .expect("close tcp publisher");
+    runtime
+        .block_on(server.shutdown())
+        .expect("shutdown server");
     stress_config::record_completed(ctx, TCP_PUBLISHES_PER_ITERATION * iterations);
 }
 
@@ -304,10 +372,14 @@ fn should_complete_ws_publish(ctx: &mut StressContext) {
     ctx.parameter("layer", "websocket");
     ctx.parameter("scenario", "publish");
     ctx.parameter("measurement_scope", "ws_e2e");
+    ctx.parameter("mode", "delivery_confirmed");
+    ctx.parameter("completion_mode", "subscriber_drained_per_batch");
+    ctx.parameter("completed_unit", "published_messages");
     ctx.parameter(
         "batch_size",
         format!("{WS_PUBLISHES_PER_ITERATION}_publishes"),
     );
+    ctx.parameter("publisher_count", "1");
     ctx.parameter("subscriber_count", "1");
 
     let subscribe_frame = build_notice_subscribe("notice://test/events");
@@ -359,7 +431,306 @@ fn should_complete_ws_publish(ctx: &mut StressContext) {
             .expect("close ws publisher gracefully");
         subscriber_handle.await.expect("subscriber task");
     });
+    runtime
+        .block_on(server.shutdown())
+        .expect("shutdown server");
     stress_config::record_completed(ctx, WS_PUBLISHES_PER_ITERATION * iterations);
+}
+
+#[stress(tier = 4)]
+fn should_complete_tcp_fire_and_forget_publish(ctx: &mut StressContext) {
+    ctx.parameter("layer", "tcp");
+    ctx.parameter("scenario", "publish");
+    ctx.parameter("measurement_scope", "tcp_send_e2e");
+    ctx.parameter("mode", "fire_and_forget_unacked");
+    ctx.parameter("completion_mode", "subscriber_drained_after_timing");
+    ctx.parameter("completed_unit", "published_messages");
+    ctx.parameter(
+        "batch_size",
+        format!("{UNACKED_PUBLISHES_PER_ITERATION}_publishes"),
+    );
+    ctx.parameter("publisher_count", "1");
+    ctx.parameter("subscriber_count", "1");
+
+    let subscribe_frame = build_notice_subscribe("notice://test/events");
+    let publish_frame: Arc<[u8]> = build_notice_publish("notice://test/events", b"event").into();
+
+    let runtime = shared_bench_runtime();
+    let server = runtime.block_on(TestServer::start()).expect("start server");
+    let mut subscriber = runtime
+        .block_on(TestClient::new(server.tcp_addr))
+        .expect("connect tcp subscriber");
+    let mut publisher = runtime
+        .block_on(TestClient::new(server.tcp_addr))
+        .expect("connect tcp publisher");
+
+    runtime
+        .block_on(subscriber.request(&subscribe_frame, 2000))
+        .expect("subscribe response");
+
+    let delivered = Arc::new(AtomicU64::new(0));
+    let (stop_tx, subscriber_handle) =
+        spawn_tcp_subscriber_counter(runtime, subscriber, delivered.clone());
+
+    let iterations = ctx.measure_workload("complete_tcp_fire_and_forget_publish", || {
+        runtime
+            .block_on(send_tcp_publish_batch(
+                &mut publisher,
+                publish_frame.clone(),
+                UNACKED_PUBLISHES_PER_ITERATION,
+            ))
+            .expect("send tcp notice publishes");
+    });
+    let expected_deliveries = UNACKED_PUBLISHES_PER_ITERATION * iterations;
+    wait_for_delivery_count(
+        runtime,
+        &delivered,
+        expected_deliveries,
+        "tcp unacked notice deliveries",
+    );
+
+    stop_tx.send(true).expect("stop tcp subscriber");
+    runtime.block_on(async {
+        subscriber_handle.await.expect("subscriber task");
+    });
+    runtime
+        .block_on(publisher.close())
+        .expect("close tcp publisher");
+    runtime
+        .block_on(server.shutdown())
+        .expect("shutdown server");
+    stress_config::record_completed(ctx, expected_deliveries);
+}
+
+#[stress(tier = 4)]
+fn should_complete_ws_fire_and_forget_publish(ctx: &mut StressContext) {
+    ctx.parameter("layer", "websocket");
+    ctx.parameter("scenario", "publish");
+    ctx.parameter("measurement_scope", "ws_send_e2e");
+    ctx.parameter("mode", "fire_and_forget_unacked");
+    ctx.parameter("completion_mode", "subscriber_drained_after_timing");
+    ctx.parameter("completed_unit", "published_messages");
+    ctx.parameter(
+        "batch_size",
+        format!("{UNACKED_PUBLISHES_PER_ITERATION}_publishes"),
+    );
+    ctx.parameter("publisher_count", "1");
+    ctx.parameter("subscriber_count", "1");
+
+    let subscribe_frame = build_notice_subscribe("notice://test/events");
+    let publish_frame: Arc<[u8]> = build_notice_publish("notice://test/events", b"event").into();
+
+    let runtime = shared_bench_runtime();
+    let server = runtime.block_on(TestServer::start()).expect("start server");
+    let mut subscriber = runtime
+        .block_on(TestWebSocketClient::connect(&format!(
+            "ws://{}",
+            server.ws_addr
+        )))
+        .expect("connect ws subscriber");
+    let mut publisher = runtime
+        .block_on(TestWebSocketClient::connect(&format!(
+            "ws://{}",
+            server.ws_addr
+        )))
+        .expect("connect ws publisher");
+
+    runtime
+        .block_on(subscriber.request(&subscribe_frame, 2000))
+        .expect("subscribe response");
+
+    let delivered = Arc::new(AtomicU64::new(0));
+    let (stop_tx, subscriber_handle) =
+        spawn_ws_subscriber_counter(runtime, subscriber, delivered.clone());
+
+    let iterations = ctx.measure_workload("complete_ws_fire_and_forget_publish", || {
+        runtime
+            .block_on(send_ws_publish_batch(
+                &mut publisher,
+                publish_frame.clone(),
+                UNACKED_PUBLISHES_PER_ITERATION,
+            ))
+            .expect("send websocket notice publishes");
+    });
+    let expected_deliveries = UNACKED_PUBLISHES_PER_ITERATION * iterations;
+    wait_for_delivery_count(
+        runtime,
+        &delivered,
+        expected_deliveries,
+        "ws unacked notice deliveries",
+    );
+
+    stop_tx.send(true).expect("stop ws subscriber");
+    runtime.block_on(async {
+        publisher
+            .close()
+            .await
+            .expect("close ws publisher gracefully");
+        subscriber_handle.await.expect("subscriber task");
+    });
+    runtime
+        .block_on(server.shutdown())
+        .expect("shutdown server");
+    stress_config::record_completed(ctx, expected_deliveries);
+}
+
+#[stress(tier = 4)]
+fn should_complete_tcp_multipublisher_fire_and_forget_publish(ctx: &mut StressContext) {
+    ctx.parameter("layer", "multiclient");
+    ctx.parameter("scenario", "publish");
+    ctx.parameter("measurement_scope", "tcp_multipublisher_send_e2e");
+    ctx.parameter("mode", "fire_and_forget_unacked");
+    ctx.parameter("completion_mode", "subscriber_drained_after_timing");
+    ctx.parameter("completed_unit", "published_messages");
+    ctx.parameter(
+        "batch_size",
+        format!(
+            "{MULTIPUBLISHER_COUNT}_publishers_{MULTIPUBLISHER_UNACKED_PUBLISHES_PER_ITERATION}_publishes_each"
+        ),
+    );
+    ctx.parameter("publisher_count", MULTIPUBLISHER_COUNT.to_string());
+    ctx.parameter("subscriber_count", "1");
+
+    let subscribe_frame = build_notice_subscribe("notice://test/events");
+    let publish_frame: Arc<[u8]> = build_notice_publish("notice://test/events", b"event").into();
+
+    let runtime = shared_bench_runtime();
+    let server = runtime.block_on(TestServer::start()).expect("start server");
+    let mut subscriber = runtime
+        .block_on(TestClient::new(server.tcp_addr))
+        .expect("connect tcp subscriber");
+    let mut publishers: Vec<TestClient> = (0..MULTIPUBLISHER_COUNT)
+        .map(|_| {
+            runtime
+                .block_on(TestClient::new(server.tcp_addr))
+                .expect("connect tcp publisher")
+        })
+        .collect();
+
+    runtime
+        .block_on(subscriber.request(&subscribe_frame, 2000))
+        .expect("subscribe response");
+
+    let delivered = Arc::new(AtomicU64::new(0));
+    let (stop_tx, subscriber_handle) =
+        spawn_tcp_subscriber_counter(runtime, subscriber, delivered.clone());
+
+    let iterations = ctx.measure_workload(
+        "complete_tcp_multipublisher_fire_and_forget_publish",
+        || {
+            runtime
+                .block_on(send_tcp_publish_batches(
+                    &mut publishers,
+                    publish_frame.clone(),
+                    MULTIPUBLISHER_UNACKED_PUBLISHES_PER_ITERATION,
+                ))
+                .expect("send tcp multipublisher notice publishes");
+        },
+    );
+    let expected_deliveries =
+        MULTIPUBLISHER_COUNT as u64 * MULTIPUBLISHER_UNACKED_PUBLISHES_PER_ITERATION * iterations;
+    wait_for_delivery_count(
+        runtime,
+        &delivered,
+        expected_deliveries,
+        "tcp multipublisher unacked notice deliveries",
+    );
+
+    stop_tx.send(true).expect("stop tcp subscriber");
+    runtime.block_on(async {
+        subscriber_handle.await.expect("subscriber task");
+    });
+    for publisher in publishers {
+        runtime
+            .block_on(publisher.close())
+            .expect("close tcp publisher");
+    }
+    runtime
+        .block_on(server.shutdown())
+        .expect("shutdown server");
+    stress_config::record_completed(ctx, expected_deliveries);
+}
+
+#[stress(tier = 4)]
+fn should_complete_ws_multipublisher_fire_and_forget_publish(ctx: &mut StressContext) {
+    ctx.parameter("layer", "multiclient");
+    ctx.parameter("scenario", "publish");
+    ctx.parameter("measurement_scope", "ws_multipublisher_send_e2e");
+    ctx.parameter("mode", "fire_and_forget_unacked");
+    ctx.parameter("completion_mode", "subscriber_drained_after_timing");
+    ctx.parameter("completed_unit", "published_messages");
+    ctx.parameter(
+        "batch_size",
+        format!(
+            "{MULTIPUBLISHER_COUNT}_publishers_{MULTIPUBLISHER_UNACKED_PUBLISHES_PER_ITERATION}_publishes_each"
+        ),
+    );
+    ctx.parameter("publisher_count", MULTIPUBLISHER_COUNT.to_string());
+    ctx.parameter("subscriber_count", "1");
+
+    let subscribe_frame = build_notice_subscribe("notice://test/events");
+    let publish_frame: Arc<[u8]> = build_notice_publish("notice://test/events", b"event").into();
+
+    let runtime = shared_bench_runtime();
+    let server = runtime.block_on(TestServer::start()).expect("start server");
+    let mut subscriber = runtime
+        .block_on(TestWebSocketClient::connect(&format!(
+            "ws://{}",
+            server.ws_addr
+        )))
+        .expect("connect ws subscriber");
+    let mut publishers: Vec<TestWebSocketClient> = (0..MULTIPUBLISHER_COUNT)
+        .map(|_| {
+            runtime
+                .block_on(TestWebSocketClient::connect(&format!(
+                    "ws://{}",
+                    server.ws_addr
+                )))
+                .expect("connect ws publisher")
+        })
+        .collect();
+
+    runtime
+        .block_on(subscriber.request(&subscribe_frame, 2000))
+        .expect("subscribe response");
+
+    let delivered = Arc::new(AtomicU64::new(0));
+    let (stop_tx, subscriber_handle) =
+        spawn_ws_subscriber_counter(runtime, subscriber, delivered.clone());
+
+    let iterations =
+        ctx.measure_workload("complete_ws_multipublisher_fire_and_forget_publish", || {
+            runtime
+                .block_on(send_ws_publish_batches(
+                    &mut publishers,
+                    publish_frame.clone(),
+                    MULTIPUBLISHER_UNACKED_PUBLISHES_PER_ITERATION,
+                ))
+                .expect("send websocket multipublisher notice publishes");
+        });
+    let expected_deliveries =
+        MULTIPUBLISHER_COUNT as u64 * MULTIPUBLISHER_UNACKED_PUBLISHES_PER_ITERATION * iterations;
+    wait_for_delivery_count(
+        runtime,
+        &delivered,
+        expected_deliveries,
+        "ws multipublisher unacked notice deliveries",
+    );
+
+    stop_tx.send(true).expect("stop ws subscriber");
+    runtime.block_on(async {
+        for publisher in &mut publishers {
+            publisher
+                .close()
+                .await
+                .expect("close ws publisher gracefully");
+        }
+        subscriber_handle.await.expect("subscriber task");
+    });
+    runtime
+        .block_on(server.shutdown())
+        .expect("shutdown server");
+    stress_config::record_completed(ctx, expected_deliveries);
 }
 
 #[stress(tier = 4)]
@@ -470,6 +841,8 @@ fn measure_multiclient_fanout_publish(
     ctx.parameter("layer", "multiclient");
     ctx.parameter("scenario", scenario);
     ctx.parameter("measurement_scope", "ws_multiclient_e2e");
+    ctx.parameter("mode", "delivery_confirmed");
+    ctx.parameter("completion_mode", "subscriber_drained_per_batch");
     ctx.parameter("completed_unit", "delivered_notifications");
     ctx.parameter("publisher_count", "1");
     let batch_size = format!("1_publish_{subscriber_count}_notifications");

@@ -1,4 +1,4 @@
-# Performance Target Rubric v2.2
+# Performance Target Rubric v2.3
 
 Fitz tracks performance targets in two forms:
 
@@ -91,11 +91,11 @@ All rows in this section map to `target_class = service_budget` and `budget_grou
 | kv | tier4-integration-kv | transaction_sequence | direct | 0.458435 | 25 | 40,000 | 15 | 66,667 | hard |  |
 | kv | tier4-integration-kv | transaction_sequence | encoded | 0.597268 | 14 | 71,429 | 10 | 100,000 | hard |  |
 | lease | tier4-integration-lease | acquire_release | direct | 0.431263 | 2.5 | 400,000 | 1.8 | 555,556 | hard |  |
-| notice | tier4-integration-notice | publish | direct | 0.539278 | 6.5 | 153,846 | 4 | 250,000 | hard |  |
+| notice | tier4-integration-notice | publish | direct | 0.601693 | 6.5 | 153,846 | 4 | 250,000 | hard | mode=delivery_confirmed |
 | queue | tier4-integration-queue | enqueue | direct | 18.642748 | 350 | 2,857 | 225 | 4,444 | hard |  |
 | queue | tier4-integration-queue | enqueue | encoded | 18.740233 | 500 | 2,000 | 325 | 3,077 | hard |  |
-| rpc | tier4-integration-rpc | request_response | direct | 0.684863 | 28 | 35,714 | 18 | 55,556 | hard |  |
-| rpc | tier4-integration-rpc | request_response | encoded | 0.702066 | 9 | 111,111 | 6 | 166,667 | hard |  |
+| rpc | tier4-integration-rpc | request_response | direct | 0.681696 | 28 | 35,714 | 18 | 55,556 | hard | mode=sync_single_inflight |
+| rpc | tier4-integration-rpc | request_response | encoded | 0.713301 | 9 | 111,111 | 6 | 166,667 | hard | mode=sync_single_inflight |
 | schedule | tier4-integration-schedule | create | direct | 64.401458 | 1,700 | 588 | 1,300 | 769 | hard |  |
 | stream | tier4-integration-stream | append | direct | 0.288628 | 2 | 500,000 | 1.538 | 650,195 | hard |  |
 | stream | tier4-integration-stream | read_area_wildcard | direct | 0.112016 | 3.077 | 324,992 | 2.5 | 400,000 | hard |  |
@@ -112,12 +112,16 @@ All rows in this section map to `target_class = service_budget` and `budget_grou
 | kv | tier4-integration-kv | transaction_sequence | websocket | 34.929051 | 110 | 9,091 | 80 | 12,500 | hard |  |
 | lease | tier4-integration-lease | acquire_release | tcp | 29.246439 | 55 | 18,182 | 40 | 25,000 | hard |  |
 | lease | tier4-integration-lease | acquire_release | websocket | 31.255469 | 55 | 18,182 | 40 | 25,000 | hard |  |
-| notice | tier4-integration-notice | publish | tcp | 6.193526 | 75 | 13,333 | 50 | 20,000 | hard |  |
-| notice | tier4-integration-notice | publish | websocket | 3.968858 | 70 | 14,286 | 50 | 20,000 | hard |  |
+| notice | tier4-integration-notice | publish | tcp | 6.557107 | 75 | 13,333 | 50 | 20,000 | hard | mode=delivery_confirmed |
+| notice | tier4-integration-notice | publish | websocket | 4.270308 | 70 | 14,286 | 50 | 20,000 | hard | mode=delivery_confirmed |
+| notice | tier4-integration-notice | publish_unacked | tcp | 5.925513 | 75 | 13,333 | 50 | 20,000 | hard | mode=fire_and_forget_unacked |
+| notice | tier4-integration-notice | publish_unacked | websocket | 2.056227 | 70 | 14,286 | 50 | 20,000 | hard | mode=fire_and_forget_unacked |
 | queue | tier4-integration-queue | enqueue | tcp | 54.739589 | 210 | 4,762 | 150 | 6,667 | hard |  |
 | queue | tier4-integration-queue | enqueue | websocket | 52.203944 | 375 | 2,667 | 250 | 4,000 | hard |  |
-| rpc | tier4-integration-rpc | request_response | tcp | 43.997985 | 60 | 16,667 | 40 | 25,000 | hard |  |
-| rpc | tier4-integration-rpc | request_response | websocket | 45.373324 | 160 | 6,250 | 100 | 10,000 | hard |  |
+| rpc | tier4-integration-rpc | request_response | tcp | 44.900579 | 60 | 16,667 | 40 | 25,000 | hard | mode=sync_single_inflight |
+| rpc | tier4-integration-rpc | request_response | websocket | 46.741819 | 160 | 6,250 | 100 | 10,000 | hard | mode=sync_single_inflight |
+| rpc | tier4-integration-rpc | request_response_pipelined | tcp | 8.505402 | 60 | 16,667 | 40 | 25,000 | hard | mode=async_pipelined |
+| rpc | tier4-integration-rpc | request_response_pipelined | websocket | 5.189162 | 160 | 6,250 | 100 | 10,000 | hard | mode=async_pipelined |
 | schedule | tier4-integration-schedule | batch_create | websocket | 4.89118 | 60 | 16,667 | 45 | 22,222 | hard |  |
 | schedule | tier4-integration-schedule | create | tcp | 52.885673 | 1,700 | 588 | 1,300 | 769 | hard |  |
 | schedule | tier4-integration-schedule | create | websocket | 51.255267 | 1,700 | 588 | 1,300 | 769 | hard |  |
@@ -138,9 +142,13 @@ All rows in this section map to `target_class = service_budget` and `budget_grou
 | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- |
 | kv | tier4-integration-kv | concurrent_transactions | multiclient | 9.676429 | 28 | 35,714 | 20 | 50,000 | hard |  |
 | lease | tier4-integration-lease | concurrent_acquire_release | multiclient | 9.041907 | 15 | 66,667 | 12 | 83,333 | hard |  |
-| notice | tier4-integration-notice | fanout_publish | multiclient | 2.341298 | 26 | 38,462 | 18 | 55,556 | hard |  |
+| notice | tier4-integration-notice | fanout_publish | multiclient | 2.602613 | 26 | 38,462 | 18 | 55,556 | hard | mode=delivery_confirmed |
+| notice | tier4-integration-notice | publish_unacked | tcp_multipublisher | 4.645584 | 26 | 38,462 | 18 | 55,556 | hard | mode=fire_and_forget_unacked |
+| notice | tier4-integration-notice | publish_unacked | websocket_multipublisher | 2.041770 | 26 | 38,462 | 18 | 55,556 | hard | mode=fire_and_forget_unacked |
 | queue | tier4-integration-queue | concurrent_enqueues | multiclient | 46.036231 | 1,100 | 909 | 750 | 1,333 | hard |  |
-| rpc | tier4-integration-rpc | concurrent_requests | multiclient | 14.172848 | 26 | 38,462 | 18 | 55,556 | hard |  |
+| rpc | tier4-integration-rpc | concurrent_requests | multiclient | 14.098315 | 26 | 38,462 | 18 | 55,556 | hard | mode=sync_concurrent |
+| rpc | tier4-integration-rpc | request_response_pipelined | tcp_multiclient | 9.589709 | 26 | 38,462 | 18 | 55,556 | variance_gated | mode=concurrent_pipelined; full refresh rel_stddev 0.133, keep out of release gating until stable |
+| rpc | tier4-integration-rpc | request_response_pipelined | websocket_multiclient | 5.335477 | 26 | 38,462 | 18 | 55,556 | hard | mode=concurrent_pipelined |
 | schedule | tier4-integration-schedule | concurrent_creates | multiclient | 38.259015 | 1,700 | 588 | 1,300 | 769 | hard |  |
 | stream | tier4-integration-stream | concurrent_appends | multiclient | 8.024244 | 45.455 | 22,000 | 33.333 | 30,000 | hard |  |
 
@@ -171,6 +179,7 @@ All rows in this section map to `target_class = internal_explainer`. They are ad
 
 ## Document History
 
+- v2.3: Added RPC pipelined and Notice fire-and-forget rows with explicit completion-mode labels.
 - v2.2: Regenerated from current `cntryl-stress.v2` rows, removed legacy criterion target keys, and added benchmark IDs to the machine-readable target mirror.
 - v2.1: Introduced `engine_core`, `service_budget`, and `internal_explainer` classes, with class-aware scoreboards and hotspot selection order.
 - v2.0: Added operational and stretch targets for tier3/tier4 stress suites plus selected subsystem explainers.

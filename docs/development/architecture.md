@@ -498,6 +498,8 @@ Current Notice behavior is intentionally ephemeral:
 - `NoticeRouteActor` remains a focused sync actor and test model for matching and fanout invariants
 
 ### Domain Actor, Data, And Admin Contracts
+- Domain actor ingress mailboxes are bounded burst buffers. Each managed domain actor uses a 16,384-message mailbox lane by default, and the async transport ingress edge briefly retries domain dispatch when that mailbox is temporarily full. Sustained saturation still returns explicit session backpressure instead of unbounded buffering or hidden delivery guarantees. Ingress metrics separate retry attempts, frames accepted after retry, exhausted retry budgets, and wait latency.
+
 #### KV
 - Actor owner: `KvDomainSink` is a thin mailbox adapter; `KvDomainActor` is the managed production actor that processes KV delivery, cleanup, session `KvActor` state, watch fanout, and admin projection updates.
 - Persistence: committed values are durable according to the selected write policy; open transactions and watcher state are ephemeral.
@@ -864,7 +866,8 @@ pub fn handle(&mut self, msg: DomainMessage) -> DomainResponse {
 | Parameter | Default | Use Case |
 |---|---:|---|
 | `max_frame_size` | 1 MB | Limit large uploads |
-| `channel_capacity` | 1000 | Backpressure threshold |
+| `channel_capacity` | 1000 | Transport channel backpressure threshold |
+| domain actor mailbox capacity | 16,384 | Bounded domain ingress burst absorption before hard backpressure |
 | `max_connections` | 10000 | Resource limits |
 | `scheduler_threads` | num_cpus | CPU-bound work |
 ## Error Handling

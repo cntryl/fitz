@@ -5,8 +5,30 @@ use super::{
 };
 use crate::observability as obs;
 use bytes::Bytes;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tracing::{debug, error, warn};
+
+const DOMAIN_DISPATCH_BACKPRESSURE_POLICY: DomainDispatchBackpressurePolicy =
+    DomainDispatchBackpressurePolicy {
+        wait_budget: Duration::from_millis(2),
+        retry_delay: Duration::from_micros(50),
+    };
+
+#[derive(Clone, Copy)]
+struct DomainDispatchBackpressurePolicy {
+    wait_budget: Duration,
+    retry_delay: Duration,
+}
+
+impl DomainDispatchBackpressurePolicy {
+    fn within_budget(self, started_at: Instant) -> bool {
+        started_at.elapsed() < self.wait_budget
+    }
+
+    async fn wait_before_retry(self) {
+        tokio::time::sleep(self.retry_delay).await;
+    }
+}
 
 pub(super) struct DomainFrameDispatcher<'a> {
     ingress: &'a RuntimeIngress,
@@ -23,7 +45,7 @@ impl DomainFrameDispatcher<'_> {
         u64::try_from(start.elapsed().as_micros().min(u128::from(u64::MAX))).unwrap_or(u64::MAX)
     }
 
-    pub(super) fn dispatch_if_domain(
+    pub(super) async fn dispatch_if_domain(
         &self,
         session_id: u64,
         channel_id: ChannelId,
@@ -58,6 +80,7 @@ impl DomainFrameDispatcher<'_> {
                     preserve_payload_for_handler: should_preserve_payload,
                 };
                 self.authorize_and_dispatch_domain_frame(&dispatch, message_payload)
+                    .await
             }
             Ok(None) => Ok(()),
         }
@@ -285,7 +308,42 @@ impl DomainFrameDispatcher<'_> {
         Ok(())
     }
 
-    fn dispatch_domain_frame(
+    fn domain_dispatch_backpressured(error: &crate::runtime::router::RouteError) -> bool {
+        matches!(
+            error,
+            crate::runtime::router::RouteError::DeliveryFailed(
+                _,
+                crate::runtime::router::DeliveryError::MailboxFull { .. }
+                    | crate::runtime::router::DeliveryError::HighLaneFull { .. },
+            )
+        )
+    }
+
+    fn record_backpressure_retry() {
+        obs::counter_inc(obs::METRIC_INGRESS_DOMAIN_BACKPRESSURE_RETRIES);
+    }
+
+    fn record_backpressure_accepted(started_at: Instant, retries: u64) {
+        if retries == 0 {
+            return;
+        }
+
+        obs::counter_inc(obs::METRIC_INGRESS_DOMAIN_BACKPRESSURE_ACCEPTED);
+        obs::histogram_observe_us(
+            obs::METRIC_INGRESS_DOMAIN_BACKPRESSURE_WAIT_LATENCY,
+            Self::elapsed_micros_u64(started_at),
+        );
+    }
+
+    fn record_backpressure_exhausted(started_at: Instant) {
+        obs::counter_inc(obs::METRIC_INGRESS_DOMAIN_BACKPRESSURE_EXHAUSTED);
+        obs::histogram_observe_us(
+            obs::METRIC_INGRESS_DOMAIN_BACKPRESSURE_WAIT_LATENCY,
+            Self::elapsed_micros_u64(started_at),
+        );
+    }
+
+    async fn dispatch_domain_frame(
         &self,
         dispatch: &DomainDispatchRequest<'_>,
         message_payload: &mut Option<Bytes>,
@@ -305,66 +363,84 @@ impl DomainFrameDispatcher<'_> {
             crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::descriptor_for_domain(
                 dispatch.domain,
             );
-        let envelope = descriptor.build_request_envelope(
-            crate::api::runtime_ingress::domain_registry::DomainEnvelopeBuildRequest {
-                session_id: dispatch.session_id,
-                channel_id: dispatch.channel_id,
-                route_family: dispatch.route_family,
-                msg_type: dispatch.msg_type,
-                payload: dispatch_payload,
-                source,
-                destination: addr,
-            },
-        );
-        debug!(
-            session_id = dispatch.session_id,
-            domain = dispatch.domain.as_str(),
-            msg_type = dispatch.msg_type.as_u16(),
-            route = %envelope.destination(),
-            source = ?envelope.source(),
-            "Ingress: routing envelope to domain"
-        );
 
-        let dispatch_start = Instant::now();
-        let dispatch_result = dispatch
-            .router
-            .route_to_domain(dispatch.domain.as_str(), envelope);
-        if let Ok(collector) = std::panic::catch_unwind(crate::observability::metrics) {
-            collector.histogram_observe_us(
-                obs::METRIC_INGRESS_DOMAIN_DISPATCH_LATENCY,
-                Self::elapsed_micros_u64(dispatch_start),
+        let backpressure_started_at = Instant::now();
+        let mut retries = 0_u64;
+        let policy = DOMAIN_DISPATCH_BACKPRESSURE_POLICY;
+
+        loop {
+            let envelope = descriptor.build_request_envelope(
+                crate::api::runtime_ingress::domain_registry::DomainEnvelopeBuildRequest {
+                    session_id: dispatch.session_id,
+                    channel_id: dispatch.channel_id,
+                    route_family: dispatch.route_family,
+                    msg_type: dispatch.msg_type,
+                    payload: dispatch_payload.clone(),
+                    source: source.clone(),
+                    destination: addr.clone(),
+                },
             );
-        }
 
-        match dispatch_result {
-            Ok(()) => Ok(()),
-            Err(crate::runtime::router::RouteError::DeliveryFailed(
-                _,
-                crate::runtime::router::DeliveryError::MailboxFull { .. }
-                | crate::runtime::router::DeliveryError::HighLaneFull { .. },
-            )) => {
-                warn!(
-                    session_id = dispatch.session_id,
-                    domain = dispatch.domain.as_str(),
-                    "Ingress: domain dispatch backpressure"
+            debug!(
+                session_id = dispatch.session_id,
+                domain = dispatch.domain.as_str(),
+                msg_type = dispatch.msg_type.as_u16(),
+                route = %addr,
+                source = ?source,
+                "Ingress: routing envelope to domain"
+            );
+
+            let dispatch_start = Instant::now();
+            let dispatch_result = dispatch
+                .router
+                .route_to_domain(dispatch.domain.as_str(), envelope);
+            if let Ok(collector) = std::panic::catch_unwind(crate::observability::metrics) {
+                collector.histogram_observe_us(
+                    obs::METRIC_INGRESS_DOMAIN_DISPATCH_LATENCY,
+                    Self::elapsed_micros_u64(dispatch_start),
                 );
-                Err(IngressDecision::Backpressure)
             }
-            Err(error) => {
-                error!(
-                    session_id = dispatch.session_id,
-                    domain = dispatch.domain.as_str(),
-                    error = %error,
-                    "Ingress: router.route failed for domain dispatch"
-                );
-                Err(IngressDecision::Close(format!(
-                    "route delivery failed: {error}"
-                )))
+
+            match dispatch_result {
+                Ok(()) => {
+                    Self::record_backpressure_accepted(backpressure_started_at, retries);
+                    return Ok(());
+                }
+                Err(error)
+                    if Self::domain_dispatch_backpressured(&error)
+                        && policy.within_budget(backpressure_started_at) =>
+                {
+                    retries = retries.saturating_add(1);
+                    Self::record_backpressure_retry();
+                    policy.wait_before_retry().await;
+                }
+                Err(error) if Self::domain_dispatch_backpressured(&error) => {
+                    Self::record_backpressure_exhausted(backpressure_started_at);
+                    warn!(
+                        session_id = dispatch.session_id,
+                        domain = dispatch.domain.as_str(),
+                        retries = retries,
+                        waited_us = Self::elapsed_micros_u64(backpressure_started_at),
+                        "Ingress: domain dispatch backpressure"
+                    );
+                    return Err(IngressDecision::Backpressure);
+                }
+                Err(error) => {
+                    error!(
+                        session_id = dispatch.session_id,
+                        domain = dispatch.domain.as_str(),
+                        error = %error,
+                        "Ingress: router.route failed for domain dispatch"
+                    );
+                    return Err(IngressDecision::Close(format!(
+                        "route delivery failed: {error}"
+                    )));
+                }
             }
         }
     }
 
-    fn authorize_and_dispatch_domain_frame(
+    async fn authorize_and_dispatch_domain_frame(
         &self,
         dispatch: &DomainDispatchRequest<'_>,
         message_payload: &mut Option<Bytes>,
@@ -429,7 +505,7 @@ impl DomainFrameDispatcher<'_> {
                 .send_unauthorized_domain_response(dispatch, payload_ref)
                 .map_or_else(|decision| decision, |()| IngressDecision::Accept),
         })?;
-        self.dispatch_domain_frame(dispatch, message_payload)
+        self.dispatch_domain_frame(dispatch, message_payload).await
     }
 
     pub(super) fn resolve_authorization_targets(

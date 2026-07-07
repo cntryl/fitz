@@ -95,6 +95,12 @@ pub const METRIC_ROUTE_MISMATCHES: &str = "fitz_route_mismatches_total";
 pub const METRIC_DELIVERY_FAILURES: &str = "fitz_delivery_failures_total";
 pub const METRIC_ROUTER_BACKPRESSURE: &str = "fitz_router_backpressure_total";
 pub const METRIC_ROUTER_HIGH_LANE_BACKPRESSURE: &str = "fitz_router_high_lane_backpressure_total";
+pub const METRIC_INGRESS_DOMAIN_BACKPRESSURE_RETRIES: &str =
+    "fitz_ingress_domain_backpressure_retries_total";
+pub const METRIC_INGRESS_DOMAIN_BACKPRESSURE_ACCEPTED: &str =
+    "fitz_ingress_domain_backpressure_accepted_total";
+pub const METRIC_INGRESS_DOMAIN_BACKPRESSURE_EXHAUSTED: &str =
+    "fitz_ingress_domain_backpressure_exhausted_total";
 
 pub const METRIC_AUTH_FAILURES: &str = "fitz_auth_failures_total";
 pub const METRIC_PERMISSION_DENIALS: &str = "fitz_permission_denials_total";
@@ -136,6 +142,8 @@ pub const METRIC_DOMAIN_OPERATION_LATENCY: &str = "fitz_domain_operation_latency
 pub const METRIC_PERMISSION_CHECK_LATENCY: &str = "fitz_permission_check_latency_us";
 pub const METRIC_INGRESS_AUTH_ROUTE_LATENCY: &str = "fitz_ingress_auth_route_latency_us";
 pub const METRIC_INGRESS_DOMAIN_DISPATCH_LATENCY: &str = "fitz_ingress_domain_dispatch_latency_us";
+pub const METRIC_INGRESS_DOMAIN_BACKPRESSURE_WAIT_LATENCY: &str =
+    "fitz_ingress_domain_backpressure_wait_latency_us";
 pub const METRIC_INGRESS_FRAME_TOTAL_LATENCY: &str = "fitz_ingress_frame_total_latency_us";
 pub const METRIC_SESSION_FRAME_PROCESS_LATENCY: &str = "fitz_session_frame_process_latency_us";
 pub const METRIC_SESSION_TLV_DECODE_LATENCY: &str = "fitz_session_tlv_decode_latency_us";

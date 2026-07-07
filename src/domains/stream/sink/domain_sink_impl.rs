@@ -128,7 +128,7 @@ impl StreamDomainSink {
             router,
             StreamDomainActor::route_address(),
             move || StreamDomainActor::new(core.clone()),
-            1024,
+            crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
         )
     }
 

@@ -167,7 +167,7 @@ impl NoticeDomainSink {
             router,
             NoticeDomainActor::route_address(),
             move || NoticeDomainActor::new(core.clone()),
-            1024,
+            crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
         )
     }
 
