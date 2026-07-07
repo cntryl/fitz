@@ -7,8 +7,9 @@
 //! 4. Handles session lifecycle and backpressure
 
 use crate::api::ingress::IngressConfig;
+use crate::api::runtime_ingress::Ingress;
 use crate::observability as obs;
-use crate::session::{CloseReason, Ingress};
+use crate::session::CloseReason;
 use bytes::Bytes;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -217,10 +218,9 @@ fn hex_preview(data: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::runtime_ingress::IngressDecision;
     use crate::protocol::frame::ChannelId;
-    use crate::session::{
-        IngressDecision, SessionInfo, SessionMetadata, SessionPermissions, TransportKind,
-    };
+    use crate::session::{SessionInfo, SessionMetadata, SessionPermissions, TransportKind};
     use std::sync::Mutex;
 
     // Mock ingress for testing

@@ -3,8 +3,8 @@ use super::{
     tcp_session::handle_tcp_connection, ListenerHandle,
 };
 use crate::api::ingress::IngressConfig;
+use crate::api::runtime_ingress::Ingress;
 use crate::boot::{BootConfig, BootResult};
-use crate::session::manager::Ingress;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tracing::info;

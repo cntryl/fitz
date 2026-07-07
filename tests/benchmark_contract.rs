@@ -69,6 +69,91 @@ fn should_label_direct_lease_acquire_release_as_direct_inproc() {
     assert!(!benchmark_id.contains("measurement_scope=routed"));
 }
 
+#[test]
+fn should_label_tier4_rpc_targets_with_completion_semantics() {
+    // Arrange
+    let repo_root = repo_root();
+    let targets = perf_targets(&repo_root);
+
+    // Act
+    let missing_labels = targets
+        .iter()
+        .filter(|(key, _)| key.starts_with("stress:tier4-integration-rpc|"))
+        .filter_map(|(key, target)| {
+            let missing = missing_fields(
+                target,
+                &[
+                    "mode",
+                    "completion_mode",
+                    "completed_unit",
+                    "inflight_per_client",
+                    "worker_count",
+                ],
+            );
+            (!missing.is_empty()).then(|| format!("{key}: {}", missing.join(", ")))
+        })
+        .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        missing_labels.is_empty(),
+        "tier4 RPC perf targets must label completion semantics:\n{}",
+        missing_labels.join("\n")
+    );
+}
+
+#[test]
+fn should_label_tier4_notice_targets_with_completion_semantics() {
+    // Arrange
+    let repo_root = repo_root();
+    let targets = perf_targets(&repo_root);
+
+    // Act
+    let missing_labels = targets
+        .iter()
+        .filter(|(key, _)| key.starts_with("stress:tier4-integration-notice|"))
+        .filter_map(|(key, target)| {
+            let missing = missing_fields(
+                target,
+                &[
+                    "mode",
+                    "completion_mode",
+                    "completed_unit",
+                    "publisher_count",
+                    "subscriber_count",
+                ],
+            );
+            (!missing.is_empty()).then(|| format!("{key}: {}", missing.join(", ")))
+        })
+        .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        missing_labels.is_empty(),
+        "tier4 Notice perf targets must label completion semantics:\n{}",
+        missing_labels.join("\n")
+    );
+}
+
+#[test]
+fn should_keep_unstable_rpc_pipelined_tcp_row_out_of_release_ids() {
+    // Arrange
+    let repo_root = repo_root();
+    let release_ids = release_benchmark_ids(&repo_root);
+
+    // Act
+    let promoted = release_ids.iter().any(|id| {
+        id.contains("should_complete_tcp_multiclient_pipelined_requests")
+            || id.contains("measurement_scope=tcp_multiclient_pipelined_e2e")
+    });
+
+    // Assert
+    assert!(
+        !promoted,
+        "tcp multiclient pipelined RPC row is variance-gated and must not be release-gated"
+    );
+}
+
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
@@ -125,4 +210,12 @@ fn target_str<'a>(value: &'a Value, field: &str) -> &'a str {
         .get(field)
         .and_then(Value::as_str)
         .unwrap_or_else(|| panic!("missing string field {field} in {value}"))
+}
+
+fn missing_fields(value: &Value, fields: &[&str]) -> Vec<String> {
+    fields
+        .iter()
+        .filter(|field| value.get(**field).is_none())
+        .map(|field| (*field).to_string())
+        .collect()
 }

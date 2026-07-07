@@ -8,8 +8,8 @@
 //! 4. Handles session lifecycle and backpressure
 
 use crate::api::ingress::IngressConfig;
+use crate::api::runtime_ingress::Ingress;
 use crate::observability as obs;
-use crate::session::manager::Ingress;
 use crate::session::{
     generate_session_id, CloseReason, Session, SessionMetadata, SessionPermissions, TransportKind,
 };

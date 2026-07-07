@@ -37,7 +37,7 @@ impl ShutdownSignal {
 
 struct ShutdownContext {
     runtime: Runtime,
-    ingress: Arc<crate::session::manager::RuntimeIngress>,
+    ingress: Arc<crate::api::runtime_ingress::RuntimeIngress>,
     router: Arc<crate::runtime::Router>,
     store: Arc<cntryl_midge::Engine>,
     ws_shutdown: tokio::sync::oneshot::Sender<()>,
@@ -222,7 +222,7 @@ fn warn_defaulted_fast_queue_policy(config: &BootConfig) {
 
 async fn start_http_listener(
     config: &BootConfig,
-    ingress: Arc<crate::session::manager::RuntimeIngress>,
+    ingress: Arc<crate::api::runtime_ingress::RuntimeIngress>,
     ingress_config: crate::api::ingress::IngressConfig,
     runtime: Runtime,
 ) -> BootResult<crate::api::handlers::ListenerHandle> {
@@ -241,7 +241,7 @@ async fn abort_startup<T>(
 
 async fn start_tcp_listener(
     config: &BootConfig,
-    ingress: Arc<crate::session::manager::RuntimeIngress>,
+    ingress: Arc<crate::api::runtime_ingress::RuntimeIngress>,
     ingress_config: crate::api::ingress::IngressConfig,
     runtime: Runtime,
 ) -> BootResult<Option<crate::api::handlers::ListenerHandle>> {
@@ -305,7 +305,7 @@ async fn session_close_reason(runtime: &Runtime, signal: &ShutdownSignal) -> Str
 
 fn shutdown_runtime(
     runtime: Runtime,
-    ingress: Arc<crate::session::manager::RuntimeIngress>,
+    ingress: Arc<crate::api::runtime_ingress::RuntimeIngress>,
     router: Arc<crate::runtime::Router>,
     store: Arc<cntryl_midge::Engine>,
 ) -> BootResult<()> {

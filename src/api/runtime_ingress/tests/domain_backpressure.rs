@@ -15,6 +15,21 @@ impl MailboxSink for AlwaysBackpressuredSink {
     }
 }
 
+struct AlwaysHighLaneBackpressuredSink;
+
+impl MailboxSink for AlwaysHighLaneBackpressuredSink {
+    fn deliver(&self, _envelope: Envelope) -> Result<(), DeliveryError> {
+        Err(DeliveryError::HighLaneFull {
+            capacity: 1,
+            current_len: 1,
+        })
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
 struct TransientBackpressuredSink {
     failures_remaining: AtomicUsize,
     accepted: AtomicUsize,
@@ -157,6 +172,41 @@ fn should_absorb_transient_domain_mailbox_backpressure_for_each_domain() {
             sink.accepted.load(Ordering::SeqCst),
             1,
             "domain frame should be accepted after retry for {}",
+            case.domain
+        );
+    }
+}
+
+#[test]
+fn should_surface_sustained_high_lane_domain_mailbox_backpressure_for_each_domain() {
+    // Arrange
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
+    for (index, case) in domain_ingress_cases().into_iter().enumerate() {
+        let router = Arc::new(crate::runtime::Router::new());
+        router.register_domain_pattern(case.domain, Arc::new(AlwaysHighLaneBackpressuredSink));
+        let ingress = RuntimeIngress::new(false).with_router(router);
+        let session_id = 3_000 + u64::try_from(index).unwrap();
+        let session = make_session_info(session_id, TransportKind::Tcp);
+
+        // Act
+        let decision = rt.block_on(async {
+            ingress.on_open(session).await.unwrap();
+            ingress
+                .on_frame(
+                    session_id,
+                    case.channel_id,
+                    crate::protocol::tlv::MessageType::new(case.msg_type),
+                    case.payload,
+                )
+                .await
+        });
+
+        // Assert
+        assert_eq!(
+            decision,
+            IngressDecision::Backpressure,
+            "sustained high-lane backpressure should remain visible for {}",
             case.domain
         );
     }

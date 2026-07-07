@@ -1,6 +1,6 @@
 use crate::api::http::{Body, Request, Response};
 use crate::api::ingress::IngressConfig;
-use crate::session::manager::Ingress;
+use crate::api::runtime_ingress::Ingress;
 use crate::session::{
     generate_session_id, CloseReason, Session, SessionMetadata, SessionPermissions, TransportKind,
 };

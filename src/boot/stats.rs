@@ -1,8 +1,8 @@
 //! Runtime statistics and observability
 
+use crate::api::runtime_ingress::RuntimeIngress;
 use crate::boot::domains::DomainHandles;
 use crate::runtime::Router;
-use crate::session::manager::RuntimeIngress;
 use parking_lot::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize};
 use std::sync::Arc;

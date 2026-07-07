@@ -5,14 +5,18 @@
 //! - Tokio async I/O
 //! - Socket accept loops
 //! - Protocol framing (TCP length-prefix, WebSocket)
-//! - Session creation and lifecycle
-//! - Forwarding of bytes to `Session`
+//! - Runtime ingress edge coordination
+//! - Forwarding framed bytes into the synchronous core
 //!
-//! This layer MUST NOT:
+//! Transport handlers in this layer MUST NOT:
 //! - Route messages
 //! - Create envelopes
 //! - Inspect permissions
 //! - Contain domain logic
+//!
+//! `runtime_ingress` is the explicit async edge boundary that performs
+//! authentication, authorization, cleanup dispatch, and bounded delivery into
+//! the synchronous runtime/domain core.
 
 pub mod admin;
 pub mod background;

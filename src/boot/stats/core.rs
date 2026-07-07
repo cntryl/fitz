@@ -2,9 +2,9 @@ use super::{
     BrokerLifecycleState, Runtime, DEFAULT_DRAIN_CLOSE_REASON, DEFAULT_DRAIN_GRACE_SECONDS,
     LIFECYCLE_DRAINING, LIFECYCLE_RUNNING, LIFECYCLE_SHUTTING_DOWN,
 };
+use crate::api::runtime_ingress::RuntimeIngress;
 use crate::boot::domains::DomainHandles;
 use crate::runtime::Router;
-use crate::session::manager::RuntimeIngress;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;

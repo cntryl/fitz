@@ -4,8 +4,8 @@ use super::{
 };
 use crate::api::http::Request;
 use crate::api::ingress::IngressConfig;
+use crate::api::runtime_ingress::Ingress;
 use crate::boot::{BootConfig, BootResult};
-use crate::session::manager::Ingress;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;

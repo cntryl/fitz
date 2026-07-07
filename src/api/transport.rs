@@ -49,7 +49,7 @@
 //! ```
 
 use crate::api::ingress::IngressConfig;
-use crate::session::manager::Ingress;
+use crate::api::runtime_ingress::Ingress;
 use crate::session::{
     CloseReason, Session, SessionInfo, SessionMetadata, SessionPermissions, TransportKind,
     generate_session_id,

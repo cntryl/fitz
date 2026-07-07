@@ -11,6 +11,7 @@ pub(crate) use fitz::api::admin::{
     StreamAreaWatermark, StreamAreaWatermarkDetail, StreamInfo,
 };
 pub(crate) use fitz::api::http::Body;
+pub(crate) use fitz::api::runtime_ingress::{Ingress, RuntimeIngress};
 pub(crate) use fitz::boot::domains::DomainHandles;
 pub(crate) use fitz::boot::{BootConfig, Runtime};
 pub(crate) use fitz::domains::kv::sink::KvDomainSink;
@@ -29,8 +30,7 @@ pub(crate) use fitz::domains::stream::store::{CommitRecordsParams, EventPayload,
 pub(crate) use fitz::runtime::routing::RouteFamily;
 pub(crate) use fitz::runtime::Router;
 pub(crate) use fitz::session::{
-    Ingress, RuntimeIngress, SessionInfo as RuntimeSessionInfo, SessionMetadata,
-    SessionPermissions, TransportKind,
+    SessionInfo as RuntimeSessionInfo, SessionMetadata, SessionPermissions, TransportKind,
 };
 pub(crate) use fitz::testkit::body;
 pub(crate) use hyper::header::{COOKIE, SET_COOKIE};

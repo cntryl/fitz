@@ -32,6 +32,7 @@ const SYNC_CORE_TRANSPORT_FORBIDDEN: &[&str] = &[
     "crate::api::transport::",
     "crate::api::ws::",
 ];
+const SYNC_CORE_API_FORBIDDEN: &[&str] = &["crate::api::"];
 const ADMIN_BOUNDARY_FORBIDDEN: &[&str] = &[
     "crate::boot::domains::",
     "crate::domains::kv::sink",
@@ -53,6 +54,7 @@ const ADMIN_BOUNDARY_ALLOWED: &[&str] = &[
     "crate::domains::kv::sink::AdminKvRowsRequest",
     "crate::domains::stream::sink::AdminStreamReadRequest",
 ];
+const PRODUCTION_RUST_LINE_LIMIT: usize = 1_000;
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 struct OwnedSourceFile {
@@ -89,6 +91,22 @@ fn should_keep_transport_and_admin_frameworks_out_of_sync_core() {
     assert!(
         report.is_empty(),
         "found transport or admin framework dependencies in sync core:\n{report}"
+    );
+}
+
+#[test]
+fn should_keep_sync_core_independent_from_api_modules() {
+    // Arrange
+    let repo_root = repo_root();
+    let files = sync_core_source_files(&repo_root);
+
+    // Act
+    let report = report_for_patterns(&repo_root, &files, SYNC_CORE_API_FORBIDDEN);
+
+    // Assert
+    assert!(
+        report.is_empty(),
+        "sync core must not depend on src/api modules:\n{report}"
     );
 }
 
@@ -148,6 +166,52 @@ fn should_keep_admin_api_on_runtime_facades() {
     );
 }
 
+#[test]
+fn should_keep_production_rust_files_below_line_budget() {
+    // Arrange
+    let repo_root = repo_root();
+    let files = production_rust_source_files(&repo_root);
+
+    // Act
+    let violations = files
+        .iter()
+        .filter_map(|path| {
+            let line_count = read_source_file(path).lines().count();
+            (line_count > PRODUCTION_RUST_LINE_LIMIT).then(|| {
+                format!(
+                    "{} has {line_count} lines",
+                    relative_display_path(&repo_root, path)
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    let report = format_violation_report(&violations);
+
+    // Assert
+    assert!(
+        report.is_empty(),
+        "production Rust files must stay at or below {PRODUCTION_RUST_LINE_LIMIT} lines:\n{report}"
+    );
+}
+
+#[test]
+fn should_keep_domain_actor_mailbox_capacity_centralized() {
+    // Arrange
+    let repo_root = repo_root();
+    let files = domain_production_source_files(&repo_root);
+
+    // Act
+    let report = format_violation_report(&collect_domain_mailbox_capacity_violations(
+        &repo_root, &files,
+    ));
+
+    // Assert
+    assert!(
+        report.is_empty(),
+        "domain managed actor mailbox capacity must use DOMAIN_ACTOR_MAILBOX_CAPACITY:\n{report}"
+    );
+}
+
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
@@ -197,6 +261,32 @@ fn sync_core_source_files(repo_root: &Path) -> Vec<PathBuf> {
     files
 }
 
+fn production_rust_source_files(repo_root: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    collect_rust_files(&repo_root.join("src"), &mut files);
+    files.retain(|path| {
+        let relative = relative_display_path(repo_root, path);
+        !relative.ends_with("/tests.rs")
+            && !relative.contains("/tests/")
+            && !relative.contains("/test_helpers.rs")
+    });
+    files.sort();
+    files
+}
+
+fn domain_production_source_files(repo_root: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    collect_rust_files(&repo_root.join("src").join("domains"), &mut files);
+    files.retain(|path| {
+        let relative = relative_display_path(repo_root, path);
+        !relative.ends_with("/tests.rs")
+            && !relative.contains("/tests/")
+            && !relative.contains("/test_helpers.rs")
+    });
+    files.sort();
+    files
+}
+
 fn admin_api_source_files(repo_root: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     collect_rust_files(&repo_root.join("src").join("api").join("admin"), &mut files);
@@ -225,6 +315,32 @@ fn collect_rust_files(directory: &Path, files: &mut Vec<PathBuf>) {
             files.push(path);
         }
     }
+}
+
+fn collect_domain_mailbox_capacity_violations(repo_root: &Path, files: &[PathBuf]) -> Vec<String> {
+    let mut violations = Vec::new();
+
+    for path in files {
+        let content = read_source_file(path);
+        let lines = content.lines().collect::<Vec<_>>();
+        for (line_index, line) in lines.iter().enumerate() {
+            if !line.contains("ManagedActor::spawn_supervised") {
+                continue;
+            }
+
+            let window_end = (line_index + 8).min(lines.len());
+            let window = lines[line_index..window_end].join("\n");
+            if !window.contains("DOMAIN_ACTOR_MAILBOX_CAPACITY") {
+                violations.push(format!(
+                    "{}:{} spawns managed actor without centralized domain mailbox capacity",
+                    relative_display_path(repo_root, path),
+                    line_index + 1
+                ));
+            }
+        }
+    }
+
+    violations
 }
 
 fn collect_foreign_domain_reference_violations(

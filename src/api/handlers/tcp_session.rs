@@ -1,6 +1,6 @@
 use super::record_connection_closed;
 use crate::api::ingress::IngressConfig;
-use crate::session::manager::Ingress;
+use crate::api::runtime_ingress::Ingress;
 use bytes::Bytes;
 use parking_lot::Mutex;
 use std::convert::TryFrom;
@@ -299,8 +299,8 @@ pub(super) async fn handle_tcp_connection(
 #[cfg(test)]
 mod tests {
     use super::{close_tcp_session_on_frame_error, should_ignore_unknown_session_error};
+    use crate::api::runtime_ingress::{Ingress, IngressDecision};
     use crate::protocol::frame::ChannelId;
-    use crate::session::manager::{Ingress, IngressDecision};
     use crate::session::{CloseReason, SessionError, SessionInfo};
     use bytes::Bytes;
     use std::sync::{Arc, Mutex};

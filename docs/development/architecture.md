@@ -54,11 +54,11 @@ Layer 5: STORAGE (Persistent Backend)
 └─ Midge LSM (key-value durability)
 ```
 ### Critical Invariant: Async ↔ Sync Boundary
-**Transport (Layer 1) is async.** For each connection:
+**Transport and runtime ingress are async edge code.** For each connection:
 1. Async task reads frames
 2. Parses frame bytes
-3. **Synchronously calls domain handler**
-4. Waits for synchronous response
+3. Calls `RuntimeIngress`, which owns async edge orchestration such as auth setup, cleanup retries, and bounded mailbox-backpressure waits
+4. Dispatches into synchronous runtime/domain handlers
 5. Encodes response
 6. Writes frame back
 **The domain handler NEVER blocks on async.** It returns immediately with a typed response.
@@ -67,6 +67,8 @@ Async WebSocket Reader
     ↓ (frame bytes)
 Sync TLV Parser
     ↓ (route, message type)
+RuntimeIngress (async edge coordination)
+    ↓ (bounded dispatch into sync core)
 Sync Router (DashMap lookup)
     ↓ (domain sink)
 Sync Domain Handler (business logic)
@@ -75,7 +77,7 @@ Sync TLV Encoder
     ↓ (response bytes)
 Async WebSocket Writer
 ```
-This design eliminates async scheduling jitter from the hot path.
+This design keeps async scheduling at the API edge while preserving synchronous runtime and domain execution.
 ### Critical Invariant: Ephemeral Sessions
 > **Fitz sessions are ephemeral. The broker never restores session state after disconnect. Clients are responsible for rebuilding all state including subscriptions, transactions, workers, leases, and stream resume position.**
 
@@ -206,13 +208,14 @@ Thread pool with priority lanes:
 - Respects priorities (control > data > background)
 - No jitter from tokio scheduling
 #### Ingress
-Session management:
+API-edge session management:
 - Maintains per-connection session state
 - Tracks active transactions (KV), stream sessions, subscriptions
 - Cleans up resources on disconnect
+- May perform bounded async waits at the `src/api` edge for authentication, cleanup retry dispatch, or transient domain mailbox backpressure
 **Constraints:**
-- ALL functions are synchronous (no `.await`)
-- No async primitives (no tokio locks, channels, timers)
+- `src/runtime`, `src/domains`, `src/protocol`, and `src/session` remain synchronous core modules with no `.await`, Tokio primitives, or futures dependencies
+- Async ingress code stays under `src/api`
 - Use parking_lot or DashMap for concurrency
 - Return responses immediately; never queue for later
 ### Layer 4: Domains

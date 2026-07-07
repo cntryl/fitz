@@ -1,8 +1,8 @@
 //! Boot result and configuration types
 
 use crate::api::ingress::IngressConfig;
+use crate::api::runtime_ingress::RuntimeIngress;
 use crate::runtime::Router;
-use crate::session::manager::RuntimeIngress;
 use std::sync::Arc;
 use tracing::info;
 
