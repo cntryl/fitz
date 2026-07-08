@@ -258,6 +258,3 @@ path = "benches/tier4_integration_schedule.rs"
 name = "tier4_integration_stream"
 harness = false
 path = "benches/tier4_integration_stream.rs"
-
-[package.metadata.cargo-machete]
-ignored = ["cntryl-lexkey"]
