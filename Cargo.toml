@@ -3,10 +3,14 @@ name = "fitz"
 version = "0.0.1"
 edition = "2021"
 autobenches = false
+readme = "README.md"
+license-file = "LICENSE"
 authors = ["smiggleworth"]
 description = "The messaging layer your system was missing"
+homepage = "https://github.com/cntryl/fitz"
 repository = "https://github.com/cntryl/fitz"
-keywords = ["database", "kv", "lsm", "embedded", "storage"]
+documentation = "https://github.com/cntryl/fitz/blob/main/README.md"
+keywords = ["broker", "kv", "messaging", "queue", "stream"]
 categories = ["message-broker"]
 
 [workspace]
@@ -15,66 +19,66 @@ resolver = "2"
 [workspace.lints.clippy]
 pedantic = "deny"
 
+[features]
+# Feature flag to skip admin snapshot syncing in RPC domain for benchmarking
+# Helps identify if snapshot overhead is the dominant bottleneck in scaling collapse
+bench-no-snapshot = []
+
 [profile.release]
 lto = true
 codegen-units = 1
- 
+
 [dependencies]
-tokio = { version = "1", features = ["full"] }
+ahash = "0.8"
+argon2 = "0.5"
+async-trait = "0.1"
+base64 = "0.22.1"
+brotli = "8"
+bytes = "1.12"
+chrono = { version = "0.4", features = ["serde"] }
+cntryl-lexkey = { git = "https://github.com/cntryl/lexkey-rs", rev = "9e75be255d73261b88dfd1d273a55fb9eb177e40" }
+cntryl-midge = { git = "https://github.com/cntryl/midge" }
+crossbeam-channel = "0.5"
+dashmap = "6.2.1"
+futures = "0.3"
+futures-util = "0.3"
+flate2 = "1"
+fxhash = "0.2"
+hex = "0.4"
+hmac = "0.13"
 hyper = { version = "1", features = ["full"] }
+hyper-tungstenite = "0.20"
 hyper-util = { version = "0.1", features = ["server", "tokio"] }
 http-body-util = "0.1"
-tokio-tungstenite = "0.29"
-tungstenite = "0.29"
-futures = "0.3"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-bytes = "1.12"
-brotli = "8"
-uuid = { version = "1", features = ["v4", "serde"] }
-flate2 = "1"
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
-once_cell = "1.21"
-chrono = { version = "0.4", features = ["serde"] }
-base64 = "0.22.1"
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }
-argon2 = "0.5"
-sha1 = "0.11"
-hmac = "0.13"
-sha2 = "0.11"
-hex = "0.4"
-hyper-tungstenite = "0.20"
-futures-util = "0.3"
-url = "2"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt", "ansi"] }
-tracing-opentelemetry = "0.33"
+lz4_flex = "0.13.1"
+num_cpus = "1.17"
+num-traits = "0.2"
 opentelemetry = { version = "0.32", features = ["trace"] }
 opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic"] }
 opentelemetry_sdk = { version = "0.32", features = ["rt-tokio", "trace"] }
-async-trait = "0.1"
-
-# Lock-free / concurrency crates used by lease service
-crossbeam-channel = "0.5"
-fxhash = "0.2"
-ahash = "0.8"
-num_cpus = "1.17"
-dashmap = "6.2.1"
+once_cell = "1.21"
 parking_lot = "0.12"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha1 = "0.11"
+sha2 = "0.11"
 smallvec = "1.15"
 tempfile = "3"
-lz4_flex = "0.13.1"
-num-traits = "0.2"
-cntryl-midge = { git = "https://github.com/cntryl/midge" }
-cntryl-lexkey = { git = "https://github.com/cntryl/lexkey-rs", rev = "9e75be255d73261b88dfd1d273a55fb9eb177e40" }
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.29"
+tracing = "0.1"
+tracing-opentelemetry = "0.33"
+tracing-subscriber = { version = "0.3", features = ["ansi", "env-filter", "fmt", "json"] }
+tungstenite = "0.29"
+url = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
 
 [dev-dependencies]
-url = "2"
-futures-util = "0.3"
 cntryl-stress = { git = "https://github.com/cntryl/stress", branch = "main" }
-serial_test = "3.5.0"
-tempfile = "3"
 proptest = "1"
+serial_test = "3.5.0"
 
 # Tier 1: Hot Path (Infrastructure - Pure sync internals, stress micro mode)
 [[bench]]
@@ -255,7 +259,5 @@ name = "tier4_integration_stream"
 harness = false
 path = "benches/tier4_integration_stream.rs"
 
-[features]
-# Feature flag to skip admin snapshot syncing in RPC domain for benchmarking
-# Helps identify if snapshot overhead is the dominant bottleneck in scaling collapse
-bench-no-snapshot = []
+[package.metadata.cargo-machete]
+ignored = ["cntryl-lexkey"]
