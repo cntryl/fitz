@@ -5,7 +5,7 @@ use crate::tier4_stream_support::{
 };
 use bytes::Bytes;
 use cntryl_stress::StressContext;
-use fitz::benchkit::create_write_heavy_bench_store;
+use fitz::benchkit::{create_local_bench_store, create_write_heavy_bench_store};
 use fitz::domains::stream::protocol::StreamWriteMode;
 use fitz::domains::stream::{StreamActor, StreamStore};
 use fitz::runtime::routing::RouteFamily;
@@ -16,34 +16,56 @@ const OWNER_SESSION_ID: u64 = 1;
 
 pub(crate) struct DirectActorFixture {
     pub(crate) actor: StreamActor,
+    store: Arc<StreamStore>,
+    realm: String,
     _temp_dir: Option<tempfile::TempDir>,
 }
 
 pub(crate) fn direct_actor(storage: StorageProfile, realm: &str) -> DirectActorFixture {
-    match storage {
-        StorageProfile::Memory => {
-            let store = Arc::new(StreamStore::new(create_write_heavy_bench_store()));
-            let actor = StreamActor::new(
-                RouteFamily::new(1),
-                realm.to_string(),
-                "orders".to_string(),
-                "resource-0".to_string(),
-                store,
-            )
-            .expect("create write-heavy memory Stream actor");
-            DirectActorFixture {
-                actor,
-                _temp_dir: None,
-            }
-        }
+    let (store, temp_dir) = match storage {
+        StorageProfile::Memory => (
+            Arc::new(StreamStore::new(create_write_heavy_bench_store())),
+            None,
+        ),
         StorageProfile::LocalDisk => {
-            let (actor, temp_dir) =
-                fitz::benchkit::create_local_bench_stream_actor(realm, "orders", "resource-0");
-            DirectActorFixture {
-                actor,
-                _temp_dir: Some(temp_dir),
-            }
+            let (engine, temp_dir) = create_local_bench_store();
+            (Arc::new(StreamStore::new(engine)), Some(temp_dir))
         }
+    };
+    let realm = realm.to_string();
+    let actor = new_direct_actor(store.clone(), &realm);
+
+    DirectActorFixture {
+        actor,
+        store,
+        realm,
+        _temp_dir: temp_dir,
+    }
+}
+
+fn new_direct_actor(store: Arc<StreamStore>, realm: &str) -> StreamActor {
+    StreamActor::new(
+        RouteFamily::new(1),
+        realm.to_string(),
+        "orders".to_string(),
+        "resource-0".to_string(),
+        store,
+    )
+    .expect("create direct Stream actor")
+}
+
+impl DirectActorFixture {
+    fn refresh_actor(&mut self) {
+        self.actor = new_direct_actor(self.store.clone(), &self.realm);
+    }
+
+    fn next_resource_offset(&self) -> u64 {
+        self.actor
+            .metadata()
+            .expect("read direct Stream metadata after conflict")
+            .metadata
+            .last_resource_offset
+            .map_or(0, |offset| offset.saturating_add(1))
     }
 }
 
@@ -108,37 +130,40 @@ pub(crate) fn measure_direct_write(
 
     measure_operations(ctx, measurement, 1, |latencies| {
         let started = Instant::now();
-        fixture
-            .actor
-            .begin_append_session(OWNER_SESSION_ID, stream_session_id, None)
-            .expect("begin direct Stream write");
-        fixture
-            .actor
-            .append_to_session_with_discriminator_for_owner(
-                OWNER_SESSION_ID,
-                stream_session_id,
-                next_offset,
-                payload.clone(),
-                None,
-                None,
-            )
-            .expect("append direct Stream write");
         let mut commit_attempts = 0_u32;
         loop {
+            fixture
+                .actor
+                .begin_append_session(OWNER_SESSION_ID, stream_session_id, None)
+                .expect("begin direct Stream write");
+            fixture
+                .actor
+                .append_to_session_with_discriminator_for_owner(
+                    OWNER_SESSION_ID,
+                    stream_session_id,
+                    next_offset,
+                    payload.clone(),
+                    None,
+                    None,
+                )
+                .expect("append direct Stream write");
             match fixture.actor.commit_session_for_owner(
                 OWNER_SESSION_ID,
                 stream_session_id,
                 write_mode,
             ) {
                 Ok(_) => break,
-                // Local Midge commits are optimistic. A transient conflict leaves the
-                // staged session intact, so retrying the exact same commit is safe.
+                // An optimistic conflict leaves this actor's cached frontier stale.
+                // Recreate it on the same store, then restage against the refreshed
+                // frontier before retrying the logical lifecycle.
                 Err(error) if error.contains("concurrency conflict") => {
                     commit_attempts += 1;
                     assert!(
                         commit_attempts < 1_000,
                         "direct Stream commit retry limit exceeded"
                     );
+                    fixture.refresh_actor();
+                    next_offset = fixture.next_resource_offset();
                     std::thread::yield_now();
                 }
                 Err(error) => panic!("commit direct Stream write: {error}"),
