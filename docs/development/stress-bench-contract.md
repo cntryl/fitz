@@ -94,4 +94,4 @@ The wrong pattern leaves completed operations counted while the measured work di
 ## Reference examples
 
 - **Tier 3 (system, no network):** [benches/tier3_system_rpc.rs](../../benches/tier3_system_rpc.rs) — real request → router → route actor → dispatch → worker actor → response → route actor; setup outside timed sections; only the request + drain loop inside; completed-operation counts match ops; no getters or fake work.
-- **Tier 4 (integration):** [benches/tier4_integration_kv.rs](../../benches/tier4_integration_kv.rs) — direct (actor.handle only), tcp (full roundtrip via TestClient), websocket (TestWebSocketClient), multiclient; uses `shared_bench_runtime()`; setup (server, client, frames) outside measure.
+- **Tier 4 (integration):** `benches/tier4_kv_gate.rs` — direct (actor.handle only), encoded codec path, TCP (full roundtrip via TestClient), WebSocket (TestWebSocketClient), and multiclient rows where exposed; uses `shared_bench_runtime()`; setup (server, client, frames) outside measure.

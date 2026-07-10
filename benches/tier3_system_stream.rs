@@ -14,21 +14,23 @@ use stress_config::StressContextExt;
 use bytes::Bytes;
 use cntryl_stress::{stress, stress_main, StressContext};
 use fitz::benchkit::{
-    build_stream_append, build_stream_begin, build_stream_commit, build_stream_last,
-    build_stream_read, build_stream_subscribe, count_stream_read_records_from_payload,
-    create_bench_stream_sink, create_write_heavy_bench_stream_sink, extract_single_tlv_field,
-    parse_stream_session_id, register_session_counting_sink, register_session_queue_sink,
-    route_frame, FrameQueueSink,
+    build_stream_append, build_stream_begin, build_stream_commit, build_stream_read,
+    count_stream_read_records_from_payload, create_bench_stream_sink, extract_single_tlv_field,
+    parse_stream_session_id, register_session_queue_sink, route_frame, FrameQueueSink,
 };
 use fitz::protocol::frame::ChannelId;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{RouteAddress, RouteFamily};
-use std::cell::Cell;
 use std::sync::Arc;
 use std::time::Duration;
 
 const CLIENT_SESSION_ID: u64 = 1;
 const STREAM_SYNC_COMMIT_MODE: u8 = 1;
+
+fn configure_read_measurement(ctx: &mut StressContext) {
+    ctx.parameter("completed_unit", "records_returned");
+    ctx.parameter("logical_unit", "stream_record");
+}
 
 struct StreamBenchContext {
     router: Arc<Router>,
@@ -38,21 +40,9 @@ struct StreamBenchContext {
 }
 
 fn setup_stream_sink() -> StreamBenchContext {
-    setup_stream_sink_with(false)
-}
-
-fn setup_write_heavy_stream_sink() -> StreamBenchContext {
-    setup_stream_sink_with(true)
-}
-
-fn setup_stream_sink_with(write_heavy: bool) -> StreamBenchContext {
     let family = RouteFamily::new(1);
     let router = Arc::new(Router::new());
-    let sink = if write_heavy {
-        create_write_heavy_bench_stream_sink(router.clone())
-    } else {
-        create_bench_stream_sink(router.clone())
-    };
+    let sink = create_bench_stream_sink(router.clone());
     router.register_domain_pattern("stream", sink as Arc<dyn MailboxSink>);
     let (source, inbox) = register_session_queue_sink(&router, family, CLIENT_SESSION_ID);
     StreamBenchContext {
@@ -96,35 +86,6 @@ fn begin_stream(context: &StreamBenchContext, route: &str) -> u64 {
     })
 }
 
-fn assert_stream_success(operation: &str, route: &str, response: &Bytes) {
-    assert!(
-        response.first().copied() == Some(0),
-        "stream {operation} failed for {route}; response={response:?}"
-    );
-}
-
-fn subscribe_stream(
-    context: &StreamBenchContext,
-    source: &RouteAddress,
-    destination: &str,
-    session_id: u64,
-    pattern: &str,
-) {
-    let subscribe_frame = build_stream_subscribe(pattern);
-    let (msg_type, payload) = extract_single_tlv_field(&subscribe_frame);
-    route_frame(
-        context.router.as_ref(),
-        source,
-        destination,
-        session_id,
-        ChannelId::Pub,
-        msg_type,
-        payload,
-        context.family,
-    )
-    .expect("stream subscribe");
-}
-
 fn seed_committed_stream_route(
     context: &StreamBenchContext,
     route: &str,
@@ -161,28 +122,11 @@ fn prepare_validated_read(
 }
 
 #[stress(tier = 3)]
-fn should_complete_append_sustained_load(ctx: &mut StressContext) {
-    ctx.parameter("scenario", "sustained_append");
-    ctx.parameter("measurement_scope", "routed_system");
-    ctx.parameter("batch_size", "single_append");
-
-    let context = setup_stream_sink();
-    let route = "stream://bench/system/append/append";
-    let session_id = begin_stream(&context, route);
-    let append_frame = build_stream_append(session_id, 0, b"sustained append event");
-    let (msg_type, payload) = extract_single_tlv_field(&append_frame);
-
-    let iterations = ctx.measure_workload("complete_append_sustained_load", || {
-        let _ = request(&context, route, msg_type, payload.clone());
-    });
-    stress_config::record_completed(ctx, iterations);
-}
-
-#[stress(tier = 3)]
 fn should_complete_read_scan_throughput(ctx: &mut StressContext) {
     ctx.parameter("scenario", "read_scan");
     ctx.parameter("measurement_scope", "routed_system");
     ctx.parameter("batch_size", "100_events_scanned");
+    configure_read_measurement(ctx);
 
     let context = setup_stream_sink();
     let route = "stream://bench/system/read/read";
@@ -211,6 +155,7 @@ fn should_complete_area_wildcard_read_throughput(ctx: &mut StressContext) {
     ctx.parameter("measurement_scope", "routed_system");
     ctx.parameter("read_scope", "area");
     ctx.parameter("batch_size", "100_events_scanned");
+    configure_read_measurement(ctx);
 
     let context = setup_stream_sink();
     seed_committed_stream_route(
@@ -233,162 +178,6 @@ fn should_complete_area_wildcard_read_throughput(ctx: &mut StressContext) {
         let _ = request(&context, read_route, read_msg_type, read_payload.clone());
     });
     stress_config::record_completed(ctx, 100 * iterations);
-}
-
-#[stress(tier = 3)]
-fn should_complete_realm_wildcard_read_throughput(ctx: &mut StressContext) {
-    ctx.parameter("scenario", "read_realm_wildcard");
-    ctx.parameter("measurement_scope", "routed_system");
-    ctx.parameter("read_scope", "realm");
-    ctx.parameter("batch_size", "100_events_scanned");
-
-    let context = setup_stream_sink();
-    seed_committed_stream_route(
-        &context,
-        "stream://bench/events/orders",
-        50,
-        b"realm read event",
-    );
-    seed_committed_stream_route(
-        &context,
-        "stream://bench/audit/ledger",
-        50,
-        b"realm read event",
-    );
-
-    let read_route = "stream://bench/*/*";
-    let (read_msg_type, read_payload) = prepare_validated_read(&context, read_route, 100);
-
-    let iterations = ctx.measure_workload("complete_realm_wildcard_read_throughput", || {
-        let _ = request(&context, read_route, read_msg_type, read_payload.clone());
-    });
-    stress_config::record_completed(ctx, 100 * iterations);
-}
-
-#[stress(tier = 3)]
-fn should_complete_batch_write_operations(ctx: &mut StressContext) {
-    ctx.parameter("scenario", "batch_write");
-    ctx.parameter("measurement_scope", "routed_system");
-    ctx.parameter("batch_size", "100_appends");
-
-    let context = setup_stream_sink();
-    let route = "stream://bench/system/batch/append";
-    let session_id = begin_stream(&context, route);
-    let append_frame = build_stream_append(session_id, 0, b"batch event");
-    let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
-
-    let iterations = ctx.measure_workload("complete_batch_write_operations", || {
-        for _ in 0..100 {
-            let _ = request(&context, route, append_msg_type, append_payload.clone());
-        }
-    });
-    stress_config::record_completed(ctx, 100 * iterations);
-}
-
-#[stress(tier = 3)]
-fn should_complete_multiarea_concurrent_writes(ctx: &mut StressContext) {
-    ctx.parameter("scenario", "multiarea_writes");
-    ctx.parameter("measurement_scope", "routed_system");
-    ctx.parameter("batch_size", "10_appends");
-    ctx.parameter("area_count", "10");
-
-    let context = setup_stream_sink();
-    let routes: Vec<String> = (0..10)
-        .map(|i| format!("stream://bench/system/area{i}/append"))
-        .collect();
-    let append_requests: Vec<(String, u16, Bytes)> = routes
-        .iter()
-        .map(|route| {
-            let session_id = begin_stream(&context, route);
-            let append_frame = build_stream_append(session_id, 0, b"concurrent write");
-            let (msg_type, payload) = extract_single_tlv_field(&append_frame);
-            (route.clone(), msg_type, payload)
-        })
-        .collect();
-
-    let iterations = ctx.measure_workload("complete_multiarea_concurrent_writes", || {
-        for (route, msg_type, payload) in &append_requests {
-            let _ = request(&context, route, *msg_type, payload.clone());
-        }
-    });
-    stress_config::record_completed(ctx, 10 * iterations);
-}
-
-#[stress(tier = 3)]
-fn should_complete_publish_fanout_with_subscribers(ctx: &mut StressContext) {
-    ctx.parameter("scenario", "publish_fanout");
-    ctx.parameter("measurement_scope", "routed_fanout");
-    ctx.parameter("batch_size", "10_publishes");
-    ctx.parameter("subscriber_count", "16");
-
-    let context = setup_write_heavy_stream_sink();
-    let subscribe_destination = "stream://bench/system/fanout-control/append";
-    // Stream commit notifications are published on the committed resource route, not the append route.
-    let notify_pattern = "stream://bench/system/*";
-    let publish_routes: Vec<String> = (0..10)
-        .map(|index| format!("stream://bench/system/fanout-{index}/append"))
-        .collect();
-    let expected_offsets: Vec<Cell<u64>> = publish_routes.iter().map(|_| Cell::new(0)).collect();
-
-    let _subscriber_sinks: Vec<_> = (2..18)
-        .map(|session_id| {
-            let (source, sink) =
-                register_session_counting_sink(&context.router, context.family, session_id);
-            subscribe_stream(
-                &context,
-                &source,
-                subscribe_destination,
-                session_id,
-                notify_pattern,
-            );
-            sink
-        })
-        .collect();
-
-    let iterations = ctx.measure_workload("complete_publish_fanout_with_subscribers", || {
-        for (route, expected_offset) in publish_routes.iter().zip(expected_offsets.iter()) {
-            let stream_session = begin_stream(&context, route);
-
-            let append_frame =
-                build_stream_append(stream_session, expected_offset.get(), b"fanout event");
-            let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
-            let append_response = request(&context, route, append_msg_type, append_payload);
-            assert_stream_success("append", route, &append_response);
-
-            let commit_frame = build_stream_commit(stream_session, STREAM_SYNC_COMMIT_MODE);
-            let (commit_msg_type, commit_payload) = extract_single_tlv_field(&commit_frame);
-            let commit_response = request(&context, route, commit_msg_type, commit_payload);
-            assert_stream_success("commit", route, &commit_response);
-
-            expected_offset.set(expected_offset.get().saturating_add(1));
-        }
-    });
-    stress_config::record_completed(ctx, publish_routes.len() as u64 * iterations);
-}
-
-#[stress(tier = 3)]
-fn should_complete_offset_tracking_overhead(ctx: &mut StressContext) {
-    ctx.parameter("scenario", "offset_tracking");
-    ctx.parameter("measurement_scope", "routed_system");
-    ctx.parameter("batch_size", "single_last_read");
-
-    let context = setup_stream_sink();
-    let route = "stream://bench/system/offset/append";
-    let session_id = begin_stream(&context, route);
-    let append_frame = build_stream_append(session_id, 0, b"offset event");
-    let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
-    let _ = request(&context, route, append_msg_type, append_payload);
-    let commit_frame = build_stream_commit(session_id, 0);
-    let (commit_msg_type, commit_payload) = extract_single_tlv_field(&commit_frame);
-    let _ = request(&context, route, commit_msg_type, commit_payload);
-
-    let last_frame = build_stream_last(route);
-    let (last_msg_type, last_payload) = extract_single_tlv_field(&last_frame);
-
-    let iterations = ctx.measure_workload("complete_offset_tracking_overhead", || {
-        let _ = request(&context, route, last_msg_type, last_payload.clone());
-    });
-    stress_config::record_completed(ctx, iterations);
 }
 
 stress_main!();

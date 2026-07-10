@@ -3,7 +3,7 @@
 //! These helpers let benchmarks drive the same `FrameContext -> Envelope -> Router ->
 //! DomainSink` path that the live server uses, without standing up TCP/WS transport.
 
-use super::{create_bench_store, create_write_heavy_bench_store};
+use super::{create_bench_store, create_local_bench_store, create_write_heavy_bench_store};
 use crate::domains::lease::protocol::{LeaseKey, LeaseResponse};
 use crate::domains::lease::sink::LeaseDomainSink;
 use crate::domains::notice::sink::NoticeDomainSink;
@@ -683,6 +683,30 @@ pub fn create_bench_stream_sink(router: Arc<Router>) -> Arc<StreamDomainSink> {
         router,
         crate::domains::stream::StreamStorageLayout::default(),
     )
+}
+
+/// Create a benchmark `StreamDomainSink` backed by an isolated local-disk store.
+///
+/// The returned temporary directory must stay alive for the lifetime of the sink.
+///
+/// # Panics
+///
+/// Panics if the benchmark Stream sink cannot be constructed.
+#[must_use]
+pub fn create_local_bench_stream_sink(
+    router: Arc<Router>,
+) -> (Arc<StreamDomainSink>, tempfile::TempDir) {
+    let (store, temp_dir) = create_local_bench_store();
+    let sink = Arc::new(
+        StreamDomainSink::new_with_layout(
+            store,
+            router,
+            crate::control::admin::read_model::AdminReadModel::new(),
+            crate::domains::stream::StreamStorageLayout::default(),
+        )
+        .expect("create local-disk bench Stream sink"),
+    );
+    (sink, temp_dir)
 }
 
 #[must_use]

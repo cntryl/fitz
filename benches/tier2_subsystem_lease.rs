@@ -21,6 +21,8 @@ use std::time::{Duration, Instant};
 const WATCH_ROUTE: &str = "lease://realm/locks/primary";
 const NOTIFY_REPEAT_COUNT: u64 = 32_768;
 const EXACT_ROUTE_64_NOTIFY_REPEAT_COUNT: u64 = 131_072;
+const SINGLE_STAR_16_NOTIFY_REPEAT_COUNT: u64 = 131_072;
+const DOUBLE_STAR_64_NOTIFY_REPEAT_COUNT: u64 = 131_072;
 const NOTIFY_CHUNK_SIZE: u64 = 512;
 
 struct PreparedLeaseNotifyCase {
@@ -168,6 +170,10 @@ fn notify_watchers(ctx: &mut StressContext, name: &str, watcher_count: usize, pa
 fn notify_repeat_count(watcher_count: usize, pattern: &str) -> u64 {
     if watcher_count == 64 && pattern == WATCH_ROUTE {
         EXACT_ROUTE_64_NOTIFY_REPEAT_COUNT
+    } else if watcher_count == 16 && pattern == "lease://realm/locks/*" {
+        SINGLE_STAR_16_NOTIFY_REPEAT_COUNT
+    } else if watcher_count == 64 && pattern == "lease://realm/**" {
+        DOUBLE_STAR_64_NOTIFY_REPEAT_COUNT
     } else {
         NOTIFY_REPEAT_COUNT
     }

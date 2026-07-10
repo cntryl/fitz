@@ -8,9 +8,19 @@ use fitz::runtime::subscriptions::{SubscriptionId, SubscriptionIndex};
 
 const SINGLE_PATTERN_BATCH_SIZE: usize = 512;
 const REMOVE_BATCH_SIZE: usize = 512;
-const MATCH_REPEAT_COUNT: usize = 4_096;
+const MATCH_REPEAT_COUNT: usize = 16_384;
 const REPLACE_CASE_COUNT: usize = 64;
 const INSERT_100_MATCH_2_REPEAT_COUNT: u64 = 1_024;
+
+fn configure_route_match_measurement(ctx: &mut StressContext) {
+    ctx.parameter("completed_unit", "route_matches");
+    ctx.parameter("logical_unit", "route_match");
+}
+
+fn configure_subscription_insert_measurement(ctx: &mut StressContext) {
+    ctx.parameter("completed_unit", "subscription_inserts");
+    ctx.parameter("logical_unit", "subscription_insert");
+}
 
 fn make_subscriptions_with_patterns(pattern_count: usize) -> SubscriptionIndex {
     let mut index = SubscriptionIndex::new();
@@ -118,31 +128,29 @@ fn make_index_with_depth(
     (index, route, family)
 }
 
-fn insert_single_pattern(ctx: &mut StressContext, pattern: &Route) {
+fn insert_single_pattern(ctx: &mut StressContext, name: &str, pattern: &Route) {
     let family = RouteFamily::new(1);
     let indexes = (0..SINGLE_PATTERN_BATCH_SIZE)
         .map(|_| SubscriptionIndex::new())
         .collect::<Vec<_>>();
 
-    tier2_stress::measure_once(
-        ctx,
-        "insert_single_pattern",
-        SINGLE_PATTERN_BATCH_SIZE as u64,
-        || {
-            for mut index in indexes {
-                index.insert(family, black_box(pattern), SubscriptionId(1));
-            }
-        },
-    );
+    configure_subscription_insert_measurement(ctx);
+    tier2_stress::measure_once(ctx, name, SINGLE_PATTERN_BATCH_SIZE as u64, || {
+        for mut index in indexes {
+            index.insert(family, black_box(pattern), SubscriptionId(1));
+        }
+    });
 }
 
 fn match_repeated(
     ctx: &mut StressContext,
+    name: &str,
     index: &SubscriptionIndex,
     family: RouteFamily,
     route: &Route,
 ) {
-    tier2_stress::measure_iterations(ctx, "match_repeated", MATCH_REPEAT_COUNT as u64, || {
+    configure_route_match_measurement(ctx);
+    tier2_stress::measure_iterations(ctx, name, MATCH_REPEAT_COUNT as u64, || {
         for _ in 0..MATCH_REPEAT_COUNT {
             black_box(index.match_all(family, black_box(route)));
         }
@@ -151,17 +159,29 @@ fn match_repeated(
 
 #[stress(tier = 2, name = "exact_pattern")]
 fn should_insert_exact_pattern(ctx: &mut StressContext) {
-    insert_single_pattern(ctx, &Route::new("notify://realm/orders/create"));
+    insert_single_pattern(
+        ctx,
+        "exact_pattern",
+        &Route::new("notify://realm/orders/create"),
+    );
 }
 
 #[stress(tier = 2, name = "single_star_pattern")]
 fn should_insert_single_star_pattern(ctx: &mut StressContext) {
-    insert_single_pattern(ctx, &Route::new("notify://realm/orders/*"));
+    insert_single_pattern(
+        ctx,
+        "single_star_pattern",
+        &Route::new("notify://realm/orders/*"),
+    );
 }
 
 #[stress(tier = 2, name = "double_star_pattern")]
 fn should_insert_double_star_pattern(ctx: &mut StressContext) {
-    insert_single_pattern(ctx, &Route::new("notify://realm/**/created"));
+    insert_single_pattern(
+        ctx,
+        "double_star_pattern",
+        &Route::new("notify://realm/**/created"),
+    );
 }
 
 #[stress(tier = 2, name = "exact")]
@@ -169,7 +189,7 @@ fn should_match_exact(ctx: &mut StressContext) {
     let index = make_subscriptions_with_patterns(100);
     let family = RouteFamily::new(1);
     let route = Route::new("notify://realm/orders/create");
-    match_repeated(ctx, &index, family, &route);
+    match_repeated(ctx, "exact", &index, family, &route);
 }
 
 #[stress(tier = 2, name = "single_star")]
@@ -177,7 +197,7 @@ fn should_match_single_star(ctx: &mut StressContext) {
     let index = make_subscriptions_with_patterns(100);
     let family = RouteFamily::new(1);
     let route = Route::new("notify://realm/orders/create");
-    match_repeated(ctx, &index, family, &route);
+    match_repeated(ctx, "single_star", &index, family, &route);
 }
 
 #[stress(tier = 2, name = "double_star")]
@@ -185,41 +205,42 @@ fn should_match_double_star(ctx: &mut StressContext) {
     let index = make_subscriptions_with_patterns(100);
     let family = RouteFamily::new(1);
     let route = Route::new("notify://realm/orders/created");
-    match_repeated(ctx, &index, family, &route);
+    match_repeated(ctx, "double_star", &index, family, &route);
 }
 
 #[stress(tier = 2, name = "10k_subs_1_match")]
 fn should_match_10k_subs_1_match(ctx: &mut StressContext) {
     let (index, route, family) = make_index_fanout_sparse(10000);
-    match_repeated(ctx, &index, family, &route);
+    match_repeated(ctx, "10k_subs_1_match", &index, family, &route);
 }
 
 #[stress(tier = 2, name = "10k_subs_10k_matches")]
 fn should_match_10k_subs_10k_matches(ctx: &mut StressContext) {
     let (index, route, family) = make_index_fanout_dense(10000);
+    configure_route_match_measurement(ctx);
     tier2_stress::measure_iterations(ctx, "10k_subs_10k_matches", 1, || {
         black_box(index.match_all_with_capacity(family, black_box(&route), 10_000));
     });
 }
 
-fn match_depth(ctx: &mut StressContext, depth: usize) {
+fn match_depth(ctx: &mut StressContext, name: &str, depth: usize) {
     let (index, route, family) = make_index_with_depth(depth, 1000);
-    match_repeated(ctx, &index, family, &route);
+    match_repeated(ctx, name, &index, family, &route);
 }
 
 #[stress(tier = 2, name = "depth_3")]
 fn should_match_depth_3(ctx: &mut StressContext) {
-    match_depth(ctx, 3);
+    match_depth(ctx, "depth_3", 3);
 }
 
 #[stress(tier = 2, name = "depth_5")]
 fn should_match_depth_5(ctx: &mut StressContext) {
-    match_depth(ctx, 5);
+    match_depth(ctx, "depth_5", 5);
 }
 
 #[stress(tier = 2, name = "depth_10")]
 fn should_match_depth_10(ctx: &mut StressContext) {
-    match_depth(ctx, 10);
+    match_depth(ctx, "depth_10", 10);
 }
 
 #[stress(tier = 2, name = "remove_from_index")]
@@ -261,6 +282,7 @@ fn should_insert_100_match_2(ctx: &mut StressContext) {
         .collect::<Vec<_>>();
 
     let completed_inserts = 100 * INSERT_100_MATCH_2_REPEAT_COUNT;
+    configure_subscription_insert_measurement(ctx);
     tier2_stress::measure_iterations(ctx, "insert_100_match_2", completed_inserts, || {
         for _ in 0..INSERT_100_MATCH_2_REPEAT_COUNT {
             let mut index = SubscriptionIndex::new();

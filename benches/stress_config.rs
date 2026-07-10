@@ -1,3 +1,5 @@
+#![allow(dead_code)] // Helper API is shared selectively by benchmark targets.
+
 /// Stress helpers for Fitz tier3 and tier4 benchmarks
 ///
 /// Tier 3: System-level (domain + plumbing, single family/concurrent access patterns)

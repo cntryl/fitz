@@ -26,8 +26,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 const CLIENT_SESSION_ID: u64 = 1;
-const LEASE_QUERY_CONFIRM_BATCH_SIZE: usize = 256;
 const LEASE_MIXED_CONFIRM_BATCH_SIZE: usize = 3;
+
+fn configure_lease_measurement(ctx: &mut StressContext) {
+    ctx.parameter("completed_unit", "lease_operations");
+    ctx.parameter("logical_unit", "lease_operation");
+}
 
 fn build_acquire_payload(route: &str, owner_id: &str, ttl_secs: u64) -> Bytes {
     let mut enc = PayloadEncoder::new();
@@ -167,6 +171,7 @@ fn should_complete_acquire_release_sequence(ctx: &mut StressContext) {
     ctx.parameter("scenario", "single_route_intensive");
     ctx.parameter("measurement_scope", "routed_system");
     ctx.parameter("batch_size", "acquire_release");
+    configure_lease_measurement(ctx);
 
     let (router, family, source, inbox) = setup_lease_sink();
     let lease_routes: Vec<(String, RouteAddress)> = (0..100)
@@ -199,6 +204,7 @@ fn should_complete_dual_route_renew_operations(ctx: &mut StressContext) {
     ctx.parameter("scenario", "dual_route_concurrent");
     ctx.parameter("measurement_scope", "routed_system");
     ctx.parameter("batch_size", "2_renews");
+    configure_lease_measurement(ctx);
 
     let (router, family, source, inbox) = setup_lease_sink();
     let renew_route_a = "lease://realm/area1/lock1/renew";
@@ -244,62 +250,12 @@ fn should_complete_dual_route_renew_operations(ctx: &mut StressContext) {
 }
 
 #[stress(tier = 3)]
-fn should_complete_round_robin_query_operations(ctx: &mut StressContext) {
-    ctx.parameter("scenario", "triple_route_contention");
-    ctx.parameter("measurement_scope", "routed_system");
-    let batch_size_tag = format!("{LEASE_QUERY_CONFIRM_BATCH_SIZE}_queries");
-    ctx.parameter("batch_size", batch_size_tag.as_str());
-
-    let (router, family, source, inbox) = setup_lease_sink();
-    let query_routes = [
-        "lease://realm/area1/lock1/query",
-        "lease://realm/area2/lock2/query",
-        "lease://realm/area3/lock3/query",
-    ];
-    let owners = ["client-1", "client-2", "client-3"];
-    let query_addresses: Vec<RouteAddress> = query_routes
-        .iter()
-        .map(|route| lease_address(family, route))
-        .collect();
-    for ((route, address), owner) in query_routes
-        .iter()
-        .zip(query_addresses.iter())
-        .zip(owners.iter())
-    {
-        let _ = acquire_token(&router, &source, &inbox, route, address, owner);
-    }
-
-    let query_payloads: Vec<Bytes> = query_routes
-        .iter()
-        .map(|route| build_query_payload(route))
-        .collect();
-    let mut phase = 0usize;
-    let iterations = ctx.measure_workload("complete_round_robin_query_operations", || {
-        for _ in 0..LEASE_QUERY_CONFIRM_BATCH_SIZE {
-            let route_index = phase % query_routes.len();
-            let payload = query_payloads[route_index].clone();
-            send_request(
-                &router,
-                &source,
-                &query_addresses[route_index],
-                403,
-                payload,
-            );
-            phase += 1;
-        }
-        drain_responses(&inbox, LEASE_QUERY_CONFIRM_BATCH_SIZE);
-    });
-    let batch_size =
-        u64::try_from(LEASE_QUERY_CONFIRM_BATCH_SIZE).expect("lease query batch size fits u64");
-    stress_config::record_completed(ctx, iterations * batch_size);
-}
-
-#[stress(tier = 3)]
 fn should_complete_cycling_query_renew_operations(ctx: &mut StressContext) {
     ctx.parameter("scenario", "mixed_operations_high_load");
     ctx.parameter("measurement_scope", "routed_system");
     let batch_size_tag = format!("{LEASE_MIXED_CONFIRM_BATCH_SIZE}_mixed_ops");
     ctx.parameter("batch_size", batch_size_tag.as_str());
+    configure_lease_measurement(ctx);
 
     let (router, family, source, inbox) = setup_lease_sink();
     let route = "lease://realm/area/lock1/mixed";

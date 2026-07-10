@@ -15,10 +15,22 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const CREATE_BATCH_SIZE: usize = 32;
 const STORE_INSERT_CASE_COUNT: usize = 16;
-const STORE_BATCH_CASE_COUNT: usize = 16;
+const STORE_BATCH_CASE_COUNT: usize = 64;
+const NEXT_FIRE_REPEAT_COUNT: usize = 512;
 const ROUTE_RING_SIZE: usize = 1024;
 const PAYLOAD_SIZE: usize = 32;
 const ACTOR_CREATE_REPEAT_COUNT: u64 = 32;
+const ROUTE_VALIDATION_REPEAT_COUNT: usize = 32;
+
+fn configure_route_validation_measurement(ctx: &mut StressContext) {
+    ctx.parameter("completed_unit", "validated_routes");
+    ctx.parameter("logical_unit", "route_validation");
+}
+
+fn configure_next_fire_measurement(ctx: &mut StressContext) {
+    ctx.parameter("completed_unit", "next_fire_calculations");
+    ctx.parameter("logical_unit", "next_fire_calculation");
+}
 
 #[inline]
 fn u128_to_u64_saturating(value: u128) -> u64 {
@@ -128,15 +140,18 @@ fn create_actor_case(fixtures: &ScheduleCreateFixtures) -> ActorCreateCase {
 #[stress(tier = 2, name = "validate_route_1024_unique")]
 fn should_validate_route_1024_unique(ctx: &mut StressContext) {
     let fixtures = create_fixtures();
+    configure_route_validation_measurement(ctx);
 
     tier2_stress::measure_iterations(
         ctx,
         "validate_route_1024_unique",
-        usize_to_u64_saturating(ROUTE_RING_SIZE),
+        usize_to_u64_saturating(ROUTE_RING_SIZE * ROUTE_VALIDATION_REPEAT_COUNT),
         || {
-            for route in &fixtures.routes {
-                black_box(validate_concrete_schedule_route(black_box(route)))
-                    .expect("valid schedule route");
+            for _ in 0..ROUTE_VALIDATION_REPEAT_COUNT {
+                for route in &fixtures.routes {
+                    black_box(validate_concrete_schedule_route(black_box(route)))
+                        .expect("valid schedule route");
+                }
             }
         },
     );
@@ -145,16 +160,20 @@ fn should_validate_route_1024_unique(ctx: &mut StressContext) {
 #[stress(tier = 2, name = "next_fire_hourly_32")]
 fn should_next_fire_hourly_32(ctx: &mut StressContext) {
     let fixtures = create_fixtures();
+    configure_next_fire_measurement(ctx);
 
     tier2_stress::measure_iterations(
         ctx,
         "next_fire_hourly_32",
-        usize_to_u64_saturating(CREATE_BATCH_SIZE),
+        usize_to_u64_saturating(CREATE_BATCH_SIZE * NEXT_FIRE_REPEAT_COUNT),
         || {
-            for offset in 0..CREATE_BATCH_SIZE {
-                black_box(fixtures.hourly_schedule.next_fire_time(
-                    fixtures.next_fire_start + Duration::from_secs(usize_to_u64_saturating(offset)),
-                ));
+            for _ in 0..NEXT_FIRE_REPEAT_COUNT {
+                for offset in 0..CREATE_BATCH_SIZE {
+                    black_box(fixtures.hourly_schedule.next_fire_time(
+                        fixtures.next_fire_start
+                            + Duration::from_secs(usize_to_u64_saturating(offset)),
+                    ));
+                }
             }
         },
     );
@@ -163,17 +182,20 @@ fn should_next_fire_hourly_32(ctx: &mut StressContext) {
 #[stress(tier = 2, name = "next_fire_daily_32")]
 fn should_next_fire_daily_32(ctx: &mut StressContext) {
     let fixtures = create_fixtures();
+    configure_next_fire_measurement(ctx);
 
     tier2_stress::measure_iterations(
         ctx,
         "next_fire_daily_32",
-        usize_to_u64_saturating(CREATE_BATCH_SIZE),
+        usize_to_u64_saturating(CREATE_BATCH_SIZE * NEXT_FIRE_REPEAT_COUNT),
         || {
-            for offset in 0..CREATE_BATCH_SIZE {
-                black_box(fixtures.daily_schedule.next_fire_time(
-                    fixtures.next_fire_start
-                        + Duration::from_secs(usize_to_u64_saturating(offset) * 60),
-                ));
+            for _ in 0..NEXT_FIRE_REPEAT_COUNT {
+                for offset in 0..CREATE_BATCH_SIZE {
+                    black_box(fixtures.daily_schedule.next_fire_time(
+                        fixtures.next_fire_start
+                            + Duration::from_secs(usize_to_u64_saturating(offset) * 60),
+                    ));
+                }
             }
         },
     );

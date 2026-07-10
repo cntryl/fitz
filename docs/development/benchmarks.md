@@ -72,7 +72,7 @@ another broker.
 | **Tier 1** | Hotpath | Stress micro | `benches/tier1_hotpath_*.rs` | Pure synchronous internals using `#[stress(tier = 1)]` and one named measurement. |
 | **Tier 2** | Subsystem | Stress | `benches/tier2_subsystem_*.rs` | Component and domain subsystem rows using stress fixed-operation samples and explicit correctness counters. |
 | **Tier 3** | System | Stress | `benches/tier3_system_*.rs` | In-process domain actor + test engine, no network. |
-| **Tier 4** | Integration | Stress | `benches/tier4_integration_*.rs` | Full stack direct/TCP/WebSocket/multiclient scenarios. |
+| **Tier 4** | Integration | Stress | `benches/tier4_{domain}_{group}.rs` | Full-stack direct/TCP/WebSocket/multiclient scenarios, split by domain and workload group. |
 
 Shared helper files:
 
@@ -80,6 +80,11 @@ Shared helper files:
   context calls.
 - `benches/stress_config.rs`: shared correctness counter recording and a
   benchmark-only `measure_workload` adapter for existing Tier 3/4 rows.
+
+Tier 4 executable targets use the stable `tier4_{domain}_{group}` naming
+convention (for example, `tier4_kv_gate` and `tier4_rpc_pipeline`). Support
+fixtures and measurement modules use the same prefix but are not registered as
+standalone Cargo benchmarks.
 
 The manifest sets `autobenches = false`; every runnable bench target must be
 listed explicitly in `Cargo.toml`.
@@ -180,17 +185,20 @@ workflow defaults. Keep such commands out of committed Fitz docs and CI.
 Run a targeted benchmark:
 
 ```bash
-export FITZ_LOG_LEVEL=warn
+export FITZ_LOG_LEVEL=off
 export OTEL_ENABLED=false
 cargo bench --quiet --bench tier1_hotpath_tlv -- --workload decode_one
 cargo bench --quiet --bench tier2_subsystem_queue -- --workload ack_256_messages_primary
-cargo bench --quiet --bench tier4_integration_rpc -- --workload should_complete_direct_request
+cargo bench --quiet --bench tier4_rpc_roundtrip -- --workload should_measure_tcp_request_response_roundtrip
 cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"
 ```
 
 Use `cargo bench --quiet` so Cargo build progress does not bury the stress
 table. Keep the stress console mode at its default unless a local diagnostic run
 needs `--console verbose`, `--console json`, or `--console markdown`.
+Tier 4 benchmark binaries silence Fitz observability by default; set
+`FITZ_BENCH_ALLOW_LOGS=true` only when you need transport or startup logs while
+debugging a benchmark harness issue.
 
 Run the release suite locally by using the release command list in
 [`.github/workflows/bench.yml`](../../.github/workflows/bench.yml), then

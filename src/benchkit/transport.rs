@@ -684,9 +684,10 @@ pub fn parse_stream_session_id(data: &[u8]) -> Result<u64, String> {
     let mut decoder = PayloadDecoder::new(data);
     let status = decoder.get_u8()?;
     if status != 0 {
-        let error = decoder
-            .get_string()
-            .unwrap_or_else(|_| "Stream BEGIN operation failed".to_string());
+        let error = crate::protocol::error_codes::decode_error_body(data).map_or_else(
+            |_| "Stream BEGIN operation failed".to_string(),
+            |(_, message)| message,
+        );
         return Err(error);
     }
 

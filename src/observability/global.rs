@@ -138,13 +138,58 @@ impl Drop for ScopedHistogramUs {
 ///
 /// Returns an error if full observability initialization fails.
 pub fn try_init_observability() -> Result<Arc<MetricsCollector>, Box<dyn std::error::Error>> {
+    try_init_observability_with_defaults(None, None)
+}
+
+pub(crate) fn try_init_observability_with_defaults(
+    default_log_level: Option<&str>,
+    default_otel_enabled: Option<bool>,
+) -> Result<Arc<MetricsCollector>, Box<dyn std::error::Error>> {
     // Check if already initialized
     if let Some(existing) = METRICS_COLLECTOR.get() {
         return Ok(existing.clone());
     }
 
     // Not initialized yet, call full init
-    init_observability()
+    init_observability_with_defaults(default_log_level, default_otel_enabled)
+}
+
+pub(crate) fn try_init_bench_observability(
+) -> Result<Arc<MetricsCollector>, Box<dyn std::error::Error>> {
+    // Benchmarks should emit only stress output unless explicitly opted into logs.
+    if let Some(existing) = METRICS_COLLECTOR.get() {
+        return Ok(existing.clone());
+    }
+
+    init_observability_with_options(Some("off"), Some(false), true)
+}
+
+fn default_env_filter(log_level: &str) -> EnvFilter {
+    if log_level == "off" {
+        EnvFilter::new("off")
+    } else {
+        EnvFilter::new(format!("fitz={log_level},warn"))
+    }
+}
+
+fn resolve_env_filter(ignore_env_overrides: bool, log_level: &str) -> EnvFilter {
+    if ignore_env_overrides {
+        return default_env_filter(log_level);
+    }
+
+    if std::env::var("RUST_LOG").is_ok() {
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| default_env_filter(log_level))
+    } else {
+        default_env_filter(log_level)
+    }
+}
+
+fn service_identity() -> (String, String) {
+    let instance_id =
+        std::env::var("FITZ_SERVICE_INSTANCE_ID").unwrap_or_else(|_| Uuid::new_v4().to_string());
+    let environment =
+        std::env::var("FITZ_DEPLOYMENT_ENVIRONMENT").unwrap_or_else(|_| "unknown".to_string());
+    (instance_id, environment)
 }
 
 /// Initialize observability (tracing, metrics, OTEL).
@@ -152,7 +197,7 @@ pub fn try_init_observability() -> Result<Arc<MetricsCollector>, Box<dyn std::er
 /// # Environment Variables
 ///
 /// - `FITZ_LOG_FORMAT` (text|json): Logging format. Default: text
-/// - `FITZ_LOG_LEVEL` (trace|debug|info|warn): Log level. Default: info
+/// - `FITZ_LOG_LEVEL` (off|trace|debug|info|warn): Log level. Default: info
 /// - `OTEL_ENABLED` (true|false): Enable OTLP export. Default: true
 /// - `OTEL_EXPORTER_OTLP_ENDPOINT`: OTLP collector endpoint. Default: <http://localhost:4317>
 /// - `FITZ_METRICS_PORT`: HTTP metrics port. Default: 9090
@@ -166,29 +211,41 @@ pub fn try_init_observability() -> Result<Arc<MetricsCollector>, Box<dyn std::er
 ///
 /// Returns an error if the OpenTelemetry exporter cannot be initialized.
 pub fn init_observability() -> Result<Arc<MetricsCollector>, Box<dyn std::error::Error>> {
+    init_observability_with_defaults(None, None)
+}
+
+fn init_observability_with_defaults(
+    default_log_level: Option<&str>,
+    default_otel_enabled: Option<bool>,
+) -> Result<Arc<MetricsCollector>, Box<dyn std::error::Error>> {
+    init_observability_with_options(default_log_level, default_otel_enabled, false)
+}
+
+fn init_observability_with_options(
+    default_log_level: Option<&str>,
+    default_otel_enabled: Option<bool>,
+    ignore_env_overrides: bool,
+) -> Result<Arc<MetricsCollector>, Box<dyn std::error::Error>> {
     // Detect logging format
     let log_format = std::env::var("FITZ_LOG_FORMAT")
         .unwrap_or_else(|_| "text".to_string())
         .to_lowercase();
 
     // Detect log level
-    let log_level = std::env::var("FITZ_LOG_LEVEL")
-        .unwrap_or_else(|_| "info".to_string())
-        .to_lowercase();
+    let log_level = if ignore_env_overrides {
+        default_log_level.unwrap_or("info").to_string()
+    } else {
+        std::env::var("FITZ_LOG_LEVEL")
+            .ok()
+            .unwrap_or_else(|| default_log_level.unwrap_or("info").to_string())
+    }
+    .to_lowercase();
 
     // Build env filter (RUST_LOG takes precedence)
-    let env_filter = if let Ok(_rust_log) = std::env::var("RUST_LOG") {
-        EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new(format!("fitz={log_level},warn")))
-    } else {
-        EnvFilter::new(format!("fitz={log_level},warn"))
-    };
+    let env_filter = resolve_env_filter(ignore_env_overrides, &log_level);
 
     // Derive service identity and environment metadata
-    let service_instance_id =
-        std::env::var("FITZ_SERVICE_INSTANCE_ID").unwrap_or_else(|_| Uuid::new_v4().to_string());
-    let deployment_environment =
-        std::env::var("FITZ_DEPLOYMENT_ENVIRONMENT").unwrap_or_else(|_| "unknown".to_string());
+    let (service_instance_id, deployment_environment) = service_identity();
 
     let fmt_layer = if log_format == "json" {
         fmt::layer()
@@ -214,10 +271,14 @@ pub fn init_observability() -> Result<Arc<MetricsCollector>, Box<dyn std::error:
         .unwrap_or_else(|_| "http://localhost:4317".to_string());
 
     // Initialize OpenTelemetry OTLP exporter when enabled.
-    let otel_enabled = std::env::var("OTEL_ENABLED")
-        .unwrap_or_else(|_| "true".to_string())
-        .parse::<bool>()
-        .unwrap_or(true);
+    let otel_enabled = if ignore_env_overrides {
+        default_otel_enabled.unwrap_or(true)
+    } else {
+        std::env::var("OTEL_ENABLED")
+            .ok()
+            .and_then(|value| value.parse::<bool>().ok())
+            .unwrap_or(default_otel_enabled.unwrap_or(true))
+    };
 
     if otel_enabled {
         let resource = Resource::builder_empty()

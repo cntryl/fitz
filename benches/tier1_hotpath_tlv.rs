@@ -1,12 +1,19 @@
 use bytes::Bytes;
 use cntryl_stress::{black_box, stress, stress_allocator, stress_main, StressContext};
-use fitz::protocol::tlv::{MessageType, TlvDecoder, TlvEncoder, TlvRecord};
+use fitz::protocol::tlv::{MessageType, TlvDecoder, TlvEncoder, TlvRef};
 
 stress_allocator!();
+
+const DECODE_ONE_BATCH_OPS: u64 = 256;
+const DECODE_ITER_REUSE_BATCH_OPS: u64 = 16;
 
 fn record_group(ctx: &mut StressContext, group: &str, payload_size: usize) {
     ctx.parameter("group", group);
     ctx.parameter("payload_size", payload_size);
+}
+
+fn mark_validated_micro(ctx: &mut StressContext) {
+    ctx.metadata("validated_micro", "true");
 }
 
 macro_rules! encode_clear_bench {
@@ -14,6 +21,7 @@ macro_rules! encode_clear_bench {
         #[stress(tier = 1, max_allocs_per_op = 0, max_bytes_per_op = 0)]
         fn $fn_name(ctx: &mut StressContext) {
             record_group(ctx, "hotpath_tlv_encode_sizes", $size);
+            mark_validated_micro(ctx);
             let payload = vec![0_u8; $size];
             let mut encoder = TlvEncoder::with_capacity(1024);
 
@@ -26,32 +34,11 @@ macro_rules! encode_clear_bench {
     };
 }
 
-macro_rules! encode_new_finish_bench {
-    ($fn_name:ident, $bench_name:literal, $size:expr) => {
-        #[stress(tier = 1)]
-        fn $fn_name(ctx: &mut StressContext) {
-            record_group(ctx, "hotpath_tlv_encode_sizes", $size);
-            let payload = vec![0_u8; $size];
-
-            ctx.measure($bench_name, || {
-                let mut encoder = TlvEncoder::with_capacity(1024);
-                encoder.encode(MessageType::new(42), black_box(&payload));
-                let out: Bytes = encoder.finish();
-                black_box(out);
-            });
-        }
-    };
-}
-
 encode_clear_bench!(
     should_encode_clear_encode_256b,
     "encode_clear_encode_256b",
     256
 );
-encode_new_finish_bench!(should_encode_new_finish_0b, "encode_new_finish_0b", 0);
-encode_new_finish_bench!(should_encode_new_finish_16b, "encode_new_finish_16b", 16);
-encode_new_finish_bench!(should_encode_new_finish_64b, "encode_new_finish_64b", 64);
-encode_new_finish_bench!(should_encode_new_finish_256b, "encode_new_finish_256b", 256);
 
 fn encoded_records(size: usize, records: usize) -> Bytes {
     let mut encoder = TlvEncoder::with_capacity(1024 * 8);
@@ -74,9 +61,14 @@ macro_rules! decode_all_bench {
             ctx.parameter("records", RECORDS);
             let data = encoded_records($size, RECORDS);
             let decoder = TlvDecoder::new();
+            let mut refs: Vec<TlvRef<'_>> = Vec::with_capacity(RECORDS);
 
             ctx.measure($bench_name, || {
-                black_box(decoder.decode_all(black_box(&data)).unwrap());
+                refs.clear();
+                decoder
+                    .decode_refs_into(black_box(&data), &mut refs)
+                    .unwrap();
+                black_box(&refs);
             });
         }
     };
@@ -89,19 +81,28 @@ macro_rules! decode_iter_reuse_bench {
             const RECORDS: usize = 64;
             record_group(ctx, "hotpath_tlv_decode_sizes", $size);
             ctx.parameter("records", RECORDS);
+            ctx.parameter("completed_unit", "decode_passes");
+            ctx.parameter("logical_unit", "decode_pass");
+            ctx.parameter("decoded_records_per_logical_operation", RECORDS.to_string());
             let data = encoded_records($size, RECORDS);
             let decoder = TlvDecoder::new();
-            let mut out: Vec<TlvRecord> = Vec::with_capacity(RECORDS);
+            let mut checksum = 0usize;
 
-            ctx.measure($bench_name, || {
-                out.clear();
-                let mut offset = 0usize;
-                while offset < data.len() {
-                    let (record, consumed) = decoder.decode_one(&data[offset..]).unwrap();
-                    out.push(record);
-                    offset += consumed;
+            ctx.measure_batch($bench_name, DECODE_ITER_REUSE_BATCH_OPS, || {
+                for _ in 0..DECODE_ITER_REUSE_BATCH_OPS {
+                    let mut offset = 0usize;
+                    let mut local_checksum = 0usize;
+                    while offset < data.len() {
+                        let (msg_type, slice, consumed) =
+                            decoder.decode_one_ref(&data[offset..]).unwrap();
+                        local_checksum = local_checksum
+                            .wrapping_add(usize::from(msg_type.as_u16()))
+                            .wrapping_add(slice.len());
+                        offset += consumed;
+                    }
+                    checksum ^= local_checksum;
                 }
-                black_box(&out);
+                black_box(checksum);
             });
         }
     };
@@ -137,14 +138,19 @@ macro_rules! decode_one_bench {
         #[stress(tier = 1)]
         fn $fn_name(ctx: &mut StressContext) {
             record_group(ctx, "hotpath_tlv_decode_single", $size);
+            mark_validated_micro(ctx);
+            ctx.parameter("completed_unit", "decoded_records");
+            ctx.parameter("logical_unit", "tlv_record");
             let mut encoder = TlvEncoder::with_capacity(256);
             let payload = vec![0_u8; $size];
             encoder.encode(MessageType::new(42), &payload);
             let data = encoder.finish();
             let decoder = TlvDecoder::new();
 
-            ctx.measure($bench_name, || {
-                black_box(decoder.decode_one(black_box(&data)).unwrap());
+            ctx.measure_batch($bench_name, DECODE_ONE_BATCH_OPS, || {
+                for _ in 0..DECODE_ONE_BATCH_OPS {
+                    black_box(decoder.decode_one_ref(black_box(&data)).unwrap());
+                }
             });
         }
     };

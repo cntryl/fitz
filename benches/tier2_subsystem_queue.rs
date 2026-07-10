@@ -23,7 +23,9 @@ const MULTI_QUEUE_MESSAGES_PER_QUEUE: usize = 1;
 const DEQUEUE_OPERATION_BATCH_SIZE: usize = 256;
 const ACK_OPERATION_BATCH_SIZE: usize = 256;
 const WATCH_REGISTER_BATCH_SIZE: usize = 64;
-const QUEUE_MEASUREMENT_REPEAT_COUNT: u32 = 2;
+const QUEUE_MEASUREMENT_REPEAT_COUNT: u32 = 8;
+const ACK_MEASUREMENT_REPEAT_COUNT: u32 = 16;
+const MULTI_QUEUE_MEASUREMENT_REPEAT_COUNT: u32 = 32;
 
 struct PreparedDequeueCase {
     router: Arc<Router>,
@@ -292,10 +294,11 @@ fn queue_enqueue(
     name: &str,
     queue_count: usize,
     messages_per_queue: usize,
+    repeat_count: u32,
 ) {
     let mut total = Duration::ZERO;
     let expected_responses = queue_count * messages_per_queue;
-    for _ in 0..QUEUE_MEASUREMENT_REPEAT_COUNT {
+    for _ in 0..repeat_count {
         let (router, family) = setup_queue_domain();
         let (source, sink) = register_session_counting_sink(&router, family, CLIENT_SESSION_ID);
         let queue_routes = build_queue_routes(queue_count);
@@ -333,8 +336,8 @@ fn queue_enqueue(
     tier2_stress::record_duration(
         ctx,
         name,
-        total / QUEUE_MEASUREMENT_REPEAT_COUNT,
-        expected_responses as u64,
+        total,
+        expected_responses as u64 * u64::from(repeat_count),
     );
 }
 
@@ -345,6 +348,7 @@ fn should_enqueue_1024_messages_1_queue_primary(ctx: &mut StressContext) {
         "enqueue_1024_messages_1_queue_primary",
         1,
         SINGLE_QUEUE_ENQUEUE_BATCH_SIZE,
+        QUEUE_MEASUREMENT_REPEAT_COUNT,
     );
 }
 
@@ -355,6 +359,7 @@ fn should_enqueue_1_messages_each_256_queues_primary(ctx: &mut StressContext) {
         "enqueue_1_messages_each_256_queues_primary",
         256,
         MULTI_QUEUE_MESSAGES_PER_QUEUE,
+        MULTI_QUEUE_MEASUREMENT_REPEAT_COUNT,
     );
 }
 
@@ -397,15 +402,15 @@ fn should_dequeue_256_messages_primary(ctx: &mut StressContext) {
     tier2_stress::record_duration(
         ctx,
         "dequeue_256_messages_primary",
-        total / QUEUE_MEASUREMENT_REPEAT_COUNT,
-        DEQUEUE_OPERATION_BATCH_SIZE as u64,
+        total,
+        DEQUEUE_OPERATION_BATCH_SIZE as u64 * u64::from(QUEUE_MEASUREMENT_REPEAT_COUNT),
     );
 }
 
 #[stress(tier = 2, name = "ack_256_messages_primary")]
 fn should_ack_256_messages_primary(ctx: &mut StressContext) {
     let mut total = Duration::ZERO;
-    for _ in 0..QUEUE_MEASUREMENT_REPEAT_COUNT {
+    for _ in 0..ACK_MEASUREMENT_REPEAT_COUNT {
         let case = prepare_ack_case();
         let start = Instant::now();
         for (ack_msg_type, ack_payload) in &case.ack_requests {
@@ -431,8 +436,8 @@ fn should_ack_256_messages_primary(ctx: &mut StressContext) {
     tier2_stress::record_duration(
         ctx,
         "ack_256_messages_primary",
-        total / QUEUE_MEASUREMENT_REPEAT_COUNT,
-        ACK_OPERATION_BATCH_SIZE as u64,
+        total,
+        ACK_OPERATION_BATCH_SIZE as u64 * u64::from(ACK_MEASUREMENT_REPEAT_COUNT),
     );
 }
 
@@ -467,8 +472,8 @@ fn should_watch_register_64_sessions_primary(ctx: &mut StressContext) {
     tier2_stress::record_duration(
         ctx,
         "watch_register_64_sessions_primary",
-        total / QUEUE_MEASUREMENT_REPEAT_COUNT,
-        WATCH_REGISTER_BATCH_SIZE as u64,
+        total,
+        WATCH_REGISTER_BATCH_SIZE as u64 * u64::from(QUEUE_MEASUREMENT_REPEAT_COUNT),
     );
 }
 

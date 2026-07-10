@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      FITZ_LOG_LEVEL: warn
+      FITZ_LOG_LEVEL: off
       OTEL_ENABLED: false
 
     steps:
@@ -53,37 +53,16 @@ jobs:
 
       - name: Run release Tier 4 benchmarks
         run: |
-          cargo bench --quiet --bench tier4_integration_kv -- --workload should_complete_direct_begin_put_rollback
-          cargo bench --quiet --bench tier4_integration_kv -- --workload should_complete_tcp_begin_put_rollback
-          cargo bench --quiet --bench tier4_integration_kv -- --workload should_complete_ws_begin_put_rollback
-          cargo bench --quiet --bench tier4_integration_kv -- --workload should_complete_multiclient_concurrent_transactions
-          cargo bench --quiet --bench tier4_integration_lease -- --workload should_complete_direct_acquire_release
-          cargo bench --quiet --bench tier4_integration_lease -- --workload should_complete_tcp_acquire_release
-          cargo bench --quiet --bench tier4_integration_lease -- --workload should_complete_ws_acquire_release
-          cargo bench --quiet --bench tier4_integration_lease -- --workload should_complete_multiclient_acquire_release
-          cargo bench --quiet --bench tier4_integration_notice -- --workload should_complete_direct_publish
-          cargo bench --quiet --bench tier4_integration_notice -- --workload should_complete_tcp_publish
-          cargo bench --quiet --bench tier4_integration_notice -- --workload should_complete_ws_publish
-          cargo bench --quiet --bench tier4_integration_notice -- --workload should_complete_multiclient_fanout_publish
-          cargo bench --quiet --bench tier4_integration_queue -- --workload should_complete_direct_enqueue
-          cargo bench --quiet --bench tier4_integration_queue -- --workload should_complete_tcp_enqueue
-          cargo bench --quiet --bench tier4_integration_queue -- --workload should_complete_ws_enqueue
-          cargo bench --quiet --bench tier4_integration_queue -- --workload should_complete_multiclient_concurrent_enqueues
-          cargo bench --quiet --bench tier4_integration_rpc -- --workload should_complete_direct_request
-          cargo bench --quiet --bench tier4_integration_rpc -- --workload should_complete_tcp_request_response
-          cargo bench --quiet --bench tier4_integration_rpc -- --workload should_complete_ws_request_response
-          cargo bench --quiet --bench tier4_integration_rpc -- --workload should_complete_multiclient_concurrent_requests
-          cargo bench --quiet --bench tier4_integration_schedule -- --workload should_complete_direct_create
-          cargo bench --quiet --bench tier4_integration_schedule -- --workload should_complete_tcp_create
-          cargo bench --quiet --bench tier4_integration_schedule -- --workload should_complete_ws_create
-          cargo bench --quiet --bench tier4_integration_schedule -- --workload should_complete_multiclient_creates
-          cargo bench --quiet --bench tier4_integration_stream -- --workload should_complete_direct_append
-          cargo bench --quiet --bench tier4_integration_stream -- --workload should_complete_direct_resource_read
-          cargo bench --quiet --bench tier4_integration_stream -- --workload should_complete_tcp_append
-          cargo bench --quiet --bench tier4_integration_stream -- --workload should_complete_tcp_resource_read
-          cargo bench --quiet --bench tier4_integration_stream -- --workload should_complete_ws_append
-          cargo bench --quiet --bench tier4_integration_stream -- --workload should_complete_ws_resource_read
-          cargo bench --quiet --bench tier4_integration_stream -- --workload should_complete_multiclient_appends
+          for bench in \
+            tier4_kv_gate \
+            tier4_lease_gate \
+            tier4_notice_publish \
+            tier4_queue_gate \
+            tier4_rpc_roundtrip \
+            tier4_schedule_lifecycle \
+            tier4_stream_gate; do
+            cargo bench --quiet --bench "$bench"
+          done
 
       - name: Filter baseline to release surface
         run: |
@@ -116,7 +95,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
-      FITZ_LOG_LEVEL: warn
+      FITZ_LOG_LEVEL: off
       OTEL_ENABLED: false
 
     steps:
@@ -150,6 +129,32 @@ jobs:
         run: |
           cargo bench --quiet --bench tier3_system_queue
           cargo bench --quiet --bench tier3_system_rpc
+
+      - name: Run complete Tier 4 characterization matrix
+        run: |
+          cargo bench --quiet --bench tier4_kv_gate
+          cargo bench --quiet --bench tier4_kv_ladder
+          cargo bench --quiet --bench tier4_kv_contention
+          cargo bench --quiet --bench tier4_lease_gate
+          cargo bench --quiet --bench tier4_lease_ladder
+          cargo bench --quiet --bench tier4_lease_contention
+          cargo bench --quiet --bench tier4_notice_publish
+          cargo bench --quiet --bench tier4_notice_fanout
+          cargo bench --quiet --bench tier4_notice_control
+          cargo bench --quiet --bench tier4_queue_gate
+          cargo bench --quiet --bench tier4_queue_concurrency
+          cargo bench --quiet --bench tier4_queue_shapes
+          cargo bench --quiet --bench tier4_rpc_roundtrip
+          cargo bench --quiet --bench tier4_rpc_pipeline
+          cargo bench --quiet --bench tier4_schedule_lifecycle
+          cargo bench --quiet --bench tier4_schedule_concurrency
+          cargo bench --quiet --bench tier4_schedule_shapes
+          cargo bench --quiet --bench tier4_stream_concurrency
+          cargo bench --quiet --bench tier4_stream_filters
+          cargo bench --quiet --bench tier4_stream_gate
+          cargo bench --quiet --bench tier4_stream_ladder
+          cargo bench --quiet --bench tier4_stream_mixed
+          cargo bench --quiet --bench tier4_stream_shapes
 
       - name: Summarize benchmark results
         run: cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Deep Benchmark Report"

@@ -21,6 +21,11 @@ const REQUESTER_SESSION_ID: u64 = 1;
 const REQUEST_FRAME_RING_SIZE: usize = 4096;
 const DISPATCH_BATCH_SIZE: usize = 32_768;
 
+fn configure_cleanup_measurement(ctx: &mut StressContext) {
+    ctx.parameter("completed_unit", "cleaned_up_requests");
+    ctx.parameter("logical_unit", "request_cleanup");
+}
+
 type WorkerHandle = (u64, RouteAddress, Arc<FrameQueueSink>);
 
 struct RequestFrameRing {
@@ -203,6 +208,7 @@ fn dispatch_response_cleanup_workers(ctx: &mut StressContext, worker_count: usiz
     let mut request_ring =
         RequestFrameRing::new(ROUTE_STR, b"dispatch payload", REQUEST_FRAME_RING_SIZE);
     let mut next_worker_index = 0usize;
+    configure_cleanup_measurement(ctx);
 
     tier2_stress::measure_iterations(
         ctx,

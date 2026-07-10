@@ -5,7 +5,7 @@ Fitz tracks performance targets in two forms:
 - Human-readable rubric matrix: this document
 - Machine-readable mirror: [config/perf_targets.json](../../config/perf_targets.json)
 
-This version is generated from current `cntryl-stress.v2` artifacts. Current values are derived from each selected row's `throughput_ops_per_s` as `1_000_000 / ops_per_second`; `mean_us` remains the canonical target metric.
+This version is generated from current `cntryl-stress.v2` artifacts. Current values are normalized to `mean_us` from each selected row: throughput rows are converted as `1_000_000 / ops_per_second`, and `ns_per_op` rows are divided by 1,000. `mean_us` remains the canonical target metric.
 
 ## Baseline
 
@@ -88,19 +88,15 @@ All rows in this section map to `target_class = service_budget` and `budget_grou
 
 | domain | suite | scenario | layer | current us | operational max us | min ops/sec | stretch max us | min ops/sec | gating | notes |
 | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- |
-| kv | tier4-integration-kv | transaction_sequence | direct | 0.458435 | 25 | 40,000 | 15 | 66,667 | hard |  |
-| kv | tier4-integration-kv | transaction_sequence | encoded | 0.597268 | 14 | 71,429 | 10 | 100,000 | hard |  |
-| lease | tier4-integration-lease | acquire_release | direct | 0.431263 | 2.5 | 400,000 | 1.8 | 555,556 | hard |  |
-| notice | tier4-integration-notice | publish | direct | 0.601693 | 6.5 | 153,846 | 4 | 250,000 | hard | mode=delivery_confirmed |
-| queue | tier4-integration-queue | enqueue | direct | 18.642748 | 350 | 2,857 | 225 | 4,444 | hard |  |
-| queue | tier4-integration-queue | enqueue | encoded | 18.740233 | 500 | 2,000 | 325 | 3,077 | hard |  |
-| rpc | tier4-integration-rpc | request_response | direct | 0.681696 | 28 | 35,714 | 18 | 55,556 | hard | mode=sync_single_inflight |
-| rpc | tier4-integration-rpc | request_response | encoded | 0.713301 | 9 | 111,111 | 6 | 166,667 | hard | mode=sync_single_inflight |
-| schedule | tier4-integration-schedule | create | direct | 64.401458 | 1,700 | 588 | 1,300 | 769 | hard |  |
-| stream | tier4-integration-stream | append | direct | 0.288628 | 2 | 500,000 | 1.538 | 650,195 | hard |  |
-| stream | tier4-integration-stream | read_area_wildcard | direct | 0.112016 | 3.077 | 324,992 | 2.5 | 400,000 | hard |  |
-| stream | tier4-integration-stream | read_realm_wildcard | direct | 0.153586 | 5 | 200,000 | 3.846 | 260,010 | hard |  |
-| stream | tier4-integration-stream | read_resource_exact | direct | 0.101846 | 2.5 | 400,000 | 2 | 500,000 | hard |  |
+| kv | tier4-kv-gate | transaction_sequence | direct | 0.458435 | 25 | 40,000 | 15 | 66,667 | hard |  |
+| kv | tier4-kv-gate | transaction_sequence | encoded | 0.597268 | 14 | 71,429 | 10 | 100,000 | hard |  |
+| lease | tier4-lease-gate | acquire_release | direct | 0.431263 | 2.5 | 400,000 | 1.8 | 555,556 | hard |  |
+| notice | tier4-notice-publish | publish | direct | 0.601693 | 6.5 | 153,846 | 4 | 250,000 | hard | mode=delivery_confirmed |
+| queue | tier4-queue-gate | enqueue | direct | 18.642748 | 350 | 2,857 | 225 | 4,444 | hard |  |
+| queue | tier4-queue-gate | enqueue | encoded | 18.740233 | 500 | 2,000 | 325 | 3,077 | hard |  |
+| rpc | tier4-rpc-roundtrip | request_response | direct | 0.681696 | 28 | 35,714 | 18 | 55,556 | hard | mode=sync_single_inflight |
+| rpc | tier4-rpc-roundtrip | request_response | encoded | 0.713301 | 9 | 111,111 | 6 | 166,667 | hard | mode=sync_single_inflight |
+| schedule | tier4-schedule-lifecycle | create | direct | 64.401458 | 1,700 | 588 | 1,300 | 769 | hard |  |
 
 ## Service Budget: Transport
 
@@ -108,31 +104,51 @@ All rows in this section map to `target_class = service_budget` and `budget_grou
 
 | domain | suite | scenario | layer | current us | operational max us | min ops/sec | stretch max us | min ops/sec | gating | notes |
 | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- |
-| kv | tier4-integration-kv | transaction_sequence | tcp | 33.809857 | 70 | 14,286 | 50 | 20,000 | hard |  |
-| kv | tier4-integration-kv | transaction_sequence | websocket | 34.929051 | 110 | 9,091 | 80 | 12,500 | hard |  |
-| lease | tier4-integration-lease | acquire_release | tcp | 29.246439 | 55 | 18,182 | 40 | 25,000 | hard |  |
-| lease | tier4-integration-lease | acquire_release | websocket | 31.255469 | 55 | 18,182 | 40 | 25,000 | hard |  |
-| notice | tier4-integration-notice | publish | tcp | 6.557107 | 75 | 13,333 | 50 | 20,000 | hard | mode=delivery_confirmed |
-| notice | tier4-integration-notice | publish | websocket | 4.270308 | 70 | 14,286 | 50 | 20,000 | hard | mode=delivery_confirmed |
-| notice | tier4-integration-notice | publish_unacked | tcp | 5.925513 | 75 | 13,333 | 50 | 20,000 | hard | mode=fire_and_forget_unacked |
-| notice | tier4-integration-notice | publish_unacked | websocket | 2.056227 | 70 | 14,286 | 50 | 20,000 | hard | mode=fire_and_forget_unacked |
-| queue | tier4-integration-queue | enqueue | tcp | 54.739589 | 210 | 4,762 | 150 | 6,667 | hard |  |
-| queue | tier4-integration-queue | enqueue | websocket | 52.203944 | 375 | 2,667 | 250 | 4,000 | hard |  |
-| rpc | tier4-integration-rpc | request_response | tcp | 44.900579 | 60 | 16,667 | 40 | 25,000 | hard | mode=sync_single_inflight |
-| rpc | tier4-integration-rpc | request_response | websocket | 46.741819 | 160 | 6,250 | 100 | 10,000 | hard | mode=sync_single_inflight |
-| rpc | tier4-integration-rpc | request_response_pipelined | tcp | 8.505402 | 60 | 16,667 | 40 | 25,000 | hard | mode=async_pipelined |
-| rpc | tier4-integration-rpc | request_response_pipelined | websocket | 5.189162 | 160 | 6,250 | 100 | 10,000 | hard | mode=async_pipelined |
-| schedule | tier4-integration-schedule | batch_create | websocket | 4.89118 | 60 | 16,667 | 45 | 22,222 | hard |  |
-| schedule | tier4-integration-schedule | create | tcp | 52.885673 | 1,700 | 588 | 1,300 | 769 | hard |  |
-| schedule | tier4-integration-schedule | create | websocket | 51.255267 | 1,700 | 588 | 1,300 | 769 | hard |  |
-| stream | tier4-integration-stream | append | tcp | 22.303691 | 83.333 | 12,000 | 62.5 | 16,000 | hard |  |
-| stream | tier4-integration-stream | append | websocket | 21.971242 | 83.333 | 12,000 | 62.5 | 16,000 | hard |  |
-| stream | tier4-integration-stream | read_area_wildcard | tcp | 0.484235 | 5.556 | 179,986 | 4.167 | 239,981 | hard |  |
-| stream | tier4-integration-stream | read_area_wildcard | websocket | 0.479241 | 5.556 | 179,986 | 4.444 | 225,023 | hard |  |
-| stream | tier4-integration-stream | read_realm_wildcard | tcp | 0.502908 | 5.556 | 179,986 | 4.348 | 229,991 | hard |  |
-| stream | tier4-integration-stream | read_realm_wildcard | websocket | 0.50067 | 5.556 | 179,986 | 4.545 | 220,022 | hard |  |
-| stream | tier4-integration-stream | read_resource_exact | tcp | 0.447178 | 2.857 | 350,018 | 2.222 | 450,045 | hard |  |
-| stream | tier4-integration-stream | read_resource_exact | websocket | 0.438126 | 3.333 | 300,030 | 2.5 | 400,000 | hard |  |
+| kv | tier4-kv-gate | transaction_sequence | tcp | 33.809857 | 70 | 14,286 | 50 | 20,000 | hard |  |
+| kv | tier4-kv-gate | transaction_sequence | websocket | 34.929051 | 110 | 9,091 | 80 | 12,500 | hard |  |
+| lease | tier4-lease-gate | acquire_release | tcp | 29.246439 | 55 | 18,182 | 40 | 25,000 | hard |  |
+| lease | tier4-lease-gate | acquire_release | websocket | 31.255469 | 55 | 18,182 | 40 | 25,000 | hard |  |
+| notice | tier4-notice-publish | publish | tcp | 6.557107 | 75 | 13,333 | 50 | 20,000 | hard | mode=delivery_confirmed |
+| notice | tier4-notice-publish | publish | websocket | 4.270308 | 70 | 14,286 | 50 | 20,000 | hard | mode=delivery_confirmed |
+| notice | tier4-notice-publish | publish_unacked | tcp | 5.925513 | 75 | 13,333 | 50 | 20,000 | hard | mode=fire_and_forget_unacked |
+| notice | tier4-notice-publish | publish_unacked | websocket | 2.056227 | 70 | 14,286 | 50 | 20,000 | hard | mode=fire_and_forget_unacked |
+| queue | tier4-queue-gate | enqueue | tcp | 54.739589 | 210 | 4,762 | 150 | 6,667 | hard |  |
+| queue | tier4-queue-gate | enqueue | websocket | 52.203944 | 375 | 2,667 | 250 | 4,000 | hard |  |
+| rpc | tier4-rpc-roundtrip | request_response | tcp | 44.900579 | 60 | 16,667 | 40 | 25,000 | hard | mode=sync_single_inflight |
+| rpc | tier4-rpc-roundtrip | request_response | websocket | 46.741819 | 160 | 6,250 | 100 | 10,000 | hard | mode=sync_single_inflight |
+| rpc | tier4-rpc-pipeline | request_response_pipelined | tcp | 8.505402 | 60 | 16,667 | 40 | 25,000 | hard | mode=async_pipelined |
+| rpc | tier4-rpc-pipeline | request_response_pipelined | websocket | 5.189162 | 160 | 6,250 | 100 | 10,000 | hard | mode=async_pipelined |
+| schedule | tier4-schedule-lifecycle | batch_create | websocket | 4.89118 | 60 | 16,667 | 45 | 22,222 | hard |  |
+| schedule | tier4-schedule-lifecycle | create | tcp | 52.885673 | 1,700 | 588 | 1,300 | 769 | hard |  |
+| schedule | tier4-schedule-lifecycle | create | websocket | 51.255267 | 1,700 | 588 | 1,300 | 769 | hard |  |
+| stream | tier4-stream-gate | append_open_session | tcp | 363.179956 | 1,000 | 1,000 | 750 | 1,333 | hard | record_metric=ns_per_op |
+| stream | tier4-stream-gate | append_open_session | websocket | 420.279425 | 1,000 | 1,000 | 750 | 1,333 | hard | record_metric=ns_per_op |
+| stream | tier4-stream-gate | rollback_lifecycle | tcp | 2,933.281225 | 5,000 | 200 | 3,750 | 267 | hard | record_metric=ns_per_op |
+| stream | tier4-stream-gate | rollback_lifecycle | websocket | 2,979.490675 | 5,000 | 200 | 3,750 | 267 | hard | record_metric=ns_per_op |
+| stream | tier4-stream-gate | read_resource_exact | tcp | 489.871356 | 1,000 | 1,000 | 750 | 1,333 | hard | read_scope=resource; record_metric=ns_per_op |
+| stream | tier4-stream-gate | read_resource_exact | websocket | 521.404694 | 1,000 | 1,000 | 750 | 1,333 | hard | read_scope=resource; record_metric=ns_per_op |
+| stream | tier4-stream-gate | read_area_wildcard | tcp | 483.374737 | 1,000 | 1,000 | 750 | 1,333 | hard | read_scope=area; record_metric=ns_per_op |
+| stream | tier4-stream-gate | read_area_wildcard | websocket | 521.340369 | 1,000 | 1,000 | 750 | 1,333 | hard | read_scope=area; record_metric=ns_per_op |
+| stream | tier4-stream-gate | read_realm_wildcard | tcp | 503.082287 | 1,000 | 1,000 | 750 | 1,333 | hard | read_scope=realm; record_metric=ns_per_op |
+| stream | tier4-stream-gate | read_realm_wildcard | websocket | 540.298694 | 1,000 | 1,000 | 750 | 1,333 | hard | read_scope=realm; record_metric=ns_per_op |
+| stream | tier4-stream-gate | tail_read | tcp | 430.148175 | 1,000 | 1,000 | 750 | 1,333 | hard | record_metric=ns_per_op |
+| stream | tier4-stream-gate | tail_read | websocket | 477.116144 | 1,000 | 1,000 | 750 | 1,333 | hard | record_metric=ns_per_op |
+| stream | tier4-stream-gate | metadata_read | tcp | 468.841919 | 1,000 | 1,000 | 750 | 1,333 | hard | record_metric=ns_per_op |
+| stream | tier4-stream-gate | metadata_read | websocket | 504.573963 | 1,000 | 1,000 | 750 | 1,333 | hard | record_metric=ns_per_op |
+| stream | tier4-stream-gate | unsubscribe_no_notify | tcp | 1,495.963525 | 2,500 | 400 | 1,875 | 533 | hard | record_metric=ns_per_op |
+| stream | tier4-stream-gate | unsubscribe_no_notify | websocket | 1,697.50315 | 2,500 | 400 | 1,875 | 533 | hard | record_metric=ns_per_op |
+| stream | tier4-stream-filters | filter_unfiltered_baseline | tcp | 583.129688 | 1,000 | 1,000 | 750 | 1,333 | hard | read_scope=area; filter_mode=unfiltered; records_expected=100; record_metric=ns_per_op |
+| stream | tier4-stream-filters | filter_unfiltered_baseline | websocket | 621.136725 | 1,000 | 1,000 | 750 | 1,333 | hard | read_scope=area; filter_mode=unfiltered; records_expected=100; record_metric=ns_per_op |
+| stream | tier4-stream-filters | filter_unfiltered_baseline | tcp | 595.819012 | 1,000 | 1,000 | 750 | 1,333 | hard | read_scope=realm; filter_mode=unfiltered; records_expected=100; record_metric=ns_per_op |
+| stream | tier4-stream-filters | filter_unfiltered_baseline | websocket | 629.898694 | 1,000 | 1,000 | 750 | 1,333 | hard | read_scope=realm; filter_mode=unfiltered; records_expected=100; record_metric=ns_per_op |
+| stream | tier4-stream-filters | filter_all_match | tcp | 759.782819 | 1,250 | 800 | 937.5 | 1,067 | hard | read_scope=area; filter_mode=all_match; records_expected=100; record_metric=ns_per_op |
+| stream | tier4-stream-filters | filter_all_match | websocket | 786.791663 | 1,250 | 800 | 937.5 | 1,067 | hard | read_scope=area; filter_mode=all_match; records_expected=100; record_metric=ns_per_op |
+| stream | tier4-stream-filters | filter_all_match | tcp | 772.110944 | 1,250 | 800 | 937.5 | 1,067 | hard | read_scope=realm; filter_mode=all_match; records_expected=100; record_metric=ns_per_op |
+| stream | tier4-stream-filters | filter_all_match | websocket | 793.897919 | 1,250 | 800 | 937.5 | 1,067 | hard | read_scope=realm; filter_mode=all_match; records_expected=100; record_metric=ns_per_op |
+| stream | tier4-stream-filters | filter_subset_25 | tcp | 740.327344 | 1,000 | 1,000 | 750 | 1,333 | hard | read_scope=area; filter_mode=subset_25; records_expected=25; record_metric=ns_per_op |
+| stream | tier4-stream-filters | filter_subset_25 | websocket | 771.551569 | 1,250 | 800 | 937.5 | 1,067 | hard | read_scope=area; filter_mode=subset_25; records_expected=25; record_metric=ns_per_op |
+| stream | tier4-stream-filters | filter_subset_25 | tcp | 750.665369 | 1,250 | 800 | 937.5 | 1,067 | hard | read_scope=realm; filter_mode=subset_25; records_expected=25; record_metric=ns_per_op |
+| stream | tier4-stream-filters | filter_subset_25 | websocket | 780.097137 | 1,250 | 800 | 937.5 | 1,067 | hard | read_scope=realm; filter_mode=subset_25; records_expected=25; record_metric=ns_per_op |
 
 ## Service Budget: Contention
 
@@ -140,17 +156,16 @@ All rows in this section map to `target_class = service_budget` and `budget_grou
 
 | domain | suite | scenario | layer | current us | operational max us | min ops/sec | stretch max us | min ops/sec | gating | notes |
 | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- |
-| kv | tier4-integration-kv | concurrent_transactions | multiclient | 9.676429 | 28 | 35,714 | 20 | 50,000 | hard |  |
-| lease | tier4-integration-lease | concurrent_acquire_release | multiclient | 9.041907 | 15 | 66,667 | 12 | 83,333 | hard |  |
-| notice | tier4-integration-notice | fanout_publish | multiclient | 2.602613 | 26 | 38,462 | 18 | 55,556 | hard | mode=delivery_confirmed |
-| notice | tier4-integration-notice | publish_unacked | tcp_multipublisher | 4.645584 | 26 | 38,462 | 18 | 55,556 | hard | mode=fire_and_forget_unacked |
-| notice | tier4-integration-notice | publish_unacked | websocket_multipublisher | 2.041770 | 26 | 38,462 | 18 | 55,556 | hard | mode=fire_and_forget_unacked |
-| queue | tier4-integration-queue | concurrent_enqueues | multiclient | 46.036231 | 1,100 | 909 | 750 | 1,333 | hard |  |
-| rpc | tier4-integration-rpc | concurrent_requests | multiclient | 14.098315 | 26 | 38,462 | 18 | 55,556 | hard | mode=sync_concurrent |
-| rpc | tier4-integration-rpc | request_response_pipelined | tcp_multiclient | 9.589709 | 26 | 38,462 | 18 | 55,556 | variance_gated | mode=concurrent_pipelined; full refresh rel_stddev 0.133, keep out of release gating until stable |
-| rpc | tier4-integration-rpc | request_response_pipelined | websocket_multiclient | 5.335477 | 26 | 38,462 | 18 | 55,556 | hard | mode=concurrent_pipelined |
-| schedule | tier4-integration-schedule | concurrent_creates | multiclient | 38.259015 | 1,700 | 588 | 1,300 | 769 | hard |  |
-| stream | tier4-integration-stream | concurrent_appends | multiclient | 8.024244 | 45.455 | 22,000 | 33.333 | 30,000 | hard |  |
+| kv | tier4-kv-contention | concurrent_transactions | multiclient | 9.676429 | 28 | 35,714 | 20 | 50,000 | hard |  |
+| lease | tier4-lease-contention | concurrent_acquire_release | multiclient | 9.041907 | 15 | 66,667 | 12 | 83,333 | hard |  |
+| notice | tier4-notice-fanout | fanout_publish | multiclient | 2.602613 | 26 | 38,462 | 18 | 55,556 | hard | mode=delivery_confirmed |
+| notice | tier4-notice-publish | publish_unacked | tcp_multipublisher | 4.645584 | 26 | 38,462 | 18 | 55,556 | hard | mode=fire_and_forget_unacked |
+| notice | tier4-notice-publish | publish_unacked | websocket_multipublisher | 2.041770 | 26 | 38,462 | 18 | 55,556 | hard | mode=fire_and_forget_unacked |
+| queue | tier4-queue-concurrency | concurrent_enqueues | multiclient | 46.036231 | 1,100 | 909 | 750 | 1,333 | hard |  |
+| rpc | tier4-rpc-roundtrip | concurrent_requests | multiclient | 14.098315 | 26 | 38,462 | 18 | 55,556 | hard | mode=sync_concurrent |
+| rpc | tier4-rpc-pipeline | request_response_pipelined | tcp_multiclient | 9.589709 | 26 | 38,462 | 18 | 55,556 | variance_gated | mode=concurrent_pipelined; full refresh rel_stddev 0.133, keep out of release gating until stable |
+| rpc | tier4-rpc-pipeline | request_response_pipelined | websocket_multiclient | 5.335477 | 26 | 38,462 | 18 | 55,556 | hard | mode=concurrent_pipelined |
+| schedule | tier4-schedule-concurrency | concurrent_creates | multiclient | 38.259015 | 1,700 | 588 | 1,300 | 769 | hard |  |
 
 ## Internal Explainers
 

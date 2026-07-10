@@ -16,19 +16,25 @@ fn record_group(ctx: &mut StressContext, payload_size: usize) {
     ctx.parameter("payload_size", payload_size);
 }
 
+fn mark_validated_micro(ctx: &mut StressContext) {
+    ctx.metadata("validated_micro", "true");
+}
+
 macro_rules! decode_then_route_bench {
-    ($fn_name:ident, $bench_name:literal, $size:expr) => {
-        #[stress(tier = 1)]
+    ($fn_name:ident, $stress_name:literal, $bench_name:literal, $size:expr) => {
+        #[stress(tier = 1, name = $stress_name)]
         fn $fn_name(ctx: &mut StressContext) {
             record_group(ctx, $size);
+            mark_validated_micro(ctx);
             let data = encoded_record($size);
             let decoder = TlvDecoder::new();
             let mut mux = Mux::new(1024);
 
             ctx.measure($bench_name, || {
-                let (record, _) = decoder.decode_one(black_box(&data)).unwrap();
-                let message = mux.route(record).unwrap();
-                mux.release(message.channel);
+                let (msg_type, value, _) = decoder.decode_one_ref(black_box(&data)).unwrap();
+                let message = mux.route_ref(msg_type, value).unwrap();
+                let channel = message.channel;
+                mux.release(channel);
                 black_box(message);
             });
         }
@@ -36,13 +42,15 @@ macro_rules! decode_then_route_bench {
 }
 
 decode_then_route_bench!(
-    should_decode_then_route_owning_16b,
-    "decode_then_route_owning_16b",
+    should_decode_then_route_ref_16b,
+    "decode_then_route_ref_16b",
+    "decode_then_route_ref_16b",
     16
 );
 decode_then_route_bench!(
-    should_decode_then_route_owning_64b,
-    "decode_then_route_owning_64b",
+    should_decode_then_route_ref_64b,
+    "decode_then_route_ref_64b",
+    "decode_then_route_ref_64b",
     64
 );
 

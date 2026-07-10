@@ -16,11 +16,12 @@ pub use live_sink::{
     create_bench_rpc_sink, create_bench_rpc_sink_with_metrics,
     create_bench_rpc_sink_with_route_pending_capacity, create_bench_rpc_sink_with_timeout,
     create_bench_schedule_sink, create_bench_stream_sink, create_bench_stream_sink_with_layout,
-    create_write_heavy_bench_stream_sink, drain_frame_queue_sinks_after_each_count,
-    drain_frame_queue_sinks_after_total_count, register_session_counting_sink,
-    register_session_queue_sink, route_frame, route_frame_to_address, route_raw_frame,
-    session_inbox_route, wait_for_counting_sinks_each_count, wait_for_counting_sinks_total_count,
-    CountingSink, DirectLeaseAcquireRelease, FrameQueueSink,
+    create_local_bench_stream_sink, create_write_heavy_bench_stream_sink,
+    drain_frame_queue_sinks_after_each_count, drain_frame_queue_sinks_after_total_count,
+    register_session_counting_sink, register_session_queue_sink, route_frame,
+    route_frame_to_address, route_raw_frame, session_inbox_route,
+    wait_for_counting_sinks_each_count, wait_for_counting_sinks_total_count, CountingSink,
+    DirectLeaseAcquireRelease, FrameQueueSink,
 };
 pub use queue::{create_bench_queue_actor, create_local_bench_queue_actor};
 pub use runtime::shared_bench_runtime;

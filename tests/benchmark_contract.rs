@@ -49,24 +49,23 @@ fn should_keep_release_benchmark_ids_resolvable_to_baseline_rows() {
 }
 
 #[test]
-fn should_label_direct_lease_acquire_release_as_direct_inproc() {
+fn should_omit_unsupported_direct_lease_rows_from_the_transport_gate() {
     // Arrange
     let repo_root = repo_root();
     let targets = perf_targets(&repo_root);
-    let direct_lease = targets
-        .get("stress:tier4-integration-lease|acquire_release|direct")
-        .expect("direct lease acquire/release target");
 
     // Act
-    let measurement_scope = target_str(direct_lease, "measurement_scope");
-    let benchmark_id = target_str(direct_lease, "benchmark_id");
+    let direct_gate_rows = targets
+        .iter()
+        .filter(|(key, _)| key.starts_with("stress:tier4-lease-gate|"))
+        .filter(|(_, target)| target_str(target, "layer") == "direct")
+        .collect::<Vec<_>>();
 
     // Assert
-    assert_eq!(measurement_scope, "direct_inproc");
-    assert!(benchmark_id.contains("should_complete_direct_acquire_release"));
-    assert!(benchmark_id.contains("layer=direct"));
-    assert!(benchmark_id.contains("measurement_scope=direct_inproc"));
-    assert!(!benchmark_id.contains("measurement_scope=routed"));
+    assert!(
+        direct_gate_rows.is_empty(),
+        "Lease transport gates must not claim an unsupported direct transport row"
+    );
 }
 
 #[test]
@@ -78,12 +77,11 @@ fn should_label_tier4_rpc_targets_with_completion_semantics() {
     // Act
     let missing_labels = targets
         .iter()
-        .filter(|(key, _)| key.starts_with("stress:tier4-integration-rpc|"))
+        .filter(|(key, _)| key.starts_with("stress:tier4-rpc-"))
         .filter_map(|(key, target)| {
             let missing = missing_fields(
                 target,
                 &[
-                    "mode",
                     "completion_mode",
                     "completed_unit",
                     "inflight_per_client",
@@ -97,7 +95,7 @@ fn should_label_tier4_rpc_targets_with_completion_semantics() {
     // Assert
     assert!(
         missing_labels.is_empty(),
-        "tier4 RPC perf targets must label completion semantics:\n{}",
+        "tier RPC perf targets must label completion semantics:\n{}",
         missing_labels.join("\n")
     );
 }
@@ -111,12 +109,11 @@ fn should_label_tier4_notice_targets_with_completion_semantics() {
     // Act
     let missing_labels = targets
         .iter()
-        .filter(|(key, _)| key.starts_with("stress:tier4-integration-notice|"))
+        .filter(|(key, _)| key.starts_with("stress:tier4-notice-"))
         .filter_map(|(key, target)| {
             let missing = missing_fields(
                 target,
                 &[
-                    "mode",
                     "completion_mode",
                     "completed_unit",
                     "publisher_count",
@@ -130,7 +127,7 @@ fn should_label_tier4_notice_targets_with_completion_semantics() {
     // Assert
     assert!(
         missing_labels.is_empty(),
-        "tier4 Notice perf targets must label completion semantics:\n{}",
+        "tier Notice perf targets must label completion semantics:\n{}",
         missing_labels.join("\n")
     );
 }
@@ -143,8 +140,8 @@ fn should_keep_unstable_rpc_pipelined_tcp_row_out_of_release_ids() {
 
     // Act
     let promoted = release_ids.iter().any(|id| {
-        id.contains("should_complete_tcp_multiclient_pipelined_requests")
-            || id.contains("measurement_scope=tcp_multiclient_pipelined_e2e")
+        id.contains("tier4-rpc-pipeline")
+            || id.contains("should_characterize_tcp_32_inflight_pipeline")
     });
 
     // Assert

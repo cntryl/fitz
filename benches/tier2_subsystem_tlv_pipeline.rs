@@ -9,6 +9,16 @@ use fitz::protocol::tlv::{MessageType, TlvDecoder, TlvEncoder};
 const PIPELINE_RECORDS: usize = 256;
 const PIPELINE_REPEAT_COUNT: usize = 65_536;
 
+fn configure_decode_measurement(ctx: &mut StressContext) {
+    ctx.parameter("completed_unit", "decoded_records");
+    ctx.parameter("logical_unit", "tlv_record");
+}
+
+fn configure_decode_route_measurement(ctx: &mut StressContext) {
+    ctx.parameter("completed_unit", "routed_records");
+    ctx.parameter("logical_unit", "tlv_record");
+}
+
 fn encode_frame(records: usize, size: usize) -> bytes::Bytes {
     let mut encoder = TlvEncoder::with_capacity(1024 * 8);
     let payload = vec![0u8; size];
@@ -25,6 +35,7 @@ fn decode_only(ctx: &mut StressContext, name: &str, size: usize) {
     let data = encode_frame(PIPELINE_RECORDS, size);
     let decoder = TlvDecoder::new();
     let mut refs = Vec::with_capacity(PIPELINE_RECORDS);
+    configure_decode_measurement(ctx);
 
     tier2_stress::measure_iterations(
         ctx,
@@ -54,6 +65,7 @@ fn decode_then_mux_route_ref(ctx: &mut StressContext, name: &str, size: usize) {
         let cref = mux.route_ref(tlv_ref.ty, tlv_ref.value).unwrap();
         mux.release(cref.channel);
     }
+    configure_decode_route_measurement(ctx);
 
     tier2_stress::measure_iterations(
         ctx,

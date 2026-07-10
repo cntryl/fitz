@@ -95,6 +95,29 @@ impl TestServer {
             false,
             None,
             crate::boot::runtime::StorageMode::Memory,
+            false,
+            crate::domains::stream::StreamStorageLayout::default(),
+            Vec::new(),
+            vec![1],
+            default_test_route_family_mappings(),
+        )
+        .await
+    }
+
+    /// Start a benchmark-only memory server with capacity for fixed-duration write loops.
+    ///
+    /// Ordinary tests keep Midge's default memory configuration. Tier 4 write benchmarks
+    /// opt into this fixture so their signal is not capped by a benchmark-induced write stall.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the runtime or listeners cannot be initialized.
+    pub async fn start_with_write_heavy_memory() -> Result<Self, Box<dyn std::error::Error>> {
+        Self::start_with_options(
+            false,
+            None,
+            crate::boot::runtime::StorageMode::Memory,
+            true,
             crate::domains::stream::StreamStorageLayout::default(),
             Vec::new(),
             vec![1],
@@ -113,6 +136,7 @@ impl TestServer {
             false,
             Some(rpc_request_timeout),
             crate::boot::runtime::StorageMode::Memory,
+            false,
             crate::domains::stream::StreamStorageLayout::default(),
             Vec::new(),
             vec![1],
@@ -131,6 +155,7 @@ impl TestServer {
             auth_required,
             None,
             crate::boot::runtime::StorageMode::Memory,
+            false,
             crate::domains::stream::StreamStorageLayout::default(),
             Vec::new(),
             vec![1],
@@ -154,6 +179,7 @@ impl TestServer {
             true,
             None,
             crate::boot::runtime::StorageMode::Memory,
+            false,
             crate::domains::stream::StreamStorageLayout::default(),
             Vec::new(),
             route_families,
@@ -184,6 +210,7 @@ impl TestServer {
             false,
             None,
             crate::boot::runtime::StorageMode::Memory,
+            false,
             crate::domains::stream::StreamStorageLayout::default(),
             origins,
             vec![1],
@@ -202,6 +229,7 @@ impl TestServer {
             false,
             None,
             crate::boot::runtime::StorageMode::Memory,
+            false,
             stream_storage_layout,
             Vec::new(),
             vec![1],
@@ -222,6 +250,7 @@ impl TestServer {
             crate::boot::runtime::StorageMode::LocalDisk {
                 db_path: db_path.into(),
             },
+            false,
             crate::domains::stream::StreamStorageLayout::default(),
             Vec::new(),
             vec![1],
@@ -243,6 +272,7 @@ impl TestServer {
             crate::boot::runtime::StorageMode::LocalDisk {
                 db_path: db_path.into(),
             },
+            false,
             stream_storage_layout,
             Vec::new(),
             vec![1],
@@ -251,11 +281,12 @@ impl TestServer {
         .await
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     async fn start_with_options(
         auth_required: bool,
         rpc_request_timeout: Option<Duration>,
         storage_mode: crate::boot::runtime::StorageMode,
+        write_heavy_memory: bool,
         stream_storage_layout: crate::domains::stream::StreamStorageLayout,
         ws_allowed_origins: Vec<crate::api::origin::ExactOrigin>,
         route_families: Vec<u32>,
@@ -285,6 +316,8 @@ impl TestServer {
         // Keep listeners alive - will be passed to spawn functions
         // This prevents the port reallocation race condition where parallel tests
         // could grab the same port between bind() and the spawn functions
+
+        let memory_storage = matches!(&storage_mode, crate::boot::runtime::StorageMode::Memory);
 
         // Boot runtime with test configuration
         let boot_config = crate::boot::BootConfig {
@@ -320,7 +353,13 @@ impl TestServer {
             max_frame_size: 16_777_216, // 16 MB (test config allows larger frames than production 1 MB default)
             channel_capacity: 10_000,
             cloud_durability: crate::boot::runtime::CloudDurabilityMode::Background,
-            storage_memtable: crate::boot::runtime::StorageMemtableConfig::Auto,
+            storage_memtable: if memory_storage && write_heavy_memory {
+                // Integration benchmarks intentionally perform many fixed-duration writes;
+                // keep the ephemeral test store from stalling before the sample completes.
+                crate::boot::runtime::StorageMemtableConfig::Bytes(512 * 1024 * 1024)
+            } else {
+                crate::boot::runtime::StorageMemtableConfig::Auto
+            },
             queue_write_policy: crate::boot::runtime::QueueWritePolicy::Fast,
             queue_write_policy_source: crate::boot::runtime::QueueWritePolicySource::Explicit,
             queue_loss_window_ms: 100,

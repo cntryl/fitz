@@ -97,16 +97,6 @@ harness = false
 path = "benches/tier1_hotpath_mux.rs"
 
 [[bench]]
-name = "tier1_hotpath_envelope"
-harness = false
-path = "benches/tier1_hotpath_envelope.rs"
-
-[[bench]]
-name = "tier1_hotpath_routing"
-harness = false
-path = "benches/tier1_hotpath_routing.rs"
-
-[[bench]]
 name = "tier1_hotpath_permissions"
 harness = false
 path = "benches/tier1_hotpath_permissions.rs"
@@ -115,6 +105,16 @@ path = "benches/tier1_hotpath_permissions.rs"
 name = "tier1_hotpath_context"
 harness = false
 path = "benches/tier1_hotpath_context.rs"
+
+[[bench]]
+name = "tier1_hotpath_envelope"
+harness = false
+path = "benches/tier1_hotpath_envelope.rs"
+
+[[bench]]
+name = "tier1_hotpath_routing"
+harness = false
+path = "benches/tier1_hotpath_routing.rs"
 
 # Tier 2: Subsystem (Infrastructure integration, <3s, sync only)
 [[bench]]
@@ -214,47 +214,122 @@ harness = false
 path = "benches/tier3_system_rpc.rs"
 
 [[bench]]
-name = "tier3_system_schedule"
-harness = false
-path = "benches/tier3_system_schedule.rs"
-
-[[bench]]
 name = "tier3_system_stream"
 harness = false
 path = "benches/tier3_system_stream.rs"
 
-# Tier 4: Integration (Full TCP/WS to domain, full stack - one per domain)
+# Tier 4: Integration characterization (every executable target is explicit)
 [[bench]]
-name = "tier4_integration_kv"
+name = "tier4_kv_gate"
 harness = false
-path = "benches/tier4_integration_kv.rs"
+path = "benches/tier4_kv_gate.rs"
 
 [[bench]]
-name = "tier4_integration_lease"
+name = "tier4_kv_ladder"
 harness = false
-path = "benches/tier4_integration_lease.rs"
+path = "benches/tier4_kv_ladder.rs"
 
 [[bench]]
-name = "tier4_integration_notice"
+name = "tier4_kv_contention"
 harness = false
-path = "benches/tier4_integration_notice.rs"
+path = "benches/tier4_kv_contention.rs"
 
 [[bench]]
-name = "tier4_integration_queue"
+name = "tier4_lease_gate"
 harness = false
-path = "benches/tier4_integration_queue.rs"
+path = "benches/tier4_lease_gate.rs"
 
 [[bench]]
-name = "tier4_integration_rpc"
+name = "tier4_lease_ladder"
 harness = false
-path = "benches/tier4_integration_rpc.rs"
+path = "benches/tier4_lease_ladder.rs"
 
 [[bench]]
-name = "tier4_integration_schedule"
+name = "tier4_lease_contention"
 harness = false
-path = "benches/tier4_integration_schedule.rs"
+path = "benches/tier4_lease_contention.rs"
 
 [[bench]]
-name = "tier4_integration_stream"
+name = "tier4_notice_publish"
 harness = false
-path = "benches/tier4_integration_stream.rs"
+path = "benches/tier4_notice_publish.rs"
+
+[[bench]]
+name = "tier4_notice_fanout"
+harness = false
+path = "benches/tier4_notice_fanout.rs"
+
+[[bench]]
+name = "tier4_notice_control"
+harness = false
+path = "benches/tier4_notice_control.rs"
+
+[[bench]]
+name = "tier4_queue_gate"
+harness = false
+path = "benches/tier4_queue_gate.rs"
+
+[[bench]]
+name = "tier4_queue_concurrency"
+harness = false
+path = "benches/tier4_queue_concurrency.rs"
+
+[[bench]]
+name = "tier4_queue_shapes"
+harness = false
+path = "benches/tier4_queue_shapes.rs"
+
+[[bench]]
+name = "tier4_rpc_roundtrip"
+harness = false
+path = "benches/tier4_rpc_roundtrip.rs"
+
+[[bench]]
+name = "tier4_rpc_pipeline"
+harness = false
+path = "benches/tier4_rpc_pipeline.rs"
+
+[[bench]]
+name = "tier4_schedule_lifecycle"
+harness = false
+path = "benches/tier4_schedule_lifecycle.rs"
+
+[[bench]]
+name = "tier4_schedule_concurrency"
+harness = false
+path = "benches/tier4_schedule_concurrency.rs"
+
+[[bench]]
+name = "tier4_schedule_shapes"
+harness = false
+path = "benches/tier4_schedule_shapes.rs"
+
+[[bench]]
+name = "tier4_stream_gate"
+harness = false
+path = "benches/tier4_stream_gate.rs"
+
+[[bench]]
+name = "tier4_stream_concurrency"
+harness = false
+path = "benches/tier4_stream_concurrency.rs"
+
+[[bench]]
+name = "tier4_stream_filters"
+harness = false
+path = "benches/tier4_stream_filters.rs"
+
+[[bench]]
+name = "tier4_stream_ladder"
+harness = false
+path = "benches/tier4_stream_ladder.rs"
+
+[[bench]]
+name = "tier4_stream_mixed"
+harness = false
+path = "benches/tier4_stream_mixed.rs"
+
+[[bench]]
+name = "tier4_stream_shapes"
+harness = false
+path = "benches/tier4_stream_shapes.rs"

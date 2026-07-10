@@ -1,3 +1,5 @@
+#![allow(dead_code)] // Helpers are used selectively by independent RPC workload targets.
+
 use bytes::Bytes;
 use fitz::benchkit::{build_rpc_request, build_rpc_response_frame_bytes, shared_bench_runtime};
 use fitz::runtime::routing::RouteFamily;
@@ -9,6 +11,7 @@ use uuid::Uuid;
 
 pub(crate) struct NetworkRequestFrame {
     pub(crate) frame: Bytes,
+    pub(crate) response_frame: Bytes,
     pub(crate) correlation_id: Uuid,
     pub(crate) body: Bytes,
 }
@@ -111,6 +114,84 @@ fn try_parse_rpc_request_frame_parts(frame: &Bytes) -> Option<RpcRequestParts> {
     })
 }
 
+pub(crate) fn prebuilt_response_frames(
+    request_batches: &[Vec<NetworkRequestFrame>],
+) -> HashMap<Uuid, Bytes> {
+    request_batches
+        .iter()
+        .flatten()
+        .map(|request| (request.correlation_id, request.response_frame.clone()))
+        .collect()
+}
+
+pub(crate) async fn service_pipelined_requests_tcp(
+    worker: &mut TestClient,
+    responses: &HashMap<Uuid, Bytes>,
+    request_count: usize,
+    timeout_ms: u64,
+) -> Result<(), String> {
+    tokio::time::timeout(Duration::from_millis(timeout_ms), async {
+        let mut completed = 0usize;
+        while completed < request_count {
+            let frame = worker
+                .recv_frame_bytes_without_timeout()
+                .await
+                .map_err(|error| format!("receive pipelined RPC worker request: {error}"))?;
+            let Some(request) = try_parse_rpc_request_frame_parts(&frame) else {
+                continue;
+            };
+            let response = responses.get(&request.correlation_id).ok_or_else(|| {
+                format!(
+                    "missing prebuilt RPC response for {}",
+                    request.correlation_id
+                )
+            })?;
+            worker
+                .send_frame_bytes(response.clone())
+                .await
+                .map_err(|error| format!("send pipelined RPC worker response: {error}"))?;
+            completed += 1;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|_| "pipelined RPC TCP worker timeout".to_string())?
+}
+
+pub(crate) async fn service_pipelined_requests_ws(
+    worker: &mut TestWebSocketClient,
+    responses: &HashMap<Uuid, Bytes>,
+    request_count: usize,
+    timeout_ms: u64,
+) -> Result<(), String> {
+    tokio::time::timeout(Duration::from_millis(timeout_ms), async {
+        let mut completed = 0usize;
+        while completed < request_count {
+            let frame = worker
+                .recv_frame_bytes_without_timeout()
+                .await
+                .map_err(|error| format!("receive pipelined RPC worker request: {error}"))?;
+            let Some(request) = try_parse_rpc_request_frame_parts(&frame) else {
+                continue;
+            };
+            let response = responses.get(&request.correlation_id).ok_or_else(|| {
+                format!(
+                    "missing prebuilt RPC response for {}",
+                    request.correlation_id
+                )
+            })?;
+            worker
+                .send_frame_bytes(response.clone())
+                .await
+                .map_err(|error| format!("send pipelined RPC worker response: {error}"))?;
+            completed += 1;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|_| "pipelined RPC WebSocket worker timeout".to_string())?
+}
+
 fn try_parse_rpc_response_payload_parts(payload: &Bytes) -> Option<RpcResponseParts> {
     let mut offset = 0usize;
     let correlation_id = read_uuid_field(payload.as_ref(), &mut offset)?;
@@ -150,6 +231,10 @@ pub(crate) fn build_network_request_frame(
 
     NetworkRequestFrame {
         frame,
+        response_frame: build_rpc_response_frame_bytes(
+            request.correlation_id,
+            request.body.clone(),
+        ),
         correlation_id: request.correlation_id,
         body: request.body,
     }
@@ -218,15 +303,10 @@ pub(crate) fn assert_requester_inbox_contains_worker_response(
     panic!("expected worker rpc response in requester inbox");
 }
 
-async fn try_request_until_worker_response_tcp(
+async fn try_receive_worker_response_tcp(
     client: &mut TestClient,
     request_frame: &NetworkRequestFrame,
 ) -> Result<(), String> {
-    client
-        .send_frame_bytes(request_frame.frame.clone())
-        .await
-        .map_err(|error| format!("send rpc request: {error}"))?;
-
     for _ in 0..4 {
         let frame = client
             .recv_frame_bytes_without_timeout()
@@ -245,13 +325,55 @@ async fn try_request_until_worker_response_tcp(
     Err("expected worker rpc response frame over tcp".to_string())
 }
 
-pub(crate) async fn request_until_worker_response_tcp(
+async fn try_receive_expected_rpc_request_tcp(
     client: &mut TestClient,
     request_frame: &NetworkRequestFrame,
-) {
-    try_request_until_worker_response_tcp(client, request_frame)
-        .await
-        .expect("rpc tcp worker response");
+) -> Result<(), String> {
+    loop {
+        let frame = client
+            .recv_frame_bytes_without_timeout()
+            .await
+            .map_err(|error| format!("receive rpc request: {error}"))?;
+        let Some(request) = try_parse_rpc_request_frame_parts(&frame) else {
+            continue;
+        };
+        if request.correlation_id != request_frame.correlation_id {
+            return Err(format!(
+                "worker received unexpected rpc correlation id: expected {}, got {}",
+                request_frame.correlation_id, request.correlation_id
+            ));
+        }
+        if request.body != request_frame.body {
+            return Err(format!(
+                "worker received unexpected rpc request body: expected {:?}, got {:?}",
+                request_frame.body.as_ref(),
+                request.body.as_ref()
+            ));
+        }
+        return Ok(());
+    }
+}
+
+pub(crate) async fn complete_roundtrip_tcp(
+    requester_client: &mut TestClient,
+    worker_client: &mut TestClient,
+    request_frame: &NetworkRequestFrame,
+    response_timeout_ms: u64,
+) -> Result<(), String> {
+    tokio::time::timeout(Duration::from_millis(response_timeout_ms), async {
+        requester_client
+            .send_frame_bytes(request_frame.frame.clone())
+            .await
+            .map_err(|error| format!("send rpc request: {error}"))?;
+        try_receive_expected_rpc_request_tcp(worker_client, request_frame).await?;
+        worker_client
+            .send_frame_bytes(request_frame.response_frame.clone())
+            .await
+            .map_err(|error| format!("send rpc response: {error}"))?;
+        try_receive_worker_response_tcp(requester_client, request_frame).await
+    })
+    .await
+    .map_err(|_| "rpc tcp roundtrip timeout".to_string())?
 }
 
 async fn try_request_until_worker_response_ws(
@@ -281,13 +403,77 @@ async fn try_request_until_worker_response_ws(
     Err("expected worker rpc response frame over websocket".to_string())
 }
 
-pub(crate) async fn request_until_worker_response_ws(
+async fn try_receive_worker_response_ws(
     client: &mut TestWebSocketClient,
     request_frame: &NetworkRequestFrame,
-) {
-    try_request_until_worker_response_ws(client, request_frame)
-        .await
-        .expect("rpc websocket worker response");
+) -> Result<(), String> {
+    for _ in 0..4 {
+        let frame = client
+            .recv_frame_bytes_without_timeout()
+            .await
+            .map_err(|error| format!("receive rpc response: {error}"))?;
+        if let Some(response) = try_parse_rpc_response_frame_parts(&frame) {
+            validate_rpc_worker_response(
+                &response,
+                request_frame.correlation_id,
+                request_frame.body.as_ref(),
+            )?;
+            return Ok(());
+        }
+    }
+
+    Err("expected worker rpc response frame over websocket".to_string())
+}
+
+async fn try_receive_expected_rpc_request_ws(
+    client: &mut TestWebSocketClient,
+    request_frame: &NetworkRequestFrame,
+) -> Result<(), String> {
+    loop {
+        let frame = client
+            .recv_frame_bytes_without_timeout()
+            .await
+            .map_err(|error| format!("receive rpc request: {error}"))?;
+        let Some(request) = try_parse_rpc_request_frame_parts(&frame) else {
+            continue;
+        };
+        if request.correlation_id != request_frame.correlation_id {
+            return Err(format!(
+                "worker received unexpected rpc correlation id: expected {}, got {}",
+                request_frame.correlation_id, request.correlation_id
+            ));
+        }
+        if request.body != request_frame.body {
+            return Err(format!(
+                "worker received unexpected rpc request body: expected {:?}, got {:?}",
+                request_frame.body.as_ref(),
+                request.body.as_ref()
+            ));
+        }
+        return Ok(());
+    }
+}
+
+pub(crate) async fn complete_roundtrip_ws(
+    requester_client: &mut TestWebSocketClient,
+    worker_client: &mut TestWebSocketClient,
+    request_frame: &NetworkRequestFrame,
+    response_timeout_ms: u64,
+) -> Result<(), String> {
+    tokio::time::timeout(Duration::from_millis(response_timeout_ms), async {
+        requester_client
+            .send_frame_bytes(request_frame.frame.clone())
+            .await
+            .map_err(|error| format!("send rpc request: {error}"))?;
+        try_receive_expected_rpc_request_ws(worker_client, request_frame).await?;
+        worker_client
+            .send_frame_bytes(request_frame.response_frame.clone())
+            .await
+            .map_err(|error| format!("send rpc response: {error}"))?;
+        try_receive_worker_response_ws(requester_client, request_frame).await
+    })
+    .await
+    .map_err(|_| "rpc websocket roundtrip timeout".to_string())?
 }
 
 pub(crate) fn spawn_rpc_tcp_workers(
@@ -530,4 +716,107 @@ pub(crate) async fn complete_pipelined_requests_ws(
     })
     .await
     .map_err(|_| "pipelined websocket rpc response timeout".to_string())?
+}
+
+pub(crate) async fn complete_pipelined_requests_tcp_with_latencies(
+    client: &mut TestClient,
+    request_frames: &[NetworkRequestFrame],
+    response_timeout_ms: u64,
+) -> Result<Vec<Duration>, String> {
+    tokio::time::timeout(Duration::from_millis(response_timeout_ms), async {
+        let mut expected = HashMap::with_capacity(request_frames.len());
+        for request in request_frames {
+            expected.insert(
+                request.correlation_id,
+                (request.body.clone(), std::time::Instant::now()),
+            );
+            client
+                .send_frame_bytes(request.frame.clone())
+                .await
+                .map_err(|error| format!("send pipelined RPC request: {error}"))?;
+        }
+        drain_timed_responses_tcp(client, expected).await
+    })
+    .await
+    .map_err(|_| "pipelined TCP RPC response timeout".to_string())?
+}
+
+pub(crate) async fn complete_pipelined_requests_ws_with_latencies(
+    client: &mut TestWebSocketClient,
+    request_frames: &[NetworkRequestFrame],
+    response_timeout_ms: u64,
+) -> Result<Vec<Duration>, String> {
+    tokio::time::timeout(Duration::from_millis(response_timeout_ms), async {
+        let mut expected = HashMap::with_capacity(request_frames.len());
+        for request in request_frames {
+            expected.insert(
+                request.correlation_id,
+                (request.body.clone(), std::time::Instant::now()),
+            );
+            client
+                .send_frame_bytes(request.frame.clone())
+                .await
+                .map_err(|error| format!("send pipelined RPC request: {error}"))?;
+        }
+        drain_timed_responses_ws(client, expected).await
+    })
+    .await
+    .map_err(|_| "pipelined WebSocket RPC response timeout".to_string())?
+}
+
+async fn drain_timed_responses_tcp(
+    client: &mut TestClient,
+    mut expected: HashMap<Uuid, (Bytes, std::time::Instant)>,
+) -> Result<Vec<Duration>, String> {
+    let expected_count = expected.len();
+    let mut latencies = Vec::with_capacity(expected_count);
+    while !expected.is_empty() {
+        let frame = client
+            .recv_frame_bytes_without_timeout()
+            .await
+            .map_err(|error| format!("receive pipelined RPC response: {error}"))?;
+        collect_timed_response(&frame, &mut expected, &mut latencies)?;
+    }
+    if latencies.len() != expected_count {
+        return Err("RPC response latency count mismatch".to_string());
+    }
+    Ok(latencies)
+}
+
+async fn drain_timed_responses_ws(
+    client: &mut TestWebSocketClient,
+    mut expected: HashMap<Uuid, (Bytes, std::time::Instant)>,
+) -> Result<Vec<Duration>, String> {
+    let expected_count = expected.len();
+    let mut latencies = Vec::with_capacity(expected_count);
+    while !expected.is_empty() {
+        let frame = client
+            .recv_frame_bytes_without_timeout()
+            .await
+            .map_err(|error| format!("receive pipelined RPC response: {error}"))?;
+        collect_timed_response(&frame, &mut expected, &mut latencies)?;
+    }
+    if latencies.len() != expected_count {
+        return Err("RPC response latency count mismatch".to_string());
+    }
+    Ok(latencies)
+}
+
+fn collect_timed_response(
+    frame: &Bytes,
+    expected: &mut HashMap<Uuid, (Bytes, std::time::Instant)>,
+    latencies: &mut Vec<Duration>,
+) -> Result<(), String> {
+    let Some(response) = try_parse_rpc_response_frame_parts(frame) else {
+        return Ok(());
+    };
+    let Some((expected_body, started)) = expected.remove(&response.correlation_id) else {
+        return Err(format!(
+            "unexpected pipelined RPC correlation id {}",
+            response.correlation_id
+        ));
+    };
+    validate_rpc_worker_response(&response, response.correlation_id, expected_body.as_ref())?;
+    latencies.push(started.elapsed());
+    Ok(())
 }

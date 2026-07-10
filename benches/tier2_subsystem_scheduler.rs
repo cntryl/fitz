@@ -13,6 +13,11 @@ const REGISTER_BATCH_SIZE: usize = 64;
 const REGISTER_BATCH_REPEAT_COUNT: usize = 512;
 const REGISTER_SINGLE_REPEAT_COUNT: usize = 8_192;
 
+fn configure_registration_measurement(ctx: &mut StressContext) {
+    ctx.parameter("completed_unit", "registered_routes");
+    ctx.parameter("logical_unit", "route_registration");
+}
+
 fn test_address(family: u64, route: &str) -> RouteAddress {
     RouteAddress::new(RouteFamily::new(family), Route::new(route))
 }
@@ -41,6 +46,7 @@ fn should_register_single_fresh_primary(ctx: &mut StressContext) {
     let (single_addresses, single_sinks) = make_registration_batch("/bench/reg/single", 1);
     let scheduler = Scheduler::new(1);
     let router = scheduler.router();
+    configure_registration_measurement(ctx);
 
     tier2_stress::measure_iterations(
         ctx,
@@ -64,6 +70,7 @@ fn should_register_64_fresh_primary(ctx: &mut StressContext) {
         make_registration_batch("/bench/reg/batch", REGISTER_BATCH_SIZE);
     let scheduler = Scheduler::new(1);
     let router = scheduler.router();
+    configure_registration_measurement(ctx);
 
     tier2_stress::measure_iterations(
         ctx,
@@ -85,6 +92,7 @@ fn should_register_64_replace_primary(ctx: &mut StressContext) {
     let scheduler = Scheduler::new(1);
     let router = scheduler.router();
     register_all(&router, &batch_addresses, &batch_sinks);
+    configure_registration_measurement(ctx);
 
     tier2_stress::measure_iterations(
         ctx,

@@ -10,6 +10,12 @@ use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use std::sync::Arc;
 
 const MAILBOX_ROUTE_BATCH_SIZE: usize = 32_768;
+
+fn configure_route_measurement(ctx: &mut StressContext) {
+    ctx.parameter("completed_unit", "routed_messages");
+    ctx.parameter("logical_unit", "message_route");
+}
+
 fn test_address(family: u64, route: &str) -> RouteAddress {
     RouteAddress::new(RouteFamily::new(family), Route::new(route))
 }
@@ -21,6 +27,7 @@ fn should_route_exact_mailbox_32768_messages_primary(ctx: &mut StressContext) {
     let mailbox = Arc::new(Mailbox::new(1));
     router.register(address.clone(), mailbox.clone());
     let mut seq = 0_u64;
+    configure_route_measurement(ctx);
 
     tier2_stress::measure_iterations(
         ctx,

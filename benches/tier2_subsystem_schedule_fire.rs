@@ -326,11 +326,6 @@ fn should_ack_claims_all_ready_1000_mixed_crons(ctx: &mut StressContext) {
     ack_claims(ctx, "ack_claims_all_ready_1000_mixed_crons", 1000, 1000);
 }
 
-#[stress(tier = 2, name = "publish_exact_route_1_subscribers")]
-fn should_publish_exact_route_1_subscribers(ctx: &mut StressContext) {
-    publish_exact_route(ctx, "publish_exact_route_1_subscribers", 1);
-}
-
 #[stress(tier = 2, name = "publish_exact_route_10_subscribers")]
 fn should_publish_exact_route_10_subscribers(ctx: &mut StressContext) {
     publish_exact_route(ctx, "publish_exact_route_10_subscribers", 10);
