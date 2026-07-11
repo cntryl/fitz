@@ -13,7 +13,10 @@ const FRESH_DELIVER_BATCH_SIZE: usize = 512;
 const ERROR_DELIVER_BATCH_SIZE: usize = 512;
 
 fn test_address(family: u64, route: &str) -> RouteAddress {
-    RouteAddress::new(RouteFamily::new(family), Route::new(route))
+    RouteAddress::new(
+        RouteFamily::try_from(family).expect("benchmark family must fit in u32"),
+        Route::new(route),
+    )
 }
 
 fn prefill_normal_lane(mailbox: &Mailbox, address: &RouteAddress, count: usize) {

@@ -1,10 +1,15 @@
 ## Domain-Specific Endpoints
 
-Admin domain routes are mounted under `/api/v1`. The examples below use the
-aggregate form `/api/v1/{domain}/...`; callers that need a concrete route family
-can put it before the domain as `/api/v1/{route_family}/{domain}/...`. Wildcard
-admin sessions may use `/api/v1/all/{domain}/...` for aggregate reads. Paths
-under `/admin/{domain}/...` or `/api/v1/admin/{domain}/...` are not mounted.
+Admin domain routes are mounted under `/api/v1/{route_family}/{domain}/...`.
+Every domain read or mutation must name a concrete provisioned route family;
+the former domain-first `/api/v1/{domain}/...` paths are removed and return
+404. Wildcard admin sessions may use `/api/v1/all/{domain}/...` only for
+aggregate reads. Paths under `/admin/{domain}/...` or
+`/api/v1/admin/{domain}/...` are not mounted.
+
+In the endpoint examples below, insert `/{route_family}` between `/api/v1` and
+the domain name. Query parameters formerly used only to select a route family
+are no longer accepted as a substitute for that path segment.
 
 ### KV Domain
 All KV admin responses separate durable committed data from live transaction

@@ -17,7 +17,10 @@ fn configure_route_measurement(ctx: &mut StressContext) {
 }
 
 fn test_address(family: u64, route: &str) -> RouteAddress {
-    RouteAddress::new(RouteFamily::new(family), Route::new(route))
+    RouteAddress::new(
+        RouteFamily::try_from(family).expect("benchmark family must fit in u32"),
+        Route::new(route),
+    )
 }
 
 #[stress(tier = 2, name = "route_exact_mailbox_32768_messages_primary")]

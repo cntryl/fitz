@@ -70,7 +70,10 @@ pub(crate) fn schedule_missed_observations(
     )
     .unwrap_or(u64::MAX);
     let observations = runtime
-        .schedule_list_pending_claims(RouteFamily::new(family))
+        .schedule_list_pending_claims(
+            RouteFamily::try_from(family)
+                .expect("admin route family is validated at the HTTP boundary"),
+        )
         .into_iter()
         .filter_map(|claim| {
             let route = route_quad(&claim.route)?;

@@ -9,7 +9,7 @@ async fn should_list_kv_realms_with_valid_cookie() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/kv/realms")
+        .uri("/api/v1/1/kv/realms")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -32,7 +32,7 @@ async fn should_return_area_collection_route() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/kv/realms/prod/areas")
+        .uri("/api/v1/1/kv/realms/prod/areas")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -52,7 +52,7 @@ async fn should_return_resource_collection_route() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/queue/realms/prod/areas/jobs/resources")
+        .uri("/api/v1/1/queue/realms/prod/areas/jobs/resources")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -72,7 +72,7 @@ async fn should_return_leaf_resource_detail() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/stream/realms/prod/areas/logs/resources/application")
+        .uri("/api/v1/1/stream/realms/prod/areas/logs/resources/application")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -101,7 +101,7 @@ async fn should_return_stream_realm_watermarks_given_committed_stream_history() 
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/stream/realms/prod/watermarks")
+        .uri("/api/v1/1/stream/realms/prod/watermarks")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -132,7 +132,7 @@ async fn should_return_stream_area_watermarks_given_committed_stream_history() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/stream/realms/prod/areas/logs/watermarks")
+        .uri("/api/v1/1/stream/realms/prod/areas/logs/watermarks")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -162,7 +162,7 @@ async fn should_return_kv_transactions_under_resource() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/kv/realms/prod/areas/app/resources/users/transactions")
+        .uri("/api/v1/1/kv/realms/prod/areas/app/resources/users/transactions")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -187,7 +187,7 @@ async fn should_return_committed_kv_value_given_authorized_route_family() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/kv/realms/prod/areas/app/resources/users/value?route_family=1&key=user%3A1")
+        .uri("/api/v1/1/kv/realms/prod/areas/app/resources/users/value?key=user%3A1")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -231,7 +231,7 @@ async fn should_scan_committed_kv_prefix_given_authorized_route_family() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/kv/realms/prod/areas/app/resources/users/prefix?route_family=1&prefix=user%3A&limit=1")
+        .uri("/api/v1/1/kv/realms/prod/areas/app/resources/users/prefix?prefix=user%3A&limit=1")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -469,7 +469,7 @@ async fn should_reject_committed_kv_read_given_unauthorized_route_family() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/kv/realms/prod/areas/app/resources/users/value?route_family=2&key=user%3A1")
+        .uri("/api/v1/2/kv/realms/prod/areas/app/resources/users/value?key=user%3A1")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -491,7 +491,7 @@ async fn should_return_queue_inflight_under_resource() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/queue/realms/prod/areas/jobs/resources/worker/inflight")
+        .uri("/api/v1/1/queue/realms/prod/areas/jobs/resources/worker/inflight")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -513,7 +513,7 @@ async fn should_return_queue_detail_with_delayed_and_dead_letter_counts() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/queue/realms/prod/areas/jobs/resources/worker")
+        .uri("/api/v1/1/queue/realms/prod/areas/jobs/resources/worker")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -566,7 +566,7 @@ async fn should_return_lease_detail_with_age_and_diagnostics() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/lease/realms/prod/areas/locks/resources/cache")
+        .uri("/api/v1/1/lease/realms/prod/areas/locks/resources/cache")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -623,7 +623,7 @@ async fn should_return_schedule_stats_with_latency_pressure() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/schedule/stats")
+        .uri("/api/v1/1/schedule/stats")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -690,7 +690,7 @@ async fn should_return_schedule_stats_with_pending_claim_age() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/schedule/stats")
+        .uri("/api/v1/1/schedule/stats")
         .header(COOKIE, cookie.clone())
         .body(Body::default())
         .unwrap();

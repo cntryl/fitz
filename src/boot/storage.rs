@@ -29,10 +29,7 @@ pub async fn init(config: &BootConfig) -> BootResult<Arc<cntryl_midge::Engine>> 
 /// Ensure required column families exist.
 fn ensure_column_families(engine: &cntryl_midge::Engine, config: &BootConfig) -> BootResult<()> {
     for family in &config.route_families {
-        ensure_route_family(
-            engine,
-            crate::runtime::routing::RouteFamily::new((*family).into()),
-        )?;
+        ensure_route_family(engine, crate::runtime::routing::RouteFamily::new(*family))?;
     }
     Ok(())
 }

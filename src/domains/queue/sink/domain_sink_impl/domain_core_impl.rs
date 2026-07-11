@@ -529,7 +529,8 @@ impl QueueDomainCore {
         let mut families = self.families.lock();
         for (family_id, state) in families.iter_mut() {
             state.remove_session(
-                crate::runtime::routing::RouteFamily::new(*family_id),
+                crate::runtime::routing::RouteFamily::try_from(*family_id)
+                    .expect("queue family IDs originate from RouteFamily"),
                 session_id,
             );
         }

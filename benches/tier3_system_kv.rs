@@ -32,7 +32,7 @@ fn begin_transaction(
     mode: TxMode,
 ) -> Option<u64> {
     let response = actor.handle(KvMessage::Begin {
-        route_family: RouteFamily::new(family_id),
+        route_family: RouteFamily::try_from(family_id).expect("benchmark family must fit in u32"),
         realm: "system".to_string(),
         area: "kv".to_string(),
         resource: resource.to_string(),
@@ -73,7 +73,8 @@ fn should_complete_10_puts_per_3_families(ctx: &mut StressContext) {
             for i in 0..TRIPLE_FAMILY_PUTS_PER_FAMILY {
                 actor.handle(KvMessage::Put {
                     tx_id: *tx_id,
-                    route_family: RouteFamily::new(*family_id),
+                    route_family: RouteFamily::try_from(*family_id)
+                        .expect("benchmark family must fit in u32"),
                     resource: resource.clone(),
                     key: Bytes::from(format!("k{i}").into_bytes()),
                     value: Bytes::from_static(b"v"),

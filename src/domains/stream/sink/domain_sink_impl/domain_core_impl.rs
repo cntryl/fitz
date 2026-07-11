@@ -45,7 +45,8 @@ impl StreamDomainCore {
             Entry::Occupied(entry) => Ok(entry.get().clone()),
             Entry::Vacant(entry) => {
                 let actor = Arc::new(Mutex::new(StreamActor::new(
-                    RouteFamily::new(key.family_id),
+                    RouteFamily::try_from(key.family_id)
+                        .expect("stream family IDs originate from RouteFamily"),
                     key.realm.clone(),
                     key.area.clone(),
                     key.resource.clone(),
@@ -675,7 +676,11 @@ impl StreamDomainCore {
     pub(in crate::domains::stream::sink) fn unsubscribe_all(&self, session_id: u64) {
         let mut families = self.families.lock();
         for (family_id, state) in families.iter_mut() {
-            state.remove_session(RouteFamily::new(*family_id), session_id);
+            state.remove_session(
+                RouteFamily::try_from(*family_id)
+                    .expect("stream family IDs originate from RouteFamily"),
+                session_id,
+            );
         }
         families.retain(|_, state| !state.is_empty());
         drop(families);

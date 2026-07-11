@@ -55,6 +55,10 @@ impl Runtime {
     ///
     /// Returns an error when the KV domain is not initialized or the admin
     /// inventory query fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called without prior HTTP-boundary validation of `family`.
     pub fn kv_inventory_entries(
         &self,
         family: Option<u64>,
@@ -64,7 +68,10 @@ impl Runtime {
             .read()
             .clone()
             .ok_or_else(|| "KV domain is not initialized".to_string())?;
-        domains.kv_admin_inventory(family.map(crate::runtime::routing::RouteFamily::new))
+        domains.kv_admin_inventory(family.map(|family| {
+            crate::runtime::routing::RouteFamily::try_from(family)
+                .expect("admin route family is validated at the HTTP boundary")
+        }))
     }
 
     /// Read the KV inventory entry for one resource.
@@ -73,6 +80,10 @@ impl Runtime {
     ///
     /// Returns an error when the KV domain is not initialized or the admin
     /// inventory query fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called without prior HTTP-boundary validation of `family`.
     pub fn kv_inventory_resource(
         &self,
         family: u64,
@@ -86,7 +97,8 @@ impl Runtime {
             .clone()
             .ok_or_else(|| "KV domain is not initialized".to_string())?;
         domains.kv_admin_inventory_resource(
-            crate::runtime::routing::RouteFamily::new(family),
+            crate::runtime::routing::RouteFamily::try_from(family)
+                .expect("admin route family is validated at the HTTP boundary"),
             realm,
             area,
             resource,

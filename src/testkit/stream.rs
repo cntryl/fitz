@@ -127,8 +127,14 @@ pub fn addr(path: &str) -> RouteAddress {
 
 /// Build a `RouteAddress` with specific family
 #[must_use]
+/// # Panics
+///
+/// Panics when the test family cannot fit in a `u32`.
 pub fn addr_with_family(path: &str, family: u64) -> RouteAddress {
-    RouteAddress::new(RouteFamily::new(family), route(path))
+    RouteAddress::new(
+        RouteFamily::try_from(family).expect("test route family must fit in u32"),
+        route(path),
+    )
 }
 
 #[must_use]

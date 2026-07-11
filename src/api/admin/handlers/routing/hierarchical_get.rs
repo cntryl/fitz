@@ -568,7 +568,6 @@ fn handle_resource_compare(
     let against_family = match parse_optional_allowed_family_param(uri, principal, "against_family")
     {
         Ok(Some(family)) => Some(family),
-        Ok(None) if matches!(scope, AdminFamilyScope::Legacy) && scheme == "queue" => None,
         Ok(None) => family,
         Err(response) => return *response,
     };

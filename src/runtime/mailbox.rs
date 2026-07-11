@@ -173,7 +173,10 @@ mod tests {
     use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
     fn test_address(family: u64, route: &str) -> RouteAddress {
-        RouteAddress::new(RouteFamily::new(family), Route::new(route))
+        RouteAddress::new(
+            RouteFamily::try_from(family).expect("test family must fit in u32"),
+            Route::new(route),
+        )
     }
 
     #[test]

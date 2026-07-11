@@ -33,6 +33,10 @@ fn stream_read_item_to_admin_record(
 /// # Errors
 ///
 /// Propagates JSON response construction failures from the admin HTTP layer.
+///
+/// # Panics
+///
+/// Panics if called without prior HTTP-boundary validation of `family`.
 pub fn stream_records_for_resource(
     runtime: &Runtime,
     path: &ResourcePath<'_>,
@@ -42,7 +46,8 @@ pub fn stream_records_for_resource(
     discriminator: Option<&str>,
 ) -> Response {
     match runtime.stream_read_resource_records(AdminStreamReadRequest {
-        family: RouteFamily::new(family),
+        family: RouteFamily::try_from(family)
+            .expect("admin route family is validated at the HTTP boundary"),
         realm: path.realm,
         area: path.area,
         resource: path.resource,
@@ -72,6 +77,9 @@ pub fn stream_records_for_resource(
     }
 }
 
+/// # Panics
+///
+/// Panics if called without prior HTTP-boundary validation of the request family.
 pub(crate) fn stream_search(runtime: &Runtime, request: &StreamSearchRequest) -> Response {
     let mut remaining = request.limit;
     let mut has_more = false;
@@ -105,7 +113,8 @@ pub(crate) fn stream_search(runtime: &Runtime, request: &StreamSearchRequest) ->
             resource: &stream.resource,
         };
         let response = runtime.stream_read_resource_records(AdminStreamReadRequest {
-            family: RouteFamily::new(request.family),
+            family: RouteFamily::try_from(request.family)
+                .expect("admin route family is validated at the HTTP boundary"),
             realm: &stream.realm,
             area: &stream.area,
             resource: &stream.resource,

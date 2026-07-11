@@ -515,7 +515,8 @@ impl LeaseDomainRuntime<'_> {
         let mut removed = 0;
         for (family_id, state) in families.iter_mut() {
             removed += state.remove_session(
-                crate::runtime::routing::RouteFamily::new(*family_id),
+                crate::runtime::routing::RouteFamily::try_from(*family_id)
+                    .expect("lease family IDs originate from RouteFamily"),
                 session_id,
             );
         }

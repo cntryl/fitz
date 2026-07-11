@@ -168,9 +168,7 @@ impl SessionAuthenticator<'_> {
                 "resolved route family {route_family} is not provisioned"
             ));
         }
-        Ok(crate::runtime::routing::RouteFamily::new(
-            route_family.into(),
-        ))
+        Ok(crate::runtime::routing::RouteFamily::new(route_family))
     }
 
     pub(super) fn apply_authenticated_session(

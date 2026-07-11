@@ -50,7 +50,6 @@ pub(super) struct RuntimeDrainResponse {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum AdminFamilyScope {
-    Legacy,
     All,
     Family(u64),
 }
@@ -59,7 +58,7 @@ impl AdminFamilyScope {
     fn filter(self) -> Option<u64> {
         match self {
             Self::Family(family) => Some(family),
-            Self::Legacy | Self::All => None,
+            Self::All => None,
         }
     }
 }

@@ -230,6 +230,10 @@ pub fn rpc_operations(
 /// # Errors
 ///
 /// Propagates JSON response construction failures from the admin HTTP layer.
+///
+/// # Panics
+///
+/// Panics if called without prior HTTP-boundary validation of `family`.
 #[must_use]
 pub fn list_sessions(runtime: &Runtime) -> Response {
     let sessions = runtime.list_sessions();
@@ -241,6 +245,10 @@ pub fn list_sessions(runtime: &Runtime) -> Response {
 /// # Errors
 ///
 /// Propagates JSON response construction failures from the admin HTTP layer.
+///
+/// # Panics
+///
+/// Panics if called without prior HTTP-boundary validation of `family`.
 #[must_use]
 pub fn kv_transactions_for_resource(
     runtime: &Runtime,
@@ -263,6 +271,10 @@ pub fn kv_transactions_for_resource(
 /// # Errors
 ///
 /// Propagates JSON response construction failures from the admin HTTP layer.
+///
+/// # Panics
+///
+/// Panics if called without prior HTTP-boundary validation of `family`.
 pub fn kv_committed_value_for_resource(
     runtime: &Runtime,
     path: &ResourcePath<'_>,
@@ -270,7 +282,8 @@ pub fn kv_committed_value_for_resource(
     key: &[u8],
 ) -> Result<Response, Infallible> {
     match runtime.kv_get_committed_value(
-        crate::runtime::routing::RouteFamily::new(family),
+        crate::runtime::routing::RouteFamily::try_from(family)
+            .expect("admin route family is validated at the HTTP boundary"),
         path.realm,
         path.area,
         path.resource,
@@ -294,6 +307,10 @@ pub fn kv_committed_value_for_resource(
 /// # Errors
 ///
 /// Propagates JSON response construction failures from the admin HTTP layer.
+///
+/// # Panics
+///
+/// Panics if called without prior HTTP-boundary validation of `family`.
 #[must_use]
 pub fn kv_prefix_scan_for_resource(
     runtime: &Runtime,
@@ -303,7 +320,8 @@ pub fn kv_prefix_scan_for_resource(
     limit: usize,
 ) -> Result<Response, Infallible> {
     match runtime.kv_scan_committed_prefix(
-        crate::runtime::routing::RouteFamily::new(family),
+        crate::runtime::routing::RouteFamily::try_from(family)
+            .expect("admin route family is validated at the HTTP boundary"),
         path.realm,
         path.area,
         path.resource,
@@ -335,6 +353,10 @@ pub fn kv_prefix_scan_for_resource(
 /// # Errors
 ///
 /// Propagates JSON response construction failures from the admin HTTP layer.
+///
+/// # Panics
+///
+/// Panics if called without prior HTTP-boundary validation of `family`.
 #[must_use]
 pub fn kv_rows_for_resource(
     runtime: &Runtime,
@@ -345,7 +367,8 @@ pub fn kv_rows_for_resource(
     limit: usize,
 ) -> Result<Response, Infallible> {
     match runtime.kv_scan_committed_rows(&AdminKvRowsRequest {
-        route_family: crate::runtime::routing::RouteFamily::new(family),
+        route_family: crate::runtime::routing::RouteFamily::try_from(family)
+            .expect("admin route family is validated at the HTTP boundary"),
         realm: path.realm,
         area: path.area,
         resource: path.resource,

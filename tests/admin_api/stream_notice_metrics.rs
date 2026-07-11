@@ -21,7 +21,7 @@ async fn should_return_stream_domain_stats_given_recorded_operations() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/stream/stats")
+        .uri("/api/v1/1/stream/stats")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -81,7 +81,7 @@ async fn should_report_stream_latency_buckets_without_pressure_given_caught_up_w
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/stream/stats")
+        .uri("/api/v1/1/stream/stats")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -148,7 +148,7 @@ async fn should_classify_stream_latency_pressure_given_recorded_latency_tail_and
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/stream/stats")
+        .uri("/api/v1/1/stream/stats")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -224,13 +224,13 @@ async fn should_return_stream_and_notice_domain_stats_given_recorded_metrics() {
 
     let stream_req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/stream/stats")
+        .uri("/api/v1/1/stream/stats")
         .header(COOKIE, cookie.clone())
         .body(Body::default())
         .unwrap();
     let notice_req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/notice/stats")
+        .uri("/api/v1/1/notice/stats")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();

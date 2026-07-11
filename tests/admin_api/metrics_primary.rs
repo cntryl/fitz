@@ -13,7 +13,7 @@ async fn should_return_queue_domain_stats() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/queue/stats")
+        .uri("/api/v1/1/queue/stats")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -82,7 +82,7 @@ async fn should_return_queue_operation_counters_given_recorded_metrics() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/queue/stats")
+        .uri("/api/v1/1/queue/stats")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -191,7 +191,7 @@ async fn should_return_kv_failure_stats_given_recorded_metrics() {
 
     let kv_req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/kv/stats")
+        .uri("/api/v1/1/kv/stats")
         .header(COOKIE, cookie.clone())
         .body(Body::default())
         .unwrap();
@@ -363,13 +363,13 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
 
     let rpc_req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/rpc/stats")
+        .uri("/api/v1/1/rpc/stats")
         .header(COOKIE, cookie.clone())
         .body(Body::default())
         .unwrap();
     let lease_req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/lease/stats")
+        .uri("/api/v1/1/lease/stats")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -550,7 +550,7 @@ async fn should_return_rpc_data_loss_risk_given_late_response_drops() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/rpc/stats")
+        .uri("/api/v1/1/rpc/stats")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();

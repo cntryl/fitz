@@ -6,7 +6,7 @@ fn route(s: &str) -> Route {
 }
 
 fn family(id: u64) -> RouteFamily {
-    RouteFamily::new(id)
+    RouteFamily::try_from(id).expect("test family must fit in u32")
 }
 
 fn sub_id(n: u64) -> SubscriptionId {

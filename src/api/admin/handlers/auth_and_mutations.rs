@@ -57,16 +57,11 @@ pub(super) fn parse_domain_path<'a>(
         return Err(Box::new(super::not_found()));
     }
 
-    let first = segments[2];
-    if is_admin_domain_scheme(first) {
-        return Ok((AdminFamilyScope::Legacy, first, &segments[3..]));
-    }
-
     if segments.len() < 4 {
         return Err(Box::new(super::not_found()));
     }
 
-    let scope = parse_family_scope(first, principal)?;
+    let scope = parse_family_scope(segments[2], principal)?;
     let scheme = segments[3];
     if !is_admin_domain_scheme(scheme) {
         return Err(Box::new(super::not_found()));
@@ -103,6 +98,13 @@ pub(super) fn parse_family_scope(
         ))
     })?;
 
+    RouteFamily::try_from(family).map_err(|_| {
+        Box::new(super::error_response(
+            StatusCode::BAD_REQUEST,
+            "Route family exceeds the supported u32 range",
+        ))
+    })?;
+
     if !principal.route_family_access.allows(&family.to_string()) {
         return Err(Box::new(super::error_response(
             StatusCode::FORBIDDEN,
@@ -113,26 +115,25 @@ pub(super) fn parse_family_scope(
     Ok(AdminFamilyScope::Family(family))
 }
 
+#[allow(clippy::unnecessary_wraps)]
 pub(super) fn resource_family_filter(
     scope: AdminFamilyScope,
-    uri: &hyper::Uri,
-    scheme: &str,
+    _uri: &hyper::Uri,
+    _scheme: &str,
 ) -> Result<Option<u64>, Box<Response>> {
     match scope {
         AdminFamilyScope::Family(family) => Ok(Some(family)),
-        AdminFamilyScope::Legacy if scheme == "queue" => parse_optional_queue_family(uri),
-        AdminFamilyScope::All | AdminFamilyScope::Legacy => Ok(None),
+        AdminFamilyScope::All => Ok(None),
     }
 }
 
 pub(super) fn require_concrete_route_family(
     scope: AdminFamilyScope,
-    uri: &hyper::Uri,
-    principal: &AdminPrincipal,
+    _uri: &hyper::Uri,
+    _principal: &AdminPrincipal,
 ) -> Result<u64, Box<Response>> {
     match scope {
         AdminFamilyScope::Family(family) => Ok(family),
-        AdminFamilyScope::Legacy => require_allowed_route_family(uri, principal),
         AdminFamilyScope::All => Err(Box::new(super::error_response(
             StatusCode::BAD_REQUEST,
             "Route family path segment must be concrete for this endpoint",
@@ -142,11 +143,10 @@ pub(super) fn require_concrete_route_family(
 
 pub(super) fn require_concrete_queue_family(
     scope: AdminFamilyScope,
-    uri: &hyper::Uri,
+    _uri: &hyper::Uri,
 ) -> Result<u64, Box<Response>> {
     match scope {
         AdminFamilyScope::Family(family) => Ok(family),
-        AdminFamilyScope::Legacy => require_queue_family(uri),
         AdminFamilyScope::All => Err(Box::new(super::error_response(
             StatusCode::BAD_REQUEST,
             "Route family path segment must be concrete for this endpoint",
@@ -161,6 +161,7 @@ pub(super) fn parse_optional_allowed_family_param(
 ) -> Result<Option<u64>, Box<Response>> {
     let family = parse_optional_u64_param(uri, key)?;
     if let Some(family) = family {
+        validate_route_family_value(family)?;
         if !principal.route_family_access.allows(&family.to_string()) {
             return Err(Box::new(super::error_response(
                 StatusCode::FORBIDDEN,
@@ -171,10 +172,6 @@ pub(super) fn parse_optional_allowed_family_param(
     Ok(family)
 }
 
-pub(super) fn parse_optional_queue_family(uri: &hyper::Uri) -> Result<Option<u64>, Box<Response>> {
-    parse_optional_u64_param(uri, "family")
-}
-
 pub(super) fn parse_optional_u64_param(
     uri: &hyper::Uri,
     key: &str,
@@ -183,25 +180,13 @@ pub(super) fn parse_optional_u64_param(
         .map_err(|message| Box::new(super::error_response(StatusCode::BAD_REQUEST, &message)))
 }
 
-pub(super) fn require_allowed_route_family(
-    uri: &hyper::Uri,
-    principal: &AdminPrincipal,
-) -> Result<u64, Box<Response>> {
-    let Some(family) = parse_optional_u64_param(uri, "route_family")? else {
-        return Err(Box::new(super::error_response(
+fn validate_route_family_value(family: u64) -> Result<(), Box<Response>> {
+    RouteFamily::try_from(family).map(|_| ()).map_err(|_| {
+        Box::new(super::error_response(
             StatusCode::BAD_REQUEST,
-            "Missing route_family query parameter",
-        )));
-    };
-
-    if !principal.route_family_access.allows(&family.to_string()) {
-        return Err(Box::new(super::error_response(
-            StatusCode::FORBIDDEN,
-            "Route family is not allowed for this admin session",
-        )));
-    }
-
-    Ok(family)
+            "Route family exceeds the supported u32 range",
+        ))
+    })
 }
 
 pub(super) fn parse_required_string_query_param(
@@ -224,16 +209,6 @@ pub(super) fn parse_required_string_query_param(
 pub(super) fn parse_event_limit(uri: &hyper::Uri) -> Result<usize, Box<Response>> {
     list::parse_limit_query_param(uri, 20, 50)
         .map_err(|message| Box::new(super::error_response(StatusCode::BAD_REQUEST, &message)))
-}
-
-pub(super) fn require_queue_family(uri: &hyper::Uri) -> Result<u64, Box<Response>> {
-    match parse_optional_queue_family(uri)? {
-        Some(family) => Ok(family),
-        None => Err(Box::new(super::error_response(
-            StatusCode::BAD_REQUEST,
-            "Missing family query parameter",
-        ))),
-    }
 }
 
 pub(super) fn parse_message_id(value: &str) -> Result<u64, Box<Response>> {
@@ -263,13 +238,14 @@ pub(super) fn handle_queue_dead_letter_replay(
         Err(response) => return *response,
     };
 
-    match runtime.queue_replay_dead_letter(
-        RouteFamily::new(family),
-        realm,
-        area,
-        resource,
-        message_id,
-    ) {
+    let Ok(family) = RouteFamily::try_from(family) else {
+        return super::error_response(
+            StatusCode::BAD_REQUEST,
+            "Route family exceeds the supported u32 range",
+        );
+    };
+
+    match runtime.queue_replay_dead_letter(family, realm, area, resource, message_id) {
         Ok(true) => no_content_response(),
         Ok(false) => super::not_found(),
         Err(message) => super::error_response(StatusCode::INTERNAL_SERVER_ERROR, &message),
@@ -294,13 +270,14 @@ pub(super) fn handle_queue_dead_letter_purge(
         Err(response) => return *response,
     };
 
-    match runtime.queue_purge_dead_letter(
-        RouteFamily::new(family),
-        realm,
-        area,
-        resource,
-        message_id,
-    ) {
+    let Ok(family) = RouteFamily::try_from(family) else {
+        return super::error_response(
+            StatusCode::BAD_REQUEST,
+            "Route family exceeds the supported u32 range",
+        );
+    };
+
+    match runtime.queue_purge_dead_letter(family, realm, area, resource, message_id) {
         Ok(true) => no_content_response(),
         Ok(false) => super::not_found(),
         Err(message) => super::error_response(StatusCode::INTERNAL_SERVER_ERROR, &message),

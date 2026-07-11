@@ -29,6 +29,18 @@ source, and stop emitting all removed legacy Fitz auth shapes:
 identity claim is missing, unmapped, or maps to an unprovisioned family.
 Anonymous mode always uses route family `1`.
 
+## Breaking Admin Route Migration
+
+Admin domain routes now require a concrete family path segment. Replace every
+`/api/v1/{domain}/...` request with `/api/v1/{family}/{domain}/...`; do not use
+`family` or `route_family` query parameters as a fallback. The removed
+domain-first paths return `404`. Route-family values are `u32` identifiers:
+wire and admin values above `u32::MAX` are rejected rather than clamped.
+
+Update admin grants to either `*` or canonical decimal family IDs. Symbolic,
+non-canonical, and overflowed grants are rejected when a session is created or
+validated.
+
 ## Pre-Upgrade Checklist
 
 1. Back up durability-sensitive state.

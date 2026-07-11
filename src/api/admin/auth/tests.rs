@@ -119,7 +119,7 @@ fn should_extract_principal_from_cookie() {
 
 #[test]
 #[serial]
-fn should_extract_explicit_route_families_from_admin_cookie() {
+fn should_reject_symbolic_route_family_grants_at_login() {
     // Arrange
     reset_admin_env();
     std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
@@ -127,25 +127,11 @@ fn should_extract_explicit_route_families_from_admin_cookie() {
     std::env::set_var("FITZ_ADMIN_ROUTE_FAMILIES", "1,partner");
 
     let auth = AdminAuth::from_env();
-    let principal = auth.authenticate_credentials("admin", "pwd123").unwrap();
-    let cookie = auth.issue_session_cookie(&principal).unwrap();
-    let cookie_value = cookie.split(';').next().unwrap().to_string();
-
-    let req = hyper::http::Request::builder()
-        .header(COOKIE, cookie_value)
-        .body(Body::default())
-        .unwrap();
-
     // Act
-    let extracted = auth.principal_from_request(&req).unwrap();
+    let result = auth.authenticate_credentials("admin", "pwd123");
 
     // Assert
-    assert_eq!(
-        extracted.route_family_access.route_families(),
-        vec!["1".to_string(), "partner".to_string()]
-    );
-    assert!(extracted.route_family_access.allows("1"));
-    assert!(!extracted.route_family_access.allows("2"));
+    assert!(matches!(result, Err(AuthFailure::Unavailable)));
 }
 
 #[test]

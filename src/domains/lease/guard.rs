@@ -239,11 +239,14 @@ mod tests {
     use std::time::{Duration, Instant};
 
     fn test_address(family: u64, route: &str) -> RouteAddress {
-        RouteAddress::new(RouteFamily::new(family), Route::new(route))
+        RouteAddress::new(
+            RouteFamily::try_from(family).expect("test family must fit in u32"),
+            Route::new(route),
+        )
     }
 
     fn test_family(id: u64) -> RouteFamily {
-        RouteFamily::new(id)
+        RouteFamily::try_from(id).expect("test family must fit in u32")
     }
 
     fn test_route(route: &str) -> Route {

@@ -117,6 +117,20 @@ impl AdminRouteFamilyAccess {
     pub fn is_wildcard(&self) -> bool {
         matches!(self, Self::Wildcard(value) if value == "*")
     }
+
+    fn is_valid_grant_set(&self) -> bool {
+        match self {
+            Self::Wildcard(value) => value == "*",
+            Self::Explicit(values) => {
+                !values.is_empty()
+                    && values.iter().all(|value| {
+                        value
+                            .parse::<u32>()
+                            .is_ok_and(|family| family.to_string() == *value)
+                    })
+            }
+        }
+    }
 }
 
 impl AdminAuth {
@@ -213,6 +227,10 @@ impl AdminAuth {
             .as_ref()
             .as_ref()
             .ok_or(AuthFailure::Unavailable)?;
+
+        if !settings.route_family_access.is_valid_grant_set() {
+            return Err(AuthFailure::Unavailable);
+        }
 
         if username != settings.username {
             return Err(AuthFailure::InvalidCredentials);
@@ -313,6 +331,10 @@ impl AdminAuth {
         .claims;
 
         if claims.role != "admin" {
+            return Err(AuthFailure::InvalidSession);
+        }
+
+        if !claims.route_families.is_valid_grant_set() {
             return Err(AuthFailure::InvalidSession);
         }
 

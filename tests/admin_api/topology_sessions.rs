@@ -636,7 +636,7 @@ async fn should_return_exact_rpc_operation_detail_counts() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/rpc/realms/prod/areas/api/resources/users/operations/get")
+        .uri("/api/v1/1/rpc/realms/prod/areas/api/resources/users/operations/get")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();

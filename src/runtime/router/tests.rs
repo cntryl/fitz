@@ -7,7 +7,10 @@ use parking_lot::Mutex;
 
 /// Helper to create test route addresses
 fn test_address(family: u64, route: &str) -> RouteAddress {
-    RouteAddress::new(RouteFamily::new(family), Route::new(route))
+    RouteAddress::new(
+        RouteFamily::try_from(family).expect("test family must fit in u32"),
+        Route::new(route),
+    )
 }
 
 /// Mock sink for testing

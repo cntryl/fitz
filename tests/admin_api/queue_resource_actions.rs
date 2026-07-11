@@ -10,7 +10,7 @@ async fn should_return_queue_events_with_bounded_timeline() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/queue/realms/prod/areas/jobs/resources/worker/events?family=1&limit=3")
+        .uri("/api/v1/1/queue/realms/prod/areas/jobs/resources/worker/events?limit=3")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -56,7 +56,7 @@ async fn should_return_queue_comparison_between_two_resource_snapshots() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/queue/realms/prod/areas/jobs/resources/worker/compare?family=1&against_realm=prod&against_area=jobs&against_resource=backup&against_family=2")
+        .uri("/api/v1/1/queue/realms/prod/areas/jobs/resources/worker/compare?against_realm=prod&against_area=jobs&against_resource=backup&against_family=2")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -95,7 +95,7 @@ async fn should_return_queue_dead_letters_under_resource() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/queue/realms/prod/areas/jobs/resources/worker/dead-letters")
+        .uri("/api/v1/1/queue/realms/prod/areas/jobs/resources/worker/dead-letters")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -115,7 +115,7 @@ async fn should_return_queue_dead_letters_under_resource() {
 
 #[tokio::test]
 #[serial]
-async fn should_reject_dead_letter_replay_given_missing_family_query_param() {
+async fn should_reject_legacy_dead_letter_replay_path() {
     // Arrange
     let (runtime, store) = queue_runtime_with_domains();
     let message_id = seed_dead_lettered_queue_message(store);
@@ -138,7 +138,7 @@ async fn should_reject_dead_letter_replay_given_missing_family_query_param() {
         .unwrap();
 
     // Assert
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -152,7 +152,7 @@ async fn should_reject_unsafe_admin_request_given_cross_origin() {
     let req = hyper::http::Request::builder()
         .method(Method::POST)
         .uri(format!(
-            "/api/v1/queue/realms/prod/areas/jobs/resources/worker/dead-letters/{message_id}/replay?family=1"
+            "/api/v1/1/queue/realms/prod/areas/jobs/resources/worker/dead-letters/{message_id}/replay"
         ))
         .header(COOKIE, cookie)
         .header("host", "localhost")
@@ -180,7 +180,7 @@ async fn should_replay_dead_letter_given_family_targeted_admin_request() {
     let replay_req = hyper::http::Request::builder()
         .method(Method::POST)
         .uri(format!(
-            "/api/v1/queue/realms/prod/areas/jobs/resources/worker/dead-letters/{message_id}/replay?family=1"
+            "/api/v1/1/queue/realms/prod/areas/jobs/resources/worker/dead-letters/{message_id}/replay"
         ))
         .header(COOKIE, cookie.clone())
         .header("host", "localhost")
@@ -194,7 +194,7 @@ async fn should_replay_dead_letter_given_family_targeted_admin_request() {
         .unwrap();
     let detail_req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/queue/realms/prod/areas/jobs/resources/worker?family=1")
+        .uri("/api/v1/1/queue/realms/prod/areas/jobs/resources/worker")
         .header(COOKIE, cookie.clone())
         .body(Body::default())
         .unwrap();
@@ -203,7 +203,7 @@ async fn should_replay_dead_letter_given_family_targeted_admin_request() {
         .unwrap();
     let dead_letters_req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/queue/realms/prod/areas/jobs/resources/worker/dead-letters?family=1")
+        .uri("/api/v1/1/queue/realms/prod/areas/jobs/resources/worker/dead-letters")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -239,7 +239,7 @@ async fn should_purge_dead_letter_given_family_targeted_admin_request() {
     let purge_req = hyper::http::Request::builder()
         .method(Method::DELETE)
         .uri(format!(
-            "/api/v1/queue/realms/prod/areas/jobs/resources/worker/dead-letters/{message_id}?family=1"
+            "/api/v1/1/queue/realms/prod/areas/jobs/resources/worker/dead-letters/{message_id}"
         ))
         .header(COOKIE, cookie.clone())
         .header("host", "localhost")
@@ -253,7 +253,7 @@ async fn should_purge_dead_letter_given_family_targeted_admin_request() {
         .unwrap();
     let detail_req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/queue/realms/prod/areas/jobs/resources/worker?family=1")
+        .uri("/api/v1/1/queue/realms/prod/areas/jobs/resources/worker")
         .header(COOKIE, cookie.clone())
         .body(Body::default())
         .unwrap();
@@ -262,7 +262,7 @@ async fn should_purge_dead_letter_given_family_targeted_admin_request() {
         .unwrap();
     let dead_letters_req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/queue/realms/prod/areas/jobs/resources/worker/dead-letters?family=1")
+        .uri("/api/v1/1/queue/realms/prod/areas/jobs/resources/worker/dead-letters")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -296,7 +296,7 @@ async fn should_return_notice_subscriptions_under_resource() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/notice/realms/prod/areas/events/resources/orders/subscriptions")
+        .uri("/api/v1/1/notice/realms/prod/areas/events/resources/orders/subscriptions")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -320,7 +320,7 @@ async fn should_return_rpc_workers_under_operation() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/rpc/realms/prod/areas/api/resources/users/operations/get/workers")
+        .uri("/api/v1/1/rpc/realms/prod/areas/api/resources/users/operations/get/workers")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -345,7 +345,7 @@ async fn should_return_rpc_pending_requests() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/rpc/pending?realm=prod")
+        .uri("/api/v1/1/rpc/pending?realm=prod")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -374,7 +374,7 @@ async fn should_return_rpc_events_with_worker_registration_and_pending_transitio
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/rpc/realms/prod/areas/api/resources/users/events?limit=3")
+        .uri("/api/v1/1/rpc/realms/prod/areas/api/resources/users/events?limit=3")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();

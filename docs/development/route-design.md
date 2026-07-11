@@ -699,7 +699,7 @@ if parts.len() != 4 {
 1. **Hard isolation**: Complete state separation between families
 2. **1:1 ColumnFamily mapping**: `RouteFamily.id()` → `ColumnFamilyId`
 3. **No default CF**: `RouteFamily=0` forbidden for persistent domains
-4. **Wire format**: u64 on wire, clamped to u32 on parse
+4. **Wire format**: u64 on wire, rejected when it exceeds the `u32` storage range
 5. **Opaque identifier**: No semantic meaning to runtime
 6. **No hierarchy**: Families are flat, no parent/child relationships
 

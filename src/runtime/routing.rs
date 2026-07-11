@@ -251,10 +251,10 @@ pub struct RouteFamily {
 }
 
 impl RouteFamily {
-    /// Create a new route family from a wire-format u64 value
+    /// Create a route family from an already validated storage identifier.
     ///
-    /// Values above `u32::MAX` are clamped to `u32::MAX` with a warning.
-    /// Fitz stores route families as u32 to align 1:1 with Midge `ColumnFamilyId`.
+    /// Wire and admin inputs must use [`TryFrom<u64>`], so an out-of-range
+    /// value is rejected rather than silently becoming a different family.
     ///
     /// # Example
     ///
@@ -264,17 +264,9 @@ impl RouteFamily {
     /// assert_eq!(family.id(), 1);
     /// ```
     #[inline]
-    pub fn new(id: u64) -> Self {
-        if let Ok(id) = u32::try_from(id) {
-            Self { id }
-        } else {
-            tracing::warn!(
-                "RouteFamily {} exceeds u32::MAX, clamping to {}",
-                id,
-                u32::MAX
-            );
-            Self { id: u32::MAX }
-        }
+    #[must_use]
+    pub fn new(id: u32) -> Self {
+        Self { id }
     }
 
     /// Create a route family directly from a u32 value
@@ -296,6 +288,14 @@ impl RouteFamily {
     #[must_use]
     pub fn as_u64(&self) -> u64 {
         u64::from(self.id)
+    }
+}
+
+impl TryFrom<u64> for RouteFamily {
+    type Error = std::num::TryFromIntError;
+
+    fn try_from(id: u64) -> Result<Self, Self::Error> {
+        Ok(Self::new(u32::try_from(id)?))
     }
 }
 
@@ -502,6 +502,18 @@ mod tests {
 
         // Assert
         assert_eq!(family.id(), 1);
+    }
+
+    #[test]
+    fn should_reject_route_family_values_above_u32_range() {
+        // Arrange
+        let overflow = u64::from(u32::MAX) + 1;
+
+        // Act
+        let result = RouteFamily::try_from(overflow);
+
+        // Assert
+        assert!(result.is_err());
     }
 
     #[test]

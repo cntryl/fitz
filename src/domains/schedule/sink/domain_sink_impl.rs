@@ -356,7 +356,7 @@ impl ScheduleDomainRuntime<'_> {
                 continue;
             }
 
-            let family = crate::runtime::routing::RouteFamily::new(column_family.id().into());
+            let family = crate::runtime::routing::RouteFamily::new(column_family.id());
             if actors.contains_key(&family) {
                 continue;
             }

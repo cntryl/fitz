@@ -467,7 +467,7 @@ async fn should_require_auth_for_hierarchical_route() {
     let runtime = test_runtime();
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/kv/realms")
+        .uri("/api/v1/1/kv/realms")
         .body(Body::default())
         .unwrap();
 
@@ -476,6 +476,28 @@ async fn should_require_auth_for_hierarchical_route() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+#[serial]
+async fn should_reject_overflowed_route_family_path_segment() {
+    // Arrange
+    let runtime = test_runtime();
+    let cookie = login_cookie(runtime.clone()).await;
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/4294967296/kv/realms")
+        .header(COOKIE, cookie)
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]

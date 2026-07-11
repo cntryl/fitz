@@ -667,7 +667,7 @@ pub(crate) fn seed_committed_kv_values(
     resource: &str,
     entries: &[(&[u8], &[u8])],
 ) {
-    let route_family = RouteFamily::new(family);
+    let route_family = RouteFamily::try_from(family).expect("test family must fit in u32");
     let mut actor = KvActor::new(store);
     let tx_id = match actor.handle(KvMessage::Begin {
         route_family,
@@ -709,7 +709,7 @@ pub(crate) fn delete_committed_kv_range(
     start: &[u8],
     end: &[u8],
 ) {
-    let route_family = RouteFamily::new(family);
+    let route_family = RouteFamily::try_from(family).expect("test family must fit in u32");
     let mut actor = KvActor::new(store);
     let tx_id = match actor.handle(KvMessage::Begin {
         route_family,
