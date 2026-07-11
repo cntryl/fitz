@@ -160,6 +160,7 @@ fn kv_message_policy(msg_type: u16) -> Result<Option<AuthorizationPolicy>, &'sta
         101..=108 => Ok(Some(AuthorizationPolicy::SessionOwned)),
         109 | 110 => Ok(Some(AuthorizationPolicy::RouteScoped(Access::Read))),
         111 => Err("invalid message type: 111 is server-to-client only"),
+        112..=199 => Err("invalid message type: unsupported KV operation"),
         _ => Ok(None),
     }
 }
@@ -168,10 +169,10 @@ fn queue_message_policy(msg_type: u16) -> Result<Option<AuthorizationPolicy>, &'
     use crate::auth::Access;
 
     match msg_type {
-        200..=204 => Ok(Some(AuthorizationPolicy::RouteScoped(Access::Write))),
+        200 | 202 | 203 | 204 => Ok(Some(AuthorizationPolicy::RouteScoped(Access::Write))),
         207 | 208 => Ok(Some(AuthorizationPolicy::RouteScoped(Access::Read))),
         209 => Err("invalid message type: 209 is server-to-client only"),
-        205 | 206 | 210..=299 => Err("invalid message type: unsupported queue operation"),
+        201 | 205 | 206 | 210..=299 => Err("invalid message type: unsupported queue operation"),
         _ => Ok(None),
     }
 }
@@ -183,9 +184,8 @@ fn rpc_message_policy(msg_type: u16) -> Result<Option<AuthorizationPolicy>, &'st
         300 | 301 => Ok(Some(AuthorizationPolicy::RouteScoped(Access::All))),
         302 => Ok(Some(AuthorizationPolicy::RouteScoped(Access::Write))),
         303 => Ok(Some(AuthorizationPolicy::SessionOwned)),
-        304 => Err("invalid message type: unsupported rpc operation"),
+        304 | 306..=399 => Err("invalid message type: unsupported rpc operation"),
         305 => Err("invalid message type: 305 is server-to-client only"),
-        306..=399 => Ok(Some(AuthorizationPolicy::RouteScoped(Access::Read))),
         _ => Ok(None),
     }
 }
@@ -223,6 +223,7 @@ fn stream_message_policy(msg_type: u16) -> Result<Option<AuthorizationPolicy>, &
         601..=603 => Ok(Some(AuthorizationPolicy::SessionOwned)),
         604..=608 => Ok(Some(AuthorizationPolicy::RouteScoped(Access::Read))),
         609 => Err("invalid message type: 609 is server-to-client only"),
+        610..=699 => Err("invalid message type: unsupported stream operation"),
         _ => Ok(None),
     }
 }
@@ -236,6 +237,7 @@ fn schedule_message_policy(msg_type: u16) -> Result<Option<AuthorizationPolicy>,
         702 => Ok(Some(AuthorizationPolicy::WildcardScoped(Access::Read))),
         703 | 704 => Ok(Some(AuthorizationPolicy::RouteScoped(Access::Read))),
         705 => Err("invalid message type: 705 is server-to-client only"),
+        707..=799 => Err("invalid message type: unsupported schedule operation"),
         _ => Ok(None),
     }
 }
@@ -523,7 +525,7 @@ mod tests {
                     AuthorizationPolicy::MultiRouteScoped(crate::auth::Access::Write),
                 )),
             ),
-            (112, None),
+            (800, None),
         ];
 
         // Act
@@ -551,8 +553,16 @@ mod tests {
         // Arrange
         let cases = [
             (111, "invalid message type: 111 is server-to-client only"),
+            (112, "invalid message type: unsupported KV operation"),
+            (199, "invalid message type: unsupported KV operation"),
             (209, "invalid message type: 209 is server-to-client only"),
+            (201, "invalid message type: unsupported queue operation"),
             (205, "invalid message type: unsupported queue operation"),
+            (299, "invalid message type: unsupported queue operation"),
+            (304, "invalid message type: unsupported rpc operation"),
+            (305, "invalid message type: 305 is server-to-client only"),
+            (306, "invalid message type: unsupported rpc operation"),
+            (399, "invalid message type: unsupported rpc operation"),
             (409, "invalid message type: 409 is server-to-client only"),
             (404, "invalid message type: unsupported lease operation"),
             (504, "invalid message type: 504 is server-to-client only"),
@@ -561,7 +571,11 @@ mod tests {
                 "invalid message type: 505-599 are unsupported notice operations",
             ),
             (609, "invalid message type: 609 is server-to-client only"),
+            (610, "invalid message type: unsupported stream operation"),
+            (699, "invalid message type: unsupported stream operation"),
             (705, "invalid message type: 705 is server-to-client only"),
+            (707, "invalid message type: unsupported schedule operation"),
+            (799, "invalid message type: unsupported schedule operation"),
         ];
 
         // Act

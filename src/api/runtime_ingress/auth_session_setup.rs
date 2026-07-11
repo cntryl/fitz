@@ -27,6 +27,8 @@ impl RuntimeIngress {
         domain: DispatchDomain,
         route: &str,
     ) -> Result<Cow<'_, str>, String> {
+        Self::validate_qualified_domain_scheme(domain, route)?;
+
         match domain {
             DispatchDomain::Kv => Self::canonicalize_triplet_route_str(domain, route, true),
             DispatchDomain::Queue | DispatchDomain::Lease | DispatchDomain::Stream => {
@@ -36,6 +38,23 @@ impl RuntimeIngress {
                 Ok(Self::scheme_prefixed_route_str(domain.as_str(), route))
             }
         }
+    }
+
+    fn validate_qualified_domain_scheme(domain: DispatchDomain, route: &str) -> Result<(), String> {
+        let Some((scheme, _)) = route.split_once("://") else {
+            return Ok(());
+        };
+
+        if scheme == domain.as_str() {
+            return Ok(());
+        }
+
+        Err(format!(
+            "{} message route must use {}://, not {}://",
+            domain.as_str(),
+            domain.as_str(),
+            scheme
+        ))
     }
 
     pub(super) fn scheme_prefixed_route_str<'a>(domain: &str, route: &'a str) -> Cow<'a, str> {

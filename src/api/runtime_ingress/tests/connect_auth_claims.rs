@@ -860,3 +860,18 @@ fn should_canonicalize_scheme_less_domain_routes_for_authorization() {
         "notice://test/notifications/**"
     );
 }
+
+#[test]
+fn should_reject_qualified_route_with_a_different_domain_scheme() {
+    // Arrange
+    let route = crate::runtime::routing::Route::new("queue://test/area/resource");
+
+    // Act
+    let result = RuntimeIngress::canonicalize_domain_route(DispatchDomain::Notice, &route);
+
+    // Assert
+    assert!(result.is_err());
+    assert!(result
+        .unwrap_err()
+        .contains("notice message route must use notice://"));
+}
