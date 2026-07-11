@@ -9,8 +9,12 @@ impl QueueActor {
     pub fn replay_dead_letter(&mut self, id: MessageId) -> Result<bool, String> {
         self.process_due_work();
 
-        let Ok((mut record, record_layout)) = self.load_full_record_for_admin_mutation(id) else {
-            return Ok(false);
+        let (mut record, record_layout) = match self.load_full_record_for_admin_mutation(id) {
+            Ok(value) => value,
+            Err(error) if error == format!("Message {id} disappeared from storage") => {
+                return Ok(false);
+            }
+            Err(error) => return Err(error),
         };
 
         if !matches!(record.state, QueueState::Dlq) {
@@ -57,7 +61,7 @@ impl QueueActor {
             self.index_meta_key.clone(),
             Self::encode_index_meta(
                 self.next_id_limit,
-                Self::usize_to_u64(self.persisted_ready_count + 1),
+                Self::usize_to_u64(self.persisted_ready_count.saturating_add(1)),
                 Self::usize_to_u64(self.persisted_delayed.len()),
                 self.min_persisted_delayed_visibility_ms(),
             ),
@@ -93,7 +97,10 @@ impl QueueActor {
         } else {
             match self.load_record_metadata_from_store(id) {
                 Ok(record) => record,
-                Err(_) => return Ok(false),
+                Err(error) if error == format!("Message {id} disappeared from storage") => {
+                    return Ok(false);
+                }
+                Err(error) => return Err(error),
             }
         };
 
@@ -213,7 +220,7 @@ impl QueueActor {
             self.index_meta_key.clone(),
             Self::encode_index_meta(
                 self.next_id_limit,
-                Self::usize_to_u64(self.persisted_ready_count + 1),
+                Self::usize_to_u64(self.persisted_ready_count.saturating_add(1)),
                 Self::usize_to_u64(staged_delayed_count),
                 staged_next_delayed_visibility,
             ),

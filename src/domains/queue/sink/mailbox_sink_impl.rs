@@ -24,6 +24,18 @@ struct OperationOutcome {
     mark_admin_snapshot_dirty: bool,
 }
 
+type SubscriptionOutcome = (
+    crate::domains::queue::QueueResponse,
+    Option<(
+        RouteFamily,
+        crate::runtime::matcher::Pattern,
+        u64,
+        u64,
+        crate::runtime::routing::RouteAddress,
+    )>,
+    bool,
+);
+
 #[derive(Clone, Copy)]
 struct ExtendOperation {
     session_id: u64,
@@ -163,6 +175,26 @@ impl QueueDomainCore {
         let route_family = *envelope.destination().family();
         let request_started = self.record_request_start();
 
+        if meta.route_family != route_family
+            || envelope
+                .source()
+                .is_some_and(|source| *source.family() != meta.route_family)
+        {
+            let response = crate::domains::queue::QueueResponse::BadRequest {
+                reason: "route family mismatch".to_string(),
+            };
+            let response_meta = envelope.source().map_or(meta, |source| {
+                let mut response_meta = meta;
+                response_meta.route_family = *source.family();
+                response_meta
+            });
+            self.route_queue_response(envelope, response_meta, &response);
+            if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+                metrics.record_failure(started_at);
+            }
+            return Ok(());
+        }
+
         let Some(parsed_frame) =
             self.parse_request_frame(envelope, meta, request.frame, request_started)
         else {
@@ -270,71 +302,34 @@ impl QueueDomainCore {
         request_started: Option<Instant>,
         sub_msg: QueueSubscriptionMessage,
     ) {
-        let (response, initial_watch_snapshot) = match sub_msg {
+        let (response, initial_watch_snapshot, state_changed) = match sub_msg {
             QueueSubscriptionMessage::Watch {
                 family_id,
                 pattern,
                 session_id,
                 subscriber,
-            } => {
-                let pattern_str = pattern.as_str();
-                let parsed_pattern = crate::runtime::matcher::Pattern::new(pattern_str);
-                let subscription_id = {
-                    let mut families = self.families.lock();
-                    let state = families
-                        .entry(family_id.as_u64())
-                        .or_insert_with(RoutedSubscriptionSet::new);
-
-                    if let Some(id) = state.find_existing_id(session_id, pattern_str) {
-                        id
-                    } else {
-                        let id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
-                        state.insert(
-                            family_id,
-                            QueueSubscription {
-                                pattern: parsed_pattern.clone(),
-                                session_id,
-                                subscription_id: id,
-                                subscriber: subscriber.clone(),
-                            },
-                        );
-                        id
-                    }
-                };
-
-                (
-                    crate::domains::queue::QueueResponse::WatchOk { subscription_id },
-                    Some((
-                        family_id,
-                        parsed_pattern,
-                        session_id,
-                        subscription_id,
-                        subscriber,
-                    )),
-                )
-            }
+            } => self.handle_watch_subscription(
+                envelope, meta, family_id, &pattern, session_id, subscriber,
+            ),
             QueueSubscriptionMessage::Unwatch {
                 family_id,
                 pattern,
                 session_id,
-                ..
-            } => {
-                let mut families = self.families.lock();
-                let remove_family = if let Some(state) = families.get_mut(&family_id.as_u64()) {
-                    state.remove_session_pattern(family_id, session_id, pattern.as_str());
-                    state.is_empty()
-                } else {
-                    false
-                };
-                if remove_family {
-                    families.remove(&family_id.as_u64());
-                }
-                (crate::domains::queue::QueueResponse::UnwatchOk, None)
-            }
+                subscriber,
+            } => self.handle_unwatch_subscription(
+                envelope,
+                meta,
+                family_id,
+                &pattern,
+                session_id,
+                &subscriber,
+            ),
         };
 
         self.route_queue_response(envelope, meta, &response);
-        self.mark_admin_snapshot_dirty();
+        if state_changed {
+            self.mark_admin_snapshot_dirty();
+        }
         if let Some((family_id, pattern, session_id, subscription_id, subscriber)) =
             initial_watch_snapshot
         {
@@ -350,6 +345,126 @@ impl QueueDomainCore {
         self.record_operation_metrics(request_started, &response, QueueOpKind::InflightExpired);
     }
 
+    fn handle_watch_subscription(
+        &self,
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+        family_id: RouteFamily,
+        pattern: &crate::runtime::routing::Route,
+        session_id: u64,
+        subscriber: crate::runtime::routing::RouteAddress,
+    ) -> SubscriptionOutcome {
+        if !Self::valid_subscription_request(envelope, meta, family_id, session_id, &subscriber) {
+            return (
+                crate::domains::queue::QueueResponse::BadRequest {
+                    reason: "route family mismatch".to_string(),
+                },
+                None,
+                false,
+            );
+        }
+        if pattern.as_str().is_empty() {
+            return (
+                crate::domains::queue::QueueResponse::BadRequest {
+                    reason: "empty pattern".to_string(),
+                },
+                None,
+                false,
+            );
+        }
+
+        let pattern_str = pattern.as_str();
+        let parsed_pattern = crate::runtime::matcher::Pattern::new(pattern_str);
+        let subscription_id = {
+            let mut families = self.families.lock();
+            let state = families
+                .entry(family_id.as_u64())
+                .or_insert_with(RoutedSubscriptionSet::new);
+
+            if let Some(id) = state.find_existing_id(session_id, pattern_str) {
+                id
+            } else {
+                let id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
+                state.insert(
+                    family_id,
+                    QueueSubscription {
+                        pattern: parsed_pattern.clone(),
+                        session_id,
+                        subscription_id: id,
+                        subscriber: subscriber.clone(),
+                    },
+                );
+                id
+            }
+        };
+
+        (
+            crate::domains::queue::QueueResponse::WatchOk { subscription_id },
+            Some((
+                family_id,
+                parsed_pattern,
+                session_id,
+                subscription_id,
+                subscriber,
+            )),
+            true,
+        )
+    }
+
+    fn handle_unwatch_subscription(
+        &self,
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+        family_id: RouteFamily,
+        pattern: &crate::runtime::routing::Route,
+        session_id: u64,
+        subscriber: &crate::runtime::routing::RouteAddress,
+    ) -> SubscriptionOutcome {
+        if !Self::valid_subscription_request(envelope, meta, family_id, session_id, subscriber) {
+            return (
+                crate::domains::queue::QueueResponse::BadRequest {
+                    reason: "route family mismatch".to_string(),
+                },
+                None,
+                false,
+            );
+        }
+        if pattern.as_str().is_empty() {
+            return (
+                crate::domains::queue::QueueResponse::BadRequest {
+                    reason: "empty pattern".to_string(),
+                },
+                None,
+                false,
+            );
+        }
+
+        let mut families = self.families.lock();
+        let remove_family = if let Some(state) = families.get_mut(&family_id.as_u64()) {
+            state.remove_session_pattern(family_id, session_id, pattern.as_str());
+            state.is_empty()
+        } else {
+            false
+        };
+        if remove_family {
+            families.remove(&family_id.as_u64());
+        }
+        (crate::domains::queue::QueueResponse::UnwatchOk, None, true)
+    }
+
+    fn valid_subscription_request(
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+        family_id: RouteFamily,
+        session_id: u64,
+        subscriber: &crate::runtime::routing::RouteAddress,
+    ) -> bool {
+        family_id == meta.route_family
+            && *subscriber.family() == family_id
+            && session_id == meta.session_id
+            && envelope.source().is_none_or(|source| source == subscriber)
+    }
+
     fn handle_actor_operation_frame(
         &self,
         envelope: &Envelope,
@@ -358,89 +473,24 @@ impl QueueDomainCore {
         route_family: RouteFamily,
         queue_msg: crate::domains::queue::protocol::QueueMessage,
     ) {
-        let request_context = OperationRequestContext {
-            envelope,
-            meta,
-            request_started,
-        };
-        let op_kind = Self::classify_operation(&queue_msg);
-        let outcome = match queue_msg {
-            crate::domains::queue::protocol::QueueMessage::Send {
-                family_id,
-                route,
-                body,
-                delay_seconds,
-            } => match self.handle_enqueue_operation(
-                family_id,
-                &route,
-                body,
-                delay_seconds,
-                request_context,
-            ) {
-                Some(outcome) => outcome,
-                None => return,
-            },
-            crate::domains::queue::protocol::QueueMessage::Receive {
-                family_id,
-                route,
-                inflight_seconds,
-                batch_size,
-            } => match self.handle_receive_operation(
-                family_id,
-                &route,
-                meta.session_id,
-                inflight_seconds,
-                batch_size,
-                request_context,
-            ) {
-                Some(outcome) => outcome,
-                None => return,
-            },
-            crate::domains::queue::protocol::QueueMessage::Extend {
-                family_id,
-                route,
-                id,
-                token,
-                inflight_seconds,
-            } => match self.handle_extend_operation(
-                family_id,
-                &route,
-                ExtendOperation {
-                    session_id: meta.session_id,
-                    id,
-                    token,
-                    inflight_seconds,
-                },
-                request_context,
-            ) {
-                Some(outcome) => outcome,
-                None => return,
-            },
-            crate::domains::queue::protocol::QueueMessage::Ack {
-                family_id,
-                route,
-                id,
-                token,
-            } => match self.handle_ack_operation(
-                family_id,
-                &route,
-                meta.session_id,
-                id,
-                token,
-                request_context,
-            ) {
-                Some(outcome) => outcome,
-                None => return,
-            },
-            crate::domains::queue::protocol::QueueMessage::InflightExpired { .. } => {
-                OperationOutcome {
-                    response: crate::domains::queue::QueueResponse::Error {
-                        message: "InflightExpired is an internal message".to_string(),
-                    },
-                    ready_notification: None,
-                    mark_admin_snapshot_dirty: false,
-                }
+        if Self::queue_message_family(&queue_msg)
+            .is_some_and(|family_id| family_id != meta.route_family)
+        {
+            let response = crate::domains::queue::QueueResponse::BadRequest {
+                reason: "route family mismatch".to_string(),
+            };
+            self.route_queue_response(envelope, meta, &response);
+            if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+                metrics.record_failure(started_at);
             }
+            return;
+        }
+
+        let op_kind = Self::classify_operation(&queue_msg);
+        let Some(outcome) =
+            self.dispatch_actor_operation(envelope, meta, request_started, queue_msg)
+        else {
+            return;
         };
 
         if outcome.mark_admin_snapshot_dirty {
@@ -454,6 +504,102 @@ impl QueueDomainCore {
 
         self.route_queue_response(envelope, meta, &outcome.response);
         self.record_operation_metrics(request_started, &outcome.response, op_kind);
+    }
+
+    fn queue_message_family(
+        queue_msg: &crate::domains::queue::protocol::QueueMessage,
+    ) -> Option<RouteFamily> {
+        match queue_msg {
+            crate::domains::queue::protocol::QueueMessage::Send { family_id, .. }
+            | crate::domains::queue::protocol::QueueMessage::Receive { family_id, .. }
+            | crate::domains::queue::protocol::QueueMessage::Extend { family_id, .. }
+            | crate::domains::queue::protocol::QueueMessage::Ack { family_id, .. } => {
+                Some(*family_id)
+            }
+            crate::domains::queue::protocol::QueueMessage::InflightExpired { .. } => None,
+        }
+    }
+
+    fn dispatch_actor_operation(
+        &self,
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+        request_started: Option<Instant>,
+        queue_msg: crate::domains::queue::protocol::QueueMessage,
+    ) -> Option<OperationOutcome> {
+        let request_context = OperationRequestContext {
+            envelope,
+            meta,
+            request_started,
+        };
+        let outcome = match queue_msg {
+            crate::domains::queue::protocol::QueueMessage::Send {
+                family_id,
+                route,
+                body,
+                delay_seconds,
+            } => self.handle_enqueue_operation(
+                family_id,
+                &route,
+                body,
+                delay_seconds,
+                request_context,
+            )?,
+            crate::domains::queue::protocol::QueueMessage::Receive {
+                family_id,
+                route,
+                inflight_seconds,
+                batch_size,
+            } => self.handle_receive_operation(
+                family_id,
+                &route,
+                meta.session_id,
+                inflight_seconds,
+                batch_size,
+                request_context,
+            )?,
+            crate::domains::queue::protocol::QueueMessage::Extend {
+                family_id,
+                route,
+                id,
+                token,
+                inflight_seconds,
+            } => self.handle_extend_operation(
+                family_id,
+                &route,
+                ExtendOperation {
+                    session_id: meta.session_id,
+                    id,
+                    token,
+                    inflight_seconds,
+                },
+                request_context,
+            )?,
+            crate::domains::queue::protocol::QueueMessage::Ack {
+                family_id,
+                route,
+                id,
+                token,
+            } => self.handle_ack_operation(
+                family_id,
+                &route,
+                meta.session_id,
+                id,
+                token,
+                request_context,
+            )?,
+            crate::domains::queue::protocol::QueueMessage::InflightExpired { .. } => {
+                OperationOutcome {
+                    response: crate::domains::queue::QueueResponse::Error {
+                        message: "InflightExpired is an internal message".to_string(),
+                    },
+                    ready_notification: None,
+                    mark_admin_snapshot_dirty: false,
+                }
+            }
+        };
+
+        Some(outcome)
     }
 
     fn handle_enqueue_operation(

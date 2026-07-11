@@ -127,13 +127,15 @@ impl QueueActor {
             end: id.as_u64(),
         };
         Self::push_range_into(&mut self.persisted_ready_shards, shard, range);
-        self.persisted_ready_count += 1;
+        self.persisted_ready_count = self.persisted_ready_count.saturating_add(1);
     }
 
     pub(super) fn push_persisted_ready_range(&mut self, range: ReadyRange) {
         let shard = Self::ready_shard_index(range.next);
         Self::push_range_into(&mut self.persisted_ready_shards, shard, range);
-        self.persisted_ready_count += Self::range_len(range);
+        self.persisted_ready_count = self
+            .persisted_ready_count
+            .saturating_add(Self::range_len(range));
     }
 
     pub(super) fn recompute_oldest_ready_enqueued_at_ms(&mut self) {

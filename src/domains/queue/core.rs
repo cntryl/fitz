@@ -1,4 +1,4 @@
-use crate::runtime::routing::{route_triplet, Route, RouteFamily};
+use crate::runtime::routing::{route_exact_triplet, Route, RouteFamily};
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
@@ -15,9 +15,15 @@ impl QueueKey {
     /// Parse a route into queue key.
     #[must_use]
     pub fn from_route(family: RouteFamily, route: &Route) -> Option<Self> {
-        let parts = route_triplet(route.as_str())?;
+        let parts = route_exact_triplet(route.as_str())?;
 
-        if !parts.realm.is_empty() && !parts.area.is_empty() && !parts.resource.is_empty() {
+        if !parts.realm.is_empty()
+            && !parts.area.is_empty()
+            && !parts.resource.is_empty()
+            && !matches!(parts.realm, "*" | "**")
+            && !matches!(parts.area, "*" | "**")
+            && !matches!(parts.resource, "*" | "**")
+        {
             Some(QueueKey {
                 family,
                 realm: parts.realm.to_string(),
@@ -104,6 +110,32 @@ mod tests {
     fn should_reject_queue_route_with_too_few_segments() {
         // Arrange
         let route = Route::new("queue://acme/tasks");
+        let family = RouteFamily::new(1);
+
+        // Act
+        let key = QueueKey::from_route(family, &route);
+
+        // Assert
+        assert!(key.is_none());
+    }
+
+    #[test]
+    fn should_reject_queue_route_with_trailing_segments() {
+        // Arrange
+        let route = Route::new("queue://acme/tasks/work/extra");
+        let family = RouteFamily::new(1);
+
+        // Act
+        let key = QueueKey::from_route(family, &route);
+
+        // Assert
+        assert!(key.is_none());
+    }
+
+    #[test]
+    fn should_reject_queue_route_with_wildcard_segment() {
+        // Arrange
+        let route = Route::new("queue://acme/tasks/*");
         let family = RouteFamily::new(1);
 
         // Act

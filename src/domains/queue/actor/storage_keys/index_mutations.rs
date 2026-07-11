@@ -31,13 +31,13 @@ impl QueueActor {
                 | PersistedReadyMutation::Split { removed, .. } => Self::range_len(removed),
             };
             count = count.saturating_sub(removed_len);
-            count += match mutation {
+            count = count.saturating_add(match mutation {
                 PersistedReadyMutation::Delete { .. } => 0,
                 PersistedReadyMutation::Replace { inserted, .. } => Self::range_len(inserted),
                 PersistedReadyMutation::Split { left, right, .. } => {
                     Self::range_len(left) + Self::range_len(right)
                 }
-            };
+            });
         }
         count
     }

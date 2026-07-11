@@ -74,6 +74,13 @@ impl QueueActor {
         )
     }
 
+    pub(in crate::domains::queue::actor) fn has_message_id_capacity(
+        &self,
+        additional_ids: u64,
+    ) -> bool {
+        self.next_id.checked_add(additional_ids).is_some()
+    }
+
     /// Generate a random inflight token
     pub(in crate::domains::queue::actor) fn generate_token() -> u64 {
         let uuid = uuid::Uuid::new_v4();

@@ -145,6 +145,14 @@ impl QueueActor {
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
         commit_write_options: cntryl_midge::WriteOptions,
     ) -> Result<Self, String> {
+        if family != queue_key.family {
+            return Err(format!(
+                "queue actor family mismatch: actor={}, queue={}",
+                family.as_u64(),
+                queue_key.family.as_u64()
+            ));
+        }
+
         let now = Instant::now();
 
         let mut actor = Self {

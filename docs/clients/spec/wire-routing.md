@@ -785,7 +785,7 @@ A request is valid **only if**:
   | ---------- | ----------------------------------------------- |
   | `LIST` | `{realm}/{area}`, `{realm}/*/*` |
   | `ENQUEUE` | `{realm}/{area}/{resource}` |
-  | `RESERVE` | `{realm}/{area}/{resource}`, `{realm}/{area}/*` |
+  | `RESERVE` | `{realm}/{area}/{resource}` |
   | `COMPLETE` | `{realm}/{area}/{resource}` |
   | `EXTEND` | `{realm}/{area}/{resource}` |
 

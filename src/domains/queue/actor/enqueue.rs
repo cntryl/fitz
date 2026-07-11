@@ -23,6 +23,12 @@ struct BatchSendPlan {
 impl QueueActor {
     /// Handle send operation
     pub fn handle_send(&mut self, body: Bytes, delay_seconds: Option<u64>) -> QueueResponse {
+        if !self.has_message_id_capacity(1) {
+            return QueueResponse::Error {
+                message: "queue message id space exhausted".to_string(),
+            };
+        }
+
         // Track empty state before send for notification
         let was_empty = self.ready_count == 0;
 
@@ -44,8 +50,13 @@ impl QueueActor {
         let reserved_limit = self.reserved_id_limit_for(1);
         let staged_next_id = reserved_limit.unwrap_or(self.next_id_limit);
         let is_ready = timing.visible_at <= now_instant;
-        let staged_ready_count = self.persisted_ready_count + usize::from(is_ready);
-        let staged_delayed_count = self.persisted_delayed.len() + usize::from(!is_ready);
+        let staged_ready_count = self
+            .persisted_ready_count
+            .saturating_add(usize::from(is_ready));
+        let staged_delayed_count = self
+            .persisted_delayed
+            .len()
+            .saturating_add(usize::from(!is_ready));
         let staged_next_delayed_visibility = if is_ready {
             self.min_persisted_delayed_visibility_ms()
         } else {
@@ -122,6 +133,11 @@ impl QueueActor {
         if items.is_empty() {
             return QueueResponse::SentBatch { ids: vec![] };
         }
+        if !self.has_message_id_capacity(Self::usize_to_u64(items.len())) {
+            return QueueResponse::Error {
+                message: "queue message id space exhausted".to_string(),
+            };
+        }
 
         let was_empty = self.ready_count == 0;
         let now_instant = self.clock.now_instant();
@@ -151,8 +167,11 @@ impl QueueActor {
             &mut txn,
             plan.reserved_limit,
             staged_next_id,
-            self.persisted_ready_count + plan.staged_ready_add,
-            self.persisted_delayed.len() + plan.staged_delayed.len(),
+            self.persisted_ready_count
+                .saturating_add(plan.staged_ready_add),
+            self.persisted_delayed
+                .len()
+                .saturating_add(plan.staged_delayed.len()),
             plan.staged_next_delayed_visibility,
         ) {
             return response;
@@ -228,7 +247,11 @@ impl QueueActor {
                 reason: "delay_seconds is too large".to_string(),
             });
         };
-        let visible_at_ms = now_epoch_ms.saturating_add(delay_ms);
+        let Some(visible_at_ms) = now_epoch_ms.checked_add(delay_ms) else {
+            return Err(QueueResponse::BadRequest {
+                reason: "delay_seconds is too large".to_string(),
+            });
+        };
         let Some(visible_at) = now_instant.checked_add(Duration::from_millis(delay_ms)) else {
             return Err(QueueResponse::BadRequest {
                 reason: "delay_seconds is too large".to_string(),

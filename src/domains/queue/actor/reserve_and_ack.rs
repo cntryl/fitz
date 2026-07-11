@@ -34,12 +34,11 @@ impl QueueActor {
         let batch_size = batch_size.unwrap_or(1);
         let now = self.clock.now_instant();
         let now_epoch_ms = self.clock.now_epoch_ms();
-        let inflight_duration = Duration::from_secs(inflight_seconds);
-        let Some(expires_at) = now.checked_add(inflight_duration) else {
-            return QueueResponse::BadRequest {
-                reason: "inflight_seconds is too large".to_string(),
+        let (expires_at, expires_at_epoch_ms) =
+            match Self::inflight_expiration(now, now_epoch_ms, inflight_seconds) {
+                Ok(expiration) => expiration,
+                Err(response) => return response,
             };
-        };
 
         let mut messages = Vec::with_capacity(self.ready.len().min(batch_size));
 
@@ -62,6 +61,27 @@ impl QueueActor {
                 }
             };
 
+            let Some(next_attempts) = attempts.checked_add(1) else {
+                if messages.is_empty() {
+                    return QueueResponse::Error {
+                        message: "queue delivery attempt counter exhausted".to_string(),
+                    };
+                }
+                break;
+            };
+            let inflight_epoch = self
+                .records
+                .get(&id)
+                .map_or(Some(1), |record| record.inflight_epoch.checked_add(1));
+            let Some(inflight_epoch) = inflight_epoch else {
+                if messages.is_empty() {
+                    return QueueResponse::Error {
+                        message: "queue inflight epoch exhausted".to_string(),
+                    };
+                }
+                break;
+            };
+
             let Some(id) = self.pop_ready() else {
                 break;
             };
@@ -69,12 +89,6 @@ impl QueueActor {
 
             // Generate inflight token
             let token = Self::generate_token();
-            let inflight_epoch = self
-                .records
-                .get(&id)
-                .map_or(1, |record| record.inflight_epoch.saturating_add(1));
-            let expires_at_epoch_ms =
-                now_epoch_ms.saturating_add(inflight_seconds.saturating_mul(1_000));
 
             // Create inflight entry
             self.inflight.insert(
@@ -84,7 +98,7 @@ impl QueueActor {
                     expires_at,
                     expires_at_epoch_ms,
                     owner_session_id,
-                    attempts: attempts + 1,
+                    attempts: next_attempts,
                     inflight_epoch,
                 },
             );
@@ -115,7 +129,7 @@ impl QueueActor {
                 body,
                 token,
                 inflight_seconds,
-                attempts: attempts + 1, // First attempt is 1 (not 0)
+                attempts: next_attempts, // First attempt is 1 (not 0)
             });
         }
 
@@ -126,6 +140,30 @@ impl QueueActor {
         }
 
         QueueResponse::Received { messages }
+    }
+
+    fn inflight_expiration(
+        now: Instant,
+        now_epoch_ms: u64,
+        inflight_seconds: u64,
+    ) -> Result<(Instant, u64), QueueResponse> {
+        let Some(expires_at) = now.checked_add(Duration::from_secs(inflight_seconds)) else {
+            return Err(QueueResponse::BadRequest {
+                reason: "inflight_seconds is too large".to_string(),
+            });
+        };
+        let Some(inflight_duration_ms) = inflight_seconds.checked_mul(1_000) else {
+            return Err(QueueResponse::BadRequest {
+                reason: "inflight_seconds is too large".to_string(),
+            });
+        };
+        let Some(expires_at_epoch_ms) = now_epoch_ms.checked_add(inflight_duration_ms) else {
+            return Err(QueueResponse::BadRequest {
+                reason: "inflight_seconds is too large".to_string(),
+            });
+        };
+
+        Ok((expires_at, expires_at_epoch_ms))
     }
 
     /// Handle session-bound extend operation
@@ -175,12 +213,24 @@ impl QueueActor {
                 reason: "inflight_seconds is too large".to_string(),
             };
         };
-        inflight.inflight_epoch = inflight.inflight_epoch.saturating_add(1);
+        let Some(inflight_duration_ms) = inflight_seconds.checked_mul(1_000) else {
+            return QueueResponse::BadRequest {
+                reason: "inflight_seconds is too large".to_string(),
+            };
+        };
+        let Some(inflight_expires_at_ms) = now_epoch_ms.checked_add(inflight_duration_ms) else {
+            return QueueResponse::BadRequest {
+                reason: "inflight_seconds is too large".to_string(),
+            };
+        };
+        let Some(inflight_epoch) = inflight.inflight_epoch.checked_add(1) else {
+            return QueueResponse::Error {
+                message: "queue inflight epoch exhausted".to_string(),
+            };
+        };
+        inflight.inflight_epoch = inflight_epoch;
         inflight.expires_at = new_expires_at;
-        inflight.expires_at_epoch_ms =
-            now_epoch_ms.saturating_add(inflight_seconds.saturating_mul(1_000));
-        let inflight_epoch = inflight.inflight_epoch;
-        let inflight_expires_at_ms = inflight.expires_at_epoch_ms;
+        inflight.expires_at_epoch_ms = inflight_expires_at_ms;
 
         // Schedule new timer (old timer will be ignored when it fires)
         self.timers.push(Reverse(InflightExpiry {

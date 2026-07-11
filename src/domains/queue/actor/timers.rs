@@ -21,7 +21,17 @@ impl QueueActor {
             return;
         };
 
-        record.attempts += 1;
+        let Some(next_attempts) = record.attempts.checked_add(1) else {
+            tracing::error!(
+                queue = ?self.queue_key,
+                route_family = self.queue_key.family.as_u64(),
+                message_id = id.as_u64(),
+                "Queue delivery attempt counter exhausted during redelivery"
+            );
+            self.schedule_inflight_retry(id, &inflight);
+            return;
+        };
+        record.attempts = next_attempts;
         let Some(txn) = self.begin_redelivery_transaction(id, &inflight) else {
             return;
         };

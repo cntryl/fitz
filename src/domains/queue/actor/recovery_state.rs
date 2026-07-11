@@ -22,7 +22,10 @@ impl QueueActor {
                 let mut id = range.next;
                 while id <= range.end {
                     ready_ids.push(MessageId::new(id));
-                    id = id.saturating_add(Self::ready_shards_u64());
+                    let Some(next_id) = id.checked_add(Self::ready_shards_u64()) else {
+                        break;
+                    };
+                    id = next_id;
                 }
             }
         }
