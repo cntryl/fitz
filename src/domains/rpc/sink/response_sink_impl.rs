@@ -152,9 +152,7 @@ impl RpcDomainRuntime<'_> {
                 caller_info
                     .caller_inbox_addr
                     .as_ref()
-                    .map_or(crate::runtime::routing::RouteFamily::new(0), |addr| {
-                        *addr.family()
-                    }),
+                    .map_or(caller_info.family, |addr| *addr.family()),
             );
             let live_request_count = state.live_request_count();
             self.histogram_observe_us("rpc_pending_route_remove_us", pending_route_lookup_us);
@@ -284,9 +282,7 @@ impl RpcDomainRuntime<'_> {
             caller_info
                 .caller_inbox_addr
                 .as_ref()
-                .map_or(crate::runtime::routing::RouteFamily::new(0), |addr| {
-                    *addr.family()
-                }),
+                .map_or(caller_info.family, |addr| *addr.family()),
         );
 
         if let Some(caller_inbox_addr) = caller_info.caller_inbox_addr.clone() {

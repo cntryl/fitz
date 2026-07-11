@@ -455,7 +455,10 @@ impl RpcDomainRuntime<'_> {
         let disconnect_deliveries = cleanup_result
             .disconnect_deliveries
             .into_iter()
-            .filter(|delivery| delivery.correlation_id != req.correlation_id)
+            .filter(|delivery| {
+                delivery.correlation_id != req.correlation_id
+                    || *delivery.caller_inbox_addr.family() != meta.route_family
+            })
             .collect();
         self.forward_worker_disconnect_errors(disconnect_deliveries);
         tracing::warn!(

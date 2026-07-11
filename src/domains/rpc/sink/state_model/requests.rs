@@ -3,6 +3,7 @@ use super::{DateTime, Instant, Route, RouteAddress, RpcWorkerDispatch, Utc};
 #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
 #[derive(Debug, Clone)]
 pub(in crate::domains::rpc::sink) struct RpcPendingRequest {
+    pub(in crate::domains::rpc::sink) family: crate::runtime::routing::RouteFamily,
     pub(in crate::domains::rpc::sink) route: Route,
     pub(in crate::domains::rpc::sink) caller_session_id: u64,
     pub(in crate::domains::rpc::sink) caller_inbox_addr: Option<RouteAddress>,
@@ -17,6 +18,7 @@ pub(in crate::domains::rpc::sink) struct RpcPendingRequest {
 
 #[derive(Debug)]
 pub(in crate::domains::rpc::sink) struct RpcPendingDispatchInfo {
+    pub(in crate::domains::rpc::sink) family: crate::runtime::routing::RouteFamily,
     pub(in crate::domains::rpc::sink) route: Route,
     pub(in crate::domains::rpc::sink) caller_session_id: u64,
     pub(in crate::domains::rpc::sink) caller_inbox_addr: Option<RouteAddress>,
@@ -51,6 +53,7 @@ impl RpcPendingRequest {
         } = init;
 
         Self {
+            family: *worker_addr.family(),
             route,
             caller_session_id,
             caller_inbox_addr: Some(caller_inbox_addr),
@@ -87,6 +90,7 @@ impl RpcPendingRequest {
 
     pub(in crate::domains::rpc::sink) fn dispatch_info(&self) -> RpcPendingDispatchInfo {
         RpcPendingDispatchInfo {
+            family: self.family,
             route: self.route.clone(),
             caller_session_id: self.caller_session_id,
             caller_inbox_addr: self.caller_inbox_addr.clone(),
@@ -97,6 +101,7 @@ impl RpcPendingRequest {
 
     pub(in crate::domains::rpc::sink) fn into_dispatch_info(self) -> RpcPendingDispatchInfo {
         RpcPendingDispatchInfo {
+            family: self.family,
             route: self.route,
             caller_session_id: self.caller_session_id,
             caller_inbox_addr: self.caller_inbox_addr,

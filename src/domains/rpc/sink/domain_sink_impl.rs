@@ -200,11 +200,7 @@ impl RpcDomainSink {
         pending: RpcPendingRequest,
     ) {
         self.core.state.lock().pending.track_pending_for_family(
-            *pending
-                .caller_inbox_addr
-                .as_ref()
-                .expect("pending caller")
-                .family(),
+            pending.family,
             correlation_id,
             pending,
         );
@@ -815,6 +811,10 @@ impl RpcDomainRuntime<'_> {
                 self.counter_inc("rpc_request_forward_errors_total");
                 let cleanup_result = self.apply_session_cleanup(dispatch.worker.session_id);
                 self.forward_worker_disconnect_errors(cleanup_result.disconnect_deliveries);
+                self.dispatch_queued_requests_for_route(
+                    &dispatch.request.route,
+                    *dispatch.worker.addr.family(),
+                );
             }
             Err(crate::runtime::RouteError::DeliveryFailed(
                 _,

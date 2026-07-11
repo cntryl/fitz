@@ -88,6 +88,51 @@ fn should_allow_same_rpc_correlation_in_separate_route_families() {
     assert_eq!(state.live_request_count(), 2);
 }
 
+#[test]
+fn should_release_worker_credit_after_caller_disconnects() {
+    // Arrange
+    let route = Route::new("rpc://bench/system/resource/operation");
+    let family = RouteFamily::new(1);
+    let correlation_id = uuid::Uuid::new_v4();
+    let mut state = RpcState::new();
+    state
+        .ensure_route_state_for_family(family, &route)
+        .register_worker(test_rpc_worker(family, &route, 11));
+    let dispatch = state.dispatch_or_queue_request(
+        crate::domains::rpc::protocol::RpcRequest::new(
+            family,
+            correlation_id,
+            route.clone(),
+            bytes::Bytes::from_static(b"payload"),
+        ),
+        101,
+        session_inbox_address(family, 101),
+        Duration::from_secs(30),
+        8,
+        32,
+    );
+    assert!(matches!(dispatch, RpcRequestDispatch::Immediate { .. }));
+    state.pending.cleanup_session(101);
+
+    // Act
+    let response =
+        state
+            .pending
+            .pending_for_response_in_family(family, &correlation_id, 11, 0, true);
+    if let RpcPendingResponseDisposition::Forward { pending, .. } = response {
+        state.release_worker_for_dispatch_info(&pending, None);
+    } else {
+        panic!("caller cleanup must retain the worker-owned pending request");
+    }
+
+    // Assert
+    assert!(state
+        .routes
+        .get(&(family, route))
+        .expect("family route")
+        .has_available_worker());
+}
+
 pub(super) fn assert_rpc_terminal_code_error(
     frame: &FrameContext,
     expected_correlation_id: uuid::Uuid,

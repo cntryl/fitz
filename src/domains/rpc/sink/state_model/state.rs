@@ -351,17 +351,13 @@ impl RpcState {
             family,
             correlation_id: *correlation_id,
         })?;
-        if let Some(caller) = pending.caller_inbox_addr.as_ref() {
-            if let Some(route_state) = self
-                .routes
-                .get_mut(&(*caller.family(), pending.route.clone()))
-            {
-                route_state.release_worker_slot(pending.worker_slot, None);
-            }
+        if let Some(route_state) = self
+            .routes
+            .get_mut(&(pending.family, pending.route.clone()))
+        {
+            route_state.release_worker_slot(pending.worker_slot, None);
         }
-        if let Some(caller) = pending.caller_inbox_addr.as_ref() {
-            self.prune_route_if_empty_for_family(*caller.family(), &pending.route);
-        }
+        self.prune_route_if_empty_for_family(pending.family, &pending.route);
         Some((pending, self.live_request_count()))
     }
 
@@ -370,13 +366,11 @@ impl RpcState {
         pending: &RpcPendingRequest,
         latency_us: Option<u64>,
     ) {
-        if let Some(caller) = pending.caller_inbox_addr.as_ref() {
-            if let Some(route_state) = self
-                .routes
-                .get_mut(&(*caller.family(), pending.route.clone()))
-            {
-                route_state.release_worker_slot(pending.worker_slot, latency_us);
-            }
+        if let Some(route_state) = self
+            .routes
+            .get_mut(&(pending.family, pending.route.clone()))
+        {
+            route_state.release_worker_slot(pending.worker_slot, latency_us);
         }
     }
 
@@ -385,13 +379,11 @@ impl RpcState {
         pending: &RpcPendingDispatchInfo,
         latency_us: Option<u64>,
     ) {
-        if let Some(caller) = pending.caller_inbox_addr.as_ref() {
-            if let Some(route_state) = self
-                .routes
-                .get_mut(&(*caller.family(), pending.route.clone()))
-            {
-                route_state.release_worker_slot(pending.worker_slot, latency_us);
-            }
+        if let Some(route_state) = self
+            .routes
+            .get_mut(&(pending.family, pending.route.clone()))
+        {
+            route_state.release_worker_slot(pending.worker_slot, latency_us);
         }
     }
 
@@ -445,9 +437,7 @@ impl RpcState {
                 .remove(&expiring.key)
                 .expect("tracked pending request");
             self.release_worker_for_pending(&pending, None);
-            if let Some(caller) = pending.caller_inbox_addr.as_ref() {
-                self.prune_route_if_empty_for_family(*caller.family(), &pending.route);
-            }
+            self.prune_route_if_empty_for_family(pending.family, &pending.route);
             removed_pending = removed_pending.saturating_add(1);
 
             if let Some(caller_inbox_addr) = pending.caller_inbox_addr {
