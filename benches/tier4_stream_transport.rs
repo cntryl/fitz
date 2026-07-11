@@ -128,9 +128,10 @@ pub(crate) async fn request_success(client: &mut StreamBenchClient, frame: &[u8]
 
 fn stream_error_message(response: &[u8]) -> String {
     let (_message_type, _status, payload) = parse_stream_response(response);
-    fitz::protocol::error_codes::decode_error_body(&payload)
-        .map(|(_, message)| message)
-        .unwrap_or_else(|_| "Stream request failed".to_string())
+    fitz::protocol::error_codes::decode_error_body(&payload).map_or_else(
+        |_| "Stream request failed".to_string(),
+        |(_, message)| message,
+    )
 }
 
 pub(crate) async fn request_read_count(

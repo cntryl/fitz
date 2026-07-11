@@ -21,6 +21,7 @@ pub(crate) const ROUTE: &str = "kv://tier4/state/resource";
 pub(crate) const PAYLOAD_SIZE: usize = 256;
 const TIMEOUT_MS: u64 = 5_000;
 const MAX_TX_RETRIES: usize = 512;
+const STATE_RING_LEN: usize = 32;
 
 pub(crate) fn dimensions(
     storage: StorageProfile,
@@ -71,7 +72,37 @@ fn direct_actor(storage: StorageProfile) -> DirectKvActor {
     DirectKvActor::new(storage)
 }
 
-fn direct_lifecycle(actor: &mut DirectKvActor, commit: bool, sequence: u64) {
+struct DirectLifecycleState {
+    actor: DirectKvActor,
+    keys: [Bytes; STATE_RING_LEN],
+    values: [Bytes; STATE_RING_LEN],
+    next: usize,
+}
+
+impl DirectLifecycleState {
+    fn new(storage: StorageProfile) -> Self {
+        Self {
+            actor: direct_actor(storage),
+            keys: std::array::from_fn(|index| Bytes::from(format!("key-{index}"))),
+            values: std::array::from_fn(|index| {
+                Bytes::from(vec![
+                    u8::try_from(index).expect("state-ring index fits u8");
+                    PAYLOAD_SIZE
+                ])
+            }),
+            next: 0,
+        }
+    }
+
+    fn complete(&mut self, commit: bool) {
+        let key = self.keys[self.next].clone();
+        let value = self.values[self.next].clone();
+        self.next = (self.next + 1) % STATE_RING_LEN;
+        direct_lifecycle(&mut self.actor, commit, key, value);
+    }
+}
+
+fn direct_lifecycle(actor: &mut DirectKvActor, commit: bool, key: Bytes, value: Bytes) {
     let begin = actor.actor.handle(KvMessage::Begin {
         route_family: RouteFamily::new(1),
         realm: "tier4".into(),
@@ -88,8 +119,8 @@ fn direct_lifecycle(actor: &mut DirectKvActor, commit: bool, sequence: u64) {
             tx_id,
             route_family: RouteFamily::new(1),
             resource: "resource".into(),
-            key: Bytes::from(format!("key-{sequence}")),
-            value: Bytes::from(vec![0xA5; PAYLOAD_SIZE])
+            key,
+            value,
         }),
         KvResponse::PutOk
     ));
@@ -118,13 +149,11 @@ pub(crate) fn measure_direct(
         "begin_put_rollback"
     };
     tag_dimensions(ctx, &d);
-    let mut actor = direct_actor(storage);
-    direct_lifecycle(&mut actor, commit, 0);
-    let mut sequence = 1_u64;
+    let mut state = DirectLifecycleState::new(storage);
+    state.complete(commit);
     measure_operations(ctx, measurement, 1, |latencies| {
         let started = Instant::now();
-        direct_lifecycle(&mut actor, commit, sequence);
-        sequence += 1;
+        state.complete(commit);
         latencies.push(started.elapsed());
     });
 }
@@ -157,29 +186,29 @@ impl EncodedState {
         };
         frame[offset..offset + 8].copy_from_slice(&tx_id.to_be_bytes());
     }
-    fn dispatch(&mut self, frame: &[u8]) -> KvResponse {
+    fn dispatch(actor: &mut DirectKvActor, frame: &[u8]) -> KvResponse {
         let mut parser = TlvFrameParser::new(frame);
         let (message_type, payload) = parser.next_field_ref().expect("KV field");
         let message =
             parse_kv_request(message_type, RouteFamily::new(1), payload).expect("KV decode");
-        self.actor.actor.handle(message)
+        actor.actor.handle(message)
     }
     fn complete(&mut self, commit: bool) {
-        let KvResponse::BeginOk { tx_id } = self.dispatch(&self.begin.clone()) else {
+        let KvResponse::BeginOk { tx_id } = Self::dispatch(&mut self.actor, &self.begin) else {
             panic!("KV encoded begin failed")
         };
         Self::set_tx(&mut self.put, tx_id);
         assert!(matches!(
-            self.dispatch(&self.put.clone()),
+            Self::dispatch(&mut self.actor, &self.put),
             KvResponse::PutOk
         ));
-        let mut frame = if commit {
-            self.commit.clone()
+        let frame = if commit {
+            &mut self.commit
         } else {
-            self.rollback.clone()
+            &mut self.rollback
         };
-        Self::set_tx(&mut frame, tx_id);
-        let response = self.dispatch(&frame);
+        Self::set_tx(frame, tx_id);
+        let response = Self::dispatch(&mut self.actor, frame);
         assert!(
             matches!(response, KvResponse::CommitOk | KvResponse::RollbackOk),
             "KV encoded lifecycle failed: {response:?}"
@@ -216,7 +245,7 @@ pub(crate) fn measure_encoded(
 
 enum Client {
     Tcp(TestClient),
-    WebSocket(TestWebSocketClient),
+    WebSocket(Box<TestWebSocketClient>),
 }
 impl Client {
     async fn request(&mut self, frame: &[u8]) -> Vec<u8> {
@@ -241,11 +270,11 @@ struct WireState {
     sequence: u64,
 }
 impl WireState {
-    fn new() -> Self {
+    fn new(route: &str) -> Self {
         Self {
-            begin: build_kv_begin(ROUTE, 1, 1),
-            put: build_kv_put(0, ROUTE, b"key", &vec![0xA5; PAYLOAD_SIZE]),
-            commit: build_kv_commit(0, ROUTE),
+            begin: build_kv_begin(route, 1, 1),
+            put: build_kv_put(0, route, b"key", &vec![0xA5; PAYLOAD_SIZE]),
+            commit: build_kv_commit(0, route),
             sequence: 0,
         }
     }
@@ -265,8 +294,8 @@ impl WireState {
         self.sequence += 1;
     }
 
-    async fn complete_retry(&mut self, client: &mut Client) {
-        for _ in 0..MAX_TX_RETRIES {
+    async fn complete_retry(&mut self, client: &mut Client) -> u64 {
+        for attempt in 0..MAX_TX_RETRIES {
             let begin = client.request(&self.begin).await;
             let (_type, status, data) = parse_kv_response(&begin);
             if status != 0 {
@@ -286,7 +315,7 @@ impl WireState {
             let (_, commit_status, _) = parse_kv_response(&commit);
             if commit_status == 0 {
                 self.sequence += 1;
-                return;
+                return u64::try_from(attempt).expect("retry attempt should fit u64");
             }
             tokio::task::yield_now().await;
         }
@@ -324,12 +353,12 @@ pub(crate) fn measure_transport(
                 TransportKind::WebSocket => {
                     TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr))
                         .await
-                        .map(Client::WebSocket)
+                        .map(|client| Client::WebSocket(Box::new(client)))
                 }
             }
         })
         .expect("KV client");
-    let mut state = WireState::new();
+    let mut state = WireState::new(ROUTE);
     runtime.block_on(state.complete(&mut client));
     measure_operations(ctx, measurement, 1, |latencies| {
         let started = Instant::now();
@@ -380,7 +409,7 @@ pub(crate) fn measure_contention(
                     TransportKind::WebSocket => {
                         TestWebSocketClient::connect(&format!("ws://{}", server.ws_addr))
                             .await
-                            .map(Client::WebSocket)
+                            .map(|client| Client::WebSocket(Box::new(client)))
                     }
                 }
             }))
@@ -389,18 +418,28 @@ pub(crate) fn measure_contention(
         .into_iter()
         .map(Result::unwrap)
         .collect::<Vec<_>>();
+    let mut states = (0..clients.len())
+        .map(|index| WireState::new(&format!("kv://tier4/contention/resource-{index}")))
+        .collect::<Vec<_>>();
+    let mut retry_count = 0_u64;
     measure_operations(ctx, measurement, 4, |latencies| {
-        let observed = runtime.block_on(async {
-            join_all(clients.iter_mut().map(|client| async move {
-                let mut state = WireState::new();
-                let started = Instant::now();
-                state.complete_retry(client).await;
-                started.elapsed()
-            }))
-            .await
-        });
-        latencies.extend(observed);
+        let observed =
+            runtime.block_on(async {
+                join_all(clients.iter_mut().zip(states.iter_mut()).map(
+                    |(client, state)| async move {
+                        let started = Instant::now();
+                        let retries = state.complete_retry(client).await;
+                        (started.elapsed(), retries)
+                    },
+                ))
+                .await
+            });
+        for (latency, retries) in observed {
+            latencies.push(latency);
+            retry_count = retry_count.saturating_add(retries);
+        }
     });
+    ctx.metadata("optimistic_commit_retries", retry_count.to_string());
     runtime.block_on(async {
         join_all(clients.into_iter().map(Client::close)).await;
     });

@@ -44,12 +44,11 @@ jobs:
 
       - name: Run release Tier 3 benchmarks
         run: |
-          cargo bench --quiet --bench tier3_system_queue -- --workload should_complete_capacity_enqueue_isolated
-          cargo bench --quiet --bench tier3_system_queue -- --workload should_complete_capacity_receive_batch_cleanup
-          cargo bench --quiet --bench tier3_system_queue -- --workload should_complete_capacity_ack_roundtrip
+          cargo bench --quiet --bench tier3_system_queue -- --workload should_complete_capacity_mixed_workload
+          cargo bench --quiet --bench tier3_system_queue -- --workload should_complete_routed_enqueue_sustained
+          cargo bench --quiet --bench tier3_system_queue -- --workload should_complete_wait_wakeup_with_waiters
           cargo bench --quiet --bench tier3_system_queue -- --workload should_complete_routed_ack_roundtrip
-          cargo bench --quiet --bench tier3_system_rpc -- --workload should_complete_short_roundtrip_batch
-          cargo bench --quiet --bench tier3_system_rpc -- --workload should_complete_single_response_throughput
+          cargo bench --quiet --bench tier3_system_rpc -- --workload should_complete_pending_cardinality_steady_state_1000
 
       - name: Run release Tier 4 benchmarks
         run: |
@@ -79,6 +78,9 @@ jobs:
 
       - name: Summarize benchmark results
         run: cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"
+
+      - name: Assert release benchmark quality
+        run: bash scripts/assert-release-benchmark-results.sh
 
       - name: Upload benchmark artifacts
         if: always()
@@ -132,29 +134,17 @@ jobs:
 
       - name: Run complete Tier 4 characterization matrix
         run: |
-          cargo bench --quiet --bench tier4_kv_gate
-          cargo bench --quiet --bench tier4_kv_ladder
-          cargo bench --quiet --bench tier4_kv_contention
-          cargo bench --quiet --bench tier4_lease_gate
-          cargo bench --quiet --bench tier4_lease_ladder
-          cargo bench --quiet --bench tier4_lease_contention
-          cargo bench --quiet --bench tier4_notice_publish
-          cargo bench --quiet --bench tier4_notice_fanout
-          cargo bench --quiet --bench tier4_notice_control
-          cargo bench --quiet --bench tier4_queue_gate
-          cargo bench --quiet --bench tier4_queue_concurrency
-          cargo bench --quiet --bench tier4_queue_shapes
-          cargo bench --quiet --bench tier4_rpc_roundtrip
-          cargo bench --quiet --bench tier4_rpc_pipeline
-          cargo bench --quiet --bench tier4_schedule_lifecycle
-          cargo bench --quiet --bench tier4_schedule_concurrency
-          cargo bench --quiet --bench tier4_schedule_shapes
-          cargo bench --quiet --bench tier4_stream_concurrency
-          cargo bench --quiet --bench tier4_stream_filters
-          cargo bench --quiet --bench tier4_stream_gate
-          cargo bench --quiet --bench tier4_stream_ladder
-          cargo bench --quiet --bench tier4_stream_mixed
-          cargo bench --quiet --bench tier4_stream_shapes
+          printf '%s\n' \
+            tier4_kv_gate tier4_kv_ladder tier4_kv_contention \
+            tier4_lease_gate tier4_lease_ladder tier4_lease_contention \
+            tier4_notice_publish tier4_notice_fanout tier4_notice_control \
+            tier4_queue_gate tier4_queue_concurrency tier4_queue_shapes \
+            tier4_rpc_roundtrip tier4_rpc_pipeline \
+            tier4_schedule_lifecycle tier4_schedule_concurrency tier4_schedule_shapes \
+            tier4_stream_concurrency tier4_stream_filters tier4_stream_gate \
+            tier4_stream_ladder tier4_stream_mixed tier4_stream_shapes \
+            | shuf \
+            | while read -r bench; do cargo bench --quiet --bench "$bench"; done
 
       - name: Summarize benchmark results
         run: cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Deep Benchmark Report"

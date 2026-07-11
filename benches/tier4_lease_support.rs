@@ -165,7 +165,7 @@ impl LeaseClient {
         match self {
             Self::Tcp(client) => client.close().await.expect("close Lease TCP client"),
             Self::WebSocket(mut client) => {
-                client.close().await.expect("close Lease WebSocket client")
+                client.close().await.expect("close Lease WebSocket client");
             }
         }
     }

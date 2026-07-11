@@ -49,6 +49,52 @@ fn should_keep_release_benchmark_ids_resolvable_to_baseline_rows() {
 }
 
 #[test]
+fn should_keep_exactly_fourteen_primary_tier4_rows_in_the_release_manifest() {
+    // Arrange
+    let repo_root = repo_root();
+    let release_ids = release_benchmark_ids(&repo_root);
+
+    // Act
+    let invalid_rows = release_ids
+        .iter()
+        .filter(|id| !id.contains("|throughput_ops_per_s|") || id.contains("_latency"))
+        .collect::<Vec<_>>();
+
+    // Assert
+    assert_eq!(release_ids.len(), 14, "release manifest row count");
+    assert!(
+        invalid_rows.is_empty(),
+        "release manifest must contain primary throughput rows only:\n{}",
+        invalid_rows
+            .iter()
+            .map(|id| id.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+#[test]
+fn should_keep_latency_records_out_of_perf_targets() {
+    // Arrange
+    let repo_root = repo_root();
+    let targets = perf_target_entries(&repo_root);
+
+    // Act
+    let latency_targets = targets
+        .into_iter()
+        .filter(|(_, benchmark_id)| benchmark_id.contains("_latency"))
+        .map(|(key, benchmark_id)| format!("{key}: {benchmark_id}"))
+        .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        latency_targets.is_empty(),
+        "latency records are report-only and cannot become perf targets:\n{}",
+        latency_targets.join("\n")
+    );
+}
+
+#[test]
 fn should_omit_unsupported_direct_lease_rows_from_the_transport_gate() {
     // Arrange
     let repo_root = repo_root();

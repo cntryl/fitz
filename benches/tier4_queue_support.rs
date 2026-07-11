@@ -44,6 +44,7 @@ impl QueueWriteMode {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Shared row declarations stay readable at call sites.
 pub(crate) fn dimensions(
     scenario: &'static str,
     storage_profile: StorageProfile,
@@ -332,12 +333,13 @@ impl QueueBenchClient {
         match self {
             Self::Tcp(client) => client.close().await.expect("close Queue TCP client"),
             Self::WebSocket(mut client) => {
-                client.close().await.expect("close Queue WebSocket client")
+                client.close().await.expect("close Queue WebSocket client");
             }
         }
     }
 }
 
+#[allow(clippy::struct_field_names)] // Names distinguish protocol frames in this fixture.
 struct WireLifecycleState {
     enqueue_frame: Vec<u8>,
     reserve_frame: Vec<u8>,
@@ -500,9 +502,10 @@ fn assert_success_response(frame: &[u8], expected_message_type: u16, minimum_len
     assert_eq!(message_type, expected_message_type, "Queue response type");
     assert!(payload.len() >= minimum_len, "Queue response is too short");
     if payload.first().copied() != Some(0) {
-        let message = decode_error_body(payload)
-            .map(|(_, message)| message)
-            .unwrap_or_else(|_| "malformed Queue error response".to_string());
+        let message = decode_error_body(payload).map_or_else(
+            |_| "malformed Queue error response".to_string(),
+            |(_, message)| message,
+        );
         panic!("Queue request failed: {message}");
     }
     payload

@@ -125,7 +125,7 @@ fn measure_tcp_pipeline(
                         )
                     },
                 ));
-                let (_, observations) = tokio::try_join!(service, requests)?;
+                let ((), observations) = tokio::try_join!(service, requests)?;
                 Ok::<_, String>(observations)
             })
             .expect("complete RPC TCP pipeline");
@@ -214,7 +214,7 @@ fn measure_ws_pipeline(
                         )
                     },
                 ));
-                let (_, observations) = tokio::try_join!(service, requests)?;
+                let ((), observations) = tokio::try_join!(service, requests)?;
                 Ok::<_, String>(observations)
             })
             .expect("complete RPC WS pipeline");

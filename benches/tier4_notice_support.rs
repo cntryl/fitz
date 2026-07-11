@@ -61,7 +61,7 @@ impl NoticeBenchClient {
             Self::Tcp(client) => client.send_frame(frame).await,
             Self::WebSocket(client) => client.send_frame(frame).await,
         }
-        .expect("Notice send frame")
+        .expect("Notice send frame");
     }
 
     pub(crate) async fn recv_frame(&mut self) -> Vec<u8> {
@@ -76,7 +76,7 @@ impl NoticeBenchClient {
         match self {
             Self::Tcp(client) => client.close().await.expect("close Notice TCP client"),
             Self::WebSocket(mut client) => {
-                client.close().await.expect("close Notice WebSocket client")
+                client.close().await.expect("close Notice WebSocket client");
             }
         }
     }
@@ -130,7 +130,7 @@ pub(crate) async fn complete_network_publish(
     let started = Instant::now();
     let delivery_futures: Vec<_> = subscribers
         .iter_mut()
-        .map(|client| client.recv_frame())
+        .map(NoticeBenchClient::recv_frame)
         .collect();
     publisher.send(publish_frame).await;
     let deliveries = join_all(delivery_futures).await;

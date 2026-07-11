@@ -145,9 +145,10 @@ fn encoded_request(fixture: &EncodedFixture, route: &str, frame: &[u8]) -> Bytes
         .map(|response| response.payload.clone())
         .expect("encoded Stream response");
     if response.first().copied() != Some(0) {
-        let error = fitz::protocol::error_codes::decode_error_body(&response)
-            .map(|(_, message)| message)
-            .unwrap_or_else(|_| "encoded Stream request failed".to_string());
+        let error = fitz::protocol::error_codes::decode_error_body(&response).map_or_else(
+            |_| "encoded Stream request failed".to_string(),
+            |(_, message)| message,
+        );
         panic!("{error}");
     }
     response

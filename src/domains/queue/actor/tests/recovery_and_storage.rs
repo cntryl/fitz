@@ -344,7 +344,7 @@ fn should_compact_hot_body_fifo_under_cache_churn() {
     let max_fifo_len = QueueActor::BODY_CACHE_LIMIT * QueueActor::BODY_CACHE_FIFO_SLACK_MULTIPLIER
         + actor.body_cache.len();
     assert!(actor.body_cache.is_empty());
-    assert!(actor.body_cache_bytes == 0);
+    assert_eq!(actor.body_cache_bytes, 0);
     assert!(actor.body_cache_fifo.len() <= max_fifo_len);
 }
 

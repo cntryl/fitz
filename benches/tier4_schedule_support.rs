@@ -50,6 +50,7 @@ impl ScheduleWriteMode {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Shared row declarations stay readable at call sites.
 pub(crate) fn dimensions(
     scenario: &'static str,
     storage_profile: StorageProfile,
@@ -562,9 +563,10 @@ fn build_schedule_subscribe(route: &str) -> Vec<u8> {
 fn assert_schedule_success(frame: &[u8], expected_message_type: u16) {
     let payload = schedule_response_payload(frame, expected_message_type);
     if payload.first().copied() != Some(0) {
-        let message = decode_error_body(payload)
-            .map(|(_, message)| message)
-            .unwrap_or_else(|_| "malformed Schedule error response".to_string());
+        let message = decode_error_body(payload).map_or_else(
+            |_| "malformed Schedule error response".to_string(),
+            |(_, message)| message,
+        );
         panic!("Schedule request failed: {message}");
     }
     assert_eq!(payload, [0], "Schedule success response payload");

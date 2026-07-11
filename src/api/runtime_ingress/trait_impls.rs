@@ -208,36 +208,12 @@ impl RuntimeIngress {
                             resource,
                             ..
                         } => Ok(Some(Route::new(format!("kv://{realm}/{area}/{resource}")))),
-                        crate::domains::kv::KvMessage::Get {
-                            route_family: _,
-                            resource: _,
-                            ..
-                        }
-                        | crate::domains::kv::KvMessage::Put {
-                            route_family: _,
-                            resource: _,
-                            ..
-                        }
-                        | crate::domains::kv::KvMessage::Insert {
-                            route_family: _,
-                            resource: _,
-                            ..
-                        }
-                        | crate::domains::kv::KvMessage::Delete {
-                            route_family: _,
-                            resource: _,
-                            ..
-                        }
-                        | crate::domains::kv::KvMessage::DeleteRange {
-                            route_family: _,
-                            resource: _,
-                            ..
-                        }
-                        | crate::domains::kv::KvMessage::Scan {
-                            route_family: _,
-                            resource: _,
-                            ..
-                        } => {
+                        crate::domains::kv::KvMessage::Get { .. }
+                        | crate::domains::kv::KvMessage::Put { .. }
+                        | crate::domains::kv::KvMessage::Insert { .. }
+                        | crate::domains::kv::KvMessage::Delete { .. }
+                        | crate::domains::kv::KvMessage::DeleteRange { .. }
+                        | crate::domains::kv::KvMessage::Scan { .. } => {
                             // Operations now include full route; authorization was checked at BEGIN time
                             Ok(None)
                         }

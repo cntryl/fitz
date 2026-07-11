@@ -259,6 +259,11 @@ relevant report has:
 - no legacy-adapter records
 - no noisy or untrustworthy current rows
 
+For release runs, run `bash scripts/assert-release-benchmark-results.sh` after
+summarizing. It rejects stale `tierr-*` / `tier-*` Tier 4 artifacts and requires
+the 14 manifest primary throughput rows to have passing correctness and
+`acceptable` (or better) quality. Paired latency records remain report-only.
+
 After copying `target/bench_results.json` to `config/bench_baseline.json`,
 summarize again and require `new == 0`, `missing == 0`, and `critical == 0`.
 Never refresh the baseline from a targeted benchmark run or a partial
