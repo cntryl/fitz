@@ -353,7 +353,7 @@ fn should_not_fire_given_backward_epoch_jump_before_due_time() {
 }
 
 #[test]
-fn should_cleanup_pending_fire_claim_after_ttl() {
+fn should_retain_pending_fire_claim_after_elapsed_time() {
     // Arrange
     let clock = Arc::new(MockClock::new(epoch_ms(2026, 3, 31, 5, 59, 30)));
     let (store, mut actor) = make_schedule_actor_and_store_with_clock(clock.clone());
@@ -369,24 +369,20 @@ fn should_cleanup_pending_fire_claim_after_ttl() {
     actor.bench_prepare_scan(1);
     let claimed = actor.bench_claim_due_fires();
     assert_eq!(claimed.len(), 1);
-    let ttl_ms = 5 * 60 * 1000;
-    clock.advance(Duration::from_millis(ttl_ms + 1));
+    clock.advance(Duration::from_hours(24));
     let schedule_store = ScheduleStore::new(store);
 
     // Act
-    let expired = actor
-        .bench_cleanup_stale_pending_claims(ttl_ms)
-        .expect("cleanup stale pending claims");
     let persisted = schedule_store
         .load_pending_fire_claims(1)
         .expect("load pending fire claims");
 
     // Assert
-    assert_eq!(expired, 1);
-    assert!(actor
-        .bench_pending_claimed_occurrences_for_publish()
-        .is_empty());
-    assert!(persisted.is_empty());
+    assert_eq!(
+        actor.bench_pending_claimed_occurrences_for_publish().len(),
+        1
+    );
+    assert_eq!(persisted.len(), 1);
 }
 
 // ========== Schedule Replacement Tests ==========

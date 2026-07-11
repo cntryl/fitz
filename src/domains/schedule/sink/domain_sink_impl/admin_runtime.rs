@@ -1,6 +1,6 @@
 use super::super::model::{
     now_epoch_ms, schedule_admin_snapshot_due, HashSet, Ordering, ScheduleDomainRuntime,
-    ScheduleLiveCounts, SCHEDULE_PENDING_CLAIM_CLEANUP_INTERVAL_MS,
+    ScheduleLiveCounts,
 };
 
 impl ScheduleDomainRuntime<'_> {
@@ -114,51 +114,6 @@ impl ScheduleDomainRuntime<'_> {
         if let Some(metrics) = &self.core.metrics {
             metrics.set_schedule_count(self.schedule_count());
             metrics.set_pending_fire_count(self.pending_fire_count());
-        }
-    }
-
-    pub(super) fn pending_claim_cleanup_due(&self) -> bool {
-        let now_elapsed_ms =
-            u64::try_from(self.core.snapshot_epoch.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let mut last_elapsed_ms = self
-            .core
-            .last_pending_claim_cleanup_elapsed_ms
-            .load(Ordering::Relaxed);
-
-        loop {
-            if last_elapsed_ms == 0 {
-                let first_elapsed_ms = now_elapsed_ms.max(1);
-                match self
-                    .core
-                    .last_pending_claim_cleanup_elapsed_ms
-                    .compare_exchange(0, first_elapsed_ms, Ordering::AcqRel, Ordering::Relaxed)
-                {
-                    Ok(_) => return true,
-                    Err(observed) => {
-                        last_elapsed_ms = observed;
-                        continue;
-                    }
-                }
-            }
-
-            if now_elapsed_ms.saturating_sub(last_elapsed_ms)
-                < SCHEDULE_PENDING_CLAIM_CLEANUP_INTERVAL_MS
-            {
-                return false;
-            }
-
-            match self
-                .core
-                .last_pending_claim_cleanup_elapsed_ms
-                .compare_exchange(
-                    last_elapsed_ms,
-                    now_elapsed_ms,
-                    Ordering::AcqRel,
-                    Ordering::Relaxed,
-                ) {
-                Ok(_) => return true,
-                Err(observed) => last_elapsed_ms = observed,
-            }
         }
     }
 

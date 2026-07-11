@@ -179,16 +179,14 @@ fn should_retry_ack_without_republishing_given_same_broker_ack_persist_failure()
 }
 
 #[test]
-fn should_increment_expired_pending_claim_metric_when_cleanup_removes_orphans() {
+fn should_retain_pending_claim_when_it_is_older_than_the_former_cleanup_ttl() {
     // Arrange
     let family = RouteFamily::new(1);
     let clock = Arc::new(MockClock::new(1_700_000_000_000));
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let metrics = MetricsCollector::new();
-    let sink = ScheduleDomainSink::new(store.clone(), router, admin_read_model)
-        .with_metrics(metrics.clone());
+    let sink = ScheduleDomainSink::new(store.clone(), router, admin_read_model);
     let mut actor = crate::domains::schedule::ScheduleActor::new_with_clock(
         family,
         store,
@@ -208,13 +206,11 @@ fn should_increment_expired_pending_claim_metric_when_cleanup_removes_orphans() 
     let claimed = actor.bench_claim_due_fires();
     assert_eq!(claimed.len(), 1);
     clock.advance(Duration::from_millis(11));
-    sink.force_pending_claim_cleanup_due_for_tests(10);
     sink.insert_actor_for_tests(family, actor);
 
     // Act
     sink.scan_due_schedules();
 
     // Assert
-    wait_for_metric_counter(&metrics, METRIC_PENDING_CLAIMS_EXPIRED_TOTAL, 1);
-    assert_eq!(sink.actor_pending_fire_count_for_tests(family), 0);
+    assert_eq!(sink.actor_pending_fire_count_for_tests(family), 1);
 }

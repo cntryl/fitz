@@ -1,7 +1,4 @@
-use super::model::{
-    Ordering, ScheduleDomainSink, ScheduleSubscriptionSet,
-    SCHEDULE_PENDING_CLAIM_CLEANUP_INTERVAL_MS,
-};
+use super::model::{Ordering, ScheduleDomainSink, ScheduleSubscriptionSet};
 use crate::runtime::routing::RouteFamily;
 
 impl ScheduleDomainSink {
@@ -109,18 +106,5 @@ impl ScheduleDomainSink {
             .entry(family_id)
             .or_default()
             .insert((fire_id, route.to_string()));
-    }
-
-    pub(super) fn force_pending_claim_cleanup_due_for_tests(&self, ttl_ms: u64) {
-        self.state
-            .core
-            .pending_claim_ttl_ms
-            .store(ttl_ms, Ordering::Relaxed);
-        let now_elapsed_ms =
-            u64::try_from(self.state.core.snapshot_epoch.elapsed().as_millis()).unwrap_or(u64::MAX);
-        self.state.core.last_pending_claim_cleanup_elapsed_ms.store(
-            now_elapsed_ms.saturating_sub(SCHEDULE_PENDING_CLAIM_CLEANUP_INTERVAL_MS),
-            Ordering::Relaxed,
-        );
     }
 }

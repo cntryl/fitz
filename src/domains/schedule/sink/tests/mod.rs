@@ -1,6 +1,4 @@
 use super::*;
-use crate::domains::schedule::metrics::METRIC_PENDING_CLAIMS_EXPIRED_TOTAL;
-use crate::observability::metrics::MetricsCollector;
 use crate::protocol::frame::ChannelId;
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
@@ -156,15 +154,4 @@ fn wait_for_ack_failure_count(sink: &ScheduleDomainSink, expected: u64) {
         std::thread::sleep(Duration::from_millis(5));
     }
     assert_eq!(sink.ack_failure_count(), expected);
-}
-
-fn wait_for_metric_counter(metrics: &MetricsCollector, name: &str, expected: u64) {
-    let deadline = Instant::now() + Duration::from_secs(1);
-    while Instant::now() < deadline {
-        if metrics.counter_get(name) == expected {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    assert_eq!(metrics.counter_get(name), expected);
 }

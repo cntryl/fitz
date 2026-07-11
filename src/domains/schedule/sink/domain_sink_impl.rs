@@ -3,7 +3,6 @@ use super::model::{
     Ordering, PendingFireKey, Router, ScheduleDomainActor, ScheduleDomainCommand,
     ScheduleDomainCore, ScheduleDomainRuntime, ScheduleDomainSink, ScheduleDomainState,
     ScheduleLiveCounts, ScheduleMetrics, ScheduleSubscription, VecDeque,
-    SCHEDULE_PENDING_CLAIM_TTL_MS,
 };
 #[cfg(test)]
 use crate::protocol::frame_context::FrameContext;
@@ -46,8 +45,6 @@ impl ScheduleDomainState {
                 live_publish_failures: AtomicU64::new(0),
                 ack_failures: AtomicU64::new(0),
                 pending_ack_retries: Mutex::new(HashMap::new()),
-                pending_claim_ttl_ms: AtomicU64::new(SCHEDULE_PENDING_CLAIM_TTL_MS),
-                last_pending_claim_cleanup_elapsed_ms: AtomicU64::new(0),
                 recent_acknowledgement_ms: Mutex::new(VecDeque::new()),
                 write_options: cntryl_midge::WriteOptions::buffered(),
                 metrics: None,
@@ -422,15 +419,10 @@ impl ScheduleDomainRuntime<'_> {
         let mut live_publish_candidates = Vec::new();
         let mut ack_retry_candidates = PendingAckRetryMap::new();
         let mut snapshot_dirty = false;
-        let cleanup_due = self.pending_claim_cleanup_due();
         let mut actors = self.core.actors.lock();
         let mut pending_ack_retries = self.core.pending_ack_retries.lock();
 
         for (family, actor) in actors.iter_mut() {
-            if self.cleanup_stale_pending_claims_if_due(*family, actor, cleanup_due) {
-                snapshot_dirty = true;
-            }
-
             if !actor.claim_due_fires().is_empty() {
                 snapshot_dirty = true;
             }
@@ -448,40 +440,6 @@ impl ScheduleDomainRuntime<'_> {
             live_publish_candidates,
             ack_retry_candidates,
             snapshot_dirty,
-        }
-    }
-
-    fn cleanup_stale_pending_claims_if_due(
-        &self,
-        family: crate::runtime::routing::RouteFamily,
-        actor: &mut crate::domains::schedule::ScheduleActor,
-        cleanup_due: bool,
-    ) -> bool {
-        if !cleanup_due {
-            return false;
-        }
-
-        match actor
-            .cleanup_stale_pending_claims(self.core.pending_claim_ttl_ms.load(Ordering::Relaxed))
-        {
-            Ok(expired) if expired > 0 => {
-                if let Some(metrics) = &self.core.metrics {
-                    metrics.record_pending_claims_expired(expired);
-                }
-                true
-            }
-            Ok(_) => false,
-            Err(error) => {
-                if let Some(metrics) = &self.core.metrics {
-                    metrics.record_pending_claim_cleanup_failure();
-                }
-                tracing::warn!(
-                    route_family = family.as_u64(),
-                    error = %error,
-                    "Failed to cleanup stale pending schedule fires"
-                );
-                false
-            }
         }
     }
 

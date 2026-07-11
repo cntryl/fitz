@@ -302,41 +302,6 @@ impl ScheduleActor {
         self.ack_pending_fire_claims(delivered)
     }
 
-    /// # Errors
-    ///
-    /// Returns an error when deleting expired pending-claim rows from durable
-    /// storage fails.
-    pub(crate) fn cleanup_stale_pending_claims(&mut self, ttl_ms: u64) -> Result<usize, String> {
-        let now_epoch_ms = self.clock.now_epoch_ms();
-        let expired: Vec<_> = self
-            .pending_claimed_occurrences
-            .iter()
-            .filter(|(_, claim)| now_epoch_ms.saturating_sub(claim.claimed_at_ms) >= ttl_ms)
-            .map(|((fire_ms, route), _)| (*fire_ms, route.clone()))
-            .collect();
-
-        if expired.is_empty() {
-            return Ok(0);
-        }
-
-        self.store.delete_pending_fire_claims(
-            self.family.as_u64(),
-            &expired,
-            self.write_options,
-        )?;
-
-        for key in &expired {
-            self.pending_claimed_occurrences.remove(key);
-        }
-
-        Ok(expired.len())
-    }
-
-    #[doc(hidden)]
-    pub fn bench_cleanup_stale_pending_claims(&mut self, ttl_ms: u64) -> Result<usize, String> {
-        self.cleanup_stale_pending_claims(ttl_ms)
-    }
-
     pub(crate) fn pending_fire_count(&self) -> usize {
         self.pending_claimed_occurrences.len()
     }

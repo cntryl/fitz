@@ -9,8 +9,6 @@ pub(super) use std::time::Instant;
 
 #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
 pub(super) const SCHEDULE_ADMIN_SNAPSHOT_INTERVAL_US: u64 = 250_000;
-pub(super) const SCHEDULE_PENDING_CLAIM_TTL_MS: u64 = 24 * 60 * 60 * 1000;
-pub(super) const SCHEDULE_PENDING_CLAIM_CLEANUP_INTERVAL_MS: u64 = 60_000;
 
 pub(super) fn now_epoch_ms() -> u64 {
     u64::try_from(
@@ -184,10 +182,6 @@ pub(super) struct ScheduleDomainCore {
     /// Pending fire claims already handed off to the live publish path in this
     /// broker process but still waiting for durable acknowledgement retry.
     pub(super) pending_ack_retries: Mutex<HashMap<u64, HashSet<PendingFireKey>>>,
-    /// Maximum age for a pending claimed fire before cleanup removes it.
-    pub(super) pending_claim_ttl_ms: AtomicU64,
-    /// Last monotonic cleanup sweep time, measured relative to `snapshot_epoch`.
-    pub(super) last_pending_claim_cleanup_elapsed_ms: AtomicU64,
     /// Rolling window of acknowledged handoff timestamps for executions-per-minute.
     pub(super) recent_acknowledgement_ms: Mutex<VecDeque<u64>>,
     /// Write options for schedule persistence.
