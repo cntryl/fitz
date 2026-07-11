@@ -539,8 +539,6 @@ fn should_rank_schedule_with_pending_ack_retry_pressure() {
         0,
         1,
         0,
-        0,
-        0,
         now,
     );
     let hotspot = analysis.hotspots.first().expect("schedule hotspot");
@@ -559,60 +557,6 @@ fn should_rank_schedule_with_pending_ack_retry_pressure() {
         .explanation_hints
         .iter()
         .any(|hint| hint.contains("pending ack retry")));
-}
-
-#[test]
-fn should_classify_schedule_cleanup_pressure() {
-    // Arrange
-    let now = Utc::now();
-    let schedules = vec![ScheduleInfo {
-        route_family: 1,
-        realm: "prod".to_string(),
-        area: "jobs".to_string(),
-        resource: "billing".to_string(),
-        operation: "send".to_string(),
-        cron: "0 * * * *".to_string(),
-        next_run: (now + Duration::seconds(30)).to_rfc3339(),
-        last_run: None,
-        executions_total: 2,
-        enabled: true,
-    }];
-
-    // Act
-    let analysis = analyze_schedule(
-        &schedules,
-        0,
-        0,
-        0,
-        ScheduleLatencyBuckets::default(),
-        0,
-        0,
-        0,
-        3,
-        1,
-        now,
-    );
-    let hotspot = analysis.hotspots.first().expect("schedule hotspot");
-
-    // Assert
-    assert_eq!(hotspot.hotspot.snapshot.current_stage, "stale_handoff");
-    assert_eq!(
-        hotspot.hotspot.snapshot.likely_bottleneck.as_deref(),
-        Some("claim cleanup")
-    );
-    assert_eq!(hotspot.hotspot.snapshot.severity, DiagnosticSeverity::High);
-    assert!(hotspot
-        .hotspot
-        .snapshot
-        .explanation_hints
-        .iter()
-        .any(|hint| hint.contains("expired pending claim")));
-    assert!(hotspot
-        .hotspot
-        .snapshot
-        .explanation_hints
-        .iter()
-        .any(|hint| hint.contains("cleanup failure")));
 }
 
 #[test]
@@ -638,19 +582,7 @@ fn should_classify_schedule_latency_pressure() {
     };
 
     // Act
-    let analysis = analyze_schedule(
-        &schedules,
-        0,
-        0,
-        0,
-        request_latency_buckets,
-        0,
-        0,
-        0,
-        0,
-        0,
-        now,
-    );
+    let analysis = analyze_schedule(&schedules, 0, 0, 0, request_latency_buckets, 0, 0, 0, now);
     let hotspot = analysis.hotspots.first().expect("schedule hotspot");
 
     // Assert
@@ -756,6 +688,6 @@ fn should_summarize_incident_given_broker_hotspot() {
     assert_eq!(summary.suggested_next_queries.len(), 2);
     assert_eq!(
         summary.suggested_next_queries[1].endpoint,
-        "inspect /metrics"
+        "inspect /api/v1/all/metrics"
     );
 }

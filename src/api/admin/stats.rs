@@ -12,7 +12,9 @@
 use super::troubleshooting;
 use crate::api::http::Response;
 use crate::boot::Runtime;
+use crate::runtime::routing::RouteFamily;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalStats {
@@ -166,8 +168,6 @@ pub struct ScheduleStats {
     pub notify_failures_total: u64,
     pub ack_failures_total: u64,
     pub overdue_normalizations_total: u64,
-    pub pending_claims_expired_total: u64,
-    pub pending_claim_cleanup_failures_total: u64,
     pub create_persistence_failures_total: u64,
     pub upsert_persistence_failures_total: u64,
     pub cancel_persistence_failures_total: u64,
@@ -359,9 +359,6 @@ fn build_schedule_stats(
         notify_failures_total: runtime.schedule_notify_failures(),
         ack_failures_total: runtime.schedule_ack_failures(),
         overdue_normalizations_total: runtime.schedule_overdue_normalizations(),
-        pending_claims_expired_total: runtime.schedule_pending_claims_expired_total(),
-        pending_claim_cleanup_failures_total: runtime
-            .schedule_pending_claim_cleanup_failures_total(),
         create_persistence_failures_total: runtime.schedule_create_persistence_failures_total(),
         upsert_persistence_failures_total: runtime.schedule_upsert_persistence_failures_total(),
         cancel_persistence_failures_total: runtime.schedule_cancel_persistence_failures_total(),
@@ -383,13 +380,269 @@ pub fn handle_global_stats(runtime: &Runtime) -> Response {
     crate::api::admin::json_response(build_global_stats(runtime))
 }
 
+/// Build a stats snapshot containing only state attributable to one route
+/// family. Broker-wide counters and diagnostics are intentionally omitted
+/// rather than copied into a narrower authorization scope.
+#[allow(clippy::too_many_lines)]
+pub(crate) fn build_family_stats(runtime: &Runtime, family: u64) -> GlobalStats {
+    let sessions = runtime
+        .list_sessions()
+        .into_iter()
+        .filter(|session| session.route_family == family)
+        .collect::<Vec<_>>();
+    let kv_transactions = runtime
+        .kv_list_transactions(None)
+        .into_iter()
+        .filter(|transaction| transaction.route_family == family)
+        .collect::<Vec<_>>();
+    let streams = runtime
+        .stream_list_streams(None)
+        .into_iter()
+        .filter(|stream| stream.route_family == family)
+        .collect::<Vec<_>>();
+    let notice_subscriptions = runtime
+        .notice_list_subscriptions(None, None)
+        .into_iter()
+        .filter(|subscription| subscription.route_family == family)
+        .collect::<Vec<_>>();
+    let notice_routes = runtime
+        .notice_list_routes(None)
+        .into_iter()
+        .filter(|route| route.route_family == family)
+        .collect::<Vec<_>>();
+    let queues = runtime
+        .queue_list_queues(None)
+        .into_iter()
+        .filter(|queue| queue.family == family)
+        .collect::<Vec<_>>();
+    let rpc_workers = runtime
+        .rpc_list_workers(None)
+        .into_iter()
+        .filter(|worker| worker.route_family == family)
+        .collect::<Vec<_>>();
+    let rpc_pending = runtime
+        .rpc_list_pending(None)
+        .into_iter()
+        .filter(|request| request.route_family == family)
+        .collect::<Vec<_>>();
+    let leases = runtime
+        .lease_list_leases(None)
+        .into_iter()
+        .filter(|lease| lease.route_family == family)
+        .collect::<Vec<_>>();
+    let schedules = runtime
+        .schedule_list_schedules(None)
+        .into_iter()
+        .filter(|schedule| schedule.route_family == family)
+        .collect::<Vec<_>>();
+    let pending_fire_claims = u32::try_from(family).map_or(0, |family| {
+        runtime
+            .schedule_list_pending_claims(RouteFamily::new(family))
+            .len()
+    });
+
+    let mut realms = BTreeSet::new();
+    realms.extend(kv_transactions.iter().map(|item| item.realm.clone()));
+    realms.extend(streams.iter().map(|item| item.realm.clone()));
+    realms.extend(notice_subscriptions.iter().map(|item| item.realm.clone()));
+    realms.extend(queues.iter().map(|item| item.realm.clone()));
+    realms.extend(rpc_workers.iter().map(|item| item.realm.clone()));
+    realms.extend(leases.iter().map(|item| item.realm.clone()));
+    realms.extend(schedules.iter().map(|item| item.realm.clone()));
+
+    let queue_messages_ready = queues
+        .iter()
+        .map(|queue| queue.messages_ready)
+        .sum::<usize>();
+    let queue_messages_delayed = queues
+        .iter()
+        .map(|queue| queue.messages_delayed)
+        .sum::<usize>();
+    let queue_messages_inflight = queues
+        .iter()
+        .map(|queue| queue.messages_inflight)
+        .sum::<usize>();
+    let queue_messages_dead_lettered = queues
+        .iter()
+        .map(|queue| queue.messages_dead_lettered)
+        .sum::<usize>();
+    let queue_messages_pending = queue_messages_ready.saturating_add(queue_messages_delayed);
+    let healthy = troubleshooting::healthy_domain_diagnostics();
+
+    GlobalStats {
+        broker: BrokerStats {
+            uptime_seconds: 0,
+            connections: sessions.len(),
+            sessions: sessions.len(),
+            realms: realms.into_iter().collect(),
+            messages_per_second: 0.0,
+            router_backpressure_total: 0,
+            router_high_lane_backpressure_total: 0,
+        },
+        domains: DomainStats {
+            kv: KvStats {
+                transactions_active: kv_transactions.len(),
+                keys_total: 0,
+                commits_failed_total: 0,
+                invalid_transaction_rejects_total: 0,
+                operations_per_second: 0.0,
+                diagnostics: healthy.clone(),
+            },
+            stream: StreamStats {
+                streams_active: streams.len(),
+                append_sessions_active: streams.iter().map(|stream| stream.sessions_active).sum(),
+                events_total: 0,
+                requests_total: 0,
+                success_total: 0,
+                failure_total: 0,
+                append_sessions_started_total: 0,
+                append_sessions_ended_total: 0,
+                append_conflicts_total: 0,
+                notify_drops_total: 0,
+                watermark_lag_buckets: crate::api::admin::StreamLagBuckets::default(),
+                request_latency_buckets: crate::api::admin::StreamLatencyBuckets::default(),
+                operations_per_second: 0.0,
+                subscriptions_active: 0,
+                diagnostics: healthy.clone(),
+            },
+            notice: NoticeStats {
+                subscriptions_active: notice_subscriptions.len(),
+                routes_active: notice_routes.len(),
+                max_route_subscribers: notice_routes
+                    .iter()
+                    .map(|route| route.subscribers)
+                    .max()
+                    .unwrap_or(0),
+                requests_total: 0,
+                success_total: 0,
+                failure_total: 0,
+                delivery_drops_total: 0,
+                unsubscribes_total: 0,
+                wildcard_limit_rejects_total: 0,
+                publishes_per_second: 0.0,
+                diagnostics: healthy.clone(),
+            },
+            queue: QueueStats {
+                messages_ready: queue_messages_ready,
+                messages_delayed: queue_messages_delayed,
+                messages_pending: queue_messages_pending,
+                messages_dead_lettered: queue_messages_dead_lettered,
+                oldest_message_age_seconds: 0,
+                oldest_backlog_age_seconds: 0,
+                backlog_age_buckets: crate::api::admin::QueueAgeBuckets::default(),
+                delay_age_buckets: crate::api::admin::QueueAgeBuckets::default(),
+                inflight_active: queue_messages_inflight,
+                requests_total: 0,
+                success_total: 0,
+                failure_total: 0,
+                enqueues_total: 0,
+                reserves_total: 0,
+                completes_total: 0,
+                releases_total: 0,
+                extends_total: 0,
+                notify_drops_total: 0,
+                redeliveries_total: 0,
+                dead_letter_transitions_total: 0,
+                complete_rejected_total: 0,
+                operations_per_second: 0.0,
+                diagnostics: healthy.clone(),
+            },
+            rpc: RpcStats {
+                workers_registered: rpc_workers.len(),
+                requests_pending: rpc_pending.len(),
+                oldest_pending_request_age_seconds: rpc_pending
+                    .iter()
+                    .map(|request| request.age_seconds)
+                    .max()
+                    .unwrap_or(0),
+                pending_routes_active: rpc_pending
+                    .iter()
+                    .map(|request| request.route.as_str())
+                    .collect::<BTreeSet<_>>()
+                    .len(),
+                slowest_worker_average_latency_ms: 0.0,
+                worker_latency_buckets: crate::api::admin::RpcLatencyBuckets::default(),
+                requests_total: 0,
+                success_total: 0,
+                failure_total: 0,
+                request_timeouts_total: 0,
+                backpressure_rejects_total: 0,
+                duplicate_correlation_rejects_total: 0,
+                wrong_worker_rejects_total: 0,
+                responses_dropped_closed_caller_total: 0,
+                responses_missing_pending_total: 0,
+                invalid_sequence_responses_total: 0,
+                invalid_sequence_errors_forwarded_total: 0,
+                invalid_sequence_errors_dropped_total: 0,
+                operations_per_second: 0.0,
+                diagnostics: healthy.clone(),
+            },
+            lease: LeaseStats {
+                leases_active: leases.len(),
+                waiter_depth: 0,
+                oldest_lease_age_seconds: 0,
+                requests_total: 0,
+                success_total: 0,
+                failure_total: 0,
+                acquire_timeouts_total: 0,
+                forced_releases_total: 0,
+                invalid_token_rejects_total: 0,
+                ownership_churn_total: 0,
+                operations_per_second: 0.0,
+                diagnostics: healthy.clone(),
+            },
+            schedule: ScheduleStats {
+                schedules_active: schedules.len(),
+                executions_per_minute: 0.0,
+                subscriptions_active: 0,
+                pending_fire_claims,
+                pending_ack_retries: 0,
+                oldest_pending_claim_age_seconds: 0,
+                request_latency_buckets: crate::api::admin::ScheduleLatencyBuckets::default(),
+                notify_failures_total: 0,
+                ack_failures_total: 0,
+                overdue_normalizations_total: 0,
+                create_persistence_failures_total: 0,
+                upsert_persistence_failures_total: 0,
+                cancel_persistence_failures_total: 0,
+                diagnostics: healthy,
+            },
+        },
+        diagnostics: troubleshooting::healthy_global_diagnostics(),
+    }
+}
+
+/// Handle statistics scoped to one authorized route family.
+pub fn handle_family_stats(runtime: &Runtime, family: u64) -> Response {
+    crate::api::admin::json_response(build_family_stats(runtime, family))
+}
+
 /// Handle `/api/v1/troubleshooting`.
 pub fn handle_global_troubleshooting(runtime: &Runtime) -> Response {
     super::json_response(build_global_troubleshooting(runtime))
 }
 
+/// Handle troubleshooting guidance scoped to one authorized route family.
+pub fn handle_family_troubleshooting(_runtime: &Runtime, _family: u64) -> Response {
+    super::json_response(troubleshooting::healthy_global_diagnostics())
+}
+
 /// Handle domain-specific stats endpoints
-pub fn handle_domain_stats(runtime: &Runtime, domain: &str) -> Response {
+pub fn handle_domain_stats(runtime: &Runtime, domain: &str, family: Option<u64>) -> Response {
+    if let Some(family) = family {
+        let stats = build_family_stats(runtime, family);
+        return match domain {
+            "kv" => crate::api::admin::json_response(stats.domains.kv),
+            "stream" => crate::api::admin::json_response(stats.domains.stream),
+            "notice" => crate::api::admin::json_response(stats.domains.notice),
+            "queue" => crate::api::admin::json_response(stats.domains.queue),
+            "rpc" => crate::api::admin::json_response(stats.domains.rpc),
+            "lease" => crate::api::admin::json_response(stats.domains.lease),
+            "schedule" => crate::api::admin::json_response(stats.domains.schedule),
+            _ => crate::api::admin::not_found(),
+        };
+    }
+
     let troubleshooting::TroubleshootingSnapshot {
         kv,
         stream,

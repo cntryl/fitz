@@ -18,7 +18,7 @@ impl MailboxSink for StreamDomainSink {
             return Err(DeliveryError::ActorStopped);
         }
 
-        self.core.deliver_envelope(&envelope)
+        self.deliver_to_actor(envelope, false)
     }
 
     fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {

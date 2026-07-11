@@ -15,6 +15,7 @@ pub mod frame;
 pub mod frame_context;
 pub mod kv_codec;
 pub mod lease_codec;
+pub mod manifest;
 pub mod mux;
 pub mod notice_codec;
 pub mod payload_codec;

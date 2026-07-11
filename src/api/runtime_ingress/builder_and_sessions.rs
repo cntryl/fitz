@@ -12,7 +12,10 @@ impl RuntimeIngress {
             session_actors: Arc::new(DashMap::new()),
             session_inbox_routes: Arc::new(DashMap::new()),
             pending_session_cleanups: Arc::new(DashMap::new()),
-            cleanup_retry_in_progress: Arc::new(AtomicBool::new(false)),
+            cleanup_wake: Arc::new(tokio::sync::Notify::new()),
+            cleanup_worker_started: Arc::new(AtomicBool::new(false)),
+            cleanup_shutdown: Arc::new(AtomicBool::new(false)),
+            closed_sessions: Arc::new(DashMap::new()),
             router: None,
             event_handler: None,
             route_families: Arc::new(std::iter::once(1).collect()),
@@ -142,7 +145,12 @@ impl RuntimeIngress {
     }
 
     #[allow(dead_code)]
-    pub(super) async fn retry_pending_session_cleanups(&self) {
-        self.session_cleanup_coordinator().retry_pending().await;
+    pub(super) fn retry_pending_session_cleanups(&self) {
+        self.session_cleanup_coordinator().retry_pending();
+    }
+
+    /// Drain the dedicated cleanup worker before runtime teardown.
+    pub async fn drain_session_cleanups(&self) {
+        self.drain_cleanup_tickets().await;
     }
 }

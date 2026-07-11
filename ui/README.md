@@ -17,7 +17,7 @@ This starts the Vite+ dev server on `http://localhost:5173`.
 Expected companion services:
 
 - Fitz backend on `http://localhost:4090`
-- Vite proxy forwards `/api`, `/metrics`, and `/ws`
+- Vite proxy forwards `/api` and `/ws`
 
 For UI-only design work without a running broker, enable the Vite mock API:
 
@@ -45,7 +45,6 @@ Local Rust builds do not embed UI assets and do not fall back to `../public`. Fo
 
 The browser client reads these public Vite env vars through `src/shared/config.ts`:
 
-- `VITE_FITZ_API_BASE_URL`
 - `VITE_FITZ_MOCK_API`
 - `VITE_FITZ_REQUEST_TIMEOUT_MS`
 - `VITE_FITZ_LOG_LEVEL`
@@ -65,7 +64,7 @@ The workspace-local `skills/` docs describe the intended Askr workflow for each 
 - `/login` is the admin sign-in route
 - `/admin` is the authenticated landing page
 - `/admin/metrics` is the browser metrics explorer
-- `/metrics` remains the raw Prometheus endpoint served by the broker
+- `/api/v1/{family}/metrics` is the authenticated structured metrics contract
 
 The SPA uses the existing admin session endpoints at `/api/v1/session`.
 

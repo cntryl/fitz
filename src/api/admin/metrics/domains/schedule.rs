@@ -86,24 +86,6 @@ fn append_counter_metrics(output: &mut String, runtime: &Runtime) {
     );
     output.push('\n');
 
-    output.push_str("# HELP fitz_schedule_pending_claims_expired_total Total stale pending schedule claims cleaned up by this broker process\n");
-    output.push_str("# TYPE fitz_schedule_pending_claims_expired_total counter\n");
-    let _ = writeln!(
-        output,
-        "fitz_schedule_pending_claims_expired_total {}",
-        runtime.schedule_pending_claims_expired_total()
-    );
-    output.push('\n');
-
-    output.push_str("# HELP fitz_schedule_pending_claim_cleanup_failure_total Total failed pending schedule claim cleanup attempts\n");
-    output.push_str("# TYPE fitz_schedule_pending_claim_cleanup_failure_total counter\n");
-    let _ = writeln!(
-        output,
-        "fitz_schedule_pending_claim_cleanup_failure_total {}",
-        runtime.schedule_pending_claim_cleanup_failures_total()
-    );
-    output.push('\n');
-
     output.push_str("# HELP fitz_schedule_create_persistence_failures_total Total schedule create mutations that failed to persist\n");
     output.push_str("# TYPE fitz_schedule_create_persistence_failures_total counter\n");
     let _ = writeln!(

@@ -7,7 +7,7 @@ This guide explains how to instrument each layer of Fitz with comprehensive obse
 **Sampling Strategy:**
 - **Hot paths** (routing, TLV codec, frame I/O): 0.1% sampling (1 in 1000)
 - **Critical paths** (auth, permission checks, request boundaries): 100% sampling
-- **Debug paths** (scheduler, internal operations): Debug level (hidden by default)
+- **Debug paths** (family actor workers, internal operations): Debug level (hidden by default)
 
 **Metric Types:**
 - **Counters**: Increment-only (frames_received, errors_total, operations_total)
@@ -39,7 +39,7 @@ after `FITZ_DRAIN_GRACE_SECONDS`.
 
 ### Layer 1: API/Transport (Async)
 
-**Files:** `src/api/tcp.rs`, `src/api/ws.rs`, `src/api/ingress.rs`
+**Files:** `src/api/handlers/tcp_listener.rs`, `src/api/handlers/tcp_session.rs`, `src/api/handlers/websocket.rs`, `src/api/ingress.rs`
 
 **Goal:** Track connection lifecycle, frame I/O, and protocol errors
 
@@ -147,7 +147,7 @@ pub fn process_frame(session: &Session, frame: &[u8]) -> Result<Message> {
 
 ### Layer 3: Runtime/Router (Sync)
 
-**Files:** `src/runtime/router.rs`, `src/runtime/scheduler.rs`
+**Files:** `src/runtime/router.rs`, `src/runtime/family_actor_pool.rs`
 
 **Goal:** Track message routing, delivery, and actor scheduling
 
@@ -352,7 +352,8 @@ Expected output:
 
 ### Step 3: Check Metrics Endpoint
 
-Once the `/metrics` endpoint is added (see next section):
+Raw Prometheus is served by the dedicated metrics listener, not the
+authenticated main listener:
 
 ```bash
 curl http://localhost:9090/metrics | head -30
@@ -452,6 +453,6 @@ FITZ_LOG_FORMAT=json FITZ_LOG_LEVEL=debug cargo test kv_basics -- --nocapture
 1. **Implement Layer 1 (API)** - Track connections and frames
 2. **Implement Layer 2 (Session)** - Track auth and TLV codec
 3. **Implement Layer 3 (Router)** - Track routing and delivery (highest ROI)
-4. **Add `POST /metrics` endpoint** - Export metrics in Prometheus format
+4. **Keep the dedicated `/metrics` listener private** - Export raw Prometheus only from `FITZ_METRICS_BIND_ADDR:FITZ_METRICS_PORT`.
 5. **Add distributed tracing** - Link parent/child messages via OpenTelemetry
 6. **Configure Datadog/Prometheus** - Connect external observability platform

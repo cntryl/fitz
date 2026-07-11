@@ -1,15 +1,15 @@
 use super::{
     BinaryHeap, ExpiringPendingRequest, FxBuildHasher, HashMap, Instant, Route, RouteAddress,
-    RpcFastMap, RpcPendingDispatchInfo, RpcPendingErrorDelivery, RpcPendingRequest,
-    RpcPendingRequestInit, RpcPendingTable, RpcPendingTimeoutResult, RpcQueuedDispatch,
-    RpcQueuedRequest, RpcRequestDispatch, RpcRouteState, RpcSessionCleanupResult,
-    RpcWorkerCleanupResult,
+    RouteFamily, RpcCorrelationKey, RpcFastMap, RpcPendingDispatchInfo, RpcPendingErrorDelivery,
+    RpcPendingRequest, RpcPendingRequestInit, RpcPendingTable, RpcPendingTimeoutResult,
+    RpcQueuedDispatch, RpcQueuedRequest, RpcRequestDispatch, RpcRouteState,
+    RpcSessionCleanupResult, RpcWorkerCleanupResult,
 };
 
 pub(in crate::domains::rpc::sink) struct RpcState {
-    pub(in crate::domains::rpc::sink) routes: RpcFastMap<Route, RpcRouteState>,
+    pub(in crate::domains::rpc::sink) routes: RpcFastMap<(RouteFamily, Route), RpcRouteState>,
     pub(in crate::domains::rpc::sink) pending: RpcPendingTable,
-    pub(in crate::domains::rpc::sink) queued: RpcFastMap<uuid::Uuid, RpcQueuedRequest>,
+    pub(in crate::domains::rpc::sink) queued: RpcFastMap<RpcCorrelationKey, RpcQueuedRequest>,
     pub(in crate::domains::rpc::sink) queued_expirations: BinaryHeap<ExpiringPendingRequest>,
 }
 
@@ -28,12 +28,23 @@ impl RpcState {
         }
     }
 
+    #[cfg(test)]
     pub(in crate::domains::rpc::sink) fn ensure_route_state(
         &mut self,
         route: &Route,
     ) -> &mut RpcRouteState {
         self.routes
-            .entry(route.clone())
+            .entry((RouteFamily::new(1), route.clone()))
+            .or_insert_with(RpcRouteState::new)
+    }
+
+    pub(in crate::domains::rpc::sink) fn ensure_route_state_for_family(
+        &mut self,
+        family: RouteFamily,
+        route: &Route,
+    ) -> &mut RpcRouteState {
+        self.routes
+            .entry((family, route.clone()))
             .or_insert_with(RpcRouteState::new)
     }
 
@@ -42,16 +53,17 @@ impl RpcState {
         &mut self,
         route: &Route,
     ) -> Option<&mut RpcRouteState> {
-        self.routes.get_mut(route)
+        self.routes.get_mut(&(RouteFamily::new(1), route.clone()))
     }
 
-    pub(in crate::domains::rpc::sink) fn prune_route_if_empty(&mut self, route: &Route) {
-        let should_remove = self.routes.get(route).is_some_and(|route_state| {
+    fn prune_route_if_empty_for_family(&mut self, family: RouteFamily, route: &Route) {
+        let key = (family, route.clone());
+        let should_remove = self.routes.get(&key).is_some_and(|route_state| {
             route_state.worker_count() == 0 && !route_state.has_queued_requests()
         });
 
         if should_remove {
-            self.routes.remove(route);
+            self.routes.remove(&key);
         }
     }
 
@@ -62,10 +74,10 @@ impl RpcState {
         let mut removed_workers = 0;
         let mut empty_routes = Vec::new();
 
-        for (route, route_state) in &mut self.routes {
+        for (key, route_state) in &mut self.routes {
             removed_workers += route_state.unregister_session(session_id);
             if route_state.worker_count() == 0 && !route_state.has_queued_requests() {
-                empty_routes.push(route.clone());
+                empty_routes.push(key.clone());
             }
         }
 
@@ -94,7 +106,8 @@ impl RpcState {
             let mut removed = 0;
             let mut remove_route = false;
 
-            if let Some(route_state) = self.routes.get_mut(worker_addr.route()) {
+            let key = (*worker_addr.family(), worker_addr.route().clone());
+            if let Some(route_state) = self.routes.get_mut(&key) {
                 let before = route_state.worker_count();
                 route_state.unregister_worker(worker_addr, session_id);
                 removed = before.saturating_sub(route_state.worker_count());
@@ -103,7 +116,7 @@ impl RpcState {
             }
 
             if remove_route {
-                self.routes.remove(worker_addr.route());
+                self.routes.remove(&key);
             }
 
             removed
@@ -119,12 +132,25 @@ impl RpcState {
         }
     }
 
+    #[cfg(test)]
     pub(in crate::domains::rpc::sink) fn contains_correlation(
         &self,
         correlation_id: &uuid::Uuid,
     ) -> bool {
-        self.pending.contains_correlation(correlation_id)
-            || self.queued.contains_key(correlation_id)
+        self.contains_correlation_in_family(RouteFamily::new(1), correlation_id)
+    }
+
+    fn contains_correlation_in_family(
+        &self,
+        family: RouteFamily,
+        correlation_id: &uuid::Uuid,
+    ) -> bool {
+        self.pending
+            .contains_correlation_in_family(family, correlation_id)
+            || self.queued.contains_key(&RpcCorrelationKey {
+                family,
+                correlation_id: *correlation_id,
+            })
     }
 
     pub(in crate::domains::rpc::sink) fn live_request_count(&self) -> usize {
@@ -138,13 +164,17 @@ impl RpcState {
         request: RpcQueuedRequest,
     ) {
         let route = request.request.route.clone();
-        self.ensure_route_state(&route)
+        self.ensure_route_state_for_family(*request.caller_inbox_addr.family(), &route)
             .enqueue_request(correlation_id);
+        let key = RpcCorrelationKey {
+            family: *request.caller_inbox_addr.family(),
+            correlation_id,
+        };
         self.queued_expirations.push(ExpiringPendingRequest {
             expires_at: request.expires_at,
-            correlation_id,
+            key,
         });
-        self.queued.insert(correlation_id, request);
+        self.queued.insert(key, request);
     }
 
     pub(in crate::domains::rpc::sink) fn dispatch_or_queue_request(
@@ -156,13 +186,14 @@ impl RpcState {
         route_pending_capacity: usize,
         global_pending_capacity: usize,
     ) -> RpcRequestDispatch {
-        if self.contains_correlation(&request.correlation_id) {
+        let family = *caller_inbox_addr.family();
+        if self.contains_correlation_in_family(family, &request.correlation_id) {
             return RpcRequestDispatch::Duplicate { request };
         }
 
         let live_request_count = self.live_request_count();
         let route = request.route.clone();
-        let Some(route_state) = self.routes.get_mut(&route) else {
+        let Some(route_state) = self.routes.get_mut(&(family, route.clone())) else {
             return RpcRequestDispatch::NoWorkers { request };
         };
 
@@ -197,11 +228,13 @@ impl RpcState {
                     caller_inbox_addr,
                     expires_at,
                 );
-                self.queued_expirations.push(ExpiringPendingRequest {
-                    expires_at,
+                let key = RpcCorrelationKey {
+                    family,
                     correlation_id,
-                });
-                self.queued.insert(correlation_id, queued);
+                };
+                self.queued_expirations
+                    .push(ExpiringPendingRequest { expires_at, key });
+                self.queued.insert(key, queued);
                 RpcRequestDispatch::Queued {
                     route,
                     correlation_id,
@@ -209,7 +242,8 @@ impl RpcState {
                 }
             }
             DispatchAction::Dispatch(worker) => {
-                self.pending.track_pending(
+                self.pending.track_pending_for_family(
+                    family,
                     correlation_id,
                     RpcPendingRequest::from_dispatch(
                         &request,
@@ -228,24 +262,39 @@ impl RpcState {
         }
     }
 
-    pub(in crate::domains::rpc::sink) fn remove_queued_request(
+    pub(in crate::domains::rpc::sink) fn remove_queued_request_for_family(
         &mut self,
+        family: RouteFamily,
         correlation_id: &uuid::Uuid,
     ) -> Option<RpcQueuedRequest> {
-        let queued = self.queued.remove(correlation_id)?;
-        if let Some(route_state) = self.routes.get_mut(&queued.request.route) {
+        let key = RpcCorrelationKey {
+            family,
+            correlation_id: *correlation_id,
+        };
+        let queued = self.queued.remove(&key)?;
+        let family = *queued.caller_inbox_addr.family();
+        if let Some(route_state) = self.routes.get_mut(&(family, queued.request.route.clone())) {
             route_state.remove_queued_request(correlation_id);
         }
-        self.prune_route_if_empty(&queued.request.route);
+        self.prune_route_if_empty_for_family(family, &queued.request.route);
         Some(queued)
     }
 
+    #[cfg(test)]
     pub(in crate::domains::rpc::sink) fn next_queued_dispatch(
         &mut self,
         route: &Route,
     ) -> Option<RpcQueuedDispatch> {
+        self.next_queued_dispatch_for_family(route, RouteFamily::new(1))
+    }
+
+    pub(in crate::domains::rpc::sink) fn next_queued_dispatch_for_family(
+        &mut self,
+        route: &Route,
+        family: RouteFamily,
+    ) -> Option<RpcQueuedDispatch> {
         let (worker, correlation_id) = {
-            let route_state = self.routes.get_mut(route)?;
+            let route_state = self.routes.get_mut(&(family, route.clone()))?;
             if !route_state.has_available_worker() || !route_state.has_queued_requests() {
                 return None;
             }
@@ -258,7 +307,10 @@ impl RpcState {
 
         let queued = self
             .queued
-            .remove(&correlation_id)
+            .remove(&RpcCorrelationKey {
+                family,
+                correlation_id,
+            })
             .expect("queued request for dispatch");
         let RpcQueuedRequest {
             request,
@@ -280,7 +332,8 @@ impl RpcState {
             submitted_at_instant,
             expires_at,
         });
-        self.pending.track_pending(correlation_id, pending);
+        self.pending
+            .track_pending_for_family(family, correlation_id, pending);
 
         Some(RpcQueuedDispatch {
             request,
@@ -289,15 +342,26 @@ impl RpcState {
         })
     }
 
-    pub(in crate::domains::rpc::sink) fn remove_pending_request(
+    pub(in crate::domains::rpc::sink) fn remove_pending_request_for_family(
         &mut self,
+        family: RouteFamily,
         correlation_id: &uuid::Uuid,
     ) -> Option<(RpcPendingRequest, usize)> {
-        let pending = self.pending.pending.remove(correlation_id)?;
-        if let Some(route_state) = self.routes.get_mut(&pending.route) {
-            route_state.release_worker_slot(pending.worker_slot, None);
+        let pending = self.pending.pending.remove(&RpcCorrelationKey {
+            family,
+            correlation_id: *correlation_id,
+        })?;
+        if let Some(caller) = pending.caller_inbox_addr.as_ref() {
+            if let Some(route_state) = self
+                .routes
+                .get_mut(&(*caller.family(), pending.route.clone()))
+            {
+                route_state.release_worker_slot(pending.worker_slot, None);
+            }
         }
-        self.prune_route_if_empty(&pending.route);
+        if let Some(caller) = pending.caller_inbox_addr.as_ref() {
+            self.prune_route_if_empty_for_family(*caller.family(), &pending.route);
+        }
         Some((pending, self.live_request_count()))
     }
 
@@ -306,8 +370,13 @@ impl RpcState {
         pending: &RpcPendingRequest,
         latency_us: Option<u64>,
     ) {
-        if let Some(route_state) = self.routes.get_mut(&pending.route) {
-            route_state.release_worker_slot(pending.worker_slot, latency_us);
+        if let Some(caller) = pending.caller_inbox_addr.as_ref() {
+            if let Some(route_state) = self
+                .routes
+                .get_mut(&(*caller.family(), pending.route.clone()))
+            {
+                route_state.release_worker_slot(pending.worker_slot, latency_us);
+            }
         }
     }
 
@@ -316,8 +385,13 @@ impl RpcState {
         pending: &RpcPendingDispatchInfo,
         latency_us: Option<u64>,
     ) {
-        if let Some(route_state) = self.routes.get_mut(&pending.route) {
-            route_state.release_worker_slot(pending.worker_slot, latency_us);
+        if let Some(caller) = pending.caller_inbox_addr.as_ref() {
+            if let Some(route_state) = self
+                .routes
+                .get_mut(&(*caller.family(), pending.route.clone()))
+            {
+                route_state.release_worker_slot(pending.worker_slot, latency_us);
+            }
         }
     }
 
@@ -325,15 +399,15 @@ impl RpcState {
         &mut self,
         session_id: u64,
     ) -> usize {
-        let queued_to_remove: Vec<uuid::Uuid> = self
+        let queued_to_remove: Vec<(RouteFamily, uuid::Uuid)> = self
             .queued
             .iter()
             .filter(|(_, queued)| queued.caller_session_id == session_id)
-            .map(|(correlation_id, _)| *correlation_id)
+            .map(|(key, _)| (key.family, key.correlation_id))
             .collect();
 
-        for correlation_id in &queued_to_remove {
-            self.remove_queued_request(correlation_id);
+        for (family, correlation_id) in &queued_to_remove {
+            self.remove_queued_request_for_family(*family, correlation_id);
         }
 
         queued_to_remove.len()
@@ -357,7 +431,7 @@ impl RpcState {
                 .expirations
                 .pop()
                 .expect("pending expiration entry");
-            let Some(pending) = self.pending.pending.get(&expiring.correlation_id) else {
+            let Some(pending) = self.pending.pending.get(&expiring.key) else {
                 continue;
             };
 
@@ -368,15 +442,17 @@ impl RpcState {
             let pending = self
                 .pending
                 .pending
-                .remove(&expiring.correlation_id)
+                .remove(&expiring.key)
                 .expect("tracked pending request");
             self.release_worker_for_pending(&pending, None);
-            self.prune_route_if_empty(&pending.route);
+            if let Some(caller) = pending.caller_inbox_addr.as_ref() {
+                self.prune_route_if_empty_for_family(*caller.family(), &pending.route);
+            }
             removed_pending = removed_pending.saturating_add(1);
 
             if let Some(caller_inbox_addr) = pending.caller_inbox_addr {
                 timeout_deliveries.push(RpcPendingErrorDelivery {
-                    correlation_id: expiring.correlation_id,
+                    correlation_id: expiring.key.correlation_id,
                     caller_session_id: pending.caller_session_id,
                     caller_inbox_addr,
                 });
@@ -394,7 +470,7 @@ impl RpcState {
                 .queued_expirations
                 .pop()
                 .expect("queued expiration entry");
-            let Some(queued) = self.queued.get(&expiring.correlation_id) else {
+            let Some(queued) = self.queued.get(&expiring.key) else {
                 continue;
             };
 
@@ -403,11 +479,11 @@ impl RpcState {
             }
 
             let queued = self
-                .remove_queued_request(&expiring.correlation_id)
+                .remove_queued_request_for_family(expiring.key.family, &expiring.key.correlation_id)
                 .expect("tracked queued request");
             removed_pending = removed_pending.saturating_add(1);
             timeout_deliveries.push(RpcPendingErrorDelivery {
-                correlation_id: expiring.correlation_id,
+                correlation_id: expiring.key.correlation_id,
                 caller_session_id: queued.caller_session_id,
                 caller_inbox_addr: queued.caller_inbox_addr,
             });

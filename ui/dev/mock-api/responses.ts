@@ -13,7 +13,7 @@ import {
   globalStats,
   json,
   kvByte,
-  metricsText,
+  familyMetrics,
   now,
   operationForIndex,
   queueArea,
@@ -25,6 +25,7 @@ import {
   routeFamilies,
   routeFamilyFrom,
   sessions,
+  structuredMetrics,
   text,
   timeline,
   topology,
@@ -512,6 +513,23 @@ export function apiResponse(method: string, url: URL): MockResponse | null {
       username: "mock-admin",
     });
   }
+  const familyScopedRoute = url.pathname.match(
+    /^\/api\/v1\/(\d+)\/(sessions|stats|topology|troubleshooting)$/,
+  );
+  if (familyScopedRoute) {
+    switch (familyScopedRoute[2]) {
+      case "sessions":
+        return json(sessions);
+      case "stats":
+        return json(globalStats);
+      case "topology":
+        return json(topology);
+      case "troubleshooting":
+        return json(diagnostics);
+      default:
+        return null;
+    }
+  }
   if (url.pathname === "/api/v1/sessions") return json(sessions);
   if (url.pathname === "/api/v1/stats") return json(globalStats);
   if (url.pathname === "/api/v1/topology") return json(topology);
@@ -533,7 +551,9 @@ export function mockFitzResponse(method: string | undefined, requestUrl: string 
   const url = new URL(requestUrl ?? "/", "http://fitz.mock");
 
   if (requestMethod === "OPTIONS") return text("", 204);
-  if (url.pathname === "/metrics") return text(metricsText);
+  if (url.pathname === "/api/v1/all/metrics") return json(structuredMetrics);
+  const familyMetricsMatch = url.pathname.match(/^\/api\/v1\/(\d+)\/metrics$/);
+  if (familyMetricsMatch) return json(familyMetrics(familyMetricsMatch[1]));
 
   const response = apiResponse(requestMethod, url);
   if (response) return response;

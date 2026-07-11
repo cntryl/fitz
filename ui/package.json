@@ -11,12 +11,14 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "install:browsers": "playwright install chromium",
+    "validate:openapi": "npx --yes @redocly/cli lint ../public/openapi.yml",
+    "check:generated": "npm run gen:adapters && git diff --exit-code -- src/adapters/generated/api.ts",
     "type-check": "tsc --noEmit",
     "lint": "vp lint .",
     "lint:fix": "vp lint src tests --fix",
     "fmt": "vp fmt .",
     "gen": "npm run gen:adapters && npm run fmt",
-    "gen:adapters": "npx @fgrzl/fetch-gen --input ../public/openapi.yml --output ./src/adapters/generated/api.ts"
+    "gen:adapters": "npx @fgrzl/fetch-gen --input ../public/openapi.yml --output ./src/adapters/generated/api.ts && node ./scripts/normalize-generated.js"
   },
   "dependencies": {
     "@askrjs/askr": "0.0.50",

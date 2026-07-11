@@ -193,8 +193,6 @@ fn should_export_schedule_metrics_given_preloaded_schedule_runtime() {
     assert!(metrics.contains("fitz_schedule_notify_failures_total 0"));
     assert!(metrics.contains("fitz_schedule_ack_failures_total 0"));
     assert!(metrics.contains("fitz_schedule_overdue_normalizations_total 0"));
-    assert!(metrics.contains("fitz_schedule_pending_claims_expired_total 0"));
-    assert!(metrics.contains("fitz_schedule_pending_claim_cleanup_failure_total 0"));
     assert!(metrics.contains("fitz_schedule_latency_ms{le=\"100ms\"}"));
     assert!(metrics.contains(&format!(
         "fitz_schedule_latency_ms{{le=\"100ms\"}} {}",

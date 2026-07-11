@@ -53,3 +53,39 @@ fn build_messaging_topology(runtime: &Runtime) -> MessagingTopology {
 pub fn handle_topology(runtime: &Runtime) -> Response {
     super::json_response(build_messaging_topology(runtime))
 }
+
+/// Return only topology records attributable to one authorized family.
+pub fn handle_family_topology(runtime: &Runtime, family: u64) -> Response {
+    let mut topology = build_messaging_topology(runtime);
+    topology
+        .session_groups
+        .retain(|group| group.route_family == family);
+    topology.broker.sessions = topology
+        .session_groups
+        .iter()
+        .map(|group| group.sessions)
+        .sum();
+    topology.broker.connections = topology.broker.sessions;
+    topology.broker.uptime_seconds = 0;
+    topology.broker.realms.clear();
+    topology.broker.messages_per_second = 0.0;
+    topology.broker.router_backpressure_total = 0;
+    topology.broker.router_high_lane_backpressure_total = 0;
+    topology.diagnostics = super::troubleshooting::healthy_global_diagnostics();
+    topology.lanes.iter_mut().for_each(|lane| {
+        lane.top_scoped_resources
+            .retain(|resource| resource.scope.route_family == Some(family));
+        lane.diagnostics = super::troubleshooting::healthy_domain_diagnostics().snapshot;
+        lane.consumers = 0;
+        lane.observers = 0;
+        lane.activity_per_second = 0.0;
+        lane.counters.clear();
+    });
+    topology
+        .connections
+        .items
+        .retain(|connection| connection.scope.route_family == Some(family));
+    topology.connections.total = topology.connections.items.len();
+    topology.connections.truncated = false;
+    super::json_response(topology)
+}

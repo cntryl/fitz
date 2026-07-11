@@ -93,8 +93,8 @@ pub(super) fn parse_family_scope(
 
     let family = value.parse::<u64>().map_err(|_| {
         Box::new(super::error_response(
-            StatusCode::BAD_REQUEST,
-            "Invalid route family path segment",
+            StatusCode::NOT_FOUND,
+            "Route family path segment is required",
         ))
     })?;
 

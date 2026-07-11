@@ -1,6 +1,6 @@
 use super::{
-    drain_session_tasks, record_connection_closed, record_connection_opened, session_tasks,
-    websocket::handle_websocket, ListenerHandle,
+    drain_session_tasks, reap_session_tasks, record_connection_opened, session_tasks,
+    websocket::handle_websocket, ConnectionLifecycle, ListenerHandle,
 };
 use crate::api::http::Request;
 use crate::api::ingress::IngressConfig;
@@ -59,6 +59,8 @@ pub fn spawn_http_listener_with_bound_socket(
     let join = tokio::spawn(async move {
         let connections = session_tasks();
         let websockets = session_tasks();
+        let mut reap_interval = tokio::time::interval(std::time::Duration::from_millis(250));
+        reap_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let _ = ready_tx.send(());
 
         loop {
@@ -77,13 +79,16 @@ pub fn spawn_http_listener_with_bound_socket(
                             record_connection_opened();
 
                             info!("HTTP connection from {}", peer_addr);
+                            runtime.increment_connections();
+                            let accepted_at = tokio::time::Instant::now();
+                            let lifecycle = ConnectionLifecycle::new(runtime.clone(), permit);
                             let ingress = ingress.clone();
                             let config = http_config.clone();
                             let runtime = runtime.clone();
                             let websocket_tasks = websockets.clone();
                             let ws_allowed_origins = ws_allowed_origins.clone();
                             connections.lock().await.spawn(async move {
-                                if let Err(e) = handle_http_upgrade(stream, ingress, config, runtime, websocket_tasks, ws_allowed_origins, permit).await {
+                                if let Err(e) = handle_http_upgrade(stream, ingress, config, runtime, websocket_tasks, ws_allowed_origins, lifecycle, accepted_at).await {
                                     tracing::error!("HTTP handler error: {}", e);
                                 }
                             });
@@ -92,6 +97,10 @@ pub fn spawn_http_listener_with_bound_socket(
                             tracing::error!("HTTP accept error: {}", e);
                         }
                     }
+                }
+                _ = reap_interval.tick() => {
+                    reap_session_tasks("http", &connections).await;
+                    reap_session_tasks("websocket", &websockets).await;
                 }
             }
         }
@@ -106,6 +115,7 @@ pub fn spawn_http_listener_with_bound_socket(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_http_upgrade(
     stream: TcpStream,
     ingress: Arc<dyn Ingress>,
@@ -113,21 +123,21 @@ async fn handle_http_upgrade(
     runtime: Arc<crate::boot::Runtime>,
     websocket_tasks: super::SessionTasks,
     ws_allowed_origins: Arc<Vec<crate::api::origin::ExactOrigin>>,
-    permit: tokio::sync::OwnedSemaphorePermit,
+    lifecycle: ConnectionLifecycle,
+    accepted_at: tokio::time::Instant,
 ) -> Result<(), Box<dyn std::error::Error>> {
     stream.set_nodelay(true)?;
 
-    runtime.increment_connections();
-
     let runtime_clone = runtime.clone();
-    let connection_permit = Arc::new(std::sync::Mutex::new(Some(permit)));
+    let connection_lifecycle = lifecycle.clone();
     let service = service_fn(move |req| {
         let ingress = ingress.clone();
         let config = config.clone();
         let runtime = runtime_clone.clone();
         let websocket_tasks = websocket_tasks.clone();
         let ws_allowed_origins = ws_allowed_origins.clone();
-        let connection_permit = connection_permit.clone();
+        let connection_lifecycle = connection_lifecycle.clone();
+        let accepted_at = accepted_at;
 
         async move {
             if is_websocket_upgrade(&req) {
@@ -138,7 +148,8 @@ async fn handle_http_upgrade(
                     runtime,
                     websocket_tasks,
                     ws_allowed_origins,
-                    connection_permit,
+                    connection_lifecycle,
+                    accepted_at,
                 )
                 .await
             } else {
@@ -157,8 +168,7 @@ async fn handle_http_upgrade(
         tracing::debug!("HTTP connection error: {}", e);
     }
 
-    record_connection_closed();
-    runtime.decrement_connections();
+    lifecycle.finish_http();
 
     Ok(())
 }

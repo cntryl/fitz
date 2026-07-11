@@ -18,6 +18,23 @@ const LIFECYCLE_SHUTTING_DOWN: u8 = 2;
 
 const DEFAULT_DRAIN_GRACE_SECONDS: u64 = 25;
 const DEFAULT_DRAIN_CLOSE_REASON: &str = "broker draining for redeploy";
+const ADMIN_BLOCKING_EXECUTOR_CAPACITY: usize = 8;
+
+/// An owned slot in the bounded API-edge blocking executor.
+///
+/// This deliberately uses synchronous atomics because the permit is also
+/// stored in `Runtime`, which is shared with the synchronous core. The slot
+/// is returned when the blocking task drops the permit.
+pub(crate) struct AdminBlockingPermit {
+    slots: Arc<AtomicUsize>,
+}
+
+impl Drop for AdminBlockingPermit {
+    fn drop(&mut self) {
+        self.slots
+            .fetch_add(1, std::sync::atomic::Ordering::Release);
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BrokerLifecycleState {
@@ -91,6 +108,17 @@ pub struct Runtime {
     /// Active session count
     pub(crate) session_count: Arc<AtomicUsize>,
 
+    /// Number of synchronous family actor shards selected at startup.
+    pub(crate) family_actor_shards: Arc<AtomicUsize>,
+
+    /// Provisioned-family affinity table used by runtime dispatch adapters.
+    /// The pool is configured before transports start accepting work.
+    pub(crate) family_actor_ingress: Arc<RwLock<Option<crate::runtime::FamilyActorIngress<()>>>>,
+
+    /// Set when an unrecoverable production domain actor failure requires the
+    /// boot loop to terminate with a non-zero result.
+    pub(crate) fatal_domain_failure: Arc<AtomicBool>,
+
     /// Total messages received
     pub(crate) messages_received: Arc<AtomicU64>,
 
@@ -114,4 +142,8 @@ pub struct Runtime {
 
     /// Whether a validated external TLS terminator protects public browser traffic.
     pub(crate) assume_external_tls: Arc<AtomicBool>,
+
+    /// Available slots for synchronous storage-backed admin work moved off
+    /// Tokio workers.
+    pub(crate) admin_blocking_slots: Arc<AtomicUsize>,
 }

@@ -24,10 +24,24 @@ pub(super) fn dispatch_session_cleanup(
     route_family: crate::runtime::routing::RouteFamily,
     session_id: u64,
 ) -> Vec<DispatchDomain> {
+    dispatch_session_cleanup_for_domains(
+        router,
+        route_family,
+        session_id,
+        crate::runtime::DomainRegistry::cleanup_order(),
+    )
+}
+
+pub(super) fn dispatch_session_cleanup_for_domains(
+    router: &crate::runtime::Router,
+    route_family: crate::runtime::routing::RouteFamily,
+    session_id: u64,
+    domains: &[DispatchDomain],
+) -> Vec<DispatchDomain> {
     let cleanup = crate::runtime::SessionCleanup { session_id };
     let mut failed_domains = Vec::new();
 
-    for &domain in crate::runtime::DomainRegistry::cleanup_order() {
+    for &domain in domains {
         let cleanup_addr =
             crate::runtime::routing::RouteAddress::new(route_family, domain.cleanup_route());
         let cleanup_envelope = crate::runtime::Envelope::new(cleanup_addr, cleanup.clone());
@@ -115,9 +129,12 @@ pub(super) struct DomainDispatchRequest<'a> {
     pub(super) payload: DomainDispatchPayload<'a>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(super) struct PendingSessionCleanup {
     pub(super) route_family: crate::runtime::routing::RouteFamily,
+    pub(super) pending_domains: Vec<DispatchDomain>,
+    pub(super) created_at: std::time::Instant,
+    pub(super) attempts: u32,
 }
 
 impl AuthorizationTargets<'_> {
@@ -251,8 +268,14 @@ pub struct RuntimeIngress {
     pub(super) session_inbox_routes: Arc<DashMap<u64, crate::runtime::routing::Route>>,
     /// Best-effort retry tickets for session cleanups that failed initial delivery.
     pub(super) pending_session_cleanups: Arc<DashMap<u64, PendingSessionCleanup>>,
-    /// Prevent overlapping pending-cleanup sweeps from issuing duplicate retries.
-    pub(super) cleanup_retry_in_progress: Arc<AtomicBool>,
+    /// Wakes the dedicated cleanup worker immediately when a ticket is added.
+    pub(super) cleanup_wake: Arc<tokio::sync::Notify>,
+    /// Ensures one cleanup worker services the pending ticket set.
+    pub(super) cleanup_worker_started: Arc<AtomicBool>,
+    /// Allows graceful shutdown to stop the worker after tickets drain.
+    pub(super) cleanup_shutdown: Arc<AtomicBool>,
+    /// Idempotence barrier for the session finalizer.
+    pub(super) closed_sessions: Arc<DashMap<u64, ()>>,
     /// Optional router for dispatching frames to domain sinks
     pub(super) router: Option<Arc<crate::runtime::Router>>,
     /// Optional callback for session events (for routing to handlers)

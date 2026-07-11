@@ -605,7 +605,7 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("Infrastructure signals");
     expect(text).toContain("Domain internals");
     expect(text).toContain("Advanced operational views");
-    expect(text).toContain("Prometheus metrics");
+    expect(text).toContain("Structured metrics");
     expect(text).toContain("Storage health");
     expect(text).toContain("Not exposed");
     expect(text).toContain("Hotspots");

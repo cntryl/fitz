@@ -1,19 +1,7 @@
 import { FetchClient } from "@fgrzl/fetch";
-import { addLogging, addRateLimit, addRetry } from "@fgrzl/fetch/middleware";
+import { addLogging, addRateLimit, createRetryMiddleware } from "@fgrzl/fetch/middleware";
+import { navigate } from "@askrjs/askr/router";
 import { appConfig } from "@/shared/config";
-
-const DOMAIN_API_SEGMENTS = new Set([
-  "kv",
-  "queue",
-  "stream",
-  "lease",
-  "schedule",
-  "notice",
-  "rpc",
-]);
-const ROUTE_FAMILY_STORAGE_KEY = "fitz-admin-route-family";
-const DEFAULT_ROUTE_FAMILY_SEGMENT = "1";
-const routeFamilyPattern = /^\d+$/;
 
 function createTraceId() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -23,73 +11,50 @@ function createTraceId() {
   return `fitz-ui-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function routeFamilyFromLocation() {
-  if (typeof window === "undefined") {
-    return DEFAULT_ROUTE_FAMILY_SEGMENT;
-  }
-
-  const parts = window.location.pathname.split("/").filter(Boolean);
-  if (parts[0] === "admin" && routeFamilyPattern.test(parts[1] ?? "")) {
-    return decodeURIComponent(parts[1]);
-  }
-
-  const storedRouteFamily = window.localStorage?.getItem(ROUTE_FAMILY_STORAGE_KEY);
-
-  return routeFamilyPattern.test(storedRouteFamily ?? "")
-    ? (storedRouteFamily ?? DEFAULT_ROUTE_FAMILY_SEGMENT)
-    : DEFAULT_ROUTE_FAMILY_SEGMENT;
-}
-
-function familyFirstAdminUrl(url: string | undefined) {
-  if (!url) {
-    return url;
-  }
-
-  const parsed = new URL(url, "http://fitz.local");
-  const parts = parsed.pathname.split("/").filter(Boolean);
-
-  if (parts[0] !== "api" || parts[1] !== "v1" || !DOMAIN_API_SEGMENTS.has(parts[2])) {
-    return url;
-  }
-
-  parts.splice(2, 0, routeFamilyFromLocation());
-  parsed.pathname = `/${parts.map((part) => encodeURIComponent(decodeURIComponent(part))).join("/")}`;
-
-  if (/^https?:\/\//.test(url)) {
-    return parsed.toString();
-  }
-
-  return `${parsed.pathname}${parsed.search}${parsed.hash}`;
-}
-
 // Adapter boundary only: configure transport concerns here, not DTO mapping or app logic.
 export const client = new FetchClient({
-  baseUrl: appConfig.apiBaseUrl,
   credentials: "same-origin",
   timeout: appConfig.requestTimeoutMs,
 });
 
-client.use((request, next) => {
-  return next({
-    ...request,
-    url: familyFirstAdminUrl(request.url),
-  });
-});
-
-addRetry(client, {
+const retry = createRetryMiddleware({
   maxRetries: 2,
   delay: 750,
+});
+
+client.use((request, next) => {
+  if (request.method === "GET" || request.method === "HEAD") {
+    return retry(request, next);
+  }
+
+  return next(request);
+});
+
+client.use(async (request, next) => {
+  const response = await next(request);
+  if (
+    response.status === 401 &&
+    typeof window !== "undefined" &&
+    request.method !== "DELETE" &&
+    !window.location.pathname.startsWith("/login")
+  ) {
+    void fetch("/api/v1/session", {
+      credentials: "same-origin",
+      headers: { Accept: "application/json" },
+      method: "DELETE",
+    });
+    navigate("/login", { history: "replace" });
+  }
+  return response;
 });
 
 addRateLimit(client, {
   maxRequests: 100,
   windowMs: 60 * 1000,
-  skipPatterns: ["/metrics"],
 });
 
 addLogging(client, {
   level: appConfig.logLevel,
-  skipPatterns: ["/metrics"],
 });
 
 client.use((request, next) => {

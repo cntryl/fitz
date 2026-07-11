@@ -260,8 +260,6 @@ export const domainStats = {
     oldest_pending_claim_age_seconds: 75,
     overdue_normalizations_total: 3,
     pending_ack_retries: 4,
-    pending_claim_cleanup_failures_total: 0,
-    pending_claims_expired_total: 2,
     pending_fire_claims: 6,
     request_latency_buckets: latencyBuckets,
     schedules_active: 19,
@@ -487,35 +485,63 @@ export const topology = {
   ],
 };
 
-export const metricsText = `# HELP fitz_uptime_seconds Broker uptime in seconds
-# TYPE fitz_uptime_seconds gauge
-fitz_uptime_seconds 172840
+const structuredMetricSamples = [
+  {
+    help: "Broker uptime in seconds",
+    kind: "gauge" as const,
+    labels: {},
+    name: "fitz_uptime_seconds",
+    value: 172840,
+  },
+  {
+    help: "Pending queue messages",
+    kind: "gauge" as const,
+    labels: {},
+    name: "fitz_queue_messages_pending",
+    value: 37,
+  },
+  {
+    help: "Pending RPC requests",
+    kind: "gauge" as const,
+    labels: {},
+    name: "fitz_rpc_requests_pending",
+    value: 14,
+  },
+  {
+    help: "Notice delivery drops",
+    kind: "counter" as const,
+    labels: {},
+    name: "fitz_notice_delivery_drops_total",
+    value: 3,
+  },
+  {
+    help: "Schedule latency",
+    kind: "histogram" as const,
+    labels: { le: "100ms" },
+    name: "fitz_schedule_latency_ms",
+    value: 35,
+  },
+];
 
-# HELP fitz_queue_messages_pending Pending queue messages
-# TYPE fitz_queue_messages_pending gauge
-fitz_queue_messages_pending 37
+export const structuredMetrics = {
+  generated_at: 1782743400000,
+  samples: structuredMetricSamples,
+  scope: "all" as const,
+};
 
-# HELP fitz_rpc_requests_pending Pending RPC requests
-# TYPE fitz_rpc_requests_pending gauge
-fitz_rpc_requests_pending 14
-
-# HELP fitz_notice_delivery_drops_total Notice delivery drops
-# TYPE fitz_notice_delivery_drops_total counter
-fitz_notice_delivery_drops_total 3
-
-# HELP fitz_schedule_latency_ms Schedule request latency
-# TYPE fitz_schedule_latency_ms histogram
-fitz_schedule_latency_ms{le="1ms"} 3
-fitz_schedule_latency_ms{le="5ms"} 9
-fitz_schedule_latency_ms{le="10ms"} 18
-fitz_schedule_latency_ms{le="50ms"} 30
-fitz_schedule_latency_ms{le="100ms"} 35
-fitz_schedule_latency_ms{le="500ms"} 37
-fitz_schedule_latency_ms{le="1s"} 38
-fitz_schedule_latency_ms{le="5s"} 38
-fitz_schedule_latency_ms{le="+Inf"} 38
-fitz_schedule_latency_ms_count 38
-`;
+export function familyMetrics(family: string) {
+  return {
+    family: Number(family),
+    generated_at: structuredMetrics.generated_at,
+    samples: structuredMetricSamples
+      .filter((sample) => sample.name !== "fitz_uptime_seconds")
+      .map((sample) => ({
+        ...sample,
+        labels: { ...sample.labels, family },
+      })),
+    scope: "family" as const,
+  };
+}
 
 export function routeFamilyFrom(value: string) {
   const parsed = Number(value);
@@ -728,4 +754,3 @@ export function comparison(domain: Domain, family: number, realm: string, area: 
 export function kvByte(value: string) {
   return { base64: btoa(value), len_bytes: value.length, utf8: value };
 }
-

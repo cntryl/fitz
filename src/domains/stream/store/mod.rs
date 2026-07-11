@@ -27,7 +27,6 @@ std::thread_local! {
     static FAIL_NEXT_REALM_WATERMARK_GUARD_READ: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FAIL_NEXT_AREA_WATERMARK_PERSIST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FAIL_NEXT_REALM_WATERMARK_PERSIST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    static FAIL_NEXT_PROMOTION_FRONTIER_COMMIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 #[derive(Debug, Clone)]
@@ -277,6 +276,8 @@ pub struct StreamStore {
     sequencing_guards: Arc<Mutex<HashMap<SequenceGuardKey, SequenceGuard>>>,
     realm_sequence_states: Arc<Mutex<HashMap<RealmSequenceStateKey, RealmSequenceStateHandle>>>,
     resource_meta_states: Arc<Mutex<HashMap<SequenceGuardKey, ResourceMetaStateHandle>>>,
+    #[cfg(test)]
+    fail_next_promotion_frontier_commit: std::sync::atomic::AtomicBool,
 }
 
 #[allow(clippy::struct_field_names)]

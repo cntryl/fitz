@@ -73,7 +73,7 @@ Queue has a separate hot-path policy:
 2. Give each broker process its own `FITZ_STORAGE_CACHE_PATH`.
 3. Use a stable `FITZ_STORAGE_PREFIX` per environment, such as `dev`, `staging`, or `prod`.
 4. Configure provider namespace, endpoint, region, and credentials outside the image.
-5. Configure `/livez`, `/targetz`, `/startupz`, `/healthz`, `/readyz`, and `/metrics` monitoring before customer traffic.
+5. Configure `/livez`, `/targetz`, `/startupz`, `/healthz`, and `/readyz` on the HTTP listener, plus `FITZ_METRICS_BIND_ADDR:FITZ_METRICS_PORT/metrics` for Prometheus before customer traffic.
 6. For single-active rolling handoff, use `/targetz` for target eligibility and keep `/readyz` or `/healthz` for strict data-plane readiness.
 
 Endpoint details are in [../admin/admin-api.md](../admin/admin-api.md) and [observability.md](observability.md).

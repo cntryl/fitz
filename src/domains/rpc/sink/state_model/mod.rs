@@ -2,7 +2,9 @@ pub(super) use crate::domains::rpc::{RpcClientRequest, RpcClientResponseBody};
 pub(super) type RpcDeliveryOutcome = (Option<RpcClientResponseBody>, Option<bool>, bool);
 #[cfg(test)]
 pub(super) use crate::protocol::frame_context::FrameContext;
-pub(super) use crate::runtime::routing::{route_quad, session_inbox_address, Route, RouteAddress};
+pub(super) use crate::runtime::routing::{
+    route_quad, session_inbox_address, Route, RouteAddress, RouteFamily,
+};
 pub(super) use crate::runtime::{DeliveryError, Envelope, MailboxSink, ManagedActor, Router};
 pub(super) use chrono::{DateTime, Utc};
 pub(super) use fxhash::FxBuildHasher;
@@ -14,6 +16,12 @@ pub(super) use std::sync::Arc;
 pub(super) use std::time::{Duration, Instant};
 
 pub(super) type RpcFastMap<K, V> = HashMap<K, V, FxBuildHasher>;
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(super) struct RpcCorrelationKey {
+    pub(super) family: RouteFamily,
+    pub(super) correlation_id: uuid::Uuid,
+}
 
 mod constants;
 mod expiration;

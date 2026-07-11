@@ -80,8 +80,8 @@ pub use resource_inventory::{
     collect_areas, collect_kv_resources, collect_realms, collect_resources,
     kv_committed_value_for_resource, kv_prefix_scan_for_resource, kv_resources,
     kv_rows_for_resource, kv_transactions_for_resource, lease_resources, list_sessions,
-    notice_resources, queue_resources, rpc_operations, rpc_resources, schedule_resources,
-    stream_resources,
+    list_sessions_for_family, notice_resources, queue_resources, rpc_operations, rpc_resources,
+    schedule_resources, stream_resources,
 };
 pub(crate) use resource_paths::{
     collect_distinct_entries, collect_resource_refs, matches_family, IntoResourceRef,

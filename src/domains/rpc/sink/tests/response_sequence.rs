@@ -41,7 +41,14 @@ fn should_retain_pending_request_before_stream_end_given_rpc_pending_table() {
             assert_eq!(tracked.worker_slot, 0);
             assert!(!removed_pending);
             assert_eq!(pending.len(), 1);
-            assert_eq!(pending.pending[&correlation_id].next_expected_seq, 1);
+            assert_eq!(
+                pending.pending[&RpcCorrelationKey {
+                    family: RouteFamily::new(1),
+                    correlation_id,
+                }]
+                    .next_expected_seq,
+                1
+            );
         }
         other => panic!("expected non-terminal response handling, found {other:?}"),
     }

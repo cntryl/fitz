@@ -5,7 +5,7 @@
 //! - `routing`: Universal addressing model (`RouteFamily`, Route, `RouteAddress`)
 //! - `actor`: Actor trait and lifecycle
 //! - `mailbox`: Message queuing
-//! - `scheduler`: Actor scheduling
+//! - `family_actor_pool`: fixed-affinity family scheduling and bounded lanes
 //! - `envelope`: Message metadata and routing
 //! - `router`: Message delivery infrastructure
 //! - `matcher`: Wildcard pattern matching
@@ -28,12 +28,16 @@ pub mod context;
 pub mod domain_event;
 pub mod domain_manifest;
 pub mod envelope;
+pub mod family_actor_pool;
 pub mod mailbox;
 pub mod managed_actor;
 pub mod matcher;
 pub mod router;
 pub mod routing;
-pub mod scheduler;
+/// Legacy actor fixture retained only for unit tests; production uses family
+/// actor pools and managed actors directly.
+#[cfg(test)]
+pub(crate) mod scheduler;
 pub mod subscriptions;
 pub mod supervision;
 
@@ -47,10 +51,14 @@ pub use context::{Timer, TimerId, TimerManager};
 pub use domain_event::{DomainPublishEvent, SessionCleanup};
 pub use domain_manifest::{DomainDescriptor, DomainKind, DomainRegistry};
 pub use envelope::{Envelope, MessageId};
+pub use family_actor_pool::{
+    family_shard_affinity, shard_count_for_family_count, FamilyActorEnqueueError,
+    FamilyActorIngress, FamilyActorLane, FamilyActorPool, FamilyActorPoolError, FamilyActorShard,
+    FamilyActorWork, FAMILY_ACTOR_CONTROL_LANE_CAPACITY, FAMILY_ACTOR_NORMAL_LANE_CAPACITY,
+};
 pub use mailbox::Mailbox;
 pub use managed_actor::{ManagedActor, ManagedActorHealthSnapshot};
 pub use matcher::{Pattern, PatternSegment};
 pub use router::{DeliveryError, MailboxSink, RouteError, Router};
-pub use scheduler::Scheduler;
 pub use subscriptions::{SubscriptionId, SubscriptionIndex};
 pub use supervision::{SupervisionAction, SupervisorStrategy};

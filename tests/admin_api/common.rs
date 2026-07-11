@@ -36,6 +36,7 @@ pub(crate) use fitz::testkit::body;
 pub(crate) use hyper::header::{COOKIE, SET_COOKIE};
 pub(crate) use hyper::{Method, StatusCode};
 pub(crate) use serial_test::serial;
+use std::fmt::Write as _;
 pub(crate) use std::sync::Arc;
 pub(crate) use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -135,6 +136,42 @@ pub(crate) fn assert_prometheus_counter(metrics: &str, name: &str, value: u64) {
         metrics.contains(&format!("{name} {value}")),
         "missing sample line for {name}={value}"
     );
+}
+
+/// Convert the structured metrics response into a test-only text view so the
+/// historical metric assertions continue to verify names, kinds, labels, and
+/// values without making the production API parse Prometheus text.
+pub(crate) fn structured_metrics_text(body: &[u8]) -> String {
+    let payload: serde_json::Value = serde_json::from_slice(body).expect("structured metrics JSON");
+    let mut output = String::new();
+    for sample in payload["samples"].as_array().expect("metrics samples") {
+        let name = sample["name"].as_str().expect("metric name");
+        let help = sample["help"].as_str().expect("metric help");
+        let kind = sample["kind"].as_str().expect("metric kind");
+        writeln!(&mut output, "# HELP {name} {help}").expect("write metric help");
+        writeln!(&mut output, "# TYPE {name} {kind}").expect("write metric type");
+        let labels = sample["labels"].as_object().expect("metric labels");
+        let labels = labels
+            .iter()
+            .map(|(key, value)| {
+                format!("{key}=\"{}\"", value.as_str().expect("metric label value"))
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let sample_name = if labels.is_empty() {
+            name.to_string()
+        } else {
+            format!("{name}{{{labels}}}")
+        };
+        let value = sample["value"].as_f64().expect("metric value");
+        let value = if value.is_finite() && value.fract() == 0.0 {
+            format!("{value:.0}")
+        } else {
+            value.to_string()
+        };
+        writeln!(&mut output, "{sample_name} {value}").expect("write metric sample");
+    }
+    output
 }
 
 pub(crate) fn mark_runtime_ready(runtime: &Runtime) {

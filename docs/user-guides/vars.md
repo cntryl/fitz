@@ -111,6 +111,12 @@ For the complete production auth and browser-perimeter checklist, see [../operat
 | FITZ_STREAM_STORAGE_LAYOUT | promotion-frontier or aliases | promotion-frontier | Stream layout selector. Legacy aliases are accepted but normalized to promotion-frontier. |
 | FITZ_MIN_MEMORY_BYTES | Unsigned integer byte count | 134217728 | Startup preflight minimum cgroup memory threshold. Set 0 to bypass memory-limit check. |
 
+Schedule persistence follows the selected storage mode. `memory` mode uses
+best-effort writes and does not promise restart recovery. Persistent local and
+background-cloud modes wait for local sync; strict-cloud mode waits for the
+provider acknowledgement. Definitions and unresolved fire claims have no
+age-based expiry; cancellation or deletion is the explicit resolution path.
+
 ### Provider-Specific FITZ Keys
 
 | Key | Used By | Notes |
@@ -129,7 +135,8 @@ For the complete production auth and browser-perimeter checklist, see [../operat
 | --- | --- | --- | --- |
 | FITZ_LOG_FORMAT | text or json | text | Log formatter style. |
 | FITZ_LOG_LEVEL | trace, debug, info, warn, etc | info | Base log level for Fitz logger. |
-| FITZ_METRICS_PORT | u16 port | 9090 | Prometheus metrics endpoint port. |
+| FITZ_METRICS_BIND_ADDR | IP or hostname | 127.0.0.1 | Bind address for the dedicated unauthenticated Prometheus listener. |
+| FITZ_METRICS_PORT | u16 port | 9090 | Prometheus metrics endpoint port on the dedicated listener. |
 | FITZ_HOT_PATH_METRICS | 1/true/yes/on to enable | false | Enables expensive hot-path attribution metrics. |
 | FITZ_SERVICE_INSTANCE_ID | String | Generated UUID | Service instance metadata for tracing resources. |
 | FITZ_DEPLOYMENT_ENVIRONMENT | String | unknown | Deployment environment metadata for tracing resources. |

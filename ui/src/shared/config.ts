@@ -50,7 +50,6 @@ export function parseDashboardPollIntervalMs(value: string | undefined) {
 }
 
 export const appConfig = {
-  apiBaseUrl: import.meta.env.VITE_FITZ_API_BASE_URL ?? "",
   dashboardPollIntervalMs: parseDashboardPollIntervalMs(
     import.meta.env.VITE_FITZ_DASHBOARD_POLL_INTERVAL_MS,
   ),

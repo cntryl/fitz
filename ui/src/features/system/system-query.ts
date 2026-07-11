@@ -1,14 +1,17 @@
 import { createQuery, queryScope } from "@askrjs/askr/data";
 import { systemService } from "./system-service";
 import type { SystemOverview } from "./system-models";
+import { currentRouteFamilySegment } from "@/shared/navigation/domains";
 
 const systemQueries = queryScope("system");
 
-export const SYSTEM_OVERVIEW_KEY = systemQueries.key("overview");
+export function systemOverviewQueryKey(family = currentRouteFamilySegment()) {
+  return systemQueries.key("overview", family);
+}
 
-export function createSystemOverviewQuery() {
+export function createSystemOverviewQuery(family = currentRouteFamilySegment()) {
   return createQuery<SystemOverview>({
-    key: SYSTEM_OVERVIEW_KEY,
-    fetch: systemService.getOverview,
+    key: systemOverviewQueryKey(family),
+    fetch: (options) => systemService.getOverview(family, options),
   });
 }

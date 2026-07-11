@@ -174,6 +174,15 @@ When evaluating a proposed change, ask:
 6. Is cross-domain composition explicit?
 7. Would Fitz still behave correctly if observability were removed?
 
+The same rules apply to runtime ownership: family-affine actors are the owner
+of family state, transport code only enqueues bounded work, and an actor panic
+fails closed. Readiness and drain state may report that failure, but telemetry
+must not be used as a correctness or recovery mechanism.
+
+Protocol validation follows one exact manifest. A numeric range, domain name,
+or admin route must not grant access by itself; the manifest entry, required
+scheme, direction, and family-scoped authorization policy are authoritative.
+
 If any answer is wrong, reject the change.
 
 ## Final Invariant

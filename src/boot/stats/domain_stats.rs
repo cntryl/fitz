@@ -697,16 +697,6 @@ impl Runtime {
     }
 
     #[must_use]
-    pub fn schedule_pending_claims_expired_total(&self) -> u64 {
-        metric_counter("fitz_schedule_pending_claims_expired_total")
-    }
-
-    #[must_use]
-    pub fn schedule_pending_claim_cleanup_failures_total(&self) -> u64 {
-        metric_counter("fitz_schedule_pending_claim_cleanup_failure_total")
-    }
-
-    #[must_use]
     pub fn schedule_create_persistence_failures_total(&self) -> u64 {
         metric_counter(METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL)
     }

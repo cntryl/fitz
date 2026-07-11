@@ -58,6 +58,9 @@ impl Runtime {
             )),
             connection_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             session_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            family_actor_shards: Arc::new(std::sync::atomic::AtomicUsize::new(1)),
+            family_actor_ingress: Arc::new(parking_lot::RwLock::new(None)),
+            fatal_domain_failure: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             messages_received: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             messages_sent: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             admin_auth: Arc::new(crate::api::admin::auth::AdminAuth::from_env()),
@@ -66,6 +69,9 @@ impl Runtime {
             domains: Arc::new(parking_lot::RwLock::new(None)),
             auth_config: Arc::new(parking_lot::RwLock::new(crate::auth::AuthConfig::Disabled)),
             assume_external_tls: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            admin_blocking_slots: Arc::new(std::sync::atomic::AtomicUsize::new(
+                super::ADMIN_BLOCKING_EXECUTOR_CAPACITY,
+            )),
         }
     }
 
@@ -83,8 +89,56 @@ impl Runtime {
         *self.ingress.write() = Some(ingress);
     }
 
+    ///
+    /// # Panics
+    ///
+    /// Panics if boot configuration validation allowed an invalid or empty
+    /// route-family set through to runtime initialization.
+    pub fn configure_route_families(&self, route_families: &[u32]) {
+        self.admin_auth
+            .set_provisioned_route_families(route_families);
+        let families = route_families
+            .iter()
+            .copied()
+            .map(crate::runtime::routing::RouteFamily::new)
+            .collect::<Vec<_>>();
+        let pool = crate::runtime::FamilyActorPool::<()>::new(&families)
+            .expect("validated route families must provision a family actor pool");
+        self.family_actor_shards
+            .store(pool.shard_count(), Ordering::Release);
+        *self.family_actor_ingress.write() = Some(pool.ingress());
+    }
+
+    #[must_use]
+    pub fn family_actor_shard_count(&self) -> usize {
+        self.family_actor_shards.load(Ordering::Acquire)
+    }
+
+    #[must_use]
+    pub fn family_actor_shard_for(
+        &self,
+        family: crate::runtime::routing::RouteFamily,
+    ) -> Option<usize> {
+        self.family_actor_ingress
+            .read()
+            .as_ref()
+            .and_then(|ingress| ingress.shard_for_family(family))
+    }
+
     pub fn attach_domains(&self, domains: Arc<DomainHandles>) {
         *self.domains.write() = Some(domains);
+    }
+
+    #[must_use]
+    ///
+    /// # Panics
+    ///
+    /// Panics if domain handles have not been attached yet.
+    pub fn domains(&self) -> Arc<DomainHandles> {
+        self.domains
+            .read()
+            .clone()
+            .expect("domain handles must be attached before health monitoring")
     }
 
     #[cfg(test)]
@@ -103,7 +157,7 @@ impl Runtime {
             &store,
             &runtime.admin_read_model(),
             &crate::boot::domains::DomainSetupOptions {
-                server_write_options: cntryl_midge::WriteOptions::best_effort(),
+                schedule_write_options: cntryl_midge::WriteOptions::best_effort(),
                 queue_write_options: cntryl_midge::WriteOptions::best_effort(),
                 queue_fast_flush_interval: Some(Duration::from_millis(100)),
                 request_sync_write_options: cntryl_midge::WriteOptions::sync(),
@@ -154,6 +208,28 @@ impl Runtime {
             .store(assume_external_tls, Ordering::SeqCst);
     }
 
+    pub(crate) fn try_acquire_admin_blocking_permit(&self) -> Option<super::AdminBlockingPermit> {
+        let mut available = self.admin_blocking_slots.load(Ordering::Acquire);
+        loop {
+            if available == 0 {
+                return None;
+            }
+            match self.admin_blocking_slots.compare_exchange_weak(
+                available,
+                available - 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    return Some(super::AdminBlockingPermit {
+                        slots: self.admin_blocking_slots.clone(),
+                    });
+                }
+                Err(observed) => available = observed,
+            }
+        }
+    }
+
     #[must_use]
     pub fn assume_external_tls(&self) -> bool {
         self.assume_external_tls.load(Ordering::SeqCst)
@@ -196,6 +272,15 @@ impl Runtime {
         self.domains.read().as_ref().is_some_and(|domains| {
             self.are_domains_ready() && domains.has_permanently_failed_domain()
         })
+    }
+
+    pub fn mark_fatal_domain_failure(&self) {
+        self.fatal_domain_failure.store(true, Ordering::SeqCst);
+    }
+
+    #[must_use]
+    pub fn has_fatal_domain_failure(&self) -> bool {
+        self.fatal_domain_failure.load(Ordering::SeqCst)
     }
 
     pub fn mark_auth_config_ready(&self) {
@@ -422,6 +507,7 @@ impl Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::routing::RouteFamily;
 
     #[test]
     fn should_track_storage_readiness() {
@@ -635,5 +721,25 @@ mod tests {
         // Assert
         assert_eq!(runtime.drain_deadline_epoch_ms(), first_deadline);
         assert_eq!(runtime.drain_close_reason(), "second drain");
+    }
+
+    #[test]
+    fn should_provision_family_affinity_for_configured_route_families_only() {
+        // Arrange
+        let router = Arc::new(Router::new());
+        let runtime = Runtime::new(router);
+
+        // Act
+        runtime.configure_route_families(&[1, 3]);
+
+        // Assert
+        assert_eq!(runtime.family_actor_shard_count(), 2);
+        assert!(runtime
+            .family_actor_shard_for(RouteFamily::new(1))
+            .is_some());
+        assert!(runtime
+            .family_actor_shard_for(RouteFamily::new(3))
+            .is_some());
+        assert_eq!(runtime.family_actor_shard_for(RouteFamily::new(2)), None);
     }
 }

@@ -408,7 +408,7 @@ mod tests {
                 None,
             )
             .expect("append staged event");
-        StreamStore::fail_next_promotion_frontier_commit_for_tests();
+        store.fail_next_promotion_frontier_commit_for_tests();
 
         // Act
         let failed = actor.commit_session_for_owner(10, 100, StreamWriteMode::Buffered);

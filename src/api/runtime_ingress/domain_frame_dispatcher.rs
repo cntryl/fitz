@@ -58,6 +58,13 @@ impl DomainFrameDispatcher<'_> {
             return Ok(());
         };
 
+        // CONNECT is consumed by the session authenticator and is not a
+        // domain message. Every other client message must be present in the
+        // exact protocol manifest.
+        if msg_type == crate::protocol::tlv::MessageType::CONNECT {
+            return Ok(());
+        }
+
         match Self::domain_dispatch_for_msg_type(msg_type) {
             Err(reason) => {
                 warn!(
@@ -81,7 +88,10 @@ impl DomainFrameDispatcher<'_> {
                 };
                 self.authorize_and_dispatch_domain_frame(dispatch).await
             }
-            Ok(None) => Ok(()),
+            Ok(None) => Err(IngressDecision::Close(format!(
+                "unsupported message type: {}",
+                msg_type.as_u16()
+            ))),
         }
     }
 
@@ -248,7 +258,24 @@ impl DomainFrameDispatcher<'_> {
         msg_type: crate::protocol::tlv::MessageType,
         payload: &[u8],
     ) -> Result<Option<Cow<'_, str>>, String> {
-        extract_auth_route_for_domain(domain, msg_type.as_u16(), payload)
+        extract_auth_route_for_domain(domain, msg_type.as_u16(), payload).and_then(|route| {
+            route
+                .map(|route| {
+                    let manifest_entry = crate::protocol::manifest::client_entry(msg_type)
+                        .map_err(str::to_string)?;
+                    if let Some(required_scheme) = manifest_entry.route_scheme {
+                        let required_prefix = format!("{required_scheme}://");
+                        if !route.starts_with(&required_prefix) {
+                            return Err(format!(
+                                "message {} requires {required_scheme} route scheme",
+                                msg_type.as_u16()
+                            ));
+                        }
+                    }
+                    Ok(route)
+                })
+                .transpose()
+        })
     }
 
     fn authorize_domain_targets(

@@ -5,7 +5,6 @@ use crate::benchkit::{
     count_stream_read_records_from_payload, extract_single_tlv_field, register_session_queue_sink,
     route_frame, FrameQueueSink,
 };
-use crate::domains::stream::store::StreamStore;
 use crate::protocol::frame::ChannelId;
 use bytes::Bytes;
 
@@ -571,7 +570,7 @@ fn should_preserve_append_session_without_notify_given_commit_failure() {
     let append_frame = build_stream_append(session_id, 0, b"retryable");
     let (append_msg_type, append_payload) = extract_single_tlv_field(&append_frame);
     let _append_response = request(&context, route, append_msg_type, append_payload);
-    StreamStore::fail_next_promotion_frontier_commit_for_tests();
+    context.sink.fail_next_promotion_frontier_commit_for_tests();
 
     // Act
     let failed_commit_frame = build_stream_commit(session_id, 1);

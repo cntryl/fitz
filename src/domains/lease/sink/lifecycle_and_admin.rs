@@ -60,7 +60,7 @@ impl LeaseDomainSink {
         state: Arc<LeaseDomainState>,
     ) -> crate::runtime::ManagedActor<LeaseDomainCommand> {
         let router = state.core.router.clone();
-        crate::runtime::ManagedActor::spawn_supervised(
+        crate::runtime::ManagedActor::spawn_fail_closed(
             router,
             LeaseDomainActor::route_address(),
             move || LeaseDomainActor::new(state.clone()),

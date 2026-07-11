@@ -5,7 +5,7 @@ mod hierarchical_mutations;
 
 use super::auth_and_mutations::{
     handle_queue_dead_letter_purge, handle_queue_dead_letter_replay, handle_runtime_drain,
-    parse_domain_path, parse_event_limit, parse_optional_allowed_family_param,
+    parse_domain_path, parse_event_limit, parse_family_scope, parse_optional_allowed_family_param,
     parse_optional_u64_param, parse_required_string_query_param, require_admin,
     require_concrete_route_family, require_data_plane_ready, require_same_origin,
     resource_family_filter,
@@ -84,6 +84,7 @@ where
     ))
 }
 
+#[allow(clippy::too_many_lines)]
 pub(super) async fn handle_request_inner<B>(
     req: hyper::Request<B>,
     runtime: Arc<Runtime>,
@@ -107,22 +108,20 @@ where
         (Method::DELETE, "/api/v1/session") => handle_logout(&req, &runtime).await,
         (Method::GET, "/api/v1/features") => handle_features(&runtime).await,
 
+        // Raw Prometheus is exposed only by the dedicated metrics listener.
+        // Keep the main authenticated listener from treating this path as an
+        // SPA route.
+        (Method::GET, "/metrics") => Ok(not_found()),
+
         (Method::POST, "/api/v1/runtime/drain") => {
-            if let Err(response) = require_admin_with_origin(&req, &runtime) {
+            if let Err(response) = require_wildcard_admin_with_origin(&req, &runtime) {
                 return Ok(*response);
             }
             handle_runtime_drain(runtime).await
         }
 
-        (Method::GET, "/metrics") => {
-            if let Err(response) = require_admin_only(&req, &runtime) {
-                return Ok(*response);
-            }
-            Ok(metrics::handle_metrics(runtime.as_ref()))
-        }
-
         (Method::GET, "/api/v1/sessions") => {
-            if let Err(response) = require_admin_only(&req, &runtime) {
+            if let Err(response) = require_wildcard_admin_only(&req, &runtime) {
                 return Ok(*response);
             }
             Ok(list::list_sessions(runtime.as_ref()))
@@ -131,24 +130,109 @@ where
         (Method::GET, path) if path.starts_with("/api/v1/sessions/") => Ok(super::not_found()),
 
         (Method::GET, "/api/v1/stats") => {
-            if let Err(response) = require_admin_and_ready(&req, &runtime) {
+            if let Err(response) = require_wildcard_admin_and_ready(&req, &runtime) {
                 return Ok(*response);
             }
             Ok(stats::handle_global_stats(runtime.as_ref()))
         }
 
         (Method::GET, "/api/v1/topology") => {
-            if let Err(response) = require_admin_and_ready(&req, &runtime) {
+            if let Err(response) = require_wildcard_admin_and_ready(&req, &runtime) {
                 return Ok(*response);
             }
             Ok(topology::handle_topology(runtime.as_ref()))
         }
 
         (Method::GET, "/api/v1/troubleshooting") => {
-            if let Err(response) = require_admin_and_ready(&req, &runtime) {
+            if let Err(response) = require_wildcard_admin_and_ready(&req, &runtime) {
                 return Ok(*response);
             }
             Ok(stats::handle_global_troubleshooting(runtime.as_ref()))
+        }
+
+        (Method::GET, path) if path.starts_with("/api/v1/") && path.ends_with("/metrics") => {
+            let principal = match require_admin(&req, &runtime) {
+                Ok(principal) => principal,
+                Err(response) => return Ok(*response),
+            };
+            if let Err(response) = require_data_plane_ready(&runtime) {
+                return Ok(*response);
+            }
+            let segments = path.trim_matches('/').split('/').collect::<Vec<_>>();
+            if segments.len() != 4 || segments[0] != "api" || segments[1] != "v1" {
+                return Ok(not_found());
+            }
+            let scope = match parse_family_scope(segments[2], &principal) {
+                Ok(scope) => scope,
+                Err(response) => return Ok(*response),
+            };
+            if let AdminFamilyScope::Family(family) = scope {
+                let Ok(family) = u32::try_from(family) else {
+                    return Ok(error_response(
+                        hyper::StatusCode::BAD_REQUEST,
+                        "Route family exceeds the supported u32 range",
+                    ));
+                };
+                if !runtime.admin_auth().is_provisioned_route_family(family) {
+                    return Ok(error_response(
+                        hyper::StatusCode::NOT_FOUND,
+                        "Route family is not provisioned",
+                    ));
+                }
+            }
+            Ok(metrics::handle_structured_metrics(
+                runtime.as_ref(),
+                scope.filter(),
+            ))
+        }
+
+        (Method::GET, path)
+            if path.starts_with("/api/v1/") && path.trim_matches('/').split('/').count() == 4 =>
+        {
+            let principal = match require_admin(&req, &runtime) {
+                Ok(principal) => principal,
+                Err(response) => return Ok(*response),
+            };
+            if let Err(response) = require_data_plane_ready(&runtime) {
+                return Ok(*response);
+            }
+            let segments = path.trim_matches('/').split('/').collect::<Vec<_>>();
+            let scope = match parse_family_scope(segments[2], &principal) {
+                Ok(scope) => scope,
+                Err(response) => return Ok(*response),
+            };
+            match scope {
+                AdminFamilyScope::All => match segments[3] {
+                    "sessions" => Ok(list::list_sessions(runtime.as_ref())),
+                    "stats" => Ok(stats::handle_global_stats(runtime.as_ref())),
+                    "topology" => Ok(topology::handle_topology(runtime.as_ref())),
+                    "troubleshooting" => Ok(stats::handle_global_troubleshooting(runtime.as_ref())),
+                    _ => Ok(not_found()),
+                },
+                AdminFamilyScope::Family(family) => {
+                    let Ok(family_id) = u32::try_from(family) else {
+                        return Ok(error_response(
+                            hyper::StatusCode::BAD_REQUEST,
+                            "Route family exceeds the supported u32 range",
+                        ));
+                    };
+                    if !runtime.admin_auth().is_provisioned_route_family(family_id) {
+                        return Ok(not_found());
+                    }
+                    match segments[3] {
+                        "sessions" => Ok(list::list_sessions_for_family(runtime.as_ref(), family)),
+                        "stats" => Ok(stats::handle_family_stats(runtime.as_ref(), family)),
+                        "topology" => {
+                            Ok(topology::handle_family_topology(runtime.as_ref(), family))
+                        }
+                        "troubleshooting" => Ok(stats::handle_family_troubleshooting(
+                            runtime.as_ref(),
+                            family,
+                        )),
+                        _ => Ok(not_found()),
+                    }
+                }
+            }
         }
 
         (Method::GET, "/api/v1/search") => {
@@ -204,26 +288,34 @@ where
     }
 }
 
-fn require_admin_only<B>(
+fn require_wildcard_admin_only<B>(
     req: &hyper::Request<B>,
     runtime: &Arc<Runtime>,
 ) -> Result<(), Box<Response>> {
-    require_admin(req, runtime).map(|_| ())
+    let principal = require_admin(req, runtime)?;
+    if principal.route_family_access.is_wildcard() {
+        Ok(())
+    } else {
+        Err(Box::new(super::error_response(
+            hyper::StatusCode::FORBIDDEN,
+            "Wildcard Route Family authority is required for this broker-global endpoint",
+        )))
+    }
 }
 
-fn require_admin_and_ready<B>(
+fn require_wildcard_admin_and_ready<B>(
     req: &hyper::Request<B>,
     runtime: &Arc<Runtime>,
 ) -> Result<(), Box<Response>> {
-    require_admin(req, runtime)?;
+    require_wildcard_admin_only(req, runtime)?;
     require_data_plane_ready(runtime)
 }
 
-fn require_admin_with_origin<B>(
+fn require_wildcard_admin_with_origin<B>(
     req: &hyper::Request<B>,
     runtime: &Arc<Runtime>,
 ) -> Result<(), Box<Response>> {
-    require_admin(req, runtime)?;
+    require_wildcard_admin_only(req, runtime)?;
     require_same_origin(req, runtime)
 }
 

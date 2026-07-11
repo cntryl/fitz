@@ -23,6 +23,33 @@ pub(super) async fn handle_hierarchical_get(
     runtime: Arc<Runtime>,
     principal: &AdminPrincipal,
 ) -> Result<Response, Infallible> {
+    let Some(permit) = runtime.try_acquire_admin_blocking_permit() else {
+        return Ok(error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Admin blocking executor is saturated",
+        ));
+    };
+    let uri = uri.clone();
+    let principal = principal.clone();
+    match tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        handle_hierarchical_get_blocking(&uri, &runtime, &principal)
+    })
+    .await
+    {
+        Ok(result) => result,
+        Err(error) => Ok(error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            &format!("Admin blocking executor failed: {error}"),
+        )),
+    }
+}
+
+fn handle_hierarchical_get_blocking(
+    uri: &hyper::Uri,
+    runtime: &Arc<Runtime>,
+    principal: &AdminPrincipal,
+) -> Result<Response, Infallible> {
     let path = uri.path();
     let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
     let (scope, scheme, tail) = match parse_domain_path(&segments, principal) {
@@ -31,17 +58,17 @@ pub(super) async fn handle_hierarchical_get(
     };
 
     if let Some(response) =
-        handle_domain_collection_routes(uri, &runtime, principal, scope, scheme, tail)
+        handle_domain_collection_routes(uri, runtime, principal, scope, scheme, tail)
     {
         return Ok(response);
     }
 
-    if let Some(response) = handle_resource_collection_routes(uri, &runtime, scope, scheme, tail) {
+    if let Some(response) = handle_resource_collection_routes(uri, runtime, scope, scheme, tail) {
         return Ok(response);
     }
 
     if let Some(response) =
-        handle_resource_detail_routes(uri, &runtime, principal, scope, scheme, tail)?
+        handle_resource_detail_routes(uri, runtime, principal, scope, scheme, tail)?
     {
         return Ok(response);
     }
@@ -58,7 +85,11 @@ fn handle_domain_collection_routes(
     tail: &[&str],
 ) -> Option<Response> {
     let response = match tail {
-        ["stats"] => Some(stats::handle_domain_stats(runtime.as_ref(), scheme)),
+        ["stats"] => Some(stats::handle_domain_stats(
+            runtime.as_ref(),
+            scheme,
+            scope.filter(),
+        )),
         ["search"] if scheme == "stream" => {
             let request = match build_stream_search_request(uri, principal, scope) {
                 Ok(request) => request,

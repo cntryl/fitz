@@ -18,6 +18,7 @@ pub(super) use crate::session::{SessionInfo, SessionMetadata, SessionPermissions
 pub(super) use bytes::Bytes;
 pub(super) use std::sync::atomic::{AtomicUsize, Ordering};
 pub(super) use std::sync::{Arc, Mutex, Once};
+pub(super) use std::time::Duration;
 
 pub(super) const TEST_AUTH_ISSUER: &str = "https://idp.example";
 pub(super) const TEST_AUTH_AUDIENCE: &str = "fitz-broker";
@@ -641,7 +642,7 @@ async fn should_record_cleanup_failures_when_on_close_cannot_reach_all_domains()
 }
 
 #[tokio::test]
-async fn should_retry_pending_session_cleanup_on_next_session_open() {
+async fn should_retry_pending_session_cleanup_without_later_traffic() {
     // Arrange
     let router = Arc::new(crate::runtime::Router::new());
     let admin_read_model = AdminReadModel::new();
@@ -666,11 +667,14 @@ async fn should_retry_pending_session_cleanup_on_next_session_open() {
     let queue_sink = Arc::new(CleanupTrackingSink::default());
     router.register_domain_pattern(DispatchDomain::Queue.as_str(), queue_sink.clone());
 
-    let mut next_session = make_session_info(90, TransportKind::WebSocket);
-    next_session.route_family = RouteFamily::new(90);
-
     // Act
-    ingress.on_open(next_session).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while ingress.pending_session_cleanups.contains_key(&session_id) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("cleanup worker should retry without later traffic");
 
     // Assert
     assert!(!ingress.pending_session_cleanups.contains_key(&session_id));

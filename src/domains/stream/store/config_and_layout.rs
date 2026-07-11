@@ -105,6 +105,8 @@ impl StreamStore {
             sequencing_guards: Arc::new(Mutex::new(HashMap::new())),
             realm_sequence_states: Arc::new(Mutex::new(HashMap::new())),
             resource_meta_states: Arc::new(Mutex::new(HashMap::new())),
+            #[cfg(test)]
+            fail_next_promotion_frontier_commit: std::sync::atomic::AtomicBool::new(false),
         }
     }
 

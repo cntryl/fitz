@@ -17,11 +17,14 @@ Benchmark references are in [development/benchmarks.md](../development/benchmark
 - Avoid allocation-heavy transformations in codec and routing path.
 - Keep wildcard subscription patterns bounded per realm.
 
-## Scheduler and Mailbox
+## Family Actor Pools and Mailboxes
 
-- Ensure scheduler worker count matches available cores.
-- Watch mailbox depth trends for starvation.
-- Prioritize control-plane traffic during degradation.
+- Family actor shard count is fixed at
+  `min(available_parallelism, provisioned route families)`.
+- Keep the normal lane at its 16,384-message contract capacity and use the
+  separate control lane for drain, cleanup, and other control work.
+- Watch family-lane depth and enqueue backpressure for starvation; never
+  compensate for saturation with an unbounded async queue.
 
 ## Storage and Durability Tradeoffs
 

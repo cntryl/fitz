@@ -9,7 +9,7 @@ use super::{
 };
 
 #[cfg(test)]
-use super::FAIL_NEXT_PROMOTION_FRONTIER_COMMIT;
+use std::sync::atomic::Ordering;
 
 fn u64_to_u32_saturating(value: u64) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
@@ -371,7 +371,7 @@ impl StreamStore {
         let mut txn = self.write_promotion_frontier_batch_rows(&params, &plan)?;
         let resource_meta_after =
             Self::persist_promotion_frontier_counters_and_metadata(&mut txn, &params, &plan)?;
-        Self::commit_promotion_frontier_tx(txn, params.mode)?;
+        self.commit_promotion_frontier_tx(txn, params.mode)?;
 
         Ok((
             Self::build_promotion_frontier_commit_response(params, &plan),
@@ -488,7 +488,9 @@ impl StreamStore {
         Ok(resource_meta_after)
     }
 
+    #[cfg_attr(not(test), allow(clippy::unused_self))]
     fn commit_promotion_frontier_tx(
+        &self,
         txn: cntryl_midge::Transaction,
         mode: StreamWriteMode,
     ) -> Result<(), String> {
@@ -499,13 +501,9 @@ impl StreamStore {
         };
         #[cfg(test)]
         {
-            let should_fail = FAIL_NEXT_PROMOTION_FRONTIER_COMMIT.with(|cell| {
-                let should_fail = cell.get();
-                if should_fail {
-                    cell.set(false);
-                }
-                should_fail
-            });
+            let should_fail = self
+                .fail_next_promotion_frontier_commit
+                .swap(false, Ordering::AcqRel);
 
             if should_fail {
                 return Err("Injected stream commit failure".to_string());

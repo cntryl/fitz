@@ -50,7 +50,7 @@ test("captures the dashboard refreshing state", async ({ page }, testInfo) => {
   let topologyRequests = 0;
 
   await mockAdminFeatures(page);
-  await page.route("**/api/v1/topology", async (route) => {
+  await page.route("**/api/v1/*/topology", async (route) => {
     topologyRequests += 1;
 
     if (topologyRequests > 1) {
@@ -103,4 +103,3 @@ test("captures desktop domain navigation", async ({ page }, testInfo) => {
   await expect(page).toHaveURL(/\/admin\/1\/queue$/);
   await expect(page.locator("main#main-content")).toHaveCount(1);
 });
-

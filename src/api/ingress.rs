@@ -7,6 +7,16 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Maximum time an accepted transport may remain unauthenticated.
+pub const CONNECT_DEADLINE: Duration = Duration::from_secs(10);
+
+/// WebSocket liveness cadence and pong grace period.
+pub const WEBSOCKET_PING_INTERVAL: Duration = Duration::from_secs(5);
+pub const WEBSOCKET_PONG_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Kernel-assisted TCP dead-peer detection interval.
+pub const TCP_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
+
 /// Configuration for ingress transports
 #[derive(Debug, Clone)]
 pub struct IngressConfig {

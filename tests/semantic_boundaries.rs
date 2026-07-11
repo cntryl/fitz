@@ -216,6 +216,46 @@ fn should_keep_rpc_route_actor_removed_from_default_surface() {
 }
 
 #[test]
+fn should_keep_scheduler_and_duplicate_transport_surfaces_private() {
+    // Arrange
+    let repo_root = repo_root();
+    let runtime_module = read_source_file(&repo_root.join("src/runtime/mod.rs"));
+    let api_module = read_source_file(&repo_root.join("src/api/mod.rs"));
+
+    // Act
+    let violations = [
+        runtime_module
+            .contains("pub use scheduler::Scheduler")
+            .then_some("runtime::Scheduler is publicly re-exported"),
+        api_module
+            .contains("pub mod ws;")
+            .then_some("duplicate api::ws transport module is exported"),
+        api_module
+            .contains("pub mod transport;")
+            .then_some("duplicate api::transport module is exported"),
+        repo_root
+            .join("src/api/ws.rs")
+            .exists()
+            .then_some("duplicate src/api/ws.rs transport file remains"),
+        repo_root
+            .join("src/api/transport.rs")
+            .exists()
+            .then_some("duplicate src/api/transport.rs file remains"),
+    ]
+    .into_iter()
+    .flatten()
+    .map(str::to_string)
+    .collect::<Vec<_>>();
+    let report = format_violation_report(&violations);
+
+    // Assert
+    assert!(
+        report.is_empty(),
+        "legacy scheduler and duplicate transport surfaces must stay absent:\n{report}"
+    );
+}
+
+#[test]
 fn should_keep_production_rust_files_below_line_budget() {
     // Arrange
     let repo_root = repo_root();

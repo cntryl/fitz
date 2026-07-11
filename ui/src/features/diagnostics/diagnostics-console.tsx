@@ -126,7 +126,7 @@ function buildInfrastructureRows(
     },
     {
       action: "Open metrics",
-      detail: "Parsed Prometheus metric families from the live metrics payload.",
+      detail: "Structured metric families from the live route-family metrics snapshot.",
       signal: "Metric families",
       value: metrics?.families.length ?? system.metrics.lineCount,
     },
@@ -236,7 +236,7 @@ function buildDomainRows(system: SystemOverview): DomainInternalRow[] {
 
 const capabilityRows: CapabilityRow[] = [
   {
-    capability: "Prometheus metrics",
+    capability: "Structured metrics",
     owner: "Broker",
     status: "Existing API",
     why: "Used for counter-level inspection, failure counters, and advanced metric sampling.",
@@ -710,7 +710,7 @@ export default function DiagnosticsConsole({
             <Stack gap="1">
               <CardTitle>Metric families</CardTitle>
               <CardDescription>
-                Parsed Prometheus families for storage-adjacent, routing, pressure, and failure
+                Structured metric families for storage-adjacent, routing, pressure, and failure
                 diagnostics.
               </CardDescription>
             </Stack>

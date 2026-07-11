@@ -1,17 +1,19 @@
-export interface PrometheusSample {
+export interface MetricSample {
   labels: Record<string, string>;
   name: string;
   value: number;
 }
 
-export interface PrometheusMetricFamily {
+export interface MetricFamily {
   help?: string;
   name: string;
-  samples: PrometheusSample[];
+  samples: MetricSample[];
   type?: string;
 }
 
 export interface MetricsOverview {
-  families: PrometheusMetricFamily[];
+  families: MetricFamily[];
+  generatedAt: number;
   raw: string;
+  scope: "all" | "family";
 }

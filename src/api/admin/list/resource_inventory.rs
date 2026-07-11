@@ -240,6 +240,17 @@ pub fn list_sessions(runtime: &Runtime) -> Response {
     crate::api::admin::json_response(SessionsList { sessions })
 }
 
+/// Returns live admin session snapshots for one authorized route family.
+#[must_use]
+pub fn list_sessions_for_family(runtime: &Runtime, family: u64) -> Response {
+    let sessions = runtime
+        .list_sessions()
+        .into_iter()
+        .filter(|session| session.route_family == family)
+        .collect();
+    crate::api::admin::json_response(SessionsList { sessions })
+}
+
 /// Returns active KV transactions for a specific resource.
 ///
 /// # Errors

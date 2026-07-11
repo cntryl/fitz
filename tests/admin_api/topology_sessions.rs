@@ -2,6 +2,124 @@ use super::common::*;
 
 #[tokio::test]
 #[serial]
+async fn should_isolate_family_admin_read_surfaces_and_global_authority() {
+    // Arrange
+    let _family_access = EnvGuard::set("FITZ_ADMIN_ROUTE_FAMILIES", "1");
+    let runtime = test_runtime();
+    let ingress = Arc::new(
+        RuntimeIngress::new(true)
+            .with_router(runtime.router())
+            .with_admin_read_model(runtime.admin_read_model()),
+    );
+    runtime.attach_ingress(ingress.clone());
+    for (session_id, family) in [(101, 1), (202, 2)] {
+        ingress
+            .on_open(RuntimeSessionInfo {
+                session_id,
+                transport_kind: TransportKind::WebSocket,
+                peer_addr: None,
+                metadata: Arc::new(SessionMetadata::new()),
+                permissions_snapshot: SessionPermissions::empty(),
+                claims: None,
+                authenticated: false,
+                route_family: RouteFamily::new(family),
+            })
+            .await
+            .expect("session opens");
+    }
+    runtime.admin_read_model().replace_queues(vec![QueueInfo {
+        family: 1,
+        realm: "family-one".to_string(),
+        area: "jobs".to_string(),
+        resource: "worker".to_string(),
+        subscriptions_active: 0,
+        messages_ready: 3,
+        messages_delayed: 0,
+        messages_inflight: 0,
+        messages_dead_lettered: 0,
+        messages_total: 3,
+        oldest_message_age_seconds: 0,
+        oldest_backlog_age_seconds: 0,
+        backlog_age_buckets: QueueAgeBuckets::default(),
+        delay_age_buckets: QueueAgeBuckets::default(),
+        enqueue_success_total: 0,
+        complete_success_total: 0,
+        in_rate_per_second: 0.0,
+        out_rate_per_second: 0.0,
+        status: "backlogged".to_string(),
+    }]);
+    let cookie = login_cookie(runtime.clone()).await;
+
+    // Act
+    let family_sessions = fitz::api::admin::handlers::handle_request(
+        hyper::http::Request::builder()
+            .method(Method::GET)
+            .uri("/api/v1/1/sessions")
+            .header(COOKIE, cookie.clone())
+            .body(Body::default())
+            .unwrap(),
+        runtime.clone(),
+    )
+    .await
+    .unwrap();
+    let family_stats = fitz::api::admin::handlers::handle_request(
+        hyper::http::Request::builder()
+            .method(Method::GET)
+            .uri("/api/v1/1/stats")
+            .header(COOKIE, cookie.clone())
+            .body(Body::default())
+            .unwrap(),
+        runtime.clone(),
+    )
+    .await
+    .unwrap();
+    let denied_family = fitz::api::admin::handlers::handle_request(
+        hyper::http::Request::builder()
+            .method(Method::GET)
+            .uri("/api/v1/2/stats")
+            .header(COOKIE, cookie.clone())
+            .body(Body::default())
+            .unwrap(),
+        runtime.clone(),
+    )
+    .await
+    .unwrap();
+    let denied_global = fitz::api::admin::handlers::handle_request(
+        hyper::http::Request::builder()
+            .method(Method::GET)
+            .uri("/api/v1/all/stats")
+            .header(COOKIE, cookie)
+            .body(Body::default())
+            .unwrap(),
+        runtime,
+    )
+    .await
+    .unwrap();
+
+    // Assert
+    assert_eq!(family_sessions.status(), StatusCode::OK);
+    let sessions: serde_json::Value =
+        serde_json::from_slice(&body::to_bytes(family_sessions.into_body()).await.unwrap())
+            .unwrap();
+    assert_eq!(sessions["sessions"].as_array().unwrap().len(), 1);
+    assert_eq!(sessions["sessions"][0]["route_family"], 1);
+
+    assert_eq!(family_stats.status(), StatusCode::OK);
+    let stats: serde_json::Value =
+        serde_json::from_slice(&body::to_bytes(family_stats.into_body()).await.unwrap()).unwrap();
+    assert_eq!(stats["broker"]["sessions"], 1);
+    assert_eq!(stats["domains"]["queue"]["messages_ready"], 3);
+    assert_eq!(stats["domains"]["queue"]["requests_total"], 0);
+    assert_eq!(
+        stats["diagnostics"]["incident_summary"]["status"],
+        "healthy"
+    );
+    assert_eq!(denied_family.status(), StatusCode::FORBIDDEN);
+    assert_eq!(denied_global.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+#[serial]
 async fn should_return_global_stats() {
     // Arrange
     let runtime = test_runtime();
@@ -424,7 +542,7 @@ async fn should_surface_router_overload_counters_in_global_stats_and_metrics() {
         .unwrap();
     let metrics_req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/metrics")
+        .uri("/api/v1/all/metrics")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -452,7 +570,7 @@ async fn should_surface_router_overload_counters_in_global_stats_and_metrics() {
 
     assert_eq!(metrics_response.status(), StatusCode::OK);
     let metrics_body = body::to_bytes(metrics_response.into_body()).await.unwrap();
-    let metrics_payload = String::from_utf8(metrics_body.to_vec()).unwrap();
+    let metrics_payload = structured_metrics_text(&metrics_body);
     assert_prometheus_counter(
         &metrics_payload,
         "fitz_router_backpressure_total",

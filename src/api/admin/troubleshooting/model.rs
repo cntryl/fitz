@@ -731,7 +731,7 @@ impl DiagnosticHotspot {
                 Self::suggested_query(
                     2,
                     "Inspect broker metrics",
-                    "inspect /metrics".to_string(),
+                    "inspect /api/v1/all/metrics".to_string(),
                     "Prometheus counters are the bounded next step for checking whether saturation is accumulating in the normal lane or the control-plane high lane.",
                     "Use the metrics view to separate data-plane mailbox pressure from control-plane saturation before changing overload policy.",
                 ),

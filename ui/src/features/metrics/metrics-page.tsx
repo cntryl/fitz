@@ -17,7 +17,7 @@ import {
   QueryErrorState,
   QueryLoadingState,
 } from "@/components/shared/query-state";
-import type { PrometheusMetricFamily } from "@/features/metrics/metrics-models";
+import type { MetricFamily } from "@/features/metrics/metrics-models";
 import { createMetricsOverviewQuery } from "@/features/metrics/metrics-query";
 import { formatNumber } from "@/shared/format";
 
@@ -74,15 +74,15 @@ const emptySummaryCards = {
   failures: [],
 };
 
-function buildFamilyIndex(families: PrometheusMetricFamily[]) {
+function buildFamilyIndex(families: MetricFamily[]) {
   return new Map(families.map((family) => [family.name, family]));
 }
 
-function familyValue(index: Map<string, PrometheusMetricFamily>, name: string) {
+function familyValue(index: Map<string, MetricFamily>, name: string) {
   return index.get(name)?.samples.reduce((sum, sample) => sum + sample.value, 0) ?? 0;
 }
 
-function signalValue(index: Map<string, PrometheusMetricFamily>, names: string[]) {
+function signalValue(index: Map<string, MetricFamily>, names: string[]) {
   return names.reduce((sum, name) => sum + familyValue(index, name), 0);
 }
 
@@ -90,7 +90,7 @@ function signalText(label: string, value: number) {
   return `${label} ${formatNumber(value)}`;
 }
 
-function summarizeSnapshot(index: Map<string, PrometheusMetricFamily>): MetricsPostureSummary {
+function summarizeSnapshot(index: Map<string, MetricFamily>): MetricsPostureSummary {
   const failureSignals = [
     {
       label: "router backpressure",
@@ -139,7 +139,6 @@ function summarizeSnapshot(index: Map<string, PrometheusMetricFamily>): MetricsP
         "fitz_schedule_create_persistence_failures_total",
         "fitz_schedule_upsert_persistence_failures_total",
         "fitz_schedule_cancel_persistence_failures_total",
-        "fitz_schedule_pending_claim_cleanup_failure_total",
       ]),
     },
     {
@@ -225,7 +224,7 @@ function summarizeSnapshot(index: Map<string, PrometheusMetricFamily>): MetricsP
   };
 }
 
-function familyCardMetrics(index: Map<string, PrometheusMetricFamily>) {
+function familyCardMetrics(index: Map<string, MetricFamily>) {
   return {
     broker: [
       { label: "Uptime", value: familyValue(index, "fitz_uptime_seconds"), caption: "seconds" },
@@ -480,7 +479,7 @@ function formatLabels(labels: Record<string, string>) {
   return entries.map(([key, value]) => `${key}="${value}"`).join(", ");
 }
 
-function buildRows(families: PrometheusMetricFamily[], filterValue: string): MetricsSampleRow[] {
+function buildRows(families: MetricFamily[], filterValue: string): MetricsSampleRow[] {
   return families
     .filter((family) => familyNameMatches(family.name, filterValue))
     .flatMap((family) =>
@@ -493,7 +492,7 @@ function buildRows(families: PrometheusMetricFamily[], filterValue: string): Met
     );
 }
 
-function buildSummaryShortcuts(families: PrometheusMetricFamily[]) {
+function buildSummaryShortcuts(families: MetricFamily[]) {
   return metricsShortcuts
     .map((shortcut) => ({
       label: shortcut.label,
@@ -584,7 +583,7 @@ export default function MetricsPage() {
         tone: metrics.refreshing ? "info" : metrics.stale ? "warning" : snapshotSummary.tone,
       }
     : {
-        detail: "Searching metric families and samples from Prometheus response.",
+        detail: "Searching metric families and samples from structured broker metrics.",
         label: metrics.refreshing ? "Refreshing" : metrics.stale ? "Stale" : "Loading",
         tone: metrics.refreshing ? "info" : metrics.stale ? "warning" : "info",
       };
@@ -606,7 +605,7 @@ export default function MetricsPage() {
         {!data && metrics.loading ? (
           <QueryLoadingState
             title="Loading metrics snapshot"
-            description="Reading the current /metrics payload."
+            description="Reading the current structured route-family metrics snapshot."
           />
         ) : null}
 
@@ -756,8 +755,8 @@ export default function MetricsPage() {
             <section class="domain-section">
               <div class="domain-section-header">
                 <div>
-                  <h2>Prometheus payload</h2>
-                  <p>Exact broker payload for copy, diffing, and troubleshooting.</p>
+                  <h2>Structured payload</h2>
+                  <p>Exact route-family JSON snapshot for copy, diffing, and troubleshooting.</p>
                 </div>
               </div>
               <pre class="resource-raw">{data.raw}</pre>

@@ -47,8 +47,6 @@ pub(crate) fn analyze_schedule(
     notify_failures: u64,
     ack_failures: u64,
     overdue_normalizations: u64,
-    pending_claims_expired_total: u64,
-    pending_claim_cleanup_failures_total: u64,
     now: DateTime<Utc>,
 ) -> DomainAnalysis {
     let mut grouped: HashMap<(String, String, String, String), Vec<&ScheduleInfo>> = HashMap::new();
@@ -81,8 +79,6 @@ pub(crate) fn analyze_schedule(
             notify_failures,
             ack_failures,
             overdue_normalizations,
-            pending_claims_expired_total,
-            pending_claim_cleanup_failures_total,
             latency_tail_count,
             latency_total,
             latency_tail_ratio,
@@ -166,8 +162,6 @@ struct ScheduleHotspotContext {
     notify_failures: u64,
     ack_failures: u64,
     overdue_normalizations: u64,
-    pending_claims_expired_total: u64,
-    pending_claim_cleanup_failures_total: u64,
     latency_tail_count: usize,
     latency_total: usize,
     latency_tail_ratio: f64,
@@ -301,8 +295,6 @@ fn build_schedule_hotspot(
         notify_failures,
         ack_failures,
         overdue_normalizations,
-        pending_claims_expired_total,
-        pending_claim_cleanup_failures_total,
         latency_tail_count,
         latency_total,
         latency_tail_ratio,
@@ -343,31 +335,16 @@ fn build_schedule_hotspot(
         usize_to_u64(pending_fire_claims),
         usize_to_u64(pending_ack_retries),
         usize_to_u64(latency_tail_count),
-        pending_claims_expired_total,
-        pending_claim_cleanup_failures_total,
     ]);
-    let failure_count = notify_failures + ack_failures + pending_claim_cleanup_failures_total;
+    let failure_count = notify_failures + ack_failures;
     let handoff_pressure =
         pending_fire_claims > 0 || pending_ack_retries > 0 || overdue_normalizations > 0;
-    let cleanup_pressure =
-        pending_claims_expired_total > 0 || pending_claim_cleanup_failures_total > 0;
     let (label, trend, severity, bottleneck) = if handoff_pressure {
         (
             DiagnosisLabel::StaleHandoff,
             DiagnosticTrend::Stalled,
             DiagnosticSeverity::High,
             Some("durable handoff".to_string()),
-        )
-    } else if cleanup_pressure {
-        (
-            DiagnosisLabel::StaleHandoff,
-            DiagnosticTrend::Stalled,
-            if pending_claim_cleanup_failures_total > 0 {
-                DiagnosticSeverity::High
-            } else {
-                DiagnosticSeverity::Medium
-            },
-            Some("claim cleanup".to_string()),
         )
     } else if latency_pressure {
         (
@@ -438,16 +415,6 @@ fn build_schedule_hotspot(
     if ack_failures > 0 {
         hints.push(format!("{ack_failures} ack failure(s)"));
     }
-    if pending_claims_expired_total > 0 {
-        hints.push(format!(
-            "{pending_claims_expired_total} expired pending claim(s)"
-        ));
-    }
-    if pending_claim_cleanup_failures_total > 0 {
-        hints.push(format!(
-            "{pending_claim_cleanup_failures_total} pending claim cleanup failure(s)"
-        ));
-    }
 
     let last_change = last_run.or(next_run);
     let snapshot = DiagnosticSnapshot::with_stage(DiagnosticSnapshotInput {
@@ -469,8 +436,6 @@ fn build_schedule_hotspot(
     let score = score_usize(pending_fire_claims) * 5.0
         + score_usize(pending_ack_retries) * 3.5
         + score_u64(overdue_normalizations) * 4.0
-        + score_u64(pending_claims_expired_total) * 2.5
-        + score_u64(pending_claim_cleanup_failures_total) * 5.0
         + score_u64(failure_count) * 1.25
         + score_u64(age_seconds.unwrap_or(0)) / 20.0;
     let backlog = pending_fire_claims.saturating_add(pending_ack_retries);

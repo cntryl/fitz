@@ -24,6 +24,7 @@ use std::sync::Arc;
 enum ShutdownSignal {
     CtrlC,
     Sigterm,
+    ActorFailure,
 }
 
 impl ShutdownSignal {
@@ -31,6 +32,7 @@ impl ShutdownSignal {
         match self {
             Self::CtrlC => "ctrl_c",
             Self::Sigterm => "sigterm",
+            Self::ActorFailure => "actor_failure",
         }
     }
 }
@@ -42,6 +44,8 @@ struct ShutdownContext {
     store: Arc<cntryl_midge::Engine>,
     ws_shutdown: tokio::sync::oneshot::Sender<()>,
     ws_join: tokio::task::JoinHandle<()>,
+    metrics_shutdown: tokio::sync::oneshot::Sender<()>,
+    metrics_join: tokio::task::JoinHandle<()>,
     tcp_shutdown: Option<tokio::sync::oneshot::Sender<()>>,
     tcp_join: Option<tokio::task::JoinHandle<()>>,
 }
@@ -50,7 +54,7 @@ struct ShutdownContext {
 ///
 /// # Steps
 /// 0. Initialize observability (tracing, metrics, OTEL)
-/// 1. Create runtime (router, ingress, scheduler)
+/// 1. Create runtime (router, ingress, family actor configuration)
 /// 2. Start HTTP for target health; WebSocket upgrades remain gated
 /// 3. Open storage and acquire the active Midge writer lease
 /// 4. Register domain actors
@@ -62,6 +66,7 @@ struct ShutdownContext {
 ///
 /// Returns an error when observability, runtime, storage, domain, transport,
 /// or shutdown coordination fails during broker boot or teardown.
+#[allow(clippy::too_many_lines)]
 pub async fn boot(config: BootConfig) -> BootResult<()> {
     resource_limits::enforce_startup_resource_limits()?;
 
@@ -93,30 +98,68 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
         join: ws_join,
     } = ws_listener;
 
-    ws_ready.await.map_err(|e| {
-        Box::new(std::io::Error::other(format!(
-            "WebSocket listener failed to start: {e}"
-        ))) as Box<dyn std::error::Error>
-    })?;
+    if let Err(error) = ws_ready.await {
+        return abort_startup(
+            ws_shutdown,
+            ws_join,
+            None,
+            None,
+            Box::new(std::io::Error::other(format!(
+                "WebSocket listener failed to start: {error}"
+            ))) as Box<dyn std::error::Error>,
+        )
+        .await;
+    }
+
+    let metrics_listener = match start_metrics_listener(&config, runtime.clone()).await {
+        Ok(listener) => listener,
+        Err(error) => return abort_startup(ws_shutdown, ws_join, None, None, error).await,
+    };
+    let crate::api::handlers::ListenerHandle {
+        ready: metrics_ready,
+        shutdown: metrics_shutdown,
+        join: metrics_join,
+    } = metrics_listener;
+    if let Err(error) = metrics_ready.await {
+        return abort_startup(
+            ws_shutdown,
+            ws_join,
+            Some(metrics_shutdown),
+            Some(metrics_join),
+            Box::new(std::io::Error::other(format!(
+                "Metrics listener failed to start: {error}"
+            ))) as Box<dyn std::error::Error>,
+        )
+        .await;
+    }
 
     // Step 2: Open storage after HTTP target health is reachable.
     let store = match storage::init(&config).await {
         Ok(store) => store,
-        Err(error) => return abort_startup(ws_shutdown, ws_join, error).await,
+        Err(error) => {
+            return abort_startup(
+                ws_shutdown,
+                ws_join,
+                Some(metrics_shutdown),
+                Some(metrics_join),
+                error,
+            )
+            .await;
+        }
     };
     tracing::info!("Storage initialized");
 
     runtime.mark_storage_ready();
 
     // Step 3: Register domain actors
-    let server_write_options = config.server_write_options();
+    let schedule_write_options = config.schedule_write_options();
     let queue_write_options = config.queue_write_options();
     let domains = match domains::setup(
         &router,
         &store,
         &runtime.admin_read_model(),
         &domains::DomainSetupOptions {
-            server_write_options,
+            schedule_write_options,
             queue_write_options,
             queue_fast_flush_interval: config.queue_fast_flush_interval(),
             request_sync_write_options: config.request_sync_write_options(),
@@ -125,9 +168,19 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
         },
     ) {
         Ok(domains) => domains,
-        Err(error) => return abort_startup(ws_shutdown, ws_join, error).await,
+        Err(error) => {
+            return abort_startup(
+                ws_shutdown,
+                ws_join,
+                Some(metrics_shutdown),
+                Some(metrics_join),
+                error,
+            )
+            .await;
+        }
     };
     runtime.attach_domains(domains);
+    crate::api::background::start_domain_health_monitor(runtime.clone(), runtime.domains());
     tracing::info!("Domain actors registered");
 
     // Mark domains ready
@@ -145,7 +198,16 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
     .await;
     let tcp_listener = match tcp_listener {
         Ok(listener) => listener,
-        Err(error) => return abort_startup(ws_shutdown, ws_join, error).await,
+        Err(error) => {
+            return abort_startup(
+                ws_shutdown,
+                ws_join,
+                Some(metrics_shutdown),
+                Some(metrics_join),
+                error,
+            )
+            .await;
+        }
     };
 
     let (tcp_shutdown, tcp_join) = if let Some(tcp_listener) = tcp_listener {
@@ -154,11 +216,20 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
             shutdown,
             join,
         } = tcp_listener;
-        tcp_ready.await.map_err(|e| {
-            Box::new(std::io::Error::other(format!(
-                "TCP listener failed to start: {e}"
-            ))) as Box<dyn std::error::Error>
-        })?;
+        if let Err(error) = tcp_ready.await {
+            let _ = shutdown.send(());
+            wait_for_listener("TCP", join).await?;
+            return abort_startup(
+                ws_shutdown,
+                ws_join,
+                Some(metrics_shutdown),
+                Some(metrics_join),
+                Box::new(std::io::Error::other(format!(
+                    "TCP listener failed to start: {error}"
+                ))) as Box<dyn std::error::Error>,
+            )
+            .await;
+        }
         (Some(shutdown), Some(join))
     } else {
         (None, None)
@@ -167,11 +238,12 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
     // Mark startup complete
     runtime.mark_startup_complete();
 
-    log_ready_endpoints(&config);
+    log_ready_endpoints(&config, runtime.family_actor_shard_count());
 
     // Step 5: Wait for shutdown signal
+    let shutdown_signal = wait_for_shutdown_signal(&runtime).await?;
     shutdown_broker(
-        wait_for_shutdown_signal().await?,
+        shutdown_signal,
         ShutdownContext {
             runtime,
             ingress,
@@ -179,6 +251,8 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
             store,
             ws_shutdown,
             ws_join,
+            metrics_shutdown,
+            metrics_join,
             tcp_shutdown,
             tcp_join,
         },
@@ -196,7 +270,7 @@ async fn wait_for_listener(
         .map_err(|error| format!("{name} listener join failed: {error}"))
 }
 
-fn log_ready_endpoints(config: &BootConfig) {
+fn log_ready_endpoints(config: &BootConfig, family_actor_shards: usize) {
     tracing::info!("Fitz broker ready");
     if config.tcp_enabled {
         tracing::info!("  TCP:  {}:{}", config.bind_addr, config.tcp_port);
@@ -204,6 +278,12 @@ fn log_ready_endpoints(config: &BootConfig) {
         tracing::info!("  TCP:  disabled");
     }
     tracing::info!("  HTTP: {}:{}", config.bind_addr, config.http_port);
+    tracing::info!(
+        "  Metrics: {}:{} (unauthenticated Prometheus)",
+        config.metrics_bind_addr,
+        config.metrics_port
+    );
+    tracing::info!(family_actor_shards, "  Family actor shards");
 }
 
 fn warn_defaulted_fast_queue_policy(config: &BootConfig) {
@@ -229,13 +309,28 @@ async fn start_http_listener(
     crate::api::handlers::spawn_http_listener(config, ingress, ingress_config, runtime).await
 }
 
+async fn start_metrics_listener(
+    config: &BootConfig,
+    runtime: Runtime,
+) -> BootResult<crate::api::handlers::ListenerHandle> {
+    crate::api::handlers::spawn_metrics_listener(config, runtime).await
+}
+
 async fn abort_startup<T>(
     ws_shutdown: tokio::sync::oneshot::Sender<()>,
     ws_join: tokio::task::JoinHandle<()>,
+    metrics_shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    metrics_join: Option<tokio::task::JoinHandle<()>>,
     error: Box<dyn std::error::Error>,
 ) -> BootResult<T> {
     let _ = ws_shutdown.send(());
+    if let Some(metrics_shutdown) = metrics_shutdown {
+        let _ = metrics_shutdown.send(());
+    }
     wait_for_listener("HTTP", ws_join).await?;
+    if let Some(metrics_join) = metrics_join {
+        wait_for_listener("Metrics", metrics_join).await?;
+    }
     Err(error)
 }
 
@@ -266,23 +361,30 @@ async fn shutdown_broker(signal: ShutdownSignal, context: ShutdownContext) -> Bo
             session_close_reason,
         ))
         .await;
+    context.ingress.drain_session_cleanups().await;
 
     if let Some(tcp_shutdown) = context.tcp_shutdown {
         let _ = tcp_shutdown.send(());
     }
     let _ = context.ws_shutdown.send(());
+    let _ = context.metrics_shutdown.send(());
 
     if let Some(tcp_join) = context.tcp_join {
         wait_for_listener("TCP", tcp_join).await?;
     }
     wait_for_listener("HTTP", context.ws_join).await?;
+    wait_for_listener("Metrics", context.metrics_join).await?;
 
-    shutdown_runtime(
+    let shutdown_result = shutdown_runtime(
         context.runtime,
         context.ingress,
         context.router,
         context.store,
-    )
+    );
+    if matches!(signal, ShutdownSignal::ActorFailure) && shutdown_result.is_ok() {
+        return Err("fatal domain actor failure".into());
+    }
+    shutdown_result
 }
 
 async fn session_close_reason(runtime: &Runtime, signal: &ShutdownSignal) -> String {
@@ -300,6 +402,9 @@ async fn session_close_reason(runtime: &Runtime, signal: &ShutdownSignal) -> Str
             runtime.drain_close_reason()
         }
         ShutdownSignal::CtrlC => "broker shutdown".to_string(),
+        ShutdownSignal::ActorFailure => {
+            "broker stopped after fatal domain actor failure".to_string()
+        }
     }
 }
 
@@ -333,7 +438,17 @@ fn shutdown_runtime(
     Ok(())
 }
 
-async fn wait_for_shutdown_signal() -> BootResult<ShutdownSignal> {
+async fn wait_for_shutdown_signal(runtime: &Runtime) -> BootResult<ShutdownSignal> {
+    let actor_failure = async {
+        loop {
+            if runtime.has_fatal_domain_failure() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+    };
+    tokio::pin!(actor_failure);
+
     #[cfg(unix)]
     {
         use tokio::signal::unix::{signal, SignalKind};
@@ -345,13 +460,19 @@ async fn wait_for_shutdown_signal() -> BootResult<ShutdownSignal> {
                 Ok(ShutdownSignal::CtrlC)
             }
             _ = terminate.recv() => Ok(ShutdownSignal::Sigterm),
+            () = &mut actor_failure => Ok(ShutdownSignal::ActorFailure),
         }
     }
 
     #[cfg(not(unix))]
     {
-        tokio::signal::ctrl_c().await?;
-        Ok(ShutdownSignal::CtrlC)
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => {
+                result?;
+                Ok(ShutdownSignal::CtrlC)
+            }
+            () = &mut actor_failure => Ok(ShutdownSignal::ActorFailure),
+        }
     }
 }
 

@@ -11,7 +11,7 @@ use crate::api::ingress::IngressConfig;
 use crate::api::runtime_ingress::Ingress;
 use crate::observability as obs;
 use crate::session::{
-    generate_session_id, CloseReason, Session, SessionMetadata, SessionPermissions, TransportKind,
+    generate_session_id, Session, SessionMetadata, SessionPermissions, TransportKind,
 };
 use bytes::{Bytes, BytesMut};
 use std::sync::Arc;
@@ -32,8 +32,6 @@ use tracing::{debug, error, info, trace, warn};
 /// returned separately from `create_session` so an independent outbound
 /// writer task can send response frames without contending on a shared mutex.
 pub struct TcpHandler {
-    /// Ingress trait implementation (runtime boundary)
-    ingress: Arc<dyn Ingress>,
     /// Configuration for ingress
     config: IngressConfig,
     /// Session ID assigned by ingress
@@ -49,20 +47,18 @@ impl TcpHandler {
     ///
     /// # Arguments
     ///
-    /// * `ingress` - Runtime boundary implementation
     /// * `config` - Ingress configuration
     /// * `session_id` - Session ID from ingress
     /// * `tx` - Channel for forwarding frames to runtime
     /// * `read_half` - Read half of the TCP stream
+    #[must_use]
     pub fn new(
-        ingress: Arc<dyn Ingress>,
         config: IngressConfig,
         session_id: u64,
         tx: mpsc::Sender<(u64, Bytes)>,
         read_half: OwnedReadHalf,
     ) -> Self {
         Self {
-            ingress,
             config,
             session_id,
             tx,
@@ -93,9 +89,6 @@ impl TcpHandler {
                     session_id = self.session_id,
                     "TCP connection EOF (client closed)"
                 );
-                self.ingress
-                    .on_close(self.session_id, CloseReason::ClientClose)
-                    .await;
                 return Ok(());
             }
             trace!(
@@ -119,9 +112,6 @@ impl TcpHandler {
                         max = self.config.max_frame_size,
                         "TCP frame too large, closing"
                     );
-                    self.ingress
-                        .on_close(self.session_id, CloseReason::Error(reason.clone()))
-                        .await;
                     return Err(reason);
                 }
 
@@ -170,9 +160,6 @@ impl TcpHandler {
             Err(error) => {
                 error!(session_id = self.session_id, error = %error, "TCP read error");
                 let reason = format!("read error: {error}");
-                self.ingress
-                    .on_close(self.session_id, CloseReason::Error(reason.clone()))
-                    .await;
                 Err(reason)
             }
         }
@@ -186,8 +173,7 @@ impl TcpHandler {
             mpsc::error::TrySendError::Full((_, frame)) => self.retry_send(frame).await,
             mpsc::error::TrySendError::Closed(_) => {
                 error!(session_id = self.session_id, "TCP runtime channel closed");
-                self.close_with_error("runtime channel closed".to_string())
-                    .await
+                Self::close_with_error("runtime channel closed".to_string())
             }
         }
     }
@@ -211,15 +197,11 @@ impl TcpHandler {
                 session_id = self.session_id,
                 "TCP backpressure exceeded, closing session"
             );
-            self.close_with_error("channel full: backpressure exceeded".to_string())
-                .await
+            Self::close_with_error("channel full: backpressure exceeded".to_string())
         }
     }
 
-    async fn close_with_error(&self, reason: String) -> Result<(), String> {
-        self.ingress
-            .on_close(self.session_id, CloseReason::Error(reason.clone()))
-            .await;
+    fn close_with_error(reason: String) -> Result<(), String> {
         Err(reason)
     }
 }
@@ -254,6 +236,12 @@ pub async fn create_session(
     stream
         .set_nodelay(true)
         .map_err(|e| format!("failed to enable TCP_NODELAY: {e}"))?;
+    let socket = socket2::SockRef::from(&stream);
+    let keepalive =
+        socket2::TcpKeepalive::new().with_time(crate::api::ingress::TCP_KEEPALIVE_INTERVAL);
+    socket
+        .set_tcp_keepalive(&keepalive)
+        .map_err(|e| format!("failed to enable TCP keepalive: {e}"))?;
 
     // Extract peer address before splitting
     let peer_addr = stream.peer_addr().ok();
@@ -280,7 +268,7 @@ pub async fn create_session(
 
     // Create handler with the read half
     Ok((
-        TcpHandler::new(ingress, config, session_id, tx, read_half),
+        TcpHandler::new(config, session_id, tx, read_half),
         write_half,
     ))
 }

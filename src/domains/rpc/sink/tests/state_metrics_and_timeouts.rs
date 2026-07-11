@@ -7,6 +7,87 @@ pub(super) fn assert_rpc_code_error(payload: &[u8], expected_code: u16, expected
     assert_eq!(message, expected_message);
 }
 
+#[test]
+fn should_keep_rpc_worker_state_isolated_by_route_family() {
+    // Arrange
+    let route = Route::new("rpc://bench/system/resource/operation");
+    let family_one = RouteFamily::new(1);
+    let family_two = RouteFamily::new(2);
+    let mut state = RpcState::new();
+    state
+        .ensure_route_state_for_family(family_one, &route)
+        .register_worker(test_rpc_worker(family_one, &route, 11));
+    state
+        .ensure_route_state_for_family(family_two, &route)
+        .register_worker(test_rpc_worker(family_two, &route, 22));
+
+    // Act
+    let family_one_workers = state
+        .routes
+        .get(&(family_one, route.clone()))
+        .expect("family one route")
+        .worker_count();
+    let family_two_workers = state
+        .routes
+        .get(&(family_two, route))
+        .expect("family two route")
+        .worker_count();
+
+    // Assert
+    assert_eq!(family_one_workers, 1);
+    assert_eq!(family_two_workers, 1);
+    assert_eq!(state.route_count(), 2);
+}
+
+#[test]
+fn should_allow_same_rpc_correlation_in_separate_route_families() {
+    // Arrange
+    let route = Route::new("rpc://bench/system/resource/operation");
+    let correlation_id = uuid::Uuid::new_v4();
+    let family_one = RouteFamily::new(1);
+    let family_two = RouteFamily::new(2);
+    let mut state = RpcState::new();
+    state
+        .ensure_route_state_for_family(family_one, &route)
+        .register_worker(test_rpc_worker(family_one, &route, 11));
+    state
+        .ensure_route_state_for_family(family_two, &route)
+        .register_worker(test_rpc_worker(family_two, &route, 22));
+
+    // Act
+    let first = state.dispatch_or_queue_request(
+        crate::domains::rpc::protocol::RpcRequest::new(
+            family_one,
+            correlation_id,
+            route.clone(),
+            bytes::Bytes::from_static(b"one"),
+        ),
+        101,
+        session_inbox_address(family_one, 101),
+        Duration::from_secs(30),
+        8,
+        32,
+    );
+    let second = state.dispatch_or_queue_request(
+        crate::domains::rpc::protocol::RpcRequest::new(
+            family_two,
+            correlation_id,
+            route,
+            bytes::Bytes::from_static(b"two"),
+        ),
+        202,
+        session_inbox_address(family_two, 202),
+        Duration::from_secs(30),
+        8,
+        32,
+    );
+
+    // Assert
+    assert!(matches!(first, RpcRequestDispatch::Immediate { .. }));
+    assert!(matches!(second, RpcRequestDispatch::Immediate { .. }));
+    assert_eq!(state.live_request_count(), 2);
+}
+
 pub(super) fn assert_rpc_terminal_code_error(
     frame: &FrameContext,
     expected_correlation_id: uuid::Uuid,

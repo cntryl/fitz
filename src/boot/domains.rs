@@ -403,7 +403,7 @@ impl DomainHandles {
 }
 
 pub struct DomainSetupOptions {
-    pub server_write_options: cntryl_midge::WriteOptions,
+    pub schedule_write_options: cntryl_midge::WriteOptions,
     pub queue_write_options: cntryl_midge::WriteOptions,
     pub queue_fast_flush_interval: Option<std::time::Duration>,
     pub request_sync_write_options: cntryl_midge::WriteOptions,
@@ -503,7 +503,7 @@ pub fn setup(
 
     let schedule_sink = Arc::new(
         ScheduleDomainSink::new_with_storage(storage, router.clone(), admin_read_model.clone())
-            .with_write_options(options.server_write_options)
+            .with_write_options(options.schedule_write_options)
             .with_metrics(metrics.clone()),
     );
     DomainKind::Schedule
@@ -544,7 +544,7 @@ mod tests {
 
     fn domain_setup_options() -> DomainSetupOptions {
         DomainSetupOptions {
-            server_write_options: cntryl_midge::WriteOptions::best_effort(),
+            schedule_write_options: cntryl_midge::WriteOptions::best_effort(),
             queue_write_options: cntryl_midge::WriteOptions::best_effort(),
             queue_fast_flush_interval: Some(std::time::Duration::from_millis(100)),
             request_sync_write_options: cntryl_midge::WriteOptions::sync(),
@@ -571,13 +571,13 @@ mod tests {
             .unwrap_or_else(|| panic!("{label} frame"))
     }
 
-    fn wait_for_domain_restarts(domains: &DomainHandles, expected: u64) {
+    fn wait_for_domain_failures(domains: &DomainHandles) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
         while std::time::Instant::now() < deadline {
             if domains
                 .health_snapshots()
                 .iter()
-                .all(|snapshot| snapshot.restart_count == expected)
+                .all(|snapshot| snapshot.restart_exhausted)
             {
                 return;
             }
@@ -585,16 +585,16 @@ mod tests {
         }
 
         let snapshots = domains.health_snapshots();
-        panic!("domain restarts did not reach {expected}: {snapshots:?}");
+        panic!("domain actors did not fail closed: {snapshots:?}");
     }
 
-    fn wait_for_named_domain_restart(domains: &DomainHandles, domain: &str, expected: u64) {
+    fn wait_for_named_domain_failure(domains: &DomainHandles, domain: &str) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
         while std::time::Instant::now() < deadline {
             if domains
                 .health_snapshots()
                 .iter()
-                .any(|snapshot| snapshot.domain == domain && snapshot.restart_count == expected)
+                .any(|snapshot| snapshot.domain == domain && snapshot.restart_exhausted)
             {
                 return;
             }
@@ -602,7 +602,7 @@ mod tests {
         }
 
         let snapshots = domains.health_snapshots();
-        panic!("{domain} restarts did not reach {expected}: {snapshots:?}");
+        panic!("{domain} actor did not fail closed: {snapshots:?}");
     }
 
     #[test]
@@ -711,7 +711,7 @@ mod tests {
     }
 
     #[test]
-    fn should_restart_all_domain_actors_after_test_panic_commands() {
+    fn should_fail_closed_all_domain_actors_after_test_panic_commands() {
         // Arrange
         let store = crate::testkit::midge::create_test_engine_with_cfs(vec![1, 2, 3, 4, 5, 6, 7]);
         let router = Arc::new(Router::new());
@@ -721,14 +721,14 @@ mod tests {
 
         // Act
         domains.panic_all_domain_actors_for_tests();
-        wait_for_domain_restarts(&domains, 1);
+        wait_for_domain_failures(&domains);
         let snapshots = domains.health_snapshots();
 
         // Assert
         assert_eq!(snapshots.len(), DomainKind::ALL.len());
-        assert!(snapshots.iter().all(|snapshot| snapshot.actor_running));
+        assert!(snapshots.iter().all(|snapshot| !snapshot.actor_running));
         assert!(snapshots.iter().all(|snapshot| snapshot.panic_count == 1));
-        assert!(!domains.has_permanently_failed_domain());
+        assert!(snapshots.iter().all(|snapshot| snapshot.restart_exhausted));
         assert_eq!(domains.kv_active_transaction_count(), 0);
         assert_eq!(domains.queue_ready_message_count(), 0);
         assert_eq!(domains.stream_count(), 0);
@@ -738,7 +738,7 @@ mod tests {
     }
 
     #[test]
-    fn should_serve_second_session_after_test_panic_restarts_initialized_domain() {
+    fn should_reject_new_work_after_domain_actor_panic() {
         // Arrange
         let store = crate::testkit::midge::create_test_engine_with_cfs(vec![1, 2, 3, 4, 5, 6, 7]);
         let router = Arc::new(Router::new());
@@ -776,28 +776,30 @@ mod tests {
 
         // Act
         domains.kv.panic_actor_for_tests();
-        wait_for_named_domain_restart(&domains, "kv", 1);
-        router
-            .route(Envelope::from_route(
-                recovery_inbox,
-                recovery_kv_address,
-                FrameContext::new(
-                    recovery_session,
-                    crate::protocol::frame::ChannelId::Pub,
-                    crate::protocol::tlv::MessageType::new(crate::protocol::kv::msg_type::BEGIN),
-                    encode_kv_begin(recovery_route),
-                    family,
-                ),
-            ))
-            .expect("route session B begin after restart");
-        let recovery_response = receive_kv_response(&recovery_mailbox, "session B begin response");
+        wait_for_named_domain_failure(&domains, "kv");
+        let result = router.route(Envelope::from_route(
+            recovery_inbox,
+            recovery_kv_address,
+            FrameContext::new(
+                recovery_session,
+                crate::protocol::frame::ChannelId::Pub,
+                crate::protocol::tlv::MessageType::new(crate::protocol::kv::msg_type::BEGIN),
+                encode_kv_begin(recovery_route),
+                family,
+            ),
+        ));
 
         // Assert
         assert!(domains
             .health_snapshots()
             .iter()
-            .any(|snapshot| snapshot.domain == "kv" && snapshot.restart_count == 1));
-        assert_eq!(recovery_response.payload.first(), Some(&0));
-        assert!(!domains.has_permanently_failed_domain());
+            .any(|snapshot| snapshot.domain == "kv" && snapshot.restart_exhausted));
+        assert!(matches!(
+            result,
+            Err(crate::runtime::router::RouteError::DeliveryFailed(
+                _,
+                crate::runtime::router::DeliveryError::ActorStopped
+            ))
+        ));
     }
 }

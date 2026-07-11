@@ -71,16 +71,14 @@ impl RpcDomainSink {
         envelope: Envelope,
         high_priority: bool,
     ) -> Result<(), DeliveryError> {
-        if !high_priority {
-            if !self.actor.is_running() {
-                return Err(DeliveryError::ActorStopped);
-            }
-            return self.runtime().deliver_envelope(&envelope);
-        }
-
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         let command = RpcDomainCommand::Deliver(envelope, reply_tx);
-        self.actor.try_send_high_priority(command)?;
+        let enqueue_result = if high_priority {
+            self.actor.try_send_high_priority(command)
+        } else {
+            self.actor.try_send(command)
+        };
+        enqueue_result?;
 
         reply_rx
             .recv_timeout(std::time::Duration::from_secs(1))
@@ -162,7 +160,8 @@ impl RpcDomainRuntime<'_> {
         });
         {
             let mut state = self.state.lock();
-            let route_state = state.ensure_route_state(worker_addr.route());
+            let route_state =
+                state.ensure_route_state_for_family(*worker_addr.family(), worker_addr.route());
             route_state.register_worker(RpcWorker::new(
                 worker_addr.clone(),
                 worker_inbox_addr,
@@ -170,7 +169,7 @@ impl RpcDomainRuntime<'_> {
                 max_concurrent,
             ));
         }
-        self.dispatch_queued_requests_for_route(worker_addr.route());
+        self.dispatch_queued_requests_for_route(worker_addr.route(), *worker_addr.family());
         tracing::debug!(
             domain = "rpc",
             worker = worker_addr.route().as_str(),
@@ -256,7 +255,12 @@ impl RpcDomainRuntime<'_> {
                 route,
                 correlation_id,
                 live_request_count,
-            } => self.accept_queued_request(&route, correlation_id, live_request_count),
+            } => self.accept_queued_request(
+                &route,
+                meta.route_family,
+                correlation_id,
+                live_request_count,
+            ),
             super::state_model::RpcRequestDispatch::Immediate {
                 request,
                 worker,
@@ -372,6 +376,7 @@ impl RpcDomainRuntime<'_> {
     fn accept_queued_request(
         &self,
         route: &crate::runtime::routing::Route,
+        family: crate::runtime::routing::RouteFamily,
         correlation_id: uuid::Uuid,
         live_request_count: usize,
     ) -> DeliveryOutcome {
@@ -379,7 +384,7 @@ impl RpcDomainRuntime<'_> {
         self.histogram_observe_us("rpc_pending_route_index_us", 0);
         self.gauge_set("rpc_pending_requests", live_request_count as u64);
         self.schedule_admin_snapshot(false);
-        self.dispatch_queued_requests_for_route(route);
+        self.dispatch_queued_requests_for_route(route, family);
 
         tracing::debug!(
             domain = "rpc",
@@ -478,7 +483,7 @@ impl RpcDomainRuntime<'_> {
     ) -> DeliveryOutcome {
         self.counter_inc("rpc_request_forward_errors_total");
         let pending_len = self
-            .remove_pending_request(&req.correlation_id)
+            .remove_pending_request_for_family(meta.route_family, &req.correlation_id)
             .map(|(_, pending_len)| pending_len)
             .unwrap_or_default();
         tracing::warn!(

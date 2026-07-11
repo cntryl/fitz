@@ -1,5 +1,10 @@
 import type { Page } from "@playwright/test";
-import type { DiagnosticSnapshot, GlobalStats, MessagingTopology } from "@/adapters";
+import type {
+  DiagnosticSnapshot,
+  GlobalStats,
+  MessagingTopology,
+  StructuredMetricsResponse,
+} from "@/adapters";
 import { dashboardDiagnostics, topologyDtoLane, topologyOverview } from "../../fixtures/topology";
 
 export type DomainOverviewFixture = {
@@ -23,30 +28,21 @@ export async function mockAdminFeatures(page: Page) {
     });
   });
 
-  await page.route("**/api/v1/stats", async (route) => {
+  await page.route("**/api/v1/*/stats", async (route) => {
     await route.fulfill({
       json: makeGlobalStatsPayload(),
     });
   });
 
-  await page.route("**/api/v1/topology", async (route) => {
+  await page.route("**/api/v1/*/topology", async (route) => {
     await route.fulfill({
       json: topologyApiPayload,
     });
   });
 
-  await page.route(
-    (url) => {
-      const parsedUrl = new URL(url);
-      return parsedUrl.pathname === "/metrics";
-    },
-    async (route) => {
-      await route.fulfill({
-        body: metricsPayload,
-        contentType: "text/plain; charset=utf-8",
-      });
-    },
-  );
+  await page.route("**/api/v1/*/metrics", async (route) => {
+    await route.fulfill({ json: structuredMetricsPayload });
+  });
 }
 
 export const topologyApiPayload: MessagingTopology = {
@@ -587,42 +583,54 @@ export const sessionsEmpty: SessionsPayload = {
   sessions: [],
 };
 
-export const metricsPayload = `# HELP fitz_broker_uptime_seconds Broker up
-# TYPE fitz_broker_uptime_seconds gauge
-fitz_broker_uptime_seconds 120
-# HELP fitz_queue_ready Gauge
-# TYPE fitz_queue_ready gauge
-fitz_queue_ready{realm="default",area="jobs"} 7
-# HELP fitz_rpc_requests_total rpc requests
-# TYPE fitz_rpc_requests_total counter
-fitz_rpc_requests_total{realm="default"} 19
-`;
+export const structuredMetricsPayload: StructuredMetricsResponse = {
+  scope: "family",
+  family: 1,
+  generated_at: 1719167400000,
+  samples: [
+    {
+      name: "fitz_broker_uptime_seconds",
+      kind: "gauge",
+      help: "Broker uptime",
+      labels: { family: "1" },
+      value: 120,
+    },
+    {
+      name: "fitz_queue_ready",
+      kind: "gauge",
+      help: "Ready queue messages",
+      labels: { area: "jobs", family: "1", realm: "default" },
+      value: 7,
+    },
+    {
+      name: "fitz_rpc_requests_total",
+      kind: "counter",
+      help: "RPC requests",
+      labels: { family: "1", realm: "default" },
+      value: 19,
+    },
+  ],
+};
 
 export async function mockSessionsApi(page: Page, payload: SessionsPayload) {
   await mockAdminFeatures(page);
 
-  await page.route("**/api/v1/sessions", async (route) => {
+  await page.route("**/api/v1/*/sessions", async (route) => {
     await route.fulfill({
       json: payload,
     });
   });
 }
 
-export async function mockMetricsApi(page: Page, payload = metricsPayload) {
+export async function mockMetricsApi(
+  page: Page,
+  payload: StructuredMetricsResponse = structuredMetricsPayload,
+) {
   await mockAdminFeatures(page);
 
-  await page.route(
-    (url) => {
-      const parsedUrl = new URL(url);
-      return parsedUrl.pathname === "/metrics";
-    },
-    async (route) => {
-      await route.fulfill({
-        body: payload,
-        contentType: "text/plain; charset=utf-8",
-      });
-    },
-  );
+  await page.route("**/api/v1/*/metrics", async (route) => {
+    await route.fulfill({ json: payload });
+  });
 }
 
 export function makeDiagnosticSnapshot(overrides: Partial<DiagnosticSnapshot> = {}): DiagnosticSnapshot {
@@ -748,8 +756,6 @@ export function makeGlobalStatsPayload(): GlobalStats {
         diagnostics,
         oldest_pending_claim_age_seconds: 12,
         pending_ack_retries: 0,
-        pending_claim_cleanup_failures_total: 0,
-        pending_claims_expired_total: 0,
         request_latency_buckets: emptyLatencyBuckets,
       },
       stream: {
@@ -772,40 +778,30 @@ export function makeGlobalStatsPayload(): GlobalStats {
 export async function mockDiagnosticsApis(page: Page) {
   await mockAdminFeatures(page);
 
-  await page.route("**/api/v1/stats", async (route) => {
+  await page.route("**/api/v1/*/stats", async (route) => {
     await route.fulfill({
       json: makeGlobalStatsPayload(),
     });
   });
 
-  await page.route("**/api/v1/topology", async (route) => {
+  await page.route("**/api/v1/*/topology", async (route) => {
     await route.fulfill({
       json: topologyApiPayload,
     });
   });
 
-  await page.route(
-    (url) => {
-      const parsedUrl = new URL(url);
-      return parsedUrl.pathname === "/metrics";
-    },
-    async (route) => {
-      await route.fulfill({
-        body: metricsPayload,
-        contentType: "text/plain; charset=utf-8",
-      });
-    },
-  );
+  await page.route("**/api/v1/*/metrics", async (route) => {
+    await route.fulfill({ json: structuredMetricsPayload });
+  });
 }
 
 
 export async function mockHomeRouteApis(page: Page) {
   await mockAdminFeatures(page);
 
-  await page.route("**/api/v1/topology", async (route) => {
+  await page.route("**/api/v1/*/topology", async (route) => {
     await route.fulfill({
       json: topologyApiPayload,
     });
   });
 }
-

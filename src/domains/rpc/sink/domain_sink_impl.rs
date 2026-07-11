@@ -66,7 +66,7 @@ impl RpcDomainSink {
         active: Arc<AtomicBool>,
     ) -> crate::runtime::ManagedActor<RpcDomainCommand> {
         let router = core.router.clone();
-        crate::runtime::ManagedActor::spawn_supervised(
+        crate::runtime::ManagedActor::spawn_fail_closed(
             router,
             RpcDomainActor::route_address(),
             move || RpcDomainActor::new(core.clone(), active.clone()),
@@ -189,7 +189,7 @@ impl RpcDomainSink {
     pub(super) fn register_worker_for_tests(&self, worker: RpcWorker) {
         let mut state = self.core.state.lock();
         state
-            .ensure_route_state(worker.addr.route())
+            .ensure_route_state_for_family(*worker.addr.family(), worker.addr.route())
             .register_worker(worker);
     }
 
@@ -199,11 +199,15 @@ impl RpcDomainSink {
         correlation_id: uuid::Uuid,
         pending: RpcPendingRequest,
     ) {
-        self.core
-            .state
-            .lock()
-            .pending
-            .track_pending(correlation_id, pending);
+        self.core.state.lock().pending.track_pending_for_family(
+            *pending
+                .caller_inbox_addr
+                .as_ref()
+                .expect("pending caller")
+                .family(),
+            correlation_id,
+            pending,
+        );
     }
 
     #[cfg(test)]
@@ -465,13 +469,14 @@ impl RpcDomainRuntime<'_> {
         );
     }
 
-    pub(super) fn remove_pending_request(
+    pub(super) fn remove_pending_request_for_family(
         &self,
+        family: crate::runtime::routing::RouteFamily,
         correlation_id: &uuid::Uuid,
     ) -> Option<(RpcPendingRequest, usize)> {
         let removed = {
             let mut state = self.state.lock();
-            state.remove_pending_request(correlation_id)
+            state.remove_pending_request_for_family(family, correlation_id)
         };
 
         self.gauge_set(
@@ -673,7 +678,7 @@ impl RpcDomainRuntime<'_> {
         let workers = state
             .routes
             .iter()
-            .flat_map(|(route, route_state)| {
+            .flat_map(|((_, route), route_state)| {
                 route_state
                     .workers
                     .iter()
@@ -698,10 +703,10 @@ impl RpcDomainRuntime<'_> {
         let pending = state
             .queued
             .iter()
-            .map(|(correlation_id, queued)| {
+            .map(|(correlation_key, queued)| {
                 crate::control::admin::RpcPendingRequest::snapshot(
                     queued.caller_inbox_addr.family().as_u64(),
-                    correlation_id,
+                    &correlation_key.correlation_id,
                     queued.request.route.as_str(),
                     &queued.submitted_at_rfc3339(),
                     queued.age_seconds(snapshot_now),
@@ -713,10 +718,10 @@ impl RpcDomainRuntime<'_> {
                     .pending
                     .pending
                     .iter()
-                    .map(|(correlation_id, pending)| {
+                    .map(|(correlation_key, pending)| {
                         crate::control::admin::RpcPendingRequest::snapshot(
                             pending.worker_addr.family().as_u64(),
-                            correlation_id,
+                            &correlation_key.correlation_id,
                             pending.route.as_str(),
                             &pending.submitted_at_rfc3339(),
                             pending.age_seconds(snapshot_now),
@@ -767,13 +772,17 @@ impl RpcDomainRuntime<'_> {
         self.router.route(request_envelope)
     }
 
-    pub(super) fn dispatch_queued_requests_for_route(&self, route: &Route) {
+    pub(super) fn dispatch_queued_requests_for_route(
+        &self,
+        route: &Route,
+        family: crate::runtime::routing::RouteFamily,
+    ) {
         let mut snapshot_dirty = false;
 
         loop {
             let next_dispatch = {
                 let mut state = self.state.lock();
-                state.next_queued_dispatch(route)
+                state.next_queued_dispatch_for_family(route, family)
             };
 
             let Some(dispatch) = next_dispatch else {
@@ -813,9 +822,10 @@ impl RpcDomainRuntime<'_> {
             )) => {
                 self.counter_inc("rpc_request_forward_errors_total");
                 self.counter_inc("rpc_backpressure_rejects_total");
-                if let Some((pending, pending_len)) =
-                    self.remove_pending_request(&dispatch.request.correlation_id)
-                {
+                if let Some((pending, pending_len)) = self.remove_pending_request_for_family(
+                    *dispatch.worker.addr.family(),
+                    &dispatch.request.correlation_id,
+                ) {
                     if let Some(caller_inbox_addr) = pending.caller_inbox_addr {
                         self.forward_pending_error_deliveries(
                             vec![RpcPendingErrorDelivery {
@@ -844,13 +854,13 @@ impl RpcDomainRuntime<'_> {
     }
 
     pub(super) fn dispatch_all_queued_requests(&self) {
-        let routes: Vec<Route> = {
+        let routes: Vec<(crate::runtime::routing::RouteFamily, Route)> = {
             let state = self.state.lock();
             state.routes.keys().cloned().collect()
         };
 
-        for route in routes {
-            self.dispatch_queued_requests_for_route(&route);
+        for (family, route) in routes {
+            self.dispatch_queued_requests_for_route(&route, family);
         }
     }
 

@@ -1,7 +1,8 @@
 ## Sessions & Status
 
-Admin API routes are mounted under `/api/v1` plus the probe and metrics paths
-listed below. `/admin/...` paths are not mounted API routes.
+Admin API routes are mounted under `/api/v1`; `/admin/...` paths are browser
+routes, not API routes. Raw Prometheus is served separately on the configured
+`FITZ_METRICS_BIND_ADDR:FITZ_METRICS_PORT` listener.
 
 ### List Active Sessions
 ```
@@ -54,13 +55,18 @@ Operator tooling should not call `/admin/sessions/{id}/close` or
 - `GET /api/v1/features` - Admin feature metadata.
 
 ### Runtime And Observability Routes
-- `GET /metrics` - Prometheus metrics.
+- `GET /api/v1/{family}/metrics` - Structured metrics for one authorized family.
+- `GET /api/v1/all/metrics` - Broker-wide structured metrics; wildcard authority required.
 - `POST /api/v1/runtime/drain` - Begin runtime drain.
 - `GET /api/v1/stats` - Global broker and domain statistics.
+- `GET /api/v1/{family}/stats` - Family-scoped broker and domain statistics.
 - `GET /api/v1/topology` - Messaging topology.
+- `GET /api/v1/{family}/topology` - Family-scoped messaging topology.
 - `GET /api/v1/troubleshooting` - Global troubleshooting guidance.
+- `GET /api/v1/{family}/troubleshooting` - Family-scoped troubleshooting guidance.
 - `GET /api/v1/search` - Cross-domain admin search.
 - `GET /api/v1/sessions` - Active sessions.
+- `GET /api/v1/{family}/sessions` - Active sessions for one authorized family.
 
 ### Domain Routes
 Domain routes use `/api/v1/{domain}/...` for aggregate reads. A concrete route

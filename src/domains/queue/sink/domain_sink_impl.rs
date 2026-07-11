@@ -116,7 +116,7 @@ impl QueueDomainSink {
 
     fn spawn_actor(core: Arc<QueueDomainCore>) -> crate::runtime::ManagedActor<QueueDomainCommand> {
         let router = core.router.clone();
-        crate::runtime::ManagedActor::spawn_supervised(
+        crate::runtime::ManagedActor::spawn_fail_closed(
             router,
             QueueDomainActor::route_address(),
             move || QueueDomainActor::new(core.clone()),

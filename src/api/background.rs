@@ -11,6 +11,32 @@ pub fn start_domain_background_tasks(domains: &Arc<DomainHandles>) {
     start_schedule_tick_loop(Arc::downgrade(domains));
 }
 
+/// Fail closed when a production actor panics. A domain actor owns
+/// synchronous state that cannot be reconstructed transparently, so readiness
+/// is withdrawn and the broker enters its normal drain lifecycle.
+pub fn start_domain_health_monitor(runtime: crate::boot::Runtime, domains: Arc<DomainHandles>) {
+    let Ok(handle) = tokio::runtime::Handle::try_current() else {
+        tracing::debug!("Domain health monitor not started: no Tokio runtime available");
+        return;
+    };
+    handle.spawn(async move {
+        loop {
+            if runtime.is_shutting_down() {
+                break;
+            }
+            if domains.has_permanently_failed_domain() {
+                tracing::error!(
+                    "A domain actor failed; withdrawing readiness and beginning broker drain"
+                );
+                runtime.mark_fatal_domain_failure();
+                runtime.begin_drain();
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    });
+}
+
 fn start_queue_runtime_sweep(domains: Weak<DomainHandles>) {
     let Ok(handle) = tokio::runtime::Handle::try_current() else {
         tracing::debug!("Queue runtime sweep not started: no Tokio runtime available");

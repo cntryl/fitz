@@ -353,7 +353,7 @@ fn should_not_advance_sequence_cache_given_injected_commit_failure() {
     let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
     let failed_events = single_event(b"failed");
     let retry_events = single_event(b"retry");
-    StreamStore::fail_next_promotion_frontier_commit_for_tests();
+    store.fail_next_promotion_frontier_commit_for_tests();
 
     // Act
     let failed = store.commit_records(CommitRecordsParams {

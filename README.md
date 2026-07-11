@@ -42,6 +42,7 @@ Run an anonymous local broker:
 docker run --rm \
   -p 4090:4090 \
   -p 4091:4091 \
+  -p 9090:9090 \
   -e FITZ_AUTH_REQUIRED=false \
   -e FITZ_STORAGE_MODE=local \
   -e FITZ_STORAGE_PATH=/data \
@@ -68,7 +69,8 @@ The compose file starts an authenticated broker on `4090`/`4091` and an anonymou
 - WebSocket data plane: `ws://localhost:4090/ws`
 - TCP data plane: `localhost:4091`
 - Probes: `/livez`, `/targetz`, `/startupz`, `/healthz`, `/readyz`
-- Metrics: `/metrics`
+- Prometheus metrics: `http://localhost:9090/metrics` on the dedicated unauthenticated listener
+- Authenticated structured metrics: `/api/v1/{family}/metrics` (wildcard admins use `/api/v1/all/metrics`)
 
 ## Production Configuration
 

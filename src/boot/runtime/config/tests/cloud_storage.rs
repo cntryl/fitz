@@ -85,7 +85,7 @@ fn should_map_cloud_durability_to_write_options() {
             let config = BootConfig::new();
 
             // Assert
-            assert!(config.server_write_options().is_cloud_strict());
+            assert!(config.schedule_write_options().is_cloud_strict());
             assert!(config.request_sync_write_options().is_cloud_strict());
         },
     );
@@ -110,7 +110,7 @@ fn should_accept_background_cloud_durability() {
             // Assert
             assert!(result.is_ok());
             assert_eq!(config.cloud_durability, CloudDurabilityMode::Background);
-            assert!(!config.server_write_options().is_cloud_strict());
+            assert!(!config.schedule_write_options().is_cloud_strict());
         },
     );
 }

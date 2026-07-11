@@ -84,8 +84,8 @@ async fn should_expose_seeded_operator_console_state_through_real_admin_apis() {
     let kv_value = get_json(
         &server,
         &format!(
-            "/api/v1/kv/realms/{}/areas/{}/resources/accounts/value",
-            first.realm, first.area
+            "/api/v1/{}/kv/realms/{}/areas/{}/resources/accounts/value",
+            first.route_family, first.realm, first.area
         ),
         &[
             ("route_family", first.route_family.to_string()),
@@ -96,20 +96,17 @@ async fn should_expose_seeded_operator_console_state_through_real_admin_apis() {
     let wrong_family_value = get_json(
         &server,
         &format!(
-            "/api/v1/kv/realms/{}/areas/{}/resources/accounts/value",
-            first.realm, first.area
+            "/api/v1/{}/kv/realms/{}/areas/{}/resources/accounts/value",
+            second.route_family, first.realm, first.area
         ),
-        &[
-            ("route_family", second.route_family.to_string()),
-            ("key", first.kv_key.clone()),
-        ],
+        &[("key", first.kv_key.clone())],
     )
     .await;
     let stream_records = get_json(
         &server,
         &format!(
-            "/api/v1/stream/realms/{}/areas/{}/resources/events/records",
-            first.realm, first.area
+            "/api/v1/{}/stream/realms/{}/areas/{}/resources/events/records",
+            first.route_family, first.realm, first.area
         ),
         &[
             ("route_family", first.route_family.to_string()),
@@ -120,8 +117,8 @@ async fn should_expose_seeded_operator_console_state_through_real_admin_apis() {
     let queue_inflight = get_json(
         &server,
         &format!(
-            "/api/v1/queue/realms/{}/areas/{}/resources/settlement/inflight",
-            first.realm, first.area
+            "/api/v1/{}/queue/realms/{}/areas/{}/resources/settlement/inflight",
+            first.route_family, first.realm, first.area
         ),
         &[("family", first.route_family.to_string())],
     )
@@ -129,8 +126,8 @@ async fn should_expose_seeded_operator_console_state_through_real_admin_apis() {
     let schedule_executions = get_json(
         &server,
         &format!(
-            "/api/v1/schedule/realms/{}/areas/{}/resources/reconcile/executions",
-            first.realm, first.area
+            "/api/v1/{}/schedule/realms/{}/areas/{}/resources/reconcile/executions",
+            first.route_family, first.realm, first.area
         ),
         &[
             ("route_family", first.route_family.to_string()),
@@ -140,7 +137,7 @@ async fn should_expose_seeded_operator_console_state_through_real_admin_apis() {
     .await;
     let schedule_missed = get_json(
         &server,
-        "/api/v1/schedule/missed",
+        &format!("/api/v1/{}/schedule/missed", first.route_family),
         &[
             ("route_family", first.route_family.to_string()),
             ("realm", first.realm.clone()),
@@ -149,7 +146,7 @@ async fn should_expose_seeded_operator_console_state_through_real_admin_apis() {
     .await;
     let lease_search = get_json(
         &server,
-        "/api/v1/lease/search",
+        &format!("/api/v1/{}/lease/search", first.route_family),
         &[
             ("route_family", first.route_family.to_string()),
             ("realm", first.realm.clone()),
@@ -160,7 +157,7 @@ async fn should_expose_seeded_operator_console_state_through_real_admin_apis() {
     .await;
     let notice_deliveries = get_json(
         &server,
-        "/api/v1/notice/deliveries",
+        &format!("/api/v1/{}/notice/deliveries", first.route_family),
         &[
             ("route_family", first.route_family.to_string()),
             ("realm", first.realm.clone()),
@@ -171,7 +168,7 @@ async fn should_expose_seeded_operator_console_state_through_real_admin_apis() {
     .await;
     let rpc_calls = get_json(
         &server,
-        "/api/v1/rpc/calls",
+        &format!("/api/v1/{}/rpc/calls", first.route_family),
         &[
             ("route_family", first.route_family.to_string()),
             ("realm", first.realm.clone()),

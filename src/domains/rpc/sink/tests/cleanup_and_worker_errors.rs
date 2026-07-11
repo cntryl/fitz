@@ -52,13 +52,19 @@ fn should_remove_only_matching_pending_given_worker_unsubscribe() {
         removed_correlation_id
     );
     assert!(
-        !state.pending.pending.contains_key(&removed_correlation_id),
+        !state.pending.pending.contains_key(&RpcCorrelationKey {
+            family,
+            correlation_id: removed_correlation_id,
+        }),
         "removed worker pending should no longer be tracked"
     );
     let retained_pending = state
         .pending
         .pending
-        .get(&retained_correlation_id)
+        .get(&RpcCorrelationKey {
+            family,
+            correlation_id: retained_correlation_id,
+        })
         .expect("retained worker pending should remain tracked");
     assert_eq!(retained_pending.worker_addr, retained_worker_addr);
     assert_eq!(state.pending.len(), 1);

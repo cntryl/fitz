@@ -105,7 +105,7 @@ impl ScheduleDomainSink {
         state: Arc<ScheduleDomainState>,
     ) -> crate::runtime::ManagedActor<ScheduleDomainCommand> {
         let router = state.core.router.clone();
-        crate::runtime::ManagedActor::spawn_supervised(
+        crate::runtime::ManagedActor::spawn_fail_closed(
             router,
             ScheduleDomainActor::route_address(),
             move || ScheduleDomainActor::new(state.clone()),

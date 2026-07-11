@@ -59,7 +59,7 @@ impl std::error::Error for MuxError {}
 /// Type-to-channel mapping with optional overrides.
 ///
 /// Overrides are stored in a small, shared vector (Arc) to keep hot-path reads lock-free
-/// and cache-friendly. Default routing is an inline range match.
+/// and cache-friendly. Default routing comes from the exact protocol manifest.
 #[derive(Debug, Clone)]
 pub struct TypeMapping {
     overrides: Arc<Vec<(u16, ChannelId)>>,
@@ -92,7 +92,7 @@ impl TypeMapping {
         self.overrides = Arc::new(vec);
     }
 
-    /// Get channel for `msg_type`. Fast path: if no overrides, do only a range check.
+    /// Get the manifest channel for `msg_type`, honoring an explicit override.
     #[inline]
     #[must_use]
     pub fn get_channel(&self, msg_type: u16) -> Option<ChannelId> {
@@ -105,14 +105,16 @@ impl TypeMapping {
             }
         }
 
-        match msg_type {
-            0..=99 => Some(ChannelId::Control),
-            100..=199 | 500..=504 => Some(ChannelId::Pub), // KV, Notice
-            200..=299 | 600..=699 => Some(ChannelId::Sub), // Queue, Stream
-            300..=399 => Some(ChannelId::Rpc),             // RPC
-            400..=499 => Some(ChannelId::Lease),           // Lease
-            700..=799 => Some(ChannelId::Internal),        // Schedule
-            _ => None,
+        let entry = crate::protocol::manifest::entry(MessageType::new(msg_type))?;
+        match entry.decoder {
+            crate::protocol::manifest::ManifestDecoder::Control => Some(ChannelId::Control),
+            crate::protocol::manifest::ManifestDecoder::Kv
+            | crate::protocol::manifest::ManifestDecoder::Notice => Some(ChannelId::Pub),
+            crate::protocol::manifest::ManifestDecoder::Queue
+            | crate::protocol::manifest::ManifestDecoder::Stream => Some(ChannelId::Sub),
+            crate::protocol::manifest::ManifestDecoder::Rpc => Some(ChannelId::Rpc),
+            crate::protocol::manifest::ManifestDecoder::Lease => Some(ChannelId::Lease),
+            crate::protocol::manifest::ManifestDecoder::Schedule => Some(ChannelId::Internal),
         }
     }
 }
@@ -292,20 +294,20 @@ mod tests {
     use crate::protocol::tlv::{TlvDecoder, TlvEncoder};
 
     #[test]
-    fn should_map_default_ranges() {
+    fn should_map_manifest_message_ids() {
         // Arrange
         let mapping = TypeMapping::new();
 
         // Act
-        let c1 = mapping.get_channel(50);
-        let c2 = mapping.get_channel(150);
-        let c3 = mapping.get_channel(250);
-        let c4 = mapping.get_channel(350);
-        let c5 = mapping.get_channel(450);
+        let c1 = mapping.get_channel(1);
+        let c2 = mapping.get_channel(100);
+        let c3 = mapping.get_channel(200);
+        let c4 = mapping.get_channel(300);
+        let c5 = mapping.get_channel(400);
         let c6 = mapping.get_channel(504);
         let c7 = mapping.get_channel(505);
-        let c8 = mapping.get_channel(650);
-        let c9 = mapping.get_channel(750);
+        let c8 = mapping.get_channel(600);
+        let c9 = mapping.get_channel(700);
         let c10 = mapping.get_channel(999);
 
         // Assert
@@ -314,8 +316,8 @@ mod tests {
         assert_eq!(c3, Some(ChannelId::Sub));
         assert_eq!(c4, Some(ChannelId::Rpc));
         assert_eq!(c5, Some(ChannelId::Lease));
-        assert_eq!(c6, Some(ChannelId::Pub)); // notice
-        assert_eq!(c7, None);
+        assert_eq!(c6, Some(ChannelId::Pub)); // notice server response
+        assert_eq!(c7, None); // reserved gap
         assert_eq!(c8, Some(ChannelId::Sub)); // stream
         assert_eq!(c9, Some(ChannelId::Internal)); // schedule
         assert_eq!(c10, None);

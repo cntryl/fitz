@@ -174,9 +174,11 @@ export default function Layout({ children }: { children?: unknown }) {
   const route = currentRoute();
   const currentPath = typeof window === "undefined" ? route.path : window.location.pathname;
   const currentSession = createCurrentSessionQuery();
-  const topology = createMessagingTopologyQuery();
   const [mobileNavOpen, setMobileNavOpen] = state(false);
   const activeRouteFamilyId = routeFamilyFromPath(currentPath) ?? "";
+  const sessionRouteFamilyId =
+    currentSession.data?.routeFamilies.find((family) => /^\d+$/.test(family)) ?? "1";
+  const topology = createMessagingTopologyQuery(activeRouteFamilyId || sessionRouteFamilyId);
   const operator = createOperatorContextSnapshot(
     topology.data,
     currentSession.data,

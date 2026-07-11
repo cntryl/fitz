@@ -12,10 +12,7 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 
 #[cfg(test)]
-use super::{
-    FAIL_NEXT_AREA_WATERMARK_GUARD_READ, FAIL_NEXT_PROMOTION_FRONTIER_COMMIT,
-    FAIL_NEXT_REALM_WATERMARK_GUARD_READ,
-};
+use super::{FAIL_NEXT_AREA_WATERMARK_GUARD_READ, FAIL_NEXT_REALM_WATERMARK_GUARD_READ};
 
 impl StreamStore {
     pub(super) fn resource_sequence_guard(
@@ -339,8 +336,9 @@ impl StreamStore {
     }
 
     #[cfg(test)]
-    pub(crate) fn fail_next_promotion_frontier_commit_for_tests() {
-        FAIL_NEXT_PROMOTION_FRONTIER_COMMIT.with(|cell| cell.set(true));
+    pub(crate) fn fail_next_promotion_frontier_commit_for_tests(&self) {
+        self.fail_next_promotion_frontier_commit
+            .store(true, std::sync::atomic::Ordering::Release);
     }
 
     pub(super) fn resource_identity_from_key(

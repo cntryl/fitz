@@ -417,9 +417,14 @@ where
         }
         SupervisionAction::Resume => true,
         SupervisionAction::Stop | SupervisionAction::Escalate => {
+            health.mark_exhausted();
             running.store(false, Ordering::SeqCst);
             router.unregister(address);
             ctx.stop();
+            tracing::error!(
+                actor = ?address,
+                "Managed actor failed closed after panic"
+            );
             false
         }
     }
@@ -503,6 +508,33 @@ impl<M: Send + 'static> ManagedActor<M> {
             actor_factory,
             mailbox_capacity,
             SupervisorStrategy::default(),
+        )
+    }
+
+    /// Spawn an actor that fails closed on its first panic.
+    ///
+    /// Production domain actors use this policy because their state ownership
+    /// and readiness contract cannot safely be reconstructed by a transparent
+    /// restart. The owning runtime observes the failed health state and stops
+    /// accepting data-plane traffic.
+    #[must_use]
+    pub fn spawn_fail_closed<A, F>(
+        router: Arc<Router>,
+        address: RouteAddress,
+        actor_factory: F,
+        mailbox_capacity: usize,
+    ) -> Self
+    where
+        A: Actor<Message = M>,
+        F: Fn() -> A + Send + Sync + 'static,
+        M: Any + Send + Sync + 'static,
+    {
+        Self::spawn_supervised_with_strategy(
+            router,
+            address,
+            actor_factory,
+            mailbox_capacity,
+            SupervisorStrategy::stop(),
         )
     }
 

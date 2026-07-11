@@ -1,66 +1,42 @@
-import type { MetricsOverview, PrometheusMetricFamily, PrometheusSample } from "./metrics-models";
+import type { StructuredMetricsResponse } from "@/adapters";
+import type { MetricFamily, MetricsOverview } from "./metrics-models";
 
-function parseLabels(input: string | undefined) {
-  if (!input) return {};
-
-  return Object.fromEntries(
-    input
-      .split(",")
-      .map((part) => part.trim())
-      .filter(Boolean)
-      .map((part) => {
-        const [key, ...valueParts] = part.split("=");
-        return [key, valueParts.join("=").replace(/^"|"$/g, "")];
-      }),
-  );
-}
-
-function ensureFamily(families: Map<string, PrometheusMetricFamily>, name: string) {
+function ensureFamily(
+  families: Map<string, MetricFamily>,
+  name: string,
+  help: string,
+  type: string,
+) {
   const baseName = name.replace(/_(bucket|sum|count)$/, "");
   const existing = families.get(baseName);
 
-  if (existing) return existing;
+  if (existing) {
+    existing.help ??= help;
+    existing.type ??= type;
+    return existing;
+  }
 
-  const family: PrometheusMetricFamily = { name: baseName, samples: [] };
+  const family: MetricFamily = { help, name: baseName, samples: [], type };
   families.set(baseName, family);
   return family;
 }
 
-export function parsePrometheusMetrics(raw: string): MetricsOverview {
-  const families = new Map<string, PrometheusMetricFamily>();
+export function mapStructuredMetrics(data: StructuredMetricsResponse): MetricsOverview {
+  const families = new Map<string, MetricFamily>();
 
-  for (const line of raw.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-
-    if (trimmed.startsWith("# HELP ")) {
-      const [, name, help] = trimmed.match(/^# HELP\s+(\S+)\s+(.+)$/) ?? [];
-      if (name) ensureFamily(families, name).help = help;
-      continue;
-    }
-
-    if (trimmed.startsWith("# TYPE ")) {
-      const [, name, type] = trimmed.match(/^# TYPE\s+(\S+)\s+(.+)$/) ?? [];
-      if (name) ensureFamily(families, name).type = type;
-      continue;
-    }
-
-    if (trimmed.startsWith("#")) continue;
-
-    const match = trimmed.match(/^([^{\s]+)(?:\{([^}]*)\})?\s+(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)$/i);
-    if (!match) continue;
-
-    const [, name, labels, value] = match;
-    const sample: PrometheusSample = {
-      labels: parseLabels(labels),
-      name,
-      value: Number(value),
-    };
-    ensureFamily(families, name).samples.push(sample);
+  for (const sample of data.samples) {
+    ensureFamily(families, sample.name, sample.help, sample.kind).samples.push({
+      labels: sample.labels,
+      name: sample.name,
+      value: sample.value,
+    });
   }
 
+  const raw = JSON.stringify(data, null, 2);
   return {
     families: [...families.values()].sort((left, right) => left.name.localeCompare(right.name)),
+    generatedAt: data.generated_at,
     raw,
+    scope: data.scope,
   };
 }

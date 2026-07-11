@@ -7,7 +7,7 @@ This runbook describes standard operating procedures for Fitz in production.
 1. Verify config and secrets are present. Use [production-auth.md](production-auth.md) for the auth/browser perimeter baseline and [cloud-setup.md](cloud-setup.md) for storage configuration.
 2. Start Fitz and wait for `/startupz` plus `/healthz` or `/readyz` before sending data-plane traffic.
 3. Use `/targetz` only for single-active handoff patterns where a replacement process must become target-eligible before it owns the storage writer lease.
-4. Confirm metrics ingestion from `/metrics`.
+4. Confirm Prometheus ingestion from the dedicated `FITZ_METRICS_BIND_ADDR:FITZ_METRICS_PORT/metrics` listener; use `/api/v1/{family}/metrics` for authenticated operator JSON.
 5. Validate one authenticated client round trip on `/ws`.
 
 ## Steady-State Signals

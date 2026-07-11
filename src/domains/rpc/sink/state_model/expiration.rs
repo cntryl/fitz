@@ -1,11 +1,12 @@
 use super::{
-    Duration, HeapOrdering, Instant, RPC_MAX_TIMEOUT_SWEEP_INTERVAL, RPC_MIN_TIMEOUT_SWEEP_INTERVAL,
+    Duration, HeapOrdering, Instant, RpcCorrelationKey, RPC_MAX_TIMEOUT_SWEEP_INTERVAL,
+    RPC_MIN_TIMEOUT_SWEEP_INTERVAL,
 };
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(in crate::domains::rpc::sink) struct ExpiringPendingRequest {
     pub(super) expires_at: Instant,
-    pub(super) correlation_id: uuid::Uuid,
+    pub(super) key: RpcCorrelationKey,
 }
 
 impl Ord for ExpiringPendingRequest {
@@ -13,7 +14,8 @@ impl Ord for ExpiringPendingRequest {
         other
             .expires_at
             .cmp(&self.expires_at)
-            .then_with(|| self.correlation_id.cmp(&other.correlation_id))
+            .then_with(|| self.key.correlation_id.cmp(&other.key.correlation_id))
+            .then_with(|| self.key.family.as_u64().cmp(&other.key.family.as_u64()))
     }
 }
 

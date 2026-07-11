@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { parsePrometheusMetrics } from "@/features/metrics/metrics-mappers";
+import { mapStructuredMetrics } from "@/features/metrics/metrics-mappers";
 import {
   appendTopologyTrendPoint,
   defaultTopologySelectionId,
@@ -12,51 +12,57 @@ import {
 import { healthyDiagnostics, healthyGlobalDiagnostics, topologyDtoLane } from "./fixtures/topology";
 
 describe("Data query layer", () => {
-  it("parses Prometheus metrics into searchable families", () => {
-    expect(
-      parsePrometheusMetrics(`# HELP fitz_rpc_requests_total RPC requests
-# TYPE fitz_rpc_requests_total counter
-fitz_rpc_requests_total{realm="prod",area="api"} 42
-fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
-`),
-    ).toEqual({
-      raw: `# HELP fitz_rpc_requests_total RPC requests
-# TYPE fitz_rpc_requests_total counter
-fitz_rpc_requests_total{realm="prod",area="api"} 42
-fitz_queue_ready{realm="prod",area="jobs",resource="emails"} 7
-`,
-      families: [
-        {
-          name: "fitz_queue_ready",
-          samples: [
-            {
-              labels: {
-                area: "jobs",
-                realm: "prod",
-                resource: "emails",
-              },
-              name: "fitz_queue_ready",
-              value: 7,
-            },
-          ],
-        },
+  it("maps structured metrics into searchable families", () => {
+    const mapped = mapStructuredMetrics({
+      family: 7,
+      generated_at: 123,
+      samples: [
         {
           help: "RPC requests",
+          kind: "counter",
+          labels: { area: "api", realm: "prod" },
           name: "fitz_rpc_requests_total",
-          samples: [
-            {
-              labels: {
-                area: "api",
-                realm: "prod",
-              },
-              name: "fitz_rpc_requests_total",
-              value: 42,
-            },
-          ],
-          type: "counter",
+          value: 42,
+        },
+        {
+          help: "Queue ready messages",
+          kind: "gauge",
+          labels: { area: "jobs", realm: "prod", resource: "emails" },
+          name: "fitz_queue_ready",
+          value: 7,
         },
       ],
+      scope: "family",
     });
+
+    expect(mapped.generatedAt).toBe(123);
+    expect(mapped.scope).toBe("family");
+    expect(mapped.families).toEqual([
+      {
+        help: "Queue ready messages",
+        name: "fitz_queue_ready",
+        samples: [
+          {
+            labels: { area: "jobs", realm: "prod", resource: "emails" },
+            name: "fitz_queue_ready",
+            value: 7,
+          },
+        ],
+        type: "gauge",
+      },
+      {
+        help: "RPC requests",
+        name: "fitz_rpc_requests_total",
+        samples: [
+          {
+            labels: { area: "api", realm: "prod" },
+            name: "fitz_rpc_requests_total",
+            value: 42,
+          },
+        ],
+        type: "counter",
+      },
+    ]);
   });
   it("maps topology DTOs and derives selection links and trends", () => {
     const topology = mapMessagingTopology({

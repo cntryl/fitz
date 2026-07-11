@@ -7,7 +7,7 @@ mod assets;
 pub mod auth;
 pub mod handlers;
 mod list;
-mod metrics;
+pub(crate) mod metrics;
 mod probes;
 mod search;
 mod stats;

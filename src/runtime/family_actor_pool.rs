@@ -1,0 +1,503 @@
+//! Synchronous, family-affine actor mailboxes.
+//!
+//! Transport code is responsible for choosing a family and enqueueing work.
+//! A shard owns the receivers for its families and is the only code that
+//! drains them.  This keeps family state on one worker without introducing a
+//! mutex around the domain core or an async scheduler into the runtime.
+
+use crate::runtime::routing::RouteFamily;
+use crossbeam_channel::{bounded, Receiver, RecvTimeoutError, Sender, TrySendError};
+use std::collections::BTreeMap;
+use std::fmt;
+use std::time::Duration;
+
+/// The normal data-plane capacity required by the domain contract.
+pub const FAMILY_ACTOR_NORMAL_LANE_CAPACITY: usize = 16_384;
+
+/// A separate bounded lane for control-plane work.
+pub const FAMILY_ACTOR_CONTROL_LANE_CAPACITY: usize = 256;
+
+/// The lane used when enqueueing family work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FamilyActorLane {
+    Normal,
+    Control,
+}
+
+/// One item returned by an owning family shard.
+#[derive(Debug, PartialEq, Eq)]
+pub struct FamilyActorWork<M> {
+    pub family: RouteFamily,
+    pub lane: FamilyActorLane,
+    pub message: M,
+}
+
+/// Failure to enqueue work at the transport/router edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FamilyActorEnqueueError {
+    UnknownFamily,
+    NormalLaneFull,
+    ControlLaneFull,
+    ActorStopped,
+}
+
+impl fmt::Display for FamilyActorEnqueueError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownFamily => f.write_str("route family is not provisioned"),
+            Self::NormalLaneFull => f.write_str("family actor normal lane is full"),
+            Self::ControlLaneFull => f.write_str("family actor control lane is full"),
+            Self::ActorStopped => f.write_str("family actor shard is stopped"),
+        }
+    }
+}
+
+impl std::error::Error for FamilyActorEnqueueError {}
+
+struct FamilyActorSender<M> {
+    normal: Sender<M>,
+    control: Sender<M>,
+}
+
+struct FamilyActorReceivers<M> {
+    family: RouteFamily,
+    normal: Receiver<M>,
+    control: Receiver<M>,
+}
+
+/// The transport/router-facing half of a family actor pool.
+pub struct FamilyActorIngress<M> {
+    senders: std::sync::Arc<BTreeMap<u32, FamilyActorSender<M>>>,
+    shard_count: usize,
+}
+
+impl<M> Clone for FamilyActorIngress<M> {
+    fn clone(&self) -> Self {
+        Self {
+            senders: self.senders.clone(),
+            shard_count: self.shard_count,
+        }
+    }
+}
+
+impl<M: Send + 'static> FamilyActorIngress<M> {
+    /// Enqueue work to the family selected by the caller.
+    ///
+    /// # Errors
+    ///
+    /// Returns a bounded-lane or stopped-actor error when the work cannot be
+    /// accepted at the transport/router edge.
+    pub fn try_enqueue(
+        &self,
+        family: RouteFamily,
+        lane: FamilyActorLane,
+        message: M,
+    ) -> Result<(), FamilyActorEnqueueError> {
+        let Some(sender) = self.senders.get(&family.id()) else {
+            return Err(FamilyActorEnqueueError::UnknownFamily);
+        };
+        let result = match lane {
+            FamilyActorLane::Normal => sender.normal.try_send(message),
+            FamilyActorLane::Control => sender.control.try_send(message),
+        };
+        result.map_err(|error| match error {
+            TrySendError::Full(_) => match lane {
+                FamilyActorLane::Normal => FamilyActorEnqueueError::NormalLaneFull,
+                FamilyActorLane::Control => FamilyActorEnqueueError::ControlLaneFull,
+            },
+            TrySendError::Disconnected(_) => FamilyActorEnqueueError::ActorStopped,
+        })
+    }
+
+    #[must_use]
+    pub fn shard_count(&self) -> usize {
+        self.shard_count
+    }
+
+    /// Return the permanent shard affinity for a provisioned family.
+    #[must_use]
+    pub fn shard_for_family(&self, family: RouteFamily) -> Option<usize> {
+        self.senders
+            .contains_key(&family.id())
+            .then(|| family_shard_affinity(family, self.shard_count))
+    }
+
+    #[must_use]
+    pub fn family_count(&self) -> usize {
+        self.senders.len()
+    }
+}
+
+/// A family actor pool. Each shard can be moved to one owning worker.
+pub struct FamilyActorPool<M> {
+    ingress: FamilyActorIngress<M>,
+    shards: Vec<Option<FamilyActorShard<M>>>,
+}
+
+impl<M: Send + 'static> FamilyActorPool<M> {
+    /// Create a pool for the provisioned route families.
+    ///
+    /// The shard count is `available_parallelism`, capped at the number of
+    /// provisioned families. Family affinity is stable for the lifetime of
+    /// the pool and uses `(family_id - 1) % shard_count`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an empty, invalid, or duplicate family set.
+    pub fn new(families: &[RouteFamily]) -> Result<Self, FamilyActorPoolError> {
+        if families.is_empty() {
+            return Err(FamilyActorPoolError::NoProvisionedFamilies);
+        }
+
+        let mut family_ids = BTreeMap::new();
+        for family in families {
+            if family.id() == 0 {
+                return Err(FamilyActorPoolError::InvalidFamily(*family));
+            }
+            if family_ids.insert(family.id(), *family).is_some() {
+                return Err(FamilyActorPoolError::DuplicateFamily(*family));
+            }
+        }
+
+        let shard_count = shard_count_for_family_count(families.len());
+        let mut sender_map = BTreeMap::new();
+        let mut shard_receivers = (0..shard_count)
+            .map(|_| Vec::new())
+            .collect::<Vec<Vec<FamilyActorReceivers<M>>>>();
+
+        for family in family_ids.values().copied() {
+            let (normal, normal_receiver) = bounded(FAMILY_ACTOR_NORMAL_LANE_CAPACITY);
+            let (control, control_receiver) = bounded(FAMILY_ACTOR_CONTROL_LANE_CAPACITY);
+            sender_map.insert(family.id(), FamilyActorSender { normal, control });
+            let shard = family_shard_affinity(family, shard_count);
+            shard_receivers[shard].push(FamilyActorReceivers {
+                family,
+                normal: normal_receiver,
+                control: control_receiver,
+            });
+        }
+
+        let shards = shard_receivers
+            .into_iter()
+            .map(|receivers| Some(FamilyActorShard::new(receivers)))
+            .collect();
+
+        Ok(Self {
+            ingress: FamilyActorIngress {
+                senders: std::sync::Arc::new(sender_map),
+                shard_count,
+            },
+            shards,
+        })
+    }
+
+    #[must_use]
+    pub fn ingress(&self) -> FamilyActorIngress<M> {
+        self.ingress.clone()
+    }
+
+    #[must_use]
+    pub fn shard_count(&self) -> usize {
+        self.ingress.shard_count()
+    }
+
+    /// Move one shard to its owning worker.
+    pub fn take_shard(&mut self, shard: usize) -> Option<FamilyActorShard<M>> {
+        self.shards.get_mut(shard).and_then(Option::take)
+    }
+}
+
+/// Error raised while building a family actor pool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FamilyActorPoolError {
+    NoProvisionedFamilies,
+    InvalidFamily(RouteFamily),
+    DuplicateFamily(RouteFamily),
+}
+
+impl fmt::Display for FamilyActorPoolError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoProvisionedFamilies => f.write_str("at least one route family is required"),
+            Self::InvalidFamily(family) => write!(f, "route family {family} is invalid"),
+            Self::DuplicateFamily(family) => write!(f, "route family {family} is duplicated"),
+        }
+    }
+}
+
+impl std::error::Error for FamilyActorPoolError {}
+
+/// The worker-owned half of one shard.
+pub struct FamilyActorShard<M> {
+    receivers: Vec<FamilyActorReceivers<M>>,
+    cursor: usize,
+}
+
+impl<M: Send + 'static> FamilyActorShard<M> {
+    fn new(receivers: Vec<FamilyActorReceivers<M>>) -> Self {
+        Self {
+            receivers,
+            cursor: 0,
+        }
+    }
+
+    #[must_use]
+    pub fn families(&self) -> Vec<RouteFamily> {
+        self.receivers.iter().map(|item| item.family).collect()
+    }
+
+    /// Drain one ready message, using a round-robin family cursor.
+    pub fn try_next(&mut self) -> Option<FamilyActorWork<M>> {
+        let len = self.receivers.len();
+        if len == 0 {
+            return None;
+        }
+
+        for control in [true, false] {
+            for offset in 0..len {
+                let index = (self.cursor + offset) % len;
+                let receiver = &self.receivers[index];
+                let result = if control {
+                    receiver
+                        .control
+                        .try_recv()
+                        .map(|message| (FamilyActorLane::Control, message))
+                } else {
+                    receiver
+                        .normal
+                        .try_recv()
+                        .map(|message| (FamilyActorLane::Normal, message))
+                };
+                if let Ok((lane, message)) = result {
+                    self.cursor = (index + 1) % len;
+                    return Some(FamilyActorWork {
+                        family: receiver.family,
+                        lane,
+                        message,
+                    });
+                }
+            }
+        }
+        None
+    }
+
+    /// Wait for one message while preserving the same fair drain order.
+    ///
+    /// # Errors
+    ///
+    /// Returns a timeout or disconnected error when no family mailbox produces
+    /// work within the requested interval.
+    pub fn recv_timeout(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<FamilyActorWork<M>, RecvTimeoutError> {
+        if let Some(work) = self.try_next() {
+            return Ok(work);
+        }
+        if self.receivers.is_empty() {
+            return Err(RecvTimeoutError::Disconnected);
+        }
+
+        let mut select = crossbeam_channel::Select::new();
+        let mut operations = Vec::with_capacity(self.receivers.len() * 2);
+        for (index, receiver) in self.receivers.iter().enumerate() {
+            operations.push((
+                select.recv(&receiver.control),
+                index,
+                FamilyActorLane::Control,
+            ));
+            operations.push((
+                select.recv(&receiver.normal),
+                index,
+                FamilyActorLane::Normal,
+            ));
+        }
+        let operation = select
+            .select_timeout(timeout)
+            .map_err(|_| RecvTimeoutError::Timeout)?;
+        let (index, lane) = operations
+            .iter()
+            .find_map(|(operation_index, index, lane)| {
+                (*operation_index == operation.index()).then_some((*index, *lane))
+            })
+            .ok_or(RecvTimeoutError::Disconnected)?;
+        let message = match lane {
+            FamilyActorLane::Normal => self.receivers[index].normal.recv(),
+            FamilyActorLane::Control => self.receivers[index].control.recv(),
+        }?;
+        self.cursor = (index + 1) % self.receivers.len();
+        Ok(FamilyActorWork {
+            family: self.receivers[index].family,
+            lane,
+            message,
+        })
+    }
+}
+
+/// Calculate the fixed shard count for a number of provisioned families.
+#[must_use]
+pub fn shard_count_for_family_count(family_count: usize) -> usize {
+    let available = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    available.max(1).min(family_count.max(1))
+}
+
+/// Calculate the permanent affinity for a valid non-zero route family.
+#[must_use]
+pub fn family_shard_affinity(family: RouteFamily, shard_count: usize) -> usize {
+    debug_assert!(family.id() > 0);
+    debug_assert!(shard_count > 0);
+    (family.id() as usize - 1) % shard_count.max(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn family(id: u32) -> RouteFamily {
+        RouteFamily::new(id)
+    }
+
+    #[test]
+    fn should_cap_shards_at_provisioned_family_count() {
+        // Arrange
+        let families = [family(1), family(2)];
+
+        // Act
+        let pool = FamilyActorPool::<u64>::new(&families).expect("pool");
+
+        // Assert
+        assert_eq!(pool.shard_count(), shard_count_for_family_count(2));
+        assert!(pool.shard_count() <= families.len());
+    }
+
+    #[test]
+    fn should_keep_family_affinity_stable() {
+        // Arrange
+        let families = [family(1), family(2), family(3), family(4)];
+        let pool = FamilyActorPool::<u64>::new(&families).expect("pool");
+        let ingress = pool.ingress();
+
+        // Act
+        let affinities = families
+            .iter()
+            .map(|family| ingress.shard_for_family(*family).expect("family"))
+            .collect::<Vec<_>>();
+
+        // Assert
+        assert_eq!(
+            affinities[0],
+            family_shard_affinity(family(1), pool.shard_count())
+        );
+        assert_eq!(
+            affinities[1],
+            family_shard_affinity(family(2), pool.shard_count())
+        );
+        assert_eq!(
+            affinities[2],
+            family_shard_affinity(family(3), pool.shard_count())
+        );
+        assert_eq!(
+            affinities[3],
+            family_shard_affinity(family(4), pool.shard_count())
+        );
+    }
+
+    #[test]
+    fn should_isolate_family_capacity_and_route_work_to_owning_shard() {
+        // Arrange
+        let families = [family(1), family(2)];
+        let mut pool = FamilyActorPool::<u64>::new(&families).expect("pool");
+        let ingress = pool.ingress();
+        let family_one_shard = ingress.shard_for_family(family(1)).expect("family one");
+        let family_two_shard = ingress.shard_for_family(family(2)).expect("family two");
+        let mut first = pool.take_shard(family_one_shard).expect("first shard");
+        let mut second = if family_two_shard == family_one_shard {
+            None
+        } else {
+            pool.take_shard(family_two_shard)
+        };
+
+        // Act
+        ingress
+            .try_enqueue(family(1), FamilyActorLane::Control, 11)
+            .expect("family one enqueue");
+        ingress
+            .try_enqueue(family(2), FamilyActorLane::Normal, 22)
+            .expect("family two enqueue");
+        let first_work = first.try_next().expect("first work");
+        let second_work = second
+            .as_mut()
+            .and_then(FamilyActorShard::try_next)
+            .or_else(|| first.try_next());
+
+        // Assert
+        assert_eq!(first_work.family, family(1));
+        assert_eq!(first_work.lane, FamilyActorLane::Control);
+        assert_eq!(first_work.message, 11);
+        let second_work = second_work.expect("second work");
+        assert_eq!(second_work.family, family(2));
+        assert_eq!(second_work.message, 22);
+    }
+
+    #[test]
+    fn should_fairly_rotate_ready_families() {
+        // Arrange
+        let shard_count = shard_count_for_family_count(usize::MAX);
+        let family_count = shard_count.saturating_add(1);
+        let families = (1..=family_count)
+            .map(|id| family(u32::try_from(id).expect("test family fits")))
+            .collect::<Vec<_>>();
+        let mut pool = FamilyActorPool::<u64>::new(&families).expect("pool");
+        let ingress = pool.ingress();
+        let shard = ingress.shard_for_family(family(1)).expect("shard");
+        let second_family =
+            family(u32::try_from(pool.shard_count().saturating_add(1)).expect("test family fits"));
+        for value in 0..3 {
+            ingress
+                .try_enqueue(family(1), FamilyActorLane::Normal, value)
+                .expect("family one enqueue");
+            ingress
+                .try_enqueue(second_family, FamilyActorLane::Normal, value + 10)
+                .expect("family two enqueue");
+        }
+        let mut worker = pool.take_shard(shard).expect("shard");
+
+        // Act
+        let order = (0..6)
+            .map(|_| worker.try_next().expect("work").family.id())
+            .collect::<Vec<_>>();
+
+        // Assert
+        assert_eq!(
+            order,
+            [
+                1,
+                second_family.id(),
+                1,
+                second_family.id(),
+                1,
+                second_family.id()
+            ]
+        );
+    }
+
+    #[test]
+    fn should_reject_unknown_and_duplicate_families() {
+        // Arrange
+        let duplicate = [family(1), family(1)];
+        let pool = FamilyActorPool::<u64>::new(&[family(1)]).expect("pool");
+
+        // Act
+        let duplicate_result = FamilyActorPool::<u64>::new(&duplicate);
+        let unknown_result = pool
+            .ingress()
+            .try_enqueue(family(2), FamilyActorLane::Normal, 1);
+
+        // Assert
+        assert!(matches!(
+            duplicate_result,
+            Err(FamilyActorPoolError::DuplicateFamily(_))
+        ));
+        assert_eq!(unknown_result, Err(FamilyActorEnqueueError::UnknownFamily));
+    }
+}

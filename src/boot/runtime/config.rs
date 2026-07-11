@@ -9,6 +9,8 @@ const DEFAULT_SQRZL_EMULATOR_ENDPOINT: &str = "http://127.0.0.1:9000";
 const DEFAULT_SQRZL_EMULATOR_ACCESS_KEY: &str = "admin";
 const DEFAULT_SQRZL_EMULATOR_SECRET_KEY: &str = "sqrzl-secret";
 const DEFAULT_SQRZL_EMULATOR_BUCKET: &str = "fitz";
+const DEFAULT_METRICS_BIND_ADDR: &str = "127.0.0.1";
+const DEFAULT_METRICS_PORT: u16 = 9090;
 const ENV_STORAGE_MEMTABLE_BYTES: &str = "FITZ_STORAGE_MEMTABLE_BYTES";
 const ENV_QUEUE_WRITE_POLICY: &str = "FITZ_QUEUE_WRITE_POLICY";
 const ENV_QUEUE_LOSS_WINDOW_MS: &str = "FITZ_QUEUE_LOSS_WINDOW_MS";
@@ -326,6 +328,10 @@ pub struct BootConfig {
     pub tcp_enabled: bool,
     /// Bind address (default: "0.0.0.0")
     pub bind_addr: String,
+    /// Unauthenticated Prometheus listener bind address.
+    pub metrics_bind_addr: String,
+    /// Unauthenticated Prometheus listener port.
+    pub metrics_port: u16,
     /// Storage mode (memory, local disk, or cloud)
     pub storage_mode: StorageMode,
     /// Stream storage layout selector
@@ -380,14 +386,19 @@ impl BootConfig {
         }
     }
 
+    /// Write policy for Schedule definitions, due claims, and acknowledgements.
+    ///
+    /// Memory storage is explicitly best-effort and non-durable. Every
+    /// persistent local commit waits for local sync; cloud strict mode also
+    /// waits for provider acknowledgement.
     #[must_use]
-    pub fn server_write_options(&self) -> cntryl_midge::WriteOptions {
+    pub fn schedule_write_options(&self) -> cntryl_midge::WriteOptions {
         match (&self.storage_mode, &self.cloud_durability) {
             (StorageMode::Memory, _) => cntryl_midge::WriteOptions::best_effort(),
             (StorageMode::CloudBacked(_), CloudDurabilityMode::Strict) => {
                 cntryl_midge::WriteOptions::cloud_strict()
             }
-            _ => cntryl_midge::WriteOptions::buffered(),
+            _ => cntryl_midge::WriteOptions::sync(),
         }
     }
 
@@ -449,6 +460,12 @@ impl Default for BootConfig {
             .and_then(|value| value.parse::<bool>().ok())
             .unwrap_or(true);
         let bind_addr = std::env::var("FITZ_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0".to_string());
+        let metrics_bind_addr = std::env::var("FITZ_METRICS_BIND_ADDR")
+            .unwrap_or_else(|_| DEFAULT_METRICS_BIND_ADDR.to_string());
+        let metrics_port = std::env::var("FITZ_METRICS_PORT")
+            .ok()
+            .and_then(|value| value.parse::<u16>().ok())
+            .unwrap_or(DEFAULT_METRICS_PORT);
         let assume_external_tls = std::env::var("FITZ_ASSUME_EXTERNAL_TLS")
             .ok()
             .and_then(|value| value.parse::<bool>().ok())
@@ -471,6 +488,8 @@ impl Default for BootConfig {
             tcp_port,
             tcp_enabled,
             bind_addr,
+            metrics_bind_addr,
+            metrics_port,
             storage_mode: StorageMode::from_env(),
             stream_storage_layout: StreamStorageLayout::from_env(),
             auth_required,
@@ -541,6 +560,18 @@ impl BootConfig {
     #[must_use]
     pub fn with_bind_addr(mut self, addr: String) -> Self {
         self.bind_addr = addr;
+        self
+    }
+
+    #[must_use]
+    pub fn with_metrics_bind_addr(mut self, addr: String) -> Self {
+        self.metrics_bind_addr = addr;
+        self
+    }
+
+    #[must_use]
+    pub fn with_metrics_port(mut self, port: u16) -> Self {
+        self.metrics_port = port;
         self
     }
 
@@ -642,6 +673,9 @@ impl BootConfig {
         }
         if self.drain_close_reason.trim().is_empty() {
             return Err(format!("{ENV_DRAIN_CLOSE_REASON} must not be empty").into());
+        }
+        if self.metrics_bind_addr.trim().is_empty() {
+            return Err("FITZ_METRICS_BIND_ADDR must not be empty".into());
         }
         if let CloudDurabilityMode::Invalid { reason } = &self.cloud_durability {
             return Err(reason.clone().into());

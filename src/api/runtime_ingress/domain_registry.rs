@@ -1,13 +1,11 @@
 use super::{AuthorizationPolicy, Bytes, ChannelId, DispatchDomain, DomainAuthorizationSpec};
 
 type AuthRouteExtractor = for<'a> fn(u16, &'a [u8]) -> Result<Option<&'a str>, String>;
-type MessagePolicyResolver = fn(u16) -> Result<Option<AuthorizationPolicy>, &'static str>;
 type RequestEnvelopeBuilder = fn(DomainEnvelopeBuildRequest) -> crate::runtime::Envelope;
 
 pub(crate) struct IngressDomainDescriptor {
     pub(super) manifest: &'static crate::runtime::DomainDescriptor,
     pub(super) unauthorized_error_code: u16,
-    message_policy: MessagePolicyResolver,
     extract_auth_route: AuthRouteExtractor,
     build_request_envelope: RequestEnvelopeBuilder,
 }
@@ -25,6 +23,7 @@ pub(crate) struct DomainEnvelopeBuildRequest {
 pub(crate) struct IngressDomainRegistry;
 
 impl IngressDomainDescriptor {
+    #[cfg(test)]
     pub(super) fn kind(&self) -> DispatchDomain {
         self.manifest.kind
     }
@@ -50,6 +49,7 @@ impl IngressDomainDescriptor {
 }
 
 impl IngressDomainRegistry {
+    #[cfg(test)]
     pub(super) fn all() -> &'static [IngressDomainDescriptor; 7] {
         &INGRESS_DOMAIN_DESCRIPTORS
     }
@@ -71,32 +71,38 @@ impl IngressDomainRegistry {
     pub(super) fn dispatch_spec_for_msg_type(
         msg_type: crate::protocol::tlv::MessageType,
     ) -> Result<Option<DomainAuthorizationSpec>, &'static str> {
-        let msg_type = msg_type.as_u16();
-
-        for descriptor in Self::all() {
-            if let Some(policy) = (descriptor.message_policy)(msg_type)? {
-                return Ok(Some(DomainAuthorizationSpec {
-                    domain: descriptor.kind(),
-                    policy,
-                }));
-            }
-        }
-
-        Ok(None)
+        let Some(dispatch) = crate::dispatch::client_dispatch(msg_type)? else {
+            return Ok(None);
+        };
+        let policy = manifest_authorization_policy(dispatch.authorization)
+            .ok_or("manifest message has no authorization policy")?;
+        Ok(Some(DomainAuthorizationSpec {
+            domain: dispatch.domain,
+            policy,
+        }))
     }
 
     pub(crate) fn descriptor_for_msg_type(
         msg_type: crate::protocol::tlv::MessageType,
     ) -> Result<Option<&'static IngressDomainDescriptor>, &'static str> {
-        let msg_type = msg_type.as_u16();
+        let entry = crate::protocol::manifest::client_entry(msg_type)?;
+        let Some(domain) = Self::domain_from_manifest_name(entry.domain) else {
+            return Ok(None);
+        };
+        Ok(Some(Self::descriptor_for_domain(domain)))
+    }
 
-        for descriptor in Self::all() {
-            if (descriptor.message_policy)(msg_type)?.is_some() {
-                return Ok(Some(descriptor));
-            }
+    fn domain_from_manifest_name(name: &str) -> Option<DispatchDomain> {
+        match name {
+            "kv" => Some(DispatchDomain::Kv),
+            "queue" => Some(DispatchDomain::Queue),
+            "notice" => Some(DispatchDomain::Notice),
+            "stream" => Some(DispatchDomain::Stream),
+            "rpc" => Some(DispatchDomain::Rpc),
+            "lease" => Some(DispatchDomain::Lease),
+            "schedule" => Some(DispatchDomain::Schedule),
+            _ => None,
         }
-
-        Ok(None)
     }
 }
 
@@ -104,141 +110,66 @@ static INGRESS_DOMAIN_DESCRIPTORS: [IngressDomainDescriptor; 7] = [
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Kv.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::kv::ERR_UNAUTHORIZED,
-        message_policy: kv_message_policy,
         extract_auth_route: crate::protocol::kv_codec::extract_auth_route,
         build_request_envelope: build_kv_request_envelope,
     },
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Queue.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::queue::ERR_UNAUTHORIZED,
-        message_policy: queue_message_policy,
         extract_auth_route: crate::protocol::queue_codec::extract_auth_route,
         build_request_envelope: build_queue_request_envelope,
     },
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Notice.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::notice::ERR_UNAUTHORIZED,
-        message_policy: notice_message_policy,
         extract_auth_route: crate::protocol::notice_codec::extract_auth_route,
         build_request_envelope: build_notice_request_envelope,
     },
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Stream.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::stream::ERR_UNAUTHORIZED,
-        message_policy: stream_message_policy,
         extract_auth_route: crate::protocol::stream_codec::extract_auth_route,
         build_request_envelope: build_stream_request_envelope,
     },
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Rpc.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::rpc::ERR_UNAUTHORIZED,
-        message_policy: rpc_message_policy,
         extract_auth_route: crate::protocol::rpc_codec::extract_auth_route,
         build_request_envelope: build_rpc_request_envelope,
     },
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Lease.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::lease::ERR_UNAUTHORIZED,
-        message_policy: lease_message_policy,
         extract_auth_route: crate::protocol::lease_codec::extract_auth_route,
         build_request_envelope: build_lease_request_envelope,
     },
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Schedule.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::schedule::ERR_UNAUTHORIZED,
-        message_policy: schedule_message_policy,
         extract_auth_route: crate::protocol::schedule_codec::extract_auth_route,
         build_request_envelope: build_schedule_request_envelope,
     },
 ];
 
-fn kv_message_policy(msg_type: u16) -> Result<Option<AuthorizationPolicy>, &'static str> {
+fn manifest_authorization_policy(
+    authorization: crate::protocol::manifest::ManifestAuthorization,
+) -> Option<AuthorizationPolicy> {
     use crate::auth::Access;
+    use crate::protocol::manifest::ManifestAuthorization;
 
-    match msg_type {
-        100 => Ok(Some(AuthorizationPolicy::KvBeginModeScoped)),
-        101..=108 => Ok(Some(AuthorizationPolicy::SessionOwned)),
-        109 | 110 => Ok(Some(AuthorizationPolicy::RouteScoped(Access::Read))),
-        111 => Err("invalid message type: 111 is server-to-client only"),
-        112..=199 => Err("invalid message type: unsupported KV operation"),
-        _ => Ok(None),
-    }
-}
-
-fn queue_message_policy(msg_type: u16) -> Result<Option<AuthorizationPolicy>, &'static str> {
-    use crate::auth::Access;
-
-    match msg_type {
-        200 | 202 | 203 | 204 => Ok(Some(AuthorizationPolicy::RouteScoped(Access::Write))),
-        207 | 208 => Ok(Some(AuthorizationPolicy::RouteScoped(Access::Read))),
-        209 => Err("invalid message type: 209 is server-to-client only"),
-        201 | 205 | 206 | 210..=299 => Err("invalid message type: unsupported queue operation"),
-        _ => Ok(None),
-    }
-}
-
-fn rpc_message_policy(msg_type: u16) -> Result<Option<AuthorizationPolicy>, &'static str> {
-    use crate::auth::Access;
-
-    match msg_type {
-        300 | 301 => Ok(Some(AuthorizationPolicy::RouteScoped(Access::All))),
-        302 => Ok(Some(AuthorizationPolicy::RouteScoped(Access::Write))),
-        303 => Ok(Some(AuthorizationPolicy::SessionOwned)),
-        304 | 306..=399 => Err("invalid message type: unsupported rpc operation"),
-        305 => Err("invalid message type: 305 is server-to-client only"),
-        _ => Ok(None),
-    }
-}
-
-fn lease_message_policy(msg_type: u16) -> Result<Option<AuthorizationPolicy>, &'static str> {
-    use crate::auth::Access;
-
-    match msg_type {
-        400..=402 => Ok(Some(AuthorizationPolicy::RouteScoped(Access::Write))),
-        403 | 407 | 408 => Ok(Some(AuthorizationPolicy::RouteScoped(Access::Read))),
-        409 => Err("invalid message type: 409 is server-to-client only"),
-        404..=406 | 410..=499 => Err("invalid message type: unsupported lease operation"),
-        _ => Ok(None),
-    }
-}
-
-fn notice_message_policy(msg_type: u16) -> Result<Option<AuthorizationPolicy>, &'static str> {
-    use crate::auth::Access;
-
-    match msg_type {
-        500 => Ok(Some(AuthorizationPolicy::RouteScoped(Access::Write))),
-        501 => Ok(Some(AuthorizationPolicy::RouteScoped(Access::Read))),
-        502 | 503 => Ok(Some(AuthorizationPolicy::SessionOwned)),
-        504 => Err("invalid message type: 504 is server-to-client only"),
-        505..=599 => Err("invalid message type: 505-599 are unsupported notice operations"),
-        _ => Ok(None),
-    }
-}
-
-fn stream_message_policy(msg_type: u16) -> Result<Option<AuthorizationPolicy>, &'static str> {
-    use crate::auth::Access;
-
-    match msg_type {
-        600 => Ok(Some(AuthorizationPolicy::RouteScoped(Access::Write))),
-        601..=603 => Ok(Some(AuthorizationPolicy::SessionOwned)),
-        604..=608 => Ok(Some(AuthorizationPolicy::RouteScoped(Access::Read))),
-        609 => Err("invalid message type: 609 is server-to-client only"),
-        610..=699 => Err("invalid message type: unsupported stream operation"),
-        _ => Ok(None),
-    }
-}
-
-fn schedule_message_policy(msg_type: u16) -> Result<Option<AuthorizationPolicy>, &'static str> {
-    use crate::auth::Access;
-
-    match msg_type {
-        700 | 701 => Ok(Some(AuthorizationPolicy::RouteScoped(Access::Write))),
-        706 => Ok(Some(AuthorizationPolicy::MultiRouteScoped(Access::Write))),
-        702 => Ok(Some(AuthorizationPolicy::WildcardScoped(Access::Read))),
-        703 | 704 => Ok(Some(AuthorizationPolicy::RouteScoped(Access::Read))),
-        705 => Err("invalid message type: 705 is server-to-client only"),
-        707..=799 => Err("invalid message type: unsupported schedule operation"),
-        _ => Ok(None),
+    match authorization {
+        ManifestAuthorization::None => None,
+        ManifestAuthorization::RouteRead => Some(AuthorizationPolicy::RouteScoped(Access::Read)),
+        ManifestAuthorization::RouteWrite => Some(AuthorizationPolicy::RouteScoped(Access::Write)),
+        ManifestAuthorization::RouteAll => Some(AuthorizationPolicy::RouteScoped(Access::All)),
+        ManifestAuthorization::SessionOwned => Some(AuthorizationPolicy::SessionOwned),
+        ManifestAuthorization::KvBeginMode => Some(AuthorizationPolicy::KvBeginModeScoped),
+        ManifestAuthorization::WildcardRead => {
+            Some(AuthorizationPolicy::WildcardScoped(Access::Read))
+        }
+        ManifestAuthorization::MultiRouteWrite => {
+            Some(AuthorizationPolicy::MultiRouteScoped(Access::Write))
+        }
     }
 }
 
@@ -525,7 +456,6 @@ mod tests {
                     AuthorizationPolicy::MultiRouteScoped(crate::auth::Access::Write),
                 )),
             ),
-            (800, None),
         ];
 
         // Act
@@ -552,36 +482,14 @@ mod tests {
     fn should_preserve_invalid_message_rejections() {
         // Arrange
         let cases = [
-            (111, "invalid message type: 111 is server-to-client only"),
-            (112, "invalid message type: unsupported KV operation"),
-            (199, "invalid message type: unsupported KV operation"),
-            (209, "invalid message type: 209 is server-to-client only"),
-            (201, "invalid message type: unsupported queue operation"),
-            (205, "invalid message type: unsupported queue operation"),
-            (299, "invalid message type: unsupported queue operation"),
-            (304, "invalid message type: unsupported rpc operation"),
-            (305, "invalid message type: 305 is server-to-client only"),
-            (306, "invalid message type: unsupported rpc operation"),
-            (399, "invalid message type: unsupported rpc operation"),
-            (409, "invalid message type: 409 is server-to-client only"),
-            (404, "invalid message type: unsupported lease operation"),
-            (504, "invalid message type: 504 is server-to-client only"),
-            (
-                505,
-                "invalid message type: 505-599 are unsupported notice operations",
-            ),
-            (609, "invalid message type: 609 is server-to-client only"),
-            (610, "invalid message type: unsupported stream operation"),
-            (699, "invalid message type: unsupported stream operation"),
-            (705, "invalid message type: 705 is server-to-client only"),
-            (707, "invalid message type: unsupported schedule operation"),
-            (799, "invalid message type: unsupported schedule operation"),
+            111, 112, 199, 209, 201, 205, 299, 304, 305, 306, 399, 409, 404, 504, 505, 609, 610,
+            699, 705, 707, 799,
         ];
 
         // Act
         let actual = cases
             .iter()
-            .map(|(msg_type, _)| {
+            .map(|msg_type| {
                 IngressDomainRegistry::dispatch_spec_for_msg_type(
                     crate::protocol::tlv::MessageType::new(*msg_type),
                 )
@@ -590,7 +498,19 @@ mod tests {
             .collect::<Vec<_>>();
         let expected = cases
             .iter()
-            .map(|(_, expected)| *expected)
+            .map(|msg_type| {
+                if crate::protocol::manifest::entry(crate::protocol::tlv::MessageType::new(
+                    *msg_type,
+                ))
+                .is_some()
+                {
+                    "message type is server-to-client only"
+                } else if *msg_type == 304 {
+                    "invalid message type: unsupported rpc operation"
+                } else {
+                    "unsupported message type"
+                }
+            })
             .collect::<Vec<_>>();
 
         // Assert

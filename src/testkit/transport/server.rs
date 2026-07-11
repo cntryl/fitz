@@ -325,6 +325,8 @@ impl TestServer {
             tcp_port: tcp_addr.port(),
             tcp_enabled: true,
             http_port: ws_addr.port(), // Use discovered WS port
+            metrics_bind_addr: "127.0.0.1".to_string(),
+            metrics_port: 0,
             storage_mode,
             stream_storage_layout,
             auth_required,
@@ -384,14 +386,14 @@ impl TestServer {
         runtime.mark_storage_ready();
 
         // Step 3: Register domain actors
-        let server_write_options = boot_config.server_write_options();
+        let schedule_write_options = boot_config.schedule_write_options();
         let queue_write_options = boot_config.queue_write_options();
         let domains = crate::boot::domains::setup(
             &router,
             &store,
             &runtime.admin_read_model(),
             &crate::boot::domains::DomainSetupOptions {
-                server_write_options,
+                schedule_write_options,
                 queue_write_options,
                 queue_fast_flush_interval: boot_config.queue_fast_flush_interval(),
                 request_sync_write_options: boot_config.request_sync_write_options(),

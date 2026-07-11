@@ -152,7 +152,11 @@ async fn should_mirror_rest_resource_detail_via_mcp_tool() {
     });
 
     // Act
-    let rest_value = rest_json(&runtime, "/api/v1/kv/realms/acme/areas/app/resources/users").await;
+    let rest_value = rest_json(
+        &runtime,
+        "/api/v1/all/kv/realms/acme/areas/app/resources/users",
+    )
+    .await;
     let mcp_value = registry
         .execute(
             "inspect_resource_detail",
@@ -191,7 +195,7 @@ async fn should_mirror_rest_resource_timeline_via_mcp_tool() {
     // Act
     let rest_value = rest_json(
         &runtime,
-        "/api/v1/kv/realms/acme/areas/app/resources/users/events?limit=5",
+        "/api/v1/all/kv/realms/acme/areas/app/resources/users/events?limit=5",
     )
     .await;
     let mcp_value = registry
@@ -248,7 +252,7 @@ async fn should_preserve_durable_backlog_label_given_queue_pressure() {
     // Act
     let rest_value = rest_json(
         &runtime,
-        "/api/v1/queue/realms/acme/areas/app/resources/jobs?family=1",
+        "/api/v1/1/queue/realms/acme/areas/app/resources/jobs",
     )
     .await;
     let mcp_value = registry

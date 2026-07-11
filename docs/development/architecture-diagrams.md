@@ -25,13 +25,14 @@ flowchart TB
         ING["RuntimeIngress"]
         AUTH["CONNECT auth and route-family resolution"]
         PERM["SessionActor permission checks"]
-        DISPATCH["Domain frame dispatcher"]
+        DISPATCH["Manifest-backed domain frame dispatcher"]
     end
 
     subgraph L3["Layer 3: src/runtime core (sync)"]
         ROUTER["Router"]
         ADDR["RouteAddress = (RouteFamily, Route)"]
-        MANIFEST["DomainRegistry manifest"]
+        MANIFEST["Exact message manifest: ID, direction, scheme, auth"]
+        ACTORS["Family actor pools: fixed affinity and bounded lanes"]
     end
 
     subgraph L4["Layer 4: src/domains (sync domain sinks and actors)"]
@@ -58,7 +59,8 @@ flowchart TB
     ING --> AUTH --> PERM --> DISPATCH
     DISPATCH --> ADDR --> ROUTER
     MANIFEST --> ROUTER
-    ROUTER --> KV
+    ROUTER --> ACTORS
+    ACTORS --> KV
     ROUTER --> QUEUE
     ROUTER --> NOTICE
     ROUTER --> STREAM

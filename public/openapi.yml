@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Fitz Admin API
-  version: 2.0.0
+  version: 3.0.0
   description: |
     REST API for the Fitz admin UI.
 
@@ -21,6 +21,8 @@ tags:
   - name: Runtime
   - name: Metrics
   - name: Sessions
+  - name: Stats
+  - name: Topology
   - name: Search
   - name: KV
   - name: Queue
@@ -32,22 +34,51 @@ tags:
   - name: Troubleshooting
 
 paths:
-  /metrics:
+  /api/v1/{family}/metrics:
     get:
       tags: [Metrics]
-      summary: Prometheus metrics
-      operationId: getMetrics
+      summary: Get metrics for one route family
+      operationId: getFamilyMetrics
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/FamilyPath"
+      responses:
+        "200":
+          description: Structured metrics attributable to the requested route family
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StructuredMetricsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/all/metrics:
+    get:
+      tags: [Metrics]
+      summary: Get broker-wide metrics
+      operationId: getAllMetrics
       security:
         - sessionCookie: []
       responses:
         "200":
-          description: Metrics in Prometheus text format
+          description: Structured broker-wide metrics
           content:
-            text/plain; version=0.0.4:
+            application/json:
               schema:
-                type: string
+                $ref: "#/components/schemas/StructuredMetricsResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /api/v1/session:
     post:
@@ -128,7 +159,7 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
-          $ref: "#/components/responses/Unauthorized"
+          $ref: "#/components/responses/Forbidden"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
@@ -148,6 +179,33 @@ paths:
                 $ref: "#/components/schemas/SessionsList"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/{family}/sessions:
+    get:
+      tags: [Sessions]
+      summary: List active sessions for one route family
+      operationId: listFamilySessions
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/FamilyPath"
+      responses:
+        "200":
+          description: Active sessions for the requested route family
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionsList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
@@ -167,6 +225,33 @@ paths:
                 $ref: "#/components/schemas/GlobalStats"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/{family}/stats:
+    get:
+      tags: [Stats]
+      summary: Get route-family broker and domain statistics
+      operationId: getFamilyStats
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/FamilyPath"
+      responses:
+        "200":
+          description: Broker and domain statistics for the requested route family
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlobalStats"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
@@ -187,6 +272,33 @@ paths:
                 $ref: "#/components/schemas/MessagingTopology"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/{family}/topology:
+    get:
+      tags: [Topology]
+      summary: Get route-family messaging topology
+      operationId: getFamilyTopology
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/FamilyPath"
+      responses:
+        "200":
+          description: Messaging topology attributable to the requested route family
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingTopology"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
@@ -206,6 +318,33 @@ paths:
                 $ref: "#/components/schemas/GlobalTroubleshootingDiagnostics"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/{family}/troubleshooting:
+    get:
+      tags: [Troubleshooting]
+      summary: Get route-family troubleshooting guidance
+      operationId: getFamilyTroubleshootingGuidance
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/FamilyPath"
+      responses:
+        "200":
+          description: Troubleshooting guidance for the requested route family
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlobalTroubleshootingDiagnostics"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
@@ -3296,6 +3435,44 @@ components:
         close_reason:
           type: string
 
+    StructuredMetricsResponse:
+      type: object
+      required: [scope, generated_at, samples]
+      properties:
+        scope:
+          type: string
+          enum: [all, family]
+        family:
+          type: [integer, "null"]
+          format: int64
+        generated_at:
+          type: integer
+          format: int64
+          description: Unix epoch milliseconds when the snapshot was generated.
+        samples:
+          type: array
+          items:
+            $ref: "#/components/schemas/StructuredMetricSample"
+
+    StructuredMetricSample:
+      type: object
+      required: [name, kind, help, labels, value]
+      properties:
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [counter, gauge, histogram, summary]
+        help:
+          type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        value:
+          type: number
+          format: double
+
     DiagnosticTrend:
       type: string
       enum: [growing, shrinking, steady, stalled, unknown]
@@ -4431,8 +4608,6 @@ components:
           notify_failures_total,
           ack_failures_total,
           overdue_normalizations_total,
-          pending_claims_expired_total,
-          pending_claim_cleanup_failures_total,
           create_persistence_failures_total,
           upsert_persistence_failures_total,
           cancel_persistence_failures_total,
@@ -4463,12 +4638,6 @@ components:
           type: integer
         overdue_normalizations_total:
           type: integer
-        pending_claims_expired_total:
-          type: integer
-          description: Total stale pending schedule claims cleaned up by this broker process.
-        pending_claim_cleanup_failures_total:
-          type: integer
-          description: Total failed pending schedule claim cleanup attempts.
         create_persistence_failures_total:
           type: integer
           format: int64
@@ -5809,6 +5978,12 @@ components:
             $ref: "#/components/schemas/Error"
     Forbidden:
       description: Authenticated session is not allowed to access the requested scope
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: The requested resource or provisioned route family was not found
       content:
         application/json:
           schema:

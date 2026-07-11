@@ -20,7 +20,7 @@
 /// - `permission_check` (authorization)
 ///
 /// **Debug level (typically filtered):**
-/// - scheduler (actor scheduling)
+/// - family actor workers and internal operations
 pub mod global;
 pub mod metrics;
 pub mod tracing;
@@ -80,6 +80,8 @@ pub const METRIC_CONNECTIONS_CLOSED: &str = "fitz_connections_closed_total";
 pub const METRIC_SESSIONS_CREATED: &str = "fitz_sessions_created_total";
 pub const METRIC_SESSIONS_CLOSED: &str = "fitz_sessions_closed_total";
 pub const METRIC_SESSION_CLEANUP_FAILURES: &str = "fitz_session_cleanup_failures_total";
+pub const METRIC_SESSION_CLEANUP_RETRIES: &str = "fitz_session_cleanup_retries_total";
+pub const METRIC_SESSION_CLEANUP_SUCCESSES: &str = "fitz_session_cleanup_successes_total";
 
 pub const METRIC_FRAMES_RECEIVED: &str = "fitz_frames_received_total";
 pub const METRIC_FRAMES_SENT: &str = "fitz_frames_sent_total";
@@ -130,6 +132,8 @@ pub const METRIC_QUEUE_RESERVE_LATENCY_MS: &str = "fitz_queue_reserve_latency_ms
 // Gauges
 pub const METRIC_CONNECTIONS_ACTIVE: &str = "fitz_connections_active";
 pub const METRIC_SESSIONS_ACTIVE: &str = "fitz_sessions_active";
+pub const METRIC_SESSION_CLEANUP_PENDING: &str = "fitz_session_cleanup_pending";
+pub const METRIC_SESSION_CLEANUP_OLDEST_AGE_MS: &str = "fitz_session_cleanup_oldest_age_ms";
 pub const METRIC_MAILBOX_DEPTH: &str = "fitz_mailbox_depth";
 pub const METRIC_MESSAGES_PENDING: &str = "fitz_messages_pending";
 

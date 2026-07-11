@@ -292,7 +292,7 @@ pub(super) fn should_preserve_session_given_injected_session_commit_failure() {
             },
         )
         .expect("append retry record");
-    StreamStore::fail_next_promotion_frontier_commit_for_tests();
+    store.fail_next_promotion_frontier_commit_for_tests();
 
     // Act
     let failed = store.commit_session(1, session_id, 0, 0, 0, StreamWriteMode::Buffered);

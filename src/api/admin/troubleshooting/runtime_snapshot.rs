@@ -181,8 +181,6 @@ fn collect_runtime_domain_analyses(runtime: &Runtime, now: DateTime<Utc>) -> Run
             runtime.schedule_notify_failures(),
             runtime.schedule_ack_failures(),
             runtime.schedule_overdue_normalizations(),
-            runtime.schedule_pending_claims_expired_total(),
-            runtime.schedule_pending_claim_cleanup_failures_total(),
             now,
         ),
     }

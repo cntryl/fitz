@@ -1,4 +1,3 @@
-use super::record_connection_closed;
 use crate::api::ingress::IngressConfig;
 use crate::api::runtime_ingress::Ingress;
 use bytes::Bytes;
@@ -21,6 +20,7 @@ fn should_ignore_unknown_session_error(error: &crate::session::SessionError) -> 
     )
 }
 
+#[cfg(test)]
 async fn close_tcp_session_on_frame_error(
     ingress: &dyn Ingress,
     session_id: u64,
@@ -61,8 +61,10 @@ struct TcpFrameTaskContext {
     runtime: Arc<crate::boot::Runtime>,
     outbound_sink: Arc<crate::api::outbound::SessionOutboundSink>,
     registered_inboxes: Arc<Mutex<Vec<crate::runtime::routing::RouteAddress>>>,
+    finalizer: Arc<super::SessionCloseFinalizer>,
     initial_family: crate::runtime::routing::RouteFamily,
     session_id: u64,
+    connect_deadline: tokio::time::Instant,
 }
 
 fn spawn_tcp_frame_task(
@@ -77,7 +79,7 @@ fn spawn_tcp_frame_task(
             crate::session::SessionMetadata::new(),
             context.channel_capacity,
             None,
-            crate::runtime::routing::RouteFamily::new(1),
+            context.initial_family,
         );
 
         let mut session = crate::session::Session::new(context.session_id, session_config);
@@ -87,7 +89,29 @@ fn spawn_tcp_frame_task(
             context.session_id,
         );
 
-        while let Some((_sid, frame)) = frame_rx.recv().await {
+        let mut first_frame = true;
+        loop {
+            let next_frame = if first_frame {
+                let remaining = context
+                    .connect_deadline
+                    .saturating_duration_since(tokio::time::Instant::now());
+                if remaining.is_zero() {
+                    return Err("CONNECT deadline exceeded".to_string());
+                }
+                match tokio::time::timeout(remaining, frame_rx.recv()).await {
+                    Ok(frame) => frame,
+                    Err(_) => {
+                        return Err("CONNECT deadline exceeded".to_string());
+                    }
+                }
+            } else {
+                frame_rx.recv().await
+            };
+
+            let Some((_sid, frame)) = next_frame else {
+                break;
+            };
+            first_frame = false;
             context.runtime.increment_messages_received();
             context.ingress.record_frame_received(context.session_id);
             if let Err(error) = crate::api::session::process_session_frame(
@@ -106,13 +130,7 @@ fn spawn_tcp_frame_task(
                     return Ok(());
                 }
                 tracing::error!(session_id = context.session_id, error = %error, "TCP frame processing error");
-                let reason = close_tcp_session_on_frame_error(
-                    context.ingress.as_ref(),
-                    context.session_id,
-                    error,
-                )
-                .await;
-                return Err(reason);
+                return Err(error.to_string());
             }
 
             maybe_rebind_tcp_inbox(
@@ -122,6 +140,7 @@ fn spawn_tcp_frame_task(
                 &context.outbound_sink,
                 &context.registered_inboxes,
                 &mut registered_inbox,
+                &context.finalizer,
             );
         }
         Ok(())
@@ -135,6 +154,7 @@ fn maybe_rebind_tcp_inbox(
     outbound_sink: &Arc<crate::api::outbound::SessionOutboundSink>,
     registered_inboxes: &Arc<Mutex<Vec<crate::runtime::routing::RouteAddress>>>,
     registered_inbox: &mut crate::runtime::routing::RouteAddress,
+    finalizer: &super::SessionCloseFinalizer,
 ) {
     if let Some(updated_route_family) = ingress.get_route_family(session_id) {
         if updated_route_family != *registered_inbox.family() {
@@ -149,6 +169,7 @@ fn maybe_rebind_tcp_inbox(
             if !inboxes.contains(registered_inbox) {
                 inboxes.push(registered_inbox.clone());
             }
+            finalizer.add_route(registered_inbox.clone());
         }
     }
 }
@@ -157,11 +178,14 @@ async fn resolve_tcp_run_result(
     frame_tx: tokio::sync::mpsc::Sender<(u64, bytes::Bytes)>,
     mut frame_handle: tokio::task::JoinHandle<Result<(), String>>,
     mut handler_task: tokio::task::JoinHandle<Result<(), String>>,
+    mut writer_handle: tokio::task::JoinHandle<Result<(), String>>,
     session_id: u64,
+    runtime: Arc<crate::boot::Runtime>,
 ) -> Result<(), String> {
     tokio::select! {
         res = &mut handler_task => {
             drop(frame_tx);
+            writer_handle.abort();
             if let Err(e) = tokio::time::timeout(std::time::Duration::from_secs(1), &mut frame_handle).await {
                 tracing::warn!(session_id = session_id, error = %e, "TCP frame task did not terminate in time");
             }
@@ -172,6 +196,8 @@ async fn resolve_tcp_run_result(
         }
         res = &mut frame_handle => {
             drop(frame_tx);
+            handler_task.abort();
+            writer_handle.abort();
             match res {
                 Ok(Ok(())) => Ok(()),
                 Ok(Err(reason)) => {
@@ -180,14 +206,33 @@ async fn resolve_tcp_run_result(
                         reason = %reason,
                         "TCP frame task requested transport close"
                     );
-                    handler_task.abort();
                     Err(reason)
                 }
                 Err(e) => {
-                    handler_task.abort();
                     Err(format!("tcp frame task join error: {e}"))
                 }
             }
+        }
+        res = &mut writer_handle => {
+            drop(frame_tx);
+            handler_task.abort();
+            frame_handle.abort();
+            match res {
+                Ok(Ok(())) => Err("TCP writer stopped".to_string()),
+                Ok(Err(reason)) => Err(reason),
+                Err(error) => Err(format!("tcp writer task join error: {error}")),
+            }
+        }
+        () = async {
+            while !runtime.is_shutting_down() {
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+        } => {
+            drop(frame_tx);
+            handler_task.abort();
+            frame_handle.abort();
+            writer_handle.abort();
+            Err("server shutdown".to_string())
         }
     }
 }
@@ -198,14 +243,14 @@ pub(super) async fn handle_tcp_connection(
     ingress: Arc<dyn Ingress>,
     config: IngressConfig,
     runtime: Arc<crate::boot::Runtime>,
+    lifecycle: super::ConnectionLifecycle,
+    accepted_at: tokio::time::Instant,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crate::api::tcp::create_session;
 
     let (frame_tx, frame_rx) = tokio::sync::mpsc::channel(config.channel_capacity);
     let (handler, write_half) =
         create_session(ingress.clone(), config.clone(), stream, frame_tx.clone()).await?;
-    runtime.increment_connections();
-
     let session_id = handler.session_id;
 
     let (outbound_tx, mut outbound_rx) =
@@ -230,6 +275,12 @@ pub(super) async fn handle_tcp_connection(
         inbox_route.clone(),
         sink.clone() as std::sync::Arc<dyn crate::runtime::router::MailboxSink>,
     );
+    let finalizer = Arc::new(super::SessionCloseFinalizer::new(
+        ingress.clone(),
+        runtime.router.clone(),
+        session_id,
+        inbox_route.clone(),
+    ));
 
     let tcp_session_id = session_id;
     let runtime_for_writes = runtime.clone();
@@ -249,7 +300,7 @@ pub(super) async fn handle_tcp_connection(
             );
             if let Err(e) = write_tcp_frame(&mut write_half, &mut write_buf, frame).await {
                 tracing::error!(session_id = tcp_session_id, error = %e, "TCP outbound write error");
-                break;
+                return Err(format!("TCP outbound write error: {e}"));
             }
             runtime_for_writes.increment_messages_sent();
             ingress_for_writes.record_frame_sent(tcp_session_id);
@@ -258,6 +309,7 @@ pub(super) async fn handle_tcp_connection(
             session_id = tcp_session_id,
             "TCP outbound writer task ended"
         );
+        Ok(())
     });
 
     let frame_handle = spawn_tcp_frame_task(
@@ -268,28 +320,34 @@ pub(super) async fn handle_tcp_connection(
             runtime: runtime.clone(),
             outbound_sink: sink.clone(),
             registered_inboxes: registered_inboxes.clone(),
+            finalizer: finalizer.clone(),
             initial_family,
             session_id,
+            connect_deadline: accepted_at + crate::api::ingress::CONNECT_DEADLINE,
         },
     );
 
     let handler_task = tokio::spawn(async move { handler.run().await });
-    let run_result = resolve_tcp_run_result(frame_tx, frame_handle, handler_task, session_id).await;
+    let run_result = resolve_tcp_run_result(
+        frame_tx,
+        frame_handle,
+        handler_task,
+        writer_handle,
+        session_id,
+        runtime.clone(),
+    )
+    .await;
 
-    let inboxes = registered_inboxes.lock().clone();
-    for inbox in &inboxes {
-        runtime.router.unregister(inbox);
-    }
+    let close_reason = match &run_result {
+        Ok(()) => crate::session::CloseReason::ClientClose,
+        Err(reason) => crate::session::CloseReason::Error(reason.clone()),
+    };
+    finalizer.finish(close_reason).await;
 
     drop(sink);
     drop(outbound_tx);
 
-    if let Err(e) = tokio::time::timeout(std::time::Duration::from_secs(1), writer_handle).await {
-        tracing::warn!(session_id = session_id, error = %e, "TCP writer task did not terminate in time");
-    }
-
-    record_connection_closed();
-    runtime.decrement_connections();
+    lifecycle.finish();
 
     run_result
         .map_err(std::io::Error::other)

@@ -32,8 +32,6 @@ pub(crate) fn schedule_resource_timeline(
     notify_failures: u64,
     ack_failures: u64,
     overdue_normalizations: u64,
-    pending_claims_expired_total: u64,
-    pending_claim_cleanup_failures_total: u64,
     path: &ResourcePath<'_>,
     limit: usize,
 ) -> ResourceTimeline {
@@ -79,8 +77,6 @@ pub(crate) fn schedule_resource_timeline(
         notify_failures,
         ack_failures,
         overdue_normalizations,
-        pending_claims_expired_total,
-        pending_claim_cleanup_failures_total,
         path,
         &matching_schedules,
         age_seconds,
@@ -159,21 +155,12 @@ fn build_schedule_summary_event(
     notify_failures: u64,
     ack_failures: u64,
     overdue_normalizations: u64,
-    pending_claims_expired_total: u64,
-    pending_claim_cleanup_failures_total: u64,
     path: &ResourcePath<'_>,
     matching_schedules: &[&ScheduleInfo],
     age_seconds: Option<u64>,
     enabled: bool,
 ) -> Option<TimelineCandidate> {
-    if !(enabled
-        || overdue
-        || pending_fire_claims > 0
-        || notify_failures > 0
-        || ack_failures > 0
-        || pending_claims_expired_total > 0
-        || pending_claim_cleanup_failures_total > 0)
-    {
+    if !(enabled || overdue || pending_fire_claims > 0 || notify_failures > 0 || ack_failures > 0) {
         return None;
     }
 
@@ -194,8 +181,6 @@ fn build_schedule_summary_event(
         notify_failures,
         ack_failures,
         overdue_normalizations,
-        pending_claims_expired_total,
-        pending_claim_cleanup_failures_total,
     );
     if !pressure_notes.is_empty() {
         summary.push_str("; ");
@@ -267,8 +252,6 @@ fn build_schedule_pressure_notes(
     notify_failures: u64,
     ack_failures: u64,
     overdue_normalizations: u64,
-    pending_claims_expired_total: u64,
-    pending_claim_cleanup_failures_total: u64,
 ) -> Vec<String> {
     let mut pressure_notes = Vec::new();
     if pending_fire_claims > 0 {
@@ -290,16 +273,6 @@ fn build_schedule_pressure_notes(
     }
     if overdue_normalizations > 0 {
         pressure_notes.push(format!("{overdue_normalizations} overdue normalization(s)"));
-    }
-    if pending_claims_expired_total > 0 {
-        pressure_notes.push(format!(
-            "{pending_claims_expired_total} expired pending claim(s)"
-        ));
-    }
-    if pending_claim_cleanup_failures_total > 0 {
-        pressure_notes.push(format!(
-            "{pending_claim_cleanup_failures_total} pending claim cleanup failure(s)"
-        ));
     }
     pressure_notes
 }

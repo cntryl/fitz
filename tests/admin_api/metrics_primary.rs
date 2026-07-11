@@ -13,7 +13,7 @@ async fn should_return_queue_domain_stats() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/1/queue/stats")
+        .uri("/api/v1/all/queue/stats")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -82,7 +82,7 @@ async fn should_return_queue_operation_counters_given_recorded_metrics() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/1/queue/stats")
+        .uri("/api/v1/all/queue/stats")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -134,7 +134,7 @@ async fn should_return_queue_operation_counters_given_recorded_metrics() {
 
     let metrics_req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/metrics")
+        .uri("/api/v1/all/metrics")
         .header(COOKIE, login_cookie(runtime.clone()).await)
         .body(Body::default())
         .unwrap();
@@ -143,7 +143,7 @@ async fn should_return_queue_operation_counters_given_recorded_metrics() {
         .unwrap();
     assert_eq!(metrics_response.status(), StatusCode::OK);
     let metrics_body = body::to_bytes(metrics_response.into_body()).await.unwrap();
-    let metrics_payload = String::from_utf8(metrics_body.to_vec()).unwrap();
+    let metrics_payload = structured_metrics_text(&metrics_body);
     assert!(metrics_payload.contains("fitz_queue_complete_total"));
     assert!(metrics_payload.contains("fitz_queue_release_total"));
     assert!(metrics_payload.contains("fitz_queue_oldest_message_age_seconds 9"));
@@ -191,7 +191,7 @@ async fn should_return_kv_failure_stats_given_recorded_metrics() {
 
     let kv_req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/1/kv/stats")
+        .uri("/api/v1/all/kv/stats")
         .header(COOKIE, cookie.clone())
         .body(Body::default())
         .unwrap();
@@ -241,7 +241,7 @@ async fn should_return_kv_failure_stats_given_recorded_metrics() {
 
     let metrics_req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/metrics")
+        .uri("/api/v1/all/metrics")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -250,7 +250,7 @@ async fn should_return_kv_failure_stats_given_recorded_metrics() {
         .unwrap();
     assert_eq!(metrics_response.status(), StatusCode::OK);
     let metrics_body = body::to_bytes(metrics_response.into_body()).await.unwrap();
-    let metrics_payload = String::from_utf8(metrics_body.to_vec()).unwrap();
+    let metrics_payload = structured_metrics_text(&metrics_body);
     assert_prometheus_counter(
         &metrics_payload,
         "fitz_kv_commits_failed_total",
@@ -363,13 +363,13 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
 
     let rpc_req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/1/rpc/stats")
+        .uri("/api/v1/all/rpc/stats")
         .header(COOKIE, cookie.clone())
         .body(Body::default())
         .unwrap();
     let lease_req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/1/lease/stats")
+        .uri("/api/v1/all/lease/stats")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -475,7 +475,7 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
 
     let metrics_req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/metrics")
+        .uri("/api/v1/all/metrics")
         .header(COOKIE, login_cookie(runtime.clone()).await)
         .body(Body::default())
         .unwrap();
@@ -484,7 +484,7 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
         .unwrap();
     assert_eq!(metrics_response.status(), StatusCode::OK);
     let metrics_body = body::to_bytes(metrics_response.into_body()).await.unwrap();
-    let metrics_payload = String::from_utf8(metrics_body.to_vec()).unwrap();
+    let metrics_payload = structured_metrics_text(&metrics_body);
     assert!(metrics_payload.contains("fitz_rpc_requests_pending 2"));
     assert!(metrics_payload.contains("fitz_rpc_oldest_pending_request_age_seconds 13"));
     assert!(metrics_payload.contains("fitz_rpc_pending_routes_active 2"));
@@ -550,7 +550,7 @@ async fn should_return_rpc_data_loss_risk_given_late_response_drops() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/1/rpc/stats")
+        .uri("/api/v1/all/rpc/stats")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();

@@ -200,7 +200,8 @@ fn service_identity() -> (String, String) {
 /// - `FITZ_LOG_LEVEL` (off|trace|debug|info|warn): Log level. Default: info
 /// - `OTEL_ENABLED` (true|false): Enable OTLP export. Default: true
 /// - `OTEL_EXPORTER_OTLP_ENDPOINT`: OTLP collector endpoint. Default: <http://localhost:4317>
-/// - `FITZ_METRICS_PORT`: HTTP metrics port. Default: 9090
+/// - `FITZ_METRICS_BIND_ADDR`: unauthenticated Prometheus bind address. Default: 127.0.0.1
+/// - `FITZ_METRICS_PORT`: dedicated Prometheus listener port. Default: 9090
 /// - `RUST_LOG`: Legacy env var for log filtering (takes precedence if set)
 ///
 /// # Returns
@@ -339,13 +340,6 @@ fn init_observability_with_options(
     let metrics_collector = METRICS_COLLECTOR
         .get_or_init(|| Arc::new(MetricsCollector::new()))
         .clone();
-
-    let metrics_port = std::env::var("FITZ_METRICS_PORT")
-        .ok()
-        .and_then(|p| p.parse::<u16>().ok())
-        .unwrap_or(9090);
-
-    tracing::info!("Metrics will be exposed on port {}", metrics_port);
 
     Ok(metrics_collector)
 }

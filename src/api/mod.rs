@@ -30,4 +30,3 @@ pub mod outbound;
 pub mod runtime_ingress;
 pub mod session;
 pub mod tcp;
-pub mod ws;

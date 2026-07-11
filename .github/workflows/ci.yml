@@ -37,3 +37,49 @@ jobs:
 
       - name: Cargo test
         run: cargo test --locked
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install UI dependencies
+        working-directory: ui
+        run: npm ci
+
+      - name: Validate OpenAPI
+        working-directory: ui
+        run: npm run validate:openapi
+
+      - name: Check generated adapters
+        working-directory: ui
+        run: npm run check:generated
+
+      - name: UI tests
+        working-directory: ui
+        run: npm run test -- --run
+
+      - name: UI lint
+        working-directory: ui
+        run: npm run lint
+
+      - name: UI type check
+        working-directory: ui
+        run: npm run type-check
+
+      - name: UI build
+        working-directory: ui
+        run: npm run build
+
+      - name: Install Playwright browser
+        working-directory: ui
+        run: npm run install:browsers
+
+      - name: Playwright route suite
+        working-directory: ui
+        run: npm run test:e2e
+
+      - name: Build-only container validation
+        run: docker build --target frontend --tag fitz-ui-build .

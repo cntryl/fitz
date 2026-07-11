@@ -204,19 +204,15 @@ mod tests {
         runtime.mark_startup_complete();
     }
 
-    fn wait_for_restarts(runtime: &Runtime, expected: u64) {
+    fn wait_for_permanent_domain_failure(runtime: &Runtime) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
         while std::time::Instant::now() < deadline {
-            if runtime
-                .domain_health_snapshots()
-                .iter()
-                .all(|snapshot| snapshot.restart_count == expected)
-            {
+            if runtime.has_permanently_failed_domain() {
                 return;
             }
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        panic!("domain restarts did not reach {expected}");
+        panic!("domain actors did not fail closed");
     }
 
     #[test]
@@ -233,19 +229,19 @@ mod tests {
     }
 
     #[test]
-    fn should_keep_livez_ok_after_successful_domain_restart() {
+    fn should_fail_livez_after_domain_actor_panic() {
         // Arrange
         let runtime = test_domain_setup();
         mark_runtime_ready(&runtime);
         runtime.panic_all_domain_actors_for_tests();
-        wait_for_restarts(&runtime, 1);
+        wait_for_permanent_domain_failure(&runtime);
 
         // Act
         let response = handle_liveness(&runtime);
 
         // Assert
-        assert_eq!(response.status(), StatusCode::OK);
-        assert!(!runtime.has_permanently_failed_domain());
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(runtime.has_permanently_failed_domain());
     }
 
     #[test]

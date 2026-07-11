@@ -49,10 +49,6 @@ const config = {
         target: "http://localhost:4090",
         changeOrigin: true,
       },
-      "/metrics": {
-        target: "http://localhost:4090",
-        changeOrigin: true,
-      },
       "/ws": {
         target: "ws://localhost:4090",
         ws: true,

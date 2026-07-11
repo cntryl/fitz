@@ -2,7 +2,7 @@
 1. **Read-heavy**: Most operations are queries for visibility
 2. **Safe by default**: Dangerous operations (force rollback, cancel) require explicit confirmation
 3. **Realm-scoped**: Queries that expose realm filters operate on the application-defined realm label used in Fitz routes and resources, never on `route_family`
-4. **Prometheus-compatible**: Metrics endpoint follows Prometheus format
+4. **Explicit metrics boundaries**: Raw Prometheus is dedicated and unauthenticated; authenticated admin metrics are structured JSON and family-scoped
 5. **Minimal dependencies**: No external monitoring system required for basic visibility
 6. **SPA-first**: Web interface served at root, all API routes namespaced
 ## Route Structure
@@ -15,7 +15,9 @@
 /healthz                   → Deployment-safe health gate (mirrors readiness)
 /readyz                    → native readiness probe
 /startupz                  → startup probe
-/metrics                   → Prometheus metrics (auth required)
+/metrics                   → Prometheus metrics on FITZ_METRICS_BIND_ADDR:FITZ_METRICS_PORT (unauthenticated)
+/api/v1/{family}/metrics   → Structured metrics for one authorized family
+/api/v1/all/metrics        → Broker-wide structured metrics (wildcard authority)
 /api/v1/stats              → Global broker statistics (auth required)
 /api/v1/kv/stats           → KV domain statistics (auth required)
 /api/v1/stream/stats       → Stream domain statistics (auth required)
@@ -27,8 +29,8 @@
 **Authentication Rules**:
 - SPA (`/`, `/assets/*`) - Public access
 - Health probes (`/livez`, `/targetz`, `/healthz`, `/readyz`, `/startupz`) - Public access for orchestrators and traffic managers
-- Metrics (`/metrics`) - Requires JWT Bearer token
-- Admin API (`/api/v1/*`) - Requires JWT Bearer token with admin scope
+- Dedicated Prometheus (`FITZ_METRICS_BIND_ADDR:FITZ_METRICS_PORT/metrics`) - No admin cookie or mutation routes
+- Admin API (`/api/v1/*`) - Requires a cookie-backed admin session; broker-global reads and drain require wildcard authority
 ## Global Endpoints
 ### Probes
 #### Liveness Probe
@@ -173,11 +175,29 @@ GET /health
 ```
 **Authentication**: None (public endpoint for load balancers)
 **Purpose**: Legacy alias for `/healthz`.
-### Metrics (Prometheus Format)
+### Metrics
+
+Raw Prometheus is served only by the dedicated listener configured with
+`FITZ_METRICS_BIND_ADDR` (default `127.0.0.1`) and `FITZ_METRICS_PORT` (default
+`9090`). The main authenticated listener returns `404` for `/metrics`.
+
+For the admin UI and operator tooling, use the structured JSON endpoints:
+
+```
+GET /api/v1/{family}/metrics
+GET /api/v1/all/metrics
+```
+
+The family endpoint contains only samples attributable to the requested family.
+The `all` endpoint contains broker-global samples and requires wildcard route
+family authority.
+
+### Raw Prometheus Format
 ```
 GET /metrics
 ```
-**Authentication**: Required (JWT or API key)
+**Listener**: `FITZ_METRICS_BIND_ADDR:FITZ_METRICS_PORT`
+**Authentication**: None; keep this listener private to the scrape network.
 **Response**: Prometheus text format
 ```
 # HELP fitz_connections_total Total number of active connections

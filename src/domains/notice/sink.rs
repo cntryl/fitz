@@ -74,7 +74,7 @@ impl NoticeDomainSink {
         core: Arc<NoticeDomainCore>,
     ) -> crate::runtime::ManagedActor<NoticeDomainCommand> {
         let router = core.router.clone();
-        crate::runtime::ManagedActor::spawn_supervised(
+        crate::runtime::ManagedActor::spawn_fail_closed(
             router,
             NoticeDomainActor::route_address(),
             move || NoticeDomainActor::new(core.clone()),

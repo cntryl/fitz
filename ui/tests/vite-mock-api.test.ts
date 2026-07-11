@@ -14,12 +14,18 @@ function scopedRouteParts(route: string) {
 }
 
 describe("Vite mock API", () => {
-  it("returns typed Prometheus metrics", () => {
-    const response = mockFitzResponse("GET", "/metrics");
+  it("returns typed structured family metrics", () => {
+    const response = mockFitzResponse("GET", "/api/v1/7/metrics");
 
     expect(response?.status).toBe(200);
-    expect(response?.body).toContain("# TYPE fitz_queue_messages_pending gauge");
-    expect(response?.body).toContain("# TYPE fitz_schedule_latency_ms histogram");
+    const body = jsonBody(response);
+    expect(body.scope).toBe("family");
+    expect(body.family).toBe(7);
+    expect(body.samples).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "fitz_queue_messages_pending", kind: "gauge" }),
+      ]),
+    );
   });
 
   it("returns global stats with multiple route families", () => {

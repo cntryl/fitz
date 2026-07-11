@@ -79,9 +79,10 @@ async function signOut(options: ServiceRequestOptions = {}): Promise<void> {
 }
 
 async function listActiveSessions(
+  family = "1",
   options: ServiceRequestOptions = {},
 ): Promise<ActiveSessionsOverview> {
-  const response = await apiv1.listActiveSessions(options);
+  const response = await apiv1.listFamilySessions(family, options);
 
   return mapActiveSessionsOverview(
     unwrapResponse(response, "Unable to load active sessions").sessions,

@@ -21,7 +21,7 @@ async fn should_return_stream_domain_stats_given_recorded_operations() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/1/stream/stats")
+        .uri("/api/v1/all/stream/stats")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -81,7 +81,7 @@ async fn should_report_stream_latency_buckets_without_pressure_given_caught_up_w
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/1/stream/stats")
+        .uri("/api/v1/all/stream/stats")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -148,7 +148,7 @@ async fn should_classify_stream_latency_pressure_given_recorded_latency_tail_and
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/1/stream/stats")
+        .uri("/api/v1/all/stream/stats")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -224,13 +224,13 @@ async fn should_return_stream_and_notice_domain_stats_given_recorded_metrics() {
 
     let stream_req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/1/stream/stats")
+        .uri("/api/v1/all/stream/stats")
         .header(COOKIE, cookie.clone())
         .body(Body::default())
         .unwrap();
     let notice_req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/1/notice/stats")
+        .uri("/api/v1/all/notice/stats")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -344,7 +344,7 @@ async fn should_export_notice_churn_and_concentration_metrics_given_recorded_not
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/metrics")
+        .uri("/api/v1/all/metrics")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -357,7 +357,7 @@ async fn should_export_notice_churn_and_concentration_metrics_given_recorded_not
     // Assert
     assert_eq!(response.status(), StatusCode::OK);
     let body = body::to_bytes(response.into_body()).await.unwrap();
-    let payload = String::from_utf8(body.to_vec()).unwrap();
+    let payload = structured_metrics_text(&body);
     assert!(payload.contains("fitz_notice_subscriptions_active"));
     assert!(payload.contains("fitz_notice_routes_active"));
     assert!(payload.contains("fitz_notice_max_route_subscribers"));
@@ -395,7 +395,7 @@ async fn should_export_stream_counters_and_rates_given_recorded_stream_metrics()
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/metrics")
+        .uri("/api/v1/all/metrics")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -408,7 +408,7 @@ async fn should_export_stream_counters_and_rates_given_recorded_stream_metrics()
     // Assert
     assert_eq!(response.status(), StatusCode::OK);
     let body = body::to_bytes(response.into_body()).await.unwrap();
-    let payload = String::from_utf8(body.to_vec()).unwrap();
+    let payload = structured_metrics_text(&body);
     assert!(payload.contains("fitz_stream_events_total"));
     assert!(payload.contains("fitz_stream_append_sessions_active"));
     assert!(payload.contains("fitz_stream_append_sessions_started_total"));
@@ -457,7 +457,7 @@ async fn should_export_stream_watermark_series_given_committed_stream_history() 
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/metrics")
+        .uri("/api/v1/all/metrics")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -470,11 +470,11 @@ async fn should_export_stream_watermark_series_given_committed_stream_history() 
     // Assert
     assert_eq!(response.status(), StatusCode::OK);
     let body = body::to_bytes(response.into_body()).await.unwrap();
-    let payload = String::from_utf8(body.to_vec()).unwrap();
-    assert!(payload.contains("fitz_stream_realm_watermark{realm=\"prod\",family=\"1\"} 2"));
+    let payload = structured_metrics_text(&body);
+    assert!(payload.contains("fitz_stream_realm_watermark{family=\"1\",realm=\"prod\"} 2"));
     assert!(payload
-        .contains("fitz_stream_area_watermark{realm=\"prod\",area=\"audit\",family=\"1\"} 0"));
+        .contains("fitz_stream_area_watermark{area=\"audit\",family=\"1\",realm=\"prod\"} 0"));
     assert!(
-        payload.contains("fitz_stream_area_watermark{realm=\"prod\",area=\"logs\",family=\"1\"} 1")
+        payload.contains("fitz_stream_area_watermark{area=\"logs\",family=\"1\",realm=\"prod\"} 1")
     );
 }

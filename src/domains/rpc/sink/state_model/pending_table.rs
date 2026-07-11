@@ -1,10 +1,11 @@
 use super::{
-    BinaryHeap, ExpiringPendingRequest, FxBuildHasher, HashMap, RouteAddress, RpcFastMap,
-    RpcPendingCleanupResult, RpcPendingDispatchInfo, RpcPendingErrorDelivery, RpcPendingRequest,
+    BinaryHeap, ExpiringPendingRequest, FxBuildHasher, HashMap, RouteAddress, RouteFamily,
+    RpcCorrelationKey, RpcFastMap, RpcPendingCleanupResult, RpcPendingDispatchInfo,
+    RpcPendingErrorDelivery, RpcPendingRequest,
 };
 
 pub(in crate::domains::rpc::sink) struct RpcPendingTable {
-    pub(in crate::domains::rpc::sink) pending: RpcFastMap<uuid::Uuid, RpcPendingRequest>,
+    pub(in crate::domains::rpc::sink) pending: RpcFastMap<RpcCorrelationKey, RpcPendingRequest>,
     pub(in crate::domains::rpc::sink) expirations: BinaryHeap<ExpiringPendingRequest>,
 }
 
@@ -32,20 +33,33 @@ impl RpcPendingTable {
         }
     }
 
+    #[cfg(test)]
     pub(in crate::domains::rpc::sink) fn track_pending(
         &mut self,
         correlation_id: uuid::Uuid,
         pending: RpcPendingRequest,
     ) -> usize {
-        let expires_at = pending.expires_at;
-        self.pending.insert(correlation_id, pending);
-        self.expirations.push(ExpiringPendingRequest {
-            expires_at,
+        self.track_pending_for_family(RouteFamily::new(1), correlation_id, pending)
+    }
+
+    pub(in crate::domains::rpc::sink) fn track_pending_for_family(
+        &mut self,
+        family: RouteFamily,
+        correlation_id: uuid::Uuid,
+        pending: RpcPendingRequest,
+    ) -> usize {
+        let key = RpcCorrelationKey {
+            family,
             correlation_id,
-        });
+        };
+        let expires_at = pending.expires_at;
+        self.pending.insert(key, pending);
+        self.expirations
+            .push(ExpiringPendingRequest { expires_at, key });
         self.pending.len()
     }
 
+    #[cfg(test)]
     pub(in crate::domains::rpc::sink) fn pending_for_response(
         &mut self,
         correlation_id: &uuid::Uuid,
@@ -53,9 +67,28 @@ impl RpcPendingTable {
         seq: u64,
         stream_end: bool,
     ) -> RpcPendingResponseDisposition {
-        let std::collections::hash_map::Entry::Occupied(mut entry) =
-            self.pending.entry(*correlation_id)
-        else {
+        self.pending_for_response_in_family(
+            RouteFamily::new(1),
+            correlation_id,
+            worker_session_id,
+            seq,
+            stream_end,
+        )
+    }
+
+    pub(in crate::domains::rpc::sink) fn pending_for_response_in_family(
+        &mut self,
+        family: RouteFamily,
+        correlation_id: &uuid::Uuid,
+        worker_session_id: u64,
+        seq: u64,
+        stream_end: bool,
+    ) -> RpcPendingResponseDisposition {
+        let key = RpcCorrelationKey {
+            family,
+            correlation_id: *correlation_id,
+        };
+        let std::collections::hash_map::Entry::Occupied(mut entry) = self.pending.entry(key) else {
             return RpcPendingResponseDisposition::Missing;
         };
 
@@ -91,11 +124,15 @@ impl RpcPendingTable {
         }
     }
 
-    pub(in crate::domains::rpc::sink) fn contains_correlation(
+    pub(in crate::domains::rpc::sink) fn contains_correlation_in_family(
         &self,
+        family: RouteFamily,
         correlation_id: &uuid::Uuid,
     ) -> bool {
-        self.pending.contains_key(correlation_id)
+        self.pending.contains_key(&RpcCorrelationKey {
+            family,
+            correlation_id: *correlation_id,
+        })
     }
 
     pub(in crate::domains::rpc::sink) fn cleanup_session(
@@ -106,12 +143,12 @@ impl RpcPendingTable {
         let mut disconnect_deliveries = Vec::new();
         let before = self.pending.len();
 
-        self.pending.retain(|correlation_id, pending| {
+        self.pending.retain(|key, pending| {
             if pending.worker_session_id == session_id {
                 if pending.caller_session_id != session_id {
                     if let Some(caller_inbox_addr) = pending.caller_inbox_addr.clone() {
                         disconnect_deliveries.push(RpcPendingErrorDelivery {
-                            correlation_id: correlation_id.to_owned(),
+                            correlation_id: key.correlation_id,
                             caller_session_id: pending.caller_session_id,
                             caller_inbox_addr,
                         });
@@ -145,12 +182,12 @@ impl RpcPendingTable {
         let mut disconnect_deliveries = Vec::new();
         let before = self.pending.len();
 
-        self.pending.retain(|correlation_id, pending| {
+        self.pending.retain(|key, pending| {
             if pending.worker_session_id == worker_session_id && pending.worker_addr == *worker_addr
             {
                 if let Some(caller_inbox_addr) = pending.caller_inbox_addr.clone() {
                     disconnect_deliveries.push(RpcPendingErrorDelivery {
-                        correlation_id: correlation_id.to_owned(),
+                        correlation_id: key.correlation_id,
                         caller_session_id: pending.caller_session_id,
                         caller_inbox_addr,
                     });

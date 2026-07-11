@@ -3,6 +3,7 @@ import { Badge } from "@askrjs/themes/components";
 import { Stack } from "@askrjs/themes/components";
 import { Button } from "@askrjs/themes/components";
 import { formatUnknownError } from "@/shared/errors/format";
+import { AppApiError } from "@/shared/errors/api";
 
 export interface QueryStateProps {
   class?: string;
@@ -56,12 +57,22 @@ export function QueryErrorState({
   retryLabel = "Retry",
   title = "Unable to load",
 }: QueryErrorStateProps) {
+  const forbidden = error instanceof AppApiError && error.code === "forbidden";
+  const unavailable =
+    error instanceof AppApiError &&
+    (error.code === "serviceUnavailable" || error.code === "unknown");
   return (
     <QueryStateCard className={className}>
       <EmptyState
         role="alert"
-        title={title}
-        description={formatUnknownError(error)}
+        title={forbidden ? "Forbidden" : unavailable ? "Service unavailable" : title}
+        description={
+          forbidden
+            ? "This admin session is not authorized for the selected route family."
+            : unavailable
+              ? "The broker did not return this snapshot. Your session is still active; retry when the service is available."
+              : formatUnknownError(error)
+        }
         actions={
           onRetry ? (
             <Button variant="outline" onPress={onRetry}>

@@ -788,7 +788,10 @@ fn should_detach_caller_pending_given_rpc_session_cleanup() {
     let detached_pending = state
         .pending
         .pending
-        .get(&detached_correlation_id)
+        .get(&RpcCorrelationKey {
+            family,
+            correlation_id: detached_correlation_id,
+        })
         .expect("detached pending should remain tracked");
     assert_eq!(detached_pending.caller_session_id, 7);
     assert_eq!(detached_pending.caller_inbox_addr, None);

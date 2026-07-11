@@ -175,9 +175,8 @@ All rows in this section map to `target_class = internal_explainer`. They are ad
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- |
 | mailbox | tier2-subsystem-mailbox | deliver_empty_primary | 0.195792 | 0.55 | 1,818,182 | 0.45 | 2,222,222 | hard | Empty-mailbox delivery explainer for routed-domain movement. |
 | mailbox | tier2-subsystem-mailbox | deliver_mid_fill_64_primary | 0.218079 | 0.55 | 1,818,182 | 0.45 | 2,222,222 | hard | Mid-fill mailbox delivery explainer. |
-| scheduler | tier2-subsystem-scheduler | register_64_fresh_primary | 0.012037 | 2 | 500,000 | 1.5 | 666,667 | variance_gated | Batched fresh route registration explainer. |
-| scheduler | tier2-subsystem-scheduler | register_64_replace_primary | 0.007752 | 2 | 500,000 | 1.5 | 666,667 | variance_gated | Batched replacement route registration explainer. |
-| scheduler | tier2-subsystem-scheduler | register_single_fresh_primary | 0.18686 | 2 | 500,000 | 1.5 | 666,667 | variance_gated | Single fresh route registration explainer. |
+| family_actor_pool | tier2-subsystem-family-actor-pool | enqueue_family_affine_1024 | n/a | 2 | n/a | n/a | n/a | report_only | Family-affine bounded enqueue path. |
+| family_actor_pool | tier2-subsystem-family-actor-pool | drain_family_actor_round_robin_1024 | n/a | 2 | n/a | n/a | n/a | report_only | Fair ready-family drain path. |
 | subscriptions | tier2-subsystem-subscriptions | 10k_subs_10k_matches | 81.43697 | 110 | 9,091 | 75 | 13,333 | hard | Dense subscription match explainer. |
 | subscriptions | tier2-subsystem-subscriptions | insert_100_match_2 | 0.092206 | 30 | 33,333 | 20 | 50,000 | hard | Subscription insertion plus small match explainer. |
 | subscriptions | tier2-subsystem-subscriptions | replace_100_patterns_then_dense_match | 0.215474 | 30 | 33,333 | 20 | 50,000 | hard | Replacement plus dense match explainer. |

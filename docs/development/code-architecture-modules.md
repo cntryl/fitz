@@ -35,13 +35,14 @@ flowchart TB
     subgraph PROTO["src/protocol"]
         TLV["tlv.rs and frame modules"]
         CODECS["domain codecs<br/>kv, notice, queue, rpc, lease, stream, schedule"]
+        DISPATCH["dispatch adapter<br/>decode, commands, responses"]
     end
 
     subgraph RUNTIME["src/runtime"]
         ROUTING["routing.rs<br/>RouteFamily, Route, RouteAddress"]
         ROUTER["router.rs<br/>MailboxSink delivery"]
-        MANIFEST["domain_manifest.rs<br/>domain inventory and cleanup routes"]
-        SCHED["scheduler.rs, actor.rs, mailbox.rs"]
+        MANIFEST["protocol/manifest.rs<br/>exact message IDs and authorization"]
+        ACTORS["family_actor_pool.rs, actor.rs, mailbox.rs"]
         EVENTS["domain_event.rs<br/>DomainPublishEvent, SessionCleanup"]
     end
 
@@ -83,17 +84,19 @@ flowchart TB
     INGRESS --> SESSION
     INGRESS --> TLV
     INGRESS --> CODECS
+    INGRESS --> DISPATCH
     INGRESS --> ROUTER
     INGRESS --> MANIFEST
     INGRESS --> OUTBOUND
 
-    CODECS --> KV
-    CODECS --> QUEUE
-    CODECS --> NOTICE
-    CODECS --> STREAM
-    CODECS --> RPC
-    CODECS --> LEASE
-    CODECS --> SCHEDULE
+    CODECS --> DISPATCH
+    DISPATCH --> KV
+    DISPATCH --> QUEUE
+    DISPATCH --> NOTICE
+    DISPATCH --> STREAM
+    DISPATCH --> RPC
+    DISPATCH --> LEASE
+    DISPATCH --> SCHEDULE
     KV --> ROUTING
     QUEUE --> ROUTING
     NOTICE --> ROUTING
@@ -135,7 +138,8 @@ flowchart TB
 flowchart LR
     API["api<br/>async edge and admin HTTP"]
     AUTH["auth/session<br/>identity and permissions"]
-    PROTOCOL["protocol<br/>frame and payload codecs"]
+    PROTOCOL["protocol<br/>wire DTOs, codecs, exact message manifest"]
+    DISPATCH["dispatch adapter<br/>decode, domain commands, response frames"]
     RUNTIME["runtime<br/>sync routing primitives"]
     DOMAINS["domains<br/>sync business mechanics"]
     STORAGE["storage/Midge<br/>explicit durable surfaces"]
@@ -145,10 +149,11 @@ flowchart LR
     API --> AUTH
     API --> PROTOCOL
     API --> RUNTIME
-    API --> DOMAINS
+    API --> DISPATCH
     API --> CONTROL
     PROTOCOL --> RUNTIME
-    PROTOCOL --> DOMAINS
+    PROTOCOL --> DISPATCH
+    DISPATCH --> DOMAINS
     DOMAINS --> RUNTIME
     DOMAINS --> STORAGE
     DOMAINS --> CONTROL
@@ -163,8 +168,10 @@ Important boundaries:
 - `src/runtime` owns synchronous routing primitives, not domain behavior.
 - `src/domains` owns domain mechanics and may use runtime types for addressing
   and delivery.
-- `src/protocol` translates wire payloads into typed domain requests and
-  responses.
+- `src/protocol` owns wire DTOs, codecs, IDs, error encoding, and the exact
+  message manifest. It does not own authorization policy or domain state.
+- The dispatch adapter is the only production seam that turns protocol values
+  into synchronous domain commands and turns domain responses back into frames.
 - `src/control` and `src/api/admin` expose read models and operator views; they
   must not define correctness behavior.
 - `src/observability` records what happened; disabling it must not change broker
@@ -182,16 +189,18 @@ flowchart TB
     ROUTEEXTRACT["auth route extraction<br/>from domain payload"]
     AUTHZ["SessionActor authorize_route"]
     ADDRESS["RouteAddress<br/>(RouteFamily, Route)"]
+    MANIFEST["exact message manifest<br/>ID, domain, direction, scheme, auth"]
+    DISPATCH["dispatch adapter"]
     ROUTER["Router"]
     SINK["domain MailboxSink"]
 
     FRAME --> CONNECT
     CONNECT --> CLAIMS --> FAMILYMAP --> SESSIONINFO
-    FRAME --> ROUTEEXTRACT --> AUTHZ
+    FRAME --> MANIFEST --> ROUTEEXTRACT --> AUTHZ
     SESSIONINFO --> AUTHZ
     SESSIONINFO --> ADDRESS
     ROUTEEXTRACT --> ADDRESS
-    ADDRESS --> ROUTER --> SINK
+    ADDRESS --> ROUTER --> DISPATCH --> SINK
 ```
 
 The route family is session state. The realm is route text. Code that needs both

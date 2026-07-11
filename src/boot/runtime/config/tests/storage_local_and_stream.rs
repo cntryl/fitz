@@ -54,6 +54,34 @@ fn should_customize_stream_storage_layout() {
 }
 
 #[test]
+fn should_use_local_sync_for_schedule_durability() {
+    // Arrange
+    let config = BootConfig::new().with_storage_mode(StorageMode::LocalDisk {
+        db_path: "./target/test-schedule-durability".to_string(),
+    });
+
+    // Act
+    let write_options = config.schedule_write_options();
+
+    // Assert
+    assert!(write_options.is_sync());
+    assert!(!write_options.is_cloud_strict());
+}
+
+#[test]
+fn should_keep_memory_schedule_mode_best_effort() {
+    // Arrange
+    let config = BootConfig::new().with_storage_mode(StorageMode::Memory);
+
+    // Act
+    let write_options = config.schedule_write_options();
+
+    // Assert
+    assert!(!write_options.is_sync());
+    assert!(!write_options.is_cloud_strict());
+}
+
+#[test]
 fn should_normalize_legacy_stream_storage_layout_given_explicit_boot_config() {
     // Arrange
 

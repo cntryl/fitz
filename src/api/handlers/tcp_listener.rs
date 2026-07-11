@@ -1,6 +1,6 @@
 use super::{
-    drain_session_tasks, record_connection_opened, session_tasks,
-    tcp_session::handle_tcp_connection, ListenerHandle,
+    drain_session_tasks, reap_session_tasks, record_connection_opened, session_tasks,
+    tcp_session::handle_tcp_connection, ConnectionLifecycle, ListenerHandle,
 };
 use crate::api::ingress::IngressConfig;
 use crate::api::runtime_ingress::Ingress;
@@ -46,6 +46,8 @@ pub fn spawn_tcp_listener_with_bound_socket(
 
     let join = tokio::spawn(async move {
         let sessions = session_tasks();
+        let mut reap_interval = tokio::time::interval(std::time::Duration::from_millis(250));
+        reap_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let _ = ready_tx.send(());
 
         loop {
@@ -77,12 +79,14 @@ pub fn spawn_tcp_listener_with_bound_socket(
                             record_connection_opened();
 
                             info!("TCP connection from {}", peer_addr);
+                            runtime.increment_connections();
+                            let accepted_at = tokio::time::Instant::now();
+                            let lifecycle = ConnectionLifecycle::new(runtime.clone(), permit);
                             let ingress = ingress.clone();
                             let config = tcp_config.clone();
                             let runtime = runtime.clone();
                             sessions.lock().await.spawn(async move {
-                                let _connection_permit = permit;
-                                if let Err(e) = handle_tcp_connection(stream, ingress, config, runtime).await {
+                                if let Err(e) = handle_tcp_connection(stream, ingress, config, runtime, lifecycle, accepted_at).await {
                                     tracing::error!("TCP handler error: {}", e);
                                 }
                             });
@@ -91,6 +95,9 @@ pub fn spawn_tcp_listener_with_bound_socket(
                             tracing::error!("TCP accept error: {}", e);
                         }
                     }
+                }
+                _ = reap_interval.tick() => {
+                    reap_session_tasks("tcp", &sessions).await;
                 }
             }
         }

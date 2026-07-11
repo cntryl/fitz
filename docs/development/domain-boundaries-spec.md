@@ -45,7 +45,7 @@ These rules apply to every domain in this document:
 | Queue | Work delivery with reservation and redelivery | messages and indexes that reached durable storage under the selected write policy | inflight ownership, tokens, warm actors | Broker recovers durable backlog; client handles redelivery |
 | RPC | Live request and response dispatch | None | workers, pending requests, reply routing | Caller and worker retry explicitly |
 | Lease | Single-broker ownership coordination | None | ownership, fencing tokens, waiters | Client reacquires |
-| Schedule | Durable timing intent | definitions and pending fire claims | live subscriptions | Broker reloads timing intent; client rebuilds subscriptions |
+| Schedule | Durable timing intent (except explicit memory mode) | definitions and pending fire claims when persistence is enabled | live subscriptions | Broker reloads timing intent; client rebuilds subscriptions |
 
 ## 1. Domain Responsibility
 
@@ -76,7 +76,12 @@ Lease provides single-broker ownership coordination with TTL expiry and process-
 
 ### Schedule
 
-Schedule provides durable timing intent for future work. It persists schedule definitions and due-state across restart so the broker can remember when something should happen later, without turning timing intent into workflow orchestration or durable downstream delivery.
+Schedule provides timing intent for future work without becoming workflow
+orchestration or durable downstream delivery. In `memory` storage mode it is
+explicitly best-effort and is not recovered after restart. In persistent local
+mode, and in cloud mode after the configured local sync/provider acknowledgement,
+definitions and pending fire claims are recovered before schedule traffic is
+accepted.
 
 ## 2. Primary Use Cases
 
@@ -341,12 +346,19 @@ Lease does NOT guarantee:
 
 Schedule guarantees:
 
-- persisted schedule definitions survive restart
+- persistent-mode schedule definitions survive restart after their configured
+  acknowledgement boundary
 - execution does not occur before due time
 - overdue schedules normalize forward rather than replaying every missed interval
-- durable pending fire claims survive broker restart until resolved
+- persistent-mode pending fire claims survive broker restart until acknowledged,
+  explicitly cancelled, or explicitly deleted
 - cancel and upsert produce one durable definition outcome per route
 - persisted schedules are preloaded on broker start before schedule traffic is required
+
+Storage acknowledgement is explicit: memory mode uses best-effort writes and
+does not promise recovery; local and background-cloud modes wait for local sync;
+strict-cloud mode waits for provider acknowledgement. Pending claims have no
+age-based expiry or cleanup path.
 
 Schedule does NOT guarantee:
 
@@ -355,6 +367,7 @@ Schedule does NOT guarantee:
 - workflow orchestration semantics
 - durable execution history by itself
 - queue-style work reservation or acknowledgement
+- recovery guarantees in memory mode
 
 ## 5. Domain Interaction Rules
 

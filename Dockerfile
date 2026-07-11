@@ -1,17 +1,10 @@
 FROM node:slim AS frontend
 
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends \
-  bash \
-  ca-certificates \
-  curl \
-  && rm -rf /var/lib/apt/lists/*
-
-RUN curl -fsSL https://vite.plus | bash
-
-ENV PATH="/root/.vite-plus/bin:${PATH}"
-
 WORKDIR /ui
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 
 COPY ui/package.json ui/package-lock.json* ./
 
@@ -67,7 +60,9 @@ FROM gcr.io/distroless/cc-debian13 AS runtime
 WORKDIR /app
 
 ENV FITZ_HTTP_PORT=4090 \
-  FITZ_TCP_PORT=4091
+  FITZ_TCP_PORT=4091 \
+  FITZ_METRICS_BIND_ADDR=0.0.0.0 \
+  FITZ_METRICS_PORT=9090
 
 COPY --from=runtime-fs --chown=65532:65532 /data /data
 COPY --from=backend /usr/src/fitz/target/release/fitz /app/fitz
@@ -75,7 +70,7 @@ COPY --from=frontend --chown=65532:65532 /ui/dist/ /app/public/
 
 USER 65532:65532
 
-EXPOSE ${FITZ_HTTP_PORT} ${FITZ_TCP_PORT}
+EXPOSE ${FITZ_HTTP_PORT} ${FITZ_TCP_PORT} ${FITZ_METRICS_PORT}
 
 VOLUME ["/data"]
 

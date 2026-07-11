@@ -124,7 +124,7 @@ impl StreamDomainSink {
         core: Arc<StreamDomainCore>,
     ) -> crate::runtime::ManagedActor<StreamDomainCommand> {
         let router = core.router.clone();
-        crate::runtime::ManagedActor::spawn_supervised(
+        crate::runtime::ManagedActor::spawn_fail_closed(
             router,
             StreamDomainActor::route_address(),
             move || StreamDomainActor::new(core.clone()),
@@ -199,6 +199,13 @@ impl StreamDomainSink {
 
     pub(crate) fn actor_health_snapshot(&self) -> crate::runtime::ManagedActorHealthSnapshot {
         self.actor.health_snapshot()
+    }
+
+    #[cfg(test)]
+    pub(super) fn fail_next_promotion_frontier_commit_for_tests(&self) {
+        self.core
+            .stream_store
+            .fail_next_promotion_frontier_commit_for_tests();
     }
 
     #[cfg(test)]

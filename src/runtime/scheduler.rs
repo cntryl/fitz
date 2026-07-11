@@ -132,16 +132,6 @@ impl Scheduler {
         }
     }
 
-    /// Create a scheduler with a shared router
-    #[must_use]
-    pub fn with_router(router: Arc<Router>, worker_threads: usize) -> Self {
-        Self {
-            router,
-            running: Arc::new(AtomicBool::new(false)),
-            worker_threads: worker_threads.max(1),
-        }
-    }
-
     /// Get a reference to the router
     #[must_use]
     pub fn router(&self) -> Arc<Router> {

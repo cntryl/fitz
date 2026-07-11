@@ -7,9 +7,6 @@ pub const METRIC_FAILURE_TOTAL: &str = "fitz_schedule_failure_total";
 pub const METRIC_LATENCY_MS: &str = "fitz_schedule_latency_ms";
 pub const METRIC_ACTIVE_GAUGE: &str = "fitz_schedule_active_gauge";
 pub const METRIC_PENDING_GAUGE: &str = "fitz_schedule_pending_gauge";
-pub const METRIC_PENDING_CLAIMS_EXPIRED_TOTAL: &str = "fitz_schedule_pending_claims_expired_total";
-pub const METRIC_PENDING_CLAIM_CLEANUP_FAILURE_TOTAL: &str =
-    "fitz_schedule_pending_claim_cleanup_failure_total";
 pub const METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL: &str =
     "fitz_schedule_create_persistence_failures_total";
 pub const METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL: &str =
@@ -55,16 +52,6 @@ impl ScheduleMetrics {
 
     pub fn set_pending_fire_count(&self, count: usize) {
         self.metrics.gauge_set(METRIC_PENDING_GAUGE, count as u64);
-    }
-
-    pub fn record_pending_claims_expired(&self, count: usize) {
-        self.metrics
-            .counter_add(METRIC_PENDING_CLAIMS_EXPIRED_TOTAL, count as u64);
-    }
-
-    pub fn record_pending_claim_cleanup_failure(&self) {
-        self.metrics
-            .counter_inc(METRIC_PENDING_CLAIM_CLEANUP_FAILURE_TOTAL);
     }
 
     pub fn record_create_persistence_failure(&self) {

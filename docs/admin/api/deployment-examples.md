@@ -1,6 +1,8 @@
 ## Deployment Guidance
 
-Fitz exposes the data plane, admin UI, probes, and metrics from the HTTP listener. The TCP listener remains separate when enabled.
+Fitz exposes the data plane, admin UI, and probes from the HTTP listener. Raw
+Prometheus metrics use the separate `FITZ_METRICS_BIND_ADDR` /
+`FITZ_METRICS_PORT` listener. The TCP listener remains separate when enabled.
 
 Recommended unauthenticated probes:
 
@@ -10,11 +12,13 @@ Recommended unauthenticated probes:
 - `/healthz`: strict data-plane traffic admission.
 - `/readyz`: strict native readiness.
 
-Protected surfaces:
+Authenticated surfaces:
 
-- `/metrics`
 - `/api/v1/*`
 - unsafe admin mutations
+
+The dedicated Prometheus listener exposes only `GET /metrics` and has no admin
+session or mutation routes.
 
 ## Single-Active Handoff
 
@@ -35,7 +39,8 @@ The admin router should keep probe, metrics, SPA, WebSocket, and API paths separ
 - `/` and `/assets/*`: SPA assets.
 - `/ws`: WebSocket upgrade.
 - `/livez`, `/targetz`, `/startupz`, `/healthz`, `/readyz`: public probes.
-- `/metrics`: authenticated metrics.
+- `FITZ_METRICS_BIND_ADDR:FITZ_METRICS_PORT/metrics`: unauthenticated Prometheus scrape endpoint.
+- `/api/v1/{family}/metrics`: authenticated structured metrics.
 - `/api/v1/*`: authenticated admin API.
 
 Do not use observability or admin read models to define domain behavior. They describe runtime state; the domain contracts remain in [../../development/domain-boundaries-spec.md](../../development/domain-boundaries-spec.md).

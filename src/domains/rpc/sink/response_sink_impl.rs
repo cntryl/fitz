@@ -42,7 +42,8 @@ impl RpcDomainRuntime<'_> {
         let state_wait_us = elapsed_micros_optional(state_wait_start);
         let state_hold_start = metrics_enabled.then(Instant::now);
         let pending_route_lookup_start = metrics_enabled.then(Instant::now);
-        let caller_info = state.pending.pending_for_response(
+        let caller_info = state.pending.pending_for_response_in_family(
+            meta.route_family,
             &resp.correlation_id,
             meta.session_id,
             resp.seq,
@@ -146,7 +147,15 @@ impl RpcDomainRuntime<'_> {
         if removed_pending {
             let completion_latency_us = elapsed_micros_u64(caller_info.submitted_at_instant);
             state.release_worker_for_dispatch_info(caller_info, Some(completion_latency_us));
-            queued_dispatch = state.next_queued_dispatch(&caller_info.route);
+            queued_dispatch = state.next_queued_dispatch_for_family(
+                &caller_info.route,
+                caller_info
+                    .caller_inbox_addr
+                    .as_ref()
+                    .map_or(crate::runtime::routing::RouteFamily::new(0), |addr| {
+                        *addr.family()
+                    }),
+            );
             let live_request_count = state.live_request_count();
             self.histogram_observe_us("rpc_pending_route_remove_us", pending_route_lookup_us);
             self.histogram_observe_us("rpc_pending_untrack_us", pending_route_lookup_us);
@@ -270,7 +279,15 @@ impl RpcDomainRuntime<'_> {
         self.counter_inc("rpc_response_invalid_sequence_total");
         self.counter_inc("rpc_cleanup_pending_removed_total");
         self.schedule_admin_snapshot(false);
-        self.dispatch_queued_requests_for_route(&caller_info.route);
+        self.dispatch_queued_requests_for_route(
+            &caller_info.route,
+            caller_info
+                .caller_inbox_addr
+                .as_ref()
+                .map_or(crate::runtime::routing::RouteFamily::new(0), |addr| {
+                    *addr.family()
+                }),
+        );
 
         if let Some(caller_inbox_addr) = caller_info.caller_inbox_addr.clone() {
             self.forward_pending_error_deliveries(

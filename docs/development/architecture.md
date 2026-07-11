@@ -39,7 +39,7 @@ Layer 2: SESSION (Sync but Transport-Driven)
 └─ Route disambiguation
 Layer 3: RUNTIME (100% Sync, Deterministic)
 ├─ Router (message delivery, subscription matching)
-├─ Scheduler (actor execution, priority lanes)
+├─ Family actor pools (fixed affinity, bounded normal/control lanes)
 ├─ Ingress (session management)
 └─ Mux (frame multiplexing across channels)
 Layer 4: DOMAINS (100% Sync Business Logic)
@@ -78,6 +78,36 @@ Sync TLV Encoder
 Async WebSocket Writer
 ```
 This design keeps async scheduling at the API edge while preserving synchronous runtime and domain execution.
+
+### Exact Protocol Manifest And Dispatch
+
+`src/protocol/manifest.rs` is the single message contract. Every manifest entry
+declares the message ID, domain, direction, required route scheme, authorization
+policy, and decoder/adapter. Authentication-route extraction, authorization,
+dispatch, and unsupported/reserved-ID rejection all consult this manifest;
+range membership is not a substitute for an entry.
+
+The dispatch adapter is the boundary between wire values and synchronous domain
+commands. Protocol owns wire codecs and error encoding, domains own commands,
+responses, and state, and dispatch owns the conversion plus outbound frame
+routing. A protocol message must not bypass the manifest to select a domain.
+
+### Family Isolation And Failure Mode
+
+Stream and RPC work is family-affine. The owning worker is selected by
+`(family_id - 1) % shard_count`, with bounded normal and control lanes and fair
+ready-family scheduling. A full lane is explicit edge backpressure; it is not an
+unbounded async queue. Production domain actors fail closed: a panic marks
+readiness unhealthy, stops new data-plane work, begins drain, and does not
+silently restart the failed actor.
+
+### Metrics Boundaries
+
+Raw Prometheus is served by the dedicated unauthenticated
+`FITZ_METRICS_BIND_ADDR:FITZ_METRICS_PORT` listener. The authenticated main
+listener returns `404` for `/metrics`. Admin consumers use structured JSON at
+`/api/v1/{family}/metrics`; broker-global samples are available only at
+`/api/v1/all/metrics` with wildcard authority.
 ### Critical Invariant: Ephemeral Sessions
 > **Fitz sessions are ephemeral. The broker never restores session state after disconnect. Clients are responsible for rebuilding all state including subscriptions, transactions, workers, leases, and stream resume position.**
 
@@ -89,7 +119,7 @@ This is a hard Fitz rule:
 
 ## Layer Responsibilities
 ### Layer 1: Transport
-**Files:** `src/api/tcp.rs`, `src/api/ws.rs`
+**Files:** `src/api/handlers/tcp_listener.rs`, `src/api/handlers/tcp_session.rs`, `src/api/handlers/websocket.rs`, `src/api/handlers/http_listener.rs`
 **Responsibility:** Socket I/O and framing.
 **Behavior:**
 - Accept connections (WebSocket/HTTP: port 4090; TCP: port 4091 when enabled)
@@ -185,7 +215,7 @@ Rebuilding state after reconnect must be fast and deterministic. Fitz must keep 
 - MUST validate JWT signature (use external JWT library; do NOT implement JWT validation manually)
 - MUST reject expired JWTs (check `exp` claim)
 ### Layer 3: Runtime
-**Files:** `src/runtime/router.rs`, `src/runtime/actor.rs`, `src/runtime/scheduler.rs`, `src/runtime/routing.rs`, `src/runtime/subscriptions.rs`
+**Files:** `src/runtime/router.rs`, `src/runtime/actor.rs`, `src/runtime/family_actor_pool.rs`, `src/runtime/routing.rs`, `src/runtime/subscriptions.rs`
 **Responsibility:** Message routing, subscription indexing, actor scheduling.
 **Components:**
 #### Router
@@ -195,18 +225,20 @@ Current routing uses exact-address dispatch plus domain-owned subscription index
 - **Fanout:** Single publish reaches all currently connected matching subscriptions
 - **Ordering:** Publish order is preserved per subscriber within the running broker process
 #### Actor Mailbox
-Per-domain inbox (MPSC channel):
+Each provisioned RouteFamily has an owning synchronous actor mailbox on a fixed
+shard. The transport/router edge only enqueues work:
 - Receives incoming messages
-- Queued by scheduler
-- Domain handler processes one message at a time
+- Normal lane capacity is 16,384 messages.
+- A separate bounded control lane prevents control work from being hidden behind
+  normal-lane pressure.
+- Shard affinity is permanently `(family_id - 1) % shard_count`, where shard
+  count is `available_parallelism` capped by the provisioned family count.
+- Shards drain ready families round-robin so one noisy family cannot monopolize
+  a worker.
 #### Domain Handles
 `DomainHandles` owns the concrete domain sinks but keeps those fields private. Boot, background maintenance, metrics, and admin query code must use explicit handle or `Runtime::*` facade methods so concrete sink internals do not become a public mutable API.
-#### Scheduler
-Thread pool with priority lanes:
-- Multiple worker threads
-- Executes domain handlers in sequence
-- Respects priorities (control > data > background)
-- No jitter from tokio scheduling
+There is no production `runtime::Scheduler` API. The legacy scheduler module is
+test-only while managed domain actors are migrated to family-owned workers.
 #### Ingress
 API-edge session management:
 - Maintains per-connection session state
@@ -872,7 +904,7 @@ pub fn handle(&mut self, msg: DomainMessage) -> DomainResponse {
 | `channel_capacity` | 1000 | Transport channel backpressure threshold |
 | domain actor mailbox capacity | 16,384 | Bounded domain ingress burst absorption before hard backpressure |
 | `max_connections` | 10000 | Resource limits |
-| `scheduler_threads` | num_cpus | CPU-bound work |
+| `family_actor_shards` | min(available_parallelism, provisioned families) | Synchronous family-owned actor workers |
 ## Error Handling
 ### Transport-Level Errors
 Connection is **closed** on:

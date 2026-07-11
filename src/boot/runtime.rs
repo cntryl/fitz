@@ -60,6 +60,7 @@ pub fn init(config: &BootConfig) -> BootResult<RuntimeComponents> {
 
     // Create runtime stats tracker
     let runtime = crate::boot::Runtime::with_admin_read_model(router.clone(), admin_read_model);
+    runtime.configure_route_families(&config.route_families);
     runtime.attach_ingress(ingress.clone());
     runtime.attach_auth_config(config.auth_config.clone());
     runtime.set_assume_external_tls(config.assume_external_tls);

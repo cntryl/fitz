@@ -623,7 +623,7 @@ async fn should_return_schedule_stats_with_latency_pressure() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/1/schedule/stats")
+        .uri("/api/v1/all/schedule/stats")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -672,17 +672,12 @@ async fn should_return_schedule_stats_with_pending_claim_age() {
         .preload_persisted_families()
         .expect("preload schedules");
     let metrics = fitz::boot::observability::metrics();
-    let expired_before = metrics.counter_get("fitz_schedule_pending_claims_expired_total");
-    let cleanup_failures_before =
-        metrics.counter_get("fitz_schedule_pending_claim_cleanup_failure_total");
     let create_persistence_before =
         metrics.counter_get("fitz_schedule_create_persistence_failures_total");
     let upsert_persistence_before =
         metrics.counter_get("fitz_schedule_upsert_persistence_failures_total");
     let cancel_persistence_before =
         metrics.counter_get("fitz_schedule_cancel_persistence_failures_total");
-    metrics.counter_add("fitz_schedule_pending_claims_expired_total", 2);
-    metrics.counter_add("fitz_schedule_pending_claim_cleanup_failure_total", 1);
     metrics.counter_add("fitz_schedule_create_persistence_failures_total", 3);
     metrics.counter_add("fitz_schedule_upsert_persistence_failures_total", 5);
     metrics.counter_add("fitz_schedule_cancel_persistence_failures_total", 7);
@@ -690,7 +685,7 @@ async fn should_return_schedule_stats_with_pending_claim_age() {
 
     let req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/api/v1/1/schedule/stats")
+        .uri("/api/v1/all/schedule/stats")
         .header(COOKIE, cookie.clone())
         .body(Body::default())
         .unwrap();
@@ -712,11 +707,6 @@ async fn should_return_schedule_stats_with_pending_claim_age() {
             .as_u64()
             .unwrap_or(0)
             >= 30
-    );
-    assert_eq!(payload["pending_claims_expired_total"], expired_before + 2);
-    assert_eq!(
-        payload["pending_claim_cleanup_failures_total"],
-        cleanup_failures_before + 1
     );
     assert_eq!(
         payload["create_persistence_failures_total"],
@@ -742,7 +732,7 @@ async fn should_return_schedule_stats_with_pending_claim_age() {
 
     let metrics_req = hyper::http::Request::builder()
         .method(Method::GET)
-        .uri("/metrics")
+        .uri("/api/v1/all/metrics")
         .header(COOKIE, cookie)
         .body(Body::default())
         .unwrap();
@@ -751,7 +741,7 @@ async fn should_return_schedule_stats_with_pending_claim_age() {
         .unwrap();
     assert_eq!(metrics_response.status(), StatusCode::OK);
     let metrics_body = body::to_bytes(metrics_response.into_body()).await.unwrap();
-    let metrics_payload = String::from_utf8(metrics_body.to_vec()).unwrap();
+    let metrics_payload = structured_metrics_text(&metrics_body);
     assert_prometheus_counter(
         &metrics_payload,
         "fitz_schedule_create_persistence_failures_total",

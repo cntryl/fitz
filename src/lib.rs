@@ -8,6 +8,7 @@ pub mod auth;
 pub mod boot;
 pub mod client;
 pub mod control;
+pub mod dispatch;
 pub mod domains;
 pub mod observability;
 pub mod prelude;

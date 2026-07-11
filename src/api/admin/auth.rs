@@ -36,6 +36,7 @@ pub enum AdminAuthMode {
 pub struct AdminAuth {
     settings: Arc<Option<AdminAuthSettings>>,
     mode: AdminAuthMode,
+    provisioned_route_families: Arc<parking_lot::RwLock<Option<Vec<u32>>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -188,7 +189,14 @@ impl AdminAuth {
         Self {
             settings: Arc::new(settings),
             mode,
+            provisioned_route_families: Arc::new(parking_lot::RwLock::new(None)),
         }
+    }
+
+    /// Restrict explicit admin grants to the route-family set provisioned at
+    /// broker startup. `*` remains the only wildcard grant.
+    pub fn set_provisioned_route_families(&self, route_families: &[u32]) {
+        *self.provisioned_route_families.write() = Some(route_families.to_vec());
     }
 
     #[must_use]
@@ -228,7 +236,7 @@ impl AdminAuth {
             .as_ref()
             .ok_or(AuthFailure::Unavailable)?;
 
-        if !settings.route_family_access.is_valid_grant_set() {
+        if !self.valid_route_family_grants(&settings.route_family_access) {
             return Err(AuthFailure::Unavailable);
         }
 
@@ -334,7 +342,7 @@ impl AdminAuth {
             return Err(AuthFailure::InvalidSession);
         }
 
-        if !claims.route_families.is_valid_grant_set() {
+        if !self.valid_route_family_grants(&claims.route_families) {
             return Err(AuthFailure::InvalidSession);
         }
 
@@ -355,6 +363,32 @@ impl AdminAuth {
             .map_or_else(AdminRouteFamilyAccess::wildcard, |settings| {
                 settings.route_family_access.clone()
             })
+    }
+
+    fn valid_route_family_grants(&self, access: &AdminRouteFamilyAccess) -> bool {
+        if !access.is_valid_grant_set() {
+            return false;
+        }
+        let Some(provisioned) = self.provisioned_route_families.read().clone() else {
+            return true;
+        };
+        match access {
+            AdminRouteFamilyAccess::Wildcard(value) => value == "*",
+            AdminRouteFamilyAccess::Explicit(values) => values.iter().all(|value| {
+                value
+                    .parse::<u32>()
+                    .ok()
+                    .is_some_and(|family| provisioned.contains(&family))
+            }),
+        }
+    }
+
+    #[must_use]
+    pub fn is_provisioned_route_family(&self, family: u32) -> bool {
+        self.provisioned_route_families
+            .read()
+            .as_ref()
+            .is_none_or(|families| families.contains(&family))
     }
 
     /// Verifies the request origin against the configured admin origin policy.
