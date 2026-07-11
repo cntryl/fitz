@@ -127,7 +127,11 @@ impl StreamActor {
             .ok_or_else(|| "session not found".to_string())?;
 
         let assigned_offset = if let Some(base_expected_offset) = session.expected_offset {
-            let next_expected_offset = base_expected_offset + session.staged_events.len() as u64;
+            let staged_event_count = u64::try_from(session.staged_events.len())
+                .map_err(|_| "concurrency conflict".to_string())?;
+            let next_expected_offset = base_expected_offset
+                .checked_add(staged_event_count)
+                .ok_or_else(|| "concurrency conflict".to_string())?;
             if expected_offset != next_expected_offset {
                 return Err("concurrency conflict".to_string());
             }
@@ -140,23 +144,36 @@ impl StreamActor {
             expected_offset
         };
 
-        let event_size = body.len()
-            + metadata.as_ref().map_or(0, Bytes::len)
-            + discriminator
-                .as_ref()
-                .map_or(0, |value| value.as_str().len());
+        let event_size = body
+            .len()
+            .checked_add(metadata.as_ref().map_or(0, Bytes::len))
+            .and_then(|size| {
+                size.checked_add(
+                    discriminator
+                        .as_ref()
+                        .map_or(0, |value| value.as_str().len()),
+                )
+            })
+            .ok_or_else(|| "event too large".to_string())?;
         if event_size > MAX_EVENT_SIZE {
             return Err("event too large".to_string());
         }
 
         let limits = self.store.batch_limits();
-        if session.staged_events.len() + 1 > limits.max_batch_events
-            || session.total_bytes + event_size > limits.max_batch_bytes
-        {
+        let next_event_count = session
+            .staged_events
+            .len()
+            .checked_add(1)
+            .ok_or_else(|| "batch too large".to_string())?;
+        let next_total_bytes = session
+            .total_bytes
+            .checked_add(event_size)
+            .ok_or_else(|| "batch too large".to_string())?;
+        if next_event_count > limits.max_batch_events || next_total_bytes > limits.max_batch_bytes {
             return Err("batch too large".to_string());
         }
 
-        session.total_bytes += event_size;
+        session.total_bytes = next_total_bytes;
         session.staged_events.push(EventPayload {
             body,
             metadata,
@@ -192,9 +209,10 @@ impl StreamActor {
             return Err("empty batch".to_string());
         }
 
-        let expected_offset = session
-            .expected_offset
-            .ok_or_else(|| "session not initialized".to_string())?;
+        let Some(expected_offset) = session.expected_offset else {
+            self.active_session = Some(session);
+            return Err("session not initialized".to_string());
+        };
 
         let response = match self.store.commit_records(CommitRecordsParams {
             family: self.family_id.as_u64(),
@@ -438,5 +456,39 @@ mod tests {
         assert!(!actor.has_active_session());
         assert_eq!(records.len(), 1);
         assert_eq!(cursor.last_resource_offset, 0);
+    }
+
+    #[test]
+    fn should_preserve_active_session_given_uninitialized_staged_state() {
+        // Arrange
+        let store = Arc::new(StreamStore::new(create_test_engine_with_cfs(vec![1])));
+        let mut actor = StreamActor::new(
+            RouteFamily::new(1),
+            "test".to_string(),
+            "events".to_string(),
+            "orders".to_string(),
+            store,
+        )
+        .expect("create actor");
+        actor
+            .begin_append_session(10, 100, None)
+            .expect("begin append session");
+        let session = actor.active_session.as_mut().expect("active session");
+        session.staged_events.push(EventPayload {
+            body: Bytes::from_static(b"staged"),
+            metadata: None,
+            discriminator: None,
+        });
+        session.total_bytes = 6;
+
+        // Act
+        let result = actor.commit_session_for_owner(10, 100, StreamWriteMode::Buffered);
+
+        // Assert
+        assert_eq!(
+            result.expect_err("uninitialized state should fail"),
+            "session not initialized"
+        );
+        assert!(actor.has_active_session());
     }
 }

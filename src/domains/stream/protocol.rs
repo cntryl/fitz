@@ -207,7 +207,11 @@ impl StreamFilterClause {
             1 => Ok(Self::NotEquals(dec.get_string()?)),
             2 => Ok(Self::StartsWith(dec.get_string()?)),
             3 => {
-                let count = dec.get_u32()? as usize;
+                let count = usize::try_from(dec.get_u32()?)
+                    .map_err(|_| "decode stream filter clause: invalid AnyOf count".to_string())?;
+                if count > dec.remaining() / 4 {
+                    return Err("decode stream filter clause: impossible AnyOf count".to_string());
+                }
                 let mut values = Vec::with_capacity(count);
                 for _ in 0..count {
                     values.push(dec.get_string()?);
@@ -261,7 +265,11 @@ impl StreamFilterSet {
             return Err("decode stream filter set: missing marker".to_string());
         }
 
-        let clause_count = dec.get_u32()? as usize;
+        let clause_count = usize::try_from(dec.get_u32()?)
+            .map_err(|_| "decode stream filter set: invalid clause count".to_string())?;
+        if clause_count > dec.remaining() {
+            return Err("decode stream filter set: impossible clause count".to_string());
+        }
         let mut clauses = Vec::with_capacity(clause_count);
         for _ in 0..clause_count {
             clauses.push(StreamFilterClause::try_decode(&mut dec)?);
@@ -809,6 +817,40 @@ mod tests {
 
         // Act
         let result = StreamFilterSet::try_decode(&encoded);
+
+        // Assert
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn should_reject_stream_filter_set_given_impossible_clause_count() {
+        // Arrange
+        let mut payload_encoder = PayloadEncoder::new();
+        payload_encoder.put_u8(StreamFilterSet::VERSION_MARKER[0]);
+        payload_encoder.put_u8(StreamFilterSet::VERSION_MARKER[1]);
+        payload_encoder.put_u32(u32::MAX);
+        let encoded_payload = payload_encoder.finish();
+
+        // Act
+        let result = StreamFilterSet::try_decode(&encoded_payload);
+
+        // Assert
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn should_reject_stream_filter_any_of_given_impossible_value_count() {
+        // Arrange
+        let mut payload_encoder = PayloadEncoder::new();
+        payload_encoder.put_u8(StreamFilterSet::VERSION_MARKER[0]);
+        payload_encoder.put_u8(StreamFilterSet::VERSION_MARKER[1]);
+        payload_encoder.put_u32(1);
+        payload_encoder.put_u8(3);
+        payload_encoder.put_u32(u32::MAX);
+        let encoded_payload = payload_encoder.finish();
+
+        // Act
+        let result = StreamFilterSet::try_decode(&encoded_payload);
 
         // Assert
         assert!(result.is_err());

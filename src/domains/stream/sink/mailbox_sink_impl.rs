@@ -1,5 +1,5 @@
 use super::model::{
-    Arc, DeliveryError, Envelope, MailboxSink, Mutex, Ordering, PayloadEncoder, Route,
+    Arc, DeliveryError, Envelope, MailboxSink, Mutex, Ordering, PayloadEncoder, Route, RouteFamily,
     RoutedSubscriptionSet, StreamActor, StreamClientFrame, StreamClientRequest,
     StreamClientResponseBody, StreamDomainActor, StreamDomainCommand, StreamDomainCore,
     StreamDomainRuntime, StreamDomainSink, StreamSessionOwner, StreamSubscription,
@@ -98,6 +98,21 @@ impl StreamDomainCore {
         };
         let meta = request.meta;
         let request_started = self.record_request_start();
+
+        if meta.route_family != *envelope.destination().family()
+            || envelope
+                .source()
+                .is_some_and(|source| *source.family() != meta.route_family)
+        {
+            let response = Self::stream_error_response("route family mismatch");
+            let response_meta = envelope.source().map_or(meta, |source| {
+                let mut response_meta = meta;
+                response_meta.route_family = *source.family();
+                response_meta
+            });
+            self.route_stream_response(envelope, response_meta, &response, request_started);
+            return Ok(());
+        }
 
         let Some(parsed_frame) =
             self.parse_request_frame(envelope, meta, request.frame, request_started)
@@ -198,13 +213,25 @@ impl StreamDomainCore {
                 session_id,
                 subscriber,
             } => {
-                let mut families = self.families.lock();
-                let state = families
-                    .entry(family_id.as_u64())
-                    .or_insert_with(RoutedSubscriptionSet::new);
+                if family_id != meta.route_family
+                    || *subscriber.family() != family_id
+                    || session_id != meta.session_id
+                    || envelope
+                        .source()
+                        .is_some_and(|source| source != &subscriber)
+                {
+                    Self::stream_error_response("route family mismatch")
+                } else if pattern.as_str().is_empty() {
+                    Self::stream_error_response("empty pattern")
+                } else {
+                    let mut families = self.families.lock();
+                    let state = families
+                        .entry(family_id.as_u64())
+                        .or_insert_with(RoutedSubscriptionSet::new);
 
-                let subscription_id =
-                    if let Some(id) = state.find_existing_id(session_id, pattern.as_str()) {
+                    let subscription_id = if let Some(id) =
+                        state.find_existing_id(session_id, pattern.as_str())
+                    {
                         id
                     } else {
                         let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
@@ -220,30 +247,43 @@ impl StreamDomainCore {
                         new_id
                     };
 
-                StreamClientResponseBody::Ok {
-                    session_id: Some(subscription_id),
-                    data: vec![],
+                    StreamClientResponseBody::Ok {
+                        session_id: Some(subscription_id),
+                        data: vec![],
+                    }
                 }
             }
             StreamSubscriptionMessage::Unsubscribe {
                 family_id,
                 pattern,
                 session_id,
-                ..
+                subscriber,
             } => {
-                let mut families = self.families.lock();
-                let remove_family = if let Some(state) = families.get_mut(&family_id.as_u64()) {
-                    state.remove_session_pattern(family_id, session_id, pattern.as_str());
-                    state.is_empty()
+                if family_id != meta.route_family
+                    || *subscriber.family() != family_id
+                    || session_id != meta.session_id
+                    || envelope
+                        .source()
+                        .is_some_and(|source| source != &subscriber)
+                {
+                    Self::stream_error_response("route family mismatch")
+                } else if pattern.as_str().is_empty() {
+                    Self::stream_error_response("empty pattern")
                 } else {
-                    false
-                };
-                if remove_family {
-                    families.remove(&family_id.as_u64());
-                }
-                StreamClientResponseBody::Ok {
-                    session_id: None,
-                    data: vec![],
+                    let mut families = self.families.lock();
+                    let remove_family = if let Some(state) = families.get_mut(&family_id.as_u64()) {
+                        state.remove_session_pattern(family_id, session_id, pattern.as_str());
+                        state.is_empty()
+                    } else {
+                        false
+                    };
+                    if remove_family {
+                        families.remove(&family_id.as_u64());
+                    }
+                    StreamClientResponseBody::Ok {
+                        session_id: None,
+                        data: vec![],
+                    }
                 }
             }
         };
@@ -260,6 +300,21 @@ impl StreamDomainCore {
         stream_msg: crate::domains::stream::protocol::StreamMessage,
     ) {
         use crate::domains::stream::protocol::StreamMessage;
+
+        let message_family = match &stream_msg {
+            StreamMessage::Begin { family_id, .. }
+            | StreamMessage::Read { family_id, .. }
+            | StreamMessage::Last { family_id, .. }
+            | StreamMessage::GetMetadata { family_id, .. } => Some(*family_id),
+            StreamMessage::Append { .. }
+            | StreamMessage::Commit { .. }
+            | StreamMessage::Rollback { .. } => None,
+        };
+        if message_family.is_some_and(|family_id| family_id != meta.route_family) {
+            let response = Self::stream_error_response("route family mismatch");
+            self.route_stream_response(envelope, meta, &response, request_started);
+            return;
+        }
 
         let (response, commit_notify, should_refresh_admin_snapshot) = match stream_msg {
             StreamMessage::Begin {
@@ -314,8 +369,8 @@ impl StreamDomainCore {
             self.mark_admin_snapshot_dirty();
         }
 
-        if let Some((route, payload)) = commit_notify {
-            let event = crate::runtime::DomainPublishEvent::new(meta.route_family, route, payload);
+        if let Some((family_id, route, payload)) = commit_notify {
+            let event = crate::runtime::DomainPublishEvent::new(family_id, route, payload);
             self.handle_domain_publish(&event);
         }
 
@@ -330,9 +385,17 @@ impl StreamDomainCore {
         ingest_metadata: Option<IngestMetadata>,
     ) -> (
         StreamClientResponseBody,
-        Option<(Route, bytes::Bytes)>,
+        Option<(RouteFamily, Route, bytes::Bytes)>,
         bool,
     ) {
+        if family_id != meta.route_family {
+            return (
+                Self::stream_error_response("route family mismatch"),
+                None,
+                false,
+            );
+        }
+
         match Self::actor_key_for_route(family_id, route) {
             Ok(key) => match self.get_or_create_actor(&key) {
                 Ok(actor) => {
@@ -376,24 +439,32 @@ impl StreamDomainCore {
     fn session_owner_for(
         &self,
         owner_session_id: u64,
+        family_id: RouteFamily,
         stream_session_id: u64,
     ) -> Option<StreamSessionOwner> {
         self.session_owners
             .lock()
             .get(&stream_session_id)
-            .filter(|owner| owner.owner_session_id == owner_session_id)
+            .filter(|owner| {
+                owner.owner_session_id == owner_session_id
+                    && owner.key.family_id == family_id.as_u64()
+            })
             .cloned()
     }
 
     fn session_actor_for(
         &self,
         owner_session_id: u64,
+        family_id: RouteFamily,
         stream_session_id: u64,
     ) -> Option<Arc<Mutex<StreamActor>>> {
         self.session_owners
             .lock()
             .get(&stream_session_id)
-            .filter(|owner| owner.owner_session_id == owner_session_id)
+            .filter(|owner| {
+                owner.owner_session_id == owner_session_id
+                    && owner.key.family_id == family_id.as_u64()
+            })
             .map(|owner| owner.actor.clone())
     }
 
@@ -407,10 +478,11 @@ impl StreamDomainCore {
         discriminator: Option<StreamDiscriminator>,
     ) -> (
         StreamClientResponseBody,
-        Option<(Route, bytes::Bytes)>,
+        Option<(RouteFamily, Route, bytes::Bytes)>,
         bool,
     ) {
-        let Some(actor) = self.session_actor_for(meta.session_id, session_id) else {
+        let Some(actor) = self.session_actor_for(meta.session_id, meta.route_family, session_id)
+        else {
             return (
                 Self::stream_error_response("session not found"),
                 None,
@@ -452,7 +524,7 @@ impl StreamDomainCore {
         mode: crate::domains::stream::protocol::StreamWriteMode,
     ) -> (
         StreamClientResponseBody,
-        Option<(Route, bytes::Bytes)>,
+        Option<(RouteFamily, Route, bytes::Bytes)>,
         bool,
     ) {
         let mode = if mode == crate::domains::stream::protocol::StreamWriteMode::Sync {
@@ -460,7 +532,8 @@ impl StreamDomainCore {
         } else {
             mode
         };
-        let Some(owner) = self.session_owner_for(meta.session_id, session_id) else {
+        let Some(owner) = self.session_owner_for(meta.session_id, meta.route_family, session_id)
+        else {
             return (
                 Self::stream_error_response("session not found"),
                 None,
@@ -489,7 +562,12 @@ impl StreamDomainCore {
                         session_id: None,
                         data: vec![],
                     },
-                    Some((owner.key.resource_route(), payload)),
+                    Some((
+                        RouteFamily::try_from(owner.key.family_id)
+                            .expect("stream family IDs originate from RouteFamily"),
+                        owner.key.resource_route(),
+                        payload,
+                    )),
                     true,
                 )
             }
@@ -503,10 +581,11 @@ impl StreamDomainCore {
         session_id: u64,
     ) -> (
         StreamClientResponseBody,
-        Option<(Route, bytes::Bytes)>,
+        Option<(RouteFamily, Route, bytes::Bytes)>,
         bool,
     ) {
-        let Some(owner) = self.session_owner_for(meta.session_id, session_id) else {
+        let Some(owner) = self.session_owner_for(meta.session_id, meta.route_family, session_id)
+        else {
             return (
                 Self::stream_error_response("session not found"),
                 None,
@@ -538,7 +617,7 @@ impl StreamDomainCore {
         result: Result<Vec<u8>, String>,
     ) -> (
         StreamClientResponseBody,
-        Option<(Route, bytes::Bytes)>,
+        Option<(RouteFamily, Route, bytes::Bytes)>,
         bool,
     ) {
         match result {
@@ -564,7 +643,7 @@ impl StreamDomainCore {
         filter: Option<&crate::domains::stream::protocol::StreamFilterSet>,
     ) -> (
         StreamClientResponseBody,
-        Option<(Route, bytes::Bytes)>,
+        Option<(RouteFamily, Route, bytes::Bytes)>,
         bool,
     ) {
         Self::encode_operation_result(self.encode_read_response_data(
@@ -583,7 +662,7 @@ impl StreamDomainCore {
         route: &Route,
     ) -> (
         StreamClientResponseBody,
-        Option<(Route, bytes::Bytes)>,
+        Option<(RouteFamily, Route, bytes::Bytes)>,
         bool,
     ) {
         Self::encode_operation_result(self.encode_last_response_data(family_id, route))
@@ -595,7 +674,7 @@ impl StreamDomainCore {
         route: &Route,
     ) -> (
         StreamClientResponseBody,
-        Option<(Route, bytes::Bytes)>,
+        Option<(RouteFamily, Route, bytes::Bytes)>,
         bool,
     ) {
         Self::encode_operation_result(self.encode_metadata_response_data(family_id, route))

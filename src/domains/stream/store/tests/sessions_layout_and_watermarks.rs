@@ -96,6 +96,39 @@ pub(super) fn should_reject_append_given_stream_session_route_family_mismatch() 
 }
 
 #[test]
+pub(super) fn should_count_discriminator_bytes_against_legacy_session_limit() {
+    // Arrange
+    let store = StreamStore::with_limits(
+        create_test_engine_with_cfs(vec![1]),
+        BatchLimits {
+            max_batch_events: 4,
+            max_batch_bytes: 5,
+        },
+    );
+    let session_id = store
+        .begin_session(1, "test", "events", "orders", None)
+        .expect("begin stream session");
+
+    // Act
+    let result = store.append_to_session(
+        1,
+        session_id,
+        EventPayload {
+            body: Bytes::from_static(b"a"),
+            metadata: None,
+            discriminator: Some(StreamDiscriminator::from("12345")),
+        },
+    );
+
+    // Assert
+    assert_eq!(
+        result.expect_err("discriminator should count toward batch bytes"),
+        "ERR_BATCH_TOO_LARGE: total 0 + event 6 exceeds max_batch_bytes 5"
+    );
+    assert_eq!(store.session_event_count(session_id), Some(0));
+}
+
+#[test]
 pub(super) fn should_preserve_session_given_commit_route_family_mismatch() {
     // Arrange
     let store = StreamStore::new(create_test_engine_with_cfs(vec![1, 2]));

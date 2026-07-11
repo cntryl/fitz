@@ -301,7 +301,10 @@ struct ReadPageState<'a> {
 }
 
 fn resource_page_record_bytes(page_record: &CompactResourcePageRecord) -> usize {
-    page_record.body.len() + page_record.metadata.as_ref().map_or(0, Bytes::len)
+    page_record
+        .body
+        .len()
+        .saturating_add(page_record.metadata.as_ref().map_or(0, Bytes::len))
 }
 
 fn update_resource_cursor(
@@ -315,7 +318,10 @@ fn update_resource_cursor(
 }
 
 fn area_page_record_bytes(page_record: &CompactAreaPageRecord) -> usize {
-    page_record.body.len() + page_record.metadata.as_ref().map_or(0, Bytes::len)
+    page_record
+        .body
+        .len()
+        .saturating_add(page_record.metadata.as_ref().map_or(0, Bytes::len))
 }
 
 fn update_area_cursor(
@@ -329,7 +335,10 @@ fn update_area_cursor(
 }
 
 fn realm_page_record_bytes(page_record: &CompactRealmPageRecord) -> usize {
-    page_record.body.len() + page_record.metadata.as_ref().map_or(0, Bytes::len)
+    page_record
+        .body
+        .len()
+        .saturating_add(page_record.metadata.as_ref().map_or(0, Bytes::len))
 }
 
 fn update_realm_cursor(
@@ -431,13 +440,14 @@ where
         }
 
         let record_bytes = record_bytes(&record);
-        if *state.total_bytes + record_bytes > state.max_bytes_limit && !state.items.is_empty() {
+        let next_total_bytes = state.total_bytes.saturating_add(record_bytes);
+        if next_total_bytes > state.max_bytes_limit && !state.items.is_empty() {
             *state.has_more = true;
             return Ok(true);
         }
 
         update_cursor(state.cursor, offset, &record);
-        *state.total_bytes += record_bytes;
+        *state.total_bytes = next_total_bytes;
         state.items.push(event_item(offset, record));
     }
 

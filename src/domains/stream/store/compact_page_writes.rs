@@ -25,7 +25,7 @@ struct PromotionFrontierBatchWritePlan {
     last_resource_offset: u64,
     last_area_offset: u64,
     last_realm_offset: u64,
-    committed_size_delta: u64,
+    committed_size_after: u64,
 }
 
 impl StreamStore {
@@ -367,7 +367,7 @@ impl StreamStore {
         &self,
         params: CommitPromotionFrontierBatchParams<'_>,
     ) -> Result<(CommitResponse, ResourceMetaValue), String> {
-        let plan = Self::derive_promotion_frontier_batch_write_plan(&params);
+        let plan = Self::derive_promotion_frontier_batch_write_plan(&params)?;
         let mut txn = self.write_promotion_frontier_batch_rows(&params, &plan)?;
         let resource_meta_after =
             Self::persist_promotion_frontier_counters_and_metadata(&mut txn, &params, &plan)?;
@@ -381,27 +381,45 @@ impl StreamStore {
 
     fn derive_promotion_frontier_batch_write_plan(
         params: &CommitPromotionFrontierBatchParams<'_>,
-    ) -> PromotionFrontierBatchWritePlan {
+    ) -> Result<PromotionFrontierBatchWritePlan, String> {
         let created_at = Self::now_epoch_ms();
         let batch_size = params.events.len();
-        let batch_size_u64 = batch_size as u64;
-        let last_resource_offset = params.first_resource_offset + batch_size_u64 - 1;
-        let last_area_offset = params.first_area_offset + batch_size_u64 - 1;
-        let last_realm_offset = params.first_realm_offset + batch_size_u64 - 1;
+        let batch_size_u64 =
+            u64::try_from(batch_size).map_err(|_| "ERR_STREAM_OFFSET_EXHAUSTED".to_string())?;
+        let next_resource_offset = params
+            .first_resource_offset
+            .checked_add(batch_size_u64)
+            .ok_or_else(|| "ERR_STREAM_OFFSET_EXHAUSTED".to_string())?;
+        let next_area_offset = params
+            .first_area_offset
+            .checked_add(batch_size_u64)
+            .ok_or_else(|| "ERR_STREAM_OFFSET_EXHAUSTED".to_string())?;
+        let next_realm_offset = params
+            .first_realm_offset
+            .checked_add(batch_size_u64)
+            .ok_or_else(|| "ERR_STREAM_OFFSET_EXHAUSTED".to_string())?;
+        let last_resource_offset = next_resource_offset - 1;
+        let last_area_offset = next_area_offset - 1;
+        let last_realm_offset = next_realm_offset - 1;
         let committed_size_delta = params
             .events
             .iter()
             .map(Self::event_size_bytes)
-            .sum::<u64>();
+            .try_fold(0_u64, u64::checked_add)
+            .ok_or_else(|| "ERR_STREAM_SIZE_EXHAUSTED".to_string())?;
+        let committed_size_after = params
+            .committed_size_before
+            .checked_add(committed_size_delta)
+            .ok_or_else(|| "ERR_STREAM_SIZE_EXHAUSTED".to_string())?;
 
-        PromotionFrontierBatchWritePlan {
+        Ok(PromotionFrontierBatchWritePlan {
             created_at,
             batch_size,
             last_resource_offset,
             last_area_offset,
             last_realm_offset,
-            committed_size_delta,
-        }
+            committed_size_after,
+        })
     }
 
     fn write_promotion_frontier_batch_rows(
@@ -454,9 +472,7 @@ impl StreamStore {
     ) -> Result<ResourceMetaValue, String> {
         let resource_meta_after = ResourceMetaValue {
             next_offset: plan.last_resource_offset.saturating_add(1),
-            committed_size_bytes: params
-                .committed_size_before
-                .saturating_add(plan.committed_size_delta),
+            committed_size_bytes: plan.committed_size_after,
         };
         txn.put(
             encode_resource_meta_key(params.realm, params.area, params.resource),

@@ -93,12 +93,16 @@ impl StreamStore {
     }
 
     pub(in crate::domains::stream::store) fn event_size_bytes(event: &EventPayload) -> u64 {
-        let total_bytes = event.body.len()
-            + event.metadata.as_ref().map_or(0, Bytes::len)
-            + event
-                .discriminator
-                .as_ref()
-                .map_or(0, |discriminator| discriminator.as_str().len());
+        let total_bytes = event
+            .body
+            .len()
+            .saturating_add(event.metadata.as_ref().map_or(0, Bytes::len))
+            .saturating_add(
+                event
+                    .discriminator
+                    .as_ref()
+                    .map_or(0, |discriminator| discriminator.as_str().len()),
+            );
         usize_to_u64_saturating(total_bytes)
     }
 
@@ -222,15 +226,17 @@ impl StreamStore {
         let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
         let results = iter.collect_all();
 
-        if let Some((key, value)) = results.last() {
-            let page_start = decode_area_offset_from_key(key)?;
-            let page = CompactAreaPageValue::try_decode(value).map_err(|error| {
+        for (key, value) in results.into_iter().rev() {
+            let page_start = decode_area_offset_from_key(&key)?;
+            let page = CompactAreaPageValue::try_decode(&value).map_err(|error| {
                 Self::invalid_compact_area_page_error(realm, area, page_start, &error)
             })?;
-            Ok(page_start.saturating_add(usize_to_u64_saturating(page.records.len())))
-        } else {
-            Ok(0)
+            if !page.records.is_empty() {
+                return Ok(page_start.saturating_add(usize_to_u64_saturating(page.records.len())));
+            }
         }
+
+        Ok(0)
     }
 
     pub(super) fn load_effective_area_watermark_for_guard(
@@ -293,15 +299,19 @@ impl StreamStore {
         let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
         let results = iter.collect_all();
 
-        if let Some((key, value)) = results.last() {
-            let page_start_offset = decode_realm_offset_from_key(key)?;
-            let page = CompressedCompactRealmPageValue::try_decode(value)
+        for (key, value) in results.into_iter().rev() {
+            let page_start_offset = decode_realm_offset_from_key(&key)?;
+            let page = CompressedCompactRealmPageValue::try_decode(&value)
                 .map_err(|error| Self::invalid_compact_realm_page_error(page_start_offset, &error))?
                 .into_compact_realm_page();
-            Ok(page_start_offset.saturating_add(usize_to_u64_saturating(page.records.len())))
-        } else {
-            Ok(0)
+            if !page.records.is_empty() {
+                return Ok(
+                    page_start_offset.saturating_add(usize_to_u64_saturating(page.records.len()))
+                );
+            }
         }
+
+        Ok(0)
     }
 
     pub(super) fn load_effective_realm_watermark_for_guard(
@@ -516,15 +526,17 @@ impl StreamStore {
         let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
         let results = iter.collect_all();
 
-        if let Some((key, value)) = results.last() {
-            let page_start = decode_resource_offset_from_key(key)?;
-            let page = CompactResourcePageValue::try_decode(value).map_err(|error| {
+        for (key, value) in results.into_iter().rev() {
+            let page_start = decode_resource_offset_from_key(&key)?;
+            let page = CompactResourcePageValue::try_decode(&value).map_err(|error| {
                 Self::invalid_compact_resource_page_error(realm, area, resource, page_start, &error)
             })?;
-            Ok(page_start.saturating_add(usize_to_u64_saturating(page.records.len())))
-        } else {
-            Ok(0)
+            if !page.records.is_empty() {
+                return Ok(page_start.saturating_add(usize_to_u64_saturating(page.records.len())));
+            }
         }
+
+        Ok(0)
     }
 
     pub(super) fn load_resource_meta_snapshot(

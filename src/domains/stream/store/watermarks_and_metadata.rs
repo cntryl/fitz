@@ -222,7 +222,7 @@ impl StreamStore {
         let realm_watermark = self.get_realm_watermark(family, realm)?;
         let resource_count = match (first_resource_offset, last_resource_offset) {
             (Some(first_offset), Some(last_offset)) if last_offset >= first_offset => {
-                last_offset - first_offset + 1
+                last_offset.saturating_sub(first_offset).saturating_add(1)
             }
             _ => 0,
         };
@@ -290,24 +290,20 @@ impl StreamStore {
         let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
         let results = iter.collect_all();
 
-        if let Some((key, value)) = results.last() {
-            let page_start = decode_resource_offset_from_key(key)?;
-            let page = CompactResourcePageValue::try_decode(value).map_err(|error| {
+        for (key, value) in results.into_iter().rev() {
+            let page_start = decode_resource_offset_from_key(&key)?;
+            let page = CompactResourcePageValue::try_decode(&value).map_err(|error| {
                 Self::invalid_compact_resource_page_error(realm, area, resource, page_start, &error)
             })?;
 
-            if page.records.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(
-                    page_start
-                        .saturating_add(usize_to_u64_saturating(page.records.len()))
-                        .saturating_sub(1),
-                ))
+            if let Some(last_record) = page.records.len().checked_sub(1) {
+                return Ok(Some(
+                    page_start.saturating_add(usize_to_u64_saturating(last_record)),
+                ));
             }
-        } else {
-            Ok(None)
         }
+
+        Ok(None)
     }
 
     /// Get the first committed resource offset that is still readable.

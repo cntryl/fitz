@@ -175,6 +175,7 @@ fn stream_error_code_for_message(message: &str) -> u16 {
         "session not found" => stream::ERR_SESSION_NOT_FOUND,
         "concurrency conflict" | "ERR_CONCURRENCY_CONFLICT" => stream::ERR_CONCURRENCY_CONFLICT,
         "resource not found" => stream::ERR_RESOURCE_NOT_FOUND,
+        "empty pattern" => stream::ERR_INVALID_SUBSCRIPTION_PATTERN,
         message if message.contains("read") || message.contains("bound") => {
             stream::ERR_INVALID_READ_BOUND
         }

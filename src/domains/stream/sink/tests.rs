@@ -952,4 +952,5 @@ fn should_encode_exact_resource_metadata_payload_given_empty_stream() {
     assert_eq!(metadata.realm_watermark, 0);
 }
 
+mod correctness;
 mod realm_reads;

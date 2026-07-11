@@ -20,6 +20,15 @@ impl StreamDomainCore {
     ) -> Result<StreamActorKey, String> {
         let parts =
             route_triplet(route.as_str()).ok_or_else(|| "invalid stream route".to_string())?;
+        if parts.realm.is_empty()
+            || parts.area.is_empty()
+            || parts.resource.is_empty()
+            || parts.realm == "*"
+            || parts.area == "*"
+            || parts.resource == "*"
+        {
+            return Err("stream append routes require concrete realm/area/resource".to_string());
+        }
         if parts.area == crate::domains::stream::INTERNAL_REALM_SEGMENT {
             return Err(format!(
                 "area '{}' is reserved for internal broker use",
@@ -620,6 +629,10 @@ impl StreamDomainCore {
             #[cfg(test)]
             let mut payload_encoder = PayloadEncoder::with_capacity(256);
             state.for_each_matching(event, |subscription| {
+                if *subscription.subscriber.family() != event.family_id {
+                    crate::observability::counter_inc("fitz_stream_notify_drops_total");
+                    return;
+                }
                 #[cfg(test)]
                 self.route_commit_notify(subscription, event, &mut payload_encoder);
                 #[cfg(not(test))]
@@ -646,7 +659,7 @@ impl StreamDomainCore {
             crate::protocol::frame::ChannelId::Sub,
             crate::protocol::tlv::MessageType::new(609),
             bytes::Bytes::from(notify_payload),
-            RouteFamily::from_u32(subscription.subscriber.family().id()),
+            event.family_id,
         );
         let notify_envelope = Envelope::new(subscription.subscriber.clone(), notify_ctx);
         if self.router.route(notify_envelope).is_err() {
@@ -662,7 +675,7 @@ impl StreamDomainCore {
     ) {
         let notify = crate::domains::stream::StreamClientNotification::new(
             subscription.session_id,
-            RouteFamily::from_u32(subscription.subscriber.family().id()),
+            event.family_id,
             subscription.subscription_id,
             event.route.clone(),
             event.payload.clone(),

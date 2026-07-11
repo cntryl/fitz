@@ -203,16 +203,35 @@ impl StreamStore {
             return Err(ERR_SESSION_ROUTE_FAMILY_MISMATCH.to_string());
         }
 
-        if session.event_count + 1 > self.limits.max_batch_events {
+        let next_event_count = session
+            .event_count
+            .checked_add(1)
+            .ok_or_else(|| "ERR_BATCH_TOO_LARGE: event count overflow".to_string())?;
+        if next_event_count > self.limits.max_batch_events {
             return Err(format!(
                 "ERR_BATCH_TOO_LARGE: event count {} exceeds max_batch_events {}",
-                session.event_count + 1,
-                self.limits.max_batch_events
+                next_event_count, self.limits.max_batch_events
             ));
         }
 
-        let event_bytes = event.body.len() + event.metadata.as_ref().map_or(0, bytes::Bytes::len);
-        if session.total_bytes + event_bytes > self.limits.max_batch_bytes {
+        let event_bytes = event
+            .body
+            .len()
+            .checked_add(event.metadata.as_ref().map_or(0, bytes::Bytes::len))
+            .and_then(|size| {
+                size.checked_add(
+                    event
+                        .discriminator
+                        .as_ref()
+                        .map_or(0, |value| value.as_str().len()),
+                )
+            })
+            .ok_or_else(|| "ERR_BATCH_TOO_LARGE: event size overflow".to_string())?;
+        let next_total_bytes = session
+            .total_bytes
+            .checked_add(event_bytes)
+            .ok_or_else(|| "ERR_BATCH_TOO_LARGE: total byte count overflow".to_string())?;
+        if next_total_bytes > self.limits.max_batch_bytes {
             return Err(format!(
                 "ERR_BATCH_TOO_LARGE: total {} + event {} exceeds max_batch_bytes {}",
                 session.total_bytes, event_bytes, self.limits.max_batch_bytes
@@ -220,8 +239,8 @@ impl StreamStore {
         }
 
         session.staged_events.push(event);
-        session.total_bytes += event_bytes;
-        session.event_count += 1;
+        session.total_bytes = next_total_bytes;
+        session.event_count = next_event_count;
 
         Ok(())
     }
