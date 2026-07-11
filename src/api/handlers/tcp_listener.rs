@@ -39,6 +39,7 @@ pub fn spawn_tcp_listener_with_bound_socket(
     runtime: crate::boot::Runtime,
 ) -> BootResult<ListenerHandle> {
     let tcp_config = ingress_config.clone();
+    let connection_limiter = ingress_config.connection_limiter();
     let runtime = Arc::new(runtime);
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
@@ -68,6 +69,11 @@ pub fn spawn_tcp_listener_with_bound_socket(
                                 continue;
                             }
 
+                            let Ok(permit) = connection_limiter.clone().try_acquire_owned() else {
+                                tracing::warn!(peer = %peer_addr, "TCP connection rejected: connection limit reached");
+                                continue;
+                            };
+
                             record_connection_opened();
 
                             info!("TCP connection from {}", peer_addr);
@@ -75,6 +81,7 @@ pub fn spawn_tcp_listener_with_bound_socket(
                             let config = tcp_config.clone();
                             let runtime = runtime.clone();
                             sessions.lock().await.spawn(async move {
+                                let _connection_permit = permit;
                                 if let Err(e) = handle_tcp_connection(stream, ingress, config, runtime).await {
                                     tracing::error!("TCP handler error: {}", e);
                                 }

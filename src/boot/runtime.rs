@@ -55,6 +55,7 @@ pub fn init(config: &BootConfig) -> BootResult<RuntimeComponents> {
 
     let ingress_config = IngressConfig::default()
         .with_frame_size(config.max_frame_size)
+        .with_max_connections(config.max_connections)
         .with_channel_capacity(config.channel_capacity);
 
     // Create runtime stats tracker

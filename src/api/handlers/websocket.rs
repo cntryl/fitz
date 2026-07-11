@@ -35,6 +35,7 @@ pub(super) async fn handle_websocket(
     runtime: Arc<crate::boot::Runtime>,
     websocket_tasks: super::SessionTasks,
     ws_allowed_origins: Arc<Vec<crate::api::origin::ExactOrigin>>,
+    connection_permit: Arc<std::sync::Mutex<Option<tokio::sync::OwnedSemaphorePermit>>>,
 ) -> Result<Response, std::convert::Infallible> {
     // Note: increment_connections / decrement_connections are handled by the
     // HTTP listener wrapper (handle_http_upgrade) — no additional counter here.
@@ -65,7 +66,12 @@ pub(super) async fn handle_websocket(
         Ok((response, websocket_fut)) => {
             let runtime_clone = runtime.clone();
             let router = runtime.router.clone();
+            let permit = connection_permit
+                .lock()
+                .expect("connection permit mutex must not be poisoned")
+                .take();
             websocket_tasks.lock().await.spawn(async move {
+                let _connection_permit = permit;
                 match websocket_fut.await {
                     Ok(ws_stream) => {
                         tracing::info!("WebSocket upgrade completed");

@@ -50,6 +50,7 @@ pub fn spawn_http_listener_with_bound_socket(
     ws_allowed_origins: Vec<crate::api::origin::ExactOrigin>,
 ) -> BootResult<ListenerHandle> {
     let http_config = ingress_config.clone();
+    let connection_limiter = ingress_config.connection_limiter();
     let runtime = Arc::new(runtime);
     let ws_allowed_origins = Arc::new(ws_allowed_origins);
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
@@ -69,6 +70,10 @@ pub fn spawn_http_listener_with_bound_socket(
                 accept_result = http_listener.accept() => {
                     match accept_result {
                         Ok((stream, peer_addr)) => {
+                            let Ok(permit) = connection_limiter.clone().try_acquire_owned() else {
+                                tokio::spawn(reject_http_connection(stream));
+                                continue;
+                            };
                             record_connection_opened();
 
                             info!("HTTP connection from {}", peer_addr);
@@ -78,7 +83,7 @@ pub fn spawn_http_listener_with_bound_socket(
                             let websocket_tasks = websockets.clone();
                             let ws_allowed_origins = ws_allowed_origins.clone();
                             connections.lock().await.spawn(async move {
-                                if let Err(e) = handle_http_upgrade(stream, ingress, config, runtime, websocket_tasks, ws_allowed_origins).await {
+                                if let Err(e) = handle_http_upgrade(stream, ingress, config, runtime, websocket_tasks, ws_allowed_origins, permit).await {
                                     tracing::error!("HTTP handler error: {}", e);
                                 }
                             });
@@ -108,18 +113,21 @@ async fn handle_http_upgrade(
     runtime: Arc<crate::boot::Runtime>,
     websocket_tasks: super::SessionTasks,
     ws_allowed_origins: Arc<Vec<crate::api::origin::ExactOrigin>>,
+    permit: tokio::sync::OwnedSemaphorePermit,
 ) -> Result<(), Box<dyn std::error::Error>> {
     stream.set_nodelay(true)?;
 
     runtime.increment_connections();
 
     let runtime_clone = runtime.clone();
+    let connection_permit = Arc::new(std::sync::Mutex::new(Some(permit)));
     let service = service_fn(move |req| {
         let ingress = ingress.clone();
         let config = config.clone();
         let runtime = runtime_clone.clone();
         let websocket_tasks = websocket_tasks.clone();
         let ws_allowed_origins = ws_allowed_origins.clone();
+        let connection_permit = connection_permit.clone();
 
         async move {
             if is_websocket_upgrade(&req) {
@@ -130,6 +138,7 @@ async fn handle_http_upgrade(
                     runtime,
                     websocket_tasks,
                     ws_allowed_origins,
+                    connection_permit,
                 )
                 .await
             } else {
@@ -152,6 +161,23 @@ async fn handle_http_upgrade(
     runtime.decrement_connections();
 
     Ok(())
+}
+
+async fn reject_http_connection(stream: TcpStream) {
+    let service = service_fn(|_req: Request| async {
+        Ok::<_, std::convert::Infallible>(
+            hyper::http::Response::builder()
+                .status(503)
+                .header("Retry-After", "1")
+                .body(crate::api::http::Body::from(
+                    "Fitz connection limit reached",
+                ))
+                .unwrap(),
+        )
+    });
+    let _ = http1::Builder::new()
+        .serve_connection(TokioIo::new(stream), service)
+        .await;
 }
 
 fn is_websocket_upgrade(req: &Request) -> bool {

@@ -4,6 +4,7 @@
 //! This module provides shared types and configuration for transport adapters
 //! (WebSocket, TCP) to normalize connections and frames into a consistent interface.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Configuration for ingress transports
@@ -17,6 +18,7 @@ pub struct IngressConfig {
     pub channel_capacity: usize,
     /// Timeout for backpressure retry
     pub backpressure_timeout: Duration,
+    connection_limiter: Arc<tokio::sync::Semaphore>,
 }
 
 impl Default for IngressConfig {
@@ -26,6 +28,7 @@ impl Default for IngressConfig {
             max_connections: 10_000,
             channel_capacity: 10_000,
             backpressure_timeout: Duration::from_millis(1),
+            connection_limiter: Arc::new(tokio::sync::Semaphore::new(10_000)),
         }
     }
 }
@@ -42,7 +45,13 @@ impl IngressConfig {
     #[must_use]
     pub fn with_max_connections(mut self, max: usize) -> Self {
         self.max_connections = max;
+        self.connection_limiter = Arc::new(tokio::sync::Semaphore::new(max));
         self
+    }
+
+    #[must_use]
+    pub(crate) fn connection_limiter(&self) -> Arc<tokio::sync::Semaphore> {
+        self.connection_limiter.clone()
     }
 
     /// Create a config with custom channel capacity
@@ -125,6 +134,26 @@ mod tests {
         assert_eq!(config.max_frame_size, 512 * 1024);
         assert_eq!(config.max_connections, 5_000);
         assert_eq!(config.channel_capacity, 500);
+    }
+
+    #[test]
+    fn should_share_connection_limit_across_config_clones() {
+        // Arrange
+        let config = IngressConfig::default().with_max_connections(1);
+        let cloned = config.clone();
+
+        // Act
+        let first = config
+            .connection_limiter()
+            .try_acquire_owned()
+            .expect("first connection permit");
+        let second = cloned.connection_limiter().try_acquire_owned();
+        drop(first);
+        let after_release = cloned.connection_limiter().try_acquire_owned();
+
+        // Assert
+        assert!(second.is_err());
+        assert!(after_release.is_ok());
     }
 
     #[test]
