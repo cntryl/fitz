@@ -1,4 +1,4 @@
-name: CI
+name: CI Frontend
 
 on:
   push:
@@ -11,32 +11,11 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  frontend:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-
-      - name: Update Rust
-        run: rustup update
-
-      - name: Install Rust components
-        run: rustup component add rustfmt clippy
-
-      - name: Cargo fmt check
-        run: cargo fmt --all -- --check
-
-      - name: Cargo clippy pedantic
-        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic
-
-      - name: Cargo build
-        run: cargo build --locked
-
-      - name: Cargo test compile
-        run: cargo test --locked --no-run
-
-      - name: Cargo test
-        run: cargo test --locked
 
       - name: Set up Node
         uses: actions/setup-node@v4
