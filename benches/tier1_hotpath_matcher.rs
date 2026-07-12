@@ -4,8 +4,39 @@ use fitz::runtime::routing::Route;
 
 stress_allocator!();
 
+const MATCH_BATCH_OPS: u64 = 64;
+
 fn record_group(ctx: &mut StressContext) {
     ctx.parameter("group", "hotpath_matcher");
+    ctx.parameter("logical_unit", "route_match_batch");
+    ctx.parameter(
+        "route_matches_per_logical_operation",
+        MATCH_BATCH_OPS.to_string(),
+    );
+}
+
+fn measure_fixed_match(ctx: &mut StressContext, name: &str, pattern: &Pattern, route: &Route) {
+    ctx.measure_batch(name, MATCH_BATCH_OPS, || {
+        for _ in 0..MATCH_BATCH_OPS {
+            black_box(pattern.matches(black_box(route)));
+        }
+    });
+}
+
+fn measure_cycled_match(
+    ctx: &mut StressContext,
+    name: &str,
+    pattern: &Pattern,
+    routes: &[Route],
+    index: &mut usize,
+) {
+    ctx.measure_batch(name, MATCH_BATCH_OPS, || {
+        for _ in 0..MATCH_BATCH_OPS {
+            let matched = pattern.matches(black_box(&routes[*index]));
+            *index = (*index + 1) % routes.len();
+            black_box(matched);
+        }
+    });
 }
 
 #[stress(
@@ -19,9 +50,7 @@ fn should_exact_literal_match(ctx: &mut StressContext) {
     let pattern = Pattern::new("notify://acme/orders/create");
     let route = Route::new("notify://acme/orders/create");
 
-    ctx.measure("exact_literal_match", || {
-        black_box(pattern.matches(black_box(&route)))
-    });
+    measure_fixed_match(ctx, "exact_literal_match", &pattern, &route);
 }
 
 #[stress(
@@ -39,11 +68,7 @@ fn should_single_star_match(ctx: &mut StressContext) {
     ];
     let mut index = 0usize;
 
-    ctx.measure("single_star_match", || {
-        let matched = pattern.matches(black_box(&routes[index]));
-        index = (index + 1) % routes.len();
-        black_box(matched)
-    });
+    measure_cycled_match(ctx, "single_star_match", &pattern, &routes, &mut index);
 }
 
 #[stress(
@@ -62,11 +87,7 @@ fn should_double_star_at_end(ctx: &mut StressContext) {
     ];
     let mut index = 0usize;
 
-    ctx.measure("double_star_at_end", || {
-        let matched = pattern.matches(black_box(&routes[index]));
-        index = (index + 1) % routes.len();
-        black_box(matched)
-    });
+    measure_cycled_match(ctx, "double_star_at_end", &pattern, &routes, &mut index);
 }
 
 #[stress(
@@ -85,11 +106,7 @@ fn should_double_star_in_middle(ctx: &mut StressContext) {
     ];
     let mut index = 0usize;
 
-    ctx.measure("double_star_in_middle", || {
-        let matched = pattern.matches(black_box(&routes[index]));
-        index = (index + 1) % routes.len();
-        black_box(matched)
-    });
+    measure_cycled_match(ctx, "double_star_in_middle", &pattern, &routes, &mut index);
 }
 
 #[stress(
@@ -103,9 +120,7 @@ fn should_negative_match_late_fail(ctx: &mut StressContext) {
     let pattern = Pattern::new("notify://acme/*/items/history/created");
     let route_fail = Route::new("notify://acme/orders/items/history/updated");
 
-    ctx.measure("negative_match_late_fail", || {
-        black_box(pattern.matches(black_box(&route_fail)))
-    });
+    measure_fixed_match(ctx, "negative_match_late_fail", &pattern, &route_fail);
 }
 
 macro_rules! depth_bench {
@@ -116,9 +131,7 @@ macro_rules! depth_bench {
             let pattern = Pattern::new("notify://acme/orders/**");
             let route = Route::new($route);
 
-            ctx.measure($bench_name, || {
-                black_box(pattern.matches(black_box(&route)))
-            });
+            measure_fixed_match(ctx, $bench_name, &pattern, &route);
         }
     };
 }
@@ -148,9 +161,7 @@ macro_rules! pattern_complexity_bench {
             let pattern = Pattern::new($pattern);
             let route = Route::new("notify://acme/orders/items/history/created");
 
-            ctx.measure($bench_name, || {
-                black_box(pattern.matches(black_box(&route)))
-            });
+            measure_fixed_match(ctx, $bench_name, &pattern, &route);
         }
     };
 }
@@ -189,9 +200,7 @@ macro_rules! backtracking_bench {
             let pattern = Pattern::new("notify://acme/**/items/created");
             let route = Route::new($route);
 
-            ctx.measure($bench_name, || {
-                black_box(pattern.matches(black_box(&route)))
-            });
+            measure_fixed_match(ctx, $bench_name, &pattern, &route);
         }
     };
 }

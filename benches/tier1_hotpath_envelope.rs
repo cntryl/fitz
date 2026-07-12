@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 stress_allocator!();
 
-const ENVELOPE_BATCH_OPS: u64 = 256;
+const ENVELOPE_BATCH_OPS: u64 = 1024;
 
 #[derive(Clone)]
 #[allow(dead_code)]
@@ -20,6 +20,8 @@ fn address(route: String) -> RouteAddress {
 fn record_group(ctx: &mut StressContext, payload: &str) {
     ctx.parameter("group", "hotpath_envelope");
     ctx.parameter("payload", payload);
+    ctx.metadata("row_class", "construction");
+    ctx.metadata("validated_micro", "true");
 }
 
 #[stress(tier = 1, name = "owning_new_struct_payload")]
@@ -48,6 +50,11 @@ fn should_create_owning_new_struct_payload(ctx: &mut StressContext) {
 #[stress(tier = 1, name = "owning_from_route_struct_payload")]
 fn should_create_owning_from_route_struct_payload(ctx: &mut StressContext) {
     record_group(ctx, "struct");
+    ctx.parameter("logical_unit", "envelope_batch");
+    ctx.parameter(
+        "envelopes_per_logical_operation",
+        ENVELOPE_BATCH_OPS.to_string(),
+    );
     let triples: Vec<(RouteAddress, RouteAddress, TestMessage)> = (0_u64..4)
         .map(|i| {
             (
@@ -79,6 +86,11 @@ fn should_create_owning_from_route_struct_payload(ctx: &mut StressContext) {
 #[stress(tier = 1, name = "owning_new_with_deadline_struct_payload")]
 fn should_create_owning_new_with_deadline_struct_payload(ctx: &mut StressContext) {
     record_group(ctx, "struct");
+    ctx.parameter("logical_unit", "envelope_batch");
+    ctx.parameter(
+        "envelopes_per_logical_operation",
+        ENVELOPE_BATCH_OPS.to_string(),
+    );
     let deadline = Instant::now() + Duration::from_secs(30);
     let pairs: Vec<(RouteAddress, TestMessage)> = (0_u64..4)
         .map(|i| {

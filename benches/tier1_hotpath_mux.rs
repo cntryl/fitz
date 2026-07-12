@@ -4,16 +4,24 @@ use fitz::protocol::tlv::{MessageType, TlvDecoder, TlvEncoder};
 
 stress_allocator!();
 
+const MUX_BATCH_OPS: u64 = 64;
+
 fn encoded_record(size: usize) -> bytes::Bytes {
     let mut encoder = TlvEncoder::with_capacity(256);
     let payload = vec![0_u8; size];
-    encoder.encode(MessageType::new(120), &payload);
+    // Use an assigned manifest ID so the benchmark exercises real mux routing.
+    encoder.encode(MessageType::new(100), &payload);
     encoder.finish()
 }
 
 fn record_group(ctx: &mut StressContext, payload_size: usize) {
     ctx.parameter("group", "hotpath_mux");
     ctx.parameter("payload_size", payload_size);
+    ctx.parameter("logical_unit", "decode_route_batch");
+    ctx.parameter(
+        "decode_routes_per_logical_operation",
+        MUX_BATCH_OPS.to_string(),
+    );
 }
 
 fn mark_validated_micro(ctx: &mut StressContext) {
@@ -30,12 +38,14 @@ macro_rules! decode_then_route_bench {
             let decoder = TlvDecoder::new();
             let mut mux = Mux::new(1024);
 
-            ctx.measure($bench_name, || {
-                let (msg_type, value, _) = decoder.decode_one_ref(black_box(&data)).unwrap();
-                let message = mux.route_ref(msg_type, value).unwrap();
-                let channel = message.channel;
-                mux.release(channel);
-                black_box(message);
+            ctx.measure_batch($bench_name, MUX_BATCH_OPS, || {
+                for _ in 0..MUX_BATCH_OPS {
+                    let (msg_type, value, _) = decoder.decode_one_ref(black_box(&data)).unwrap();
+                    let message = mux.route_ref(msg_type, value).unwrap();
+                    let channel = message.channel;
+                    mux.release(channel);
+                    black_box(message);
+                }
             });
         }
     };

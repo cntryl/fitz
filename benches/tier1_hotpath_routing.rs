@@ -5,6 +5,8 @@ stress_allocator!();
 
 fn record_group(ctx: &mut StressContext) {
     ctx.parameter("group", "hotpath_routing");
+    ctx.metadata("row_class", "construction");
+    ctx.metadata("validated_micro", "true");
 }
 
 macro_rules! route_new_bench {
