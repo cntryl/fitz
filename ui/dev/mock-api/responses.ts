@@ -31,7 +31,11 @@ import {
   topology,
 } from "./fixtures";
 
-export function domainResponse(familyValue: string, domain: Domain, rest: string[]): MockResponse | null {
+export function domainResponse(
+  familyValue: string,
+  domain: Domain,
+  rest: string[],
+): MockResponse | null {
   const family = routeFamilyFrom(familyValue);
 
   if (rest[0] === "stats") return json(domainStats[domain]);

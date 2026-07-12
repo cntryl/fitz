@@ -20,7 +20,11 @@ import {
   queueResourceQueryKey,
   queueResourceTimelineQueryKey,
 } from "@/features/queue/queue-resource-query";
-import { createActiveSessionsQuery, createCurrentSessionQuery, SESSION_QUERY_PREFIX } from "@/features/session/session-query";
+import {
+  createActiveSessionsQuery,
+  createCurrentSessionQuery,
+  SESSION_QUERY_PREFIX,
+} from "@/features/session/session-query";
 import { createSignInMutation, createSignOutMutation } from "@/features/session/session-mutation";
 import { createKvOverviewQuery } from "@/features/kv/kv-query";
 import {
@@ -77,7 +81,10 @@ import {
   streamRealmQueryKey,
   streamResourceQueryKey,
 } from "@/features/stream/stream-query";
-import { createResourceInventoryQuery, createResourceQuery } from "@/features/resource/resource-query";
+import {
+  createResourceInventoryQuery,
+  createResourceQuery,
+} from "@/features/resource/resource-query";
 import { resourceService } from "@/features/resource/resource-service";
 import { createMetricsOverviewQuery } from "@/features/metrics/metrics-query";
 import { metricsService } from "@/features/metrics/metrics-service";
@@ -93,7 +100,11 @@ import { queueService } from "@/features/queue/queue-service";
 import { queueResourceService } from "@/features/queue/queue-resource-service";
 import { systemService } from "@/features/system/system-service";
 import { topologyService } from "@/features/topology/topology-service";
-import { affectedQueueKeys, createPurgeQueueDeadLetterMutation, createReplayQueueDeadLetterMutation } from "@/features/queue/queue-actions";
+import {
+  affectedQueueKeys,
+  createPurgeQueueDeadLetterMutation,
+  createReplayQueueDeadLetterMutation,
+} from "@/features/queue/queue-actions";
 
 describe("Data query layer", () => {
   it("exports session query helpers", () => {

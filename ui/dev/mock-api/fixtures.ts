@@ -685,7 +685,13 @@ export function resourceDetail(
   };
 }
 
-export function timeline(domain: Domain, family: number, realm: string, area: string, resource: string) {
+export function timeline(
+  domain: Domain,
+  family: number,
+  realm: string,
+  area: string,
+  resource: string,
+) {
   return {
     area,
     derived: false,
@@ -717,7 +723,13 @@ export function timeline(domain: Domain, family: number, realm: string, area: st
   };
 }
 
-export function comparison(domain: Domain, family: number, realm: string, area: string, resource: string) {
+export function comparison(
+  domain: Domain,
+  family: number,
+  realm: string,
+  area: string,
+  resource: string,
+) {
   return {
     comparison_mode: "resource",
     delta: {

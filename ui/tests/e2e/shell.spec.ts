@@ -1,5 +1,12 @@
 import { expect, test } from "@playwright/test";
-import { applyTheme, expectRouteChrome, normalizeRoute, sprint16Routes, themeModes, viewportPresets } from "./shell/chrome";
+import {
+  applyTheme,
+  expectRouteChrome,
+  normalizeRoute,
+  sprint16Routes,
+  themeModes,
+  viewportPresets,
+} from "./shell/chrome";
 
 test.describe("sprint 16 route matrix", () => {
   for (const route of sprint16Routes) {
@@ -27,4 +34,3 @@ test.describe("sprint 16 route matrix", () => {
     }
   }
 });
-

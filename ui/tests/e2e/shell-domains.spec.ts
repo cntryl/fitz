@@ -1,5 +1,9 @@
 import { expect, test } from "@playwright/test";
-import { applyLeaseOverride, domainOverviewPages, mockDomainOverviewApis } from "./shell/api-fixtures";
+import {
+  applyLeaseOverride,
+  domainOverviewPages,
+  mockDomainOverviewApis,
+} from "./shell/api-fixtures";
 import { mockResourceDetailApis, mockScheduleResourceApis } from "./shell/resource-mocks";
 
 test("captures a domain inventory page", async ({ page }, testInfo) => {
@@ -291,4 +295,3 @@ test.describe("captures domain overview templates", () => {
     });
   }
 });
-

@@ -2,10 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { cleanupApp } from "@askrjs/askr/boot";
 import { queryState } from "@askrjs/askr/testing";
 import { mountRoute, pageSmokeMocks, queryOptions } from "./page-smoke/harness";
-import {
-  queueResource,
-  resourceDetail,
-} from "./page-smoke/fixtures";
+import { queueResource, resourceDetail } from "./page-smoke/fixtures";
 
 const mocks = pageSmokeMocks();
 

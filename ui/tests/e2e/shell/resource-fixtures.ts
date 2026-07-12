@@ -61,7 +61,6 @@ export function leaseSearchRowsFixture(scope: ResourceScope, expiresOffsetSecond
   };
 }
 
-
 export function resourceDetailFixture(
   domain: ResourceDomain,
   scope: ResourceScope,
@@ -283,4 +282,3 @@ export function streamRecordsFixture(options: {
     from_offset: 0,
   };
 }
-

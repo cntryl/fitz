@@ -13,9 +13,8 @@
     "install:browsers": "playwright install chromium",
     "check:generated": "npm run gen:adapters && git diff --exit-code -- src/adapters/generated/api.ts",
     "type-check": "tsc --noEmit",
-    "lint": "vp lint .",
-    "lint:fix": "vp lint src tests --fix",
-    "fmt": "vp fmt .",
+    "lint": "vp lint",
+    "fmt": "vp fmt",
     "gen": "npm run gen:adapters && npm run fmt",
     "gen:adapters": "npx @fgrzl/fetch-gen --input ../public/openapi.yml --output ./src/adapters/generated/api.ts && node ./scripts/normalize-generated.js"
   },

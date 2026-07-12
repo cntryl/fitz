@@ -14,7 +14,11 @@ import {
   mockScheduleResourceApis,
 } from "./resource-mocks";
 
-export async function openDashboard(page: Page, theme: "light" | "dark" = "light", setupApis = true) {
+export async function openDashboard(
+  page: Page,
+  theme: "light" | "dark" = "light",
+  setupApis = true,
+) {
   if (theme === "dark") {
     await page.addInitScript(() => {
       localStorage.setItem("fitz-admin-theme", "dark");
@@ -443,4 +447,3 @@ export const sprint16Routes: RouteScenario[] = [
     title: /Signed out|Signing out/,
   },
 ];
-

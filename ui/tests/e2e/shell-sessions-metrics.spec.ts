@@ -1,5 +1,10 @@
 import { expect, test } from "@playwright/test";
-import { mockMetricsApi, mockSessionsApi, sessionsEmpty, sessionsWithData } from "./shell/api-fixtures";
+import {
+  mockMetricsApi,
+  mockSessionsApi,
+  sessionsEmpty,
+  sessionsWithData,
+} from "./shell/api-fixtures";
 import { openDashboard } from "./shell/chrome";
 
 test("captures the mobile navbar panel", async ({ page }, testInfo) => {

@@ -1,5 +1,9 @@
 import { expect, test } from "@playwright/test";
-import { mockAdminFeatures, mockDomainOverviewApis, topologyApiPayload } from "./shell/api-fixtures";
+import {
+  mockAdminFeatures,
+  mockDomainOverviewApis,
+  topologyApiPayload,
+} from "./shell/api-fixtures";
 import { openDashboard } from "./shell/chrome";
 
 test("captures the desktop dashboard shell", async ({ page }, testInfo) => {

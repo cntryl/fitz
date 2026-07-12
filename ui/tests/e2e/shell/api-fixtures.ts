@@ -301,7 +301,15 @@ export const domainOverviewData: Record<string, DomainOverviewFixture> = {
 
 export type DomainOverviewOverride = Partial<DomainOverviewFixture>;
 
-export const domainApiSegments = new Set(["kv", "queue", "stream", "lease", "schedule", "notice", "rpc"]);
+export const domainApiSegments = new Set([
+  "kv",
+  "queue",
+  "stream",
+  "lease",
+  "schedule",
+  "notice",
+  "rpc",
+]);
 
 export function normalizedAdminApiSegments(pathname: string) {
   const segments = pathname.split("/").filter(Boolean);
@@ -633,7 +641,9 @@ export async function mockMetricsApi(
   });
 }
 
-export function makeDiagnosticSnapshot(overrides: Partial<DiagnosticSnapshot> = {}): DiagnosticSnapshot {
+export function makeDiagnosticSnapshot(
+  overrides: Partial<DiagnosticSnapshot> = {},
+): DiagnosticSnapshot {
   return {
     age_seconds: overrides.age_seconds ?? 12,
     confidence: 1,
@@ -794,7 +804,6 @@ export async function mockDiagnosticsApis(page: Page) {
     await route.fulfill({ json: structuredMetricsPayload });
   });
 }
-
 
 export async function mockHomeRouteApis(page: Page) {
   await mockAdminFeatures(page);
