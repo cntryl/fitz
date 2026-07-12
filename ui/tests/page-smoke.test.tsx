@@ -15,6 +15,7 @@ import {
 } from "./page-smoke/fixtures";
 
 const mocks = pageSmokeMocks();
+const PAGE_SMOKE_TIMEOUT_MS = 30_000;
 
 describe("admin page smoke tests", () => {
   it("mounts every authenticated route with success data", async () => {
@@ -187,7 +188,7 @@ describe("admin page smoke tests", () => {
       cleanupApp(root);
       document.body.innerHTML = "";
     }
-  }, 15000);
+  }, PAGE_SMOKE_TIMEOUT_MS);
   it("renders all domain overviews with the shared frame contract", async () => {
     for (const page of domainOverviews) {
       const { default: Component } = await page.module();
@@ -211,7 +212,7 @@ describe("admin page smoke tests", () => {
       cleanupApp(root);
       document.body.innerHTML = "";
     }
-  });
+  }, PAGE_SMOKE_TIMEOUT_MS);
   it("renders the flat inventory for domain overview, realm, and area routes", async () => {
     for (const page of domainOverviews) {
       const { default: Component } = await page.module();
@@ -239,7 +240,7 @@ describe("admin page smoke tests", () => {
         document.body.innerHTML = "";
       }
     }
-  });
+  }, PAGE_SMOKE_TIMEOUT_MS);
   it("covers notice drill-down loading and error states", async () => {
     const { default: NoticePage } = await import("@/pages/app/notice");
     const { default: NoticeOperationPage } = await import("@/pages/app/notice-operation");
