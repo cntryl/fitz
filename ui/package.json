@@ -16,7 +16,7 @@
     "lint": "vp lint",
     "fmt": "vp fmt",
     "gen": "npm run gen:adapters && npm run fmt",
-    "gen:adapters": "npx @fgrzl/fetch-gen --input ../public/openapi.yml --output ./src/adapters/generated/api.ts && node ./scripts/normalize-generated.js"
+    "gen:adapters": "npx @fgrzl/fetch-gen --input ../public/openapi.yml --output ./src/adapters/generated/api.ts && npm run fmt"
   },
   "dependencies": {
     "@askrjs/askr": "0.0.51",
