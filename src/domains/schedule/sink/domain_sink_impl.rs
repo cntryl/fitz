@@ -2,10 +2,10 @@ use super::model::{
     now_epoch_ms, Arc, AtomicBool, AtomicU64, Entry, Envelope, HashMap, HashSet, Instant, Mutex,
     Ordering, PendingFireKey, Router, ScheduleDomainActor, ScheduleDomainCommand,
     ScheduleDomainCore, ScheduleDomainRuntime, ScheduleDomainSink, ScheduleDomainState,
-    ScheduleLiveCounts, ScheduleMetrics, ScheduleSubscription, VecDeque,
+    ScheduleLiveCounts, ScheduleMetrics, VecDeque,
 };
 #[cfg(test)]
-use crate::protocol::frame_context::FrameContext;
+use crate::dispatch::protocol::frame_context::FrameContext;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
 type PendingAckRetryMap = HashMap<crate::runtime::routing::RouteFamily, Vec<PendingFireKey>>;
@@ -627,36 +627,36 @@ impl ScheduleDomainRuntime<'_> {
 
     pub(super) fn route_live_notify(
         &self,
-        subscription: &ScheduleSubscription,
+        session_id: u64,
+        subscription_id: u64,
+        subscriber: &crate::runtime::routing::RouteAddress,
         payload: &bytes::Bytes,
     ) {
         #[cfg(test)]
-        let notify_payload = crate::protocol::schedule_codec::encode_notify(
-            subscription.subscription_id,
+        let notify_payload = crate::dispatch::protocol::schedule_codec::encode_notify(
+            subscription_id,
             payload.as_ref(),
         );
 
         #[cfg(test)]
         let notify_ctx = FrameContext::new(
-            subscription.session_id,
-            crate::protocol::frame::ChannelId::Sub,
-            crate::protocol::tlv::MessageType::new(705),
+            session_id,
+            crate::dispatch::protocol::frame::ChannelId::Sub,
+            crate::dispatch::protocol::tlv::MessageType::new(705),
             bytes::Bytes::from(notify_payload),
-            crate::runtime::routing::RouteFamily::from_u32(subscription.subscriber.family().id()),
+            *subscriber.family(),
         );
 
         #[cfg(test)]
-        let notify_envelope = Envelope::new(subscription.subscriber.clone(), notify_ctx);
+        let notify_envelope = Envelope::new(subscriber.clone(), notify_ctx);
 
         #[cfg(not(test))]
         let notify_envelope = Envelope::new(
-            subscription.subscriber.clone(),
+            subscriber.clone(),
             crate::domains::schedule::ScheduleClientNotification::new(
-                subscription.session_id,
-                crate::runtime::routing::RouteFamily::from_u32(
-                    subscription.subscriber.family().id(),
-                ),
-                subscription.subscription_id,
+                session_id,
+                *subscriber.family(),
+                subscription_id,
                 payload.clone(),
             ),
         );
@@ -668,11 +668,23 @@ impl ScheduleDomainRuntime<'_> {
 
     pub(super) fn handle_domain_publish(&self, event: &crate::runtime::DomainPublishEvent) {
         let family_id = event.family_id.as_u64();
-        let families = self.core.sub_families.lock();
-        if let Some(state) = families.get(&family_id) {
-            state.for_each_route(event.route.as_str(), |subscription| {
-                self.route_live_notify(subscription, &event.payload);
-            });
+        let targets = {
+            let families = self.core.sub_families.lock();
+            let mut targets = Vec::new();
+            if let Some(state) = families.get(&family_id) {
+                state.for_each_route(event.route.as_str(), |subscription| {
+                    targets.push((
+                        subscription.session_id,
+                        subscription.subscription_id,
+                        subscription.subscriber.clone(),
+                    ));
+                });
+            }
+            targets
+        };
+
+        for (session_id, subscription_id, subscriber) in targets {
+            self.route_live_notify(session_id, subscription_id, &subscriber, &event.payload);
         }
     }
 

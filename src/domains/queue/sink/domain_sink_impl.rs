@@ -6,7 +6,7 @@ use super::model::{
     QUEUE_ACTOR_IDLE_TTL, QUEUE_DEDUP_SWEEP_INTERVAL, QUEUE_IDLE_SWEEP_INTERVAL,
 };
 #[cfg(test)]
-use crate::protocol::frame_context::FrameContext;
+use crate::dispatch::protocol::frame_context::FrameContext;
 use std::sync::Arc;
 
 mod domain_core_impl;

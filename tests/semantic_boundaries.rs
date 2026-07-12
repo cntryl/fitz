@@ -112,6 +112,38 @@ fn should_keep_sync_core_independent_from_api_modules() {
 }
 
 #[test]
+fn should_keep_protocol_and_domains_on_dispatch_boundary() {
+    // Arrange
+    let repo_root = repo_root();
+    let protocol_files = source_files_under(&repo_root.join("src").join("protocol"));
+    let domain_files = source_files_under(&repo_root.join("src").join("domains"));
+
+    // Act
+    let protocol_report = report_for_patterns(&repo_root, &protocol_files, &["crate::domains::"]);
+    let domain_report = report_for_patterns(&repo_root, &domain_files, &["crate::protocol::"]);
+    let report = [
+        (!protocol_report.is_empty()).then(|| {
+            format!("protocol imports domain DTOs outside dispatch::wire:\n{protocol_report}")
+        }),
+        (!domain_report.is_empty()).then(|| {
+            format!(
+                "domains import protocol contracts outside dispatch::protocol:\n{domain_report}"
+            )
+        }),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join("\n");
+
+    // Assert
+    assert!(
+        report.is_empty(),
+        "protocol/domain dependencies must cross through src/dispatch:\n{report}"
+    );
+}
+
+#[test]
 fn should_disallow_direct_cross_domain_references() {
     // Arrange
     let repo_root = repo_root();
@@ -425,6 +457,13 @@ fn sync_core_source_files(repo_root: &Path) -> Vec<PathBuf> {
     for directory in SYNC_CORE_DIRS {
         collect_rust_files(&repo_root.join("src").join(directory), &mut files);
     }
+    files.sort();
+    files
+}
+
+fn source_files_under(directory: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    collect_rust_files(directory, &mut files);
     files.sort();
     files
 }

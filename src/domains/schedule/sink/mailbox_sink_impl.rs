@@ -3,7 +3,7 @@ use super::model::{
     ScheduleDomainRuntime, ScheduleDomainSink, ScheduleSubscription, ScheduleSubscriptionSet,
 };
 #[cfg(test)]
-use crate::protocol::frame_context::FrameContext;
+use crate::dispatch::protocol::frame_context::FrameContext;
 use crate::runtime::{Actor, Context};
 
 impl MailboxSink for ScheduleDomainSink {
@@ -83,7 +83,29 @@ impl ScheduleDomainRuntime<'_> {
         let meta = request.meta;
         let request_started = self.record_request_start();
 
-        let schedule_msg = self.parse_request_message(request.message, request_started)?;
+        if !Self::valid_request_envelope(envelope, meta) {
+            let response = crate::domains::schedule::ScheduleResponse::Error(
+                "route family mismatch".to_string(),
+            );
+            let response_meta = Self::response_meta_for_source(envelope, meta);
+            self.route_schedule_response(envelope, response_meta, &response, request_started);
+            return Ok(());
+        }
+
+        let Some(schedule_msg) =
+            self.parse_request_message(envelope, meta, request.message, request_started)
+        else {
+            return Ok(());
+        };
+
+        if !Self::valid_schedule_message(envelope, meta, &schedule_msg) {
+            let response = crate::domains::schedule::ScheduleResponse::Error(
+                "route family mismatch".to_string(),
+            );
+            let response_meta = Self::response_meta_for_source(envelope, meta);
+            self.route_schedule_response(envelope, response_meta, &response, request_started);
+            return Ok(());
+        }
 
         let route_addr = envelope.destination();
         let route_family = *route_addr.family();
@@ -126,6 +148,12 @@ impl ScheduleDomainRuntime<'_> {
 
     fn handle_domain_publish_envelope(&self, envelope: &Envelope) -> bool {
         if let Some(event) = envelope.payload::<crate::runtime::DomainPublishEvent>() {
+            if *envelope.destination().family() != event.family_id {
+                self.core
+                    .live_publish_failures
+                    .fetch_add(1, Ordering::Relaxed);
+                return true;
+            }
             self.handle_domain_publish(event);
             return true;
         }
@@ -165,23 +193,23 @@ impl ScheduleDomainRuntime<'_> {
 
     fn parse_request_message(
         &self,
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
         message: Result<crate::domains::schedule::ScheduleMessage, String>,
         request_started: Option<std::time::Instant>,
-    ) -> Result<crate::domains::schedule::ScheduleMessage, DeliveryError> {
+    ) -> Option<crate::domains::schedule::ScheduleMessage> {
         match message {
-            Ok(message) => Ok(message),
+            Ok(message) => Some(message),
             Err(error) => {
-                if let (Some(metrics), Some(started_at)) =
-                    (self.core.metrics.as_ref(), request_started)
-                {
-                    metrics.record_failure(started_at);
-                }
                 tracing::warn!(
                     domain = "schedule",
                     error = %error,
                     "Failed to parse schedule message"
                 );
-                Err(DeliveryError::ActorStopped)
+                let response = crate::domains::schedule::ScheduleResponse::Error(error);
+                let response_meta = Self::response_meta_for_source(envelope, meta);
+                self.route_schedule_response(envelope, response_meta, &response, request_started);
+                None
             }
         }
     }
@@ -195,6 +223,41 @@ impl ScheduleDomainRuntime<'_> {
         schedule_msg: crate::domains::schedule::ScheduleMessage,
     ) -> Option<(crate::domains::schedule::ScheduleResponse, bool)> {
         use crate::domains::schedule::ScheduleResponse;
+
+        match &schedule_msg {
+            crate::domains::schedule::ScheduleMessage::Subscribe {
+                family_id,
+                route,
+                session_id,
+                subscriber,
+            } => {
+                return Some((
+                    self.apply_subscribe_message(
+                        *family_id,
+                        route,
+                        *session_id,
+                        subscriber.clone(),
+                    ),
+                    false,
+                ));
+            }
+            crate::domains::schedule::ScheduleMessage::Unsubscribe {
+                family_id,
+                route,
+                session_id,
+                ..
+            } => {
+                return Some((
+                    self.apply_unsubscribe_message(*family_id, route, *session_id),
+                    false,
+                ));
+            }
+            crate::domains::schedule::ScheduleMessage::UnsubscribeAll { session_id, .. } => {
+                self.unsubscribe_all(*session_id);
+                return Some((ScheduleResponse::Ok, false));
+            }
+            _ => {}
+        }
 
         let mut actors = self.core.actors.lock();
         let actor = match self.get_or_create_actor(&mut actors, route_family) {
@@ -309,7 +372,17 @@ impl ScheduleDomainRuntime<'_> {
             );
             id
         } else {
-            let new_id = self.core.next_sub_id.fetch_add(1, Ordering::Relaxed);
+            let Ok(new_id) = self.core.next_sub_id.fetch_update(
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+                |current| current.checked_add(1),
+            ) else {
+                let state_empty = state.is_empty();
+                if state_empty {
+                    families.remove(&fam_id);
+                }
+                return ScheduleResponse::Error("subscription ID space exhausted".to_string());
+            };
             state.insert(ScheduleSubscription {
                 route: route.as_str().to_string(),
                 session_id,
@@ -386,7 +459,7 @@ impl ScheduleDomainRuntime<'_> {
                 frame_ctx.msg_type.as_u16(),
                 frame_ctx.route_family,
             );
-            let parsed = crate::protocol::schedule_codec::parse_request(
+            let parsed = crate::dispatch::protocol::schedule_codec::parse_request(
                 &frame_ctx,
                 &frame_ctx.payload,
                 *envelope.destination().family(),
@@ -414,15 +487,15 @@ impl ScheduleDomainRuntime<'_> {
         #[cfg(test)]
         let response_ctx = {
             let mut payload_encoder =
-                crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
-            let response_bytes = crate::protocol::schedule_codec::encode_response_into(
+                crate::dispatch::protocol::payload_codec::PayloadEncoder::with_capacity(256);
+            let response_bytes = crate::dispatch::protocol::schedule_codec::encode_response_into(
                 &mut payload_encoder,
                 response,
             );
             FrameContext::new(
                 meta.session_id,
                 test_protocol_channel_from_client(meta.channel),
-                crate::protocol::tlv::MessageType::new(meta.message_type),
+                crate::dispatch::protocol::tlv::MessageType::new(meta.message_type),
                 bytes::Bytes::from(response_bytes),
                 meta.route_family,
             )
@@ -444,32 +517,98 @@ impl ScheduleDomainRuntime<'_> {
             }
         }
     }
+
+    fn valid_request_envelope(envelope: &Envelope, meta: crate::runtime::ClientFrameMeta) -> bool {
+        meta.route_family == *envelope.destination().family()
+            && envelope
+                .source()
+                .is_none_or(|source| *source.family() == meta.route_family)
+    }
+
+    fn response_meta_for_source(
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+    ) -> crate::runtime::ClientFrameMeta {
+        envelope.source().map_or(meta, |source| {
+            let mut response_meta = meta;
+            response_meta.route_family = *source.family();
+            response_meta
+        })
+    }
+
+    fn valid_schedule_message(
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+        message: &crate::domains::schedule::ScheduleMessage,
+    ) -> bool {
+        use crate::domains::schedule::ScheduleMessage;
+
+        match message {
+            ScheduleMessage::Subscribe {
+                family_id,
+                session_id,
+                subscriber,
+                ..
+            }
+            | ScheduleMessage::Unsubscribe {
+                family_id,
+                session_id,
+                subscriber,
+                ..
+            } => {
+                *family_id == meta.route_family
+                    && *session_id == meta.session_id
+                    && *subscriber.family() == *family_id
+                    && envelope.source().is_none_or(|source| source == subscriber)
+            }
+            ScheduleMessage::UnsubscribeAll {
+                session_id,
+                subscriber,
+            } => {
+                *session_id == meta.session_id
+                    && *subscriber.family() == meta.route_family
+                    && envelope.source().is_none_or(|source| source == subscriber)
+            }
+            ScheduleMessage::Create { .. }
+            | ScheduleMessage::CreateBatch { .. }
+            | ScheduleMessage::Cancel { .. }
+            | ScheduleMessage::List { .. } => true,
+        }
+    }
 }
 
 #[cfg(test)]
 fn test_client_channel_from_protocol(
-    channel: crate::protocol::frame::ChannelId,
+    channel: crate::dispatch::protocol::frame::ChannelId,
 ) -> crate::runtime::ClientChannel {
     match channel {
-        crate::protocol::frame::ChannelId::Control => crate::runtime::ClientChannel::Control,
-        crate::protocol::frame::ChannelId::Pub => crate::runtime::ClientChannel::Pub,
-        crate::protocol::frame::ChannelId::Sub => crate::runtime::ClientChannel::Sub,
-        crate::protocol::frame::ChannelId::Rpc => crate::runtime::ClientChannel::Rpc,
-        crate::protocol::frame::ChannelId::Lease => crate::runtime::ClientChannel::Lease,
-        crate::protocol::frame::ChannelId::Internal => crate::runtime::ClientChannel::Internal,
+        crate::dispatch::protocol::frame::ChannelId::Control => {
+            crate::runtime::ClientChannel::Control
+        }
+        crate::dispatch::protocol::frame::ChannelId::Pub => crate::runtime::ClientChannel::Pub,
+        crate::dispatch::protocol::frame::ChannelId::Sub => crate::runtime::ClientChannel::Sub,
+        crate::dispatch::protocol::frame::ChannelId::Rpc => crate::runtime::ClientChannel::Rpc,
+        crate::dispatch::protocol::frame::ChannelId::Lease => crate::runtime::ClientChannel::Lease,
+        crate::dispatch::protocol::frame::ChannelId::Internal => {
+            crate::runtime::ClientChannel::Internal
+        }
     }
 }
 
 #[cfg(test)]
 fn test_protocol_channel_from_client(
     channel: crate::runtime::ClientChannel,
-) -> crate::protocol::frame::ChannelId {
+) -> crate::dispatch::protocol::frame::ChannelId {
     match channel {
-        crate::runtime::ClientChannel::Control => crate::protocol::frame::ChannelId::Control,
-        crate::runtime::ClientChannel::Pub => crate::protocol::frame::ChannelId::Pub,
-        crate::runtime::ClientChannel::Sub => crate::protocol::frame::ChannelId::Sub,
-        crate::runtime::ClientChannel::Rpc => crate::protocol::frame::ChannelId::Rpc,
-        crate::runtime::ClientChannel::Lease => crate::protocol::frame::ChannelId::Lease,
-        crate::runtime::ClientChannel::Internal => crate::protocol::frame::ChannelId::Internal,
+        crate::runtime::ClientChannel::Control => {
+            crate::dispatch::protocol::frame::ChannelId::Control
+        }
+        crate::runtime::ClientChannel::Pub => crate::dispatch::protocol::frame::ChannelId::Pub,
+        crate::runtime::ClientChannel::Sub => crate::dispatch::protocol::frame::ChannelId::Sub,
+        crate::runtime::ClientChannel::Rpc => crate::dispatch::protocol::frame::ChannelId::Rpc,
+        crate::runtime::ClientChannel::Lease => crate::dispatch::protocol::frame::ChannelId::Lease,
+        crate::runtime::ClientChannel::Internal => {
+            crate::dispatch::protocol::frame::ChannelId::Internal
+        }
     }
 }

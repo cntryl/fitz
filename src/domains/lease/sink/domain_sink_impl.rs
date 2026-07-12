@@ -3,9 +3,9 @@ use super::model::{
     PendingAcquireRef, QueuedAcquireRequest, SinkLeaseState, Utc, LEASE_MAX_QUEUE_DEPTH,
     LEASE_MAX_WAIT_SECONDS,
 };
-use crate::domains::subscription_state::RoutedSubscriptionSet;
 #[cfg(test)]
-use crate::protocol::frame_context::FrameContext;
+use crate::dispatch::protocol::frame_context::FrameContext;
+use crate::domains::subscription_state::RoutedSubscriptionSet;
 use crate::runtime::Envelope;
 use std::collections::VecDeque;
 
@@ -93,16 +93,17 @@ impl LeaseDomainRuntime<'_> {
         #[cfg(test)]
         let response_ctx = {
             let mut payload_encoder =
-                crate::protocol::payload_codec::PayloadEncoder::with_capacity(128);
-            let response_bytes = crate::protocol::lease_codec::encode_domain_response_into(
-                &mut payload_encoder,
-                response,
-            );
+                crate::dispatch::protocol::payload_codec::PayloadEncoder::with_capacity(128);
+            let response_bytes =
+                crate::dispatch::protocol::lease_codec::encode_domain_response_into(
+                    &mut payload_encoder,
+                    response,
+                );
             FrameContext::new(
                 waiter.session_id,
                 test_protocol_channel_from_client(waiter.channel),
-                crate::protocol::tlv::MessageType::new(
-                    crate::protocol::lease_codec::msg_type::ACQUIRE,
+                crate::dispatch::protocol::tlv::MessageType::new(
+                    crate::dispatch::protocol::lease_codec::msg_type::ACQUIRE,
                 ),
                 bytes::Bytes::from(response_bytes),
                 waiter.route_family,
@@ -114,7 +115,7 @@ impl LeaseDomainRuntime<'_> {
             crate::runtime::ClientFrameMeta::new(
                 waiter.session_id,
                 waiter.channel,
-                crate::protocol::lease_codec::msg_type::ACQUIRE,
+                crate::dispatch::protocol::lease_codec::msg_type::ACQUIRE,
                 waiter.route_family,
             ),
             response.clone(),
@@ -137,11 +138,12 @@ impl LeaseDomainRuntime<'_> {
     ) {
         #[cfg(test)]
         let response_ctx = {
-            let response_bytes = crate::protocol::lease_codec::encode_domain_response(response);
+            let response_bytes =
+                crate::dispatch::protocol::lease_codec::encode_domain_response(response);
             FrameContext::new(
                 meta.session_id,
                 test_protocol_channel_from_client(meta.channel),
-                crate::protocol::tlv::MessageType::new(meta.message_type),
+                crate::dispatch::protocol::tlv::MessageType::new(meta.message_type),
                 bytes::Bytes::from(response_bytes),
                 meta.route_family,
             )
@@ -465,48 +467,59 @@ impl LeaseDomainRuntime<'_> {
 
     pub(super) fn handle_domain_publish(&self, event: &crate::runtime::DomainPublishEvent) {
         let family_id = event.family_id.as_u64();
-        let families = self.core.families.lock();
+        let targets = {
+            let families = self.core.families.lock();
+            let mut targets = Vec::new();
+            if let Some(family_state) = families.get(&family_id) {
+                family_state.for_each_matching(event, |sub| {
+                    targets.push((
+                        sub.session_id,
+                        sub.subscription_id,
+                        sub.route_address.clone(),
+                    ));
+                });
+            }
+            targets
+        };
 
-        if let Some(family_state) = families.get(&family_id) {
+        #[cfg(test)]
+        let mut payload_encoder =
+            crate::dispatch::protocol::payload_codec::PayloadEncoder::with_capacity(256);
+        for (session_id, subscription_id, route_address) in targets {
             #[cfg(test)]
-            let mut payload_encoder =
-                crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
-            family_state.for_each_matching(event, |sub| {
-                #[cfg(test)]
-                {
-                    let notify_payload = crate::protocol::lease_codec::encode_notify_into(
-                        &mut payload_encoder,
-                        sub.subscription_id,
-                        event.route.as_str(),
-                        &event.payload,
-                    );
-                    let notify_ctx = FrameContext::new(
-                        sub.session_id,
-                        crate::protocol::frame::ChannelId::Sub,
-                        crate::protocol::tlv::MessageType::new(
-                            crate::protocol::lease_codec::msg_type::NOTIFY,
-                        ),
-                        bytes::Bytes::from(notify_payload),
-                        event.family_id,
-                    );
+            {
+                let notify_payload = crate::dispatch::protocol::lease_codec::encode_notify_into(
+                    &mut payload_encoder,
+                    subscription_id,
+                    event.route.as_str(),
+                    &event.payload,
+                );
+                let notify_ctx = FrameContext::new(
+                    session_id,
+                    crate::dispatch::protocol::frame::ChannelId::Sub,
+                    crate::dispatch::protocol::tlv::MessageType::new(
+                        crate::dispatch::protocol::lease_codec::msg_type::NOTIFY,
+                    ),
+                    bytes::Bytes::from(notify_payload),
+                    event.family_id,
+                );
 
-                    let notify_envelope = Envelope::new(sub.route_address.clone(), notify_ctx);
-                    let _ = self.core.router.route(notify_envelope);
-                }
+                let notify_envelope = Envelope::new(route_address, notify_ctx);
+                let _ = self.core.router.route(notify_envelope);
+            }
 
-                #[cfg(not(test))]
-                {
-                    let notification = crate::domains::lease::LeaseClientNotification::new(
-                        sub.session_id,
-                        event.family_id,
-                        sub.subscription_id,
-                        event.route.clone(),
-                        event.payload.clone(),
-                    );
-                    let notify_envelope = Envelope::new(sub.route_address.clone(), notification);
-                    let _ = self.core.router.route(notify_envelope);
-                }
-            });
+            #[cfg(not(test))]
+            {
+                let notification = crate::domains::lease::LeaseClientNotification::new(
+                    session_id,
+                    event.family_id,
+                    subscription_id,
+                    event.route.clone(),
+                    event.payload.clone(),
+                );
+                let notify_envelope = Envelope::new(route_address, notification);
+                let _ = self.core.router.route(notify_envelope);
+            }
         }
     }
 
@@ -524,8 +537,13 @@ impl LeaseDomainRuntime<'_> {
         removed
     }
 
-    pub(super) fn next_fencing_token(&self) -> u64 {
-        self.core.next_token.fetch_add(1, Ordering::Relaxed)
+    pub(super) fn next_fencing_token(&self) -> Option<u64> {
+        self.core
+            .next_token
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                current.checked_add(1)
+            })
+            .ok()
     }
 
     pub(super) fn handle_acquire(
@@ -561,7 +579,9 @@ impl LeaseDomainRuntime<'_> {
 
             match leases.get(&key) {
                 None => {
-                    let token = self.next_fencing_token();
+                    let Some(token) = self.next_fencing_token() else {
+                        return LeaseResponse::Error("fencing token space exhausted".to_string());
+                    };
                     let state = SinkLeaseState {
                         owner_id,
                         owner_session_id,
@@ -688,7 +708,9 @@ impl LeaseDomainRuntime<'_> {
             }
         }
 
-        let queued_token = self.next_fencing_token();
+        let Some(queued_token) = self.next_fencing_token() else {
+            return LeaseResponse::Error("fencing token space exhausted".to_string());
+        };
         pending_acquires
             .entry(key.clone())
             .or_default()
@@ -744,7 +766,9 @@ impl LeaseDomainRuntime<'_> {
                     }
                 }
                 Some(_) => {
-                    let new_token = self.next_fencing_token();
+                    let Some(new_token) = self.next_fencing_token() else {
+                        return LeaseResponse::Error("fencing token space exhausted".to_string());
+                    };
                     if let Some(state) = leases.get_mut(key) {
                         state.expiry = now + ttl;
                         state.fencing_token = new_token;
@@ -850,13 +874,17 @@ impl LeaseDomainRuntime<'_> {
 #[cfg(test)]
 fn test_protocol_channel_from_client(
     channel: crate::runtime::ClientChannel,
-) -> crate::protocol::frame::ChannelId {
+) -> crate::dispatch::protocol::frame::ChannelId {
     match channel {
-        crate::runtime::ClientChannel::Control => crate::protocol::frame::ChannelId::Control,
-        crate::runtime::ClientChannel::Pub => crate::protocol::frame::ChannelId::Pub,
-        crate::runtime::ClientChannel::Sub => crate::protocol::frame::ChannelId::Sub,
-        crate::runtime::ClientChannel::Rpc => crate::protocol::frame::ChannelId::Rpc,
-        crate::runtime::ClientChannel::Lease => crate::protocol::frame::ChannelId::Lease,
-        crate::runtime::ClientChannel::Internal => crate::protocol::frame::ChannelId::Internal,
+        crate::runtime::ClientChannel::Control => {
+            crate::dispatch::protocol::frame::ChannelId::Control
+        }
+        crate::runtime::ClientChannel::Pub => crate::dispatch::protocol::frame::ChannelId::Pub,
+        crate::runtime::ClientChannel::Sub => crate::dispatch::protocol::frame::ChannelId::Sub,
+        crate::runtime::ClientChannel::Rpc => crate::dispatch::protocol::frame::ChannelId::Rpc,
+        crate::runtime::ClientChannel::Lease => crate::dispatch::protocol::frame::ChannelId::Lease,
+        crate::runtime::ClientChannel::Internal => {
+            crate::dispatch::protocol::frame::ChannelId::Internal
+        }
     }
 }

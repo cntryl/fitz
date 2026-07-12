@@ -1,3 +1,5 @@
+#[cfg(test)]
+pub(super) use crate::dispatch::protocol::frame_context::FrameContext;
 pub(super) use crate::domains::queue::{
     projection::{QueueAdminProjection, QueueProjectionEntry, QueueProjectionState},
     MessageId, QueueActorLiveCounts, QueueClientFrame, QueueClientRequest, QueueKey, QueueMetrics,
@@ -5,8 +7,6 @@ pub(super) use crate::domains::queue::{
 };
 pub(super) use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 pub(super) use crate::observability as obs;
-#[cfg(test)]
-pub(super) use crate::protocol::frame_context::FrameContext;
 pub(super) use crate::runtime::{DeliveryError, Envelope, MailboxSink, ManagedActor, Router};
 pub(super) use parking_lot::Mutex;
 pub(super) use std::collections::{HashMap, HashSet};

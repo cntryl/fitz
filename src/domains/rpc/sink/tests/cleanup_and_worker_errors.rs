@@ -105,20 +105,23 @@ fn should_forward_worker_disconnect_error_given_rpc_unsubscribe() {
         crate::benchkit::extract_single_tlv_field(&request_frame);
     let request_ctx = FrameContext::new(
         1,
-        crate::protocol::frame::ChannelId::Rpc,
-        crate::protocol::tlv::MessageType::new(request_msg_type),
+        crate::dispatch::protocol::frame::ChannelId::Rpc,
+        crate::dispatch::protocol::tlv::MessageType::new(request_msg_type),
         request_payload.clone(),
         family,
     );
-    let request =
-        match crate::protocol::rpc_codec::parse_request(&request_ctx, &request_payload, family)
-            .expect("parse rpc request")
-        {
-            crate::domains::rpc::protocol::RpcMessage::Request(request) => request,
-            other => panic!("expected rpc request, found {other:?}"),
-        };
+    let request = match crate::dispatch::protocol::rpc_codec::parse_request(
+        &request_ctx,
+        &request_payload,
+        family,
+    )
+    .expect("parse rpc request")
+    {
+        crate::domains::rpc::protocol::RpcMessage::Request(request) => request,
+        other => panic!("expected rpc request, found {other:?}"),
+    };
     let unsubscribe_payload = {
-        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::new();
+        let mut encoder = crate::dispatch::protocol::payload_codec::PayloadEncoder::new();
         encoder.put_string(request_route.as_str());
         encoder.finish()
     };
@@ -135,8 +138,8 @@ fn should_forward_worker_disconnect_error_given_rpc_unsubscribe() {
         request_addr,
         FrameContext::new(
             42,
-            crate::protocol::frame::ChannelId::Rpc,
-            crate::protocol::tlv::MessageType::new(301),
+            crate::dispatch::protocol::frame::ChannelId::Rpc,
+            crate::dispatch::protocol::tlv::MessageType::new(301),
             bytes::Bytes::from(unsubscribe_payload),
             family,
         ),
@@ -155,7 +158,7 @@ fn should_forward_worker_disconnect_error_given_rpc_unsubscribe() {
     assert!(error_response.stream_end);
     assert_rpc_code_error(
         error_response.body.as_ref(),
-        crate::protocol::error_codes::rpc::ERR_WORKER_NOT_FOUND,
+        crate::dispatch::protocol::error_codes::rpc::ERR_WORKER_NOT_FOUND,
         RPC_WORKER_NOT_FOUND_ERROR,
     );
 }
@@ -201,7 +204,7 @@ fn should_retain_other_worker_route_given_rpc_unsubscribe_on_same_session() {
         0,
     ));
     let unsubscribe_payload = {
-        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::new();
+        let mut encoder = crate::dispatch::protocol::payload_codec::PayloadEncoder::new();
         encoder.put_string(removed_route.as_str());
         encoder.finish()
     };
@@ -210,19 +213,22 @@ fn should_retain_other_worker_route_given_rpc_unsubscribe_on_same_session() {
         crate::benchkit::extract_single_tlv_field(&request_frame);
     let request_ctx = FrameContext::new(
         1,
-        crate::protocol::frame::ChannelId::Rpc,
-        crate::protocol::tlv::MessageType::new(request_msg_type),
+        crate::dispatch::protocol::frame::ChannelId::Rpc,
+        crate::dispatch::protocol::tlv::MessageType::new(request_msg_type),
         request_payload.clone(),
         family,
     );
-    let request =
-        match crate::protocol::rpc_codec::parse_request(&request_ctx, &request_payload, family)
-            .expect("parse rpc request")
-        {
-            crate::domains::rpc::protocol::RpcMessage::Request(request) => request,
-            other => panic!("expected rpc request, found {other:?}"),
-        };
-    let response_payload = crate::protocol::rpc_codec::encode_response_message(
+    let request = match crate::dispatch::protocol::rpc_codec::parse_request(
+        &request_ctx,
+        &request_payload,
+        family,
+    )
+    .expect("parse rpc request")
+    {
+        crate::domains::rpc::protocol::RpcMessage::Request(request) => request,
+        other => panic!("expected rpc request, found {other:?}"),
+    };
+    let response_payload = crate::dispatch::protocol::rpc_codec::encode_response_message(
         &crate::domains::rpc::protocol::RpcResponse::single(
             request.correlation_id,
             bytes::Bytes::from_static(b"ok"),
@@ -235,8 +241,8 @@ fn should_retain_other_worker_route_given_rpc_unsubscribe_on_same_session() {
         removed_addr,
         FrameContext::new(
             42,
-            crate::protocol::frame::ChannelId::Rpc,
-            crate::protocol::tlv::MessageType::new(301),
+            crate::dispatch::protocol::frame::ChannelId::Rpc,
+            crate::dispatch::protocol::tlv::MessageType::new(301),
             bytes::Bytes::from(unsubscribe_payload),
             family,
         ),
@@ -253,8 +259,8 @@ fn should_retain_other_worker_route_given_rpc_unsubscribe_on_same_session() {
         retained_addr,
         FrameContext::new(
             42,
-            crate::protocol::frame::ChannelId::Rpc,
-            crate::protocol::tlv::MessageType::new(303),
+            crate::dispatch::protocol::frame::ChannelId::Rpc,
+            crate::dispatch::protocol::tlv::MessageType::new(303),
             bytes::Bytes::from(response_payload),
             family,
         ),
@@ -308,18 +314,21 @@ fn should_forward_worker_disconnect_error_given_rpc_session_cleanup() {
         crate::benchkit::extract_single_tlv_field(&request_frame);
     let request_ctx = FrameContext::new(
         1,
-        crate::protocol::frame::ChannelId::Rpc,
-        crate::protocol::tlv::MessageType::new(request_msg_type),
+        crate::dispatch::protocol::frame::ChannelId::Rpc,
+        crate::dispatch::protocol::tlv::MessageType::new(request_msg_type),
         request_payload.clone(),
         family,
     );
-    let request =
-        match crate::protocol::rpc_codec::parse_request(&request_ctx, &request_payload, family)
-            .expect("parse rpc request")
-        {
-            crate::domains::rpc::protocol::RpcMessage::Request(request) => request,
-            other => panic!("expected rpc request, found {other:?}"),
-        };
+    let request = match crate::dispatch::protocol::rpc_codec::parse_request(
+        &request_ctx,
+        &request_payload,
+        family,
+    )
+    .expect("parse rpc request")
+    {
+        crate::domains::rpc::protocol::RpcMessage::Request(request) => request,
+        other => panic!("expected rpc request, found {other:?}"),
+    };
 
     // Act
     sink.deliver(Envelope::from_route(
@@ -346,7 +355,7 @@ fn should_forward_worker_disconnect_error_given_rpc_session_cleanup() {
     assert!(error_response.stream_end);
     assert_rpc_code_error(
         error_response.body.as_ref(),
-        crate::protocol::error_codes::rpc::ERR_WORKER_NOT_FOUND,
+        crate::dispatch::protocol::error_codes::rpc::ERR_WORKER_NOT_FOUND,
         RPC_WORKER_NOT_FOUND_ERROR,
     );
 }
@@ -388,13 +397,13 @@ fn should_reject_worker_response_when_correlation_missing_given_rpc_sink() {
         crate::benchkit::extract_single_tlv_field(&request_frame);
     let request_ctx = FrameContext::new(
         1,
-        crate::protocol::frame::ChannelId::Rpc,
-        crate::protocol::tlv::MessageType::new(request_msg_type),
+        crate::dispatch::protocol::frame::ChannelId::Rpc,
+        crate::dispatch::protocol::tlv::MessageType::new(request_msg_type),
         request_payload,
         family,
     );
     let orphan_correlation_id = uuid::Uuid::new_v4();
-    let orphan_response_payload = crate::protocol::rpc_codec::encode_response_message(
+    let orphan_response_payload = crate::dispatch::protocol::rpc_codec::encode_response_message(
         &crate::domains::rpc::protocol::RpcResponse::single(
             orphan_correlation_id,
             bytes::Bytes::from_static(b"wrong"),
@@ -413,8 +422,8 @@ fn should_reject_worker_response_when_correlation_missing_given_rpc_sink() {
         request_addr,
         FrameContext::new(
             42,
-            crate::protocol::frame::ChannelId::Rpc,
-            crate::protocol::tlv::MessageType::new(303),
+            crate::dispatch::protocol::frame::ChannelId::Rpc,
+            crate::dispatch::protocol::tlv::MessageType::new(303),
             bytes::Bytes::from(orphan_response_payload),
             family,
         ),
@@ -435,7 +444,7 @@ fn should_reject_worker_response_when_correlation_missing_given_rpc_sink() {
     assert!(error_response.stream_end);
     assert_rpc_code_error(
         error_response.body.as_ref(),
-        crate::protocol::error_codes::rpc::ERR_CORRELATION_NOT_FOUND,
+        crate::dispatch::protocol::error_codes::rpc::ERR_CORRELATION_NOT_FOUND,
         RPC_CORRELATION_NOT_FOUND_ERROR,
     );
 }
@@ -495,8 +504,8 @@ fn should_reject_worker_response_from_non_owner_session_given_rpc_sink() {
         crate::benchkit::extract_single_tlv_field(&request_frame);
     let request_ctx = FrameContext::new(
         1,
-        crate::protocol::frame::ChannelId::Rpc,
-        crate::protocol::tlv::MessageType::new(request_msg_type),
+        crate::dispatch::protocol::frame::ChannelId::Rpc,
+        crate::dispatch::protocol::tlv::MessageType::new(request_msg_type),
         request_payload,
         family,
     );
@@ -513,7 +522,7 @@ fn should_reject_worker_response_from_non_owner_session_given_rpc_sink() {
         .first()
         .cloned()
         .expect("owner worker request delivery");
-    let owner_request = match crate::protocol::rpc_codec::parse_request(
+    let owner_request = match crate::dispatch::protocol::rpc_codec::parse_request(
         &owner_request,
         &owner_request.payload,
         family,
@@ -523,7 +532,7 @@ fn should_reject_worker_response_from_non_owner_session_given_rpc_sink() {
         crate::domains::rpc::protocol::RpcMessage::Request(request) => request,
         other => panic!("expected rpc request, found {other:?}"),
     };
-    let wrong_response_payload = crate::protocol::rpc_codec::encode_response_message(
+    let wrong_response_payload = crate::dispatch::protocol::rpc_codec::encode_response_message(
         &crate::domains::rpc::protocol::RpcResponse::single(
             owner_request.correlation_id,
             bytes::Bytes::from_static(b"wrong"),
@@ -534,8 +543,8 @@ fn should_reject_worker_response_from_non_owner_session_given_rpc_sink() {
         request_addr,
         FrameContext::new(
             43,
-            crate::protocol::frame::ChannelId::Rpc,
-            crate::protocol::tlv::MessageType::new(303),
+            crate::dispatch::protocol::frame::ChannelId::Rpc,
+            crate::dispatch::protocol::tlv::MessageType::new(303),
             bytes::Bytes::from(wrong_response_payload),
             family,
         ),
@@ -560,7 +569,7 @@ fn should_reject_worker_response_from_non_owner_session_given_rpc_sink() {
     assert!(error_response.stream_end);
     assert_rpc_code_error(
         error_response.body.as_ref(),
-        crate::protocol::error_codes::rpc::ERR_RPC_WRONG_WORKER,
+        crate::dispatch::protocol::error_codes::rpc::ERR_RPC_WRONG_WORKER,
         RPC_WRONG_WORKER_ERROR,
     );
 }
@@ -599,19 +608,22 @@ fn should_drop_late_worker_response_after_requester_cleanup_without_forward_erro
         crate::benchkit::extract_single_tlv_field(&request_frame);
     let request_ctx = FrameContext::new(
         1,
-        crate::protocol::frame::ChannelId::Rpc,
-        crate::protocol::tlv::MessageType::new(request_msg_type),
+        crate::dispatch::protocol::frame::ChannelId::Rpc,
+        crate::dispatch::protocol::tlv::MessageType::new(request_msg_type),
         request_payload.clone(),
         family,
     );
-    let request =
-        match crate::protocol::rpc_codec::parse_request(&request_ctx, &request_payload, family)
-            .expect("parse rpc request")
-        {
-            crate::domains::rpc::protocol::RpcMessage::Request(request) => request,
-            other => panic!("expected rpc request, found {other:?}"),
-        };
-    let response_payload = crate::protocol::rpc_codec::encode_response_message(
+    let request = match crate::dispatch::protocol::rpc_codec::parse_request(
+        &request_ctx,
+        &request_payload,
+        family,
+    )
+    .expect("parse rpc request")
+    {
+        crate::domains::rpc::protocol::RpcMessage::Request(request) => request,
+        other => panic!("expected rpc request, found {other:?}"),
+    };
+    let response_payload = crate::dispatch::protocol::rpc_codec::encode_response_message(
         &crate::domains::rpc::protocol::RpcResponse::single(
             request.correlation_id,
             bytes::Bytes::from_static(b"ok"),
@@ -636,8 +648,8 @@ fn should_drop_late_worker_response_after_requester_cleanup_without_forward_erro
         request_addr,
         FrameContext::new(
             42,
-            crate::protocol::frame::ChannelId::Rpc,
-            crate::protocol::tlv::MessageType::new(303),
+            crate::dispatch::protocol::frame::ChannelId::Rpc,
+            crate::dispatch::protocol::tlv::MessageType::new(303),
             bytes::Bytes::from(response_payload),
             family,
         ),

@@ -393,6 +393,7 @@ impl TestServer {
             &store,
             &runtime.admin_read_model(),
             &crate::boot::domains::DomainSetupOptions {
+                route_families: boot_config.route_families.clone(),
                 schedule_write_options,
                 queue_write_options,
                 queue_fast_flush_interval: boot_config.queue_fast_flush_interval(),

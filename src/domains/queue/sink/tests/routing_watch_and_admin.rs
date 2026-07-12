@@ -1,6 +1,6 @@
 use super::*;
-pub(super) use crate::protocol::frame::ChannelId;
-pub(super) use crate::protocol::tlv::MessageType;
+pub(super) use crate::dispatch::protocol::frame::ChannelId;
+pub(super) use crate::dispatch::protocol::tlv::MessageType;
 pub(super) use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 pub(super) use crate::runtime::Mailbox;
 pub(super) use bytes::{BufMut, Bytes};
@@ -85,9 +85,13 @@ pub(super) fn encode_queue_ack(route: &str, id: u64, token: u64) -> Bytes {
 }
 
 pub(super) fn bad_request_reason(frame: &FrameContext) -> String {
-    let (code, message) = crate::protocol::error_codes::decode_error_body(frame.payload.as_ref())
-        .expect("bad request error envelope");
-    assert_eq!(code, crate::protocol::error_codes::queue::ERR_BAD_REQUEST);
+    let (code, message) =
+        crate::dispatch::protocol::error_codes::decode_error_body(frame.payload.as_ref())
+            .expect("bad request error envelope");
+    assert_eq!(
+        code,
+        crate::dispatch::protocol::error_codes::queue::ERR_BAD_REQUEST
+    );
     message
 }
 
@@ -131,8 +135,9 @@ pub(super) fn receive_response_first_message(frame: &FrameContext) -> (u64, u64)
 }
 
 pub(super) fn queue_simple_error_code(frame: &FrameContext) -> u16 {
-    let (code, _) = crate::protocol::error_codes::decode_error_body(frame.payload.as_ref())
-        .expect("queue error envelope");
+    let (code, _) =
+        crate::dispatch::protocol::error_codes::decode_error_body(frame.payload.as_ref())
+            .expect("queue error envelope");
     code
 }
 

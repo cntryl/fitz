@@ -5,7 +5,7 @@ use super::model::{
     QueueSubscriptionMessage, RoutedSubscriptionSet,
 };
 #[cfg(test)]
-use crate::protocol::frame_context::FrameContext;
+use crate::dispatch::protocol::frame_context::FrameContext;
 use crate::runtime::routing::RouteFamily;
 use crate::runtime::{Actor, Context};
 
@@ -384,7 +384,23 @@ impl QueueDomainCore {
             if let Some(id) = state.find_existing_id(session_id, pattern_str) {
                 id
             } else {
-                let id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
+                let Ok(id) = self.next_sub_id.fetch_update(
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                    |current| current.checked_add(1),
+                ) else {
+                    let state_empty = state.is_empty();
+                    if state_empty {
+                        families.remove(&family_id.as_u64());
+                    }
+                    return (
+                        crate::domains::queue::QueueResponse::BadRequest {
+                            reason: "subscription ID space exhausted".to_string(),
+                        },
+                        None,
+                        false,
+                    );
+                };
                 state.insert(
                     family_id,
                     QueueSubscription {
@@ -825,7 +841,7 @@ impl QueueDomainCore {
                 frame_ctx.msg_type.as_u16(),
                 frame_ctx.route_family,
             );
-            let parsed = crate::protocol::queue_codec::parse_frame(
+            let parsed = crate::dispatch::protocol::queue_codec::parse_frame(
                 &frame_ctx,
                 &frame_ctx.payload,
                 frame_ctx.route_family,
@@ -833,10 +849,10 @@ impl QueueDomainCore {
                 subscriber,
             )
             .map(|frame| match frame {
-                crate::protocol::queue_codec::ParsedQueueFrame::Op(message) => {
+                crate::dispatch::protocol::queue_codec::ParsedQueueFrame::Op(message) => {
                     QueueClientFrame::Op(message)
                 }
-                crate::protocol::queue_codec::ParsedQueueFrame::Sub(message) => {
+                crate::dispatch::protocol::queue_codec::ParsedQueueFrame::Sub(message) => {
                     QueueClientFrame::Sub(message)
                 }
             });
@@ -852,14 +868,18 @@ impl QueueDomainCore {
 
 #[cfg(test)]
 fn test_client_channel_from_protocol(
-    channel: crate::protocol::frame::ChannelId,
+    channel: crate::dispatch::protocol::frame::ChannelId,
 ) -> crate::runtime::ClientChannel {
     match channel {
-        crate::protocol::frame::ChannelId::Control => crate::runtime::ClientChannel::Control,
-        crate::protocol::frame::ChannelId::Pub => crate::runtime::ClientChannel::Pub,
-        crate::protocol::frame::ChannelId::Sub => crate::runtime::ClientChannel::Sub,
-        crate::protocol::frame::ChannelId::Rpc => crate::runtime::ClientChannel::Rpc,
-        crate::protocol::frame::ChannelId::Lease => crate::runtime::ClientChannel::Lease,
-        crate::protocol::frame::ChannelId::Internal => crate::runtime::ClientChannel::Internal,
+        crate::dispatch::protocol::frame::ChannelId::Control => {
+            crate::runtime::ClientChannel::Control
+        }
+        crate::dispatch::protocol::frame::ChannelId::Pub => crate::runtime::ClientChannel::Pub,
+        crate::dispatch::protocol::frame::ChannelId::Sub => crate::runtime::ClientChannel::Sub,
+        crate::dispatch::protocol::frame::ChannelId::Rpc => crate::runtime::ClientChannel::Rpc,
+        crate::dispatch::protocol::frame::ChannelId::Lease => crate::runtime::ClientChannel::Lease,
+        crate::dispatch::protocol::frame::ChannelId::Internal => {
+            crate::runtime::ClientChannel::Internal
+        }
     }
 }

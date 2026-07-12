@@ -1,9 +1,9 @@
 use super::routing_watch_and_admin::{bad_request_reason, new_queue_domain_sink};
 use super::*;
+use crate::dispatch::protocol::frame_context::FrameContext;
 use crate::domains::queue::{
     QueueClientFrame, QueueClientRequest, QueueMessage, QueueSubscriptionMessage,
 };
-use crate::protocol::frame_context::FrameContext;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::runtime::{ClientChannel, ClientFrameMeta, Mailbox, MailboxSink};
 

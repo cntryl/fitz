@@ -5,24 +5,37 @@ use super::model::{
     StreamDomainRuntime, StreamDomainSink, StreamSessionOwner, StreamSubscription,
     STREAM_OPERATIONS_TOTAL,
 };
-use crate::domains::stream::protocol::{IngestMetadata, StreamDiscriminator};
 #[cfg(test)]
-use crate::protocol::FrameContext;
+use crate::dispatch::protocol::FrameContext;
+use crate::domains::stream::protocol::{IngestMetadata, StreamDiscriminator};
 #[cfg(test)]
 use crate::runtime::routing::RouteAddress;
 use crate::runtime::{Actor, Context};
 
 impl MailboxSink for StreamDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        if !self.actor.is_running() {
+        if !self.actor.is_running()
+            || self
+                .family_runtime
+                .as_ref()
+                .is_some_and(|runtime| !runtime.is_running())
+        {
             return Err(DeliveryError::ActorStopped);
         }
 
-        self.deliver_to_actor(envelope, false)
+        if self.family_runtime.is_some() {
+            self.deliver_to_family(envelope, false)
+        } else {
+            self.deliver_to_actor(envelope, false)
+        }
     }
 
     fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        self.deliver_to_actor(envelope, true)
+        if self.family_runtime.is_some() {
+            self.deliver_to_family(envelope, true)
+        } else {
+            self.deliver_to_actor(envelope, true)
+        }
     }
 }
 
@@ -37,6 +50,12 @@ impl Actor for StreamDomainActor {
             }
             StreamDomainCommand::ReadLiveCounts(reply) => {
                 let _ = reply.send(runtime.live_counts());
+            }
+            StreamDomainCommand::ReadResourceRecords(command) => {
+                let request = command.request.as_borrowed();
+                let _ = command
+                    .reply
+                    .send(runtime.admin_read_resource_records(request));
             }
             StreamDomainCommand::RefreshAdminSnapshotIfDirty(reply) => {
                 runtime.refresh_admin_snapshot_if_dirty();
@@ -56,6 +75,52 @@ impl Actor for StreamDomainActor {
 }
 
 impl StreamDomainSink {
+    fn deliver_to_family(
+        &self,
+        envelope: Envelope,
+        high_priority: bool,
+    ) -> Result<(), DeliveryError> {
+        let Some(runtime) = self.family_runtime.as_ref() else {
+            return Err(DeliveryError::ActorStopped);
+        };
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        let family = *envelope.destination().family();
+        let command = StreamDomainCommand::Deliver(envelope, reply_tx);
+        let lane = if high_priority {
+            crate::runtime::FamilyActorLane::Control
+        } else {
+            crate::runtime::FamilyActorLane::Normal
+        };
+        runtime
+            .try_enqueue(family, lane, command)
+            .map_err(Self::family_enqueue_error)?;
+
+        // Family delivery is called synchronously by the async transport edge.
+        // The actor routes client responses through the router, so waiting for
+        // the handler result here would block a Tokio worker. The receiver is
+        // deliberately dropped after the bounded enqueue succeeds; the actor
+        // still owns the command and treats the reply as best effort.
+        drop(reply_rx);
+        Ok(())
+    }
+
+    fn family_enqueue_error(error: crate::runtime::FamilyActorEnqueueError) -> DeliveryError {
+        match error {
+            crate::runtime::FamilyActorEnqueueError::NormalLaneFull => DeliveryError::MailboxFull {
+                capacity: crate::runtime::FAMILY_ACTOR_NORMAL_LANE_CAPACITY,
+                current_len: crate::runtime::FAMILY_ACTOR_NORMAL_LANE_CAPACITY,
+            },
+            crate::runtime::FamilyActorEnqueueError::ControlLaneFull => {
+                DeliveryError::HighLaneFull {
+                    capacity: crate::runtime::FAMILY_ACTOR_CONTROL_LANE_CAPACITY,
+                    current_len: crate::runtime::FAMILY_ACTOR_CONTROL_LANE_CAPACITY,
+                }
+            }
+            crate::runtime::FamilyActorEnqueueError::UnknownFamily
+            | crate::runtime::FamilyActorEnqueueError::ActorStopped => DeliveryError::ActorStopped,
+        }
+    }
+
     fn deliver_to_actor(
         &self,
         envelope: Envelope,
@@ -83,7 +148,7 @@ impl StreamDomainRuntime<'_> {
 }
 
 impl StreamDomainCore {
-    fn deliver_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {
+    pub(super) fn deliver_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {
         if self.handle_cleanup_envelope(envelope) {
             return Ok(());
         }
@@ -153,6 +218,10 @@ impl StreamDomainCore {
 
     fn handle_domain_publish_envelope(&self, envelope: &Envelope) -> bool {
         if let Some(event) = envelope.payload::<crate::runtime::DomainPublishEvent>() {
+            if *envelope.destination().family() != event.family_id {
+                crate::observability::counter_inc("fitz_stream_publish_family_mismatch_total");
+                return true;
+            }
             self.handle_domain_publish(event);
             return true;
         }
@@ -229,27 +298,44 @@ impl StreamDomainCore {
                         .entry(family_id.as_u64())
                         .or_insert_with(RoutedSubscriptionSet::new);
 
-                    let subscription_id = if let Some(id) =
-                        state.find_existing_id(session_id, pattern.as_str())
-                    {
-                        id
-                    } else {
-                        let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
-                        state.insert(
-                            family_id,
-                            StreamSubscription {
-                                pattern: crate::runtime::matcher::Pattern::new(pattern.as_str()),
-                                session_id,
-                                subscription_id: new_id,
-                                subscriber,
-                            },
-                        );
-                        new_id
-                    };
+                    let subscription_id =
+                        if let Some(id) = state.find_existing_id(session_id, pattern.as_str()) {
+                            Ok(id)
+                        } else {
+                            match self.next_sub_id.fetch_update(
+                                Ordering::Relaxed,
+                                Ordering::Relaxed,
+                                |current| current.checked_add(1),
+                            ) {
+                                Ok(new_id) => {
+                                    state.insert(
+                                        family_id,
+                                        StreamSubscription {
+                                            pattern: crate::runtime::matcher::Pattern::new(
+                                                pattern.as_str(),
+                                            ),
+                                            session_id,
+                                            subscription_id: new_id,
+                                            subscriber,
+                                        },
+                                    );
+                                    Ok(new_id)
+                                }
+                                Err(_) => Err(()),
+                            }
+                        };
 
-                    StreamClientResponseBody::Ok {
-                        session_id: Some(subscription_id),
-                        data: vec![],
+                    if let Ok(subscription_id) = subscription_id {
+                        StreamClientResponseBody::Ok {
+                            session_id: Some(subscription_id),
+                            data: vec![],
+                        }
+                    } else {
+                        let state_empty = state.is_empty();
+                        if state_empty {
+                            families.remove(&family_id.as_u64());
+                        }
+                        Self::stream_error_response("subscription ID space exhausted")
                     }
                 }
             }
@@ -397,41 +483,56 @@ impl StreamDomainCore {
         }
 
         match Self::actor_key_for_route(family_id, route) {
-            Ok(key) => match self.get_or_create_actor(&key) {
-                Ok(actor) => {
-                    let stream_session_id = self.next_session_id.fetch_add(1, Ordering::Relaxed);
-                    match actor.lock().begin_append_session(
-                        meta.session_id,
-                        stream_session_id,
-                        ingest_metadata,
-                    ) {
-                        Ok(session_id) => {
-                            self.session_owners.lock().insert(
-                                session_id,
-                                StreamSessionOwner {
-                                    key,
-                                    owner_session_id: meta.session_id,
-                                    actor: actor.clone(),
-                                },
-                            );
-                            self.counter_inc("fitz_stream_append_sessions_started_total");
-                            (
-                                StreamClientResponseBody::Ok {
-                                    session_id: Some(session_id),
-                                    data: vec![],
-                                },
-                                None,
-                                true,
-                            )
-                        }
-                        Err(error) => {
-                            crate::observability::counter_inc("fitz_stream_append_conflicts_total");
-                            (Self::stream_error_response(error), None, false)
+            Ok(key) => {
+                let Ok(stream_session_id) = self.next_session_id.fetch_update(
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                    |current| current.checked_add(1),
+                ) else {
+                    return (
+                        Self::stream_error_response("stream session ID space exhausted"),
+                        None,
+                        false,
+                    );
+                };
+
+                match self.get_or_create_actor(&key) {
+                    Ok(actor) => {
+                        match actor.lock().begin_append_session(
+                            meta.session_id,
+                            stream_session_id,
+                            ingest_metadata,
+                        ) {
+                            Ok(session_id) => {
+                                self.session_owners.lock().insert(
+                                    session_id,
+                                    StreamSessionOwner {
+                                        key,
+                                        owner_session_id: meta.session_id,
+                                        actor: actor.clone(),
+                                    },
+                                );
+                                self.counter_inc("fitz_stream_append_sessions_started_total");
+                                (
+                                    StreamClientResponseBody::Ok {
+                                        session_id: Some(session_id),
+                                        data: vec![],
+                                    },
+                                    None,
+                                    true,
+                                )
+                            }
+                            Err(error) => {
+                                crate::observability::counter_inc(
+                                    "fitz_stream_append_conflicts_total",
+                                );
+                                (Self::stream_error_response(error), None, false)
+                            }
                         }
                     }
+                    Err(error) => (Self::stream_error_response(error), None, false),
                 }
-                Err(error) => (Self::stream_error_response(error), None, false),
-            },
+            }
             Err(error) => (Self::stream_error_response(error), None, false),
         }
     }
@@ -700,7 +801,7 @@ impl StreamDomainCore {
                 frame_ctx.msg_type.as_u16(),
                 frame_ctx.route_family,
             );
-            let parsed = crate::protocol::stream_codec::parse_request(
+            let parsed = crate::dispatch::protocol::stream_codec::parse_request(
                 &frame_ctx,
                 &frame_ctx.payload,
                 *envelope.destination().family(),
@@ -726,13 +827,15 @@ impl StreamDomainCore {
         #[cfg(test)]
         let response_ctx = {
             let mut payload_encoder =
-                crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
-            let response_bytes =
-                crate::protocol::stream_codec::encode_response_into(&mut payload_encoder, response);
+                crate::dispatch::protocol::payload_codec::PayloadEncoder::with_capacity(256);
+            let response_bytes = crate::dispatch::protocol::stream_codec::encode_response_into(
+                &mut payload_encoder,
+                response,
+            );
             FrameContext::new(
                 meta.session_id,
                 test_protocol_channel_from_client(meta.channel),
-                crate::protocol::tlv::MessageType::new(meta.message_type),
+                crate::dispatch::protocol::tlv::MessageType::new(meta.message_type),
                 bytes::Bytes::from(response_bytes),
                 meta.route_family,
             )
@@ -758,28 +861,36 @@ impl StreamDomainCore {
 
 #[cfg(test)]
 fn test_client_channel_from_protocol(
-    channel: crate::protocol::frame::ChannelId,
+    channel: crate::dispatch::protocol::frame::ChannelId,
 ) -> crate::runtime::ClientChannel {
     match channel {
-        crate::protocol::frame::ChannelId::Control => crate::runtime::ClientChannel::Control,
-        crate::protocol::frame::ChannelId::Pub => crate::runtime::ClientChannel::Pub,
-        crate::protocol::frame::ChannelId::Sub => crate::runtime::ClientChannel::Sub,
-        crate::protocol::frame::ChannelId::Rpc => crate::runtime::ClientChannel::Rpc,
-        crate::protocol::frame::ChannelId::Lease => crate::runtime::ClientChannel::Lease,
-        crate::protocol::frame::ChannelId::Internal => crate::runtime::ClientChannel::Internal,
+        crate::dispatch::protocol::frame::ChannelId::Control => {
+            crate::runtime::ClientChannel::Control
+        }
+        crate::dispatch::protocol::frame::ChannelId::Pub => crate::runtime::ClientChannel::Pub,
+        crate::dispatch::protocol::frame::ChannelId::Sub => crate::runtime::ClientChannel::Sub,
+        crate::dispatch::protocol::frame::ChannelId::Rpc => crate::runtime::ClientChannel::Rpc,
+        crate::dispatch::protocol::frame::ChannelId::Lease => crate::runtime::ClientChannel::Lease,
+        crate::dispatch::protocol::frame::ChannelId::Internal => {
+            crate::runtime::ClientChannel::Internal
+        }
     }
 }
 
 #[cfg(test)]
 fn test_protocol_channel_from_client(
     channel: crate::runtime::ClientChannel,
-) -> crate::protocol::frame::ChannelId {
+) -> crate::dispatch::protocol::frame::ChannelId {
     match channel {
-        crate::runtime::ClientChannel::Control => crate::protocol::frame::ChannelId::Control,
-        crate::runtime::ClientChannel::Pub => crate::protocol::frame::ChannelId::Pub,
-        crate::runtime::ClientChannel::Sub => crate::protocol::frame::ChannelId::Sub,
-        crate::runtime::ClientChannel::Rpc => crate::protocol::frame::ChannelId::Rpc,
-        crate::runtime::ClientChannel::Lease => crate::protocol::frame::ChannelId::Lease,
-        crate::runtime::ClientChannel::Internal => crate::protocol::frame::ChannelId::Internal,
+        crate::runtime::ClientChannel::Control => {
+            crate::dispatch::protocol::frame::ChannelId::Control
+        }
+        crate::runtime::ClientChannel::Pub => crate::dispatch::protocol::frame::ChannelId::Pub,
+        crate::runtime::ClientChannel::Sub => crate::dispatch::protocol::frame::ChannelId::Sub,
+        crate::runtime::ClientChannel::Rpc => crate::dispatch::protocol::frame::ChannelId::Rpc,
+        crate::runtime::ClientChannel::Lease => crate::dispatch::protocol::frame::ChannelId::Lease,
+        crate::runtime::ClientChannel::Internal => {
+            crate::dispatch::protocol::frame::ChannelId::Internal
+        }
     }
 }

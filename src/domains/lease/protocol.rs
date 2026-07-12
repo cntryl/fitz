@@ -428,6 +428,9 @@ pub enum LeaseResponse {
         pending_waiters: usize,
     },
 
+    /// Request rejected before lease state was touched.
+    Error(String),
+
     /// Successfully subscribed to lease notifications
     SubscribeOk { subscription_id: u64 },
 

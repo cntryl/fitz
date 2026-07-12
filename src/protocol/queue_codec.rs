@@ -1,6 +1,6 @@
 //! Queue domain TLV message types and codec
 
-use crate::domains::queue::{
+use crate::dispatch::wire::queue::{
     MessageId, QueueMessage, QueueNotification, QueueResponse, QueueSubscriptionMessage,
 };
 use crate::protocol::frame_context::FrameContext;
@@ -600,7 +600,7 @@ mod tests {
 
     #[test]
     fn should_encode_reserved_response() {
-        use crate::domains::queue::ReservedMessage;
+        use crate::dispatch::wire::queue::ReservedMessage;
 
         // Arrange
         let response = QueueResponse::Received {

@@ -272,10 +272,10 @@ impl LeaseActor {
     }
 
     /// Allocate and return the next fencing token
-    fn next_fencing_token(&mut self) -> u64 {
+    fn next_fencing_token(&mut self) -> Option<u64> {
         let token = self.next_token;
-        self.next_token += 1;
-        token
+        self.next_token = token.checked_add(1)?;
+        Some(token)
     }
 
     /// Handle lease acquisition
@@ -330,7 +330,9 @@ impl LeaseActor {
             }
         } else {
             // Lease doesn't exist or is expired - grant it immediately
-            let token = self.next_fencing_token();
+            let Some(token) = self.next_fencing_token() else {
+                return LeaseResponse::Error("fencing token space exhausted".to_string());
+            };
             let expiry = now + ttl;
 
             self.leases.insert(
@@ -380,12 +382,15 @@ impl LeaseActor {
             }
         }
 
+        let Some(queued_token) = self.next_fencing_token() else {
+            return LeaseResponse::Error("fencing token space exhausted".to_string());
+        };
+
         // Schedule timeout
         let timeout_duration = Duration::from_secs(u64::from(wait_seconds));
         let timer_id = ctx.timer_manager().schedule_once(timeout_duration);
 
         // Enqueue waiter
-        let queued_token = self.next_fencing_token();
         let pending = PendingAcquire {
             owner_id,
             timer_id,
@@ -500,7 +505,9 @@ impl LeaseActor {
             }
             ExtendDecision::Fenced(current_token) => LeaseResponse::Fenced { current_token },
             ExtendDecision::Extend => {
-                let new_token = self.next_fencing_token();
+                let Some(new_token) = self.next_fencing_token() else {
+                    return LeaseResponse::Error("fencing token space exhausted".to_string());
+                };
                 if let Some(state) = self.leases.get_mut(key) {
                     state.expiry = now + ttl;
                     state.fencing_token = new_token;

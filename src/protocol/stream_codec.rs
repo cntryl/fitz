@@ -6,7 +6,7 @@
 //! `route_family` is a server-internal concept supplied by the session layer
 //! — it never appears on the wire.
 
-use crate::domains::stream::protocol::{
+use crate::dispatch::wire::stream::{
     IngestMetadata, StreamClientFrame, StreamClientResponseBody, StreamDiscriminator,
     StreamFilterSet, StreamMessage, StreamSubscriptionMessage, StreamWriteMode,
 };

@@ -7,8 +7,12 @@
 
 use crate::runtime::routing::RouteFamily;
 use crossbeam_channel::{bounded, Receiver, RecvTimeoutError, Sender, TrySendError};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
+use std::panic::AssertUnwindSafe;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
+use std::thread;
 use std::time::Duration;
 
 /// The normal data-plane capacity required by the domain contract.
@@ -126,6 +130,11 @@ impl<M: Send + 'static> FamilyActorIngress<M> {
     pub fn family_count(&self) -> usize {
         self.senders.len()
     }
+
+    #[must_use]
+    pub fn families(&self) -> Vec<RouteFamily> {
+        self.senders.keys().copied().map(RouteFamily::new).collect()
+    }
 }
 
 /// A family actor pool. Each shard can be moved to one owning worker.
@@ -233,6 +242,178 @@ pub struct FamilyActorShard<M> {
     cursor: usize,
 }
 
+/// A running set of family-affine workers.
+///
+/// The pool itself only owns bounded channels. This wrapper owns one worker
+/// thread per shard and creates one state value per provisioned family on that
+/// worker. A handler panic fails the pool closed and drops the message that
+/// triggered it; callers observe `ActorStopped` through the bounded edge.
+pub struct FamilyActorPoolRuntime<M: Send + 'static> {
+    ingress: FamilyActorIngress<M>,
+    active: Arc<AtomicBool>,
+    running: Arc<AtomicBool>,
+    failed: Arc<AtomicBool>,
+    panic_count: Arc<AtomicU64>,
+    join_handles: parking_lot::Mutex<Vec<thread::JoinHandle<()>>>,
+}
+
+impl<M: Send + 'static> FamilyActorPoolRuntime<M> {
+    /// Start family workers for a pool.
+    ///
+    /// `state_factory` runs once for every family on its owning shard. The
+    /// returned state is then accessed only by that shard's handler closure.
+    /// This keeps mutable family state out of a shared per-domain core while
+    /// retaining a small, synchronous dispatch surface.
+    #[must_use]
+    pub fn spawn<S, F, H>(
+        mut pool: FamilyActorPool<M>,
+        active: Arc<AtomicBool>,
+        state_factory: F,
+        handler: H,
+    ) -> Self
+    where
+        S: Send + 'static,
+        F: Fn(RouteFamily) -> S + Send + Sync + 'static,
+        H: Fn(&mut S, RouteFamily, FamilyActorLane, M) + Send + Sync + 'static,
+    {
+        let ingress = pool.ingress();
+        let running = Arc::new(AtomicBool::new(true));
+        let failed = Arc::new(AtomicBool::new(false));
+        let panic_count = Arc::new(AtomicU64::new(0));
+        let state_factory = Arc::new(state_factory);
+        let handler = Arc::new(handler);
+        let mut join_handles = Vec::with_capacity(pool.shard_count());
+
+        for shard_index in 0..pool.shard_count() {
+            let Some(mut shard) = pool.take_shard(shard_index) else {
+                continue;
+            };
+            let mut family_states = HashMap::with_capacity(shard.families().len());
+            for family in shard.families() {
+                family_states.insert(family.id(), state_factory(family));
+            }
+
+            let worker_active = active.clone();
+            let worker_running = running.clone();
+            let worker_failed = failed.clone();
+            let worker_panic_count = panic_count.clone();
+            let worker_handler = handler.clone();
+            join_handles.push(thread::spawn(move || {
+                while worker_active.load(Ordering::Acquire)
+                    && worker_running.load(Ordering::Acquire)
+                    && !worker_failed.load(Ordering::Acquire)
+                {
+                    let work = match shard.recv_timeout(Duration::from_millis(50)) {
+                        Ok(work) => work,
+                        Err(RecvTimeoutError::Timeout) => continue,
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    };
+
+                    let Some(state) = family_states.get_mut(&work.family.id()) else {
+                        worker_panic_count.fetch_add(1, Ordering::Relaxed);
+                        worker_failed.store(true, Ordering::Release);
+                        worker_active.store(false, Ordering::Release);
+                        tracing::error!(
+                            family = work.family.id(),
+                            "family actor received work for an unowned route family"
+                        );
+                        break;
+                    };
+
+                    if std::panic::catch_unwind(AssertUnwindSafe(|| {
+                        worker_handler(state, work.family, work.lane, work.message);
+                    }))
+                    .is_err()
+                    {
+                        worker_panic_count.fetch_add(1, Ordering::Relaxed);
+                        worker_failed.store(true, Ordering::Release);
+                        worker_active.store(false, Ordering::Release);
+                        tracing::error!(
+                            family = work.family.id(),
+                            "family actor failed closed after handler panic"
+                        );
+                        break;
+                    }
+                }
+                worker_running.store(false, Ordering::Release);
+            }));
+        }
+
+        Self {
+            ingress,
+            active,
+            running,
+            failed,
+            panic_count,
+            join_handles: parking_lot::Mutex::new(join_handles),
+        }
+    }
+
+    #[must_use]
+    pub fn ingress(&self) -> FamilyActorIngress<M> {
+        self.ingress.clone()
+    }
+
+    /// Enqueue work through the running family actor pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the family is unknown, the selected bounded lane
+    /// is full, or the pool has already stopped.
+    pub fn try_enqueue(
+        &self,
+        family: RouteFamily,
+        lane: FamilyActorLane,
+        message: M,
+    ) -> Result<(), FamilyActorEnqueueError> {
+        if !self.is_running() {
+            return Err(FamilyActorEnqueueError::ActorStopped);
+        }
+        self.ingress.try_enqueue(family, lane, message)
+    }
+
+    #[must_use]
+    pub fn is_running(&self) -> bool {
+        self.active.load(Ordering::Acquire)
+            && self.running.load(Ordering::Acquire)
+            && !self.failed.load(Ordering::Acquire)
+    }
+
+    #[must_use]
+    pub fn health_snapshot(&self) -> crate::runtime::ManagedActorHealthSnapshot {
+        crate::runtime::ManagedActorHealthSnapshot {
+            running: self.is_running(),
+            restart_count: 0,
+            panic_count: self.panic_count.load(Ordering::Relaxed),
+            restart_exhausted: self.failed.load(Ordering::Acquire),
+        }
+    }
+
+    /// Fail the pool closed without waiting for a worker panic.
+    pub fn fail_closed(&self) {
+        self.failed.store(true, Ordering::Release);
+        self.active.store(false, Ordering::Release);
+        self.running.store(false, Ordering::Release);
+    }
+
+    /// Stop all shard workers and join them.
+    pub fn stop(&self) {
+        self.running.store(false, Ordering::Release);
+        let handles = std::mem::take(&mut *self.join_handles.lock());
+        for handle in handles {
+            if let Err(error) = handle.join() {
+                tracing::error!(error = ?error, "family actor worker panicked before join");
+            }
+        }
+    }
+}
+
+impl<M: Send + 'static> Drop for FamilyActorPoolRuntime<M> {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
 impl<M: Send + 'static> FamilyActorShard<M> {
     fn new(receivers: Vec<FamilyActorReceivers<M>>) -> Self {
         Self {
@@ -297,40 +478,18 @@ impl<M: Send + 'static> FamilyActorShard<M> {
         if self.receivers.is_empty() {
             return Err(RecvTimeoutError::Disconnected);
         }
+        let deadline = std::time::Instant::now() + timeout;
 
-        let mut select = crossbeam_channel::Select::new();
-        let mut operations = Vec::with_capacity(self.receivers.len() * 2);
-        for (index, receiver) in self.receivers.iter().enumerate() {
-            operations.push((
-                select.recv(&receiver.control),
-                index,
-                FamilyActorLane::Control,
-            ));
-            operations.push((
-                select.recv(&receiver.normal),
-                index,
-                FamilyActorLane::Normal,
-            ));
+        loop {
+            if let Some(work) = self.try_next() {
+                return Ok(work);
+            }
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(RecvTimeoutError::Timeout);
+            }
+            thread::sleep(remaining.min(Duration::from_millis(1)));
         }
-        let operation = select
-            .select_timeout(timeout)
-            .map_err(|_| RecvTimeoutError::Timeout)?;
-        let (index, lane) = operations
-            .iter()
-            .find_map(|(operation_index, index, lane)| {
-                (*operation_index == operation.index()).then_some((*index, *lane))
-            })
-            .ok_or(RecvTimeoutError::Disconnected)?;
-        let message = match lane {
-            FamilyActorLane::Normal => self.receivers[index].normal.recv(),
-            FamilyActorLane::Control => self.receivers[index].control.recv(),
-        }?;
-        self.cursor = (index + 1) % self.receivers.len();
-        Ok(FamilyActorWork {
-            family: self.receivers[index].family,
-            lane,
-            message,
-        })
     }
 }
 
@@ -499,5 +658,40 @@ mod tests {
             Err(FamilyActorPoolError::DuplicateFamily(_))
         ));
         assert_eq!(unknown_result, Err(FamilyActorEnqueueError::UnknownFamily));
+    }
+
+    #[test]
+    fn should_dispatch_runtime_work_to_a_family_worker() {
+        // Arrange
+        let families = [family(1)];
+        let pool = FamilyActorPool::<u64>::new(&families).expect("pool");
+        let active = Arc::new(AtomicBool::new(true));
+        let (observed_tx, observed_rx) = crossbeam_channel::bounded(1);
+        let runtime = FamilyActorPoolRuntime::spawn(
+            pool,
+            active,
+            {
+                let observed_tx = observed_tx.clone();
+                move |_family| observed_tx.clone()
+            },
+            |observed_tx, family, lane, message| {
+                observed_tx
+                    .send((family, lane, message))
+                    .expect("worker observer");
+            },
+        );
+
+        // Act
+        runtime
+            .try_enqueue(family(1), FamilyActorLane::Normal, 42)
+            .expect("enqueue");
+        let observed = observed_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker should receive work");
+
+        // Assert
+        assert_eq!(observed.0, family(1));
+        assert_eq!(observed.1, FamilyActorLane::Normal);
+        assert_eq!(observed.2, 42);
     }
 }

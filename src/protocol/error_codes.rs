@@ -114,6 +114,7 @@ pub mod lease {
     pub const ERR_INVALID_TOKEN: u16 = 5005; // AC-LEASE-009: Invalid or wrong lease token
     pub const ERR_TIMEOUT: u16 = 5006;
     pub const ERR_QUEUE_FULL: u16 = 5007;
+    pub const ERR_BAD_REQUEST: u16 = 5008;
     pub const ERR_UNAUTHORIZED: u16 = 5009; // AC-LEASE-010: Permission denied for lease operation
 }
 

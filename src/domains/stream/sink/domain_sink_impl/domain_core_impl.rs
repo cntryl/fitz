@@ -6,7 +6,7 @@ use super::{
     Route, RouteFamily, StreamActor, StreamActorKey, StreamAdminRecord, StreamAdminSnapshotMap,
     StreamAreaSnapshotMap, StreamClientResponseBody, StreamDomainCore, StreamDomainRuntime,
     StreamFilteredReason, StreamLiveCounts, StreamMetadata, StreamReadItem, StreamRealmSnapshotMap,
-    StreamRecord, StreamStorageLayout, StreamSubscription,
+    StreamRecord, StreamStorageLayout,
 };
 
 impl StreamDomainCore {
@@ -73,7 +73,7 @@ impl StreamDomainCore {
     }
 
     pub(in crate::domains::stream::sink) fn refresh_metrics_gauges(&self) {
-        let counts = self.live_counts();
+        let counts = self.aggregate_live_counts();
 
         if let Some(metrics) = &self.metrics {
             metrics.set_stream_count(counts.streams);
@@ -304,6 +304,18 @@ impl StreamDomainCore {
     }
 
     fn overlay_live_actor_snapshots(&self, streams: &mut StreamAdminSnapshotMap) {
+        let family_cores = self.registered_family_cores();
+        if family_cores.is_empty() {
+            self.overlay_live_actor_snapshots_from(streams);
+            return;
+        }
+
+        for family_core in family_cores {
+            family_core.overlay_live_actor_snapshots_from(streams);
+        }
+    }
+
+    fn overlay_live_actor_snapshots_from(&self, streams: &mut StreamAdminSnapshotMap) {
         let actors = self.actors.lock();
         for (key, actor) in actors.iter() {
             let actor = actor.lock();
@@ -624,44 +636,64 @@ impl StreamDomainCore {
         event: &crate::runtime::DomainPublishEvent,
     ) {
         let family_id = event.family_id.as_u64();
-        let families = self.families.lock();
-        if let Some(state) = families.get(&family_id) {
+        let targets = {
+            let families = self.families.lock();
+            let mut targets = Vec::new();
+            if let Some(state) = families.get(&family_id) {
+                state.for_each_matching(event, |subscription| {
+                    targets.push((
+                        subscription.session_id,
+                        subscription.subscription_id,
+                        subscription.subscriber.clone(),
+                    ));
+                });
+            }
+            targets
+        };
+
+        #[cfg(test)]
+        let mut payload_encoder = PayloadEncoder::with_capacity(256);
+        for (session_id, subscription_id, subscriber) in targets {
+            if *subscriber.family() != event.family_id {
+                crate::observability::counter_inc("fitz_stream_notify_drops_total");
+                continue;
+            }
             #[cfg(test)]
-            let mut payload_encoder = PayloadEncoder::with_capacity(256);
-            state.for_each_matching(event, |subscription| {
-                if *subscription.subscriber.family() != event.family_id {
-                    crate::observability::counter_inc("fitz_stream_notify_drops_total");
-                    return;
-                }
-                #[cfg(test)]
-                self.route_commit_notify(subscription, event, &mut payload_encoder);
-                #[cfg(not(test))]
-                self.route_commit_notify(subscription, event);
-            });
+            self.route_commit_notify(
+                session_id,
+                subscription_id,
+                &subscriber,
+                event,
+                &mut payload_encoder,
+            );
+            #[cfg(not(test))]
+            self.route_commit_notify(session_id, subscription_id, &subscriber, event);
         }
     }
 
     #[cfg(test)]
     pub(in crate::domains::stream::sink) fn route_commit_notify(
         &self,
-        subscription: &StreamSubscription,
+        session_id: u64,
+        subscription_id: u64,
+        subscriber: &crate::runtime::routing::RouteAddress,
         event: &crate::runtime::DomainPublishEvent,
         payload_encoder: &mut PayloadEncoder,
     ) {
-        let notify_payload = crate::protocol::stream_codec::encode_notify_into(
+        let notify_payload = crate::dispatch::protocol::stream_codec::encode_notify_into(
             payload_encoder,
-            subscription.subscription_id,
+            subscription_id,
             &event.route,
             &event.payload,
         );
         let notify_ctx = FrameContext::new(
-            subscription.session_id,
-            crate::protocol::frame::ChannelId::Sub,
-            crate::protocol::tlv::MessageType::new(609),
+            session_id,
+            crate::dispatch::protocol::frame::ChannelId::Sub,
+            crate::dispatch::protocol::tlv::MessageType::new(609),
             bytes::Bytes::from(notify_payload),
             event.family_id,
         );
-        let notify_envelope = Envelope::new(subscription.subscriber.clone(), notify_ctx);
+        let notify_envelope = Envelope::new(subscriber.clone(), notify_ctx);
         if self.router.route(notify_envelope).is_err() {
             crate::observability::counter_inc("fitz_stream_notify_drops_total");
         }
@@ -670,17 +702,19 @@ impl StreamDomainCore {
     #[cfg(not(test))]
     pub(in crate::domains::stream::sink) fn route_commit_notify(
         &self,
-        subscription: &StreamSubscription,
+        session_id: u64,
+        subscription_id: u64,
+        subscriber: &crate::runtime::routing::RouteAddress,
         event: &crate::runtime::DomainPublishEvent,
     ) {
         let notify = crate::domains::stream::StreamClientNotification::new(
-            subscription.session_id,
+            session_id,
             event.family_id,
-            subscription.subscription_id,
+            subscription_id,
             event.route.clone(),
             event.payload.clone(),
         );
-        let notify_envelope = Envelope::new(subscription.subscriber.clone(), notify);
+        let notify_envelope = Envelope::new(subscriber.clone(), notify);
         if self.router.route(notify_envelope).is_err() {
             crate::observability::counter_inc("fitz_stream_notify_drops_total");
         }
@@ -736,6 +770,38 @@ impl StreamDomainCore {
             subscriptions,
         }
     }
+
+    fn registered_family_cores(&self) -> Vec<Arc<StreamDomainCore>> {
+        let mut family_cores = self.family_cores.lock();
+        let mut live = Vec::with_capacity(family_cores.len());
+        family_cores.retain(|_, weak| {
+            if let Some(core) = weak.upgrade() {
+                live.push(core);
+                true
+            } else {
+                false
+            }
+        });
+        live
+    }
+
+    fn aggregate_live_counts(&self) -> StreamLiveCounts {
+        let family_cores = self.registered_family_cores();
+        if family_cores.is_empty() {
+            return self.live_counts();
+        }
+
+        family_cores
+            .into_iter()
+            .fold(StreamLiveCounts::default(), |mut total, family_core| {
+                let counts = family_core.live_counts();
+                total.streams = total.streams.saturating_add(counts.streams);
+                total.append_sessions =
+                    total.append_sessions.saturating_add(counts.append_sessions);
+                total.subscriptions = total.subscriptions.saturating_add(counts.subscriptions);
+                total
+            })
+    }
 }
 
 impl StreamDomainRuntime<'_> {
@@ -750,5 +816,18 @@ impl StreamDomainRuntime<'_> {
 
     pub(in crate::domains::stream::sink) fn live_counts(&self) -> StreamLiveCounts {
         self.core.live_counts()
+    }
+
+    pub(in crate::domains::stream::sink) fn admin_read_resource_records(
+        &self,
+        request: AdminStreamReadRequest<'_>,
+    ) -> Result<
+        (
+            Vec<StreamReadItem>,
+            crate::domains::stream::protocol::ReadCursor,
+        ),
+        String,
+    > {
+        self.core.admin_read_resource_records(request)
     }
 }

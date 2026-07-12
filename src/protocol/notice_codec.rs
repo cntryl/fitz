@@ -7,8 +7,8 @@
 //! concepts supplied by the session/transport layer — they never appear
 //! on the wire.
 
-pub use crate::domains::notice::protocol::NoticeResponse;
-use crate::domains::notice::protocol::{
+pub use crate::dispatch::wire::notice::NoticeResponse;
+use crate::dispatch::wire::notice::{
     DeliverMessage, NotificationMessage, PublishMessage, SubscribeMessage, UnsubscribeAllMessage,
     UnsubscribeMessage,
 };

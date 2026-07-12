@@ -13,7 +13,7 @@
 //!
 //! Lease fencing tokens are process-local; a restart resets the token lineage.
 
-use crate::domains::lease::protocol::{
+use crate::dispatch::wire::lease::{
     session_scoped_owner_id, LeaseKey, LeaseMessage, LeaseResponse as DomainLeaseResponse,
     LeaseSubscriptionMessage, PreparedLeaseOperation,
 };
@@ -250,6 +250,11 @@ pub fn encode_domain_response_into(
             enc.put_u32(usize_to_u32_saturating(*pending_waiters));
             enc.finish()
         }
+        DomainLeaseResponse::Error(message) => encode_error_into(
+            enc,
+            crate::protocol::error_codes::lease::ERR_BAD_REQUEST,
+            message,
+        ),
         DomainLeaseResponse::NotFound => {
             enc.put_u8(0);
             enc.put_u8(0); // has_holder=false

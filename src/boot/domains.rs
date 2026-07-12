@@ -6,8 +6,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Arc as StdArc;
 
+use crate::runtime::routing::RouteFamily;
 #[cfg(test)]
-use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+use crate::runtime::routing::{Route, RouteAddress};
 
 use crate::domains::kv::sink::KvDomainSink;
 use crate::domains::lease::sink::LeaseDomainSink;
@@ -403,12 +404,22 @@ impl DomainHandles {
 }
 
 pub struct DomainSetupOptions {
+    pub route_families: Vec<u32>,
     pub schedule_write_options: cntryl_midge::WriteOptions,
     pub queue_write_options: cntryl_midge::WriteOptions,
     pub queue_fast_flush_interval: Option<std::time::Duration>,
     pub request_sync_write_options: cntryl_midge::WriteOptions,
     pub rpc_request_timeout: Option<std::time::Duration>,
     pub stream_storage_layout: crate::domains::stream::StreamStorageLayout,
+}
+
+fn provisioned_route_families(options: &DomainSetupOptions) -> Vec<RouteFamily> {
+    options
+        .route_families
+        .iter()
+        .copied()
+        .map(RouteFamily::new)
+        .collect()
 }
 
 /// Set up all 7 domain actors and register them with the router.
@@ -425,6 +436,7 @@ pub fn setup(
 ) -> BootResult<Arc<DomainHandles>> {
     let metrics = (*crate::observability::metrics()).clone();
     let storage = crate::storage::FitzStorageEngine::new(store.clone());
+    let route_families = provisioned_route_families(options);
 
     let kv_sink = Arc::new(
         KvDomainSink::new(store.clone(), router.clone(), admin_read_model.clone())
@@ -462,11 +474,12 @@ pub fn setup(
     tracing::info!("Registered Notice domain (handles notice://* across all route families)");
 
     let stream_sink = Arc::new(
-        StreamDomainSink::new_with_storage_layout(
+        StreamDomainSink::new_with_storage_layout_and_families(
             storage.clone(),
             router.clone(),
             admin_read_model.clone(),
             options.stream_storage_layout,
+            Some(&route_families),
         )?
         .with_sync_write_options(options.request_sync_write_options)
         .with_metrics(metrics.clone()),
@@ -477,7 +490,7 @@ pub fn setup(
     tracing::info!("Registered Stream domain (handles stream://* across all route families)");
 
     let rpc_sink = Arc::new(
-        RpcDomainSink::new(router.clone(), admin_read_model.clone())
+        RpcDomainSink::new_with_families(router.clone(), admin_read_model.clone(), &route_families)
             .with_request_timeout(
                 options
                     .rpc_request_timeout
@@ -544,6 +557,7 @@ mod tests {
 
     fn domain_setup_options() -> DomainSetupOptions {
         DomainSetupOptions {
+            route_families: vec![1, 2, 3, 4, 5, 6, 7],
             schedule_write_options: cntryl_midge::WriteOptions::best_effort(),
             queue_write_options: cntryl_midge::WriteOptions::best_effort(),
             queue_fast_flush_interval: Some(std::time::Duration::from_millis(100)),
@@ -694,7 +708,8 @@ mod tests {
         let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
 
         // Act
-        setup(&router, &store, &admin_read_model, &domain_setup_options()).expect("setup domains");
+        let _domains = setup(&router, &store, &admin_read_model, &domain_setup_options())
+            .expect("setup domains");
 
         // Assert
         for domain in DomainKind::ALL {

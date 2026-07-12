@@ -354,6 +354,7 @@ impl LeaseDomainRuntime<'_> {
                 | crate::domains::lease::protocol::LeaseResponse::Expired
                 | crate::domains::lease::protocol::LeaseResponse::Fenced { .. }
                 | crate::domains::lease::protocol::LeaseResponse::NotFound
+                | crate::domains::lease::protocol::LeaseResponse::Error(_)
         )
     }
 }

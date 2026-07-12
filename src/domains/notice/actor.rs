@@ -71,10 +71,10 @@ impl NoticeRouteActor {
     }
 
     /// Generate a unique subscription ID
-    fn allocate_subscription_id(&mut self) -> SubscriptionId {
+    fn allocate_subscription_id(&mut self) -> Option<SubscriptionId> {
         let id = SubscriptionId(self.next_subscription_id);
-        self.next_subscription_id += 1;
-        id
+        self.next_subscription_id = self.next_subscription_id.checked_add(1)?;
+        Some(id)
     }
 
     /// Subscribe to a pattern (`SessionActor` has already verified authorization)
@@ -91,7 +91,13 @@ impl NoticeRouteActor {
             return;
         }
 
-        let subscription_id = self.allocate_subscription_id();
+        let Some(subscription_id) = self.allocate_subscription_id() else {
+            tracing::warn!(
+                family = self.family_id.as_u64(),
+                "Notice subscription ID space exhausted"
+            );
+            return;
+        };
 
         // Add subscription to the trie-based index
         self.index

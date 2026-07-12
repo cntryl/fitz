@@ -3,7 +3,7 @@ use crate::benchkit::{
     build_stream_append, build_stream_begin, build_stream_subscribe, extract_single_tlv_field,
     route_frame_to_address, FrameQueueSink,
 };
-use crate::protocol::frame::ChannelId;
+use crate::dispatch::protocol::frame::ChannelId;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use bytes::Bytes;
 

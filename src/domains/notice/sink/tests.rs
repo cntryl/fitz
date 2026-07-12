@@ -1,15 +1,16 @@
 use super::*;
 use crate::control::admin::{NoticeRouteInfo, NoticeSubscription as AdminNoticeSubscription};
-use crate::protocol::frame::ChannelId;
-use crate::protocol::frame_context::FrameContext;
-use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
-use crate::protocol::tlv::MessageType;
+use crate::dispatch::protocol::frame::ChannelId;
+use crate::dispatch::protocol::frame_context::FrameContext;
+use crate::dispatch::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
+use crate::dispatch::protocol::tlv::MessageType;
 use crate::runtime::mailbox::Mailbox;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use bytes::Bytes;
 use std::sync::Arc;
 
 mod cleanup;
+mod correctness;
 mod publish;
 
 fn encode_notice_subscribe(pattern: &str) -> Bytes {

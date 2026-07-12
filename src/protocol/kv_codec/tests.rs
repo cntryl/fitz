@@ -1,5 +1,5 @@
 use super::*;
-use crate::domains::kv::{KvMessage, KvResponse};
+use crate::dispatch::wire::kv::{KvMessage, KvResponse};
 use crate::runtime::routing::RouteFamily;
 use bytes::{BufMut, Bytes};
 

@@ -4,7 +4,7 @@ use super::model::{
     RoutedSubscriptionSet,
 };
 #[cfg(test)]
-use crate::protocol::frame_context::FrameContext;
+use crate::dispatch::protocol::frame_context::FrameContext;
 use crate::runtime::{Actor, Context};
 
 enum LeaseRequestView<'a> {
@@ -124,7 +124,13 @@ impl LeaseDomainRuntime<'_> {
         if let Some(request) =
             envelope.payload::<crate::domains::lease::protocol::PreparedLeaseClientRequest>()
         {
-            self.handle_prepared_request(envelope, request)?;
+            if !Self::valid_request_envelope(envelope, request.meta) {
+                let response = Self::error_response("route family mismatch");
+                let response_meta = Self::response_meta_for_source(envelope, request.meta);
+                self.route_lease_response(envelope, response_meta, &response, None);
+                return Ok(());
+            }
+            self.handle_prepared_request(envelope, request);
             return Ok(());
         }
 
@@ -134,7 +140,18 @@ impl LeaseDomainRuntime<'_> {
         let meta = request.meta();
         let request_started = self.record_request_start();
 
-        let parsed_frame = self.parse_request_frame(meta, request.frame(), request_started)?;
+        if !Self::valid_request_envelope(envelope, meta) {
+            let response = Self::error_response("route family mismatch");
+            let response_meta = Self::response_meta_for_source(envelope, meta);
+            self.route_lease_response(envelope, response_meta, &response, request_started);
+            return Ok(());
+        }
+
+        let Some(parsed_frame) =
+            self.parse_request_frame(envelope, meta, request.frame(), request_started)
+        else {
+            return Ok(());
+        };
 
         match parsed_frame {
             crate::domains::lease::protocol::LeaseClientFrame::Sub(sub_msg) => {
@@ -152,12 +169,22 @@ impl LeaseDomainRuntime<'_> {
         &self,
         envelope: &Envelope,
         request: &crate::domains::lease::protocol::PreparedLeaseClientRequest,
-    ) -> Result<(), DeliveryError> {
+    ) {
         let meta = request.meta;
         let request_started = self.record_request_start();
-        let operation = self.parse_prepared_request_frame(meta, &request.frame, request_started)?;
+        let Some(operation) =
+            self.parse_prepared_request_frame(envelope, meta, &request.frame, request_started)
+        else {
+            return;
+        };
+        if Self::prepared_operation_family(operation)
+            .is_some_and(|family_id| family_id != meta.route_family)
+        {
+            let response = Self::error_response("route family mismatch");
+            self.route_lease_response(envelope, meta, &response, request_started);
+            return;
+        }
         self.handle_prepared_operation_frame(envelope, meta, request_started, operation);
-        Ok(())
     }
 
     fn handle_cleanup_envelope(&self, envelope: &Envelope) -> bool {
@@ -179,6 +206,10 @@ impl LeaseDomainRuntime<'_> {
 
     fn handle_domain_publish_envelope(&self, envelope: &Envelope) -> bool {
         if let Some(event) = envelope.payload::<crate::runtime::DomainPublishEvent>() {
+            if *envelope.destination().family() != event.family_id {
+                crate::observability::counter_inc("fitz_lease_publish_family_mismatch_total");
+                return true;
+            }
             self.handle_domain_publish(event);
             return true;
         }
@@ -216,10 +247,11 @@ impl LeaseDomainRuntime<'_> {
 
     fn parse_request_frame<'a>(
         &self,
+        envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         frame: &'a Result<crate::domains::lease::protocol::LeaseClientFrame, String>,
         request_started: Option<std::time::Instant>,
-    ) -> Result<&'a crate::domains::lease::protocol::LeaseClientFrame, DeliveryError> {
+    ) -> Option<&'a crate::domains::lease::protocol::LeaseClientFrame> {
         match frame {
             Ok(msg) => {
                 tracing::debug!(
@@ -228,26 +260,25 @@ impl LeaseDomainRuntime<'_> {
                     msg_type = meta.message_type,
                     "Lease: parsed message successfully"
                 );
-                Ok(msg)
+                Some(msg)
             }
             Err(error) => {
-                if let (Some(metrics), Some(started_at)) =
-                    (self.core.metrics.as_ref(), request_started)
-                {
-                    metrics.record_failure(started_at);
-                }
                 tracing::warn!(domain = "lease", error = %error, "Failed to parse lease message");
-                Err(DeliveryError::ActorStopped)
+                let response = Self::error_response(error);
+                let response_meta = Self::response_meta_for_source(envelope, meta);
+                self.route_lease_response(envelope, response_meta, &response, request_started);
+                None
             }
         }
     }
 
     fn parse_prepared_request_frame<'a>(
         &self,
+        envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         frame: &'a Result<crate::domains::lease::protocol::PreparedLeaseOperation, String>,
         request_started: Option<std::time::Instant>,
-    ) -> Result<&'a crate::domains::lease::protocol::PreparedLeaseOperation, DeliveryError> {
+    ) -> Option<&'a crate::domains::lease::protocol::PreparedLeaseOperation> {
         match frame {
             Ok(operation) => {
                 tracing::debug!(
@@ -256,16 +287,14 @@ impl LeaseDomainRuntime<'_> {
                     msg_type = meta.message_type,
                     "Lease: prepared message successfully"
                 );
-                Ok(operation)
+                Some(operation)
             }
             Err(error) => {
-                if let (Some(metrics), Some(started_at)) =
-                    (self.core.metrics.as_ref(), request_started)
-                {
-                    metrics.record_failure(started_at);
-                }
                 tracing::warn!(domain = "lease", error = %error, "Failed to prepare lease message");
-                Err(DeliveryError::ActorStopped)
+                let response = Self::error_response(error);
+                let response_meta = Self::response_meta_for_source(envelope, meta);
+                self.route_lease_response(envelope, response_meta, &response, request_started);
+                None
             }
         }
     }
@@ -286,52 +315,90 @@ impl LeaseDomainRuntime<'_> {
                 session_id,
                 subscriber,
             } => {
-                let pattern_str = pattern.as_str().to_string();
-                let subscription_id = {
-                    let mut families = self.core.families.lock();
-                    let state = families
-                        .entry(family_id.as_u64())
-                        .or_insert_with(RoutedSubscriptionSet::new);
+                if !Self::valid_subscription_request(
+                    envelope,
+                    meta,
+                    *family_id,
+                    *session_id,
+                    subscriber,
+                ) {
+                    LeaseResponse::Error("route family mismatch".to_string())
+                } else if pattern.as_str().is_empty() {
+                    LeaseResponse::Error("empty pattern".to_string())
+                } else {
+                    let pattern_str = pattern.as_str().to_string();
+                    let subscription_result = {
+                        let mut families = self.core.families.lock();
+                        let state = families
+                            .entry(family_id.as_u64())
+                            .or_insert_with(RoutedSubscriptionSet::new);
 
-                    if let Some(existing_id) =
-                        state.find_existing_id(*session_id, pattern_str.as_str())
-                    {
-                        existing_id
-                    } else {
-                        let new_id = self.core.next_sub_id.fetch_add(1, Ordering::Relaxed);
-                        state.insert(
-                            *family_id,
-                            LeaseSubscription {
-                                pattern: crate::runtime::matcher::Pattern::new(
-                                    pattern_str.as_str(),
-                                ),
-                                session_id: *session_id,
-                                route_address: subscriber.clone(),
-                                subscription_id: new_id,
-                            },
-                        );
-                        new_id
+                        if let Some(existing_id) =
+                            state.find_existing_id(*session_id, pattern_str.as_str())
+                        {
+                            Ok(existing_id)
+                        } else if let Ok(new_id) = self.core.next_sub_id.fetch_update(
+                            Ordering::Relaxed,
+                            Ordering::Relaxed,
+                            |current| current.checked_add(1),
+                        ) {
+                            state.insert(
+                                *family_id,
+                                LeaseSubscription {
+                                    pattern: crate::runtime::matcher::Pattern::new(
+                                        pattern_str.as_str(),
+                                    ),
+                                    session_id: *session_id,
+                                    route_address: subscriber.clone(),
+                                    subscription_id: new_id,
+                                },
+                            );
+                            Ok(new_id)
+                        } else {
+                            let state_empty = state.is_empty();
+                            if state_empty {
+                                families.remove(&family_id.as_u64());
+                            }
+                            Err(LeaseResponse::Error(
+                                "subscription ID space exhausted".to_string(),
+                            ))
+                        }
+                    };
+                    match subscription_result {
+                        Ok(subscription_id) => LeaseResponse::SubscribeOk { subscription_id },
+                        Err(response) => response,
                     }
-                };
-                LeaseResponse::SubscribeOk { subscription_id }
+                }
             }
             LeaseSubscriptionMessage::Unsubscribe {
                 family_id,
                 pattern,
                 session_id,
-                ..
+                subscriber,
             } => {
-                let mut families = self.core.families.lock();
-                let remove_family = if let Some(state) = families.get_mut(&family_id.as_u64()) {
-                    state.remove_session_pattern(*family_id, *session_id, pattern.as_str());
-                    state.is_empty()
+                if !Self::valid_subscription_request(
+                    envelope,
+                    meta,
+                    *family_id,
+                    *session_id,
+                    subscriber,
+                ) {
+                    LeaseResponse::Error("route family mismatch".to_string())
+                } else if pattern.as_str().is_empty() {
+                    LeaseResponse::Error("empty pattern".to_string())
                 } else {
-                    false
-                };
-                if remove_family {
-                    families.remove(&family_id.as_u64());
+                    let mut families = self.core.families.lock();
+                    let remove_family = if let Some(state) = families.get_mut(&family_id.as_u64()) {
+                        state.remove_session_pattern(*family_id, *session_id, pattern.as_str());
+                        state.is_empty()
+                    } else {
+                        false
+                    };
+                    if remove_family {
+                        families.remove(&family_id.as_u64());
+                    }
+                    LeaseResponse::UnsubscribeOk
                 }
-                LeaseResponse::UnsubscribeOk
             }
         };
 
@@ -347,6 +414,12 @@ impl LeaseDomainRuntime<'_> {
         lease_msg: &crate::domains::lease::protocol::LeaseMessage,
     ) {
         use crate::domains::lease::protocol::{LeaseKey, LeaseMessage, LeaseResponse};
+
+        if !Self::valid_lease_message(envelope, meta, lease_msg) {
+            let response = Self::error_response("route family mismatch");
+            self.route_lease_response(envelope, meta, &response, request_started);
+            return;
+        }
 
         let session_prefix = meta.session_id.to_string();
         let effective_owner = |owner_id: &str| {
@@ -438,6 +511,14 @@ impl LeaseDomainRuntime<'_> {
     ) {
         use crate::domains::lease::protocol::{LeaseResponse, PreparedLeaseOperation};
 
+        if Self::prepared_operation_family(operation)
+            .is_some_and(|family_id| family_id != meta.route_family)
+        {
+            let response = Self::error_response("route family mismatch");
+            self.route_lease_response(envelope, meta, &response, request_started);
+            return;
+        }
+
         let domain_response = match operation {
             PreparedLeaseOperation::Acquire {
                 key,
@@ -496,7 +577,7 @@ impl LeaseDomainRuntime<'_> {
                 frame_ctx.msg_type.as_u16(),
                 frame_ctx.route_family,
             );
-            let parsed = crate::protocol::lease_codec::parse_frame(
+            let parsed = crate::dispatch::protocol::lease_codec::parse_frame(
                 &frame_ctx,
                 &frame_ctx.payload,
                 frame_ctx.route_family,
@@ -504,10 +585,10 @@ impl LeaseDomainRuntime<'_> {
                 subscriber,
             )
             .map(|frame| match frame {
-                crate::protocol::lease_codec::ParsedLeaseFrame::Op(message) => {
+                crate::dispatch::protocol::lease_codec::ParsedLeaseFrame::Op(message) => {
                     crate::domains::lease::LeaseClientFrame::Op(message)
                 }
-                crate::protocol::lease_codec::ParsedLeaseFrame::Sub(message) => {
+                crate::dispatch::protocol::lease_codec::ParsedLeaseFrame::Sub(message) => {
                     crate::domains::lease::LeaseClientFrame::Sub(message)
                 }
             });
@@ -521,18 +602,88 @@ impl LeaseDomainRuntime<'_> {
             None
         }
     }
+
+    fn valid_request_envelope(envelope: &Envelope, meta: crate::runtime::ClientFrameMeta) -> bool {
+        meta.route_family == *envelope.destination().family()
+            && envelope
+                .source()
+                .is_none_or(|source| *source.family() == meta.route_family)
+    }
+
+    fn response_meta_for_source(
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+    ) -> crate::runtime::ClientFrameMeta {
+        envelope.source().map_or(meta, |source| {
+            let mut response_meta = meta;
+            response_meta.route_family = *source.family();
+            response_meta
+        })
+    }
+
+    fn error_response(reason: &str) -> crate::domains::lease::protocol::LeaseResponse {
+        crate::domains::lease::protocol::LeaseResponse::Error(reason.to_string())
+    }
+
+    fn valid_subscription_request(
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+        family_id: crate::runtime::routing::RouteFamily,
+        session_id: u64,
+        subscriber: &crate::runtime::routing::RouteAddress,
+    ) -> bool {
+        family_id == meta.route_family
+            && *subscriber.family() == family_id
+            && session_id == meta.session_id
+            && envelope.source().is_none_or(|source| source == subscriber)
+    }
+
+    fn valid_lease_message(
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+        message: &crate::domains::lease::protocol::LeaseMessage,
+    ) -> bool {
+        use crate::domains::lease::protocol::LeaseMessage;
+        match message {
+            LeaseMessage::Acquire { family_id, .. }
+            | LeaseMessage::Extend { family_id, .. }
+            | LeaseMessage::Release { family_id, .. }
+            | LeaseMessage::Query { family_id, .. } => *family_id == meta.route_family,
+            LeaseMessage::Tick => {
+                meta.channel == crate::runtime::ClientChannel::Internal
+                    && envelope.source().is_none()
+            }
+        }
+    }
+
+    fn prepared_operation_family(
+        operation: &crate::domains::lease::protocol::PreparedLeaseOperation,
+    ) -> Option<crate::runtime::routing::RouteFamily> {
+        use crate::domains::lease::protocol::PreparedLeaseOperation;
+        match operation {
+            PreparedLeaseOperation::Acquire { key, .. }
+            | PreparedLeaseOperation::Extend { key, .. }
+            | PreparedLeaseOperation::Release { key, .. }
+            | PreparedLeaseOperation::Query { key } => Some(key.family),
+            PreparedLeaseOperation::NotFound => None,
+        }
+    }
 }
 
 #[cfg(test)]
 fn test_client_channel_from_protocol(
-    channel: crate::protocol::frame::ChannelId,
+    channel: crate::dispatch::protocol::frame::ChannelId,
 ) -> crate::runtime::ClientChannel {
     match channel {
-        crate::protocol::frame::ChannelId::Control => crate::runtime::ClientChannel::Control,
-        crate::protocol::frame::ChannelId::Pub => crate::runtime::ClientChannel::Pub,
-        crate::protocol::frame::ChannelId::Sub => crate::runtime::ClientChannel::Sub,
-        crate::protocol::frame::ChannelId::Rpc => crate::runtime::ClientChannel::Rpc,
-        crate::protocol::frame::ChannelId::Lease => crate::runtime::ClientChannel::Lease,
-        crate::protocol::frame::ChannelId::Internal => crate::runtime::ClientChannel::Internal,
+        crate::dispatch::protocol::frame::ChannelId::Control => {
+            crate::runtime::ClientChannel::Control
+        }
+        crate::dispatch::protocol::frame::ChannelId::Pub => crate::runtime::ClientChannel::Pub,
+        crate::dispatch::protocol::frame::ChannelId::Sub => crate::runtime::ClientChannel::Sub,
+        crate::dispatch::protocol::frame::ChannelId::Rpc => crate::runtime::ClientChannel::Rpc,
+        crate::dispatch::protocol::frame::ChannelId::Lease => crate::runtime::ClientChannel::Lease,
+        crate::dispatch::protocol::frame::ChannelId::Internal => {
+            crate::runtime::ClientChannel::Internal
+        }
     }
 }

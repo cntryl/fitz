@@ -165,7 +165,12 @@ impl StreamStore {
     ) -> Result<SessionId, String> {
         let session_id = self
             .next_session_id
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            .fetch_update(
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+                |current| current.checked_add(1),
+            )
+            .map_err(|_| "stream session ID space exhausted".to_string())?;
 
         let initial_capacity = self.limits.max_batch_events.min(128);
 

@@ -3,7 +3,7 @@ use super::model::{
     KvDomainRuntime, KvDomainSink, KvResourceLockKey, MailboxSink, Ordering,
 };
 #[cfg(test)]
-use crate::protocol::frame_context::FrameContext;
+use crate::dispatch::protocol::frame_context::FrameContext;
 use crate::runtime::{Actor, Context};
 
 impl MailboxSink for KvDomainSink {
@@ -65,9 +65,20 @@ impl KvDomainRuntime<'_> {
 
         let request = Self::extract_request(envelope)?;
         let meta = request.meta;
-        let operation_started = Self::record_operation_start();
         let request_started = self.record_request_start();
-        let parsed_frame = self.parse_request_frame(meta, request.frame, request_started)?;
+        if !Self::valid_request_envelope(envelope, meta) {
+            let response = Self::error_response("route family mismatch");
+            let response_meta = Self::response_meta_for_source(envelope, meta);
+            self.route_kv_response(envelope, response_meta, &response, request_started)?;
+            return Ok(());
+        }
+
+        let operation_started = Self::record_operation_start();
+        let Some(parsed_frame) =
+            self.parse_request_frame(envelope, meta, request.frame, request_started)
+        else {
+            return Ok(());
+        };
 
         match parsed_frame {
             KvClientFrame::Sub(sub_msg) => {
@@ -133,18 +144,14 @@ impl KvDomainRuntime<'_> {
 
     fn parse_request_frame(
         &self,
+        envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         frame: Result<KvClientFrame, String>,
         request_started: Option<std::time::Instant>,
-    ) -> Result<KvClientFrame, DeliveryError> {
+    ) -> Option<KvClientFrame> {
         let parsed_frame = match frame {
             Ok(msg) => msg,
             Err(e) => {
-                if let (Some(metrics), Some(started_at)) =
-                    (self.core.metrics.as_ref(), request_started)
-                {
-                    metrics.record_failure(started_at);
-                }
                 tracing::warn!(
                     domain = "kv",
                     session = meta.session_id,
@@ -152,7 +159,10 @@ impl KvDomainRuntime<'_> {
                     error = %e,
                     "Failed to parse KV message"
                 );
-                return Err(DeliveryError::ActorStopped);
+                let response = Self::error_response(&e);
+                let response_meta = Self::response_meta_for_source(envelope, meta);
+                let _ = self.route_kv_response(envelope, response_meta, &response, request_started);
+                return None;
             }
         };
 
@@ -164,7 +174,7 @@ impl KvDomainRuntime<'_> {
             "Parsed KV message successfully"
         );
 
-        Ok(parsed_frame)
+        Some(parsed_frame)
     }
 
     fn handle_subscription_frame(
@@ -181,32 +191,67 @@ impl KvDomainRuntime<'_> {
                 session_id,
                 subscriber,
             } => {
-                let subscription_id = {
-                    let mut watch_actors = self.core.watch_actors.lock();
-                    let actor = watch_actors
-                        .entry(family_id.as_u64())
-                        .or_insert_with(|| crate::domains::kv::watch::KvWatchActor::new(family_id));
-                    actor.subscribe(session_id, pattern.as_str(), subscriber)
-                };
-                crate::domains::kv::KvResponse::SubscribeOk { subscription_id }
+                if !Self::valid_subscription_request(
+                    envelope,
+                    meta,
+                    family_id,
+                    session_id,
+                    &subscriber,
+                ) {
+                    Self::error_response("route family mismatch")
+                } else if pattern.as_str().is_empty() {
+                    Self::error_response("empty pattern")
+                } else {
+                    let subscription_id = {
+                        let mut watch_actors = self.core.watch_actors.lock();
+                        let actor = watch_actors.entry(family_id.as_u64()).or_insert_with(|| {
+                            crate::domains::kv::watch::KvWatchActor::new(family_id)
+                        });
+                        let subscription_id =
+                            actor.subscribe(session_id, pattern.as_str(), subscriber);
+                        if subscription_id.is_none() {
+                            watch_actors.remove(&family_id.as_u64());
+                        }
+                        subscription_id
+                    };
+                    match subscription_id {
+                        Some(subscription_id) => {
+                            crate::domains::kv::KvResponse::SubscribeOk { subscription_id }
+                        }
+                        None => Self::error_response("subscription ID space exhausted"),
+                    }
+                }
             }
             crate::domains::kv::KvSubscriptionMessage::Unsubscribe {
                 family_id,
                 pattern,
                 session_id,
-                ..
+                subscriber,
             } => {
-                let mut watch_actors = self.core.watch_actors.lock();
-                let remove_family = if let Some(actor) = watch_actors.get_mut(&family_id.as_u64()) {
-                    actor.unsubscribe(session_id, pattern.as_str());
-                    actor.is_empty()
+                if !Self::valid_subscription_request(
+                    envelope,
+                    meta,
+                    family_id,
+                    session_id,
+                    &subscriber,
+                ) {
+                    Self::error_response("route family mismatch")
+                } else if pattern.as_str().is_empty() {
+                    Self::error_response("empty pattern")
                 } else {
-                    false
-                };
-                if remove_family {
-                    watch_actors.remove(&family_id.as_u64());
+                    let mut watch_actors = self.core.watch_actors.lock();
+                    let remove_family =
+                        if let Some(actor) = watch_actors.get_mut(&family_id.as_u64()) {
+                            actor.unsubscribe(session_id, pattern.as_str());
+                            actor.is_empty()
+                        } else {
+                            false
+                        };
+                    if remove_family {
+                        watch_actors.remove(&family_id.as_u64());
+                    }
+                    crate::domains::kv::KvResponse::UnsubscribeOk
                 }
-                crate::domains::kv::KvResponse::UnsubscribeOk
             }
         };
 
@@ -223,6 +268,14 @@ impl KvDomainRuntime<'_> {
         kv_message: crate::domains::kv::KvMessage,
     ) -> Result<(), DeliveryError> {
         use crate::domains::kv::{KvMessage, TxMode};
+        if Self::kv_message_family(&kv_message)
+            .is_some_and(|family_id| family_id != meta.route_family)
+        {
+            let response = Self::error_response("route family mismatch");
+            self.route_kv_response(envelope, meta, &response, request_started)?;
+            return Ok(());
+        }
+
         let kv_message = self.apply_sync_write_options(kv_message);
         let session_id = meta.session_id;
 
@@ -250,10 +303,10 @@ impl KvDomainRuntime<'_> {
                 &kv_message,
             ),
             KvMessage::Commit { tx_id } => {
-                self.handle_commit_frame(session_id, *tx_id, &kv_message)
+                self.handle_commit_frame(session_id, meta.route_family, *tx_id, &kv_message)
             }
             KvMessage::Rollback { tx_id } => {
-                self.handle_rollback_frame(session_id, *tx_id, &kv_message)
+                self.handle_rollback_frame(session_id, meta.route_family, *tx_id, &kv_message)
             }
             _ => self.handle_regular_operation_frame(session_id, meta.message_type, &kv_message),
         };
@@ -376,6 +429,7 @@ impl KvDomainRuntime<'_> {
     fn handle_commit_frame(
         &self,
         session_id: u64,
+        route_family: crate::runtime::routing::RouteFamily,
         tx_id: u64,
         kv_message: &crate::domains::kv::KvMessage,
     ) -> (
@@ -399,6 +453,20 @@ impl KvDomainRuntime<'_> {
                 .map(|(family_id, realm, area, resource)| {
                     KvResourceLockKey::new(family_id, &realm, &area, &resource)
                 });
+        if lock_key
+            .as_ref()
+            .is_some_and(|key| key.family_id != route_family.as_u64())
+        {
+            return (
+                crate::domains::kv::KvResponse::Error {
+                    error: crate::domains::kv::KvError::InvalidRequest(
+                        "route family mismatch".to_string(),
+                    ),
+                },
+                false,
+                None,
+            );
+        }
         let response = actor.handle(kv_message.clone());
         if let KvResponse::CommitOk = response {
             if let Some(lock_key) = lock_key {
@@ -416,6 +484,7 @@ impl KvDomainRuntime<'_> {
     fn handle_rollback_frame(
         &self,
         session_id: u64,
+        route_family: crate::runtime::routing::RouteFamily,
         tx_id: u64,
         kv_message: &crate::domains::kv::KvMessage,
     ) -> (
@@ -432,6 +501,20 @@ impl KvDomainRuntime<'_> {
             tx_id = tx_id,
             "Calling actor.handle() for ROLLBACK"
         );
+        if actor
+            .resource_scope_for_tx(tx_id)
+            .is_some_and(|(family_id, _, _, _)| family_id != route_family.as_u64())
+        {
+            return (
+                crate::domains::kv::KvResponse::Error {
+                    error: crate::domains::kv::KvError::InvalidRequest(
+                        "route family mismatch".to_string(),
+                    ),
+                },
+                false,
+                None,
+            );
+        }
         let response = actor.handle(kv_message.clone());
         if let KvResponse::RollbackOk = response {
             crate::observability::counter_inc("fitz_kv_rollbacks_total");
@@ -478,7 +561,7 @@ impl KvDomainRuntime<'_> {
                 frame_ctx.msg_type.as_u16(),
                 frame_ctx.route_family,
             );
-            let parsed = crate::protocol::kv::parse_frame(
+            let parsed = crate::dispatch::protocol::kv::parse_frame(
                 &frame_ctx,
                 &frame_ctx.payload,
                 frame_ctx.route_family,
@@ -486,8 +569,12 @@ impl KvDomainRuntime<'_> {
                 subscriber,
             )
             .map(|frame| match frame {
-                crate::protocol::kv::ParsedKvFrame::Op(message) => KvClientFrame::Op(message),
-                crate::protocol::kv::ParsedKvFrame::Sub(message) => KvClientFrame::Sub(message),
+                crate::dispatch::protocol::kv::ParsedKvFrame::Op(message) => {
+                    KvClientFrame::Op(message)
+                }
+                crate::dispatch::protocol::kv::ParsedKvFrame::Sub(message) => {
+                    KvClientFrame::Sub(message)
+                }
             });
             Some(KvClientRequest::new(meta, parsed))
         }
@@ -497,18 +584,75 @@ impl KvDomainRuntime<'_> {
             None
         }
     }
+
+    fn valid_request_envelope(envelope: &Envelope, meta: crate::runtime::ClientFrameMeta) -> bool {
+        meta.route_family == *envelope.destination().family()
+            && envelope
+                .source()
+                .is_none_or(|source| *source.family() == meta.route_family)
+    }
+
+    fn valid_subscription_request(
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+        family_id: crate::runtime::routing::RouteFamily,
+        session_id: u64,
+        subscriber: &crate::runtime::routing::RouteAddress,
+    ) -> bool {
+        family_id == meta.route_family
+            && *subscriber.family() == family_id
+            && session_id == meta.session_id
+            && envelope.source().is_none_or(|source| source == subscriber)
+    }
+
+    fn kv_message_family(
+        message: &crate::domains::kv::KvMessage,
+    ) -> Option<crate::runtime::routing::RouteFamily> {
+        use crate::domains::kv::KvMessage;
+        match message {
+            KvMessage::Begin { route_family, .. }
+            | KvMessage::Get { route_family, .. }
+            | KvMessage::Put { route_family, .. }
+            | KvMessage::Insert { route_family, .. }
+            | KvMessage::Delete { route_family, .. }
+            | KvMessage::DeleteRange { route_family, .. }
+            | KvMessage::Scan { route_family, .. } => Some(*route_family),
+            KvMessage::Commit { .. } | KvMessage::Rollback { .. } => None,
+        }
+    }
+
+    fn error_response(reason: &str) -> crate::domains::kv::KvResponse {
+        crate::domains::kv::KvResponse::Error {
+            error: crate::domains::kv::KvError::InvalidRequest(reason.to_string()),
+        }
+    }
+
+    fn response_meta_for_source(
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+    ) -> crate::runtime::ClientFrameMeta {
+        envelope.source().map_or(meta, |source| {
+            let mut response_meta = meta;
+            response_meta.route_family = *source.family();
+            response_meta
+        })
+    }
 }
 
 #[cfg(test)]
 fn test_client_channel_from_protocol(
-    channel: crate::protocol::frame::ChannelId,
+    channel: crate::dispatch::protocol::frame::ChannelId,
 ) -> crate::runtime::ClientChannel {
     match channel {
-        crate::protocol::frame::ChannelId::Control => crate::runtime::ClientChannel::Control,
-        crate::protocol::frame::ChannelId::Pub => crate::runtime::ClientChannel::Pub,
-        crate::protocol::frame::ChannelId::Sub => crate::runtime::ClientChannel::Sub,
-        crate::protocol::frame::ChannelId::Rpc => crate::runtime::ClientChannel::Rpc,
-        crate::protocol::frame::ChannelId::Lease => crate::runtime::ClientChannel::Lease,
-        crate::protocol::frame::ChannelId::Internal => crate::runtime::ClientChannel::Internal,
+        crate::dispatch::protocol::frame::ChannelId::Control => {
+            crate::runtime::ClientChannel::Control
+        }
+        crate::dispatch::protocol::frame::ChannelId::Pub => crate::runtime::ClientChannel::Pub,
+        crate::dispatch::protocol::frame::ChannelId::Sub => crate::runtime::ClientChannel::Sub,
+        crate::dispatch::protocol::frame::ChannelId::Rpc => crate::runtime::ClientChannel::Rpc,
+        crate::dispatch::protocol::frame::ChannelId::Lease => crate::runtime::ClientChannel::Lease,
+        crate::dispatch::protocol::frame::ChannelId::Internal => {
+            crate::runtime::ClientChannel::Internal
+        }
     }
 }

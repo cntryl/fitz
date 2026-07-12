@@ -1,23 +1,20 @@
-use super::{AuthorizationPolicy, Bytes, ChannelId, DispatchDomain, DomainAuthorizationSpec};
+use super::{AuthorizationPolicy, DispatchDomain, DomainAuthorizationSpec};
+#[cfg(test)]
+use super::{Bytes, ChannelId};
 
 type AuthRouteExtractor = for<'a> fn(u16, &'a [u8]) -> Result<Option<&'a str>, String>;
-type RequestEnvelopeBuilder = fn(DomainEnvelopeBuildRequest) -> crate::runtime::Envelope;
+type RequestEnvelopeBuilder = fn(
+    crate::runtime::DomainKind,
+    crate::dispatch::DomainEnvelopeBuildRequest,
+) -> crate::runtime::Envelope;
+
+pub(crate) use crate::dispatch::DomainEnvelopeBuildRequest;
 
 pub(crate) struct IngressDomainDescriptor {
     pub(super) manifest: &'static crate::runtime::DomainDescriptor,
     pub(super) unauthorized_error_code: u16,
     extract_auth_route: AuthRouteExtractor,
     build_request_envelope: RequestEnvelopeBuilder,
-}
-
-pub(crate) struct DomainEnvelopeBuildRequest {
-    pub(crate) session_id: u64,
-    pub(crate) channel_id: ChannelId,
-    pub(crate) route_family: crate::runtime::routing::RouteFamily,
-    pub(crate) msg_type: crate::protocol::tlv::MessageType,
-    pub(crate) payload: Bytes,
-    pub(crate) source: crate::runtime::routing::RouteAddress,
-    pub(crate) destination: crate::runtime::routing::RouteAddress,
 }
 
 pub(crate) struct IngressDomainRegistry;
@@ -44,7 +41,7 @@ impl IngressDomainDescriptor {
         &self,
         request: DomainEnvelopeBuildRequest,
     ) -> crate::runtime::Envelope {
-        (self.build_request_envelope)(request)
+        (self.build_request_envelope)(self.manifest.kind, request)
     }
 }
 
@@ -111,43 +108,43 @@ static INGRESS_DOMAIN_DESCRIPTORS: [IngressDomainDescriptor; 7] = [
         manifest: crate::runtime::DomainKind::Kv.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::kv::ERR_UNAUTHORIZED,
         extract_auth_route: crate::protocol::kv_codec::extract_auth_route,
-        build_request_envelope: build_kv_request_envelope,
+        build_request_envelope: crate::dispatch::build_request_envelope,
     },
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Queue.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::queue::ERR_UNAUTHORIZED,
         extract_auth_route: crate::protocol::queue_codec::extract_auth_route,
-        build_request_envelope: build_queue_request_envelope,
+        build_request_envelope: crate::dispatch::build_request_envelope,
     },
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Notice.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::notice::ERR_UNAUTHORIZED,
         extract_auth_route: crate::protocol::notice_codec::extract_auth_route,
-        build_request_envelope: build_notice_request_envelope,
+        build_request_envelope: crate::dispatch::build_request_envelope,
     },
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Stream.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::stream::ERR_UNAUTHORIZED,
         extract_auth_route: crate::protocol::stream_codec::extract_auth_route,
-        build_request_envelope: build_stream_request_envelope,
+        build_request_envelope: crate::dispatch::build_request_envelope,
     },
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Rpc.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::rpc::ERR_UNAUTHORIZED,
         extract_auth_route: crate::protocol::rpc_codec::extract_auth_route,
-        build_request_envelope: build_rpc_request_envelope,
+        build_request_envelope: crate::dispatch::build_request_envelope,
     },
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Lease.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::lease::ERR_UNAUTHORIZED,
         extract_auth_route: crate::protocol::lease_codec::extract_auth_route,
-        build_request_envelope: build_lease_request_envelope,
+        build_request_envelope: crate::dispatch::build_request_envelope,
     },
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Schedule.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::schedule::ERR_UNAUTHORIZED,
         extract_auth_route: crate::protocol::schedule_codec::extract_auth_route,
-        build_request_envelope: build_schedule_request_envelope,
+        build_request_envelope: crate::dispatch::build_request_envelope,
     },
 ];
 
@@ -171,188 +168,6 @@ fn manifest_authorization_policy(
             Some(AuthorizationPolicy::MultiRouteScoped(Access::Write))
         }
     }
-}
-
-fn frame_context(request: &DomainEnvelopeBuildRequest) -> crate::protocol::FrameContext {
-    crate::protocol::frame_context::FrameContext::new(
-        request.session_id,
-        request.channel_id,
-        request.msg_type,
-        request.payload.clone(),
-        request.route_family,
-    )
-}
-
-fn client_frame_meta(request: &DomainEnvelopeBuildRequest) -> crate::runtime::ClientFrameMeta {
-    crate::runtime::ClientFrameMeta::new(
-        request.session_id,
-        crate::api::frame_adapter::client_channel_from_protocol(request.channel_id),
-        request.msg_type.as_u16(),
-        request.route_family,
-    )
-}
-
-fn build_kv_request_envelope(request: DomainEnvelopeBuildRequest) -> crate::runtime::Envelope {
-    let ctx = frame_context(&request);
-    let meta = client_frame_meta(&request);
-    let parsed = crate::protocol::kv::parse_frame(
-        &ctx,
-        &ctx.payload,
-        request.route_family,
-        request.session_id,
-        request.source.clone(),
-    )
-    .map(|frame| match frame {
-        crate::protocol::kv::ParsedKvFrame::Op(message) => {
-            crate::domains::kv::KvClientFrame::Op(message)
-        }
-        crate::protocol::kv::ParsedKvFrame::Sub(message) => {
-            crate::domains::kv::KvClientFrame::Sub(message)
-        }
-    });
-    let client_request = crate::domains::kv::KvClientRequest::new(meta, parsed);
-    crate::runtime::Envelope::from_route(request.source, request.destination, client_request)
-}
-
-fn build_queue_request_envelope(request: DomainEnvelopeBuildRequest) -> crate::runtime::Envelope {
-    let ctx = frame_context(&request);
-    let meta = client_frame_meta(&request);
-    let parsed = crate::protocol::queue_codec::parse_frame(
-        &ctx,
-        &ctx.payload,
-        request.route_family,
-        request.session_id,
-        request.source.clone(),
-    )
-    .map(|frame| match frame {
-        crate::protocol::queue_codec::ParsedQueueFrame::Op(message) => {
-            crate::domains::queue::QueueClientFrame::Op(message)
-        }
-        crate::protocol::queue_codec::ParsedQueueFrame::Sub(message) => {
-            crate::domains::queue::QueueClientFrame::Sub(message)
-        }
-    });
-    let client_request = crate::domains::queue::QueueClientRequest::new(meta, parsed);
-    crate::runtime::Envelope::from_route(request.source, request.destination, client_request)
-}
-
-fn build_notice_request_envelope(request: DomainEnvelopeBuildRequest) -> crate::runtime::Envelope {
-    let ctx = frame_context(&request);
-    let meta = client_frame_meta(&request);
-    let parsed = crate::protocol::notice_codec::parse_request(
-        &ctx,
-        &ctx.payload,
-        request.route_family,
-        crate::session::SessionId(request.session_id),
-        request.source.clone(),
-    );
-    let client_request = crate::domains::notice::NoticeClientRequest::new(meta, parsed);
-    crate::runtime::Envelope::from_route(request.source, request.destination, client_request)
-}
-
-fn build_stream_request_envelope(request: DomainEnvelopeBuildRequest) -> crate::runtime::Envelope {
-    let ctx = frame_context(&request);
-    let meta = client_frame_meta(&request);
-    let parsed = crate::protocol::stream_codec::parse_request(
-        &ctx,
-        &ctx.payload,
-        request.route_family,
-        crate::session::SessionId(request.session_id),
-        request.source.clone(),
-    );
-    let client_request = crate::domains::stream::StreamClientRequest::new(meta, parsed);
-    crate::runtime::Envelope::from_route(request.source, request.destination, client_request)
-}
-
-fn build_rpc_request_envelope(request: DomainEnvelopeBuildRequest) -> crate::runtime::Envelope {
-    let DomainEnvelopeBuildRequest {
-        session_id,
-        channel_id,
-        route_family,
-        msg_type,
-        payload,
-        source,
-        destination,
-    } = request;
-    let ctx = crate::protocol::frame_context::FrameContext::new(
-        session_id,
-        channel_id,
-        msg_type,
-        payload,
-        route_family,
-    );
-    let meta = crate::runtime::ClientFrameMeta::new(
-        session_id,
-        crate::api::frame_adapter::client_channel_from_protocol(channel_id),
-        msg_type.as_u16(),
-        route_family,
-    );
-    let parsed = crate::protocol::rpc_codec::parse_request(&ctx, &ctx.payload, route_family);
-    let client_request =
-        crate::domains::rpc::RpcClientRequest::new_with_payload(meta, parsed, ctx.payload.clone());
-    crate::runtime::Envelope::from_route(source, destination, client_request)
-}
-
-fn build_lease_request_envelope(request: DomainEnvelopeBuildRequest) -> crate::runtime::Envelope {
-    let meta = client_frame_meta(&request);
-    let msg_type = request.msg_type.as_u16();
-
-    if matches!(
-        msg_type,
-        crate::protocol::lease_codec::msg_type::ACQUIRE
-            | crate::protocol::lease_codec::msg_type::RENEW
-            | crate::protocol::lease_codec::msg_type::RELEASE
-            | crate::protocol::lease_codec::msg_type::QUERY
-    ) {
-        let parsed = crate::protocol::lease_codec::parse_prepared_request(
-            msg_type,
-            request.route_family,
-            request.session_id,
-            &request.payload,
-        );
-        let client_request =
-            crate::domains::lease::protocol::PreparedLeaseClientRequest::new(meta, parsed);
-        return crate::runtime::Envelope::from_route(
-            request.source,
-            request.destination,
-            client_request,
-        );
-    }
-
-    let ctx = frame_context(&request);
-    let parsed = crate::protocol::lease_codec::parse_frame(
-        &ctx,
-        &ctx.payload,
-        request.route_family,
-        request.session_id,
-        request.source.clone(),
-    )
-    .map(|frame| match frame {
-        crate::protocol::lease_codec::ParsedLeaseFrame::Op(message) => {
-            crate::domains::lease::LeaseClientFrame::Op(message)
-        }
-        crate::protocol::lease_codec::ParsedLeaseFrame::Sub(message) => {
-            crate::domains::lease::LeaseClientFrame::Sub(message)
-        }
-    });
-    let client_request = crate::domains::lease::LeaseClientRequest::new(meta, parsed);
-    crate::runtime::Envelope::from_route(request.source, request.destination, client_request)
-}
-
-fn build_schedule_request_envelope(
-    request: DomainEnvelopeBuildRequest,
-) -> crate::runtime::Envelope {
-    let ctx = frame_context(&request);
-    let meta = client_frame_meta(&request);
-    let parsed = crate::protocol::schedule_codec::parse_request(
-        &ctx,
-        &ctx.payload,
-        request.route_family,
-        crate::session::SessionId(request.session_id),
-        request.source.clone(),
-    );
-    let client_request = crate::domains::schedule::ScheduleClientRequest::new(meta, parsed);
-    crate::runtime::Envelope::from_route(request.source, request.destination, client_request)
 }
 
 #[cfg(test)]

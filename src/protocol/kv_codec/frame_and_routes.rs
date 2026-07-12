@@ -1,7 +1,7 @@
 // KV domain TLV message types and codec
 
-use crate::domains::kv::KvError;
-use crate::domains::kv::{KvMessage, KvResponse, KvSubscriptionMessage, TxMode};
+use crate::dispatch::wire::kv::KvError;
+use crate::dispatch::wire::kv::{KvMessage, KvResponse, KvSubscriptionMessage, TxMode};
 use crate::protocol::frame_context::FrameContext;
 use crate::runtime::routing::{route_exact_triplet, Route, RouteAddress, RouteFamily};
 

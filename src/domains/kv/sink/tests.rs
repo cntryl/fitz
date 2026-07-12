@@ -1,12 +1,14 @@
 use super::*;
-use crate::protocol::error_codes;
-use crate::protocol::frame::ChannelId;
-use crate::protocol::tlv::MessageType;
+use crate::dispatch::protocol::error_codes;
+use crate::dispatch::protocol::frame::ChannelId;
+use crate::dispatch::protocol::tlv::MessageType;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::runtime::Mailbox;
 use bytes::{BufMut, Bytes};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+mod correctness;
 
 #[inline]
 fn usize_to_u32_saturating(value: usize) -> u32 {
@@ -161,7 +163,7 @@ fn should_record_kv_latency_samples_by_operation_kind() {
         FrameContext::new(
             session_id,
             ChannelId::Pub,
-            MessageType::new(crate::protocol::kv::msg_type::BEGIN),
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
             encode_kv_begin(kv_route, 1, 0),
             family,
         ),
@@ -176,7 +178,7 @@ fn should_record_kv_latency_samples_by_operation_kind() {
         FrameContext::new(
             session_id,
             ChannelId::Pub,
-            MessageType::new(crate::protocol::kv::msg_type::PUT),
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::PUT),
             encode_kv_put(tx_id, kv_route, b"user:1", b"alice"),
             family,
         ),
@@ -191,7 +193,7 @@ fn should_record_kv_latency_samples_by_operation_kind() {
         FrameContext::new(
             session_id,
             ChannelId::Pub,
-            MessageType::new(crate::protocol::kv::msg_type::COMMIT),
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::COMMIT),
             encode_kv_commit(tx_id, kv_route),
             family,
         ),
@@ -419,7 +421,7 @@ fn should_rebuild_kv_admin_transactions_from_actor_state() {
         FrameContext::new(
             session_id,
             ChannelId::Sub,
-            MessageType::new(crate::protocol::kv::msg_type::BEGIN),
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
             encode_kv_begin(kv_route, 1, 0),
             family,
         ),
@@ -572,7 +574,7 @@ fn should_route_kv_latency_snapshot_query_through_managed_actor() {
         FrameContext::new(
             session_id,
             ChannelId::Pub,
-            MessageType::new(crate::protocol::kv::msg_type::BEGIN),
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
             encode_kv_begin(kv_route, 1, 0),
             family,
         ),
@@ -586,7 +588,7 @@ fn should_route_kv_latency_snapshot_query_through_managed_actor() {
         FrameContext::new(
             session_id,
             ChannelId::Pub,
-            MessageType::new(crate::protocol::kv::msg_type::PUT),
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::PUT),
             encode_kv_put(tx_id, kv_route, b"user:1", b"alice"),
             family,
         ),
@@ -599,7 +601,7 @@ fn should_route_kv_latency_snapshot_query_through_managed_actor() {
         FrameContext::new(
             session_id,
             ChannelId::Pub,
-            MessageType::new(crate::protocol::kv::msg_type::COMMIT),
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::COMMIT),
             encode_kv_commit(tx_id, kv_route),
             family,
         ),
@@ -677,7 +679,7 @@ fn should_notify_kv_subscriber_given_committed_put() {
         FrameContext::new(
             watch_session_id,
             ChannelId::Pub,
-            MessageType::new(crate::protocol::kv::msg_type::SUBSCRIBE),
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::SUBSCRIBE),
             encode_kv_subscribe(kv_route),
             family,
         ),
@@ -692,7 +694,7 @@ fn should_notify_kv_subscriber_given_committed_put() {
         FrameContext::new(
             writer_session_id,
             ChannelId::Pub,
-            MessageType::new(crate::protocol::kv::msg_type::BEGIN),
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
             encode_kv_begin(kv_route, 1, 0),
             family,
         ),
@@ -707,7 +709,7 @@ fn should_notify_kv_subscriber_given_committed_put() {
         FrameContext::new(
             writer_session_id,
             ChannelId::Pub,
-            MessageType::new(crate::protocol::kv::msg_type::PUT),
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::PUT),
             encode_kv_put(tx_id, kv_route, b"user:1", b"alice"),
             family,
         ),
@@ -721,7 +723,7 @@ fn should_notify_kv_subscriber_given_committed_put() {
         FrameContext::new(
             writer_session_id,
             ChannelId::Pub,
-            MessageType::new(crate::protocol::kv::msg_type::COMMIT),
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::COMMIT),
             encode_kv_commit(tx_id, kv_route),
             family,
         ),
@@ -733,7 +735,7 @@ fn should_notify_kv_subscriber_given_committed_put() {
     let notify_frame = receive_frame(&watcher_mailbox, "KV notify envelope");
     assert_eq!(
         notify_frame.msg_type.as_u16(),
-        crate::protocol::kv::msg_type::NOTIFY
+        crate::dispatch::protocol::kv::msg_type::NOTIFY
     );
     let (delivered_subscription_id, delivered_route, mutation_count) =
         decode_kv_watch_delivery(&notify_frame);
@@ -767,7 +769,7 @@ fn should_not_notify_kv_subscriber_given_empty_commit() {
         FrameContext::new(
             watch_session_id,
             ChannelId::Pub,
-            MessageType::new(crate::protocol::kv::msg_type::SUBSCRIBE),
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::SUBSCRIBE),
             encode_kv_subscribe(kv_route),
             family,
         ),
@@ -782,7 +784,7 @@ fn should_not_notify_kv_subscriber_given_empty_commit() {
         FrameContext::new(
             writer_session_id,
             ChannelId::Pub,
-            MessageType::new(crate::protocol::kv::msg_type::BEGIN),
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
             encode_kv_begin(kv_route, 1, 0),
             family,
         ),
@@ -797,7 +799,7 @@ fn should_not_notify_kv_subscriber_given_empty_commit() {
         FrameContext::new(
             writer_session_id,
             ChannelId::Pub,
-            MessageType::new(crate::protocol::kv::msg_type::COMMIT),
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::COMMIT),
             encode_kv_commit(tx_id, kv_route),
             family,
         ),
@@ -834,7 +836,7 @@ fn should_remove_kv_subscription_given_unsubscribe() {
         FrameContext::new(
             watch_session_id,
             ChannelId::Pub,
-            MessageType::new(crate::protocol::kv::msg_type::SUBSCRIBE),
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::SUBSCRIBE),
             encode_kv_subscribe(kv_route),
             family,
         ),
@@ -849,7 +851,7 @@ fn should_remove_kv_subscription_given_unsubscribe() {
         FrameContext::new(
             watch_session_id,
             ChannelId::Pub,
-            MessageType::new(crate::protocol::kv::msg_type::UNSUBSCRIBE),
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::UNSUBSCRIBE),
             encode_kv_unsubscribe(kv_route),
             family,
         ),
@@ -863,7 +865,7 @@ fn should_remove_kv_subscription_given_unsubscribe() {
         FrameContext::new(
             writer_session_id,
             ChannelId::Pub,
-            MessageType::new(crate::protocol::kv::msg_type::BEGIN),
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
             encode_kv_begin(kv_route, 1, 0),
             family,
         ),
@@ -878,7 +880,7 @@ fn should_remove_kv_subscription_given_unsubscribe() {
         FrameContext::new(
             writer_session_id,
             ChannelId::Pub,
-            MessageType::new(crate::protocol::kv::msg_type::PUT),
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::PUT),
             encode_kv_put(tx_id, kv_route, b"user:1", b"alice"),
             family,
         ),
@@ -892,7 +894,7 @@ fn should_remove_kv_subscription_given_unsubscribe() {
         FrameContext::new(
             writer_session_id,
             ChannelId::Pub,
-            MessageType::new(crate::protocol::kv::msg_type::COMMIT),
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::COMMIT),
             encode_kv_commit(tx_id, kv_route),
             family,
         ),

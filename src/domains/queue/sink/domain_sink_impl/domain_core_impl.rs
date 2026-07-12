@@ -37,11 +37,11 @@ impl QueueDomainCore {
     ) {
         #[cfg(test)]
         {
-            let response_bytes = crate::protocol::queue_codec::encode_response(response);
+            let response_bytes = crate::dispatch::protocol::queue_codec::encode_response(response);
             let response_ctx = FrameContext::new(
                 meta.session_id,
                 test_protocol_channel_from_client(meta.channel),
-                crate::protocol::tlv::MessageType::new(meta.message_type),
+                crate::dispatch::protocol::tlv::MessageType::new(meta.message_type),
                 bytes::Bytes::from(response_bytes),
                 meta.route_family,
             );
@@ -137,7 +137,7 @@ impl QueueDomainCore {
     ) {
         #[cfg(test)]
         {
-            let payload = crate::protocol::queue_codec::encode_notify(
+            let payload = crate::dispatch::protocol::queue_codec::encode_notify(
                 subscription_id,
                 route,
                 QueueNotification {
@@ -148,9 +148,9 @@ impl QueueDomainCore {
             );
             let notify_ctx = FrameContext::new(
                 session_id,
-                crate::protocol::frame::ChannelId::Sub,
-                crate::protocol::tlv::MessageType::new(
-                    crate::protocol::queue_codec::msg_type::NOTIFY,
+                crate::dispatch::protocol::frame::ChannelId::Sub,
+                crate::dispatch::protocol::tlv::MessageType::new(
+                    crate::dispatch::protocol::queue_codec::msg_type::NOTIFY,
                 ),
                 bytes::Bytes::from(payload),
                 *subscriber.family(),
@@ -187,17 +187,33 @@ impl QueueDomainCore {
         notification: QueueReadyNotification,
     ) {
         let route = Self::queue_ready_route(key);
-        let families = self.families.lock();
-        if let Some(state) = families.get(&notification.family_id.as_u64()) {
-            state.for_each_matching_route(notification.family_id, route.as_str(), |subscription| {
-                self.route_queue_notify_to_subscription(
-                    subscription.session_id,
-                    subscription.subscription_id,
-                    &subscription.subscriber,
-                    &route,
-                    notification.counts,
+        let targets = {
+            let families = self.families.lock();
+            let mut targets = Vec::new();
+            if let Some(state) = families.get(&notification.family_id.as_u64()) {
+                state.for_each_matching_route(
+                    notification.family_id,
+                    route.as_str(),
+                    |subscription| {
+                        targets.push((
+                            subscription.session_id,
+                            subscription.subscription_id,
+                            subscription.subscriber.clone(),
+                        ));
+                    },
                 );
-            });
+            }
+            targets
+        };
+
+        for (session_id, subscription_id, subscriber) in targets {
+            self.route_queue_notify_to_subscription(
+                session_id,
+                subscription_id,
+                &subscriber,
+                &route,
+                notification.counts,
+            );
         }
     }
 
@@ -650,13 +666,17 @@ impl QueueDomainCore {
 #[cfg(test)]
 fn test_protocol_channel_from_client(
     channel: crate::runtime::ClientChannel,
-) -> crate::protocol::frame::ChannelId {
+) -> crate::dispatch::protocol::frame::ChannelId {
     match channel {
-        crate::runtime::ClientChannel::Control => crate::protocol::frame::ChannelId::Control,
-        crate::runtime::ClientChannel::Pub => crate::protocol::frame::ChannelId::Pub,
-        crate::runtime::ClientChannel::Sub => crate::protocol::frame::ChannelId::Sub,
-        crate::runtime::ClientChannel::Rpc => crate::protocol::frame::ChannelId::Rpc,
-        crate::runtime::ClientChannel::Lease => crate::protocol::frame::ChannelId::Lease,
-        crate::runtime::ClientChannel::Internal => crate::protocol::frame::ChannelId::Internal,
+        crate::runtime::ClientChannel::Control => {
+            crate::dispatch::protocol::frame::ChannelId::Control
+        }
+        crate::runtime::ClientChannel::Pub => crate::dispatch::protocol::frame::ChannelId::Pub,
+        crate::runtime::ClientChannel::Sub => crate::dispatch::protocol::frame::ChannelId::Sub,
+        crate::runtime::ClientChannel::Rpc => crate::dispatch::protocol::frame::ChannelId::Rpc,
+        crate::runtime::ClientChannel::Lease => crate::dispatch::protocol::frame::ChannelId::Lease,
+        crate::runtime::ClientChannel::Internal => {
+            crate::dispatch::protocol::frame::ChannelId::Internal
+        }
     }
 }

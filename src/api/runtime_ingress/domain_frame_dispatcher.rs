@@ -400,8 +400,8 @@ impl DomainFrameDispatcher<'_> {
         let policy = DOMAIN_DISPATCH_BACKPRESSURE_POLICY;
 
         loop {
-            let envelope = descriptor.build_request_envelope(
-                crate::api::runtime_ingress::domain_registry::DomainEnvelopeBuildRequest {
+            let envelope =
+                descriptor.build_request_envelope(crate::dispatch::DomainEnvelopeBuildRequest {
                     session_id,
                     channel_id,
                     route_family,
@@ -409,8 +409,7 @@ impl DomainFrameDispatcher<'_> {
                     payload: dispatch_payload.clone(),
                     source: source.clone(),
                     destination: addr.clone(),
-                },
-            );
+                });
 
             debug!(
                 session_id = session_id,

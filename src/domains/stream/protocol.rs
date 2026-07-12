@@ -3,7 +3,7 @@
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
+use crate::dispatch::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use crate::runtime::routing::{route_exact_quad, Route, RouteAddress, RouteFamily};
 use crate::runtime::ClientFrameMeta;
 

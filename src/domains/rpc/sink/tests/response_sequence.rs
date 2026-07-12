@@ -124,19 +124,22 @@ fn should_reject_out_of_order_worker_response_given_rpc_sink() {
         crate::benchkit::extract_single_tlv_field(&request_frame);
     let request_ctx = FrameContext::new(
         1,
-        crate::protocol::frame::ChannelId::Rpc,
-        crate::protocol::tlv::MessageType::new(request_msg_type),
+        crate::dispatch::protocol::frame::ChannelId::Rpc,
+        crate::dispatch::protocol::tlv::MessageType::new(request_msg_type),
         request_payload.clone(),
         family,
     );
-    let request =
-        match crate::protocol::rpc_codec::parse_request(&request_ctx, &request_payload, family)
-            .expect("parse rpc request")
-        {
-            crate::domains::rpc::protocol::RpcMessage::Request(request) => request,
-            other => panic!("expected rpc request, found {other:?}"),
-        };
-    let invalid_response_payload = crate::protocol::rpc_codec::encode_response_message(
+    let request = match crate::dispatch::protocol::rpc_codec::parse_request(
+        &request_ctx,
+        &request_payload,
+        family,
+    )
+    .expect("parse rpc request")
+    {
+        crate::domains::rpc::protocol::RpcMessage::Request(request) => request,
+        other => panic!("expected rpc request, found {other:?}"),
+    };
+    let invalid_response_payload = crate::dispatch::protocol::rpc_codec::encode_response_message(
         &crate::domains::rpc::protocol::RpcResponse::chunk(
             request.correlation_id,
             1,
@@ -157,8 +160,8 @@ fn should_reject_out_of_order_worker_response_given_rpc_sink() {
         request_addr,
         FrameContext::new(
             42,
-            crate::protocol::frame::ChannelId::Rpc,
-            crate::protocol::tlv::MessageType::new(303),
+            crate::dispatch::protocol::frame::ChannelId::Rpc,
+            crate::dispatch::protocol::tlv::MessageType::new(303),
             bytes::Bytes::from(invalid_response_payload),
             family,
         ),
@@ -177,7 +180,7 @@ fn should_reject_out_of_order_worker_response_given_rpc_sink() {
     assert!(error_response.stream_end);
     assert_rpc_code_error(
         error_response.body.as_ref(),
-        crate::protocol::error_codes::rpc::ERR_RPC_INVALID_SEQUENCE,
+        crate::dispatch::protocol::error_codes::rpc::ERR_RPC_INVALID_SEQUENCE,
         RPC_INVALID_SEQUENCE_ERROR,
     );
 
@@ -190,7 +193,7 @@ fn should_reject_out_of_order_worker_response_given_rpc_sink() {
     assert!(worker_error.stream_end);
     assert_rpc_code_error(
         worker_error.body.as_ref(),
-        crate::protocol::error_codes::rpc::ERR_RPC_INVALID_SEQUENCE,
+        crate::dispatch::protocol::error_codes::rpc::ERR_RPC_INVALID_SEQUENCE,
         RPC_INVALID_SEQUENCE_ERROR,
     );
 }
@@ -223,19 +226,22 @@ fn should_reject_duplicate_worker_response_chunk_given_rpc_sink() {
         crate::benchkit::extract_single_tlv_field(&request_frame);
     let request_ctx = FrameContext::new(
         1,
-        crate::protocol::frame::ChannelId::Rpc,
-        crate::protocol::tlv::MessageType::new(request_msg_type),
+        crate::dispatch::protocol::frame::ChannelId::Rpc,
+        crate::dispatch::protocol::tlv::MessageType::new(request_msg_type),
         request_payload.clone(),
         family,
     );
-    let request =
-        match crate::protocol::rpc_codec::parse_request(&request_ctx, &request_payload, family)
-            .expect("parse rpc request")
-        {
-            crate::domains::rpc::protocol::RpcMessage::Request(request) => request,
-            other => panic!("expected rpc request, found {other:?}"),
-        };
-    let first_response_payload = crate::protocol::rpc_codec::encode_response_message(
+    let request = match crate::dispatch::protocol::rpc_codec::parse_request(
+        &request_ctx,
+        &request_payload,
+        family,
+    )
+    .expect("parse rpc request")
+    {
+        crate::domains::rpc::protocol::RpcMessage::Request(request) => request,
+        other => panic!("expected rpc request, found {other:?}"),
+    };
+    let first_response_payload = crate::dispatch::protocol::rpc_codec::encode_response_message(
         &crate::domains::rpc::protocol::RpcResponse::chunk(
             request.correlation_id,
             0,
@@ -243,7 +249,7 @@ fn should_reject_duplicate_worker_response_chunk_given_rpc_sink() {
             false,
         ),
     );
-    let duplicate_response_payload = crate::protocol::rpc_codec::encode_response_message(
+    let duplicate_response_payload = crate::dispatch::protocol::rpc_codec::encode_response_message(
         &crate::domains::rpc::protocol::RpcResponse::chunk(
             request.correlation_id,
             0,
@@ -264,8 +270,8 @@ fn should_reject_duplicate_worker_response_chunk_given_rpc_sink() {
         request_addr.clone(),
         FrameContext::new(
             42,
-            crate::protocol::frame::ChannelId::Rpc,
-            crate::protocol::tlv::MessageType::new(303),
+            crate::dispatch::protocol::frame::ChannelId::Rpc,
+            crate::dispatch::protocol::tlv::MessageType::new(303),
             bytes::Bytes::from(first_response_payload),
             family,
         ),
@@ -276,8 +282,8 @@ fn should_reject_duplicate_worker_response_chunk_given_rpc_sink() {
         request_addr,
         FrameContext::new(
             42,
-            crate::protocol::frame::ChannelId::Rpc,
-            crate::protocol::tlv::MessageType::new(303),
+            crate::dispatch::protocol::frame::ChannelId::Rpc,
+            crate::dispatch::protocol::tlv::MessageType::new(303),
             bytes::Bytes::from(duplicate_response_payload),
             family,
         ),
@@ -298,7 +304,7 @@ fn should_reject_duplicate_worker_response_chunk_given_rpc_sink() {
     assert!(terminal_error.stream_end);
     assert_rpc_code_error(
         terminal_error.body.as_ref(),
-        crate::protocol::error_codes::rpc::ERR_RPC_INVALID_SEQUENCE,
+        crate::dispatch::protocol::error_codes::rpc::ERR_RPC_INVALID_SEQUENCE,
         RPC_INVALID_SEQUENCE_ERROR,
     );
 
@@ -311,7 +317,7 @@ fn should_reject_duplicate_worker_response_chunk_given_rpc_sink() {
     assert!(worker_error.stream_end);
     assert_rpc_code_error(
         worker_error.body.as_ref(),
-        crate::protocol::error_codes::rpc::ERR_RPC_INVALID_SEQUENCE,
+        crate::dispatch::protocol::error_codes::rpc::ERR_RPC_INVALID_SEQUENCE,
         RPC_INVALID_SEQUENCE_ERROR,
     );
 }

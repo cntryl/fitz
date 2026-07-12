@@ -79,11 +79,12 @@ impl<T: RoutedSubscription> RoutedSubscriptionSet<T> {
             let route = Route::from_ref(pattern);
             self.index
                 .insert(family_id, &route, SubscriptionId(subscription_id));
-            self.wildcard_subscription_count += 1;
-            *self
+            self.wildcard_subscription_count = self.wildcard_subscription_count.saturating_add(1);
+            let session_wildcards = self
                 .wildcard_subscription_counts
                 .entry(session_id)
-                .or_insert(0) += 1;
+                .or_insert(0);
+            *session_wildcards = session_wildcards.saturating_add(1);
         } else {
             self.exact_routes
                 .entry(pattern.to_string())
@@ -153,12 +154,12 @@ impl<T: RoutedSubscription> RoutedSubscriptionSet<T> {
         route: &str,
         mut visit: impl FnMut(&T),
     ) -> usize {
-        let mut matched = 0;
+        let mut matched = 0_usize;
 
         if let Some(exact_ids) = self.exact_routes.get(route) {
             for subscription_id in exact_ids {
                 if let Some(subscription) = self.subscriptions.get(subscription_id) {
-                    matched += 1;
+                    matched = matched.saturating_add(1);
                     visit(subscription);
                 }
             }
@@ -172,7 +173,7 @@ impl<T: RoutedSubscription> RoutedSubscriptionSet<T> {
             );
             for subscription_id in wildcard_matches {
                 if let Some(subscription) = self.subscriptions.get(&subscription_id.0) {
-                    matched += 1;
+                    matched = matched.saturating_add(1);
                     visit(subscription);
                 }
             }

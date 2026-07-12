@@ -177,6 +177,7 @@ impl RpcState {
         self.queued.insert(key, request);
     }
 
+    #[cfg(test)]
     pub(in crate::domains::rpc::sink) fn dispatch_or_queue_request(
         &mut self,
         request: crate::domains::rpc::protocol::RpcRequest,
@@ -186,12 +187,34 @@ impl RpcState {
         route_pending_capacity: usize,
         global_pending_capacity: usize,
     ) -> RpcRequestDispatch {
+        self.dispatch_or_queue_request_with_global_count(
+            request,
+            caller_session_id,
+            caller_inbox_addr,
+            request_timeout,
+            route_pending_capacity,
+            global_pending_capacity,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::domains::rpc::sink) fn dispatch_or_queue_request_with_global_count(
+        &mut self,
+        request: crate::domains::rpc::protocol::RpcRequest,
+        caller_session_id: u64,
+        caller_inbox_addr: RouteAddress,
+        request_timeout: std::time::Duration,
+        route_pending_capacity: usize,
+        global_pending_capacity: usize,
+        global_pending_count: Option<&std::sync::atomic::AtomicUsize>,
+    ) -> RpcRequestDispatch {
         let family = *caller_inbox_addr.family();
         if self.contains_correlation_in_family(family, &request.correlation_id) {
             return RpcRequestDispatch::Duplicate { request };
         }
 
-        let live_request_count = self.live_request_count();
+        let local_live_request_count = self.live_request_count();
         let route = request.route.clone();
         let Some(route_state) = self.routes.get_mut(&(family, route.clone())) else {
             return RpcRequestDispatch::NoWorkers { request };
@@ -201,19 +224,45 @@ impl RpcState {
             return RpcRequestDispatch::NoWorkers { request };
         }
 
-        if live_request_count >= global_pending_capacity {
-            return RpcRequestDispatch::GlobalCapacityFull { request };
+        let correlation_id = request.correlation_id;
+        let queued = route_state.has_queued_requests() || !route_state.has_available_worker();
+        if queued && route_state.queued_len() >= route_pending_capacity {
+            return RpcRequestDispatch::RouteCapacityFull { request };
         }
 
-        let correlation_id = request.correlation_id;
-        let action = if route_state.has_queued_requests() || !route_state.has_available_worker() {
-            if route_state.queued_len() >= route_pending_capacity {
-                return RpcRequestDispatch::RouteCapacityFull { request };
+        let reserved_global_capacity = if let Some(global_pending_count) = global_pending_count {
+            let mut current = global_pending_count.load(std::sync::atomic::Ordering::Acquire);
+            loop {
+                if current >= global_pending_capacity {
+                    return RpcRequestDispatch::GlobalCapacityFull { request };
+                }
+                match global_pending_count.compare_exchange_weak(
+                    current,
+                    current.saturating_add(1),
+                    std::sync::atomic::Ordering::AcqRel,
+                    std::sync::atomic::Ordering::Acquire,
+                ) {
+                    Ok(_) => break true,
+                    Err(observed) => current = observed,
+                }
             }
+        } else {
+            if local_live_request_count >= global_pending_capacity {
+                return RpcRequestDispatch::GlobalCapacityFull { request };
+            }
+            false
+        };
+
+        let action = if queued {
             route_state.enqueue_request(correlation_id);
             DispatchAction::Queue
         } else {
             let Some(worker) = route_state.claim_worker() else {
+                if reserved_global_capacity {
+                    if let Some(global_pending_count) = global_pending_count {
+                        global_pending_count.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+                    }
+                }
                 return RpcRequestDispatch::NoWorkers { request };
             };
             DispatchAction::Dispatch(worker)
@@ -238,7 +287,10 @@ impl RpcState {
                 RpcRequestDispatch::Queued {
                     route,
                     correlation_id,
-                    live_request_count: self.live_request_count(),
+                    live_request_count: global_pending_count.map_or_else(
+                        || local_live_request_count,
+                        |count| count.load(std::sync::atomic::Ordering::Acquire),
+                    ),
                 }
             }
             DispatchAction::Dispatch(worker) => {
@@ -256,7 +308,10 @@ impl RpcState {
                 RpcRequestDispatch::Immediate {
                     request,
                     worker,
-                    live_request_count: self.live_request_count(),
+                    live_request_count: global_pending_count.map_or_else(
+                        || local_live_request_count,
+                        |count| count.load(std::sync::atomic::Ordering::Acquire),
+                    ),
                 }
             }
         }

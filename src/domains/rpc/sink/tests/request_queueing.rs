@@ -116,8 +116,8 @@ fn should_reject_duplicate_live_correlation_given_rpc_sink() {
         0,
     ));
     let correlation_id = uuid::Uuid::new_v4();
-    let mut payload_encoder = crate::protocol::payload_codec::PayloadEncoder::new();
-    let caller_one_payload = crate::protocol::rpc_codec::encode_request_into(
+    let mut payload_encoder = crate::dispatch::protocol::payload_codec::PayloadEncoder::new();
+    let caller_one_payload = crate::dispatch::protocol::rpc_codec::encode_request_into(
         &crate::domains::rpc::protocol::RpcRequest::new(
             family,
             correlation_id,
@@ -126,7 +126,7 @@ fn should_reject_duplicate_live_correlation_given_rpc_sink() {
         ),
         &mut payload_encoder,
     );
-    let caller_two_payload = crate::protocol::rpc_codec::encode_request_into(
+    let caller_two_payload = crate::dispatch::protocol::rpc_codec::encode_request_into(
         &crate::domains::rpc::protocol::RpcRequest::new(
             family,
             correlation_id,
@@ -142,8 +142,8 @@ fn should_reject_duplicate_live_correlation_given_rpc_sink() {
         request_addr.clone(),
         FrameContext::new(
             1,
-            crate::protocol::frame::ChannelId::Rpc,
-            crate::protocol::tlv::MessageType::new(302),
+            crate::dispatch::protocol::frame::ChannelId::Rpc,
+            crate::dispatch::protocol::tlv::MessageType::new(302),
             bytes::Bytes::from(caller_one_payload),
             family,
         ),
@@ -154,8 +154,8 @@ fn should_reject_duplicate_live_correlation_given_rpc_sink() {
         request_addr,
         FrameContext::new(
             2,
-            crate::protocol::frame::ChannelId::Rpc,
-            crate::protocol::tlv::MessageType::new(302),
+            crate::dispatch::protocol::frame::ChannelId::Rpc,
+            crate::dispatch::protocol::tlv::MessageType::new(302),
             bytes::Bytes::from(caller_two_payload),
             family,
         ),
@@ -172,7 +172,7 @@ fn should_reject_duplicate_live_correlation_given_rpc_sink() {
     assert_rpc_terminal_code_error(
         &caller_two_frames[0],
         correlation_id,
-        crate::protocol::error_codes::rpc::ERR_RPC_DUPLICATE_CORRELATION,
+        crate::dispatch::protocol::error_codes::rpc::ERR_RPC_DUPLICATE_CORRELATION,
         RPC_DUPLICATE_CORRELATION_ERROR,
     );
 
@@ -229,15 +229,15 @@ fn should_queue_request_when_worker_is_busy_given_rpc_sink() {
         bytes::Bytes::from_static(b"second"),
     );
     let caller_one_payload = {
-        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::new();
-        bytes::Bytes::from(crate::protocol::rpc_codec::encode_request_into(
+        let mut encoder = crate::dispatch::protocol::payload_codec::PayloadEncoder::new();
+        bytes::Bytes::from(crate::dispatch::protocol::rpc_codec::encode_request_into(
             &caller_one_request,
             &mut encoder,
         ))
     };
     let caller_two_payload = {
-        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::new();
-        bytes::Bytes::from(crate::protocol::rpc_codec::encode_request_into(
+        let mut encoder = crate::dispatch::protocol::payload_codec::PayloadEncoder::new();
+        bytes::Bytes::from(crate::dispatch::protocol::rpc_codec::encode_request_into(
             &caller_two_request,
             &mut encoder,
         ))
@@ -249,8 +249,8 @@ fn should_queue_request_when_worker_is_busy_given_rpc_sink() {
         request_addr.clone(),
         FrameContext::new(
             1,
-            crate::protocol::frame::ChannelId::Rpc,
-            crate::protocol::tlv::MessageType::new(302),
+            crate::dispatch::protocol::frame::ChannelId::Rpc,
+            crate::dispatch::protocol::tlv::MessageType::new(302),
             caller_one_payload.clone(),
             family,
         ),
@@ -261,8 +261,8 @@ fn should_queue_request_when_worker_is_busy_given_rpc_sink() {
         request_addr,
         FrameContext::new(
             2,
-            crate::protocol::frame::ChannelId::Rpc,
-            crate::protocol::tlv::MessageType::new(302),
+            crate::dispatch::protocol::frame::ChannelId::Rpc,
+            crate::dispatch::protocol::tlv::MessageType::new(302),
             caller_two_payload.clone(),
             family,
         ),
@@ -332,20 +332,20 @@ fn should_dispatch_queued_request_after_terminal_response_given_rpc_sink() {
         bytes::Bytes::from_static(b"second"),
     );
     let caller_one_payload = {
-        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::new();
-        bytes::Bytes::from(crate::protocol::rpc_codec::encode_request_into(
+        let mut encoder = crate::dispatch::protocol::payload_codec::PayloadEncoder::new();
+        bytes::Bytes::from(crate::dispatch::protocol::rpc_codec::encode_request_into(
             &caller_one_request,
             &mut encoder,
         ))
     };
     let caller_two_payload = {
-        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::new();
-        bytes::Bytes::from(crate::protocol::rpc_codec::encode_request_into(
+        let mut encoder = crate::dispatch::protocol::payload_codec::PayloadEncoder::new();
+        bytes::Bytes::from(crate::dispatch::protocol::rpc_codec::encode_request_into(
             &caller_two_request,
             &mut encoder,
         ))
     };
-    let response_payload = crate::protocol::rpc_codec::encode_response_message(
+    let response_payload = crate::dispatch::protocol::rpc_codec::encode_response_message(
         &crate::domains::rpc::protocol::RpcResponse::single(
             caller_one_request.correlation_id,
             bytes::Bytes::from_static(b"ok"),
@@ -358,8 +358,8 @@ fn should_dispatch_queued_request_after_terminal_response_given_rpc_sink() {
         request_addr.clone(),
         FrameContext::new(
             1,
-            crate::protocol::frame::ChannelId::Rpc,
-            crate::protocol::tlv::MessageType::new(302),
+            crate::dispatch::protocol::frame::ChannelId::Rpc,
+            crate::dispatch::protocol::tlv::MessageType::new(302),
             caller_one_payload.clone(),
             family,
         ),
@@ -370,8 +370,8 @@ fn should_dispatch_queued_request_after_terminal_response_given_rpc_sink() {
         request_addr.clone(),
         FrameContext::new(
             2,
-            crate::protocol::frame::ChannelId::Rpc,
-            crate::protocol::tlv::MessageType::new(302),
+            crate::dispatch::protocol::frame::ChannelId::Rpc,
+            crate::dispatch::protocol::tlv::MessageType::new(302),
             caller_two_payload.clone(),
             family,
         ),
@@ -382,8 +382,8 @@ fn should_dispatch_queued_request_after_terminal_response_given_rpc_sink() {
         request_addr,
         FrameContext::new(
             42,
-            crate::protocol::frame::ChannelId::Rpc,
-            crate::protocol::tlv::MessageType::new(303),
+            crate::dispatch::protocol::frame::ChannelId::Rpc,
+            crate::dispatch::protocol::tlv::MessageType::new(303),
             bytes::Bytes::from(response_payload),
             family,
         ),
@@ -458,8 +458,8 @@ fn should_reject_request_when_route_queue_capacity_reached_given_rpc_sink() {
     );
     sink.register_worker_for_tests(test_rpc_worker(family, &request_route, 42));
     let caller_one_payload = {
-        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::new();
-        bytes::Bytes::from(crate::protocol::rpc_codec::encode_request_into(
+        let mut encoder = crate::dispatch::protocol::payload_codec::PayloadEncoder::new();
+        bytes::Bytes::from(crate::dispatch::protocol::rpc_codec::encode_request_into(
             &crate::domains::rpc::protocol::RpcRequest::new(
                 family,
                 uuid::Uuid::new_v4(),
@@ -470,8 +470,8 @@ fn should_reject_request_when_route_queue_capacity_reached_given_rpc_sink() {
         ))
     };
     let caller_two_payload = {
-        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::new();
-        bytes::Bytes::from(crate::protocol::rpc_codec::encode_request_into(
+        let mut encoder = crate::dispatch::protocol::payload_codec::PayloadEncoder::new();
+        bytes::Bytes::from(crate::dispatch::protocol::rpc_codec::encode_request_into(
             &crate::domains::rpc::protocol::RpcRequest::new(
                 family,
                 uuid::Uuid::new_v4(),
@@ -488,8 +488,8 @@ fn should_reject_request_when_route_queue_capacity_reached_given_rpc_sink() {
         bytes::Bytes::from_static(b"third"),
     );
     let caller_three_payload = {
-        let mut encoder = crate::protocol::payload_codec::PayloadEncoder::new();
-        bytes::Bytes::from(crate::protocol::rpc_codec::encode_request_into(
+        let mut encoder = crate::dispatch::protocol::payload_codec::PayloadEncoder::new();
+        bytes::Bytes::from(crate::dispatch::protocol::rpc_codec::encode_request_into(
             &caller_three_request,
             &mut encoder,
         ))
@@ -501,8 +501,8 @@ fn should_reject_request_when_route_queue_capacity_reached_given_rpc_sink() {
         request_addr.clone(),
         FrameContext::new(
             1,
-            crate::protocol::frame::ChannelId::Rpc,
-            crate::protocol::tlv::MessageType::new(302),
+            crate::dispatch::protocol::frame::ChannelId::Rpc,
+            crate::dispatch::protocol::tlv::MessageType::new(302),
             caller_one_payload,
             family,
         ),
@@ -513,8 +513,8 @@ fn should_reject_request_when_route_queue_capacity_reached_given_rpc_sink() {
         request_addr.clone(),
         FrameContext::new(
             2,
-            crate::protocol::frame::ChannelId::Rpc,
-            crate::protocol::tlv::MessageType::new(302),
+            crate::dispatch::protocol::frame::ChannelId::Rpc,
+            crate::dispatch::protocol::tlv::MessageType::new(302),
             caller_two_payload,
             family,
         ),
@@ -525,8 +525,8 @@ fn should_reject_request_when_route_queue_capacity_reached_given_rpc_sink() {
         request_addr,
         FrameContext::new(
             3,
-            crate::protocol::frame::ChannelId::Rpc,
-            crate::protocol::tlv::MessageType::new(302),
+            crate::dispatch::protocol::frame::ChannelId::Rpc,
+            crate::dispatch::protocol::tlv::MessageType::new(302),
             caller_three_payload,
             family,
         ),
@@ -548,7 +548,7 @@ fn should_reject_request_when_route_queue_capacity_reached_given_rpc_sink() {
     assert_rpc_terminal_code_error(
         &caller_three_frames[0],
         caller_three_request.correlation_id,
-        crate::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
+        crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
         RPC_BACKPRESSURE_ERROR,
     );
 }
@@ -610,18 +610,21 @@ fn should_reject_request_when_worker_disconnects_before_dispatch_given_missing_w
         crate::benchkit::extract_single_tlv_field(&request_frame);
     let request_ctx = FrameContext::new(
         1,
-        crate::protocol::frame::ChannelId::Rpc,
-        crate::protocol::tlv::MessageType::new(request_msg_type),
+        crate::dispatch::protocol::frame::ChannelId::Rpc,
+        crate::dispatch::protocol::tlv::MessageType::new(request_msg_type),
         request_payload.clone(),
         family,
     );
-    let request =
-        match crate::protocol::rpc_codec::parse_request(&request_ctx, &request_payload, family)
-            .expect("parse rpc request")
-        {
-            crate::domains::rpc::protocol::RpcMessage::Request(request) => request,
-            other => panic!("expected rpc request, found {other:?}"),
-        };
+    let request = match crate::dispatch::protocol::rpc_codec::parse_request(
+        &request_ctx,
+        &request_payload,
+        family,
+    )
+    .expect("parse rpc request")
+    {
+        crate::domains::rpc::protocol::RpcMessage::Request(request) => request,
+        other => panic!("expected rpc request, found {other:?}"),
+    };
 
     // Act
     sink.deliver(Envelope::from_route(
@@ -639,7 +642,7 @@ fn should_reject_request_when_worker_disconnects_before_dispatch_given_missing_w
     assert_rpc_terminal_code_error(
         &reply_frames[0],
         request.correlation_id,
-        crate::protocol::error_codes::rpc::ERR_WORKER_NOT_FOUND,
+        crate::dispatch::protocol::error_codes::rpc::ERR_WORKER_NOT_FOUND,
         RPC_WORKER_NOT_FOUND_ERROR,
     );
 }
@@ -678,19 +681,22 @@ fn should_forward_response_to_original_request_source_given_noncanonical_inbox_r
         crate::benchkit::extract_single_tlv_field(&request_frame);
     let request_ctx = FrameContext::new(
         1,
-        crate::protocol::frame::ChannelId::Rpc,
-        crate::protocol::tlv::MessageType::new(request_msg_type),
+        crate::dispatch::protocol::frame::ChannelId::Rpc,
+        crate::dispatch::protocol::tlv::MessageType::new(request_msg_type),
         request_payload.clone(),
         family,
     );
-    let request =
-        match crate::protocol::rpc_codec::parse_request(&request_ctx, &request_payload, family)
-            .expect("parse rpc request")
-        {
-            crate::domains::rpc::protocol::RpcMessage::Request(request) => request,
-            other => panic!("expected rpc request, found {other:?}"),
-        };
-    let response_payload = crate::protocol::rpc_codec::encode_response_message(
+    let request = match crate::dispatch::protocol::rpc_codec::parse_request(
+        &request_ctx,
+        &request_payload,
+        family,
+    )
+    .expect("parse rpc request")
+    {
+        crate::domains::rpc::protocol::RpcMessage::Request(request) => request,
+        other => panic!("expected rpc request, found {other:?}"),
+    };
+    let response_payload = crate::dispatch::protocol::rpc_codec::encode_response_message(
         &crate::domains::rpc::protocol::RpcResponse::single(
             request.correlation_id,
             bytes::Bytes::from_static(b"ok"),
@@ -709,8 +715,8 @@ fn should_forward_response_to_original_request_source_given_noncanonical_inbox_r
         request_addr,
         FrameContext::new(
             42,
-            crate::protocol::frame::ChannelId::Rpc,
-            crate::protocol::tlv::MessageType::new(303),
+            crate::dispatch::protocol::frame::ChannelId::Rpc,
+            crate::dispatch::protocol::tlv::MessageType::new(303),
             bytes::Bytes::from(response_payload),
             family,
         ),

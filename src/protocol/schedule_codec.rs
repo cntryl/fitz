@@ -3,7 +3,7 @@
 //! Encodes and decodes TLV messages for schedule definition management and
 //! ephemeral live notifications.
 
-use crate::domains::schedule::{ScheduleCreateEntry, ScheduleMessage, ScheduleResponse};
+use crate::dispatch::wire::schedule::{ScheduleCreateEntry, ScheduleMessage, ScheduleResponse};
 use crate::protocol::error_codes::schedule as schedule_error_codes;
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
@@ -305,7 +305,7 @@ pub fn encode_notify_into(
 #[cfg(test)]
 mod tests {
     use super::{encode_notify, encode_response, extract_batch_auth_routes};
-    use crate::domains::schedule::ScheduleResponse;
+    use crate::dispatch::wire::schedule::ScheduleResponse;
     use crate::protocol::error_codes::schedule as schedule_error_codes;
     use crate::protocol::payload_codec::PayloadEncoder;
 

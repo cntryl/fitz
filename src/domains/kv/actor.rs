@@ -230,10 +230,16 @@ impl KvActor {
             TxMode::ReadWrite => TransactionMode::ReadWrite,
         };
 
+        let Some(next_tx_id) = self.next_tx_id.checked_add(1) else {
+            return KvResponse::Error {
+                error: KvError::InvalidRequest("transaction ID space exhausted".to_string()),
+            };
+        };
+
         match self.store.begin_tx(cf, tx_mode) {
             Ok(tx) => {
                 let tx_id = self.next_tx_id;
-                self.next_tx_id += 1;
+                self.next_tx_id = next_tx_id;
                 let scoped_prefix = Self::realm_resource_prefix(&realm, &area, &resource);
 
                 tracing::trace!(
@@ -363,7 +369,7 @@ impl KvActor {
 
         match active.tx.put(scoped_key, value.to_vec(), None) {
             Ok(()) => {
-                active.mutation_count += 1;
+                active.mutation_count = active.mutation_count.saturating_add(1);
                 active
                     .inventory_delta
                     .record_key_change(key, before_bytes, after_bytes);
@@ -407,7 +413,7 @@ impl KvActor {
                 // Key doesn't exist, proceed with insert
                 match active.tx.put(scoped_key, value.to_vec(), None) {
                     Ok(()) => {
-                        active.mutation_count += 1;
+                        active.mutation_count = active.mutation_count.saturating_add(1);
                         active.inventory_delta.record_key_change(
                             key,
                             None,
@@ -455,7 +461,7 @@ impl KvActor {
 
         match active.tx.delete(scoped_key) {
             Ok(()) => {
-                active.mutation_count += 1;
+                active.mutation_count = active.mutation_count.saturating_add(1);
                 active
                     .inventory_delta
                     .record_key_change(key, before_bytes, None);
@@ -497,7 +503,7 @@ impl KvActor {
 
         match active.tx.delete_range(scoped_start, scoped_end) {
             Ok(()) => {
-                active.mutation_count += 1;
+                active.mutation_count = active.mutation_count.saturating_add(1);
                 active.inventory_delta.mark_incomplete();
                 KvResponse::DeleteRangeOk
             }

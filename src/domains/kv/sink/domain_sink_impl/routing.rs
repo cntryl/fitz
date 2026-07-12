@@ -2,7 +2,7 @@ use super::super::model::{DeliveryError, Envelope, KvDomainRuntime, KvResourceLo
 #[cfg(test)]
 use super::test_channels::test_protocol_channel_from_client;
 #[cfg(test)]
-use crate::protocol::frame_context::FrameContext;
+use crate::dispatch::protocol::frame_context::FrameContext;
 
 impl KvDomainRuntime<'_> {
     fn kv_route_for_lock(resource_key: &KvResourceLockKey) -> crate::runtime::routing::Route {
@@ -22,15 +22,17 @@ impl KvDomainRuntime<'_> {
     ) {
         #[cfg(test)]
         {
-            let payload = crate::protocol::kv::encode_notify(
+            let payload = crate::dispatch::protocol::kv::encode_notify(
                 subscription_id,
                 route,
                 crate::domains::kv::KvNotification { mutation_count },
             );
             let notify_ctx = FrameContext::new(
                 session_id,
-                crate::protocol::frame::ChannelId::Sub,
-                crate::protocol::tlv::MessageType::new(crate::protocol::kv::msg_type::NOTIFY),
+                crate::dispatch::protocol::frame::ChannelId::Sub,
+                crate::dispatch::protocol::tlv::MessageType::new(
+                    crate::dispatch::protocol::kv::msg_type::NOTIFY,
+                ),
                 bytes::Bytes::from(payload),
                 *subscriber.family(),
             );
@@ -88,7 +90,7 @@ impl KvDomainRuntime<'_> {
     ) -> Result<(), DeliveryError> {
         #[cfg(test)]
         let response_ctx = {
-            let response_bytes = crate::protocol::kv::encode_response(response);
+            let response_bytes = crate::dispatch::protocol::kv::encode_response(response);
             tracing::trace!(
                 domain = "kv",
                 session = meta.session_id,
@@ -99,7 +101,7 @@ impl KvDomainRuntime<'_> {
             FrameContext::new(
                 meta.session_id,
                 test_protocol_channel_from_client(meta.channel),
-                crate::protocol::tlv::MessageType::new(meta.message_type),
+                crate::dispatch::protocol::tlv::MessageType::new(meta.message_type),
                 bytes::Bytes::from(response_bytes),
                 meta.route_family,
             )

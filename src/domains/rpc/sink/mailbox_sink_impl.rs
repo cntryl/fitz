@@ -10,11 +10,35 @@ use crate::runtime::{Actor, Context};
 
 impl MailboxSink for RpcDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        self.deliver_to_actor(envelope, false)
+        if !self.actor.is_running()
+            || self
+                .family_runtime
+                .as_ref()
+                .is_some_and(|runtime| !runtime.is_running())
+        {
+            return Err(DeliveryError::ActorStopped);
+        }
+        if self.family_runtime.is_some() {
+            self.deliver_to_family(envelope, false)
+        } else {
+            self.deliver_to_actor(envelope, false)
+        }
     }
 
     fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        self.deliver_to_actor(envelope, true)
+        if !self.actor.is_running()
+            || self
+                .family_runtime
+                .as_ref()
+                .is_some_and(|runtime| !runtime.is_running())
+        {
+            return Err(DeliveryError::ActorStopped);
+        }
+        if self.family_runtime.is_some() {
+            self.deliver_to_family(envelope, true)
+        } else {
+            self.deliver_to_actor(envelope, true)
+        }
     }
 }
 
@@ -66,6 +90,50 @@ impl Actor for RpcDomainActor {
 }
 
 impl RpcDomainSink {
+    fn deliver_to_family(
+        &self,
+        envelope: Envelope,
+        high_priority: bool,
+    ) -> Result<(), DeliveryError> {
+        let Some(runtime) = self.family_runtime.as_ref() else {
+            return Err(DeliveryError::ActorStopped);
+        };
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        let family = *envelope.destination().family();
+        let command = RpcDomainCommand::Deliver(envelope, reply_tx);
+        let lane = if high_priority {
+            crate::runtime::FamilyActorLane::Control
+        } else {
+            crate::runtime::FamilyActorLane::Normal
+        };
+        runtime
+            .try_enqueue(family, lane, command)
+            .map_err(Self::family_enqueue_error)?;
+
+        // Family delivery is called synchronously by the async transport edge.
+        // Client responses are routed by the actor itself; waiting here would
+        // block a Tokio worker while the synchronous domain actor runs.
+        drop(reply_rx);
+        Ok(())
+    }
+
+    fn family_enqueue_error(error: crate::runtime::FamilyActorEnqueueError) -> DeliveryError {
+        match error {
+            crate::runtime::FamilyActorEnqueueError::NormalLaneFull => DeliveryError::MailboxFull {
+                capacity: crate::runtime::FAMILY_ACTOR_NORMAL_LANE_CAPACITY,
+                current_len: crate::runtime::FAMILY_ACTOR_NORMAL_LANE_CAPACITY,
+            },
+            crate::runtime::FamilyActorEnqueueError::ControlLaneFull => {
+                DeliveryError::HighLaneFull {
+                    capacity: crate::runtime::FAMILY_ACTOR_CONTROL_LANE_CAPACITY,
+                    current_len: crate::runtime::FAMILY_ACTOR_CONTROL_LANE_CAPACITY,
+                }
+            }
+            crate::runtime::FamilyActorEnqueueError::UnknownFamily
+            | crate::runtime::FamilyActorEnqueueError::ActorStopped => DeliveryError::ActorStopped,
+        }
+    }
+
     fn deliver_to_actor(
         &self,
         envelope: Envelope,
@@ -97,15 +165,39 @@ impl RpcDomainRuntime<'_> {
         let request = Self::extract_request(envelope)?;
         let meta = request.meta;
         let request_started = self.record_request_start();
+
+        if !Self::valid_request_envelope(envelope, meta) {
+            let response_meta = Self::response_meta_for_source(envelope, meta);
+            self.route_rpc_client_response(
+                envelope,
+                response_meta,
+                &RpcClientResponseBody::Error("route family mismatch".to_string()),
+            );
+            return Ok(());
+        }
+
         Self::log_parse_start(meta);
 
-        let rpc_msg = self.parse_request_message(
+        let Some(rpc_msg) = self.parse_request_message(
             envelope,
             meta,
             request.message,
             &request.raw_payload,
             request_started,
-        )?;
+        ) else {
+            return Ok(());
+        };
+
+        if !Self::valid_rpc_message(envelope, meta, &rpc_msg) {
+            let response_meta = Self::response_meta_for_source(envelope, meta);
+            self.route_rpc_client_response(
+                envelope,
+                response_meta,
+                &RpcClientResponseBody::Error("route family mismatch".to_string()),
+            );
+            return Ok(());
+        }
+
         let (response, snapshot_policy, request_failed) =
             self.handle_rpc_message(envelope, &meta, rpc_msg);
 
@@ -225,13 +317,15 @@ impl RpcDomainRuntime<'_> {
         let mut state = self.state.lock();
         let state_wait_us = state_wait_start.map_or(0, Self::elapsed_micros_u64);
         let state_hold_start = metrics_enabled.then(Instant::now);
-        let dispatch = state.dispatch_or_queue_request(
+        let dispatch = state.dispatch_or_queue_request_with_global_count(
             req,
             meta.session_id,
             caller_inbox_addr,
             self.request_timeout,
             self.route_pending_capacity,
             RPC_MAX_PENDING_REQUESTS,
+            self.enforce_global_pending_count
+                .then_some(self.global_pending_count.as_ref()),
         );
         let state_hold_us = state_hold_start.map_or(0, Self::elapsed_micros_u64);
         drop(state);
@@ -303,7 +397,7 @@ impl RpcDomainRuntime<'_> {
             envelope,
             *meta,
             &req,
-            crate::protocol::error_codes::rpc::ERR_RPC_DUPLICATE_CORRELATION,
+            crate::dispatch::protocol::error_codes::rpc::ERR_RPC_DUPLICATE_CORRELATION,
             RPC_DUPLICATE_CORRELATION_ERROR,
         )
     }
@@ -320,7 +414,7 @@ impl RpcDomainRuntime<'_> {
             envelope,
             *meta,
             &req,
-            crate::protocol::error_codes::rpc::ERR_ROUTE_NOT_REGISTERED,
+            crate::dispatch::protocol::error_codes::rpc::ERR_ROUTE_NOT_REGISTERED,
             RPC_NO_WORKERS_ERROR,
         )
     }
@@ -344,7 +438,7 @@ impl RpcDomainRuntime<'_> {
             envelope,
             *meta,
             &req,
-            crate::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
+            crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
             RPC_BACKPRESSURE_ERROR,
         )
     }
@@ -368,7 +462,7 @@ impl RpcDomainRuntime<'_> {
             envelope,
             *meta,
             &req,
-            crate::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
+            crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
             RPC_BACKPRESSURE_ERROR,
         )
     }
@@ -472,7 +566,7 @@ impl RpcDomainRuntime<'_> {
             envelope,
             *meta,
             &req,
-            crate::protocol::error_codes::rpc::ERR_WORKER_NOT_FOUND,
+            crate::dispatch::protocol::error_codes::rpc::ERR_WORKER_NOT_FOUND,
             RPC_WORKER_NOT_FOUND_ERROR,
         )
     }
@@ -500,7 +594,7 @@ impl RpcDomainRuntime<'_> {
             envelope,
             *meta,
             &req,
-            crate::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
+            crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
             RPC_BACKPRESSURE_ERROR,
         )
     }
@@ -577,9 +671,9 @@ impl RpcDomainRuntime<'_> {
         message: Result<crate::domains::rpc::protocol::RpcMessage, String>,
         raw_payload: &[u8],
         request_started: Option<Instant>,
-    ) -> Result<crate::domains::rpc::protocol::RpcMessage, DeliveryError> {
+    ) -> Option<crate::domains::rpc::protocol::RpcMessage> {
         match message {
-            Ok(msg) => Ok(msg),
+            Ok(msg) => Some(msg),
             Err(e) => {
                 if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started)
                 {
@@ -588,19 +682,65 @@ impl RpcDomainRuntime<'_> {
                 tracing::warn!(domain = "rpc", error = %e, "Failed to parse RPC message");
                 if meta.message_type == 302 {
                     if let Ok(correlation_id) =
-                        crate::protocol::rpc_codec::extract_request_correlation_id(raw_payload)
+                        crate::dispatch::protocol::rpc_codec::extract_request_correlation_id(
+                            raw_payload,
+                        )
                     {
                         self.route_rpc_terminal_error_response(
                             envelope,
-                            meta,
+                            Self::response_meta_for_source(envelope, meta),
                             correlation_id,
-                            crate::protocol::error_codes::rpc::ERR_BACKEND_ERROR,
+                            crate::dispatch::protocol::error_codes::rpc::ERR_BACKEND_ERROR,
                             "RPC request parse failed",
                         );
-                        return Err(DeliveryError::ActorStopped);
+                        return None;
                     }
                 }
-                Err(DeliveryError::ActorStopped)
+                self.route_rpc_client_response(
+                    envelope,
+                    Self::response_meta_for_source(envelope, meta),
+                    &RpcClientResponseBody::Error("RPC message parse failed".to_string()),
+                );
+                None
+            }
+        }
+    }
+
+    fn valid_request_envelope(envelope: &Envelope, meta: crate::runtime::ClientFrameMeta) -> bool {
+        meta.route_family == *envelope.destination().family()
+            && envelope
+                .source()
+                .is_none_or(|source| *source.family() == meta.route_family)
+    }
+
+    fn response_meta_for_source(
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+    ) -> crate::runtime::ClientFrameMeta {
+        envelope.source().map_or(meta, |source| {
+            let mut response_meta = meta;
+            response_meta.route_family = *source.family();
+            response_meta
+        })
+    }
+
+    fn valid_rpc_message(
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+        message: &crate::domains::rpc::protocol::RpcMessage,
+    ) -> bool {
+        use crate::domains::rpc::protocol::RpcMessage;
+
+        match message {
+            RpcMessage::RegisterWorker { worker_addr, .. }
+            | RpcMessage::UnregisterWorker { worker_addr } => {
+                *worker_addr.family() == meta.route_family
+            }
+            RpcMessage::Request(request) => request.family_id == meta.route_family,
+            RpcMessage::Response(_) => true,
+            RpcMessage::Deliver(_) => {
+                meta.channel == crate::runtime::ClientChannel::Internal
+                    && envelope.source().is_none()
             }
         }
     }

@@ -117,10 +117,10 @@ impl ScheduleSubscriptionSet {
             return 0;
         };
 
-        let mut matched = 0;
+        let mut matched = 0_usize;
         for subscription_id in subscription_ids {
             if let Some(subscription) = self.subscriptions.get(subscription_id) {
-                matched += 1;
+                matched = matched.saturating_add(1);
                 visit(subscription);
             }
         }

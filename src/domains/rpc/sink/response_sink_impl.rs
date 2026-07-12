@@ -4,11 +4,11 @@ use super::state_model::{
     RpcPendingResponseDisposition, RpcQueuedDispatch, RpcState, RPC_CORRELATION_NOT_FOUND_ERROR,
     RPC_INVALID_SEQUENCE_ERROR, RPC_WRONG_WORKER_ERROR,
 };
+#[cfg(test)]
+use crate::dispatch::protocol::frame_context::FrameContext;
 use crate::domains::rpc::protocol::RpcResponse;
 #[cfg(not(test))]
 use crate::domains::rpc::{RpcClientForwardedResponse, RpcClientForwardedResponseBody};
-#[cfg(test)]
-use crate::protocol::frame_context::FrameContext;
 
 struct ResponseStateContext<'a> {
     envelope: &'a Envelope,
@@ -109,7 +109,7 @@ impl RpcDomainRuntime<'_> {
                 caller_session_id: meta.session_id,
                 caller_inbox_addr: worker_inbox_addr,
             }],
-            crate::protocol::error_codes::rpc::ERR_RPC_WRONG_WORKER,
+            crate::dispatch::protocol::error_codes::rpc::ERR_RPC_WRONG_WORKER,
             RPC_WRONG_WORKER_ERROR,
             "rpc_worker_ownership_errors_forwarded_total",
             "rpc_worker_ownership_errors_dropped_total",
@@ -145,6 +145,7 @@ impl RpcDomainRuntime<'_> {
         let mut queued_dispatch = None;
 
         if removed_pending {
+            self.release_global_pending(1);
             let completion_latency_us = elapsed_micros_u64(caller_info.submitted_at_instant);
             state.release_worker_for_dispatch_info(caller_info, Some(completion_latency_us));
             queued_dispatch = state.next_queued_dispatch_for_family(
@@ -206,15 +207,16 @@ impl RpcDomainRuntime<'_> {
             #[cfg(test)]
             let forward_envelope = {
                 let mut payload_encoder =
-                    crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
-                let encoded_response = crate::protocol::rpc_codec::encode_response_message_into(
-                    resp,
-                    &mut payload_encoder,
-                );
+                    crate::dispatch::protocol::payload_codec::PayloadEncoder::with_capacity(256);
+                let encoded_response =
+                    crate::dispatch::protocol::rpc_codec::encode_response_message_into(
+                        resp,
+                        &mut payload_encoder,
+                    );
                 let forward_ctx = FrameContext::new(
                     caller_info.caller_session_id,
                     super::mailbox_adapter::test_protocol_channel_from_client(meta.channel),
-                    crate::protocol::tlv::MessageType::new(303),
+                    crate::dispatch::protocol::tlv::MessageType::new(303),
                     bytes::Bytes::from(encoded_response),
                     *caller_inbox_addr.family(),
                 );
@@ -264,6 +266,7 @@ impl RpcDomainRuntime<'_> {
             pending_route_lookup_us,
         } = context;
         state.release_worker_for_dispatch_info(caller_info, None);
+        self.release_global_pending(1);
         let live_request_count = state.live_request_count();
         let state_hold_us = elapsed_micros_optional(state_hold_start);
         drop(state);
@@ -292,7 +295,7 @@ impl RpcDomainRuntime<'_> {
                     caller_session_id: caller_info.caller_session_id,
                     caller_inbox_addr,
                 }],
-                crate::protocol::error_codes::rpc::ERR_RPC_INVALID_SEQUENCE,
+                crate::dispatch::protocol::error_codes::rpc::ERR_RPC_INVALID_SEQUENCE,
                 RPC_INVALID_SEQUENCE_ERROR,
                 "rpc_invalid_sequence_errors_forwarded_total",
                 "rpc_invalid_sequence_errors_dropped_total",
@@ -310,7 +313,7 @@ impl RpcDomainRuntime<'_> {
                 caller_session_id: meta.session_id,
                 caller_inbox_addr: worker_inbox_addr,
             }],
-            crate::protocol::error_codes::rpc::ERR_RPC_INVALID_SEQUENCE,
+            crate::dispatch::protocol::error_codes::rpc::ERR_RPC_INVALID_SEQUENCE,
             RPC_INVALID_SEQUENCE_ERROR,
             "rpc_worker_protocol_errors_forwarded_total",
             "rpc_worker_protocol_errors_dropped_total",
@@ -357,7 +360,7 @@ impl RpcDomainRuntime<'_> {
                 caller_session_id: meta.session_id,
                 caller_inbox_addr: worker_inbox_addr,
             }],
-            crate::protocol::error_codes::rpc::ERR_CORRELATION_NOT_FOUND,
+            crate::dispatch::protocol::error_codes::rpc::ERR_CORRELATION_NOT_FOUND,
             RPC_CORRELATION_NOT_FOUND_ERROR,
             "rpc_correlation_errors_forwarded_total",
             "rpc_correlation_errors_dropped_total",

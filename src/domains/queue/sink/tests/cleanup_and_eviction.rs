@@ -90,7 +90,7 @@ impl QueueRequestContext<'_> {
 fn assert_not_found(frame: &FrameContext) {
     assert_eq!(
         queue_simple_error_code(frame),
-        crate::protocol::error_codes::queue::ERR_MESSAGE_NOT_FOUND
+        crate::dispatch::protocol::error_codes::queue::ERR_MESSAGE_NOT_FOUND
     );
 }
 

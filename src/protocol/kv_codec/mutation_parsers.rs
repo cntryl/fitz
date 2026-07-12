@@ -1,6 +1,6 @@
 use bytes::Bytes;
 
-use crate::domains::kv::{KvMessage, KvNotification, ScanQuery};
+use crate::dispatch::wire::kv::{KvMessage, KvNotification, ScanQuery};
 use crate::protocol::kv_codec::frame_and_routes::{decode_route_str, parse_route_resource};
 use crate::runtime::routing::{Route, RouteFamily};
 

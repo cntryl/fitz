@@ -1,6 +1,6 @@
 use super::{
-    Arc, AtomicBool, AtomicU64, DeliveryError, Duration, Envelope, Instant, ManagedActor, Mutex,
-    Router, RpcState,
+    Arc, AtomicBool, AtomicU64, AtomicUsize, BTreeMap, DeliveryError, Duration, Envelope,
+    FamilyActorPoolRuntime, Instant, ManagedActor, Mutex, Router, RpcState, Weak,
 };
 #[cfg(test)]
 use super::{RouteAddress, RpcSessionCleanupResult, RpcWorkerCleanupResult};
@@ -13,15 +13,20 @@ pub(in crate::domains::rpc::sink) struct RpcDomainCore {
         Arc<crate::control::admin::read_model::AdminReadModel>,
     pub(in crate::domains::rpc::sink) request_timeout: Duration,
     pub(in crate::domains::rpc::sink) route_pending_capacity: usize,
-    pub(in crate::domains::rpc::sink) snapshot_dirty: AtomicBool,
+    pub(in crate::domains::rpc::sink) global_pending_count: Arc<AtomicUsize>,
+    pub(in crate::domains::rpc::sink) enforce_global_pending_count: bool,
+    pub(in crate::domains::rpc::sink) snapshot_dirty: Arc<AtomicBool>,
     #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
-    pub(in crate::domains::rpc::sink) snapshot_syncing: AtomicBool,
+    pub(in crate::domains::rpc::sink) snapshot_syncing: Arc<AtomicBool>,
     #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
-    pub(in crate::domains::rpc::sink) last_snapshot_elapsed_us: AtomicU64,
-    pub(in crate::domains::rpc::sink) last_inline_timeout_elapsed_us: AtomicU64,
+    pub(in crate::domains::rpc::sink) last_snapshot_elapsed_us: Arc<AtomicU64>,
+    pub(in crate::domains::rpc::sink) last_inline_timeout_elapsed_us: Arc<AtomicU64>,
     #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
     pub(in crate::domains::rpc::sink) snapshot_epoch: Instant,
     pub(in crate::domains::rpc::sink) metrics: Option<crate::domains::rpc::RpcMetrics>,
+    /// Weak family-core registry used to aggregate admin and metric views.
+    /// Mutable RPC state itself remains local to each family core.
+    pub(in crate::domains::rpc::sink) family_cores: Arc<Mutex<BTreeMap<u32, Weak<RpcDomainCore>>>>,
 }
 
 pub(in crate::domains::rpc::sink) enum RpcDomainCommand {
@@ -66,6 +71,10 @@ pub struct RpcDomainSink {
     pub(in crate::domains::rpc::sink) core: Arc<RpcDomainCore>,
     pub(in crate::domains::rpc::sink) active: Arc<AtomicBool>,
     pub(in crate::domains::rpc::sink) actor: ManagedActor<RpcDomainCommand>,
+    pub(in crate::domains::rpc::sink) family_runtime:
+        Option<FamilyActorPoolRuntime<RpcDomainCommand>>,
+    pub(in crate::domains::rpc::sink) family_families:
+        Option<Vec<crate::runtime::routing::RouteFamily>>,
 }
 
 impl std::ops::Deref for RpcDomainRuntime<'_> {

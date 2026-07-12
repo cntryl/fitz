@@ -1,20 +1,19 @@
 use super::state_model::{
-    route_quad, rpc_admin_snapshot_due, rpc_timeout_sweep_interval, Arc, AtomicBool, AtomicU64,
-    DeliveryError, Duration, Envelope, Instant, Mutex, Ordering, Route, RouteAddress, Router,
-    RpcDomainActor, RpcDomainCommand, RpcDomainCore, RpcDomainRuntime, RpcDomainSink,
-    RpcLiveCounts, RpcPendingErrorDelivery, RpcPendingRequest, RpcQueuedDispatch, RpcRouteState,
-    RpcSessionCleanupResult, RpcState, RpcWorkerCleanupResult, RpcWorkerDispatch,
-    RPC_BACKPRESSURE_ERROR, RPC_DEFAULT_REQUEST_TIMEOUT, RPC_DEFAULT_ROUTE_PENDING_CAPACITY,
-    RPC_MIN_TIMEOUT_SWEEP_INTERVAL, RPC_TIMEOUT_ERROR, RPC_WORKER_NOT_FOUND_ERROR,
+    rpc_admin_snapshot_due, rpc_timeout_sweep_interval, Arc, AtomicBool, DeliveryError, Duration,
+    Envelope, Instant, Ordering, Route, RouteAddress, RpcDomainActor, RpcDomainCommand,
+    RpcDomainCore, RpcDomainRuntime, RpcDomainSink, RpcLiveCounts, RpcPendingErrorDelivery,
+    RpcPendingRequest, RpcQueuedDispatch, RpcRouteState, RpcSessionCleanupResult,
+    RpcWorkerCleanupResult, RpcWorkerDispatch, RPC_BACKPRESSURE_ERROR, RPC_TIMEOUT_ERROR,
+    RPC_WORKER_NOT_FOUND_ERROR,
 };
 #[cfg(test)]
 use super::state_model::{RpcQueuedRequest, RpcWorker};
+#[cfg(test)]
+use crate::dispatch::protocol::frame_context::FrameContext;
 #[cfg(not(test))]
 use crate::domains::rpc::{
     RpcClientForwardedResponse, RpcClientForwardedResponseBody, RpcWorkerRequestDelivery,
 };
-#[cfg(test)]
-use crate::protocol::frame_context::FrameContext;
 use crate::runtime::routing::RouteFamily;
 
 impl RpcDomainActor {
@@ -35,54 +34,6 @@ impl RpcDomainActor {
 }
 
 impl RpcDomainSink {
-    pub fn new(
-        router: Arc<Router>,
-        admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
-    ) -> Self {
-        let core = Arc::new(RpcDomainCore {
-            state: Mutex::new(RpcState::new()),
-            router,
-            admin_read_model,
-            request_timeout: RPC_DEFAULT_REQUEST_TIMEOUT,
-            route_pending_capacity: RPC_DEFAULT_ROUTE_PENDING_CAPACITY,
-            snapshot_dirty: AtomicBool::new(false),
-            snapshot_syncing: AtomicBool::new(false),
-            last_snapshot_elapsed_us: AtomicU64::new(0),
-            last_inline_timeout_elapsed_us: AtomicU64::new(0),
-            snapshot_epoch: Instant::now(),
-            metrics: None,
-        });
-        let active = Arc::new(AtomicBool::new(true));
-        let actor = Self::spawn_actor(core.clone(), active.clone());
-        Self {
-            core,
-            active,
-            actor,
-        }
-    }
-
-    fn spawn_actor(
-        core: Arc<RpcDomainCore>,
-        active: Arc<AtomicBool>,
-    ) -> crate::runtime::ManagedActor<RpcDomainCommand> {
-        let router = core.router.clone();
-        crate::runtime::ManagedActor::spawn_fail_closed(
-            router,
-            RpcDomainActor::route_address(),
-            move || RpcDomainActor::new(core.clone(), active.clone()),
-            crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
-        )
-    }
-
-    fn rebuild_actor(&mut self) {
-        self.actor.stop();
-        self.actor = Self::spawn_actor(self.core.clone(), self.active.clone());
-    }
-
-    fn core_for_builder(&mut self) -> &mut RpcDomainCore {
-        Arc::get_mut(&mut self.core).expect("RPC sink builders must run before sharing the sink")
-    }
-
     pub(super) fn runtime(&self) -> RpcDomainRuntime<'_> {
         RpcDomainRuntime {
             core: &self.core,
@@ -90,40 +41,11 @@ impl RpcDomainSink {
         }
     }
 
-    #[must_use]
-    pub fn with_request_timeout(mut self, request_timeout: Duration) -> Self {
-        self.actor.stop();
-        self.core_for_builder().request_timeout = if request_timeout.is_zero() {
-            RPC_MIN_TIMEOUT_SWEEP_INTERVAL
-        } else {
-            request_timeout
-        };
-        self.rebuild_actor();
-        self
-    }
-
-    #[must_use]
-    pub fn with_route_pending_capacity(mut self, route_pending_capacity: usize) -> Self {
-        self.actor.stop();
-        self.core_for_builder().route_pending_capacity = route_pending_capacity.max(1);
-        self.rebuild_actor();
-        self
-    }
-
-    #[must_use]
-    pub fn with_metrics(
-        mut self,
-        metrics: crate::observability::metrics::MetricsCollector,
-    ) -> Self {
-        self.actor.stop();
-        self.core_for_builder().metrics = Some(crate::domains::rpc::RpcMetrics::new(metrics));
-        self.runtime().refresh_metrics_gauges();
-        self.rebuild_actor();
-        self
-    }
-
     pub fn stop(&self) {
         self.active.store(false, Ordering::Relaxed);
+        if let Some(runtime) = self.family_runtime.as_ref() {
+            runtime.stop();
+        }
         self.actor.stop();
     }
 
@@ -136,6 +58,26 @@ impl RpcDomainSink {
     }
 
     pub(crate) fn expire_timed_out_requests(&self) {
+        if let (Some(runtime), Some(families)) =
+            (self.family_runtime.as_ref(), self.family_families.as_ref())
+        {
+            for family in families.iter().copied() {
+                if let Err(error) = runtime.try_enqueue(
+                    family,
+                    crate::runtime::FamilyActorLane::Control,
+                    RpcDomainCommand::ExpireTimedOutRequestsAt(Instant::now(), None),
+                ) {
+                    tracing::warn!(
+                        domain = "rpc",
+                        family = family.id(),
+                        error = %error,
+                        "RPC timeout sweep enqueue failed"
+                    );
+                }
+            }
+            return;
+        }
+
         if let Err(error) =
             self.actor
                 .try_send_high_priority(RpcDomainCommand::ExpireTimedOutRequestsAt(
@@ -149,6 +91,29 @@ impl RpcDomainSink {
 
     #[cfg(test)]
     pub(super) fn expire_timed_out_requests_at(&self, now: Instant) {
+        if let (Some(runtime), Some(families)) =
+            (self.family_runtime.as_ref(), self.family_families.as_ref())
+        {
+            for family in families.iter().copied() {
+                let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+                if let Err(error) = runtime.try_enqueue(
+                    family,
+                    crate::runtime::FamilyActorLane::Control,
+                    RpcDomainCommand::ExpireTimedOutRequestsAt(now, Some(reply_tx)),
+                ) {
+                    tracing::warn!(
+                        domain = "rpc",
+                        family = family.id(),
+                        error = %error,
+                        "RPC timeout sweep enqueue failed"
+                    );
+                    continue;
+                }
+                let _ = reply_rx.recv_timeout(Duration::from_secs(1));
+            }
+            return;
+        }
+
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         if let Err(error) =
             self.actor
@@ -167,14 +132,34 @@ impl RpcDomainSink {
     #[cfg(test)]
     pub(super) fn is_actor_running(&self) -> bool {
         self.actor.is_running()
+            && self
+                .family_runtime
+                .as_ref()
+                .is_none_or(crate::runtime::FamilyActorPoolRuntime::is_running)
     }
 
     pub(crate) fn actor_health_snapshot(&self) -> crate::runtime::ManagedActorHealthSnapshot {
-        self.actor.health_snapshot()
+        self.family_runtime.as_ref().map_or_else(
+            || self.actor.health_snapshot(),
+            crate::runtime::FamilyActorPoolRuntime::health_snapshot,
+        )
     }
 
     #[cfg(test)]
     pub(crate) fn panic_actor_for_tests(&self) {
+        if let (Some(runtime), Some(family)) = (
+            self.family_runtime.as_ref(),
+            self.family_families
+                .as_ref()
+                .and_then(|families| families.first()),
+        ) {
+            let _ = runtime.try_enqueue(
+                *family,
+                crate::runtime::FamilyActorLane::Control,
+                RpcDomainCommand::PanicForTests,
+            );
+            return;
+        }
         let _ = self
             .actor
             .try_send_high_priority(RpcDomainCommand::PanicForTests);
@@ -247,6 +232,35 @@ impl RpcDomainSink {
     }
 
     fn live_counts(&self) -> RpcLiveCounts {
+        if let (Some(runtime), Some(families)) =
+            (self.family_runtime.as_ref(), self.family_families.as_ref())
+        {
+            let mut total = RpcLiveCounts::default();
+            for family in families.iter().copied() {
+                let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+                if let Err(error) = runtime.try_enqueue(
+                    family,
+                    crate::runtime::FamilyActorLane::Control,
+                    RpcDomainCommand::ReadLiveCounts(reply_tx),
+                ) {
+                    tracing::warn!(
+                        domain = "rpc",
+                        family = family.id(),
+                        error = %error,
+                        "RPC live-count query enqueue failed"
+                    );
+                    continue;
+                }
+                if let Ok(counts) = reply_rx.recv_timeout(Duration::from_secs(1)) {
+                    total.workers = total.workers.saturating_add(counts.workers);
+                    total.pending_requests = total
+                        .pending_requests
+                        .saturating_add(counts.pending_requests);
+                }
+            }
+            return total;
+        }
+
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         if let Err(error) = self
             .actor
@@ -264,6 +278,24 @@ impl RpcDomainSink {
     #[cfg(test)]
     pub(super) fn sync_admin_snapshot(&self) {
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        if let (Some(runtime), Some(family)) = (
+            self.family_runtime.as_ref(),
+            self.family_families
+                .as_ref()
+                .and_then(|families| families.first()),
+        ) {
+            if let Err(error) = runtime.try_enqueue(
+                *family,
+                crate::runtime::FamilyActorLane::Control,
+                RpcDomainCommand::SyncAdminSnapshot(Some(reply_tx)),
+            ) {
+                tracing::warn!(domain = "rpc", error = %error, "RPC admin snapshot enqueue failed");
+                return;
+            }
+            let _ = reply_rx.recv_timeout(Duration::from_secs(1));
+            return;
+        }
+
         if let Err(error) = self
             .actor
             .try_send_high_priority(RpcDomainCommand::SyncAdminSnapshot(Some(reply_tx)))
@@ -276,6 +308,22 @@ impl RpcDomainSink {
     }
 
     pub fn refresh_admin_snapshot_if_dirty(&self) {
+        if let (Some(runtime), Some(family)) = (
+            self.family_runtime.as_ref(),
+            self.family_families
+                .as_ref()
+                .and_then(|families| families.first()),
+        ) {
+            if let Err(error) = runtime.try_enqueue(
+                *family,
+                crate::runtime::FamilyActorLane::Control,
+                RpcDomainCommand::RefreshAdminSnapshotIfDirty(None),
+            ) {
+                tracing::warn!(domain = "rpc", error = %error, "RPC admin snapshot refresh enqueue failed");
+            }
+            return;
+        }
+
         if let Err(error) = self
             .actor
             .try_send_high_priority(RpcDomainCommand::RefreshAdminSnapshotIfDirty(None))
@@ -336,6 +384,17 @@ impl RpcDomainRuntime<'_> {
         start.elapsed().as_micros().try_into().unwrap_or(u64::MAX)
     }
 
+    pub(super) fn release_global_pending(&self, count: usize) {
+        if count == 0 {
+            return;
+        }
+        let _ = self.global_pending_count.fetch_update(
+            Ordering::AcqRel,
+            Ordering::Acquire,
+            |current| Some(current.saturating_sub(count)),
+        );
+    }
+
     pub(crate) fn timeout_sweep_interval(&self) -> Duration {
         rpc_timeout_sweep_interval(self.request_timeout)
     }
@@ -382,8 +441,9 @@ impl RpcDomainRuntime<'_> {
 
     pub(super) fn refresh_metrics_gauges(&self) {
         if let Some(metrics) = &self.metrics {
-            metrics.set_worker_count(self.worker_count());
-            metrics.set_pending_request_count(self.pending_request_count());
+            let counts = self.core.aggregate_live_counts();
+            metrics.set_worker_count(counts.workers);
+            metrics.set_pending_request_count(counts.pending_requests);
         }
     }
 
@@ -424,6 +484,7 @@ impl RpcDomainRuntime<'_> {
             return;
         }
 
+        self.release_global_pending(timeout_result.removed_pending);
         let timeout_delivery_count = timeout_result.timeout_deliveries.len();
         self.gauge_set("rpc_pending_requests", timeout_result.pending_len as u64);
         self.counter_add(
@@ -458,7 +519,7 @@ impl RpcDomainRuntime<'_> {
 
         self.forward_pending_error_deliveries(
             timeout_result.timeout_deliveries,
-            crate::protocol::error_codes::rpc::ERR_RPC_TIMEOUT,
+            crate::dispatch::protocol::error_codes::rpc::ERR_RPC_TIMEOUT,
             RPC_TIMEOUT_ERROR,
             "rpc_timeout_errors_forwarded_total",
             "rpc_timeout_errors_dropped_total",
@@ -482,6 +543,9 @@ impl RpcDomainRuntime<'_> {
                 |(_, pending_len)| *pending_len as u64,
             ),
         );
+        if removed.is_some() {
+            self.release_global_pending(1);
+        }
         removed
     }
 
@@ -492,6 +556,7 @@ impl RpcDomainRuntime<'_> {
         };
 
         self.gauge_set("rpc_pending_requests", cleanup_result.pending_len as u64);
+        self.release_global_pending(cleanup_result.removed_pending);
         if cleanup_result.removed_workers > 0 {
             self.counter_add(
                 "rpc_cleanup_workers_removed_total",
@@ -542,6 +607,7 @@ impl RpcDomainRuntime<'_> {
         };
 
         self.gauge_set("rpc_pending_requests", cleanup_result.pending_len as u64);
+        self.release_global_pending(cleanup_result.removed_pending);
         if cleanup_result.removed_workers > 0 {
             self.counter_add(
                 "rpc_cleanup_workers_removed_total",
@@ -590,10 +656,10 @@ impl RpcDomainRuntime<'_> {
             #[cfg(test)]
             let response_envelope = {
                 let mut error_body_encoder =
-                    crate::protocol::payload_codec::PayloadEncoder::with_capacity(96);
+                    crate::dispatch::protocol::payload_codec::PayloadEncoder::with_capacity(96);
                 let mut response_encoder =
-                    crate::protocol::payload_codec::PayloadEncoder::with_capacity(128);
-                let error_body = crate::protocol::rpc_codec::encode_error_body_into(
+                    crate::dispatch::protocol::payload_codec::PayloadEncoder::with_capacity(128);
+                let error_body = crate::dispatch::protocol::rpc_codec::encode_error_body_into(
                     error_code,
                     error_message,
                     &mut error_body_encoder,
@@ -602,14 +668,15 @@ impl RpcDomainRuntime<'_> {
                     correlation_id,
                     bytes::Bytes::from(error_body),
                 );
-                let encoded_response = crate::protocol::rpc_codec::encode_response_message_into(
-                    &error_response,
-                    &mut response_encoder,
-                );
+                let encoded_response =
+                    crate::dispatch::protocol::rpc_codec::encode_response_message_into(
+                        &error_response,
+                        &mut response_encoder,
+                    );
                 let response_ctx = FrameContext::new(
                     delivery.caller_session_id,
-                    crate::protocol::frame::ChannelId::Rpc,
-                    crate::protocol::tlv::MessageType::new(303),
+                    crate::dispatch::protocol::frame::ChannelId::Rpc,
+                    crate::dispatch::protocol::tlv::MessageType::new(303),
                     bytes::Bytes::from(encoded_response),
                     *delivery.caller_inbox_addr.family(),
                 );
@@ -654,84 +721,11 @@ impl RpcDomainRuntime<'_> {
     ) {
         self.forward_pending_error_deliveries(
             disconnect_deliveries,
-            crate::protocol::error_codes::rpc::ERR_WORKER_NOT_FOUND,
+            crate::dispatch::protocol::error_codes::rpc::ERR_WORKER_NOT_FOUND,
             RPC_WORKER_NOT_FOUND_ERROR,
             "rpc_worker_disconnect_errors_forwarded_total",
             "rpc_worker_disconnect_errors_dropped_total",
         );
-    }
-
-    /// Copy a point-in-time view of live in-memory RPC state into the admin read
-    /// model for the current broker process only.
-    ///
-    /// This snapshot is intentionally coalesced and may lag very recent subscribe,
-    /// unsubscribe, timeout, or cleanup mutations by up to the current sync
-    /// interval. It is an operational view, not a durable recovery log.
-    #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
-    pub(super) fn sync_admin_snapshot(&self) {
-        let state = self.state.lock();
-        let snapshot_now = Instant::now();
-        let workers = state
-            .routes
-            .iter()
-            .flat_map(|((_, route), route_state)| {
-                route_state
-                    .workers
-                    .iter()
-                    .filter_map(|worker| {
-                        let worker = worker.as_ref()?;
-                        route_quad(route.as_str()).map(|parts| {
-                            let registered_at = worker.registered_at_rfc3339();
-                            crate::control::admin::RpcWorker::snapshot(
-                                worker.addr.family().as_u64(),
-                                worker.session_id,
-                                parts.realm,
-                                route.as_str(),
-                                &registered_at,
-                                worker.requests_handled,
-                                worker.average_latency_ms(),
-                            )
-                        })
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        let pending = state
-            .queued
-            .iter()
-            .map(|(correlation_key, queued)| {
-                crate::control::admin::RpcPendingRequest::snapshot(
-                    queued.caller_inbox_addr.family().as_u64(),
-                    &correlation_key.correlation_id,
-                    queued.request.route.as_str(),
-                    &queued.submitted_at_rfc3339(),
-                    queued.age_seconds(snapshot_now),
-                    None,
-                )
-            })
-            .chain(
-                state
-                    .pending
-                    .pending
-                    .iter()
-                    .map(|(correlation_key, pending)| {
-                        crate::control::admin::RpcPendingRequest::snapshot(
-                            pending.worker_addr.family().as_u64(),
-                            &correlation_key.correlation_id,
-                            pending.route.as_str(),
-                            &pending.submitted_at_rfc3339(),
-                            pending.age_seconds(snapshot_now),
-                            Some(pending.worker_session_id.to_string()),
-                        )
-                    }),
-            )
-            .collect();
-        self.admin_read_model.replace_rpc_workers(workers);
-        self.admin_read_model.replace_rpc_pending(pending);
-    }
-
-    pub(super) fn worker_count(&self) -> usize {
-        self.live_counts().workers
     }
 
     pub(super) fn pending_request_count(&self) -> usize {
@@ -746,13 +740,15 @@ impl RpcDomainRuntime<'_> {
         #[cfg(test)]
         let request_envelope = {
             let mut payload_encoder =
-                crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
-            let request_bytes =
-                crate::protocol::rpc_codec::encode_request_into(req, &mut payload_encoder);
+                crate::dispatch::protocol::payload_codec::PayloadEncoder::with_capacity(256);
+            let request_bytes = crate::dispatch::protocol::rpc_codec::encode_request_into(
+                req,
+                &mut payload_encoder,
+            );
             let request_ctx = FrameContext::new(
                 worker.session_id,
-                crate::protocol::frame::ChannelId::Rpc,
-                crate::protocol::tlv::MessageType::new(302),
+                crate::dispatch::protocol::frame::ChannelId::Rpc,
+                crate::dispatch::protocol::tlv::MessageType::new(302),
                 bytes::Bytes::from(request_bytes),
                 *worker.addr.family(),
             );
@@ -833,7 +829,7 @@ impl RpcDomainRuntime<'_> {
                                 caller_session_id: pending.caller_session_id,
                                 caller_inbox_addr,
                             }],
-                            crate::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
+                            crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
                             RPC_BACKPRESSURE_ERROR,
                             "rpc_backpressure_errors_forwarded_total",
                             "rpc_backpressure_errors_dropped_total",

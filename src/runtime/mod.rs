@@ -53,8 +53,9 @@ pub use domain_manifest::{DomainDescriptor, DomainKind, DomainRegistry};
 pub use envelope::{Envelope, MessageId};
 pub use family_actor_pool::{
     family_shard_affinity, shard_count_for_family_count, FamilyActorEnqueueError,
-    FamilyActorIngress, FamilyActorLane, FamilyActorPool, FamilyActorPoolError, FamilyActorShard,
-    FamilyActorWork, FAMILY_ACTOR_CONTROL_LANE_CAPACITY, FAMILY_ACTOR_NORMAL_LANE_CAPACITY,
+    FamilyActorIngress, FamilyActorLane, FamilyActorPool, FamilyActorPoolError,
+    FamilyActorPoolRuntime, FamilyActorShard, FamilyActorWork, FAMILY_ACTOR_CONTROL_LANE_CAPACITY,
+    FAMILY_ACTOR_NORMAL_LANE_CAPACITY,
 };
 pub use mailbox::Mailbox;
 pub use managed_actor::{ManagedActor, ManagedActorHealthSnapshot};

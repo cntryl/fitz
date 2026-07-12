@@ -4,10 +4,10 @@
 //! session-scoped, cleaned up on disconnect, and are never replayed or
 //! restored after broker restart.
 
+#[cfg(test)]
+use crate::dispatch::protocol::frame_context::FrameContext;
 use crate::domains::notice::NoticeMetrics;
 use crate::domains::subscription_state::RoutedSubscriptionSet;
-#[cfg(test)]
-use crate::protocol::frame_context::FrameContext;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, ManagedActor, RouteError, Router};
 use chrono::Utc;
 use parking_lot::Mutex;
@@ -241,10 +241,16 @@ impl NoticeDomainSink {
         envelope
             .payload::<crate::domains::notice::NoticeClientRequest>()
             .is_some_and(|request| {
-                matches!(
-                    request.message,
-                    Ok(crate::domains::notice::protocol::NotificationMessage::Publish(_))
-                )
+                let Ok(crate::domains::notice::protocol::NotificationMessage::Publish(publish)) =
+                    &request.message
+                else {
+                    return false;
+                };
+                request.meta.route_family == *envelope.destination().family()
+                    && envelope
+                        .source()
+                        .is_none_or(|source| *source.family() == request.meta.route_family)
+                    && publish.family_id == request.meta.route_family
             })
     }
 }
@@ -270,9 +276,10 @@ impl NoticeDomainCore {
                         pattern.clone(),
                         &created_at,
                     ));
-                    *routes
+                    let subscribers = routes
                         .entry((*route_family, Arc::clone(&subscription.pattern_route)))
-                        .or_insert(0) += 1;
+                        .or_insert(0);
+                    *subscribers = subscribers.saturating_add(1);
                 }
             }
         }
@@ -382,7 +389,7 @@ impl NoticeDomainCore {
         const MAX_RETRIES: usize = 200;
 
         #[cfg(test)]
-        let notify_payload = crate::protocol::notice_codec::encode_notify(
+        let notify_payload = crate::dispatch::protocol::notice_codec::encode_notify(
             target.subscription_id,
             route,
             payload.as_ref(),
@@ -391,8 +398,8 @@ impl NoticeDomainCore {
         #[cfg(test)]
         let notify_ctx = FrameContext::new(
             target.session_id,
-            crate::protocol::frame::ChannelId::Sub,
-            crate::protocol::tlv::MessageType::new(504),
+            crate::dispatch::protocol::frame::ChannelId::Sub,
+            crate::dispatch::protocol::tlv::MessageType::new(504),
             notify_payload.into(),
             *target.subscriber.family(),
         );
@@ -558,9 +565,27 @@ impl NoticeDomainCore {
         let meta = request.meta;
         let request_started = self.record_request_start();
 
+        if !Self::valid_request_envelope(envelope, meta) {
+            let response = Self::error_response("route family mismatch");
+            let response_meta = Self::response_meta_for_source(envelope, meta);
+            self.route_notice_response(envelope, response_meta, &response, request_started);
+            return Ok(());
+        }
+
         Self::log_parse_start(meta);
 
-        let notice_msg = self.parse_notice_message(request.message, request_started)?;
+        let Some(notice_msg) =
+            self.parse_notice_message(envelope, meta, request.message, request_started)
+        else {
+            return Ok(());
+        };
+
+        if !Self::valid_notice_message(envelope, meta, &notice_msg) {
+            let response = Self::error_response("route family mismatch");
+            let response_meta = Self::response_meta_for_source(envelope, meta);
+            self.route_notice_response(envelope, response_meta, &response, request_started);
+            return Ok(());
+        }
 
         let (response_opt, should_sync_admin_snapshot) = self.dispatch_notice_message(notice_msg);
         if should_sync_admin_snapshot {
@@ -595,6 +620,10 @@ impl NoticeDomainCore {
 
     fn handle_domain_publish_envelope(&self, envelope: &Envelope) -> bool {
         if let Some(event) = envelope.payload::<crate::runtime::DomainPublishEvent>() {
+            if *envelope.destination().family() != event.family_id {
+                self.counter_add("fitz_notice_publish_family_mismatch_total", 1);
+                return true;
+            }
             self.handle_domain_publish(event);
             return true;
         }
@@ -642,18 +671,19 @@ impl NoticeDomainCore {
 
     fn parse_notice_message(
         &self,
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
         message: Result<crate::domains::notice::protocol::NotificationMessage, String>,
         request_started: Option<Instant>,
-    ) -> Result<crate::domains::notice::protocol::NotificationMessage, DeliveryError> {
+    ) -> Option<crate::domains::notice::protocol::NotificationMessage> {
         match message {
-            Ok(message) => Ok(message),
+            Ok(message) => Some(message),
             Err(error) => {
-                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started)
-                {
-                    metrics.record_failure(started_at);
-                }
                 tracing::warn!(domain = "notice", error = %error, "Failed to parse notice message");
-                Err(DeliveryError::ActorStopped)
+                let response = Self::error_response(&error);
+                let response_meta = Self::response_meta_for_source(envelope, meta);
+                self.route_notice_response(envelope, response_meta, &response, request_started);
+                None
             }
         }
     }
@@ -713,11 +743,6 @@ impl NoticeDomainCore {
         use crate::domains::notice::NoticeResponse;
 
         let family_id = sub_msg.family_id.as_u64();
-        let mut families = self.families.lock();
-        let state = families
-            .entry(family_id)
-            .or_insert_with(RoutedSubscriptionSet::new);
-
         if sub_msg.pattern.as_str().is_empty() {
             tracing::warn!(
                 domain = "notice",
@@ -729,6 +754,11 @@ impl NoticeDomainCore {
                 false,
             );
         }
+
+        let mut families = self.families.lock();
+        let state = families
+            .entry(family_id)
+            .or_insert_with(RoutedSubscriptionSet::new);
 
         let existing_sub_id =
             state.find_existing_id(sub_msg.session_id.0, sub_msg.pattern.as_str());
@@ -766,7 +796,23 @@ impl NoticeDomainCore {
                 false,
             )
         } else {
-            let new_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
+            let Ok(new_id) =
+                self.next_sub_id
+                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                        current.checked_add(1)
+                    })
+            else {
+                let state_empty = state.is_empty();
+                if state_empty {
+                    families.remove(&family_id);
+                }
+                return (
+                    Some(NoticeResponse::Error(
+                        "subscription ID space exhausted".to_string(),
+                    )),
+                    false,
+                );
+            };
             state.insert(
                 sub_msg.family_id,
                 NoticeSubscription {
@@ -796,6 +842,60 @@ impl NoticeDomainCore {
         (Some(response), state_changed)
     }
 
+    fn valid_request_envelope(envelope: &Envelope, meta: crate::runtime::ClientFrameMeta) -> bool {
+        meta.route_family == *envelope.destination().family()
+            && envelope
+                .source()
+                .is_none_or(|source| *source.family() == meta.route_family)
+    }
+
+    fn valid_notice_message(
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+        message: &crate::domains::notice::protocol::NotificationMessage,
+    ) -> bool {
+        use crate::domains::notice::protocol::NotificationMessage;
+
+        match message {
+            NotificationMessage::Publish(publish) => publish.family_id == meta.route_family,
+            NotificationMessage::Subscribe(subscribe) => {
+                subscribe.family_id == meta.route_family
+                    && subscribe.session_id.0 == meta.session_id
+                    && *subscribe.subscriber.family() == subscribe.family_id
+                    && envelope
+                        .source()
+                        .is_none_or(|source| source == &subscribe.subscriber)
+            }
+            NotificationMessage::Unsubscribe(unsubscribe) => {
+                unsubscribe.family_id == meta.route_family
+                    && unsubscribe.session_id.0 == meta.session_id
+            }
+            NotificationMessage::UnsubscribeAll(unsubscribe_all) => {
+                unsubscribe_all.session_id.0 == meta.session_id
+                    && *unsubscribe_all.subscriber.family() == meta.route_family
+                    && envelope
+                        .source()
+                        .is_none_or(|source| source == &unsubscribe_all.subscriber)
+            }
+            NotificationMessage::Deliver(_) => false,
+        }
+    }
+
+    fn error_response(reason: &str) -> crate::domains::notice::NoticeResponse {
+        crate::domains::notice::NoticeResponse::Error(reason.to_string())
+    }
+
+    fn response_meta_for_source(
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+    ) -> crate::runtime::ClientFrameMeta {
+        envelope.source().map_or(meta, |source| {
+            let mut response_meta = meta;
+            response_meta.route_family = *source.family();
+            response_meta
+        })
+    }
+
     fn route_notice_response(
         &self,
         envelope: &Envelope,
@@ -806,13 +906,15 @@ impl NoticeDomainCore {
         #[cfg(test)]
         let response_ctx = {
             let mut payload_encoder =
-                crate::protocol::payload_codec::PayloadEncoder::with_capacity(256);
-            let response_bytes =
-                crate::protocol::notice_codec::encode_response_into(response, &mut payload_encoder);
+                crate::dispatch::protocol::payload_codec::PayloadEncoder::with_capacity(256);
+            let response_bytes = crate::dispatch::protocol::notice_codec::encode_response_into(
+                response,
+                &mut payload_encoder,
+            );
             FrameContext::new(
                 meta.session_id,
                 test_protocol_channel_from_client(meta.channel),
-                crate::protocol::tlv::MessageType::new(meta.message_type),
+                crate::dispatch::protocol::tlv::MessageType::new(meta.message_type),
                 bytes::Bytes::from(response_bytes),
                 meta.route_family,
             )
@@ -860,7 +962,7 @@ impl NoticeDomainCore {
                 frame_ctx.msg_type.as_u16(),
                 frame_ctx.route_family,
             );
-            let parsed = crate::protocol::notice_codec::parse_request(
+            let parsed = crate::dispatch::protocol::notice_codec::parse_request(
                 &frame_ctx,
                 &frame_ctx.payload,
                 *envelope.destination().family(),

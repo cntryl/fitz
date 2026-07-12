@@ -117,7 +117,14 @@ impl RpcPendingTable {
         }
 
         let tracked = pending.dispatch_info();
-        pending.next_expected_seq = pending.next_expected_seq.saturating_add(1);
+        let Some(next_expected_seq) = pending.next_expected_seq.checked_add(1) else {
+            let pending = entry.remove().into_dispatch_info();
+            return RpcPendingResponseDisposition::InvalidSequence {
+                pending,
+                expected_seq,
+            };
+        };
+        pending.next_expected_seq = next_expected_seq;
         RpcPendingResponseDisposition::Forward {
             pending: tracked,
             removed_pending: false,

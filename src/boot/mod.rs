@@ -159,6 +159,7 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
         &store,
         &runtime.admin_read_model(),
         &domains::DomainSetupOptions {
+            route_families: config.route_families.clone(),
             schedule_write_options,
             queue_write_options,
             queue_fast_flush_interval: config.queue_fast_flush_interval(),

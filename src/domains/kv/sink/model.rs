@@ -7,9 +7,9 @@
 // intentionally discards that state on disconnect, and broker restart clears
 // it wholesale instead of attempting transaction recovery.
 
-pub(super) use crate::domains::kv::{KvClientFrame, KvClientRequest};
 #[cfg(test)]
-pub(super) use crate::protocol::frame_context::FrameContext;
+pub(super) use crate::dispatch::protocol::frame_context::FrameContext;
+pub(super) use crate::domains::kv::{KvClientFrame, KvClientRequest};
 pub(super) use crate::runtime::routing::RouteFamily;
 pub(super) use crate::runtime::{DeliveryError, Envelope, MailboxSink, ManagedActor, Router};
 pub(super) use bytes::Bytes;

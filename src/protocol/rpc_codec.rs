@@ -6,7 +6,7 @@
 //! `route_family` is a server-internal concept supplied by the session layer
 //! — it never appears on the wire.
 
-use crate::domains::rpc::protocol::{RpcClientResponseBody, RpcMessage, RpcRequest, RpcResponse};
+use crate::dispatch::wire::rpc::{RpcClientResponseBody, RpcMessage, RpcRequest, RpcResponse};
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use crate::protocol::tlv::MessageType;
@@ -400,7 +400,7 @@ fn parse_rpc_response(dec: &mut PayloadDecoder) -> Result<RpcMessage, String> {
 /// Wire format: `[uuid16 correlation_id][string route][bytes body]`
 ///
 /// This encodes the `RpcWorkItem` to be sent from route actor to worker session actor.
-pub fn encode_request_delivery(work_item: &crate::domains::rpc::protocol::RpcWorkItem) -> Vec<u8> {
+pub fn encode_request_delivery(work_item: &crate::dispatch::wire::rpc::RpcWorkItem) -> Vec<u8> {
     let capacity = UUID_BYTES_LEN
         + encoded_string_len(work_item.route.as_str())
         + encoded_bytes_len(work_item.body.len());
@@ -415,7 +415,7 @@ pub fn encode_request_into(request: &RpcRequest, enc: &mut PayloadEncoder) -> Ve
 
 /// Encode RPC REQUEST delivery using a reusable payload encoder.
 pub fn encode_request_delivery_into(
-    work_item: &crate::domains::rpc::protocol::RpcWorkItem,
+    work_item: &crate::dispatch::wire::rpc::RpcWorkItem,
     enc: &mut PayloadEncoder,
 ) -> Vec<u8> {
     encode_request_fields_into(

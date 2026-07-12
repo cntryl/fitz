@@ -86,14 +86,23 @@ impl ReplyInboxActor {
 
         // Check sequence number
         if response.seq == stream.next_seq {
-            // Expected chunk, forward immediately
-            Self::forward_response_static(response);
-            stream.next_seq += 1;
-
-            // If this completes the stream, clean up
             if response.stream_end {
+                // A terminal max-valued sequence does not need a successor.
+                Self::forward_response_static(response);
                 self.streams.remove(&correlation_id);
+                return;
             }
+
+            let Some(next_seq) = stream.next_seq.checked_add(1) else {
+                self.invalid_sequence_failures = self.invalid_sequence_failures.saturating_add(1);
+                self.streams.remove(&correlation_id);
+                return;
+            };
+
+            // Expected non-terminal chunk, forward only after proving that the
+            // next sequence number remains representable.
+            Self::forward_response_static(response);
+            stream.next_seq = next_seq;
         } else {
             self.invalid_sequence_failures = self.invalid_sequence_failures.saturating_add(1);
             self.streams.remove(&correlation_id);
@@ -252,6 +261,46 @@ mod tests {
         // Act - receive seq 0 twice
         inbox.handle_response(&create_response(correlation_id, 0, false), &mut ctx);
         inbox.handle_response(&create_response(correlation_id, 0, false), &mut ctx);
+
+        // Assert
+        assert_eq!(inbox.active_streams(), 0);
+        assert_eq!(inbox.invalid_sequence_failures(), 1);
+    }
+
+    #[test]
+    fn should_accept_terminal_max_sequence_without_overflow_failure() {
+        // Arrange
+        let mut inbox = create_inbox();
+        let router = std::sync::Arc::new(crate::runtime::router::Router::new());
+        let addr = RouteAddress::new(RouteFamily::new(1), Route::new("inbox://test"));
+        let mut ctx = Context::new(addr, router);
+        let correlation_id = Uuid::new_v4();
+        inbox
+            .streams
+            .insert(correlation_id, StreamState { next_seq: u64::MAX });
+
+        // Act
+        inbox.handle_response(&create_response(correlation_id, u64::MAX, true), &mut ctx);
+
+        // Assert
+        assert_eq!(inbox.active_streams(), 0);
+        assert_eq!(inbox.invalid_sequence_failures(), 0);
+    }
+
+    #[test]
+    fn should_reject_non_terminal_max_sequence_without_overflowing() {
+        // Arrange
+        let mut inbox = create_inbox();
+        let router = std::sync::Arc::new(crate::runtime::router::Router::new());
+        let addr = RouteAddress::new(RouteFamily::new(1), Route::new("inbox://test"));
+        let mut ctx = Context::new(addr, router);
+        let correlation_id = Uuid::new_v4();
+        inbox
+            .streams
+            .insert(correlation_id, StreamState { next_seq: u64::MAX });
+
+        // Act
+        inbox.handle_response(&create_response(correlation_id, u64::MAX, false), &mut ctx);
 
         // Assert
         assert_eq!(inbox.active_streams(), 0);

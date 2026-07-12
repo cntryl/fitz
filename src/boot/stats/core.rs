@@ -157,6 +157,7 @@ impl Runtime {
             &store,
             &runtime.admin_read_model(),
             &crate::boot::domains::DomainSetupOptions {
+                route_families: vec![1, 2, 3, 4, 5, 6, 7],
                 schedule_write_options: cntryl_midge::WriteOptions::best_effort(),
                 queue_write_options: cntryl_midge::WriteOptions::best_effort(),
                 queue_fast_flush_interval: Some(Duration::from_millis(100)),

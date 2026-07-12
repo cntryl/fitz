@@ -6,7 +6,7 @@
 //! **Purpose**: Performance benchmarking only
 //! **Not used in production code**: These are simplified primitives for measuring overhead
 
-use crate::protocol::tlv::MessageType;
+use crate::dispatch::protocol::tlv::MessageType;
 
 /// Subscriber identifier
 pub type SubscriberId = usize;

@@ -5,7 +5,7 @@ use crate::benchkit::{
     count_stream_read_records_from_payload, extract_single_tlv_field, register_session_queue_sink,
     route_frame, FrameQueueSink,
 };
-use crate::protocol::frame::ChannelId;
+use crate::dispatch::protocol::frame::ChannelId;
 use bytes::Bytes;
 
 const TEST_CLIENT_SESSION_ID: u64 = 1;
@@ -121,7 +121,7 @@ struct DecodedStreamMetadataPayload {
 }
 
 fn decode_stream_wire_record(
-    decoder: &mut crate::protocol::payload_codec::PayloadDecoder<'_>,
+    decoder: &mut crate::dispatch::protocol::payload_codec::PayloadDecoder<'_>,
 ) -> DecodedStreamWireRecord {
     let resource_offset = decoder.get_u64().expect("stream resource offset");
     let area_offset = decoder.get_optional_u64().expect("stream area offset");
@@ -141,7 +141,7 @@ fn decode_stream_wire_record(
 }
 
 fn decode_stream_read_payload(data: &[u8]) -> DecodedStreamReadPayload {
-    let mut decoder = crate::protocol::payload_codec::PayloadDecoder::new(data);
+    let mut decoder = crate::dispatch::protocol::payload_codec::PayloadDecoder::new(data);
     let count = decoder.get_u32().expect("stream read record count") as usize;
     let mut records = Vec::with_capacity(count);
     for _ in 0..count {
@@ -183,7 +183,7 @@ fn decode_stream_read_payload(data: &[u8]) -> DecodedStreamReadPayload {
 }
 
 fn decode_stream_success_data(payload: &[u8]) -> Bytes {
-    let mut decoder = crate::protocol::payload_codec::PayloadDecoder::new(payload);
+    let mut decoder = crate::dispatch::protocol::payload_codec::PayloadDecoder::new(payload);
     let status = decoder.get_u8().expect("stream status");
     assert_eq!(status, 0, "expected stream success response");
     decoder
@@ -198,7 +198,7 @@ fn decode_stream_success_data(payload: &[u8]) -> Bytes {
 }
 
 fn decode_stream_metadata_payload(data: &[u8]) -> DecodedStreamMetadataPayload {
-    let mut decoder = crate::protocol::payload_codec::PayloadDecoder::new(data);
+    let mut decoder = crate::dispatch::protocol::payload_codec::PayloadDecoder::new(data);
     let first_resource_offset = decoder
         .get_optional_u64()
         .expect("first stream metadata offset");
@@ -236,7 +236,7 @@ fn begin_stream(context: &TestContext, route: &str) -> u64 {
 }
 
 fn decode_stream_error_message(payload: &[u8]) -> Result<String, String> {
-    crate::protocol::error_codes::decode_error_body(payload).map(|(_, message)| message)
+    crate::dispatch::protocol::error_codes::decode_error_body(payload).map(|(_, message)| message)
 }
 
 fn seed_committed_stream_route(
@@ -514,7 +514,8 @@ fn should_keep_sink_alive_given_malformed_filter_payload_on_stream_read() {
     let route = "stream://bench/events/orders";
     seed_committed_stream_route(&context, route, 1, b"persisted");
 
-    let mut malformed_read_payload = crate::protocol::payload_codec::PayloadEncoder::new();
+    let mut malformed_read_payload =
+        crate::dispatch::protocol::payload_codec::PayloadEncoder::new();
     malformed_read_payload.put_string(route);
     malformed_read_payload.put_u64(0);
     malformed_read_payload.put_u64(10);

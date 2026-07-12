@@ -1,8 +1,8 @@
 use super::*;
-use crate::protocol::frame::ChannelId;
-use crate::protocol::frame_context::FrameContext;
-use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
-use crate::protocol::tlv::MessageType;
+use crate::dispatch::protocol::frame::ChannelId;
+use crate::dispatch::protocol::frame_context::FrameContext;
+use crate::dispatch::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
+use crate::dispatch::protocol::tlv::MessageType;
 use crate::runtime::clock::Clock;
 use crate::runtime::mailbox::Mailbox;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
@@ -10,6 +10,7 @@ use bytes::Bytes;
 use std::sync::Arc;
 use std::time::Duration;
 
+mod correctness;
 mod delivery_and_subscriptions;
 mod lifecycle_and_admin;
 mod recovery_and_claims;

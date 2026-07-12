@@ -47,12 +47,22 @@ impl KvWatchActor {
         }
     }
 
-    pub fn subscribe(&mut self, session_id: u64, pattern: &str, subscriber: RouteAddress) -> u64 {
+    pub fn subscribe(
+        &mut self,
+        session_id: u64,
+        pattern: &str,
+        subscriber: RouteAddress,
+    ) -> Option<u64> {
         if let Some(existing_id) = self.subscriptions.find_existing_id(session_id, pattern) {
-            return existing_id;
+            return Some(existing_id);
         }
 
-        let subscription_id = self.next_sub_id.fetch_add(1, Ordering::Relaxed);
+        let subscription_id = self
+            .next_sub_id
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                current.checked_add(1)
+            })
+            .ok()?;
         self.subscriptions.insert(
             self.family_id,
             KvWatchSubscription {
@@ -62,7 +72,7 @@ impl KvWatchActor {
                 subscriber,
             },
         );
-        subscription_id
+        Some(subscription_id)
     }
 
     pub fn unsubscribe(&mut self, session_id: u64, pattern: &str) -> usize {
