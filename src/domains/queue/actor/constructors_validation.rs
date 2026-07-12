@@ -241,13 +241,15 @@ impl QueueActor {
                     "queue validation failed: family={family} key_category=transaction error={error:?}"
                 )
             })?;
-        let mut iter = txn.scan(&cntryl_midge::Query::new()).map_err(|error| {
+        let iter = txn.scan(&cntryl_midge::Query::new()).map_err(|error| {
             format!("queue validation failed: family={family} key_category=scan error={error:?}")
         })?;
         let mut required_bodies = HashSet::<Vec<u8>>::new();
         let mut body_rows = HashSet::<Vec<u8>>::new();
 
-        for (key, value) in iter.collect_all() {
+        for (key, value) in iter.try_collect().map_err(|error| {
+            format!("queue validation failed: family={family} key_category=scan error={error:?}")
+        })? {
             let Some(suffix) = storage_key::strip_domain_prefix(&key, DomainKeyspace::Queue) else {
                 continue;
             };

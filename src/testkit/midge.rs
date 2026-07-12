@@ -94,7 +94,12 @@ pub fn create_test_engine_with_cfs(cf_ids: Vec<u32>) -> Arc<Engine> {
     let _ = std::fs::create_dir_all(&db_path);
 
     let engine = Arc::new(
-        Engine::open(OpenOptions::local(db_path).build()).expect("Failed to create test engine"),
+        Engine::open(
+            OpenOptions::local(db_path)
+                .build()
+                .expect("Failed to build test engine options"),
+        )
+        .expect("Failed to create test engine"),
     );
 
     // Explicitly create each requested column family.

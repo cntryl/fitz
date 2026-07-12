@@ -326,7 +326,8 @@ mod tests {
                     .end_key(Bytes::from(end)),
             )
             .expect("scan realm range")
-            .collect_all();
+            .try_collect()
+            .expect("collect realm range");
 
         // Assert
         assert_eq!(rows.len(), 4);

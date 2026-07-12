@@ -370,13 +370,14 @@ impl KvDomainRuntime<'_> {
         let iterator = tx.scan(&midge_query).map_err(|error| error.to_string())?;
         let mut rows = Vec::new();
 
-        for (scoped_key, value) in iterator {
+        for entry in iterator {
+            let (scoped_key, value) = entry.map_err(|error| error.to_string())?;
             let Some(user_key) =
                 crate::domains::kv::KvActor::strip_scoped_prefix(&resource_prefix, &scoped_key)
             else {
                 continue;
             };
-            rows.push((user_key, value.clone()));
+            rows.push((user_key, value.to_vec()));
         }
 
         let has_more = rows.len() > limit;
@@ -435,7 +436,8 @@ impl KvDomainRuntime<'_> {
         let iterator = tx.scan(&midge_query).map_err(|error| error.to_string())?;
         let mut rows = Vec::new();
 
-        for (scoped_key, value) in iterator {
+        for entry in iterator {
+            let (scoped_key, value) = entry.map_err(|error| error.to_string())?;
             let Some(user_key) =
                 crate::domains::kv::KvActor::strip_scoped_prefix(&resource_prefix, &scoped_key)
             else {
@@ -447,7 +449,7 @@ impl KvDomainRuntime<'_> {
             {
                 continue;
             }
-            rows.push((user_key, value.clone()));
+            rows.push((user_key, value.to_vec()));
         }
 
         let has_more = rows.len() > request.limit;
@@ -486,7 +488,8 @@ impl KvDomainRuntime<'_> {
             .map_err(|error| error.to_string())?;
         let mut discovered = Vec::new();
 
-        for (key, value) in iterator.by_ref() {
+        for entry in iterator.by_ref() {
+            let (key, value) = entry.map_err(|error| error.to_string())?;
             let Some((realm, area, resource)) =
                 crate::domains::kv::KvActor::parse_inventory_metadata_key(&key)
             else {
@@ -545,7 +548,8 @@ impl KvDomainRuntime<'_> {
         let mut storage_bytes = 0u64;
         let mut has_more = false;
 
-        for (scoped_key, value) in iterator.by_ref() {
+        for entry in iterator.by_ref() {
+            let (scoped_key, value) = entry.map_err(|error| error.to_string())?;
             if count >= u64::try_from(ADMIN_INVENTORY_REFRESH_LIMIT).unwrap_or(u64::MAX) {
                 has_more = true;
                 break;

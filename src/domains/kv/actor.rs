@@ -558,13 +558,21 @@ impl KvActor {
             Ok(iterator) => {
                 let mut items = Vec::new();
 
-                for (key, value) in iterator {
+                for entry in iterator {
+                    let (key, value) = match entry {
+                        Ok(row) => row,
+                        Err(error) => {
+                            return KvResponse::Error {
+                                error: Self::map_midge_error(error),
+                            };
+                        }
+                    };
                     let Some(user_key) = Self::strip_scoped_prefix(&prefix, &key) else {
                         continue;
                     };
                     items.push(KvPair {
                         key: Bytes::from(user_key),
-                        value: Bytes::from(value),
+                        value,
                     });
                 }
 

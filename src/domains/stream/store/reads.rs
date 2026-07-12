@@ -90,8 +90,10 @@ impl StreamStore {
                 cntryl_midge::TransactionMode::ReadOnly,
             )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
-        let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
-        let results = iter.collect_all();
+        let iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
+        let results = iter
+            .try_collect()
+            .map_err(|e| format!("scan error: {e:?}"))?;
 
         let limit = read_limit_to_usize(params.limit);
         let mut items = Vec::with_capacity(limit.min(1000));
@@ -246,8 +248,10 @@ impl StreamStore {
                 cntryl_midge::TransactionMode::ReadOnly,
             )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
-        let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
-        let results = iter.collect_all();
+        let iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
+        let results = iter
+            .try_collect()
+            .map_err(|e| format!("scan error: {e:?}"))?;
 
         let limit = read_limit_to_usize(params.limit);
         let mut items = Vec::with_capacity(limit.min(1000));
@@ -396,8 +400,10 @@ impl StreamStore {
                 cntryl_midge::TransactionMode::ReadOnly,
             )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
-        let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
-        let results = iter.collect_all();
+        let iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
+        let results = iter
+            .try_collect()
+            .map_err(|e| format!("scan error: {e:?}"))?;
 
         let limit = read_limit_to_usize(limit);
         let mut items = Vec::with_capacity(limit.min(1000));

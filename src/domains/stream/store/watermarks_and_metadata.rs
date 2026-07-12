@@ -287,8 +287,10 @@ impl StreamStore {
                 cntryl_midge::TransactionMode::ReadOnly,
             )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
-        let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
-        let results = iter.collect_all();
+        let iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
+        let results = iter
+            .try_collect()
+            .map_err(|e| format!("scan error: {e:?}"))?;
 
         for (key, value) in results.into_iter().rev() {
             let page_start = decode_resource_offset_from_key(&key)?;
@@ -344,8 +346,10 @@ impl StreamStore {
                 cntryl_midge::TransactionMode::ReadOnly,
             )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
-        let mut iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
-        let results = iter.collect_all();
+        let iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
+        let results = iter
+            .try_collect()
+            .map_err(|e| format!("scan error: {e:?}"))?;
 
         for (key, value) in results {
             let page_start = decode_resource_offset_from_key(&key)?;

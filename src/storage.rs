@@ -53,8 +53,12 @@ impl FitzStorageEngine {
         query: &cntryl_midge::Query,
     ) -> cntryl_midge::MidgeResult<Vec<(Vec<u8>, Vec<u8>)>> {
         let txn = self.begin_tx(family, cntryl_midge::TransactionMode::ReadOnly)?;
-        let mut iter = txn.scan(query)?;
-        Ok(iter.collect_all())
+        let iter = txn.scan(query)?;
+        let rows = iter.try_collect()?;
+        Ok(rows
+            .into_iter()
+            .map(|(key, value)| (key.to_vec(), value.to_vec()))
+            .collect())
     }
 
     pub(crate) fn flush_cf(

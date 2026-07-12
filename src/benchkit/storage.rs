@@ -29,7 +29,9 @@ pub fn create_bench_store_with_cfs(
     column_families: impl IntoIterator<Item = u32>,
 ) -> Arc<cntryl_midge::Engine> {
     create_store_with_cfs(
-        cntryl_midge::OpenOptions::in_memory().build(),
+        cntryl_midge::OpenOptions::in_memory()
+            .build()
+            .expect("Failed to build in-memory benchmark options"),
         column_families,
     )
 }
@@ -61,7 +63,8 @@ pub fn create_write_heavy_bench_store_with_cfs(
             .memory_budget(cntryl_midge::MemoryBudget::Bytes(
                 WRITE_HEAVY_BENCH_MEMORY_BUDGET_BYTES,
             ))
-            .build(),
+            .build()
+            .expect("Failed to build write-heavy benchmark options"),
         column_families,
     )
 }
@@ -115,8 +118,12 @@ pub fn create_local_bench_store() -> (Arc<cntryl_midge::Engine>, tempfile::TempD
     let temp_path = temp_dir.path().to_string_lossy().to_string();
 
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::local(&temp_path).build())
-            .expect("Failed to create local disk store"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::local(&temp_path)
+                .build()
+                .expect("Failed to build local benchmark options"),
+        )
+        .expect("Failed to create local disk store"),
     );
 
     // Ensure column family 1 exists for durable benchmark/tests that rely on explicit

@@ -7,6 +7,8 @@ use bytes::Bytes;
 use std::cmp::Reverse;
 use std::time::{Duration, Instant};
 
+type RecoveryScanEntries = Vec<(Vec<u8>, Vec<u8>)>;
+
 struct IndexScanStats {
     max_id: Option<u64>,
     scanned_ready_count: u64,
@@ -142,18 +144,24 @@ impl QueueActor {
         let mut delayed_keys = Vec::new();
         let mut dlq_keys = Vec::new();
 
-        for (key, _) in ready_iter {
-            ready_keys.push(key.clone());
+        for entry in ready_iter {
+            let (key, _) = entry
+                .map_err(|error| format!("Failed to scan ready index for rebuild: {error:?}"))?;
+            ready_keys.push(key);
         }
-        for (key, _) in delayed_iter {
-            delayed_keys.push(key.clone());
+        for entry in delayed_iter {
+            let (key, _) = entry
+                .map_err(|error| format!("Failed to scan delayed index for rebuild: {error:?}"))?;
+            delayed_keys.push(key);
         }
-        for (key, _) in dlq_iter {
-            dlq_keys.push(key.clone());
+        for entry in dlq_iter {
+            let (key, _) = entry
+                .map_err(|error| format!("Failed to scan DLQ index for rebuild: {error:?}"))?;
+            dlq_keys.push(key);
         }
 
         for key in ready_keys.into_iter().chain(delayed_keys).chain(dlq_keys) {
-            txn.delete(key)
+            txn.delete(key.to_vec())
                 .map_err(|e| format!("Failed to delete stale queue index key: {e:?}"))?;
         }
 
@@ -237,13 +245,13 @@ impl QueueActor {
             }
         };
 
-        if header_iter.remaining() == 0 && legacy_iter.remaining() == 0 {
+        let header_entries = Self::collect_scan_entries(&mut header_iter)?;
+        let legacy_entries = Self::collect_scan_entries(&mut legacy_iter)?;
+        if header_entries.is_empty() && legacy_entries.is_empty() {
             return Ok(None);
         }
 
-        let recovered_count = header_iter.remaining() + legacy_iter.remaining();
-        let header_entries = Self::collect_scan_entries(&mut header_iter);
-        let legacy_entries = Self::collect_scan_entries(&mut legacy_iter);
+        let recovered_count = header_entries.len() + legacy_entries.len();
         let per_shard = recovered_count / Self::READY_SHARDS + 1;
         for shard in &mut self.ready_shards {
             shard.reserve(per_shard);
@@ -452,7 +460,16 @@ impl QueueActor {
         next_id: u64,
         stats: &mut IndexScanStats,
     ) -> Result<(), IndexRecoveryAttempt> {
-        for (key_bytes, value_bytes) in ready_iter.by_ref() {
+        for entry in ready_iter.by_ref() {
+            let (key_bytes, value_bytes) = match entry {
+                Ok(row) => row,
+                Err(error) => {
+                    return Err(IndexRecoveryAttempt::Error {
+                        next_id,
+                        reason: format!("Failed to read queue ready index: {error:?}"),
+                    });
+                }
+            };
             let Some((shard, start_id)) =
                 Self::parse_ready_range_key(&key_bytes, &self.ready_index_prefix)
             else {
@@ -494,7 +511,16 @@ impl QueueActor {
         now_instant: Instant,
         stats: &mut IndexScanStats,
     ) -> Result<(), IndexRecoveryAttempt> {
-        for (key_bytes, _value_bytes) in delayed_iter.by_ref() {
+        for entry in delayed_iter.by_ref() {
+            let (key_bytes, _value_bytes) = match entry {
+                Ok(row) => row,
+                Err(error) => {
+                    return Err(IndexRecoveryAttempt::Error {
+                        next_id,
+                        reason: format!("Failed to read queue delayed index: {error:?}"),
+                    });
+                }
+            };
             let Some((visible_at_ms, id)) =
                 Self::parse_delayed_index_key(&key_bytes, &self.delayed_index_prefix)
             else {
@@ -539,7 +565,16 @@ impl QueueActor {
         next_id: u64,
         stats: &mut IndexScanStats,
     ) -> Result<(), IndexRecoveryAttempt> {
-        for (key_bytes, _value_bytes) in dlq_iter.by_ref() {
+        for entry in dlq_iter.by_ref() {
+            let (key_bytes, _value_bytes) = match entry {
+                Ok(row) => row,
+                Err(error) => {
+                    return Err(IndexRecoveryAttempt::Error {
+                        next_id,
+                        reason: format!("Failed to read queue DLQ index: {error:?}"),
+                    });
+                }
+            };
             let Some((dead_lettered_at_ms, id)) =
                 Self::parse_dlq_index_key(&key_bytes, &self.dlq_index_prefix)
             else {
@@ -560,17 +595,21 @@ impl QueueActor {
         Ok(())
     }
 
-    fn collect_scan_entries(iter: &mut cntryl_midge::ScanIterator) -> Vec<(Vec<u8>, Vec<u8>)> {
+    fn collect_scan_entries(
+        iter: &mut cntryl_midge::ScanIterator,
+    ) -> Result<RecoveryScanEntries, String> {
         let mut entries = Vec::new();
         for entry in iter.by_ref() {
-            entries.push(entry);
+            let (key, value) =
+                entry.map_err(|error| format!("Failed to read queue recovery scan: {error:?}"))?;
+            entries.push((key.to_vec(), value.to_vec()));
         }
-        entries
+        Ok(entries)
     }
 
     fn recover_header_entries(
         &mut self,
-        entries: &[(Vec<u8>, Vec<u8>)],
+        entries: &RecoveryScanEntries,
         now_epoch_ms: u64,
         now_instant: Instant,
         recovered_ready_ids: &mut Vec<MessageId>,
@@ -606,7 +645,7 @@ impl QueueActor {
 
     fn recover_legacy_entries(
         &mut self,
-        entries: &[(Vec<u8>, Vec<u8>)],
+        entries: &RecoveryScanEntries,
         now_epoch_ms: u64,
         now_instant: Instant,
         recovered_ready_ids: &mut Vec<MessageId>,

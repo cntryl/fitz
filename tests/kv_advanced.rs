@@ -7,11 +7,26 @@ use fitz::domains::kv::{KvActor, KvMessage, KvResponse, TxMode};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
 use std::sync::Arc;
+use std::time::Duration;
+
+fn shutdown_local_bench_store(store: Arc<cntryl_midge::Engine>) {
+    let mut engine = Arc::try_unwrap(store).unwrap_or_else(|store| {
+        panic!(
+            "local bench store has {} remaining owners",
+            Arc::strong_count(&store)
+        );
+    });
+    engine
+        .shutdown(Duration::from_secs(2))
+        .expect("shutdown local bench store");
+}
 
 fn reopen_local_bench_store(temp_path: &std::path::Path) -> Arc<cntryl_midge::Engine> {
     Arc::new(
         cntryl_midge::Engine::open(
-            cntryl_midge::OpenOptions::local(temp_path.to_string_lossy().as_ref()).build(),
+            cntryl_midge::OpenOptions::local(temp_path.to_string_lossy().as_ref())
+                .build()
+                .expect("build local reopen options"),
         )
         .expect("reopen engine"),
     )
@@ -206,15 +221,10 @@ fn should_restore_committed_kv_value_on_engine_restart() {
 
     // Simulate process exit and restart
     drop(actor);
-    drop(store);
+    shutdown_local_bench_store(store);
 
     // Keep temp_dir alive during reopen to prevent directory deletion
-    let reopened = Arc::new(
-        cntryl_midge::Engine::open(
-            cntryl_midge::OpenOptions::local(temp_path.to_string_lossy().as_ref()).build(),
-        )
-        .expect("reopen engine"),
-    );
+    let reopened = reopen_local_bench_store(&temp_path);
 
     let mut actor2 = KvActor::new(reopened);
     let b2 = actor2.handle(KvMessage::Begin {
@@ -291,7 +301,7 @@ fn should_discard_uncommitted_kv_write_on_engine_restart() {
     assert!(matches!(put, KvResponse::PutOk));
 
     drop(actor);
-    drop(store);
+    shutdown_local_bench_store(store);
 
     let reopened = reopen_local_bench_store(&temp_path);
     let mut actor2 = KvActor::new(reopened);
@@ -379,7 +389,7 @@ fn should_return_family_one_value_after_engine_restart_given_same_key_in_multipl
     write_committed_value_for_family(&mut actor, family_two, b"family-2");
 
     drop(actor);
-    drop(store);
+    shutdown_local_bench_store(store);
 
     let reopened = reopen_local_bench_store(&temp_path);
     let mut actor2 = KvActor::new(reopened);
@@ -406,7 +416,7 @@ fn should_return_family_two_value_after_engine_restart_given_same_key_in_multipl
     write_committed_value_for_family(&mut actor, family_two, b"family-2");
 
     drop(actor);
-    drop(store);
+    shutdown_local_bench_store(store);
 
     let reopened = reopen_local_bench_store(&temp_path);
     let mut actor2 = KvActor::new(reopened);

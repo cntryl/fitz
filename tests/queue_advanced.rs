@@ -71,8 +71,12 @@ impl Clock for TestClock {
 fn should_distribute_messages_fairly_among_competing_consumers() {
     // Arrange
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("Failed to open Midge"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
     );
 
     let queue_key = unique_queue_key("competing");
@@ -127,8 +131,12 @@ fn should_distribute_messages_fairly_among_competing_consumers() {
 fn should_redeliver_messages_after_crash() {
     // Arrange
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("Failed to open Midge"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
     );
 
     let queue_key = unique_queue_key("crash-recovery");
@@ -224,8 +232,12 @@ fn should_redeliver_messages_after_crash() {
 fn should_preserve_fifo_order_after_recovery() {
     // Arrange
     let reference_store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("Failed to open Midge"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
     );
     let reference_queue_key = unique_queue_key("live-order");
     let mut reference_actor = QueueActor::new(
@@ -259,8 +271,12 @@ fn should_preserve_fifo_order_after_recovery() {
     }
 
     let recovery_store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("Failed to open Midge"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
     );
     let recovery_queue_key = unique_queue_key("crash-order");
 
@@ -314,8 +330,12 @@ fn should_preserve_fifo_order_after_recovery() {
 fn should_preserve_delayed_visibility_across_restart() {
     // Arrange
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("Failed to open Midge"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
     );
 
     let queue_key = unique_queue_key("delayed-crash");
@@ -369,8 +389,12 @@ fn should_preserve_delayed_visibility_across_restart() {
 fn should_prevent_id_collisions_across_crash() {
     // Arrange
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("Failed to open Midge"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
     );
 
     let queue_key = unique_queue_key("atomic-batch");
@@ -444,8 +468,12 @@ fn should_redeliver_message_on_lease_expiration() {
     // Arrange
     let clock = TestClock::new();
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("Failed to open Midge"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
     );
 
     let queue_key = unique_queue_key("lease-expire");
@@ -492,8 +520,12 @@ fn should_dlq_message_after_max_attempts() {
     // Arrange
     let clock = TestClock::new();
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("Failed to open Midge"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("crash-dlq");
 

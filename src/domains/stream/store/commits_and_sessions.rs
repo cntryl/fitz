@@ -116,12 +116,15 @@ impl StreamStore {
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
 
         let resource_meta_query = cntryl_midge::Query::new();
-        let mut resource_meta_iter = txn
+        let resource_meta_iter = txn
             .scan(&resource_meta_query)
             .map_err(|e| format!("scan error: {e:?}"))?;
 
         let mut values = Vec::new();
-        for (key, value) in resource_meta_iter.collect_all() {
+        for (key, value) in resource_meta_iter
+            .try_collect()
+            .map_err(|e| format!("scan error: {e:?}"))?
+        {
             let Ok((realm, area, resource)) = Self::resource_identity_from_key(
                 crate::domains::stream::storage::KeyPrefix::ResourceMeta as u8,
                 &key,

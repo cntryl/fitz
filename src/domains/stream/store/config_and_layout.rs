@@ -167,11 +167,14 @@ impl StreamStore {
                 cntryl_midge::TransactionMode::ReadOnly,
             )
             .map_err(|e| format!("stream validation failed: family={family} begin_tx: {e:?}"))?;
-        let mut iter = txn
+        let iter = txn
             .scan(&cntryl_midge::Query::new())
             .map_err(|e| format!("stream validation failed: family={family} scan: {e:?}"))?;
 
-        for (key, value) in iter.collect_all() {
+        for (key, value) in iter
+            .try_collect()
+            .map_err(|e| format!("stream validation failed: family={family} scan: {e:?}"))?
+        {
             let validation = Self::validate_persisted_row(&key, &value);
             if let Err((category, error)) = validation {
                 return Err(format!(
@@ -349,7 +352,8 @@ impl StreamStore {
 
         let query = cntryl_midge::Query::new();
         let iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
-        for (key, _value) in iter {
+        for entry in iter {
+            let (key, _value) = entry.map_err(|e| format!("scan error: {e:?}"))?;
             let suffix = crate::domains::stream::storage::stream_key_suffix(&key);
             if suffix
                 .first()

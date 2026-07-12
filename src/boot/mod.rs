@@ -426,14 +426,14 @@ fn shutdown_runtime(
     drop(router);
     drop(runtime);
 
-    let store = Arc::try_unwrap(store).map_err(|store| {
+    let mut store = Arc::try_unwrap(store).map_err(|store| {
         format!(
             "Midge shutdown blocked by {} leftover engine references",
             Arc::strong_count(&store)
         )
     })?;
     store
-        .shutdown()
+        .shutdown(std::time::Duration::from_secs(2))
         .map_err(|error| format!("Midge shutdown failed: {error}"))?;
 
     Ok(())

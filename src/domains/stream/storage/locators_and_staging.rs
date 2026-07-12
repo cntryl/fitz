@@ -349,8 +349,12 @@ impl RealmLocatorValue {
 pub fn create_test_db() -> std::sync::Arc<cntryl_midge::Engine> {
     use std::sync::Arc;
     Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("create in-memory db"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("create in-memory db"),
     )
 }
 

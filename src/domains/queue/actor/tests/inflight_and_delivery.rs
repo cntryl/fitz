@@ -4,8 +4,12 @@ use super::*;
 fn should_reject_extend_with_invalid_token() {
     // Arrange
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("Failed to open Midge"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("jobs-extend-invalid");
     let mut actor = QueueActor::new(
@@ -37,8 +41,12 @@ fn should_redeliver_message_when_inflight_expires() {
     // Arrange
     let clock = MockClock::new();
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("Failed to open Midge"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("jobs-redelivery");
     let mut actor = QueueActor::with_clock(
@@ -89,8 +97,12 @@ fn should_redeliver_message_when_inflight_expires() {
 fn should_reserve_multiple_messages_in_batch() {
     // Arrange
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("Failed to open Midge"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("jobs-reserve-batch");
     let mut actor = QueueActor::new(
@@ -125,8 +137,12 @@ fn should_reserve_multiple_messages_in_batch() {
 fn should_ack_multiple_messages_in_batch() {
     // Arrange
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("Failed to open Midge"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("jobs-ack-batch");
     let mut actor = QueueActor::new(
@@ -160,8 +176,12 @@ fn should_ack_multiple_messages_in_batch() {
 fn should_dequeue_all_enqueued_messages() {
     // Arrange
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("Failed to open Midge"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("fifo-order");
     let mut actor = QueueActor::new(
@@ -213,8 +233,12 @@ fn should_ignore_stale_timer_after_extend() {
     // Arrange
     let clock = MockClock::new();
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("Failed to open Midge"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("jobs-stale-timer");
     let mut actor = QueueActor::with_clock(
@@ -256,8 +280,12 @@ fn should_reject_operations_on_expired_inflight() {
     // Arrange
     let clock = MockClock::new();
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("Failed to open Midge"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("jobs-expired-inflight");
     let mut actor = QueueActor::with_clock(
@@ -303,8 +331,12 @@ fn should_return_message_to_ready_when_extend_observes_expired_inflight() {
     // Arrange
     let clock = MockClock::new();
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("Failed to open Midge"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("jobs-expired-extend-redelivery");
     let mut actor = QueueActor::with_clock(
@@ -346,8 +378,12 @@ fn should_return_message_to_ready_when_complete_observes_expired_inflight() {
     // Arrange
     let clock = MockClock::new();
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("Failed to open Midge"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("jobs-expired-complete-redelivery");
     let mut actor = QueueActor::with_clock(
@@ -387,8 +423,12 @@ fn should_return_message_to_ready_when_complete_observes_expired_inflight() {
 fn should_return_not_found_for_nonexistent_message() {
     // Arrange
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("Failed to open Midge"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("jobs-not-found");
     let mut actor = QueueActor::new(
@@ -414,8 +454,12 @@ fn should_delay_message_visibility() {
     // Arrange
     let clock = MockClock::new();
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("Failed to open Midge"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("jobs-delay");
     let mut actor = QueueActor::with_clock(
@@ -473,8 +517,12 @@ fn should_move_to_dlq_after_max_attempts() {
     // Arrange
     let clock = MockClock::new();
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("Failed to open Midge"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("jobs-dlq");
     let mut actor = QueueActor::with_clock(
@@ -552,8 +600,12 @@ fn should_not_requeue_dlq_message_after_restart() {
     // Arrange
     let clock = MockClock::new();
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("Failed to open Midge"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("jobs-dlq-restart");
     let msg_id = {
@@ -616,8 +668,12 @@ fn should_report_admin_dead_letters_given_retained_dlq_messages() {
     // Arrange
     let clock = MockClock::new();
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("Failed to open Midge"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("jobs-admin-dlq");
     let mut actor = QueueActor::with_clock(
@@ -663,8 +719,12 @@ fn should_replay_dead_letter_given_retained_dlq_message() {
     // Arrange
     let clock = MockClock::new();
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("Failed to open Midge"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("jobs-dlq-replay");
     let mut actor = QueueActor::with_clock(
@@ -712,8 +772,12 @@ fn should_recover_replayed_dead_letter_as_ready_after_restart() {
     // Arrange
     let clock = MockClock::new();
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("Failed to open Midge"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("jobs-dlq-replay-restart");
     let mut actor = QueueActor::with_clock(
@@ -762,8 +826,12 @@ fn should_purge_dead_letter_given_retained_dlq_message() {
     // Arrange
     let clock = MockClock::new();
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("Failed to open Midge"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("jobs-dlq-purge");
     let mut actor = QueueActor::with_clock(
@@ -806,8 +874,12 @@ fn should_keep_purged_dead_letter_deleted_after_restart() {
     // Arrange
     let clock = MockClock::new();
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("Failed to open Midge"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("jobs-dlq-purge-restart");
     let mut actor = QueueActor::with_clock(
@@ -851,8 +923,12 @@ fn should_allow_unlimited_retries_when_max_attempts_is_none() {
     // Arrange
     let clock = MockClock::new();
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("Failed to open Midge"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
     );
     let queue_key = unique_queue_key("jobs-unlimited");
     let mut actor = QueueActor::with_clock(

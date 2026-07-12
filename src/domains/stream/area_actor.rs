@@ -371,8 +371,12 @@ mod tests {
         let family = RouteFamily::new(0);
         let addr = RouteAddress::new(family, Route::new("stream://realm1/area1/__area__"));
         let db = Arc::new(
-            cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-                .expect("Failed to open store"),
+            cntryl_midge::Engine::open(
+                cntryl_midge::OpenOptions::in_memory()
+                    .build()
+                    .expect("build in-memory test options"),
+            )
+            .expect("Failed to open store"),
         );
         let store = Arc::new(StreamStore::new(db));
         let actor = AreaActor::new(family, "realm1".to_string(), "area1".to_string(), store);
@@ -387,8 +391,12 @@ mod tests {
         router.register_domain_pattern("stream", stream_mailbox.clone());
         let addr = RouteAddress::new(family, Route::new("stream://realm1/area1/__area__"));
         let db = Arc::new(
-            cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-                .expect("Failed to open store"),
+            cntryl_midge::Engine::open(
+                cntryl_midge::OpenOptions::in_memory()
+                    .build()
+                    .expect("build in-memory test options"),
+            )
+            .expect("Failed to open store"),
         );
         let store = Arc::new(StreamStore::new(db));
         let actor = AreaActor::new(family, "realm1".to_string(), "area1".to_string(), store);

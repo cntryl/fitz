@@ -76,7 +76,7 @@ pub fn ensure_route_family(
 fn init_memory(config: &BootConfig) -> BootResult<Arc<cntryl_midge::Engine>> {
     info!("Initializing in-memory storage (ephemeral, no persistence)");
 
-    let open_options = build_midge_open_options(cntryl_midge::OpenOptions::in_memory(), config);
+    let open_options = build_midge_open_options(cntryl_midge::OpenOptions::in_memory(), config)?;
     let store = cntryl_midge::Engine::open(open_options)
         .map_err(|e| format!("Failed to open in-memory Midge: {e}"))?;
 
@@ -109,7 +109,7 @@ async fn open_local_disk_with_retry(
     config: &BootConfig,
     db_path: &str,
 ) -> BootResult<cntryl_midge::Engine> {
-    let open_options = build_midge_open_options(cntryl_midge::OpenOptions::local(db_path), config);
+    let open_options = build_midge_open_options(cntryl_midge::OpenOptions::local(db_path), config)?;
     let retry_started_at = Instant::now();
     let mut retry_attempt = 0;
 
@@ -167,9 +167,9 @@ fn storage_open_retry_jitter_ms(attempt: u32) -> u64 {
 }
 
 fn build_midge_open_options(
-    open_options: cntryl_midge::OpenOptions,
+    open_options: cntryl_midge::OpenOptionsBuilder,
     config: &BootConfig,
-) -> cntryl_midge::OpenOptions {
+) -> BootResult<cntryl_midge::OpenOptions> {
     let open_options = if matches!(&config.storage_mode, StorageMode::CloudBacked(_))
         && config.storage_memtable_bytes().is_none()
     {
@@ -192,7 +192,9 @@ fn build_midge_open_options(
         None => open_options,
     };
 
-    open_options.build()
+    open_options
+        .build()
+        .map_err(|error| format!("Invalid Midge open options: {error}").into())
 }
 
 /// Initialize cloud-backed storage.
@@ -224,7 +226,7 @@ async fn init_cloud(
             cloud.prefix.clone().unwrap_or_default(),
         ),
         config,
-    );
+    )?;
     let store = open_cloud_with_retry(open_options, cloud).await?;
 
     ensure_column_families(&store, config)?;

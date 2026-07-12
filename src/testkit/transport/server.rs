@@ -730,9 +730,9 @@ impl TestServer {
         drop(domains);
         drop(runtime);
         drop(permit);
-        let store = wait_for_exclusive_store(store).await?;
+        let mut store = wait_for_exclusive_store(store).await?;
         store
-            .shutdown()
+            .shutdown(STORE_SHUTDOWN_RELEASE_TIMEOUT)
             .map_err(|error| format!("Midge shutdown failed: {error}"))?;
         Ok(())
     }

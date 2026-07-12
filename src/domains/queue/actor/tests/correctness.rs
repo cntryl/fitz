@@ -4,8 +4,12 @@ use super::*;
 fn should_reject_queue_actor_family_mismatch() {
     // Arrange
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("open test store"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("open test store"),
     );
     let queue_key = QueueKey {
         family: RouteFamily::new(1),
@@ -36,8 +40,12 @@ fn should_reject_queue_actor_family_mismatch() {
 fn should_reject_enqueue_when_message_id_space_is_exhausted() {
     // Arrange
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("open test store"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("open test store"),
     );
     let mut actor = QueueActor::new(
         RouteFamily::new(0),
@@ -61,8 +69,12 @@ fn should_reject_enqueue_when_message_id_space_is_exhausted() {
 fn should_reject_receive_when_delivery_attempt_counter_is_exhausted() {
     // Arrange
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("open test store"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("open test store"),
     );
     let mut actor = QueueActor::new(
         RouteFamily::new(0),
@@ -94,8 +106,12 @@ fn should_reject_receive_when_delivery_attempt_counter_is_exhausted() {
 fn should_recover_ready_message_id_at_numeric_maximum_without_looping() {
     // Arrange
     let store = Arc::new(
-        cntryl_midge::Engine::open(cntryl_midge::OpenOptions::in_memory().build())
-            .expect("open test store"),
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("open test store"),
     );
     let queue_key = unique_queue_key("max-ready-id");
     let mut txn = store

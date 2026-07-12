@@ -109,7 +109,8 @@ fn should_apply_configured_storage_memtable_bytes_to_midge_options() {
     let config = BootConfig::with_memory_storage().with_storage_memtable_bytes(memtable_bytes);
 
     // Act
-    let open_options = build_midge_open_options(cntryl_midge::OpenOptions::in_memory(), &config);
+    let open_options = build_midge_open_options(cntryl_midge::OpenOptions::in_memory(), &config)
+        .expect("build memory options");
 
     // Assert
     assert_eq!(open_options.memtable_size_limit(), memtable_bytes);
@@ -149,14 +150,16 @@ fn should_apply_cloud_throughput_defaults_when_memtable_is_auto() {
         "tests",
     )
     .memory_budget(MemoryBudget::Bytes(512 * 1024 * 1024));
+    let expected_memtable_bytes =
+        (512 * 1024 * 1024usize).saturating_sub((512 * 1024 * 1024usize) / 10) / 2;
 
     // Act
-    let tuned = build_midge_open_options(open_options, &config);
+    let tuned = build_midge_open_options(open_options, &config).expect("build cloud options");
 
     // Assert
-    assert_eq!(tuned.goal, Goal::Throughput);
-    assert_eq!(tuned.workload, WorkloadProfile::WriteHeavy);
-    assert_eq!(tuned.memtable_size_limit(), 256 * 1024 * 1024);
+    assert_eq!(tuned.goal(), Goal::Throughput);
+    assert_eq!(tuned.workload(), WorkloadProfile::WriteHeavy);
+    assert_eq!(tuned.memtable_size_limit(), expected_memtable_bytes);
     assert_eq!(tuned.wal_buffer_size(), 1024 * 1024);
     assert_eq!(tuned.target_sst_size(), 512 * 1024 * 1024);
 }
@@ -183,7 +186,7 @@ fn should_respect_cloud_memtable_override_before_tuning() {
     .memory_budget(MemoryBudget::Bytes(512 * 1024 * 1024));
 
     // Act
-    let tuned = build_midge_open_options(open_options, &config);
+    let tuned = build_midge_open_options(open_options, &config).expect("build cloud options");
 
     // Assert
     let engine = cntryl_midge::Engine::open(tuned).expect("open tuned cloud engine");
@@ -218,6 +221,7 @@ fn should_reduce_cloud_wal_flush_churn_with_throughput_tuning_on_cloud_simulated
     )
     .memory_budget(budget)
     .build();
+    let baseline_opts = baseline_opts.expect("build baseline options");
     let tuned_opts = build_midge_open_options(
         cntryl_midge::OpenOptions::cloud_simulated(
             tempdir.path().join("tuned"),
@@ -226,7 +230,8 @@ fn should_reduce_cloud_wal_flush_churn_with_throughput_tuning_on_cloud_simulated
         )
         .memory_budget(budget),
         &config,
-    );
+    )
+    .expect("build tuned options");
 
     assert_eq!(baseline_opts.wal_buffer_size(), 128 * 1024);
     assert_eq!(tuned_opts.wal_buffer_size(), 1024 * 1024);
@@ -580,13 +585,15 @@ fn sqrzl_boot_config(
 }
 
 fn shutdown_store(store: Arc<cntryl_midge::Engine>) {
-    let engine = Arc::try_unwrap(store).unwrap_or_else(|store| {
+    let mut engine = Arc::try_unwrap(store).unwrap_or_else(|store| {
         panic!(
             "Midge shutdown blocked by {} leftover engine references",
             Arc::strong_count(&store)
         );
     });
-    engine.shutdown().expect("shutdown Midge");
+    engine
+        .shutdown(Duration::from_secs(2))
+        .expect("shutdown Midge");
 }
 
 async fn ensure_sqrzl_namespace(

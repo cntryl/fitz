@@ -169,11 +169,13 @@ impl ScheduleStore {
         let rows = tx
             .scan(&cntryl_midge::Query::new())
             .map_err(|e| format!("scan schedule rows failed: {e:?}"))?
-            .collect_all();
+            .try_collect()
+            .map_err(|e| format!("scan schedule rows failed: {e:?}"))?;
 
         Ok(rows
             .into_iter()
             .filter(|(key, _)| Self::schedule_key_suffix(key).starts_with(suffix_prefix))
+            .map(|(key, value)| (key.to_vec(), value.to_vec()))
             .collect())
     }
 
