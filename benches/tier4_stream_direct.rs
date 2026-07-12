@@ -127,9 +127,17 @@ pub(crate) fn measure_direct_write(
     let payload = Bytes::from(vec![0xC3; payload_size]);
     let mut stream_session_id = 1_u64;
     let mut next_offset = 0_u64;
+    if storage == StorageProfile::Memory {
+        // Memory-mode Midge intentionally does not flush: a Stream history is
+        // therefore unbounded for the duration of a fixed-duration benchmark.
+        // Recreate the ephemeral fixture only when its explicit memory budget
+        // rejects a write so the row measures successful write lifecycles without
+        // silently turning the storage contract into an unbounded allocation.
+        ctx.metadata("memory_store_reset", "on_memory_budget_stall");
+    }
 
     measure_operations(ctx, measurement, 1, |latencies| {
-        let started = Instant::now();
+        let mut started = Instant::now();
         let mut commit_attempts = 0_u32;
         loop {
             fixture
@@ -165,6 +173,19 @@ pub(crate) fn measure_direct_write(
                     fixture.refresh_actor();
                     next_offset = fixture.next_resource_offset();
                     std::thread::yield_now();
+                }
+                Err(error)
+                    if storage == StorageProfile::Memory
+                        && error.contains("Memory budget exceeded") =>
+                {
+                    // In-memory Midge retains every committed Stream record and
+                    // deliberately makes flush a no-op. Start a fresh ephemeral
+                    // store before retrying this logical operation; exclude the
+                    // recovery/setup time from that operation's latency sample.
+                    fixture = direct_actor(storage, &format!("direct-write-{}", storage.label()));
+                    stream_session_id = 1;
+                    next_offset = 0;
+                    started = Instant::now();
                 }
                 Err(error) => panic!("commit direct Stream write: {error}"),
             }
