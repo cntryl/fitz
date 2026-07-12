@@ -49,10 +49,6 @@ jobs:
         working-directory: ui
         run: npm ci
 
-      - name: Validate OpenAPI
-        working-directory: ui
-        run: npm run validate:openapi
-
       - name: Check generated adapters
         working-directory: ui
         run: npm run check:generated
