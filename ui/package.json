@@ -4,7 +4,7 @@
   "scripts": {
     "clean": "npx rimraf node_modules dist",
     "dev": "vp dev",
-    "mock": "VITE_FITZ_MOCK_API=1 vp dev",
+    "dev:mock": "VITE_FITZ_MOCK_API=1 vp dev",
     "build": "vp build",
     "preview": "vp preview",
     "test": "vp test",
@@ -21,23 +21,23 @@
     "gen:adapters": "npx @fgrzl/fetch-gen --input ../public/openapi.yml --output ./src/adapters/generated/api.ts && node ./scripts/normalize-generated.js"
   },
   "dependencies": {
-    "@askrjs/askr": "0.0.50",
+    "@askrjs/askr": "0.0.51",
     "@askrjs/charts": "^0.0.1",
     "@askrjs/logos": "0.0.1",
     "@askrjs/lucide": "^0.0.3",
-    "@askrjs/themes": "0.0.10",
+    "@askrjs/themes": "0.0.11",
     "@askrjs/ui": "0.0.12",
     "@askrjs/vite": "0.0.5",
     "@fgrzl/fetch": "^2.0.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
-    "@types/node": "^26.1.0",
+    "@types/node": "^26.1.1",
     "autoprefixer": "^10.5.2",
     "jsdom": "^29.1.1",
-    "postcss": "^8.5.16",
+    "postcss": "^8.5.17",
     "typescript": "^6.0.3",
-    "vite-plus": "^0.2.2"
+    "vite-plus": "^0.2.4"
   },
-  "packageManager": "npm@11.18.0"
+  "packageManager": "npm@12.0.1"
 }
