@@ -20,10 +20,14 @@ permissions:
 jobs:
   version:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+
     outputs:
       branch: ${{ steps.branch.outputs.branch }}
       semver: ${{ steps.gitversion.outputs.semVer }}
       fullSemVer: ${{ steps.gitversion.outputs.fullSemVer }}
+
     steps:
       - uses: actions/checkout@v7
         with:
