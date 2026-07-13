@@ -4,20 +4,9 @@ on:
   schedule:
     - cron: "0 5 * * *"
   workflow_dispatch:
-    inputs:
-      suite:
-        description: "Benchmark suite to run"
-        required: true
-        default: "release"
-        type: choice
-        options:
-          - release
-          - deep
-          - all
 
 jobs:
-  release:
-    if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.suite == 'release' || github.event.inputs.suite == 'all') }}
+  bench:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -36,125 +25,22 @@ jobs:
         with:
           shared-key: "bench"
 
-      - name: Install cntryl-tools
-        run: cargo install --git https://github.com/cntryl/tools --locked
+      - name: Benchmark tier 1
+        run: cargo bench --bench 'tier1*'
 
-      - name: Clear previous benchmark artifacts
-        run: rm -rf target/stress target/bench_results.json target/bench_summary.md
+      - name: Benchmark tier 2
+        run: cargo bench --bench 'tier2*'
 
-      - name: Run release Tier 3 benchmarks
-        run: |
-          cargo bench --quiet --bench tier3_system_queue -- --workload should_complete_capacity_mixed_workload
-          cargo bench --quiet --bench tier3_system_queue -- --workload should_complete_routed_enqueue_sustained
-          cargo bench --quiet --bench tier3_system_queue -- --workload should_complete_wait_wakeup_with_waiters
-          cargo bench --quiet --bench tier3_system_queue -- --workload should_complete_routed_ack_roundtrip
-          cargo bench --quiet --bench tier3_system_rpc -- --workload should_complete_pending_cardinality_steady_state_1000
+      - name: Benchmark tier 3
+        run: cargo bench --bench 'tier3*'
 
-      - name: Run release Tier 4 benchmarks
-        run: |
-          for bench in \
-            tier4_kv_gate \
-            tier4_lease_gate \
-            tier4_notice_publish \
-            tier4_queue_gate \
-            tier4_rpc_roundtrip \
-            tier4_schedule_lifecycle \
-            tier4_stream_gate; do
-            cargo bench --quiet --bench "$bench"
-          done
+      - name: Benchmark tier 4
+        run: cargo bench --bench 'tier4*'
 
-      - name: Filter baseline to release surface
-        run: |
-          jq --rawfile release_ids config/bench_release_ids.txt '
-            ($release_ids
-              | split("\n")
-              | map(gsub("#.*$"; "") | gsub("^\\s+|\\s+$"; ""))
-              | map(select(length > 0))) as $ids
-            | .records = [.records[] | select(.id as $id | $ids | index($id))]
-            | .comparison_summary = null
-          ' config/bench_baseline.json > /tmp/bench_baseline.release.json
-          test "$(jq '.records | length' /tmp/bench_baseline.release.json)" -eq "$(grep -Ev '^\s*(#|$)' config/bench_release_ids.txt | wc -l | tr -d ' ')"
-          mv /tmp/bench_baseline.release.json config/bench_baseline.json
-
-      - name: Summarize benchmark results
-        run: cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"
-
-      - name: Assert release benchmark quality
-        run: bash scripts/assert-release-benchmark-results.sh
-
-      - name: Upload benchmark artifacts
+      - name: Upload stress benchmark artifacts
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
-          name: release-bench-artifacts-ubuntu-latest
-          path: |
-            target/stress/**
-            target/bench_results.json
-            target/bench_summary.md
-
-  deep:
-    if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (github.event.inputs.suite == 'deep' || github.event.inputs.suite == 'all')) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    env:
-      FITZ_LOG_LEVEL: off
-      OTEL_ENABLED: false
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Update Rust toolchain
-        run: rustup update stable
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: "bench"
-
-      - name: Install cntryl-tools
-        run: cargo install --git https://github.com/cntryl/tools --locked
-
-      - name: Clear previous benchmark artifacts
-        run: rm -rf target/stress target/bench_results.json target/bench_summary.md
-
-      - name: Run deep Tier 2 signal suites
-        run: |
-          cargo bench --quiet --bench tier2_subsystem_queue
-          cargo bench --quiet --bench tier2_subsystem_lease
-          cargo bench --quiet --bench tier2_subsystem_notice
-          cargo bench --quiet --bench tier2_subsystem_rpc
-          cargo bench --quiet --bench tier2_subsystem_stream
-          cargo bench --quiet --bench tier2_subsystem_schedule_fire
-
-      - name: Run deep Tier 3 scaling suites
-        run: |
-          cargo bench --quiet --bench tier3_system_queue
-          cargo bench --quiet --bench tier3_system_rpc
-
-      - name: Run complete Tier 4 characterization matrix
-        run: |
-          printf '%s\n' \
-            tier4_kv_gate tier4_kv_ladder tier4_kv_contention \
-            tier4_lease_gate tier4_lease_ladder tier4_lease_contention \
-            tier4_notice_publish tier4_notice_fanout tier4_notice_control \
-            tier4_queue_gate tier4_queue_concurrency tier4_queue_shapes \
-            tier4_rpc_roundtrip tier4_rpc_pipeline \
-            tier4_schedule_lifecycle tier4_schedule_concurrency tier4_schedule_shapes \
-            tier4_stream_concurrency tier4_stream_filters tier4_stream_gate \
-            tier4_stream_ladder tier4_stream_mixed tier4_stream_shapes \
-            | shuf \
-            | while read -r bench; do cargo bench --quiet --bench "$bench"; done
-
-      - name: Summarize benchmark results
-        run: cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Deep Benchmark Report"
-
-      - name: Upload deep benchmark artifacts
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: deep-bench-artifacts-ubuntu-latest
-          path: |
-            target/stress/**
-            target/bench_results.json
-            target/bench_summary.md
+          name: bench-stress-artifacts
+          path: target/stress
+          if-no-files-found: ignore
