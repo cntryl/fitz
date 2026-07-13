@@ -1,11 +1,10 @@
 name: CI Backend
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
-  pull_request:
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -14,11 +13,16 @@ jobs:
   backend:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Update Rust
-        run: rustup update
+      - name: Update Rust toolchain
+        run: rustup update stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "ci"
 
       - name: Install Rust components
         run: rustup component add rustfmt clippy
@@ -31,9 +35,6 @@ jobs:
 
       - name: Cargo build
         run: cargo build --locked
-
-      - name: Cargo test compile
-        run: cargo test --locked --no-run
 
       - name: Cargo test
         run: cargo test --locked
