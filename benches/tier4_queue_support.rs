@@ -1,7 +1,8 @@
 #![allow(dead_code)] // Standalone Queue targets use focused subsets of this support API.
 
 use crate::tier4_support::{
-    measure_operations, tag_dimensions, StorageProfile, Tier4Dimensions, TransportKind,
+    measure_operations, measure_operations_best_effort, tag_dimensions, StorageProfile,
+    Tier4Dimensions, TransportKind,
 };
 use bytes::Bytes;
 use cntryl_stress::StressContext;
@@ -321,19 +322,21 @@ impl QueueBenchClient {
         }
     }
 
-    async fn request(&mut self, frame: &[u8]) -> Vec<u8> {
+    async fn request(&mut self, frame: &[u8]) -> Result<Vec<u8>, String> {
         match self {
             Self::Tcp(client) => client.request(frame, RESPONSE_TIMEOUT_MS).await,
             Self::WebSocket(client) => client.request(frame, RESPONSE_TIMEOUT_MS).await,
         }
-        .expect("Queue request response")
+        .map_err(|error| error.to_string())
     }
 
     async fn close(self) {
         match self {
-            Self::Tcp(client) => client.close().await.expect("close Queue TCP client"),
+            Self::Tcp(client) => {
+                let _ = client.close().await;
+            }
             Self::WebSocket(mut client) => {
-                client.close().await.expect("close Queue WebSocket client");
+                let _ = client.close().await;
             }
         }
     }
@@ -355,18 +358,27 @@ impl WireLifecycleState {
         }
     }
 
-    async fn complete(&mut self, client: &mut QueueBenchClient, require_own_message: bool) {
-        let enqueue_response = client.request(&self.enqueue_frame).await;
-        let message_id = parse_enqueue_response(&enqueue_response);
-        let reserve_response = client.request(&self.reserve_frame).await;
-        let (reserved_id, token) = parse_reserve_response(&reserve_response);
-        if require_own_message {
-            assert_eq!(reserved_id, message_id, "Queue reserved the wrong message");
+    async fn complete(
+        &mut self,
+        client: &mut QueueBenchClient,
+        require_own_message: bool,
+    ) -> Result<(), String> {
+        let enqueue_response = client.request(&self.enqueue_frame).await?;
+        let message_id = parse_enqueue_response(&enqueue_response)?;
+        let reserve_response = client.request(&self.reserve_frame).await?;
+        let (reserved_id, token) = parse_reserve_response(&reserve_response)?;
+        if require_own_message && reserved_id != message_id {
+            return Err(format!(
+                "Queue reserved message {reserved_id}, expected {message_id}"
+            ));
         }
         self.complete_frame.set(reserved_id, token);
-        let complete_response = client.request(self.complete_frame.as_slice()).await;
-        let payload = assert_success_response(&complete_response, 204, 1);
-        assert_eq!(payload, [0], "Queue complete response payload");
+        let complete_response = client.request(self.complete_frame.as_slice()).await?;
+        let payload = assert_success_response(&complete_response, 204, 1)?;
+        if payload != [0] {
+            return Err(format!("Queue complete response payload: {payload:?}"));
+        }
+        Ok(())
     }
 }
 
@@ -383,11 +395,12 @@ pub(crate) fn measure_transport_lifecycle(
         1,
         |runtime, clients| {
             let mut state = WireLifecycleState::new(CANONICAL_ROUTE, dimensions.payload_size);
-            runtime.block_on(state.complete(&mut clients[0], true));
-            measure_operations(ctx, measurement, 1, |latencies| {
+            let _ = runtime.block_on(state.complete(&mut clients[0], true));
+            measure_operations_best_effort(ctx, measurement, || {
                 let started = Instant::now();
-                runtime.block_on(state.complete(&mut clients[0], true));
-                latencies.push(started.elapsed());
+                runtime
+                    .block_on(state.complete(&mut clients[0], true))
+                    .map(|()| started.elapsed())
             });
         },
     );
@@ -425,7 +438,7 @@ pub(crate) fn measure_concurrent_lifecycles(
                     join_all(clients.iter_mut().zip(states.iter_mut()).map(
                         |(client, state)| async move {
                             let started = Instant::now();
-                            state.complete(client, false).await;
+                            let _ = state.complete(client, false).await;
                             started.elapsed()
                         },
                     ))
@@ -472,41 +485,82 @@ fn with_transport_clients<R>(
     result
 }
 
-fn parse_enqueue_response(frame: &[u8]) -> u64 {
-    let payload = assert_success_response(frame, 200, 9);
-    assert_eq!(payload.len(), 9, "Queue enqueue response length");
-    u64::from_be_bytes(payload[1..9].try_into().expect("Queue message id"))
+fn parse_enqueue_response(frame: &[u8]) -> Result<u64, String> {
+    let payload = assert_success_response(frame, 200, 9)?;
+    if payload.len() != 9 {
+        return Err(format!("Queue enqueue response length: {}", payload.len()));
+    }
+    payload[1..9]
+        .try_into()
+        .map(u64::from_be_bytes)
+        .map_err(|_| "Queue message id must be 8 bytes".to_string())
 }
 
-fn parse_reserve_response(frame: &[u8]) -> (u64, u64) {
-    let payload = assert_success_response(frame, 202, 25);
-    let count = u32::from_be_bytes(payload[1..5].try_into().expect("Queue reserve count"));
-    assert_eq!(count, 1, "Queue lifecycle must reserve one message");
-    let message_id = u64::from_be_bytes(payload[5..13].try_into().expect("Queue message id"));
-    let token = u64::from_be_bytes(payload[13..21].try_into().expect("Queue inflight token"));
-    let body_len = usize::try_from(u32::from_be_bytes(
-        payload[21..25].try_into().expect("Queue body length"),
-    ))
-    .expect("Queue body length should fit usize");
-    assert_eq!(payload.len(), 25 + body_len, "Queue reserve body length");
-    (message_id, token)
-}
-
-fn assert_success_response(frame: &[u8], expected_message_type: u16, minimum_len: usize) -> &[u8] {
-    let mut parser = TlvFrameParser::new(frame);
-    let (message_type, payload) = parser.next_field_ref().expect("Queue response field");
-    assert!(
-        parser.next_field_ref().is_none(),
-        "expected one Queue response"
+fn parse_reserve_response(frame: &[u8]) -> Result<(u64, u64), String> {
+    let payload = assert_success_response(frame, 202, 25)?;
+    let count = u32::from_be_bytes(
+        payload[1..5]
+            .try_into()
+            .map_err(|_| "Queue reserve count must be 4 bytes".to_string())?,
     );
-    assert_eq!(message_type, expected_message_type, "Queue response type");
-    assert!(payload.len() >= minimum_len, "Queue response is too short");
+    if count != 1 {
+        return Err(format!("Queue lifecycle reserved {count} messages"));
+    }
+    let message_id = u64::from_be_bytes(
+        payload[5..13]
+            .try_into()
+            .map_err(|_| "Queue message id must be 8 bytes".to_string())?,
+    );
+    let token = u64::from_be_bytes(
+        payload[13..21]
+            .try_into()
+            .map_err(|_| "Queue inflight token must be 8 bytes".to_string())?,
+    );
+    let body_len = usize::try_from(u32::from_be_bytes(
+        payload[21..25]
+            .try_into()
+            .map_err(|_| "Queue body length must be 4 bytes".to_string())?,
+    ))
+    .map_err(|_| "Queue body length does not fit usize".to_string())?;
+    if payload.len() != 25 + body_len {
+        return Err(format!(
+            "Queue reserve body length: payload={}, expected={}",
+            payload.len(),
+            25 + body_len
+        ));
+    }
+    Ok((message_id, token))
+}
+
+fn assert_success_response(
+    frame: &[u8],
+    expected_message_type: u16,
+    minimum_len: usize,
+) -> Result<&[u8], String> {
+    let mut parser = TlvFrameParser::new(frame);
+    let Some((message_type, payload)) = parser.next_field_ref() else {
+        return Err("Queue response field is missing".to_string());
+    };
+    if parser.next_field_ref().is_some() {
+        return Err("expected one Queue response".to_string());
+    }
+    if message_type != expected_message_type {
+        return Err(format!(
+            "Queue response type: got {message_type}, expected {expected_message_type}"
+        ));
+    }
+    if payload.len() < minimum_len {
+        return Err(format!(
+            "Queue response is too short: got {}, expected at least {minimum_len}",
+            payload.len()
+        ));
+    }
     if payload.first().copied() != Some(0) {
         let message = decode_error_body(payload).map_or_else(
             |_| "malformed Queue error response".to_string(),
             |(_, message)| message,
         );
-        panic!("Queue request failed: {message}");
+        return Err(format!("Queue request failed: {message}"));
     }
-    payload
+    Ok(payload)
 }

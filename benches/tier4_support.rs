@@ -175,3 +175,43 @@ pub(crate) fn measure_operations(
 
     completed
 }
+
+/// Run a diagnostic operation for every sample iteration without aborting the
+/// enclosing benchmark when an integration transport fails.
+pub(crate) fn measure_operations_best_effort(
+    ctx: &mut StressContext,
+    measurement: &'static str,
+    mut run_iteration: impl FnMut() -> Result<Duration, String>,
+) {
+    let mut latencies = Vec::new();
+    let mut failures = 0_u64;
+    let mut first_failure = None;
+    let attempted = ctx.measure_batch(measurement, 1, || match run_iteration() {
+        Ok(latency) => latencies.push(latency),
+        Err(error) => {
+            failures = failures.saturating_add(1);
+            if first_failure.is_none() {
+                first_failure = Some(error);
+            }
+        }
+    });
+
+    let completed = u64::try_from(latencies.len()).unwrap_or(u64::MAX);
+    let _ = ctx.correctness().attempted(completed).completed(completed);
+    ctx.metadata("attempted_operations", attempted);
+
+    ctx.metadata("measurement_kind", "best_effort_diagnostic");
+    if failures == 0 {
+        ctx.metadata("measurement_status", "complete");
+    } else {
+        ctx.metadata("measurement_status", "degraded");
+        ctx.metadata("measurement_failures", failures);
+        ctx.metadata(
+            "first_measurement_failure",
+            first_failure.as_deref().unwrap_or("unknown"),
+        );
+    }
+    for latency in latencies {
+        ctx.record_latency(latency);
+    }
+}
