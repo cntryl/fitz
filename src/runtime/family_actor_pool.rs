@@ -61,6 +61,7 @@ impl std::error::Error for FamilyActorEnqueueError {}
 struct FamilyActorSender<M> {
     normal: Sender<M>,
     control: Sender<M>,
+    wake: Sender<()>,
 }
 
 struct FamilyActorReceivers<M> {
@@ -72,6 +73,7 @@ struct FamilyActorReceivers<M> {
 /// The transport/router-facing half of a family actor pool.
 pub struct FamilyActorIngress<M> {
     senders: std::sync::Arc<BTreeMap<u32, FamilyActorSender<M>>>,
+    shard_wakes: Arc<Vec<Sender<()>>>,
     shard_count: usize,
 }
 
@@ -79,6 +81,7 @@ impl<M> Clone for FamilyActorIngress<M> {
     fn clone(&self) -> Self {
         Self {
             senders: self.senders.clone(),
+            shard_wakes: self.shard_wakes.clone(),
             shard_count: self.shard_count,
         }
     }
@@ -110,7 +113,11 @@ impl<M: Send + 'static> FamilyActorIngress<M> {
                 FamilyActorLane::Control => FamilyActorEnqueueError::ControlLaneFull,
             },
             TrySendError::Disconnected(_) => FamilyActorEnqueueError::ActorStopped,
-        })
+        })?;
+        match sender.wake.try_send(()) {
+            Ok(()) | Err(TrySendError::Full(())) => Ok(()),
+            Err(TrySendError::Disconnected(())) => Err(FamilyActorEnqueueError::ActorStopped),
+        }
     }
 
     #[must_use]
@@ -134,6 +141,12 @@ impl<M: Send + 'static> FamilyActorIngress<M> {
     #[must_use]
     pub fn families(&self) -> Vec<RouteFamily> {
         self.senders.keys().copied().map(RouteFamily::new).collect()
+    }
+
+    fn wake_all(&self) {
+        for wake in self.shard_wakes.iter() {
+            let _ = wake.try_send(());
+        }
     }
 }
 
@@ -169,6 +182,7 @@ impl<M: Send + 'static> FamilyActorPool<M> {
         }
 
         let shard_count = shard_count_for_family_count(families.len());
+        let shard_wakes = (0..shard_count).map(|_| bounded(1)).collect::<Vec<_>>();
         let mut sender_map = BTreeMap::new();
         let mut shard_receivers = (0..shard_count)
             .map(|_| Vec::new())
@@ -177,8 +191,15 @@ impl<M: Send + 'static> FamilyActorPool<M> {
         for family in family_ids.values().copied() {
             let (normal, normal_receiver) = bounded(FAMILY_ACTOR_NORMAL_LANE_CAPACITY);
             let (control, control_receiver) = bounded(FAMILY_ACTOR_CONTROL_LANE_CAPACITY);
-            sender_map.insert(family.id(), FamilyActorSender { normal, control });
             let shard = family_shard_affinity(family, shard_count);
+            sender_map.insert(
+                family.id(),
+                FamilyActorSender {
+                    normal,
+                    control,
+                    wake: shard_wakes[shard].0.clone(),
+                },
+            );
             shard_receivers[shard].push(FamilyActorReceivers {
                 family,
                 normal: normal_receiver,
@@ -188,12 +209,14 @@ impl<M: Send + 'static> FamilyActorPool<M> {
 
         let shards = shard_receivers
             .into_iter()
-            .map(|receivers| Some(FamilyActorShard::new(receivers)))
+            .zip(shard_wakes.iter())
+            .map(|(receivers, (_, wake))| Some(FamilyActorShard::new(receivers, wake.clone())))
             .collect();
 
         Ok(Self {
             ingress: FamilyActorIngress {
                 senders: std::sync::Arc::new(sender_map),
+                shard_wakes: Arc::new(shard_wakes.into_iter().map(|(wake, _)| wake).collect()),
                 shard_count,
             },
             shards,
@@ -239,6 +262,7 @@ impl std::error::Error for FamilyActorPoolError {}
 /// The worker-owned half of one shard.
 pub struct FamilyActorShard<M> {
     receivers: Vec<FamilyActorReceivers<M>>,
+    wake: Receiver<()>,
     cursor: usize,
 }
 
@@ -298,6 +322,7 @@ impl<M: Send + 'static> FamilyActorPoolRuntime<M> {
             let worker_failed = failed.clone();
             let worker_panic_count = panic_count.clone();
             let worker_handler = handler.clone();
+            let worker_ingress = ingress.clone();
             join_handles.push(thread::spawn(move || {
                 while worker_active.load(Ordering::Acquire)
                     && worker_running.load(Ordering::Acquire)
@@ -313,6 +338,7 @@ impl<M: Send + 'static> FamilyActorPoolRuntime<M> {
                         worker_panic_count.fetch_add(1, Ordering::Relaxed);
                         worker_failed.store(true, Ordering::Release);
                         worker_active.store(false, Ordering::Release);
+                        worker_ingress.wake_all();
                         tracing::error!(
                             family = work.family.id(),
                             "family actor received work for an unowned route family"
@@ -328,6 +354,7 @@ impl<M: Send + 'static> FamilyActorPoolRuntime<M> {
                         worker_panic_count.fetch_add(1, Ordering::Relaxed);
                         worker_failed.store(true, Ordering::Release);
                         worker_active.store(false, Ordering::Release);
+                        worker_ingress.wake_all();
                         tracing::error!(
                             family = work.family.id(),
                             "family actor failed closed after handler panic"
@@ -394,11 +421,13 @@ impl<M: Send + 'static> FamilyActorPoolRuntime<M> {
         self.failed.store(true, Ordering::Release);
         self.active.store(false, Ordering::Release);
         self.running.store(false, Ordering::Release);
+        self.ingress.wake_all();
     }
 
     /// Stop all shard workers and join them.
     pub fn stop(&self) {
         self.running.store(false, Ordering::Release);
+        self.ingress.wake_all();
         let handles = std::mem::take(&mut *self.join_handles.lock());
         for handle in handles {
             if let Err(error) = handle.join() {
@@ -415,9 +444,10 @@ impl<M: Send + 'static> Drop for FamilyActorPoolRuntime<M> {
 }
 
 impl<M: Send + 'static> FamilyActorShard<M> {
-    fn new(receivers: Vec<FamilyActorReceivers<M>>) -> Self {
+    fn new(receivers: Vec<FamilyActorReceivers<M>>, wake: Receiver<()>) -> Self {
         Self {
             receivers,
+            wake,
             cursor: 0,
         }
     }
@@ -478,18 +508,8 @@ impl<M: Send + 'static> FamilyActorShard<M> {
         if self.receivers.is_empty() {
             return Err(RecvTimeoutError::Disconnected);
         }
-        let deadline = std::time::Instant::now() + timeout;
-
-        loop {
-            if let Some(work) = self.try_next() {
-                return Ok(work);
-            }
-            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-            if remaining.is_zero() {
-                return Err(RecvTimeoutError::Timeout);
-            }
-            thread::sleep(remaining.min(Duration::from_millis(1)));
-        }
+        self.wake.recv_timeout(timeout)?;
+        self.try_next().ok_or(RecvTimeoutError::Timeout)
     }
 }
 
@@ -693,5 +713,172 @@ mod tests {
         assert_eq!(observed.0, family(1));
         assert_eq!(observed.1, FamilyActorLane::Normal);
         assert_eq!(observed.2, 42);
+    }
+
+    #[test]
+    fn should_prioritize_control_work_over_ready_normal_work() {
+        // Arrange
+        let mut pool = FamilyActorPool::<u64>::new(&[family(1)]).expect("pool");
+        let ingress = pool.ingress();
+        let mut shard = pool.take_shard(0).expect("shard");
+        ingress
+            .try_enqueue(family(1), FamilyActorLane::Normal, 10)
+            .expect("normal enqueue");
+        ingress
+            .try_enqueue(family(1), FamilyActorLane::Control, 20)
+            .expect("control enqueue");
+
+        // Act
+        let first = shard.try_next().expect("first work");
+
+        // Assert
+        assert_eq!(first.lane, FamilyActorLane::Control);
+        assert_eq!(first.message, 20);
+    }
+
+    #[test]
+    fn should_preserve_lane_full_errors_with_wake_notifications() {
+        // Arrange
+        let pool = FamilyActorPool::<u64>::new(&[family(1)]).expect("pool");
+        let ingress = pool.ingress();
+        for value in 0..FAMILY_ACTOR_NORMAL_LANE_CAPACITY {
+            ingress
+                .try_enqueue(family(1), FamilyActorLane::Normal, value as u64)
+                .expect("normal capacity");
+        }
+        for value in 0..FAMILY_ACTOR_CONTROL_LANE_CAPACITY {
+            ingress
+                .try_enqueue(family(1), FamilyActorLane::Control, value as u64)
+                .expect("control capacity");
+        }
+
+        // Act
+        let normal = ingress.try_enqueue(family(1), FamilyActorLane::Normal, 1);
+        let control = ingress.try_enqueue(family(1), FamilyActorLane::Control, 1);
+
+        // Assert
+        assert_eq!(normal, Err(FamilyActorEnqueueError::NormalLaneFull));
+        assert_eq!(control, Err(FamilyActorEnqueueError::ControlLaneFull));
+    }
+
+    #[test]
+    fn should_drain_coalesced_burst_without_additional_wakes() {
+        // Arrange
+        const MESSAGE_COUNT: usize = 1_024;
+        let pool = FamilyActorPool::<u64>::new(&[family(1)]).expect("pool");
+        let active = Arc::new(AtomicBool::new(true));
+        let (completed_tx, completed_rx) = bounded(1);
+        let runtime = FamilyActorPoolRuntime::spawn(
+            pool,
+            active,
+            |_| Vec::with_capacity(MESSAGE_COUNT),
+            move |observed, _family, _lane, message| {
+                observed.push(message);
+                if observed.len() == MESSAGE_COUNT {
+                    completed_tx
+                        .send(observed.clone())
+                        .expect("completion observer");
+                }
+            },
+        );
+
+        // Act
+        for value in 0..MESSAGE_COUNT {
+            runtime
+                .try_enqueue(family(1), FamilyActorLane::Normal, value as u64)
+                .expect("burst enqueue");
+        }
+        let observed = completed_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("burst completion");
+
+        // Assert
+        assert_eq!(observed, (0..MESSAGE_COUNT as u64).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn should_not_lose_wake_between_dispatch_and_next_wait() {
+        // Arrange
+        const MESSAGE_COUNT: u64 = 256;
+        let pool = FamilyActorPool::<u64>::new(&[family(1)]).expect("pool");
+        let active = Arc::new(AtomicBool::new(true));
+        let (observed_tx, observed_rx) = bounded(1);
+        let runtime = FamilyActorPoolRuntime::spawn(
+            pool,
+            active,
+            |_| (),
+            move |(), _family, _lane, message| {
+                observed_tx.send(message).expect("dispatch observer");
+            },
+        );
+
+        // Act
+        for value in 0..MESSAGE_COUNT {
+            runtime
+                .try_enqueue(family(1), FamilyActorLane::Normal, value)
+                .expect("enqueue");
+            assert_eq!(
+                observed_rx
+                    .recv_timeout(Duration::from_secs(1))
+                    .expect("dispatch"),
+                value
+            );
+        }
+
+        // Assert
+        assert!(runtime.is_running());
+    }
+
+    #[test]
+    fn should_stop_idle_worker_promptly() {
+        // Arrange
+        let pool = FamilyActorPool::<u64>::new(&[family(1)]).expect("pool");
+        let active = Arc::new(AtomicBool::new(true));
+        let runtime = FamilyActorPoolRuntime::spawn(pool, active, |_| (), |(), _, _, _u64| {});
+        let started = std::time::Instant::now();
+
+        // Act
+        runtime.stop();
+
+        // Assert
+        assert!(started.elapsed() < Duration::from_millis(100));
+        assert!(!runtime.is_running());
+    }
+
+    #[test]
+    fn should_fail_closed_and_wake_workers_after_handler_panic() {
+        // Arrange
+        let pool = FamilyActorPool::<u64>::new(&[family(1)]).expect("pool");
+        let active = Arc::new(AtomicBool::new(true));
+        let (started_tx, started_rx) = bounded(1);
+        let runtime = FamilyActorPoolRuntime::spawn(
+            pool,
+            active,
+            |_| (),
+            move |(), _family, _lane, _message: u64| {
+                started_tx.send(()).expect("panic observer");
+                panic!("injected handler panic");
+            },
+        );
+
+        // Act
+        runtime
+            .try_enqueue(family(1), FamilyActorLane::Normal, 1)
+            .expect("panic command enqueue");
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("handler started");
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while runtime.is_running() && std::time::Instant::now() < deadline {
+            thread::yield_now();
+        }
+
+        // Assert
+        assert!(!runtime.is_running());
+        assert_eq!(
+            runtime.try_enqueue(family(1), FamilyActorLane::Normal, 2),
+            Err(FamilyActorEnqueueError::ActorStopped)
+        );
+        assert_eq!(runtime.health_snapshot().panic_count, 1);
     }
 }
