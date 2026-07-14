@@ -4,7 +4,13 @@ on:
   push:
     branches:
       - main
+    paths:
+      - .github/workflows/ci-frontend.yml
+      - ui/**
   pull_request:
+    paths:
+      - .github/workflows/ci-frontend.yml
+      - ui/**
   workflow_dispatch:
 
 permissions:
@@ -14,48 +20,43 @@ jobs:
   frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: ui
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: lts/*
           cache: npm
           cache-dependency-path: ui/package-lock.json
 
       - name: Install UI dependencies
-        working-directory: ui
         run: npm ci
 
       - name: Check generated adapters
-        working-directory: ui
         run: npm run check:generated
 
       - name: UI tests
-        working-directory: ui
         run: npm run test -- --run
 
       - name: UI lint
-        working-directory: ui
         run: npm run lint
 
       - name: UI type check
-        working-directory: ui
         run: npm run type-check
 
       - name: UI build
-        working-directory: ui
         run: npm run build
 
       - name: Install Playwright browser
-        working-directory: ui
         run: npm run install:browsers
 
       - name: Playwright route suite
-        working-directory: ui
         run: npm run test:e2e
 
       - name: Build-only container validation
