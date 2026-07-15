@@ -19,7 +19,7 @@
     "gen:adapters": "npx @fgrzl/fetch-gen --input ../public/openapi.yml --output ./src/adapters/generated/api.ts && npm run fmt"
   },
   "dependencies": {
-    "@askrjs/askr": "0.0.51",
+    "@askrjs/askr": "0.0.52",
     "@askrjs/charts": "^0.0.1",
     "@askrjs/logos": "0.0.1",
     "@askrjs/lucide": "^0.0.3",
