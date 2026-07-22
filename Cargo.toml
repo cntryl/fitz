@@ -51,7 +51,7 @@ hyper-tungstenite = "0.30"
 hyper-util = { version = "0.1", features = ["server", "tokio"] }
 http-body-util = "0.1"
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }
-lz4_flex = "0.13.1"
+lz4_flex = "0.14.0"
 num_cpus = "1.17"
 num-traits = "0.2"
 opentelemetry = { version = "0.32", features = ["trace"] }
