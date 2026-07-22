@@ -1,4 +1,4 @@
-import { createQuery, queryScope } from "@askrjs/askr/data";
+import { createQuery, defineQuery, queryScope } from "@askrjs/askr/data";
 import { sessionService } from "./session-service";
 import type { ActiveSessionsOverview, SessionState } from "./session-models";
 import { currentRouteFamilySegment } from "@/shared/navigation/domains";
@@ -15,29 +15,29 @@ export function activeSessionsQueryKey(family = currentRouteFamilySegment()) {
 async function fetchCurrentSession({ signal }: { signal: AbortSignal }) {
   return (
     (await sessionService.getCurrentSession({ signal })) ?? {
+      authRequired: true,
       authenticated: false,
       routeFamilies: [],
       routeFamiliesWildcard: true,
-      username: "admin",
+      username: "",
     }
   );
 }
 
-function fetchActiveSessions(family: string) {
-  return ({ signal }: { signal: AbortSignal }) =>
-    sessionService.listActiveSessions(family, { signal });
-}
+const currentSessionQuery = defineQuery<Record<never, never>, SessionState>({
+  key: () => CURRENT_SESSION_KEY,
+  fetch: fetchCurrentSession,
+});
+
+const activeSessionsQuery = defineQuery<{ family: string }, ActiveSessionsOverview>({
+  key: ({ family }) => activeSessionsQueryKey(family),
+  fetch: ({ family, signal }) => sessionService.listActiveSessions(family, { signal }),
+});
 
 export function createCurrentSessionQuery() {
-  return createQuery<SessionState>({
-    key: CURRENT_SESSION_KEY,
-    fetch: fetchCurrentSession,
-  });
+  return createQuery(currentSessionQuery, {});
 }
 
 export function createActiveSessionsQuery(family = currentRouteFamilySegment()) {
-  return createQuery<ActiveSessionsOverview>({
-    key: activeSessionsQueryKey(family),
-    fetch: fetchActiveSessions(family),
-  });
+  return createQuery(activeSessionsQuery, { family });
 }

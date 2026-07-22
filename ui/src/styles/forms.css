@@ -26,11 +26,6 @@
   white-space: nowrap;
 }
 
-.auth-brand svg {
-  flex: none;
-  color: var(--ak-color-primary, currentColor);
-}
-
 .auth-card {
   width: min(100%, 25rem);
   border-color: var(--fitz-border-subtle);

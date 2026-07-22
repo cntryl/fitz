@@ -1,6 +1,5 @@
-import { createQuery, queryScope } from "@askrjs/askr/data";
+import { createQuery, defineQuery, queryScope } from "@askrjs/askr/data";
 import { leaseService } from "./lease-service";
-import { stableQueryFetch, type QueryFetch } from "@/shared/query-fetch";
 import {
   currentRouteFamilySegment,
   DEFAULT_ROUTE_FAMILY_SEGMENT,
@@ -13,9 +12,6 @@ import type {
 } from "./lease-models";
 
 const leaseQueries = queryScope("lease");
-const leaseRealmFetches = new Map<string, QueryFetch<LeaseRealmInventory>>();
-const leaseAreaFetches = new Map<string, QueryFetch<LeaseAreaResourceRows>>();
-const leaseResourceRowsFetches = new Map<string, QueryFetch<LeaseOwnershipSearchResult>>();
 
 export const LEASE_OVERVIEW_KEY = leaseQueries.key("overview", DEFAULT_ROUTE_FAMILY_SEGMENT);
 export const LEASE_INVENTORY_KEY = LEASE_OVERVIEW_KEY;
@@ -46,43 +42,51 @@ export function leaseResourceRowsQueryKey(
   return leaseQueries.key("resource-rows", family, realm, area, resource, String(limit ?? 0));
 }
 
-export function createLeaseOverviewQuery() {
-  const key = leaseOverviewQueryKey();
+const leaseOverviewQuery = defineQuery<{ family: string }, LeaseOverview>({
+  key: ({ family }) => leaseOverviewQueryKey(family),
+  fetch: ({ signal }) => leaseService.getOverview({ signal }),
+});
 
-  return createQuery<LeaseOverview>({
-    key,
-    fetch: leaseService.getOverview,
-  });
+const leaseRealmQuery = defineQuery<{ family: string; realm: string }, LeaseRealmInventory>({
+  key: ({ family, realm }) => leaseRealmQueryKey(realm, family),
+  fetch: ({ realm, signal }) => leaseService.listRealmResources(realm, { signal }),
+});
+
+const leaseAreaQuery = defineQuery<
+  { area: string; family: string; realm: string },
+  LeaseAreaResourceRows
+>({
+  key: ({ area, family, realm }) => leaseAreaQueryKey(realm, area, family),
+  fetch: ({ area, realm, signal }) => leaseService.listAreaResources(realm, area, { signal }),
+});
+
+interface LeaseResourceRowsQueryInput {
+  area: string;
+  family: string;
+  limit: number;
+  realm: string;
+  resource: string;
+}
+
+const leaseResourceRowsQuery = defineQuery<LeaseResourceRowsQueryInput, LeaseOwnershipSearchResult>(
+  {
+    key: ({ area, family, limit, realm, resource }) =>
+      leaseResourceRowsQueryKey(realm, area, resource, limit, family),
+    fetch: ({ area, limit, realm, resource, signal }) =>
+      leaseService.searchRows({ area, limit, realm, resource }, { signal }),
+  },
+);
+
+export function createLeaseOverviewQuery() {
+  return createQuery(leaseOverviewQuery, { family: currentRouteFamilySegment() });
 }
 
 export function createLeaseRealmQuery(realm: string) {
-  const key = leaseRealmQueryKey(realm);
-
-  return createQuery<LeaseRealmInventory>({
-    key,
-    fetch: stableQueryFetch(
-      leaseRealmFetches,
-      key,
-      () =>
-        ({ signal }) =>
-          leaseService.listRealmResources(realm, { signal }),
-    ),
-  });
+  return createQuery(leaseRealmQuery, { family: currentRouteFamilySegment(), realm });
 }
 
 export function createLeaseAreaQuery(realm: string, area: string) {
-  const key = leaseAreaQueryKey(realm, area);
-
-  return createQuery<LeaseAreaResourceRows>({
-    key,
-    fetch: stableQueryFetch(
-      leaseAreaFetches,
-      key,
-      () =>
-        ({ signal }) =>
-          leaseService.listAreaResources(realm, area, { signal }),
-    ),
-  });
+  return createQuery(leaseAreaQuery, { area, family: currentRouteFamilySegment(), realm });
 }
 
 export function createLeaseResourceRowsQuery(request: {
@@ -92,24 +96,9 @@ export function createLeaseResourceRowsQuery(request: {
   limit?: number;
 }) {
   const limit = request.limit ?? 50;
-  const key = leaseResourceRowsQueryKey(request.realm, request.area, request.resource, limit);
-
-  return createQuery<LeaseOwnershipSearchResult>({
-    key,
-    fetch: stableQueryFetch(
-      leaseResourceRowsFetches,
-      key,
-      () =>
-        ({ signal }) =>
-          leaseService.searchRows(
-            {
-              area: request.area,
-              limit,
-              realm: request.realm,
-              resource: request.resource,
-            },
-            { signal },
-          ),
-    ),
+  return createQuery(leaseResourceRowsQuery, {
+    ...request,
+    family: currentRouteFamilySegment(),
+    limit,
   });
 }

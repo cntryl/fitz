@@ -61,6 +61,15 @@ a {
   color: inherit;
 }
 
+.fitz-brand-logo {
+  display: block;
+  flex: none;
+  inline-size: 1.75rem;
+  block-size: 1.75rem;
+  border-radius: var(--ak-radius-2, 0.5rem);
+  object-fit: cover;
+}
+
 .skip-link {
   position: fixed;
   inset-block-start: var(--ak-space-2, 0.5rem);
@@ -86,9 +95,7 @@ a {
   outline-offset: 2px;
 }
 
-.text-link,
-.flow-inspector-link,
-.resource-workbench-summary-actions a {
+.text-link {
   color: var(--ak-color-link, var(--ak-color-text, CanvasText));
   font-weight: 650;
   text-decoration-color: color-mix(in srgb, currentColor 34%, transparent);
@@ -97,15 +104,11 @@ a {
   text-underline-offset: 0.18em;
 }
 
-.text-link:hover,
-.flow-inspector-link:hover,
-.resource-workbench-summary-actions a:hover {
+.text-link:hover {
   text-decoration-color: currentColor;
 }
 
-.text-link:focus-visible,
-.flow-inspector-link:focus-visible,
-.resource-workbench-summary-actions a:focus-visible {
+.text-link:focus-visible {
   border-radius: var(--fitz-row-radius);
   outline: 2px solid var(--fitz-focus-ring);
   outline-offset: 2px;
@@ -113,4 +116,8 @@ a {
 
 .route-transition-surface {
   min-width: 0;
+}
+
+main#main-content.route-transition-surface:focus {
+  outline: none;
 }

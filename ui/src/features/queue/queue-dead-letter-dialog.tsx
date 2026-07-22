@@ -7,10 +7,12 @@ import {
   DialogPortal,
   DialogTitle,
 } from "@askrjs/ui";
-import { Button, Inline } from "@askrjs/themes/components";
+import { Alert, Button, Inline } from "@askrjs/themes/components";
 import type { DeadLetterMessage } from "@/features/queue/queue-models";
+import { formatUnknownError } from "@/shared/errors/format";
 
 export interface QueueDeadLetterDialogProps {
+  actionError?: unknown;
   actionPending: boolean;
   confirmationKind: "replay" | "purge" | null;
   confirmationMessage: DeadLetterMessage | null;
@@ -40,6 +42,7 @@ export function deadLetterDialogCopy(
 }
 
 export default function QueueDeadLetterDialog({
+  actionError,
   actionPending,
   confirmationKind,
   confirmationMessage,
@@ -60,6 +63,14 @@ export default function QueueDeadLetterDialog({
             <DialogTitle>{copy.title}</DialogTitle>
 
             <DialogDescription>{copy.description}</DialogDescription>
+
+            {actionError ? (
+              <Alert
+                variant="danger"
+                title={`${confirmationKind === "replay" ? "Replay" : "Purge"} failed`}
+                description={formatUnknownError(actionError)}
+              />
+            ) : null}
 
             <Inline gap="2" justify="end" wrap="wrap">
               <DialogClose asChild>

@@ -1,5 +1,4 @@
 import DomainInventoryPage from "@/components/shared/domain-inventory-page";
-import type { DomainResourceMetricColumn } from "@/components/shared/domain-resource-inventory-table";
 import { createLeaseOverviewQuery } from "@/features/lease/lease-query";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 import { formatDurationSeconds, formatNumber } from "@/shared/format";
@@ -12,45 +11,29 @@ function riskSignal(stats: {
   leasesActive: number;
   waiterDepth: number;
 }) {
-  const pressureSignals =
-    stats.acquireTimeoutsTotal + stats.forcedReleasesTotal + stats.invalidTokenRejectsTotal;
-  const pressureCount = pressureSignals + stats.waiterDepth;
-  const riskBits = [
-    stats.acquireTimeoutsTotal > 0 ? `${stats.acquireTimeoutsTotal} acquire timeout(s)` : null,
-    stats.forcedReleasesTotal > 0 ? `${stats.forcedReleasesTotal} forced release(s)` : null,
-    stats.invalidTokenRejectsTotal > 0 ? `${stats.invalidTokenRejectsTotal} token reject(s)` : null,
-  ].filter(Boolean) as string[];
-  const pressureDetail = `${formatNumber(
+  const cumulativeDetail = `${formatNumber(
     stats.acquireTimeoutsTotal,
-  )} acquire timeout(s), ${formatNumber(stats.forcedReleasesTotal)} forced release(s), ${formatNumber(
+  )} acquire ${stats.acquireTimeoutsTotal === 1 ? "timeout" : "timeouts"}, ${formatNumber(
+    stats.forcedReleasesTotal,
+  )} forced ${stats.forcedReleasesTotal === 1 ? "release" : "releases"}, ${formatNumber(
     stats.invalidTokenRejectsTotal,
-  )} token reject(s)`;
+  )} token ${stats.invalidTokenRejectsTotal === 1 ? "rejection" : "rejections"}`;
   const detailBase = `${formatNumber(stats.leasesActive)} active leases, ${formatNumber(
     stats.waiterDepth,
   )} waiters, ${formatDurationSeconds(
     stats.oldestLeaseAgeSeconds,
-  )} oldest lease age. Pressure counters: ${pressureDetail}.`;
+  )} oldest lease age. Cumulative process totals: ${cumulativeDetail}.`;
 
-  if (pressureCount > 6) {
+  if (stats.waiterDepth > 0) {
     return {
-      detail: `${detailBase} Attention is warranted from ${riskBits.join(", ")}.`,
-      label: "Attention" as const,
-      tone: "danger" as const,
-    };
-  }
-
-  if (pressureSignals > 0 || stats.waiterDepth > 0) {
-    return {
-      detail: `${detailBase} ${stats.waiterDepth ? `Waiters visible (${formatNumber(stats.waiterDepth)}). ` : ""}${
-        riskBits.length > 0 ? `Current risk signals: ${riskBits.join(", ")}.` : ""
-      }`,
+      detail: `${detailBase} Current waiters indicate live contention. Historical totals do not identify a current incident.`,
       label: "Pressure" as const,
       tone: "warning" as const,
     };
   }
 
   return {
-    detail: `${detailBase} No immediate lease contention risk is visible.`,
+    detail: `${detailBase} No current waiters are visible; historical totals do not establish live contention.`,
     label: "Live" as const,
     tone: "success" as const,
   };
@@ -70,46 +53,6 @@ export default function LeasePage() {
       leasesActive: overview.data.stats.leasesActive,
       waiterDepth: overview.data.stats.waiterDepth,
     });
-  const leaseMetricColumns: readonly DomainResourceMetricColumn[] = [
-    {
-      id: "active-leases",
-      header: "Active leases",
-      width: "12%",
-      cell: () => (stats ? formatNumber(stats.leasesActive) : "--"),
-    },
-    {
-      id: "waiters",
-      header: "Waiters",
-      width: "10%",
-      cell: () => (stats ? formatNumber(stats.waiterDepth) : "--"),
-    },
-    {
-      id: "oldest-age",
-      header: "Oldest age",
-      width: "11%",
-      cell: () => (stats ? formatDurationSeconds(stats.oldestLeaseAgeSeconds) : "--"),
-    },
-    {
-      id: "ops",
-      header: "Ops / sec",
-      width: "10%",
-      cell: () => (stats ? stats.operationsPerSecond.toFixed(2) : "--"),
-    },
-    {
-      id: "pressure",
-      header: "Pressure",
-      width: "10%",
-      cell: () =>
-        stats
-          ? formatNumber(
-              stats.acquireTimeoutsTotal +
-                stats.forcedReleasesTotal +
-                stats.invalidTokenRejectsTotal,
-            )
-          : "--",
-    },
-  ];
-
   return (
     <DomainInventoryPage
       domain="lease"
@@ -125,7 +68,6 @@ export default function LeasePage() {
       refreshingDescription="Refreshing lease inventory..."
       emptyDescription="No lease resources are currently visible. Check the selected Route Family or broaden scope."
       tableTitle="Resource inventory"
-      metricColumns={leaseMetricColumns}
       stats={[
         { label: "Active leases", value: stats ? formatNumber(stats.leasesActive) : "--" },
         { label: "Waiters", value: stats ? formatNumber(stats.waiterDepth) : "--" },

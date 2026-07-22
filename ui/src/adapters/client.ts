@@ -1,5 +1,5 @@
-import { FetchClient } from "@fgrzl/fetch";
-import { addLogging, addRateLimit, createRetryMiddleware } from "@fgrzl/fetch/middleware";
+import type { ClientOptions, Middleware } from "@askrjs/fetch";
+import { logging, retry } from "@askrjs/fetch/middleware";
 import { navigate } from "@askrjs/askr/router";
 import { appConfig } from "@/shared/config";
 
@@ -11,31 +11,25 @@ function createTraceId() {
   return `fitz-ui-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-// Adapter boundary only: configure transport concerns here, not DTO mapping or app logic.
-export const client = new FetchClient({
-  credentials: "same-origin",
-  timeout: appConfig.requestTimeoutMs,
-});
+const requestHeaders: Middleware = (context, next) => {
+  const headers = new Headers(context.request.headers);
 
-const retry = createRetryMiddleware({
-  maxRetries: 2,
-  delay: 750,
-});
+  if (!headers.has("Accept")) headers.set("Accept", "application/json");
+  if (!headers.has("x-request-id")) headers.set("x-request-id", createTraceId());
 
-client.use((request, next) => {
-  if (request.method === "GET" || request.method === "HEAD") {
-    return retry(request, next);
-  }
+  return next({
+    ...context,
+    request: new Request(context.request, { headers }),
+  });
+};
 
-  return next(request);
-});
+const redirectUnauthenticated: Middleware = async (context, next) => {
+  const result = await next(context);
 
-client.use(async (request, next) => {
-  const response = await next(request);
   if (
-    response.status === 401 &&
+    result.status === 401 &&
     typeof window !== "undefined" &&
-    request.method !== "DELETE" &&
+    context.request.method !== "DELETE" &&
     !window.location.pathname.startsWith("/login")
   ) {
     void fetch("/api/v1/session", {
@@ -45,31 +39,25 @@ client.use(async (request, next) => {
     });
     navigate("/login", { history: "replace" });
   }
-  return response;
+
+  return result;
+};
+
+const requestLogger = logging({
+  log(event) {
+    const method = appConfig.logLevel === "debug" ? "debug" : appConfig.logLevel;
+    console[method](event);
+  },
 });
 
-addRateLimit(client, {
-  maxRequests: 100,
-  windowMs: 60 * 1000,
-});
-
-addLogging(client, {
-  level: appConfig.logLevel,
-});
-
-client.use((request, next) => {
-  const headers = new Headers(request.headers);
-
-  if (!headers.has("Accept")) {
-    headers.set("Accept", "application/json");
-  }
-
-  if (!headers.has("x-request-id")) {
-    headers.set("x-request-id", createTraceId());
-  }
-
-  return next({
-    ...request,
-    headers,
-  });
-});
+// Adapter boundary only: configure transport concerns here, not DTO mapping or app logic.
+export const clientOptions: ClientOptions = {
+  credentials: "same-origin",
+  timeout: appConfig.requestTimeoutMs,
+  middleware: [
+    requestHeaders,
+    retry({ attempts: 3, delay: () => 750 }),
+    redirectUnauthenticated,
+    requestLogger,
+  ],
+};

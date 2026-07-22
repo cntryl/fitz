@@ -1,6 +1,6 @@
 import { For } from "@askrjs/askr/control";
 import { currentRouteFamilySegment } from "@/shared/navigation/domains";
-import { useOperatorContext } from "@/shared/operator-context";
+import { useOperatorScope } from "@/shared/operator-scope";
 
 export interface OperatorScopeStripProps {
   area?: string | number | null;
@@ -34,7 +34,7 @@ export default function OperatorScopeStrip({
   resource,
   routeFamily,
 }: OperatorScopeStripProps) {
-  const operator = useOperatorContext();
+  const operator = useOperatorScope();
   const routeFamilyValue =
     scopeValue(routeFamily) ??
     scopeValue(operator.selectedRouteFamilyId) ??

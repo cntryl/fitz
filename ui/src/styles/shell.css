@@ -30,6 +30,20 @@
   min-inline-size: 0;
 }
 
+.operator-route-family-trigger {
+  inline-size: 100%;
+  justify-content: space-between;
+}
+
+.operator-route-family-trigger > span {
+  min-inline-size: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .route-transition-surface {
   inline-size: 100%;
   max-inline-size: 100%;
@@ -59,7 +73,7 @@
   white-space: nowrap;
 }
 
-@media (max-width: 48rem) {
+@media (max-width: 47.999rem) {
   .operator-shell-layout {
     min-block-size: auto;
   }
@@ -82,7 +96,7 @@
     display: none;
   }
 
-  .operator-sidebar[data-mobile-open="true"] .operator-sidebar-panel {
+  .operator-sidebar-panel[data-open="true"] {
     display: block;
   }
 }

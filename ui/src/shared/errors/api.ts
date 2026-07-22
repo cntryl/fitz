@@ -1,4 +1,4 @@
-import type { FetchResponse } from "@/adapters/generated/types";
+import type { FetchResult } from "@askrjs/fetch";
 
 export type AppApiErrorCode =
   | "badRequest"
@@ -37,13 +37,21 @@ function errorCodeForStatus(status: number): AppApiErrorCode {
   return "unknown";
 }
 
-function errorMessage<T>(response: FetchResponse<T>, fallbackMessage: string) {
-  return response.error?.message || response.statusText || fallbackMessage;
+function errorMessage<T>(response: FetchResult<T>, fallbackMessage: string) {
+  if (response.ok) return fallbackMessage;
+  if (
+    typeof response.error === "object" &&
+    response.error !== null &&
+    "message" in response.error
+  ) {
+    return String(response.error.message);
+  }
+  return fallbackMessage;
 }
 
-// Service boundary helper: unwrap FetchResponse<T> before data leaves services.
-export function unwrapResponse<T>(response: FetchResponse<T>, fallbackMessage: string): T {
-  if (response.ok && response.data !== null) {
+// Service boundary helper: unwrap FetchResult<T> before data leaves services.
+export function unwrapResponse<T>(response: FetchResult<T>, fallbackMessage: string): T {
+  if (response.ok && response.data !== null && response.data !== undefined) {
     return response.data;
   }
 
@@ -58,7 +66,7 @@ export function unwrapResponse<T>(response: FetchResponse<T>, fallbackMessage: s
   );
 }
 
-export function ensureResponseOk<T>(response: FetchResponse<T>, fallbackMessage: string) {
+export function ensureResponseOk<T>(response: FetchResult<T>, fallbackMessage: string) {
   if (response.ok) {
     return;
   }

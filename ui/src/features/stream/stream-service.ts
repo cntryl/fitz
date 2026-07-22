@@ -1,4 +1,4 @@
-import { apiv1 } from "@/adapters";
+import { apiParams, apiParamsQuery, apiv1 } from "@/adapters";
 import type { StreamRecordsResponse } from "@/adapters";
 import { unwrapResponse, type ServiceRequestOptions } from "@/shared/errors/api";
 import { apiRouteFamilySegment } from "@/shared/navigation/domains";
@@ -14,8 +14,8 @@ import type {
 async function getOverview(options: ServiceRequestOptions = {}): Promise<StreamOverview> {
   const family = apiRouteFamilySegment();
   const [realmsResponse, statsResponse] = await Promise.all([
-    apiv1.listStreamRealms(family, options),
-    apiv1.getStreamStats(family, options),
+    apiv1.listStreamRealms(apiParams({ family }, options)),
+    apiv1.getStreamStats(apiParams({ family }, options)),
   ]);
 
   return mapStreamOverview(
@@ -30,16 +30,18 @@ async function searchRecords(
 ): Promise<StreamRecordsResponse> {
   return unwrapResponse(
     await apiv1.searchStreamRecords(
-      apiRouteFamilySegment(request.routeFamily),
-      {
-        area: request.area,
-        discriminator: request.discriminator,
-        from_offset: request.fromOffset,
-        limit: request.limit,
-        realm: request.realm,
-        resource: request.resource,
-      },
-      options,
+      apiParamsQuery(
+        { family: apiRouteFamilySegment(request.routeFamily) },
+        {
+          area: request.area,
+          discriminator: request.discriminator,
+          from_offset: request.fromOffset,
+          limit: request.limit,
+          realm: request.realm,
+          resource: request.resource,
+        },
+        options,
+      ),
     ),
     "Unable to search stream records",
   );
@@ -54,16 +56,20 @@ async function readResourceRecords(
 ): Promise<StreamRecordsResponse> {
   return unwrapResponse(
     await apiv1.readStreamResourceRecords(
-      apiRouteFamilySegment(request.routeFamily),
-      request.realm,
-      request.area,
-      request.resource,
-      {
-        discriminator: request.discriminator,
-        from_offset: request.fromOffset,
-        limit: request.limit,
-      },
-      options,
+      apiParamsQuery(
+        {
+          area: request.area,
+          family: apiRouteFamilySegment(request.routeFamily),
+          realm: request.realm,
+          resource: request.resource,
+        },
+        {
+          discriminator: request.discriminator,
+          from_offset: request.fromOffset,
+          limit: request.limit,
+        },
+        options,
+      ),
     ),
     "Unable to read stream records",
   );
@@ -75,13 +81,13 @@ async function getRealmRollup(
 ): Promise<StreamRealmRollup> {
   const family = apiRouteFamilySegment();
   const [watermarks, areas] = await Promise.all([
-    apiv1.getStreamRealmWatermarks(family, realm, options),
-    apiv1.listStreamAreas(family, realm, options),
+    apiv1.getStreamRealmWatermarks(apiParams({ family, realm }, options)),
+    apiv1.listStreamAreas(apiParams({ family, realm }, options)),
   ]);
   const areaRows = await Promise.all(
     unwrapResponse(areas, "Unable to load stream areas").areas.map(async ({ area }) => {
       const resources = unwrapResponse(
-        await apiv1.listStreamResources(family, realm, area, options),
+        await apiv1.listStreamResources(apiParams({ area, family, realm }, options)),
         "Unable to load stream resources",
       ).resources;
 
@@ -113,8 +119,8 @@ async function getAreaRollup(
 ): Promise<StreamAreaRollup> {
   const family = apiRouteFamilySegment();
   const [watermarks, resources] = await Promise.all([
-    apiv1.getStreamAreaWatermarks(family, realm, area, options),
-    apiv1.listStreamResources(family, realm, area, options),
+    apiv1.getStreamAreaWatermarks(apiParams({ area, family, realm }, options)),
+    apiv1.listStreamResources(apiParams({ area, family, realm }, options)),
   ]);
   const watermarkDetail = unwrapResponse(watermarks, "Unable to load stream area watermarks");
 
@@ -141,18 +147,22 @@ async function getResourceView(
 ): Promise<StreamResourceView> {
   const family = apiRouteFamilySegment(request.routeFamily);
   const [detail, records] = await Promise.all([
-    apiv1.getStreamResource(family, request.realm, request.area, request.resource, options),
+    apiv1.getStreamResource(
+      apiParams(
+        { area: request.area, family, realm: request.realm, resource: request.resource },
+        options,
+      ),
+    ),
     apiv1.readStreamResourceRecords(
-      family,
-      request.realm,
-      request.area,
-      request.resource,
-      {
-        discriminator: request.discriminator,
-        from_offset: request.fromOffset,
-        limit: request.limit,
-      },
-      options,
+      apiParamsQuery(
+        { area: request.area, family, realm: request.realm, resource: request.resource },
+        {
+          discriminator: request.discriminator,
+          from_offset: request.fromOffset,
+          limit: request.limit,
+        },
+        options,
+      ),
     ),
   ]);
 

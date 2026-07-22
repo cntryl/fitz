@@ -1,6 +1,6 @@
 import { currentRoute } from "@askrjs/askr/router";
 import { state } from "@askrjs/askr";
-import { Link } from "@askrjs/askr/router";
+import { For } from "@askrjs/askr/control";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
 import {
   Card,
@@ -13,16 +13,15 @@ import {
 import DomainHeader from "@/components/shared/domain-header";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
-import { createDomainSidebar } from "@/components/shared/domain-sidebar";
+import { queryFreshness, queryHeaderStatus } from "@/components/shared/query-header-status";
 import {
   QueryEmptyState,
   QueryErrorState,
   QueryLoadingState,
   QueryRefreshingState,
 } from "@/components/shared/query-state";
-import { formatDurationSeconds, formatNumber } from "@/shared/format";
+import { formatDurationSeconds, formatNumber, formatTimestamp } from "@/shared/format";
 import { createLeaseResourceRowsQuery } from "@/features/lease/lease-query";
-import { domainScopeHref } from "@/shared/navigation/domains";
 import { deriveLeaseRemainingLifetime } from "@/features/lease/lease-mappers";
 import type { LeaseOwnershipSearchRow } from "@/features/lease/lease-models";
 
@@ -80,13 +79,13 @@ function formatOwner(row: LeaseOwnershipSearchRow) {
   return row.ownerSessionId ?? row.ownerId ?? "--";
 }
 
-function LeaseResourceRowsTable(props: { rows: LeaseOwnershipSearchRow[]; now: number }) {
+function LeaseResourceRowsTable(props: { rows: LeaseOwnershipSearchRow[]; now: () => number }) {
   const totalWaiters = props.rows.reduce((sum, row) => sum + row.pendingWaiters, 0);
 
   return (
     <Card padding="sm" variant="default">
       <CardHeader>
-        <CardTitle>Lease ownership rows</CardTitle>
+        <CardTitle titleAs="h2">Lease ownership rows</CardTitle>
         <CardDescription>
           Owner/session, queued token, waiters, age, remaining TTL, and expiry for this scope.
           {` ${props.rows.length} row${props.rows.length === 1 ? "" : "s"}, ${totalWaiters} waiter${
@@ -95,7 +94,8 @@ function LeaseResourceRowsTable(props: { rows: LeaseOwnershipSearchRow[]; now: n
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <div class="domain-table-wrap">
+        <p class="domain-scroll-hint">Scroll the table horizontally on narrow screens.</p>
+        <div class="domain-table-wrap lease-resource-table-wrap">
           <Table>
             <TableHead>
               <TableRow>
@@ -109,21 +109,26 @@ function LeaseResourceRowsTable(props: { rows: LeaseOwnershipSearchRow[]; now: n
               </TableRow>
             </TableHead>
             <TableBody>
-              {props.rows.map((row) => (
-                <TableRow
-                  key={`${row.ownerSessionId}-${row.ownerId ?? "none"}-${row.queuedToken ?? "none"}-${row.area}-${row.realm}-${row.resource}-${row.state}`}
-                >
-                  <TableCell>{formatOwner(row)}</TableCell>
-                  <TableCell>{row.state}</TableCell>
-                  <TableCell>{row.queuedToken ?? "--"}</TableCell>
-                  <TableCell>{formatNumber(row.pendingWaiters)}</TableCell>
-                  <TableCell>
-                    {row.ageSeconds === null ? "--" : formatDurationSeconds(row.ageSeconds)}
-                  </TableCell>
-                  <TableCell>{formatRemaining(row.expiresAt, props.now)}</TableCell>
-                  <TableCell>{row.expiresAt ?? "--"}</TableCell>
-                </TableRow>
-              ))}
+              <For
+                each={props.rows}
+                by={(row) =>
+                  `${row.ownerSessionId}-${row.ownerId ?? "none"}-${row.queuedToken ?? "none"}-${row.area}-${row.realm}-${row.resource}-${row.state}`
+                }
+              >
+                {(row) => (
+                  <TableRow>
+                    <TableCell>{formatOwner(row)}</TableCell>
+                    <TableCell>{row.state}</TableCell>
+                    <TableCell>{row.queuedToken ?? "--"}</TableCell>
+                    <TableCell>{formatNumber(row.pendingWaiters)}</TableCell>
+                    <TableCell>
+                      {row.ageSeconds === null ? "--" : formatDurationSeconds(row.ageSeconds)}
+                    </TableCell>
+                    <TableCell>{() => formatRemaining(row.expiresAt, props.now())}</TableCell>
+                    <TableCell>{row.expiresAt ? formatTimestamp(row.expiresAt) : "--"}</TableCell>
+                  </TableRow>
+                )}
+              </For>
             </TableBody>
           </Table>
         </div>
@@ -134,6 +139,7 @@ function LeaseResourceRowsTable(props: { rows: LeaseOwnershipSearchRow[]; now: n
 
 export default function LeaseResourcePage() {
   const [leaseClockNow, setLeaseClockNow] = state(Date.now());
+  leaseClockNow();
 
   ensureLeaseClockRunning(setLeaseClockNow);
 
@@ -157,53 +163,36 @@ export default function LeaseResourcePage() {
   const rows = rowsData?.items ?? [];
   const waiters = rows.reduce((sum, row) => sum + row.pendingWaiters, 0);
 
-  const snapshot = createDomainSidebar({
-    data: rowsData,
-    title: "Lease ownership rows",
-    description: realm && area && resource ? [realm, area, resource].join(" / ") : "Lease resource",
-    stats: (current) => [
-      { label: "Rows", value: current.items.length },
-      { label: "Waiters", value: waiters },
-      { label: "Route Family", value: current.routeFamily },
-    ],
-    footer: <Link href={domainScopeHref("lease", { area, realm })}>Back to lease area</Link>,
-  });
-
   if (!realm || !area || !resource || !rowsQuery) {
     return null;
   }
 
   return (
-    <DomainPageFrame sidebar={snapshot}>
+    <DomainPageFrame>
       <Stack gap="3">
         <DomainHeader
           eyebrow="Lease ownership"
           title={resource}
           description={`Ephemeral owner/session rows with TTL and waiter pressure for ${realm} / ${area} / ${resource}.`}
-          primaryAction={{ label: "Refresh ownership rows", onPress: () => rowsQuery.refresh() }}
-          status={{
-            detail: rowsData
-              ? `${formatNumber(rows.length)} row${rows.length === 1 ? "" : "s"} visible in scope. ${waiters} waiter${waiters === 1 ? "" : "s"} visible. Ephemeral, not crash-safe continuity.`
-              : "Loading lease ownership rows.",
-            label: rowsQuery.refreshing ? "Refreshing" : rowsQuery.stale ? "Stale" : "Live",
-            tone: rowsQuery.refreshing ? "info" : rowsQuery.stale ? "warning" : "success",
+          primaryAction={{
+            busy: rowsQuery.refreshing,
+            disabled: rowsQuery.refreshing,
+            label: "Refresh ownership rows",
+            onPress: () => rowsQuery.refresh(),
           }}
+          status={queryHeaderStatus(rowsQuery, {
+            loading: "Loading lease ownership rows.",
+            ready: rowsData
+              ? `${formatNumber(rows.length)} row${rows.length === 1 ? "" : "s"} visible in scope. ${waiters} waiter${waiters === 1 ? "" : "s"} visible. Ephemeral, not crash-safe continuity.`
+              : "",
+            unavailable: "Lease ownership evidence is unavailable for this resource.",
+          })}
         />
         <OperatorScopeStrip
           realm={realm}
           area={area}
           resource={resource}
-          freshness={
-            rowsQuery.refreshing
-              ? "Refreshing"
-              : rowsQuery.stale
-                ? "Stale"
-                : rowsData
-                  ? "Live"
-                  : rowsQuery.loading
-                    ? "Loading"
-                    : undefined
-          }
+          freshness={queryFreshness(rowsQuery)}
         />
         {!rowsData && rowsQuery.loading ? (
           <QueryLoadingState description="Loading lease ownership rows..." />
@@ -216,7 +205,9 @@ export default function LeaseResourcePage() {
           />
         ) : null}
 
-        {rowsData ? <LeaseResourceRowsTable rows={rows} now={leaseClockNow()} /> : null}
+        {rowsData && rows.length > 0 ? (
+          <LeaseResourceRowsTable rows={rows} now={leaseClockNow} />
+        ) : null}
 
         {rowsData && rows.length === 0 ? (
           <QueryEmptyState description="No visible lease ownership rows at the current level." />
@@ -225,10 +216,6 @@ export default function LeaseResourcePage() {
         {rowsQuery.refreshing ? (
           <QueryRefreshingState description="Refreshing lease ownership rows..." />
         ) : null}
-
-        <Link class="text-link" href={domainScopeHref("lease", { area, realm })}>
-          Back to area
-        </Link>
       </Stack>
     </DomainPageFrame>
   );

@@ -13,6 +13,7 @@ import {
 import { VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
 import type { DiagnosticHotspot, SuggestedQuery } from "@/adapters";
 import {
+  QueryCompactEmptyState,
   QueryEmptyState,
   QueryErrorState,
   QueryLoadingState,
@@ -30,6 +31,8 @@ interface DiagnosticsConsoleProps {
   metrics?: MetricsOverview | null;
   metricsError?: unknown;
   metricsLoading?: boolean;
+  onRetryMetrics?: () => void;
+  onRetryTopology?: () => void;
   operatorLabel: string;
   system: SystemOverview;
   topology?: MessagingTopologyOverview | null;
@@ -40,16 +43,17 @@ interface DiagnosticsConsoleProps {
 interface InfrastructureRow {
   action: string;
   detail: string;
+  href: string;
   signal: string;
   value: string | number;
 }
 
 interface DomainInternalRow {
+  activity: number;
+  cumulativeFailures: number | null;
   domain: string;
-  failures: number;
   href: string;
   internals: string;
-  pressure: number;
 }
 
 interface CapabilityRow {
@@ -86,6 +90,10 @@ function fixedRate(value: number) {
   return `${value.toFixed(2)} / sec`;
 }
 
+function diagnosticTableHeight(rowCount: number, rowHeight = 48) {
+  return `${Math.min(620, Math.max(140, 44 + rowCount * rowHeight))}px`;
+}
+
 function buildInfrastructureRows(
   system: SystemOverview,
   topology?: MessagingTopologyOverview | null,
@@ -95,30 +103,35 @@ function buildInfrastructureRows(
     {
       action: "Review sessions",
       detail: "Open broker connections in the current admin snapshot.",
+      href: adminChildHref("sessions"),
       signal: "Connections",
       value: system.broker.connections,
     },
     {
       action: "Review sessions",
       detail: "Authenticated sessions currently visible to admin.",
+      href: adminChildHref("sessions"),
       signal: "Sessions",
       value: system.broker.sessions,
     },
     {
       action: "Review topology",
       detail: "Broker-local message throughput from global stats.",
+      href: `${adminChildHref("diagnostics")}#diagnostic-hotspots`,
       signal: "Messages / sec",
       value: fixedRate(system.broker.messagesPerSecond),
     },
     {
       action: "Review route families",
       detail: "Route-family groups from the topology snapshot.",
+      href: "/",
       signal: "Route families",
       value: topology?.sessionGroups.length ?? "Loading",
     },
     {
       action: "Review topology",
       detail: "Visible topology connections; truncated means more data exists server-side.",
+      href: `${adminChildHref("diagnostics")}#diagnostic-hotspots`,
       signal: "Topology connections",
       value: topology
         ? `${formatNumber(topology.connections.total)}${topology.connections.truncated ? " truncated" : ""}`
@@ -127,13 +140,15 @@ function buildInfrastructureRows(
     {
       action: "Open metrics",
       detail: "Structured metric families from the live route-family metrics snapshot.",
+      href: adminChildHref("metrics"),
       signal: "Metric families",
       value: metrics?.families.length ?? system.metrics.lineCount,
     },
     {
       action: "Review router pressure",
-      detail: "Backpressure counters exposed by topology diagnostics.",
-      signal: "Router backpressure",
+      detail: "Cumulative backpressure total exposed by topology diagnostics.",
+      href: `${adminChildHref("diagnostics")}#diagnostic-hotspots`,
+      signal: "Router backpressure total",
       value: topology?.broker.routerBackpressureTotal ?? "Loading",
     },
   ];
@@ -144,21 +159,21 @@ function buildDomainRows(system: SystemOverview): DomainInternalRow[] {
 
   return [
     {
-      domain: "Queue",
-      failures: domains.queue.messagesDeadLettered,
-      href: domainHref("queue"),
-      internals: `${formatNumber(domains.queue.messagesReady)} ready / ${formatNumber(
-        domains.queue.inflightActive,
-      )} inflight`,
-      pressure:
+      activity:
         domains.queue.messagesPending +
         domains.queue.messagesReady +
         domains.queue.messagesDelayed +
         domains.queue.inflightActive,
+      cumulativeFailures: null,
+      domain: "Queue",
+      href: domainHref("queue"),
+      internals: `${formatNumber(domains.queue.messagesReady)} ready / ${formatNumber(
+        domains.queue.inflightActive,
+      )} inflight / ${formatNumber(domains.queue.messagesDeadLettered)} dead-lettered`,
     },
     {
-      domain: "RPC",
-      failures:
+      activity: domains.rpc.requestsPending + domains.rpc.pendingRoutesActive,
+      cumulativeFailures:
         domains.rpc.failureTotal +
         domains.rpc.requestTimeoutsTotal +
         domains.rpc.responsesDroppedClosedCallerTotal +
@@ -166,70 +181,70 @@ function buildDomainRows(system: SystemOverview): DomainInternalRow[] {
         domains.rpc.invalidSequenceErrorsDroppedTotal +
         domains.rpc.invalidSequenceErrorsForwardedTotal +
         domains.rpc.invalidSequenceResponsesTotal,
+      domain: "RPC",
       href: domainHref("rpc"),
       internals: `${formatNumber(domains.rpc.workersRegistered)} workers / ${formatNumber(
         domains.rpc.requestsPending,
       )} pending`,
-      pressure: domains.rpc.requestsPending + domains.rpc.pendingRoutesActive,
     },
     {
-      domain: "Notice",
-      failures:
+      activity: domains.notice.subscriptionsActive,
+      cumulativeFailures:
         domains.notice.deliveryDropsTotal +
         domains.notice.failureTotal +
         domains.notice.wildcardLimitRejectsTotal,
+      domain: "Notice",
       href: domainHref("notice"),
       internals: `${formatNumber(domains.notice.subscriptionsActive)} subscriptions`,
-      pressure: domains.notice.subscriptionsActive,
     },
     {
-      domain: "Schedule",
-      failures:
+      activity: domains.schedule.pendingFireClaims + domains.schedule.subscriptionsActive,
+      cumulativeFailures:
         domains.schedule.ackFailuresTotal +
         domains.schedule.cancelPersistenceFailuresTotal +
         domains.schedule.createPersistenceFailuresTotal +
         domains.schedule.notifyFailuresTotal +
         domains.schedule.overdueNormalizationsTotal +
         domains.schedule.upsertPersistenceFailuresTotal,
+      domain: "Schedule",
       href: domainHref("schedule"),
       internals: `${formatNumber(domains.schedule.schedulesActive)} schedules / ${domains.schedule.executionsPerMinute.toFixed(
         2,
       )} exec/min`,
-      pressure: domains.schedule.pendingFireClaims + domains.schedule.subscriptionsActive,
     },
     {
-      domain: "Stream",
-      failures:
+      activity: domains.stream.subscriptionsActive,
+      cumulativeFailures:
         domains.stream.appendConflictsTotal +
         domains.stream.failureTotal +
         domains.stream.notifyDropsTotal,
+      domain: "Stream",
       href: domainHref("stream"),
       internals: `${formatNumber(domains.stream.streamsActive)} streams / ${formatNumber(
         domains.stream.eventsTotal,
       )} events`,
-      pressure: domains.stream.subscriptionsActive,
     },
     {
-      domain: "Lease",
-      failures:
+      activity: domains.lease.waiterDepth,
+      cumulativeFailures:
         domains.lease.acquireTimeoutsTotal +
         domains.lease.failureTotal +
         domains.lease.forcedReleasesTotal +
         domains.lease.invalidTokenRejectsTotal,
+      domain: "Lease",
       href: domainHref("lease"),
       internals: `${formatNumber(domains.lease.leasesActive)} active / oldest ${formatDurationSeconds(
         domains.lease.oldestLeaseAgeSeconds,
       )}`,
-      pressure: domains.lease.waiterDepth,
     },
     {
+      activity: domains.kv.transactionsActive,
+      cumulativeFailures: domains.kv.commitsFailedTotal + domains.kv.invalidTransactionRejectsTotal,
       domain: "KV",
-      failures: domains.kv.commitsFailedTotal + domains.kv.invalidTransactionRejectsTotal,
       href: domainHref("kv"),
       internals: `${formatNumber(domains.kv.keysTotal)} keys / ${formatNumber(
         domains.kv.transactionsActive,
       )} tx`,
-      pressure: domains.kv.transactionsActive,
     },
   ];
 }
@@ -322,6 +337,8 @@ export default function DiagnosticsConsole({
   metrics,
   metricsError,
   metricsLoading = false,
+  onRetryMetrics,
+  onRetryTopology,
   operatorLabel,
   system,
   topology,
@@ -330,6 +347,10 @@ export default function DiagnosticsConsole({
 }: DiagnosticsConsoleProps) {
   const incident = topology?.diagnostics.incident_summary ?? system.diagnostics.incident_summary;
   const incidentTone = severityTone(incident.severity);
+  const recommendedNextQuery =
+    incident.status === "healthy" || incident.severity === "informational"
+      ? null
+      : incident.recommended_next_query;
   const infrastructureRows = buildInfrastructureRows(system, topology, metrics);
   const domainRows = buildDomainRows(system);
   const hotspots = hotspotsFrom(system, topology);
@@ -362,7 +383,11 @@ export default function DiagnosticsConsole({
       id: "action",
       header: "Action",
       width: "22%",
-      cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.action}</span>,
+      cellComponent: ({ row }) => (
+        <Link class="text-link" href={row.href}>
+          {row.action}
+        </Link>
+      ),
     },
   ];
   const domainColumns: readonly VirtualTableColumn<DomainInternalRow>[] = [
@@ -377,25 +402,25 @@ export default function DiagnosticsConsole({
       ),
     },
     {
-      id: "pressure",
-      header: "Pressure",
+      id: "activity",
+      header: "Current activity",
       width: "18%",
-      cellComponent: ({ row }) => <span>{formatNumber(row.pressure)}</span>,
+      cellComponent: ({ row }) => <span>{formatNumber(row.activity)}</span>,
     },
     {
-      id: "failures",
-      header: "Failures",
-      width: "18%",
+      id: "cumulative-failures",
+      header: "Cumulative signals",
+      width: "22%",
       cellComponent: ({ row }) => (
-        <Badge variant={row.failures > 0 ? "warning" : "success"}>
-          {formatNumber(row.failures)}
+        <Badge variant="outline">
+          {row.cumulativeFailures === null ? "--" : formatNumber(row.cumulativeFailures)}
         </Badge>
       ),
     },
     {
       id: "internals",
       header: "Internals",
-      width: "46%",
+      width: "42%",
       cellComponent: ({ row }) => (
         <span class="domain-table-cell-truncate" title={row.internals}>
           {row.internals}
@@ -475,9 +500,14 @@ export default function DiagnosticsConsole({
       header: "Endpoint",
       width: "26%",
       cellComponent: ({ row }) => (
-        <code class="diagnostics-code-cell" title={row.endpoint}>
-          {row.endpoint}
-        </code>
+        <a
+          class="text-link diagnostics-code-cell"
+          href={row.endpoint}
+          target="_blank"
+          rel="noreferrer"
+        >
+          <code title={row.endpoint}>{row.endpoint}</code>
+        </a>
       ),
     },
     {
@@ -535,7 +565,7 @@ export default function DiagnosticsConsole({
         <CardHeader>
           <Inline justify="between" align="start" gap="3" wrap="wrap">
             <Stack gap="1">
-              <CardTitle>Diagnostics console</CardTitle>
+              <CardTitle titleAs="h2">Diagnostics console</CardTitle>
               <CardDescription>
                 Infrastructure internals for {operatorLabel}: topology pressure, suggested follow-up
                 queries, metrics families, and exposed diagnostics.
@@ -558,7 +588,7 @@ export default function DiagnosticsConsole({
             </div>
             <div class="diagnostics-summary-card">
               <span class="domain-header-kicker">Next query</span>
-              <strong>{incident.recommended_next_query ?? "No follow-up needed"}</strong>
+              <strong>{recommendedNextQuery ?? "No follow-up needed"}</strong>
               <span>Generated {formatTimestamp(topology?.generatedAt ?? system.fetchedAt)}</span>
             </div>
           </div>
@@ -567,7 +597,7 @@ export default function DiagnosticsConsole({
 
       <Card padding="sm" variant="default">
         <CardHeader>
-          <CardTitle>Infrastructure signals</CardTitle>
+          <CardTitle titleAs="h2">Infrastructure signals</CardTitle>
           <CardDescription>
             Broker internals, topology shape, route-family groups, router pressure, and metrics
             coverage.
@@ -583,17 +613,17 @@ export default function DiagnosticsConsole({
             overscan={3}
             rowHeight={48}
             rows={infrastructureRows}
-            style={{ height: "320px" }}
+            style={{ height: diagnosticTableHeight(infrastructureRows.length) }}
           />
         </CardContent>
       </Card>
 
       <Card padding="sm" variant="default">
         <CardHeader>
-          <CardTitle>Domain internals</CardTitle>
+          <CardTitle titleAs="h2">Domain internals</CardTitle>
           <CardDescription>
-            Cross-domain pressure and failure counters stay here so operational workflows remain
-            focused on state, flow, failures, and actions.
+            Current activity and cumulative process counters stay separate so historical totals do
+            not masquerade as active incidents.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -606,7 +636,7 @@ export default function DiagnosticsConsole({
             overscan={4}
             rowHeight={48}
             rows={domainRows}
-            style={{ height: "360px" }}
+            style={{ height: diagnosticTableHeight(domainRows.length) }}
           />
         </CardContent>
       </Card>
@@ -637,9 +667,9 @@ export default function DiagnosticsConsole({
         </div>
       </section>
 
-      <Card padding="sm" variant="default">
+      <Card id="diagnostic-hotspots" padding="sm" variant="default">
         <CardHeader>
-          <CardTitle>Hotspots</CardTitle>
+          <CardTitle titleAs="h2">Hotspots</CardTitle>
           <CardDescription>
             Broker-generated diagnostic hotspots from the current topology or global stats snapshot.
           </CardDescription>
@@ -649,7 +679,11 @@ export default function DiagnosticsConsole({
             <QueryLoadingState description="Loading topology hotspots..." />
           ) : null}
           {topologyError ? (
-            <QueryErrorState title="Unable to load topology diagnostics" error={topologyError} />
+            <QueryErrorState
+              title="Unable to load topology diagnostics"
+              error={topologyError}
+              onRetry={onRetryTopology}
+            />
           ) : null}
           {!topologyLoading && !topologyError ? (
             hotspots.length === 0 ? (
@@ -667,7 +701,7 @@ export default function DiagnosticsConsole({
                 overscan={4}
                 rowHeight={48}
                 rows={hotspots}
-                style={{ height: "320px" }}
+                style={{ height: diagnosticTableHeight(hotspots.length) }}
               />
             )
           ) : null}
@@ -676,7 +710,7 @@ export default function DiagnosticsConsole({
 
       <Card padding="sm" variant="default">
         <CardHeader>
-          <CardTitle>Suggested queries</CardTitle>
+          <CardTitle titleAs="h2">Suggested queries</CardTitle>
           <CardDescription>
             Backend-provided follow-up queries and remediation hints. These are diagnostics
             pointers, not domain workflow replacements.
@@ -684,7 +718,7 @@ export default function DiagnosticsConsole({
         </CardHeader>
         <CardContent>
           {suggestedQueries.length === 0 ? (
-            <QueryEmptyState
+            <QueryCompactEmptyState
               title="No suggested queries"
               description="The broker did not recommend a follow-up query for this snapshot."
             />
@@ -698,7 +732,7 @@ export default function DiagnosticsConsole({
               overscan={4}
               rowHeight={48}
               rows={suggestedQueries}
-              style={{ height: "320px" }}
+              style={{ height: diagnosticTableHeight(suggestedQueries.length) }}
             />
           )}
         </CardContent>
@@ -708,7 +742,7 @@ export default function DiagnosticsConsole({
         <CardHeader>
           <Inline justify="between" align="start" gap="3" wrap="wrap">
             <Stack gap="1">
-              <CardTitle>Metric families</CardTitle>
+              <CardTitle titleAs="h2">Metric families</CardTitle>
               <CardDescription>
                 Structured metric families for storage-adjacent, routing, pressure, and failure
                 diagnostics.
@@ -722,7 +756,11 @@ export default function DiagnosticsConsole({
         <CardContent>
           {metricsLoading ? <QueryLoadingState description="Loading metric families..." /> : null}
           {metricsError ? (
-            <QueryErrorState title="Unable to load metric families" error={metricsError} />
+            <QueryErrorState
+              title="Unable to load metric families"
+              error={metricsError}
+              onRetry={onRetryMetrics}
+            />
           ) : null}
           {!metricsLoading && !metricsError ? (
             familyRows.length === 0 ? (
@@ -740,7 +778,7 @@ export default function DiagnosticsConsole({
                 overscan={8}
                 rowHeight={48}
                 rows={familyRows}
-                style={{ height: "384px" }}
+                style={{ height: diagnosticTableHeight(familyRows.length) }}
               />
             )
           ) : null}

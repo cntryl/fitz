@@ -55,6 +55,14 @@ export function serviceContractMocks() {
 }
 
 vi.mock("@/adapters", () => ({
+  apiBody: (body: unknown, options = {}) => ({ ...options, body }),
+  apiParams: (params: unknown, options = {}) => ({ ...options, params }),
+  apiParamsQuery: (params: unknown, query: unknown, options = {}) => ({
+    ...options,
+    params,
+    query,
+  }),
+  apiQuery: (query: unknown, options = {}) => ({ ...options, query }),
   apiv1: mocks.apiv1,
 }));
 

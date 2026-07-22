@@ -1,13 +1,9 @@
 @import "@askrjs/themes/default";
-@import "@askrjs/charts/default";
 @import "./base.css";
 @import "./shell.css";
 @import "./layout.css";
 @import "./domain.css";
-@import "./charts.css";
 @import "./forms.css";
-@import "./resource.css";
 @import "./dashboard.css";
-@import "./topology-flow.css";
 @import "./responsive.css";
 @import "./domain-pages.css";

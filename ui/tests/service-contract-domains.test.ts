@@ -2,6 +2,11 @@ import { describe, expect, it } from "vite-plus/test";
 import { serviceContractMocks } from "./service-contract/setup";
 
 const mocks = serviceContractMocks();
+const params = (value: Record<string, unknown>) => ({ params: value });
+const paramsQuery = (paramsValue: Record<string, unknown>, query: Record<string, unknown>) => ({
+  params: paramsValue,
+  query,
+});
 
 describe("service endpoint contracts", () => {
   it("loads stream records through route-family scoped stream endpoints", async () => {
@@ -27,28 +32,27 @@ describe("service endpoint contracts", () => {
     });
 
     expect(mocks.apiv1.searchStreamRecords).toHaveBeenCalledWith(
-      "7",
-      {
-        area: "ops",
-        discriminator: "invoice",
-        from_offset: 3,
-        limit: 10,
-        realm: "default",
-        resource: "events",
-      },
-      {},
+      paramsQuery(
+        { family: "7" },
+        {
+          area: "ops",
+          discriminator: "invoice",
+          from_offset: 3,
+          limit: 10,
+          realm: "default",
+          resource: "events",
+        },
+      ),
     );
     expect(mocks.apiv1.readStreamResourceRecords).toHaveBeenCalledWith(
-      "7",
-      "default",
-      "ops",
-      "events",
-      {
-        discriminator: "invoice",
-        from_offset: 0,
-        limit: 10,
-      },
-      {},
+      paramsQuery(
+        { area: "ops", family: "7", realm: "default", resource: "events" },
+        {
+          discriminator: "invoice",
+          from_offset: 0,
+          limit: 10,
+        },
+      ),
     );
   });
   it("loads schedule execution and missed handoff observations through schedule endpoints", async () => {
@@ -70,24 +74,23 @@ describe("service endpoint contracts", () => {
     });
 
     expect(mocks.apiv1.listScheduleExecutionObservations).toHaveBeenCalledWith(
-      "7",
-      "default",
-      "ops",
-      "reconcile",
-      {
-        limit: 10,
-      },
-      {},
+      paramsQuery(
+        { area: "ops", family: "7", realm: "default", resource: "reconcile" },
+        {
+          limit: 10,
+        },
+      ),
     );
     expect(mocks.apiv1.searchScheduleMissedHandoffs).toHaveBeenCalledWith(
-      "7",
-      {
-        area: "ops",
-        limit: 10,
-        realm: "default",
-        resource: "reconcile",
-      },
-      {},
+      paramsQuery(
+        { family: "7" },
+        {
+          area: "ops",
+          limit: 10,
+          realm: "default",
+          resource: "reconcile",
+        },
+      ),
     );
   });
   it("loads schedule hierarchy and resource detail through schedule endpoints", async () => {
@@ -103,32 +106,31 @@ describe("service endpoint contracts", () => {
       routeFamily: 7,
     });
 
-    expect(mocks.apiv1.listScheduleAreas).toHaveBeenCalledWith("1", "default", {});
-    expect(mocks.apiv1.listScheduleResources).toHaveBeenCalledWith("1", "default", "ops", {});
+    expect(mocks.apiv1.listScheduleAreas).toHaveBeenCalledWith(
+      params({ family: "1", realm: "default" }),
+    );
+    expect(mocks.apiv1.listScheduleResources).toHaveBeenCalledWith(
+      params({ area: "ops", family: "1", realm: "default" }),
+    );
     expect(mocks.apiv1.getScheduleResource).toHaveBeenCalledWith(
-      "7",
-      "default",
-      "ops",
-      "reconcile",
-      {},
+      params({ area: "ops", family: "7", realm: "default", resource: "reconcile" }),
     );
     expect(mocks.apiv1.listScheduleExecutionObservations).toHaveBeenCalledWith(
-      "7",
-      "default",
-      "ops",
-      "reconcile",
-      { limit: 10 },
-      {},
+      paramsQuery(
+        { area: "ops", family: "7", realm: "default", resource: "reconcile" },
+        { limit: 10 },
+      ),
     );
     expect(mocks.apiv1.searchScheduleMissedHandoffs).toHaveBeenCalledWith(
-      "7",
-      {
-        area: "ops",
-        limit: 10,
-        realm: "default",
-        resource: "reconcile",
-      },
-      {},
+      paramsQuery(
+        { family: "7" },
+        {
+          area: "ops",
+          limit: 10,
+          realm: "default",
+          resource: "reconcile",
+        },
+      ),
     );
   });
   it("loads lease ownership searches through the lease search endpoint", async () => {
@@ -145,16 +147,17 @@ describe("service endpoint contracts", () => {
     });
 
     expect(mocks.apiv1.searchLeaseOwnership).toHaveBeenCalledWith(
-      "7",
-      {
-        area: "ops",
-        limit: 10,
-        owner: "worker-1",
-        realm: "default",
-        resource: "settlement",
-        state: "contention",
-      },
-      {},
+      paramsQuery(
+        { family: "7" },
+        {
+          area: "ops",
+          limit: 10,
+          owner: "worker-1",
+          realm: "default",
+          resource: "settlement",
+          state: "contention",
+        },
+      ),
     );
   });
   it("loads communication evidence through notice delivery and RPC call endpoints", async () => {
@@ -181,28 +184,30 @@ describe("service endpoint contracts", () => {
     });
 
     expect(mocks.apiv1.searchNoticeDeliveries).toHaveBeenCalledWith(
-      "7",
-      {
-        area: "ops",
-        limit: 10,
-        q: "events",
-        realm: "default",
-        resource: "events",
-      },
-      {},
+      paramsQuery(
+        { family: "7" },
+        {
+          area: "ops",
+          limit: 10,
+          q: "events",
+          realm: "default",
+          resource: "events",
+        },
+      ),
     );
     expect(mocks.apiv1.searchRpcCalls).toHaveBeenCalledWith(
-      "7",
-      {
-        area: "ops",
-        correlation_id: "corr-1",
-        limit: 10,
-        operation: "sync",
-        q: "profile",
-        realm: "default",
-        resource: "profile",
-      },
-      {},
+      paramsQuery(
+        { family: "7" },
+        {
+          area: "ops",
+          correlation_id: "corr-1",
+          limit: 10,
+          operation: "sync",
+          q: "profile",
+          realm: "default",
+          resource: "profile",
+        },
+      ),
     );
   });
   it("loads notice scoped inventory and operation delivery detail with route-family scope", async () => {
@@ -236,29 +241,35 @@ describe("service endpoint contracts", () => {
       {},
     );
 
-    expect(mocks.apiv1.listNoticeAreas).toHaveBeenCalledWith("7", "default", {});
-    expect(mocks.apiv1.listNoticeResources).toHaveBeenCalledWith("7", "default", "ops", {});
-    expect(mocks.apiv1.searchNoticeDeliveries).toHaveBeenCalledWith(
-      "7",
-      {
-        area: "ops",
-        limit: 50,
-        q: undefined,
-        realm: "default",
-        resource: "primary",
-      },
-      {},
+    expect(mocks.apiv1.listNoticeAreas).toHaveBeenCalledWith(
+      params({ family: "7", realm: "default" }),
+    );
+    expect(mocks.apiv1.listNoticeResources).toHaveBeenCalledWith(
+      params({ area: "ops", family: "7", realm: "default" }),
     );
     expect(mocks.apiv1.searchNoticeDeliveries).toHaveBeenCalledWith(
-      "7",
-      {
-        area: "ops",
-        limit: 25,
-        q: "GetStatus",
-        realm: "default",
-        resource: "primary",
-      },
-      {},
+      paramsQuery(
+        { family: "7" },
+        {
+          area: "ops",
+          limit: 50,
+          q: undefined,
+          realm: "default",
+          resource: "primary",
+        },
+      ),
+    );
+    expect(mocks.apiv1.searchNoticeDeliveries).toHaveBeenCalledWith(
+      paramsQuery(
+        { family: "7" },
+        {
+          area: "ops",
+          limit: 25,
+          q: "GetStatus",
+          realm: "default",
+          resource: "primary",
+        },
+      ),
     );
   });
   it("loads RPC scoped inventory, resource operations, and operation evidence", async () => {
@@ -281,29 +292,37 @@ describe("service endpoint contracts", () => {
       window.history.pushState({}, "", "/");
     }
 
-    expect(mocks.apiv1.listRpcAreas).toHaveBeenCalledWith("7", "default", {});
-    expect(mocks.apiv1.listRpcResources).toHaveBeenCalledWith("7", "default", "ops", {});
-    expect(mocks.apiv1.getRpcResource).toHaveBeenCalledWith("7", "default", "ops", "primary", {});
-    expect(mocks.apiv1.getRpcOperation).toHaveBeenCalledWith(
-      "7",
-      "default",
-      "ops",
-      "primary",
-      "GetStatus",
-      {},
+    expect(mocks.apiv1.listRpcAreas).toHaveBeenCalledWith(
+      params({ family: "7", realm: "default" }),
     );
-    expect(mocks.apiv1.searchRpcCalls).toHaveBeenCalledWith(
-      "7",
-      {
+    expect(mocks.apiv1.listRpcResources).toHaveBeenCalledWith(
+      params({ area: "ops", family: "7", realm: "default" }),
+    );
+    expect(mocks.apiv1.getRpcResource).toHaveBeenCalledWith(
+      params({ area: "ops", family: "7", realm: "default", resource: "primary" }),
+    );
+    expect(mocks.apiv1.getRpcOperation).toHaveBeenCalledWith(
+      params({
         area: "ops",
-        correlation_id: undefined,
-        limit: 25,
+        family: "7",
         operation: "GetStatus",
-        q: undefined,
         realm: "default",
         resource: "primary",
-      },
-      {},
+      }),
+    );
+    expect(mocks.apiv1.searchRpcCalls).toHaveBeenCalledWith(
+      paramsQuery(
+        { family: "7" },
+        {
+          area: "ops",
+          correlation_id: undefined,
+          limit: 25,
+          operation: "GetStatus",
+          q: undefined,
+          realm: "default",
+          resource: "primary",
+        },
+      ),
     );
   });
   it("loads Stream rollups and resource records through scoped stream endpoints", async () => {
@@ -326,22 +345,30 @@ describe("service endpoint contracts", () => {
       window.history.pushState({}, "", "/");
     }
 
-    expect(mocks.apiv1.listStreamAreas).toHaveBeenCalledWith("7", "default", {});
-    expect(mocks.apiv1.listStreamResources).toHaveBeenCalledWith("7", "default", "ops", {});
-    expect(mocks.apiv1.getStreamRealmWatermarks).toHaveBeenCalledWith("7", "default", {});
-    expect(mocks.apiv1.getStreamAreaWatermarks).toHaveBeenCalledWith("7", "default", "ops", {});
-    expect(mocks.apiv1.getStreamResource).toHaveBeenCalledWith("7", "default", "ops", "events", {});
+    expect(mocks.apiv1.listStreamAreas).toHaveBeenCalledWith(
+      params({ family: "7", realm: "default" }),
+    );
+    expect(mocks.apiv1.listStreamResources).toHaveBeenCalledWith(
+      params({ area: "ops", family: "7", realm: "default" }),
+    );
+    expect(mocks.apiv1.getStreamRealmWatermarks).toHaveBeenCalledWith(
+      params({ family: "7", realm: "default" }),
+    );
+    expect(mocks.apiv1.getStreamAreaWatermarks).toHaveBeenCalledWith(
+      params({ area: "ops", family: "7", realm: "default" }),
+    );
+    expect(mocks.apiv1.getStreamResource).toHaveBeenCalledWith(
+      params({ area: "ops", family: "7", realm: "default", resource: "events" }),
+    );
     expect(mocks.apiv1.readStreamResourceRecords).toHaveBeenCalledWith(
-      "7",
-      "default",
-      "ops",
-      "events",
-      {
-        discriminator: "invoice",
-        from_offset: 4,
-        limit: 25,
-      },
-      {},
+      paramsQuery(
+        { area: "ops", family: "7", realm: "default", resource: "events" },
+        {
+          discriminator: "invoice",
+          from_offset: 4,
+          limit: 25,
+        },
+      ),
     );
   });
   it("loads global admin search through the search endpoint with route-family scope", async () => {
@@ -363,8 +390,8 @@ describe("service endpoint contracts", () => {
       total: 1,
     });
 
-    expect(mocks.apiv1.searchAdminState).toHaveBeenCalledWith(
-      {
+    expect(mocks.apiv1.searchAdminState).toHaveBeenCalledWith({
+      query: {
         area: "ops",
         domain: "queue",
         limit: 10,
@@ -374,7 +401,6 @@ describe("service endpoint contracts", () => {
         resource: "settlement",
         route_family: "7",
       },
-      {},
-    );
+    });
   });
 });

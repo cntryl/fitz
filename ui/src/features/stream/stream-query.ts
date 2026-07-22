@@ -1,5 +1,4 @@
-import { createQuery, queryScope } from "@askrjs/askr/data";
-import { stableQueryFetch, type QueryFetch } from "@/shared/query-fetch";
+import { createQuery, defineQuery, queryScope } from "@askrjs/askr/data";
 import { streamService } from "./stream-service";
 import type {
   StreamAreaRollup,
@@ -10,9 +9,6 @@ import type {
 import { currentRouteFamilySegment } from "@/shared/navigation/domains";
 
 const streamQueries = queryScope("stream");
-const streamRealmFetches = new Map<string, QueryFetch<StreamRealmRollup>>();
-const streamAreaFetches = new Map<string, QueryFetch<StreamAreaRollup>>();
-const streamResourceFetches = new Map<string, QueryFetch<StreamResourceView>>();
 
 export function streamRealmQueryKey(realm: string, family = currentRouteFamilySegment()) {
   return streamQueries.key("realm", family, realm);
@@ -49,43 +45,50 @@ export function streamResourceQueryKey(
   );
 }
 
-export function createStreamOverviewQuery() {
-  const key = streamQueries.key("overview", currentRouteFamilySegment());
+const streamOverviewQuery = defineQuery<{ family: string }, StreamOverview>({
+  key: ({ family }) => streamQueries.key("overview", family),
+  fetch: ({ signal }) => streamService.getOverview({ signal }),
+});
 
-  return createQuery<StreamOverview>({
-    key,
-    fetch: streamService.getOverview,
-  });
+const streamRealmQuery = defineQuery<{ family: string; realm: string }, StreamRealmRollup>({
+  key: ({ family, realm }) => streamRealmQueryKey(realm, family),
+  fetch: ({ realm, signal }) => streamService.getRealmRollup(realm, { signal }),
+});
+
+const streamAreaQuery = defineQuery<
+  { area: string; family: string; realm: string },
+  StreamAreaRollup
+>({
+  key: ({ area, family, realm }) => streamAreaQueryKey(realm, area, family),
+  fetch: ({ area, realm, signal }) => streamService.getAreaRollup(realm, area, { signal }),
+});
+
+interface StreamResourceQueryInput {
+  area: string;
+  discriminator?: string;
+  family: string;
+  fromOffset?: number;
+  limit: number;
+  realm: string;
+  resource: string;
+}
+
+const streamResourceQuery = defineQuery<StreamResourceQueryInput, StreamResourceView>({
+  key: ({ family, ...request }) => streamResourceQueryKey(request, family),
+  fetch: ({ family, signal, ...request }) =>
+    streamService.getResourceView({ ...request, routeFamily: family }, { signal }),
+});
+
+export function createStreamOverviewQuery() {
+  return createQuery(streamOverviewQuery, { family: currentRouteFamilySegment() });
 }
 
 export function createStreamRealmQuery(realm: string) {
-  const key = streamRealmQueryKey(realm);
-
-  return createQuery<StreamRealmRollup>({
-    key,
-    fetch: stableQueryFetch(
-      streamRealmFetches,
-      key,
-      () =>
-        ({ signal }) =>
-          streamService.getRealmRollup(realm, { signal }),
-    ),
-  });
+  return createQuery(streamRealmQuery, { family: currentRouteFamilySegment(), realm });
 }
 
 export function createStreamAreaQuery(realm: string, area: string) {
-  const key = streamAreaQueryKey(realm, area);
-
-  return createQuery<StreamAreaRollup>({
-    key,
-    fetch: stableQueryFetch(
-      streamAreaFetches,
-      key,
-      () =>
-        ({ signal }) =>
-          streamService.getAreaRollup(realm, area, { signal }),
-    ),
-  });
+  return createQuery(streamAreaQuery, { area, family: currentRouteFamilySegment(), realm });
 }
 
 export function createStreamResourceQuery(request: {
@@ -97,23 +100,9 @@ export function createStreamResourceQuery(request: {
   resource: string;
 }) {
   const limit = request.limit ?? 50;
-  const key = streamResourceQueryKey({ ...request, limit });
-
-  return createQuery<StreamResourceView>({
-    key,
-    fetch: stableQueryFetch(
-      streamResourceFetches,
-      key,
-      () =>
-        ({ signal }) =>
-          streamService.getResourceView(
-            {
-              ...request,
-              limit,
-              routeFamily: currentRouteFamilySegment(),
-            },
-            { signal },
-          ),
-    ),
+  return createQuery(streamResourceQuery, {
+    ...request,
+    family: currentRouteFamilySegment(),
+    limit,
   });
 }

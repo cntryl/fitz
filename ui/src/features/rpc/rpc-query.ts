@@ -1,5 +1,4 @@
-import { createQuery, queryScope } from "@askrjs/askr/data";
-import { stableQueryFetch, type QueryFetch } from "@/shared/query-fetch";
+import { createQuery, defineQuery, queryScope } from "@askrjs/askr/data";
 import { rpcService } from "./rpc-service";
 import type {
   RpcAreaInventory,
@@ -11,10 +10,6 @@ import type {
 import { currentRouteFamilySegment } from "@/shared/navigation/domains";
 
 const rpcQueries = queryScope("rpc");
-const rpcRealmFetches = new Map<string, QueryFetch<RpcAreaInventory>>();
-const rpcAreaFetches = new Map<string, QueryFetch<RpcResourceInventory>>();
-const rpcResourceFetches = new Map<string, QueryFetch<RpcResourceOperationRows>>();
-const rpcOperationFetches = new Map<string, QueryFetch<RpcOperationView>>();
 
 export function rpcRealmQueryKey(realm: string, family = currentRouteFamilySegment()) {
   return rpcQueries.key("realm", family, realm);
@@ -52,57 +47,70 @@ export function rpcOperationQueryKey(
   );
 }
 
-export function createRpcOverviewQuery() {
-  const key = rpcQueries.key("overview", currentRouteFamilySegment());
+const rpcOverviewQuery = defineQuery<{ family: string }, RpcOverview>({
+  key: ({ family }) => rpcQueries.key("overview", family),
+  fetch: ({ signal }) => rpcService.getOverview({ signal }),
+});
 
-  return createQuery<RpcOverview>({
-    key,
-    fetch: rpcService.getOverview,
-  });
+const rpcRealmQuery = defineQuery<{ family: string; realm: string }, RpcAreaInventory>({
+  key: ({ family, realm }) => rpcRealmQueryKey(realm, family),
+  fetch: ({ realm, signal }) => rpcService.listRpcAreas(realm, { signal }),
+});
+
+const rpcAreaQuery = defineQuery<
+  { area: string; family: string; realm: string },
+  RpcResourceInventory
+>({
+  key: ({ area, family, realm }) => rpcAreaQueryKey(realm, area, family),
+  fetch: ({ area, realm, signal }) => rpcService.listRpcResources(realm, area, { signal }),
+});
+
+interface RpcResourceQueryInput {
+  area: string;
+  family: string;
+  realm: string;
+  resource: string;
+}
+
+const rpcResourceQuery = defineQuery<RpcResourceQueryInput, RpcResourceOperationRows>({
+  key: ({ area, family, realm, resource }) => rpcResourceQueryKey(realm, area, resource, family),
+  fetch: ({ area, realm, resource, signal }) =>
+    rpcService.getResourceOperations(realm, area, resource, { signal }),
+});
+
+interface RpcOperationQueryInput extends RpcResourceQueryInput {
+  limit: number;
+  operation: string;
+}
+
+const rpcOperationQuery = defineQuery<RpcOperationQueryInput, RpcOperationView>({
+  key: ({ area, family, limit, operation, realm, resource }) =>
+    rpcOperationQueryKey(realm, area, resource, operation, limit, family),
+  fetch: ({ area, family, limit, operation, realm, resource, signal }) =>
+    rpcService.getOperationView(
+      { area, limit, operation, realm, resource, routeFamily: family },
+      { signal },
+    ),
+});
+
+export function createRpcOverviewQuery() {
+  return createQuery(rpcOverviewQuery, { family: currentRouteFamilySegment() });
 }
 
 export function createRpcRealmQuery(realm: string) {
-  const key = rpcRealmQueryKey(realm);
-
-  return createQuery<RpcAreaInventory>({
-    key,
-    fetch: stableQueryFetch(
-      rpcRealmFetches,
-      key,
-      () =>
-        ({ signal }) =>
-          rpcService.listRpcAreas(realm, { signal }),
-    ),
-  });
+  return createQuery(rpcRealmQuery, { family: currentRouteFamilySegment(), realm });
 }
 
 export function createRpcAreaQuery(realm: string, area: string) {
-  const key = rpcAreaQueryKey(realm, area);
-
-  return createQuery<RpcResourceInventory>({
-    key,
-    fetch: stableQueryFetch(
-      rpcAreaFetches,
-      key,
-      () =>
-        ({ signal }) =>
-          rpcService.listRpcResources(realm, area, { signal }),
-    ),
-  });
+  return createQuery(rpcAreaQuery, { area, family: currentRouteFamilySegment(), realm });
 }
 
 export function createRpcResourceQuery(realm: string, area: string, resource: string) {
-  const key = rpcResourceQueryKey(realm, area, resource);
-
-  return createQuery<RpcResourceOperationRows>({
-    key,
-    fetch: stableQueryFetch(
-      rpcResourceFetches,
-      key,
-      () =>
-        ({ signal }) =>
-          rpcService.getResourceOperations(realm, area, resource, { signal }),
-    ),
+  return createQuery(rpcResourceQuery, {
+    area,
+    family: currentRouteFamilySegment(),
+    realm,
+    resource,
   });
 }
 
@@ -114,32 +122,9 @@ export function createRpcOperationQuery(request: {
   resource: string;
 }) {
   const limit = request.limit ?? 50;
-  const key = rpcOperationQueryKey(
-    request.realm,
-    request.area,
-    request.resource,
-    request.operation,
+  return createQuery(rpcOperationQuery, {
+    ...request,
+    family: currentRouteFamilySegment(),
     limit,
-  );
-
-  return createQuery<RpcOperationView>({
-    key,
-    fetch: stableQueryFetch(
-      rpcOperationFetches,
-      key,
-      () =>
-        ({ signal }) =>
-          rpcService.getOperationView(
-            {
-              area: request.area,
-              limit,
-              operation: request.operation,
-              realm: request.realm,
-              resource: request.resource,
-              routeFamily: currentRouteFamilySegment(),
-            },
-            { signal },
-          ),
-    ),
   });
 }

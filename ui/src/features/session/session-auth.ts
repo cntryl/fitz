@@ -7,16 +7,25 @@ export const sessionRouteAuth: RouteAuthOptions = {
       const session = await sessionService.getCurrentSession({ signal });
 
       return {
-        session,
-        user: session?.authenticated ? { username: session.username } : null,
+        authenticated: Boolean(session?.authenticated),
+        principal: session?.authenticated
+          ? {
+              id: session.username || "open-access",
+              subject: session.username || "open-access",
+              username: session.username || undefined,
+            }
+          : null,
+        session: null,
+        tenant: null,
       };
     } catch {
       return {
+        authenticated: false,
+        principal: null,
         session: null,
-        user: null,
+        tenant: null,
       };
     }
   },
   loginPath: "/login",
-  guestRedirectTo: "/",
 };

@@ -6,6 +6,8 @@ export interface DomainHeaderProps {
   eyebrow?: string;
   domain?: string;
   primaryAction?: {
+    busy?: boolean;
+    disabled?: boolean;
     icon?: unknown;
     label: string;
     onPress: () => void;
@@ -49,7 +51,7 @@ export default function DomainHeader({
           <span class="domain-header-title-row">
             <span>{title}</span>
             {status ? (
-              <Badge aria-hidden={true} variant={status.tone ?? "info"}>
+              <Badge role="status" aria-live="polite" variant={status.tone ?? "info"}>
                 {status.label}
               </Badge>
             ) : null}
@@ -66,6 +68,8 @@ export default function DomainHeader({
             <Button
               variant="outline"
               aria-label={action.label}
+              aria-busy={action.busy ? "true" : undefined}
+              disabled={action.disabled || action.busy}
               title={action.label}
               onPress={action.onPress}
             >

@@ -1,9 +1,9 @@
 import DomainInventoryPage from "@/components/shared/domain-inventory-page";
-import type { DomainResourceMetricColumn } from "@/components/shared/domain-resource-inventory-table";
+import { queryHeaderStatus } from "@/components/shared/query-header-status";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 import { createStreamOverviewQuery } from "@/features/stream/stream-query";
 import type { StreamLagBucketsSummary } from "@/features/stream/stream-models";
-import { formatNumber } from "@/shared/format";
+import { formatCount, formatNumber } from "@/shared/format";
 
 type StreamPostureTone = "success" | "warning" | "danger" | "info";
 
@@ -22,16 +22,6 @@ function summarizeWatermarkLag(buckets: StreamLagBucketsSummary) {
     percentageBehind: total === 0 ? 0 : Math.round((behind / total) * 100),
     total,
   };
-}
-
-function formatWatermarkLag(buckets: StreamLagBucketsSummary) {
-  const lag = summarizeWatermarkLag(buckets);
-
-  if (lag.total === 0) {
-    return "--";
-  }
-
-  return `${formatNumber(lag.behind)} / ${formatNumber(lag.total)}`;
 }
 
 function summarizeStreamHealth(stats: {
@@ -54,13 +44,16 @@ function summarizeStreamHealth(stats: {
 
   if (stats.watermarkLagBuckets.over100 > 0) {
     return {
-      detail: `Offset ${formatNumber(stats.eventsTotal)} across ${formatNumber(
+      detail: `${formatCount(stats.eventsTotal, "committed event")} across ${formatCount(
         stats.streamsActive,
-      )} active stream(s); ${formatNumber(
-        stats.subscriptionsActive,
-      )} live subscriptions. ${lag.percentageBehind}% of families are behind the latest watermark, including ${formatNumber(
+        "active stream",
+      )}; ${formatCount(stats.subscriptionsActive, "live subscription")}. ${formatNumber(
+        lag.behind,
+      )} of ${formatNumber(
+        lag.total,
+      )} observed watermark families (${lag.percentageBehind}%) are behind the latest watermark, including ${formatNumber(
         stats.watermarkLagBuckets.over100,
-      )} family(s) at 100+ behind.`,
+      )} ${stats.watermarkLagBuckets.over100 === 1 ? "family" : "families"} at 100+ behind.`,
       label: "Attention",
       tone: "danger",
     };
@@ -68,22 +61,27 @@ function summarizeStreamHealth(stats: {
 
   if (lag.behind > 0) {
     return {
-      detail: `Offset ${formatNumber(stats.eventsTotal)} across ${formatNumber(
+      detail: `${formatCount(stats.eventsTotal, "committed event")} across ${formatCount(
         stats.streamsActive,
-      )} active stream(s); ${formatNumber(
-        stats.subscriptionsActive,
-      )} live subscriptions. ${lag.percentageBehind}% of families are behind the latest watermark, and replay catch-up is in progress.`,
+        "active stream",
+      )}; ${formatCount(stats.subscriptionsActive, "live subscription")}. ${formatNumber(
+        lag.behind,
+      )} of ${formatNumber(
+        lag.total,
+      )} observed watermark families (${lag.percentageBehind}%) are behind the latest watermark, and replay catch-up is in progress.`,
       label: "Pressure",
       tone: "warning",
     };
   }
 
   return {
-    detail: `Offset ${formatNumber(stats.eventsTotal)} across ${formatNumber(
+    detail: `${formatCount(stats.eventsTotal, "committed event")} across ${formatCount(
       stats.streamsActive,
-    )} active stream(s); ${formatNumber(
+      "active stream",
+    )}; ${formatCount(
       stats.subscriptionsActive,
-    )} live subscriptions. Watermark lag is caught up for durable replay.`,
+      "live subscription",
+    )}. Watermark lag is caught up for durable replay.`,
     label: "Live",
     tone: "success",
   };
@@ -107,39 +105,6 @@ export default function StreamPage() {
     },
   );
   const stats = overview.data?.stats;
-  const streamMetricColumns: readonly DomainResourceMetricColumn[] = [
-    {
-      id: "offset",
-      header: "Offset",
-      width: "10%",
-      cell: () => (stats ? formatNumber(stats.eventsTotal) : "--"),
-    },
-    {
-      id: "streams",
-      header: "Streams",
-      width: "10%",
-      cell: () => (stats ? formatNumber(stats.streamsActive) : "--"),
-    },
-    {
-      id: "subscriptions",
-      header: "Subscriptions",
-      width: "12%",
-      cell: () => (stats ? formatNumber(stats.subscriptionsActive) : "--"),
-    },
-    {
-      id: "watermark-lag",
-      header: "Watermark lag",
-      width: "13%",
-      cell: () => (stats ? formatWatermarkLag(stats.watermarkLagBuckets) : "--"),
-    },
-    {
-      id: "ops",
-      header: "Ops / sec",
-      width: "10%",
-      cell: () => (stats ? stats.operationsPerSecond.toFixed(2) : "--"),
-    },
-  ];
-
   return (
     <DomainInventoryPage
       domain="stream"
@@ -155,33 +120,21 @@ export default function StreamPage() {
       refreshingDescription="Refreshing stream inventory..."
       emptyDescription="No stream resources are currently visible. Check the selected Route Family or broaden scope."
       tableTitle="Resource inventory"
-      metricColumns={streamMetricColumns}
       stats={[
-        { label: "Offset", value: stats ? formatNumber(stats.eventsTotal) : "--" },
+        { label: "Committed events", value: stats ? formatNumber(stats.eventsTotal) : "--" },
         { label: "Streams", value: stats ? formatNumber(stats.streamsActive) : "--" },
         { label: "Subscriptions", value: stats ? formatNumber(stats.subscriptionsActive) : "--" },
       ]}
-      status={{
-        detail: overview.data
-          ? health.detail
-          : overview.error
-            ? "Stream health is unavailable. Resource inventory can still be inspected when loaded."
-            : "Loading stream health.",
-        label: overview.refreshing
-          ? "Refreshing"
-          : overview.error
-            ? "Health unavailable"
-            : overview.stale
-              ? "Stale"
-              : health.label,
-        tone: overview.refreshing
-          ? "info"
-          : overview.error
-            ? "warning"
-            : overview.stale
-              ? "warning"
-              : health.tone,
-      }}
+      status={queryHeaderStatus(
+        overview,
+        {
+          loading: "Loading stream health.",
+          ready: health.detail,
+          unavailable:
+            "Stream health is unavailable. Resource inventory can still be inspected when loaded.",
+        },
+        { label: health.label, tone: health.tone },
+      )}
     />
   );
 }

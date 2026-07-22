@@ -11,7 +11,7 @@ import {
 import DomainHeader from "@/components/shared/domain-header";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
-import { createDomainSidebar } from "@/components/shared/domain-sidebar";
+import { queryFreshness, queryHeaderStatus } from "@/components/shared/query-header-status";
 import {
   QueryEmptyState,
   QueryErrorState,
@@ -20,7 +20,7 @@ import {
 } from "@/components/shared/query-state";
 import { createRpcResourceQuery } from "@/features/rpc/rpc-query";
 import type { RpcResourceOperationRows } from "@/features/rpc/rpc-models";
-import { formatNumber } from "@/shared/format";
+import { formatCount, formatNumber } from "@/shared/format";
 import { domainScopeHref, formatFitzRoute } from "@/shared/navigation/domains";
 
 type RpcResourceOperationRow = RpcResourceOperationRows["operations"][number];
@@ -112,49 +112,35 @@ export default function RpcResourcePage() {
   const totalWorkers = data?.operations.reduce((sum, row) => sum + row.workers, 0) ?? 0;
   const pendingRequests = data?.operations.reduce((sum, row) => sum + row.pendingRequests, 0) ?? 0;
 
-  const snapshot = createDomainSidebar({
-    data,
-    title: `RPC operations for ${resource}`,
-    description: `${realm} / ${area} / ${resource}`,
-    stats: (current) => [
-      { label: "Operations", value: current.operations.length },
-      { label: "Workers", value: totalWorkers },
-      { label: "Pending requests", value: pendingRequests },
-    ],
-    footer: <Link href={domainScopeHref("rpc", { area, realm })}>Back to area</Link>,
-  });
-
   return (
-    <DomainPageFrame sidebar={snapshot}>
+    <DomainPageFrame>
       <Stack gap="3">
         <DomainHeader
           eyebrow="RPC resource"
           title={resource}
           description={`Live operation evidence for ${realm} / ${area} / ${resource}.`}
-          primaryAction={{ label: "Refresh operations", onPress: () => query.refresh() }}
-          status={{
-            detail: data
-              ? `${data.operations.length} operation(s), ${totalWorkers} live worker(s), ${pendingRequests} pending request(s).`
-              : "Loading RPC operations.",
-            label: query.refreshing ? "Refreshing" : query.stale ? "Stale" : "Live",
-            tone: query.refreshing ? "info" : query.stale ? "warning" : "success",
+          primaryAction={{
+            busy: query.refreshing,
+            disabled: query.refreshing,
+            label: "Refresh operations",
+            onPress: () => query.refresh(),
           }}
+          status={queryHeaderStatus(query, {
+            loading: "Loading RPC operations.",
+            ready: data
+              ? `${formatCount(data.operations.length, "operation")}, ${formatCount(
+                  totalWorkers,
+                  "live worker",
+                )}, ${formatCount(pendingRequests, "pending request")}.`
+              : "",
+            unavailable: "RPC operation evidence is unavailable for this resource.",
+          })}
         />
         <OperatorScopeStrip
           realm={realm}
           area={area}
           resource={resource}
-          freshness={
-            query.refreshing
-              ? "Refreshing"
-              : query.stale
-                ? "Stale"
-                : data
-                  ? "Live"
-                  : query.loading
-                    ? "Loading"
-                    : undefined
-          }
+          freshness={queryFreshness(query)}
         />
         {!data && query.loading ? (
           <QueryLoadingState description="Loading RPC operations..." />
@@ -176,7 +162,7 @@ export default function RpcResourcePage() {
             ) : (
               <Card padding="sm" variant="default">
                 <CardHeader>
-                  <CardTitle>RPC operations</CardTitle>
+                  <CardTitle titleAs="h2">RPC operations</CardTitle>
                   <CardDescription>
                     Live operation evidence: workers, handled calls, latency, and in-memory pending
                     request evidence.

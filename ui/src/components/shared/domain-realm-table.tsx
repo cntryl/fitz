@@ -26,7 +26,7 @@ export default function DomainRealmTable({
   return (
     <Card padding="sm" variant="default">
       <CardHeader>
-        <CardTitle>{title}</CardTitle>
+        <CardTitle titleAs="h2">{title}</CardTitle>
         <p class="domain-muted">{realms.length} realms</p>
       </CardHeader>
 

@@ -50,6 +50,7 @@ export interface OverviewVital {
 }
 
 export interface OverviewStatus {
+  complete: boolean;
   domains: OverviewDomainStatus[];
   generatedAt?: string;
   issues: OverviewIssue[];
@@ -230,8 +231,13 @@ function issueSort(left: OverviewIssue, right: OverviewIssue) {
 function laneSignal(lane: TopologyLane | undefined) {
   if (!lane) return null;
 
+  const normalState = lane.state === "flowing" || lane.state === "quiet";
   const primary = lane.counters
-    .filter((counter) => counter.value > 0)
+    .filter(
+      (counter) =>
+        counter.value > 0 &&
+        !(normalState && /(pressure|fail|reject|drop|timeout|error)/.test(counter.key)),
+    )
     .slice(0, 2)
     .map((counter) => `${counter.label} ${formatNumber(counter.value)}`);
 
@@ -339,6 +345,7 @@ export function buildOverviewStatus({
 
   const issues = Array.from(issueMap.values()).sort(issueSort);
   const topIssue = issues[0];
+  const complete = Boolean(system && topology);
   const overall = topIssue
     ? {
         description: `${issues.length} actionable signal${issues.length === 1 ? "" : "s"} detected. Start with ${topIssue.scope}.`,
@@ -346,15 +353,23 @@ export function buildOverviewStatus({
         title: topIssue.title,
         tone: topIssue.tone,
       }
-    : {
-        description:
-          "No actionable pressure, failure, backlog, or contention signals are active in the current snapshot.",
-        label: "Healthy",
-        title: "No active issues",
-        tone: "success" as const,
-      };
+    : !complete
+      ? {
+          description: `${system ? "System counters are available" : "System counters are unavailable"}; ${topology ? "topology signals are available" : "topology signals are unavailable"}. Health cannot be confirmed from a partial snapshot.`,
+          label: "Partial",
+          title: "Incomplete snapshot",
+          tone: "warning" as const,
+        }
+      : {
+          description:
+            "No actionable pressure, failure, backlog, or contention signals are active in the current snapshot.",
+          label: "Healthy",
+          title: "No active issues",
+          tone: "success" as const,
+        };
 
   return {
+    complete,
     domains: domainStatuses(topology, system, issues),
     generatedAt: topology?.generatedAt ?? system?.fetchedAt,
     issues,

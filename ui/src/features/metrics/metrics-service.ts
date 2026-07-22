@@ -1,4 +1,4 @@
-import { apiv1 } from "@/adapters";
+import { apiParams, apiv1 } from "@/adapters";
 import { unwrapResponse, type ServiceRequestOptions } from "@/shared/errors/api";
 import { mapStructuredMetrics } from "./metrics-mappers";
 import type { MetricsOverview } from "./metrics-models";
@@ -8,7 +8,7 @@ async function getOverview(
   options: ServiceRequestOptions = {},
 ): Promise<MetricsOverview> {
   const data = unwrapResponse(
-    await apiv1.getFamilyMetrics(family, options),
+    await apiv1.getFamilyMetrics(apiParams({ family }, options)),
     "Unable to load route-family metrics",
   );
 

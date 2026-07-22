@@ -12,22 +12,25 @@ import {
   CardTitle,
 } from "@askrjs/themes/components";
 import { createSignOutMutation } from "@/features/session/session-mutation";
+import { manageRoutePageContext } from "@/components/shared/domain-page-frame";
 import { formatUnknownError } from "@/shared/errors/format";
 
-type LogoutPhase = "pending" | "success" | "error";
+type LogoutPhase = "pending" | "success" | "open" | "error";
 
 export default function Logout() {
   const signOut = createSignOutMutation();
   const [phase, setPhase] = state<LogoutPhase>("pending");
   const [error, setError] = state("");
 
+  task(() => manageRoutePageContext("Sign out"));
+
   async function signOutAndSetPhase() {
     setPhase("pending");
     setError("");
 
     try {
-      await signOut.execute(undefined);
-      setPhase("success");
+      const result = await signOut.execute(undefined);
+      setPhase(result?.performed === false ? "open" : "success");
     } catch (err) {
       setError(formatUnknownError(err));
       setPhase("error");
@@ -41,22 +44,26 @@ export default function Logout() {
   const currentPhase = phase();
   const errorMessage = error();
   const title =
-    currentPhase === "success"
-      ? "Signed out"
-      : currentPhase === "error"
-        ? "Sign out failed"
-        : "Signing out";
+    currentPhase === "open"
+      ? "Open access"
+      : currentPhase === "success"
+        ? "Signed out"
+        : currentPhase === "error"
+          ? "Sign out failed"
+          : "Signing out";
   const description =
-    currentPhase === "success"
-      ? "Your Fitz Admin session has been cleared."
-      : currentPhase === "error"
-        ? "We could not clear your session. You may still be signed in."
-        : "Clearing your Fitz Admin session.";
+    currentPhase === "open"
+      ? "Admin authentication is disabled, so there is no browser account session to clear."
+      : currentPhase === "success"
+        ? "Your Fitz Admin session has been cleared."
+        : currentPhase === "error"
+          ? "We could not clear your session. You may still be signed in."
+          : "Clearing your Fitz Admin session.";
 
   return (
     <Card class="auth-card" variant="raised">
       <CardHeader>
-        <CardTitle>{title}</CardTitle>
+        <CardTitle titleAs="h1">{title}</CardTitle>
         <CardDescription>{description}</CardDescription>
       </CardHeader>
       <CardContent>
@@ -75,6 +82,18 @@ export default function Logout() {
               actions={
                 <Button onPress={() => navigate("/login", { history: "replace" })}>
                   Go to sign in
+                </Button>
+              }
+            />
+          ) : null}
+
+          {currentPhase === "open" ? (
+            <Alert
+              variant="info"
+              description="You can return directly to the open admin workspace."
+              actions={
+                <Button onPress={() => navigate("/admin", { history: "replace" })}>
+                  Return to Fitz Admin
                 </Button>
               }
             />

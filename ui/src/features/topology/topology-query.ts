@@ -1,4 +1,4 @@
-import { createQuery, queryScope } from "@askrjs/askr/data";
+import { createQuery, defineQuery, queryScope } from "@askrjs/askr/data";
 import { topologyService } from "./topology-service";
 import type { MessagingTopologyOverview } from "./topology-models";
 import { currentRouteFamilySegment } from "@/shared/navigation/domains";
@@ -11,13 +11,11 @@ export function messagingTopologyQueryKey(family = currentRouteFamilySegment()) 
   return topologyQueries.key("overview", family);
 }
 
-function fetchMessagingTopology(family: string) {
-  return ({ signal }: { signal: AbortSignal }) => topologyService.getOverview(family, { signal });
-}
+const messagingTopologyQuery = defineQuery<{ family: string }, MessagingTopologyOverview>({
+  key: ({ family }) => messagingTopologyQueryKey(family),
+  fetch: ({ family, signal }) => topologyService.getOverview(family, { signal }),
+});
 
 export function createMessagingTopologyQuery(family = currentRouteFamilySegment()) {
-  return createQuery<MessagingTopologyOverview>({
-    key: messagingTopologyQueryKey(family),
-    fetch: fetchMessagingTopology(family),
-  });
+  return createQuery(messagingTopologyQuery, { family });
 }

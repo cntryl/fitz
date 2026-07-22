@@ -1,5 +1,5 @@
-import { apiv1 } from "@/adapters";
-import type { AdminFeaturesResponse } from "@/adapters/generated/types";
+import { apiBody, apiParams, apiv1 } from "@/adapters";
+import type { AdminFeaturesResponse } from "@/adapters";
 import {
   AppApiError,
   ensureResponseOk,
@@ -13,10 +13,11 @@ export type { LoginPayload, SessionState } from "./session-models";
 
 function openAdminSession(features: AdminFeaturesResponse): SessionState {
   return {
+    authRequired: false,
     authenticated: true,
     routeFamilies: features.route_families,
     routeFamiliesWildcard: features.route_families_wildcard,
-    username: "admin",
+    username: "",
   };
 }
 
@@ -53,7 +54,7 @@ async function signIn(payload: LoginPayload, options: ServiceRequestOptions = {}
     return;
   }
 
-  const response = await apiv1.createAdminSession(mapLoginPayload(payload), options);
+  const response = await apiv1.createAdminSession(apiBody(mapLoginPayload(payload), options));
 
   if (response.status === 401) {
     throw new AppApiError("Invalid username or password", 401, "unauthenticated");
@@ -62,27 +63,28 @@ async function signIn(payload: LoginPayload, options: ServiceRequestOptions = {}
   ensureResponseOk(response, "Unable to sign in");
 }
 
-async function signOut(options: ServiceRequestOptions = {}): Promise<void> {
+async function signOut(options: ServiceRequestOptions = {}): Promise<{ performed: boolean }> {
   const features = await getAdminFeatures(options);
 
   if (!features.admin_auth_required) {
-    return;
+    return { performed: false };
   }
 
   const response = await apiv1.deleteAdminSession(options);
 
   if (response.status === 401) {
-    return;
+    return { performed: true };
   }
 
   ensureResponseOk(response, "Unable to sign out");
+  return { performed: true };
 }
 
 async function listActiveSessions(
   family = "1",
   options: ServiceRequestOptions = {},
 ): Promise<ActiveSessionsOverview> {
-  const response = await apiv1.listFamilySessions(family, options);
+  const response = await apiv1.listFamilySessions(apiParams({ family }, options));
 
   return mapActiveSessionsOverview(
     unwrapResponse(response, "Unable to load active sessions").sessions,

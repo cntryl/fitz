@@ -1,14 +1,7 @@
 import type { ResourceEntry } from "@/adapters";
 import type { ServiceRequestOptions } from "@/shared/errors/api";
-import { getResourceDomainAdapter } from "./resource-domain-adapters";
-import { mapResourceDetail } from "./resource-mappers";
-import type {
-  DomainId,
-  ResourceDetail,
-  ResourceInventory,
-  ResourceInventoryResource,
-  ResourceRef,
-} from "./resource-models";
+import { getResourceInventoryAdapter } from "./resource-domain-adapters";
+import type { DomainId, ResourceInventory, ResourceInventoryResource } from "./resource-models";
 
 type ResourceEntryWithOperation = ResourceEntry & { operation?: string };
 
@@ -48,7 +41,7 @@ export async function getResourceInventory(
   domain: DomainId,
   options: ServiceRequestOptions = {},
 ): Promise<ResourceInventory> {
-  const adapter = getResourceDomainAdapter(domain);
+  const adapter = getResourceInventoryAdapter(domain);
   const realms = await adapter.listRealms(options);
   const inventoryRealms = await Promise.all(
     realms.map(async ({ realm }) => {
@@ -74,32 +67,6 @@ export async function getResourceInventory(
   return { domain, realms: inventoryRealms };
 }
 
-export async function getResource(
-  domain: DomainId,
-  ref: ResourceRef,
-  against: ResourceRef | null,
-  options: ServiceRequestOptions = {},
-): Promise<ResourceDetail> {
-  const adapter = getResourceDomainAdapter(domain);
-  const [detail, timeline, comparison, related] = await Promise.all([
-    adapter.loadDetail(ref, options),
-    adapter.loadTimeline(ref, options),
-    adapter.loadComparison(ref, against, options),
-    adapter.loadRelated(ref, options),
-  ]);
-
-  return mapResourceDetail({
-    comparison,
-    detailMetrics: adapter.mapDetailMetrics(detail, related),
-    domain,
-    raw: { comparison, detail, related, timeline },
-    ref,
-    related,
-    timeline,
-  });
-}
-
 export const resourceService = {
-  getResource,
   getResourceInventory,
 };

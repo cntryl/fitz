@@ -1,7 +1,4 @@
-import type {
-  AdminSearchResponse,
-  AdminSearchResult as AdminSearchResultDto,
-} from "@/adapters/generated/types";
+import type { AdminSearchResponse, AdminSearchResult as AdminSearchResultDto } from "@/adapters";
 import type { AdminSearchResult, AdminSearchResults } from "./search-models";
 
 function optionalString(value: string | null | undefined) {

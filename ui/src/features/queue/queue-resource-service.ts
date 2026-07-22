@@ -1,4 +1,4 @@
-import { apiv1 } from "@/adapters";
+import { apiParams, apiParamsQuery, apiv1 } from "@/adapters";
 import { unwrapResponse, type ServiceRequestOptions } from "@/shared/errors/api";
 import { apiRouteFamilySegment } from "@/shared/navigation/domains";
 import {
@@ -21,33 +21,49 @@ async function getResource(
   const [detailResponse, inflightResponse, deadLettersResponse, timelineResponse] =
     await Promise.all([
       apiv1.getQueueResource(
-        family,
-        resourceRef.realm,
-        resourceRef.area,
-        resourceRef.resource,
-        options,
+        apiParams(
+          {
+            area: resourceRef.area,
+            family,
+            realm: resourceRef.realm,
+            resource: resourceRef.resource,
+          },
+          options,
+        ),
       ),
       apiv1.listQueueInflightEntries(
-        family,
-        resourceRef.realm,
-        resourceRef.area,
-        resourceRef.resource,
-        options,
+        apiParams(
+          {
+            area: resourceRef.area,
+            family,
+            realm: resourceRef.realm,
+            resource: resourceRef.resource,
+          },
+          options,
+        ),
       ),
       apiv1.listQueueDeadLetters(
-        family,
-        resourceRef.realm,
-        resourceRef.area,
-        resourceRef.resource,
-        options,
+        apiParams(
+          {
+            area: resourceRef.area,
+            family,
+            realm: resourceRef.realm,
+            resource: resourceRef.resource,
+          },
+          options,
+        ),
       ),
       apiv1.listQueueResourceEvents(
-        family,
-        resourceRef.realm,
-        resourceRef.area,
-        resourceRef.resource,
-        { limit: 8 },
-        options,
+        apiParamsQuery(
+          {
+            area: resourceRef.area,
+            family,
+            realm: resourceRef.realm,
+            resource: resourceRef.resource,
+          },
+          { limit: 8 },
+          options,
+        ),
       ),
     ]);
 
@@ -65,12 +81,11 @@ async function getTimeline(
 ): Promise<QueueResourceTimeline> {
   const family = apiRouteFamilySegment();
   const response = await apiv1.listQueueResourceEvents(
-    family,
-    resourceRef.realm,
-    resourceRef.area,
-    resourceRef.resource,
-    { limit: 8 },
-    options,
+    apiParamsQuery(
+      { area: resourceRef.area, family, realm: resourceRef.realm, resource: resourceRef.resource },
+      { limit: 8 },
+      options,
+    ),
   );
 
   return mapQueueResourceTimeline(
@@ -84,17 +99,21 @@ async function compareResource(
   options: ServiceRequestOptions = {},
 ): Promise<QueueResourceComparison> {
   const response = await apiv1.compareQueueResourceSnapshots(
-    apiRouteFamilySegment(),
-    resourceRef.realm,
-    resourceRef.area,
-    resourceRef.resource,
-    {
-      against_area: againstResourceRef.area,
-      against_family: againstResourceRef.family ?? undefined,
-      against_realm: againstResourceRef.realm,
-      against_resource: againstResourceRef.resource,
-    },
-    options,
+    apiParamsQuery(
+      {
+        area: resourceRef.area,
+        family: apiRouteFamilySegment(),
+        realm: resourceRef.realm,
+        resource: resourceRef.resource,
+      },
+      {
+        against_area: againstResourceRef.area,
+        against_family: againstResourceRef.family ?? undefined,
+        against_realm: againstResourceRef.realm,
+        against_resource: againstResourceRef.resource,
+      },
+      options,
+    ),
   );
 
   return mapQueueResourceComparison(
@@ -102,7 +121,7 @@ async function compareResource(
   );
 }
 
-// Services are the app contract boundary: no Askr resources and no FetchResponse leaks.
+// Services are the app contract boundary: no Askr resources and no FetchResult leaks.
 export const queueResourceService = {
   compareResource,
   getResource,

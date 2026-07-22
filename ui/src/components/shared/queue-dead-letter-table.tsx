@@ -24,7 +24,7 @@ export default function QueueDeadLetterTable({
     {
       id: "message",
       header: "Message",
-      width: hasActions ? "12%" : "14%",
+      width: hasActions ? "10%" : "14%",
       cellComponent: ({ row }) => (
         <span class="domain-table-cell-truncate" title={String(row.messageId)}>
           {row.messageId}
@@ -34,7 +34,7 @@ export default function QueueDeadLetterTable({
     {
       id: "context",
       header: "Context",
-      width: hasActions ? "20%" : "24%",
+      width: hasActions ? "18%" : "24%",
       cellComponent: ({ row }) => {
         const context = `${row.realm} / ${row.area} / ${row.resource}`;
 
@@ -48,19 +48,19 @@ export default function QueueDeadLetterTable({
     {
       id: "family",
       header: "Family",
-      width: hasActions ? "8%" : "10%",
+      width: hasActions ? "7%" : "10%",
       cellComponent: ({ row }) => <span>{row.family}</span>,
     },
     {
       id: "attempts",
       header: "Attempts",
-      width: hasActions ? "8%" : "10%",
+      width: hasActions ? "7%" : "10%",
       cellComponent: ({ row }) => <span>{row.attempts}</span>,
     },
     {
       id: "dead-lettered",
       header: "Dead-lettered",
-      width: hasActions ? "16%" : "18%",
+      width: hasActions ? "15%" : "18%",
       cellComponent: ({ row }) => (
         <span class="domain-table-cell-truncate" title={formatTimestamp(row.deadLetteredAt)}>
           {formatTimestamp(row.deadLetteredAt)}
@@ -70,7 +70,7 @@ export default function QueueDeadLetterTable({
     {
       id: "reason",
       header: "Reason",
-      width: hasActions ? "20%" : "24%",
+      width: hasActions ? "19%" : "24%",
       cellComponent: ({ row }) => (
         <span class="queue-dead-letter-reason" title={row.reason}>
           {row.reason}
@@ -82,7 +82,7 @@ export default function QueueDeadLetterTable({
           {
             id: "actions",
             header: "Actions",
-            width: "16%",
+            width: "24%",
             cellComponent: ({ row }) => (
               <div class="queue-action-cell">
                 {onReplay ? (

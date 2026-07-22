@@ -37,14 +37,18 @@ export function parseRouteResourceScope(path: string): ResourceScope {
   };
 }
 
-export function leaseSearchRowsFixture(scope: ResourceScope, expiresOffsetSeconds = 120) {
+export function leaseSearchRowsFixture(
+  scope: ResourceScope,
+  expiresOffsetSeconds = 120,
+  now = Date.now(),
+) {
   return {
     area: scope.area,
     items: [
       {
         acquired_at: "2026-05-21T13:00:00.000Z",
         area: scope.area,
-        expires_at: new Date(Date.now() + expiresOffsetSeconds * 1000).toISOString(),
+        expires_at: new Date(now + expiresOffsetSeconds * 1000).toISOString(),
         owner_id: "owner-lease-primary",
         owner_session_id: "session-lease-primary",
         pending_waiters: 2,

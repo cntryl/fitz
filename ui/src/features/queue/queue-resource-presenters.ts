@@ -4,41 +4,7 @@ import type {
   QueueResourceTimelineEvent,
 } from "@/features/queue/queue-resource-models";
 
-export interface QueueComparisonTarget extends QueueResourceRef {
-  family: number | null;
-}
-
-export interface ParsedQueueFamily {
-  valid: boolean;
-  value: number | null;
-}
-
 export type QueueStateTone = "info" | "success" | "warning" | "danger";
-
-export function trimmedOrNull(value: string) {
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-export function parseFamilyInput(value: string): ParsedQueueFamily {
-  const trimmed = value.trim();
-
-  if (trimmed.length === 0) {
-    return { value: null, valid: true };
-  }
-
-  if (!/^\d+$/.test(trimmed)) {
-    return { value: null, valid: false };
-  }
-
-  const parsed = Number(trimmed);
-
-  if (!Number.isSafeInteger(parsed)) {
-    return { value: null, valid: false };
-  }
-
-  return { value: parsed, valid: true };
-}
 
 export function humanizeSeconds(seconds: number) {
   if (seconds < 60) {
@@ -91,20 +57,8 @@ export function formatTimelineKind(kind: string) {
   }
 }
 
-export function formatComparisonValue(value: number | null | undefined) {
-  if (value == null) {
-    return "n/a";
-  }
-
-  if (value === 0) {
-    return "0";
-  }
-
-  return value > 0 ? `+${value}` : `${value}`;
-}
-
 export function formatQueueScope(
-  scope: Pick<QueueComparisonTarget, "area" | "realm" | "resource"> & {
+  scope: Pick<QueueResourceRef, "area" | "realm" | "resource"> & {
     family?: number | null;
   },
 ) {
@@ -112,10 +66,11 @@ export function formatQueueScope(
   return scope.family == null ? base : `${base} / family ${scope.family}`;
 }
 
-export function describeQueueState(
-  detail: QueueResourceDetail,
-  compareTarget: QueueComparisonTarget | null,
-): { detail: string; label: string; tone: QueueStateTone } {
+export function describeQueueState(detail: QueueResourceDetail): {
+  detail: string;
+  label: string;
+  tone: QueueStateTone;
+} {
   const counts = [
     detail.messagesReady > 0 ? `${detail.messagesReady} ready` : null,
     detail.messagesInflight > 0 ? `${detail.messagesInflight} inflight` : null,
@@ -130,13 +85,9 @@ export function describeQueueState(
   const ageSentence = `Oldest visible message age: ${humanizeSeconds(
     detail.oldestMessageAgeSeconds,
   )}.`;
-  const compareSentence = compareTarget
-    ? ` Comparing against ${formatQueueScope(compareTarget)}.`
-    : "";
-
   if (detail.messagesDeadLettered > 0) {
     return {
-      detail: `${snapshotSentence} ${ageSentence} Dead letters need attention.${compareSentence}`,
+      detail: `${snapshotSentence} ${ageSentence} Dead letters need attention.`,
       label: "Attention",
       tone: "danger",
     };
@@ -144,7 +95,7 @@ export function describeQueueState(
 
   if (detail.messagesDelayed > 0) {
     return {
-      detail: `${snapshotSentence} ${ageSentence} Delayed work is visible.${compareSentence}`,
+      detail: `${snapshotSentence} ${ageSentence} Delayed work is visible.`,
       label: "Warning",
       tone: "warning",
     };
@@ -157,14 +108,14 @@ export function describeQueueState(
     detail.messagesDeadLettered === 0
   ) {
     return {
-      detail: `${snapshotSentence} ${ageSentence}${compareSentence}`,
+      detail: `${snapshotSentence} ${ageSentence}`,
       label: "Healthy",
       tone: "success",
     };
   }
 
   return {
-    detail: `${snapshotSentence} ${ageSentence} The queue is active and moving messages.${compareSentence}`,
+    detail: `${snapshotSentence} ${ageSentence} The queue is active and moving messages.`,
     label: "Healthy",
     tone: "success",
   };

@@ -19,7 +19,7 @@ export default function DomainIndex({ title, description, links }: DomainIndexPr
   return (
     <Card padding="sm" variant="default">
       <CardHeader>
-        <CardTitle>{title}</CardTitle>
+        <CardTitle titleAs="h2">{title}</CardTitle>
         <CardDescription>{description}</CardDescription>
       </CardHeader>
       <CardContent>

@@ -1,4 +1,4 @@
-@media (max-width: 48rem) {
+@media (max-width: 47.999rem) {
   :where([data-slot="navbar"][data-collapse-at] [data-slot="navbar-content"]) {
     gap: var(--fitz-control-gap);
     padding: var(--ak-space-sm, 0.625rem);
@@ -25,11 +25,6 @@
     flex-direction: column;
   }
 
-  .resource-workbench-hero {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
   .domain-header-actions {
     align-items: flex-start;
   }
@@ -44,41 +39,6 @@
 
   .domain-section-header h2 {
     font-size: var(--fitz-section-title-size);
-  }
-
-  .chart-shell-header,
-  .chart-panel-header {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .flow-stage {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .flow-map {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .flow-inspector {
-    position: static;
-  }
-
-  .flow-column-core::before,
-  .flow-column-core::after {
-    display: none;
-  }
-
-  .flow-lane {
-    grid-template-columns: auto minmax(0, 1fr);
-  }
-
-  .flow-lane > span:last-child {
-    grid-column: 2;
-  }
-
-  .resource-workbench-summary-actions {
-    align-items: flex-start;
   }
 
   .overview-status-band,

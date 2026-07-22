@@ -258,6 +258,11 @@ export const shellLinks: ShellLink[] = [
     icon: LayoutDashboardIcon,
   },
   {
+    href: "/sessions",
+    title: "Sessions",
+    icon: Rows3Icon,
+  },
+  {
     href: "/diagnostics",
     title: "Diagnostics",
     icon: GaugeIcon,
@@ -269,7 +274,7 @@ export const shellLinks: ShellLink[] = [
   },
   {
     href: "/settings",
-    title: "Settings",
+    title: "Workspace & account",
     icon: SettingsIcon,
   },
 ];
@@ -299,7 +304,7 @@ export const domainDefinitions = {
     href: "/schedule",
     segment: "schedule",
     title: "Schedule",
-    description: "Durable timing intent, timeline review, and execution health.",
+    description: "Durable timing intent, timeline review, and handoff health.",
     icon: TimerResetIcon,
     routes: {
       scopeLevels: ["realm", "area", "resource"],

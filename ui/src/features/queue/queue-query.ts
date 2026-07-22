@@ -1,6 +1,5 @@
-import { createQuery, queryScope } from "@askrjs/askr/data";
+import { createQuery, defineQuery, queryScope } from "@askrjs/askr/data";
 import { queueService } from "./queue-service";
-import { stableQueryFetch, type QueryFetch } from "@/shared/query-fetch";
 import {
   currentRouteFamilySegment,
   DEFAULT_ROUTE_FAMILY_SEGMENT,
@@ -18,9 +17,6 @@ import type {
 export type { DeadLetterFilters, DeadLetterMessage, QueueResourceRef } from "./queue-models";
 
 const queueQueries = queryScope("queue");
-const queueDeadLetterFetches = new Map<string, QueryFetch<DeadLetterMessage[]>>();
-const queueRealmFetches = new Map<string, QueryFetch<QueueRealmDetail>>();
-const queueAreaFetches = new Map<string, QueryFetch<QueueAreaDetail>>();
 
 export const QUEUE_OVERVIEW_KEY = queueQueries.key("overview");
 export const QUEUE_INVENTORY_KEY = queueQueries.key("inventory");
@@ -33,21 +29,26 @@ export function queueInventoryQueryKey(family = currentRouteFamilySegment()) {
   return queueQueries.key("inventory", family);
 }
 
-export function queueRealmQueryKey(realm: string) {
-  return queueQueries.key("realm", currentRouteFamilySegment(), realm);
+export function queueRealmQueryKey(realm: string, family = currentRouteFamilySegment()) {
+  return queueQueries.key("realm", family, realm);
 }
 
-export function queueAreaQueryKey(realm: string, area: string) {
-  return queueQueries.key("area", currentRouteFamilySegment(), realm, area);
+export function queueAreaQueryKey(
+  realm: string,
+  area: string,
+  family = currentRouteFamilySegment(),
+) {
+  return queueQueries.key("area", family, realm, area);
 }
 
 export function queueDeadLettersQueryKey(
   resourceRef: QueueResourceRef,
   filters: DeadLetterFilters = {},
+  family = currentRouteFamilySegment(),
 ) {
   return queueQueries.key(
     "dead-letters",
-    currentRouteFamilySegment(),
+    family,
     resourceRef.realm,
     resourceRef.area,
     resourceRef.resource,
@@ -65,68 +66,64 @@ export function queueDeadLettersQueryPrefix(resourceRef: QueueResourceRef) {
   );
 }
 
-export function createQueueOverviewQuery() {
-  const key = queueOverviewQueryKey();
+const queueOverviewQuery = defineQuery<{ family: string }, QueueOverview>({
+  key: ({ family }) => queueOverviewQueryKey(family),
+  fetch: ({ signal }) => queueService.getOverview({ signal }),
+});
 
-  return createQuery<QueueOverview>({
-    key,
-    fetch: queueService.getOverview,
-  });
+const queueInventoryQuery = defineQuery<{ family: string }, QueueInventory>({
+  key: ({ family }) => queueInventoryQueryKey(family),
+  fetch: ({ signal }) => queueService.listInventory({ signal }),
+});
+
+const queueRealmQuery = defineQuery<{ family: string; realm: string }, QueueRealmDetail>({
+  key: ({ family, realm }) => queueRealmQueryKey(realm, family),
+  fetch: ({ realm, signal }) => queueService.getRealm(realm, { signal }),
+});
+
+const queueAreaQuery = defineQuery<
+  { area: string; family: string; realm: string },
+  QueueAreaDetail
+>({
+  key: ({ area, family, realm }) => queueAreaQueryKey(realm, area, family),
+  fetch: ({ area, realm, signal }) => queueService.getArea(realm, area, { signal }),
+});
+
+interface QueueDeadLettersQueryInput {
+  family: string;
+  filters: DeadLetterFilters;
+  resourceRef: QueueResourceRef;
+}
+
+const queueDeadLettersQuery = defineQuery<QueueDeadLettersQueryInput, DeadLetterMessage[]>({
+  key: ({ family, filters, resourceRef }) => queueDeadLettersQueryKey(resourceRef, filters, family),
+  fetch: ({ filters, resourceRef, signal }) =>
+    queueService.listDeadLetters(resourceRef, filters, { signal }),
+});
+
+export function createQueueOverviewQuery() {
+  return createQuery(queueOverviewQuery, { family: currentRouteFamilySegment() });
 }
 
 export function createQueueInventoryQuery() {
-  const key = queueInventoryQueryKey();
-
-  return createQuery<QueueInventory>({
-    key,
-    fetch: queueService.listInventory,
-  });
+  return createQuery(queueInventoryQuery, { family: currentRouteFamilySegment() });
 }
 
 export function createQueueRealmQuery(realm: string) {
-  const key = queueRealmQueryKey(realm);
-
-  return createQuery<QueueRealmDetail>({
-    key,
-    fetch: stableQueryFetch(
-      queueRealmFetches,
-      key,
-      () =>
-        ({ signal }) =>
-          queueService.getRealm(realm, { signal }),
-    ),
-  });
+  return createQuery(queueRealmQuery, { family: currentRouteFamilySegment(), realm });
 }
 
 export function createQueueAreaQuery(realm: string, area: string) {
-  const key = queueAreaQueryKey(realm, area);
-
-  return createQuery<QueueAreaDetail>({
-    key,
-    fetch: stableQueryFetch(
-      queueAreaFetches,
-      key,
-      () =>
-        ({ signal }) =>
-          queueService.getArea(realm, area, { signal }),
-    ),
-  });
+  return createQuery(queueAreaQuery, { area, family: currentRouteFamilySegment(), realm });
 }
 
 export function createQueueDeadLettersQuery(
   resourceRef: QueueResourceRef,
   filters: DeadLetterFilters = {},
 ) {
-  const key = queueDeadLettersQueryKey(resourceRef, filters);
-
-  return createQuery({
-    key,
-    fetch: stableQueryFetch(
-      queueDeadLetterFetches,
-      key,
-      () =>
-        ({ signal }) =>
-          queueService.listDeadLetters(resourceRef, filters, { signal }),
-    ),
+  return createQuery(queueDeadLettersQuery, {
+    family: currentRouteFamilySegment(),
+    filters,
+    resourceRef,
   });
 }

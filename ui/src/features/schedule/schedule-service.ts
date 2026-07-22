@@ -1,4 +1,4 @@
-import { apiv1 } from "@/adapters";
+import { apiParams, apiParamsQuery, apiv1 } from "@/adapters";
 import type { ScheduleExecutionObservationList, ScheduleMissedObservationList } from "@/adapters";
 import { unwrapResponse, type ServiceRequestOptions } from "@/shared/errors/api";
 import { apiRouteFamilySegment } from "@/shared/navigation/domains";
@@ -15,8 +15,8 @@ import type {
 async function getOverview(options: ServiceRequestOptions = {}): Promise<ScheduleOverview> {
   const family = apiRouteFamilySegment();
   const [realmsResponse, statsResponse] = await Promise.all([
-    apiv1.listScheduleRealms(family, options),
-    apiv1.getScheduleStats(family, options),
+    apiv1.listScheduleRealms(apiParams({ family }, options)),
+    apiv1.getScheduleStats(apiParams({ family }, options)),
   ]);
 
   return mapScheduleOverview(
@@ -31,14 +31,18 @@ async function listExecutionObservations(
 ): Promise<ScheduleExecutionObservationList> {
   return unwrapResponse(
     await apiv1.listScheduleExecutionObservations(
-      apiRouteFamilySegment(request.routeFamily),
-      request.realm,
-      request.area,
-      request.resource,
-      {
-        limit: request.limit,
-      },
-      options,
+      apiParamsQuery(
+        {
+          area: request.area,
+          family: apiRouteFamilySegment(request.routeFamily),
+          realm: request.realm,
+          resource: request.resource,
+        },
+        {
+          limit: request.limit,
+        },
+        options,
+      ),
     ),
     "Unable to load schedule handoff observations",
   );
@@ -50,13 +54,13 @@ async function listScheduleAreas(
 ): Promise<ScheduleRealmInventory> {
   const family = apiRouteFamilySegment();
   const areas = unwrapResponse(
-    await apiv1.listScheduleAreas(family, realm, options),
+    await apiv1.listScheduleAreas(apiParams({ family, realm }, options)),
     "Unable to load schedule areas",
   ).areas;
   const areaRows = await Promise.all(
     areas.map(async ({ area }) => {
       const resources = unwrapResponse(
-        await apiv1.listScheduleResources(family, realm, area, options),
+        await apiv1.listScheduleResources(apiParams({ area, family, realm }, options)),
         "Unable to load schedule resources",
       ).resources.map((entry) => entry.resource);
 
@@ -78,7 +82,7 @@ async function listScheduleResources(
 ): Promise<ScheduleAreaInventory> {
   const family = apiRouteFamilySegment();
   const resources = unwrapResponse(
-    await apiv1.listScheduleResources(family, realm, area, options),
+    await apiv1.listScheduleResources(apiParams({ area, family, realm }, options)),
     "Unable to load schedule resources",
   ).resources.map((entry) => entry.resource);
 
@@ -100,24 +104,30 @@ async function getScheduleResource(
   const family = apiRouteFamilySegment(request.routeFamily);
   const limit = request.limit ?? 20;
   const [detail, executionObservations, missedHandoffs] = await Promise.all([
-    apiv1.getScheduleResource(family, request.realm, request.area, request.resource, options),
+    apiv1.getScheduleResource(
+      apiParams(
+        { area: request.area, family, realm: request.realm, resource: request.resource },
+        options,
+      ),
+    ),
     apiv1.listScheduleExecutionObservations(
-      family,
-      request.realm,
-      request.area,
-      request.resource,
-      { limit },
-      options,
+      apiParamsQuery(
+        { area: request.area, family, realm: request.realm, resource: request.resource },
+        { limit },
+        options,
+      ),
     ),
     apiv1.searchScheduleMissedHandoffs(
-      family,
-      {
-        area: request.area,
-        limit,
-        realm: request.realm,
-        resource: request.resource,
-      },
-      options,
+      apiParamsQuery(
+        { family },
+        {
+          area: request.area,
+          limit,
+          realm: request.realm,
+          resource: request.resource,
+        },
+        options,
+      ),
     ),
   ]);
 
@@ -137,14 +147,16 @@ async function searchMissedHandoffs(
 ): Promise<ScheduleMissedObservationList> {
   return unwrapResponse(
     await apiv1.searchScheduleMissedHandoffs(
-      apiRouteFamilySegment(request.routeFamily),
-      {
-        area: request.area,
-        limit: request.limit,
-        realm: request.realm,
-        resource: request.resource,
-      },
-      options,
+      apiParamsQuery(
+        { family: apiRouteFamilySegment(request.routeFamily) },
+        {
+          area: request.area,
+          limit: request.limit,
+          realm: request.realm,
+          resource: request.resource,
+        },
+        options,
+      ),
     ),
     "Unable to load pending schedule handoffs",
   );

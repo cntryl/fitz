@@ -1,5 +1,4 @@
-import { createQuery, queryScope } from "@askrjs/askr/data";
-import { stableQueryFetch, type QueryFetch } from "@/shared/query-fetch";
+import { createQuery, defineQuery, queryScope } from "@askrjs/askr/data";
 import { noticeService } from "./notice-service";
 import type {
   NoticeAreaResourceRows,
@@ -11,10 +10,6 @@ import type {
 import { currentRouteFamilySegment } from "@/shared/navigation/domains";
 
 const noticeQueries = queryScope("notice");
-const noticeRealmFetches = new Map<string, QueryFetch<NoticeRealmInventory>>();
-const noticeAreaFetches = new Map<string, QueryFetch<NoticeAreaResourceRows>>();
-const noticeResourceRowsFetches = new Map<string, QueryFetch<NoticeResourceOperationRows>>();
-const noticeOperationRowsFetches = new Map<string, QueryFetch<NoticeDeliveryRows>>();
 
 export const NOTICE_OVERVIEW_KEY = noticeQueries.key("overview", currentRouteFamilySegment());
 
@@ -70,43 +65,66 @@ export function noticeOperationRowsQueryKey(
   );
 }
 
-export function createNoticeOverviewQuery() {
-  const key = noticeOverviewQueryKey();
+const noticeOverviewQuery = defineQuery<{ family: string }, NoticeOverview>({
+  key: ({ family }) => noticeOverviewQueryKey(family),
+  fetch: ({ signal }) => noticeService.getOverview({ signal }),
+});
 
-  return createQuery<NoticeOverview>({
-    key,
-    fetch: noticeService.getOverview,
-  });
+const noticeRealmQuery = defineQuery<{ family: string; realm: string }, NoticeRealmInventory>({
+  key: ({ family, realm }) => noticeRealmQueryKey(realm, family),
+  fetch: ({ realm, signal }) => noticeService.listNoticeAreas(realm, { signal }),
+});
+
+const noticeAreaQuery = defineQuery<
+  { area: string; family: string; realm: string },
+  NoticeAreaResourceRows
+>({
+  key: ({ area, family, realm }) => noticeAreaQueryKey(realm, area, family),
+  fetch: ({ area, realm, signal }) => noticeService.listNoticeResources(realm, area, { signal }),
+});
+
+interface NoticeResourceRowsQueryInput {
+  area: string;
+  family: string;
+  limit: number;
+  realm: string;
+  resource: string;
+}
+
+const noticeResourceRowsQuery = defineQuery<
+  NoticeResourceRowsQueryInput,
+  NoticeResourceOperationRows
+>({
+  key: ({ area, family, limit, realm, resource }) =>
+    noticeResourceRowsQueryKey(realm, area, resource, limit, family),
+  fetch: ({ area, limit, realm, resource, signal }) =>
+    noticeService.searchResourceRows({ area, limit, realm, resource }, { signal }),
+});
+
+interface NoticeOperationRowsQueryInput extends NoticeResourceRowsQueryInput {
+  operation: string;
+}
+
+const noticeOperationRowsQuery = defineQuery<NoticeOperationRowsQueryInput, NoticeDeliveryRows>({
+  key: ({ area, family, limit, operation, realm, resource }) =>
+    noticeOperationRowsQueryKey(realm, area, resource, operation, limit, family),
+  fetch: ({ area, limit, operation, realm, resource, signal }) =>
+    noticeService.searchOperationRows(
+      { area, limit, operation, query: operation, realm, resource },
+      { signal },
+    ),
+});
+
+export function createNoticeOverviewQuery() {
+  return createQuery(noticeOverviewQuery, { family: currentRouteFamilySegment() });
 }
 
 export function createNoticeRealmQuery(realm: string) {
-  const key = noticeRealmQueryKey(realm);
-
-  return createQuery<NoticeRealmInventory>({
-    key,
-    fetch: stableQueryFetch(
-      noticeRealmFetches,
-      key,
-      () =>
-        ({ signal }) =>
-          noticeService.listNoticeAreas(realm, { signal }),
-    ),
-  });
+  return createQuery(noticeRealmQuery, { family: currentRouteFamilySegment(), realm });
 }
 
 export function createNoticeAreaQuery(realm: string, area: string) {
-  const key = noticeAreaQueryKey(realm, area);
-
-  return createQuery<NoticeAreaResourceRows>({
-    key,
-    fetch: stableQueryFetch(
-      noticeAreaFetches,
-      key,
-      () =>
-        ({ signal }) =>
-          noticeService.listNoticeResources(realm, area, { signal }),
-    ),
-  });
+  return createQuery(noticeAreaQuery, { area, family: currentRouteFamilySegment(), realm });
 }
 
 export function createNoticeResourceRowsQuery(request: {
@@ -116,25 +134,10 @@ export function createNoticeResourceRowsQuery(request: {
   limit?: number;
 }) {
   const limit = request.limit ?? 50;
-  const key = noticeResourceRowsQueryKey(request.realm, request.area, request.resource, limit);
-
-  return createQuery<NoticeResourceOperationRows>({
-    key,
-    fetch: stableQueryFetch(
-      noticeResourceRowsFetches,
-      key,
-      () =>
-        ({ signal }) =>
-          noticeService.searchResourceRows(
-            {
-              area: request.area,
-              limit,
-              realm: request.realm,
-              resource: request.resource,
-            },
-            { signal },
-          ),
-    ),
+  return createQuery(noticeResourceRowsQuery, {
+    ...request,
+    family: currentRouteFamilySegment(),
+    limit,
   });
 }
 
@@ -146,32 +149,9 @@ export function createNoticeOperationRowsQuery(request: {
   limit?: number;
 }) {
   const limit = request.limit ?? 50;
-  const key = noticeOperationRowsQueryKey(
-    request.realm,
-    request.area,
-    request.resource,
-    request.operation,
+  return createQuery(noticeOperationRowsQuery, {
+    ...request,
+    family: currentRouteFamilySegment(),
     limit,
-  );
-
-  return createQuery<NoticeDeliveryRows>({
-    key,
-    fetch: stableQueryFetch(
-      noticeOperationRowsFetches,
-      key,
-      () =>
-        ({ signal }) =>
-          noticeService.searchOperationRows(
-            {
-              area: request.area,
-              limit,
-              operation: request.operation,
-              query: request.operation,
-              realm: request.realm,
-              resource: request.resource,
-            },
-            { signal },
-          ),
-    ),
   });
 }

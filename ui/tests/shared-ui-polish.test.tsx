@@ -2,18 +2,33 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { cleanupApp, createSPA } from "@askrjs/askr/boot";
 import type { RouteHandler } from "@askrjs/askr/router";
 import { Card, CardContent } from "@askrjs/themes/components";
-import { ThemeProvider } from "@askrjs/themes/theme";
+import { ThemeScope } from "@askrjs/themes/theme";
 import AppLayout from "@/pages/app/_layout";
+import RouteFamilySelectorPage from "@/pages/app/route-family";
 import AuthLayout from "@/pages/auth/_layout";
+import { authAccountLabel } from "@/pages/auth/_layout";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
-import DomainResourceBrowser from "@/components/shared/domain-resource-browser";
 import DomainResourceInventoryTable from "@/components/shared/domain-resource-inventory-table";
+import {
+  domainResourceInventoryRows,
+  PureDomainResourceInventoryTable,
+  scopeDomainResourceInventoryRows,
+} from "@/components/shared/domain-resource-inventory-table";
+import DomainHeader from "@/components/shared/domain-header";
 import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
-import ResourceWorkbench from "@/components/shared/resource-workbench";
 import QueueInflightTable from "@/components/shared/queue-inflight-table";
-import { QueryEmptyState, QueryErrorState } from "@/components/shared/query-state";
+import {
+  QueryCompactEmptyState,
+  QueryEmptyState,
+  QueryErrorState,
+} from "@/components/shared/query-state";
 import { domainLinks, pathWithRouteFamily } from "@/shared/navigation/domains";
+import {
+  createOperatorScopeSnapshot,
+  OperatorScope,
+  type OperatorScopeSnapshot,
+} from "@/shared/operator-scope";
 
 vi.mock("@/features/session/session-query", () => ({
   createCurrentSessionQuery: () => ({
@@ -52,9 +67,9 @@ async function mount(handler: RouteHandler, path = "/") {
     routes: [
       {
         handler: (params, context) => (
-          <ThemeProvider defaultTheme="system" storageKey="fitz-admin-theme">
+          <ThemeScope defaultTheme="system" storageKey="fitz-admin-theme">
             {handler(params, context)}
-          </ThemeProvider>
+          </ThemeScope>
         ),
         path,
       },
@@ -71,6 +86,235 @@ afterEach(() => {
 });
 
 describe("shared UI polish contracts", () => {
+  it("distinguishes authenticated open access from a guest", () => {
+    expect(authAccountLabel({ authenticated: true, username: "" })).toBe("Open access");
+    expect(authAccountLabel({ authenticated: false, username: "" })).toBe("Guest");
+  });
+
+  it("renders route-family loading, error, and empty states", async () => {
+    const base: OperatorScopeSnapshot = {
+      retryRouteFamilies: vi.fn(),
+      routeFamilies: [],
+      routeFamilyError: null,
+      routeFamilyState: "loading",
+      routeFamiliesWildcard: false,
+      selectedRouteFamily: { description: "Select a family", id: "", label: "Select Route Family" },
+      selectedRouteFamilyId: "",
+    };
+
+    for (const state of ["loading", "error", "empty"] as const) {
+      const snapshot = {
+        ...base,
+        routeFamilyError: state === "error" ? new Error("Family lookup failed") : null,
+        routeFamilyState: state,
+      };
+      const root = await mount(() => (
+        <OperatorScope value={snapshot}>
+          <RouteFamilySelectorPage />
+        </OperatorScope>
+      ));
+
+      expect(root.textContent).toContain(
+        state === "loading"
+          ? "Loading available Route Families"
+          : state === "error"
+            ? "Family lookup failed"
+            : "No Route Families available",
+      );
+    }
+  });
+
+  it("uses the scoped URL as the only route-family selection state", async () => {
+    const root = await mount(() => (
+      <OperatorScope
+        value={{
+          retryRouteFamilies: vi.fn(),
+          routeFamilies: [{ description: "Authorized family", id: "7", label: "Route family 7" }],
+          routeFamilyError: null,
+          routeFamilyState: "ready",
+          routeFamiliesWildcard: false,
+          selectedRouteFamily: {
+            description: "Select a family",
+            id: "",
+            label: "Select Route Family",
+          },
+          selectedRouteFamilyId: "",
+        }}
+      >
+        <RouteFamilySelectorPage />
+      </OperatorScope>
+    ));
+
+    const link = root.querySelector('a[aria-label="Open workspace for Route family 7"]');
+    expect(link?.getAttribute("href")).toBe("/admin/7");
+    expect(link?.getAttribute("role")).toBeNull();
+    expect(link?.getAttribute("tabindex")).toBeNull();
+    expect(link?.textContent?.trim()).toBe("Open");
+    expect(root.textContent).not.toContain("Authorized family7");
+    expect(document.title).toBe("Select Route Family · Fitz Admin");
+    expect(document.activeElement).toBe(root.querySelector("main#main-content"));
+  });
+
+  it("accepts a concrete URL family through wildcard session access", () => {
+    const snapshot = createOperatorScopeSnapshot(
+      null,
+      {
+        authenticated: true,
+        routeFamilies: [],
+        routeFamiliesWildcard: true,
+        username: "operator",
+      },
+      "42",
+    );
+
+    expect(snapshot.routeFamilyState).toBe("ready");
+    expect(snapshot.routeFamiliesWildcard).toBe(true);
+    expect(snapshot.selectedRouteFamilyId).toBe("42");
+    expect(snapshot.selectedRouteFamily.label).toBe("Route family 42");
+  });
+
+  it("offers numeric Route Family entry to wildcard sessions", async () => {
+    const root = await mount(() => (
+      <OperatorScope
+        value={{
+          retryRouteFamilies: vi.fn(),
+          routeFamilies: [],
+          routeFamilyError: null,
+          routeFamilyState: "ready",
+          routeFamiliesWildcard: true,
+          selectedRouteFamily: {
+            description: "Select a family",
+            id: "",
+            label: "Select Route Family",
+          },
+          selectedRouteFamilyId: "",
+        }}
+      >
+        <RouteFamilySelectorPage />
+      </OperatorScope>
+    ));
+
+    const input = root.querySelector<HTMLInputElement>("#wildcard-route-family");
+    expect(root.textContent).toContain("wildcard access");
+    expect(input?.getAttribute("inputmode")).toBe("numeric");
+    expect(input?.hasAttribute("required")).toBe(true);
+  });
+
+  it("uses the page heading for the document title and moves focus to routed content", async () => {
+    const root = await mount(
+      () => (
+        <DomainPageFrame>
+          <DomainHeader
+            title="Queue inventory"
+            description="Durable work resources."
+            status={{ label: "Live", tone: "success" }}
+          />
+        </DomainPageFrame>
+      ),
+      "/admin/1/queue",
+    );
+    const main = root.querySelector("main#main-content");
+
+    expect(document.title).toBe("Queue inventory · Fitz Admin");
+    expect(document.title).not.toContain("Live");
+    expect(document.activeElement).toBe(main);
+  });
+
+  it("clears route search through the owning URL-query callback", async () => {
+    const onSearchChange = vi.fn();
+    const root = await mount(() => (
+      <main>
+        <PureDomainResourceInventoryTable
+          domain="notice"
+          emptyDescription="No routes"
+          onRowOpen={vi.fn()}
+          onSearchChange={onSearchChange}
+          rowHref={() => "/admin/1/notice/default/ops/primary"}
+          rows={[{ area: "ops", realm: "default", resource: "primary" }]}
+          searchValue="primary"
+          title="Notice inventory"
+        />
+      </main>
+    ));
+
+    root.querySelector("button")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(onSearchChange).toHaveBeenCalledWith("");
+  });
+
+  it("sizes sparse resource inventories to their content minimum", async () => {
+    const root = await mount(() => (
+      <PureDomainResourceInventoryTable
+        domain="notice"
+        emptyDescription="No routes"
+        onRowOpen={vi.fn()}
+        onSearchChange={vi.fn()}
+        rowHref={() => "/admin/1/notice/default/ops/primary"}
+        rows={[{ area: "ops", realm: "default", resource: "primary" }]}
+        searchValue=""
+        title="Notice inventory"
+      />
+    ));
+
+    expect(root.querySelector(".domain-resource-virtual-table")?.getAttribute("style")).toContain(
+      "140px",
+    );
+  });
+
+  it("scopes resource inventory rows to the route hierarchy", () => {
+    const rows = domainResourceInventoryRows({
+      realms: [
+        {
+          realm: "acme",
+          areas: [
+            { area: "payments", resources: ["orders"] },
+            { area: "support", resources: ["tickets"] },
+          ],
+        },
+        {
+          realm: "globex",
+          areas: [{ area: "payments", resources: ["billing"] }],
+        },
+      ],
+    });
+
+    expect(scopeDomainResourceInventoryRows(rows, { realm: "acme" })).toEqual([
+      { area: "payments", realm: "acme", resource: "orders" },
+      { area: "support", realm: "acme", resource: "tickets" },
+    ]);
+    expect(scopeDomainResourceInventoryRows(rows, { area: "payments", realm: "acme" })).toEqual([
+      { area: "payments", realm: "acme", resource: "orders" },
+    ]);
+  });
+
+  it("renders the compact secondary empty-state class", async () => {
+    const root = await mount(() => (
+      <QueryCompactEmptyState title="No suggested queries" description="Nothing recommended." />
+    ));
+
+    expect(root.querySelector(".domain-state-compact")).toBeTruthy();
+  });
+
+  it("disables and marks a refresh action busy while refreshing", async () => {
+    const root = await mount(() => (
+      <main>
+        <DomainHeader
+          title="Queue inventory"
+          description="Durable work resources."
+          primaryAction={{
+            busy: true,
+            disabled: true,
+            label: "Refresh queue",
+            onPress: vi.fn(),
+          }}
+        />
+      </main>
+    ));
+    const refresh = root.querySelector('button[aria-label="Refresh queue"]');
+
+    expect(refresh?.getAttribute("aria-busy")).toBe("true");
+    expect(refresh?.hasAttribute("disabled")).toBe(true);
+  });
+
   it("renders a route family selector when the URL has no valid family", async () => {
     const root = await mount(
       () => (
@@ -86,8 +330,8 @@ describe("shared UI polish contracts", () => {
     expect(root.querySelector("main#main-content")?.textContent).toContain("Select Route Family");
     expect(root.textContent).not.toContain("Workspace");
     expect(root.querySelector('nav[aria-label="Primary navigation"]')).toBeNull();
-    expect(root.querySelector('a[href="/admin/1"]')?.textContent).toContain("Open workspace");
-    expect(root.querySelector('a[href="/admin/7"]')?.textContent).toContain("Open workspace");
+    expect(root.querySelector('a[href="/admin/1"]')?.textContent?.trim()).toBe("Open");
+    expect(root.querySelector('a[href="/admin/7"]')?.textContent?.trim()).toBe("Open");
   });
 
   it("uses icon-backed shell controls with stable labels", async () => {
@@ -133,12 +377,42 @@ describe("shared UI polish contracts", () => {
     expect(routeFamilySelector).toBeTruthy();
     expect(root.querySelector('form[role="search"]')).toBeNull();
     expect(routeFamilySelector?.querySelector('[data-slot="icon"]')).toBeTruthy();
-    expect(root.querySelector('button[aria-label="User menu"]')).toBeNull();
+    const signOut = root.querySelector('a[aria-label="Sign out"]');
+    expect(signOut?.getAttribute("href")).toBe("/logout");
+    expect(signOut?.textContent).toBe("");
+    expect(
+      root.querySelector('[aria-label="Primary navigation"] a[href="/admin/1/settings"]'),
+    ).toBeTruthy();
+    expect(
+      root
+        .querySelector('[aria-label="Primary navigation"] a[href="/admin/1"]')
+        ?.getAttribute("aria-current"),
+    ).toBe("page");
 
     routeFamilySelector?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
 
     expect(document.body.textContent).toContain("Route Family");
+
+    expect(root.querySelector('button[aria-label="Account menu"]')).toBeNull();
+  });
+
+  it("renders Sessions directly beneath the Route Family breadcrumb", async () => {
+    const root = await mount(
+      () => (
+        <AppLayout>
+          <DomainPageFrame>
+            <section>Sessions content</section>
+          </DomainPageFrame>
+        </AppLayout>
+      ),
+      "/admin/1/sessions",
+    );
+    const breadcrumbs = root.querySelector('[aria-label="Resource hierarchy"]');
+
+    expect(breadcrumbs?.textContent).toContain("Route family 1");
+    expect(breadcrumbs?.textContent).toContain("Sessions");
+    expect(breadcrumbs?.textContent).not.toContain("Settings");
   });
 
   it("renders the shared footer on auth pages", async () => {
@@ -152,6 +426,7 @@ describe("shared UI polish contracts", () => {
     );
 
     expect(root.querySelector("main#main-content")?.textContent).toContain("Auth page");
+    expect(root.querySelector("main#main-content")?.getAttribute("tabindex")).toBe("-1");
     expect(root.querySelector('footer [href="https://github.com/cntryl/fitz"]')).toBeTruthy();
     expect(root.querySelector('footer [href="https://github.com/cntryl/fitz-ts"]')).toBeTruthy();
     expect(root.querySelector('footer [href="https://github.com/cntryl/fitz-go"]')).toBeTruthy();
@@ -190,11 +465,11 @@ describe("shared UI polish contracts", () => {
     }
   });
 
-  it("keeps the shared page frame to one main and one sidebar surface", async () => {
+  it("keeps the shared page frame to one full-width content surface", async () => {
     const root = await mount(
       () => (
         <AppLayout>
-          <DomainPageFrame sidebar={<section>Sidebar</section>}>
+          <DomainPageFrame>
             <section>Workspace</section>
           </DomainPageFrame>
         </AppLayout>
@@ -204,10 +479,9 @@ describe("shared UI polish contracts", () => {
 
     expect(root.querySelectorAll("main#main-content")).toHaveLength(1);
     expect(root.querySelectorAll(".page-frame-main")).toHaveLength(1);
-    expect(root.querySelectorAll(".page-frame-sidebar")).toHaveLength(1);
+    expect(root.querySelectorAll(".page-frame-sidebar")).toHaveLength(0);
     expect(root.querySelectorAll('[data-slot="container"][data-ak-layout="true"]')).toHaveLength(3);
     expect(root.textContent).toContain("Workspace");
-    expect(root.textContent).toContain("Sidebar");
   });
 
   it("renders query states as in-place surfaces instead of nested cards", async () => {
@@ -241,59 +515,6 @@ describe("shared UI polish contracts", () => {
     expect(strips[0]?.textContent).not.toContain("RealmRoute Family 41");
     expect(strips[1]?.textContent).toContain("Route Family 7");
     expect(strips[1]?.textContent).toContain("Realmdefault");
-  });
-
-  it("collapses raw resource payloads without changing the JSON body", async () => {
-    const raw = {
-      detail: { answer: 42 },
-      rows: ["primary"],
-    };
-    const root = await mount(() => (
-      <main>
-        <ResourceWorkbench
-          detail={{
-            detailMetrics: [{ label: "Keys", value: 1 }],
-            domain: "kv",
-            raw,
-            ref: { area: "ops", realm: "default", resource: "primary" },
-            related: [],
-            timeline: {
-              area: "ops",
-              derived: false,
-              events: [],
-              limit: 10,
-              realm: "default",
-              resource: "primary",
-            },
-          }}
-        />
-      </main>
-    ));
-
-    const rawDetails = root.querySelector("details.resource-workbench-raw") as HTMLDetailsElement;
-    const rawBody = root.querySelector(".resource-raw");
-
-    expect(rawDetails).toBeTruthy();
-    expect(rawDetails.open).toBe(false);
-    expect(rawDetails.querySelector("summary")?.textContent).toBe("Raw API payload");
-    expect(rawBody?.textContent).toBe(JSON.stringify(raw, null, 2));
-  });
-
-  it("renders inventory failures as explicit error states", async () => {
-    const root = await mount(() => (
-      <main>
-        <DomainResourceBrowser
-          domain="queue"
-          inventory={null}
-          loading={false}
-          error={new Error("Inventory failed")}
-        />
-      </main>
-    ));
-
-    expect(root.textContent).toContain("Unable to load resources");
-    expect(root.textContent).toContain("Inventory failed");
-    expect(root.querySelector('[role="alert"]')).toBeTruthy();
   });
 
   it("renders flat resource inventory with virtual table links and metric typography", async () => {
@@ -346,6 +567,40 @@ describe("shared UI polish contracts", () => {
     expect(root.querySelector('a[href="/admin/1/kv/default/ops/primary"]')).toBeTruthy();
   });
 
+  it("uses accessible icons instead of visible sort-state prose", async () => {
+    const root = await mount(() => (
+      <main>
+        <PureDomainResourceInventoryTable
+          domain="queue"
+          emptyDescription="No routes"
+          metricColumns={[
+            {
+              id: "ready",
+              header: "Ready",
+              cell: () => 3,
+              sortValue: () => 3,
+            },
+          ]}
+          onRowOpen={vi.fn()}
+          onSearchChange={vi.fn()}
+          rowHref={() => "/admin/1/queue/default/ops/primary"}
+          rows={[{ area: "ops", realm: "default", resource: "primary" }]}
+          searchValue=""
+          title="Queue inventory"
+        />
+      </main>
+    ));
+    const sort = root.querySelector('button[aria-label="Sort by Ready, not sorted"]');
+
+    expect(sort?.querySelector('[data-slot="icon"]')).toBeTruthy();
+    expect(sort?.textContent).toBe("Ready");
+    expect(root.textContent).not.toContain("route order");
+
+    sort?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
+    expect(root.querySelector('button[aria-label="Sort by Ready, descending"]')).toBeTruthy();
+  });
+
   it("uses AskR table, virtual table, and card styling without app-local table chrome", async () => {
     const root = await mount(() => (
       <main>
@@ -394,6 +649,7 @@ describe("shared UI polish contracts", () => {
     expect(root.querySelector(".domain-metric-value")?.getAttribute("data-numeric")).toBe(
       "tabular",
     );
+    expect(root.querySelector('[data-slot="card-title"]')?.tagName).toBe("H2");
     expect(root.textContent).toContain("Current values");
     expect(root.textContent).toContain("session-1");
   });

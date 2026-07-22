@@ -3,6 +3,7 @@ import { cleanupApp } from "@askrjs/askr/boot";
 import { queryState } from "@askrjs/askr/testing";
 import { mountRoute, pageSmokeMocks, queryOptions } from "./page-smoke/harness";
 import {
+  activeSessions,
   emptyTopology,
   healthyGlobalDiagnostics,
   queueInventory,
@@ -13,6 +14,42 @@ import {
 } from "./page-smoke/fixtures";
 
 const mocks = pageSmokeMocks();
+
+const currentActivityMetricNames = [
+  "fitz_queue_messages_pending",
+  "fitz_queue_inflight_active",
+  "fitz_rpc_requests_pending",
+  "fitz_lease_waiter_depth",
+  "fitz_schedule_pending_fire_claims",
+  "fitz_schedule_pending_ack_retries",
+  "fitz_stream_append_sessions_active",
+  "fitz_kv_transactions_active",
+  "fitz_notice_subscriptions_active",
+] as const;
+
+function metricFamily(name: string, value: number, type = "gauge") {
+  return {
+    help: name,
+    name,
+    samples: [{ labels: {}, name, value }],
+    type,
+  };
+}
+
+function completeMetricsSnapshot(activityValue = 0, cumulativeFailureValue = 0) {
+  const families = [
+    ...currentActivityMetricNames.map((name, index) =>
+      metricFamily(name, index === 0 ? activityValue : 0),
+    ),
+    metricFamily("fitz_queue_messages_dead_lettered", 0),
+    metricFamily("fitz_rpc_request_timeouts_total", cumulativeFailureValue, "counter"),
+  ];
+
+  return {
+    families,
+    raw: families.map((family) => `${family.name} ${family.samples[0]?.value ?? 0}`).join("\n"),
+  };
+}
 
 describe("admin page smoke tests", () => {
   it("renders compact domain entry points when no lanes are visible", async () => {
@@ -78,17 +115,119 @@ describe("admin page smoke tests", () => {
     expect(text).not.toContain("Stream pressure");
     expect(text).not.toContain("stream latency");
   });
-  it("renders a metrics posture summary and empty search state", async () => {
+  it("does not promote cumulative domain counters to active overview issues", async () => {
+    const { default: Home } = await import("@/pages/app/home");
+    const cumulativeSystem = {
+      ...systemOverview,
+      diagnostics: healthyGlobalDiagnostics,
+      domains: {
+        ...systemOverview.domains,
+        kv: {
+          ...systemOverview.domains.kv,
+          commitsFailedTotal: 8,
+          invalidTransactionRejectsTotal: 3,
+        },
+        lease: {
+          ...systemOverview.domains.lease,
+          acquireTimeoutsTotal: 5,
+          failureTotal: 4,
+          waiterDepth: 0,
+        },
+        notice: {
+          ...systemOverview.domains.notice,
+          deliveryDropsTotal: 6,
+          failureTotal: 2,
+        },
+        rpc: {
+          ...systemOverview.domains.rpc,
+          failureTotal: 7,
+          requestTimeoutsTotal: 9,
+        },
+        schedule: {
+          ...systemOverview.domains.schedule,
+          ackFailuresTotal: 4,
+          pendingFireClaims: 0,
+        },
+        stream: {
+          ...systemOverview.domains.stream,
+          appendConflictsTotal: 5,
+          failureTotal: 3,
+        },
+      },
+    };
+    mocks.queryStates.system = queryState.fresh(cumulativeSystem, queryOptions());
+    mocks.queryStates.topology = queryState.fresh(
+      { ...emptyTopology, diagnostics: healthyGlobalDiagnostics },
+      queryOptions(),
+    );
+
+    const root = await mountRoute("/admin/1", "/admin/{family}", Home);
+
+    expect(root.textContent).toContain("No active issues");
+    expect(root.textContent).not.toContain("RPC failures");
+    expect(root.textContent).not.toContain("KV write pressure");
+  });
+  it("does not label a flowing lane with a historical pressure counter", async () => {
+    const { default: Home } = await import("@/pages/app/home");
+    mocks.queryStates.topology = queryState.fresh(
+      {
+        ...topologyOverview,
+        diagnostics: healthyGlobalDiagnostics,
+        lanes: [
+          topologyAppLane("stream", "Stream", "flowing", [
+            { key: "pressure", label: "Pressure", value: 9 },
+          ]),
+        ],
+      },
+      queryOptions(),
+    );
+
+    const root = await mountRoute("/admin/1", "/admin/{family}", Home);
+
+    expect(root.textContent).toContain("1.00 act/sec");
+    expect(root.textContent).not.toContain("Pressure 9");
+  });
+  it("marks overview health incomplete when a required source is unavailable", async () => {
+    const { default: Home } = await import("@/pages/app/home");
+    mocks.queryStates.system = queryState.error(
+      new Error("system counters unavailable"),
+      undefined,
+      queryOptions(),
+    );
+    mocks.queryStates.topology = queryState.fresh(
+      { ...emptyTopology, diagnostics: healthyGlobalDiagnostics },
+      queryOptions(),
+    );
+
+    const root = await mountRoute("/admin/1", "/admin/{family}", Home);
+
+    expect(root.textContent).toContain("Incomplete snapshot");
+    expect(root.textContent).toContain("Issue status incomplete");
+    expect(root.textContent).not.toContain("No active issues");
+  });
+  it("renders missing metrics as incomplete instead of zero", async () => {
     const { default: MetricsPage } = await import("@/pages/app/metrics");
 
-    const root = await mountRoute("/admin/metrics", "/admin/metrics", MetricsPage);
+    const root = await mountRoute("/admin/1/metrics", "/admin/{family}/metrics", MetricsPage);
 
     expect(root.textContent).toContain("Live state");
-    expect(root.textContent).toContain("Broker snapshot");
-    expect(root.textContent).toContain("Quiet");
-    expect(root.textContent).toContain("No backlog, contention, or failure pressure detected");
+    expect(root.textContent).toContain("No known summary metrics");
+    expect(root.textContent).not.toContain("Broker snapshot");
+    expect(root.textContent).toContain("Incomplete");
+    expect(root.textContent).toContain("Missing telemetry is not treated as zero");
+    expect(root.textContent).not.toContain("Uptime0seconds");
     expect(root.textContent).toContain("Metric samples");
     expect(root.textContent).toContain("Showing 3 of 3 samples");
+    const payloadTrigger = Array.from(root.querySelectorAll("button")).find(
+      (button) => button.textContent === "View structured payload",
+    );
+    expect(payloadTrigger?.getAttribute("aria-expanded")).toBe("false");
+    expect(root.querySelector(".resource-raw")).toBeNull();
+
+    payloadTrigger?.click();
+    await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
+    expect(payloadTrigger?.getAttribute("aria-expanded")).toBe("true");
+    expect(root.querySelector(".resource-raw")).toBeTruthy();
 
     const filter = root.querySelector(
       'input[aria-label="Filter metrics"]',
@@ -105,6 +244,7 @@ describe("admin page smoke tests", () => {
       await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
 
       expect(root.textContent).toContain("Showing 1 of 3 samples");
+      expect(window.location.search).toBe("?q=queue");
 
       const clearShortcut = Array.from(root.querySelectorAll("button")).find(
         (button) => button.textContent === "Clear filters",
@@ -115,7 +255,40 @@ describe("admin page smoke tests", () => {
       await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
 
       expect(root.textContent).toContain("Showing 3 of 3 samples");
+      expect(window.location.search).toBe("");
     }
+  });
+  it("uses the metrics query parameter as the filter source", async () => {
+    const { default: MetricsPage } = await import("@/pages/app/metrics");
+
+    const root = await mountRoute("/admin/1/metrics?q=rpc", "/admin/{family}/metrics", MetricsPage);
+    const filter = root.querySelector(
+      'input[aria-label="Filter metrics"]',
+    ) as HTMLInputElement | null;
+
+    expect(filter?.value).toBe("rpc");
+    expect(root.textContent).toContain("Showing 1 of 3 samples");
+  });
+  it("labels current work as activity while keeping cumulative failures historical", async () => {
+    const { default: MetricsPage } = await import("@/pages/app/metrics");
+    mocks.queryStates.metrics = queryState.fresh(completeMetricsSnapshot(4, 9), queryOptions());
+
+    const root = await mountRoute("/admin/1/metrics", "/admin/{family}/metrics", MetricsPage);
+
+    expect(root.textContent).toContain("Active");
+    expect(root.textContent).toContain("Activity alone does not establish pressure");
+    expect(root.textContent).toContain("Failures (1)");
+    expect(root.textContent).not.toContain("Attention");
+  });
+  it("reports quiet when all required current gauges are observed at zero", async () => {
+    const { default: MetricsPage } = await import("@/pages/app/metrics");
+    mocks.queryStates.metrics = queryState.fresh(completeMetricsSnapshot(0, 9), queryOptions());
+
+    const root = await mountRoute("/admin/1/metrics", "/admin/{family}/metrics", MetricsPage);
+
+    expect(root.textContent).toContain("Quiet");
+    expect(root.textContent).toContain("Cumulative counters below remain historical");
+    expect(root.textContent).not.toContain("Attention");
   });
   it("renders metrics loading and error states", async () => {
     const { default: MetricsPage } = await import("@/pages/app/metrics");
@@ -142,13 +315,39 @@ describe("admin page smoke tests", () => {
     let root = await mountRoute("/sessions", "/sessions", SessionsPage);
 
     expect(root.textContent).toContain("Session summary");
-    expect(root.textContent).toContain("Healthy");
+    expect(root.textContent).toContain("Active");
     expect(root.textContent).toContain("Sessions");
     expect(root.textContent).toContain("Route families");
     expect(root.textContent).toContain("Transports");
-    expect(root.textContent).toContain("Idle risk");
+    expect(root.textContent).toContain("Longest idle");
     expect(root.textContent).toContain("session-1");
     expect(root.textContent).toContain("2001:db8::1ff:fe23:4567:890a");
+
+    cleanupApp(root);
+    document.body.innerHTML = "";
+
+    mocks.queryStates.activeSessions = queryState.fresh(
+      {
+        sessions: [
+          {
+            ...activeSessions.sessions[0],
+            identityClaim: undefined,
+            identityValue: undefined,
+            idleSeconds: undefined,
+            messagesReceived: undefined,
+            messagesSent: undefined,
+            subject: undefined,
+          },
+        ],
+      },
+      queryOptions(),
+    );
+    root = await mountRoute("/sessions", "/sessions", SessionsPage);
+
+    expect(root.textContent).toContain("Not reported");
+    expect(root.textContent).not.toContain("Unauthenticated");
+    expect(root.textContent).not.toContain("Not resolved");
+    expect(root.textContent).not.toContain("Attention");
 
     cleanupApp(root);
     document.body.innerHTML = "";
@@ -177,6 +376,48 @@ describe("admin page smoke tests", () => {
     root = await mountRoute("/sessions", "/sessions", SessionsPage);
     expect(root.textContent).toContain("Unable to load active sessions");
     expect(root.textContent).toContain("session endpoint unavailable");
+  });
+  it("does not claim open access before the workspace session loads", async () => {
+    const { default: SettingsPage } = await import("@/pages/app/settings");
+
+    mocks.queryStates.currentSession = queryState.loading(queryOptions());
+    let root = await mountRoute("/settings", "/settings", SettingsPage);
+    expect(root.textContent).toContain("Loading workspace session access");
+    expect(root.textContent).not.toContain("Admin endpoint is currently open");
+
+    cleanupApp(root);
+    document.body.innerHTML = "";
+
+    mocks.queryStates.currentSession = queryState.error(
+      new Error("session access unavailable"),
+      undefined,
+      queryOptions(),
+    );
+    root = await mountRoute("/settings", "/settings", SettingsPage);
+    expect(root.textContent).toContain("Unable to load session access");
+    expect(root.textContent).toContain("session access unavailable");
+    expect(root.textContent).not.toContain("Admin endpoint is currently open");
+  });
+  it("describes open admin access without inventing an account session", async () => {
+    mocks.queryStates.currentSession = queryState.fresh(
+      {
+        authRequired: false,
+        authenticated: true,
+        routeFamilies: ["1"],
+        routeFamiliesWildcard: false,
+        username: "",
+      },
+      queryOptions(),
+    );
+
+    const { default: SettingsPage } = await import("@/pages/app/settings");
+    const root = await mountRoute("/settings", "/settings", SettingsPage);
+    const text = root.textContent ?? "";
+
+    expect(text).toContain("Open access");
+    expect(text).toContain("no browser account session exists");
+    expect(text).not.toContain("Signed in");
+    expect(root.querySelector('a[href="/logout"]')).toBeNull();
   });
   it("mounts the dashboard loading and error states", async () => {
     const { default: Home } = await import("@/pages/app/home");
@@ -246,7 +487,8 @@ describe("admin page smoke tests", () => {
     expect(root.textContent).toContain("Queue inventory");
     expect(root.textContent).toContain("Resource inventory");
     expect(root.textContent).toContain("queue://default/ops/primary");
-    expect(root.textContent).toContain("message(s) are visible");
+    expect(root.textContent).toContain("messages are visible");
+    expect(root.textContent).toContain("Activity alone does not establish pressure");
     expect(root.querySelector('a[href="/admin/1/queue/default/ops/primary"]')).toBeTruthy();
   });
 });

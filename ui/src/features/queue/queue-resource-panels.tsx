@@ -23,7 +23,6 @@ import type {
 } from "@/features/queue/queue-resource-models";
 import {
   formatRate,
-  formatStatus,
   formatTimelineContext,
   formatTimelineKind,
   humanizeSeconds,
@@ -33,7 +32,7 @@ export function QueueResourceCurrentValuesPanel({ detail }: { detail: QueueResou
   return (
     <DomainMetricTable
       title="Current values"
-      description="Point-in-time durable backlog and live reservation counters for this scope."
+      description="Broker-visible queue counters and live reservations for this scope."
       metrics={[
         { label: "Ready", value: detail.messagesReady },
         {
@@ -44,23 +43,19 @@ export function QueueResourceCurrentValuesPanel({ detail }: { detail: QueueResou
         { label: "Inflight", value: detail.messagesInflight },
         { label: "Subscriptions", value: detail.subscriptionsActive },
         {
-          label: "Dead letters",
+          label: "Snapshot dead letters",
           value: detail.messagesDeadLettered,
-          caption: detail.messagesDeadLettered > 0 ? "Needs action before work resumes" : undefined,
+          caption:
+            detail.messagesDeadLettered > 0
+              ? "Resource-summary counter; needs action"
+              : "Resource-summary counter",
         },
-        { label: "Total messages", value: detail.messagesTotal },
         { label: "In / sec", value: formatRate(detail.inRatePerSecond) },
         { label: "Out / sec", value: formatRate(detail.outRatePerSecond) },
-        { label: "Status", value: formatStatus(detail.status) },
         {
           label: "Oldest backlog",
           value: humanizeSeconds(detail.oldestBacklogAgeSeconds),
           caption: "Ready and delayed messages",
-        },
-        {
-          label: "Oldest age",
-          value: humanizeSeconds(detail.oldestMessageAgeSeconds),
-          caption: "Live snapshot",
         },
       ]}
     />
@@ -73,10 +68,12 @@ export function QueueResourceInflightPanel({ messages }: { messages: QueueInflig
       <CardHeader>
         <Inline justify="between" gap="3" align="start" wrap="wrap">
           <Stack gap="1">
-            <CardTitle>Inflight</CardTitle>
+            <CardTitle titleAs="h2">Inflight</CardTitle>
             <CardDescription>Live reservations currently owned by queue sessions.</CardDescription>
           </Stack>
-          <Badge variant="info">{messages.length} entries</Badge>
+          <Badge variant="info">
+            {messages.length} {messages.length === 1 ? "entry" : "entries"}
+          </Badge>
         </Inline>
       </CardHeader>
 
@@ -84,7 +81,12 @@ export function QueueResourceInflightPanel({ messages }: { messages: QueueInflig
         {messages.length === 0 ? (
           <QueryEmptyState description="No inflight messages are visible for this resource." />
         ) : (
-          <QueueInflightTable messages={messages} />
+          <Stack gap="2">
+            <p class="domain-scroll-hint">
+              Scroll the table horizontally to inspect ownership and expiry details.
+            </p>
+            <QueueInflightTable messages={messages} />
+          </Stack>
         )}
       </CardContent>
     </Card>
@@ -109,13 +111,14 @@ export function QueueResourceDeadLettersPanel({
       <CardHeader>
         <Inline justify="between" gap="3" align="start" wrap="wrap">
           <Stack gap="1">
-            <CardTitle>Dead letters</CardTitle>
+            <CardTitle titleAs="h2">Dead letters</CardTitle>
             <CardDescription>
-              Durable messages awaiting explicit replay or purge decisions.
+              Durable messages returned by the current dead-letter inspection. This list and the
+              resource-summary counter can have different snapshot times.
             </CardDescription>
           </Stack>
           <Badge variant={messages.length > 0 ? "warning" : "success"}>
-            {messages.length} messages
+            {messages.length} {messages.length === 1 ? "message" : "messages"} returned
           </Badge>
         </Inline>
       </CardHeader>
@@ -124,13 +127,16 @@ export function QueueResourceDeadLettersPanel({
         {messages.length === 0 ? (
           <QueryEmptyState description="No dead-letter messages are visible for this resource. No replay or purge action is needed." />
         ) : (
-          <QueueDeadLetterTable
-            messages={messages}
-            onReplay={onReplay}
-            onPurge={onPurge}
-            pendingAction={pendingAction}
-            pendingMessageId={pendingMessageId}
-          />
+          <Stack gap="2">
+            <p class="domain-scroll-hint">Scroll the table horizontally to reach all actions.</p>
+            <QueueDeadLetterTable
+              messages={messages}
+              onReplay={onReplay}
+              onPurge={onPurge}
+              pendingAction={pendingAction}
+              pendingMessageId={pendingMessageId}
+            />
+          </Stack>
         )}
       </CardContent>
     </Card>
@@ -204,7 +210,7 @@ export function QueueResourceTimelinePanel({ timeline }: { timeline: QueueResour
       <CardHeader>
         <Inline justify="between" gap="3" align="start" wrap="wrap">
           <Stack gap="1">
-            <CardTitle>Timeline</CardTitle>
+            <CardTitle titleAs="h2">Timeline</CardTitle>
             <CardDescription>
               {timeline.derived
                 ? "Derived transition evidence built from surrounding queue state."

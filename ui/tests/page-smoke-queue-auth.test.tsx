@@ -2,13 +2,26 @@ import { describe, expect, it } from "vite-plus/test";
 import { cleanupApp } from "@askrjs/askr/boot";
 import { queryState } from "@askrjs/askr/testing";
 import { mountRoute, pageSmokeMocks, queryOptions } from "./page-smoke/harness";
-import { queueResource, resourceDetail } from "./page-smoke/fixtures";
+import { queueInventory, queueResource, resourceDetail } from "./page-smoke/fixtures";
 
 const mocks = pageSmokeMocks();
 
 describe("admin page smoke tests", () => {
   it("renders queue resource links for overview, realm, and area routes", async () => {
     const { default: QueuePage } = await import("@/pages/app/queue");
+    mocks.queryStates.queueInventory = queryState.fresh(
+      {
+        ...queueInventory,
+        realms: [
+          ...queueInventory.realms,
+          {
+            realm: "globex",
+            areas: [{ area: "support", resources: ["tickets"] }],
+          },
+        ],
+      },
+      queryOptions(),
+    );
 
     let root = await mountRoute("/admin/1/queue", "/admin/{family}/queue", QueuePage);
     expect(root.textContent).toContain("Queue inventory");
@@ -16,6 +29,7 @@ describe("admin page smoke tests", () => {
     expect(
       root.querySelector('a[href="/admin/1/queue/default/ops/primary"]')?.textContent,
     ).toContain("queue://default/ops/primary");
+    expect(root.textContent).toContain("queue://globex/support/tickets");
 
     cleanupApp(root);
     document.body.innerHTML = "";
@@ -26,6 +40,7 @@ describe("admin page smoke tests", () => {
     expect(
       root.querySelector('a[href="/admin/1/queue/default/ops/primary"]')?.textContent,
     ).toContain("queue://default/ops/primary");
+    expect(root.textContent).not.toContain("queue://globex/support/tickets");
 
     cleanupApp(root);
     document.body.innerHTML = "";
@@ -39,8 +54,9 @@ describe("admin page smoke tests", () => {
     expect(
       root.querySelector('a[href="/admin/1/queue/default/ops/primary"]')?.textContent,
     ).toContain("queue://default/ops/primary");
+    expect(root.textContent).not.toContain("queue://globex/support/tickets");
   });
-  it("mounts queue comparison and generic resource comparison flows", async () => {
+  it("removes queue comparison controls and preserves generic resource flows", async () => {
     const { default: QueueResourcePage } = await import("@/pages/app/queue-resource");
     let root = await mountRoute(
       "/queue/default/ops/primary?againstRealm=default&againstArea=ops&againstResource=secondary",
@@ -48,36 +64,17 @@ describe("admin page smoke tests", () => {
       QueueResourcePage,
     );
 
-    expect(root.textContent).toContain("Comparison summary");
-    expect(root.textContent).toContain("Current scope");
-    expect(root.textContent).toContain("Target scope");
-    expect(root.textContent).toContain("Difference");
-    expect(root.textContent).toContain("Point-in-time durable backlog");
-    expect(root.textContent).toContain("Snapshots match");
+    expect(root.textContent).not.toContain("Compare scopes");
+    expect(root.textContent).not.toContain("Comparison summary");
+    expect(root.querySelector("#compare-realm")).toBeNull();
+    expect(root.querySelector("#compare-family")).toBeNull();
     expect(root.textContent).toContain(
       "No dead-letter messages are visible for this resource. No replay or purge action is needed.",
     );
 
-    let text = root.textContent ?? "";
-    let order = ["Current values", "Compare scopes", "Dead letters", "Inflight", "Timeline"];
+    const text = root.textContent ?? "";
+    const order = ["Current values", "Dead letters", "Inflight", "Timeline"];
     let cursor = -1;
-    for (const label of order) {
-      const index = text.indexOf(label, cursor + 1);
-      expect(index).toBeGreaterThan(cursor);
-      cursor = index;
-    }
-
-    cleanupApp(root);
-    document.body.innerHTML = "";
-
-    root = await mountRoute(
-      "/queue/default/ops/primary",
-      "/queue/{realm}/{area}/{resource}",
-      QueueResourcePage,
-    );
-    text = root.textContent ?? "";
-    order = ["Current values", "Dead letters", "Inflight", "Timeline", "Compare scopes"];
-    cursor = -1;
     for (const label of order) {
       const index = text.indexOf(label, cursor + 1);
       expect(index).toBeGreaterThan(cursor);
@@ -112,7 +109,7 @@ describe("admin page smoke tests", () => {
 
     const { default: KvResourcePage } = await import("@/pages/app/kv-resource");
     root = await mountRoute(
-      "/admin/1/kv/default/ops/primary?startsWith=user%3A",
+      "/admin/1/kv/default/ops/primary?startsWith=user%3A&cursor=cursor-2&cursorTrail=",
       "/admin/{family}/kv/{realm}/{area}/{resource}",
       KvResourcePage,
     );
@@ -120,6 +117,43 @@ describe("admin page smoke tests", () => {
     expect(root.textContent).toContain("Key preview");
     expect(root.textContent).toContain("user:1");
     expect(root.textContent).toContain("alice");
+    expect(
+      root.querySelector('a[href="/admin/1/kv/default/ops/primary?startsWith=user%3A"]')
+        ?.textContent,
+    ).toContain("First page");
+    expect(root.textContent).toContain("Previous page");
+
+    const exactKey = root.querySelector<HTMLInputElement>("#kv-exact-key");
+    if (exactKey) {
+      exactKey.value = "user:1";
+      exactKey.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    root
+      .querySelector<HTMLFormElement>("#kv-exact-key")
+      ?.closest("form")
+      ?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
+
+    expect(root.textContent).toContain("Exact key result");
+    expect(root.querySelector('button[aria-label="Copy exact key"]')).toBeTruthy();
+    expect(root.querySelector('button[aria-label="Copy exact value"]')).toBeTruthy();
+  });
+  it("offers first and previous controls for a later Stream window", async () => {
+    const { default: StreamResourcePage } = await import("@/pages/app/stream-resource");
+    const root = await mountRoute(
+      "/admin/1/stream/default/ops/primary?fromOffset=100&limit=50",
+      "/admin/{family}/stream/{realm}/{area}/{resource}",
+      StreamResourcePage,
+    );
+
+    expect(
+      root.querySelector('a[href="/admin/1/stream/default/ops/primary"]')?.textContent,
+    ).toContain("First page");
+    expect(
+      root.querySelector('a[href="/admin/1/stream/default/ops/primary?fromOffset=50"]')
+        ?.textContent,
+    ).toContain("Previous page");
+    expect(root.querySelector('button[aria-label^="Copy body at offset"]')).toBeTruthy();
   });
   it("opens an accessible queue dead-letter confirmation dialog", async () => {
     const { default: QueueResourcePage } = await import("@/pages/app/queue-resource");
@@ -156,6 +190,18 @@ describe("admin page smoke tests", () => {
     expect(root.textContent).toContain("Replay dead-letter message?");
     expect(root.textContent).toContain("Replay message 42 in default / ops / primary.");
     expect(root.querySelector('[role="alertdialog"]')).toBeTruthy();
+
+    mocks.mutation.error = new Error("Replay service unavailable");
+    mocks.mutation.execute.mockRejectedValueOnce(new Error("Replay service unavailable"));
+    const confirm = Array.from(root.querySelectorAll("button")).find(
+      (button) => button.textContent === "Replay message",
+    );
+    confirm?.click();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(root.querySelector('[role="alertdialog"]')).toBeTruthy();
+    expect(root.textContent).toContain("Replay failed");
+    expect(root.textContent).toContain("Replay service unavailable");
   });
   it("uses mutation-owned login pending and error states", async () => {
     const { default: Login } = await import("@/pages/auth/login");

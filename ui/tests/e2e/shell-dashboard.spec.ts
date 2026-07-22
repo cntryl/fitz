@@ -34,6 +34,60 @@ test("captures the tablet dashboard shell", async ({ page }, testInfo) => {
   });
 });
 
+test("uses mobile below 48rem and desktop at 48rem", async ({ page }) => {
+  await page.setViewportSize({ width: 767, height: 900 });
+  await openDashboard(page);
+
+  const primaryNav = page.getByRole("navigation", { name: "Primary navigation" });
+  await expect(primaryNav.getByRole("button", { name: /Menu|Navigation/ })).toBeVisible();
+
+  await page.setViewportSize({ width: 768, height: 900 });
+  await expect(primaryNav.getByRole("link", { name: "Overview" })).toBeVisible();
+  await expect(primaryNav.getByRole("button", { name: /Menu|Navigation/ })).toBeHidden();
+});
+
+test("keeps route-family actions as native keyboard links", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await mockAdminFeatures(page);
+  await page.goto("/admin");
+
+  const openWorkspace = page.getByRole("link", {
+    name: "Open workspace for Route family 1",
+  });
+
+  await expect(openWorkspace).toHaveAttribute("href", "/admin/1");
+  await expect(openWorkspace).not.toHaveAttribute("role", "button");
+  await openWorkspace.focus();
+  await expect(openWorkspace).toBeFocused();
+  await openWorkspace.press("Enter");
+  await expect(page).toHaveURL(/\/admin\/1$/);
+});
+
+test("keeps workspace settings truthful in open-access mode", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  await openDashboard(page);
+
+  await expect(page.locator('a[aria-label="Sign out"]')).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Account menu" })).toHaveCount(0);
+  await page
+    .getByRole("navigation", { name: "Primary navigation" })
+    .getByRole("link", { name: "Workspace & account" })
+    .click();
+  await expect(page).toHaveURL(/\/admin\/1\/settings$/);
+  await expect(page.getByRole("navigation", { name: "Primary navigation" })).toHaveCount(1);
+  await expect(page.getByRole("navigation", { name: "Resource hierarchy" })).toContainText(
+    "Workspace & account",
+  );
+  await expect(
+    page.getByText("Admin authentication is disabled; no browser account session exists"),
+  ).toBeVisible();
+  await expect(page.getByText("Signed in")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Context" })).toHaveAttribute(
+    "href",
+    "#operator-context",
+  );
+});
+
 test("captures the desktop dashboard shell in dark mode", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1200 });
   await openDashboard(page, "dark");

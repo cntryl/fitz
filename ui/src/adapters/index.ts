@@ -1,9 +1,10 @@
-import { client } from "./client";
-import { createAdapter } from "./generated/api";
+import { clientOptions } from "./client";
+import { createApiClient } from "./generated/api";
 
 // Adapter boundary only: export the generated API instance. Services own app contracts.
-export const apiv1 = createAdapter(client);
+export const apiv1 = createApiClient(clientOptions);
 
-export { client };
-export { createAdapter };
-export type * from "./generated/types";
+export { clientOptions };
+export { api, createApiClient } from "./generated/api";
+export { apiBody, apiParams, apiParamsQuery, apiQuery } from "./request";
+export type * from "./generated";

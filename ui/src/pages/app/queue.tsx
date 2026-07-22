@@ -19,21 +19,21 @@ function describeQueueStats(stats: QueueStatsSummary) {
   )}. Oldest backlog ${formatDurationSeconds(stats.oldestBacklogAgeSeconds)}.`;
 
   if (stats.messagesDeadLettered > 0) {
-    return `${counts} ${formatNumber(
-      stats.messagesDeadLettered,
-    )} dead-lettered message(s) need explicit operator action.`;
+    return `${counts} ${formatNumber(stats.messagesDeadLettered)} dead-lettered ${
+      stats.messagesDeadLettered === 1 ? "message needs" : "messages need"
+    } explicit operator action.`;
   }
 
   if (stats.messagesReady > 0 || stats.messagesDelayed > 0) {
-    return `${counts} ${formatNumber(
-      visible,
-    )} message(s) are visible across ready, delayed, inflight, and dead-letter states.`;
+    return `${counts} ${formatNumber(visible)} ${
+      visible === 1 ? "message is" : "messages are"
+    } visible across ready, delayed, inflight, and dead-letter states. Activity alone does not establish pressure.`;
   }
 
   if (stats.inflightActive > 0) {
-    return `${counts} ${formatNumber(
-      stats.inflightActive,
-    )} live reservation(s) are currently in flight.`;
+    return `${counts} ${formatNumber(stats.inflightActive)} live ${
+      stats.inflightActive === 1 ? "reservation is" : "reservations are"
+    } currently in flight.`;
   }
 
   return `${counts} No durable queue backlog is visible at this level.`;
@@ -45,7 +45,7 @@ function queueStatus(stats: QueueStatsSummary) {
   }
 
   if (queueVisibleCount(stats) > 0) {
-    return { label: "Pressure" as const, tone: "warning" as const };
+    return { label: "Active" as const, tone: "info" as const };
   }
 
   return { label: "Live" as const, tone: "success" as const };
@@ -61,31 +61,36 @@ export default function QueuePage() {
       id: "ready",
       header: "Ready",
       width: "10%",
-      cell: () => (stats ? formatNumber(stats.messagesReady) : "--"),
+      cell: (row) => formatNumber(row.messagesReady ?? 0),
+      sortValue: (row) => row.messagesReady,
     },
     {
       id: "delayed",
       header: "Delayed",
       width: "10%",
-      cell: () => (stats ? formatNumber(stats.messagesDelayed) : "--"),
+      cell: (row) => formatNumber(row.messagesDelayed ?? 0),
+      sortValue: (row) => row.messagesDelayed,
     },
     {
       id: "inflight",
       header: "In flight",
       width: "10%",
-      cell: () => (stats ? formatNumber(stats.inflightActive) : "--"),
+      cell: (row) => formatNumber(row.messagesInflight ?? 0),
+      sortValue: (row) => row.messagesInflight,
     },
     {
       id: "dead-lettered",
       header: "Dead-lettered",
       width: "12%",
-      cell: () => (stats ? formatNumber(stats.messagesDeadLettered) : "--"),
+      cell: (row) => formatNumber(row.messagesDeadLettered ?? 0),
+      sortValue: (row) => row.messagesDeadLettered,
     },
     {
       id: "oldest",
       header: "Oldest",
       width: "10%",
-      cell: () => (stats ? formatDurationSeconds(stats.oldestBacklogAgeSeconds) : "--"),
+      cell: (row) => formatDurationSeconds(row.oldestBacklogAgeSeconds ?? 0),
+      sortValue: (row) => row.oldestBacklogAgeSeconds,
     },
   ];
 

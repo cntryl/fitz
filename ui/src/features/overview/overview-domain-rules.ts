@@ -1,6 +1,6 @@
 import type { DiagnosticSeverity } from "@/adapters";
 import type { SystemDomainStatsSummary } from "@/features/system/system-models";
-import { formatNumber } from "@/shared/format";
+import { formatCount, formatNumber } from "@/shared/format";
 import { domainSegments, type DomainSegment } from "@/shared/navigation/domains";
 
 export interface OverviewDomainIssueDescriptor {
@@ -28,7 +28,9 @@ const queueRule: OverviewDomainRule = {
     return queueDeadLetters > 0
       ? [
           {
-            description: `${formatNumber(queueDeadLetters)} message(s) are in dead-letter state.`,
+            description: `${formatCount(queueDeadLetters, "message")} ${
+              queueDeadLetters === 1 ? "is" : "are"
+            } in dead-letter state.`,
             id: "queue-dead-letters",
             severity: "high",
             title: "Queue dead letters",
@@ -43,27 +45,14 @@ const queueRule: OverviewDomainRule = {
   },
 };
 
+// Process-lifetime counters stay visible in domain and Metrics detail, but a non-zero
+// historical total does not describe a currently active incident. Current gauges and
+// broker-generated incident, hotspot, and lane diagnostics own Overview issue status.
+
 const rpcRule: OverviewDomainRule = {
   domain: "rpc",
-  issues(domains) {
-    const rpcFailures =
-      domains.rpc.failureTotal +
-      domains.rpc.requestTimeoutsTotal +
-      domains.rpc.responsesMissingPendingTotal +
-      domains.rpc.responsesDroppedClosedCallerTotal;
-
-    return rpcFailures > 0
-      ? [
-          {
-            description: `${formatNumber(
-              rpcFailures,
-            )} timeout, failure, or late-response signal(s) are active.`,
-            id: "rpc-failures",
-            severity: "high",
-            title: "RPC failures",
-          },
-        ]
-      : [];
+  issues() {
+    return [];
   },
   signal(domains) {
     return `${formatNumber(domains.rpc.requestsPending)} pending / ${formatNumber(
@@ -75,32 +64,13 @@ const rpcRule: OverviewDomainRule = {
 const scheduleRule: OverviewDomainRule = {
   domain: "schedule",
   issues(domains) {
-    const scheduleFailures =
-      domains.schedule.ackFailuresTotal +
-      domains.schedule.notifyFailuresTotal +
-      domains.schedule.createPersistenceFailuresTotal +
-      domains.schedule.upsertPersistenceFailuresTotal +
-      domains.schedule.cancelPersistenceFailuresTotal;
-
-    if (scheduleFailures > 0) {
-      return [
-        {
-          description: `${formatNumber(
-            scheduleFailures,
-          )} schedule persistence or delivery failure(s) are visible.`,
-          id: "schedule-failures",
-          severity: "high",
-          title: "Schedule failures",
-        },
-      ];
-    }
-
     if (domains.schedule.pendingFireClaims > 0) {
       return [
         {
-          description: `${formatNumber(
+          description: `${formatCount(
             domains.schedule.pendingFireClaims,
-          )} pending fire claim(s) need handoff confirmation.`,
+            "pending fire claim",
+          )} ${domains.schedule.pendingFireClaims === 1 ? "needs" : "need"} handoff confirmation.`,
           id: "schedule-pending-claims",
           severity: "medium",
           title: "Schedule pending claims",
@@ -120,20 +90,14 @@ const scheduleRule: OverviewDomainRule = {
 const leaseRule: OverviewDomainRule = {
   domain: "lease",
   issues(domains) {
-    const leasePressure =
-      domains.lease.failureTotal + domains.lease.acquireTimeoutsTotal + domains.lease.waiterDepth;
-
-    return leasePressure > 0
+    return domains.lease.waiterDepth > 0
       ? [
           {
-            description: `${formatNumber(
-              leasePressure,
-            )} lease failure, timeout, or waiter signal(s) are active.`,
+            description: `${formatCount(domains.lease.waiterDepth, "lease waiter")} ${
+              domains.lease.waiterDepth === 1 ? "is" : "are"
+            } currently queued.`,
             id: "lease-pressure",
-            severity:
-              domains.lease.failureTotal > 0 || domains.lease.acquireTimeoutsTotal > 0
-                ? "high"
-                : "medium",
+            severity: "medium",
             title: "Lease contention",
           },
         ]
@@ -148,24 +112,8 @@ const leaseRule: OverviewDomainRule = {
 
 const noticeRule: OverviewDomainRule = {
   domain: "notice",
-  issues(domains) {
-    const noticePressure =
-      domains.notice.failureTotal +
-      domains.notice.deliveryDropsTotal +
-      domains.notice.wildcardLimitRejectsTotal;
-
-    return noticePressure > 0
-      ? [
-          {
-            description: `${formatNumber(
-              noticePressure,
-            )} notice drop, failure, or wildcard reject signal(s) are active.`,
-            id: "notice-pressure",
-            severity: "medium",
-            title: "Notice delivery pressure",
-          },
-        ]
-      : [];
+  issues() {
+    return [];
   },
   signal(domains) {
     return `${formatNumber(domains.notice.subscriptionsActive)} subscriptions`;
@@ -174,24 +122,8 @@ const noticeRule: OverviewDomainRule = {
 
 const streamRule: OverviewDomainRule = {
   domain: "stream",
-  issues(domains) {
-    const streamPressure =
-      domains.stream.failureTotal +
-      domains.stream.appendConflictsTotal +
-      domains.stream.notifyDropsTotal;
-
-    return streamPressure > 0
-      ? [
-          {
-            description: `${formatNumber(
-              streamPressure,
-            )} stream failure, append conflict, or notify-drop signal(s) are active.`,
-            id: "stream-pressure",
-            severity: "medium",
-            title: "Stream pressure",
-          },
-        ]
-      : [];
+  issues() {
+    return [];
   },
   signal(domains) {
     return `${formatNumber(domains.stream.streamsActive)} streams / ${formatNumber(
@@ -202,21 +134,8 @@ const streamRule: OverviewDomainRule = {
 
 const kvRule: OverviewDomainRule = {
   domain: "kv",
-  issues(domains) {
-    const kvPressure = domains.kv.commitsFailedTotal + domains.kv.invalidTransactionRejectsTotal;
-
-    return kvPressure > 0
-      ? [
-          {
-            description: `${formatNumber(
-              kvPressure,
-            )} failed commit or invalid transaction reject signal(s) are active.`,
-            id: "kv-pressure",
-            severity: "medium",
-            title: "KV write pressure",
-          },
-        ]
-      : [];
+  issues() {
+    return [];
   },
   signal(domains) {
     return `${formatNumber(domains.kv.keysTotal)} keys / ${formatNumber(

@@ -22,7 +22,7 @@ Expected companion services:
 For UI-only design work without a running broker, enable the Vite mock API:
 
 ```bash
-npm run mock
+npm run dev:mock
 ```
 
 The mock server returns DTO-shaped admin payloads for the shell, overview, diagnostics, metrics,
@@ -48,14 +48,12 @@ The browser client reads these public Vite env vars through `src/shared/config.t
 - `VITE_FITZ_MOCK_API`
 - `VITE_FITZ_REQUEST_TIMEOUT_MS`
 - `VITE_FITZ_LOG_LEVEL`
-
-## Local Skills
-
-The workspace-local `skills/` docs describe the intended Askr workflow for each slice. Pick the narrowest applicable skill for the files you are changing, and treat the docs as guidance for that surface rather than a checklist to force onto unrelated code.
+- `VITE_FITZ_DASHBOARD_POLL_INTERVAL_MS`
+- `VITE_FITZ_ENVIRONMENT_LABEL`
 
 ## UI Clarity
 
-- [UI clarity charter](docs/ui-clarity-charter.md)
+- [Domain UI/UX review](docs/domain-ux-review.md)
 - Treat it as the visual and copy standard for new screens and feature surfaces.
 
 ## Routing

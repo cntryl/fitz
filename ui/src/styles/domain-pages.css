@@ -4,10 +4,7 @@
 .domain-section,
 .domain-section-header,
 .domain-inventory-toolbar,
-.domain-resource-inventory,
-.domain-sidebar,
-.domain-sidebar [data-slot="card"],
-.domain-sidebar [data-slot="card-content"] {
+.domain-resource-inventory {
   min-width: 0;
 }
 
@@ -51,8 +48,7 @@
 
 .domain-stat-value,
 .domain-resource-metric,
-.domain-metric-value,
-.domain-sidebar-stat dd {
+.domain-metric-value {
   font-variant-numeric: tabular-nums;
 }
 
@@ -62,8 +58,62 @@
   line-height: var(--fitz-body-line-height);
 }
 
+.domain-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
 .domain-table-wrap [data-slot="table"] {
   min-inline-size: 42rem;
+}
+
+.notice-resource-table-wrap table,
+.notice-operation-table-wrap table,
+.rpc-operation-table-wrap table,
+.notice-operation-table-wrap [data-slot="table"] {
+  min-inline-size: 52rem;
+}
+
+.schedule-observation-table-wrap [data-slot="table"],
+.lease-resource-table-wrap [data-slot="table"] {
+  min-inline-size: 58rem;
+  table-layout: fixed;
+}
+
+.schedule-observation-table-wrap :is(th, td):nth-child(1) {
+  width: 34%;
+}
+
+.schedule-observation-table-wrap :is(th, td):nth-child(2) {
+  width: 10%;
+}
+
+.schedule-observation-table-wrap :is(th, td):nth-child(3),
+.schedule-observation-table-wrap :is(th, td):nth-child(4) {
+  width: 20%;
+}
+
+.schedule-observation-table-wrap :is(th, td):nth-child(5) {
+  width: 16%;
+}
+
+.lease-resource-table-wrap :is(th, td):first-child {
+  width: 24%;
+}
+
+.lease-resource-table-wrap :is(th, td):last-child {
+  width: 20%;
+}
+
+.notice-resource-table-wrap th,
+.notice-resource-table-wrap td,
+.notice-operation-table-wrap [data-slot="table-header-cell"],
+.notice-operation-table-wrap [data-slot="table-cell"],
+.notice-operation-table-wrap th,
+.notice-operation-table-wrap td,
+.rpc-operation-table-wrap th,
+.rpc-operation-table-wrap td {
+  white-space: nowrap;
 }
 
 .domain-table-wrap [data-slot="table-header-cell"],
@@ -71,7 +121,33 @@
   white-space: nowrap;
 }
 
-.domain-resource-virtual-table [data-slot="virtual-table-table"],
+.domain-metric-table-wrap [data-slot="table-head"],
+.domain-metric-table-wrap [data-slot="table-body"],
+.notice-operation-table-wrap [data-slot="table-head"],
+.notice-operation-table-wrap [data-slot="table-body"],
+.rpc-operation-table-wrap [data-slot="table-head"],
+.rpc-operation-table-wrap [data-slot="table-body"] {
+  display: block;
+  inline-size: 100%;
+}
+
+.domain-metric-table-wrap [data-slot="table-row"],
+.notice-operation-table-wrap [data-slot="table-row"],
+.rpc-operation-table-wrap [data-slot="table-row"] {
+  display: grid;
+  inline-size: 100%;
+}
+
+.domain-metric-table-wrap [data-slot="table-row"] {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.notice-operation-table-wrap [data-slot="table-row"],
+.rpc-operation-table-wrap [data-slot="table-row"] {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.domain-resource-virtual-table[data-has-metrics="true"] [data-slot="virtual-table-table"],
 .queue-resource-virtual-table [data-slot="virtual-table-table"],
 .stream-record-virtual-table [data-slot="virtual-table-table"],
 .rpc-operation-virtual-table [data-slot="virtual-table-table"],
@@ -81,7 +157,7 @@
 }
 
 .queue-resource-virtual-table [data-slot="virtual-table-table"] {
-  min-inline-size: 60rem;
+  min-inline-size: 58rem;
 }
 
 .domain-resource-virtual-table [data-slot="virtual-table-header-cell"],
@@ -112,7 +188,7 @@
   white-space: nowrap;
 }
 
-@media (max-width: 48rem) {
+@media (max-width: 47.999rem) {
   .domain-header-title-row,
   .domain-inventory-toolbar,
   .domain-inventory-search-shell,
@@ -138,18 +214,6 @@
     overflow-wrap: anywhere;
   }
 
-  .domain-sidebar-stats {
-    gap: 0;
-  }
-
-  .domain-sidebar-stat {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .domain-sidebar-stat dd {
-    text-align: start;
-  }
-
   .domain-table-wrap {
     max-width: 100%;
     overflow-x: auto;
@@ -159,7 +223,7 @@
     min-inline-size: 38rem;
   }
 
-  .domain-resource-virtual-table [data-slot="virtual-table-table"],
+  .domain-resource-virtual-table[data-has-metrics="true"] [data-slot="virtual-table-table"],
   .queue-resource-virtual-table [data-slot="virtual-table-table"],
   .stream-record-virtual-table [data-slot="virtual-table-table"],
   .rpc-operation-virtual-table [data-slot="virtual-table-table"],

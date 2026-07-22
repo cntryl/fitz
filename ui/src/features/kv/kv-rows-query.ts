@@ -1,11 +1,9 @@
-import { createQuery, queryScope } from "@askrjs/askr/data";
+import { createQuery, defineQuery, queryScope } from "@askrjs/askr/data";
 import { kvService } from "./kv-service";
 import type { KvResourceScope, KvRowsResult } from "./kv-models";
 import { currentRouteFamilySegment } from "@/shared/navigation/domains";
-import { stableQueryFetch, type QueryFetch } from "@/shared/query-fetch";
 
 const kvRowsQueries = queryScope("kv");
-const kvRowsFetches = new Map<string, QueryFetch<KvRowsResult>>();
 
 export interface KvRowsQueryState {
   cursor?: string | null;
@@ -13,10 +11,14 @@ export interface KvRowsQueryState {
   startsWith: string;
 }
 
-export function kvRowsQueryKey(scope: KvResourceScope, state: KvRowsQueryState) {
+export function kvRowsQueryKey(
+  scope: KvResourceScope,
+  state: KvRowsQueryState,
+  family = currentRouteFamilySegment(),
+) {
   return kvRowsQueries.key(
     "rows",
-    currentRouteFamilySegment(),
+    family,
     scope.realm,
     scope.area,
     scope.resource,
@@ -26,17 +28,17 @@ export function kvRowsQueryKey(scope: KvResourceScope, state: KvRowsQueryState) 
   );
 }
 
-export function createKvRowsQuery(scope: KvResourceScope, state: KvRowsQueryState) {
-  const key = kvRowsQueryKey(scope, state);
+interface KvRowsQueryInput {
+  family: string;
+  scope: KvResourceScope;
+  state: KvRowsQueryState;
+}
 
-  return createQuery<KvRowsResult>({
-    key,
-    fetch: stableQueryFetch(
-      kvRowsFetches,
-      key,
-      () =>
-        ({ signal }) =>
-          kvService.browseCommittedRows(scope, state, { signal }),
-    ),
-  });
+const kvRowsQuery = defineQuery<KvRowsQueryInput, KvRowsResult>({
+  key: ({ family, scope, state }) => kvRowsQueryKey(scope, state, family),
+  fetch: ({ scope, signal, state }) => kvService.browseCommittedRows(scope, state, { signal }),
+});
+
+export function createKvRowsQuery(scope: KvResourceScope, state: KvRowsQueryState) {
+  return createQuery(kvRowsQuery, { family: currentRouteFamilySegment(), scope, state });
 }

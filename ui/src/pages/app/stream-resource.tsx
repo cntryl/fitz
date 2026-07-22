@@ -13,10 +13,12 @@ import {
 } from "@askrjs/themes/components";
 import { Form, Input, Label, VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
 import type { StreamAdminRecord } from "@/adapters";
+import CopyTextButton from "@/components/shared/copy-text-button";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
+import { queryFreshness, queryHeaderStatus } from "@/components/shared/query-header-status";
 import {
   QueryEmptyState,
   QueryErrorState,
@@ -24,8 +26,8 @@ import {
   QueryRefreshingState,
 } from "@/components/shared/query-state";
 import { createStreamResourceQuery } from "@/features/stream/stream-query";
-import { formatNumber, formatTimestampMs } from "@/shared/format";
-import { domainResourceHref, domainScopeHref, formatFitzRoute } from "@/shared/navigation/domains";
+import { formatCount, formatNumber, formatTimestampMs } from "@/shared/format";
+import { domainResourceHref, formatFitzRoute } from "@/shared/navigation/domains";
 
 const DEFAULT_LIMIT = 50;
 
@@ -68,7 +70,7 @@ const recordColumns: readonly VirtualTableColumn<StreamAdminRecord>[] = [
   {
     id: "route",
     header: "Route",
-    width: "32%",
+    width: "28%",
     cellComponent: ({ row }) => {
       const route = formatFitzRoute("stream", row);
 
@@ -82,13 +84,13 @@ const recordColumns: readonly VirtualTableColumn<StreamAdminRecord>[] = [
   {
     id: "offset",
     header: "Offset",
-    width: "10%",
+    width: "9%",
     cellComponent: ({ row }) => <span>{formatNumber(row.resource_offset)}</span>,
   },
   {
     id: "family",
     header: "Family",
-    width: "10%",
+    width: "8%",
     cellComponent: ({ row }) => <span>{formatNumber(row.route_family)}</span>,
   },
   {
@@ -104,11 +106,22 @@ const recordColumns: readonly VirtualTableColumn<StreamAdminRecord>[] = [
   {
     id: "body",
     header: "Body",
-    width: "30%",
+    width: "25%",
     cellComponent: ({ row }) => (
       <span class="domain-table-cell-truncate" title={row.body.base64}>
         {row.body.utf8 ?? row.body.base64}
       </span>
+    ),
+  },
+  {
+    id: "actions",
+    header: "Copy",
+    width: "12%",
+    cellComponent: ({ row }) => (
+      <CopyTextButton
+        label={`Copy body at offset ${row.resource_offset}`}
+        text={row.body.utf8 ?? row.body.base64}
+      />
     ),
   },
 ];
@@ -133,6 +146,15 @@ export default function StreamResourcePage() {
   const query = createStreamResourceQuery({ ...scope, discriminator, fromOffset, limit });
   const data = query.data;
   const records = data?.records.records ?? [];
+  const headerStatus = queryHeaderStatus(
+    query,
+    {
+      loading: "Loading stream resource.",
+      ready: `${formatCount(records.length, "committed record")} visible from offset ${formatNumber(data?.records.from_offset ?? fromOffset)}.`,
+      unavailable: "Committed stream records are unavailable.",
+    },
+    { label: "Committed", tone: "success" },
+  );
 
   function applyFilters(event: Event) {
     event.preventDefault();
@@ -152,37 +174,30 @@ export default function StreamResourcePage() {
           eyebrow="Stream resource"
           title={scope.resource}
           description={`${scope.realm} / ${scope.area}`}
-          primaryAction={{ label: "Refresh records", onPress: () => query.refresh() }}
-          status={{
-            detail: data
-              ? `${formatNumber(records.length)} committed record(s) visible from offset ${formatNumber(data.records.from_offset)}.`
-              : "Loading stream resource.",
-            label: query.refreshing ? "Refreshing" : query.stale ? "Stale" : "Live",
-            tone: query.refreshing ? "info" : query.stale ? "warning" : "success",
+          primaryAction={{
+            busy: query.refreshing,
+            disabled: query.refreshing,
+            label: "Refresh records",
+            onPress: () => query.refresh(),
           }}
+          status={headerStatus}
         />
         <OperatorScopeStrip
           realm={scope.realm}
           area={scope.area}
           resource={scope.resource}
-          freshness={
-            query.refreshing
-              ? "Refreshing"
-              : query.stale
-                ? "Stale"
-                : data
-                  ? "Live"
-                  : query.loading
-                    ? "Loading"
-                    : undefined
-          }
+          freshness={queryFreshness(query)}
         />
         {data ? (
           <DomainMetricTable
             title="Stream resource metrics"
             description="Durable committed metadata. Append sessions are live and separate from replay history."
             metrics={[
-              { label: "Offset", value: data.detail.offset, caption: "Durable committed metadata" },
+              {
+                label: "Latest committed offset",
+                value: data.detail.offset,
+                caption: "Resource high-water metadata, not the read cursor",
+              },
               {
                 label: "Watermark",
                 value: data.detail.watermark,
@@ -203,7 +218,7 @@ export default function StreamResourcePage() {
         ) : null}
         <Card padding="sm" variant="default">
           <CardHeader>
-            <CardTitle>Record filters</CardTitle>
+            <CardTitle titleAs="h2">Record filters</CardTitle>
             <CardDescription>
               Read committed records by from offset, optional discriminator, and limit.
             </CardDescription>
@@ -269,7 +284,7 @@ export default function StreamResourcePage() {
         <Show when={records.length > 0}>
           <Card padding="sm" variant="default">
             <CardHeader>
-              <CardTitle>Committed records</CardTitle>
+              <CardTitle titleAs="h2">Committed records</CardTitle>
               <CardDescription>
                 Durable stream records returned by the current read window.
               </CardDescription>
@@ -277,7 +292,7 @@ export default function StreamResourcePage() {
             <CardContent>
               <VirtualTable<StreamAdminRecord>
                 aria-label="Stream records"
-                class="stream-record-virtual-table"
+                class="stream-resource-virtual-table"
                 columns={recordColumns}
                 getKey={(record) => `${record.route_family}:${record.resource_offset}`}
                 headerHeight={44}
@@ -290,11 +305,24 @@ export default function StreamResourcePage() {
           </Card>
         </Show>
         <Inline gap="2" wrap="wrap">
-          <Button asChild variant="outline">
-            <Link href={domainScopeHref("stream", { area: scope.area, realm: scope.realm })}>
-              Back to area
+          <Show when={fromOffset > 0}>
+            <Link
+              class="page-action-link"
+              href={recordsHref(scope, { discriminator, fromOffset: 0, limit })}
+            >
+              First page
             </Link>
-          </Button>
+            <Link
+              class="page-action-link"
+              href={recordsHref(scope, {
+                discriminator,
+                fromOffset: Math.max(0, fromOffset - limit),
+                limit,
+              })}
+            >
+              Previous page
+            </Link>
+          </Show>
           <Show when={data?.records.has_more}>
             <Button asChild>
               <Link

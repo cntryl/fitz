@@ -1,4 +1,4 @@
-import { group, lazy, route, type RouteHandler } from "@askrjs/askr/router";
+import { group, lazy, route, type AuthRequirement, type RouteHandler } from "@askrjs/askr/router";
 import Layout from "./_layout";
 import RouteFamilySelectorPage from "./route-family";
 import {
@@ -27,6 +27,9 @@ const SessionsPage = lazy(() => import("./sessions"));
 const SettingsPage = lazy(() => import("./settings"));
 const StreamPage = lazy(() => import("./stream"));
 const StreamResourcePage = lazy(() => import("./stream-resource"));
+
+const requireAuthenticated: AuthRequirement = (auth) =>
+  auth.authenticated ? { allowed: true } : { allowed: false, reason: "unauthenticated" };
 
 const domainPageBySegment: Record<DomainSegment, RouteHandler> = {
   kv: KvPage,
@@ -60,7 +63,7 @@ function hasRouteScope(segment: DomainSegment, scope: "realm" | "area" | "operat
 }
 
 export function registerAppRoutes() {
-  group({ layout: Layout, auth: true }, () => {
+  group({ layout: Layout, auth: requireAuthenticated }, () => {
     route("/", RouteFamilySelectorPage);
     route("/admin", RouteFamilySelectorPage);
     route("/admin/metrics", RouteFamilySelectorPage);

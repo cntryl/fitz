@@ -87,6 +87,7 @@ export interface DeadLetterMessage {
 
 export interface QueueInventoryArea {
   area: string;
+  resourceEntries: QueueResourceSummary[];
   resources: string[];
 }
 

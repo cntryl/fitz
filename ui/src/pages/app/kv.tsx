@@ -1,10 +1,14 @@
 import DomainInventoryPage from "@/components/shared/domain-inventory-page";
-import type { DomainResourceMetricColumn } from "@/components/shared/domain-resource-inventory-table";
+import {
+  domainResourceInventoryRows,
+  type DomainResourceMetricColumn,
+} from "@/components/shared/domain-resource-inventory-table";
 import { createKvOverviewQuery } from "@/features/kv/kv-query";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 import { formatNumber } from "@/shared/format";
 
 type KvOverviewStats = NonNullable<ReturnType<typeof createKvOverviewQuery>["data"]>["stats"];
+type AvailableMetricColumn = DomainResourceMetricColumn & { available: boolean };
 
 function formatMaybeNumber(value: number | undefined) {
   return value === undefined ? "--" : formatNumber(value);
@@ -26,29 +30,30 @@ function formatLatency(value: number | undefined) {
   return value === undefined ? "--" : value.toFixed(1);
 }
 
-function kvFailureCount(stats: KvOverviewStats) {
+function kvCumulativeFailureCount(stats: KvOverviewStats) {
   return stats.commitsFailedTotal + stats.invalidTransactionRejectsTotal;
 }
 
-function describeKvPressure(stats: KvOverviewStats) {
+function describeKvActivity(stats: KvOverviewStats) {
   return `${formatNumber(stats.keysTotal)} keys, ${formatNumber(
     stats.transactionsActive,
-  )} active txn(s), ${stats.operationsPerSecond.toFixed(2)} ops/sec, ${formatNumber(
-    kvFailureCount(stats),
-  )} failure signal(s).`;
+  )} active ${stats.transactionsActive === 1 ? "transaction" : "transactions"}, ${stats.operationsPerSecond.toFixed(2)} ops/sec. Cumulative process totals include ${formatNumber(
+    kvCumulativeFailureCount(stats),
+  )} failure ${kvCumulativeFailureCount(stats) === 1 ? "signal" : "signals"}; historical totals do not establish current pressure.`;
 }
 
 export default function KvPage() {
   const overview = createKvOverviewQuery();
   const inventory = createResourceInventoryQuery("kv");
   const stats = overview.data?.stats;
+  const inventoryRows = domainResourceInventoryRows(inventory.data);
   const kvHealth = stats
     ? ({
-        label: kvFailureCount(stats) > 0 ? "Pressure" : "Live",
-        tone: kvFailureCount(stats) > 0 ? "warning" : "success",
+        label: stats.transactionsActive > 0 || stats.operationsPerSecond > 0 ? "Active" : "Live",
+        tone: stats.transactionsActive > 0 || stats.operationsPerSecond > 0 ? "info" : "success",
       } as const)
     : null;
-  const kvMetricColumns: readonly DomainResourceMetricColumn[] = [
+  const metricCandidates: readonly AvailableMetricColumn[] = [
     {
       id: "records",
       header: "Records",
@@ -56,6 +61,7 @@ export default function KvPage() {
       cell: formatRecordCount,
       sortValue: (row) => row.estimatedRecordCount,
       title: (row) => (row.estimateComplete === false ? "Estimate incomplete" : undefined),
+      available: inventoryRows.some((row) => row.estimatedRecordCount !== undefined),
     },
     {
       id: "storage",
@@ -63,6 +69,7 @@ export default function KvPage() {
       width: "8%",
       cell: (row) => formatStorageBytes(row.estimatedStorageBytes),
       sortValue: (row) => row.estimatedStorageBytes,
+      available: inventoryRows.some((row) => row.estimatedStorageBytes !== undefined),
     },
     {
       id: "transactions",
@@ -70,6 +77,7 @@ export default function KvPage() {
       width: "8%",
       cell: (row) => formatMaybeNumber(row.transactionsActive),
       sortValue: (row) => row.transactionsActive,
+      available: inventoryRows.some((row) => row.transactionsActive !== undefined),
     },
     {
       id: "read-latency",
@@ -77,6 +85,7 @@ export default function KvPage() {
       width: "9%",
       cell: (row) => formatLatency(row.readLatencyP95Ms),
       sortValue: (row) => row.readLatencyP95Ms,
+      available: inventoryRows.some((row) => row.readLatencyP95Ms !== undefined),
     },
     {
       id: "write-latency",
@@ -84,32 +93,12 @@ export default function KvPage() {
       width: "9%",
       cell: (row) => formatLatency(row.writeLatencyP95Ms),
       sortValue: (row) => row.writeLatencyP95Ms,
-    },
-    {
-      id: "domain-keys",
-      header: "Domain keys",
-      width: "9%",
-      cell: () => formatMaybeNumber(stats?.keysTotal),
-    },
-    {
-      id: "domain-txns",
-      header: "Domain txns",
-      width: "9%",
-      cell: () => formatMaybeNumber(stats?.transactionsActive),
-    },
-    {
-      id: "domain-ops",
-      header: "Ops / sec",
-      width: "9%",
-      cell: () => (stats ? stats.operationsPerSecond.toFixed(2) : "--"),
-    },
-    {
-      id: "domain-failures",
-      header: "Failures",
-      width: "9%",
-      cell: () => (stats ? formatNumber(kvFailureCount(stats)) : "--"),
+      available: inventoryRows.some((row) => row.writeLatencyP95Ms !== undefined),
     },
   ];
+  const kvMetricColumns = metricCandidates
+    .filter((column) => column.available)
+    .map(({ available: _available, ...column }) => column);
 
   return (
     <DomainInventoryPage
@@ -137,7 +126,7 @@ export default function KvPage() {
       ]}
       status={{
         detail: stats
-          ? `Current authoritative-state pressure: ${describeKvPressure(stats)}`
+          ? `Current authoritative-state activity: ${describeKvActivity(stats)}`
           : overview.error
             ? "KV health is unavailable. Resource inventory can still be inspected when loaded."
             : "Loading KV health.",

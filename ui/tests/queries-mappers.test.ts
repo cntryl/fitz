@@ -8,7 +8,7 @@ import {
 } from "@/features/queue/queue-resource-mappers";
 import { mapKvStats } from "@/features/kv/kv-mappers";
 import { mapLeaseStats } from "@/features/lease/lease-mappers";
-import { mapNoticeStats } from "@/features/notice/notice-mappers";
+import { mapNoticeResourceOperationRows, mapNoticeStats } from "@/features/notice/notice-mappers";
 import { mapRpcStats } from "@/features/rpc/rpc-mappers";
 import { mapScheduleStats } from "@/features/schedule/schedule-mappers";
 import { mapStreamStats } from "@/features/stream/stream-mappers";
@@ -17,6 +17,50 @@ import { mapSystemOverview } from "@/features/system/system-mappers";
 import { healthyDiagnostics, healthyGlobalDiagnostics } from "./fixtures/topology";
 
 describe("Data query layer", () => {
+  it("keeps one route publish rate when Notice repeats it per subscription", () => {
+    const mapped = mapNoticeResourceOperationRows({
+      limit: 50,
+      observations: [
+        {
+          area: "ops",
+          notifications_received: 8,
+          publishes_per_minute: 12.5,
+          publishes_total: 100,
+          realm: "default",
+          resource: "orders",
+          route: "notice://default/ops/orders/RefreshProjection",
+          route_family: 1,
+          session_id: "session-1",
+          status: "active_subscription",
+          subscription_id: 11,
+        },
+        {
+          area: "ops",
+          notifications_received: 5,
+          publishes_per_minute: 12.5,
+          publishes_total: 100,
+          realm: "default",
+          resource: "orders",
+          route: "notice://default/ops/orders/RefreshProjection",
+          route_family: 1,
+          session_id: "session-2",
+          status: "active_subscription",
+          subscription_id: 12,
+        },
+      ],
+      route_family: 1,
+    });
+
+    expect(mapped.operations).toEqual([
+      {
+        activeSubscribers: 2,
+        latencyMs: null,
+        operation: "notice://default/ops/orders/RefreshProjection",
+        rollingMessageCount: 12.5,
+      },
+    ]);
+  });
+
   it("maps queue DTOs to camelCase app models", () => {
     expect(
       mapQueueDeadLetter({

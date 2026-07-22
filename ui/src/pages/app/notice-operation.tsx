@@ -1,5 +1,5 @@
 import { For } from "@askrjs/askr/control";
-import { Link, currentRoute } from "@askrjs/askr/router";
+import { currentRoute } from "@askrjs/askr/router";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
 import {
   Card,
@@ -12,7 +12,7 @@ import {
 import DomainHeader from "@/components/shared/domain-header";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
-import { createDomainSidebar } from "@/components/shared/domain-sidebar";
+import { queryFreshness, queryHeaderStatus } from "@/components/shared/query-header-status";
 import {
   QueryEmptyState,
   QueryErrorState,
@@ -22,7 +22,6 @@ import {
 import { formatNumber } from "@/shared/format";
 import { createNoticeOperationRowsQuery } from "@/features/notice/notice-query";
 import type { NoticeDeliveryRows } from "@/features/notice/notice-models";
-import { domainScopeHref } from "@/shared/navigation/domains";
 
 function decodeParam(value: string | undefined) {
   if (!value) return undefined;
@@ -90,75 +89,33 @@ export default function NoticeOperationPage(props: {
   const activeSubscribers = new Set(
     deliveries.map((row) => `${row.subscriptionId ?? "session"}:${row.sessionId ?? "session"}`),
   ).size;
-  const rollingMessages = deliveries.reduce((sum, row) => sum + row.publishesPerMinute, 0);
-
-  const snapshot = createDomainSidebar({
-    data,
-    title: `Notice operation ${query}`,
-    description: `Live subscriber counters for ${realm} / ${area} / ${resource} / ${query}`,
-    stats: (current) => [
-      {
-        label: "Active subscribers",
-        value: activeSubscribers,
-      },
-      {
-        label: "Rolling messages / min",
-        value: current.observations.length === 0 ? 0 : rollingMessages,
-      },
-      {
-        label: "Latency",
-        value: "--/N/A",
-        note: "Latency unavailable via current API",
-      },
-    ],
-    footer: (
-      <Link
-        href={domainScopeHref("notice", {
-          area,
-          realm,
-          resource,
-        })}
-      >
-        Back to resource
-      </Link>
-    ),
-  });
-
   return (
-    <DomainPageFrame sidebar={snapshot}>
+    <DomainPageFrame>
       <Stack gap="3">
         <DomainHeader
           eyebrow="Notice operation"
           title={query}
           description={`${realm} / ${area} / ${resource} / ${query}`}
           primaryAction={{
+            busy: rowsQuery.refreshing,
+            disabled: rowsQuery.refreshing,
             label: "Refresh operation deliveries",
             onPress: () => rowsQuery.refresh(),
           }}
-          status={{
-            detail: data
+          status={queryHeaderStatus(rowsQuery, {
+            loading: "Loading notice deliveries for this operation.",
+            ready: data
               ? `${formatNumber(data.observations.length)} live subscription row${data.observations.length === 1 ? "" : "s"} for this operation route. ${activeSubscribers} active subscriber${activeSubscribers === 1 ? "" : "s"}.`
-              : "Loading notice deliveries for this operation.",
-            label: rowsQuery.refreshing ? "Refreshing" : rowsQuery.stale ? "Stale" : "Live",
-            tone: rowsQuery.refreshing ? "info" : rowsQuery.stale ? "warning" : "success",
-          }}
+              : "",
+            unavailable: "Notice delivery evidence is unavailable for this operation.",
+          })}
         />
         <OperatorScopeStrip
           realm={realm}
           area={area}
           resource={resource}
           operation={query}
-          freshness={
-            rowsQuery.refreshing
-              ? "Refreshing"
-              : rowsQuery.stale
-                ? "Stale"
-                : data
-                  ? "Live"
-                  : rowsQuery.loading
-                    ? "Loading"
-                    : undefined
-          }
+          freshness={queryFreshness(rowsQuery)}
         />
         {!data && rowsQuery.loading ? (
           <QueryLoadingState description="Loading notice operation deliveries..." />
@@ -182,26 +139,29 @@ export default function NoticeOperationPage(props: {
             ) : (
               <Card padding="sm" variant="default">
                 <CardHeader>
-                  <CardTitle>Delivery evidence</CardTitle>
+                  <CardTitle titleAs="h2">Delivery evidence</CardTitle>
                   <CardDescription>
-                    Live subscription counters for this operation route; not delivery history.
+                    Live subscription observations for this operation route; not delivery history.
+                    The API does not report a reset scope for total counters.
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <Table>
-                    <TableHead>
-                      <TableRow>
-                        <TableHeaderCell>Status</TableHeaderCell>
-                        <TableHeaderCell>Session</TableHeaderCell>
-                        <TableHeaderCell>Notifications received</TableHeaderCell>
-                        <TableHeaderCell>Publishes / min</TableHeaderCell>
-                        <TableHeaderCell>Publishes total</TableHeaderCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      <NoticeDeliveryTableRows rows={data.observations} />
-                    </TableBody>
-                  </Table>
+                  <div class="domain-table-wrap notice-operation-table-wrap">
+                    <Table>
+                      <TableHead>
+                        <TableRow>
+                          <TableHeaderCell>Status</TableHeaderCell>
+                          <TableHeaderCell>Session</TableHeaderCell>
+                          <TableHeaderCell>Notifications observed</TableHeaderCell>
+                          <TableHeaderCell>Current publishes / min</TableHeaderCell>
+                          <TableHeaderCell>Observed publish total</TableHeaderCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        <NoticeDeliveryTableRows rows={data.observations} />
+                      </TableBody>
+                    </Table>
+                  </div>
                 </CardContent>
               </Card>
             )}

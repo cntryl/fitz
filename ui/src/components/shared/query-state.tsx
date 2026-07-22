@@ -39,14 +39,11 @@ export function QueryLoadingState({
   title = "Loading",
 }: QueryStateProps) {
   return (
-    <QueryStateCard className={className}>
-      <EmptyState
-        aria-busy="true"
-        title={title}
-        icon={<Spinner label={title} />}
-        description={description}
-      />
-    </QueryStateCard>
+    <div role="status" aria-live="polite" aria-busy="true">
+      <QueryStateCard className={className}>
+        <EmptyState title={title} icon={<Spinner label={title} />} description={description} />
+      </QueryStateCard>
+    </div>
   );
 }
 
@@ -87,6 +84,18 @@ export function QueryErrorState({
 
 export function QueryEmptyState({
   class: className = "domain-state",
+  description,
+  title = "Nothing to show",
+}: QueryStateProps) {
+  return (
+    <QueryStateCard className={className}>
+      <EmptyState title={title} description={description} />
+    </QueryStateCard>
+  );
+}
+
+export function QueryCompactEmptyState({
+  class: className = "domain-state domain-state-compact",
   description,
   title = "Nothing to show",
 }: QueryStateProps) {

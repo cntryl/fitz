@@ -1,4 +1,4 @@
-import { apiv1 } from "@/adapters";
+import { apiParams, apiParamsQuery, apiv1 } from "@/adapters";
 import { unwrapResponse, type ServiceRequestOptions } from "@/shared/errors/api";
 import { apiRouteFamilySegment } from "@/shared/navigation/domains";
 import { mapKvCommittedValue, mapKvOverview, mapKvPrefixScan, mapKvRows } from "./kv-mappers";
@@ -15,8 +15,8 @@ import type {
 async function getOverview(options: ServiceRequestOptions = {}): Promise<KvOverview> {
   const family = apiRouteFamilySegment();
   const [realmsResponse, statsResponse] = await Promise.all([
-    apiv1.listKvRealms(family, options),
-    apiv1.getKvStats(family, options),
+    apiv1.listKvRealms(apiParams({ family }, options)),
+    apiv1.getKvStats(apiParams({ family }, options)),
   ]);
 
   return mapKvOverview(
@@ -34,15 +34,19 @@ async function getCommittedValue(
   return mapKvCommittedValue(
     unwrapResponse(
       await apiv1.getKvCommittedValue(
-        apiRouteFamilySegment(scope.routeFamily),
-        scope.realm,
-        scope.area,
-        scope.resource,
-        {
-          key,
-          key_encoding: keyEncoding,
-        },
-        options,
+        apiParamsQuery(
+          {
+            area: scope.area,
+            family: apiRouteFamilySegment(scope.routeFamily),
+            realm: scope.realm,
+            resource: scope.resource,
+          },
+          {
+            key,
+            key_encoding: keyEncoding,
+          },
+          options,
+        ),
       ),
       "Unable to load committed KV value",
     ),
@@ -59,16 +63,20 @@ async function scanCommittedPrefix(
   return mapKvPrefixScan(
     unwrapResponse(
       await apiv1.scanKvCommittedPrefix(
-        apiRouteFamilySegment(scope.routeFamily),
-        scope.realm,
-        scope.area,
-        scope.resource,
-        {
-          key_encoding: keyEncoding,
-          limit,
-          prefix,
-        },
-        options,
+        apiParamsQuery(
+          {
+            area: scope.area,
+            family: apiRouteFamilySegment(scope.routeFamily),
+            realm: scope.realm,
+            resource: scope.resource,
+          },
+          {
+            key_encoding: keyEncoding,
+            limit,
+            prefix,
+          },
+          options,
+        ),
       ),
       "Unable to scan committed KV prefix",
     ),
@@ -87,17 +95,21 @@ async function browseCommittedRows(
   return mapKvRows(
     unwrapResponse(
       await apiv1.browseKvCommittedRows(
-        apiRouteFamilySegment(),
-        scope.realm,
-        scope.area,
-        scope.resource,
-        {
-          cursor: request.cursor ?? undefined,
-          key_encoding: "utf8",
-          limit: request.limit,
-          starts_with: request.startsWith,
-        },
-        options,
+        apiParamsQuery(
+          {
+            area: scope.area,
+            family: apiRouteFamilySegment(),
+            realm: scope.realm,
+            resource: scope.resource,
+          },
+          {
+            cursor: request.cursor ?? undefined,
+            key_encoding: "utf8",
+            limit: request.limit,
+            starts_with: request.startsWith,
+          },
+          options,
+        ),
       ),
       "Unable to browse committed KV rows",
     ),

@@ -1,7 +1,6 @@
 import { askr } from "@askrjs/vite";
 import autoprefixer from "autoprefixer";
 import { defineConfig } from "vite-plus";
-import type { UserConfig } from "@voidzero-dev/vite-plus-core";
 import { fitzMockApiPlugin } from "./dev/mock-api";
 
 function fileUrlPath(path: string) {
@@ -16,7 +15,9 @@ const useMockApi =
   process.env.VITE_FITZ_MOCK_API === "1" || process.env.VITE_FITZ_MOCK_API === "true";
 
 const config = {
-  fmt: {},
+  fmt: {
+    ignorePatterns: ["src/adapters/generated/**"],
+  },
   lint: {
     ignorePatterns: ["dist/**", "coverage/**", "src/adapters/generated/**"],
     options: {
@@ -31,15 +32,12 @@ const config = {
     }),
   ],
   css: {
-    transformer: "postcss",
+    transformer: "postcss" as const,
     postcss: {
       plugins: [autoprefixer()],
     },
   },
   base: "/",
-  define: {
-    "process.env": {},
-  },
   server: {
     port: 5173,
     open: true,
@@ -56,7 +54,6 @@ const config = {
     },
   },
   resolve: {
-    dedupe: ["@askrjs/askr", "@askrjs/ui"],
     alias: [
       {
         find: "@",
@@ -76,6 +73,6 @@ const config = {
       reporter: ["text", "json", "html"],
     },
   },
-} as UserConfig;
+};
 
 export default defineConfig(config);

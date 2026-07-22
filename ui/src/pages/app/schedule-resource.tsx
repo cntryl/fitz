@@ -1,5 +1,5 @@
 import { For, Show } from "@askrjs/askr/control";
-import { currentRoute, Link } from "@askrjs/askr/router";
+import { currentRoute } from "@askrjs/askr/router";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
 import {
   Card,
@@ -14,7 +14,7 @@ import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
-import { createDomainSidebar } from "@/components/shared/domain-sidebar";
+import { queryFreshness, queryHeaderStatus } from "@/components/shared/query-header-status";
 import {
   QueryEmptyState,
   QueryErrorState,
@@ -25,11 +25,12 @@ import { createScheduleResourceQuery } from "@/features/schedule/schedule-query"
 import type { ScheduleResourceView } from "@/features/schedule/schedule-models";
 import {
   formatDurationSeconds,
+  formatCount,
   formatNumber,
   formatRelativeTime,
   formatTimestamp,
 } from "@/shared/format";
-import { domainScopeHref, formatFitzRoute } from "@/shared/navigation/domains";
+import { formatFitzRoute } from "@/shared/navigation/domains";
 
 function decodeParam(value: string | undefined) {
   if (!value) return "";
@@ -45,23 +46,29 @@ function formatMaybeTimestamp(value?: string | null) {
   return value ? formatTimestamp(value) : "--";
 }
 
-function formatNextRun(value?: string | null) {
-  return value ? formatRelativeTime(value) : "No next run visible";
+export function formatScheduleTiming(value?: string | null, reference = Date.now()) {
+  if (!value) return "No next run scheduled";
+
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) return value;
+
+  const relative = formatRelativeTime(value, reference);
+  return timestamp >= reference ? `Next run ${relative}` : `Scheduled run was ${relative}`;
 }
 
-function listenerLabel(data: ScheduleResourceView) {
+function handoffEvidenceLabel(data: ScheduleResourceView) {
   const observations = data.executionObservations.observations.length;
   const pending = data.missedHandoffs.observations.length;
 
   if (observations > 0) {
-    return `${formatNumber(observations)} recent handoff observation(s)`;
+    return `${formatCount(observations, "recent acknowledged handoff observation")}`;
   }
 
   if (pending > 0) {
     return "Pending handoff claim visible";
   }
 
-  return "No live listeners visible";
+  return "No recent handoff observations";
 }
 
 function oldestPendingAge(data: ScheduleResourceView) {
@@ -73,22 +80,34 @@ function oldestPendingAge(data: ScheduleResourceView) {
   return oldest == null ? "--" : formatDurationSeconds(oldest);
 }
 
-function diagnosticSummary(data: ScheduleResourceView) {
-  const diagnostics = data.detail.diagnostics;
-  const parts = [
-    `severity ${diagnostics.severity}`,
-    `trend ${diagnostics.trend}`,
-    diagnostics.likely_bottleneck ? `bottleneck ${diagnostics.likely_bottleneck}` : null,
-  ].filter((part): part is string => part !== null);
+function scheduleTimingMetric(value?: string | null) {
+  if (!value) {
+    return {
+      label: "Next run",
+      value: "No next run scheduled",
+    };
+  }
 
-  return parts.join(", ");
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) {
+    return {
+      label: "Scheduled value",
+      value,
+    };
+  }
+
+  return {
+    caption: formatScheduleTiming(value),
+    label: timestamp >= Date.now() ? "Next run" : "Scheduled run",
+    value: formatTimestamp(value),
+  };
 }
 
 function ScheduleCard(props: { children: unknown; description?: string; title: string }) {
   return (
     <Card padding="sm" variant="default">
       <CardHeader>
-        <CardTitle>{props.title}</CardTitle>
+        <CardTitle titleAs="h2">{props.title}</CardTitle>
         {props.description ? <CardDescription>{props.description}</CardDescription> : null}
       </CardHeader>
       <CardContent>{props.children}</CardContent>
@@ -104,35 +123,41 @@ function ExecutionRows(props: { rows: ScheduleExecutionObservation[] }) {
   }
 
   return (
-    <div class="domain-table-wrap">
-      <Table>
-        <TableHead>
-          <TableRow>
-            <TableHeaderCell>Route</TableHeaderCell>
-            <TableHeaderCell>Status</TableHeaderCell>
-            <TableHeaderCell>Next run</TableHeaderCell>
-            <TableHeaderCell>Last run</TableHeaderCell>
-            <TableHeaderCell>Executions</TableHeaderCell>
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          <For each={props.rows} by={(row) => `${row.operation}:${row.next_run}`}>
-            {(row) => (
-              <TableRow>
-                <TableCell>
-                  <span class="domain-table-cell-truncate" title={formatFitzRoute("schedule", row)}>
-                    {formatFitzRoute("schedule", row)}
-                  </span>
-                </TableCell>
-                <TableCell>{row.status}</TableCell>
-                <TableCell>{formatMaybeTimestamp(row.next_run)}</TableCell>
-                <TableCell>{formatMaybeTimestamp(row.last_run)}</TableCell>
-                <TableCell>{formatNumber(row.executions_total)}</TableCell>
-              </TableRow>
-            )}
-          </For>
-        </TableBody>
-      </Table>
+    <div>
+      <p class="domain-scroll-hint">Scroll the table horizontally on narrow screens.</p>
+      <div class="domain-table-wrap schedule-observation-table-wrap">
+        <Table>
+          <TableHead>
+            <TableRow>
+              <TableHeaderCell>Route</TableHeaderCell>
+              <TableHeaderCell>Status</TableHeaderCell>
+              <TableHeaderCell>Scheduled time</TableHeaderCell>
+              <TableHeaderCell>Last handoff</TableHeaderCell>
+              <TableHeaderCell>Handoff count</TableHeaderCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            <For each={props.rows} by={(row) => `${row.operation}:${row.next_run}`}>
+              {(row) => (
+                <TableRow>
+                  <TableCell>
+                    <span
+                      class="domain-table-cell-truncate"
+                      title={formatFitzRoute("schedule", row)}
+                    >
+                      {formatFitzRoute("schedule", row)}
+                    </span>
+                  </TableCell>
+                  <TableCell>{row.status}</TableCell>
+                  <TableCell>{formatMaybeTimestamp(row.next_run)}</TableCell>
+                  <TableCell>{formatMaybeTimestamp(row.last_run)}</TableCell>
+                  <TableCell>{formatNumber(row.executions_total)}</TableCell>
+                </TableRow>
+              )}
+            </For>
+          </TableBody>
+        </Table>
+      </div>
     </div>
   );
 }
@@ -145,35 +170,41 @@ function MissedRows(props: { rows: ScheduleMissedObservation[] }) {
   }
 
   return (
-    <div class="domain-table-wrap">
-      <Table>
-        <TableHead>
-          <TableRow>
-            <TableHeaderCell>Route</TableHeaderCell>
-            <TableHeaderCell>Status</TableHeaderCell>
-            <TableHeaderCell>Fire at</TableHeaderCell>
-            <TableHeaderCell>Claimed at</TableHeaderCell>
-            <TableHeaderCell>Age</TableHeaderCell>
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          <For each={props.rows} by={(row) => `${row.operation}:${row.fire_ms}`}>
-            {(row) => (
-              <TableRow>
-                <TableCell>
-                  <span class="domain-table-cell-truncate" title={formatFitzRoute("schedule", row)}>
-                    {formatFitzRoute("schedule", row)}
-                  </span>
-                </TableCell>
-                <TableCell>{row.status}</TableCell>
-                <TableCell>{formatTimestamp(row.fire_at)}</TableCell>
-                <TableCell>{formatTimestamp(row.claimed_at)}</TableCell>
-                <TableCell>{formatDurationSeconds(row.age_seconds)}</TableCell>
-              </TableRow>
-            )}
-          </For>
-        </TableBody>
-      </Table>
+    <div>
+      <p class="domain-scroll-hint">Scroll the table horizontally on narrow screens.</p>
+      <div class="domain-table-wrap">
+        <Table>
+          <TableHead>
+            <TableRow>
+              <TableHeaderCell>Route</TableHeaderCell>
+              <TableHeaderCell>Status</TableHeaderCell>
+              <TableHeaderCell>Fire at</TableHeaderCell>
+              <TableHeaderCell>Claimed at</TableHeaderCell>
+              <TableHeaderCell>Age</TableHeaderCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            <For each={props.rows} by={(row) => `${row.operation}:${row.fire_ms}`}>
+              {(row) => (
+                <TableRow>
+                  <TableCell>
+                    <span
+                      class="domain-table-cell-truncate"
+                      title={formatFitzRoute("schedule", row)}
+                    >
+                      {formatFitzRoute("schedule", row)}
+                    </span>
+                  </TableCell>
+                  <TableCell>{row.status}</TableCell>
+                  <TableCell>{formatTimestamp(row.fire_at)}</TableCell>
+                  <TableCell>{formatTimestamp(row.claimed_at)}</TableCell>
+                  <TableCell>{formatDurationSeconds(row.age_seconds)}</TableCell>
+                </TableRow>
+              )}
+            </For>
+          </TableBody>
+        </Table>
+      </div>
     </div>
   );
 }
@@ -188,66 +219,40 @@ export default function ScheduleResourcePage() {
   const query = createScheduleResourceQuery({ ...ref, limit: 20 });
   const data = query.data;
   const scopeLabel = `${ref.realm} / ${ref.area} / ${ref.resource}`;
-  const sidebar = createDomainSidebar({
-    data,
-    title: "Schedule resource scope",
-    description: scopeLabel,
-    stats: (current: ScheduleResourceView) => [
-      { label: "Realm", value: current.detail.realm },
-      { label: "Area", value: current.detail.area },
-      { label: "Resource", value: current.detail.resource },
-      { label: "Enabled", value: current.detail.enabled ? "yes" : "no" },
-      {
-        label: "Next run",
-        value: current.detail.next_run ? formatRelativeTime(current.detail.next_run) : "--",
-      },
-      { label: "Listeners", value: listenerLabel(current) },
-    ],
-  });
-
+  const timingMetric = data ? scheduleTimingMetric(data.detail.next_run) : null;
   return (
-    <DomainPageFrame sidebar={sidebar}>
+    <DomainPageFrame>
       <Stack gap="3">
         <DomainHeader
           eyebrow="Schedule resource"
           title="Schedule resource inspection"
           description={`Durable timing intent and schedule-owned handoff evidence for ${scopeLabel}.`}
-          primaryAction={{ label: "Refresh resource", onPress: () => query.refresh() }}
-          status={{
-            detail: data
-              ? `${listenerLabel(data)}. Next run: ${formatNextRun(data.detail.next_run)}.`
-              : "Loading schedule resource.",
-            label: query.refreshing
-              ? "Refreshing"
-              : query.stale
-                ? "Stale"
-                : data?.detail.enabled === false
-                  ? "Disabled"
-                  : "Live",
-            tone: query.refreshing
-              ? "info"
-              : query.stale
-                ? "warning"
-                : data?.detail.enabled === false
-                  ? "warning"
-                  : "success",
+          primaryAction={{
+            busy: query.refreshing,
+            disabled: query.refreshing,
+            label: "Refresh resource",
+            onPress: () => query.refresh(),
           }}
+          status={queryHeaderStatus(
+            query,
+            {
+              loading: "Loading schedule resource.",
+              ready: data
+                ? `${handoffEvidenceLabel(data)}. ${formatScheduleTiming(data.detail.next_run)}.`
+                : "",
+              unavailable:
+                "Schedule timing and handoff evidence are unavailable for this resource.",
+            },
+            data?.detail.enabled === false
+              ? { label: "Disabled", tone: "warning" }
+              : { label: "Enabled", tone: "info" },
+          )}
         />
         <OperatorScopeStrip
           realm={ref.realm}
           area={ref.area}
           resource={ref.resource}
-          freshness={
-            query.refreshing
-              ? "Refreshing"
-              : query.stale
-                ? "Stale"
-                : data
-                  ? "Live"
-                  : query.loading
-                    ? "Loading"
-                    : undefined
-          }
+          freshness={queryFreshness(query)}
         />
 
         <Show when={!data && query.loading}>
@@ -275,27 +280,20 @@ export default function ScheduleResourcePage() {
                 metrics={[
                   { label: "Enabled", value: current.detail.enabled ? "yes" : "no" },
                   { label: "Cron", value: current.detail.cron ?? "unset" },
+                  timingMetric ?? { label: "Next run", value: "No next run scheduled" },
                   {
-                    label: "Next run",
-                    value: current.detail.next_run
-                      ? formatTimestamp(current.detail.next_run)
-                      : "No next run visible",
-                    caption: formatNextRun(current.detail.next_run),
-                  },
-                  {
-                    label: "Executions total",
+                    label: "Broker observation counter",
                     value: current.detail.executions_total,
-                    caption: "Broker-observed, non-authoritative counter",
+                    caption: "Non-authoritative; not downstream execution history",
                   },
-                  { label: "Is anyone listening?", value: listenerLabel(current) },
+                  { label: "Handoff evidence", value: handoffEvidenceLabel(current) },
                   { label: "Pending handoffs", value: current.missedHandoffs.observations.length },
                   { label: "Oldest pending claim age", value: oldestPendingAge(current) },
-                  { label: "Diagnostics", value: diagnosticSummary(current) },
                 ]}
               />
 
               <ScheduleCard
-                title="Execution observations"
+                title="Acknowledged handoff observations"
                 description="Schedule-owned handoff evidence, not durable downstream execution history."
               >
                 <ExecutionRows rows={current.executionObservations.observations} />
@@ -320,13 +318,6 @@ export default function ScheduleResourcePage() {
                   { label: "Contention", value: current.detail.diagnostics.contention_count },
                 ]}
               />
-
-              <Link
-                class="text-link"
-                href={domainScopeHref("schedule", { area: ref.area, realm: ref.realm })}
-              >
-                Back to schedule area
-              </Link>
             </Stack>
           )}
         </Show>

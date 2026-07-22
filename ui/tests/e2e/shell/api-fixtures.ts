@@ -314,7 +314,11 @@ export const domainApiSegments = new Set([
 export function normalizedAdminApiSegments(pathname: string) {
   const segments = pathname.split("/").filter(Boolean);
 
-  if (segments[0] === "api" && segments[1] === "v1" && domainApiSegments.has(segments[3] ?? "")) {
+  if (
+    segments[0] === "api" &&
+    segments[1] === "v1" &&
+    (domainApiSegments.has(segments[3] ?? "") || segments[3] === "topology")
+  ) {
     return [segments[0], segments[1], segments[3], ...segments.slice(4)];
   }
 
@@ -365,7 +369,7 @@ export function noticeDeliveriesFixture(options: {
       publishes_total: 120,
       realm: options.realm ?? "default",
       resource: options.resource ?? "primary",
-      route: "GetStatus",
+      route: options.operation ?? "GetStatus",
       session_id: "session-1",
       status: "open",
       subscription_id: 11,

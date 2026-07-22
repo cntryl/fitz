@@ -507,7 +507,7 @@ export const domainOverviews = [
     errorTitle: "Unable to load KV tables",
     loadingText: "Loading KV tables",
     resourceHref: "/admin/1/kv/default/ops/primary",
-    statLabels: ["Domain keys", "Domain txns", "Ops / sec", "Failures"],
+    statLabels: ["Domain keys", "Active txns", "Ops / sec"],
   },
   {
     assertText: "Lease inventory",
@@ -520,7 +520,7 @@ export const domainOverviews = [
     errorText: "Lease inventory unavailable",
     loadingText: "Loading lease inventory...",
     resourceHref: "/admin/1/lease/default/ops/primary",
-    statLabels: ["Active leases", "Waiters", "Oldest age", "Ops / sec", "Pressure"],
+    statLabels: ["Active leases", "Waiters", "Oldest lease"],
   },
   {
     assertText: "Notice inventory",
@@ -533,7 +533,7 @@ export const domainOverviews = [
     errorText: "Notice inventory unavailable",
     loadingText: "Loading notice inventory...",
     resourceHref: "/admin/1/notice/default/ops/primary",
-    statLabels: ["Subscriptions", "Routes", "Publishes / sec", "Drops", "Wildcard rejects"],
+    statLabels: ["Subscriptions", "Active operation routes", "Publishes / sec"],
   },
   {
     assertText: "RPC inventory",
@@ -546,7 +546,7 @@ export const domainOverviews = [
     errorText: "RPC inventory unavailable",
     loadingText: "Loading RPC inventory...",
     resourceHref: "/admin/1/rpc/default/ops/primary",
-    statLabels: ["Pending", "Workers", "Pending routes", "Timeouts", "Failures"],
+    statLabels: ["Pending", "Workers", "Ops / sec"],
   },
   {
     assertText: "Schedule inventory",
@@ -559,7 +559,7 @@ export const domainOverviews = [
     errorText: "Schedule inventory unavailable",
     loadingText: "Loading schedule inventory...",
     resourceHref: "/admin/1/schedule/default/ops/primary",
-    statLabels: ["Active", "Subscriptions", "Pending claims", "Failures", "Exec / min"],
+    statLabels: ["Active", "Pending claims", "Handoffs / min"],
   },
   {
     assertText: "Stream inventory",
@@ -572,7 +572,7 @@ export const domainOverviews = [
     errorText: "Stream inventory unavailable",
     loadingText: "Loading stream inventory",
     resourceHref: "/admin/1/stream/default/ops/primary",
-    statLabels: ["Offset", "Streams", "Subscriptions", "Watermark lag", "Ops / sec"],
+    statLabels: ["Committed events", "Streams", "Subscriptions"],
   },
   {
     assertText: "Queue inventory",
@@ -585,7 +585,7 @@ export const domainOverviews = [
     errorText: "Queue inventory unavailable",
     loadingText: "Loading queue inventory",
     resourceHref: "/admin/1/queue/default/ops/primary",
-    statLabels: ["Ready", "Delayed", "In flight", "Dead-lettered", "Oldest"],
+    statLabels: ["Ready", "In flight", "Dead letters"],
   },
 ];
 
@@ -600,7 +600,12 @@ export const systemOverview = {
   diagnostics,
   domains: {
     kv: kvOverview.stats,
-    lease: leaseOverview.stats,
+    lease: {
+      ...leaseOverview.stats,
+      failureTotal: 0,
+      requestsTotal: 1,
+      successTotal: 1,
+    },
     notice: {
       ...noticeOverview.stats,
       deliveryDropsTotal: 0,
@@ -746,56 +751,6 @@ export const queueResource = {
     area: "ops",
     resource: "primary",
   },
-};
-
-export const queueComparison = {
-  comparisonMode: "resource",
-  delta: {
-    ageSeconds: 0,
-    backlog: 0,
-    deadLetters: 0,
-    delayed: 0,
-    inflight: 0,
-    ready: 0,
-    recentTransitionCount: 0,
-    waiters: 0,
-  },
-  derived: false,
-  left: {
-    metrics: {
-      ageSeconds: 30,
-      backlog: 3,
-      deadLetters: 0,
-      delayed: 1,
-      inflight: 2,
-      ready: 3,
-      recentTransitionCount: 0,
-      waiters: 0,
-    },
-    scope: {
-      area: "ops",
-      realm: "default",
-      resource: "primary",
-    },
-  },
-  right: {
-    metrics: {
-      ageSeconds: 30,
-      backlog: 3,
-      deadLetters: 0,
-      delayed: 1,
-      inflight: 2,
-      ready: 3,
-      recentTransitionCount: 0,
-      waiters: 0,
-    },
-    scope: {
-      area: "ops",
-      realm: "default",
-      resource: "secondary",
-    },
-  },
-  summary: "Snapshots match",
 };
 
 export const leaseRealm = {

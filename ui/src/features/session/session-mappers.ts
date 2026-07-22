@@ -1,4 +1,4 @@
-import type { LoginRequest, SessionInfo, SessionResponse } from "@/adapters/generated/types";
+import type { LoginRequest, SessionInfo, SessionResponse } from "@/adapters";
 import type {
   ActiveSession,
   ActiveSessionsOverview,
@@ -9,6 +9,7 @@ import type {
 // Explicit mapper boundary: snake_case DTO fields stop here.
 export function mapSessionResponse(dto: SessionResponse): SessionState {
   return {
+    authRequired: true,
     authenticated: dto.authenticated,
     routeFamilies: dto.route_families,
     routeFamiliesWildcard: dto.route_families_wildcard,

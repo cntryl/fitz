@@ -1,4 +1,4 @@
-import { apiv1 } from "@/adapters";
+import { apiParams, apiParamsQuery, apiv1 } from "@/adapters";
 import type { NoticeDeliveryObservationList } from "@/adapters";
 import {
   mapNoticeAreaResourceRows,
@@ -58,8 +58,8 @@ async function mapWithConcurrency<T, R>(
 async function getOverview(options: ServiceRequestOptions = {}): Promise<NoticeOverview> {
   const family = apiRouteFamilySegment();
   const [realmsResponse, statsResponse] = await Promise.all([
-    apiv1.listNoticeRealms(family, options),
-    apiv1.getNoticeStats(family, options),
+    apiv1.listNoticeRealms(apiParams({ family }, options)),
+    apiv1.getNoticeStats(apiParams({ family }, options)),
   ]);
 
   return mapNoticeOverview(
@@ -74,7 +74,7 @@ async function listNoticeAreas(
 ): Promise<NoticeRealmInventory> {
   const { family, requestOptions } = splitRouteFamilyOption(options);
   const areaEntries = unwrapResponse(
-    await apiv1.listNoticeAreas(family, realm, requestOptions),
+    await apiv1.listNoticeAreas(apiParams({ family, realm }, requestOptions)),
     `Unable to load notice areas for ${realm}`,
   ).areas;
 
@@ -82,7 +82,7 @@ async function listNoticeAreas(
     areaEntries,
     async ({ area }) => {
       const resources = unwrapResponse(
-        await apiv1.listNoticeResources(family, realm, area, requestOptions),
+        await apiv1.listNoticeResources(apiParams({ area, family, realm }, requestOptions)),
         `Unable to load notice resources for ${realm}/${area}`,
       ).resources;
 
@@ -101,7 +101,7 @@ async function listNoticeResources(
 ): Promise<NoticeAreaResourceRows> {
   const { family, requestOptions } = splitRouteFamilyOption(options);
   const resources = unwrapResponse(
-    await apiv1.listNoticeResources(family, realm, area, requestOptions),
+    await apiv1.listNoticeResources(apiParams({ area, family, realm }, requestOptions)),
     `Unable to load notice resources for ${realm}/${area}`,
   ).resources;
 
@@ -114,15 +114,17 @@ async function searchDeliveries(
 ): Promise<NoticeDeliveryObservationList> {
   return unwrapResponse(
     await apiv1.searchNoticeDeliveries(
-      apiRouteFamilySegment(request.routeFamily),
-      {
-        area: request.area,
-        limit: request.limit,
-        q: request.query,
-        realm: request.realm,
-        resource: request.resource,
-      },
-      options,
+      apiParamsQuery(
+        { family: apiRouteFamilySegment(request.routeFamily) },
+        {
+          area: request.area,
+          limit: request.limit,
+          q: request.query,
+          realm: request.realm,
+          resource: request.resource,
+        },
+        options,
+      ),
     ),
     "Unable to search notice delivery evidence",
   );

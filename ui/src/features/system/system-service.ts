@@ -1,4 +1,4 @@
-import { apiv1 } from "@/adapters";
+import { apiParams, apiv1 } from "@/adapters";
 import { unwrapResponse, type ServiceRequestOptions } from "@/shared/errors/api";
 import { mapSystemOverview } from "./system-mappers";
 import type { SystemOverview } from "./system-models";
@@ -9,8 +9,8 @@ async function getOverview(
   options: ServiceRequestOptions = {},
 ): Promise<SystemOverview> {
   const [statsResponse, metricsResponse] = await Promise.all([
-    apiv1.getFamilyStats(family, options),
-    apiv1.getFamilyMetrics(family, options),
+    apiv1.getFamilyStats(apiParams({ family }, options)),
+    apiv1.getFamilyMetrics(apiParams({ family }, options)),
   ]);
 
   return mapSystemOverview(

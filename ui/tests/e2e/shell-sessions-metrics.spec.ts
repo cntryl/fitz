@@ -25,6 +25,23 @@ test("captures the mobile navbar panel", async ({ page }, testInfo) => {
   });
 });
 
+test("operates the mobile navigation disclosure from the keyboard", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openDashboard(page);
+  const primaryNav = page.getByRole("navigation", { name: "Primary navigation" });
+  const navigationToggle = primaryNav.getByRole("button", { name: "Navigation menu" });
+
+  await expect(navigationToggle).toHaveAttribute("aria-expanded", "false");
+  await navigationToggle.focus();
+  await navigationToggle.press("Enter");
+  await expect(navigationToggle).toHaveAttribute("aria-expanded", "true");
+  await expect(primaryNav.getByRole("link", { name: "Overview" })).toBeVisible();
+
+  await navigationToggle.press("Escape");
+  await expect(navigationToggle).toHaveAttribute("aria-expanded", "false");
+  await expect(primaryNav.getByRole("link", { name: "Overview" })).toBeHidden();
+});
+
 test("captures sessions data state", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1200 });
   await mockSessionsApi(page, sessionsWithData);
@@ -80,6 +97,12 @@ test("captures metrics desktop", async ({ page }, testInfo) => {
   await expect(page.getByRole("heading", { name: "Metrics explorer" })).toBeVisible();
   await expect(page.locator('input[aria-label="Filter metrics"]')).toBeVisible();
   await expect(page.getByRole("button", { name: "Refresh metrics" })).toBeVisible();
+  const structuredPayload = page.getByRole("button", { name: "View structured payload" });
+  await expect(structuredPayload).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator("pre.resource-raw")).toHaveCount(0);
+  await structuredPayload.press("Enter");
+  await expect(structuredPayload).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator("pre.resource-raw")).toBeVisible();
 
   await page.screenshot({
     fullPage: true,

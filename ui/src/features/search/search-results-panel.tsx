@@ -16,13 +16,14 @@ import {
   QueryErrorState,
   QueryLoadingState,
 } from "@/components/shared/query-state";
-import { formatFitzRoute } from "@/shared/navigation/domains";
+import { formatFitzRoute, pathWithRouteFamily } from "@/shared/navigation/domains";
 import type { AdminSearchResult, AdminSearchResults } from "./search-models";
 
 export interface SearchResultsPanelProps {
   error?: unknown;
   loading?: boolean;
   onRetry: () => void;
+  routeFamilyId: string;
   routeFamilyLabel: string;
   search?: AdminSearchResults | null;
 }
@@ -36,65 +37,83 @@ function titleCase(value: string) {
 }
 
 function routeText(result: AdminSearchResult) {
-  return formatFitzRoute(result.domain, result);
+  const hasDomainRoute = Boolean(
+    result.realm || result.area || result.resource || result.operation,
+  );
+
+  if (hasDomainRoute) return formatFitzRoute(result.domain, result);
+  if (result.routeFamily) return `Route Family ${result.routeFamily}`;
+  return "Broker";
 }
 
-const searchColumns: readonly VirtualTableColumn<AdminSearchResult>[] = [
-  {
-    id: "result",
-    header: "Result",
-    width: "28%",
-    cellComponent: ({ row }) => (
-      <Stack gap="1">
-        <strong class="domain-table-cell-truncate">{row.title}</strong>
-        <span class="domain-muted">
-          {titleCase(row.domain)} · {titleCase(row.kind)}
+function resultHref(result: AdminSearchResult, selectedRouteFamilyId: string) {
+  const target = new URL(result.href, "http://fitz.local");
+  const family = result.routeFamily || selectedRouteFamilyId;
+
+  return `${pathWithRouteFamily(target.pathname, family)}${target.search}${target.hash}`;
+}
+
+function searchColumns(
+  selectedRouteFamilyId: string,
+): readonly VirtualTableColumn<AdminSearchResult>[] {
+  return [
+    {
+      id: "result",
+      header: "Result",
+      width: "28%",
+      cellComponent: ({ row }) => (
+        <Stack gap="1">
+          <strong class="domain-table-cell-truncate">{row.title}</strong>
+          <span class="domain-muted">
+            {titleCase(row.domain)} · {titleCase(row.kind)}
+          </span>
+        </Stack>
+      ),
+    },
+    {
+      id: "route",
+      header: "Route",
+      width: "27%",
+      cellComponent: ({ row }) => (
+        <span class="domain-table-cell-truncate" title={routeText(row)}>
+          {routeText(row) || row.routeFamily || "Broker"}
         </span>
-      </Stack>
-    ),
-  },
-  {
-    id: "route",
-    header: "Route",
-    width: "27%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate" title={routeText(row)}>
-        {routeText(row) || row.routeFamily || "Broker"}
-      </span>
-    ),
-  },
-  {
-    id: "summary",
-    header: "Summary",
-    width: "28%",
-    cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.summary}</span>,
-  },
-  {
-    id: "health",
-    header: "Health",
-    width: "9%",
-    cellComponent: ({ row }) => (
-      <Badge variant={row.health === "failing" || row.health === "stale" ? "warning" : "outline"}>
-        {row.health ? titleCase(row.health) : "Observed"}
-      </Badge>
-    ),
-  },
-  {
-    id: "action",
-    header: "Action",
-    width: "8%",
-    cellComponent: ({ row }) => (
-      <Link class="text-link" href={row.href}>
-        Open
-      </Link>
-    ),
-  },
-];
+      ),
+    },
+    {
+      id: "summary",
+      header: "Summary",
+      width: "28%",
+      cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.summary}</span>,
+    },
+    {
+      id: "health",
+      header: "Health",
+      width: "9%",
+      cellComponent: ({ row }) => (
+        <Badge variant={row.health === "failing" || row.health === "stale" ? "warning" : "outline"}>
+          {row.health ? titleCase(row.health) : "Observed"}
+        </Badge>
+      ),
+    },
+    {
+      id: "action",
+      header: "Action",
+      width: "8%",
+      cellComponent: ({ row }) => (
+        <Link class="text-link" href={resultHref(row, selectedRouteFamilyId)}>
+          Open
+        </Link>
+      ),
+    },
+  ];
+}
 
 export default function SearchResultsPanel({
   error,
   loading = false,
   onRetry,
+  routeFamilyId,
   routeFamilyLabel,
   search,
 }: SearchResultsPanelProps) {
@@ -108,7 +127,7 @@ export default function SearchResultsPanel({
       <CardHeader>
         <Inline justify="between" align="start" gap="3" wrap="wrap">
           <Stack gap="1">
-            <CardTitle>Search results</CardTitle>
+            <CardTitle titleAs="h2">Search results</CardTitle>
             <CardDescription>{description}</CardDescription>
           </Stack>
           <Inline gap="2" align="center" wrap="wrap">
@@ -134,7 +153,7 @@ export default function SearchResultsPanel({
           <Stack gap="3">
             <VirtualTable<AdminSearchResult>
               aria-label="Admin search results"
-              columns={searchColumns}
+              columns={searchColumns(routeFamilyId)}
               rows={results}
               getKey={(row) => row.id}
               headerHeight={44}

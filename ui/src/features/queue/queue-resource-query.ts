@@ -1,6 +1,5 @@
-import { createQuery, queryScope } from "@askrjs/askr/data";
+import { createQuery, defineQuery, queryScope } from "@askrjs/askr/data";
 import { queueResourceService } from "./queue-resource-service";
-import { stableQueryFetch, type QueryFetch } from "@/shared/query-fetch";
 import { currentRouteFamilySegment } from "@/shared/navigation/domains";
 import type {
   QueueResourceComparison,
@@ -13,24 +12,27 @@ import type {
 export type { QueueResourceRef } from "./queue-resource-models";
 
 const queueResourceQueries = queryScope("queue");
-const queueResourceFetches = new Map<string, QueryFetch<QueueResourceOverview>>();
-const queueResourceTimelineFetches = new Map<string, QueryFetch<QueueResourceTimeline>>();
-const queueResourceComparisonFetches = new Map<string, QueryFetch<QueueResourceComparison>>();
 
-export function queueResourceQueryKey(resourceRef: QueueResourceRef) {
+export function queueResourceQueryKey(
+  resourceRef: QueueResourceRef,
+  family = currentRouteFamilySegment(),
+) {
   return queueResourceQueries.key(
     "resource",
-    currentRouteFamilySegment(),
+    family,
     resourceRef.realm,
     resourceRef.area,
     resourceRef.resource,
   );
 }
 
-export function queueResourceTimelineQueryKey(resourceRef: QueueResourceRef) {
+export function queueResourceTimelineQueryKey(
+  resourceRef: QueueResourceRef,
+  family = currentRouteFamilySegment(),
+) {
   return queueResourceQueries.key(
     "resource",
-    currentRouteFamilySegment(),
+    family,
     resourceRef.realm,
     resourceRef.area,
     resourceRef.resource,
@@ -41,10 +43,11 @@ export function queueResourceTimelineQueryKey(resourceRef: QueueResourceRef) {
 export function queueResourceComparisonQueryKey(
   resourceRef: QueueResourceRef,
   againstResourceRef: QueueResourceComparisonSide["scope"],
+  family = currentRouteFamilySegment(),
 ) {
   return queueResourceQueries.key(
     "resource",
-    currentRouteFamilySegment(),
+    family,
     resourceRef.realm,
     resourceRef.area,
     resourceRef.resource,
@@ -56,33 +59,52 @@ export function queueResourceComparisonQueryKey(
   );
 }
 
-export function createQueueResourceQuery(resourceRef: QueueResourceRef) {
-  const key = queueResourceQueryKey(resourceRef);
+interface QueueResourceQueryInput {
+  family: string;
+  resourceRef: QueueResourceRef;
+}
 
-  return createQuery<QueueResourceOverview>({
-    key,
-    fetch: stableQueryFetch(
-      queueResourceFetches,
-      key,
-      () =>
-        ({ signal }) =>
-          queueResourceService.getResource(resourceRef, { signal }),
+interface QueueResourceComparisonQueryInput extends QueueResourceQueryInput {
+  againstResourceRef: QueueResourceComparisonSide["scope"];
+}
+
+const queueResourceQuery = defineQuery<QueueResourceQueryInput, QueueResourceOverview>({
+  key: ({ family, resourceRef }) => queueResourceQueryKey(resourceRef, family),
+  fetch: ({ resourceRef, signal }) => queueResourceService.getResource(resourceRef, { signal }),
+});
+
+const queueResourceTimelineQuery = defineQuery<QueueResourceQueryInput, QueueResourceTimeline>({
+  key: ({ family, resourceRef }) => queueResourceTimelineQueryKey(resourceRef, family),
+  fetch: ({ resourceRef, signal }) => queueResourceService.getTimeline(resourceRef, { signal }),
+});
+
+const queueResourceComparisonQuery = defineQuery<
+  QueueResourceComparisonQueryInput,
+  QueueResourceComparison
+>({
+  key: ({ againstResourceRef, family, resourceRef }) =>
+    queueResourceComparisonQueryKey(resourceRef, againstResourceRef, family),
+  fetch: ({ againstResourceRef, resourceRef, signal }) =>
+    queueResourceService.compareResource(
+      resourceRef,
+      {
+        area: againstResourceRef.area,
+        family: againstResourceRef.family,
+        realm: againstResourceRef.realm,
+        resource: againstResourceRef.resource,
+      },
+      { signal },
     ),
-  });
+});
+
+export function createQueueResourceQuery(resourceRef: QueueResourceRef) {
+  return createQuery(queueResourceQuery, { family: currentRouteFamilySegment(), resourceRef });
 }
 
 export function createQueueResourceTimelineQuery(resourceRef: QueueResourceRef) {
-  const key = queueResourceTimelineQueryKey(resourceRef);
-
-  return createQuery<QueueResourceTimeline>({
-    key,
-    fetch: stableQueryFetch(
-      queueResourceTimelineFetches,
-      key,
-      () =>
-        ({ signal }) =>
-          queueResourceService.getTimeline(resourceRef, { signal }),
-    ),
+  return createQuery(queueResourceTimelineQuery, {
+    family: currentRouteFamilySegment(),
+    resourceRef,
   });
 }
 
@@ -90,25 +112,9 @@ export function createQueueResourceComparisonQuery(
   resourceRef: QueueResourceRef,
   againstResourceRef: QueueResourceComparisonSide["scope"],
 ) {
-  const key = queueResourceComparisonQueryKey(resourceRef, againstResourceRef);
-
-  return createQuery<QueueResourceComparison>({
-    key,
-    fetch: stableQueryFetch(
-      queueResourceComparisonFetches,
-      key,
-      () =>
-        ({ signal }) =>
-          queueResourceService.compareResource(
-            resourceRef,
-            {
-              area: againstResourceRef.area,
-              family: againstResourceRef.family,
-              realm: againstResourceRef.realm,
-              resource: againstResourceRef.resource,
-            },
-            { signal },
-          ),
-    ),
+  return createQuery(queueResourceComparisonQuery, {
+    againstResourceRef,
+    family: currentRouteFamilySegment(),
+    resourceRef,
   });
 }

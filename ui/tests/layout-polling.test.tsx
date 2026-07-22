@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { cleanupApp, createSPA } from "@askrjs/askr/boot";
 import { createInvalidationRecorder } from "@askrjs/askr/testing";
+import { SYSTEM_OVERVIEW_KEY } from "@/features/system/system-query";
 import { MESSAGING_TOPOLOGY_KEY } from "@/features/topology/topology-query";
 import RootLayout from "@/pages/_layout";
 import { appConfig } from "@/shared/config";
@@ -20,7 +21,7 @@ function LayoutHarness() {
   );
 }
 
-async function mountLayout(path: string) {
+async function mountLayout(path: string, routePath = path) {
   cleanupApp("app");
   document.body.innerHTML = '<div id="app"></div>';
   window.history.pushState({}, "", path);
@@ -32,7 +33,7 @@ async function mountLayout(path: string) {
 
   await createSPA({
     root,
-    routes: [{ handler: LayoutHarness, path }],
+    routes: [{ handler: LayoutHarness, path: routePath }],
   });
 
   await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
@@ -47,18 +48,22 @@ afterEach(() => {
 });
 
 describe("root layout dashboard polling", () => {
-  it("invalidates topology on the dashboard route interval", async () => {
+  it("invalidates overview sources on the family dashboard route interval", async () => {
     vi.useFakeTimers();
     const recorder = createInvalidationRecorder();
 
     try {
-      await mountLayout("/");
+      await mountLayout("/admin/1", "/admin/{family}");
       vi.advanceTimersByTime(appConfig.dashboardPollIntervalMs);
 
       expect(recorder.calls).toEqual([
         {
           markPendingWrite: false,
           prefix: MESSAGING_TOPOLOGY_KEY,
+        },
+        {
+          markPendingWrite: false,
+          prefix: SYSTEM_OVERVIEW_KEY,
         },
       ]);
     } finally {
@@ -71,7 +76,7 @@ describe("root layout dashboard polling", () => {
     const recorder = createInvalidationRecorder();
 
     try {
-      await mountLayout("/admin/metrics");
+      await mountLayout("/admin/1/metrics", "/admin/{family}/metrics");
       vi.advanceTimersByTime(appConfig.dashboardPollIntervalMs);
 
       expect(recorder.calls).toEqual([]);
@@ -80,13 +85,13 @@ describe("root layout dashboard polling", () => {
     }
   });
 
-  it("does not invalidate topology while the document is hidden", async () => {
+  it("does not invalidate overview sources while the document is hidden", async () => {
     vi.useFakeTimers();
     setDocumentVisibility("hidden");
     const recorder = createInvalidationRecorder();
 
     try {
-      await mountLayout("/");
+      await mountLayout("/admin/1", "/admin/{family}");
       vi.advanceTimersByTime(appConfig.dashboardPollIntervalMs);
 
       expect(recorder.calls).toEqual([]);

@@ -2,6 +2,10 @@ export function formatNumber(value: number) {
   return new Intl.NumberFormat("en-US").format(value);
 }
 
+export function formatCount(value: number, singular: string, plural = `${singular}s`) {
+  return `${formatNumber(value)} ${value === 1 ? singular : plural}`;
+}
+
 export function formatDisplayValue(value: string | number) {
   return typeof value === "number" ? formatNumber(value) : value;
 }

@@ -1,5 +1,4 @@
-import { createQuery, queryScope } from "@askrjs/askr/data";
-import { stableQueryFetch, type QueryFetch } from "@/shared/query-fetch";
+import { createQuery, defineQuery, queryScope } from "@askrjs/askr/data";
 import { scheduleService } from "./schedule-service";
 import type { ScheduleExecutionObservationList, ScheduleMissedObservationList } from "@/adapters";
 import type {
@@ -11,11 +10,6 @@ import type {
 import { currentRouteFamilySegment } from "@/shared/navigation/domains";
 
 const scheduleQueries = queryScope("schedule");
-const scheduleRealmFetches = new Map<string, QueryFetch<ScheduleRealmInventory>>();
-const scheduleAreaFetches = new Map<string, QueryFetch<ScheduleAreaInventory>>();
-const scheduleResourceFetches = new Map<string, QueryFetch<ScheduleResourceView>>();
-const scheduleExecutionFetches = new Map<string, QueryFetch<ScheduleExecutionObservationList>>();
-const scheduleMissedFetches = new Map<string, QueryFetch<ScheduleMissedObservationList>>();
 
 export function scheduleRealmQueryKey(realm: string, family = currentRouteFamilySegment()) {
   return scheduleQueries.key("realm", family, realm);
@@ -71,43 +65,72 @@ export function scheduleMissedHandoffsQueryKey(
   );
 }
 
-export function createScheduleOverviewQuery() {
-  const key = scheduleQueries.key("overview", currentRouteFamilySegment());
+const scheduleOverviewQuery = defineQuery<{ family: string }, ScheduleOverview>({
+  key: ({ family }) => scheduleQueries.key("overview", family),
+  fetch: ({ signal }) => scheduleService.getOverview({ signal }),
+});
 
-  return createQuery<ScheduleOverview>({
-    key,
-    fetch: scheduleService.getOverview,
-  });
+const scheduleRealmQuery = defineQuery<{ family: string; realm: string }, ScheduleRealmInventory>({
+  key: ({ family, realm }) => scheduleRealmQueryKey(realm, family),
+  fetch: ({ realm, signal }) => scheduleService.listScheduleAreas(realm, { signal }),
+});
+
+const scheduleAreaQuery = defineQuery<
+  { area: string; family: string; realm: string },
+  ScheduleAreaInventory
+>({
+  key: ({ area, family, realm }) => scheduleAreaQueryKey(realm, area, family),
+  fetch: ({ area, realm, signal }) =>
+    scheduleService.listScheduleResources(realm, area, { signal }),
+});
+
+interface ScheduleResourceQueryInput {
+  area: string;
+  family: string;
+  limit: number;
+  realm: string;
+  resource: string;
+}
+
+const scheduleResourceQuery = defineQuery<ScheduleResourceQueryInput, ScheduleResourceView>({
+  key: ({ family, ...request }) => scheduleResourceQueryKey(request, family),
+  fetch: ({ family, signal, ...request }) =>
+    scheduleService.getScheduleResource({ ...request, routeFamily: family }, { signal }),
+});
+
+const scheduleExecutionQuery = defineQuery<
+  ScheduleResourceQueryInput,
+  ScheduleExecutionObservationList
+>({
+  key: ({ family, ...request }) => scheduleExecutionObservationsQueryKey(request, family),
+  fetch: ({ family, signal, ...request }) =>
+    scheduleService.listExecutionObservations({ ...request, routeFamily: family }, { signal }),
+});
+
+interface ScheduleMissedQueryInput {
+  area?: string;
+  family: string;
+  limit: number;
+  realm?: string;
+  resource?: string;
+}
+
+const scheduleMissedQuery = defineQuery<ScheduleMissedQueryInput, ScheduleMissedObservationList>({
+  key: ({ family, ...request }) => scheduleMissedHandoffsQueryKey(request, family),
+  fetch: ({ family, signal, ...request }) =>
+    scheduleService.searchMissedHandoffs({ ...request, routeFamily: family }, { signal }),
+});
+
+export function createScheduleOverviewQuery() {
+  return createQuery(scheduleOverviewQuery, { family: currentRouteFamilySegment() });
 }
 
 export function createScheduleRealmQuery(realm: string) {
-  const key = scheduleRealmQueryKey(realm);
-
-  return createQuery<ScheduleRealmInventory>({
-    key,
-    fetch: stableQueryFetch(
-      scheduleRealmFetches,
-      key,
-      () =>
-        ({ signal }) =>
-          scheduleService.listScheduleAreas(realm, { signal }),
-    ),
-  });
+  return createQuery(scheduleRealmQuery, { family: currentRouteFamilySegment(), realm });
 }
 
 export function createScheduleAreaQuery(realm: string, area: string) {
-  const key = scheduleAreaQueryKey(realm, area);
-
-  return createQuery<ScheduleAreaInventory>({
-    key,
-    fetch: stableQueryFetch(
-      scheduleAreaFetches,
-      key,
-      () =>
-        ({ signal }) =>
-          scheduleService.listScheduleResources(realm, area, { signal }),
-    ),
-  });
+  return createQuery(scheduleAreaQuery, { area, family: currentRouteFamilySegment(), realm });
 }
 
 export function createScheduleResourceQuery(request: {
@@ -117,20 +140,10 @@ export function createScheduleResourceQuery(request: {
   resource: string;
 }) {
   const limit = request.limit ?? 20;
-  const key = scheduleResourceQueryKey({ ...request, limit });
-
-  return createQuery<ScheduleResourceView>({
-    key,
-    fetch: stableQueryFetch(
-      scheduleResourceFetches,
-      key,
-      () =>
-        ({ signal }) =>
-          scheduleService.getScheduleResource(
-            { ...request, limit, routeFamily: currentRouteFamilySegment() },
-            { signal },
-          ),
-    ),
+  return createQuery(scheduleResourceQuery, {
+    ...request,
+    family: currentRouteFamilySegment(),
+    limit,
   });
 }
 
@@ -141,20 +154,10 @@ export function createScheduleExecutionObservationsQuery(request: {
   resource: string;
 }) {
   const limit = request.limit ?? 20;
-  const key = scheduleExecutionObservationsQueryKey({ ...request, limit });
-
-  return createQuery<ScheduleExecutionObservationList>({
-    key,
-    fetch: stableQueryFetch(
-      scheduleExecutionFetches,
-      key,
-      () =>
-        ({ signal }) =>
-          scheduleService.listExecutionObservations(
-            { ...request, limit, routeFamily: currentRouteFamilySegment() },
-            { signal },
-          ),
-    ),
+  return createQuery(scheduleExecutionQuery, {
+    ...request,
+    family: currentRouteFamilySegment(),
+    limit,
   });
 }
 
@@ -165,19 +168,9 @@ export function createScheduleMissedHandoffsQuery(request: {
   resource?: string;
 }) {
   const limit = request.limit ?? 20;
-  const key = scheduleMissedHandoffsQueryKey({ ...request, limit });
-
-  return createQuery<ScheduleMissedObservationList>({
-    key,
-    fetch: stableQueryFetch(
-      scheduleMissedFetches,
-      key,
-      () =>
-        ({ signal }) =>
-          scheduleService.searchMissedHandoffs(
-            { ...request, limit, routeFamily: currentRouteFamilySegment() },
-            { signal },
-          ),
-    ),
+  return createQuery(scheduleMissedQuery, {
+    ...request,
+    family: currentRouteFamilySegment(),
+    limit,
   });
 }

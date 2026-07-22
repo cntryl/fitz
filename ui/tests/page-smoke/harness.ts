@@ -63,6 +63,10 @@ vi.mock("@/features/metrics/metrics-query", () => ({
   createMetricsOverviewQuery: () => mocks.queryStates.metrics,
 }));
 
+vi.mock("@/features/search/search-query", () => ({
+  createAdminSearchQuery: () => mocks.queryStates.search,
+}));
+
 vi.mock("@/features/queue/queue-query", () => ({
   createQueueDeadLettersQuery: () => mocks.queryStates.queueDeadLetters,
   createQueueAreaQuery: () => mocks.queryStates.queueArea,
@@ -72,7 +76,6 @@ vi.mock("@/features/queue/queue-query", () => ({
 }));
 
 vi.mock("@/features/queue/queue-resource-query", () => ({
-  createQueueResourceComparisonQuery: () => mocks.queryStates.queueComparison,
   createQueueResourceQuery: () => mocks.queryStates.queueResource,
   createQueueResourceTimelineQuery: () => mocks.queryStates.queueTimeline,
 }));
@@ -88,6 +91,10 @@ vi.mock("@/features/kv/kv-query", () => ({
 
 vi.mock("@/features/kv/kv-rows-query", () => ({
   createKvRowsQuery: () => mocks.queryStates.kvRows,
+}));
+
+vi.mock("@/features/kv/kv-value-query", () => ({
+  createKvValueQuery: () => mocks.queryStates.kvValue,
 }));
 
 vi.mock("@/features/lease/lease-query", () => ({
@@ -149,7 +156,6 @@ import {
   noticeRealmInventory,
   noticeResourceRows,
   queueAreaDetail,
-  queueComparison,
   queueInventory,
   queueOverview,
   queueRealmDetail,
@@ -173,11 +179,55 @@ import {
 } from "./fixtures";
 
 export function resetQueries() {
-  mocks.queryStates.currentSession = queryState.fresh({ username: "admin" }, queryOptions());
+  mocks.queryStates.currentSession = queryState.fresh(
+    {
+      authenticated: true,
+      routeFamilies: ["1"],
+      routeFamiliesWildcard: false,
+      username: "admin",
+    },
+    queryOptions(),
+  );
   mocks.queryStates.activeSessions = queryState.fresh(activeSessions, queryOptions());
   mocks.queryStates.system = queryState.fresh(systemOverview, queryOptions());
   mocks.queryStates.topology = queryState.fresh(topologyOverview, queryOptions());
   mocks.queryStates.metrics = queryState.fresh(metricsOverview, queryOptions());
+  mocks.queryStates.search = queryState.fresh(
+    {
+      limit: 100,
+      query: "orders",
+      results: [
+        {
+          domain: "sessions",
+          health: "live",
+          href: "/sessions",
+          id: "session:1:session-1",
+          kind: "session",
+          matchedFields: ["session_id"],
+          metadata: {},
+          routeFamily: "1",
+          summary: "Active broker session",
+          title: "session-1",
+        },
+        {
+          domain: "kv",
+          href: "/kv?realm=acme",
+          id: "kv:1:acme",
+          kind: "realm",
+          matchedFields: ["realm"],
+          metadata: {},
+          realm: "acme",
+          routeFamily: "1",
+          summary: "KV realm",
+          title: "acme",
+        },
+      ],
+      routeFamily: "1",
+      total: 2,
+      truncated: false,
+    },
+    queryOptions(),
+  );
   mocks.queryStates.queue = queryState.fresh(queueOverview, queryOptions());
   mocks.queryStates.queueArea = queryState.fresh(queueAreaDetail, queryOptions());
   mocks.queryStates.queueDeadLetters = queryState.fresh([], queryOptions());
@@ -185,7 +235,6 @@ export function resetQueries() {
   mocks.queryStates.queueRealm = queryState.fresh(queueRealmDetail, queryOptions());
   mocks.queryStates.queueResource = queryState.fresh(queueResource, queryOptions());
   mocks.queryStates.queueTimeline = queryState.fresh(queueResource.timeline, queryOptions());
-  mocks.queryStates.queueComparison = queryState.fresh(queueComparison, queryOptions());
   mocks.queryStates.kv = queryState.fresh(kvOverview, queryOptions());
   mocks.queryStates.lease = queryState.fresh(leaseOverview, queryOptions());
   mocks.queryStates.leaseRealm = queryState.fresh(leaseRealm, queryOptions());
@@ -223,6 +272,18 @@ export function resetQueries() {
   mocks.queryStates.inventory = queryState.fresh(inventory, queryOptions());
   mocks.queryStates.resource = queryState.fresh(resourceDetail, queryOptions());
   mocks.queryStates.kvRows = queryState.fresh(kvRows, queryOptions());
+  mocks.queryStates.kvValue = queryState.fresh(
+    {
+      area: "ops",
+      found: true,
+      key: kvRows.items[0]?.key,
+      realm: "default",
+      resource: "primary",
+      routeFamily: 1,
+      value: kvRows.items[0]?.value,
+    },
+    queryOptions(),
+  );
   mocks.mutation.error = null;
   mocks.mutation.pending = false;
   mocks.mutation.result = null;

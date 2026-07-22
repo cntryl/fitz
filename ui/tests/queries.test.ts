@@ -81,10 +81,7 @@ import {
   streamRealmQueryKey,
   streamResourceQueryKey,
 } from "@/features/stream/stream-query";
-import {
-  createResourceInventoryQuery,
-  createResourceQuery,
-} from "@/features/resource/resource-query";
+import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 import { resourceService } from "@/features/resource/resource-service";
 import { createMetricsOverviewQuery } from "@/features/metrics/metrics-query";
 import { metricsService } from "@/features/metrics/metrics-service";
@@ -283,8 +280,6 @@ describe("Data query layer", () => {
     expect(typeof createMessagingTopologyQuery).toBe("function");
     expect(createResourceInventoryQuery).toBeDefined();
     expect(typeof createResourceInventoryQuery).toBe("function");
-    expect(createResourceQuery).toBeDefined();
-    expect(typeof createResourceQuery).toBe("function");
     expect(createMetricsOverviewQuery).toBeDefined();
     expect(typeof createMetricsOverviewQuery).toBe("function");
 
@@ -326,8 +321,6 @@ describe("Data query layer", () => {
     expect(typeof queueResourceService.getResource).toBe("function");
     expect(resourceService.getResourceInventory).toBeDefined();
     expect(typeof resourceService.getResourceInventory).toBe("function");
-    expect(resourceService.getResource).toBeDefined();
-    expect(typeof resourceService.getResource).toBe("function");
     expect(metricsService.getOverview).toBeDefined();
     expect(typeof metricsService.getOverview).toBe("function");
     expect(systemService.getOverview).toBeDefined();

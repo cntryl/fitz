@@ -15,6 +15,18 @@ export interface SessionTableProps {
   sessions: ActiveSession[];
 }
 
+function reportedText(value: string | null | undefined) {
+  return value && value.length > 0 ? value : "Not reported";
+}
+
+function messageCounts(session: ActiveSession) {
+  if (session.messagesSent === undefined && session.messagesReceived === undefined) {
+    return "Not reported";
+  }
+
+  return `${session.messagesSent ?? "--"} sent / ${session.messagesReceived ?? "--"} received`;
+}
+
 function formatDuration(value?: number) {
   if (value == null) {
     return "Unknown";
@@ -66,8 +78,8 @@ export default function SessionTable({ sessions }: SessionTableProps) {
       header: "Subject",
       width: "11%",
       cellComponent: ({ row }) => (
-        <span class="session-table-cell-truncate" title={row.subject || "Unauthenticated"}>
-          {row.subject || "Unauthenticated"}
+        <span class="session-table-cell-truncate" title={reportedText(row.subject)}>
+          {reportedText(row.subject)}
         </span>
       ),
     },
@@ -76,8 +88,8 @@ export default function SessionTable({ sessions }: SessionTableProps) {
       header: "Identity claim",
       width: "10%",
       cellComponent: ({ row }) => (
-        <span class="session-table-cell-truncate" title={row.identityClaim ?? "Not resolved"}>
-          {row.identityClaim ?? "Not resolved"}
+        <span class="session-table-cell-truncate" title={reportedText(row.identityClaim)}>
+          {reportedText(row.identityClaim)}
         </span>
       ),
     },
@@ -86,8 +98,8 @@ export default function SessionTable({ sessions }: SessionTableProps) {
       header: "Identity value",
       width: "11%",
       cellComponent: ({ row }) => (
-        <span class="session-table-cell-truncate" title={row.identityValue ?? "Not resolved"}>
-          {row.identityValue ?? "Not resolved"}
+        <span class="session-table-cell-truncate" title={reportedText(row.identityValue)}>
+          {reportedText(row.identityValue)}
         </span>
       ),
     },
@@ -127,11 +139,7 @@ export default function SessionTable({ sessions }: SessionTableProps) {
       id: "messages",
       header: "Messages",
       width: "10%",
-      cellComponent: ({ row }) => (
-        <span>
-          {row.messagesSent ?? 0} sent / {row.messagesReceived ?? 0} received
-        </span>
-      ),
+      cellComponent: ({ row }) => <span>{messageCounts(row)}</span>,
     },
   ];
   const tableHeight = Math.min(520, Math.max(176, 44 + sessions.length * 48));
@@ -139,13 +147,15 @@ export default function SessionTable({ sessions }: SessionTableProps) {
   return (
     <Card padding="sm" variant="default">
       <CardHeader>
-        <CardTitle>Live sessions</CardTitle>
+        <CardTitle titleAs="h2">Live sessions</CardTitle>
         <CardDescription>
-          Each row is one live broker or admin connection. Route family, identity claim, and idle
-          time show how the session is resolved.
+          Each row is one live broker or admin connection and the context reported for it.
         </CardDescription>
       </CardHeader>
       <CardContent>
+        <p class="domain-scroll-hint session-table-desktop">
+          Scroll the table horizontally to inspect later columns.
+        </p>
         <div class="domain-table-wrap">
           <div class="session-table-desktop">
             <VirtualTable<ActiveSession>
@@ -181,17 +191,17 @@ export default function SessionTable({ sessions }: SessionTableProps) {
 
                       <div>
                         <dt>Subject</dt>
-                        <dd>{session.subject || "Unauthenticated"}</dd>
+                        <dd>{reportedText(session.subject)}</dd>
                       </div>
 
                       <div>
                         <dt>Identity claim</dt>
-                        <dd>{session.identityClaim ?? "Not resolved"}</dd>
+                        <dd>{reportedText(session.identityClaim)}</dd>
                       </div>
 
                       <div>
                         <dt>Identity value</dt>
-                        <dd>{session.identityValue ?? "Not resolved"}</dd>
+                        <dd>{reportedText(session.identityValue)}</dd>
                       </div>
 
                       <div>
@@ -223,10 +233,7 @@ export default function SessionTable({ sessions }: SessionTableProps) {
 
                       <div>
                         <dt>Messages</dt>
-                        <dd>
-                          {session.messagesSent ?? 0} sent / {session.messagesReceived ?? 0}{" "}
-                          received
-                        </dd>
+                        <dd>{messageCounts(session)}</dd>
                       </div>
                     </dl>
                   </li>

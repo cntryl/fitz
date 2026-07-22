@@ -1,8 +1,8 @@
 import { state } from "@askrjs/askr";
 import { Link, currentRoute, navigate, updateRouteQuery } from "@askrjs/askr/router";
-import { SearchIcon } from "@askrjs/lucide";
+import { ArrowDownIcon, ArrowUpDownIcon, ArrowUpIcon, SearchIcon, XIcon } from "@askrjs/lucide";
 import { Input, VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
-import { Text } from "@askrjs/themes/components";
+import { Button, Text } from "@askrjs/themes/components";
 import { QueryEmptyState } from "./query-state";
 import type { ResourceInventoryResource } from "@/features/resource/resource-models";
 import { formatNumber } from "@/shared/format";
@@ -52,7 +52,13 @@ export interface DomainResourceInventoryTableProps {
   inventory?: DomainResourceInventory | null;
   metricColumns?: readonly DomainResourceMetricColumn[];
   routeSearchParam?: string;
+  scope?: DomainResourceInventoryScope;
   title: string;
+}
+
+export interface DomainResourceInventoryScope {
+  area?: string;
+  realm?: string;
 }
 
 export interface PureDomainResourceInventoryTableProps {
@@ -89,6 +95,17 @@ export function domainResourceInventoryRows(
   );
 }
 
+export function scopeDomainResourceInventoryRows(
+  rows: readonly DomainResourceInventoryRow[],
+  scope: DomainResourceInventoryScope,
+) {
+  return rows.filter(
+    (row) =>
+      (scope.realm === undefined || row.realm === scope.realm) &&
+      (scope.area === undefined || row.area === scope.area),
+  );
+}
+
 export function DomainResourceMetricText(props: { children: unknown; title?: string }) {
   return (
     <Text
@@ -106,7 +123,7 @@ export function DomainResourceMetricText(props: { children: unknown; title?: str
 }
 
 function tableHeight(rowCount: number) {
-  return `${Math.min(620, Math.max(280, 44 + rowCount * 48))}px`;
+  return `${Math.min(620, Math.max(140, 44 + rowCount * 48))}px`;
 }
 
 function shouldIgnoreRowClick(event: MouseEvent) {
@@ -217,20 +234,27 @@ export function PureDomainResourceInventoryTable({
     const active = currentSort?.columnId === column.id;
     const nextDirection: DomainResourceSortDirection =
       active && currentSort.direction === "desc" ? "asc" : "desc";
-    const sortLabel = active
-      ? `${column.header}, ${currentSort.direction === "desc" ? "high first" : "low first"}`
-      : `${column.header}, route order`;
+    const directionLabel = active
+      ? currentSort.direction === "desc"
+        ? "descending"
+        : "ascending"
+      : "not sorted";
+    const SortIcon = active
+      ? currentSort.direction === "desc"
+        ? ArrowDownIcon
+        : ArrowUpIcon
+      : ArrowUpDownIcon;
 
     return (
       <button
         type="button"
         class="domain-sort-button"
-        aria-label={`Sort by ${column.header}`}
+        aria-label={`Sort by ${column.header}, ${directionLabel}`}
         title={`Sort by ${column.header}`}
         onClick={() => setSortState({ columnId: column.id, direction: nextDirection })}
       >
         <span>{column.header}</span>
-        <span class="domain-sort-indicator">{sortLabel.replace(`${column.header}, `, "")}</span>
+        <SortIcon class="domain-sort-indicator" size={14} aria-hidden="true" />
       </button>
     );
   }
@@ -273,7 +297,7 @@ export function PureDomainResourceInventoryTable({
         <div>
           <h2 id={`${domain}-inventory`}>{title}</h2>
         </div>
-        <span>
+        <span role="status" aria-live="polite" aria-atomic="true">
           {routeFilter
             ? `${formatNumber(filteredRows.length)} of ${formatNumber(allRows.length)} visible`
             : `${formatNumber(allRows.length)} visible`}
@@ -284,7 +308,9 @@ export function PureDomainResourceInventoryTable({
         <div class="domain-inventory-search-shell">
           <SearchIcon class="domain-inventory-search-icon" size={16} aria-hidden="true" />
           <Input
+            id={`${domain}-inventory-search`}
             aria-label={`Search ${title}`}
+            aria-controls={`${domain}-inventory-table`}
             class="domain-inventory-search"
             type="search"
             value={searchValue}
@@ -292,16 +318,30 @@ export function PureDomainResourceInventoryTable({
             placeholder="Search routes"
           />
         </div>
+        {routeFilter ? (
+          <Button
+            variant="ghost"
+            onPress={() => {
+              onSearchChange("");
+              queueMicrotask(() => document.getElementById(`${domain}-inventory-search`)?.focus());
+            }}
+          >
+            <XIcon size={16} aria-hidden="true" />
+            Clear search
+          </Button>
+        ) : null}
       </div>
 
       {allRows.length === 0 ? (
         <QueryEmptyState description={emptyDescription} />
       ) : rows.length === 0 ? (
-        <QueryEmptyState description="No resource routes match the current search. Clear filters to restore route order." />
+        <QueryEmptyState description="No resource routes match the current search. Clear filters to show all routes." />
       ) : (
         <VirtualTable<DomainResourceInventoryRow>
+          id={`${domain}-inventory-table`}
           aria-label={title}
           class="domain-resource-virtual-table"
+          data-has-metrics={hasMetrics ? "true" : "false"}
           columns={columns}
           getKey={(row) => `${row.realm}:${row.area}:${row.resource}:${row.operation ?? ""}`}
           headerHeight={44}
@@ -326,10 +366,16 @@ export default function DomainResourceInventoryTable({
   inventory,
   metricColumns = [],
   routeSearchParam = ROUTE_SEARCH_QUERY_PARAM,
+  scope,
   title,
 }: DomainResourceInventoryTableProps) {
-  const searchQuery = currentRoute().query.get(routeSearchParam) ?? "";
-  const rows = domainResourceInventoryRows(inventory);
+  const route = currentRoute();
+  const searchQuery = route.query.get(routeSearchParam) ?? "";
+  const routeScope = scope ?? {
+    area: decodeRouteParam(route.params.area),
+    realm: decodeRouteParam(route.params.realm),
+  };
+  const rows = scopeDomainResourceInventoryRows(domainResourceInventoryRows(inventory), routeScope);
 
   return (
     <PureDomainResourceInventoryTable
@@ -344,4 +390,14 @@ export default function DomainResourceInventoryTable({
       title={title}
     />
   );
+}
+
+function decodeRouteParam(value: string | undefined) {
+  if (!value) return undefined;
+
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }

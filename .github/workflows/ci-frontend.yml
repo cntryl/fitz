@@ -59,5 +59,19 @@ jobs:
       - name: Playwright route suite
         run: npm run test:e2e
 
+      - name: Playwright visual regression suite
+        run: npm run test:visual
+
+      - name: Upload visual regression artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fitz-ui-visual-regression
+          path: |
+            ui/test-results/**
+            ui/playwright-report/**
+          if-no-files-found: ignore
+
       - name: Build-only container validation
+        working-directory: .
         run: docker build --target frontend --tag fitz-ui-build .

@@ -21,7 +21,7 @@ export default function QueueInflightTable({ messages }: QueueInflightTableProps
     {
       id: "context",
       header: "Context",
-      width: "24%",
+      width: "22%",
       cellComponent: ({ row }) => {
         const context = `${row.realm} / ${row.area} / ${row.resource}`;
 
@@ -35,7 +35,7 @@ export default function QueueInflightTable({ messages }: QueueInflightTableProps
     {
       id: "token",
       header: "Owner token",
-      width: "18%",
+      width: "17%",
       cellComponent: ({ row }) => (
         <span class="domain-table-cell-truncate" title={row.inflightToken}>
           {row.inflightToken}
@@ -45,7 +45,7 @@ export default function QueueInflightTable({ messages }: QueueInflightTableProps
     {
       id: "session",
       header: "Session",
-      width: "16%",
+      width: "15%",
       cellComponent: ({ row }) => (
         <span class="domain-table-cell-truncate" title={row.sessionId}>
           {row.sessionId}
@@ -55,19 +55,19 @@ export default function QueueInflightTable({ messages }: QueueInflightTableProps
     {
       id: "family",
       header: "Family",
-      width: "8%",
+      width: "7%",
       cellComponent: ({ row }) => <span>{row.family}</span>,
     },
     {
       id: "attempts",
       header: "Attempts",
-      width: "8%",
+      width: "7%",
       cellComponent: ({ row }) => <span>{row.attempts}</span>,
     },
     {
       id: "expires",
       header: "Expires",
-      width: "14%",
+      width: "20%",
       cellComponent: ({ row }) => (
         <span class="domain-table-cell-truncate" title={formatTimestamp(row.expiresAt)}>
           {formatTimestamp(row.expiresAt)}

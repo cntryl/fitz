@@ -1,5 +1,5 @@
 import { For } from "@askrjs/askr/control";
-import { state } from "@askrjs/askr";
+import { currentRoute, updateRouteQuery } from "@askrjs/askr/router";
 import { Input, VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
 import { Button, Stack, Text } from "@askrjs/themes/components";
 import {
@@ -8,11 +8,15 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
 } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import {
+  QueryCompactEmptyState,
   QueryEmptyState,
   QueryErrorState,
   QueryLoadingState,
@@ -54,7 +58,7 @@ const metricsShortcuts: MetricsShortcut[] = [
     label: "Failures",
     query: "fail",
     test(name: string) {
-      return /\b(fail|reject|drop|timeout|rollback|invalid|wrong|missing|error)\b/.test(name);
+      return /(fail|reject|drop|timeout|rollback|invalid|wrong|missing|error)/.test(name);
     },
   },
   {
@@ -78,12 +82,20 @@ function buildFamilyIndex(families: MetricFamily[]) {
   return new Map(families.map((family) => [family.name, family]));
 }
 
-function familyValue(index: Map<string, MetricFamily>, name: string) {
-  return index.get(name)?.samples.reduce((sum, sample) => sum + sample.value, 0) ?? 0;
+function observedFamilyValue(index: Map<string, MetricFamily>, name: string) {
+  const family = index.get(name);
+
+  return family ? family.samples.reduce((sum, sample) => sum + sample.value, 0) : null;
 }
 
-function signalValue(index: Map<string, MetricFamily>, names: string[]) {
-  return names.reduce((sum, name) => sum + familyValue(index, name), 0);
+function familyValue(index: Map<string, MetricFamily>, name: string) {
+  return observedFamilyValue(index, name) ?? "--";
+}
+
+function fixedFamilyValue(index: Map<string, MetricFamily>, name: string) {
+  const value = observedFamilyValue(index, name);
+
+  return value === null ? "--" : value.toFixed(2);
 }
 
 function signalText(label: string, value: number) {
@@ -91,132 +103,58 @@ function signalText(label: string, value: number) {
 }
 
 function summarizeSnapshot(index: Map<string, MetricFamily>): MetricsPostureSummary {
-  const failureSignals = [
-    {
-      label: "router backpressure",
-      value: signalValue(index, [
-        "fitz_router_backpressure_total",
-        "fitz_router_high_lane_backpressure_total",
-      ]),
-    },
-    {
-      label: "queue drops",
-      value: signalValue(index, ["fitz_queue_notify_drops_total", "fitz_queue_redeliveries_total"]),
-    },
-    {
-      label: "RPC failures",
-      value: signalValue(index, [
-        "fitz_rpc_backpressure_rejects_total",
-        "fitz_rpc_request_timeouts_total",
-        "fitz_rpc_responses_dropped_closed_caller_total",
-        "fitz_rpc_responses_missing_pending_total",
-        "fitz_rpc_invalid_sequence_responses_total",
-        "fitz_rpc_invalid_sequence_errors_forwarded_total",
-        "fitz_rpc_invalid_sequence_errors_dropped_total",
-        "fitz_rpc_wrong_worker_rejects_total",
-      ]),
-    },
-    {
-      label: "lease failures",
-      value: signalValue(index, [
-        "fitz_lease_acquire_timeouts_total",
-        "fitz_lease_forced_releases_total",
-        "fitz_lease_invalid_token_rejects_total",
-      ]),
-    },
-    {
-      label: "notice failures",
-      value: signalValue(index, [
-        "fitz_notice_delivery_drops_total",
-        "fitz_notice_wildcard_limit_rejects_total",
-      ]),
-    },
-    {
-      label: "schedule failures",
-      value: signalValue(index, [
-        "fitz_schedule_notify_failures_total",
-        "fitz_schedule_ack_failures_total",
-        "fitz_schedule_create_persistence_failures_total",
-        "fitz_schedule_upsert_persistence_failures_total",
-        "fitz_schedule_cancel_persistence_failures_total",
-      ]),
-    },
-    {
-      label: "stream drops",
-      value: signalValue(index, [
-        "fitz_stream_notify_drops_total",
-        "fitz_stream_append_conflicts_total",
-      ]),
-    },
-    {
-      label: "KV failures",
-      value: signalValue(index, [
-        "fitz_kv_commits_failed_total",
-        "fitz_kv_invalid_transaction_rejects_total",
-      ]),
-    },
-  ];
+  const deadLetters = observedFamilyValue(index, "fitz_queue_messages_dead_lettered");
+  const activitySignals = [
+    { label: "queue pending", name: "fitz_queue_messages_pending" },
+    { label: "queue inflight", name: "fitz_queue_inflight_active" },
+    { label: "RPC pending", name: "fitz_rpc_requests_pending" },
+    { label: "lease waiters", name: "fitz_lease_waiter_depth" },
+    { label: "schedule claims", name: "fitz_schedule_pending_fire_claims" },
+    { label: "schedule ack retries", name: "fitz_schedule_pending_ack_retries" },
+    { label: "stream append sessions", name: "fitz_stream_append_sessions_active" },
+    { label: "KV transactions", name: "fitz_kv_transactions_active" },
+    { label: "notice subscriptions", name: "fitz_notice_subscriptions_active" },
+  ].map((signal) => ({ ...signal, value: observedFamilyValue(index, signal.name) }));
 
-  const pressureSignals = [
-    {
-      label: "queue backlog",
-      value: signalValue(index, [
-        "fitz_queue_ready_gauge",
-        "fitz_queue_inflight_active",
-        "fitz_queue_messages_pending",
-        "fitz_queue_delayed_gauge",
-      ]),
-    },
-    { label: "RPC pending", value: familyValue(index, "fitz_rpc_requests_pending") },
-    { label: "lease waiters", value: familyValue(index, "fitz_lease_waiter_depth") },
-    {
-      label: "schedule claims",
-      value: signalValue(index, [
-        "fitz_schedule_pending_fire_claims",
-        "fitz_schedule_pending_ack_retries",
-      ]),
-    },
-    {
-      label: "stream sessions",
-      value: familyValue(index, "fitz_stream_append_sessions_active"),
-    },
-    { label: "KV transactions", value: familyValue(index, "fitz_kv_transactions_active") },
-    {
-      label: "notice subscriptions",
-      value: familyValue(index, "fitz_notice_subscriptions_active"),
-    },
-  ];
-
-  const activeFailures = failureSignals.filter((signal) => signal.value > 0);
-  if (activeFailures.length > 0) {
+  if (deadLetters !== null && deadLetters > 0) {
     return {
-      detail: `${activeFailures.length} failure groups are non-zero: ${activeFailures
-        .slice(0, 3)
-        .map((signal) => signalText(signal.label, signal.value))
-        .join(", ")}.`,
+      detail: `${signalText("queue dead letters", deadLetters)} currently require a replay or purge decision. Cumulative failure counters below describe process history, not active incidents.`,
       label: "Attention",
-      nextStep:
-        "Open the failure counters table first, then inspect the related queue, RPC, lease, notice, schedule, stream, or KV surface.",
+      nextStep: "Open Queue and inspect the current dead-letter set.",
       tone: "danger" as const,
     };
   }
 
-  const activePressure = pressureSignals.filter((signal) => signal.value > 0);
-  if (activePressure.length > 0) {
+  const missingSignals = activitySignals.filter((signal) => signal.value === null);
+  if (missingSignals.length > 0 || deadLetters === null) {
     return {
-      detail: `${activePressure.length} pressure signals are active: ${activePressure
-        .slice(0, 3)
-        .map((signal) => signalText(signal.label, signal.value))
-        .join(", ")}.`,
-      label: "Pressure",
+      detail: `${formatNumber(activitySignals.length - missingSignals.length)} of ${formatNumber(activitySignals.length)} current-activity families are available. Missing telemetry is not treated as zero.`,
+      label: "Incomplete",
       nextStep:
-        "Open the delivery pressure and coordination state cards to see where load is building.",
+        "Refresh the snapshot, then inspect the missing metric families before judging health.",
       tone: "warning" as const,
     };
   }
 
+  const activeSignals = activitySignals.flatMap((signal) =>
+    signal.value !== null && signal.value > 0 ? [{ label: signal.label, value: signal.value }] : [],
+  );
+  if (activeSignals.length > 0) {
+    return {
+      detail: `${activeSignals.length} current activity signal${activeSignals.length === 1 ? " is" : "s are"} non-zero: ${activeSignals
+        .slice(0, 3)
+        .map((signal) => signalText(signal.label, signal.value))
+        .join(", ")}. Activity alone does not establish pressure.`,
+      label: "Active",
+      nextStep:
+        "Use age, lag, and broker diagnostics to decide whether active work needs attention.",
+      tone: "info" as const,
+    };
+  }
+
   return {
-    detail: "No backlog, contention, or failure pressure detected.",
+    detail:
+      "All observed current-activity gauges are zero. Cumulative counters below remain historical process totals.",
     label: "Quiet",
     nextStep:
       "Use the search box to inspect a specific metric family when you need a narrower read.",
@@ -386,7 +324,7 @@ function familyCardMetrics(index: Map<string, MetricFamily>) {
       },
       {
         label: "Schedule executions / min",
-        value: familyValue(index, "fitz_schedule_executions_per_minute").toFixed(2),
+        value: fixedFamilyValue(index, "fitz_schedule_executions_per_minute"),
         caption: "per minute",
       },
     ],
@@ -503,9 +441,54 @@ function buildSummaryShortcuts(families: MetricFamily[]) {
     .filter((shortcut) => shortcut.count > 0);
 }
 
+function MetricsShortcuts({
+  filterValue,
+  setFilter,
+  shortcutCards,
+}: {
+  filterValue: string;
+  setFilter: (value: string) => void;
+  shortcutCards: ReturnType<typeof buildSummaryShortcuts>;
+}) {
+  return (
+    <div class="metrics-shortcuts" role="group" aria-label="Metric family shortcuts">
+      <For each={shortcutCards} by={(shortcut) => shortcut.label}>
+        {(shortcut) => (
+          <Button
+            size="sm"
+            class="metrics-shortcut"
+            variant={filterValue === shortcut.query ? "outline" : "ghost"}
+            aria-pressed={filterValue === shortcut.query}
+            onPress={() => setFilter(shortcut.query)}
+          >
+            {shortcut.label} ({formatNumber(shortcut.count)})
+          </Button>
+        )}
+      </For>
+
+      <For each={filterValue.length > 0 ? ["clear"] : []} by={() => "clear-filters"}>
+        {() => (
+          <Button
+            size="sm"
+            class="metrics-shortcut"
+            variant="ghost"
+            onPress={() => {
+              setFilter("");
+              queueMicrotask(() => document.getElementById("metrics-filter")?.focus());
+            }}
+          >
+            Clear filters
+          </Button>
+        )}
+      </For>
+    </div>
+  );
+}
+
 export default function MetricsPage() {
   const metrics = createMetricsOverviewQuery();
-  const [filter, setFilter] = state("");
+  const filter = () => currentRoute().query.get("q") ?? "";
+  const setFilter = (value: string) => updateRouteQuery({ q: value || null });
   const data = metrics.data;
   const filterValue = filter().trim().toLowerCase();
   const familyIndex = data ? buildFamilyIndex(data.families) : null;
@@ -515,7 +498,18 @@ export default function MetricsPage() {
   const sampleRows = data ? buildRows(data.families, filterValue) : [];
   const sampleCount = data?.families.reduce((sum, family) => sum + family.samples.length, 0) ?? 0;
   const snapshotSummary = familyIndex ? summarizeSnapshot(familyIndex) : null;
-  const summaryCards = familyIndex ? familyCardMetrics(familyIndex) : emptySummaryCards;
+  const rawSummaryCards = familyIndex ? familyCardMetrics(familyIndex) : emptySummaryCards;
+  const summaryCards = {
+    broker: rawSummaryCards.broker.filter((metric) => metric.value !== "--"),
+    coordination: rawSummaryCards.coordination.filter((metric) => metric.value !== "--"),
+    delivery: rawSummaryCards.delivery.filter((metric) => metric.value !== "--"),
+    failures: rawSummaryCards.failures.filter((metric) => metric.value !== "--"),
+    state: rawSummaryCards.state.filter((metric) => metric.value !== "--"),
+  };
+  const summaryMetricCount = Object.values(summaryCards).reduce(
+    (sum, metricsForCategory) => sum + metricsForCategory.length,
+    0,
+  );
   const shortcutCards = data ? buildSummaryShortcuts(data.families) : [];
   const sampleColumns: readonly VirtualTableColumn<MetricsSampleRow>[] = [
     {
@@ -582,11 +576,17 @@ export default function MetricsPage() {
         label: metrics.refreshing ? "Refreshing" : metrics.stale ? "Stale" : snapshotSummary.label,
         tone: metrics.refreshing ? "info" : metrics.stale ? "warning" : snapshotSummary.tone,
       }
-    : {
-        detail: "Searching metric families and samples from structured broker metrics.",
-        label: metrics.refreshing ? "Refreshing" : metrics.stale ? "Stale" : "Loading",
-        tone: metrics.refreshing ? "info" : metrics.stale ? "warning" : "info",
-      };
+    : metrics.error
+      ? {
+          detail: "The structured metrics snapshot is unavailable.",
+          label: "Unavailable",
+          tone: "danger",
+        }
+      : {
+          detail: "Searching metric families and samples from structured broker metrics.",
+          label: metrics.refreshing ? "Refreshing" : metrics.stale ? "Stale" : "Loading",
+          tone: metrics.refreshing ? "info" : metrics.stale ? "warning" : "info",
+        };
 
   return (
     <DomainPageFrame>
@@ -596,6 +596,8 @@ export default function MetricsPage() {
           title="Metrics explorer"
           description="Use the filters below to inspect live broker metric families and sample labels."
           primaryAction={{
+            busy: metrics.refreshing,
+            disabled: metrics.refreshing,
             label: "Refresh metrics",
             onPress: () => metrics.refresh(),
           }}
@@ -617,152 +619,147 @@ export default function MetricsPage() {
           />
         ) : null}
 
-        <Stack gap="3">
-          <section class="domain-section">
-            <div class="domain-section-header">
-              <div>
-                <h2>Live state</h2>
-                <p>
-                  The summary below reflects the full snapshot, even when the sample table is
-                  filtered.
-                </p>
-              </div>
-            </div>
-            <div class="chart-grid">
-              <DomainMetricTable
-                title="Broker snapshot"
-                description="The broker process itself: uptime, connections, sessions, and routing pressure."
-                metrics={summaryCards.broker}
-              />
-
-              <DomainMetricTable
-                title="Delivery pressure"
-                description="Where queued work and request/response load will show up first."
-                metrics={summaryCards.delivery}
-              />
-
-              <DomainMetricTable
-                title="Coordination state"
-                description="Lease ownership, schedule claims, and stream append activity."
-                metrics={summaryCards.coordination}
-              />
-
-              <DomainMetricTable
-                title="Durable surfaces"
-                description="The long-lived state and live fanout that make Fitz useful."
-                metrics={summaryCards.state}
-              />
-
-              <DomainMetricTable
-                title="Failure counters"
-                description="These should stay flat; non-zero values usually need a closer look."
-                metrics={summaryCards.failures}
-              />
-            </div>
-          </section>
-
-          <section class="domain-section">
-            <div class="domain-section-header">
-              <div>
-                <h2>Search metrics</h2>
-                <p>
-                  Filter by family name, then scan sample name, labels, and value in one compact
-                  table.
-                </p>
-              </div>
-            </div>
-            <div class="metrics-toolbar">
-              <div class="metrics-filter">
-                <Input
-                  aria-label="Filter metrics"
-                  placeholder="Search metric families"
-                  type="search"
-                  value={filter()}
-                  onInput={(event: Event) => setFilter((event.target as HTMLInputElement).value)}
-                />
-              </div>
-
-              <div class="metrics-shortcuts" role="group" aria-label="Metric family shortcuts">
-                <For each={shortcutCards} by={(shortcut) => shortcut.label}>
-                  {(shortcut) => (
-                    <Button
-                      size="sm"
-                      class="metrics-shortcut"
-                      variant={filterValue === shortcut.query ? "outline" : "ghost"}
-                      onPress={() => setFilter(shortcut.query)}
-                    >
-                      {shortcut.label} ({formatNumber(shortcut.count)})
-                    </Button>
-                  )}
-                </For>
-
-                <For each={filterValue.length > 0 ? ["clear"] : []} by={() => "clear-filters"}>
-                  {() => (
-                    <Button
-                      size="sm"
-                      class="metrics-shortcut"
-                      variant="ghost"
-                      onPress={() => {
-                        setFilter("");
-                      }}
-                    >
-                      Clear filters
-                    </Button>
-                  )}
-                </For>
-              </div>
-            </div>
-          </section>
-
-          <Card padding="sm" variant="default">
-            <CardHeader>
-              <CardTitle>Metric samples</CardTitle>
-              <CardDescription>
-                {data
-                  ? families.length === 0
-                    ? `${formatNumber(sampleRows.length)} visible samples`
-                    : `Showing ${formatNumber(sampleRows.length)} of ${formatNumber(sampleCount)} samples`
-                  : "Loading metric samples"}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {data && sampleRows.length === 0 ? (
-                <QueryEmptyState
-                  title={filterValue.length > 0 ? "No matching metrics" : "No metrics available"}
-                  description={
-                    filterValue.length > 0
-                      ? `No metric families match "${filterValue}". Use clear filters to return to the full table.`
-                      : "No metric families were returned in this snapshot."
-                  }
-                />
-              ) : (
-                <VirtualTable<MetricsSampleRow>
-                  aria-label="Metric samples"
-                  class="metrics-sample-virtual-table"
-                  columns={sampleColumns}
-                  getKey={(row) => `${row.family}:${row.labels}:${row.value}`}
-                  headerHeight={44}
-                  overscan={12}
-                  rowHeight={48}
-                  rows={sampleRows}
-                  style={{ height: `${sampleTableHeight}px` }}
-                />
-              )}
-            </CardContent>
-          </Card>
-
-          {data ? (
+        {data ? (
+          <Stack gap="3">
             <section class="domain-section">
               <div class="domain-section-header">
                 <div>
-                  <h2>Structured payload</h2>
-                  <p>Exact route-family JSON snapshot for copy, diffing, and troubleshooting.</p>
+                  <h2>Live state</h2>
+                  <p>
+                    The summary below reflects the full snapshot, even when the sample table is
+                    filtered.
+                  </p>
                 </div>
               </div>
-              <pre class="resource-raw">{data.raw}</pre>
+              <div class="chart-grid">
+                {summaryCards.broker.length > 0 ? (
+                  <DomainMetricTable
+                    title="Broker snapshot"
+                    titleAs="h3"
+                    description="The broker process itself: uptime, connections, sessions, and cumulative routing counters."
+                    metrics={summaryCards.broker}
+                  />
+                ) : null}
+
+                {summaryCards.delivery.length > 0 ? (
+                  <DomainMetricTable
+                    title="Delivery activity"
+                    titleAs="h3"
+                    description="Current queued work and request/response activity. Non-zero values are not pressure by themselves."
+                    metrics={summaryCards.delivery}
+                  />
+                ) : null}
+
+                {summaryCards.coordination.length > 0 ? (
+                  <DomainMetricTable
+                    title="Coordination state"
+                    titleAs="h3"
+                    description="Lease ownership, schedule claims, and stream append activity."
+                    metrics={summaryCards.coordination}
+                  />
+                ) : null}
+
+                {summaryCards.state.length > 0 ? (
+                  <DomainMetricTable
+                    title="Durable surfaces"
+                    titleAs="h3"
+                    description="The long-lived state and live fanout that make Fitz useful."
+                    metrics={summaryCards.state}
+                  />
+                ) : null}
+
+                {summaryCards.failures.length > 0 ? (
+                  <DomainMetricTable
+                    title="Failure counters"
+                    titleAs="h3"
+                    description="Cumulative totals since the broker process started. Inspect changes between snapshots before treating them as active failures."
+                    metrics={summaryCards.failures}
+                  />
+                ) : null}
+              </div>
+              {summaryMetricCount === 0 ? (
+                <QueryCompactEmptyState
+                  title="No known summary metrics"
+                  description="The snapshot has samples, but none match the summary gauges on this page. Use the sample filter below."
+                />
+              ) : null}
             </section>
-          ) : null}
-        </Stack>
+
+            <Card padding="sm" variant="default">
+              <CardHeader>
+                <CardTitle titleAs="h2">Metric samples</CardTitle>
+                <CardDescription role="status" aria-live="polite" aria-atomic="true">
+                  {data
+                    ? families.length === 0
+                      ? `${formatNumber(sampleRows.length)} visible samples`
+                      : `Showing ${formatNumber(sampleRows.length)} of ${formatNumber(sampleCount)} samples`
+                    : "Loading metric samples"}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div class="metrics-toolbar">
+                  <div class="metrics-filter">
+                    <Input
+                      id="metrics-filter"
+                      aria-label="Filter metrics"
+                      placeholder="Search metric families"
+                      type="search"
+                      value={filter()}
+                      onInput={(event: Event) =>
+                        setFilter((event.target as HTMLInputElement).value)
+                      }
+                    />
+                  </div>
+
+                  <MetricsShortcuts
+                    filterValue={filterValue}
+                    setFilter={setFilter}
+                    shortcutCards={shortcutCards}
+                  />
+                </div>
+                {data && sampleRows.length === 0 ? (
+                  <QueryEmptyState
+                    title={filterValue.length > 0 ? "No matching metrics" : "No metrics available"}
+                    description={
+                      filterValue.length > 0
+                        ? `No metric families match "${filterValue}". Use clear filters to return to the full table.`
+                        : "No metric families were returned in this snapshot."
+                    }
+                  />
+                ) : (
+                  <VirtualTable<MetricsSampleRow>
+                    aria-label="Metric samples"
+                    class="metrics-sample-virtual-table"
+                    columns={sampleColumns}
+                    getKey={(row) => `${row.family}:${row.labels}:${row.value}`}
+                    headerHeight={44}
+                    overscan={12}
+                    rowHeight={48}
+                    rows={sampleRows}
+                    style={{ height: `${sampleTableHeight}px` }}
+                  />
+                )}
+              </CardContent>
+            </Card>
+
+            <section class="domain-section metrics-structured-payload">
+              <Collapsible>
+                <div class="domain-section-header">
+                  <div>
+                    <h2>Structured payload</h2>
+                    <p>Exact route-family JSON snapshot for copy, diffing, and troubleshooting.</p>
+                  </div>
+                  <CollapsibleTrigger asChild>
+                    <Button variant="outline">View structured payload</Button>
+                  </CollapsibleTrigger>
+                </div>
+                <CollapsibleContent>
+                  <pre class="resource-raw">{data.raw}</pre>
+                </CollapsibleContent>
+              </Collapsible>
+            </section>
+          </Stack>
+        ) : null}
       </Stack>
     </DomainPageFrame>
   );

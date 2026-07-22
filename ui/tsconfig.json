@@ -15,9 +15,7 @@
     "jsx": "react-jsx",
     "jsxImportSource": "@askrjs/askr",
     "paths": {
-      "@/*": ["./src/*"],
-      "@askrjs/askr/jsx-runtime": ["./node_modules/@askrjs/askr/dist/jsx/jsx-runtime.d.ts"],
-      "@askrjs/askr/jsx-dev-runtime": ["./node_modules/@askrjs/askr/dist/jsx/jsx-dev-runtime.d.ts"]
+      "@/*": ["./src/*"]
     }
   },
   "include": ["src", "tests", "dev", "vite.config.ts", "playwright.config.ts"]

@@ -11,10 +11,9 @@ import {
 } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainInventoryPage from "@/components/shared/domain-inventory-page";
-import type { DomainResourceMetricColumn } from "@/components/shared/domain-resource-inventory-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
-import { createDomainSidebar } from "@/components/shared/domain-sidebar";
+import { queryFreshness, queryHeaderStatus } from "@/components/shared/query-header-status";
 import {
   QueryEmptyState,
   QueryErrorState,
@@ -27,7 +26,7 @@ import {
 } from "@/features/notice/notice-query";
 import type { NoticeResourceOperationRows } from "@/features/notice/notice-models";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
-import { formatNumber } from "@/shared/format";
+import { formatCount, formatNumber } from "@/shared/format";
 import { domainScopeHref, formatFitzRoute } from "@/shared/navigation/domains";
 import NoticeOperationPage from "./notice-operation";
 
@@ -50,11 +49,6 @@ function parseLimit(value: string | null) {
   return Math.max(1, Math.min(200, Math.floor(parsed)));
 }
 
-function formatLatency(latencyMs: number | null) {
-  if (latencyMs == null) return "--/N/A";
-  return `${formatNumber(latencyMs)} ms`;
-}
-
 function summarizeNoticeHealth(stats: {
   deliveryDropsTotal: number;
   subscriptionsActive: number;
@@ -62,36 +56,24 @@ function summarizeNoticeHealth(stats: {
   publishesPerSecond: number;
   routesActive: number;
 }) {
-  const riskCount = stats.deliveryDropsTotal + stats.wildcardLimitRejectsTotal;
-  const hasRisk = riskCount > 0;
-  const baseDetail = `${formatNumber(stats.routesActive)} route(s), ${formatNumber(
+  const baseDetail = `${formatNumber(stats.routesActive)} active operation ${
+    stats.routesActive === 1 ? "route" : "routes"
+  }, ${formatNumber(
     stats.subscriptionsActive,
-  )} active subscriptions, ${stats.publishesPerSecond.toFixed(2)} publishes/sec, ${formatNumber(
+  )} active ${stats.subscriptionsActive === 1 ? "subscription" : "subscriptions"}, ${stats.publishesPerSecond.toFixed(2)} publishes/sec.`;
+  const historicalDetail = `Cumulative process totals: ${formatNumber(
     stats.deliveryDropsTotal,
-  )} drop(s), ${formatNumber(stats.wildcardLimitRejectsTotal)} wildcard reject(s).`;
-  const pressureSignals = [
-    stats.deliveryDropsTotal > 0
-      ? `${formatNumber(stats.deliveryDropsTotal)} delivery drop(s)`
-      : null,
-    stats.wildcardLimitRejectsTotal > 0
-      ? `${formatNumber(stats.wildcardLimitRejectsTotal)} wildcard reject(s)`
-      : null,
-  ].filter((signal): signal is string => signal !== null);
-
-  if (hasRisk) {
-    return {
-      detail: `${baseDetail} ${pressureSignals.join(
-        ", ",
-      )} are above the healthy live fanout baseline.`,
-      label: "Attention" as const,
-      tone: "danger" as const,
-    };
-  }
+  )} delivery ${stats.deliveryDropsTotal === 1 ? "drop" : "drops"}, ${formatNumber(
+    stats.wildcardLimitRejectsTotal,
+  )} wildcard ${stats.wildcardLimitRejectsTotal === 1 ? "rejection" : "rejections"}.`;
 
   return {
-    detail: `${baseDetail} Live fanout is moving without broker-visible drops.`,
+    detail: `${baseDetail} ${historicalDetail} Historical totals do not identify a current fanout incident.`,
     label: "Live" as const,
-    tone: "success" as const,
+    tone:
+      stats.subscriptionsActive > 0 || stats.publishesPerSecond > 0
+        ? ("success" as const)
+        : ("info" as const),
   };
 }
 
@@ -108,39 +90,6 @@ function NoticeLandingPage() {
     },
   );
   const stats = overview.data?.stats;
-  const noticeMetricColumns: readonly DomainResourceMetricColumn[] = [
-    {
-      id: "subscriptions",
-      header: "Subscriptions",
-      width: "12%",
-      cell: () => (stats ? formatNumber(stats.subscriptionsActive) : "--"),
-    },
-    {
-      id: "routes",
-      header: "Routes",
-      width: "10%",
-      cell: () => (stats ? formatNumber(stats.routesActive) : "--"),
-    },
-    {
-      id: "publishes",
-      header: "Publishes / sec",
-      width: "12%",
-      cell: () => (stats ? stats.publishesPerSecond.toFixed(2) : "--"),
-    },
-    {
-      id: "drops",
-      header: "Drops",
-      width: "10%",
-      cell: () => (stats ? formatNumber(stats.deliveryDropsTotal) : "--"),
-    },
-    {
-      id: "wildcard-rejects",
-      header: "Wildcard rejects",
-      width: "13%",
-      cell: () => (stats ? formatNumber(stats.wildcardLimitRejectsTotal) : "--"),
-    },
-  ];
-
   return (
     <DomainInventoryPage
       domain="notice"
@@ -156,36 +105,27 @@ function NoticeLandingPage() {
       refreshingDescription="Refreshing notice inventory..."
       emptyDescription="No notice resources are currently visible. Check the selected Route Family or broaden scope."
       tableTitle="Resource inventory"
-      metricColumns={noticeMetricColumns}
       stats={[
-        { label: "Routes", value: stats ? formatNumber(stats.routesActive) : "--" },
+        {
+          label: "Active operation routes",
+          value: stats ? formatNumber(stats.routesActive) : "--",
+        },
         { label: "Subscriptions", value: stats ? formatNumber(stats.subscriptionsActive) : "--" },
         {
           label: "Publishes / sec",
           value: stats ? stats.publishesPerSecond.toFixed(2) : "--",
         },
       ]}
-      status={{
-        detail: overview.data
-          ? `${health.detail} Notice is live fanout; subscriptions expire on disconnect or restart.`
-          : overview.error
-            ? "Notice health is unavailable. Resource inventory can still be inspected when loaded."
-            : "Loading notice health.",
-        label: overview.refreshing
-          ? "Refreshing"
-          : overview.error
-            ? "Health unavailable"
-            : overview.stale
-              ? "Stale"
-              : health.label,
-        tone: overview.refreshing
-          ? "info"
-          : overview.error
-            ? "warning"
-            : overview.stale
-              ? "warning"
-              : health.tone,
-      }}
+      status={queryHeaderStatus(
+        overview,
+        {
+          loading: "Loading notice health.",
+          ready: `${health.detail} Notice is live fanout; subscriptions expire on disconnect or restart.`,
+          unavailable:
+            "Notice health is unavailable. Resource inventory can still be inspected when loaded.",
+        },
+        { label: health.label, tone: health.tone },
+      )}
     />
   );
 }
@@ -221,7 +161,6 @@ function NoticeOperationTableRows(props: { data: NoticeResourceOperationRows }) 
             </TableCell>
             <TableCell>{formatNumber(row.activeSubscribers)}</TableCell>
             <TableCell>{formatNumber(row.rollingMessageCount)}</TableCell>
-            <TableCell>{formatLatency(row.latencyMs)}</TableCell>
           </TableRow>
         );
       }}
@@ -249,53 +188,35 @@ function NoticeResourcePage(props: { realm: string; area: string; resource: stri
     0,
   );
 
-  const snapshot = createDomainSidebar({
-    data,
-    title: `Notice operations for ${props.resource}`,
-    description: `${props.realm} / ${props.area} / ${props.resource}`,
-    stats: (current) => [
-      { label: "Operations", value: current.operations.length },
-      { label: "Active subscriptions", value: totalSubscribers },
-      { label: "Rolling messages / min", value: totalMessages },
-    ],
-    footer: (
-      <Link href={domainScopeHref("notice", { area: props.area, realm: props.realm })}>
-        Back to inventory
-      </Link>
-    ),
-  });
-
   return (
-    <DomainPageFrame sidebar={snapshot}>
+    <DomainPageFrame>
       <Stack gap="3">
         <DomainHeader
           eyebrow="Notice resource"
           title="Notice operations"
           description={`${props.realm} / ${props.area} / ${props.resource}`}
-          primaryAction={{ label: "Refresh operations", onPress: () => rowsQuery.refresh() }}
-          status={{
-            detail: data
-              ? `${data.operations.length} operation route(s), ${totalSubscribers} active subscriber${totalSubscribers === 1 ? "" : "s"}, ${totalMessages} rolling message${totalMessages === 1 ? "" : "s"}/min.`
-              : "Loading notice operations for this resource.",
-            label: rowsQuery.refreshing ? "Refreshing" : rowsQuery.stale ? "Stale" : "Live",
-            tone: rowsQuery.refreshing ? "info" : rowsQuery.stale ? "warning" : "success",
+          primaryAction={{
+            busy: rowsQuery.refreshing,
+            disabled: rowsQuery.refreshing,
+            label: "Refresh operations",
+            onPress: () => rowsQuery.refresh(),
           }}
+          status={queryHeaderStatus(rowsQuery, {
+            loading: "Loading notice operations for this resource.",
+            ready: data
+              ? `${formatCount(data.operations.length, "operation route")}, ${formatCount(
+                  totalSubscribers,
+                  "active subscriber",
+                )}, ${formatCount(totalMessages, "publish", "publishes")}/min.`
+              : "",
+            unavailable: "Notice operations are unavailable for this resource.",
+          })}
         />
         <OperatorScopeStrip
           realm={props.realm}
           area={props.area}
           resource={props.resource}
-          freshness={
-            rowsQuery.refreshing
-              ? "Refreshing"
-              : rowsQuery.stale
-                ? "Stale"
-                : data
-                  ? "Live"
-                  : rowsQuery.loading
-                    ? "Loading"
-                    : undefined
-          }
+          freshness={queryFreshness(rowsQuery)}
         />
         {!data && rowsQuery.loading ? (
           <QueryLoadingState description="Loading notice operation rows..." />
@@ -319,25 +240,26 @@ function NoticeResourcePage(props: { realm: string; area: string; resource: stri
             ) : (
               <Card padding="sm" variant="default">
                 <CardHeader>
-                  <CardTitle>Notice operations</CardTitle>
+                  <CardTitle titleAs="h2">Notice operations</CardTitle>
                   <CardDescription>
-                    Live operation routes with active subscribers and rolling messages/min.
+                    Live operation routes with active subscribers and route publish rates.
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <Table>
-                    <TableHead>
-                      <TableRow>
-                        <TableHeaderCell>Route</TableHeaderCell>
-                        <TableHeaderCell>Active subscribers</TableHeaderCell>
-                        <TableHeaderCell>Rolling messages / min</TableHeaderCell>
-                        <TableHeaderCell>Latency</TableHeaderCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      <NoticeOperationTableRows data={data} />
-                    </TableBody>
-                  </Table>
+                  <div class="domain-table-wrap notice-resource-table-wrap">
+                    <Table>
+                      <TableHead>
+                        <TableRow>
+                          <TableHeaderCell>Route</TableHeaderCell>
+                          <TableHeaderCell>Active subscribers</TableHeaderCell>
+                          <TableHeaderCell>Publishes / min</TableHeaderCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        <NoticeOperationTableRows data={data} />
+                      </TableBody>
+                    </Table>
+                  </div>
                 </CardContent>
               </Card>
             )}

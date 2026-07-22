@@ -8,7 +8,7 @@ import {
   BreadcrumbList,
   BreadcrumbSeparator,
 } from "@askrjs/themes/components";
-import { useOperatorContext } from "@/shared/operator-context";
+import { useOperatorScope } from "@/shared/operator-scope";
 import {
   adminChildHref,
   adminHref,
@@ -56,14 +56,11 @@ function routeCrumbs(path: string, params: Record<string, string | undefined>, f
   }
 
   if (path === "/settings") {
-    return [{ href: adminChildHref("settings", family), label: "Settings" }];
+    return [{ href: adminChildHref("settings", family), label: "Workspace & account" }];
   }
 
   if (path === "/sessions") {
-    return [
-      { href: adminChildHref("settings", family), label: "Settings" },
-      { href: adminChildHref("sessions", family), label: "Sessions" },
-    ];
+    return [{ href: adminChildHref("sessions", family), label: "Sessions" }];
   }
 
   if (isDomainSegment(first)) {
@@ -106,7 +103,7 @@ function routeCrumbs(path: string, params: Record<string, string | undefined>, f
 
 export default function OperatorBreadcrumbs() {
   const route = currentRoute();
-  const operator = useOperatorContext();
+  const operator = useOperatorScope();
   const family = routeFamilyFromPath(route.path) ?? operator.selectedRouteFamilyId;
   const contentPath = contentPathForRoute(route.path);
   const crumbs = [

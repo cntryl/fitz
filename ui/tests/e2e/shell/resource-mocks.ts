@@ -26,6 +26,7 @@ export async function mockResourceDetailApis(
   page: Page,
   domain: ResourceDomain,
   routeScope: ResourceScope,
+  options: { now?: number } = {},
 ) {
   const diagnostics = makeDiagnosticSnapshot();
 
@@ -143,7 +144,7 @@ export async function mockResourceDetailApis(
 
     if (domain === "lease" && segments.length === 4 && segments[3] === "search") {
       await route.fulfill({
-        json: leaseSearchRowsFixture(routeScope),
+        json: leaseSearchRowsFixture(routeScope, 120, options.now),
       });
       return;
     }
@@ -210,6 +211,28 @@ export async function mockResourceDetailApis(
       return;
     }
 
+    if (segments.length === 10 && segments[9] === "rows" && domain === "kv") {
+      await route.fulfill({
+        json: {
+          area: scope.area,
+          has_more: false,
+          items: [
+            {
+              key: { base64: "dXNlcjox", len_bytes: 6, utf8: "user:1" },
+              value: { base64: "YWxpY2U=", len_bytes: 5, utf8: "alice" },
+            },
+          ],
+          limit: Number(parsed.searchParams.get("limit") || 50),
+          next_cursor: null,
+          realm: scope.realm,
+          resource: scope.resource,
+          route_family: 1,
+          starts_with: { base64: "", len_bytes: 0, utf8: "" },
+        },
+      });
+      return;
+    }
+
     if (segments.length === 10 && segments[9] === "subscriptions" && domain === "notice") {
       await route.fulfill({
         json: {
@@ -237,19 +260,23 @@ export async function mockResourceDetailApis(
       return;
     }
 
-    if (segments.length === 12 && domain === "rpc" && segments[9] === "operations") {
+    if (segments.length === 11 && domain === "rpc" && segments[9] === "operations") {
       await route.fulfill({
         json: {
-          workers: [
-            {
-              average_latency_ms: 12,
-              realm: scope.realm,
-              registered_at: "2026-05-21T13:00:00.000Z",
-              requests_handled: 7,
-              route: decodeURIComponent(segments[10] ?? "GetStatus"),
-              session_id: "worker-1",
-            },
-          ],
+          area: scope.area,
+          diagnostics,
+          operation: decodeURIComponent(segments[10] ?? "GetStatus"),
+          realm: scope.realm,
+          requests_pending: 1,
+          resource: scope.resource,
+          slowest_worker_average_latency_ms: 12,
+          worker_latency_buckets: {
+            over_100ms: 0,
+            under_100ms: 0,
+            under_25ms: 1,
+            under_5ms: 1,
+          },
+          workers_registered: 2,
         },
       });
       return;

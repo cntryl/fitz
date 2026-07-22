@@ -56,10 +56,14 @@ function OverviewIssues({ overview }: { overview: OverviewStatus }) {
 
       {overview.issues.length === 0 ? (
         <div class="overview-empty-state">
-          <CheckCircle2Icon size={18} />
+          {overview.complete ? <CheckCircle2Icon size={18} /> : <CircleAlertIcon size={18} />}
           <div>
-            <strong>No active issues</strong>
-            <p>Open a domain below when you need to inspect normal activity or resource detail.</p>
+            <strong>{overview.complete ? "No active issues" : "Issue status incomplete"}</strong>
+            <p>
+              {overview.complete
+                ? "Open a domain below when you need to inspect normal activity or resource detail."
+                : "Load both topology and system counters before treating the selected Route Family as healthy."}
+            </p>
           </div>
         </div>
       ) : (
@@ -107,8 +111,12 @@ function DomainHealth({ overview }: { overview: OverviewStatus }) {
                 <Badge variant={toneVariant(domain.tone)}>{domain.state}</Badge>
               </div>
               <p>{domain.signal}</p>
-              <Link href={domain.href} class="overview-action-link">
-                <span>Open</span>
+              <Link
+                href={domain.href}
+                class="overview-action-link"
+                aria-label={`Open ${domain.title} inventory`}
+              >
+                <span>Open {domain.title}</span>
                 <ArrowUpRightIcon size={13} />
               </Link>
             </li>
@@ -168,12 +176,21 @@ export default function Home() {
   const topology = topologyQuery.data;
   const system = systemQuery.data;
   const overview = buildOverviewStatus({ system, topology });
+  const hasOperationalData = Boolean(topology || system);
+  const sourceUnavailable =
+    (!topology && Boolean(topologyQuery.error)) || (!system && Boolean(systemQuery.error));
   const refreshState =
     topologyQuery.refreshing || systemQuery.refreshing
       ? "Refreshing"
       : topologyQuery.stale || systemQuery.stale
         ? "Stale"
-        : "Live";
+        : sourceUnavailable
+          ? hasOperationalData
+            ? "Partial"
+            : "Unavailable"
+          : hasOperationalData
+            ? "Live"
+            : "Loading";
   const operationalLoading = !topology && !system && (topologyQuery.loading || systemQuery.loading);
   const operationalFailure = !topology && !system && topologyQuery.error && systemQuery.error;
 
@@ -185,6 +202,8 @@ export default function Home() {
           title="Fitz status"
           description="Actionable health across the selected Route Family."
           primaryAction={{
+            busy: topologyQuery.refreshing || systemQuery.refreshing,
+            disabled: topologyQuery.refreshing || systemQuery.refreshing,
             label: "Refresh overview",
             onPress: () => {
               void topologyQuery.refresh();
@@ -199,7 +218,7 @@ export default function Home() {
             tone:
               topologyQuery.refreshing || systemQuery.refreshing
                 ? "info"
-                : topologyQuery.stale || systemQuery.stale
+                : topologyQuery.stale || systemQuery.stale || sourceUnavailable
                   ? "warning"
                   : overview.overall.tone,
           }}

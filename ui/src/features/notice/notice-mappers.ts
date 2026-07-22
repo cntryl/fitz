@@ -125,7 +125,9 @@ export function mapNoticeResourceOperationRows(
       continue;
     }
 
-    next.rollingMessageCount += observation.publishes_per_minute;
+    // Publish rate is route-scoped and repeated on every subscription observation.
+    // Keep one route value instead of multiplying it by the subscriber count.
+    next.rollingMessageCount = Math.max(next.rollingMessageCount, observation.publishes_per_minute);
 
     if (observation.subscription_id !== null || observation.session_id !== null) {
       next.subscribers.add(

@@ -6,6 +6,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  type CardTitleHeadingTag,
   Text,
 } from "@askrjs/themes/components";
 import { formatDisplayValue } from "@/shared/format";
@@ -19,18 +20,24 @@ export interface DomainMetric {
 export interface DomainMetricTableProps {
   description?: string;
   title: string;
+  titleAs?: CardTitleHeadingTag;
   metrics: DomainMetric[];
 }
 
-export default function DomainMetricTable({ description, metrics, title }: DomainMetricTableProps) {
+export default function DomainMetricTable({
+  description,
+  metrics,
+  title,
+  titleAs = "h2",
+}: DomainMetricTableProps) {
   return (
     <Card padding="sm" variant="default">
       <CardHeader>
-        <CardTitle>{title}</CardTitle>
+        <CardTitle titleAs={titleAs}>{title}</CardTitle>
         {description ? <CardDescription>{description}</CardDescription> : null}
       </CardHeader>
       <CardContent>
-        <div class="domain-table-wrap">
+        <div class="domain-table-wrap domain-metric-table-wrap">
           <Table>
             <TableHead>
               <TableRow>

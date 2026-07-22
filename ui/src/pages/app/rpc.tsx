@@ -1,5 +1,4 @@
 import DomainInventoryPage from "@/components/shared/domain-inventory-page";
-import type { DomainResourceMetricColumn } from "@/components/shared/domain-resource-inventory-table";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 import { createRpcOverviewQuery } from "@/features/rpc/rpc-query";
 import { formatNumber } from "@/shared/format";
@@ -11,51 +10,40 @@ function summarizeRpcHealth(stats: {
   requestsPending: number;
   workersRegistered: number;
 }) {
-  const pressureSignals = [
-    stats.requestTimeoutsTotal > 0
-      ? `${formatNumber(stats.requestTimeoutsTotal)} request timeout(s)`
-      : null,
-    stats.failureTotal > 0 ? `${formatNumber(stats.failureTotal)} failure(s)` : null,
-    stats.pendingRoutesActive > 0
-      ? `${formatNumber(stats.pendingRoutesActive)} pending route(s)`
-      : null,
-    stats.requestsPending > stats.workersRegistered
-      ? `${formatNumber(stats.requestsPending - stats.workersRegistered)} unassigned request(s)`
-      : null,
-  ].filter((signal): signal is string => signal !== null);
-
-  const hasCritical = stats.requestTimeoutsTotal > 0 || stats.failureTotal > 0;
-  const hasPressure = pressureSignals.length > 0;
-  const baseDetail = `${formatNumber(stats.requestsPending)} pending request(s), ${formatNumber(
+  const unassignedRequests = Math.max(0, stats.requestsPending - stats.workersRegistered);
+  const baseDetail = `${formatNumber(stats.requestsPending)} pending ${
+    stats.requestsPending === 1 ? "request" : "requests"
+  }, ${formatNumber(
     stats.workersRegistered,
-  )} registered worker(s), ${formatNumber(
+  )} registered ${stats.workersRegistered === 1 ? "worker" : "workers"}, ${formatNumber(
     stats.pendingRoutesActive,
-  )} pending route(s), ${formatNumber(
+  )} ${stats.pendingRoutesActive === 1 ? "route has" : "routes have"} pending work.`;
+  const historyDetail = `Cumulative process totals: ${formatNumber(
     stats.requestTimeoutsTotal,
-  )} timeout(s), ${formatNumber(stats.failureTotal)} failure(s).`;
+  )} ${stats.requestTimeoutsTotal === 1 ? "timeout" : "timeouts"}, ${formatNumber(
+    stats.failureTotal,
+  )} ${stats.failureTotal === 1 ? "failure" : "failures"}.`;
 
-  if (hasCritical) {
+  if (unassignedRequests > 0) {
     return {
-      detail: `${baseDetail} ${pressureSignals.join(", ")}. ${
-        stats.requestsPending > 0
-          ? "Response reliability deserves immediate attention."
-          : "No pending requests are visible."
-      }`,
-      label: "Attention" as const,
-      tone: "danger" as const,
-    };
-  }
-
-  if (hasPressure) {
-    return {
-      detail: `${baseDetail} ${pressureSignals.join(", ")}.`,
+      detail: `${baseDetail} ${formatNumber(unassignedRequests)} ${
+        unassignedRequests === 1 ? "request is" : "requests are"
+      } not covered by a registered worker. ${historyDetail} Historical totals do not identify a current incident.`,
       label: "Pressure" as const,
       tone: "warning" as const,
     };
   }
 
+  if (stats.requestsPending > 0 || stats.pendingRoutesActive > 0) {
+    return {
+      detail: `${baseDetail} Registered workers cover the current pending count. ${historyDetail} Historical totals do not identify a current incident.`,
+      label: "Active" as const,
+      tone: "info" as const,
+    };
+  }
+
   return {
-    detail: `${baseDetail} Demand is healthy and live.`,
+    detail: `${baseDetail} No pending demand is visible. ${historyDetail} Historical totals do not identify a current incident.`,
     label: "Live" as const,
     tone: "success" as const,
   };
@@ -82,39 +70,6 @@ export default function RpcPage() {
         },
   );
   const stats = overview.data?.stats;
-  const rpcMetricColumns: readonly DomainResourceMetricColumn[] = [
-    {
-      id: "pending",
-      header: "Pending",
-      width: "10%",
-      cell: () => (stats ? formatNumber(stats.requestsPending) : "--"),
-    },
-    {
-      id: "workers",
-      header: "Workers",
-      width: "10%",
-      cell: () => (stats ? formatNumber(stats.workersRegistered) : "--"),
-    },
-    {
-      id: "pending-routes",
-      header: "Pending routes",
-      width: "13%",
-      cell: () => (stats ? formatNumber(stats.pendingRoutesActive) : "--"),
-    },
-    {
-      id: "timeouts",
-      header: "Timeouts",
-      width: "10%",
-      cell: () => (stats ? formatNumber(stats.requestTimeoutsTotal) : "--"),
-    },
-    {
-      id: "failures",
-      header: "Failures",
-      width: "10%",
-      cell: () => (stats ? formatNumber(stats.failureTotal) : "--"),
-    },
-  ];
-
   return (
     <DomainInventoryPage
       domain="rpc"
@@ -130,7 +85,6 @@ export default function RpcPage() {
       refreshingDescription="Refreshing RPC inventory..."
       emptyDescription="No RPC resources are currently visible. Check the selected Route Family or broaden scope."
       tableTitle="Resource inventory"
-      metricColumns={rpcMetricColumns}
       stats={[
         { label: "Pending", value: stats ? formatNumber(stats.requestsPending) : "--" },
         { label: "Workers", value: stats ? formatNumber(stats.workersRegistered) : "--" },

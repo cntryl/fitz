@@ -1,4 +1,4 @@
-import { apiv1 } from "@/adapters";
+import { apiParams, apiParamsQuery, apiv1 } from "@/adapters";
 import type { RpcCallObservationList, RpcOperationDetail } from "@/adapters";
 import { unwrapResponse, type ServiceRequestOptions } from "@/shared/errors/api";
 import { apiRouteFamilySegment } from "@/shared/navigation/domains";
@@ -15,8 +15,8 @@ import type {
 async function getOverview(options: ServiceRequestOptions = {}): Promise<RpcOverview> {
   const family = apiRouteFamilySegment();
   const [realmsResponse, statsResponse] = await Promise.all([
-    apiv1.listRpcRealms(family, options),
-    apiv1.getRpcStats(family, options),
+    apiv1.listRpcRealms(apiParams({ family }, options)),
+    apiv1.getRpcStats(apiParams({ family }, options)),
   ]);
 
   return mapRpcOverview(
@@ -31,17 +31,19 @@ async function searchCalls(
 ): Promise<RpcCallObservationList> {
   return unwrapResponse(
     await apiv1.searchRpcCalls(
-      apiRouteFamilySegment(request.routeFamily),
-      {
-        area: request.area,
-        correlation_id: request.correlationId,
-        limit: request.limit,
-        operation: request.operation,
-        q: request.query,
-        realm: request.realm,
-        resource: request.resource,
-      },
-      options,
+      apiParamsQuery(
+        { family: apiRouteFamilySegment(request.routeFamily) },
+        {
+          area: request.area,
+          correlation_id: request.correlationId,
+          limit: request.limit,
+          operation: request.operation,
+          q: request.query,
+          realm: request.realm,
+          resource: request.resource,
+        },
+        options,
+      ),
     ),
     "Unable to search RPC call evidence",
   );
@@ -53,13 +55,13 @@ async function listRpcAreas(
 ): Promise<RpcAreaInventory> {
   const family = apiRouteFamilySegment();
   const areas = unwrapResponse(
-    await apiv1.listRpcAreas(family, realm, options),
+    await apiv1.listRpcAreas(apiParams({ family, realm }, options)),
     "Unable to load RPC areas",
   ).areas;
   const rows = await Promise.all(
     areas.map(async ({ area }) => {
       const resources = unwrapResponse(
-        await apiv1.listRpcResources(family, realm, area, options),
+        await apiv1.listRpcResources(apiParams({ area, family, realm }, options)),
         "Unable to load RPC resources",
       ).resources;
 
@@ -80,7 +82,9 @@ async function listRpcResources(
   options: ServiceRequestOptions = {},
 ): Promise<RpcResourceInventory> {
   const resources = unwrapResponse(
-    await apiv1.listRpcResources(apiRouteFamilySegment(), realm, area, options),
+    await apiv1.listRpcResources(
+      apiParams({ area, family: apiRouteFamilySegment(), realm }, options),
+    ),
     "Unable to load RPC resources",
   ).resources;
 
@@ -99,11 +103,13 @@ async function getResourceOperations(
 ): Promise<RpcResourceOperationRows> {
   const family = apiRouteFamilySegment();
   const operations = unwrapResponse(
-    await apiv1.getRpcResource(family, realm, area, resource, options),
+    await apiv1.getRpcResource(apiParams({ area, family, realm, resource }, options)),
     "Unable to load RPC resource",
   );
   const calls = unwrapResponse(
-    await apiv1.searchRpcCalls(family, { area, limit: 200, realm, resource }, options),
+    await apiv1.searchRpcCalls(
+      apiParamsQuery({ family }, { area, limit: 200, realm, resource }, options),
+    ),
     "Unable to load RPC call evidence",
   ).observations;
 
@@ -138,7 +144,9 @@ async function getOperation(
   options: ServiceRequestOptions = {},
 ): Promise<RpcOperationDetail> {
   return unwrapResponse(
-    await apiv1.getRpcOperation(apiRouteFamilySegment(), realm, area, resource, operation, options),
+    await apiv1.getRpcOperation(
+      apiParams({ area, family: apiRouteFamilySegment(), operation, realm, resource }, options),
+    ),
     "Unable to load RPC operation",
   );
 }

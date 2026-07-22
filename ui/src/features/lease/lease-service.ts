@@ -1,4 +1,4 @@
-import { apiv1 } from "@/adapters";
+import { apiParams, apiParamsQuery, apiv1 } from "@/adapters";
 import type { LeaseSearchResponse } from "@/adapters";
 import { unwrapResponse, type ServiceRequestOptions } from "@/shared/errors/api";
 import { apiRouteFamilySegment } from "@/shared/navigation/domains";
@@ -46,8 +46,8 @@ async function mapWithConcurrency<T, R>(
 async function getOverview(options: ServiceRequestOptions = {}): Promise<LeaseOverview> {
   const family = apiRouteFamilySegment();
   const [realmsResponse, statsResponse] = await Promise.all([
-    apiv1.listLeaseRealms(family, options),
-    apiv1.getLeaseStats(family, options),
+    apiv1.listLeaseRealms(apiParams({ family }, options)),
+    apiv1.getLeaseStats(apiParams({ family }, options)),
   ]);
 
   return mapLeaseOverview(
@@ -62,7 +62,7 @@ async function listRealmResources(
 ): Promise<LeaseRealmInventory> {
   const family = apiRouteFamilySegment();
   const areaEntries = unwrapResponse(
-    await apiv1.listLeaseAreas(family, realm, options),
+    await apiv1.listLeaseAreas(apiParams({ family, realm }, options)),
     `Unable to load lease areas for ${realm}`,
   ).areas;
 
@@ -73,7 +73,7 @@ async function listRealmResources(
         realm,
         area,
         unwrapResponse(
-          await apiv1.listLeaseResources(family, realm, area, options),
+          await apiv1.listLeaseResources(apiParams({ area, family, realm }, options)),
           `Unable to load lease resources for ${realm}/${area}`,
         ).resources,
       ),
@@ -90,7 +90,7 @@ async function listAreaResources(
 ): Promise<LeaseAreaResourceRows> {
   const family = apiRouteFamilySegment();
   const resources = unwrapResponse(
-    await apiv1.listLeaseResources(family, realm, area, options),
+    await apiv1.listLeaseResources(apiParams({ area, family, realm }, options)),
     `Unable to load lease resources for ${realm}/${area}`,
   ).resources;
 
@@ -103,16 +103,18 @@ async function searchRows(
 ): Promise<LeaseOwnershipSearchResult> {
   const response = unwrapResponse(
     await apiv1.searchLeaseOwnership(
-      apiRouteFamilySegment(request.routeFamily),
-      {
-        area: request.area,
-        limit: request.limit,
-        owner: request.owner,
-        realm: request.realm,
-        resource: request.resource,
-        state: request.state,
-      },
-      options,
+      apiParamsQuery(
+        { family: apiRouteFamilySegment(request.routeFamily) },
+        {
+          area: request.area,
+          limit: request.limit,
+          owner: request.owner,
+          realm: request.realm,
+          resource: request.resource,
+          state: request.state,
+        },
+        options,
+      ),
     ),
     "Unable to search lease ownership",
   );
@@ -125,16 +127,18 @@ async function searchOwnership(
   options: ServiceRequestOptions = {},
 ): Promise<LeaseSearchResponse> {
   const response = await apiv1.searchLeaseOwnership(
-    apiRouteFamilySegment(request.routeFamily),
-    {
-      area: request.area,
-      limit: request.limit,
-      owner: request.owner,
-      realm: request.realm,
-      resource: request.resource,
-      state: request.state,
-    },
-    options,
+    apiParamsQuery(
+      { family: apiRouteFamilySegment(request.routeFamily) },
+      {
+        area: request.area,
+        limit: request.limit,
+        owner: request.owner,
+        realm: request.realm,
+        resource: request.resource,
+        state: request.state,
+      },
+      options,
+    ),
   );
 
   return unwrapResponse(response, "Unable to search lease ownership");

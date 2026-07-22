@@ -8,34 +8,34 @@
     "build": "vp build",
     "preview": "vp preview",
     "test": "vp test",
-    "test:e2e": "playwright test",
+    "test:e2e": "playwright test --grep-invert @visual",
+    "test:visual": "playwright test tests/e2e/visual.spec.ts --grep @visual",
     "test:e2e:ui": "playwright test --ui",
     "install:browsers": "playwright install chromium",
-    "check:generated": "npm run gen:adapters && git diff --exit-code -- src/adapters/generated/api.ts",
+    "check:generated": "askr generate ../public/openapi.yml -o ./src/adapters/generated --check",
     "type-check": "tsc --noEmit",
     "lint": "vp lint",
     "fmt": "vp fmt",
     "gen": "npm run gen:adapters && npm run fmt",
-    "gen:adapters": "npx @fgrzl/fetch-gen --input ../public/openapi.yml --output ./src/adapters/generated/api.ts && npm run fmt"
+    "gen:adapters": "askr generate ../public/openapi.yml -o ./src/adapters/generated"
   },
   "dependencies": {
-    "@askrjs/askr": "0.0.52",
-    "@askrjs/charts": "^0.0.1",
-    "@askrjs/logos": "0.0.1",
-    "@askrjs/lucide": "^0.0.3",
-    "@askrjs/themes": "0.0.11",
-    "@askrjs/ui": "0.0.12",
-    "@askrjs/vite": "0.0.5",
-    "@fgrzl/fetch": "^2.0.0"
+    "@askrjs/askr": "0.0.60",
+    "@askrjs/fetch": "0.0.1",
+    "@askrjs/lucide": "0.0.4",
+    "@askrjs/themes": "0.0.14",
+    "@askrjs/ui": "0.0.14"
   },
   "devDependencies": {
+    "@askrjs/cli": "0.0.7",
+    "@askrjs/vite": "0.0.7",
     "@playwright/test": "^1.61.1",
     "@types/node": "^26.1.1",
-    "autoprefixer": "^10.5.2",
+    "autoprefixer": "^10.5.4",
     "jsdom": "^29.1.1",
-    "postcss": "^8.5.17",
-    "typescript": "^6.0.3",
-    "vite-plus": "^0.2.4"
+    "postcss": "^8.5.22",
+    "typescript": "^7.0.2",
+    "vite-plus": "^0.2.5"
   },
   "packageManager": "npm@12.0.1"
 }

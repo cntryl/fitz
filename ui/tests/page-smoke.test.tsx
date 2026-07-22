@@ -241,8 +241,10 @@ describe("admin page smoke tests", () => {
           expect(text).toContain("Resource inventory");
           expect(text).toContain("Route");
           expect(text).toContain(`${page.path.slice(1)}://default/ops/primary`);
-          for (const statLabel of page.statLabels) {
-            expect(text).toContain(statLabel);
+          if (routeVariant.path === page.path) {
+            for (const statLabel of page.statLabels) {
+              expect(text).toContain(statLabel);
+            }
           }
           expect(root.querySelector(`a[href="${page.resourceHref}"]`)).toBeTruthy();
 

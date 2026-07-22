@@ -1,5 +1,5 @@
 import { For } from "@askrjs/askr/control";
-import { currentRoute, Link } from "@askrjs/askr/router";
+import { currentRoute } from "@askrjs/askr/router";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
 import {
   Card,
@@ -13,6 +13,7 @@ import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
+import { queryFreshness, queryHeaderStatus } from "@/components/shared/query-header-status";
 import {
   QueryEmptyState,
   QueryErrorState,
@@ -21,8 +22,7 @@ import {
 } from "@/components/shared/query-state";
 import type { RpcCallObservation } from "@/adapters";
 import { createRpcOperationQuery } from "@/features/rpc/rpc-query";
-import { formatNumber } from "@/shared/format";
-import { domainScopeHref } from "@/shared/navigation/domains";
+import { formatCount, formatNumber } from "@/shared/format";
 
 function decodeParam(value: string | undefined) {
   if (!value) return "";
@@ -43,6 +43,14 @@ function formatLatency(value: number | null | undefined) {
   return value == null ? "--" : `${formatNumber(value)} ms`;
 }
 
+function formatObservationState(value: string) {
+  return value
+    .split("_")
+    .filter(Boolean)
+    .map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`)
+    .join(" ");
+}
+
 function RpcCallEvidenceRows(props: { rows: RpcCallObservation[] }) {
   return (
     <For
@@ -51,7 +59,7 @@ function RpcCallEvidenceRows(props: { rows: RpcCallObservation[] }) {
     >
       {(row) => (
         <TableRow>
-          <TableCell>{row.state}</TableCell>
+          <TableCell>{formatObservationState(row.state)}</TableCell>
           <TableCell>{row.worker_session_id ?? "--"}</TableCell>
           <TableCell>{row.correlation_id ?? "--"}</TableCell>
           <TableCell>{formatNumber(row.requests_handled ?? 0)}</TableCell>
@@ -81,31 +89,29 @@ export default function RpcOperationPage() {
           eyebrow="RPC operation"
           title={operation}
           description={`${realm} / ${area} / ${resource}`}
-          primaryAction={{ label: "Refresh operation", onPress: () => query.refresh() }}
-          status={{
-            detail: detail
-              ? `${detail.workers_registered} worker(s), ${detail.requests_pending} pending request(s). Pending RPC state is live in-memory state only.`
-              : "Loading RPC operation.",
-            label: query.refreshing ? "Refreshing" : query.stale ? "Stale" : "Live",
-            tone: query.refreshing ? "info" : query.stale ? "warning" : "success",
+          primaryAction={{
+            busy: query.refreshing,
+            disabled: query.refreshing,
+            label: "Refresh operation",
+            onPress: () => query.refresh(),
           }}
+          status={queryHeaderStatus(query, {
+            loading: "Loading RPC operation.",
+            ready: detail
+              ? `${formatCount(detail.workers_registered, "worker")}, ${formatCount(
+                  detail.requests_pending,
+                  "pending request",
+                )}. Pending RPC state is live in-memory state only.`
+              : "",
+            unavailable: "RPC operation evidence is unavailable.",
+          })}
         />
         <OperatorScopeStrip
           realm={realm}
           area={area}
           resource={resource}
           operation={operation}
-          freshness={
-            query.refreshing
-              ? "Refreshing"
-              : query.stale
-                ? "Stale"
-                : data
-                  ? "Live"
-                  : query.loading
-                    ? "Loading"
-                    : undefined
-          }
+          freshness={queryFreshness(query)}
         />
         {!data && query.loading ? (
           <QueryLoadingState description="Loading RPC operation..." />
@@ -124,7 +130,7 @@ export default function RpcOperationPage() {
             ) : null}
             <DomainMetricTable
               title="RPC operation metrics"
-              description="Live worker capacity, pending requests, latency buckets, and call pressure."
+              description="Live worker capacity and pending requests. Latency buckets are current observations; the API does not report a reset window for handled-call counters."
               metrics={[
                 { label: "Workers", value: detail.workers_registered },
                 { label: "Pending requests", value: detail.requests_pending },
@@ -140,7 +146,7 @@ export default function RpcOperationPage() {
             />
             <Card padding="sm" variant="default">
               <CardHeader>
-                <CardTitle>Live call evidence</CardTitle>
+                <CardTitle titleAs="h2">Live call evidence</CardTitle>
                 <CardDescription>
                   Broker-local worker registrations, pending calls, and correlation rows.
                 </CardDescription>
@@ -149,24 +155,25 @@ export default function RpcOperationPage() {
                 {rows.length === 0 ? (
                   <QueryEmptyState description="No live RPC call evidence is currently visible." />
                 ) : (
-                  <Table>
-                    <TableHead>
-                      <TableRow>
-                        <TableHeaderCell>State</TableHeaderCell>
-                        <TableHeaderCell>Worker</TableHeaderCell>
-                        <TableHeaderCell>Correlation</TableHeaderCell>
-                        <TableHeaderCell>Requests handled</TableHeaderCell>
-                        <TableHeaderCell>Latency</TableHeaderCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      <RpcCallEvidenceRows rows={rows} />
-                    </TableBody>
-                  </Table>
+                  <div class="domain-table-wrap rpc-operation-table-wrap">
+                    <Table>
+                      <TableHead>
+                        <TableRow>
+                          <TableHeaderCell>State</TableHeaderCell>
+                          <TableHeaderCell>Worker</TableHeaderCell>
+                          <TableHeaderCell>Correlation</TableHeaderCell>
+                          <TableHeaderCell>Observed handled total</TableHeaderCell>
+                          <TableHeaderCell>Latency</TableHeaderCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        <RpcCallEvidenceRows rows={rows} />
+                      </TableBody>
+                    </Table>
+                  </div>
                 )}
               </CardContent>
             </Card>
-            <Link href={domainScopeHref("rpc", { area, realm, resource })}>Back to resource</Link>
           </Stack>
         ) : null}
       </Stack>

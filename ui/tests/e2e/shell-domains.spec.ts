@@ -4,7 +4,11 @@ import {
   domainOverviewPages,
   mockDomainOverviewApis,
 } from "./shell/api-fixtures";
-import { mockResourceDetailApis, mockScheduleResourceApis } from "./shell/resource-mocks";
+import {
+  mockQueueResourceApis,
+  mockResourceDetailApis,
+  mockScheduleResourceApis,
+} from "./shell/resource-mocks";
 
 test("captures a domain inventory page", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1200 });
@@ -24,6 +28,24 @@ test("captures a domain inventory page", async ({ page }, testInfo) => {
     path: testInfo.outputPath("queue-inventory.png"),
     animations: "disabled",
   });
+});
+
+test("omits comparison controls from queue resource inspection", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  const queueScope = {
+    area: "payments",
+    realm: "acme",
+    resource: "orders",
+  };
+  await mockQueueResourceApis(page, queueScope);
+  await page.goto("/admin/1/queue/acme/payments/orders");
+
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Queue resource inspection" }),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Compare scopes" })).toHaveCount(0);
+  await expect(page.locator("#compare-realm, #compare-family")).toHaveCount(0);
+  await expect(page.getByRole("heading", { level: 2, name: "Dead letters" })).toBeVisible();
 });
 
 test("captures lease overview empty state", async ({ page }, testInfo) => {
@@ -60,9 +82,9 @@ test("navigates lease scope drill-down links and shows ownership countdown updat
   await page.locator('a[href="/admin/1/lease/default/default/primary"]').click();
   await expect(page).toHaveURL("/admin/1/lease/default/default/primary");
   await expect(page.getByRole("heading", { name: "primary" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Back to area" })).toHaveAttribute(
-    "href",
-    "/admin/1/lease/default/default",
+  await expect(page.getByRole("link", { name: "Back to area" })).toHaveCount(0);
+  await expect(page.getByRole("navigation", { name: "Resource hierarchy" })).toContainText(
+    "primary",
   );
 
   const remainingCell = page.locator("table tbody tr td").nth(5);
@@ -87,11 +109,33 @@ test("navigates notice scope drill-down links to operation detail", async ({ pag
   await page.locator('a[href="/admin/1/notice/default/default/primary/GetStatus"]').click();
   await expect(page).toHaveURL("/admin/1/notice/default/default/primary/GetStatus");
   await expect(page.getByRole("heading", { level: 1, name: "GetStatus" })).toBeVisible();
-  await expect(page.getByText("Latency unavailable via current API")).toBeVisible();
-  await expect(page.getByRole("link", { name: "Back to resource" })).toHaveAttribute(
-    "href",
-    "/admin/1/notice/default/default/primary",
+  await expect(page.getByRole("heading", { level: 2, name: "Delivery evidence" })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Notifications observed" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Resource hierarchy" })).toContainText(
+    "primary",
   );
+});
+
+test("renders component-returned notice rows as aligned direct table rows", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  await mockDomainOverviewApis(page);
+  await page.goto("/admin/1/notice/acme/payments/orders/RefreshProjection");
+
+  await expect(page.getByRole("heading", { level: 1, name: "RefreshProjection" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 2, name: "Delivery evidence" })).toBeVisible();
+
+  const table = page.locator(".notice-operation-table-wrap table");
+  await expect(table.locator(":scope > tbody > tr")).toHaveCount(1);
+  await expect(table.locator(":scope > tbody > div")).toHaveCount(0);
+
+  const headerStarts = await table
+    .locator("thead th")
+    .evaluateAll((cells) => cells.map((cell) => Math.round(cell.getBoundingClientRect().left)));
+  const bodyStarts = await table
+    .locator("tbody > tr:first-child > td")
+    .evaluateAll((cells) => cells.map((cell) => Math.round(cell.getBoundingClientRect().left)));
+
+  expect(bodyStarts).toEqual(headerStarts);
 });
 
 test("navigates schedule scope drill-down links to resource detail", async ({ page }) => {
@@ -110,8 +154,10 @@ test("navigates schedule scope drill-down links to resource detail", async ({ pa
   await page.locator('a[href="/admin/1/schedule/default/default/primary"]').click();
   await expect(page).toHaveURL("/admin/1/schedule/default/default/primary");
   await expect(page.getByRole("heading", { name: "Schedule resource inspection" })).toBeVisible();
-  await expect(page.getByText("Broker-observed, non-authoritative counter")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Execution observations" })).toBeVisible();
+  await expect(page.getByText("Non-authoritative; not downstream execution history")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Acknowledged handoff observations" }),
+  ).toBeVisible();
   await expect(page.getByRole("heading", { name: "Pending and missed handoffs" })).toBeVisible();
 });
 

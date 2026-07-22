@@ -1,5 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 import {
+  mockAdminFeatures,
   mockDiagnosticsApis,
   mockDomainOverviewApis,
   mockHomeRouteApis,
@@ -36,22 +37,26 @@ export async function openDashboard(
   const contextNav = page.getByRole("navigation", { name: "Operator context" });
   const viewport = page.viewportSize();
 
-  await expect(contextNav.getByRole("link", { name: "Fitz admin home" })).toBeVisible();
-  await expect(contextNav.getByRole("button", { name: "Route Family selector" })).toBeVisible();
+  const brandLink = contextNav.getByRole("link", { name: "Fitz admin home" });
+  await expect(brandLink).toBeVisible();
+  await expect(brandLink.locator("img.fitz-brand-logo")).toBeVisible();
   await expect(contextNav.getByRole("button", { name: "Toggle color theme" })).toBeVisible();
+  await expect(contextNav.locator('a[aria-label="Sign out"]')).toHaveCount(0);
 
   if ((viewport?.width ?? 0) < 768) {
     await expect(primaryNav.getByRole("button", { name: /Menu|Navigation/ })).toBeVisible();
     return;
   }
 
+  await expect(primaryNav.getByRole("button", { name: "Route Family selector" })).toBeVisible();
   await expect(primaryNav.getByRole("link", { name: "Overview" })).toBeVisible();
+  await expect(primaryNav.getByRole("link", { name: "Sessions" })).toBeVisible();
   await expect(primaryNav.getByRole("link", { name: "Diagnostics" })).toBeVisible();
   await expect(primaryNav.getByRole("link", { name: "Metrics" })).toBeVisible();
   await expect(primaryNav.getByRole("link", { name: "Queue" })).toBeVisible();
 }
 
-export type RouteChrome = "app" | "auth";
+export type RouteChrome = "app" | "auth" | "selector";
 
 export type ThemeMode = "light" | "dark";
 
@@ -151,11 +156,6 @@ export async function expectNoHorizontalOverflow(page: Page) {
     };
     const offenders = Array.from(document.body.querySelectorAll<HTMLElement>("*")).filter(
       (element) => {
-        // askrjs/askr-charts#2 tracks sr-only chart tables inflating document width.
-        if (element.closest(".ak-chart-sr-only")) {
-          return false;
-        }
-
         const style = window.getComputedStyle(element);
         if (style.display === "none" || style.visibility === "hidden") {
           return false;
@@ -180,6 +180,27 @@ export async function expectNoHorizontalOverflow(page: Page) {
   expect(visibleOverflow).toBe(true);
 }
 
+export async function expectReachableScrollableTables(page: Page) {
+  const unreachable = await page.evaluate(() => {
+    const surfaces = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        '.domain-table-wrap, [data-slot="virtual-table"], [data-slot="table-container"]',
+      ),
+    );
+
+    return surfaces.filter((surface) => {
+      if (surface.scrollWidth <= surface.clientWidth + 1) return false;
+      const original = surface.scrollLeft;
+      surface.scrollLeft = surface.scrollWidth;
+      const reachedEnd = surface.scrollLeft > original;
+      surface.scrollLeft = original;
+      return !reachedEnd;
+    }).length;
+  });
+
+  expect(unreachable).toBe(0);
+}
+
 export async function expectRouteChrome(page: Page, route: RouteScenario) {
   const viewport = page.viewportSize();
   const isMobile = (viewport?.width ?? 0) < 768;
@@ -194,18 +215,28 @@ export async function expectRouteChrome(page: Page, route: RouteScenario) {
   await expect(page.getByRole("heading", headingOptions)).toBeVisible();
 
   await expectNoHorizontalOverflow(page);
+  await expectReachableScrollableTables(page);
+
+  if (route.shell === "selector") {
+    await expect(page.getByRole("navigation", { name: "Operator context" })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Primary navigation" })).toHaveCount(0);
+    return;
+  }
 
   if (route.shell === "app") {
+    await expect(page.getByRole("navigation", { name: "Resource hierarchy" })).toBeVisible();
     await expect(contextNav.getByRole("link", { name: "Fitz admin home" })).toBeVisible();
-    await expect(contextNav.getByRole("button", { name: "Route Family selector" })).toBeVisible();
     await expect(contextNav.getByRole("button", { name: "Toggle color theme" })).toBeVisible();
+    await expect(contextNav.locator('a[aria-label="Sign out"]')).toHaveCount(0);
 
     if (isMobile) {
       const menu = primaryNav.getByRole("button", { name: /Menu|Navigation/ });
       await expect(menu).toBeVisible();
       await menu.click();
 
+      await expect(primaryNav.getByRole("button", { name: "Route Family selector" })).toBeVisible();
       await expect(primaryNav.getByRole("link", { name: "Overview" })).toBeVisible();
+      await expect(primaryNav.getByRole("link", { name: "Sessions" })).toBeVisible();
       await expect(primaryNav.getByRole("link", { name: "Diagnostics" })).toBeVisible();
       await expect(primaryNav.getByRole("link", { name: "Metrics" })).toBeVisible();
       await expect(primaryNav.getByRole("link", { name: "Queue" })).toBeVisible();
@@ -215,7 +246,9 @@ export async function expectRouteChrome(page: Page, route: RouteScenario) {
       return;
     }
 
+    await expect(primaryNav.getByRole("button", { name: "Route Family selector" })).toBeVisible();
     await expect(primaryNav.getByRole("link", { name: "Overview" })).toBeVisible();
+    await expect(primaryNav.getByRole("link", { name: "Sessions" })).toBeVisible();
     await expect(primaryNav.getByRole("link", { name: "Stream" })).toBeVisible();
     await expect(primaryNav.getByRole("link", { name: "KV" })).toBeVisible();
     await expect(primaryNav.getByRole("link", { name: "Queue" })).toBeVisible();
@@ -258,7 +291,7 @@ export const sprint16Routes: RouteScenario[] = [
     path: "/admin/1/settings",
     shell: "app",
     setup: mockHomeRouteApis,
-    title: "Settings",
+    title: "Workspace & account",
   },
   {
     path: "/admin/1/lease",
@@ -363,6 +396,42 @@ export const sprint16Routes: RouteScenario[] = [
     title: "KV tables",
   },
   {
+    path: "/admin/1/kv/default",
+    shell: "app",
+    setup: (page) => mockDomainOverviewApis(page),
+    title: "KV tables",
+  },
+  {
+    path: "/admin/1/kv/default/ops",
+    shell: "app",
+    setup: (page) => mockDomainOverviewApis(page),
+    title: "KV tables",
+  },
+  {
+    path: "/admin/1/rpc/default",
+    shell: "app",
+    setup: (page) => mockDomainOverviewApis(page),
+    title: "RPC inventory",
+  },
+  {
+    path: "/admin/1/rpc/default/ops",
+    shell: "app",
+    setup: (page) => mockDomainOverviewApis(page),
+    title: "RPC inventory",
+  },
+  {
+    path: "/admin/1/stream/default",
+    shell: "app",
+    setup: (page) => mockDomainOverviewApis(page),
+    title: "Stream inventory",
+  },
+  {
+    path: "/admin/1/stream/default/ops",
+    shell: "app",
+    setup: (page) => mockDomainOverviewApis(page),
+    title: "Stream inventory",
+  },
+  {
     path: "/admin/1/queue/default/ops/primary",
     shell: "app",
     setup: (page) =>
@@ -388,6 +457,7 @@ export const sprint16Routes: RouteScenario[] = [
         page,
         "lease",
         parseRouteResourceScope("/admin/1/lease/default/ops/primary"),
+        { now: new Date("2026-06-23T18:30:00.000Z").valueOf() },
       ),
     title: "primary",
   },
@@ -438,12 +508,65 @@ export const sprint16Routes: RouteScenario[] = [
     path: "/login",
     shell: "auth",
     setup: (page) => mockHomeRouteApis(page),
-    title: "Sign in to Fitz Admin",
+    title: "Open access",
   },
   {
     path: "/logout",
     shell: "auth",
     setup: (page) => mockHomeRouteApis(page),
-    title: /Signed out|Signing out/,
+    title: /Open access|Signing out/,
   },
+  {
+    path: "/admin/1/rpc/default/ops/primary/GetStatus",
+    shell: "app",
+    setup: (page) =>
+      mockResourceDetailApis(
+        page,
+        "rpc",
+        parseRouteResourceScope("/admin/1/rpc/default/ops/primary/GetStatus"),
+      ),
+    title: "GetStatus",
+  },
+];
+
+const scenarioByPath = new Map(sprint16Routes.map((scenario) => [scenario.path, scenario]));
+
+function scenario(path: string) {
+  const value = scenarioByPath.get(path);
+  if (!value) throw new Error(`Missing page scenario for ${path}`);
+  return value;
+}
+
+export const canonicalVisualScenarios: RouteScenario[] = [
+  {
+    path: "/admin",
+    shell: "selector",
+    setup: mockAdminFeatures,
+    title: "Select Route Family",
+  },
+  ...[
+    "/admin/1",
+    "/admin/1/sessions",
+    "/admin/1/metrics",
+    "/admin/1/diagnostics",
+    "/admin/1/settings",
+    "/admin/1/kv",
+    "/admin/1/lease",
+    "/admin/1/notice",
+    "/admin/1/queue",
+    "/admin/1/rpc",
+    "/admin/1/schedule",
+    "/admin/1/stream",
+    "/admin/1/kv/default/ops/primary",
+    "/admin/1/lease/default/ops/primary",
+    "/admin/1/notice/default/ops/primary",
+    "/admin/1/queue/default/ops/primary",
+    "/admin/1/rpc/default/ops/primary",
+    "/admin/1/schedule/default/ops/primary",
+    "/admin/1/stream/default/ops/primary",
+    "/admin/1/notice/default/ops/primary/GetStatus",
+    "/login",
+    "/logout",
+    "/admin/1/rpc/default/ops/primary/GetStatus",
+  ].map(scenario),
 ];

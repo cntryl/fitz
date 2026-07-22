@@ -14,9 +14,9 @@ export function createSignInMutation() {
 }
 
 export function createSignOutMutation() {
-  return createMutation<undefined, void>({
+  return createMutation<undefined, { performed: boolean }>({
     action: async (_input, { signal }) => {
-      await sessionService.signOut({ signal });
+      return sessionService.signOut({ signal });
     },
     affects: () => [SESSION_QUERY_PREFIX],
     afterSuccess: "invalidate",

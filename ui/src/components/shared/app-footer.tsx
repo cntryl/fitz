@@ -20,7 +20,7 @@ export default function AppFooter() {
               <FooterTitle>Fitz</FooterTitle>
             </Brand>
             <FooterDescription>
-              Ephemeral broker admin for live domains, Route Families, and operational diagnostics.
+              Fitz operator console for live domains, Route Families, and operational diagnostics.
             </FooterDescription>
           </FooterSection>
 
