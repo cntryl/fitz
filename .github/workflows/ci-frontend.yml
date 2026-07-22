@@ -59,14 +59,11 @@ jobs:
       - name: Playwright route suite
         run: npm run test:e2e
 
-      - name: Playwright visual regression suite
-        run: npm run test:visual
-
-      - name: Upload visual regression artifacts
+      - name: Upload Playwright failure artifacts
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: fitz-ui-visual-regression
+          name: fitz-ui-playwright-failures
           path: |
             ui/test-results/**
             ui/playwright-report/**

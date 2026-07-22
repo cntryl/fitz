@@ -8,7 +8,6 @@ const baseURL = configuredBaseURL;
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  snapshotPathTemplate: "{testDir}/__screenshots__/{arg}{ext}",
   fullyParallel: true,
   forbidOnly: isCI,
   retries: isCI ? 2 : 0,

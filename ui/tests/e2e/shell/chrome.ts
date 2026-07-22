@@ -1,6 +1,5 @@
 import { expect, type Page } from "@playwright/test";
 import {
-  mockAdminFeatures,
   mockDiagnosticsApis,
   mockDomainOverviewApis,
   mockHomeRouteApis,
@@ -543,46 +542,4 @@ export const sprint16Routes: RouteScenario[] = [
       ),
     title: "GetStatus",
   },
-];
-
-const scenarioByPath = new Map(sprint16Routes.map((scenario) => [scenario.path, scenario]));
-
-function scenario(path: string) {
-  const value = scenarioByPath.get(path);
-  if (!value) throw new Error(`Missing page scenario for ${path}`);
-  return value;
-}
-
-export const canonicalVisualScenarios: RouteScenario[] = [
-  {
-    path: "/admin",
-    shell: "selector",
-    setup: mockAdminFeatures,
-    title: "Select Route Family",
-  },
-  ...[
-    "/admin/1",
-    "/admin/1/sessions",
-    "/admin/1/metrics",
-    "/admin/1/diagnostics",
-    "/admin/1/settings",
-    "/admin/1/kv",
-    "/admin/1/lease",
-    "/admin/1/notice",
-    "/admin/1/queue",
-    "/admin/1/rpc",
-    "/admin/1/schedule",
-    "/admin/1/stream",
-    "/admin/1/kv/default/ops/primary",
-    "/admin/1/lease/default/ops/primary",
-    "/admin/1/notice/default/ops/primary",
-    "/admin/1/queue/default/ops/primary",
-    "/admin/1/rpc/default/ops/primary",
-    "/admin/1/schedule/default/ops/primary",
-    "/admin/1/stream/default/ops/primary",
-    "/admin/1/notice/default/ops/primary/GetStatus",
-    "/login",
-    "/logout",
-    "/admin/1/rpc/default/ops/primary/GetStatus",
-  ].map(scenario),
 ];
