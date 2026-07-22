@@ -267,8 +267,15 @@ export async function expectRouteChrome(page: Page, route: RouteScenario) {
     return;
   }
 
-  await expect(primaryNav.getByRole("link", { name: "Fitz admin home" })).toBeVisible();
-  await expect(primaryNav.getByRole("button", { name: "Toggle color theme" })).toBeVisible();
+  await expect(primaryNav).toHaveCount(0);
+  await expect(contextNav).toHaveCount(0);
+  await expect(page.locator("header, footer")).toHaveCount(0);
+  await expect(page.locator("main#main-content.auth-page")).toBeVisible();
+  await expect(page.locator('[data-slot="card"]')).toBeVisible();
+
+  if (route.path === "/login") {
+    await expect(page.locator('[data-slot="card"] img.fitz-brand-logo')).toBeVisible();
+  }
 }
 
 export const sprint16Routes: RouteScenario[] = [

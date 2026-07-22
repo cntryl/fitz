@@ -1,16 +1,23 @@
 import { state } from "@askrjs/askr";
 import { task } from "@askrjs/askr/resources";
 import { currentRoute, navigate } from "@askrjs/askr/router";
-import { Input, Label } from "@askrjs/ui";
-import { Button, Field } from "@askrjs/themes/components";
 import {
   Alert,
+  Block,
+  Brand,
+  BrandLabel,
+  BrandMark,
+  Button,
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
+  Field,
+  Input,
+  Label,
 } from "@askrjs/themes/components";
+import fitzLogo from "@/assets/fitz-logo.png";
 import { createSignInMutation } from "@/features/session/session-mutation";
 import { createCurrentSessionQuery } from "@/features/session/session-query";
 import { manageRoutePageContext } from "@/components/shared/domain-page-frame";
@@ -55,7 +62,13 @@ export default function Login() {
 
   return (
     <Card class="auth-card" variant="raised">
-      <CardHeader class="auth-card-header">
+      <CardHeader>
+        <Brand>
+          <BrandMark aria-hidden="true">
+            <img class="fitz-brand-logo" src={fitzLogo} alt="" />
+          </BrandMark>
+          <BrandLabel>Fitz Admin</BrandLabel>
+        </Brand>
         <CardTitle titleAs="h1">{openAccess ? "Open access" : "Sign in to Fitz Admin"}</CardTitle>
         <CardDescription>
           {openAccess
@@ -77,7 +90,7 @@ export default function Login() {
             }
           />
         ) : (
-          <form class="auth-form" onSubmit={onSubmit}>
+          <Block as="form" direction="column" gap="xl" onSubmit={onSubmit}>
             <Field>
               <Label for="username-field">Username</Label>
               <Input
@@ -106,9 +119,9 @@ export default function Login() {
             </Field>
 
             <Button
-              class="auth-submit"
               type="submit"
               variant="primary"
+              width="full"
               aria-busy={signIn.pending}
               disabled={signIn.pending}
             >
@@ -124,7 +137,7 @@ export default function Login() {
                 />
               ) : null}
             </div>
-          </form>
+          </Block>
         )}
       </CardContent>
     </Card>

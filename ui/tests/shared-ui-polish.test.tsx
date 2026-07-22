@@ -6,7 +6,6 @@ import { ThemeScope } from "@askrjs/themes/theme";
 import AppLayout from "@/pages/app/_layout";
 import RouteFamilySelectorPage from "@/pages/app/route-family";
 import AuthLayout from "@/pages/auth/_layout";
-import { authAccountLabel } from "@/pages/auth/_layout";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainResourceInventoryTable from "@/components/shared/domain-resource-inventory-table";
@@ -86,11 +85,6 @@ afterEach(() => {
 });
 
 describe("shared UI polish contracts", () => {
-  it("distinguishes authenticated open access from a guest", () => {
-    expect(authAccountLabel({ authenticated: true, username: "" })).toBe("Open access");
-    expect(authAccountLabel({ authenticated: false, username: "" })).toBe("Guest");
-  });
-
   it("renders route-family loading, error, and empty states", async () => {
     const base: OperatorScopeSnapshot = {
       retryRouteFamilies: vi.fn(),
@@ -415,7 +409,7 @@ describe("shared UI polish contracts", () => {
     expect(breadcrumbs?.textContent).not.toContain("Settings");
   });
 
-  it("renders the shared footer on auth pages", async () => {
+  it("renders auth pages in a focused full-viewport shell", async () => {
     const root = await mount(
       () => (
         <AuthLayout>
@@ -427,11 +421,9 @@ describe("shared UI polish contracts", () => {
 
     expect(root.querySelector("main#main-content")?.textContent).toContain("Auth page");
     expect(root.querySelector("main#main-content")?.getAttribute("tabindex")).toBe("-1");
-    expect(root.querySelector('footer [href="https://github.com/cntryl/fitz"]')).toBeTruthy();
-    expect(root.querySelector('footer [href="https://github.com/cntryl/fitz-ts"]')).toBeTruthy();
-    expect(root.querySelector('footer [href="https://github.com/cntryl/fitz-go"]')).toBeTruthy();
-    expect(root.textContent).toContain("fitz-ts");
-    expect(root.textContent).toContain("fitz-go");
+    expect(root.querySelector("main#main-content")?.classList.contains("auth-page")).toBe(true);
+    expect(root.querySelector(".auth-panel")?.textContent).toContain("Auth page");
+    expect(root.querySelector("header, footer")).toBeNull();
   });
 
   it("exposes individual domain pages from the app sidebar", async () => {

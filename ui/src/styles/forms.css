@@ -1,55 +1,35 @@
-.auth-header {
-  padding-block: 0;
-  border-block-end: 1px solid var(--fitz-border-subtle);
-  background: var(--fitz-page-background);
-}
-
-.auth-navbar {
-  min-block-size: 0;
-  padding-block: 0.375rem;
-  overflow: visible;
-}
-
-.auth-navbar > [data-slot="navbar-shell"] {
-  overflow: visible;
-}
-
-.auth-brand a {
-  display: inline-flex;
+.auth-page {
+  box-sizing: border-box;
+  display: flex;
+  min-block-size: 100svh;
+  inline-size: 100%;
   align-items: center;
-  gap: var(--fitz-control-gap);
-  min-block-size: 2.25rem;
-  color: inherit;
-  font-size: 0.9375rem;
-  font-weight: 720;
-  text-decoration: none;
-  white-space: nowrap;
+  justify-content: center;
+  padding: 1.5rem;
+}
+
+.auth-panel {
+  inline-size: 100%;
+  max-inline-size: 24rem;
 }
 
 .auth-card {
-  width: min(100%, 25rem);
-  border-color: var(--fitz-border-subtle);
-  box-shadow: 0 0.75rem 2rem color-mix(in srgb, var(--ak-color-text, CanvasText) 8%, transparent);
+  gap: var(--ak-space-xl, 1.5rem);
+  padding-block: var(--ak-space-xl, 1.5rem);
 }
 
-.auth-card-header {
-  gap: var(--ak-space-1, 0.25rem);
+.auth-card :where([data-slot="card-header"], [data-slot="card-content"]) {
+  padding-inline: var(--ak-space-xl, 1.5rem);
 }
 
-.auth-card [data-slot="card-title"] {
-  font-size: 1.125rem;
+.auth-card [data-slot="brand"] {
+  margin-block-end: var(--ak-space-sm, 0.5rem);
 }
 
-.auth-form {
-  display: grid;
-  gap: var(--ak-space-4, 1rem);
-}
-
-.auth-submit {
-  inline-size: 100%;
-  min-block-size: 2.5rem;
-  justify-content: center;
-  gap: var(--fitz-control-gap);
+@media (min-width: 48rem) {
+  .auth-page {
+    padding: 2.5rem;
+  }
 }
 
 .auth-status-shell {
