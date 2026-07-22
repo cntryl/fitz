@@ -189,7 +189,16 @@ export async function expectReachableScrollableTables(page: Page) {
     );
 
     return surfaces.filter((surface) => {
-      if (surface.scrollWidth <= surface.clientWidth + 1) return false;
+      const style = window.getComputedStyle(surface);
+      const inlineBorderWidth =
+        Number.parseFloat(style.borderLeftWidth) + Number.parseFloat(style.borderRightWidth);
+      const reservedScrollbarGutter = Math.max(
+        0,
+        surface.offsetWidth - surface.clientWidth - inlineBorderWidth,
+      );
+      const horizontalOverflow = surface.scrollWidth - surface.clientWidth;
+
+      if (horizontalOverflow <= reservedScrollbarGutter + 1) return false;
       const original = surface.scrollLeft;
       surface.scrollLeft = surface.scrollWidth;
       const reachedEnd = surface.scrollLeft > original;
