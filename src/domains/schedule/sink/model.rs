@@ -46,6 +46,7 @@ pub(super) struct ScheduleSubscriptionSet {
     pub(super) subscriptions: HashMap<u64, ScheduleSubscription>,
     pub(super) session_routes: HashMap<u64, HashMap<String, u64>>,
     pub(super) exact_routes: HashMap<String, Vec<u64>>,
+    pub(super) round_robin_cursors: HashMap<String, usize>,
 }
 
 impl ScheduleSubscriptionSet {
@@ -54,6 +55,7 @@ impl ScheduleSubscriptionSet {
             subscriptions: HashMap::new(),
             session_routes: HashMap::new(),
             exact_routes: HashMap::new(),
+            round_robin_cursors: HashMap::new(),
         }
     }
 
@@ -108,26 +110,6 @@ impl ScheduleSubscriptionSet {
         removed_ids.len()
     }
 
-    pub(super) fn for_each_route(
-        &self,
-        route: &str,
-        mut visit: impl FnMut(&ScheduleSubscription),
-    ) -> usize {
-        let Some(subscription_ids) = self.exact_routes.get(route) else {
-            return 0;
-        };
-
-        let mut matched = 0_usize;
-        for subscription_id in subscription_ids {
-            if let Some(subscription) = self.subscriptions.get(subscription_id) {
-                matched = matched.saturating_add(1);
-                visit(subscription);
-            }
-        }
-
-        matched
-    }
-
     pub(super) fn remove_subscription(&mut self, subscription_id: u64) -> bool {
         let Some(subscription) = self.subscriptions.remove(&subscription_id) else {
             return false;
@@ -153,6 +135,7 @@ impl ScheduleSubscriptionSet {
             };
         if route_entries_empty {
             self.exact_routes.remove(subscription.route.as_str());
+            self.round_robin_cursors.remove(subscription.route.as_str());
         }
 
         true

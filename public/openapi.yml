@@ -5235,6 +5235,7 @@ components:
           operation,
           status,
           cron,
+          delivery_mode,
           next_run,
           last_run,
           executions_total,
@@ -5249,6 +5250,9 @@ components:
         operation: { type: string }
         status: { type: string }
         cron: { type: string }
+        delivery_mode:
+          type: string
+          enum: [broadcast, single]
         next_run: { type: string }
         last_run:
           type: [string, "null"]
@@ -5282,6 +5286,7 @@ components:
           area,
           resource,
           operation,
+          delivery_mode,
           fire_ms,
           fire_at,
           claimed_at,
@@ -5296,6 +5301,9 @@ components:
         area: { type: string }
         resource: { type: string }
         operation: { type: string }
+        delivery_mode:
+          type: string
+          enum: [broadcast, single]
         fire_ms:
           type: integer
           format: int64

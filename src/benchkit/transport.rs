@@ -809,6 +809,7 @@ pub fn build_schedule_create(route: &str, cron: &str, payload: &[u8]) -> Vec<u8>
 
     buf.put_u32(u32_len(cron.len()));
     buf.put_slice(cron.as_bytes());
+    buf.put_u8(crate::domains::schedule::ScheduleDeliveryMode::Broadcast as u8);
 
     buf.put_u32(u32_len(payload.len()));
     buf.put_slice(payload);
@@ -830,6 +831,7 @@ pub fn build_schedule_create_batch(entries: &[(&str, &str, &[u8])]) -> Vec<u8> {
 
         buf.put_u32(u32_len(cron.len()));
         buf.put_slice(cron.as_bytes());
+        buf.put_u8(crate::domains::schedule::ScheduleDeliveryMode::Broadcast as u8);
 
         buf.put_u32(u32_len(payload.len()));
         buf.put_slice(payload);

@@ -530,6 +530,7 @@ pub(crate) fn seed_pending_schedule_claim(store: Arc<cntryl_midge::Engine>) {
             ScheduleInsert {
                 route,
                 cron: "* * * * *",
+                delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
                 payload: &payload,
                 next_fire_ms: claimed_fire_ms,
                 previous_fire_ms: None,
@@ -546,6 +547,7 @@ pub(crate) fn seed_pending_schedule_claim(store: Arc<cntryl_midge::Engine>) {
                 route,
                 route_parts: &route_parts,
                 cron: "* * * * *",
+                delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
                 payload: &payload,
                 claimed_at_ms: claimed_fire_ms,
                 next_fire_ms,
@@ -572,6 +574,7 @@ pub(crate) fn seed_active_schedule_definition(store: Arc<cntryl_midge::Engine>) 
             ScheduleInsert {
                 route,
                 cron: "* * * * *",
+                delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
                 payload: &payload,
                 next_fire_ms,
                 previous_fire_ms: None,

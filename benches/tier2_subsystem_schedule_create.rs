@@ -7,7 +7,7 @@ use cntryl_stress::{black_box, stress, stress_main, StressContext};
 use fitz::benchkit::create_bench_store;
 use fitz::domains::schedule::actor::ScheduleActor;
 use fitz::domains::schedule::protocol::{
-    validate_concrete_schedule_route, CronSchedule, ScheduleCreateEntry,
+    validate_concrete_schedule_route, CronSchedule, ScheduleCreateEntry, ScheduleDeliveryMode,
 };
 use fitz::domains::schedule::store::{ScheduleBatchInsert, ScheduleInsert, ScheduleStore};
 use fitz::runtime::routing::RouteFamily;
@@ -222,6 +222,7 @@ fn should_store_insert_unique_inmemory_32(ctx: &mut StressContext) {
                                 ScheduleInsert {
                                     route: &case.routes[index],
                                     cron: &case.cron,
+                                    delivery_mode: ScheduleDeliveryMode::Broadcast,
                                     payload: &case.payloads[index],
                                     next_fire_ms: case.next_fire_ms,
                                     previous_fire_ms: None,
@@ -251,6 +252,7 @@ fn should_store_insert_batch_unique_inmemory_32(ctx: &mut StressContext) {
                 .map(|index| ScheduleBatchInsert {
                     route: case.routes[index].clone(),
                     cron: case.cron.clone(),
+                    delivery_mode: ScheduleDeliveryMode::Broadcast,
                     payload: case.payloads[index].clone(),
                     next_fire_ms: case.next_fire_ms,
                     previous_fire_ms: None,
@@ -318,6 +320,7 @@ fn should_actor_create_batch_unique_inmemory_32(ctx: &mut StressContext) {
                 .map(|index| ScheduleCreateEntry {
                     route: case.routes[index].clone(),
                     cron: case.cron.clone(),
+                    delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
                     payload: case.payloads[index].clone(),
                 })
                 .collect::<Vec<_>>()

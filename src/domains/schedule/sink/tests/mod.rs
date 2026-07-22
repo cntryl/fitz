@@ -63,6 +63,7 @@ fn encode_schedule_create(route: &str, cron: &str, payload: &[u8]) -> Bytes {
     let mut encoder = PayloadEncoder::new();
     encoder.put_string(route);
     encoder.put_string(cron);
+    encoder.put_u8(crate::domains::schedule::ScheduleDeliveryMode::Broadcast as u8);
     encoder.put_bytes(payload);
     Bytes::from(encoder.finish())
 }

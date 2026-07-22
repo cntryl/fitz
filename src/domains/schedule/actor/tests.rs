@@ -95,6 +95,7 @@ fn should_normalize_overdue_persisted_schedule_forward_on_preload() {
             ScheduleInsert {
                 route,
                 cron: "* * * * *",
+                delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
                 payload: &payload,
                 next_fire_ms: overdue_ms,
                 previous_fire_ms: None,
@@ -138,6 +139,7 @@ fn should_skip_missed_execution_given_overdue_schedule_on_preload() {
             ScheduleInsert {
                 route,
                 cron: "* * * * *",
+                delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
                 payload: &payload,
                 next_fire_ms: overdue_ms,
                 previous_fire_ms: None,
@@ -217,6 +219,7 @@ fn should_preserve_pending_due_occurrence_given_identical_batch_retry_at_due_bou
     let entries = vec![ScheduleCreateEntry {
         route: route.clone(),
         cron,
+        delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
         payload,
     }];
 
@@ -563,6 +566,7 @@ fn should_not_fire_original_due_occurrence_given_batch_reschedule_before_due_sca
     let entries = vec![ScheduleCreateEntry {
         route: route.clone(),
         cron: "0 2 * * *".to_string(),
+        delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
         payload: replacement_payload.clone(),
     }];
 

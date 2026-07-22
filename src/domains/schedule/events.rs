@@ -7,10 +7,12 @@ pub enum ScheduleEvent {
     ScheduleCreated {
         route: String,
         cron: String,
+        delivery_mode: crate::domains::schedule::ScheduleDeliveryMode,
     },
     ScheduleUpdated {
         route: String,
         cron: String,
+        delivery_mode: crate::domains::schedule::ScheduleDeliveryMode,
     },
     ScheduleDeleted {
         route: String,
@@ -18,6 +20,7 @@ pub enum ScheduleEvent {
     ScheduleFired {
         route: String,
         fire_ms: u64,
+        delivery_mode: crate::domains::schedule::ScheduleDeliveryMode,
     },
     ScheduleAcknowledged {
         route: String,

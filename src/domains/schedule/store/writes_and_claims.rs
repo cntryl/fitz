@@ -37,6 +37,7 @@ impl ScheduleStore {
                 last_fire_ms: schedule.last_fire_ms,
                 executions_total: schedule.executions_total,
                 cron: schedule.cron,
+                delivery_mode: schedule.delivery_mode,
                 payload: schedule.payload,
             },
         )?;
@@ -90,6 +91,7 @@ impl ScheduleStore {
                     last_fire_ms: item.last_fire_ms,
                     executions_total: item.executions_total,
                     cron: &item.cron,
+                    delivery_mode: item.delivery_mode,
                     payload: &item.payload,
                 },
             )?;
@@ -161,7 +163,11 @@ impl ScheduleStore {
             }
             txn.put(
                 pending_fire_key,
-                Self::encode_pending_fire_value(item.payload, item.claimed_at_ms),
+                Self::encode_pending_fire_value(
+                    item.payload,
+                    item.claimed_at_ms,
+                    item.delivery_mode,
+                ),
                 None,
             )
             .map_err(|e| format!("put pending fire failed: {e:?}"))?;

@@ -273,7 +273,10 @@ These items are **not standardized** and may require broker-specific implementat
 - Notice: PUBLISH/SUBSCRIBE include full route/pattern
 - RPC: REQUEST includes full route
 - Lease: ACQUIRE/RENEW/RELEASE include full route
-- Schedule: CREATE/CANCEL include full route; LIST uses only optional offset/limit pagination fields
+- Schedule: CREATE uses `[route][cron][mode][payload]`, CREATE_BATCH repeats that
+  entry shape, CANCEL includes the full route, and LIST uses optional
+  offset/limit pagination while returning mode in every entry. Mode is required:
+  `0` is broadcast and `1` is single.
 
 **Why this design:**
 - Explicit scoping: Each message is addressable either by route or by a previously issued opaque handle

@@ -5,7 +5,8 @@ pub(super) use crate::domains::schedule::metrics::{
 pub(super) use crate::domains::schedule::protocol::{
     epoch_ms_to_instant_with_reference, instant_to_epoch_ms_with_reference,
     parse_concrete_schedule_route, Clock, ConcreteScheduleRoute, CronSchedule, ScheduleCreateEntry,
-    ScheduleDef, ScheduleListEntry, ScheduleMessage, ScheduleResponse, SystemClock,
+    ScheduleDef, ScheduleDeliveryMode, ScheduleListEntry, ScheduleMessage, ScheduleResponse,
+    SystemClock,
 };
 pub(super) use crate::domains::schedule::store::{
     PersistedPendingFireClaim, PersistedSchedule, ScheduleAckDefinition, ScheduleFireClaim,
@@ -29,6 +30,7 @@ pub(super) struct PendingScheduleCreate {
     pub(super) route: String,
     pub(super) route_parts: ConcreteScheduleRoute,
     pub(super) cron: String,
+    pub(super) delivery_mode: ScheduleDeliveryMode,
     pub(super) parsed_cron: CronSchedule,
     pub(super) payload: Bytes,
     pub(super) next_fire_time: Instant,
@@ -48,6 +50,7 @@ pub(super) struct PendingScheduleFire {
 
 pub(super) struct PendingClaim {
     pub(super) payload: Bytes,
+    pub(super) delivery_mode: ScheduleDeliveryMode,
     pub(super) claimed_at_ms: u64,
 }
 

@@ -3,7 +3,9 @@
 //! Encodes and decodes TLV messages for schedule definition management and
 //! ephemeral live notifications.
 
-use crate::dispatch::wire::schedule::{ScheduleCreateEntry, ScheduleMessage, ScheduleResponse};
+use crate::dispatch::wire::schedule::{
+    ScheduleCreateEntry, ScheduleDeliveryMode, ScheduleMessage, ScheduleResponse,
+};
 use crate::protocol::error_codes::schedule as schedule_error_codes;
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
@@ -52,6 +54,7 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
         700 => {
             let route = dec.get_string_ref()?;
             dec.get_string_ref()?;
+            dec.get_u8()?;
             dec.skip_bytes()?;
             if !dec.is_complete() {
                 return Err("Trailing data in message".to_string());
@@ -93,6 +96,7 @@ pub fn extract_batch_auth_routes(payload: &[u8]) -> Result<Vec<&str>, String> {
     for _ in 0..entry_count {
         let route = dec.get_string_ref()?;
         dec.get_string_ref()?;
+        dec.get_u8()?;
         dec.skip_bytes()?;
         routes.push(route);
     }
@@ -132,6 +136,7 @@ pub fn encode_response_into(enc: &mut PayloadEncoder, response: &ScheduleRespons
                 enc.put_u8(1); // has_entry
                 enc.put_string(&entry.route);
                 enc.put_string(&entry.cron);
+                enc.put_u8(entry.delivery_mode as u8);
                 enc.put_bytes(&entry.payload);
             }
             enc.put_u8(0); // end sentinel
@@ -152,6 +157,7 @@ fn schedule_error_code_for_message(message: &str) -> u16 {
     match message {
         "schedule not found" => schedule_error_codes::ERR_SCHEDULE_NOT_FOUND,
         "Cron expression must have exactly 5 fields" => schedule_error_codes::ERR_INVALID_CRON,
+        "invalid schedule delivery mode" => schedule_error_codes::ERR_INVALID_DELIVERY_MODE,
         "schedule route must be schedule://{realm}/{area}/{resource}/{operation}"
         | "schedule route scheme must be schedule"
         | "schedule route must not contain wildcards"
@@ -165,10 +171,11 @@ fn schedule_error_code_for_message(message: &str) -> u16 {
 // ===== Helper Parsers =====
 
 /// Parse CREATE message
-/// Wire format: [string route][string cron][bytes payload]
+/// Wire format: [string route][string cron][u8 mode][bytes payload]
 fn parse_create(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, String> {
     let route = dec.get_string()?;
     let cron = dec.get_string()?;
+    let delivery_mode = ScheduleDeliveryMode::try_from(dec.get_u8()?)?;
     let payload = dec.get_bytes()?;
 
     if !dec.is_complete() {
@@ -178,6 +185,7 @@ fn parse_create(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, String> {
     Ok(ScheduleMessage::Create {
         route,
         cron,
+        delivery_mode,
         payload,
     })
 }
@@ -190,6 +198,7 @@ fn parse_create_batch(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, Strin
         entries.push(ScheduleCreateEntry {
             route: dec.get_string()?,
             cron: dec.get_string()?,
+            delivery_mode: ScheduleDeliveryMode::try_from(dec.get_u8()?)?,
             payload: dec.get_bytes()?,
         });
     }
@@ -304,7 +313,10 @@ pub fn encode_notify_into(
 
 #[cfg(test)]
 mod tests {
-    use super::{encode_notify, encode_response, extract_batch_auth_routes};
+    use super::{
+        encode_notify, encode_response, extract_batch_auth_routes, parse_create,
+        ScheduleDeliveryMode,
+    };
     use crate::dispatch::wire::schedule::ScheduleResponse;
     use crate::protocol::error_codes::schedule as schedule_error_codes;
     use crate::protocol::payload_codec::PayloadEncoder;
@@ -360,9 +372,11 @@ mod tests {
         enc.put_u32(2);
         enc.put_string("schedule://acme/jobs/backup/run");
         enc.put_string("0 2 * * *");
+        enc.put_u8(ScheduleDeliveryMode::Broadcast as u8);
         enc.put_bytes(b"backup");
         enc.put_string("schedule://acme/jobs/report/run");
         enc.put_string("15 6 * * *");
+        enc.put_u8(ScheduleDeliveryMode::Single as u8);
         enc.put_bytes(b"report");
         let payload = enc.finish();
 
@@ -373,5 +387,47 @@ mod tests {
         assert_eq!(routes.len(), 2);
         assert_eq!(routes[0], "schedule://acme/jobs/backup/run");
         assert_eq!(routes[1], "schedule://acme/jobs/report/run");
+    }
+
+    #[test]
+    fn should_reject_unknown_schedule_delivery_mode() {
+        // Arrange
+        let mut enc = PayloadEncoder::new();
+        enc.put_string("schedule://acme/jobs/backup/run");
+        enc.put_string("0 2 * * *");
+        enc.put_u8(2);
+        enc.put_bytes(b"backup");
+        let payload = enc.finish();
+        let mut decoder = crate::protocol::payload_codec::PayloadDecoder::new(&payload);
+
+        // Act
+        let result = parse_create(&mut decoder);
+
+        // Assert
+        assert_eq!(
+            result.expect_err("invalid mode"),
+            "invalid schedule delivery mode"
+        );
+        assert_eq!(
+            super::schedule_error_code_for_message("invalid schedule delivery mode"),
+            schedule_error_codes::ERR_INVALID_DELIVERY_MODE
+        );
+    }
+
+    #[test]
+    fn should_reject_legacy_create_without_delivery_mode() {
+        // Arrange
+        let mut enc = PayloadEncoder::new();
+        enc.put_string("schedule://acme/jobs/backup/run");
+        enc.put_string("0 2 * * *");
+        enc.put_bytes(b"backup");
+        let payload = enc.finish();
+        let mut decoder = crate::protocol::payload_codec::PayloadDecoder::new(&payload);
+
+        // Act
+        let result = parse_create(&mut decoder);
+
+        // Assert
+        assert!(result.is_err());
     }
 }

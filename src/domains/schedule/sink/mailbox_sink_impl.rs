@@ -284,8 +284,9 @@ impl ScheduleDomainRuntime<'_> {
             ScheduleMessage::Create {
                 route,
                 cron,
+                delivery_mode,
                 payload,
-            } => match actor.create_schedule(route, cron, payload) {
+            } => match actor.create_schedule_with_mode(route, cron, delivery_mode, payload) {
                 Ok(changed) => {
                     if changed {
                         schedule_snapshot_dirty = true;

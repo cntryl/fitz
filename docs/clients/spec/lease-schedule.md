@@ -522,6 +522,7 @@ elif response.type == "Fenced":
 [bytes]   route (e.g., "schedule://realm/area/resource/operation")
 [u32 BE]  cron_len
 [bytes]   cron (UTF-8 cron expression, 5-field format)
+[u8]      delivery_mode (0=broadcast, 1=single)
 [u32 BE]  payload_len
 [bytes]   payload (arbitrary bytes to deliver on notification)
 
@@ -538,6 +539,11 @@ Response (error=1):
 - Route serves as the unique schedule identifier (upsert behavior)
 - Creating a schedule with an existing route updates that schedule
 - Payload is arbitrary binary data delivered to subscribers on notification
+- Delivery mode is required. Unknown values return error code 7008.
+- `broadcast` attempts every connected exact-route subscriber. `single` fairly
+  rotates one accepted live handoff across connected exact-route subscribers.
+- Both modes are ephemeral downstream delivery. No subscriber or all rejected
+  handoffs still complete the occurrence without backlog or retry.
 - Invalid cron expression returns error code 7002
 
 #### CANCEL Request
@@ -580,6 +586,7 @@ Response (success):
     [bytes]  route
     [u32 BE] cron_len
     [bytes]  cron
+    [u8]     delivery_mode (0=broadcast, 1=single)
     [u32 BE] payload_len
     [bytes]  payload
   [u8]     0 (has_entry=false, end sentinel)
@@ -641,6 +648,7 @@ Schedules are durable (persisted to storage):
 client.schedule_create(
     route="schedule://prod/app/reminders/send",
     cron="0 9 * * 1",  # Every Monday at 9 AM
+    delivery_mode="broadcast",
     payload=b"weekly-reminder-config"
 )
 
@@ -661,7 +669,7 @@ client.schedule_cancel(
 )
 ```uses route as identity:
 
-- `CREATE`: `[route_len][route][cron_len][cron][payload_len][payload]`
+- `CREATE`: `[route_len][route][cron_len][cron][mode][payload_len][payload]`
 - `LIST`: optional `[offset][limit]`, returning one response with `total_count` plus entry sentinels
 - `CANCEL`: `[route_len][route]`
 
@@ -678,7 +686,9 @@ client.schedule_cancel(
 
 When a schedule fires, the broker performs **one action**:
 
-**SCHEDULE_NOTIFY (705):** The broker emits a `SCHEDULE_NOTIFY` message to all clients subscribed to the schedule's exact route via `SCHEDULE_SUBSCRIBE (703)`. The notification contains the schedule's configured payload bytes.
+**SCHEDULE_NOTIFY (705):** In broadcast mode the broker attempts every connected
+exact-route subscriber. In single mode it attempts subscribers in round-robin
+order until one accepts. The notification wire payload is unchanged.
 
 **Client observability:** Clients observe schedule execution by subscribing to schedule routes via `SCHEDULE_SUBSCRIBE` to receive `SCHEDULE_NOTIFY` when schedules fire.
 
@@ -702,6 +712,7 @@ When a schedule fires, the broker performs **one action**:
 - 7005 = ERR_INVALID_ROUTE
 - 7006 = ERR_INVALID_SUBSCRIPTION_PATTERN
 - 7007 = ERR_SUBSCRIPTION_LIMIT
+- 7008 = ERR_INVALID_DELIVERY_MODE
 
 #### Acceptance Tests
 
@@ -774,4 +785,3 @@ Server pushes a schedule fire notification to a subscriber.
 - Payload is the raw payload bytes configured when the schedule was created
 - Client demultiplexes to local handlers registered for that `subscription_id`
 - Delivery is best-effort; notifications may be dropped under backpressure
-

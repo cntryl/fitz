@@ -136,6 +136,11 @@ The acceptance criteria in `client-acceptance-criteria.md` are the normative sou
 
 **REQ-API-005 (T0)** The `Schedule.List` operation MUST support pagination (offset, limit) and return a total count alongside the results.
 
+**REQ-API-005A (T0)** Schedule Create and CreateBatch MUST require a delivery
+mode (`broadcast` or `single`), encode it as `0` or `1` after cron, and decode
+the mode returned for every List entry. Clients MUST surface error `7008` for
+unknown modes. This is a clean wire upgrade with no legacy CREATE encoding.
+
 **REQ-API-006 (T0)** `Schedule.ListBySelector` (filtered listing by selector pattern) MUST be exposed.
 
 **REQ-API-007 (T0)** The client's connection state MUST be observable. At minimum, the state machine transitions (DISCONNECTED → CONNECTING → CONNECTED → AUTHENTICATING → AUTHENTICATED → CLOSED) must be exposed as typed values or events.

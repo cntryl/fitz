@@ -131,6 +131,7 @@ function ExecutionRows(props: { rows: ScheduleExecutionObservation[] }) {
             <TableRow>
               <TableHeaderCell>Route</TableHeaderCell>
               <TableHeaderCell>Status</TableHeaderCell>
+              <TableHeaderCell>Mode</TableHeaderCell>
               <TableHeaderCell>Scheduled time</TableHeaderCell>
               <TableHeaderCell>Last handoff</TableHeaderCell>
               <TableHeaderCell>Handoff count</TableHeaderCell>
@@ -149,6 +150,7 @@ function ExecutionRows(props: { rows: ScheduleExecutionObservation[] }) {
                     </span>
                   </TableCell>
                   <TableCell>{row.status}</TableCell>
+                  <TableCell>{row.delivery_mode}</TableCell>
                   <TableCell>{formatMaybeTimestamp(row.next_run)}</TableCell>
                   <TableCell>{formatMaybeTimestamp(row.last_run)}</TableCell>
                   <TableCell>{formatNumber(row.executions_total)}</TableCell>
@@ -178,6 +180,7 @@ function MissedRows(props: { rows: ScheduleMissedObservation[] }) {
             <TableRow>
               <TableHeaderCell>Route</TableHeaderCell>
               <TableHeaderCell>Status</TableHeaderCell>
+              <TableHeaderCell>Mode</TableHeaderCell>
               <TableHeaderCell>Fire at</TableHeaderCell>
               <TableHeaderCell>Claimed at</TableHeaderCell>
               <TableHeaderCell>Age</TableHeaderCell>
@@ -196,6 +199,7 @@ function MissedRows(props: { rows: ScheduleMissedObservation[] }) {
                     </span>
                   </TableCell>
                   <TableCell>{row.status}</TableCell>
+                  <TableCell>{row.delivery_mode}</TableCell>
                   <TableCell>{formatTimestamp(row.fire_at)}</TableCell>
                   <TableCell>{formatTimestamp(row.claimed_at)}</TableCell>
                   <TableCell>{formatDurationSeconds(row.age_seconds)}</TableCell>

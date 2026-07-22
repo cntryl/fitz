@@ -97,8 +97,9 @@ impl ScheduleActor {
             ScheduleMessage::Create {
                 route,
                 cron,
+                delivery_mode,
                 payload,
-            } => match self.create_schedule(route, cron, payload) {
+            } => match self.create_schedule_with_mode(route, cron, delivery_mode, payload) {
                 Ok(_) => ScheduleResponse::Ok,
                 Err(e) => ScheduleResponse::Error(e),
             },

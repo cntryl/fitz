@@ -43,6 +43,7 @@ fn runtime_with_preloaded_schedule() -> Arc<Runtime> {
             ScheduleInsert {
                 route: "schedule://acme/jobs/invoices/send",
                 cron: "0 * * * *",
+                delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
                 payload: &payload,
                 next_fire_ms: now_ms.saturating_add(60_000),
                 previous_fire_ms: None,
@@ -372,6 +373,7 @@ fn should_aggregate_schedule_detail_given_multiple_schedules() {
             resource: "invoices".to_string(),
             operation: "send".to_string(),
             cron: "0 * * * *".to_string(),
+            delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
             next_run: "2026-03-31T02:00:00Z".to_string(),
             last_run: None,
             executions_total: 2,
@@ -384,6 +386,7 @@ fn should_aggregate_schedule_detail_given_multiple_schedules() {
             resource: "invoices".to_string(),
             operation: "retry".to_string(),
             cron: "*/5 * * * *".to_string(),
+            delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
             next_run: "2026-03-31T01:00:00Z".to_string(),
             last_run: None,
             executions_total: 3,

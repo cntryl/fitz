@@ -125,6 +125,7 @@ fn should_persist_definition_without_due_index_for_inserted_schedule() {
             ScheduleInsert {
                 route,
                 cron: "* * * * *",
+                delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
                 payload: &payload,
                 next_fire_ms,
                 previous_fire_ms: None,
@@ -152,7 +153,11 @@ fn should_persist_definition_without_due_index_for_inserted_schedule() {
     );
     assert_eq!(
         ScheduleStore::decode_definition_body_value(&body_value).unwrap(),
-        ("* * * * *".to_string(), Bytes::from_static(b"payload"),)
+        (
+            "* * * * *".to_string(),
+            ScheduleDeliveryMode::Broadcast,
+            Bytes::from_static(b"payload"),
+        )
     );
     assert_eq!(
         count_prefix(&db, 1, BODY_PREFIX),
@@ -185,6 +190,7 @@ fn should_rebuild_due_index_from_inserted_schedule_definitions_on_load() {
             ScheduleInsert {
                 route,
                 cron: "*/5 * * * *",
+                delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
                 payload: &payload,
                 next_fire_ms,
                 previous_fire_ms: None,
@@ -333,7 +339,11 @@ fn should_split_inline_definition_rows_on_load() {
     );
     assert_eq!(
         ScheduleStore::decode_definition_body_value(&body).unwrap(),
-        ("*/10 * * * *".to_string(), Bytes::from_static(b"payload"))
+        (
+            "*/10 * * * *".to_string(),
+            ScheduleDeliveryMode::Broadcast,
+            Bytes::from_static(b"payload"),
+        )
     );
 }
 
@@ -350,6 +360,7 @@ fn should_remove_definition_with_due_index_when_canceling_schedule() {
             ScheduleInsert {
                 route,
                 cron: "0 * * * *",
+                delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
                 payload: &payload,
                 next_fire_ms,
                 previous_fire_ms: None,
@@ -396,6 +407,7 @@ fn should_persist_pending_fire_given_claimed_due_schedule() {
             ScheduleInsert {
                 route,
                 cron: "* * * * *",
+                delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
                 payload: &payload,
                 next_fire_ms: original_fire_ms,
                 previous_fire_ms: None,
@@ -414,6 +426,7 @@ fn should_persist_pending_fire_given_claimed_due_schedule() {
                 route,
                 route_parts: &route_parts,
                 cron: "* * * * *",
+                delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
                 payload: &payload,
                 claimed_at_ms: 1_700_000_020_500_u64,
                 next_fire_ms,
@@ -434,6 +447,7 @@ fn should_persist_pending_fire_given_claimed_due_schedule() {
         vec![PersistedPendingFireClaim {
             route: route.to_string(),
             payload: payload.clone(),
+            delivery_mode: ScheduleDeliveryMode::Broadcast,
             claimed_at_ms: 1_700_000_020_500_u64,
             fire_ms: original_fire_ms,
         }]
@@ -466,7 +480,11 @@ fn should_persist_pending_fire_given_claimed_due_schedule() {
                 .expect("body row should remain after claim"),
         )
         .unwrap(),
-        ("* * * * *".to_string(), Bytes::from_static(b"payload"))
+        (
+            "* * * * *".to_string(),
+            ScheduleDeliveryMode::Broadcast,
+            Bytes::from_static(b"payload"),
+        )
     );
 }
 
@@ -487,6 +505,7 @@ fn should_record_acknowledgement_state_given_acknowledged_claimed_due_schedule()
             ScheduleInsert {
                 route,
                 cron: "* * * * *",
+                delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
                 payload: &payload,
                 next_fire_ms: original_fire_ms,
                 previous_fire_ms: None,
@@ -503,6 +522,7 @@ fn should_record_acknowledgement_state_given_acknowledged_claimed_due_schedule()
                 route,
                 route_parts: &route_parts,
                 cron: "* * * * *",
+                delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
                 payload: &payload,
                 claimed_at_ms: 1_700_000_020_500_u64,
                 next_fire_ms,
@@ -575,6 +595,7 @@ fn should_remove_pending_fire_without_recreating_definition_given_missing_schedu
             ScheduleInsert {
                 route,
                 cron: "* * * * *",
+                delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
                 payload: &payload,
                 next_fire_ms: original_fire_ms,
                 previous_fire_ms: None,
@@ -591,6 +612,7 @@ fn should_remove_pending_fire_without_recreating_definition_given_missing_schedu
                 route,
                 route_parts: &route_parts,
                 cron: "* * * * *",
+                delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
                 payload: &payload,
                 claimed_at_ms: 1_700_000_020_500_u64,
                 next_fire_ms,

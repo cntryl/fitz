@@ -55,6 +55,7 @@ fn populate_actor(
         let response = actor.handle(ScheduleMessage::Create {
             route: routes[index].clone(),
             cron: crons[index].clone(),
+            delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
             payload: payloads[index].clone(),
         });
         assert!(
@@ -99,6 +100,7 @@ fn delete_then_full_list_shared_cache(ctx: &mut StressContext, name: &str, count
         let response = actor.handle(ScheduleMessage::Create {
             route: route.clone(),
             cron: crons[victim_index].clone(),
+            delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
             payload: payloads[victim_index].clone(),
         });
         assert!(
@@ -137,6 +139,7 @@ fn upsert_then_full_list_shared_cache(ctx: &mut StressContext, name: &str, count
             let response = actor.handle(ScheduleMessage::Create {
                 route: route.clone(),
                 cron: replacement_crons[replacement_index].clone(),
+                delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
                 payload: replacement_payloads[replacement_index].clone(),
             });
             replacement_index = (replacement_index + 1) % replacement_crons.len();

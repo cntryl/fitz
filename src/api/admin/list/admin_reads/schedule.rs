@@ -31,6 +31,7 @@ pub fn schedule_executions_for_resource(
             area: schedule.area,
             resource: schedule.resource,
             operation: schedule.operation,
+            delivery_mode: schedule.delivery_mode,
             status: if schedule.last_run.is_some() {
                 "acknowledged_handoff".to_string()
             } else {
@@ -87,6 +88,7 @@ pub(crate) fn schedule_missed_observations(
                     area: route.area.to_string(),
                     resource: route.resource.to_string(),
                     operation: route.operation.to_string(),
+                    delivery_mode: claim.delivery_mode,
                     fire_ms: claim.fire_ms,
                     fire_at: timestamp_ms_to_rfc3339(claim.fire_ms),
                     claimed_at: timestamp_ms_to_rfc3339(claim.claimed_at_ms),

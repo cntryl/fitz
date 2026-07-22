@@ -778,6 +778,7 @@ export type ScheduleExecutionObservation = {
   "operation": string;
   "status": string;
   "cron": string;
+  "delivery_mode": "broadcast" | "single";
   "next_run": string;
   "last_run": string | null;
   "executions_total": number;
@@ -810,6 +811,7 @@ export type ScheduleMissedObservation = {
   "area": string;
   "resource": string;
   "operation": string;
+  "delivery_mode": "broadcast" | "single";
   "fire_ms": number;
   "fire_at": string;
   "claimed_at": string;

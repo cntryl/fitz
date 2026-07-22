@@ -488,6 +488,7 @@ pub struct ScheduleInfo {
     pub resource: String,
     pub operation: String,
     pub cron: String,
+    pub delivery_mode: crate::domains::schedule::ScheduleDeliveryMode,
     pub next_run: String,
     pub last_run: Option<String>,
     pub executions_total: u64,
@@ -498,6 +499,7 @@ pub struct ScheduleInfo {
 pub struct SchedulePendingClaimInfo {
     pub route_family: u64,
     pub route: String,
+    pub delivery_mode: crate::domains::schedule::ScheduleDeliveryMode,
     pub fire_ms: u64,
     pub claimed_at_ms: u64,
 }
@@ -842,6 +844,7 @@ impl ScheduleInfo {
             resource,
             operation,
             cron,
+            delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
             next_run: next_run.to_string(),
             last_run: None,
             executions_total: 0,

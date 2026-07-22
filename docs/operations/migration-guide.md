@@ -37,6 +37,14 @@ Admin domain routes now require a concrete family path segment. Replace every
 domain-first paths return `404`. Route-family values are `u32` identifiers:
 wire and admin values above `u32::MAX` are rejected rather than clamped.
 
+### Schedule delivery-mode client upgrade
+
+Upgrade every client Schedule codec atomically with the broker. CREATE entries
+are now `[route][cron][mode][payload]`; CREATE_BATCH repeats that shape; LIST
+entries return `[route][cron][mode][payload]`. Use `0` for broadcast and `1` for
+single delivery. Unknown values fail with `ERR_INVALID_DELIVERY_MODE` (`7008`).
+The NOTIFY payload and all Schedule message IDs are unchanged.
+
 Update admin grants to either `*` or canonical decimal family IDs. Symbolic,
 non-canonical, and overflowed grants are rejected when a session is created or
 validated.

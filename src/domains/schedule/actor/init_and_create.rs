@@ -166,6 +166,7 @@ impl ScheduleActor {
                     resource: route.resource.clone(),
                     operation: route.operation.clone(),
                     cron: schedule.cron.clone(),
+                    delivery_mode: schedule.delivery_mode,
                     next_run: chrono::DateTime::<chrono::Utc>::from_timestamp_millis(
                         Self::u64_to_i64_saturating(schedule.next_fire_ms),
                     )
@@ -224,6 +225,7 @@ impl ScheduleActor {
         let PersistedSchedule {
             route,
             cron,
+            delivery_mode,
             payload,
             next_fire_ms,
             last_fire_ms,
@@ -238,6 +240,7 @@ impl ScheduleActor {
         let (effective_next_fire_time, effective_next_fire_ms) = self.resolve_preloaded_fire_time(
             &route,
             &cron,
+            delivery_mode,
             &payload,
             next_fire_ms,
             last_fire_ms,
@@ -247,11 +250,13 @@ impl ScheduleActor {
             now_ms,
             normalization_batch,
         );
-        let list_index = self.push_list_entry(route.as_str(), cron.as_str(), &payload);
+        let list_index =
+            self.push_list_entry(route.as_str(), cron.as_str(), delivery_mode, &payload);
         let def = ScheduleDef {
             route: route.clone(),
             route_parts,
             cron,
+            delivery_mode,
             parsed_cron,
             payload,
             next_fire_time: effective_next_fire_time,
@@ -272,6 +277,7 @@ impl ScheduleActor {
         &self,
         route: &str,
         cron: &str,
+        delivery_mode: crate::domains::schedule::ScheduleDeliveryMode,
         payload: &bytes::Bytes,
         next_fire_ms: u64,
         last_fire_ms: Option<u64>,
@@ -292,6 +298,7 @@ impl ScheduleActor {
             normalization_batch.push(crate::domains::schedule::store::ScheduleBatchInsert {
                 route: route.to_string(),
                 cron: cron.to_string(),
+                delivery_mode,
                 payload: payload.clone(),
                 next_fire_ms: normalized_next_fire_ms,
                 previous_fire_ms: Some(next_fire_ms),
@@ -340,6 +347,7 @@ impl ScheduleActor {
                 ),
                 PendingClaim {
                     payload: pending_claimed_occurrence.payload,
+                    delivery_mode: pending_claimed_occurrence.delivery_mode,
                     claimed_at_ms,
                 },
             );

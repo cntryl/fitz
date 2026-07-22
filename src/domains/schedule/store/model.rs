@@ -6,7 +6,7 @@ pub(super) use std::sync::Arc;
 pub(super) use cntryl_midge::WriteOptions;
 
 pub(super) use crate::domains::schedule::protocol::{
-    parse_concrete_schedule_route, ConcreteScheduleRoute,
+    parse_concrete_schedule_route, ConcreteScheduleRoute, ScheduleDeliveryMode,
 };
 pub(super) use crate::utils::storage_key::{self, DomainKeyspace};
 
@@ -14,8 +14,10 @@ pub(super) const DEFINITION_VALUE_VERSION_V1: u8 = 1;
 pub(super) const DEFINITION_VALUE_VERSION_V2: u8 = 2;
 pub(super) const DEFINITION_VALUE_VERSION_V3: u8 = 3;
 pub(super) const BODY_VALUE_VERSION_V1: u8 = 1;
+pub(super) const BODY_VALUE_VERSION_V2: u8 = 2;
 pub(super) const PENDING_FIRE_VALUE_VERSION_V1: u8 = 1;
 pub(super) const PENDING_FIRE_VALUE_VERSION_V2: u8 = 2;
+pub(super) const PENDING_FIRE_VALUE_VERSION_V3: u8 = 3;
 pub(super) const DEFINITION_PREFIX: &[u8] = &[0x01];
 pub(super) const BODY_PREFIX: &[u8] = &[0x02];
 pub(super) const DUE_PREFIX: &[u8] = &[0x03];
@@ -27,6 +29,7 @@ pub(super) const LEGACY_INDEX_PREFIX: &[u8] = b"sched:idx:";
 pub struct ScheduleBatchInsert {
     pub route: String,
     pub cron: String,
+    pub delivery_mode: ScheduleDeliveryMode,
     pub payload: Bytes,
     pub next_fire_ms: u64,
     pub previous_fire_ms: Option<u64>,
@@ -38,6 +41,7 @@ pub struct ScheduleBatchInsert {
 pub struct ScheduleInsert<'a> {
     pub route: &'a str,
     pub cron: &'a str,
+    pub delivery_mode: ScheduleDeliveryMode,
     pub payload: &'a Bytes,
     pub next_fire_ms: u64,
     pub previous_fire_ms: Option<u64>,
@@ -50,6 +54,7 @@ pub(super) struct ScheduleDefinitionData<'a> {
     pub(super) last_fire_ms: Option<u64>,
     pub(super) executions_total: u64,
     pub(super) cron: &'a str,
+    pub(super) delivery_mode: ScheduleDeliveryMode,
     pub(super) payload: &'a Bytes,
 }
 
@@ -58,6 +63,7 @@ pub struct ScheduleFireClaim<'a> {
     pub route_parts: &'a ConcreteScheduleRoute,
     pub cron: &'a str,
     pub payload: &'a Bytes,
+    pub delivery_mode: ScheduleDeliveryMode,
     pub claimed_at_ms: u64,
     pub next_fire_ms: u64,
     pub previous_fire_ms: u64,
@@ -83,6 +89,7 @@ pub struct ScheduleAckDefinition<'a> {
 pub struct PersistedSchedule {
     pub route: String,
     pub cron: String,
+    pub delivery_mode: ScheduleDeliveryMode,
     pub payload: Bytes,
     pub next_fire_ms: u64,
     pub last_fire_ms: Option<u64>,
@@ -93,6 +100,7 @@ pub struct PersistedSchedule {
 pub struct PersistedPendingFireClaim {
     pub route: String,
     pub payload: Bytes,
+    pub delivery_mode: ScheduleDeliveryMode,
     pub claimed_at_ms: u64,
     pub fire_ms: u64,
 }

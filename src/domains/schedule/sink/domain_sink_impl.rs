@@ -13,6 +13,7 @@ type LivePublishCandidate = (
     crate::runtime::routing::RouteFamily,
     u64,
     String,
+    crate::domains::schedule::ScheduleDeliveryMode,
     bytes::Bytes,
 );
 
@@ -471,6 +472,7 @@ impl ScheduleDomainRuntime<'_> {
                     family,
                     pending_fire.fire_ms,
                     pending_fire.route,
+                    pending_fire.delivery_mode,
                     pending_fire.payload,
                 ));
             }
@@ -491,27 +493,18 @@ impl ScheduleDomainRuntime<'_> {
     ) -> bool {
         let mut had_live_handoffs = false;
 
-        for (family, fire_ms, route, payload) in live_publish_candidates {
-            let route_value = crate::runtime::routing::Route::new(route.clone());
-            let event =
-                crate::runtime::DomainPublishEvent::new(family, route_value.clone(), payload);
-            let destination = crate::runtime::routing::RouteAddress::new(family, route_value);
-            if self
-                .core
-                .router
-                .route(Envelope::new(destination, event))
-                .is_ok()
-            {
-                had_live_handoffs = true;
-                ack_retry_candidates
-                    .entry(family)
-                    .or_default()
-                    .push((fire_ms, route));
-            } else {
+        for (family, fire_ms, route, delivery_mode, payload) in live_publish_candidates {
+            let accepted = self.handle_schedule_publish(family, &route, delivery_mode, &payload);
+            had_live_handoffs |= accepted;
+            if !accepted {
                 self.core
                     .live_publish_failures
                     .fetch_add(1, Ordering::Relaxed);
             }
+            ack_retry_candidates
+                .entry(family)
+                .or_default()
+                .push((fire_ms, route));
         }
 
         had_live_handoffs
@@ -631,7 +624,7 @@ impl ScheduleDomainRuntime<'_> {
         subscription_id: u64,
         subscriber: &crate::runtime::routing::RouteAddress,
         payload: &bytes::Bytes,
-    ) {
+    ) -> bool {
         #[cfg(test)]
         let notify_payload = crate::dispatch::protocol::schedule_codec::encode_notify(
             subscription_id,
@@ -663,29 +656,79 @@ impl ScheduleDomainRuntime<'_> {
 
         // Subscriber notify routing is best-effort and must not redefine the
         // schedule domain's durable acknowledgement boundary.
-        let _ = self.core.router.route(notify_envelope);
+        self.core.router.route(notify_envelope).is_ok()
+    }
+
+    fn handle_schedule_publish(
+        &self,
+        family: crate::runtime::routing::RouteFamily,
+        route: &str,
+        delivery_mode: crate::domains::schedule::ScheduleDeliveryMode,
+        payload: &bytes::Bytes,
+    ) -> bool {
+        let mut families = self.core.sub_families.lock();
+        let Some(state) = families.get_mut(&family.as_u64()) else {
+            return false;
+        };
+        let Some(subscription_ids) = state.exact_routes.get(route).cloned() else {
+            return false;
+        };
+        if subscription_ids.is_empty() {
+            return false;
+        }
+
+        match delivery_mode {
+            crate::domains::schedule::ScheduleDeliveryMode::Broadcast => {
+                let mut any_accepted = false;
+                for subscription in subscription_ids
+                    .iter()
+                    .filter_map(|id| state.subscriptions.get(id))
+                {
+                    any_accepted |= self.route_live_notify(
+                        subscription.session_id,
+                        subscription.subscription_id,
+                        &subscription.subscriber,
+                        payload,
+                    );
+                }
+                any_accepted
+            }
+            crate::domains::schedule::ScheduleDeliveryMode::Single => {
+                let start = state.round_robin_cursors.get(route).copied().unwrap_or(0)
+                    % subscription_ids.len();
+                for offset in 0..subscription_ids.len() {
+                    let index = (start + offset) % subscription_ids.len();
+                    let Some(subscription) = state.subscriptions.get(&subscription_ids[index])
+                    else {
+                        continue;
+                    };
+                    if self.route_live_notify(
+                        subscription.session_id,
+                        subscription.subscription_id,
+                        &subscription.subscriber,
+                        payload,
+                    ) {
+                        state
+                            .round_robin_cursors
+                            .insert(route.to_string(), (index + 1) % subscription_ids.len());
+                        return true;
+                    }
+                }
+                state
+                    .round_robin_cursors
+                    .insert(route.to_string(), (start + 1) % subscription_ids.len());
+                false
+            }
+        }
     }
 
     pub(super) fn handle_domain_publish(&self, event: &crate::runtime::DomainPublishEvent) {
-        let family_id = event.family_id.as_u64();
-        let targets = {
-            let families = self.core.sub_families.lock();
-            let mut targets = Vec::new();
-            if let Some(state) = families.get(&family_id) {
-                state.for_each_route(event.route.as_str(), |subscription| {
-                    targets.push((
-                        subscription.session_id,
-                        subscription.subscription_id,
-                        subscription.subscriber.clone(),
-                    ));
-                });
-            }
-            targets
-        };
-
-        for (session_id, subscription_id, subscriber) in targets {
-            self.route_live_notify(session_id, subscription_id, &subscriber, &event.payload);
-        }
+        self.handle_schedule_publish(
+            event.family_id,
+            event.route.as_str(),
+            crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
+            &event.payload,
+        );
     }
 
     pub fn unsubscribe_all(&self, session_id: u64) {

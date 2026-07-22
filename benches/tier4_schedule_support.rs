@@ -128,6 +128,7 @@ impl DirectLifecycleState {
             self.fixture.actor.handle(ScheduleMessage::Create {
                 route: CANONICAL_ROUTE.to_string(),
                 cron: "* * * * *".to_string(),
+                delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
                 payload: payload.clone(),
             }),
             ScheduleResponse::Ok

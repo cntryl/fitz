@@ -391,6 +391,7 @@ async fn should_return_messaging_topology_given_live_admin_snapshots() {
         resource: "sweeper".to_string(),
         operation: "run".to_string(),
         cron: "* * * * *".to_string(),
+        delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
         next_run: "2026-03-14T12:01:00Z".to_string(),
         last_run: None,
         executions_total: 4,

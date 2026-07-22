@@ -3,7 +3,7 @@
 
 **MUST** create job with cron expression
 **Given:** Session with `schedule://realm/area/**#write` permission  
-**When:** Client sends `Create(route="schedule://prod/jobs/backup", cron="0 2 * * *", payload="backup-db")`  
+**When:** Client sends `Create(route="schedule://prod/jobs/backup", cron="0 2 * * *", delivery_mode="broadcast", payload="backup-db")`
 **Then:**
 
 - Server returns `CreateOk(job_id)`
@@ -56,7 +56,8 @@
   - Job ID
   - Cron expression
   - Next scheduled time
-  - Payload
+- Payload
+  - Delivery mode
 
 ### AC-SCHEDULE-006: Cron Wildcards (renumbered)
 
@@ -338,6 +339,7 @@ Error codes follow the format `XXYY` where:
 | 7005 | ERR_INVALID_TARGET | Target route invalid or unsupported | No |
 | 7006 | ERR_INVALID_SUBSCRIPTION_PATTERN | Subscription pattern syntax invalid | No |
 | 7007 | ERR_SUBSCRIPTION_LIMIT | Maximum subscriptions reached | No |
+| 7008 | ERR_INVALID_DELIVERY_MODE | Delivery mode is not broadcast (0) or single (1) | No |
 | 7009 | ERR_UNAUTHORIZED | Permission denied for schedule operation | No |
 
 ### Error Handling Guidelines

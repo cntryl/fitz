@@ -197,4 +197,9 @@ Fitz must remain a runtime of narrow, composable primitives:
 - Lease = explicit ownership coordination
 - Schedule = durable timing intent
 
+Schedule definitions select a required live delivery mode. `broadcast` attempts
+every currently connected exact-route subscriber; `single` attempts one
+currently connected exact-route subscriber using an ephemeral fair cursor.
+Neither mode makes downstream delivery durable, retryable, or exactly-once.
+
 The architecture stays clean only if these meanings stay stable.

@@ -186,6 +186,7 @@ fn should_handle_multiple_schedules_with_different_frequencies() {
         let response = actor.handle(ScheduleMessage::Create {
             route: route.to_string(),
             cron: cron.to_string(),
+            delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
             payload: Bytes::from(label),
         });
 
@@ -218,6 +219,7 @@ fn should_allow_creating_schedule_with_complex_cron() {
     let response = actor.handle(ScheduleMessage::Create {
         route: "schedule://acme/ops/business-hours-frequent/run".to_string(),
         cron: "*/15 9-17 * * 1-5".to_string(),
+        delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
         payload: Bytes::from("complex-cron"),
     });
 
@@ -306,6 +308,7 @@ fn should_skip_missed_occurrences_given_forward_epoch_jump() {
     let response = actor.handle(ScheduleMessage::Create {
         route: "schedule://acme/system/forward-jump/run".to_string(),
         cron: "* * * * *".to_string(),
+        delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
         payload: Bytes::from("jump"),
     });
     assert!(matches!(
@@ -333,6 +336,7 @@ fn should_not_fire_given_backward_epoch_jump_before_due_time() {
     let response = actor.handle(ScheduleMessage::Create {
         route: "schedule://acme/system/backward-jump/run".to_string(),
         cron: "* * * * *".to_string(),
+        delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
         payload: Bytes::from("jump"),
     });
     assert!(matches!(
@@ -360,6 +364,7 @@ fn should_retain_pending_fire_claim_after_elapsed_time() {
     let create_response = actor.handle(ScheduleMessage::Create {
         route: "schedule://acme/system/cleanup/run".to_string(),
         cron: "* * * * *".to_string(),
+        delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
         payload: Bytes::from("cleanup"),
     });
     assert!(matches!(
@@ -396,6 +401,7 @@ fn should_replace_schedule_preserving_ordering() {
     actor.handle(ScheduleMessage::Create {
         route: "schedule://acme/jobs/job/run".to_string(),
         cron: "0 2 * * *".to_string(),
+        delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
         payload: Bytes::from("v1"),
     });
 
@@ -403,6 +409,7 @@ fn should_replace_schedule_preserving_ordering() {
     let response = actor.handle(ScheduleMessage::Create {
         route: "schedule://acme/jobs/job/run".to_string(),
         cron: "0 3 * * *".to_string(),
+        delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
         payload: Bytes::from("v2"),
     });
 
@@ -435,12 +442,14 @@ fn should_maintain_independence_between_schedules() {
     actor.handle(ScheduleMessage::Create {
         route: "schedule://acme/jobs/job1/run".to_string(),
         cron: "0 2 * * *".to_string(),
+        delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
         payload: Bytes::from("job1"),
     });
 
     actor.handle(ScheduleMessage::Create {
         route: "schedule://acme/jobs/job2/run".to_string(),
         cron: "0 3 * * *".to_string(),
+        delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
         payload: Bytes::from("job2"),
     });
 

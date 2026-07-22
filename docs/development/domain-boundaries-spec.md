@@ -83,6 +83,11 @@ mode, and in cloud mode after the configured local sync/provider acknowledgement
 definitions and pending fire claims are recovered before schedule traffic is
 accepted.
 
+Each definition persists one delivery mode. `broadcast` attempts all live
+exact-route subscribers. `single` selects at most one accepted live handoff by
+round-robin. The cursor and subscriptions are ephemeral; an occurrence advances
+even when there are no subscribers or every live handoff is rejected.
+
 ## 2. Primary Use Cases
 
 ### Notice

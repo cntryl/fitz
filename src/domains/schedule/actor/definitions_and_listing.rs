@@ -1,8 +1,9 @@
 use super::model::{
     parse_concrete_schedule_route, Arc, BinaryHeap, Bytes, CronSchedule, FastSet, FxBuildHasher,
     Instant, PendingScheduleCreate, Reverse, ScheduleActor, ScheduleCreateEntry, ScheduleDef,
-    ScheduleInsert, ScheduleListEntry, METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL,
-    METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL, METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL,
+    ScheduleDeliveryMode, ScheduleInsert, ScheduleListEntry,
+    METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL, METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL,
+    METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL,
 };
 
 impl ScheduleActor {
@@ -23,10 +24,11 @@ impl ScheduleActor {
     ///
     /// Returns an error when cron parsing fails or the updated definition
     /// cannot be persisted.
-    pub(super) fn create_schedule_at(
+    pub(super) fn create_schedule_with_mode_at(
         &mut self,
         route: String,
         cron: String,
+        delivery_mode: ScheduleDeliveryMode,
         payload: Bytes,
         now: Instant,
     ) -> Result<bool, String> {
@@ -49,7 +51,10 @@ impl ScheduleActor {
             });
 
         if let Some(existing) = self.schedules.get(&route) {
-            if existing.cron == cron && existing.payload == payload {
+            if existing.cron == cron
+                && existing.delivery_mode == delivery_mode
+                && existing.payload == payload
+            {
                 return Ok(false);
             }
         }
@@ -64,6 +69,7 @@ impl ScheduleActor {
             ScheduleInsert {
                 route: &route,
                 cron: &cron,
+                delivery_mode,
                 payload: &payload,
                 next_fire_ms,
                 previous_fire_ms: previous_next_fire_ms,
@@ -80,11 +86,13 @@ impl ScheduleActor {
             return Err(error);
         }
 
-        let list_index = self.upsert_list_entry(previous_list_index, &route, &cron, &payload);
+        let list_index =
+            self.upsert_list_entry(previous_list_index, &route, &cron, delivery_mode, &payload);
         let def = ScheduleDef {
             route: route.clone(),
             route_parts,
             cron,
+            delivery_mode,
             parsed_cron: cron_obj,
             payload,
             next_fire_time,
@@ -104,13 +112,52 @@ impl ScheduleActor {
     ///
     /// Returns an error when cron parsing fails or the definition cannot be
     /// persisted.
+    #[cfg(test)]
+    pub(super) fn create_schedule_at(
+        &mut self,
+        route: String,
+        cron: String,
+        payload: Bytes,
+        now: Instant,
+    ) -> Result<bool, String> {
+        self.create_schedule_with_mode_at(
+            route,
+            cron,
+            ScheduleDeliveryMode::Broadcast,
+            payload,
+            now,
+        )
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error when validation or durable persistence fails.
+    pub fn create_schedule_with_mode(
+        &mut self,
+        route: String,
+        cron: String,
+        delivery_mode: ScheduleDeliveryMode,
+        payload: Bytes,
+    ) -> Result<bool, String> {
+        self.create_schedule_with_mode_at(
+            route,
+            cron,
+            delivery_mode,
+            payload,
+            self.clock.now_instant(),
+        )
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error when validation or durable persistence fails.
     pub fn create_schedule(
         &mut self,
         route: String,
         cron: String,
         payload: Bytes,
     ) -> Result<bool, String> {
-        self.create_schedule_at(route, cron, payload, self.clock.now_instant())
+        self.create_schedule_with_mode(route, cron, ScheduleDeliveryMode::Broadcast, payload)
     }
 
     /// # Errors
@@ -146,7 +193,9 @@ impl ScheduleActor {
                 should_skip,
             ) = match self.schedules.get(&entry.route) {
                 Some(existing)
-                    if existing.cron == entry.cron && existing.payload == entry.payload =>
+                    if existing.cron == entry.cron
+                        && existing.delivery_mode == entry.delivery_mode
+                        && existing.payload == entry.payload =>
                 {
                     (
                         Some(existing.next_fire_ms),
@@ -200,12 +249,14 @@ impl ScheduleActor {
                 entry.previous_list_index,
                 &entry.route,
                 &entry.cron,
+                entry.delivery_mode,
                 &entry.payload,
             );
             let def = ScheduleDef {
                 route: entry.route.clone(),
                 route_parts: entry.route_parts,
                 cron: entry.cron,
+                delivery_mode: entry.delivery_mode,
                 parsed_cron: entry.parsed_cron,
                 payload: entry.payload,
                 next_fire_time: entry.next_fire_time,
@@ -283,6 +334,7 @@ impl ScheduleActor {
             route: entry.route,
             route_parts,
             cron: entry.cron,
+            delivery_mode: entry.delivery_mode,
             parsed_cron,
             payload: entry.payload,
             next_fire_time,
@@ -303,6 +355,7 @@ impl ScheduleActor {
                 |entry| crate::domains::schedule::store::ScheduleBatchInsert {
                     route: entry.route.clone(),
                     cron: entry.cron.clone(),
+                    delivery_mode: entry.delivery_mode,
                     payload: entry.payload.clone(),
                     next_fire_ms: entry.next_fire_ms,
                     previous_fire_ms: entry.previous_fire_ms,
@@ -340,13 +393,14 @@ impl ScheduleActor {
     }
 
     #[must_use]
-    pub fn list_defs(&self) -> Vec<(String, String, Bytes)> {
+    pub fn list_defs(&self) -> Vec<(String, String, ScheduleDeliveryMode, Bytes)> {
         self.list_entries
             .iter()
             .map(|entry| {
                 (
                     entry.route.clone(),
                     entry.cron.clone(),
+                    entry.delivery_mode,
                     entry.payload.clone(),
                 )
             })
@@ -357,11 +411,13 @@ impl ScheduleActor {
         &mut self,
         route: &str,
         cron: &str,
+        delivery_mode: ScheduleDeliveryMode,
         payload: &Bytes,
     ) -> usize {
         let entry = Arc::new(ScheduleListEntry {
             route: route.to_string(),
             cron: cron.to_string(),
+            delivery_mode,
             payload: payload.clone(),
         });
         let index = self.list_entries.len();
@@ -400,11 +456,13 @@ impl ScheduleActor {
         current_index: Option<usize>,
         route: &str,
         cron: &str,
+        delivery_mode: ScheduleDeliveryMode,
         payload: &Bytes,
     ) -> usize {
         let entry = Arc::new(ScheduleListEntry {
             route: route.to_string(),
             cron: cron.to_string(),
+            delivery_mode,
             payload: payload.clone(),
         });
         if let Some(index) = current_index {

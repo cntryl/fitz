@@ -40,7 +40,7 @@ impl ScheduleStore {
             &mut metadata_rows,
         )?;
 
-        let mut body_definitions = BTreeMap::<String, (String, Bytes)>::new();
+        let mut body_definitions = BTreeMap::new();
         Self::decode_body_rows(body_rows, &mut body_definitions)?;
 
         Self::merge_metadata_rows(metadata_rows, &body_definitions, &mut schedules)?;
@@ -81,10 +81,11 @@ impl ScheduleStore {
                 Self::decode_pending_fire_key(&key),
                 Self::decode_pending_fire_value(&value),
             ) {
-                (Ok((fire_ms, route)), Ok((claimed_at_ms, payload))) => {
+                (Ok((fire_ms, route)), Ok((claimed_at_ms, delivery_mode, payload))) => {
                     pending.push(PersistedPendingFireClaim {
                         route,
                         payload,
+                        delivery_mode,
                         claimed_at_ms,
                         fire_ms,
                     });
@@ -173,6 +174,7 @@ impl ScheduleStore {
                     let persisted = PersistedSchedule {
                         route: route.clone(),
                         cron,
+                        delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
                         payload,
                         next_fire_ms,
                         last_fire_ms,
@@ -204,15 +206,22 @@ impl ScheduleStore {
 
     fn decode_body_rows(
         body_rows: Vec<(Vec<u8>, Vec<u8>)>,
-        body_definitions: &mut BTreeMap<String, (String, Bytes)>,
+        body_definitions: &mut BTreeMap<
+            String,
+            (
+                String,
+                crate::domains::schedule::ScheduleDeliveryMode,
+                Bytes,
+            ),
+        >,
     ) -> Result<(), String> {
         for (key, value) in body_rows {
             match (
                 Self::decode_body_key(&key),
                 Self::decode_definition_body_value(&value),
             ) {
-                (Ok(route), Ok((cron, payload))) => {
-                    body_definitions.insert(route, (cron, payload));
+                (Ok(route), Ok((cron, delivery_mode, payload))) => {
+                    body_definitions.insert(route, (cron, delivery_mode, payload));
                 }
                 (Err(error), _) | (_, Err(error)) => {
                     return Err(format!("decode persisted schedule body failed: {error}"));
@@ -225,17 +234,25 @@ impl ScheduleStore {
 
     fn merge_metadata_rows(
         metadata_rows: BTreeMap<String, (u64, Option<u64>, u64)>,
-        body_definitions: &BTreeMap<String, (String, Bytes)>,
+        body_definitions: &BTreeMap<
+            String,
+            (
+                String,
+                crate::domains::schedule::ScheduleDeliveryMode,
+                Bytes,
+            ),
+        >,
         schedules: &mut BTreeMap<String, PersistedSchedule>,
     ) -> Result<(), String> {
         for (route, (next_fire_ms, last_fire_ms, executions_total)) in metadata_rows {
             match body_definitions.get(&route) {
-                Some((cron, payload)) => {
+                Some((cron, delivery_mode, payload)) => {
                     schedules.insert(
                         route.clone(),
                         PersistedSchedule {
                             route,
                             cron: cron.clone(),
+                            delivery_mode: *delivery_mode,
                             payload: payload.clone(),
                             next_fire_ms,
                             last_fire_ms,
@@ -282,6 +299,7 @@ impl ScheduleStore {
                     last_fire_ms: schedule.last_fire_ms,
                     executions_total: schedule.executions_total,
                     cron: &schedule.cron,
+                    delivery_mode: schedule.delivery_mode,
                     payload: &schedule.payload,
                 },
             )

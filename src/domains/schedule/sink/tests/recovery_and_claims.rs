@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn should_retry_pending_claim_after_restart_given_initial_live_publish_failure() {
+fn should_ack_pending_claim_without_subscribers() {
     // Arrange
     let family = RouteFamily::new(1);
     let session_id = 7;
@@ -36,64 +36,10 @@ fn should_retry_pending_claim_after_restart_given_initial_live_publish_failure()
 
     // Act
     initial_sink.scan_due_schedules();
-    wait_for_pending_fire_count(&initial_sink, 1);
-
-    let subscriber_mailbox = Arc::new(Mailbox::new(8));
-    router.register(subscriber_address.clone(), subscriber_mailbox.clone());
-    let restarted_sink = Arc::new(ScheduleDomainSink::new(
-        store,
-        router.clone(),
-        admin_read_model,
-    ));
-    router.register_domain_pattern("schedule", restarted_sink.clone());
-    restarted_sink
-        .preload_persisted_families()
-        .expect("preload persisted families");
-
-    restarted_sink
-        .deliver(Envelope::from_route(
-            subscriber_address.clone(),
-            schedule_address,
-            FrameContext::new(
-                session_id,
-                ChannelId::Sub,
-                MessageType::new(703),
-                encode_schedule_subscribe(schedule_route),
-                family,
-            ),
-        ))
-        .expect("subscribe schedule");
-    let subscribe_envelope = receive_envelope(&subscriber_mailbox, "subscribe ack envelope");
-    let subscribe_frame = subscribe_envelope
-        .into_payload::<FrameContext>()
-        .expect("subscribe ack frame");
-    let mut subscribe_decoder = PayloadDecoder::new(&subscribe_frame.payload);
-    let _subscribe_status = subscribe_decoder.get_u8().expect("subscribe status");
-    let subscription_id = subscribe_decoder
-        .get_optional_u64()
-        .expect("subscription id")
-        .expect("subscription id present");
-
-    restarted_sink.scan_due_schedules();
+    wait_for_pending_fire_count(&initial_sink, 0);
 
     // Assert
-    let notify_envelope = receive_envelope(&subscriber_mailbox, "schedule notify envelope");
-    let notify_frame = notify_envelope
-        .into_payload::<FrameContext>()
-        .expect("schedule notify frame");
-    assert_eq!(notify_frame.msg_type.as_u16(), 705);
-
-    let mut notify_decoder = PayloadDecoder::new(&notify_frame.payload);
-    let notified_subscription_id = notify_decoder.get_u64().expect("notify subscription id");
-    let notified_payload = notify_decoder.get_bytes().expect("notify payload");
-
-    assert_eq!(notified_subscription_id, subscription_id);
-    assert_eq!(notified_payload.as_ref(), b"replay");
-    assert!(notify_decoder.is_complete());
-
-    restarted_sink.scan_due_schedules();
-    wait_for_pending_fire_count(&restarted_sink, 0);
-    assert_no_envelope(&subscriber_mailbox);
+    assert_eq!(initial_sink.pending_ack_retry_count(), 0);
 }
 
 #[test]
@@ -196,6 +142,7 @@ fn should_retain_pending_claim_when_it_is_older_than_the_former_cleanup_ttl() {
     let create_response = actor.handle(crate::domains::schedule::ScheduleMessage::Create {
         route: "schedule://acme/jobs/cleanup/run".to_string(),
         cron: "* * * * *".to_string(),
+        delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
         payload: Bytes::from_static(b"cleanup"),
     });
     assert!(matches!(

@@ -59,6 +59,7 @@ impl ScheduleActor {
                     route: &item.route,
                     route_parts: &schedule.route_parts,
                     cron: &schedule.cron,
+                    delivery_mode: schedule.delivery_mode,
                     payload: &schedule.payload,
                     claimed_at_ms,
                     next_fire_ms: item.next_fire_ms,
@@ -145,12 +146,14 @@ impl ScheduleActor {
                 (item.previous_fire_ms, item.route.clone()),
                 PendingClaim {
                     payload: payload.clone(),
+                    delivery_mode: def.delivery_mode,
                     claimed_at_ms: now_ms,
                 },
             );
             claimed.push(PersistedPendingFireClaim {
                 route: item.route,
                 payload,
+                delivery_mode: def.delivery_mode,
                 claimed_at_ms: now_ms,
                 fire_ms: item.previous_fire_ms,
             });
@@ -193,6 +196,7 @@ impl ScheduleActor {
             .map(|((fire_ms, route), claim)| PersistedPendingFireClaim {
                 route: route.clone(),
                 payload: claim.payload.clone(),
+                delivery_mode: claim.delivery_mode,
                 claimed_at_ms: claim.claimed_at_ms,
                 fire_ms: *fire_ms,
             })
@@ -208,6 +212,7 @@ impl ScheduleActor {
                 |((fire_ms, route), claim)| crate::control::admin::SchedulePendingClaimInfo {
                     route_family: self.family.as_u64(),
                     route: route.clone(),
+                    delivery_mode: claim.delivery_mode,
                     fire_ms: *fire_ms,
                     claimed_at_ms: claim.claimed_at_ms,
                 },

@@ -209,6 +209,7 @@ fn should_create_schedule_successfully() {
     let response = actor.handle(ScheduleMessage::Create {
         route: route.clone(),
         cron,
+        delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
         payload,
     });
 
@@ -218,6 +219,43 @@ fn should_create_schedule_successfully() {
         ScheduleResponse::Error(e) => panic!("Expected Ok, got Error: {e}"),
         _ => panic!("Expected Ok response"),
     }
+}
+
+#[test]
+fn should_treat_delivery_mode_change_as_schedule_upsert() {
+    // Arrange
+    let mut actor = make_schedule_actor();
+    let route = "schedule://acme/jobs/mode/run".to_string();
+    let cron = "0 2 * * *".to_string();
+    let payload = Bytes::from("payload");
+    actor.handle(ScheduleMessage::Create {
+        route: route.clone(),
+        cron: cron.clone(),
+        delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
+        payload: payload.clone(),
+    });
+
+    // Act
+    let response = actor.handle(ScheduleMessage::Create {
+        route,
+        cron,
+        delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Single,
+        payload,
+    });
+    let list = actor.handle(ScheduleMessage::List {
+        offset: 0,
+        limit: 0,
+    });
+
+    // Assert
+    assert!(matches!(response, ScheduleResponse::Ok));
+    let ScheduleResponse::ListDefs { entries, .. } = list else {
+        panic!("expected schedule list");
+    };
+    assert_eq!(
+        entries[0].delivery_mode,
+        fitz::domains::schedule::ScheduleDeliveryMode::Single
+    );
 }
 
 #[test]
@@ -232,6 +270,7 @@ fn should_reject_invalid_cron_on_create() {
     let response = actor.handle(ScheduleMessage::Create {
         route,
         cron,
+        delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
         payload,
     });
 
@@ -253,6 +292,7 @@ fn should_reject_legacy_three_segment_route_on_create() {
     let response = actor.handle(ScheduleMessage::Create {
         route: "schedule://acme/jobs/backup".to_string(),
         cron: "0 0 * * *".to_string(),
+        delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
         payload: Bytes::from("legacy"),
     });
 
@@ -278,12 +318,14 @@ fn should_upsert_schedule_by_route() {
     let response1 = actor.handle(ScheduleMessage::Create {
         route: route.clone(),
         cron: "0 2 * * *".to_string(),
+        delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
         payload: Bytes::from("config-v1"),
     });
 
     let response2 = actor.handle(ScheduleMessage::Create {
         route: route.clone(),
         cron: "0 3 * * *".to_string(), // Changed from 2 AM to 3 AM
+        delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
         payload: Bytes::from("config-v2"),
     });
 
@@ -318,6 +360,7 @@ fn should_keep_single_schedule_given_identical_create_upsert() {
     actor.handle(ScheduleMessage::Create {
         route: route.clone(),
         cron: cron.clone(),
+        delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
         payload: payload.clone(),
     });
 
@@ -325,6 +368,7 @@ fn should_keep_single_schedule_given_identical_create_upsert() {
     let response = actor.handle(ScheduleMessage::Create {
         route: route.clone(),
         cron,
+        delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
         payload: payload.clone(),
     });
 
@@ -354,16 +398,19 @@ fn should_create_multiple_schedules_in_single_batch() {
         ScheduleCreateEntry {
             route: "schedule://acme/jobs/batch-1/run".to_string(),
             cron: "0 2 * * *".to_string(),
+            delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
             payload: Bytes::from("backup"),
         },
         ScheduleCreateEntry {
             route: "schedule://acme/jobs/batch-2/run".to_string(),
             cron: "15 6 * * *".to_string(),
+            delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
             payload: Bytes::from("report"),
         },
         ScheduleCreateEntry {
             route: "schedule://acme/jobs/batch-3/run".to_string(),
             cron: "0 * * * *".to_string(),
+            delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
             payload: Bytes::from("sync"),
         },
     ];
@@ -393,11 +440,13 @@ fn should_reject_schedule_batch_given_duplicate_routes() {
         ScheduleCreateEntry {
             route: "schedule://acme/jobs/backup/run".to_string(),
             cron: "0 2 * * *".to_string(),
+            delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
             payload: Bytes::from("backup"),
         },
         ScheduleCreateEntry {
             route: "schedule://acme/jobs/backup/run".to_string(),
             cron: "15 6 * * *".to_string(),
+            delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
             payload: Bytes::from("report"),
         },
     ];
@@ -435,6 +484,7 @@ fn should_cancel_schedule_by_route() {
     actor.handle(ScheduleMessage::Create {
         route: route.clone(),
         cron: "0 2 * * *".to_string(),
+        delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
         payload: Bytes::from("data"),
     });
 
@@ -504,18 +554,21 @@ fn should_list_all_schedules() {
     actor.handle(ScheduleMessage::Create {
         route: "schedule://acme/jobs/backup/run".to_string(),
         cron: "0 2 * * *".to_string(),
+        delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
         payload: Bytes::from("backup"),
     });
 
     actor.handle(ScheduleMessage::Create {
         route: "schedule://acme/jobs/cleanup/run".to_string(),
         cron: "0 3 * * *".to_string(),
+        delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
         payload: Bytes::from("cleanup"),
     });
 
     actor.handle(ScheduleMessage::Create {
         route: "schedule://acme/jobs/report/run".to_string(),
         cron: "0 9 * * 1".to_string(), // Monday at 9 AM
+        delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
         payload: Bytes::from("report"),
     });
 
@@ -572,6 +625,7 @@ fn should_preserve_payload_in_schedule() {
     actor.handle(ScheduleMessage::Create {
         route: route.clone(),
         cron: "* * * * *".to_string(),
+        delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
         payload: payload.clone(),
     });
 

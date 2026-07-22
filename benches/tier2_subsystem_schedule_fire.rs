@@ -91,6 +91,7 @@ fn populate_actor(actor: &mut ScheduleActor, fixtures: &ScheduleFixtures) {
         let response = actor.handle(ScheduleMessage::Create {
             route: fixtures.routes[index].clone(),
             cron: fixtures.crons[index].clone(),
+            delivery_mode: fitz::domains::schedule::ScheduleDeliveryMode::Broadcast,
             payload: fixtures.payloads[index].clone(),
         });
         assert!(

@@ -50,7 +50,7 @@ impl ScheduleConnector for WsScheduleConnector {
 pub fn build_schedule_create(route: &str, cron: &str, payload: &[u8]) -> Vec<u8> {
     use bytes::BufMut;
 
-    // Wire format: [string route][string cron][bytes payload]
+    // Wire format: [string route][string cron][u8 mode][bytes payload]
     let mut buf = Vec::new();
 
     // Route (length-prefixed string)
@@ -60,6 +60,7 @@ pub fn build_schedule_create(route: &str, cron: &str, payload: &[u8]) -> Vec<u8>
     // Cron expression (length-prefixed string)
     buf.put_u32(u32_len(cron.len()));
     buf.put_slice(cron.as_bytes());
+    buf.put_u8(fitz::domains::schedule::ScheduleDeliveryMode::Broadcast as u8);
 
     // Payload (length-prefixed bytes)
     buf.put_u32(u32_len(payload.len()));
@@ -83,6 +84,7 @@ pub fn build_schedule_create_batch(entries: &[(&str, &str, &[u8])]) -> Vec<u8> {
 
         buf.put_u32(u32_len(cron.len()));
         buf.put_slice(cron.as_bytes());
+        buf.put_u8(fitz::domains::schedule::ScheduleDeliveryMode::Broadcast as u8);
 
         buf.put_u32(u32_len(payload.len()));
         buf.put_slice(payload);

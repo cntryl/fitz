@@ -494,6 +494,7 @@ mod tests {
             resource: "invoices".to_string(),
             operation: "send".to_string(),
             cron: "0 * * * *".to_string(),
+            delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
             next_run: "2026-03-31T00:00:00Z".to_string(),
             last_run: Some("2026-03-30T23:00:00Z".to_string()),
             executions_total: 42,

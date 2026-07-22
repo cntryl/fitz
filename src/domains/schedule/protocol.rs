@@ -65,6 +65,35 @@ pub fn validate_concrete_schedule_route(route: &str) -> Result<(), String> {
     parse_concrete_schedule_route(route).map(|_| ())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ScheduleDeliveryMode {
+    Broadcast = 0,
+    Single = 1,
+}
+
+impl ScheduleDeliveryMode {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Broadcast => "broadcast",
+            Self::Single => "single",
+        }
+    }
+}
+
+impl TryFrom<u8> for ScheduleDeliveryMode {
+    type Error = String;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Broadcast),
+            1 => Ok(Self::Single),
+            _ => Err("invalid schedule delivery mode".to_string()),
+        }
+    }
+}
+
 /// Schedule operation messages
 #[derive(Debug, Clone)]
 pub enum ScheduleMessage {
@@ -72,6 +101,7 @@ pub enum ScheduleMessage {
     Create {
         route: String,
         cron: String,
+        delivery_mode: ScheduleDeliveryMode,
         payload: Bytes,
     },
     /// Create or update multiple schedules atomically.
@@ -162,6 +192,7 @@ impl ScheduleClientNotification {
 pub struct ScheduleCreateEntry {
     pub route: String,
     pub cron: String,
+    pub delivery_mode: ScheduleDeliveryMode,
     pub payload: Bytes,
 }
 
@@ -186,6 +217,7 @@ pub enum ScheduleResponse {
 pub struct ScheduleListEntry {
     pub route: String,
     pub cron: String,
+    pub delivery_mode: ScheduleDeliveryMode,
     pub payload: Bytes,
 }
 
@@ -198,6 +230,7 @@ pub struct ScheduleDef {
     pub route_parts: ConcreteScheduleRoute,
     /// Cron expression (when to fire)
     pub cron: String,
+    pub delivery_mode: ScheduleDeliveryMode,
     /// Parsed cron schedule (cached to avoid reparsing)
     pub parsed_cron: CronSchedule,
     /// Payload bytes handed to the live publish path when an occurrence is claimed.
@@ -785,6 +818,7 @@ mod tests {
             route,
             route_parts,
             cron,
+            delivery_mode: ScheduleDeliveryMode::Broadcast,
             parsed_cron,
             payload,
             next_fire_time: Instant::now(),

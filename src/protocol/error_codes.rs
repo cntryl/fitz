@@ -141,5 +141,6 @@ pub mod schedule {
     pub const ERR_INVALID_TARGET: u16 = 7005;
     pub const ERR_INVALID_SUBSCRIPTION_PATTERN: u16 = 7006;
     pub const ERR_SUBSCRIPTION_LIMIT: u16 = 7007;
+    pub const ERR_INVALID_DELIVERY_MODE: u16 = 7008;
     pub const ERR_UNAUTHORIZED: u16 = 7009; // AC-SCHEDULE-008: Permission denied for schedule operation
 }

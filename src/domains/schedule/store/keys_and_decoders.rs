@@ -1,9 +1,10 @@
 use super::model::{
     parse_concrete_schedule_route, storage_key, Arc, Bytes, ConcreteScheduleRoute,
-    DecodedDefinitionRow, DomainKeyspace, Encoder, LexKey, ScheduleDefinitionData, ScheduleRows,
-    ScheduleStore, BODY_PREFIX, BODY_VALUE_VERSION_V1, DEFINITION_PREFIX,
-    DEFINITION_VALUE_VERSION_V1, DEFINITION_VALUE_VERSION_V2, DEFINITION_VALUE_VERSION_V3,
-    DUE_PREFIX, PENDING_FIRE_PREFIX, PENDING_FIRE_VALUE_VERSION_V1, PENDING_FIRE_VALUE_VERSION_V2,
+    DecodedDefinitionRow, DomainKeyspace, Encoder, LexKey, ScheduleDefinitionData,
+    ScheduleDeliveryMode, ScheduleRows, ScheduleStore, BODY_PREFIX, BODY_VALUE_VERSION_V1,
+    BODY_VALUE_VERSION_V2, DEFINITION_PREFIX, DEFINITION_VALUE_VERSION_V1,
+    DEFINITION_VALUE_VERSION_V2, DEFINITION_VALUE_VERSION_V3, DUE_PREFIX, PENDING_FIRE_PREFIX,
+    PENDING_FIRE_VALUE_VERSION_V1, PENDING_FIRE_VALUE_VERSION_V2, PENDING_FIRE_VALUE_VERSION_V3,
 };
 
 impl ScheduleStore {
@@ -268,9 +269,14 @@ impl ScheduleStore {
         value
     }
 
-    pub(super) fn encode_definition_body_value(cron: &str, payload: &Bytes) -> Vec<u8> {
-        let mut value = Vec::with_capacity(1 + 4 + cron.len() + 4 + payload.len());
-        value.push(BODY_VALUE_VERSION_V1);
+    pub(super) fn encode_definition_body_value(
+        cron: &str,
+        delivery_mode: ScheduleDeliveryMode,
+        payload: &Bytes,
+    ) -> Vec<u8> {
+        let mut value = Vec::with_capacity(2 + 4 + cron.len() + 4 + payload.len());
+        value.push(BODY_VALUE_VERSION_V2);
+        value.push(delivery_mode as u8);
         value.extend_from_slice(&Self::usize_to_u32_saturating(cron.len()).to_be_bytes());
         value.extend_from_slice(cron.as_bytes());
         value.extend_from_slice(&Self::usize_to_u32_saturating(payload.len()).to_be_bytes());
@@ -368,19 +374,31 @@ impl ScheduleStore {
         }
     }
 
-    pub(super) fn decode_definition_body_value(value: &[u8]) -> Result<(String, Bytes), String> {
+    pub(super) fn decode_definition_body_value(
+        value: &[u8],
+    ) -> Result<(String, ScheduleDeliveryMode, Bytes), String> {
         if value.is_empty() {
             return Err("Schedule definition body value too short".to_string());
         }
 
         match value[0] {
-            BODY_VALUE_VERSION_V1 => {
+            BODY_VALUE_VERSION_V1 | BODY_VALUE_VERSION_V2 => {
                 if value.len() < 9 {
                     return Err("Schedule definition body value too short".to_string());
                 }
 
-                let cron_len = u32::from_be_bytes(value[1..5].try_into().unwrap()) as usize;
-                let cron_start = 5;
+                let (delivery_mode, length_start) = if value[0] == BODY_VALUE_VERSION_V1 {
+                    (ScheduleDeliveryMode::Broadcast, 1)
+                } else {
+                    if value.len() < 10 {
+                        return Err("Schedule definition body value too short".to_string());
+                    }
+                    (ScheduleDeliveryMode::try_from(value[1])?, 2)
+                };
+                let cron_len =
+                    u32::from_be_bytes(value[length_start..length_start + 4].try_into().unwrap())
+                        as usize;
+                let cron_start = length_start + 4;
                 let cron_end = cron_start + cron_len;
                 if value.len() < cron_end + 4 {
                     return Err("Schedule definition body value truncated before cron".to_string());
@@ -400,6 +418,7 @@ impl ScheduleStore {
 
                 Ok((
                     cron,
+                    delivery_mode,
                     Bytes::copy_from_slice(&value[payload_start..payload_end]),
                 ))
             }
@@ -409,21 +428,32 @@ impl ScheduleStore {
         }
     }
 
-    pub(super) fn encode_pending_fire_value(payload: &Bytes, claimed_at_ms: u64) -> Vec<u8> {
-        let mut value = Vec::with_capacity(1 + std::mem::size_of::<u64>() + payload.len());
-        value.push(PENDING_FIRE_VALUE_VERSION_V2);
+    pub(super) fn encode_pending_fire_value(
+        payload: &Bytes,
+        claimed_at_ms: u64,
+        delivery_mode: ScheduleDeliveryMode,
+    ) -> Vec<u8> {
+        let mut value = Vec::with_capacity(2 + std::mem::size_of::<u64>() + payload.len());
+        value.push(PENDING_FIRE_VALUE_VERSION_V3);
         value.extend_from_slice(&claimed_at_ms.to_le_bytes());
+        value.push(delivery_mode as u8);
         value.extend_from_slice(payload);
         value
     }
 
-    pub(super) fn decode_pending_fire_value(value: &[u8]) -> Result<(u64, Bytes), String> {
+    pub(super) fn decode_pending_fire_value(
+        value: &[u8],
+    ) -> Result<(u64, ScheduleDeliveryMode, Bytes), String> {
         if value.is_empty() {
             return Err("Schedule pending fire value too short".to_string());
         }
 
         match value[0] {
-            PENDING_FIRE_VALUE_VERSION_V1 => Ok((0, Bytes::copy_from_slice(&value[1..]))),
+            PENDING_FIRE_VALUE_VERSION_V1 => Ok((
+                0,
+                ScheduleDeliveryMode::Broadcast,
+                Bytes::copy_from_slice(&value[1..]),
+            )),
             PENDING_FIRE_VALUE_VERSION_V2 => {
                 if value.len() < 1 + std::mem::size_of::<u64>() {
                     return Err(
@@ -432,7 +462,23 @@ impl ScheduleStore {
                 }
 
                 let claimed_at_ms = u64::from_le_bytes(value[1..9].try_into().unwrap());
-                Ok((claimed_at_ms, Bytes::copy_from_slice(&value[9..])))
+                Ok((
+                    claimed_at_ms,
+                    ScheduleDeliveryMode::Broadcast,
+                    Bytes::copy_from_slice(&value[9..]),
+                ))
+            }
+            PENDING_FIRE_VALUE_VERSION_V3 => {
+                if value.len() < 10 {
+                    return Err("Schedule pending fire value missing delivery mode".to_string());
+                }
+                let claimed_at_ms = u64::from_le_bytes(value[1..9].try_into().unwrap());
+                let delivery_mode = ScheduleDeliveryMode::try_from(value[9])?;
+                Ok((
+                    claimed_at_ms,
+                    delivery_mode,
+                    Bytes::copy_from_slice(&value[10..]),
+                ))
             }
             other => Err(format!(
                 "Unsupported schedule pending fire value version: {other}"
@@ -480,11 +526,12 @@ impl ScheduleStore {
         txn: &mut cntryl_midge::Transaction,
         route: &str,
         cron: &str,
+        delivery_mode: ScheduleDeliveryMode,
         payload: &Bytes,
     ) -> Result<(), String> {
         txn.put(
             Self::encode_body_key(route),
-            Self::encode_definition_body_value(cron, payload),
+            Self::encode_definition_body_value(cron, delivery_mode, payload),
             None,
         )
         .map_err(|e| format!("put schedule body failed: {e:?}"))
@@ -502,6 +549,12 @@ impl ScheduleStore {
             definition.last_fire_ms,
             definition.executions_total,
         )?;
-        Self::put_definition_body(txn, route, definition.cron, definition.payload)
+        Self::put_definition_body(
+            txn,
+            route,
+            definition.cron,
+            definition.delivery_mode,
+            definition.payload,
+        )
     }
 }

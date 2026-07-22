@@ -48,6 +48,7 @@ fn runtime_with_preloaded_schedule_metrics() -> Arc<Runtime> {
             ScheduleInsert {
                 route,
                 cron: "* * * * *",
+                delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
                 payload: &payload,
                 next_fire_ms: claimed_fire_ms,
                 previous_fire_ms: None,
@@ -64,6 +65,7 @@ fn runtime_with_preloaded_schedule_metrics() -> Arc<Runtime> {
                 route,
                 route_parts: &route_parts,
                 cron: "* * * * *",
+                delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
                 payload: &payload,
                 claimed_at_ms: claimed_fire_ms,
                 next_fire_ms,
