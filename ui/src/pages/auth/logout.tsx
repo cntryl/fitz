@@ -1,16 +1,17 @@
 import { state } from "@askrjs/askr";
 import { task } from "@askrjs/askr/resources";
 import { navigate } from "@askrjs/askr/router";
-import { Button } from "@askrjs/themes/components";
-import { Spinner } from "@askrjs/themes/components";
 import {
   Alert,
+  Button,
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
+  Spinner,
 } from "@askrjs/themes/components";
+import AuthBrand from "@/components/shared/auth-brand";
 import { createSignOutMutation } from "@/features/session/session-mutation";
 import { manageRoutePageContext } from "@/components/shared/domain-page-frame";
 import { formatUnknownError } from "@/shared/errors/format";
@@ -63,6 +64,7 @@ export default function Logout() {
   return (
     <Card class="auth-card" variant="raised">
       <CardHeader>
+        <AuthBrand />
         <CardTitle titleAs="h1">{title}</CardTitle>
         <CardDescription>{description}</CardDescription>
       </CardHeader>

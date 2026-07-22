@@ -4,9 +4,6 @@ import { currentRoute, navigate } from "@askrjs/askr/router";
 import {
   Alert,
   Block,
-  Brand,
-  BrandLabel,
-  BrandMark,
   Button,
   Card,
   CardContent,
@@ -17,7 +14,7 @@ import {
   Input,
   Label,
 } from "@askrjs/themes/components";
-import fitzLogo from "@/assets/fitz-logo.png";
+import AuthBrand from "@/components/shared/auth-brand";
 import { createSignInMutation } from "@/features/session/session-mutation";
 import { createCurrentSessionQuery } from "@/features/session/session-query";
 import { manageRoutePageContext } from "@/components/shared/domain-page-frame";
@@ -63,12 +60,7 @@ export default function Login() {
   return (
     <Card class="auth-card" variant="raised">
       <CardHeader>
-        <Brand>
-          <BrandMark aria-hidden="true">
-            <img class="fitz-brand-logo" src={fitzLogo} alt="" />
-          </BrandMark>
-          <BrandLabel>Fitz Admin</BrandLabel>
-        </Brand>
+        <AuthBrand />
         <CardTitle titleAs="h1">{openAccess ? "Open access" : "Sign in to Fitz Admin"}</CardTitle>
         <CardDescription>
           {openAccess

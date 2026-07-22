@@ -90,3 +90,29 @@ test("renders truthful open-access state when authentication is disabled", async
   await expect(page.locator("main#main-content")).toBeFocused();
   await expect(page.locator("header, footer")).toHaveCount(0);
 });
+
+test("should_mirror_the_login_card_on_the_logout_route", async ({ page }) => {
+  // Arrange
+  await mockAdminFeatures(page);
+  await page.goto("/logout");
+  await expect(page.getByRole("heading", { level: 1, name: "Open access" })).toBeVisible();
+  const viewport = page.viewportSize();
+
+  // Act
+  const cardBounds = await page.locator('[data-slot="card"]').boundingBox();
+
+  // Assert
+  expect(viewport).not.toBeNull();
+  expect(cardBounds).not.toBeNull();
+  if (!viewport || !cardBounds) return;
+
+  expect(cardBounds.width).toBe(384);
+  expect(Math.abs(cardBounds.x + cardBounds.width / 2 - viewport.width / 2)).toBeLessThanOrEqual(1);
+  expect(Math.abs(cardBounds.y + cardBounds.height / 2 - viewport.height / 2)).toBeLessThanOrEqual(
+    1,
+  );
+  await expect(page.locator('[data-slot="card"] img.fitz-brand-logo')).toBeVisible();
+  await expect(page.getByText("Fitz Admin", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Return to Fitz Admin" })).toBeVisible();
+  await expect(page.locator("header, footer")).toHaveCount(0);
+});

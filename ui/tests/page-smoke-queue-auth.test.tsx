@@ -227,6 +227,7 @@ describe("admin page smoke tests", () => {
 
     let root = await mountRoute("/logout", "/logout", Logout);
 
+    expect(root.textContent).toContain("Fitz Admin");
     expect(root.textContent).toContain("Signing out");
     expect(root.textContent).toContain("Clearing your session.");
 
