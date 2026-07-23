@@ -17,6 +17,12 @@ pub const WEBSOCKET_PONG_TIMEOUT: Duration = Duration::from_secs(10);
 /// Kernel-assisted TCP dead-peer detection interval.
 pub const TCP_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
 
+/// Maximum time allowed to receive one HTTP request header block.
+pub const HTTP_HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Maximum lifetime for a non-upgraded HTTP connection.
+pub const HTTP_CONNECTION_MAX_LIFETIME: Duration = Duration::from_mins(1);
+
 /// Configuration for ingress transports
 #[derive(Debug, Clone)]
 pub struct IngressConfig {

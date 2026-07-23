@@ -183,7 +183,7 @@ pub fn extract_route_segments_borrowed(route: &str) -> RouteSegments<'_> {
     split_route(route).1
 }
 
-/// Match pattern segments against route segments using index-based recursion
+/// Match pattern segments against route segments without recursion.
 /// Used by both Pattern matching and `SubscriptionIndex` suffix matching
 #[must_use]
 pub fn match_pattern_segments(
@@ -192,45 +192,7 @@ pub fn match_pattern_segments(
     route: &[String],
     route_idx: usize,
 ) -> bool {
-    // Both exhausted: match
-    if pat_idx >= patterns.len() && route_idx >= route.len() {
-        return true;
-    }
-
-    // Pattern exhausted but route remains: no match
-    if pat_idx >= patterns.len() {
-        return false;
-    }
-
-    // Route exhausted but pattern remains: only ** can match empty
-    if route_idx >= route.len() {
-        return patterns[pat_idx..]
-            .iter()
-            .all(|p| matches!(p, PatternSegment::DoubleStar));
-    }
-
-    match &patterns[pat_idx] {
-        PatternSegment::DoubleStar => {
-            // Option 1: ** matches zero segments
-            if match_pattern_segments(patterns, pat_idx + 1, route, route_idx) {
-                return true;
-            }
-            // Option 2: ** matches one or more segments
-            match_pattern_segments(patterns, pat_idx, route, route_idx + 1)
-        }
-        PatternSegment::Star => {
-            // * matches exactly one segment
-            match_pattern_segments(patterns, pat_idx + 1, route, route_idx + 1)
-        }
-        PatternSegment::Literal(pat) => {
-            // Literal must match exactly
-            if pat == &route[route_idx] {
-                match_pattern_segments(patterns, pat_idx + 1, route, route_idx + 1)
-            } else {
-                false
-            }
-        }
-    }
+    match_segments_dynamic(patterns, pat_idx, route, route_idx)
 }
 
 /// Match pattern segments against route segments with borrowed strings
@@ -243,109 +205,48 @@ pub fn match_pattern_segments_borrowed(
     route: &[&str],
     route_idx: usize,
 ) -> bool {
-    // Both exhausted: match
-    if pat_idx >= patterns.len() && route_idx >= route.len() {
-        return true;
-    }
-
-    // Pattern exhausted but route remains: no match
-    if pat_idx >= patterns.len() {
-        return false;
-    }
-
-    // Route exhausted but pattern remains: only ** can match empty
-    if route_idx >= route.len() {
-        // Fast path: check remaining patterns are all DoubleStar
-        for pattern in patterns.iter().skip(pat_idx) {
-            if !matches!(pattern, PatternSegment::DoubleStar) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    match &patterns[pat_idx] {
-        PatternSegment::DoubleStar => {
-            // Option 1: ** matches zero segments
-            if match_pattern_segments_borrowed(patterns, pat_idx + 1, route, route_idx) {
-                return true;
-            }
-            // Option 2: ** matches one or more segments
-            match_pattern_segments_borrowed(patterns, pat_idx, route, route_idx + 1)
-        }
-        PatternSegment::Star => {
-            // * matches exactly one segment
-            match_pattern_segments_borrowed(patterns, pat_idx + 1, route, route_idx + 1)
-        }
-        PatternSegment::Literal(pat) => {
-            // Fast path: str comparison is highly optimized
-            if *pat == route[route_idx] {
-                match_pattern_segments_borrowed(patterns, pat_idx + 1, route, route_idx + 1)
-            } else {
-                false
-            }
-        }
-    }
+    match_segments_dynamic(patterns, pat_idx, route, route_idx)
 }
 
-/// Match route segments against pattern segments using index-based iteration
-/// (avoids recursive slicing overhead)
+/// Match route segments against pattern segments with bounded heap state.
 #[inline]
 fn match_segments(patterns: &[PatternSegment], route: &[&str]) -> bool {
-    match_segments_indexed(patterns, 0, route, 0)
+    match_segments_dynamic(patterns, 0, route, 0)
 }
 
-/// Index-based matching function (avoids slice allocation on each recursion)
-#[inline]
-fn match_segments_indexed(
+fn match_segments_dynamic<T: AsRef<str>>(
     patterns: &[PatternSegment],
     pat_idx: usize,
-    route: &[&str],
+    route: &[T],
     route_idx: usize,
 ) -> bool {
-    // Both exhausted: match
-    if pat_idx >= patterns.len() && route_idx >= route.len() {
-        return true;
-    }
+    let patterns = patterns.get(pat_idx..).unwrap_or_default();
+    let route = route.get(route_idx..).unwrap_or_default();
+    let mut previous = vec![false; route.len() + 1];
+    previous[0] = true;
 
-    // Pattern exhausted but route remains: no match
-    if pat_idx >= patterns.len() {
-        return false;
-    }
-
-    // Route exhausted but pattern remains: only ** can match empty
-    if route_idx >= route.len() {
-        // Fast path: check remaining patterns are all DoubleStar
-        for pattern in patterns.iter().skip(pat_idx) {
-            if !matches!(pattern, PatternSegment::DoubleStar) {
-                return false;
+    for pattern in patterns {
+        let mut current = vec![false; route.len() + 1];
+        match pattern {
+            PatternSegment::DoubleStar => {
+                current[0] = previous[0];
+                for index in 1..=route.len() {
+                    current[index] = previous[index] || current[index - 1];
+                }
+            }
+            PatternSegment::Star => {
+                current[1..].copy_from_slice(&previous[..route.len()]);
+            }
+            PatternSegment::Literal(literal) => {
+                for index in 1..=route.len() {
+                    current[index] = previous[index - 1] && literal == route[index - 1].as_ref();
+                }
             }
         }
-        return true;
+        previous = current;
     }
 
-    match &patterns[pat_idx] {
-        PatternSegment::DoubleStar => {
-            // Option 1: ** matches zero segments, skip to next pattern
-            if match_segments_indexed(patterns, pat_idx + 1, route, route_idx) {
-                return true;
-            }
-            // Option 2: ** matches one or more segments, consume one segment
-            match_segments_indexed(patterns, pat_idx, route, route_idx + 1)
-        }
-        PatternSegment::Star => {
-            // * matches exactly one segment
-            match_segments_indexed(patterns, pat_idx + 1, route, route_idx + 1)
-        }
-        PatternSegment::Literal(pat) => {
-            // Literal must match exactly
-            if pat == route[route_idx] {
-                match_segments_indexed(patterns, pat_idx + 1, route, route_idx + 1)
-            } else {
-                false
-            }
-        }
-    }
+    previous[route.len()]
 }
 
 #[cfg(test)]
@@ -617,5 +518,32 @@ mod tests {
         // Assert
         assert!(notice_match);
         assert!(queue_match);
+    }
+
+    #[test]
+    fn should_match_long_route_without_recursion() {
+        // Arrange
+        let pattern = Pattern::new("notice://**");
+        let long_route = format!("notice://{}", vec!["a"; 32_760].join("/"));
+
+        // Act
+        let result = pattern.matches_str(&long_route);
+
+        // Assert
+        assert!(result);
+    }
+
+    #[test]
+    fn should_match_multiple_double_stars_deterministically() {
+        // Arrange
+        let pattern = Pattern::new("notice://**/orders/**/created");
+
+        // Act
+        let result = pattern.matches(&route(
+            "notice://prod/west/orders/customer/priority/created",
+        ));
+
+        // Assert
+        assert!(result);
     }
 }

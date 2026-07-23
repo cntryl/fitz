@@ -55,11 +55,20 @@ Operational expectations:
 
 - Put Fitz behind a TLS-terminating load balancer, reverse proxy, sidecar, or
   other trusted network boundary.
+- Fitz rejects startup when runtime auth or protected admin is configured on a
+  non-loopback bind without `FITZ_ASSUME_EXTERNAL_TLS=true`. This is an explicit
+  deployment assertion; Fitz does not terminate TLS itself.
 - Keep the backend listener reachable only from that trusted edge.
 - Keep raw TCP disabled unless you explicitly need it, or protect it with a
   trusted TLS/private-network path.
 - Protected admin session cookies expire across broker restarts because the
   signing key is process-ephemeral.
+- Admin login bodies are small and bounded, password verification runs off the
+  transport executor, and repeated failures from one client address are
+  rate-limited. Keep an edge rate limit as an additional distributed control.
+- JWKS downloads use HTTPS, strict time and size limits, a shared cache, and
+  coalesced refreshes. A missing key ID does not trigger an unrestricted
+  identity-provider request for every connection.
 
 ## What Not To Reuse From Local Examples
 

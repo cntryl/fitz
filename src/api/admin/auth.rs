@@ -6,7 +6,10 @@ use chrono::{Duration, Utc};
 use hyper::StatusCode;
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
+use std::time::{Duration as StdDuration, Instant};
 use uuid::Uuid;
 
 mod config;
@@ -25,6 +28,29 @@ const DEFAULT_SESSION_TTL_SECS: i64 = 28_800;
 const DEFAULT_OPEN_ADMIN_USERNAME: &str = "admin";
 const ADMIN_PUBLIC_ORIGIN_ENV: &str = "FITZ_ADMIN_PUBLIC_ORIGIN";
 const ADMIN_ROUTE_FAMILIES_ENV: &str = "FITZ_ADMIN_ROUTE_FAMILIES";
+const ADMIN_LOGIN_ATTEMPT_LIMIT: u32 = 5;
+const ADMIN_LOGIN_WINDOW: StdDuration = StdDuration::from_mins(1);
+const ADMIN_LOGIN_CLIENT_LIMIT: usize = 4_096;
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct AdminClientIp(pub IpAddr);
+
+impl Default for AdminClientIp {
+    fn default() -> Self {
+        Self(IpAddr::V4(Ipv4Addr::LOCALHOST))
+    }
+}
+
+#[derive(Debug)]
+struct LoginAttemptWindow {
+    started_at: Instant,
+    attempts: u32,
+}
+
+#[derive(Debug, Default)]
+struct LoginRateLimiter {
+    clients: HashMap<IpAddr, LoginAttemptWindow>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AdminAuthMode {
@@ -37,6 +63,7 @@ pub struct AdminAuth {
     settings: Arc<Option<AdminAuthSettings>>,
     mode: AdminAuthMode,
     provisioned_route_families: Arc<parking_lot::RwLock<Option<Vec<u32>>>>,
+    login_rate_limiter: Arc<parking_lot::Mutex<LoginRateLimiter>>,
 }
 
 #[derive(Debug, Clone)]
@@ -190,6 +217,7 @@ impl AdminAuth {
             settings: Arc::new(settings),
             mode,
             provisioned_route_families: Arc::new(parking_lot::RwLock::new(None)),
+            login_rate_limiter: Arc::new(parking_lot::Mutex::new(LoginRateLimiter::default())),
         }
     }
 
@@ -240,21 +268,57 @@ impl AdminAuth {
             return Err(AuthFailure::Unavailable);
         }
 
-        if username != settings.username {
-            return Err(AuthFailure::InvalidCredentials);
-        }
-
         let parsed_hash =
             PasswordHash::new(&settings.password_hash).map_err(|_| AuthFailure::Unavailable)?;
 
-        Argon2::default()
+        let password_matches = Argon2::default()
             .verify_password(password.as_bytes(), &parsed_hash)
-            .map_err(|_| AuthFailure::InvalidCredentials)?;
+            .is_ok();
+        if username != settings.username || !password_matches {
+            return Err(AuthFailure::InvalidCredentials);
+        }
 
         Ok(AdminPrincipal {
             username: settings.username.clone(),
             route_family_access: settings.route_family_access.clone(),
         })
+    }
+
+    pub(crate) fn begin_login_attempt(&self, client: AdminClientIp) -> Result<(), AuthFailure> {
+        let now = Instant::now();
+        let mut limiter = self.login_rate_limiter.lock();
+        limiter
+            .clients
+            .retain(|_, window| now.duration_since(window.started_at) < ADMIN_LOGIN_WINDOW);
+
+        if !limiter.clients.contains_key(&client.0)
+            && limiter.clients.len() >= ADMIN_LOGIN_CLIENT_LIMIT
+        {
+            return Err(AuthFailure::RateLimited);
+        }
+
+        let window = limiter
+            .clients
+            .entry(client.0)
+            .or_insert(LoginAttemptWindow {
+                started_at: now,
+                attempts: 0,
+            });
+        if now.duration_since(window.started_at) >= ADMIN_LOGIN_WINDOW {
+            window.started_at = now;
+            window.attempts = 0;
+        }
+        if window.attempts >= ADMIN_LOGIN_ATTEMPT_LIMIT {
+            return Err(AuthFailure::RateLimited);
+        }
+        window.attempts = window.attempts.saturating_add(1);
+        Ok(())
+    }
+
+    pub(crate) fn complete_login_attempt(&self, client: AdminClientIp, succeeded: bool) {
+        if succeeded {
+            self.login_rate_limiter.lock().clients.remove(&client.0);
+        }
     }
 
     /// Issues a signed admin session cookie for the authenticated principal.
@@ -425,6 +489,7 @@ pub enum AuthFailure {
     MissingSession,
     InvalidSession,
     InvalidCredentials,
+    RateLimited,
     Csrf,
 }
 
@@ -436,6 +501,7 @@ impl AuthFailure {
             AuthFailure::MissingSession
             | AuthFailure::InvalidSession
             | AuthFailure::InvalidCredentials => StatusCode::UNAUTHORIZED,
+            AuthFailure::RateLimited => StatusCode::TOO_MANY_REQUESTS,
             AuthFailure::Csrf => StatusCode::FORBIDDEN,
         }
     }
@@ -447,6 +513,7 @@ impl AuthFailure {
             AuthFailure::MissingSession => "Authentication required",
             AuthFailure::InvalidSession => "Invalid or expired session",
             AuthFailure::InvalidCredentials => "Invalid username or password",
+            AuthFailure::RateLimited => "Too many login attempts",
             AuthFailure::Csrf => "Admin request origin is not allowed",
         }
     }

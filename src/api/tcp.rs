@@ -130,11 +130,6 @@ impl TcpHandler {
                     frame_len = len,
                     "TCP frame extracted, forwarding to runtime"
                 );
-                trace!(
-                    session_id = self.session_id,
-                    frame_hex = %hex_preview(&frame),
-                    "TCP frame payload preview"
-                );
 
                 // Forward to runtime with backpressure handling.
                 // Pass ownership directly — recover from TrySendError::Full to avoid
@@ -276,17 +271,6 @@ pub async fn create_session(
 fn frame_len(buffer: &BytesMut) -> usize {
     let len_bytes = &buffer[..4];
     u32::from_be_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]]) as usize
-}
-
-/// Helper: preview first N bytes as hex string for trace logging
-fn hex_preview(data: &[u8]) -> String {
-    let limit = data.len().min(32);
-    let hex: Vec<String> = data[..limit].iter().map(|b| format!("{b:02x}")).collect();
-    if data.len() > limit {
-        format!("{}... ({} bytes total)", hex.join(" "), data.len())
-    } else {
-        hex.join(" ")
-    }
 }
 
 #[cfg(test)]

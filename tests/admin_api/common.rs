@@ -8,7 +8,8 @@ pub(crate) use bytes::Bytes;
 pub(crate) use fitz::api::admin::{
     KvTransaction, LeaseInfo, NoticeRouteInfo, NoticeSubscription, QueueAgeBuckets,
     QueueDeadLetter, QueueInflight, QueueInfo, RpcPendingRequest, RpcWorker, ScheduleInfo,
-    StreamAreaWatermark, StreamAreaWatermarkDetail, StreamInfo,
+    StreamAreaWatermark, StreamAreaWatermarkDetail, StreamInfo, StreamRealmWatermark,
+    StreamRealmWatermarkDetail,
 };
 pub(crate) use fitz::api::http::Body;
 pub(crate) use fitz::api::runtime_ingress::{Ingress, RuntimeIngress};
@@ -791,6 +792,62 @@ pub(crate) fn seed_stream_latency_pressure_data(runtime: &Arc<Runtime>) {
         watermark: 0,
         size_bytes: 0,
         sessions_active: 0,
+    }]);
+}
+
+pub(crate) fn seed_cross_family_stream_watermark_data(runtime: &Arc<Runtime>) {
+    let read_model = runtime.admin_read_model();
+    read_model.replace_streams(vec![
+        StreamInfo {
+            route_family: 1,
+            realm: "prod".to_string(),
+            area: "logs".to_string(),
+            resource: "application".to_string(),
+            offset: 4,
+            watermark: 3,
+            size_bytes: 32,
+            sessions_active: 0,
+        },
+        StreamInfo {
+            route_family: 2,
+            realm: "prod".to_string(),
+            area: "logs".to_string(),
+            resource: "security".to_string(),
+            offset: 9,
+            watermark: 8,
+            size_bytes: 64,
+            sessions_active: 0,
+        },
+    ]);
+    read_model.replace_stream_realm_watermarks(vec![StreamRealmWatermarkDetail {
+        realm: "prod".to_string(),
+        area_count: 1,
+        resource_count: 2,
+        family_watermarks: vec![
+            StreamRealmWatermark {
+                family: 1,
+                watermark: 3,
+            },
+            StreamRealmWatermark {
+                family: 2,
+                watermark: 8,
+            },
+        ],
+    }]);
+    read_model.replace_stream_area_watermarks(vec![StreamAreaWatermarkDetail {
+        realm: "prod".to_string(),
+        area: "logs".to_string(),
+        resource_count: 2,
+        family_watermarks: vec![
+            StreamAreaWatermark {
+                family: 1,
+                watermark: 3,
+            },
+            StreamAreaWatermark {
+                family: 2,
+                watermark: 8,
+            },
+        ],
     }]);
 }
 

@@ -48,6 +48,27 @@ fn should_authenticate_with_valid_credentials() {
 
 #[test]
 #[serial]
+fn should_rate_limit_admin_login_attempts_by_client_address() {
+    // Arrange
+    reset_admin_env();
+    std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
+    std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
+    let auth = AdminAuth::from_env();
+    let client = AdminClientIp("192.0.2.10".parse().unwrap());
+
+    // Act
+    let accepted = (0..ADMIN_LOGIN_ATTEMPT_LIMIT)
+        .map(|_| auth.begin_login_attempt(client))
+        .collect::<Vec<_>>();
+    let rejected = auth.begin_login_attempt(client);
+
+    // Assert
+    assert!(accepted.iter().all(Result::is_ok));
+    assert!(matches!(rejected, Err(AuthFailure::RateLimited)));
+}
+
+#[test]
+#[serial]
 fn should_configure_protected_admin_without_jwt_secret() {
     // Arrange
     reset_admin_env();
@@ -213,6 +234,19 @@ fn should_clear_admin_session_cookie_with_matching_secure_attributes() {
     assert!(cookie.contains("; Secure"));
     assert!(cookie.contains("; SameSite=Strict"));
     assert!(cookie.contains("; Max-Age=0"));
+}
+
+#[tokio::test]
+async fn should_reject_login_body_over_limit() {
+    // Arrange
+    let oversized = "a".repeat(8 * 1024 + 1);
+    let request = hyper::Request::new(Body::from(oversized));
+
+    // Act
+    let result = parse_login_request(request).await;
+
+    // Assert
+    assert!(matches!(result, Err(AuthFailure::InvalidCredentials)));
 }
 
 #[test]

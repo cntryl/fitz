@@ -3,7 +3,14 @@ use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+const JWKS_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+const JWKS_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+const JWKS_READ_TIMEOUT: Duration = Duration::from_secs(3);
+const JWKS_MAX_BODY_BYTES: usize = 256 * 1024;
+const JWKS_FORCED_REFRESH_COOLDOWN_SECS: u64 = 30;
 
 /// JWKS caching layer.
 ///
@@ -48,6 +55,18 @@ struct CachedJwksEntry {
 }
 
 static JWKS_CACHE: Lazy<DashMap<String, CachedJwksEntry>> = Lazy::new(DashMap::new);
+static JWKS_REFRESH_LOCKS: Lazy<DashMap<String, Arc<tokio::sync::Mutex<()>>>> =
+    Lazy::new(DashMap::new);
+static JWKS_FORCED_REFRESH_AT: Lazy<DashMap<String, u64>> = Lazy::new(DashMap::new);
+static JWKS_HTTP_CLIENT: Lazy<Result<reqwest::Client, String>> = Lazy::new(|| {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(JWKS_CONNECT_TIMEOUT)
+        .read_timeout(JWKS_READ_TIMEOUT)
+        .timeout(JWKS_REQUEST_TIMEOUT)
+        .build()
+        .map_err(|error| format!("build jwks client error: {error}"))
+});
 
 fn now_epoch_secs() -> u64 {
     SystemTime::now()
@@ -182,17 +201,15 @@ pub fn get_decoding_key_from_cache(jwks_url: &str, kid: &str) -> Option<jsonwebt
 /// Returns an error when the URL is invalid, when the HTTP fetch fails, when a
 /// redirect or non-success response is returned, or when the body cannot be
 /// read or parsed into supported JWKS key material.
-pub async fn fetch_and_cache_jwks(jwks_url: &str) -> Result<(), String> {
+async fn fetch_and_cache_jwks_unlocked(jwks_url: &str) -> Result<(), String> {
     super::validate_jwks_url(jwks_url, super::allow_insecure_jwks_http())
         .map_err(|error| format!("invalid JWKS URL: {error}"))?;
 
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|error| format!("build jwks client error: {error}"))?;
+    let client = JWKS_HTTP_CLIENT
+        .as_ref()
+        .map_err(std::clone::Clone::clone)?;
 
-    // Simple HTTPS fetch, cache with default TTL of 1 hour
-    let resp = client
+    let mut resp = client
         .get(jwks_url)
         .send()
         .await
@@ -211,12 +228,67 @@ pub async fn fetch_and_cache_jwks(jwks_url: &str) -> Result<(), String> {
         ));
     }
 
-    let text = resp
-        .text()
+    if resp
+        .content_length()
+        .is_some_and(|length| length > JWKS_MAX_BODY_BYTES as u64)
+    {
+        return Err(format!(
+            "read jwks body error: response exceeds {JWKS_MAX_BODY_BYTES} bytes"
+        ));
+    }
+    let mut body = Vec::with_capacity(
+        resp.content_length()
+            .and_then(|length| usize::try_from(length).ok())
+            .unwrap_or(0)
+            .min(JWKS_MAX_BODY_BYTES),
+    );
+    while let Some(chunk) = resp
+        .chunk()
         .await
-        .map_err(|e| format!("read jwks body error: {e}"))?;
+        .map_err(|error| format!("read jwks body error: {error}"))?
+    {
+        if body.len().saturating_add(chunk.len()) > JWKS_MAX_BODY_BYTES {
+            return Err(format!(
+                "read jwks body error: response exceeds {JWKS_MAX_BODY_BYTES} bytes"
+            ));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    let text =
+        std::str::from_utf8(&body).map_err(|error| format!("read jwks body error: {error}"))?;
 
-    cache_jwks_from_json_with_ttl(jwks_url, &text, 3600)
+    cache_jwks_from_json_with_ttl(jwks_url, text, 3600)
+}
+
+fn refresh_lock(jwks_url: &str) -> Arc<tokio::sync::Mutex<()>> {
+    JWKS_REFRESH_LOCKS
+        .entry(jwks_url.to_string())
+        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+        .clone()
+}
+
+fn claim_forced_refresh(jwks_url: &str) -> bool {
+    let now = now_epoch_secs();
+    if JWKS_FORCED_REFRESH_AT
+        .get(jwks_url)
+        .is_some_and(|last| now < last.saturating_add(JWKS_FORCED_REFRESH_COOLDOWN_SECS))
+    {
+        return false;
+    }
+    JWKS_FORCED_REFRESH_AT.insert(jwks_url.to_string(), now);
+    true
+}
+
+/// Fetches and caches the current key set for an HTTPS JWKS URL.
+///
+/// # Errors
+///
+/// Returns an error when the URL is invalid, the request fails or times out,
+/// the response is unsuccessful or oversized, or the document is malformed.
+pub async fn fetch_and_cache_jwks(jwks_url: &str) -> Result<(), String> {
+    let lock = refresh_lock(jwks_url);
+    let _guard = lock.lock().await;
+    fetch_and_cache_jwks_unlocked(jwks_url).await
 }
 
 /// Attempt to ensure JWKS is cached for `jwks_url`; if missing or stale, fetch
@@ -227,11 +299,27 @@ pub async fn fetch_and_cache_jwks(jwks_url: &str) -> Result<(), String> {
 /// Returns an error when cache refresh is required and the JWKS fetch or parse
 /// path fails.
 pub async fn ensure_jwks_cached(jwks_url: &str) -> Result<(), String> {
-    if is_jwks_stale(jwks_url) {
-        fetch_and_cache_jwks(jwks_url).await
-    } else {
-        Ok(())
+    if !is_jwks_stale(jwks_url) {
+        return Ok(());
     }
+    let lock = refresh_lock(jwks_url);
+    let _guard = lock.lock().await;
+    if !is_jwks_stale(jwks_url) {
+        return Ok(());
+    }
+    fetch_and_cache_jwks_unlocked(jwks_url).await
+}
+
+pub(crate) async fn refresh_jwks_for_missing_kid(jwks_url: &str, kid: &str) -> Result<(), String> {
+    if get_decoding_key_from_cache(jwks_url, kid).is_some() {
+        return Ok(());
+    }
+    let lock = refresh_lock(jwks_url);
+    let _guard = lock.lock().await;
+    if get_decoding_key_from_cache(jwks_url, kid).is_some() || !claim_forced_refresh(jwks_url) {
+        return Ok(());
+    }
+    fetch_and_cache_jwks_unlocked(jwks_url).await
 }
 
 /// Derive a default JWKS URL from issuer.
@@ -377,5 +465,20 @@ mod tests {
 
         // Assert
         assert_eq!(url, "https://idp.example/.well-known/jwks.json");
+    }
+
+    #[test]
+    fn should_throttle_forced_refreshes_for_same_jwks_url() {
+        // Arrange
+        let url = "https://idp.example/throttle-test";
+        JWKS_FORCED_REFRESH_AT.remove(url);
+
+        // Act
+        let first = claim_forced_refresh(url);
+        let second = claim_forced_refresh(url);
+
+        // Assert
+        assert!(first);
+        assert!(!second);
     }
 }

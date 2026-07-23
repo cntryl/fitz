@@ -83,12 +83,14 @@ impl Permission {
     /// supported access levels.
     pub fn parse(s: &str) -> Result<Self, String> {
         let raw = s.to_string();
-        let (_route_part, access_part) = if let Some(idx) = s.rfind('#') {
+        let (route_part, access_part) = if let Some(idx) = s.rfind('#') {
             (&s[..idx], &s[idx + 1..])
         } else {
             (s, "*")
         };
 
+        crate::utils::route_shape::validate_route_shape(route_part)
+            .map_err(|error| format!("invalid permission route: {error}"))?;
         let access = Access::from_str(access_part)?;
 
         Ok(Self { raw, access })
@@ -437,8 +439,7 @@ pub async fn verified_jwt_using_jwks_with_claims_config(
 
     // Try to get decoding key from cache; if missing, fetch and cache, then retry
     if jwks::get_decoding_key_from_cache(&issuer.jwks_url, kid).is_none() {
-        // Attempt network fetch & cache
-        jwks::fetch_and_cache_jwks(&issuer.jwks_url)
+        jwks::refresh_jwks_for_missing_kid(&issuer.jwks_url, kid)
             .await
             .map_err(|e| format!("failed to fetch jwks: {e}"))?;
     }

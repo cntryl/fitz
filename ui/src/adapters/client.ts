@@ -29,14 +29,8 @@ const redirectUnauthenticated: Middleware = async (context, next) => {
   if (
     result.status === 401 &&
     typeof window !== "undefined" &&
-    context.request.method !== "DELETE" &&
     !window.location.pathname.startsWith("/login")
   ) {
-    void fetch("/api/v1/session", {
-      credentials: "same-origin",
-      headers: { Accept: "application/json" },
-      method: "DELETE",
-    });
     navigate("/login", { history: "replace" });
   }
 
@@ -58,6 +52,6 @@ export const clientOptions: ClientOptions = {
     requestHeaders,
     retry({ attempts: 3, delay: () => 750 }),
     redirectUnauthenticated,
-    requestLogger,
+    ...(appConfig.logLevel === "debug" ? [requestLogger] : []),
   ],
 };

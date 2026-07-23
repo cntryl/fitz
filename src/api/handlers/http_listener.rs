@@ -8,10 +8,14 @@ use crate::api::runtime_ingress::Ingress;
 use crate::boot::{BootConfig, BootResult};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioIo, TokioTimer};
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tracing::info;
+
+fn http_connection_limit(max_connections: usize) -> usize {
+    max_connections.div_ceil(4).clamp(1, 1_024)
+}
 
 /// Spawn HTTP/WebSocket listener on configured port.
 ///
@@ -51,6 +55,9 @@ pub fn spawn_http_listener_with_bound_socket(
 ) -> BootResult<ListenerHandle> {
     let http_config = ingress_config.clone();
     let connection_limiter = ingress_config.connection_limiter();
+    let http_connection_limiter = Arc::new(tokio::sync::Semaphore::new(http_connection_limit(
+        ingress_config.max_connections,
+    )));
     let runtime = Arc::new(runtime);
     let ws_allowed_origins = Arc::new(ws_allowed_origins);
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
@@ -76,6 +83,13 @@ pub fn spawn_http_listener_with_bound_socket(
                                 tokio::spawn(reject_http_connection(stream));
                                 continue;
                             };
+                            let Ok(http_permit) =
+                                http_connection_limiter.clone().try_acquire_owned()
+                            else {
+                                drop(permit);
+                                tokio::spawn(reject_http_connection(stream));
+                                continue;
+                            };
                             record_connection_opened();
 
                             info!("HTTP connection from {}", peer_addr);
@@ -88,7 +102,8 @@ pub fn spawn_http_listener_with_bound_socket(
                             let websocket_tasks = websockets.clone();
                             let ws_allowed_origins = ws_allowed_origins.clone();
                             connections.lock().await.spawn(async move {
-                                if let Err(e) = handle_http_upgrade(stream, ingress, config, runtime, websocket_tasks, ws_allowed_origins, lifecycle, accepted_at).await {
+                                let _http_permit = http_permit;
+                                if let Err(e) = handle_http_upgrade(stream, peer_addr, ingress, config, runtime, websocket_tasks, ws_allowed_origins, lifecycle, accepted_at).await {
                                     tracing::error!("HTTP handler error: {}", e);
                                 }
                             });
@@ -118,6 +133,7 @@ pub fn spawn_http_listener_with_bound_socket(
 #[allow(clippy::too_many_arguments)]
 async fn handle_http_upgrade(
     stream: TcpStream,
+    peer_addr: std::net::SocketAddr,
     ingress: Arc<dyn Ingress>,
     config: IngressConfig,
     runtime: Arc<crate::boot::Runtime>,
@@ -130,7 +146,9 @@ async fn handle_http_upgrade(
 
     let runtime_clone = runtime.clone();
     let connection_lifecycle = lifecycle.clone();
-    let service = service_fn(move |req| {
+    let service = service_fn(move |mut req| {
+        req.extensions_mut()
+            .insert(crate::api::admin::auth::AdminClientIp(peer_addr.ip()));
         let ingress = ingress.clone();
         let config = config.clone();
         let runtime = runtime_clone.clone();
@@ -159,13 +177,17 @@ async fn handle_http_upgrade(
     });
 
     let io = TokioIo::new(stream);
-    let conn = http1::Builder::new()
+    let mut builder = http1::Builder::new();
+    builder
         .keep_alive(true)
-        .serve_connection(io, service)
-        .with_upgrades();
+        .timer(TokioTimer::new())
+        .header_read_timeout(crate::api::ingress::HTTP_HEADER_READ_TIMEOUT);
+    let conn = builder.serve_connection(io, service).with_upgrades();
 
-    if let Err(e) = conn.await {
-        tracing::debug!("HTTP connection error: {}", e);
+    match tokio::time::timeout(crate::api::ingress::HTTP_CONNECTION_MAX_LIFETIME, conn).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => tracing::debug!("HTTP connection error: {error}"),
+        Err(_) => tracing::debug!("HTTP connection reached its maximum lifetime"),
     }
 
     lifecycle.finish_http();
@@ -195,4 +217,16 @@ fn is_websocket_upgrade(req: &Request) -> bool {
         .get("upgrade")
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_reserve_global_connection_capacity_from_http() {
+        assert_eq!(http_connection_limit(10_000), 1_024);
+        assert_eq!(http_connection_limit(100), 25);
+        assert_eq!(http_connection_limit(1), 1);
+    }
 }

@@ -7,6 +7,7 @@ use crate::session::{
 };
 use bytes::Bytes;
 use hyper_tungstenite::tungstenite::error::ProtocolError;
+use hyper_tungstenite::tungstenite::protocol::WebSocketConfig;
 use hyper_tungstenite::tungstenite::Error as WsError;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -39,6 +40,12 @@ fn is_normal_websocket_disconnect(error: &WsError) -> bool {
         error,
         WsError::ConnectionClosed | WsError::Protocol(ProtocolError::ResetWithoutClosingHandshake)
     )
+}
+
+fn bounded_websocket_config(max_frame_size: usize) -> WebSocketConfig {
+    WebSocketConfig::default()
+        .max_message_size(Some(max_frame_size))
+        .max_frame_size(Some(max_frame_size))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -77,7 +84,8 @@ pub(super) async fn handle_websocket(
             .unwrap());
     }
 
-    match hyper_tungstenite::upgrade(req, None) {
+    let websocket_config = bounded_websocket_config(config.max_frame_size);
+    match hyper_tungstenite::upgrade(req, Some(websocket_config)) {
         Ok((response, websocket_fut)) => {
             let runtime_clone = runtime.clone();
             let router = runtime.router.clone();
@@ -497,8 +505,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        is_normal_websocket_disconnect, websocket_close_reason, websocket_origin_allowed,
-        websocket_session_frame_error_reason,
+        bounded_websocket_config, is_normal_websocket_disconnect, websocket_close_reason,
+        websocket_origin_allowed, websocket_session_frame_error_reason,
     };
     use crate::protocol::frame::ChannelId;
     use crate::session::{CloseReason, SessionError};
@@ -534,6 +542,19 @@ mod tests {
 
         // Assert
         assert!(result);
+    }
+
+    #[test]
+    fn should_bound_websocket_decoder_to_ingress_frame_limit() {
+        // Arrange
+        let max_frame_size = 512 * 1024;
+
+        // Act
+        let config = bounded_websocket_config(max_frame_size);
+
+        // Assert
+        assert_eq!(config.max_message_size, Some(max_frame_size));
+        assert_eq!(config.max_frame_size, Some(max_frame_size));
     }
 
     #[test]

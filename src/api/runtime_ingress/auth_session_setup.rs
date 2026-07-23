@@ -27,9 +27,10 @@ impl RuntimeIngress {
         domain: DispatchDomain,
         route: &str,
     ) -> Result<Cow<'_, str>, String> {
+        crate::utils::route_shape::validate_route_shape(route)?;
         Self::validate_qualified_domain_scheme(domain, route)?;
 
-        match domain {
+        let canonical = match domain {
             DispatchDomain::Kv => Self::canonicalize_triplet_route_str(domain, route, true),
             DispatchDomain::Queue | DispatchDomain::Lease | DispatchDomain::Stream => {
                 Self::canonicalize_triplet_route_str(domain, route, false)
@@ -37,7 +38,9 @@ impl RuntimeIngress {
             DispatchDomain::Rpc | DispatchDomain::Notice | DispatchDomain::Schedule => {
                 Ok(Self::scheme_prefixed_route_str(domain.as_str(), route))
             }
-        }
+        }?;
+        crate::utils::route_shape::validate_route_shape(canonical.as_ref())?;
+        Ok(canonical)
     }
 
     fn validate_qualified_domain_scheme(domain: DispatchDomain, route: &str) -> Result<(), String> {

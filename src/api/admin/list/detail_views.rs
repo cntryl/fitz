@@ -154,10 +154,33 @@ pub fn stream_detail(
 }
 
 #[must_use]
-pub fn stream_realm_watermark_detail(runtime: &Runtime, realm: &str) -> StreamRealmWatermarkDetail {
-    runtime
+pub fn stream_realm_watermark_detail(
+    runtime: &Runtime,
+    realm: &str,
+    family: Option<u64>,
+) -> StreamRealmWatermarkDetail {
+    let mut detail = runtime
         .stream_realm_watermark_detail(realm)
-        .unwrap_or_else(|| StreamRealmWatermarkDetail::snapshot(realm, 0, 0, Vec::new()))
+        .unwrap_or_else(|| StreamRealmWatermarkDetail::snapshot(realm, 0, 0, Vec::new()));
+
+    if let Some(family) = family {
+        detail
+            .family_watermarks
+            .retain(|watermark| watermark.family == family);
+        let streams = runtime
+            .stream_list_streams(Some(realm))
+            .into_iter()
+            .filter(|stream| stream.route_family == family)
+            .collect::<Vec<_>>();
+        detail.area_count = streams
+            .iter()
+            .map(|stream| stream.area.as_str())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
+        detail.resource_count = streams.len();
+    }
+
+    detail
 }
 
 #[must_use]
@@ -165,10 +188,24 @@ pub fn stream_area_watermark_detail(
     runtime: &Runtime,
     realm: &str,
     area: &str,
+    family: Option<u64>,
 ) -> StreamAreaWatermarkDetail {
-    runtime
+    let mut detail = runtime
         .stream_area_watermark_detail(realm, area)
-        .unwrap_or_else(|| StreamAreaWatermarkDetail::snapshot(realm, area, 0, Vec::new()))
+        .unwrap_or_else(|| StreamAreaWatermarkDetail::snapshot(realm, area, 0, Vec::new()));
+
+    if let Some(family) = family {
+        detail
+            .family_watermarks
+            .retain(|watermark| watermark.family == family);
+        detail.resource_count = runtime
+            .stream_list_streams(Some(realm))
+            .into_iter()
+            .filter(|stream| stream.route_family == family && stream.area == area)
+            .count();
+    }
+
+    detail
 }
 
 #[must_use]

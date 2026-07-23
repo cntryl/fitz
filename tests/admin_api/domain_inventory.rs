@@ -155,6 +155,69 @@ async fn should_return_stream_area_watermarks_given_committed_stream_history() {
 
 #[tokio::test]
 #[serial]
+async fn should_isolate_stream_realm_watermarks_by_authorized_route_family() {
+    // Arrange
+    let _family_guard = EnvGuard::set("FITZ_ADMIN_ROUTE_FAMILIES", "1");
+    let runtime = test_runtime();
+    seed_cross_family_stream_watermark_data(&runtime);
+    let cookie = login_cookie(runtime.clone()).await;
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/1/stream/realms/prod/watermarks")
+        .header(COOKIE, cookie)
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["area_count"], 1);
+    assert_eq!(payload["resource_count"], 1);
+    assert_eq!(
+        payload["family_watermarks"],
+        serde_json::json!([{"family": 1, "watermark": 3}])
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn should_isolate_stream_area_watermarks_by_authorized_route_family() {
+    // Arrange
+    let _family_guard = EnvGuard::set("FITZ_ADMIN_ROUTE_FAMILIES", "1");
+    let runtime = test_runtime();
+    seed_cross_family_stream_watermark_data(&runtime);
+    let cookie = login_cookie(runtime.clone()).await;
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/1/stream/realms/prod/areas/logs/watermarks")
+        .header(COOKIE, cookie)
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["resource_count"], 1);
+    assert_eq!(
+        payload["family_watermarks"],
+        serde_json::json!([{"family": 1, "watermark": 3}])
+    );
+}
+
+#[tokio::test]
+#[serial]
 async fn should_return_kv_transactions_under_resource() {
     let runtime = test_runtime();
     seed_snapshot_data(&runtime);

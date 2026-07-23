@@ -709,6 +709,15 @@ impl BootConfig {
         let protected_admin_configured =
             crate::api::admin::auth::protected_admin_configured_from_env();
         let public_bind = !bind_addr_is_loopback(&self.bind_addr);
+        if (self.auth_required || protected_admin_configured)
+            && public_bind
+            && !self.assume_external_tls
+        {
+            return Err(
+                "FITZ_ASSUME_EXTERNAL_TLS=true is required when authenticated listeners bind to a non-loopback address"
+                    .into(),
+            );
+        }
         let ws_allowed_origins = configured_ws_allowed_origins(
             &self.ws_allowed_origins,
             self.ws_allowed_origins_error.as_ref(),

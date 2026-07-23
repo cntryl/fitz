@@ -37,3 +37,18 @@ fn should_reject_invalid_access_level() {
     // Assert
     assert!(result.is_err());
 }
+
+#[test]
+fn should_reject_permission_route_over_segment_limit() {
+    // Arrange
+    let route = format!(
+        "notice://{}#read",
+        vec!["a"; crate::utils::route_shape::MAX_ROUTE_SEGMENTS + 1].join("/")
+    );
+
+    // Act
+    let result = Permission::parse(&route);
+
+    // Assert
+    assert!(result.is_err());
+}

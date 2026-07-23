@@ -157,7 +157,7 @@ fn handle_resource_collection_routes(
         match tail {
             ["realms"] => Some(handle_realms_collection(scheme, runtime, scope.filter())),
             ["realms", realm, "watermarks"] if scheme == "stream" => Some(json_response(
-                list::stream_realm_watermark_detail(runtime.as_ref(), realm),
+                list::stream_realm_watermark_detail(runtime.as_ref(), realm, scope.filter()),
             )),
             ["realms", realm] if scheme == "queue" => Some(json_response(
                 list::queue_realm_detail(runtime.as_ref(), realm, scope.filter()),
@@ -176,6 +176,7 @@ fn handle_resource_collection_routes(
                     runtime.as_ref(),
                     realm,
                     area,
+                    scope.filter(),
                 )))
             }
             ["realms", realm, "areas", area] if scheme == "queue" => Some(json_response(

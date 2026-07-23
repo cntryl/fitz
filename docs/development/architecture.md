@@ -696,15 +696,15 @@ If any check fails:
 Brokers deployed with runtime auth or protected admin on non-loopback binds must be protected by TLS at the network edge:
 1. **WebSocket browser traffic:**
    - Clients use the public `wss://` scheme through the TLS-terminating load balancer
-   - Set `FITZ_ASSUME_EXTERNAL_TLS=true` in TLS-terminated deployments so Fitz emits TLS-dependent browser headers such as HSTS
+   - Set `FITZ_ASSUME_EXTERNAL_TLS=true` in TLS-terminated deployments. Fitz fails startup when runtime auth or protected admin is enabled on a non-loopback bind without this explicit assertion
    - Configure exact public `FITZ_WS_ALLOWED_ORIGINS` for browser WebSocket clients; Fitz defaults only to loopback local-development origins
+   - HTTP headers, request bodies, WebSocket frames, and total HTTP connection lifetimes are bounded at ingress so unauthenticated clients cannot retain unlimited parser or connection resources
 2. **TCP traffic:**
    - Use a TLS-capable load balancer, sidecar, or private trusted network for raw TCP
    - Disable raw TCP with `FITZ_TCP_ENABLED=false` when only browser traffic is needed
 3. **Certificate Management:**
    - Managed by the external TLS terminator in current deployments
    - Native listener TLS and in-process certificate rotation are future enhancements
-   - Log certificate expiry warnings
 4. **Cipher Suites:**
    - Use strong modern cipher suites (TLS 1.2+)
    - Disable weak ciphers (RC4, DES, NULL)

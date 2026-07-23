@@ -16,11 +16,11 @@ import { createSignOutMutation } from "@/features/session/session-mutation";
 import { manageRoutePageContext } from "@/components/shared/domain-page-frame";
 import { formatUnknownError } from "@/shared/errors/format";
 
-type LogoutPhase = "pending" | "success" | "open" | "error";
+type LogoutPhase = "confirm" | "pending" | "success" | "open" | "error";
 
 export default function Logout() {
   const signOut = createSignOutMutation();
-  const [phase, setPhase] = state<LogoutPhase>("pending");
+  const [phase, setPhase] = state<LogoutPhase>("confirm");
   const [error, setError] = state("");
 
   task(() => manageRoutePageContext("Sign out"));
@@ -38,10 +38,6 @@ export default function Logout() {
     }
   }
 
-  task(async () => {
-    await signOutAndSetPhase();
-  });
-
   const currentPhase = phase();
   const errorMessage = error();
   const title =
@@ -49,17 +45,21 @@ export default function Logout() {
       ? "Open access"
       : currentPhase === "success"
         ? "Signed out"
-        : currentPhase === "error"
+          : currentPhase === "error"
           ? "Sign out failed"
-          : "Signing out";
+          : currentPhase === "pending"
+            ? "Signing out"
+            : "Sign out";
   const description =
     currentPhase === "open"
       ? "Admin authentication is disabled, so there is no browser account session to clear."
       : currentPhase === "success"
         ? "Your Fitz Admin session has been cleared."
-        : currentPhase === "error"
+          : currentPhase === "error"
           ? "We could not clear your session. You may still be signed in."
-          : "Clearing your Fitz Admin session.";
+          : currentPhase === "pending"
+            ? "Clearing your Fitz Admin session."
+            : "Confirm that you want to end this browser session.";
 
   return (
     <Card class="auth-card" variant="raised">
@@ -70,6 +70,18 @@ export default function Logout() {
       </CardHeader>
       <CardContent>
         <div class="auth-status-shell" aria-live="polite" aria-atomic="true">
+          {currentPhase === "confirm" ? (
+            <Alert
+              variant="info"
+              description="This signs you out of Fitz Admin on this browser."
+              actions={
+                <Button onPress={() => void signOutAndSetPhase()}>
+                  Sign out
+                </Button>
+              }
+            />
+          ) : null}
+
           {currentPhase === "pending" ? (
             <div class="auth-status">
               <Spinner label="Signing out" />

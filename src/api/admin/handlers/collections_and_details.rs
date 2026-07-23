@@ -149,6 +149,11 @@ where
         return Ok(*response);
     }
 
+    let client = req
+        .extensions()
+        .get::<auth::AdminClientIp>()
+        .copied()
+        .unwrap_or_default();
     let Ok(login) = auth::parse_login_request(req).await else {
         return Ok(super::error_response(
             StatusCode::BAD_REQUEST,
@@ -156,9 +161,35 @@ where
         ));
     };
 
-    let principal = match admin_auth.authenticate_credentials(&login.username, &login.password) {
-        Ok(principal) => principal,
-        Err(err) => return Ok(auth_error_response(err)),
+    let Some(permit) = runtime.try_acquire_admin_blocking_permit() else {
+        return Ok(super::error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Admin authentication executor is saturated",
+        ));
+    };
+    if let Err(error) = admin_auth.begin_login_attempt(client) {
+        return Ok(auth_error_response(error));
+    }
+    let verifier = admin_auth.clone();
+    let username = login.username;
+    let password = login.password;
+    let verification = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        verifier.authenticate_credentials(&username, &password)
+    })
+    .await;
+    let principal = match verification {
+        Ok(Ok(principal)) => {
+            admin_auth.complete_login_attempt(client, true);
+            principal
+        }
+        Ok(Err(error)) => return Ok(auth_error_response(error)),
+        Err(_) => {
+            return Ok(super::error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Admin authentication executor failed",
+            ));
+        }
     };
 
     let cookie = match admin_auth.issue_session_cookie(&principal) {

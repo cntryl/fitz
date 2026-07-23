@@ -9,9 +9,14 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
-type AuthorizationCache = HashMap<u8, HashMap<String, bool>>;
+#[derive(Debug, Default)]
+struct AuthorizationCache {
+    entries: HashMap<u8, HashMap<String, bool>>,
+    retained_route_bytes: usize,
+}
 
 const CHECK_CACHE_ENTRY_LIMIT: usize = 256;
+const CHECK_CACHE_BYTE_LIMIT: usize = 64 * 1024;
 
 /// Compiled permission used by runtime checks. This is created from an
 /// `auth::Permission` by compiling the route-shaped string into a `Pattern`.
@@ -107,6 +112,10 @@ impl SessionPermissions {
     #[inline]
     #[must_use]
     pub fn allows_route(&self, route: &str, access: Access) -> bool {
+        if crate::utils::route_shape::validate_route_shape(route).is_err() {
+            return false;
+        }
+
         let access_bits = access_to_bits(access);
 
         if let Some(result) = self.cached_authorization(route, access_bits) {
@@ -123,7 +132,7 @@ impl SessionPermissions {
         Self {
             inner: Arc::new(inner),
             compiled: Arc::new(compiled),
-            check_cache: Arc::new(RwLock::new(HashMap::new())),
+            check_cache: Arc::new(RwLock::new(AuthorizationCache::default())),
         }
     }
 
@@ -141,6 +150,7 @@ impl SessionPermissions {
     fn cached_authorization(&self, route: &str, access_bits: u8) -> Option<bool> {
         let cache = self.check_cache.read();
         cache
+            .entries
             .get(&access_bits)
             .and_then(|routes| routes.get(route).copied())
     }
@@ -152,26 +162,35 @@ impl SessionPermissions {
     }
 
     fn cache_authorization(&self, route: &str, access_bits: u8, allowed: bool) {
-        let mut cache = self.check_cache.write();
-        let should_clear = Self::cached_entry_count(&cache) >= CHECK_CACHE_ENTRY_LIMIT
-            && cache
-                .get(&access_bits)
-                .is_none_or(|routes| !routes.contains_key(route));
-
-        if should_clear {
-            cache.clear();
+        if route.len() > CHECK_CACHE_BYTE_LIMIT {
+            return;
         }
 
-        let routes = cache.entry(access_bits).or_default();
+        let mut cache = self.check_cache.write();
+        let is_new = cache
+            .entries
+            .get(&access_bits)
+            .is_none_or(|routes| !routes.contains_key(route));
+        let should_clear = is_new
+            && (Self::cached_entry_count(&cache) >= CHECK_CACHE_ENTRY_LIMIT
+                || cache.retained_route_bytes.saturating_add(route.len()) > CHECK_CACHE_BYTE_LIMIT);
+
+        if should_clear {
+            cache.entries.clear();
+            cache.retained_route_bytes = 0;
+        }
+
+        let routes = cache.entries.entry(access_bits).or_default();
         if let Some(cached) = routes.get_mut(route) {
             *cached = allowed;
         } else {
             routes.insert(route.to_string(), allowed);
+            cache.retained_route_bytes = cache.retained_route_bytes.saturating_add(route.len());
         }
     }
 
     fn cached_entry_count(cache: &AuthorizationCache) -> usize {
-        cache.values().map(HashMap::len).sum()
+        cache.entries.values().map(HashMap::len).sum()
     }
 }
 impl fmt::Display for SessionPermissions {
@@ -182,7 +201,9 @@ impl fmt::Display for SessionPermissions {
 
 #[inline]
 fn permission_route_part(raw_permission: &str) -> &str {
-    raw_permission.split('#').next().unwrap_or("")
+    raw_permission
+        .rsplit_once('#')
+        .map_or(raw_permission, |(route, _access)| route)
 }
 
 #[inline]
@@ -298,8 +319,48 @@ mod tests {
 
         // Assert
         let cache = perms.check_cache.read();
-        let routes = cache.get(&access_to_bits(Access::Write)).unwrap();
+        let routes = cache.entries.get(&access_to_bits(Access::Write)).unwrap();
         assert!(routes.contains_key(first_route));
         assert!(routes.contains_key(second_route));
+    }
+
+    #[test]
+    fn should_bound_cached_route_bytes() {
+        // Arrange
+        let permission = Permission::parse("notice://**#write").unwrap();
+        let perms = SessionPermissions::from_permissions(vec![permission]);
+        let route_body = "a".repeat(crate::utils::route_shape::MAX_ROUTE_BYTES - 32);
+
+        // Act
+        for index in 0..32 {
+            let route = format!("notice://{index}/{route_body}");
+            let _ = perms.allows_route(&route, Access::Write);
+        }
+
+        // Assert
+        let cache = perms.check_cache.read();
+        assert!(cache.retained_route_bytes <= CHECK_CACHE_BYTE_LIMIT);
+        assert!(SessionPermissions::cached_entry_count(&cache) < 32);
+    }
+
+    #[test]
+    fn should_not_cache_oversized_route() {
+        // Arrange
+        let permission = Permission::parse("notice://**#write").unwrap();
+        let perms = SessionPermissions::from_permissions(vec![permission]);
+        let route = format!(
+            "notice://{}",
+            "a".repeat(crate::utils::route_shape::MAX_ROUTE_BYTES)
+        );
+
+        // Act
+        let allowed = perms.allows_route(&route, Access::Write);
+
+        // Assert
+        assert!(!allowed);
+        assert_eq!(
+            SessionPermissions::cached_entry_count(&perms.check_cache.read()),
+            0
+        );
     }
 }

@@ -4,6 +4,31 @@ import { getResourceInventoryAdapter } from "./resource-domain-adapters";
 import type { DomainId, ResourceInventory, ResourceInventoryResource } from "./resource-models";
 
 type ResourceEntryWithOperation = ResourceEntry & { operation?: string };
+const RESOURCE_INVENTORY_CONCURRENCY = 4;
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = Array.from<R | undefined>({ length: items.length });
+  let nextIndex = 0;
+
+  async function run() {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex++;
+      results[currentIndex] = await worker(items[currentIndex]);
+    }
+  }
+
+  await Promise.all(
+    Array.from(
+      { length: Math.min(RESOURCE_INVENTORY_CONCURRENCY, items.length) },
+      () => run(),
+    ),
+  );
+
+  return results as R[];
+}
 
 function mapInventoryResource(entry: ResourceEntryWithOperation): ResourceInventoryResource {
   const resource: ResourceInventoryResource = {
@@ -43,11 +68,13 @@ export async function getResourceInventory(
 ): Promise<ResourceInventory> {
   const adapter = getResourceInventoryAdapter(domain);
   const realms = await adapter.listRealms(options);
-  const inventoryRealms = await Promise.all(
-    realms.map(async ({ realm }) => {
+  const inventoryRealms = await mapWithConcurrency(
+    realms,
+    async ({ realm }) => {
       const areas = await adapter.listAreas(realm, options);
-      const inventoryAreas = await Promise.all(
-        areas.map(async ({ area }) => {
+      const inventoryAreas = await mapWithConcurrency(
+        areas,
+        async ({ area }) => {
           const resourceEntries = (await adapter.listResources({ area, realm }, options)).map(
             mapInventoryResource,
           );
@@ -57,11 +84,11 @@ export async function getResourceInventory(
             resourceEntries,
             resources: resourceEntries.map((entry) => entry.resource),
           };
-        }),
+        },
       );
 
       return { areas: inventoryAreas, realm };
-    }),
+    },
   );
 
   return { domain, realms: inventoryRealms };

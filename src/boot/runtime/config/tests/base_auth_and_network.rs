@@ -312,7 +312,7 @@ pub(super) fn auth_ready_config() -> BootConfig {
 
 #[test]
 #[serial]
-pub(super) fn should_allow_public_bind_without_external_tls_ack_when_auth_required() {
+pub(super) fn should_reject_public_bind_without_external_tls_ack_when_auth_required() {
     with_auth_env(&[], || {
         // Arrange
         let config = auth_ready_config()
@@ -323,7 +323,10 @@ pub(super) fn should_allow_public_bind_without_external_tls_ack_when_auth_requir
         let result = config.validate();
 
         // Assert
-        assert!(result.is_ok());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("FITZ_ASSUME_EXTERNAL_TLS=true is required"));
         assert!(!config.assume_external_tls);
     });
 }
@@ -355,6 +358,7 @@ pub(super) fn should_reject_public_auth_bind_with_empty_ws_allowed_origins() {
         // Arrange
         let config = auth_ready_config()
             .with_bind_addr("0.0.0.0".to_string())
+            .with_assume_external_tls(true)
             .with_ws_allowed_origins(Vec::new());
 
         // Act
@@ -406,7 +410,7 @@ pub(super) fn should_allow_loopback_bind_without_external_tls_when_auth_required
 
 #[test]
 #[serial]
-pub(super) fn should_allow_public_bind_without_external_tls_ack_when_protected_admin_configured() {
+pub(super) fn should_reject_public_bind_without_external_tls_ack_when_protected_admin_configured() {
     with_auth_env(
         &[
             ("FITZ_ADMIN_USERNAME", "admin"),
@@ -427,7 +431,10 @@ pub(super) fn should_allow_public_bind_without_external_tls_ack_when_protected_a
             let result = config.validate();
 
             // Assert
-            assert!(result.is_ok());
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("FITZ_ASSUME_EXTERNAL_TLS=true is required"));
             assert!(!config.assume_external_tls);
         },
     );
