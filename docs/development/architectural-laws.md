@@ -201,5 +201,9 @@ Schedule definitions select a required live delivery mode. `broadcast` attempts
 every currently connected exact-route subscriber; `single` attempts one
 currently connected exact-route subscriber using an ephemeral fair cursor.
 Neither mode makes downstream delivery durable, retryable, or exactly-once.
+An occurrence is acknowledged and advances when no subscriber accepts it.
+This is intentional: subscriber availability must not turn Schedule into a
+second durable work queue. Use Queue when work must remain available until a
+consumer reserves and acknowledges it.
 
 The architecture stays clean only if these meanings stay stable.

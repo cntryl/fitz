@@ -690,6 +690,26 @@ When a schedule fires, the broker performs **one action**:
 exact-route subscriber. In single mode it attempts subscribers in round-robin
 order until one accepts. The notification wire payload is unchanged.
 
+| Mode | Live subscriber result | Occurrence result |
+|---|---|---|
+| `broadcast` | none | No notification; acknowledge and advance. |
+| `broadcast` | all accept | Attempt and hand off to all; acknowledge and advance. |
+| `broadcast` | some or all reject | Attempt all once; keep accepted handoffs, do not retry rejected handoffs; acknowledge and advance. |
+| `single` | none | No notification; acknowledge and advance. |
+| `single` | a candidate accepts | Try in cursor order, stop after the first accepted handoff, advance past it; acknowledge and advance. |
+| `single` | all reject | Try every candidate once, advance the cursor, acknowledge and advance. |
+
+“Accepts” means the broker's in-process router accepted the handoff. Schedule
+notifications have no consumer acknowledgement. Subscriptions match only the
+exact route in the same route family; they and the round-robin cursor are lost
+on restart. A persisted pending claim may therefore be attempted again after a
+restart, but it does not provide exactly-once delivery.
+
+The broker does not wait for a subscriber or create a retry window. Doing so
+would make live subscriber availability create a work backlog and duplicate
+Queue's reservation, retry, and consumer-acknowledgement responsibilities. Use
+Queue when an occurrence must remain available for eventual processing.
+
 **Client observability:** Clients observe schedule execution by subscribing to schedule routes via `SCHEDULE_SUBSCRIBE` to receive `SCHEDULE_NOTIFY` when schedules fire.
 
 **Payload semantics:** The payload is opaque to Fitz — clients can encode configuration, task identifiers, or any data needed to handle the notification. Common patterns:

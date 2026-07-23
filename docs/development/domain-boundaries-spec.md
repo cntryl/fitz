@@ -88,6 +88,33 @@ exact-route subscribers. `single` selects at most one accepted live handoff by
 round-robin. The cursor and subscriptions are ephemeral; an occurrence advances
 even when there are no subscribers or every live handoff is rejected.
 
+The complete live-delivery behavior is:
+
+| Mode | Subscribers at fire time | Result |
+|---|---|---|
+| `broadcast` | none | Deliver nothing, acknowledge the pending claim, and advance. |
+| `broadcast` | one or more, all accepting | Attempt and hand off to every subscriber, then acknowledge and advance. |
+| `broadcast` | mixed accepting and rejecting | Attempt every subscriber once; accepted handoffs remain delivered, rejected handoffs are not retried, then acknowledge and advance. |
+| `broadcast` | one or more, all rejecting | Attempt every subscriber once, acknowledge the pending claim, and advance. |
+| `single` | none | Deliver nothing, acknowledge the pending claim, and advance. |
+| `single` | one accepting | Hand off once, advance the cursor past that subscriber, then acknowledge and advance. |
+| `single` | multiple accepting | Hand off to the first candidate from the round-robin cursor, advance past it, then acknowledge and advance. |
+| `single` | mixed accepting and rejecting | Try each candidate in rotation order until one accepts; make at most one accepted handoff, advance past it, then acknowledge and advance. |
+| `single` | one or more, all rejecting | Try every candidate once, advance the cursor safely, acknowledge the pending claim, and advance. |
+
+An accepted handoff means the in-process router accepted the notification; it
+is not a consumer acknowledgement. Subscriber disconnects remove candidates,
+duplicate subscriptions from the same session to the same route are
+idempotent, and candidates in another `RouteFamily` never participate.
+
+These rules deliberately keep Schedule responsible only for *when* an
+occurrence becomes due. Waiting for a subscriber would turn temporary absence
+into a backlog and would require retry deadlines, cancellation and upsert rules,
+restart recovery, and consumer acknowledgement semantics. Queue already owns
+that durable-work contract. Applications that require eventual processing
+should schedule a durable Queue operation rather than treat a Schedule
+subscription as one.
+
 ## 2. Primary Use Cases
 
 ### Notice

@@ -585,6 +585,7 @@ Current Notice behavior is intentionally ephemeral:
 - Current production boundary: `ScheduleDomainSink` is the mailbox adapter, and `ScheduleDomainRuntime` executes against `ScheduleDomainCore` inside the managed actor mailbox.
 - Persistence: schedule definitions, next-fire state, and pending claims are durable timing intent; subscriber watches and transient handoff coordination are ephemeral.
 - Cleanup: disconnect removes live watches but does not erase persisted schedule intent or imply replay of every missed interval after downtime.
+- Delivery boundary: `broadcast` attempts every live exact-route subscriber; `single` attempts candidates in ephemeral round-robin order until one router handoff succeeds. Zero accepted handoffs still acknowledge the pending claim and advance, because Schedule owns timing rather than durable consumer availability.
 - `RouteFamily`/`realm`: schedules stay partitioned by exact `RouteFamily`, while `realm` remains an application-defined route label that is never derived from the family.
 - Admin path: schedule projections flow through `Runtime::schedule_list_schedules()` after actor-owned snapshot refresh; live counters and pending claim inspection use command/reply reads to `ScheduleDomainActor`.
 
