@@ -95,7 +95,7 @@ test("should_mirror_the_login_card_on_the_logout_route", async ({ page }) => {
   // Arrange
   await mockAdminFeatures(page);
   await page.goto("/logout");
-  await expect(page.getByRole("heading", { level: 1, name: "Open access" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Sign out" })).toBeVisible();
   const viewport = page.viewportSize();
 
   // Act
@@ -113,6 +113,6 @@ test("should_mirror_the_login_card_on_the_logout_route", async ({ page }) => {
   );
   await expect(page.locator('[data-slot="card"] img.fitz-brand-logo')).toBeVisible();
   await expect(page.getByText("Fitz Admin", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Return to Fitz Admin" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
   await expect(page.locator("header, footer")).toHaveCount(0);
 });

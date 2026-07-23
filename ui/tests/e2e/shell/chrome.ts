@@ -527,7 +527,7 @@ export const sprint16Routes: RouteScenario[] = [
     path: "/logout",
     shell: "auth",
     setup: (page) => mockHomeRouteApis(page),
-    title: /Open access|Signing out/,
+    title: "Sign out",
   },
   {
     path: "/admin/1/rpc/default/ops/primary/GetStatus",
