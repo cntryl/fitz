@@ -29,11 +29,11 @@ impl QueueDomainActor {
 }
 
 impl QueueDomainSink {
-    /// Constructs a queue sink over a raw Midge engine after validating persisted queue state.
+    /// Constructs a queue sink over a raw Midge engine after preparing persisted queue state.
     ///
     /// # Errors
     ///
-    /// Returns an error when the persisted queue state is invalid for the current runtime.
+    /// Returns an error when persisted queue state is invalid or cannot be reconciled.
     pub fn try_new(
         store: Arc<cntryl_midge::Engine>,
         router: Arc<Router>,
@@ -46,6 +46,7 @@ impl QueueDomainSink {
             router,
             admin_read_model,
             queue_write_options,
+            cntryl_midge::WriteOptions::sync(),
             dedup_store,
         )
     }
@@ -55,10 +56,13 @@ impl QueueDomainSink {
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
         queue_write_options: cntryl_midge::WriteOptions,
+        recovery_write_options: cntryl_midge::WriteOptions,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     ) -> Result<Self, String> {
-        crate::domains::queue::QueueActor::validate_persisted_state_for_existing_families(
+        crate::domains::queue::QueueActor::prepare_persisted_state_for_existing_families(
             store.inner(),
+            queue_write_options,
+            recovery_write_options,
         )?;
         Ok(Self::new_with_storage(
             store,

@@ -325,6 +325,9 @@ Queue guarantees:
 - retry and redelivery after lease expiry
 - optional dead-letter transition when retry policy is exhausted
 - `FITZ_QUEUE_WRITE_POLICY=fast` may lose accepted recent queue mutations before the `FITZ_QUEUE_LOSS_WINDOW_MS` background flush window closes
+- fast-policy startup durably discards incomplete split message remnants from that
+  loss window and rebuilds the affected queue indexes; buffered and strict
+  policies fail closed on the same incomplete authoritative state
 
 Queue does NOT guarantee:
 

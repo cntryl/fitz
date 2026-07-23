@@ -437,6 +437,9 @@ pub fn setup(
     let metrics = (*crate::observability::metrics()).clone();
     let storage = crate::storage::FitzStorageEngine::new(store.clone());
     let route_families = provisioned_route_families(options);
+    let rpc_request_timeout = options
+        .rpc_request_timeout
+        .unwrap_or(std::time::Duration::from_secs(30));
 
     let kv_sink = Arc::new(
         KvDomainSink::new(store.clone(), router.clone(), admin_read_model.clone())
@@ -454,6 +457,7 @@ pub fn setup(
             router.clone(),
             admin_read_model.clone(),
             options.queue_write_options,
+            options.request_sync_write_options,
             crate::utils::idempotency::default_dedup_store(),
         )?
         .with_fast_flush_interval(options.queue_fast_flush_interval)
@@ -491,11 +495,7 @@ pub fn setup(
 
     let rpc_sink = Arc::new(
         RpcDomainSink::new_with_families(router.clone(), admin_read_model.clone(), &route_families)
-            .with_request_timeout(
-                options
-                    .rpc_request_timeout
-                    .unwrap_or(std::time::Duration::from_secs(30)),
-            )
+            .with_request_timeout(rpc_request_timeout)
             .with_metrics(metrics.clone()),
     );
     DomainKind::Rpc
