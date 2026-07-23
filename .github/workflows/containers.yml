@@ -103,11 +103,22 @@ jobs:
 
       - name: Create manifest list and push
         working-directory: /tmp/digests
+        env:
+          BRANCH: ${{ needs.version.outputs.branch }}
+          SEMVER: ${{ needs.version.outputs.semver }}
         run: |
+          image="${REGISTRY}/${IMAGE_NAME}"
+          tags=(
+            -t "${image}:${BRANCH}"
+            -t "${image}:${SEMVER}"
+          )
+          if [[ "${BRANCH}" == "main" ]]; then
+            tags+=(-t "${image}:latest")
+          fi
+
           docker buildx imagetools create \
-            -t "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.version.outputs.branch }}" \
-            -t "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.version.outputs.semver }}" \
-            $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)
+            "${tags[@]}" \
+            $(printf "${image}@sha256:%s " *)
 
       - name: Inspect image
         run: |
