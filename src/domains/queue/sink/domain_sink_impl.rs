@@ -46,7 +46,11 @@ impl QueueDomainSink {
             router,
             admin_read_model,
             queue_write_options,
-            cntryl_midge::WriteOptions::sync(),
+            if queue_write_options.is_cloud_strict() {
+                cntryl_midge::WriteOptions::cloud_strict()
+            } else {
+                cntryl_midge::WriteOptions::sync()
+            },
             dedup_store,
         )
     }

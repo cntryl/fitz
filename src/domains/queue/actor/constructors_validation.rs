@@ -285,7 +285,7 @@ impl QueueActor {
             .begin_tx(family, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|error| {
                 format!(
-                    "queue validation failed: family={family} key_category=transaction error={error:?}"
+                    "queue reconciliation failed: family={family} key_category=transaction error={error:?}"
                 )
             })?;
         let scan = Self::scan_persisted_state_for_family(&txn, family)?;
@@ -444,7 +444,7 @@ impl QueueActor {
         }
         if !recovery_write_options.is_sync() && !recovery_write_options.is_cloud_strict() {
             return Err(format!(
-                "queue validation failed: family={family} key_category=reconciliation error=durable recovery write policy required"
+                "queue reconciliation failed: family={family} key_category=reconciliation error=durable recovery write policy required"
             ));
         }
 
