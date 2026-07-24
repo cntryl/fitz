@@ -301,12 +301,6 @@ export const sprint16Routes: RouteScenario[] = [
     title: "Diagnostics",
   },
   {
-    path: "/admin/1/settings",
-    shell: "app",
-    setup: mockHomeRouteApis,
-    title: "Workspace & account",
-  },
-  {
     path: "/admin/1/lease",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),

@@ -55,10 +55,6 @@ function routeCrumbs(path: string, params: Record<string, string | undefined>, f
     return [{ href: adminChildHref("metrics", family), label: "Metrics" }];
   }
 
-  if (path === "/settings") {
-    return [{ href: adminChildHref("settings", family), label: "Workspace & account" }];
-  }
-
   if (path === "/sessions") {
     return [{ href: adminChildHref("sessions", family), label: "Sessions" }];
   }

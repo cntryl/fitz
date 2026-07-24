@@ -699,6 +699,7 @@ Brokers deployed with runtime auth or protected admin on non-loopback binds must
    - Set `FITZ_ASSUME_EXTERNAL_TLS=true` in TLS-terminated deployments. Fitz fails startup when runtime auth or protected admin is enabled on a non-loopback bind without this explicit assertion
    - Configure exact public `FITZ_WS_ALLOWED_ORIGINS` for browser WebSocket clients; Fitz defaults only to loopback local-development origins
    - HTTP headers, request bodies, WebSocket frames, and total HTTP connection lifetimes are bounded at ingress so unauthenticated clients cannot retain unlimited parser or connection resources
+   - Repo-owned local Compose examples set `FITZ_ASSUME_LOCAL_LOOPBACK_EDGE=true` because Fitz binds inside a container while Docker publishes only to host loopback. The assertion requires loopback browser origins, does not enable HSTS, and is not valid for production
 2. **TCP traffic:**
    - Use a TLS-capable load balancer, sidecar, or private trusted network for raw TCP
    - Disable raw TCP with `FITZ_TCP_ENABLED=false` when only browser traffic is needed

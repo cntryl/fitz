@@ -2,23 +2,9 @@ import { state } from "@askrjs/askr";
 import { For } from "@askrjs/askr/control";
 import { task } from "@askrjs/askr/resources";
 import { Link, navigate } from "@askrjs/askr/router";
-import { ArrowRightIcon, NetworkIcon } from "@askrjs/lucide";
+import { NetworkIcon } from "@askrjs/lucide";
 import { Input, Label } from "@askrjs/ui";
-import {
-  Block,
-  Button,
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  Field,
-  Grid,
-  Inline,
-  Main,
-  PageHeader,
-  Stack,
-} from "@askrjs/themes/components";
+import { Button, Field, Inline, Main, PageHeader, Stack } from "@askrjs/themes/components";
 import { pathWithRouteFamily } from "@/shared/navigation/domains";
 import { manageRoutePageContext } from "@/components/shared/domain-page-frame";
 import {
@@ -27,6 +13,7 @@ import {
   QueryLoadingState,
 } from "@/components/shared/query-state";
 import { useOperatorScope, type RouteFamilyOption } from "@/shared/operator-scope";
+import { routeFamilyIconColor } from "@/shared/route-family-appearance";
 
 function selectorTarget(routeFamilyId: string) {
   if (typeof window === "undefined") {
@@ -36,38 +23,29 @@ function selectorTarget(routeFamilyId: string) {
   return `${pathWithRouteFamily(window.location.pathname, routeFamilyId)}${window.location.search}${window.location.hash}`;
 }
 
-function RouteFamilyGrid({ routeFamilies }: { routeFamilies: RouteFamilyOption[] }) {
+function RouteFamilyList({ routeFamilies }: { routeFamilies: RouteFamilyOption[] }) {
   return (
-    <Grid columns={{ base: 1, md: 2, xl: 3 }} gap="md">
+    <ul class="route-family-list">
       <For each={routeFamilies} by={(family) => family.id}>
         {(family) => (
-          <Card>
-            <CardHeader>
-              <CardTitle titleAs="h2">
-                <Block as="span" direction="row" align="center" gap="xs">
-                  <>
-                    <NetworkIcon size={16} aria-hidden="true" />
-                    <span>{family.label}</span>
-                  </>
-                </Block>
-              </CardTitle>
-              <CardDescription>{family.description}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Button asChild variant="outline">
-                <Link
-                  href={selectorTarget(family.id)}
-                  aria-label={`Open workspace for Route family ${family.id}`}
-                >
-                  Open
-                  <ArrowRightIcon size={16} aria-hidden="true" />
-                </Link>
-              </Button>
-            </CardContent>
-          </Card>
+          <li>
+            <Link
+              class="route-family-list-link"
+              href={selectorTarget(family.id)}
+              aria-label={`Open workspace for Route family ${family.id}`}
+            >
+              <NetworkIcon
+                class="route-family-icon"
+                size={18}
+                style={{ color: routeFamilyIconColor(family.id) }}
+                aria-hidden="true"
+              />
+              <span>{family.label}</span>
+            </Link>
+          </li>
         )}
       </For>
-    </Grid>
+    </ul>
   );
 }
 
@@ -84,37 +62,33 @@ function WildcardRouteFamilyForm() {
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle titleAs="h2">Open another Route Family</CardTitle>
-        <CardDescription>
+    <section class="route-family-wildcard">
+      <div>
+        <h2>Open another Route Family</h2>
+        <p>
           This session has wildcard access. Enter the numeric Route Family identifier you want to
           operate.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={openRouteFamily}>
-          <Inline align="end" gap="3" wrap="wrap">
-            <Field>
-              <Label for="wildcard-route-family">Route Family</Label>
-              <Input
-                id="wildcard-route-family"
-                name="routeFamily"
-                inputmode="numeric"
-                pattern="[0-9]+"
-                required
-                value={routeFamilyId()}
-                onInput={(event: Event) =>
-                  setRouteFamilyId((event.target as HTMLInputElement).value)
-                }
-                placeholder="42"
-              />
-            </Field>
-            <Button type="submit">Open</Button>
-          </Inline>
-        </form>
-      </CardContent>
-    </Card>
+        </p>
+      </div>
+      <form onSubmit={openRouteFamily}>
+        <Inline align="end" gap="3" wrap="wrap">
+          <Field>
+            <Label for="wildcard-route-family">Route Family</Label>
+            <Input
+              id="wildcard-route-family"
+              name="routeFamily"
+              inputmode="numeric"
+              pattern="[0-9]+"
+              required
+              value={routeFamilyId()}
+              onInput={(event: Event) => setRouteFamilyId((event.target as HTMLInputElement).value)}
+              placeholder="42"
+            />
+          </Field>
+          <Button type="submit">Open</Button>
+        </Inline>
+      </form>
+    </section>
   );
 }
 
@@ -155,9 +129,11 @@ export default function RouteFamilySelectorPage() {
         {operator.routeFamilyState === "ready" ? (
           <Stack gap="3">
             {operator.routeFamilies.length > 0 ? (
-              <RouteFamilyGrid routeFamilies={operator.routeFamilies} />
+              <RouteFamilyList routeFamilies={operator.routeFamilies} />
             ) : null}
-            {operator.routeFamiliesWildcard ? <WildcardRouteFamilyForm /> : null}
+            {operator.routeFamiliesWildcard && operator.routeFamilies.length === 0 ? (
+              <WildcardRouteFamilyForm />
+            ) : null}
           </Stack>
         ) : null}
       </Stack>

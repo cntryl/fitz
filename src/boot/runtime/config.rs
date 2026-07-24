@@ -310,10 +310,32 @@ use env::{
     drain_close_reason_from_env, drain_grace_seconds_from_env, env_non_empty,
     queue_loss_window_ms_from_env, required_env,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LocalListenerExposure {
+    Direct,
+    HostLoopbackEdge,
+}
+
+impl LocalListenerExposure {
+    fn from_assumption(assume_local_loopback_edge: bool) -> Self {
+        if assume_local_loopback_edge {
+            Self::HostLoopbackEdge
+        } else {
+            Self::Direct
+        }
+    }
+
+    pub(crate) fn is_host_loopback_edge(self) -> bool {
+        self == Self::HostLoopbackEdge
+    }
+}
+
 mod validation;
 use validation::{
-    bind_addr_is_loopback, configured_ws_allowed_origins, default_local_ws_allowed_origins,
+    configured_ws_allowed_origins, default_local_ws_allowed_origins,
     parse_ws_allowed_origins_from_env, validate_admin_browser_security,
+    validate_ingress_security_boundary, validate_local_loopback_edge_origins,
     validate_public_origin_security,
 };
 
@@ -365,6 +387,7 @@ pub struct BootConfig {
     pub(crate) queue_loss_window_error: Option<String>,
     /// Whether an external TLS terminator is explicitly protecting public listeners.
     pub assume_external_tls: bool,
+    pub(crate) local_listener_exposure: LocalListenerExposure,
     /// Browser origins allowed to open the WebSocket data-plane endpoint.
     pub ws_allowed_origins: Vec<crate::api::origin::ExactOrigin>,
     pub(crate) ws_allowed_origins_error: Option<String>,
@@ -470,6 +493,12 @@ impl Default for BootConfig {
             .ok()
             .and_then(|value| value.parse::<bool>().ok())
             .unwrap_or(false);
+        let assume_local_loopback_edge = std::env::var("FITZ_ASSUME_LOCAL_LOOPBACK_EDGE")
+            .ok()
+            .and_then(|value| value.parse::<bool>().ok())
+            .unwrap_or(false);
+        let local_listener_exposure =
+            LocalListenerExposure::from_assumption(assume_local_loopback_edge);
         let (ws_allowed_origins, ws_allowed_origins_error) =
             parse_ws_allowed_origins_from_env().unwrap_or_else(default_local_ws_allowed_origins);
         let (drain_grace_seconds, drain_config_error) = drain_grace_seconds_from_env();
@@ -507,6 +536,7 @@ impl Default for BootConfig {
             queue_loss_window_ms,
             queue_loss_window_error,
             assume_external_tls,
+            local_listener_exposure,
             ws_allowed_origins,
             ws_allowed_origins_error,
             drain_grace_seconds,
@@ -579,6 +609,23 @@ impl BootConfig {
     pub fn with_assume_external_tls(mut self, assume_external_tls: bool) -> Self {
         self.assume_external_tls = assume_external_tls;
         self
+    }
+
+    #[must_use]
+    pub fn with_assume_local_loopback_edge(mut self, assume_local_loopback_edge: bool) -> Self {
+        self.local_listener_exposure =
+            LocalListenerExposure::from_assumption(assume_local_loopback_edge);
+        self
+    }
+
+    #[must_use]
+    pub fn assume_external_tls(&self) -> bool {
+        self.assume_external_tls
+    }
+
+    #[must_use]
+    pub fn assume_local_loopback_edge(&self) -> bool {
+        self.local_listener_exposure.is_host_loopback_edge()
     }
 
     #[must_use]
@@ -708,20 +755,17 @@ impl BootConfig {
             .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
         let protected_admin_configured =
             crate::api::admin::auth::protected_admin_configured_from_env();
-        let public_bind = !bind_addr_is_loopback(&self.bind_addr);
-        if (self.auth_required || protected_admin_configured)
-            && public_bind
-            && !self.assume_external_tls
-        {
-            return Err(
-                "FITZ_ASSUME_EXTERNAL_TLS=true is required when authenticated listeners bind to a non-loopback address"
-                    .into(),
-            );
-        }
+        let public_bind = validate_ingress_security_boundary(
+            self.assume_external_tls,
+            self.local_listener_exposure,
+            &self.bind_addr,
+            self.auth_required || protected_admin_configured,
+        )?;
         let ws_allowed_origins = configured_ws_allowed_origins(
             &self.ws_allowed_origins,
             self.ws_allowed_origins_error.as_ref(),
         )?;
+        validate_local_loopback_edge_origins(self.local_listener_exposure, &ws_allowed_origins)?;
         validate_public_origin_security("FITZ_WS_ALLOWED_ORIGINS", &ws_allowed_origins)?;
         if self.auth_required && public_bind && ws_allowed_origins.is_empty() {
             return Err(
@@ -729,7 +773,11 @@ impl BootConfig {
                     .into(),
             );
         }
-        validate_admin_browser_security(protected_admin_configured, public_bind)?;
+        validate_admin_browser_security(
+            protected_admin_configured,
+            public_bind,
+            self.assume_local_loopback_edge(),
+        )?;
         if self.route_families.is_empty() {
             return Err("FITZ_ROUTE_FAMILIES must contain at least one family".into());
         }

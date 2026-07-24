@@ -110,6 +110,36 @@ async fn should_fallback_to_index_for_client_routes() {
 }
 
 #[tokio::test]
+async fn should_require_revalidation_for_index_document() {
+    // Arrange
+    let root = test_root();
+
+    // Act
+    let response = serve(root.path(), "/", None, None);
+
+    // Assert
+    assert_eq!(
+        response.headers().get(header::CACHE_CONTROL).unwrap(),
+        "no-cache"
+    );
+}
+
+#[tokio::test]
+async fn should_require_revalidation_for_spa_fallback() {
+    // Arrange
+    let root = test_root();
+
+    // Act
+    let response = serve(root.path(), "/sessions/123", None, None);
+
+    // Assert
+    assert_eq!(
+        response.headers().get(header::CACHE_CONTROL).unwrap(),
+        "no-cache"
+    );
+}
+
+#[tokio::test]
 async fn should_preserve_missing_asset_fallback_behavior() {
     // Arrange
     let root = test_root();

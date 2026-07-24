@@ -9,7 +9,7 @@ use super::cache::strong_etag;
 use super::compression::{
     brotli_compress, gzip_compress, is_compressible, preferred_encoding, CompressionEncoding,
 };
-use super::CACHE_CONTROL;
+use super::{CACHE_CONTROL, HTML_CACHE_CONTROL};
 
 #[derive(Clone)]
 pub(super) struct AssetRepresentation {
@@ -54,7 +54,11 @@ impl AssetEntry {
 
         Self {
             content_type,
-            cache_control: CACHE_CONTROL,
+            cache_control: if content_type == "text/html; charset=utf-8" {
+                HTML_CACHE_CONTROL
+            } else {
+                CACHE_CONTROL
+            },
             identity,
             gzip,
             brotli,

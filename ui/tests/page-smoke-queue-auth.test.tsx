@@ -220,7 +220,7 @@ describe("admin page smoke tests", () => {
 
     expect(root.textContent).toContain("Bad credentials");
   });
-  it("confirms logout before using mutation-owned pending, success, and error states", async () => {
+  it("starts logout on entry and exposes retry on error", async () => {
     const { default: Logout } = await import("@/pages/auth/logout");
 
     mocks.mutation.execute.mockImplementationOnce(() => new Promise<void>(() => {}));
@@ -228,29 +228,24 @@ describe("admin page smoke tests", () => {
     let root = await mountRoute("/logout", "/logout", Logout);
 
     expect(root.textContent).toContain("Fitz Admin");
-    expect(root.textContent).toContain("Confirm that you want to end this browser session.");
-    root.querySelector("button")?.click();
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect(root.textContent).toContain("Signing out");
-    expect(root.textContent).toContain("Clearing your session.");
+    expect(root.textContent).toContain("Clearing your Fitz Admin session.");
 
     cleanupApp(root);
     document.body.innerHTML = "";
 
     mocks.mutation.execute.mockResolvedValueOnce(undefined);
     root = await mountRoute("/logout", "/logout", Logout);
-    root.querySelector("button")?.click();
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-    expect(root.textContent).toContain("Signed out");
-    expect(root.textContent).toContain("Go to sign in");
+    expect(mocks.mutation.execute).toHaveBeenCalledWith(undefined);
 
     cleanupApp(root);
     document.body.innerHTML = "";
 
     mocks.mutation.execute.mockRejectedValueOnce(new Error("Logout failed"));
     root = await mountRoute("/logout", "/logout", Logout);
-    root.querySelector("button")?.click();
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
     expect(root.textContent).toContain("Sign out failed");

@@ -17,6 +17,7 @@ use once_cell::sync::Lazy;
 use std::path::Path;
 
 const CACHE_CONTROL: &str = "public, max-age=3600";
+const HTML_CACHE_CONTROL: &str = "no-cache";
 const INDEX_PATH: &str = "index.html";
 const PUBLIC_ASSET_ROOT: &str = "/app/public";
 const VARY_ACCEPT_ENCODING: &str = "Accept-Encoding";

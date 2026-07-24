@@ -9,7 +9,6 @@ import {
   NetworkIcon,
   DatabaseZapIcon,
   Rows3Icon,
-  SettingsIcon,
   TimerResetIcon,
 } from "@askrjs/lucide";
 
@@ -70,7 +69,6 @@ const domainSegmentValues = [
 const adminContentSegments = new Set<string>([
   "diagnostics",
   "metrics",
-  "settings",
   "sessions",
   ...domainSegmentValues,
 ]);
@@ -271,11 +269,6 @@ export const shellLinks: ShellLink[] = [
     href: "/metrics",
     title: "Metrics",
     icon: ChartLineIcon,
-  },
-  {
-    href: "/settings",
-    title: "Workspace & account",
-    icon: SettingsIcon,
   },
 ];
 

@@ -228,6 +228,17 @@ impl AdminAuth {
     }
 
     #[must_use]
+    pub fn provisioned_route_families(&self) -> Vec<String> {
+        self.provisioned_route_families
+            .read()
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .map(u32::to_string)
+            .collect()
+    }
+
+    #[must_use]
     pub fn is_configured(&self) -> bool {
         self.settings.is_some()
     }

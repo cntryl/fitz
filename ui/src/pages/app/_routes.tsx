@@ -24,7 +24,6 @@ const RpcResourcePage = lazy(() => import("./rpc-resource"));
 const SchedulePage = lazy(() => import("./schedule"));
 const ScheduleResourcePage = lazy(() => import("./schedule-resource"));
 const SessionsPage = lazy(() => import("./sessions"));
-const SettingsPage = lazy(() => import("./settings"));
 const StreamPage = lazy(() => import("./stream"));
 const StreamResourcePage = lazy(() => import("./stream-resource"));
 
@@ -73,9 +72,6 @@ export function registerAppRoutes() {
     route("/admin/{family}/metrics", MetricsPage);
     route("/diagnostics", RouteFamilySelectorPage);
     route("/admin/{family}/diagnostics", DiagnosticsPage);
-    route("/settings", RouteFamilySelectorPage);
-    route("/admin/{family}/settings", SettingsPage);
-
     for (const link of domainLinks) {
       route(`/${link.segment}`, RouteFamilySelectorPage);
       route(`/admin/{family}/${link.segment}`, domainPageBySegment[link.segment]);

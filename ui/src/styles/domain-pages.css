@@ -1,5 +1,4 @@
 .domain-header-page,
-.domain-header-description,
 .domain-header-title-row,
 .domain-section,
 .domain-section-header,
@@ -8,21 +7,9 @@
   min-width: 0;
 }
 
-.domain-header-description {
-  display: grid;
-  gap: 0.125rem;
-  max-width: min(100%, 72ch);
-}
-
-.domain-header-description > span,
 .domain-header-title-row > span:first-child {
   min-width: 0;
   overflow-wrap: anywhere;
-}
-
-.domain-header-detail {
-  display: block;
-  max-width: 72ch;
 }
 
 .domain-section {

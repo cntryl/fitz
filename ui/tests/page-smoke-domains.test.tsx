@@ -66,9 +66,8 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("lease://default/ops/primary");
     expect(text).toContain("1h");
     expect(text).toContain("Pressure");
-    expect(text).toContain("acquire timeout");
-    expect(text).toContain("Historical totals do not identify a current incident");
-    expect(text).toContain("Ephemeral ownership");
+    expect(text).not.toContain("acquire timeout");
+    expect(text).not.toContain("Historical totals do not identify a current incident");
     expect(text).not.toContain("Broker-local owners");
     expect(root.querySelector('a[href="/admin/1/lease/default/ops/primary"]')).toBeTruthy();
   });
@@ -298,7 +297,7 @@ describe("admin page smoke tests", () => {
       ?.querySelectorAll("td")[5]
       ?.textContent?.trim();
     expect(initialRemaining).toBeTruthy();
-    expect(root.textContent).toContain("not crash-safe continuity");
+    expect(root.textContent).not.toContain("not crash-safe continuity");
   });
   it("renders notice health in the inventory header", async () => {
     mocks.queryStates.notice = queryState.fresh(
@@ -325,10 +324,9 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("Resource inventory");
     expect(text).toContain("notice://default/ops/primary");
     expect(text).toContain("Live");
-    expect(text).toContain("2 delivery drop");
-    expect(text).toContain("1 wildcard reject");
-    expect(text).toContain("Historical totals do not identify a current fanout incident");
-    expect(text).toContain("live fanout");
+    expect(text).not.toContain("2 delivery drop");
+    expect(text).not.toContain("1 wildcard reject");
+    expect(text).not.toContain("Historical totals do not identify a current fanout incident");
     expect(text).not.toContain("Communication flow");
     expect(root.querySelector('a[href="/admin/1/notice/default/ops/primary"]')).toBeTruthy();
   });
@@ -395,8 +393,10 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("Resource inventory");
     expect(text).toContain("schedule://default/ops/primary");
     expect(text).toContain("Pressure");
-    expect(text).toContain("Schedule does not imply durable downstream delivery.");
-    expect(text).toContain("Cumulative failures describe process history, not a current incident.");
+    expect(text).not.toContain("Schedule does not imply durable downstream delivery.");
+    expect(text).not.toContain(
+      "Cumulative failures describe process history, not a current incident.",
+    );
     expect(text).not.toContain("Schedule realms");
     expect(root.querySelector('a[href="/admin/1/schedule/default/ops/primary"]')).toBeTruthy();
   });
@@ -479,11 +479,11 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("Stream inventory");
     expect(text).toContain("Resource inventory");
     expect(text).toContain("stream://default/ops/primary");
-    expect(text).toContain("100+ behind");
+    expect(text).not.toContain("100+ behind");
     expect(text).toContain("Attention");
     expect(text).toContain("Committed events");
-    expect(text).toContain("4,200 committed event");
-    expect(text).toContain("live subscriptions");
+    expect(text).not.toContain("4,200 committed event");
+    expect(text).not.toContain("live subscriptions");
     expect(text).not.toContain("Stream metrics");
     expect(root.querySelector('a[href="/admin/1/stream/default/ops/primary"]')).toBeTruthy();
   });
@@ -597,9 +597,9 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("Resource inventory");
     expect(text).toContain("rpc://default/ops/primary");
     expect(text).toContain("Pressure");
-    expect(text).toContain("not covered by a registered worker");
-    expect(text).toContain("Pending work is in-memory");
-    expect(text).toContain("pending requests");
+    expect(text).not.toContain("not covered by a registered worker");
+    expect(text).not.toContain("Pending work is in-memory");
+    expect(text).not.toContain("pending requests");
     expect(text).not.toContain("Communication flow");
     expect(root.querySelector('a[href="/admin/1/rpc/default/ops/primary"]')).toBeTruthy();
   });
@@ -724,7 +724,6 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("Diagnostics console");
     expect(text).toContain("Infrastructure signals");
     expect(text).toContain("Domain internals");
-    expect(text).toContain("Advanced operational views");
     expect(text).toContain("Structured metrics");
     expect(text).toContain("Storage health");
     expect(text).toContain("Not exposed");

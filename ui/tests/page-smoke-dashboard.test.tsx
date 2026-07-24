@@ -214,7 +214,7 @@ describe("admin page smoke tests", () => {
     expect(root.textContent).toContain("No known summary metrics");
     expect(root.textContent).not.toContain("Broker snapshot");
     expect(root.textContent).toContain("Incomplete");
-    expect(root.textContent).toContain("Missing telemetry is not treated as zero");
+    expect(root.textContent).not.toContain("Missing telemetry is not treated as zero");
     expect(root.textContent).not.toContain("Uptime0seconds");
     expect(root.textContent).toContain("Metric samples");
     expect(root.textContent).toContain("Showing 3 of 3 samples");
@@ -276,7 +276,7 @@ describe("admin page smoke tests", () => {
     const root = await mountRoute("/admin/1/metrics", "/admin/{family}/metrics", MetricsPage);
 
     expect(root.textContent).toContain("Active");
-    expect(root.textContent).toContain("Activity alone does not establish pressure");
+    expect(root.textContent).not.toContain("Activity alone does not establish pressure");
     expect(root.textContent).toContain("Failures (1)");
     expect(root.textContent).not.toContain("Attention");
   });
@@ -287,7 +287,7 @@ describe("admin page smoke tests", () => {
     const root = await mountRoute("/admin/1/metrics", "/admin/{family}/metrics", MetricsPage);
 
     expect(root.textContent).toContain("Quiet");
-    expect(root.textContent).toContain("Cumulative counters below remain historical");
+    expect(root.textContent).not.toContain("Cumulative counters below remain historical");
     expect(root.textContent).not.toContain("Attention");
   });
   it("renders metrics loading and error states", async () => {
@@ -377,48 +377,6 @@ describe("admin page smoke tests", () => {
     expect(root.textContent).toContain("Unable to load active sessions");
     expect(root.textContent).toContain("session endpoint unavailable");
   });
-  it("does not claim open access before the workspace session loads", async () => {
-    const { default: SettingsPage } = await import("@/pages/app/settings");
-
-    mocks.queryStates.currentSession = queryState.loading(queryOptions());
-    let root = await mountRoute("/settings", "/settings", SettingsPage);
-    expect(root.textContent).toContain("Loading workspace session access");
-    expect(root.textContent).not.toContain("Admin endpoint is currently open");
-
-    cleanupApp(root);
-    document.body.innerHTML = "";
-
-    mocks.queryStates.currentSession = queryState.error(
-      new Error("session access unavailable"),
-      undefined,
-      queryOptions(),
-    );
-    root = await mountRoute("/settings", "/settings", SettingsPage);
-    expect(root.textContent).toContain("Unable to load session access");
-    expect(root.textContent).toContain("session access unavailable");
-    expect(root.textContent).not.toContain("Admin endpoint is currently open");
-  });
-  it("describes open admin access without inventing an account session", async () => {
-    mocks.queryStates.currentSession = queryState.fresh(
-      {
-        authRequired: false,
-        authenticated: true,
-        routeFamilies: ["1"],
-        routeFamiliesWildcard: false,
-        username: "",
-      },
-      queryOptions(),
-    );
-
-    const { default: SettingsPage } = await import("@/pages/app/settings");
-    const root = await mountRoute("/settings", "/settings", SettingsPage);
-    const text = root.textContent ?? "";
-
-    expect(text).toContain("Open access");
-    expect(text).toContain("no browser account session exists");
-    expect(text).not.toContain("Signed in");
-    expect(root.querySelector('a[href="/logout"]')).toBeNull();
-  });
   it("mounts the dashboard loading and error states", async () => {
     const { default: Home } = await import("@/pages/app/home");
     mocks.queryStates.currentSession = queryState.loading(queryOptions());
@@ -487,8 +445,8 @@ describe("admin page smoke tests", () => {
     expect(root.textContent).toContain("Queue inventory");
     expect(root.textContent).toContain("Resource inventory");
     expect(root.textContent).toContain("queue://default/ops/primary");
-    expect(root.textContent).toContain("messages are visible");
-    expect(root.textContent).toContain("Activity alone does not establish pressure");
+    expect(root.textContent).not.toContain("messages are visible");
+    expect(root.textContent).not.toContain("Activity alone does not establish pressure");
     expect(root.querySelector('a[href="/admin/1/queue/default/ops/primary"]')).toBeTruthy();
   });
 });

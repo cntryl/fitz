@@ -58,7 +58,7 @@ export default function Login() {
   }
 
   return (
-    <Card class="auth-card" variant="raised">
+    <Card variant="raised">
       <CardHeader>
         <AuthBrand />
         <CardTitle titleAs="h1">{openAccess ? "Open access" : "Sign in to Fitz Admin"}</CardTitle>

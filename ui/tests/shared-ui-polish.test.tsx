@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { cleanupApp, createSPA } from "@askrjs/askr/boot";
-import type { RouteHandler } from "@askrjs/askr/router";
+import { createRouteRegistry, group, type RouteHandler, route } from "@askrjs/askr/router";
 import { Card, CardContent } from "@askrjs/themes/components";
 import { ThemeScope } from "@askrjs/themes/theme";
 import AppLayout from "@/pages/app/_layout";
@@ -28,6 +28,8 @@ import {
   OperatorScope,
   type OperatorScopeSnapshot,
 } from "@/shared/operator-scope";
+import { routeFamilyIconColor } from "@/shared/route-family-appearance";
+import { topologyOverview } from "./fixtures/topology";
 
 vi.mock("@/features/session/session-query", () => ({
   createCurrentSessionQuery: () => ({
@@ -77,6 +79,12 @@ async function mount(handler: RouteHandler, path = "/") {
 
   await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
   return root;
+}
+
+function browserColor(value: string) {
+  const element = document.createElement("span");
+  element.style.color = value;
+  return element.style.color;
 }
 
 afterEach(() => {
@@ -143,8 +151,9 @@ describe("shared UI polish contracts", () => {
     expect(link?.getAttribute("href")).toBe("/admin/7");
     expect(link?.getAttribute("role")).toBeNull();
     expect(link?.getAttribute("tabindex")).toBeNull();
-    expect(link?.textContent?.trim()).toBe("Open");
-    expect(root.textContent).not.toContain("Authorized family7");
+    expect(link?.textContent?.trim()).toBe("Route family 7");
+    expect(link?.textContent).not.toContain("Authorized family");
+    expect(root.querySelector('[data-slot="card"]')).toBeNull();
     expect(document.title).toBe("Select Route Family · Fitz Admin");
     expect(document.activeElement).toBe(root.querySelector("main#main-content"));
   });
@@ -165,6 +174,28 @@ describe("shared UI polish contracts", () => {
     expect(snapshot.routeFamiliesWildcard).toBe(true);
     expect(snapshot.selectedRouteFamilyId).toBe("42");
     expect(snapshot.selectedRouteFamily.label).toBe("Route family 42");
+  });
+
+  it("does not add topology families outside the session allowlist", () => {
+    const snapshot = createOperatorScopeSnapshot(
+      {
+        ...topologyOverview,
+        sessionGroups: [
+          ...topologyOverview.sessionGroups,
+          { ...topologyOverview.sessionGroups[0]!, routeFamily: 42 },
+        ],
+      },
+      {
+        authRequired: true,
+        authenticated: true,
+        routeFamilies: ["1", "2", "3", "4", "5"],
+        routeFamiliesWildcard: false,
+        username: "admin",
+      },
+      "",
+    );
+
+    expect(snapshot.routeFamilies.map((family) => family.id)).toEqual(["1", "2", "3", "4", "5"]);
   });
 
   it("offers numeric Route Family entry to wildcard sessions", async () => {
@@ -194,6 +225,31 @@ describe("shared UI polish contracts", () => {
     expect(input?.hasAttribute("required")).toBe(true);
   });
 
+  it("omits numeric Route Family entry when wildcard sessions have a concrete list", async () => {
+    const root = await mount(() => (
+      <OperatorScope
+        value={{
+          retryRouteFamilies: vi.fn(),
+          routeFamilies: [{ description: "Provisioned family", id: "1", label: "Route family 1" }],
+          routeFamilyError: null,
+          routeFamilyState: "ready",
+          routeFamiliesWildcard: true,
+          selectedRouteFamily: {
+            description: "Select a family",
+            id: "",
+            label: "Select Route Family",
+          },
+          selectedRouteFamilyId: "",
+        }}
+      >
+        <RouteFamilySelectorPage />
+      </OperatorScope>
+    ));
+
+    expect(root.textContent).toContain("Route family 1");
+    expect(root.querySelector("#wildcard-route-family")).toBeNull();
+  });
+
   it("uses the page heading for the document title and moves focus to routed content", async () => {
     const root = await mount(
       () => (
@@ -201,7 +257,11 @@ describe("shared UI polish contracts", () => {
           <DomainHeader
             title="Queue inventory"
             description="Durable work resources."
-            status={{ label: "Live", tone: "success" }}
+            status={{
+              detail: "Verbose generated status summary.",
+              label: "Live",
+              tone: "success",
+            }}
           />
         </DomainPageFrame>
       ),
@@ -211,6 +271,8 @@ describe("shared UI polish contracts", () => {
 
     expect(document.title).toBe("Queue inventory · Fitz Admin");
     expect(document.title).not.toContain("Live");
+    expect(root.textContent).not.toContain("Durable work resources.");
+    expect(root.textContent).not.toContain("Verbose generated status summary.");
     expect(document.activeElement).toBe(main);
   });
 
@@ -324,8 +386,9 @@ describe("shared UI polish contracts", () => {
     expect(root.querySelector("main#main-content")?.textContent).toContain("Select Route Family");
     expect(root.textContent).not.toContain("Workspace");
     expect(root.querySelector('nav[aria-label="Primary navigation"]')).toBeNull();
-    expect(root.querySelector('a[href="/admin/1"]')?.textContent?.trim()).toBe("Open");
-    expect(root.querySelector('a[href="/admin/7"]')?.textContent?.trim()).toBe("Open");
+    expect(root.querySelector('a[href="/admin/1"]')?.textContent).toContain("Route family 1");
+    expect(root.querySelector('a[href="/admin/7"]')?.textContent).toContain("Route family 7");
+    expect(root.querySelector('[data-slot="card"]')).toBeNull();
   });
 
   it("uses icon-backed shell controls with stable labels", async () => {
@@ -371,12 +434,13 @@ describe("shared UI polish contracts", () => {
     expect(routeFamilySelector).toBeTruthy();
     expect(root.querySelector('form[role="search"]')).toBeNull();
     expect(routeFamilySelector?.querySelector('[data-slot="icon"]')).toBeTruthy();
+    expect(routeFamilySelector?.querySelector<HTMLElement>(".route-family-icon")?.style.color).toBe(
+      browserColor(routeFamilyIconColor("1")),
+    );
     const signOut = root.querySelector('a[aria-label="Sign out"]');
     expect(signOut?.getAttribute("href")).toBe("/logout");
     expect(signOut?.textContent).toBe("");
-    expect(
-      root.querySelector('[aria-label="Primary navigation"] a[href="/admin/1/settings"]'),
-    ).toBeTruthy();
+    expect(root.textContent).not.toContain("Administration");
     expect(
       root
         .querySelector('[aria-label="Primary navigation"] a[href="/admin/1"]')
@@ -387,8 +451,75 @@ describe("shared UI polish contracts", () => {
     await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
 
     expect(document.body.textContent).toContain("Route Family");
+    expect(
+      document.body.querySelector<HTMLElement>(
+        '.operator-route-family-option[data-route-family="7"] .route-family-icon',
+      )?.style.color,
+    ).toBe(browserColor(routeFamilyIconColor("7")));
 
     expect(root.querySelector('button[aria-label="Account menu"]')).toBeNull();
+  });
+
+  it("updates every sidebar link when the Route Family changes", async () => {
+    cleanupApp("app");
+    document.body.innerHTML = '<div id="app"></div>';
+    window.history.pushState({}, "", "/admin/1/queue");
+    const root = document.getElementById("app");
+
+    if (!root) throw new Error("Missing test app root");
+
+    const Workspace = () => (
+      <DomainPageFrame>
+        <section>Workspace</section>
+      </DomainPageFrame>
+    );
+    const registry = createRouteRegistry(() => {
+      group({ layout: AppLayout }, () => {
+        route("/admin/{family}", Workspace);
+        route("/admin/{family}/queue", Workspace);
+      });
+    });
+
+    await createSPA({ root, registry });
+    root.querySelector<HTMLButtonElement>('button[aria-label="Route Family selector"]')?.click();
+    await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
+    document.body
+      .querySelector<HTMLButtonElement>('.operator-route-family-option[data-route-family="7"]')
+      ?.click();
+
+    await vi.waitFor(() => expect(window.location.pathname).toBe("/admin/7/queue"));
+    await vi.waitFor(() =>
+      expect(
+        root
+          .querySelector('button[aria-label="Route Family selector"]')
+          ?.getAttribute("aria-expanded"),
+      ).toBe("false"),
+    );
+    expect(document.body.querySelector('[role="menu"]')).toBeNull();
+    await vi.waitFor(() =>
+      expect(root.querySelector('[aria-label="Primary navigation"]')).not.toBeNull(),
+    );
+
+    const sidebarHrefs = Array.from(
+      root.querySelectorAll<HTMLAnchorElement>(
+        '[aria-label="Primary navigation"] a[data-slot="sidebar-menu-button"]',
+      ),
+      (link) => link.getAttribute("href") ?? "",
+    ).sort((first, second) => first.localeCompare(second));
+    const expectedHrefs = [
+      "/admin/7",
+      "/admin/7/diagnostics",
+      "/admin/7/metrics",
+      "/admin/7/sessions",
+      ...domainLinks.map((link) => `/admin/7/${link.segment}`),
+    ].sort((first, second) => first.localeCompare(second));
+
+    expect(sidebarHrefs).toEqual(expectedHrefs);
+    expect(
+      root
+        .querySelector('a[data-slot="sidebar-menu-button"][href="/admin/7/queue"]')
+        ?.getAttribute("aria-current"),
+    ).toBe("page");
   });
 
   it("renders Sessions directly beneath the Route Family breadcrumb", async () => {

@@ -4,7 +4,11 @@ export type MockResponse = {
   status: number;
 };
 
-export const routeFamilies = ["1", "7", "42"];
+export const routeFamilies = ["1", "2", "3", "4", "5"];
+export const mockAdminCredentials = {
+  password: "pwd123",
+  username: "admin",
+};
 export const realms = ["acme", "platform", "ops"];
 export const areas = ["payments", "messaging", "control"];
 export const resources = ["invoices", "orders", "worker-pool"];
@@ -50,6 +54,14 @@ export function text(body: string, status = 200): MockResponse {
   return {
     body,
     headers: { "content-type": "text/plain; version=0.0.4" },
+    status,
+  };
+}
+
+export function empty(status = 204): MockResponse {
+  return {
+    body: "",
+    headers: {},
     status,
   };
 }

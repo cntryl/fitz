@@ -12,6 +12,7 @@ This page is the central reference for environment variables supported by Fitz r
 | FITZ_TCP_PORT | u16 port | 4091 | Raw TCP listener port. |
 | FITZ_BIND_ADDR | IP or hostname | 0.0.0.0 | Bind address for listeners. |
 | FITZ_ASSUME_EXTERNAL_TLS | true or false | false | Confirms that a trusted external edge terminates TLS and enables TLS-dependent browser behavior such as HSTS. Fitz refuses to start with runtime auth or protected admin on a non-loopback bind unless this is true. Loopback development can leave it unset. |
+| FITZ_ASSUME_LOCAL_LOOPBACK_EDGE | true or false | false | Confirms that a trusted local container edge publishes Fitz listeners only on host loopback. This allows authenticated local Compose without asserting TLS or enabling HSTS, and requires loopback WebSocket and admin origins. Never enable it outside local development. |
 | FITZ_WS_ALLOWED_ORIGINS | Comma-separated exact browser origins, e.g. https://app.example.com | Local loopback origins for ports 3000 and 4090 | Browser WebSocket Origin allowlist. Values are HTTP origins, not wss URLs, and must not include a path, query, fragment, or trailing slash. Public browser deployments should set this to their exact SPA origins. |
 | FITZ_DRAIN_GRACE_SECONDS | Positive integer seconds | 25 | Planned redeploy drain grace. During drain, `/healthz` and `/readyz` fail and new TCP/WebSocket sessions are rejected before active sessions are closed on shutdown. Set lower than the external termination grace. |
 | FITZ_DRAIN_CLOSE_REASON | Non-empty string | broker draining for redeploy | Server close reason recorded when planned drain shutdown closes active sessions. |
@@ -71,6 +72,7 @@ The repo compose files are local-development examples only:
 - `compose.yml`, `compose.cloud.yml`, and `compose.sqrzl.yml` publish only to loopback and are not production deployment manifests.
 - `compose.yml` and `compose.cloud.yml` keep `fitz-auth` on `FITZ_JWT_HMAC_SECRET` by default so `docker compose up` stays the shortest successful path.
 - Those same compose files keep `FITZ_ADMIN_AUTH_MODE=open` because the admin surface is loopback-only and meant for local inspection.
+- Those same compose files set `FITZ_ASSUME_LOCAL_LOOPBACK_EDGE=true` because Fitz binds inside its container while Docker publishes the listeners only on host loopback. This does not assert TLS or enable HSTS.
 - The built-in loopback defaults for `FITZ_WS_ALLOWED_ORIGINS` are only for local development.
 
 To exercise issuer/JWKS plumbing locally instead of the default HMAC flow:
@@ -88,6 +90,7 @@ For authenticated browser or API deployments outside local development:
 - Set `FITZ_AUTH_REQUIRED=true`.
 - Configure runtime JWT verification with `FITZ_JWT_JWKS_MAP`. Do not rely on `FITZ_JWT_HMAC_SECRET` in production.
 - Set `FITZ_ASSUME_EXTERNAL_TLS=true` when TLS terminates outside Fitz.
+- Do not set `FITZ_ASSUME_LOCAL_LOOPBACK_EDGE`; it is only for host-loopback local container publishing.
 - Set `FITZ_WS_ALLOWED_ORIGINS` to the exact public SPA origins allowed to open browser WebSockets.
 - Set `FITZ_ADMIN_AUTH_MODE=protected`, `FITZ_ADMIN_PUBLIC_ORIGIN=https://admin.example.com`, and keep `FITZ_ADMIN_COOKIE_SECURE=true`.
 - Expect protected-admin session cookies to expire on broker restart because the signing key is generated in memory per process.

@@ -77,5 +77,6 @@ Do not carry these local-dev conveniences into production:
 - `FITZ_ADMIN_AUTH_MODE=open`
 - `FITZ_JWT_HMAC_SECRET`
 - `FITZ_JWT_ALLOW_INSECURE_HTTP=true`
+- `FITZ_ASSUME_LOCAL_LOOPBACK_EDGE=true`
 - loopback-only or placeholder origins
 - repo compose files as deployment manifests

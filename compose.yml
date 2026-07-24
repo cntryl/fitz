@@ -39,6 +39,7 @@ services:
     environment:
       <<: *broker-common-env
       FITZ_AUTH_REQUIRED: "true"
+      FITZ_ASSUME_LOCAL_LOOPBACK_EDGE: "true"
       FITZ_ADMIN_AUTH_MODE: "open"
       FITZ_HTTP_PORT: "${FITZ_AUTH_HTTP_PORT:-4090}"
       FITZ_TCP_PORT: "${FITZ_AUTH_TCP_PORT:-4091}"

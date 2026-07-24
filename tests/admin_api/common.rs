@@ -118,7 +118,7 @@ pub(crate) fn assert_browser_security_headers(headers: &hyper::HeaderMap) {
     assert_eq!(headers.get("referrer-policy").unwrap(), "no-referrer");
     assert_eq!(
         headers.get("content-security-policy").unwrap(),
-        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
     );
 }
 

@@ -549,11 +549,12 @@ async fn should_not_expose_route_family_grants_from_protected_features() {
 
 #[tokio::test]
 #[serial]
-async fn should_report_wildcard_route_family_access_from_open_features() {
+async fn should_report_provisioned_route_families_and_wildcard_access_from_open_features() {
     // Arrange
     let _mode_guard = EnvGuard::set("FITZ_ADMIN_AUTH_MODE", "open");
     let _family_guard = EnvGuard::set("FITZ_ADMIN_ROUTE_FAMILIES", "internal,partner");
     let runtime = test_runtime();
+    runtime.configure_route_families(&[1, 2]);
     let req = hyper::http::Request::builder()
         .method(Method::GET)
         .uri("/api/v1/features")
@@ -569,7 +570,7 @@ async fn should_report_wildcard_route_family_access_from_open_features() {
 
     // Assert
     assert_eq!(payload["admin_auth_required"], false);
-    assert!(payload["route_families"].as_array().unwrap().is_empty());
+    assert_eq!(payload["route_families"], serde_json::json!(["1", "2"]));
     assert_eq!(payload["route_families_wildcard"], true);
 }
 

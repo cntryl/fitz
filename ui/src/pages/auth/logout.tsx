@@ -2,7 +2,7 @@ import { state } from "@askrjs/askr";
 import { task } from "@askrjs/askr/resources";
 import { navigate } from "@askrjs/askr/router";
 import {
-  Alert,
+  Block,
   Button,
   Card,
   CardContent,
@@ -10,28 +10,30 @@ import {
   CardHeader,
   CardTitle,
   Spinner,
+  Text,
 } from "@askrjs/themes/components";
 import AuthBrand from "@/components/shared/auth-brand";
 import { createSignOutMutation } from "@/features/session/session-mutation";
 import { manageRoutePageContext } from "@/components/shared/domain-page-frame";
 import { formatUnknownError } from "@/shared/errors/format";
 
-type LogoutPhase = "confirm" | "pending" | "success" | "open" | "error";
+type LogoutPhase = "pending" | "error";
 
 export default function Logout() {
   const signOut = createSignOutMutation();
-  const [phase, setPhase] = state<LogoutPhase>("confirm");
+  const [phase, setPhase] = state<LogoutPhase>("pending");
   const [error, setError] = state("");
 
   task(() => manageRoutePageContext("Sign out"));
+  task(() => signOutAndRedirect());
 
-  async function signOutAndSetPhase() {
+  async function signOutAndRedirect() {
     setPhase("pending");
     setError("");
 
     try {
-      const result = await signOut.execute(undefined);
-      setPhase(result?.performed === false ? "open" : "success");
+      await signOut.execute(undefined);
+      navigate("/login", { history: "replace" });
     } catch (err) {
       setError(formatUnknownError(err));
       setPhase("error");
@@ -40,91 +42,35 @@ export default function Logout() {
 
   const currentPhase = phase();
   const errorMessage = error();
-  const title =
-    currentPhase === "open"
-      ? "Open access"
-      : currentPhase === "success"
-        ? "Signed out"
-          : currentPhase === "error"
-          ? "Sign out failed"
-          : currentPhase === "pending"
-            ? "Signing out"
-            : "Sign out";
+  const title = currentPhase === "error" ? "Sign out failed" : "Signing out";
   const description =
-    currentPhase === "open"
-      ? "Admin authentication is disabled, so there is no browser account session to clear."
-      : currentPhase === "success"
-        ? "Your Fitz Admin session has been cleared."
-          : currentPhase === "error"
-          ? "We could not clear your session. You may still be signed in."
-          : currentPhase === "pending"
-            ? "Clearing your Fitz Admin session."
-            : "Confirm that you want to end this browser session.";
+    currentPhase === "error"
+      ? "We could not clear your session. You may still be signed in."
+      : "Clearing your Fitz Admin session.";
 
   return (
-    <Card class="auth-card" variant="raised">
+    <Card variant="raised">
       <CardHeader>
         <AuthBrand />
         <CardTitle titleAs="h1">{title}</CardTitle>
         <CardDescription>{description}</CardDescription>
       </CardHeader>
       <CardContent>
-        <div class="auth-status-shell" aria-live="polite" aria-atomic="true">
-          {currentPhase === "confirm" ? (
-            <Alert
-              variant="info"
-              description="This signs you out of Fitz Admin on this browser."
-              actions={
-                <Button onPress={() => void signOutAndSetPhase()}>
-                  Sign out
-                </Button>
-              }
-            />
-          ) : null}
-
-          {currentPhase === "pending" ? (
-            <div class="auth-status">
-              <Spinner label="Signing out" />
-              <p>Clearing your session.</p>
-            </div>
-          ) : null}
-
-          {currentPhase === "success" ? (
-            <Alert
-              variant="success"
-              description="You can sign back in from here."
-              actions={
-                <Button onPress={() => navigate("/login", { history: "replace" })}>
-                  Go to sign in
-                </Button>
-              }
-            />
-          ) : null}
-
-          {currentPhase === "open" ? (
-            <Alert
-              variant="info"
-              description="You can return directly to the open admin workspace."
-              actions={
-                <Button onPress={() => navigate("/admin", { history: "replace" })}>
-                  Return to Fitz Admin
-                </Button>
-              }
-            />
-          ) : null}
+        <Block direction="column" align="start" gap="md" aria-live="polite" aria-atomic="true">
+          {currentPhase === "pending" ? <Spinner label="Signing out" /> : null}
 
           {currentPhase === "error" ? (
-            <Alert
-              variant="danger"
-              description={`${errorMessage || "We could not clear your session."} Your session may still be active.`}
-              actions={
-                <Button variant="outline" onPress={() => void signOutAndSetPhase()}>
-                  Try again
-                </Button>
-              }
-            />
+            <Block direction="column" align="start" gap="md" role="alert">
+              <Text tone="danger" size="sm">
+                {errorMessage || "We could not clear your session."} Your session may still be
+                active.
+              </Text>
+              <Button variant="outline" onPress={() => void signOutAndRedirect()}>
+                Try again
+              </Button>
+            </Block>
           ) : null}
-        </div>
+        </Block>
       </CardContent>
     </Card>
   );

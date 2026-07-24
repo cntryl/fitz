@@ -100,7 +100,9 @@ export function createOperatorScopeSnapshot(
       ?.filter((routeFamily) => routeFamilyPattern.test(routeFamily))
       .map((routeFamily) => optionFromSessionRouteFamily(routeFamily, openAccess)) ?? [];
   const routeFamiliesWildcard = session?.routeFamiliesWildcard === true;
-  const knownRouteFamilies = uniqueOptions([...sessionFamilies, ...topologyFamilies]);
+  const knownRouteFamilies = routeFamiliesWildcard
+    ? uniqueOptions([...sessionFamilies, ...topologyFamilies])
+    : sessionFamilies;
   const wildcardSelection =
     routeFamiliesWildcard && routeFamilyPattern.test(selectedRouteFamilyId)
       ? optionFromWildcardRouteFamily(selectedRouteFamilyId, openAccess)

@@ -37,6 +37,7 @@ pub(super) fn with_auth_env<T>(values: &[(&str, &str)], test: impl FnOnce() -> T
         "FITZ_AUTH_ROLE_CLAIM",
         "FITZ_AUTH_ALLOW_JWT_ROUTE_FAMILY",
         "FITZ_ASSUME_EXTERNAL_TLS",
+        "FITZ_ASSUME_LOCAL_LOOPBACK_EDGE",
         "FITZ_TCP_ENABLED",
         "FITZ_WS_ALLOWED_ORIGINS",
         "FITZ_ADMIN_AUTH_MODE",
@@ -176,7 +177,8 @@ pub(super) fn should_create_default_boot_config() {
     assert!(config.queue_write_options().is_best_effort());
     assert_eq!(config.drain_grace_seconds, DEFAULT_DRAIN_GRACE_SECONDS);
     assert_eq!(config.drain_close_reason, DEFAULT_DRAIN_CLOSE_REASON);
-    assert!(!config.assume_external_tls);
+    assert!(!config.assume_external_tls());
+    assert!(!config.assume_local_loopback_edge());
     assert_eq!(config.route_families, vec![1]);
     assert_eq!(
         config.auth_claims_config.identity_claim,
@@ -327,7 +329,7 @@ pub(super) fn should_reject_public_bind_without_external_tls_ack_when_auth_requi
             .unwrap_err()
             .to_string()
             .contains("FITZ_ASSUME_EXTERNAL_TLS=true is required"));
-        assert!(!config.assume_external_tls);
+        assert!(!config.assume_external_tls());
     });
 }
 
@@ -347,6 +349,105 @@ pub(super) fn should_allow_public_bind_with_external_tls_ack_when_auth_required(
 
             // Assert
             assert!(result.is_ok());
+        },
+    );
+}
+
+#[test]
+#[serial]
+pub(super) fn should_allow_public_bind_with_local_loopback_edge_ack_when_auth_required() {
+    with_auth_env(
+        &[
+            ("FITZ_ASSUME_LOCAL_LOOPBACK_EDGE", "true"),
+            ("FITZ_WS_ALLOWED_ORIGINS", "http://127.0.0.1:4090"),
+        ],
+        || {
+            // Arrange
+            let config = auth_ready_config().with_bind_addr("0.0.0.0".to_string());
+
+            // Act
+            let result = config.validate();
+
+            // Assert
+            assert!(result.is_ok());
+            assert!(!config.assume_external_tls());
+            assert!(config.assume_local_loopback_edge());
+        },
+    );
+}
+
+#[test]
+#[serial]
+pub(super) fn should_reject_non_loopback_origin_with_local_loopback_edge_ack() {
+    with_auth_env(
+        &[
+            ("FITZ_ASSUME_LOCAL_LOOPBACK_EDGE", "true"),
+            ("FITZ_WS_ALLOWED_ORIGINS", "https://app.example.com"),
+        ],
+        || {
+            // Arrange
+            let config = auth_ready_config().with_bind_addr("0.0.0.0".to_string());
+
+            // Act
+            let result = config.validate();
+
+            // Assert
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("FITZ_ASSUME_LOCAL_LOOPBACK_EDGE requires loopback"));
+        },
+    );
+}
+
+#[test]
+#[serial]
+pub(super) fn should_reject_external_tls_and_local_loopback_edge_acks_together() {
+    with_auth_env(
+        &[
+            ("FITZ_ASSUME_EXTERNAL_TLS", "true"),
+            ("FITZ_ASSUME_LOCAL_LOOPBACK_EDGE", "true"),
+            ("FITZ_WS_ALLOWED_ORIGINS", "http://127.0.0.1:4090"),
+        ],
+        || {
+            // Arrange
+            let config = auth_ready_config().with_bind_addr("0.0.0.0".to_string());
+
+            // Act
+            let result = config.validate();
+
+            // Assert
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("FITZ_ASSUME_EXTERNAL_TLS and FITZ_ASSUME_LOCAL_LOOPBACK_EDGE are mutually exclusive"));
+        },
+    );
+}
+
+#[test]
+#[serial]
+pub(super) fn should_reject_public_admin_origin_with_local_loopback_edge_ack() {
+    with_auth_env(
+        &[
+            ("FITZ_ADMIN_AUTH_MODE", "open"),
+            ("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com"),
+            ("FITZ_ASSUME_LOCAL_LOOPBACK_EDGE", "true"),
+            ("FITZ_WS_ALLOWED_ORIGINS", "http://127.0.0.1:4090"),
+        ],
+        || {
+            // Arrange
+            let config = BootConfig::new()
+                .with_auth_config(crate::auth::AuthConfig::Disabled)
+                .with_bind_addr("0.0.0.0".to_string());
+
+            // Act
+            let result = config.validate();
+
+            // Assert
+            assert!(result.unwrap_err().to_string().contains(
+                "FITZ_ASSUME_LOCAL_LOOPBACK_EDGE requires a loopback FITZ_ADMIN_PUBLIC_ORIGIN"
+            ));
         },
     );
 }
@@ -435,7 +536,7 @@ pub(super) fn should_reject_public_bind_without_external_tls_ack_when_protected_
                 .unwrap_err()
                 .to_string()
                 .contains("FITZ_ASSUME_EXTERNAL_TLS=true is required"));
-            assert!(!config.assume_external_tls);
+            assert!(!config.assume_external_tls());
         },
     );
 }

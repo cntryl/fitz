@@ -61,7 +61,7 @@ use hyper::header::HeaderValue;
 use hyper::StatusCode;
 use serde::Serialize;
 
-const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 const HSTS_MAX_AGE: &str = "max-age=31536000";
 
 pub(crate) fn with_browser_security_headers(

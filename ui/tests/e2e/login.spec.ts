@@ -91,11 +91,18 @@ test("renders truthful open-access state when authentication is disabled", async
   await expect(page.locator("header, footer")).toHaveCount(0);
 });
 
-test("should_mirror_the_login_card_on_the_logout_route", async ({ page }) => {
+test("should_show_logout_progress_while_the_session_is_cleared", async ({ page }) => {
   // Arrange
-  await mockAdminFeatures(page);
+  await mockCredentialLogin(page);
+  await page.route("**/api/v1/session", async (route) => {
+    if (route.request().method() === "DELETE") {
+      await new Promise<void>(() => {});
+      return;
+    }
+    await route.fallback();
+  });
   await page.goto("/logout");
-  await expect(page.getByRole("heading", { level: 1, name: "Sign out" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Signing out" })).toBeVisible();
   const viewport = page.viewportSize();
 
   // Act
@@ -113,6 +120,17 @@ test("should_mirror_the_login_card_on_the_logout_route", async ({ page }) => {
   );
   await expect(page.locator('[data-slot="card"] img.fitz-brand-logo')).toBeVisible();
   await expect(page.getByText("Fitz Admin", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+  await expect(page.getByText("Clearing your Fitz Admin session.")).toBeVisible();
   await expect(page.locator("header, footer")).toHaveCount(0);
+});
+
+test("should_redirect_to_login_after_logout_completes", async ({ page }) => {
+  // Arrange
+  await mockCredentialLogin(page);
+
+  // Act
+  await page.goto("/logout");
+
+  // Assert
+  await expect(page).toHaveURL(/\/login$/);
 });

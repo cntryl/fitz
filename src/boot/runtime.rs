@@ -8,6 +8,7 @@ use tracing::info;
 
 mod config;
 
+pub(crate) use config::LocalListenerExposure;
 pub use config::{
     BootConfig, CloudDurabilityMode, CloudStorageConfig, QueueWritePolicy, QueueWritePolicySource,
     StorageMemtableConfig, StorageMode,

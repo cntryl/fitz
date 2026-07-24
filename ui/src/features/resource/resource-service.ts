@@ -6,10 +6,7 @@ import type { DomainId, ResourceInventory, ResourceInventoryResource } from "./r
 type ResourceEntryWithOperation = ResourceEntry & { operation?: string };
 const RESOURCE_INVENTORY_CONCURRENCY = 4;
 
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  worker: (item: T) => Promise<R>,
-): Promise<R[]> {
+async function mapWithConcurrency<T, R>(items: T[], worker: (item: T) => Promise<R>): Promise<R[]> {
   const results = Array.from<R | undefined>({ length: items.length });
   let nextIndex = 0;
 
@@ -21,10 +18,7 @@ async function mapWithConcurrency<T, R>(
   }
 
   await Promise.all(
-    Array.from(
-      { length: Math.min(RESOURCE_INVENTORY_CONCURRENCY, items.length) },
-      () => run(),
-    ),
+    Array.from({ length: Math.min(RESOURCE_INVENTORY_CONCURRENCY, items.length) }, () => run()),
   );
 
   return results as R[];
@@ -68,28 +62,22 @@ export async function getResourceInventory(
 ): Promise<ResourceInventory> {
   const adapter = getResourceInventoryAdapter(domain);
   const realms = await adapter.listRealms(options);
-  const inventoryRealms = await mapWithConcurrency(
-    realms,
-    async ({ realm }) => {
-      const areas = await adapter.listAreas(realm, options);
-      const inventoryAreas = await mapWithConcurrency(
-        areas,
-        async ({ area }) => {
-          const resourceEntries = (await adapter.listResources({ area, realm }, options)).map(
-            mapInventoryResource,
-          );
-
-          return {
-            area,
-            resourceEntries,
-            resources: resourceEntries.map((entry) => entry.resource),
-          };
-        },
+  const inventoryRealms = await mapWithConcurrency(realms, async ({ realm }) => {
+    const areas = await adapter.listAreas(realm, options);
+    const inventoryAreas = await mapWithConcurrency(areas, async ({ area }) => {
+      const resourceEntries = (await adapter.listResources({ area, realm }, options)).map(
+        mapInventoryResource,
       );
 
-      return { areas: inventoryAreas, realm };
-    },
-  );
+      return {
+        area,
+        resourceEntries,
+        resources: resourceEntries.map((entry) => entry.resource),
+      };
+    });
+
+    return { areas: inventoryAreas, realm };
+  });
 
   return { domain, realms: inventoryRealms };
 }

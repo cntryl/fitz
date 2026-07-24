@@ -13,19 +13,6 @@
   max-inline-size: 24rem;
 }
 
-.auth-card {
-  gap: var(--ak-space-xl, 1.5rem);
-  padding-block: var(--ak-space-xl, 1.5rem);
-}
-
-.auth-card :where([data-slot="card-header"], [data-slot="card-content"]) {
-  padding-inline: var(--ak-space-xl, 1.5rem);
-}
-
-.auth-card [data-slot="brand"] {
-  margin-block-end: var(--ak-space-sm, 0.5rem);
-}
-
 @media (min-width: 48rem) {
   .auth-page {
     padding: 2.5rem;
@@ -42,19 +29,6 @@
 
 .auth-status-shell [data-slot="alert"] {
   inline-size: 100%;
-}
-
-.auth-status {
-  display: flex;
-  align-items: center;
-  gap: var(--fitz-section-gap);
-}
-
-.auth-status > p {
-  margin: 0;
-  color: var(--fitz-text-muted);
-  font-size: var(--fitz-body-size);
-  line-height: var(--fitz-body-line-height);
 }
 
 .form-grid {

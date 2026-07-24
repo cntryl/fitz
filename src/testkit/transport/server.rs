@@ -367,6 +367,7 @@ impl TestServer {
             queue_loss_window_ms: 100,
             queue_loss_window_error: None,
             assume_external_tls: false,
+            local_listener_exposure: crate::boot::runtime::LocalListenerExposure::Direct,
             ws_allowed_origins,
             ws_allowed_origins_error: None,
             drain_grace_seconds: 1,

@@ -150,8 +150,6 @@ describe("Admin UI", () => {
         "/admin/{family}/sessions",
         "/diagnostics",
         "/admin/{family}/diagnostics",
-        "/settings",
-        "/admin/{family}/settings",
         "/admin/metrics",
         "/admin/{family}/metrics",
         "/queue",

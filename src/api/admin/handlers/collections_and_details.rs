@@ -232,18 +232,20 @@ pub(super) async fn handle_logout<B>(
 
 pub(super) async fn handle_features(runtime: &Arc<Runtime>) -> Result<Response, Infallible> {
     let admin_auth = runtime.admin_auth();
-    let route_family_access = if admin_auth.login_required() {
+    let login_required = admin_auth.login_required();
+    let route_family_access = if login_required {
         None
     } else {
         Some(admin_auth.configured_route_family_access())
     };
     Ok(super::json_response(AdminFeaturesResponse {
-        admin_auth_required: admin_auth.login_required(),
+        admin_auth_required: login_required,
         admin_auth_mode: admin_auth.auth_mode(),
-        route_families: route_family_access
-            .as_ref()
-            .map(crate::api::admin::auth::AdminRouteFamilyAccess::route_families)
-            .unwrap_or_default(),
+        route_families: if login_required {
+            Vec::new()
+        } else {
+            admin_auth.provisioned_route_families()
+        },
         route_families_wildcard: route_family_access
             .as_ref()
             .is_some_and(crate::api::admin::auth::AdminRouteFamilyAccess::is_wildcard),

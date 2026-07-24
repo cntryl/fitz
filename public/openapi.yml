@@ -3332,7 +3332,7 @@ components:
           type: array
           items:
             type: string
-          description: Public bootstrap Route Family grants. Empty in protected mode; use the authenticated session endpoint for admin grants after login.
+          description: Provisioned Route Families available to public bootstrap in open mode. Empty in protected mode; use the authenticated session endpoint for admin grants after login.
         route_families_wildcard:
           type: boolean
           description: True only when public bootstrap runs with wildcard Route Family access, such as open admin mode.

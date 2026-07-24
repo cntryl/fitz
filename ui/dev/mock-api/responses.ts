@@ -9,11 +9,13 @@ import {
   diagnostics,
   domainStats,
   domains,
+  empty,
   fitzRoute,
   globalStats,
   json,
   kvByte,
   familyMetrics,
+  mockAdminCredentials,
   now,
   operationForIndex,
   queueArea,
@@ -30,6 +32,7 @@ import {
   timeline,
   topology,
 } from "./fixtures";
+import { applyFamilyScenario } from "./scenarios";
 
 export function domainResponse(
   familyValue: string,
@@ -487,7 +490,7 @@ export function search(url: URL) {
   };
 }
 
-export function apiResponse(method: string, url: URL): MockResponse | null {
+export function apiResponse(method: string, url: URL, requestBody?: unknown): MockResponse | null {
   if (method === "POST" && url.pathname === "/api/v1/runtime/drain") {
     return json({
       active_sessions: broker.sessions,
@@ -499,12 +502,19 @@ export function apiResponse(method: string, url: URL): MockResponse | null {
     });
   }
 
-  if (method === "POST" && url.pathname === "/api/v1/session") return json({ ok: true });
-  if (method === "DELETE" && url.pathname === "/api/v1/session") return json({ ok: true });
+  if (method === "POST" && url.pathname === "/api/v1/session") {
+    const credentials = requestBody as { password?: unknown; username?: unknown } | undefined;
+    const authenticated =
+      credentials?.username === mockAdminCredentials.username &&
+      credentials.password === mockAdminCredentials.password;
+
+    return authenticated ? empty() : json({ error: "Invalid username or password" }, 401);
+  }
+  if (method === "DELETE" && url.pathname === "/api/v1/session") return empty();
   if (url.pathname === "/api/v1/features") {
     return json({
-      admin_auth_mode: "open",
-      admin_auth_required: false,
+      admin_auth_mode: "protected",
+      admin_auth_required: true,
       route_families: routeFamilies,
       route_families_wildcard: false,
     });
@@ -514,7 +524,7 @@ export function apiResponse(method: string, url: URL): MockResponse | null {
       authenticated: true,
       route_families: routeFamilies,
       route_families_wildcard: false,
-      username: "mock-admin",
+      username: mockAdminCredentials.username,
     });
   }
   const familyScopedRoute = url.pathname.match(
@@ -550,17 +560,38 @@ export function apiResponse(method: string, url: URL): MockResponse | null {
   return null;
 }
 
-export function mockFitzResponse(method: string | undefined, requestUrl: string | undefined) {
+export function mockFitzResponse(
+  method: string | undefined,
+  requestUrl: string | undefined,
+  requestBody?: unknown,
+) {
   const requestMethod = method ?? "GET";
   const url = new URL(requestUrl ?? "/", "http://fitz.mock");
 
   if (requestMethod === "OPTIONS") return text("", 204);
   if (url.pathname === "/api/v1/all/metrics") return json(structuredMetrics);
   const familyMetricsMatch = url.pathname.match(/^\/api\/v1\/(\d+)\/metrics$/);
-  if (familyMetricsMatch) return json(familyMetrics(familyMetricsMatch[1]));
+  if (familyMetricsMatch) {
+    const family = routeFamilyFrom(familyMetricsMatch[1]);
+    return applyFamilyScenario(json(familyMetrics(familyMetricsMatch[1])), family, url.pathname);
+  }
 
-  const response = apiResponse(requestMethod, url);
-  if (response) return response;
+  const response = apiResponse(requestMethod, url, requestBody);
+  if (response) {
+    const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+    const pathFamily = url.pathname.match(/^\/api\/v1\/(\d+)(?:\/|$)/)?.[1];
+    const queryFamily =
+      url.pathname === "/api/v1/search" ? url.searchParams.get("route_family") : null;
+    const familyValue = pathFamily ?? queryFamily;
+    const domainValue =
+      parts[3] ?? (url.pathname === "/api/v1/search" ? url.searchParams.get("domain") : null);
+    const domain =
+      domainValue && domains.includes(domainValue as Domain) ? (domainValue as Domain) : undefined;
+
+    return familyValue
+      ? applyFamilyScenario(response, routeFamilyFrom(familyValue), url.pathname, domain)
+      : response;
+  }
 
   if (url.pathname.startsWith("/api/")) {
     return json({ error: `Mock endpoint not implemented: ${requestMethod} ${url.pathname}` }, 404);

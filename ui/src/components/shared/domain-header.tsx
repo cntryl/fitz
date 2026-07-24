@@ -28,7 +28,6 @@ export default function DomainHeader({
   primaryAction,
   status,
   title,
-  description,
   onRefresh,
 }: DomainHeaderProps) {
   const action =
@@ -55,12 +54,6 @@ export default function DomainHeader({
                 {status.label}
               </Badge>
             ) : null}
-          </span>
-        }
-        description={
-          <span class="domain-header-description">
-            <span>{description}</span>
-            {status?.detail ? <span class="domain-header-detail"> {status.detail}</span> : null}
           </span>
         }
         actions={
