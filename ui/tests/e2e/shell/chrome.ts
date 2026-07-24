@@ -4,6 +4,7 @@ import {
   mockDomainOverviewApis,
   mockHomeRouteApis,
   mockMetricsApi,
+  mockPendingLogout,
   mockSessionsApi,
   sessionsWithData,
 } from "./api-fixtures";
@@ -520,8 +521,8 @@ export const sprint16Routes: RouteScenario[] = [
   {
     path: "/logout",
     shell: "auth",
-    setup: (page) => mockHomeRouteApis(page),
-    title: "Sign out",
+    setup: (page) => mockPendingLogout(page),
+    title: "Signing out",
   },
   {
     path: "/admin/1/rpc/default/ops/primary/GetStatus",

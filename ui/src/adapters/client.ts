@@ -25,9 +25,11 @@ const requestHeaders: Middleware = (context, next) => {
 
 const redirectUnauthenticated: Middleware = async (context, next) => {
   const result = await next(context);
+  const requestPath = new URL(context.request.url).pathname;
 
   if (
     result.status === 401 &&
+    requestPath !== "/api/v1/session" &&
     typeof window !== "undefined" &&
     !window.location.pathname.startsWith("/login")
   ) {

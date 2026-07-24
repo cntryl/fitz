@@ -45,6 +45,35 @@ export async function mockAdminFeatures(page: Page) {
   });
 }
 
+export async function mockCredentialLogin(page: Page) {
+  await page.route("**/api/v1/features", async (route) => {
+    await route.fulfill({
+      json: {
+        admin_auth_required: true,
+        admin_auth_mode: "password",
+        route_families: ["1"],
+        route_families_wildcard: false,
+      },
+    });
+  });
+
+  await page.route("**/api/v1/session", async (route) => {
+    await route.fulfill({ status: 401, json: { error: "unauthenticated" } });
+  });
+}
+
+export async function mockPendingLogout(page: Page) {
+  await mockCredentialLogin(page);
+  await page.route("**/api/v1/session", async (route) => {
+    if (route.request().method() === "DELETE") {
+      await new Promise<void>(() => {});
+      return;
+    }
+
+    await route.fallback();
+  });
+}
+
 export const topologyApiPayload: MessagingTopology = {
   broker: {
     connections: topologyOverview.broker.connections,

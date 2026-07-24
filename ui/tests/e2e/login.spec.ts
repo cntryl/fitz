@@ -1,22 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { mockAdminFeatures } from "./shell/api-fixtures";
-
-async function mockCredentialLogin(page: import("@playwright/test").Page) {
-  await page.route("**/api/v1/features", async (route) => {
-    await route.fulfill({
-      json: {
-        admin_auth_required: true,
-        admin_auth_mode: "password",
-        route_families: ["1"],
-        route_families_wildcard: false,
-      },
-    });
-  });
-
-  await page.route("**/api/v1/session", async (route) => {
-    await route.fulfill({ status: 401, json: { error: "unauthenticated" } });
-  });
-}
+import { mockAdminFeatures, mockCredentialLogin, mockPendingLogout } from "./shell/api-fixtures";
 
 test("should_center_the_credential_form_in_the_full_viewport", async ({ page }) => {
   // Arrange
@@ -93,14 +76,7 @@ test("renders truthful open-access state when authentication is disabled", async
 
 test("should_show_logout_progress_while_the_session_is_cleared", async ({ page }) => {
   // Arrange
-  await mockCredentialLogin(page);
-  await page.route("**/api/v1/session", async (route) => {
-    if (route.request().method() === "DELETE") {
-      await new Promise<void>(() => {});
-      return;
-    }
-    await route.fallback();
-  });
+  await mockPendingLogout(page);
   await page.goto("/logout");
   await expect(page.getByRole("heading", { level: 1, name: "Signing out" })).toBeVisible();
   const viewport = page.viewportSize();
