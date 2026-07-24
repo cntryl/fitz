@@ -45,17 +45,6 @@ impl QueueActor {
         Ok(())
     }
 
-    pub(in crate::domains::queue::actor) fn body_suffix(
-        queue_prefix: &[u8],
-        id_bytes: &[u8],
-    ) -> Vec<u8> {
-        let mut suffix = Vec::with_capacity(queue_prefix.len() + 1 + id_bytes.len());
-        suffix.extend_from_slice(queue_prefix);
-        suffix.push(QUEUE_KEY_FAMILY_BODY);
-        suffix.extend_from_slice(id_bytes);
-        suffix
-    }
-
     #[inline]
     pub(in crate::domains::queue::actor) fn reserved_id_limit_for(
         &self,
