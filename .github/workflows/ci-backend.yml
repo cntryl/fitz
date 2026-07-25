@@ -28,6 +28,15 @@ jobs:
       - name: Install Rust components
         run: rustup component add rustfmt clippy
 
+      - name: Install cntryl-tools
+        run: cargo install --locked --git https://github.com/cntryl/tools --rev b2a06b1a635de752803f5860339fc3cecbc19742 cntryl-tools
+
+      - name: Validate repository policy
+        run: |
+          cntryl-tools validate-docs
+          cntryl-tools validate-benchmarks
+          cntryl-tools check-module-sizes
+
       - name: Cargo fmt check
         run: cargo fmt --all -- --check
 

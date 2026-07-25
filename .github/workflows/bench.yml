@@ -20,6 +20,12 @@ jobs:
       - name: Update Rust toolchain
         run: rustup update stable
 
+      - name: Install cntryl-tools
+        run: cargo install --locked --git https://github.com/cntryl/tools --rev b2a06b1a635de752803f5860339fc3cecbc19742 cntryl-tools
+
+      - name: Validate benchmark contract
+        run: cntryl-tools validate-benchmarks
+
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
@@ -29,16 +35,16 @@ jobs:
         run: cargo bench --no-run
 
       - name: Benchmark tier 1
-        run: cargo bench --quiet --bench 'tier1*'
+        run: cargo bench --bench 'tier1*' --quiet
 
       - name: Benchmark tier 2
-        run: cargo bench --quiet --bench 'tier2*'
+        run: cargo bench --bench 'tier2*' --quiet
 
       - name: Benchmark tier 3
-        run: cargo bench --quiet --bench 'tier3*'
+        run: cargo bench --bench 'tier3*' --quiet
 
       - name: Benchmark tier 4
-        run: cargo bench --quiet --bench 'tier4*'
+        run: cargo bench --bench 'tier4*' --quiet
 
       - name: Upload stress benchmark artifacts
         if: always()
