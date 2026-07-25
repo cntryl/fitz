@@ -21,7 +21,7 @@ cargo bench --quiet --bench tier3_system_rpc -- --workload should_complete_singl
 cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"
 ```
 
-For a full tier refresh, use the release or deep command lists in [Benchmark Guidelines](benchmarks.md#ci-and-local-workflows). Do not use compile-only benchmark preflights; they compile every target without producing performance signal.
+For a full tier refresh, use the release or deep command lists in [Benchmark Guidelines](benchmarks.md). Do not use compile-only benchmark preflights; they compile every target without producing performance signal.
 
 ## Optimize
 

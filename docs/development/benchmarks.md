@@ -182,6 +182,8 @@ workflow defaults. Keep such commands out of committed Fitz docs and CI.
 
 ## CI and Local Workflows
 
+Benchmark workflows are scheduled or manually dispatched and are not a pull-request performance gate.
+
 Run a targeted benchmark:
 
 ```bash

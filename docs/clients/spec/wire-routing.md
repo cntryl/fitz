@@ -296,7 +296,7 @@ Clients MUST:
 **Clients MUST check status byte first before parsing payload.**
 
 **Exception: RPC Domain**
-RPC responses include a `correlation_id` field (16-byte UUID) to match responses to requests across multiple in-flight operations. See [RPC Domain](queue-rpc-kv.md#rpc-domain-requestresponse--streaming) for details on how RPC enables per-request correlation.
+RPC responses include a `correlation_id` field (16-byte UUID) to match responses to requests across multiple in-flight operations. See [RPC Domain](queue-rpc-kv.md) for details on how RPC enables per-request correlation.
 
 **Example (KV GET success):**
 ```
