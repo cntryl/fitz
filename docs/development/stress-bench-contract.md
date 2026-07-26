@@ -1,6 +1,6 @@
 # Stress benchmark contract (cntryl_stress)
 
-This document defines the contract for Tier 2 through Tier 4 benchmarks using the `cntryl_stress` framework with `#[stress]` macros. Tier 1 hotpath rows use the micro-benchmark rules in [Benchmark Guidelines](benchmarks.md#tier-1-micro-semantics). All stress benches must follow these rules.
+This document defines the contract for Tier 2 through Tier 4 benchmarks using the `cntryl_stress` framework with `#[stress]` macros. Tier 1 hotpath rows use the micro-benchmark rules in [Benchmark Guidelines](benchmarks.md). All stress benches must follow these rules.
 
 ## Tier 2 rules (subsystem benchmarks — fixed operations)
 
