@@ -79,7 +79,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 [dev-dependencies]
 cntryl-stress = { git = "https://github.com/cntryl/stress", branch = "main" }
 proptest = "1"
-serial_test = "3.5.0"
+serial_test = "4.0.1"
 
 # Tier 1: Hot Path (Infrastructure - Pure sync internals, stress micro mode)
 [[bench]]
