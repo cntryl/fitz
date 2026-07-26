@@ -33,9 +33,9 @@ jobs:
 
       - name: Validate repository policy
         run: |
-          cntryl-tools validate-docs
-          cntryl-tools validate-benchmarks
-          cntryl-tools check-module-sizes
+          cntryl-tools validate-docs --config .cntryl/repository.toml
+          cntryl-tools validate-benchmarks --config .cntryl/repository.toml
+          cntryl-tools check-module-sizes --config .cntryl/repository.toml
 
       - name: Cargo fmt check
         run: cargo fmt --all -- --check
