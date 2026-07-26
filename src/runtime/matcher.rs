@@ -222,11 +222,12 @@ fn match_segments_dynamic<T: AsRef<str>>(
 ) -> bool {
     let patterns = patterns.get(pat_idx..).unwrap_or_default();
     let route = route.get(route_idx..).unwrap_or_default();
-    let mut previous = vec![false; route.len() + 1];
+    let mut previous: SmallVec<[bool; 32]> = std::iter::repeat_n(false, route.len() + 1).collect();
     previous[0] = true;
 
     for pattern in patterns {
-        let mut current = vec![false; route.len() + 1];
+        let mut current: SmallVec<[bool; 32]> =
+            std::iter::repeat_n(false, route.len() + 1).collect();
         match pattern {
             PatternSegment::DoubleStar => {
                 current[0] = previous[0];
