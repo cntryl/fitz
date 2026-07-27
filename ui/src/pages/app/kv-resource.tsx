@@ -210,7 +210,7 @@ export default function KvResourcePage() {
   const rowsStatus =
     concreteFamily === null
       ? {
-          detail: "Committed row browsing requires a concrete route family.",
+          detail: "Committed row browsing requires a concrete Route Family.",
           label: "Select Route Family",
           tone: "warning" as const,
         }
@@ -353,7 +353,7 @@ export default function KvResourcePage() {
                   <Label for="kv-limit">Limit</Label>
                   <Input
                     id="kv-limit"
-                    min="1"
+                    {...({ min: 1 } as Record<string, unknown>)}
                     type="number"
                     value={limitDraft()}
                     onInput={(event: Event) =>
@@ -361,7 +361,7 @@ export default function KvResourcePage() {
                     }
                   />
                 </Stack>
-                <Button type="submit">Apply</Button>
+                <Button type="submit">Apply filters</Button>
               </Inline>
             </Form>
           </CardContent>
@@ -381,7 +381,7 @@ export default function KvResourcePage() {
 
         <Show when={rowsQuery?.error}>
           <QueryErrorState
-            title="Unable to browse committed KV rows"
+            title="Unable to load committed KV rows"
             error={rowsQuery?.error}
             onRetry={() => rowsQuery?.refresh()}
           />

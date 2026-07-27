@@ -250,6 +250,6 @@ describe("admin page smoke tests", () => {
 
     expect(root.textContent).toContain("Sign out failed");
     expect(root.textContent).toContain("Logout failed");
-    expect(root.textContent).toContain("Try again");
+    expect(root.textContent).toContain("Retry");
   });
 });

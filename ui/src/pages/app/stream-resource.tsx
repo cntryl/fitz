@@ -230,7 +230,7 @@ export default function StreamResourcePage() {
                   <Label for="stream-from-offset">From offset</Label>
                   <Input
                     id="stream-from-offset"
-                    min="0"
+                    {...({ min: 0 } as Record<string, unknown>)}
                     type="number"
                     value={fromOffsetDraft()}
                     onInput={(event: Event) =>
@@ -252,7 +252,7 @@ export default function StreamResourcePage() {
                   <Label for="stream-limit">Limit</Label>
                   <Input
                     id="stream-limit"
-                    min="1"
+                    {...({ min: 1 } as Record<string, unknown>)}
                     type="number"
                     value={limitDraft()}
                     onInput={(event: Event) =>
@@ -260,7 +260,7 @@ export default function StreamResourcePage() {
                     }
                   />
                 </Stack>
-                <Button type="submit">Apply</Button>
+                <Button type="submit">Apply filters</Button>
               </Inline>
             </Form>
           </CardContent>

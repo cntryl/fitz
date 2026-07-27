@@ -65,16 +65,13 @@ async function mount(handler: RouteHandler, path = "/") {
 
   await createSPA({
     root,
-    routes: [
-      {
-        handler: (params, context) => (
-          <ThemeScope defaultTheme="system" storageKey="fitz-admin-theme">
-            {handler(params, context)}
-          </ThemeScope>
-        ),
-        path,
-      },
-    ],
+    registry: createRouteRegistry(() => {
+      route(path, (params: Record<string, string>, context?: { signal: AbortSignal }) => (
+        <ThemeScope defaultTheme="system" storageKey="fitz-admin-theme">
+          {handler(params, context)}
+        </ThemeScope>
+      ));
+    }),
   });
 
   await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
@@ -131,7 +128,7 @@ describe("shared UI polish contracts", () => {
       <OperatorScope
         value={{
           retryRouteFamilies: vi.fn(),
-          routeFamilies: [{ description: "Authorized family", id: "7", label: "Route family 7" }],
+          routeFamilies: [{ description: "Authorized family", id: "7", label: "Route Family 7" }],
           routeFamilyError: null,
           routeFamilyState: "ready",
           routeFamiliesWildcard: false,
@@ -147,11 +144,11 @@ describe("shared UI polish contracts", () => {
       </OperatorScope>
     ));
 
-    const link = root.querySelector('a[aria-label="Open workspace for Route family 7"]');
+    const link = root.querySelector('a[aria-label="Open workspace for Route Family 7"]');
     expect(link?.getAttribute("href")).toBe("/admin/7");
     expect(link?.getAttribute("role")).toBeNull();
     expect(link?.getAttribute("tabindex")).toBeNull();
-    expect(link?.textContent?.trim()).toBe("Route family 7");
+    expect(link?.textContent?.trim()).toBe("Route Family 7");
     expect(link?.textContent).not.toContain("Authorized family");
     expect(root.querySelector('[data-slot="card"]')).toBeNull();
     expect(document.title).toBe("Select Route Family · Fitz Admin");
@@ -173,7 +170,7 @@ describe("shared UI polish contracts", () => {
     expect(snapshot.routeFamilyState).toBe("ready");
     expect(snapshot.routeFamiliesWildcard).toBe(true);
     expect(snapshot.selectedRouteFamilyId).toBe("42");
-    expect(snapshot.selectedRouteFamily.label).toBe("Route family 42");
+    expect(snapshot.selectedRouteFamily.label).toBe("Route Family 42");
   });
 
   it("does not add topology families outside the session allowlist", () => {
@@ -230,7 +227,7 @@ describe("shared UI polish contracts", () => {
       <OperatorScope
         value={{
           retryRouteFamilies: vi.fn(),
-          routeFamilies: [{ description: "Provisioned family", id: "1", label: "Route family 1" }],
+          routeFamilies: [{ description: "Provisioned family", id: "1", label: "Route Family 1" }],
           routeFamilyError: null,
           routeFamilyState: "ready",
           routeFamiliesWildcard: true,
@@ -246,7 +243,7 @@ describe("shared UI polish contracts", () => {
       </OperatorScope>
     ));
 
-    expect(root.textContent).toContain("Route family 1");
+    expect(root.textContent).toContain("Route Family 1");
     expect(root.querySelector("#wildcard-route-family")).toBeNull();
   });
 
@@ -386,8 +383,8 @@ describe("shared UI polish contracts", () => {
     expect(root.querySelector("main#main-content")?.textContent).toContain("Select Route Family");
     expect(root.textContent).not.toContain("Workspace");
     expect(root.querySelector('nav[aria-label="Primary navigation"]')).toBeNull();
-    expect(root.querySelector('a[href="/admin/1"]')?.textContent).toContain("Route family 1");
-    expect(root.querySelector('a[href="/admin/7"]')?.textContent).toContain("Route family 7");
+    expect(root.querySelector('a[href="/admin/1"]')?.textContent).toContain("Route Family 1");
+    expect(root.querySelector('a[href="/admin/7"]')?.textContent).toContain("Route Family 7");
     expect(root.querySelector('[data-slot="card"]')).toBeNull();
   });
 
@@ -535,7 +532,7 @@ describe("shared UI polish contracts", () => {
     );
     const breadcrumbs = root.querySelector('[aria-label="Resource hierarchy"]');
 
-    expect(breadcrumbs?.textContent).toContain("Route family 1");
+    expect(breadcrumbs?.textContent).toContain("Route Family 1");
     expect(breadcrumbs?.textContent).toContain("Sessions");
     expect(breadcrumbs?.textContent).not.toContain("Settings");
   });

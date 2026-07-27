@@ -1,3 +1,4 @@
+import { For, Show } from "@askrjs/askr/control";
 import { currentRoute } from "@askrjs/askr/router";
 import { Alert, Button, Card, CardContent, Grid, Stack, Text } from "@askrjs/themes/components";
 import DomainHeader from "./domain-header";
@@ -106,63 +107,67 @@ export default function DomainInventoryPage<TInventory extends DomainResourceInv
         />
         <OperatorScopeStrip freshness={freshness} />
 
-        {!inventory.data && inventory.loading ? (
+        <Show when={!inventory.data && inventory.loading}>
           <QueryLoadingState description={loadingDescription} />
-        ) : null}
+        </Show>
 
-        {!inventory.data && inventory.error ? (
+        <Show when={!inventory.data && inventory.error}>
           <QueryErrorState title={errorTitle} error={inventory.error} onRetry={inventory.refresh} />
-        ) : null}
+        </Show>
 
-        {inventory.data ? (
+        <Show when={inventory.data}>
           <Stack gap="3">
-            {isRefreshing ? <QueryRefreshingState description={refreshingDescription} /> : null}
-            {inventory.error ? (
+            <Show when={isRefreshing}>
+              <QueryRefreshingState description={refreshingDescription} />
+            </Show>
+            <Show when={inventory.error}>
               <Alert
                 variant="warning"
                 title="Refresh failed"
                 description={`Showing the last available snapshot. ${formatUnknownError(inventory.error)}`}
                 actions={
                   <Button variant="outline" onPress={inventory.refresh}>
-                    Retry refresh
+                    Retry
                   </Button>
                 }
               />
-            ) : null}
-            {stats.length > 0 && !hasScopedInventory ? (
+            </Show>
+            <Show when={stats.length > 0 && !hasScopedInventory}>
               <Grid
                 class="domain-stat-grid"
                 columns={{ base: 1, sm: 2, lg: Math.min(stats.length, 3) }}
                 gap="md"
                 aria-label={`${title} key stats`}
               >
-                {stats.map((stat) => (
-                  <Card key={stat.label} padding="sm" variant="default">
-                    <CardContent>
-                      <Stack gap="1">
-                        <Text as="span" class="domain-header-kicker">
-                          {stat.label}
-                        </Text>
-                        <Text
-                          as="strong"
-                          class="domain-stat-value"
-                          font="mono"
-                          numeric="tabular"
-                          weight="semibold"
-                        >
-                          {formatDisplayValue(stat.value)}
-                        </Text>
-                        {stat.caption ? (
-                          <Text as="span" class="domain-muted" size="sm">
-                            {stat.caption}
+                <For each={stats as DomainInventoryStat[]} by={(stat) => stat.label}>
+                  {(stat) => (
+                    <Card key={stat.label} padding="sm" variant="default">
+                      <CardContent>
+                        <Stack gap="1">
+                          <Text as="span" class="domain-header-kicker">
+                            {stat.label}
                           </Text>
-                        ) : null}
-                      </Stack>
-                    </CardContent>
-                  </Card>
-                ))}
+                          <Text
+                            as="strong"
+                            class="domain-stat-value"
+                            font="mono"
+                            numeric="tabular"
+                            weight="semibold"
+                          >
+                            {formatDisplayValue(stat.value)}
+                          </Text>
+                          {stat.caption ? (
+                            <Text as="span" class="domain-muted" size="sm">
+                              {stat.caption}
+                            </Text>
+                          ) : null}
+                        </Stack>
+                      </CardContent>
+                    </Card>
+                  )}
+                </For>
               </Grid>
-            ) : null}
+            </Show>
             <DomainResourceInventoryTable
               domain={domain}
               emptyDescription={emptyDescription}
@@ -171,7 +176,7 @@ export default function DomainInventoryPage<TInventory extends DomainResourceInv
               title={tableTitle}
             />
           </Stack>
-        ) : null}
+        </Show>
       </Stack>
     </DomainPageFrame>
   );

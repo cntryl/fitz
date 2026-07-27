@@ -1,4 +1,4 @@
-import { For } from "@askrjs/askr/control";
+import { For, Show } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
 import { Card, CardContent, CardHeader, CardTitle } from "@askrjs/themes/components";
@@ -31,9 +31,10 @@ export default function DomainRealmTable({
       </CardHeader>
 
       <CardContent>
-        {realms.length === 0 ? (
+        <Show when={realms.length === 0}>
           <QueryEmptyState description={emptyMessage} />
-        ) : (
+        </Show>
+        <Show when={realms.length > 0}>
           <div class="domain-table-wrap">
             <Table>
               <TableHead>
@@ -67,7 +68,7 @@ export default function DomainRealmTable({
               </TableBody>
             </Table>
           </div>
-        )}
+        </Show>
       </CardContent>
     </Card>
   );

@@ -105,7 +105,7 @@ export default function KvPage() {
       domain="kv"
       eyebrow="Authoritative state"
       title="KV tables"
-      description="Authoritative KV tables for the active route family."
+      description="Authoritative KV tables for the active Route Family."
       refreshLabel="Refresh KV"
       inventory={inventory}
       refreshing={overview.refreshing || inventory.refreshing}

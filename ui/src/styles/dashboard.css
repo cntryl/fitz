@@ -471,12 +471,16 @@
 }
 
 .overview-domain-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: var(--fitz-control-gap);
   padding: 0;
   margin: var(--fitz-section-gap) 0 0;
   list-style: none;
+}
+
+.overview-domain-grid > .overview-domain-card {
+  flex: 1 1 14rem;
 }
 
 .overview-domain-card {

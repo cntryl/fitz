@@ -66,7 +66,7 @@ export default function Logout() {
                 active.
               </Text>
               <Button variant="outline" onPress={() => void signOutAndRedirect()}>
-                Try again
+                Retry
               </Button>
             </Block>
           ) : null}

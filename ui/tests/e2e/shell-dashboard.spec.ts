@@ -52,7 +52,7 @@ test("keeps route-family actions as native keyboard links", async ({ page }) => 
   await page.goto("/admin");
 
   const openWorkspace = page.getByRole("link", {
-    name: "Open workspace for Route family 1",
+    name: "Open workspace for Route Family 1",
   });
 
   await expect(openWorkspace).toHaveAttribute("href", "/admin/1");

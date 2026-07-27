@@ -344,7 +344,7 @@ describe("admin page smoke tests", () => {
     );
     root = await mountRoute("/sessions", "/sessions", SessionsPage);
 
-    expect(root.textContent).toContain("Not reported");
+    expect(root.textContent).toContain("Unknown");
     expect(root.textContent).not.toContain("Unauthenticated");
     expect(root.textContent).not.toContain("Not resolved");
     expect(root.textContent).not.toContain("Attention");

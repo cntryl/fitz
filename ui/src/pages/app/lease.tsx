@@ -58,7 +58,7 @@ export default function LeasePage() {
       domain="lease"
       eyebrow="Ownership coordination"
       title="Lease inventory"
-      description="Ephemeral ownership coordination resources for the active route family."
+      description="Ephemeral ownership coordination resources for the active Route Family."
       refreshLabel="Refresh lease"
       inventory={inventory}
       refreshing={overview.refreshing || inventory.refreshing}

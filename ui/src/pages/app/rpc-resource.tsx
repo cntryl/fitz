@@ -1,3 +1,4 @@
+import { Show } from "@askrjs/askr/control";
 import { currentRoute, Link } from "@askrjs/askr/router";
 import { VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
 import {
@@ -142,49 +143,54 @@ export default function RpcResourcePage() {
           resource={resource}
           freshness={queryFreshness(query)}
         />
-        {!data && query.loading ? (
+        <Show when={!data && query.loading}>
           <QueryLoadingState description="Loading RPC operations..." />
-        ) : null}
-        {!data && query.error ? (
+        </Show>
+        <Show when={!data && query.error}>
           <QueryErrorState
             title="Unable to load RPC operations"
             error={query.error}
             onRetry={() => query.refresh()}
           />
-        ) : null}
-        {data ? (
+        </Show>
+        <Show when={data}>
           <Stack gap="3">
-            {query.refreshing ? (
+            <Show when={query.refreshing}>
               <QueryRefreshingState description="Refreshing RPC operations..." />
-            ) : null}
-            {data.operations.length === 0 ? (
+            </Show>
+            <Show
+              when={data && data.operations.length === 0}
+              fallback={
+                data ? (
+                  <Card padding="sm" variant="default">
+                    <CardHeader>
+                      <CardTitle titleAs="h2">RPC operations</CardTitle>
+                      <CardDescription>
+                        Live operation evidence: workers, handled calls, latency, and in-memory
+                        pending request evidence.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <VirtualTable<RpcResourceOperationRow>
+                        aria-label="RPC operations"
+                        class="rpc-operation-virtual-table"
+                        columns={rpcOperationColumns(data)}
+                        getKey={(row) => row.operation}
+                        headerHeight={44}
+                        overscan={4}
+                        rowHeight={48}
+                        rows={data.operations}
+                        style={{ height: rpcOperationTableHeight(data.operations.length) }}
+                      />
+                    </CardContent>
+                  </Card>
+                ) : null
+              }
+            >
               <QueryEmptyState description="No RPC operations are currently visible for this resource." />
-            ) : (
-              <Card padding="sm" variant="default">
-                <CardHeader>
-                  <CardTitle titleAs="h2">RPC operations</CardTitle>
-                  <CardDescription>
-                    Live operation evidence: workers, handled calls, latency, and in-memory pending
-                    request evidence.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <VirtualTable<RpcResourceOperationRow>
-                    aria-label="RPC operations"
-                    class="rpc-operation-virtual-table"
-                    columns={rpcOperationColumns(data)}
-                    getKey={(row) => row.operation}
-                    headerHeight={44}
-                    overscan={4}
-                    rowHeight={48}
-                    rows={data.operations}
-                    style={{ height: rpcOperationTableHeight(data.operations.length) }}
-                  />
-                </CardContent>
-              </Card>
-            )}
+            </Show>
           </Stack>
-        ) : null}
+        </Show>
       </Stack>
     </DomainPageFrame>
   );

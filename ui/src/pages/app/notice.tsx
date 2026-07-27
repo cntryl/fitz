@@ -1,4 +1,4 @@
-import { For } from "@askrjs/askr/control";
+import { For, Show } from "@askrjs/askr/control";
 import { currentRoute, Link } from "@askrjs/askr/router";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
 import {
@@ -95,7 +95,7 @@ function NoticeLandingPage() {
       domain="notice"
       eyebrow="Live awareness"
       title="Notice inventory"
-      description="Live fanout resources for the active route family."
+      description="Live fanout resources for the active Route Family."
       refreshLabel="Refresh notice"
       inventory={inventory}
       refreshing={overview.refreshing || inventory.refreshing}
@@ -218,53 +218,58 @@ function NoticeResourcePage(props: { realm: string; area: string; resource: stri
           resource={props.resource}
           freshness={queryFreshness(rowsQuery)}
         />
-        {!data && rowsQuery.loading ? (
+        <Show when={!data && rowsQuery.loading}>
           <QueryLoadingState description="Loading notice operation rows..." />
-        ) : null}
-        {!data && rowsQuery.error ? (
+        </Show>
+        <Show when={!data && rowsQuery.error}>
           <QueryErrorState
             title="Unable to load notice operation rows"
             error={rowsQuery.error}
             onRetry={() => rowsQuery.refresh()}
           />
-        ) : null}
+        </Show>
 
-        {data ? (
+        <Show when={data}>
           <Stack gap="3">
-            {rowsQuery.refreshing ? (
+            <Show when={rowsQuery.refreshing}>
               <QueryRefreshingState description="Refreshing operation summary..." />
-            ) : null}
+            </Show>
 
-            {data.operations.length === 0 ? (
+            <Show
+              when={data && data.operations.length === 0}
+              fallback={
+                data ? (
+                  <Card padding="sm" variant="default">
+                    <CardHeader>
+                      <CardTitle titleAs="h2">Notice operations</CardTitle>
+                      <CardDescription>
+                        Live operation routes with active subscribers and route publish rates.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div class="domain-table-wrap notice-resource-table-wrap">
+                        <Table>
+                          <TableHead>
+                            <TableRow>
+                              <TableHeaderCell>Route</TableHeaderCell>
+                              <TableHeaderCell>Active subscribers</TableHeaderCell>
+                              <TableHeaderCell>Publishes / min</TableHeaderCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            <NoticeOperationTableRows data={data} />
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : null
+              }
+            >
               <QueryEmptyState description="No matching notice operations are currently visible." />
-            ) : (
-              <Card padding="sm" variant="default">
-                <CardHeader>
-                  <CardTitle titleAs="h2">Notice operations</CardTitle>
-                  <CardDescription>
-                    Live operation routes with active subscribers and route publish rates.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div class="domain-table-wrap notice-resource-table-wrap">
-                    <Table>
-                      <TableHead>
-                        <TableRow>
-                          <TableHeaderCell>Route</TableHeaderCell>
-                          <TableHeaderCell>Active subscribers</TableHeaderCell>
-                          <TableHeaderCell>Publishes / min</TableHeaderCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        <NoticeOperationTableRows data={data} />
-                      </TableBody>
-                    </Table>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
+            </Show>
           </Stack>
-        ) : null}
+        </Show>
       </Stack>
     </DomainPageFrame>
   );

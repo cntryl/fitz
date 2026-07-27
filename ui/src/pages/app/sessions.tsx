@@ -1,3 +1,4 @@
+import { Show } from "@askrjs/askr/control";
 import { Stack } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
@@ -127,53 +128,55 @@ export default function SessionsPage() {
           }}
         />
 
-        {!data && sessionsQuery.loading ? (
+        <Show when={!data && sessionsQuery.loading}>
           <QueryLoadingState
             title="Loading active sessions"
             description="Loading active sessions from the broker..."
           />
-        ) : null}
+        </Show>
 
-        {!data && sessionsQuery.error ? (
+        <Show when={!data && sessionsQuery.error}>
           <QueryErrorState
             title="Unable to load active sessions"
             error={sessionsQuery.error}
             onRetry={() => sessionsQuery.refresh()}
           />
-        ) : null}
+        </Show>
 
-        {data ? (
-          <Stack gap="3">
-            <DomainMetricTable
-              title="Session summary"
-              description="Current live sessions, route-family coverage, transport mix, and reported idle duration."
-              metrics={[
-                {
-                  label: "Sessions",
-                  value: data.sessions.length,
-                  caption: "Current live sessions",
-                },
-                {
-                  label: "Route families",
-                  value: routeFamilies,
-                  caption: "Resolved families",
-                },
-                {
-                  label: "Transports",
-                  value: transportKinds,
-                  caption: "Distinct transport types",
-                },
-                {
-                  label: "Longest idle",
-                  value: longestIdle === null ? "Not reported" : `${formatNumber(longestIdle)}s`,
-                  caption: sessions.length > 0 ? "Maximum reported duration" : "No live sessions",
-                },
-              ]}
-            />
+        <Show when={data}>
+          {(data) => (
+            <Stack gap="3">
+              <DomainMetricTable
+                title="Session summary"
+                description="Current live sessions, route-family coverage, transport mix, and reported idle duration."
+                metrics={[
+                  {
+                    label: "Sessions",
+                    value: data.sessions.length,
+                    caption: "Current live sessions",
+                  },
+                  {
+                    label: "Route families",
+                    value: routeFamilies,
+                    caption: "Resolved families",
+                  },
+                  {
+                    label: "Transports",
+                    value: transportKinds,
+                    caption: "Distinct transport types",
+                  },
+                  {
+                    label: "Longest idle",
+                    value: longestIdle === null ? "Unknown" : `${formatNumber(longestIdle)}s`,
+                    caption: sessions.length > 0 ? "Maximum reported duration" : "No live sessions",
+                  },
+                ]}
+              />
 
-            <SessionTable sessions={data.sessions} />
-          </Stack>
-        ) : null}
+              <SessionTable sessions={data.sessions} />
+            </Stack>
+          )}
+        </Show>
       </Stack>
     </DomainPageFrame>
   );

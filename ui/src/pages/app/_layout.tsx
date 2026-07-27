@@ -228,15 +228,15 @@ function OperatorNavigation({
                       )}
                     </For>
                     {operator.routeFamilyState === "loading" ? (
-                      <DropdownMenuItem disabled>Loading route families…</DropdownMenuItem>
+                      <DropdownMenuItem disabled>Loading Route Families…</DropdownMenuItem>
                     ) : null}
                     {operator.routeFamilyState === "error" ? (
                       <DropdownMenuItem onSelect={operator.retryRouteFamilies}>
-                        Retry route families
+                        Retry Route Families
                       </DropdownMenuItem>
                     ) : null}
                     {operator.routeFamilyState === "empty" ? (
-                      <DropdownMenuItem disabled>No route families available</DropdownMenuItem>
+                      <DropdownMenuItem disabled>No Route Families available</DropdownMenuItem>
                     ) : null}
                   </DropdownMenuContent>
                 </DropdownMenuPortal>

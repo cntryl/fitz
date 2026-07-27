@@ -32,7 +32,7 @@ function RouteFamilyList({ routeFamilies }: { routeFamilies: RouteFamilyOption[]
             <Link
               class="route-family-list-link"
               href={selectorTarget(family.id)}
-              aria-label={`Open workspace for Route family ${family.id}`}
+              aria-label={`Open workspace for Route Family ${family.id}`}
             >
               <NetworkIcon
                 class="route-family-icon"
@@ -77,8 +77,7 @@ function WildcardRouteFamilyForm() {
             <Input
               id="wildcard-route-family"
               name="routeFamily"
-              inputmode="numeric"
-              pattern="[0-9]+"
+              {...({ inputmode: "numeric", pattern: "[0-9]+" } as Record<string, unknown>)}
               required
               value={routeFamilyId()}
               onInput={(event: Event) => setRouteFamilyId((event.target as HTMLInputElement).value)}

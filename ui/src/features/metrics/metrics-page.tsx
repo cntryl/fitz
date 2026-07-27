@@ -1,4 +1,4 @@
-import { For } from "@askrjs/askr/control";
+import { For, Show } from "@askrjs/askr/control";
 import { currentRoute, updateRouteQuery } from "@askrjs/askr/router";
 import { Input, VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
 import { Button, Stack, Text } from "@askrjs/themes/components";
@@ -411,7 +411,7 @@ function formatLabels(labels: Record<string, string>) {
   const entries = Object.entries(labels).sort(([left], [right]) => left.localeCompare(right));
 
   if (entries.length === 0) {
-    return "n/a";
+    return "Unknown";
   }
 
   return entries.map(([key, value]) => `${key}="${value}"`).join(", ");
@@ -604,162 +604,168 @@ export default function MetricsPage() {
           status={headerStatus}
         />
 
-        {!data && metrics.loading ? (
+        <Show when={!data && metrics.loading}>
           <QueryLoadingState
             title="Loading metrics snapshot"
             description="Reading the current structured route-family metrics snapshot."
           />
-        ) : null}
+        </Show>
 
-        {!data && metrics.error ? (
+        <Show when={!data && metrics.error}>
           <QueryErrorState
             title="Unable to load metrics snapshot"
             error={metrics.error}
             onRetry={() => metrics.refresh()}
           />
-        ) : null}
+        </Show>
 
-        {data ? (
-          <Stack gap="3">
-            <section class="domain-section">
-              <div class="domain-section-header">
-                <div>
-                  <h2>Live state</h2>
-                  <p>
-                    The summary below reflects the full snapshot, even when the sample table is
-                    filtered.
-                  </p>
-                </div>
-              </div>
-              <div class="chart-grid">
-                {summaryCards.broker.length > 0 ? (
-                  <DomainMetricTable
-                    title="Broker snapshot"
-                    titleAs="h3"
-                    description="The broker process itself: uptime, connections, sessions, and cumulative routing counters."
-                    metrics={summaryCards.broker}
-                  />
-                ) : null}
-
-                {summaryCards.delivery.length > 0 ? (
-                  <DomainMetricTable
-                    title="Delivery activity"
-                    titleAs="h3"
-                    description="Current queued work and request/response activity. Non-zero values are not pressure by themselves."
-                    metrics={summaryCards.delivery}
-                  />
-                ) : null}
-
-                {summaryCards.coordination.length > 0 ? (
-                  <DomainMetricTable
-                    title="Coordination state"
-                    titleAs="h3"
-                    description="Lease ownership, schedule claims, and stream append activity."
-                    metrics={summaryCards.coordination}
-                  />
-                ) : null}
-
-                {summaryCards.state.length > 0 ? (
-                  <DomainMetricTable
-                    title="Durable surfaces"
-                    titleAs="h3"
-                    description="The long-lived state and live fanout that make Fitz useful."
-                    metrics={summaryCards.state}
-                  />
-                ) : null}
-
-                {summaryCards.failures.length > 0 ? (
-                  <DomainMetricTable
-                    title="Failure counters"
-                    titleAs="h3"
-                    description="Cumulative totals since the broker process started. Inspect changes between snapshots before treating them as active failures."
-                    metrics={summaryCards.failures}
-                  />
-                ) : null}
-              </div>
-              {summaryMetricCount === 0 ? (
-                <QueryCompactEmptyState
-                  title="No known summary metrics"
-                  description="The snapshot has samples, but none match the summary gauges on this page. Use the sample filter below."
-                />
-              ) : null}
-            </section>
-
-            <Card padding="sm" variant="default">
-              <CardHeader>
-                <CardTitle titleAs="h2">Metric samples</CardTitle>
-                <CardDescription role="status" aria-live="polite" aria-atomic="true">
-                  {data
-                    ? families.length === 0
-                      ? `${formatNumber(sampleRows.length)} visible samples`
-                      : `Showing ${formatNumber(sampleRows.length)} of ${formatNumber(sampleCount)} samples`
-                    : "Loading metric samples"}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div class="metrics-toolbar">
-                  <div class="metrics-filter">
-                    <Input
-                      id="metrics-filter"
-                      aria-label="Filter metrics"
-                      placeholder="Search metric families"
-                      type="search"
-                      value={filter()}
-                      onInput={(event: Event) =>
-                        setFilter((event.target as HTMLInputElement).value)
-                      }
-                    />
-                  </div>
-
-                  <MetricsShortcuts
-                    filterValue={filterValue}
-                    setFilter={setFilter}
-                    shortcutCards={shortcutCards}
-                  />
-                </div>
-                {data && sampleRows.length === 0 ? (
-                  <QueryEmptyState
-                    title={filterValue.length > 0 ? "No matching metrics" : "No metrics available"}
-                    description={
-                      filterValue.length > 0
-                        ? `No metric families match "${filterValue}". Use clear filters to return to the full table.`
-                        : "No metric families were returned in this snapshot."
-                    }
-                  />
-                ) : (
-                  <VirtualTable<MetricsSampleRow>
-                    aria-label="Metric samples"
-                    class="metrics-sample-virtual-table"
-                    columns={sampleColumns}
-                    getKey={(row) => `${row.family}:${row.labels}:${row.value}`}
-                    headerHeight={44}
-                    overscan={12}
-                    rowHeight={48}
-                    rows={sampleRows}
-                    style={{ height: `${sampleTableHeight}px` }}
-                  />
-                )}
-              </CardContent>
-            </Card>
-
-            <section class="domain-section metrics-structured-payload">
-              <Collapsible>
+        <Show when={data}>
+          {(data) => (
+            <Stack gap="3">
+              <section class="domain-section">
                 <div class="domain-section-header">
                   <div>
-                    <h2>Structured payload</h2>
-                    <p>Exact route-family JSON snapshot for copy, diffing, and troubleshooting.</p>
+                    <h2>Live state</h2>
+                    <p>
+                      The summary below reflects the full snapshot, even when the sample table is
+                      filtered.
+                    </p>
                   </div>
-                  <CollapsibleTrigger asChild>
-                    <Button variant="outline">View structured payload</Button>
-                  </CollapsibleTrigger>
                 </div>
-                <CollapsibleContent>
-                  <pre class="resource-raw">{data.raw}</pre>
-                </CollapsibleContent>
-              </Collapsible>
-            </section>
-          </Stack>
-        ) : null}
+                <div class="chart-grid">
+                  {summaryCards.broker.length > 0 ? (
+                    <DomainMetricTable
+                      title="Broker snapshot"
+                      titleAs="h3"
+                      description="The broker process itself: uptime, connections, sessions, and cumulative routing counters."
+                      metrics={summaryCards.broker}
+                    />
+                  ) : null}
+
+                  {summaryCards.delivery.length > 0 ? (
+                    <DomainMetricTable
+                      title="Delivery activity"
+                      titleAs="h3"
+                      description="Current queued work and request/response activity. Non-zero values are not pressure by themselves."
+                      metrics={summaryCards.delivery}
+                    />
+                  ) : null}
+
+                  {summaryCards.coordination.length > 0 ? (
+                    <DomainMetricTable
+                      title="Coordination state"
+                      titleAs="h3"
+                      description="Lease ownership, schedule claims, and stream append activity."
+                      metrics={summaryCards.coordination}
+                    />
+                  ) : null}
+
+                  {summaryCards.state.length > 0 ? (
+                    <DomainMetricTable
+                      title="Durable surfaces"
+                      titleAs="h3"
+                      description="The long-lived state and live fanout that make Fitz useful."
+                      metrics={summaryCards.state}
+                    />
+                  ) : null}
+
+                  {summaryCards.failures.length > 0 ? (
+                    <DomainMetricTable
+                      title="Failure counters"
+                      titleAs="h3"
+                      description="Cumulative totals since the broker process started. Inspect changes between snapshots before treating them as active failures."
+                      metrics={summaryCards.failures}
+                    />
+                  ) : null}
+                </div>
+                {summaryMetricCount === 0 ? (
+                  <QueryCompactEmptyState
+                    title="No known summary metrics"
+                    description="The snapshot has samples, but none match the summary gauges on this page. Use the sample filter below."
+                  />
+                ) : null}
+              </section>
+
+              <Card padding="sm" variant="default">
+                <CardHeader>
+                  <CardTitle titleAs="h2">Metric samples</CardTitle>
+                  <CardDescription role="status" aria-live="polite" aria-atomic="true">
+                    {data
+                      ? families.length === 0
+                        ? `${formatNumber(sampleRows.length)} visible samples`
+                        : `Showing ${formatNumber(sampleRows.length)} of ${formatNumber(sampleCount)} samples`
+                      : "Loading metric samples"}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div class="metrics-toolbar">
+                    <div class="metrics-filter">
+                      <Input
+                        id="metrics-filter"
+                        aria-label="Filter metrics"
+                        placeholder="Search metric families"
+                        type="search"
+                        value={filter()}
+                        onInput={(event: Event) =>
+                          setFilter((event.target as HTMLInputElement).value)
+                        }
+                      />
+                    </div>
+
+                    <MetricsShortcuts
+                      filterValue={filterValue}
+                      setFilter={setFilter}
+                      shortcutCards={shortcutCards}
+                    />
+                  </div>
+                  {data && sampleRows.length === 0 ? (
+                    <QueryEmptyState
+                      title={
+                        filterValue.length > 0 ? "No matching metrics" : "No metrics available"
+                      }
+                      description={
+                        filterValue.length > 0
+                          ? `No metric families match "${filterValue}". Use clear filters to return to the full table.`
+                          : "No metric families were returned in this snapshot."
+                      }
+                    />
+                  ) : (
+                    <VirtualTable<MetricsSampleRow>
+                      aria-label="Metric samples"
+                      class="metrics-sample-virtual-table"
+                      columns={sampleColumns}
+                      getKey={(row) => `${row.family}:${row.labels}:${row.value}`}
+                      headerHeight={44}
+                      overscan={12}
+                      rowHeight={48}
+                      rows={sampleRows}
+                      style={{ height: `${sampleTableHeight}px` }}
+                    />
+                  )}
+                </CardContent>
+              </Card>
+
+              <section class="domain-section metrics-structured-payload">
+                <Collapsible>
+                  <div class="domain-section-header">
+                    <div>
+                      <h2>Structured payload</h2>
+                      <p>
+                        Exact route-family JSON snapshot for copy, diffing, and troubleshooting.
+                      </p>
+                    </div>
+                    <CollapsibleTrigger asChild>
+                      <Button variant="outline">View structured payload</Button>
+                    </CollapsibleTrigger>
+                  </div>
+                  <CollapsibleContent>
+                    <pre class="resource-raw">{data.raw}</pre>
+                  </CollapsibleContent>
+                </Collapsible>
+              </section>
+            </Stack>
+          )}
+        </Show>
       </Stack>
     </DomainPageFrame>
   );

@@ -69,7 +69,7 @@ export default function SchedulePage() {
       domain="schedule"
       eyebrow="Timing intent"
       title="Schedule inventory"
-      description="Durable timing resources for the active route family."
+      description="Durable timing resources for the active Route Family."
       refreshLabel="Refresh schedule"
       inventory={inventory}
       refreshing={overview.refreshing || inventory.refreshing}

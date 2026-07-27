@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, vi } from "vite-plus/test";
 import { cleanupApp, createSPA } from "@askrjs/askr/boot";
+import { createRouteRegistry, route } from "@askrjs/askr/router";
 import type { Query } from "@askrjs/askr/data";
 import type { RouteHandler } from "@askrjs/askr/router";
 import { queryState } from "@askrjs/askr/testing";
@@ -301,7 +302,9 @@ export async function mountRoute(path: string, routePath: string, handler: Route
 
   await createSPA({
     root,
-    routes: [{ handler, path: routePath }],
+    registry: createRouteRegistry(() => {
+      route(routePath, handler);
+    }),
   });
 
   await new Promise<void>((resolve) => queueMicrotask(() => resolve()));

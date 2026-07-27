@@ -1,4 +1,4 @@
-import { For } from "@askrjs/askr/control";
+import { For, Show } from "@askrjs/askr/control";
 import { currentRoute } from "@askrjs/askr/router";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
 import {
@@ -21,7 +21,13 @@ import {
 } from "@/components/shared/query-state";
 import { formatNumber } from "@/shared/format";
 import { createNoticeOperationRowsQuery } from "@/features/notice/notice-query";
-import type { NoticeDeliveryRows } from "@/features/notice/notice-models";
+import type { NoticeDeliveryRow, NoticeDeliveryRows } from "@/features/notice/notice-models";
+
+function countActiveSubscribers(deliveries: NoticeDeliveryRow[]) {
+  return new Set(
+    deliveries.map((row) => `${row.subscriptionId ?? "session"}:${row.sessionId ?? "session"}`),
+  ).size;
+}
 
 function decodeParam(value: string | undefined) {
   if (!value) return undefined;
@@ -86,9 +92,7 @@ export default function NoticeOperationPage(props: {
 
   const data = rowsQuery.data;
   const deliveries = data?.observations ?? [];
-  const activeSubscribers = new Set(
-    deliveries.map((row) => `${row.subscriptionId ?? "session"}:${row.sessionId ?? "session"}`),
-  ).size;
+  const activeSubscribers = countActiveSubscribers(deliveries);
   return (
     <DomainPageFrame>
       <Stack gap="3">
@@ -117,56 +121,61 @@ export default function NoticeOperationPage(props: {
           operation={query}
           freshness={queryFreshness(rowsQuery)}
         />
-        {!data && rowsQuery.loading ? (
+        <Show when={!data && rowsQuery.loading}>
           <QueryLoadingState description="Loading notice operation deliveries..." />
-        ) : null}
-        {!data && rowsQuery.error ? (
+        </Show>
+        <Show when={!data && rowsQuery.error}>
           <QueryErrorState
             title="Unable to load notice operation deliveries"
             error={rowsQuery.error}
             onRetry={() => rowsQuery.refresh()}
           />
-        ) : null}
+        </Show>
 
-        {data ? (
-          <Stack gap="3">
-            {rowsQuery.refreshing ? (
-              <QueryRefreshingState description="Refreshing notice operation deliveries..." />
-            ) : null}
+        <Show when={data}>
+          {(data) => (
+            <Stack gap="3">
+              <Show when={rowsQuery.refreshing}>
+                <QueryRefreshingState description="Refreshing notice operation deliveries..." />
+              </Show>
 
-            {data.observations.length === 0 ? (
-              <QueryEmptyState description="No matching notice deliveries are currently visible." />
-            ) : (
-              <Card padding="sm" variant="default">
-                <CardHeader>
-                  <CardTitle titleAs="h2">Delivery evidence</CardTitle>
-                  <CardDescription>
-                    Live subscription observations for this operation route; not delivery history.
-                    The API does not report a reset scope for total counters.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div class="domain-table-wrap notice-operation-table-wrap">
-                    <Table>
-                      <TableHead>
-                        <TableRow>
-                          <TableHeaderCell>Status</TableHeaderCell>
-                          <TableHeaderCell>Session</TableHeaderCell>
-                          <TableHeaderCell>Notifications observed</TableHeaderCell>
-                          <TableHeaderCell>Current publishes / min</TableHeaderCell>
-                          <TableHeaderCell>Observed publish total</TableHeaderCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        <NoticeDeliveryTableRows rows={data.observations} />
-                      </TableBody>
-                    </Table>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-          </Stack>
-        ) : null}
+              <Show
+                when={data.observations.length === 0}
+                fallback={
+                  <Card padding="sm" variant="default">
+                    <CardHeader>
+                      <CardTitle titleAs="h2">Delivery evidence</CardTitle>
+                      <CardDescription>
+                        Live subscription observations for this operation route; not delivery
+                        history. The API does not report a reset scope for total counters.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div class="domain-table-wrap notice-operation-table-wrap">
+                        <Table>
+                          <TableHead>
+                            <TableRow>
+                              <TableHeaderCell>Status</TableHeaderCell>
+                              <TableHeaderCell>Session</TableHeaderCell>
+                              <TableHeaderCell>Notifications observed</TableHeaderCell>
+                              <TableHeaderCell>Current publishes / min</TableHeaderCell>
+                              <TableHeaderCell>Observed publish total</TableHeaderCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            <NoticeDeliveryTableRows rows={data.observations} />
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </CardContent>
+                  </Card>
+                }
+              >
+                <QueryEmptyState description="No matching notice deliveries are currently visible." />
+              </Show>
+            </Stack>
+          )}
+        </Show>
       </Stack>
     </DomainPageFrame>
   );

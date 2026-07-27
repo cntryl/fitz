@@ -403,7 +403,7 @@ export function resolveTopologySelection(
         id: selectionId,
         kind: "session_group",
         state: group.sessions > 0 ? "flowing" : "quiet",
-        title: `Route family ${group.routeFamily}`,
+        title: `Route Family ${group.routeFamily}`,
       };
     }
   }

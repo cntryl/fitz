@@ -65,7 +65,7 @@ export function QueryErrorState({
         title={forbidden ? "Forbidden" : unavailable ? "Service unavailable" : title}
         description={
           forbidden
-            ? "This admin session is not authorized for the selected route family."
+            ? "This admin session is not authorized for the selected Route Family."
             : unavailable
               ? "The broker did not return this snapshot. Your session is still active; retry when the service is available."
               : formatUnknownError(error)

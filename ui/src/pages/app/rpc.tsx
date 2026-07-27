@@ -75,7 +75,7 @@ export default function RpcPage() {
       domain="rpc"
       eyebrow="Live request/response"
       title="RPC inventory"
-      description="Live request/response resources for the active route family."
+      description="Live request/response resources for the active Route Family."
       refreshLabel="Refresh RPC"
       inventory={inventory}
       refreshing={overview.refreshing || inventory.refreshing}

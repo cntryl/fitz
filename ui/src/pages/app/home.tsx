@@ -1,4 +1,4 @@
-import { For } from "@askrjs/askr/control";
+import { For, Show } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
 import { ArrowUpRightIcon, CheckCircle2Icon, CircleAlertIcon } from "@askrjs/lucide";
 import { Stack } from "@askrjs/themes/components";
@@ -54,7 +54,7 @@ function OverviewIssues({ overview }: { overview: OverviewStatus }) {
         <span>{overview.issues.length} active</span>
       </div>
 
-      {overview.issues.length === 0 ? (
+      <Show when={overview.issues.length === 0}>
         <div class="overview-empty-state">
           {overview.complete ? <CheckCircle2Icon size={18} /> : <CircleAlertIcon size={18} />}
           <div>
@@ -66,7 +66,8 @@ function OverviewIssues({ overview }: { overview: OverviewStatus }) {
             </p>
           </div>
         </div>
-      ) : (
+      </Show>
+      <Show when={overview.issues.length > 0}>
         <ol class="overview-issue-list">
           <For each={overview.issues} by={(issue) => issue.id}>
             {(issue) => (
@@ -87,7 +88,7 @@ function OverviewIssues({ overview }: { overview: OverviewStatus }) {
             )}
           </For>
         </ol>
-      )}
+      </Show>
     </section>
   );
 }
@@ -225,11 +226,11 @@ export default function Home() {
         />
         <OperatorScopeStrip freshness={refreshState} />
 
-        {operationalLoading ? (
+        <Show when={operationalLoading}>
           <QueryLoadingState description="Loading overview status signals..." />
-        ) : null}
+        </Show>
 
-        {operationalFailure ? (
+        <Show when={operationalFailure}>
           <QueryErrorState
             title="Unable to load overview"
             error={topologyQuery.error ?? systemQuery.error}
@@ -238,31 +239,29 @@ export default function Home() {
               void systemQuery.refresh();
             }}
           />
-        ) : null}
+        </Show>
 
-        {!operationalLoading && !operationalFailure ? (
-          <>
-            {topologyQuery.error && !topology ? (
-              <Alert
-                variant="warning"
-                title="Topology signals unavailable"
-                description={formatUnknownError(topologyQuery.error)}
-              />
-            ) : null}
-            {systemQuery.error && !system ? (
-              <Alert
-                variant="warning"
-                title="System counters unavailable"
-                description={formatUnknownError(systemQuery.error)}
-              />
-            ) : null}
+        <Show when={!operationalLoading && !operationalFailure}>
+          <Show when={topologyQuery.error && !topology}>
+            <Alert
+              variant="warning"
+              title="Topology signals unavailable"
+              description={formatUnknownError(topologyQuery.error)}
+            />
+          </Show>
+          <Show when={systemQuery.error && !system}>
+            <Alert
+              variant="warning"
+              title="System counters unavailable"
+              description={formatUnknownError(systemQuery.error)}
+            />
+          </Show>
 
-            <OverviewStatusBand overview={overview} />
-            <OverviewIssues overview={overview} />
-            <DomainHealth overview={overview} />
-            <BrokerVitals overview={overview} />
-          </>
-        ) : null}
+          <OverviewStatusBand overview={overview} />
+          <OverviewIssues overview={overview} />
+          <DomainHealth overview={overview} />
+          <BrokerVitals overview={overview} />
+        </Show>
       </Stack>
     </DomainPageFrame>
   );

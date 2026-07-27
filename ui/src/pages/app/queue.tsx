@@ -99,7 +99,7 @@ export default function QueuePage() {
       domain="queue"
       eyebrow="Durable work"
       title="Queue inventory"
-      description="Durable work resources for the active route family."
+      description="Durable work resources for the active Route Family."
       refreshLabel="Refresh queue"
       inventory={inventory}
       refreshing={overview.refreshing || inventory.refreshing}

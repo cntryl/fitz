@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { cleanupApp, createSPA } from "@askrjs/askr/boot";
 import { createInvalidationRecorder } from "@askrjs/askr/testing";
+import { createRouteRegistry, route } from "@askrjs/askr/router";
 import { SYSTEM_OVERVIEW_KEY } from "@/features/system/system-query";
 import { MESSAGING_TOPOLOGY_KEY } from "@/features/topology/topology-query";
 import RootLayout from "@/pages/_layout";
@@ -33,7 +34,9 @@ async function mountLayout(path: string, routePath = path) {
 
   await createSPA({
     root,
-    routes: [{ handler: LayoutHarness, path: routePath }],
+    registry: createRouteRegistry(() => {
+      route(routePath, LayoutHarness);
+    }),
   });
 
   await new Promise<void>((resolve) => queueMicrotask(() => resolve()));

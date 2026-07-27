@@ -1,5 +1,5 @@
 import { Link } from "@askrjs/askr/router";
-import { For } from "@askrjs/askr/control";
+import { For, Show } from "@askrjs/askr/control";
 import { Button } from "@askrjs/themes/components";
 
 export interface PageActionItem {
@@ -29,7 +29,7 @@ export default function PageActionBar({
   return (
     <section class="page-action-bar" aria-label={label}>
       {description ? <p>{description}</p> : null}
-      {actions.length > 0 ? (
+      <Show when={actions.length > 0}>
         <div class="page-action-bar-actions">
           <For each={actionItems} by={(action) => `${action.label}:${action.href ?? "button"}`}>
             {(action) =>
@@ -49,7 +49,7 @@ export default function PageActionBar({
             }
           </For>
         </div>
-      ) : null}
+      </Show>
     </section>
   );
 }

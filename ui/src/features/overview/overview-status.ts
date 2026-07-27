@@ -293,32 +293,32 @@ function brokerVitals(
     {
       caption: "Current live sessions",
       label: "Sessions",
-      value: broker ? formatNumber(broker.sessions) : "n/a",
+      value: broker ? formatNumber(broker.sessions) : "--",
     },
     {
       caption: "Client connections",
       label: "Connections",
-      value: broker ? formatNumber(broker.connections) : "n/a",
+      value: broker ? formatNumber(broker.connections) : "--",
     },
     {
       caption: "Broker message rate",
       label: "Messages/sec",
-      value: broker ? broker.messagesPerSecond.toFixed(2) : "n/a",
+      value: broker ? broker.messagesPerSecond.toFixed(2) : "--",
     },
     {
       caption: "Observed namespaces",
       label: "Realms",
-      value: broker ? formatNumber(broker.realms.length) : "n/a",
+      value: broker ? formatNumber(broker.realms.length) : "--",
     },
     {
       caption: "Current process uptime",
       label: "Uptime",
-      value: broker ? humanizeSeconds(broker.uptimeSeconds) : "n/a",
+      value: broker ? humanizeSeconds(broker.uptimeSeconds) : "--",
     },
     {
       caption: "Router backpressure",
       label: "Router pressure",
-      value: topology ? formatNumber(topology.broker.routerBackpressureTotal) : "n/a",
+      value: topology ? formatNumber(topology.broker.routerBackpressureTotal) : "--",
     },
   ];
 }

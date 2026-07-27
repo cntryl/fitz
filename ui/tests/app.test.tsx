@@ -26,7 +26,7 @@ import StreamPage from "@/pages/app/stream";
 import StreamResourcePage from "@/pages/app/stream-resource";
 import Logout from "@/pages/auth/logout";
 import Login from "@/pages/auth/login";
-import { getRoutes } from "@askrjs/askr/router";
+import { routeRegistry } from "@/pages/_routes";
 import { EmptyState } from "@askrjs/themes/components";
 import { NavBrand, NavGroup, NavItem, NavLink, Navbar } from "@askrjs/themes/components";
 import { Section } from "@askrjs/themes/components";
@@ -34,7 +34,6 @@ import { Card } from "@askrjs/themes/components";
 import { domainLinks, shellLinks } from "@/shared/navigation/domains";
 import QueueInflightTable from "@/components/shared/queue-inflight-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
-import "@/pages/_routes";
 
 describe("Admin UI", () => {
   it("defines the shared admin shell", () => {
@@ -137,7 +136,7 @@ describe("Admin UI", () => {
   });
 
   it("registers the expected routes", () => {
-    const paths = getRoutes().map((route) => route.path);
+    const paths = routeRegistry.routes.map((route) => route.path);
 
     expect(paths).toEqual(
       expect.arrayContaining([

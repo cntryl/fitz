@@ -1,4 +1,4 @@
-import { For } from "@askrjs/askr/control";
+import { For, Show } from "@askrjs/askr/control";
 import { currentRoute } from "@askrjs/askr/router";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
 import {
@@ -113,69 +113,74 @@ export default function RpcOperationPage() {
           operation={operation}
           freshness={queryFreshness(query)}
         />
-        {!data && query.loading ? (
+        <Show when={!data && query.loading}>
           <QueryLoadingState description="Loading RPC operation..." />
-        ) : null}
-        {!data && query.error ? (
+        </Show>
+        <Show when={!data && query.error}>
           <QueryErrorState
             title="Unable to load RPC operation"
             error={query.error}
             onRetry={() => query.refresh()}
           />
-        ) : null}
-        {data && detail ? (
-          <Stack gap="3">
-            {query.refreshing ? (
-              <QueryRefreshingState description="Refreshing RPC operation..." />
-            ) : null}
-            <DomainMetricTable
-              title="RPC operation metrics"
-              description="Live worker capacity and pending requests. Latency buckets are current observations; the API does not report a reset window for handled-call counters."
-              metrics={[
-                { label: "Workers", value: detail.workers_registered },
-                { label: "Pending requests", value: detail.requests_pending },
-                {
-                  label: "Slowest average latency",
-                  value: formatLatency(detail.slowest_worker_average_latency_ms),
-                },
-                { label: "Latency <5ms", value: detail.worker_latency_buckets.under_5ms },
-                { label: "Latency <25ms", value: detail.worker_latency_buckets.under_25ms },
-                { label: "Latency <100ms", value: detail.worker_latency_buckets.under_100ms },
-                { label: "Latency 100ms+", value: detail.worker_latency_buckets.over_100ms },
-              ]}
-            />
-            <Card padding="sm" variant="default">
-              <CardHeader>
-                <CardTitle titleAs="h2">Live call evidence</CardTitle>
-                <CardDescription>
-                  Broker-local worker registrations, pending calls, and correlation rows.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                {rows.length === 0 ? (
-                  <QueryEmptyState description="No live RPC call evidence is currently visible." />
-                ) : (
-                  <div class="domain-table-wrap rpc-operation-table-wrap">
-                    <Table>
-                      <TableHead>
-                        <TableRow>
-                          <TableHeaderCell>State</TableHeaderCell>
-                          <TableHeaderCell>Worker</TableHeaderCell>
-                          <TableHeaderCell>Correlation</TableHeaderCell>
-                          <TableHeaderCell>Observed handled total</TableHeaderCell>
-                          <TableHeaderCell>Latency</TableHeaderCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        <RpcCallEvidenceRows rows={rows} />
-                      </TableBody>
-                    </Table>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </Stack>
-        ) : null}
+        </Show>
+        <Show when={detail}>
+          {(detail) => (
+            <Stack gap="3">
+              <Show when={query.refreshing}>
+                <QueryRefreshingState description="Refreshing RPC operation..." />
+              </Show>
+              <DomainMetricTable
+                title="RPC operation metrics"
+                description="Live worker capacity and pending requests. Latency buckets are current observations; the API does not report a reset window for handled-call counters."
+                metrics={[
+                  { label: "Workers", value: detail.workers_registered },
+                  { label: "Pending requests", value: detail.requests_pending },
+                  {
+                    label: "Slowest average latency",
+                    value: formatLatency(detail.slowest_worker_average_latency_ms),
+                  },
+                  { label: "Latency <5ms", value: detail.worker_latency_buckets.under_5ms },
+                  { label: "Latency <25ms", value: detail.worker_latency_buckets.under_25ms },
+                  { label: "Latency <100ms", value: detail.worker_latency_buckets.under_100ms },
+                  { label: "Latency 100ms+", value: detail.worker_latency_buckets.over_100ms },
+                ]}
+              />
+              <Card padding="sm" variant="default">
+                <CardHeader>
+                  <CardTitle titleAs="h2">Live call evidence</CardTitle>
+                  <CardDescription>
+                    Broker-local worker registrations, pending calls, and correlation rows.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Show
+                    when={rows.length === 0}
+                    fallback={
+                      <div class="domain-table-wrap rpc-operation-table-wrap">
+                        <Table>
+                          <TableHead>
+                            <TableRow>
+                              <TableHeaderCell>State</TableHeaderCell>
+                              <TableHeaderCell>Worker</TableHeaderCell>
+                              <TableHeaderCell>Correlation</TableHeaderCell>
+                              <TableHeaderCell>Observed handled total</TableHeaderCell>
+                              <TableHeaderCell>Latency</TableHeaderCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            <RpcCallEvidenceRows rows={rows} />
+                          </TableBody>
+                        </Table>
+                      </div>
+                    }
+                  >
+                    <QueryEmptyState description="No live RPC call evidence is currently visible." />
+                  </Show>
+                </CardContent>
+              </Card>
+            </Stack>
+          )}
+        </Show>
       </Stack>
     </DomainPageFrame>
   );

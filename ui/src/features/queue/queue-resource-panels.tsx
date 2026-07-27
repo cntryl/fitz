@@ -1,4 +1,4 @@
-import { For } from "@askrjs/askr/control";
+import { For, Show } from "@askrjs/askr/control";
 import { VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
 import {
   Badge,
@@ -191,13 +191,14 @@ const timelineColumns: readonly VirtualTableColumn<QueueResourceTimelineEvent>[]
 
       return (
         <div class="queue-timeline-context">
-          {timelineContext.length > 0 ? (
+          <Show when={timelineContext.length > 0}>
             <For each={timelineContext.slice(0, 2)} by={(line) => line}>
               {(line) => <span title={line}>{line}</span>}
             </For>
-          ) : (
+          </Show>
+          <Show when={timelineContext.length === 0}>
             <span>Context unavailable</span>
-          )}
+          </Show>
         </div>
       );
     },

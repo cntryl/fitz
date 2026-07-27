@@ -16,12 +16,12 @@ export interface SessionTableProps {
 }
 
 function reportedText(value: string | null | undefined) {
-  return value && value.length > 0 ? value : "Not reported";
+  return value && value.length > 0 ? value : "Unknown";
 }
 
 function messageCounts(session: ActiveSession) {
   if (session.messagesSent === undefined && session.messagesReceived === undefined) {
-    return "Not reported";
+    return "Unknown";
   }
 
   return `${session.messagesSent ?? "--"} sent / ${session.messagesReceived ?? "--"} received`;
@@ -69,7 +69,7 @@ export default function SessionTable({ sessions }: SessionTableProps) {
     },
     {
       id: "route-family",
-      header: "Route family",
+      header: "Route Family",
       width: "8%",
       cellComponent: ({ row }) => <span>{row.routeFamily ?? "Unknown"}</span>,
     },
@@ -205,7 +205,7 @@ export default function SessionTable({ sessions }: SessionTableProps) {
                       </div>
 
                       <div>
-                        <dt>Route family</dt>
+                        <dt>Route Family</dt>
                         <dd>{session.routeFamily ?? "Unknown"}</dd>
                       </div>
 

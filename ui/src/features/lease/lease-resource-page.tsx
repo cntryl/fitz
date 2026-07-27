@@ -1,6 +1,6 @@
 import { currentRoute } from "@askrjs/askr/router";
 import { state } from "@askrjs/askr";
-import { For } from "@askrjs/askr/control";
+import { For, Show } from "@askrjs/askr/control";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
 import {
   Card,
@@ -194,28 +194,28 @@ export default function LeaseResourcePage() {
           resource={resource}
           freshness={queryFreshness(rowsQuery)}
         />
-        {!rowsData && rowsQuery.loading ? (
+        <Show when={!rowsData && rowsQuery.loading}>
           <QueryLoadingState description="Loading lease ownership rows..." />
-        ) : null}
-        {rowsQuery.error ? (
+        </Show>
+        <Show when={rowsQuery.error}>
           <QueryErrorState
             title="Unable to load lease ownership rows"
             error={rowsQuery.error}
             onRetry={() => rowsQuery.refresh()}
           />
-        ) : null}
+        </Show>
 
-        {rowsData && rows.length > 0 ? (
+        <Show when={rowsData && rows.length > 0}>
           <LeaseResourceRowsTable rows={rows} now={leaseClockNow} />
-        ) : null}
+        </Show>
 
-        {rowsData && rows.length === 0 ? (
+        <Show when={rowsData && rows.length === 0}>
           <QueryEmptyState description="No visible lease ownership rows at the current level." />
-        ) : null}
+        </Show>
 
-        {rowsQuery.refreshing ? (
+        <Show when={rowsQuery.refreshing}>
           <QueryRefreshingState description="Refreshing lease ownership rows..." />
-        ) : null}
+        </Show>
       </Stack>
     </DomainPageFrame>
   );

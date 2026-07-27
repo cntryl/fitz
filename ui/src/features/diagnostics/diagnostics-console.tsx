@@ -1,4 +1,4 @@
-import { For } from "@askrjs/askr/control";
+import { For, Show } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
 import { Button } from "@askrjs/themes/components";
 import { Inline, Stack } from "@askrjs/themes/components";
@@ -122,7 +122,7 @@ function buildInfrastructureRows(
       value: fixedRate(system.broker.messagesPerSecond),
     },
     {
-      action: "Review route families",
+      action: "Review Route Families",
       detail: "Route-family groups from the topology snapshot.",
       href: "/",
       signal: "Route families",
@@ -675,36 +675,39 @@ export default function DiagnosticsConsole({
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {topologyLoading ? (
+          <Show when={topologyLoading}>
             <QueryLoadingState description="Loading topology hotspots..." />
-          ) : null}
-          {topologyError ? (
+          </Show>
+          <Show when={topologyError}>
             <QueryErrorState
               title="Unable to load topology diagnostics"
               error={topologyError}
               onRetry={onRetryTopology}
             />
-          ) : null}
-          {!topologyLoading && !topologyError ? (
-            hotspots.length === 0 ? (
+          </Show>
+          <Show when={!topologyLoading && !topologyError}>
+            <Show
+              when={hotspots.length === 0}
+              fallback={
+                <VirtualTable<DiagnosticHotspot>
+                  aria-label="Diagnostic hotspots"
+                  class="diagnostics-virtual-table"
+                  columns={hotspotColumns}
+                  getKey={hotspotKey}
+                  headerHeight={44}
+                  overscan={4}
+                  rowHeight={48}
+                  rows={hotspots}
+                  style={{ height: diagnosticTableHeight(hotspots.length) }}
+                />
+              }
+            >
               <QueryEmptyState
                 title="No diagnostic hotspots"
                 description="The broker did not report pressure hotspots in this snapshot."
               />
-            ) : (
-              <VirtualTable<DiagnosticHotspot>
-                aria-label="Diagnostic hotspots"
-                class="diagnostics-virtual-table"
-                columns={hotspotColumns}
-                getKey={hotspotKey}
-                headerHeight={44}
-                overscan={4}
-                rowHeight={48}
-                rows={hotspots}
-                style={{ height: diagnosticTableHeight(hotspots.length) }}
-              />
-            )
-          ) : null}
+            </Show>
+          </Show>
         </CardContent>
       </Card>
 
@@ -717,24 +720,27 @@ export default function DiagnosticsConsole({
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {suggestedQueries.length === 0 ? (
+          <Show
+            when={suggestedQueries.length === 0}
+            fallback={
+              <VirtualTable<SuggestedQuery>
+                aria-label="Suggested diagnostic queries"
+                class="diagnostics-virtual-table"
+                columns={suggestedColumns}
+                getKey={suggestedQueryKey}
+                headerHeight={44}
+                overscan={4}
+                rowHeight={48}
+                rows={suggestedQueries}
+                style={{ height: diagnosticTableHeight(suggestedQueries.length) }}
+              />
+            }
+          >
             <QueryCompactEmptyState
               title="No suggested queries"
               description="The broker did not recommend a follow-up query for this snapshot."
             />
-          ) : (
-            <VirtualTable<SuggestedQuery>
-              aria-label="Suggested diagnostic queries"
-              class="diagnostics-virtual-table"
-              columns={suggestedColumns}
-              getKey={suggestedQueryKey}
-              headerHeight={44}
-              overscan={4}
-              rowHeight={48}
-              rows={suggestedQueries}
-              style={{ height: diagnosticTableHeight(suggestedQueries.length) }}
-            />
-          )}
+          </Show>
         </CardContent>
       </Card>
 
@@ -754,34 +760,39 @@ export default function DiagnosticsConsole({
           </Inline>
         </CardHeader>
         <CardContent>
-          {metricsLoading ? <QueryLoadingState description="Loading metric families..." /> : null}
-          {metricsError ? (
+          <Show when={metricsLoading}>
+            <QueryLoadingState description="Loading metric families..." />
+          </Show>
+          <Show when={metricsError}>
             <QueryErrorState
               title="Unable to load metric families"
               error={metricsError}
               onRetry={onRetryMetrics}
             />
-          ) : null}
-          {!metricsLoading && !metricsError ? (
-            familyRows.length === 0 ? (
+          </Show>
+          <Show when={!metricsLoading && !metricsError}>
+            <Show
+              when={familyRows.length === 0}
+              fallback={
+                <VirtualTable<MetricFamilyRow>
+                  aria-label="Diagnostic metric families"
+                  class="diagnostics-virtual-table"
+                  columns={metricColumns}
+                  getKey={(row) => row.name}
+                  headerHeight={44}
+                  overscan={8}
+                  rowHeight={48}
+                  rows={familyRows}
+                  style={{ height: diagnosticTableHeight(familyRows.length) }}
+                />
+              }
+            >
               <QueryEmptyState
                 title="No metric families"
                 description="The metrics endpoint did not return parseable metric families."
               />
-            ) : (
-              <VirtualTable<MetricFamilyRow>
-                aria-label="Diagnostic metric families"
-                class="diagnostics-virtual-table"
-                columns={metricColumns}
-                getKey={(row) => row.name}
-                headerHeight={44}
-                overscan={8}
-                rowHeight={48}
-                rows={familyRows}
-                style={{ height: diagnosticTableHeight(familyRows.length) }}
-              />
-            )
-          ) : null}
+            </Show>
+          </Show>
         </CardContent>
       </Card>
     </Stack>

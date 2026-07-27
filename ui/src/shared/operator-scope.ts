@@ -33,12 +33,12 @@ function optionFromTopologyRouteFamily(routeFamily: number): RouteFamilyOption {
   return {
     description: `Resolved broker route family ${routeFamily} from the current admin topology snapshot.`,
     id: routeFamily.toString(),
-    label: `Route family ${routeFamily}`,
+    label: `Route Family ${routeFamily}`,
   };
 }
 
 function labelFromRouteFamily(routeFamily: string) {
-  return `Route family ${routeFamily}`;
+  return `Route Family ${routeFamily}`;
 }
 
 function optionFromSessionRouteFamily(routeFamily: string, openAccess: boolean): RouteFamilyOption {

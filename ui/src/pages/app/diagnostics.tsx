@@ -1,4 +1,5 @@
 import { state } from "@askrjs/askr";
+import { Show } from "@askrjs/askr/control";
 import { currentRoute, updateRouteQuery } from "@askrjs/askr/router";
 import { Input, Label } from "@askrjs/ui";
 import { Button, Inline, Stack } from "@askrjs/themes/components";
@@ -141,54 +142,58 @@ export default function DiagnosticsPage() {
                 />
               </div>
               <Button type="submit">Search</Button>
-              {searchQuery ? (
+              <Show when={searchQuery}>
                 <Button type="button" variant="ghost" onPress={clearSearch}>
                   Clear search
                 </Button>
-              ) : null}
+              </Show>
             </Inline>
           </form>
         </section>
 
-        {searchQuery ? (
-          <DiagnosticsSearchResults
-            query={searchQuery}
-            routeFamilyId={searchRouteFamily}
-            routeFamilyLabel={
-              operator.routeFamilies.find((family) => family.id === searchRouteFamily)?.label ??
-              operator.selectedRouteFamily.label
-            }
-          />
-        ) : null}
+        <Show when={searchQuery}>
+          {(query) => (
+            <DiagnosticsSearchResults
+              query={query}
+              routeFamilyId={searchRouteFamily}
+              routeFamilyLabel={
+                operator.routeFamilies.find((family) => family.id === searchRouteFamily)?.label ??
+                operator.selectedRouteFamily.label
+              }
+            />
+          )}
+        </Show>
 
-        {!data && system.loading ? (
+        <Show when={!data && system.loading}>
           <QueryLoadingState description="Loading broker diagnostics..." />
-        ) : null}
+        </Show>
 
-        {!data && system.error ? (
+        <Show when={!data && system.error}>
           <QueryErrorState
             title="Unable to load diagnostics"
             error={system.error}
             onRetry={() => system.refresh()}
           />
-        ) : null}
+        </Show>
 
-        {data ? (
-          <Stack gap="3">
-            <DiagnosticsConsole
-              metrics={metrics.data}
-              metricsError={metrics.error}
-              metricsLoading={metrics.loading && !metrics.data}
-              onRetryMetrics={() => metrics.refresh()}
-              onRetryTopology={() => topology.refresh()}
-              operatorLabel={operator.selectedRouteFamily.label}
-              system={data}
-              topology={topology.data}
-              topologyError={topology.error}
-              topologyLoading={topology.loading && !topology.data}
-            />
-          </Stack>
-        ) : null}
+        <Show when={data}>
+          {(data) => (
+            <Stack gap="3">
+              <DiagnosticsConsole
+                metrics={metrics.data}
+                metricsError={metrics.error}
+                metricsLoading={metrics.loading && !metrics.data}
+                onRetryMetrics={() => metrics.refresh()}
+                onRetryTopology={() => topology.refresh()}
+                operatorLabel={operator.selectedRouteFamily.label}
+                system={data}
+                topology={topology.data}
+                topologyError={topology.error}
+                topologyLoading={topology.loading && !topology.data}
+              />
+            </Stack>
+          )}
+        </Show>
       </Stack>
     </DomainPageFrame>
   );

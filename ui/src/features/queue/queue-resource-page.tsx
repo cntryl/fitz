@@ -1,4 +1,5 @@
 import { state } from "@askrjs/askr";
+import { Show } from "@askrjs/askr/control";
 import { currentRoute } from "@askrjs/askr/router";
 import { Stack } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
@@ -124,53 +125,57 @@ export default function QueueResourcePage() {
           }
         />
 
-        {resourceQuery.refreshing && data ? (
+        <Show when={resourceQuery.refreshing && data}>
           <QueryRefreshingState description="Refreshing queue resource..." />
-        ) : null}
+        </Show>
 
-        {resourceQuery.loading && !data ? (
+        <Show when={resourceQuery.loading && !data}>
           <QueryLoadingState description="Loading queue resource..." />
-        ) : null}
+        </Show>
 
-        {resourceQueryError && !data ? (
+        <Show when={resourceQueryError && !data}>
           <QueryErrorState error={resourceQueryError} onRetry={() => resourceQuery.refresh()} />
-        ) : null}
+        </Show>
 
-        {resourceQueryError && data ? (
+        <Show when={resourceQueryError && data}>
           <QueryErrorState error={resourceQueryError} onRetry={() => resourceQuery.refresh()} />
-        ) : null}
+        </Show>
 
-        {actionError ? <QueryErrorState error={actionError} /> : null}
+        <Show when={actionError}>
+          <QueryErrorState error={actionError} />
+        </Show>
 
-        {data ? (
-          <Stack gap="3">
-            <QueueResourceCurrentValuesPanel detail={data.detail} />
-            <QueueResourceDeadLettersPanel
-              messages={data.deadLetters}
-              onReplay={(message) => openDeadLetterConfirmation("replay", message)}
-              onPurge={(message) => openDeadLetterConfirmation("purge", message)}
-              pendingAction={actionKind()}
-              pendingMessageId={actionMessageId()}
-            />
-            <QueueResourceInflightPanel messages={data.inflight} />
-            <QueueResourceTimelinePanel timeline={data.timeline} />
+        <Show when={data}>
+          {(data) => (
+            <Stack gap="3">
+              <QueueResourceCurrentValuesPanel detail={data.detail} />
+              <QueueResourceDeadLettersPanel
+                messages={data.deadLetters}
+                onReplay={(message) => openDeadLetterConfirmation("replay", message)}
+                onPurge={(message) => openDeadLetterConfirmation("purge", message)}
+                pendingAction={actionKind()}
+                pendingMessageId={actionMessageId()}
+              />
+              <QueueResourceInflightPanel messages={data.inflight} />
+              <QueueResourceTimelinePanel timeline={data.timeline} />
 
-            <QueueDeadLetterDialog
-              actionError={actionError}
-              actionPending={actionPending}
-              confirmationKind={confirmationKind}
-              confirmationMessage={confirmationMessage}
-              onOpenChange={(open) => {
-                if (!open && !actionPending) {
-                  setConfirmKind(null);
-                  setConfirmMessage(null);
-                }
-              }}
-              onRunAction={(kind, message) => void runDeadLetterAction(kind, message)}
-              scopeLabel={scopeLabel}
-            />
-          </Stack>
-        ) : null}
+              <QueueDeadLetterDialog
+                actionError={actionError}
+                actionPending={actionPending}
+                confirmationKind={confirmationKind}
+                confirmationMessage={confirmationMessage}
+                onOpenChange={(open) => {
+                  if (!open && !actionPending) {
+                    setConfirmKind(null);
+                    setConfirmMessage(null);
+                  }
+                }}
+                onRunAction={(kind, message) => void runDeadLetterAction(kind, message)}
+                scopeLabel={scopeLabel}
+              />
+            </Stack>
+          )}
+        </Show>
       </Stack>
     </DomainPageFrame>
   );

@@ -1,4 +1,4 @@
-import { For } from "@askrjs/askr/control";
+import { For, Show } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
 import { Button } from "@askrjs/themes/components";
 import { Inline, Stack } from "@askrjs/themes/components";
@@ -131,7 +131,9 @@ export default function SearchResultsPanel({
             <CardDescription>{description}</CardDescription>
           </Stack>
           <Inline gap="2" align="center" wrap="wrap">
-            {search?.truncated ? <Badge variant="warning">Truncated</Badge> : null}
+            <Show when={search?.truncated}>
+              <Badge variant="warning">Truncated</Badge>
+            </Show>
             <Button type="button" variant="outline" size="sm" onPress={onRetry}>
               Refresh
             </Button>
@@ -139,17 +141,19 @@ export default function SearchResultsPanel({
         </Inline>
       </CardHeader>
       <CardContent>
-        {loading && !search ? <QueryLoadingState description="Searching admin state..." /> : null}
-        {!search && error ? (
+        <Show when={loading && !search}>
+          <QueryLoadingState description="Searching admin state..." />
+        </Show>
+        <Show when={!search && error}>
           <QueryErrorState title="Unable to search admin state" error={error} onRetry={onRetry} />
-        ) : null}
-        {search && results.length === 0 ? (
+        </Show>
+        <Show when={search && results.length === 0}>
           <QueryEmptyState
             title="No matching admin state"
             description="Try a realm, area, resource, operation, message id, session id, owner, or correlation id."
           />
-        ) : null}
-        {results.length > 0 ? (
+        </Show>
+        <Show when={results.length > 0}>
           <Stack gap="3">
             <VirtualTable<AdminSearchResult>
               aria-label="Admin search results"
@@ -172,7 +176,7 @@ export default function SearchResultsPanel({
               </For>
             </div>
           </Stack>
-        ) : null}
+        </Show>
       </CardContent>
     </Card>
   );
