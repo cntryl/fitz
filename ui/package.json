@@ -19,14 +19,14 @@
     "gen:adapters": "askr generate ../public/openapi.yml -o ./src/adapters/generated"
   },
   "dependencies": {
-    "@askrjs/askr": "^0.0.75",
+    "@askrjs/askr": "^0.0.76",
     "@askrjs/fetch": "0.0.2",
     "@askrjs/lucide": "0.0.5",
     "@askrjs/themes": "0.0.16",
     "@askrjs/ui": "^0.0.19"
   },
   "devDependencies": {
-    "@askrjs/cli": "0.0.12",
+    "@askrjs/cli": "0.0.13",
     "@askrjs/vite": "0.0.8",
     "@playwright/test": "^1.62.0",
     "@types/node": "^26.1.1",

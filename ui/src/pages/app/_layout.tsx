@@ -33,7 +33,6 @@ import {
   SidebarMenuItem,
 } from "@askrjs/themes/components";
 import { ThemeToggle } from "@askrjs/themes/theme";
-import fitzLogo from "@/assets/fitz-logo.png";
 import AppFooter from "@/components/shared/app-footer";
 import { createCurrentSessionQuery } from "@/features/session/session-query";
 import { createMessagingTopologyQuery } from "@/features/topology/topology-query";
@@ -345,7 +344,7 @@ export default function Layout({ children }: { children?: unknown }) {
                   >
                     <img
                       class="fitz-brand-logo"
-                      src={fitzLogo}
+                      src="/assets/logos/fitz-logo-128x128.png"
                       alt=""
                       width={28}
                       height={28}
