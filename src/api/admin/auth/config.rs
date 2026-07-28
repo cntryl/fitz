@@ -11,8 +11,7 @@ pub fn protected_admin_configured_from_env() -> bool {
         return false;
     }
 
-    env_non_empty("FITZ_ADMIN_USERNAME").is_some()
-        && env_non_empty("FITZ_ADMIN_PASSWORD_HASH").is_some()
+    env_non_empty("FITZ_ROOT_PASSWORD").is_some()
 }
 
 pub(super) fn env_non_empty(key: &str) -> Option<String> {

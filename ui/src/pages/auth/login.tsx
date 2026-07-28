@@ -31,7 +31,7 @@ function resolveNextTarget() {
 }
 
 export default function Login() {
-  const [username, setUsername] = state("");
+  const [username, setUsername] = state("root");
   const [password, setPassword] = state("");
 
   task(() => manageRoutePageContext("Sign in"));
@@ -65,7 +65,7 @@ export default function Login() {
         <CardDescription>
           {openAccess
             ? "Admin authentication is disabled for this Fitz instance."
-            : "Use your Fitz Admin account to continue."}
+            : "Sign in as root with the configured root password."}
         </CardDescription>
       </CardHeader>
 
@@ -92,7 +92,7 @@ export default function Login() {
                 required
                 value={username()}
                 onInput={(event: Event) => setUsername((event.target as HTMLInputElement).value)}
-                placeholder="admin"
+                placeholder="root"
               />
             </Field>
 

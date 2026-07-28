@@ -1,9 +1,5 @@
 //! Integration test for admin REST API
 
-pub(crate) use argon2::{
-    password_hash::{rand_core::OsRng, SaltString},
-    Argon2, PasswordHasher,
-};
 pub(crate) use bytes::Bytes;
 pub(crate) use fitz::api::admin::{
     KvTransaction, LeaseInfo, NoticeRouteInfo, NoticeSubscription, QueueAgeBuckets,
@@ -41,17 +37,8 @@ use std::fmt::Write as _;
 pub(crate) use std::sync::Arc;
 pub(crate) use std::time::{SystemTime, UNIX_EPOCH};
 
-pub(crate) fn password_hash_for(password: &str) -> String {
-    let salt = SaltString::generate(&mut OsRng);
-    Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
-        .unwrap()
-        .to_string()
-}
-
 pub(crate) fn configure_admin_auth() {
-    std::env::set_var("FITZ_ADMIN_USERNAME", "admin");
-    std::env::set_var("FITZ_ADMIN_PASSWORD_HASH", password_hash_for("pwd123"));
+    std::env::set_var("FITZ_ROOT_PASSWORD", "pwd123");
     std::env::set_var("FITZ_ADMIN_SESSION_TTL_SECS", "3600");
 }
 
@@ -858,7 +845,7 @@ pub(crate) async fn login_cookie(runtime: Arc<Runtime>) -> String {
         .header("Content-Type", "application/json")
         .header("host", "localhost")
         .header("origin", "http://localhost")
-        .body(Body::from(r#"{"username":"admin","password":"pwd123"}"#))
+        .body(Body::from(r#"{"username":"root","password":"pwd123"}"#))
         .unwrap();
 
     let response = fitz::api::admin::handlers::handle_request(req, runtime.clone())
@@ -886,7 +873,7 @@ pub(crate) fn expired_admin_cookie() -> String {
     )
     .unwrap_or(i64::MAX);
     let claims = serde_json::json!({
-        "sub": "admin",
+        "sub": "root",
         "role": "admin",
         "iat": now - 7_200,
         "exp": now - 3_600,

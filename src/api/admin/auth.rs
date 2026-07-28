@@ -1,6 +1,6 @@
 use argon2::{
-    password_hash::{PasswordHash, PasswordVerifier},
-    Argon2,
+    password_hash::{rand_core::OsRng, PasswordHash, PasswordVerifier, SaltString},
+    Argon2, PasswordHasher,
 };
 use chrono::{Duration, Utc};
 use hyper::StatusCode;
@@ -25,7 +25,8 @@ pub use responses::{parse_login_request, session_created_response, session_delet
 
 const ADMIN_SESSION_COOKIE: &str = "fitz_admin_session";
 const DEFAULT_SESSION_TTL_SECS: i64 = 28_800;
-const DEFAULT_OPEN_ADMIN_USERNAME: &str = "admin";
+const ROOT_USERNAME: &str = "root";
+const ROOT_PASSWORD_ENV: &str = "FITZ_ROOT_PASSWORD";
 const ADMIN_PUBLIC_ORIGIN_ENV: &str = "FITZ_ADMIN_PUBLIC_ORIGIN";
 const ADMIN_ROUTE_FAMILIES_ENV: &str = "FITZ_ADMIN_ROUTE_FAMILIES";
 const ADMIN_LOGIN_ATTEMPT_LIMIT: u32 = 5;
@@ -167,11 +168,17 @@ impl AdminAuth {
             Ok(value) if value.eq_ignore_ascii_case("open") => AdminAuthMode::Open,
             _ => AdminAuthMode::Protected,
         };
-        let username = env_non_empty("FITZ_ADMIN_USERNAME");
-        let password_hash = env_non_empty("FITZ_ADMIN_PASSWORD_HASH");
+        let root_password = env_non_empty(ROOT_PASSWORD_ENV);
 
-        let settings = match (username, password_hash) {
-            (Some(username), Some(password_hash)) => {
+        let settings = match root_password {
+            Some(root_password) => {
+                let salt = SaltString::generate(&mut OsRng);
+                let password_hash = Argon2::default()
+                    .hash_password(root_password.as_bytes(), &salt)
+                    .map(|hash| hash.to_string());
+                if let Err(error) = &password_hash {
+                    tracing::error!(%error, "Failed to hash the configured Fitz root password");
+                }
                 let jwt_secret = env_non_empty("FITZ_ADMIN_JWT_SECRET")
                     .unwrap_or_else(|| Uuid::new_v4().to_string());
                 let session_ttl_secs = std::env::var("FITZ_ADMIN_SESSION_TTL_SECS")
@@ -191,8 +198,8 @@ impl AdminAuth {
 
                 tracing::info!(session_ttl_secs, cookie_secure, "Admin auth configured");
 
-                Some(AdminAuthSettings {
-                    username,
+                password_hash.ok().map(|password_hash| AdminAuthSettings {
+                    username: ROOT_USERNAME.to_string(),
                     password_hash,
                     jwt_secret,
                     session_ttl_secs,
@@ -392,8 +399,7 @@ impl AdminAuth {
     ) -> Result<AdminPrincipal, AuthFailure> {
         if matches!(self.mode, AdminAuthMode::Open) {
             return Ok(AdminPrincipal {
-                username: std::env::var("FITZ_ADMIN_OPEN_USERNAME")
-                    .unwrap_or_else(|_| DEFAULT_OPEN_ADMIN_USERNAME.to_string()),
+                username: ROOT_USERNAME.to_string(),
                 route_family_access: AdminRouteFamilyAccess::wildcard(),
             });
         }

@@ -39,6 +39,10 @@ const kvRowsQuery = defineQuery<KvRowsQueryInput, KvRowsResult>({
   fetch: ({ scope, signal, state }) => kvService.browseCommittedRows(scope, state, { signal }),
 });
 
-export function createKvRowsQuery(scope: KvResourceScope, state: KvRowsQueryState) {
-  return createQuery(kvRowsQuery, { family: currentRouteFamilySegment(), scope, state });
+export function createKvRowsQuery(
+  scope: KvResourceScope,
+  state: KvRowsQueryState,
+  options?: { skipInitialFetch?: boolean },
+) {
+  return createQuery(kvRowsQuery, { family: currentRouteFamilySegment(), scope, state }, options);
 }

@@ -41,8 +41,7 @@ pub(super) fn with_auth_env<T>(values: &[(&str, &str)], test: impl FnOnce() -> T
         "FITZ_TCP_ENABLED",
         "FITZ_WS_ALLOWED_ORIGINS",
         "FITZ_ADMIN_AUTH_MODE",
-        "FITZ_ADMIN_USERNAME",
-        "FITZ_ADMIN_PASSWORD_HASH",
+        "FITZ_ROOT_PASSWORD",
         "FITZ_ADMIN_COOKIE_SECURE",
         "FITZ_ADMIN_PUBLIC_ORIGIN",
         ENV_QUEUE_WRITE_POLICY,
@@ -107,8 +106,7 @@ pub(super) fn with_storage_env<T>(values: &[(&str, &str)], test: impl FnOnce() -
         "GCS_HMAC_ACCESS_ID",
         "GCS_HMAC_SECRET",
         "FITZ_ADMIN_AUTH_MODE",
-        "FITZ_ADMIN_USERNAME",
-        "FITZ_ADMIN_PASSWORD_HASH",
+        "FITZ_ROOT_PASSWORD",
         ENV_DRAIN_GRACE_SECONDS,
         ENV_DRAIN_CLOSE_REASON,
     ];
@@ -514,11 +512,7 @@ pub(super) fn should_allow_loopback_bind_without_external_tls_when_auth_required
 pub(super) fn should_reject_public_bind_without_external_tls_ack_when_protected_admin_configured() {
     with_auth_env(
         &[
-            ("FITZ_ADMIN_USERNAME", "admin"),
-            (
-                "FITZ_ADMIN_PASSWORD_HASH",
-                "$argon2id$v=19$m=16,t=2,p=1$c2FsdA$hash",
-            ),
+            ("FITZ_ROOT_PASSWORD", "pwd123"),
             ("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com"),
         ],
         || {
@@ -544,28 +538,19 @@ pub(super) fn should_reject_public_bind_without_external_tls_ack_when_protected_
 #[test]
 #[serial]
 pub(super) fn should_allow_loopback_bind_without_external_tls_when_protected_admin_configured() {
-    with_auth_env(
-        &[
-            ("FITZ_ADMIN_USERNAME", "admin"),
-            (
-                "FITZ_ADMIN_PASSWORD_HASH",
-                "$argon2id$v=19$m=16,t=2,p=1$c2FsdA$hash",
-            ),
-        ],
-        || {
-            // Arrange
-            let config = BootConfig::new()
-                .with_auth_config(crate::auth::AuthConfig::Disabled)
-                .with_bind_addr("127.0.0.1".to_string())
-                .with_assume_external_tls(false);
+    with_auth_env(&[("FITZ_ROOT_PASSWORD", "pwd123")], || {
+        // Arrange
+        let config = BootConfig::new()
+            .with_auth_config(crate::auth::AuthConfig::Disabled)
+            .with_bind_addr("127.0.0.1".to_string())
+            .with_assume_external_tls(false);
 
-            // Act
-            let result = config.validate();
+        // Act
+        let result = config.validate();
 
-            // Assert
-            assert!(result.is_ok());
-        },
-    );
+        // Assert
+        assert!(result.is_ok());
+    });
 }
 
 #[test]
@@ -573,11 +558,7 @@ pub(super) fn should_allow_loopback_bind_without_external_tls_when_protected_adm
 pub(super) fn should_allow_public_bind_with_external_tls_ack_when_protected_admin_configured() {
     with_auth_env(
         &[
-            ("FITZ_ADMIN_USERNAME", "admin"),
-            (
-                "FITZ_ADMIN_PASSWORD_HASH",
-                "$argon2id$v=19$m=16,t=2,p=1$c2FsdA$hash",
-            ),
+            ("FITZ_ROOT_PASSWORD", "pwd123"),
             ("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com"),
         ],
         || {
@@ -599,32 +580,23 @@ pub(super) fn should_allow_public_bind_with_external_tls_ack_when_protected_admi
 #[test]
 #[serial]
 pub(super) fn should_reject_public_protected_admin_without_public_origin() {
-    with_auth_env(
-        &[
-            ("FITZ_ADMIN_USERNAME", "admin"),
-            (
-                "FITZ_ADMIN_PASSWORD_HASH",
-                "$argon2id$v=19$m=16,t=2,p=1$c2FsdA$hash",
-            ),
-        ],
-        || {
-            // Arrange
-            let config = BootConfig::new()
-                .with_auth_config(crate::auth::AuthConfig::Disabled)
-                .with_bind_addr("0.0.0.0".to_string())
-                .with_assume_external_tls(true);
+    with_auth_env(&[("FITZ_ROOT_PASSWORD", "pwd123")], || {
+        // Arrange
+        let config = BootConfig::new()
+            .with_auth_config(crate::auth::AuthConfig::Disabled)
+            .with_bind_addr("0.0.0.0".to_string())
+            .with_assume_external_tls(true);
 
-            // Act
-            let result = config.validate();
+        // Act
+        let result = config.validate();
 
-            // Assert
-            assert!(result.is_err());
-            assert!(result
-                .unwrap_err()
-                .to_string()
-                .contains("FITZ_ADMIN_PUBLIC_ORIGIN is required"));
-        },
-    );
+        // Assert
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("FITZ_ADMIN_PUBLIC_ORIGIN is required"));
+    });
 }
 
 #[test]
@@ -632,11 +604,7 @@ pub(super) fn should_reject_public_protected_admin_without_public_origin() {
 pub(super) fn should_reject_insecure_public_admin_origin() {
     with_auth_env(
         &[
-            ("FITZ_ADMIN_USERNAME", "admin"),
-            (
-                "FITZ_ADMIN_PASSWORD_HASH",
-                "$argon2id$v=19$m=16,t=2,p=1$c2FsdA$hash",
-            ),
+            ("FITZ_ROOT_PASSWORD", "pwd123"),
             ("FITZ_ADMIN_PUBLIC_ORIGIN", "http://admin.example.com"),
         ],
         || {
@@ -664,11 +632,7 @@ pub(super) fn should_reject_insecure_public_admin_origin() {
 pub(super) fn should_reject_insecure_admin_cookie_on_public_bind() {
     with_auth_env(
         &[
-            ("FITZ_ADMIN_USERNAME", "admin"),
-            (
-                "FITZ_ADMIN_PASSWORD_HASH",
-                "$argon2id$v=19$m=16,t=2,p=1$c2FsdA$hash",
-            ),
+            ("FITZ_ROOT_PASSWORD", "pwd123"),
             ("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com"),
             ("FITZ_ADMIN_COOKIE_SECURE", "false"),
         ],
@@ -698,11 +662,7 @@ pub(super) fn should_allow_public_bind_without_external_tls_when_admin_open_mode
     with_auth_env(
         &[
             ("FITZ_ADMIN_AUTH_MODE", "open"),
-            ("FITZ_ADMIN_USERNAME", "admin"),
-            (
-                "FITZ_ADMIN_PASSWORD_HASH",
-                "$argon2id$v=19$m=16,t=2,p=1$c2FsdA$hash",
-            ),
+            ("FITZ_ROOT_PASSWORD", "pwd123"),
         ],
         || {
             // Arrange
@@ -882,11 +842,7 @@ pub(super) fn should_reject_ws_allowed_origin_with_trailing_slash_from_environme
 pub(super) fn should_reject_admin_public_origin_with_trailing_slash_from_environment() {
     with_auth_env(
         &[
-            ("FITZ_ADMIN_USERNAME", "admin"),
-            (
-                "FITZ_ADMIN_PASSWORD_HASH",
-                "$argon2id$v=19$m=16,t=2,p=1$c2FsdA$hash",
-            ),
+            ("FITZ_ROOT_PASSWORD", "pwd123"),
             ("FITZ_ADMIN_PUBLIC_ORIGIN", "https://admin.example.com/"),
         ],
         || {

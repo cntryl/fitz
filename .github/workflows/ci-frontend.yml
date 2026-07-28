@@ -41,8 +41,16 @@ jobs:
       - name: Check generated adapters
         run: npm run check:generated
 
-      - name: UI tests
-        run: npm run test -- --run
+      - name: Verify current Askr packages
+        run: |
+          npx --no-install askr upgrade
+          git diff --exit-code -- package.json package-lock.json
+
+      - name: Askr analyzer
+        run: npx --no-install askr analyze
+
+      - name: UI format check
+        run: npm run fmt:check
 
       - name: UI lint
         run: npm run lint
@@ -52,6 +60,9 @@ jobs:
 
       - name: UI build
         run: npm run build
+
+      - name: UI tests
+        run: npm run test -- --run
 
       - name: Install Playwright browser
         run: npm run install:browsers

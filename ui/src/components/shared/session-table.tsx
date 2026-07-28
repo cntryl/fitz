@@ -1,4 +1,4 @@
-import { For } from "@askrjs/askr/control";
+import { For, Show } from "@askrjs/askr/control";
 import { VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
 import {
   Card,
@@ -47,14 +47,12 @@ function formatDuration(value?: number) {
 }
 
 export default function SessionTable({ sessions }: SessionTableProps) {
-  if (sessions.length === 0) {
-    return (
-      <QueryEmptyState
-        title="No active sessions"
-        description="No live broker or admin sessions are currently connected."
-      />
-    );
-  }
+  const emptyState = (
+    <QueryEmptyState
+      title="No active sessions"
+      description="No live broker or admin sessions are currently connected."
+    />
+  );
 
   const columns: readonly VirtualTableColumn<ActiveSession>[] = [
     {
@@ -145,104 +143,106 @@ export default function SessionTable({ sessions }: SessionTableProps) {
   const tableHeight = Math.min(520, Math.max(176, 44 + sessions.length * 48));
 
   return (
-    <Card padding="sm" variant="default">
-      <CardHeader>
-        <CardTitle titleAs="h2">Live sessions</CardTitle>
-        <CardDescription>
-          Each row is one live broker or admin connection and the context reported for it.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <p class="domain-scroll-hint session-table-desktop">
-          Scroll the table horizontally to inspect later columns.
-        </p>
-        <div class="domain-table-wrap">
-          <div class="session-table-desktop">
-            <VirtualTable<ActiveSession>
-              aria-label="Live sessions"
-              class="session-virtual-table"
-              columns={columns}
-              getKey={(session) => session.key}
-              headerHeight={44}
-              overscan={10}
-              rowHeight={48}
-              rows={sessions}
-              style={{ height: `${tableHeight}px` }}
-            />
+    <Show when={sessions.length > 0} fallback={emptyState}>
+      <Card padding="sm" variant="default">
+        <CardHeader>
+          <CardTitle titleAs="h2">Live sessions</CardTitle>
+          <CardDescription>
+            Each row is one live broker or admin connection and the context reported for it.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <p class="domain-scroll-hint session-table-desktop">
+            Scroll the table horizontally to inspect later columns.
+          </p>
+          <div class="domain-table-wrap">
+            <div class="session-table-desktop">
+              <VirtualTable<ActiveSession>
+                aria-label="Live sessions"
+                class="session-virtual-table"
+                columns={columns}
+                getKey={(session) => session.key}
+                headerHeight={44}
+                overscan={10}
+                rowHeight={48}
+                rows={sessions}
+                style={{ height: `${tableHeight}px` }}
+              />
+            </div>
+
+            <div class="session-table-mobile">
+              <ul class="session-mobile-list">
+                <For each={sessions} by={(session) => session.key}>
+                  {(session) => (
+                    <li class="session-mobile-row">
+                      <dl class="session-mobile-grid">
+                        <div>
+                          <dt>Session ID</dt>
+                          <dd>
+                            <span
+                              class="session-table-cell-truncate"
+                              title={session.sessionId ?? session.key}
+                            >
+                              {session.sessionId ?? session.key}
+                            </span>
+                          </dd>
+                        </div>
+
+                        <div>
+                          <dt>Subject</dt>
+                          <dd>{reportedText(session.subject)}</dd>
+                        </div>
+
+                        <div>
+                          <dt>Identity claim</dt>
+                          <dd>{reportedText(session.identityClaim)}</dd>
+                        </div>
+
+                        <div>
+                          <dt>Identity value</dt>
+                          <dd>{reportedText(session.identityValue)}</dd>
+                        </div>
+
+                        <div>
+                          <dt>Route Family</dt>
+                          <dd>{session.routeFamily ?? "Unknown"}</dd>
+                        </div>
+
+                        <div>
+                          <dt>Transport</dt>
+                          <dd>{session.transport ?? "Unknown"}</dd>
+                        </div>
+
+                        <div>
+                          <dt>Remote address</dt>
+                          <dd class="session-table-cell-wrap">
+                            {session.remoteAddress ?? "Unknown"}
+                          </dd>
+                        </div>
+
+                        <div>
+                          <dt>Connected at</dt>
+                          <dd>{formatTimestamp(session.connectedAt)}</dd>
+                        </div>
+
+                        <div>
+                          <dt>Idle</dt>
+                          <dd>{formatDuration(session.idleSeconds)}</dd>
+                        </div>
+
+                        <div>
+                          <dt>Messages</dt>
+                          <dd>{messageCounts(session)}</dd>
+                        </div>
+                      </dl>
+                    </li>
+                  )}
+                </For>
+              </ul>
+            </div>
           </div>
-
-          <div class="session-table-mobile">
-            <ul class="session-mobile-list">
-              <For each={sessions} by={(session) => session.key}>
-                {(session) => (
-                  <li class="session-mobile-row">
-                    <dl class="session-mobile-grid">
-                      <div>
-                        <dt>Session ID</dt>
-                        <dd>
-                          <span
-                            class="session-table-cell-truncate"
-                            title={session.sessionId ?? session.key}
-                          >
-                            {session.sessionId ?? session.key}
-                          </span>
-                        </dd>
-                      </div>
-
-                      <div>
-                        <dt>Subject</dt>
-                        <dd>{reportedText(session.subject)}</dd>
-                      </div>
-
-                      <div>
-                        <dt>Identity claim</dt>
-                        <dd>{reportedText(session.identityClaim)}</dd>
-                      </div>
-
-                      <div>
-                        <dt>Identity value</dt>
-                        <dd>{reportedText(session.identityValue)}</dd>
-                      </div>
-
-                      <div>
-                        <dt>Route Family</dt>
-                        <dd>{session.routeFamily ?? "Unknown"}</dd>
-                      </div>
-
-                      <div>
-                        <dt>Transport</dt>
-                        <dd>{session.transport ?? "Unknown"}</dd>
-                      </div>
-
-                      <div>
-                        <dt>Remote address</dt>
-                        <dd class="session-table-cell-wrap">
-                          {session.remoteAddress ?? "Unknown"}
-                        </dd>
-                      </div>
-
-                      <div>
-                        <dt>Connected at</dt>
-                        <dd>{formatTimestamp(session.connectedAt)}</dd>
-                      </div>
-
-                      <div>
-                        <dt>Idle</dt>
-                        <dd>{formatDuration(session.idleSeconds)}</dd>
-                      </div>
-
-                      <div>
-                        <dt>Messages</dt>
-                        <dd>{messageCounts(session)}</dd>
-                      </div>
-                    </dl>
-                  </li>
-                )}
-              </For>
-            </ul>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+    </Show>
   );
 }

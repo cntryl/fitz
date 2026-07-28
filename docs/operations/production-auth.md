@@ -43,8 +43,7 @@ Set at least these environment values:
 
 ```sh
 FITZ_ADMIN_AUTH_MODE=protected
-FITZ_ADMIN_USERNAME=admin
-FITZ_ADMIN_PASSWORD_HASH=<argon2-hash>
+FITZ_ROOT_PASSWORD=<secret>
 FITZ_ADMIN_PUBLIC_ORIGIN=https://admin.example.com
 FITZ_ADMIN_COOKIE_SECURE=true
 FITZ_WS_ALLOWED_ORIGINS=https://app.example.com

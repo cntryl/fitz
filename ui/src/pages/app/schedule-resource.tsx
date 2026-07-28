@@ -116,100 +116,102 @@ function ScheduleCard(props: { children: unknown; description?: string; title: s
 }
 
 function ExecutionRows(props: { rows: ScheduleExecutionObservation[] }) {
-  if (props.rows.length === 0) {
-    return (
-      <QueryEmptyState description="No schedule-owned handoff observations matched this resource." />
-    );
-  }
-
   return (
-    <div>
-      <p class="domain-scroll-hint">Scroll the table horizontally on narrow screens.</p>
-      <div class="domain-table-wrap schedule-observation-table-wrap">
-        <Table>
-          <TableHead>
-            <TableRow>
-              <TableHeaderCell>Route</TableHeaderCell>
-              <TableHeaderCell>Status</TableHeaderCell>
-              <TableHeaderCell>Mode</TableHeaderCell>
-              <TableHeaderCell>Scheduled time</TableHeaderCell>
-              <TableHeaderCell>Last handoff</TableHeaderCell>
-              <TableHeaderCell>Handoff count</TableHeaderCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            <For each={props.rows} by={(row) => `${row.operation}:${row.next_run}`}>
-              {(row) => (
-                <TableRow>
-                  <TableCell>
-                    <span
-                      class="domain-table-cell-truncate"
-                      title={formatFitzRoute("schedule", row)}
-                    >
-                      {formatFitzRoute("schedule", row)}
-                    </span>
-                  </TableCell>
-                  <TableCell>{row.status}</TableCell>
-                  <TableCell>{row.delivery_mode}</TableCell>
-                  <TableCell>{formatMaybeTimestamp(row.next_run)}</TableCell>
-                  <TableCell>{formatMaybeTimestamp(row.last_run)}</TableCell>
-                  <TableCell>{formatNumber(row.executions_total)}</TableCell>
-                </TableRow>
-              )}
-            </For>
-          </TableBody>
-        </Table>
+    <Show
+      when={props.rows.length > 0}
+      fallback={
+        <QueryEmptyState description="No schedule-owned handoff observations matched this resource." />
+      }
+    >
+      <div>
+        <p class="domain-scroll-hint">Scroll the table horizontally on narrow screens.</p>
+        <div class="domain-table-wrap schedule-observation-table-wrap">
+          <Table>
+            <TableHead>
+              <TableRow>
+                <TableHeaderCell>Route</TableHeaderCell>
+                <TableHeaderCell>Status</TableHeaderCell>
+                <TableHeaderCell>Mode</TableHeaderCell>
+                <TableHeaderCell>Scheduled time</TableHeaderCell>
+                <TableHeaderCell>Last handoff</TableHeaderCell>
+                <TableHeaderCell>Handoff count</TableHeaderCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              <For each={props.rows} by={(row) => `${row.operation}:${row.next_run}`}>
+                {(row) => (
+                  <TableRow>
+                    <TableCell>
+                      <span
+                        class="domain-table-cell-truncate"
+                        title={formatFitzRoute("schedule", row)}
+                      >
+                        {formatFitzRoute("schedule", row)}
+                      </span>
+                    </TableCell>
+                    <TableCell>{row.status}</TableCell>
+                    <TableCell>{row.delivery_mode}</TableCell>
+                    <TableCell>{formatMaybeTimestamp(row.next_run)}</TableCell>
+                    <TableCell>{formatMaybeTimestamp(row.last_run)}</TableCell>
+                    <TableCell>{formatNumber(row.executions_total)}</TableCell>
+                  </TableRow>
+                )}
+              </For>
+            </TableBody>
+          </Table>
+        </div>
       </div>
-    </div>
+    </Show>
   );
 }
 
 function MissedRows(props: { rows: ScheduleMissedObservation[] }) {
-  if (props.rows.length === 0) {
-    return (
-      <QueryEmptyState description="No pending or missed schedule handoff claims matched this resource." />
-    );
-  }
-
   return (
-    <div>
-      <p class="domain-scroll-hint">Scroll the table horizontally on narrow screens.</p>
-      <div class="domain-table-wrap">
-        <Table>
-          <TableHead>
-            <TableRow>
-              <TableHeaderCell>Route</TableHeaderCell>
-              <TableHeaderCell>Status</TableHeaderCell>
-              <TableHeaderCell>Mode</TableHeaderCell>
-              <TableHeaderCell>Fire at</TableHeaderCell>
-              <TableHeaderCell>Claimed at</TableHeaderCell>
-              <TableHeaderCell>Age</TableHeaderCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            <For each={props.rows} by={(row) => `${row.operation}:${row.fire_ms}`}>
-              {(row) => (
-                <TableRow>
-                  <TableCell>
-                    <span
-                      class="domain-table-cell-truncate"
-                      title={formatFitzRoute("schedule", row)}
-                    >
-                      {formatFitzRoute("schedule", row)}
-                    </span>
-                  </TableCell>
-                  <TableCell>{row.status}</TableCell>
-                  <TableCell>{row.delivery_mode}</TableCell>
-                  <TableCell>{formatTimestamp(row.fire_at)}</TableCell>
-                  <TableCell>{formatTimestamp(row.claimed_at)}</TableCell>
-                  <TableCell>{formatDurationSeconds(row.age_seconds)}</TableCell>
-                </TableRow>
-              )}
-            </For>
-          </TableBody>
-        </Table>
+    <Show
+      when={props.rows.length > 0}
+      fallback={
+        <QueryEmptyState description="No pending or missed schedule handoff claims matched this resource." />
+      }
+    >
+      <div>
+        <p class="domain-scroll-hint">Scroll the table horizontally on narrow screens.</p>
+        <div class="domain-table-wrap">
+          <Table>
+            <TableHead>
+              <TableRow>
+                <TableHeaderCell>Route</TableHeaderCell>
+                <TableHeaderCell>Status</TableHeaderCell>
+                <TableHeaderCell>Mode</TableHeaderCell>
+                <TableHeaderCell>Fire at</TableHeaderCell>
+                <TableHeaderCell>Claimed at</TableHeaderCell>
+                <TableHeaderCell>Age</TableHeaderCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              <For each={props.rows} by={(row) => `${row.operation}:${row.fire_ms}`}>
+                {(row) => (
+                  <TableRow>
+                    <TableCell>
+                      <span
+                        class="domain-table-cell-truncate"
+                        title={formatFitzRoute("schedule", row)}
+                      >
+                        {formatFitzRoute("schedule", row)}
+                      </span>
+                    </TableCell>
+                    <TableCell>{row.status}</TableCell>
+                    <TableCell>{row.delivery_mode}</TableCell>
+                    <TableCell>{formatTimestamp(row.fire_at)}</TableCell>
+                    <TableCell>{formatTimestamp(row.claimed_at)}</TableCell>
+                    <TableCell>{formatDurationSeconds(row.age_seconds)}</TableCell>
+                  </TableRow>
+                )}
+              </For>
+            </TableBody>
+          </Table>
+        </div>
       </div>
-    </div>
+    </Show>
   );
 }
 

@@ -7,7 +7,7 @@ export type MockResponse = {
 export const routeFamilies = ["1", "2", "3", "4", "5"];
 export const mockAdminCredentials = {
   password: "pwd123",
-  username: "admin",
+  username: "root",
 };
 export const realms = ["acme", "platform", "ops"];
 export const areas = ["payments", "messaging", "control"];

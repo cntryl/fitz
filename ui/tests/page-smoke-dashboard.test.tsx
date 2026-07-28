@@ -402,7 +402,7 @@ describe("admin page smoke tests", () => {
     document.body.innerHTML = "";
   });
   it("mounts queue loading, error, and empty states", async () => {
-    mocks.queryStates.currentSession = queryState.fresh({ username: "admin" }, queryOptions());
+    mocks.queryStates.currentSession = queryState.fresh({ username: "root" }, queryOptions());
 
     const { default: QueuePage } = await import("@/pages/app/queue");
 

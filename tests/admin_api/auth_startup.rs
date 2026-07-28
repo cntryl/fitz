@@ -296,7 +296,7 @@ async fn should_create_admin_session_and_set_cookie() {
         .header("Content-Type", "application/json")
         .header("host", "localhost")
         .header("origin", "http://localhost")
-        .body(Body::from(r#"{"username":"admin","password":"pwd123"}"#))
+        .body(Body::from(r#"{"username":"root","password":"pwd123"}"#))
         .unwrap();
 
     // Act
@@ -329,7 +329,7 @@ async fn should_reject_admin_login_given_cross_origin() {
         .header("Content-Type", "application/json")
         .header("host", "localhost")
         .header("origin", "http://evil.example")
-        .body(Body::from(r#"{"username":"admin","password":"pwd123"}"#))
+        .body(Body::from(r#"{"username":"root","password":"pwd123"}"#))
         .unwrap();
 
     // Act

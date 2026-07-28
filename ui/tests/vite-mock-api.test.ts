@@ -45,11 +45,11 @@ describe("Vite mock API", () => {
   it("accepts only the documented mock admin credentials", () => {
     const accepted = mockFitzResponse("POST", "/api/v1/session", {
       password: "pwd123",
-      username: "admin",
+      username: "root",
     });
     const rejected = mockFitzResponse("POST", "/api/v1/session", {
       password: "wrong",
-      username: "admin",
+      username: "root",
     });
 
     expect(accepted?.status).toBe(204);

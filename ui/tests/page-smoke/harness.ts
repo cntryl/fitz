@@ -185,7 +185,7 @@ export function resetQueries() {
       authenticated: true,
       routeFamilies: ["1"],
       routeFamiliesWildcard: false,
-      username: "admin",
+      username: "root",
     },
     queryOptions(),
   );

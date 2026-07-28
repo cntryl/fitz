@@ -37,7 +37,7 @@ vi.mock("@/features/session/session-query", () => ({
       authenticated: true,
       routeFamilies: ["1", "7"],
       routeFamiliesWildcard: false,
-      username: "admin",
+      username: "root",
     },
   }),
 }));
@@ -187,7 +187,7 @@ describe("shared UI polish contracts", () => {
         authenticated: true,
         routeFamilies: ["1", "2", "3", "4", "5"],
         routeFamiliesWildcard: false,
-        username: "admin",
+        username: "root",
       },
       "",
     );

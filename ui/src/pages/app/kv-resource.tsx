@@ -110,24 +110,25 @@ export default function KvResourcePage() {
   } | null>(null);
   const selectedFamily = currentRouteFamilySegment() ?? operator.selectedRouteFamilyId;
   const concreteFamily = parseConcreteRouteFamilyId(selectedFamily);
-  const rowsQuery =
-    concreteFamily === null
-      ? null
-      : createKvRowsQuery(scope, {
-          cursor,
-          limit,
-          startsWith,
-        });
+  const rowsQueryCell = createKvRowsQuery(
+    scope,
+    {
+      cursor,
+      limit,
+      startsWith,
+    },
+    { skipInitialFetch: concreteFamily === null },
+  );
+  const rowsQuery = concreteFamily === null ? null : rowsQueryCell;
   const rows = rowsQuery?.data?.items ?? [];
   const lookup = activeLookup();
-  const valueQuery =
-    concreteFamily !== null && lookup
-      ? createKvValueQuery(
-          { ...scope, routeFamily: concreteFamily },
-          lookup.key,
-          lookup.keyEncoding,
-        )
-      : null;
+  const valueQueryCell = createKvValueQuery(
+    { ...scope, routeFamily: concreteFamily ?? 0 },
+    lookup?.key ?? "",
+    lookup?.keyEncoding ?? "utf8",
+    { skipInitialFetch: concreteFamily === null || lookup === null },
+  );
+  const valueQuery = concreteFamily !== null && lookup ? valueQueryCell : null;
   const valueResult = valueQuery?.data;
   const exactLookupMetrics =
     valueResult?.found && valueResult.value

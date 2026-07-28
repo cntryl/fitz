@@ -158,22 +158,6 @@ export default function Home() {
   const topologyQuery = createMessagingTopologyQuery();
   const systemQuery = createSystemOverviewQuery();
 
-  if (session.loading && !session.data) {
-    return (
-      <DomainPageFrame>
-        <QueryLoadingState description="Loading admin dashboard..." />
-      </DomainPageFrame>
-    );
-  }
-
-  if (session.error && !session.data) {
-    return (
-      <DomainPageFrame>
-        <QueryErrorState error={session.error} onRetry={() => session.refresh()} />
-      </DomainPageFrame>
-    );
-  }
-
   const topology = topologyQuery.data;
   const system = systemQuery.data;
   const overview = buildOverviewStatus({ system, topology });
@@ -197,72 +181,80 @@ export default function Home() {
 
   return (
     <DomainPageFrame>
-      <Stack gap="3">
-        <DomainHeader
-          eyebrow="Operator overview"
-          title="Fitz status"
-          description="Actionable health across the selected Route Family."
-          primaryAction={{
-            busy: topologyQuery.refreshing || systemQuery.refreshing,
-            disabled: topologyQuery.refreshing || systemQuery.refreshing,
-            label: "Refresh overview",
-            onPress: () => {
-              void topologyQuery.refresh();
-              void systemQuery.refresh();
-            },
-          }}
-          status={{
-            detail: overview.generatedAt
-              ? `Updated ${formatRelativeTime(overview.generatedAt)}`
-              : "Loading broker status signals.",
-            label: refreshState,
-            tone:
-              topologyQuery.refreshing || systemQuery.refreshing
-                ? "info"
-                : topologyQuery.stale || systemQuery.stale || sourceUnavailable
-                  ? "warning"
-                  : overview.overall.tone,
-          }}
-        />
-        <OperatorScopeStrip freshness={refreshState} />
-
-        <Show when={operationalLoading}>
-          <QueryLoadingState description="Loading overview status signals..." />
-        </Show>
-
-        <Show when={operationalFailure}>
-          <QueryErrorState
-            title="Unable to load overview"
-            error={topologyQuery.error ?? systemQuery.error}
-            onRetry={() => {
-              void topologyQuery.refresh();
-              void systemQuery.refresh();
+      <Show when={session.loading && !session.data}>
+        <QueryLoadingState description="Loading admin dashboard..." />
+      </Show>
+      <Show when={session.error && !session.data}>
+        <QueryErrorState error={session.error} onRetry={() => session.refresh()} />
+      </Show>
+      <Show when={Boolean(session.data)}>
+        <Stack gap="3">
+          <DomainHeader
+            eyebrow="Operator overview"
+            title="Fitz status"
+            description="Actionable health across the selected Route Family."
+            primaryAction={{
+              busy: topologyQuery.refreshing || systemQuery.refreshing,
+              disabled: topologyQuery.refreshing || systemQuery.refreshing,
+              label: "Refresh overview",
+              onPress: () => {
+                void topologyQuery.refresh();
+                void systemQuery.refresh();
+              },
+            }}
+            status={{
+              detail: overview.generatedAt
+                ? `Updated ${formatRelativeTime(overview.generatedAt)}`
+                : "Loading broker status signals.",
+              label: refreshState,
+              tone:
+                topologyQuery.refreshing || systemQuery.refreshing
+                  ? "info"
+                  : topologyQuery.stale || systemQuery.stale || sourceUnavailable
+                    ? "warning"
+                    : overview.overall.tone,
             }}
           />
-        </Show>
+          <OperatorScopeStrip freshness={refreshState} />
 
-        <Show when={!operationalLoading && !operationalFailure}>
-          <Show when={topologyQuery.error && !topology}>
-            <Alert
-              variant="warning"
-              title="Topology signals unavailable"
-              description={formatUnknownError(topologyQuery.error)}
-            />
-          </Show>
-          <Show when={systemQuery.error && !system}>
-            <Alert
-              variant="warning"
-              title="System counters unavailable"
-              description={formatUnknownError(systemQuery.error)}
-            />
+          <Show when={operationalLoading}>
+            <QueryLoadingState description="Loading overview status signals..." />
           </Show>
 
-          <OverviewStatusBand overview={overview} />
-          <OverviewIssues overview={overview} />
-          <DomainHealth overview={overview} />
-          <BrokerVitals overview={overview} />
-        </Show>
-      </Stack>
+          <Show when={operationalFailure}>
+            <QueryErrorState
+              title="Unable to load overview"
+              error={topologyQuery.error ?? systemQuery.error}
+              onRetry={() => {
+                void topologyQuery.refresh();
+                void systemQuery.refresh();
+              }}
+            />
+          </Show>
+
+          <Show when={!operationalLoading && !operationalFailure}>
+            <Show when={topologyQuery.error && !topology}>
+              <Alert
+                variant="warning"
+                title="Topology signals unavailable"
+                description={formatUnknownError(topologyQuery.error)}
+              />
+            </Show>
+            <Show when={systemQuery.error && !system}>
+              <Alert
+                variant="warning"
+                title="System counters unavailable"
+                description={formatUnknownError(systemQuery.error)}
+              />
+            </Show>
+
+            <OverviewStatusBand overview={overview} />
+            <OverviewIssues overview={overview} />
+            <DomainHealth overview={overview} />
+            <BrokerVitals overview={overview} />
+          </Show>
+        </Stack>
+      </Show>
     </DomainPageFrame>
   );
 }
