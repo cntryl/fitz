@@ -62,7 +62,7 @@ impl KvDomainSink {
             .unwrap_or_default()
     }
 
-    pub(super) fn apply_sync_write_options(
+    pub(super) fn apply_write_options(
         &self,
         message: crate::domains::kv::KvMessage,
     ) -> crate::domains::kv::KvMessage {
@@ -70,9 +70,9 @@ impl KvDomainSink {
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         if let Err(error) = self
             .actor
-            .try_send_high_priority(KvDomainCommand::ApplySyncWriteOptions(message, reply_tx))
+            .try_send_high_priority(KvDomainCommand::ApplyWriteOptions(message, reply_tx))
         {
-            tracing::warn!(domain = "kv", error = %error, "KV sync-write mapping enqueue failed");
+            tracing::warn!(domain = "kv", error = %error, "KV write-option mapping enqueue failed");
             return fallback;
         }
 

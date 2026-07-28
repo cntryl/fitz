@@ -47,7 +47,8 @@ impl ScheduleActor {
     /// Returns an error when the backing schedule family cannot be flushed.
     #[doc(hidden)]
     pub fn bench_drain_storage(&self) -> Result<(), String> {
-        self.store.sync_family(self.family.as_u64())
+        self.store
+            .sync_family(self.family.as_u64(), self.write_options)
     }
 
     #[cfg(test)]

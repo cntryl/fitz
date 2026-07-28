@@ -79,7 +79,8 @@ Lease provides single-broker ownership coordination with TTL expiry and process-
 Schedule provides timing intent for future work without becoming workflow
 orchestration or durable downstream delivery. In `memory` storage mode it is
 explicitly best-effort and is not recovered after restart. In persistent local
-mode, and in cloud mode after the configured local sync/provider acknowledgement,
+mode, and in cloud mode after the configured local cloud commit barrier or
+provider acknowledgement,
 definitions and pending fire claims are recovered before schedule traffic is
 accepted.
 
@@ -391,8 +392,9 @@ Schedule guarantees:
 - persisted schedules are preloaded on broker start before schedule traffic is required
 
 Storage acknowledgement is explicit: memory mode uses best-effort writes and
-does not promise recovery; local and background-cloud modes wait for local sync;
-strict-cloud mode waits for provider acknowledgement. Pending claims have no
+does not promise recovery; local mode waits for local sync; background-cloud
+mode completes at the local cloud commit barrier while provider upload continues
+asynchronously; strict-cloud mode waits for provider acknowledgement. Pending claims have no
 age-based expiry or cleanup path.
 
 Schedule does NOT guarantee:

@@ -44,8 +44,8 @@ impl Actor for KvDomainActor {
                 let _ = reply.send(self.state.runtime().latency_snapshots(&resource_key));
             }
             #[cfg(test)]
-            KvDomainCommand::ApplySyncWriteOptions(message, reply) => {
-                let _ = reply.send(self.state.runtime().apply_sync_write_options(message));
+            KvDomainCommand::ApplyWriteOptions(message, reply) => {
+                let _ = reply.send(self.state.runtime().apply_write_options(message));
             }
             #[cfg(test)]
             KvDomainCommand::PanicForTests => {
@@ -276,7 +276,7 @@ impl KvDomainRuntime<'_> {
             return Ok(());
         }
 
-        let kv_message = self.apply_sync_write_options(kv_message);
+        let kv_message = self.apply_write_options(kv_message);
         let session_id = meta.session_id;
 
         tracing::trace!(

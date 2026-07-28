@@ -48,6 +48,8 @@ impl QueueDomainSink {
             queue_write_options,
             if queue_write_options.is_cloud_strict() {
                 cntryl_midge::WriteOptions::cloud_strict()
+            } else if queue_write_options.is_cloud_async() {
+                cntryl_midge::WriteOptions::cloud_async()
             } else {
                 cntryl_midge::WriteOptions::sync()
             },

@@ -62,6 +62,7 @@ pub(super) struct KvDomainCore {
     pub(super) projection: crate::domains::kv::projection::KvAdminProjection<KvResourceLockKey>,
     pub(super) metrics: Option<crate::domains::kv::KvMetrics>,
     pub(super) sync_write_options: cntryl_midge::WriteOptions,
+    pub(super) buffered_write_options: cntryl_midge::WriteOptions,
 }
 
 pub(super) struct KvDomainState {
@@ -89,7 +90,7 @@ pub(super) enum KvDomainCommand {
         )>,
     ),
     #[cfg(test)]
-    ApplySyncWriteOptions(
+    ApplyWriteOptions(
         crate::domains::kv::KvMessage,
         crossbeam_channel::Sender<crate::domains::kv::KvMessage>,
     ),

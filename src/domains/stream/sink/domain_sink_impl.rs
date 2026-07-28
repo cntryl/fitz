@@ -101,6 +101,8 @@ impl StreamDomainSink {
             admin_read_model,
             stream_storage_layout,
             None,
+            cntryl_midge::WriteOptions::sync(),
+            cntryl_midge::WriteOptions::buffered(),
         )
     }
 
@@ -110,11 +112,13 @@ impl StreamDomainSink {
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
         stream_storage_layout: StreamStorageLayout,
         provisioned_families: Option<&[RouteFamily]>,
+        sync_write_options: cntryl_midge::WriteOptions,
+        buffered_write_options: cntryl_midge::WriteOptions,
     ) -> Result<Self, String> {
-        let stream_store = Arc::new(StreamStore::with_storage_layout(
-            store.clone(),
-            stream_storage_layout,
-        ));
+        let stream_store = Arc::new(
+            StreamStore::with_storage_layout(store.clone(), stream_storage_layout)
+                .with_write_options(sync_write_options, buffered_write_options),
+        );
         stream_store.ensure_layout_activation_for_existing_families()?;
         stream_store.validate_persisted_state_for_existing_families()?;
 

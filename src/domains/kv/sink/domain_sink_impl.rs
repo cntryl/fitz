@@ -26,6 +26,7 @@ impl KvDomainState {
                 ),
                 metrics: None,
                 sync_write_options: cntryl_midge::WriteOptions::sync(),
+                buffered_write_options: cntryl_midge::WriteOptions::buffered(),
             },
             active: AtomicBool::new(true),
         }
@@ -83,6 +84,20 @@ impl KvDomainSink {
     pub fn with_sync_write_options(mut self, write_options: cntryl_midge::WriteOptions) -> Self {
         self.actor.stop();
         self.state_for_builder().core.sync_write_options = write_options;
+        self.rebuild_actor();
+        self
+    }
+
+    #[must_use]
+    pub fn with_write_options(
+        mut self,
+        sync_write_options: cntryl_midge::WriteOptions,
+        buffered_write_options: cntryl_midge::WriteOptions,
+    ) -> Self {
+        self.actor.stop();
+        let core = &mut self.state_for_builder().core;
+        core.sync_write_options = sync_write_options;
+        core.buffered_write_options = buffered_write_options;
         self.rebuild_actor();
         self
     }

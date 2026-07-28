@@ -97,6 +97,8 @@ impl StreamStore {
     ) -> Self {
         Self {
             db,
+            sync_write_options: cntryl_midge::WriteOptions::sync(),
+            buffered_write_options: cntryl_midge::WriteOptions::buffered(),
             limits,
             layout: layout.normalize_requested(),
             sessions: Arc::new(Mutex::new(HashMap::new())),
@@ -108,6 +110,17 @@ impl StreamStore {
             #[cfg(test)]
             fail_next_promotion_frontier_commit: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    #[must_use]
+    pub(crate) fn with_write_options(
+        mut self,
+        sync_write_options: cntryl_midge::WriteOptions,
+        buffered_write_options: cntryl_midge::WriteOptions,
+    ) -> Self {
+        self.sync_write_options = sync_write_options;
+        self.buffered_write_options = buffered_write_options;
+        self
     }
 
     pub fn batch_limits(&self) -> BatchLimits {
@@ -325,7 +338,7 @@ impl StreamStore {
             None,
         )
         .map_err(|e| LayoutActivationFailure::Other(format!("txn put failed: {e:?}")))?;
-        txn.commit(cntryl_midge::WriteOptions::sync())
+        txn.commit(self.sync_write_options)
             .map_err(|e| LayoutActivationFailure::Other(format!("midge commit error: {e:?}")))?;
 
         Ok(())

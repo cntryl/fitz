@@ -418,6 +418,9 @@ impl BootConfig {
     pub fn schedule_write_options(&self) -> cntryl_midge::WriteOptions {
         match (&self.storage_mode, &self.cloud_durability) {
             (StorageMode::Memory, _) => cntryl_midge::WriteOptions::best_effort(),
+            (StorageMode::CloudBacked(_), CloudDurabilityMode::Background) => {
+                cntryl_midge::WriteOptions::cloud_async()
+            }
             (StorageMode::CloudBacked(_), CloudDurabilityMode::Strict) => {
                 cntryl_midge::WriteOptions::cloud_strict()
             }
@@ -428,10 +431,22 @@ impl BootConfig {
     #[must_use]
     pub fn request_sync_write_options(&self) -> cntryl_midge::WriteOptions {
         match (&self.storage_mode, &self.cloud_durability) {
+            (StorageMode::CloudBacked(_), CloudDurabilityMode::Background) => {
+                cntryl_midge::WriteOptions::cloud_async()
+            }
             (StorageMode::CloudBacked(_), CloudDurabilityMode::Strict) => {
                 cntryl_midge::WriteOptions::cloud_strict()
             }
             _ => cntryl_midge::WriteOptions::sync(),
+        }
+    }
+
+    #[must_use]
+    pub fn request_buffered_write_options(&self) -> cntryl_midge::WriteOptions {
+        if matches!(self.storage_mode, StorageMode::CloudBacked(_)) {
+            cntryl_midge::WriteOptions::cloud_async()
+        } else {
+            cntryl_midge::WriteOptions::buffered()
         }
     }
 
@@ -443,6 +458,9 @@ impl BootConfig {
             }
             (StorageMode::CloudBacked(_), QueueWritePolicy::Strict) => {
                 cntryl_midge::WriteOptions::cloud_strict()
+            }
+            (StorageMode::CloudBacked(_), QueueWritePolicy::Buffered) => {
+                cntryl_midge::WriteOptions::cloud_async()
             }
             (_, QueueWritePolicy::Strict) => cntryl_midge::WriteOptions::sync(),
             (_, QueueWritePolicy::Buffered | QueueWritePolicy::Invalid { .. }) => {
