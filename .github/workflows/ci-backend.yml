@@ -28,23 +28,23 @@ jobs:
       - name: Install Rust components
         run: rustup component add rustfmt clippy
 
-      - name: Install cntryl-tools
-        run: cargo install --locked --git https://github.com/cntryl/tools --rev b2a06b1a635de752803f5860339fc3cecbc19742 cntryl-tools
-
-      - name: Cargo build
-        run: cargo build --locked
-
-      - name: Cargo test
-        run: cargo test --locked -- --test-threads=1
-
-      - name: Cargo clippy pedantic
-        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic
-
       - name: Cargo fmt check
         run: cargo fmt --all -- --check
+
+      - name: Install cntryl-tools
+        run: cargo install --locked --git https://github.com/cntryl/tools --rev b2a06b1a635de752803f5860339fc3cecbc19742 cntryl-tools
 
       - name: Validate repository policy
         run: |
           cntryl-tools validate-docs --config .cntryl/repository.toml
           cntryl-tools validate-benchmarks --config .cntryl/repository.toml
           cntryl-tools check-module-sizes --config .cntryl/repository.toml
+
+      - name: Cargo build
+        run: cargo build --locked
+
+      - name: Cargo clippy pedantic
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic
+
+      - name: Cargo test
+        run: cargo test --locked -- --test-threads=1

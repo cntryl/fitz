@@ -38,9 +38,6 @@ jobs:
       - name: Install UI dependencies
         run: npm ci
 
-      - name: Check generated adapters
-        run: npm run check:generated
-
       - name: Verify current Askr packages
         run: |
           npx --no-install askr upgrade
@@ -48,6 +45,9 @@ jobs:
 
       - name: Askr analyzer
         run: npx --no-install askr analyze
+
+      - name: Check generated adapters
+        run: npm run check:generated
 
       - name: UI format check
         run: npm run fmt:check
@@ -61,11 +61,15 @@ jobs:
       - name: UI build
         run: npm run build
 
-      - name: UI tests
-        run: npm run test -- --run
+      - name: Build-only container validation
+        working-directory: .
+        run: docker build --target frontend --tag fitz-ui-build .
 
       - name: Install Playwright browser
         run: npm run install:browsers
+
+      - name: UI tests
+        run: npm run test -- --run
 
       - name: Playwright route suite
         run: npm run test:e2e
@@ -79,7 +83,3 @@ jobs:
             ui/test-results/**
             ui/playwright-report/**
           if-no-files-found: ignore
-
-      - name: Build-only container validation
-        working-directory: .
-        run: docker build --target frontend --tag fitz-ui-build .
