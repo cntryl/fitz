@@ -87,6 +87,7 @@ fn should_map_cloud_durability_to_write_options() {
             // Assert
             assert!(config.schedule_write_options().is_cloud_strict());
             assert!(config.request_sync_write_options().is_cloud_strict());
+            assert!(config.request_buffered_write_options().is_cloud_async());
         },
     );
 }
@@ -110,7 +111,31 @@ fn should_accept_background_cloud_durability() {
             // Assert
             assert!(result.is_ok());
             assert_eq!(config.cloud_durability, CloudDurabilityMode::Background);
-            assert!(!config.schedule_write_options().is_cloud_strict());
+            assert!(config.schedule_write_options().is_cloud_async());
+            assert!(config.request_sync_write_options().is_cloud_async());
+            assert!(config.request_buffered_write_options().is_cloud_async());
+        },
+    );
+}
+
+#[test]
+#[serial]
+fn should_map_queue_buffered_write_policy_to_cloud_async() {
+    with_storage_env(
+        &[
+            ("FITZ_STORAGE_MODE", "cloud"),
+            ("FITZ_STORAGE_PROVIDER", "sqrzl-s3"),
+            ("FITZ_QUEUE_WRITE_POLICY", "buffered"),
+        ],
+        || {
+            // Arrange
+
+            // Act
+            let config = BootConfig::new();
+
+            // Assert
+            assert_eq!(config.queue_write_policy, QueueWritePolicy::Buffered);
+            assert!(config.queue_write_options().is_cloud_async());
         },
     );
 }

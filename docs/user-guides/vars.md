@@ -122,17 +122,18 @@ For the complete production auth and browser-perimeter checklist, see [../operat
 | FITZ_STORAGE_PROVIDER | Provider identifier | Unset | Required in cloud mode. Selects the configured blob/object storage backend. |
 | FITZ_STORAGE_PREFIX | Prefix string | Unset | Optional object key namespace prefix in cloud mode. |
 | FITZ_STORAGE_CACHE_PATH | Filesystem path | ./.fitz-cloud-cache | Local cache path for cloud-backed storage mode. |
-| FITZ_STORAGE_CLOUD_DURABILITY | background or strict | background | Cloud sync behavior for broker-selected durable writes. |
+| FITZ_STORAGE_CLOUD_DURABILITY | background or strict | background | Cloud policy for broker-selected durable writes and client sync intent. `background` completes at Midge's local cloud commit barrier and uploads asynchronously; `strict` waits for provider acknowledgement. |
 | FITZ_STORAGE_MEMTABLE_BYTES | Unsigned integer byte count | Auto | Optional explicit memtable size override for embedded engine. |
-| FITZ_QUEUE_WRITE_POLICY | fast, buffered, or strict | fast | Queue mutation write policy. `fast` skips WAL on the hot path and flushes dirty queue storage in the background. |
+| FITZ_QUEUE_WRITE_POLICY | fast, buffered, or strict | fast | Queue mutation write policy. `fast` skips WAL and flushes in the background; `buffered` uses local buffered WAL or cloud asynchronous durability; `strict` waits for local sync or cloud provider acknowledgement. |
 | FITZ_QUEUE_LOSS_WINDOW_MS | Positive integer millisecond count | 100 | Target background flush interval for fast queue writes. Accepted recent queue mutations can be lost before this window closes. |
 | FITZ_STREAM_STORAGE_LAYOUT | promotion-frontier or aliases | promotion-frontier | Stream layout selector. Legacy aliases are accepted but normalized to promotion-frontier. |
 | FITZ_MIN_MEMORY_BYTES | Unsigned integer byte count | 134217728 | Startup preflight minimum cgroup memory threshold. Set 0 to bypass memory-limit check. |
 
 Schedule persistence follows the selected storage mode. `memory` mode uses
-best-effort writes and does not promise restart recovery. Persistent local and
-background-cloud modes wait for local sync; strict-cloud mode waits for the
-provider acknowledgement. Definitions and unresolved fire claims have no
+best-effort writes and does not promise restart recovery. Persistent local mode
+waits for local sync, background-cloud mode completes at Midge's local cloud
+commit barrier while provider upload continues asynchronously, and strict-cloud
+mode waits for provider acknowledgement. Definitions and unresolved fire claims have no
 age-based expiry; cancellation or deletion is the explicit resolution path.
 
 ### Provider-Specific FITZ Keys

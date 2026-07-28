@@ -268,6 +268,8 @@ pub struct StreamAdminRecord {
 
 pub struct StreamStore {
     db: crate::storage::FitzStorageEngine,
+    sync_write_options: cntryl_midge::WriteOptions,
+    buffered_write_options: cntryl_midge::WriteOptions,
     limits: BatchLimits,
     layout: StreamStorageLayout,
     sessions: Arc<Mutex<HashMap<SessionId, AppendSession>>>,

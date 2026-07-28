@@ -385,6 +385,7 @@ async fn should_cleanup_real_stream_session_and_subscription_on_close() {
         store,
         router.clone(),
         admin_read_model.clone(),
+        crate::domains::stream::sink::StreamStorageWriteOptions::local(),
     ));
     let source_mailbox = Arc::new(Mailbox::new(8));
 

@@ -703,6 +703,7 @@ pub fn create_local_bench_stream_sink(
             router,
             crate::control::admin::read_model::AdminReadModel::new(),
             crate::domains::stream::StreamStorageLayout::default(),
+            crate::domains::stream::sink::StreamStorageWriteOptions::local(),
         )
         .expect("create local-disk bench Stream sink"),
     );
@@ -724,6 +725,7 @@ pub fn create_write_heavy_bench_stream_sink(router: Arc<Router>) -> Arc<StreamDo
             router,
             crate::control::admin::read_model::AdminReadModel::new(),
             crate::domains::stream::StreamStorageLayout::default(),
+            crate::domains::stream::sink::StreamStorageWriteOptions::local(),
         )
         .expect("create write-heavy bench stream sink"),
     )
@@ -747,6 +749,7 @@ pub fn create_bench_stream_sink_with_layout(
             router,
             crate::control::admin::read_model::AdminReadModel::new(),
             stream_storage_layout,
+            crate::domains::stream::sink::StreamStorageWriteOptions::local(),
         )
         .expect("create bench stream sink"),
     )

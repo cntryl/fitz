@@ -47,6 +47,58 @@ pub struct AdminStreamReadRequest<'a> {
     pub discriminator: Option<String>,
 }
 
+/// Storage-mode-compatible write options selected before Stream initialization.
+#[derive(Clone, Copy)]
+pub struct StreamStorageWriteOptions {
+    sync_intent: cntryl_midge::WriteOptions,
+    buffered_intent: cntryl_midge::WriteOptions,
+}
+
+impl StreamStorageWriteOptions {
+    #[must_use]
+    pub fn new(
+        sync_intent: cntryl_midge::WriteOptions,
+        buffered_intent: cntryl_midge::WriteOptions,
+    ) -> Self {
+        Self {
+            sync_intent,
+            buffered_intent,
+        }
+    }
+
+    #[must_use]
+    pub fn local() -> Self {
+        Self::new(
+            cntryl_midge::WriteOptions::sync(),
+            cntryl_midge::WriteOptions::buffered(),
+        )
+    }
+
+    #[must_use]
+    pub fn cloud_background() -> Self {
+        Self::new(
+            cntryl_midge::WriteOptions::cloud_async(),
+            cntryl_midge::WriteOptions::cloud_async(),
+        )
+    }
+
+    #[must_use]
+    pub fn cloud_strict() -> Self {
+        Self::new(
+            cntryl_midge::WriteOptions::cloud_strict(),
+            cntryl_midge::WriteOptions::cloud_async(),
+        )
+    }
+
+    pub(super) fn sync_intent(self) -> cntryl_midge::WriteOptions {
+        self.sync_intent
+    }
+
+    pub(super) fn buffered_intent(self) -> cntryl_midge::WriteOptions {
+        self.buffered_intent
+    }
+}
+
 pub(super) struct StreamAdminReadCommand {
     pub(super) request: AdminStreamReadRequestOwned,
     pub(super) reply: crossbeam_channel::Sender<

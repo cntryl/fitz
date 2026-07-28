@@ -195,7 +195,7 @@ impl KvDomainRuntime<'_> {
             .sum()
     }
 
-    pub(in crate::domains::kv::sink) fn apply_sync_write_options(
+    pub(in crate::domains::kv::sink) fn apply_write_options(
         &self,
         message: crate::domains::kv::KvMessage,
     ) -> crate::domains::kv::KvMessage {
@@ -207,14 +207,23 @@ impl KvDomainRuntime<'_> {
                 resource,
                 mode,
                 write_options,
-            } if write_options.is_sync() => crate::domains::kv::KvMessage::Begin {
-                route_family,
-                realm,
-                area,
-                resource,
-                mode,
-                write_options: self.core.sync_write_options,
-            },
+            } if write_options.is_sync()
+                || write_options == cntryl_midge::WriteOptions::buffered() =>
+            {
+                let write_options = if write_options.is_sync() {
+                    self.core.sync_write_options
+                } else {
+                    self.core.buffered_write_options
+                };
+                crate::domains::kv::KvMessage::Begin {
+                    route_family,
+                    realm,
+                    area,
+                    resource,
+                    mode,
+                    write_options,
+                }
+            }
             message => message,
         }
     }

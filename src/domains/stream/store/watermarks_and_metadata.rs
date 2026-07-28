@@ -100,8 +100,7 @@ impl StreamStore {
                 return Err("Injected area watermark persistence failure".to_string());
             }
         }
-        let opts = cntryl_midge::WriteOptions::sync();
-        txn.commit(opts)
+        txn.commit(self.sync_write_options)
             .map_err(|e| format!("midge commit error: {e:?}"))
     }
 
@@ -195,8 +194,7 @@ impl StreamStore {
                 return Err("Injected realm watermark persistence failure".to_string());
             }
         }
-        let opts = cntryl_midge::WriteOptions::sync();
-        txn.commit(opts)
+        txn.commit(self.sync_write_options)
             .map_err(|e| format!("midge commit error: {e:?}"))
     }
 

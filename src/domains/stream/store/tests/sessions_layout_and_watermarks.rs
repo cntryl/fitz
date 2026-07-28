@@ -69,6 +69,61 @@ pub(super) fn event_records(items: Vec<StreamReadItem>) -> Vec<StreamRecord> {
 }
 
 #[test]
+pub(super) fn should_commit_stream_and_watermarks_with_background_cloud_write_options() {
+    // Arrange
+    let tempdir = tempfile::TempDir::new().expect("create cloud simulation directory");
+    let engine = Arc::new(
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::cloud_simulated(
+                tempdir.path(),
+                "fitz-stream-writes",
+                "background",
+            )
+            .build()
+            .expect("build cloud-simulated options"),
+        )
+        .expect("open cloud-simulated engine"),
+    );
+    engine
+        .create_column_family("tenant_default")
+        .expect("create route-family column family");
+    let store = StreamStore::with_storage_layout(
+        crate::storage::FitzStorageEngine::new(engine),
+        StreamStorageLayout::PromotionFrontier,
+    )
+    .with_write_options(
+        cntryl_midge::WriteOptions::cloud_async(),
+        cntryl_midge::WriteOptions::cloud_async(),
+    );
+    let events = single_event(b"cloud-event");
+
+    // Act
+    let commit = store.commit_records(CommitRecordsParams {
+        family: 1,
+        realm: "acme",
+        area: "events",
+        resource: "orders",
+        expected_resource_next_offset: 0,
+        events: &events,
+        ingest_metadata: None,
+        mode: StreamWriteMode::Buffered,
+    });
+    let area_watermark = store.set_watermark(1, "acme", "events", 1);
+    let realm_watermark = store.set_realm_watermark(1, "acme", 1);
+
+    // Assert
+    assert!(commit.is_ok(), "cloud stream commit failed: {commit:?}");
+    assert!(
+        area_watermark.is_ok(),
+        "cloud area-watermark commit failed: {area_watermark:?}"
+    );
+    assert!(
+        realm_watermark.is_ok(),
+        "cloud realm-watermark commit failed: {realm_watermark:?}"
+    );
+}
+
+#[test]
 pub(super) fn should_reject_append_given_stream_session_route_family_mismatch() {
     // Arrange
     let store = StreamStore::new(create_test_engine_with_cfs(vec![1, 2]));

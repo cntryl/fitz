@@ -164,6 +164,7 @@ pub async fn boot(config: BootConfig) -> BootResult<()> {
             queue_write_options,
             queue_fast_flush_interval: config.queue_fast_flush_interval(),
             request_sync_write_options: config.request_sync_write_options(),
+            request_buffered_write_options: config.request_buffered_write_options(),
             rpc_request_timeout: None,
             stream_storage_layout: config.stream_storage_layout,
         },

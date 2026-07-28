@@ -57,12 +57,16 @@ Expect Fitz to reach readiness after storage startup and writer-lease acquisitio
 
 Any other value is rejected at startup.
 
-Schedule uses this policy for server-selected durable writes. KV and Stream still honor client-selected buffered versus sync modes. Notice, RPC, and Lease remain live or ephemeral as defined by their domain contracts.
+Schedule uses this policy for server-selected durable writes. KV and Stream
+still honor client-selected buffered versus sync intent, translated to
+cloud-compatible commits: buffered intent uses asynchronous cloud durability,
+while sync intent follows `FITZ_STORAGE_CLOUD_DURABILITY`. Notice, RPC, and
+Lease remain live or ephemeral as defined by their domain contracts.
 
 Queue has a separate hot-path policy:
 
 - `FITZ_QUEUE_WRITE_POLICY=fast`: default; skips WAL for queue mutations and flushes dirty queue storage in the background.
-- `FITZ_QUEUE_WRITE_POLICY=buffered`: uses buffered WAL writes without waiting for sync acknowledgement per queue mutation.
+- `FITZ_QUEUE_WRITE_POLICY=buffered`: uses buffered WAL locally; in cloud mode it completes at Midge's local cloud commit barrier while provider upload continues asynchronously.
 - `FITZ_QUEUE_WRITE_POLICY=strict`: waits for local sync writes; in cloud mode it also waits for provider acknowledgement.
 
 `FITZ_QUEUE_LOSS_WINDOW_MS` defaults to `100` and controls the target flush interval for fast queue writes. In fast mode, accepted recent queue sends, completes, dead-letter replays, and dead-letter purges can be lost if the process or host crashes before the background flush completes.

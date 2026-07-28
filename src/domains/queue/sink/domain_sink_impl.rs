@@ -31,6 +31,11 @@ impl QueueDomainActor {
 impl QueueDomainSink {
     /// Constructs a queue sink over a raw Midge engine after preparing persisted queue state.
     ///
+    /// The recovery write policy is explicit because startup reconciliation can write before the
+    /// sink starts handling queue traffic. Cloud-backed engines must receive a cloud-compatible
+    /// recovery policy such as [`cntryl_midge::WriteOptions::cloud_async`] or
+    /// [`cntryl_midge::WriteOptions::cloud_strict`].
+    ///
     /// # Errors
     ///
     /// Returns an error when persisted queue state is invalid or cannot be reconciled.
@@ -39,6 +44,7 @@ impl QueueDomainSink {
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
         queue_write_options: cntryl_midge::WriteOptions,
+        recovery_write_options: cntryl_midge::WriteOptions,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     ) -> Result<Self, String> {
         Self::try_new_with_storage(
@@ -46,11 +52,7 @@ impl QueueDomainSink {
             router,
             admin_read_model,
             queue_write_options,
-            if queue_write_options.is_cloud_strict() {
-                cntryl_midge::WriteOptions::cloud_strict()
-            } else {
-                cntryl_midge::WriteOptions::sync()
-            },
+            recovery_write_options,
             dedup_store,
         )
     }

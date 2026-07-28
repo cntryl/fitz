@@ -49,11 +49,13 @@ impl StreamDomainSink {
         store: Arc<cntryl_midge::Engine>,
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
+        write_options: super::StreamStorageWriteOptions,
     ) -> Self {
         Self::new_with_storage(
             crate::storage::FitzStorageEngine::new(store),
             router,
             admin_read_model,
+            write_options,
         )
     }
 
@@ -61,12 +63,14 @@ impl StreamDomainSink {
         store: crate::storage::FitzStorageEngine,
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
+        write_options: super::StreamStorageWriteOptions,
     ) -> Self {
         Self::new_with_storage_layout(
             store,
             router,
             admin_read_model,
             StreamStorageLayout::default(),
+            write_options,
         )
         .expect("create stream domain sink with default stream layout")
     }
@@ -80,12 +84,14 @@ impl StreamDomainSink {
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
         stream_storage_layout: StreamStorageLayout,
+        write_options: super::StreamStorageWriteOptions,
     ) -> Result<Self, String> {
         Self::new_with_storage_layout(
             crate::storage::FitzStorageEngine::new(store),
             router,
             admin_read_model,
             stream_storage_layout,
+            write_options,
         )
     }
 
@@ -94,6 +100,7 @@ impl StreamDomainSink {
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
         stream_storage_layout: StreamStorageLayout,
+        write_options: super::StreamStorageWriteOptions,
     ) -> Result<Self, String> {
         Self::new_with_storage_layout_and_families(
             store,
@@ -101,6 +108,7 @@ impl StreamDomainSink {
             admin_read_model,
             stream_storage_layout,
             None,
+            write_options,
         )
     }
 
@@ -110,11 +118,12 @@ impl StreamDomainSink {
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
         stream_storage_layout: StreamStorageLayout,
         provisioned_families: Option<&[RouteFamily]>,
+        write_options: super::StreamStorageWriteOptions,
     ) -> Result<Self, String> {
-        let stream_store = Arc::new(StreamStore::with_storage_layout(
-            store.clone(),
-            stream_storage_layout,
-        ));
+        let stream_store = Arc::new(
+            StreamStore::with_storage_layout(store.clone(), stream_storage_layout)
+                .with_write_options(write_options.sync_intent(), write_options.buffered_intent()),
+        );
         stream_store.ensure_layout_activation_for_existing_families()?;
         stream_store.validate_persisted_state_for_existing_families()?;
 
@@ -255,18 +264,6 @@ impl StreamDomainSink {
     fn core_for_builder(&mut self) -> &mut StreamDomainCore {
         self.stop_family_runtime();
         Arc::get_mut(&mut self.core).expect("Stream sink builders must run before sharing the sink")
-    }
-
-    #[must_use]
-    pub fn with_sync_write_options(mut self, write_options: cntryl_midge::WriteOptions) -> Self {
-        self.actor.stop();
-        self.core_for_builder().sync_write_mode = if write_options.is_cloud_strict() {
-            crate::domains::stream::protocol::StreamWriteMode::CloudStrict
-        } else {
-            crate::domains::stream::protocol::StreamWriteMode::Sync
-        };
-        self.rebuild_actor();
-        self
     }
 
     #[must_use]

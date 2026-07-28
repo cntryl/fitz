@@ -399,6 +399,7 @@ impl TestServer {
                 queue_write_options,
                 queue_fast_flush_interval: boot_config.queue_fast_flush_interval(),
                 request_sync_write_options: boot_config.request_sync_write_options(),
+                request_buffered_write_options: boot_config.request_buffered_write_options(),
                 rpc_request_timeout,
                 stream_storage_layout: boot_config.stream_storage_layout,
             },

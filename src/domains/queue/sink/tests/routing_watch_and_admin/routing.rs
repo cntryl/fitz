@@ -20,6 +20,40 @@ pub(super) fn should_create_queue_domain_sink() {
 }
 
 #[test]
+pub(super) fn should_create_fast_queue_sink_with_explicit_background_cloud_recovery() {
+    // Arrange
+    let tempdir = tempfile::TempDir::new().expect("create cloud simulation directory");
+    let store = Arc::new(
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::cloud_simulated(
+                tempdir.path(),
+                "fitz-queue-sink",
+                "background",
+            )
+            .build()
+            .expect("build cloud-simulated options"),
+        )
+        .expect("open cloud-simulated engine"),
+    );
+    store
+        .create_column_family("tenant_default")
+        .expect("create route-family column family");
+
+    // Act
+    let result = QueueDomainSink::try_new(
+        store,
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+        cntryl_midge::WriteOptions::best_effort(),
+        cntryl_midge::WriteOptions::cloud_async(),
+        crate::utils::idempotency::default_dedup_store(),
+    );
+
+    // Assert
+    assert!(result.is_ok());
+}
+
+#[test]
 pub(super) fn should_mark_fast_queue_family_dirty_given_successful_send() {
     // Arrange
     let family = RouteFamily::new(1);

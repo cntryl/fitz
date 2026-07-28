@@ -511,8 +511,8 @@ impl StreamStore {
         mode: StreamWriteMode,
     ) -> Result<(), String> {
         let write_options = match mode {
-            StreamWriteMode::Sync => cntryl_midge::WriteOptions::sync(),
-            StreamWriteMode::Buffered => cntryl_midge::WriteOptions::buffered(),
+            StreamWriteMode::Sync => self.sync_write_options,
+            StreamWriteMode::Buffered => self.buffered_write_options,
             StreamWriteMode::CloudStrict => cntryl_midge::WriteOptions::cloud_strict(),
         };
         #[cfg(test)]

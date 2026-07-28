@@ -197,6 +197,7 @@ pub(crate) fn queue_runtime_with_domains() -> (Arc<Runtime>, Arc<cntryl_midge::E
             store.clone(),
             router.clone(),
             admin_read_model.clone(),
+            fitz::domains::stream::sink::StreamStorageWriteOptions::local(),
         )),
         Arc::new(RpcDomainSink::new(router.clone(), admin_read_model.clone())),
         Arc::new(LeaseDomainSink::new(
@@ -252,6 +253,7 @@ pub(crate) fn schedule_runtime_with_domains() -> (
             store.clone(),
             runtime.router(),
             admin_read_model.clone(),
+            fitz::domains::stream::sink::StreamStorageWriteOptions::local(),
         )),
         Arc::new(RpcDomainSink::new(
             runtime.router(),

@@ -27,6 +27,7 @@ fn setup_test_context() -> TestContext {
         crate::benchkit::create_bench_store(),
         router.clone(),
         admin_read_model.clone(),
+        StreamStorageWriteOptions::local(),
     ));
     router.register_domain_pattern("stream", sink.clone() as Arc<dyn MailboxSink>);
     let (source, inbox) = register_session_queue_sink(&router, family, TEST_CLIENT_SESSION_ID);
@@ -279,6 +280,7 @@ fn should_reject_stream_delivery_when_managed_actor_is_stopped() {
         crate::benchkit::create_bench_store(),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
+        StreamStorageWriteOptions::local(),
     );
     let destination = RouteAddress::new(
         RouteFamily::new(1),
@@ -657,6 +659,7 @@ fn should_create_stream_sink_given_promotion_frontier_layout() {
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
         StreamStorageLayout::PromotionFrontier,
+        StreamStorageWriteOptions::local(),
     )
     .expect("create stream sink");
 
@@ -668,23 +671,72 @@ fn should_create_stream_sink_given_promotion_frontier_layout() {
 }
 
 #[test]
-fn should_map_sync_commits_to_cloud_strict_given_strict_cloud_sync_policy() {
+fn should_create_stream_sink_with_background_cloud_policy_through_public_api() {
     // Arrange
+    let tempdir = tempfile::TempDir::new().expect("create cloud simulation directory");
+    let store = Arc::new(
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::cloud_simulated(
+                tempdir.path(),
+                "fitz-stream-sink",
+                "background",
+            )
+            .build()
+            .expect("build cloud-simulated options"),
+        )
+        .expect("open cloud-simulated engine"),
+    );
+    store
+        .create_column_family("tenant_default")
+        .expect("create route-family column family");
     let router = Arc::new(Router::new());
 
     // Act
-    let sink = StreamDomainSink::new(
-        crate::benchkit::create_bench_store(),
+    let result = StreamDomainSink::new_with_layout(
+        store,
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-    )
-    .with_sync_write_options(cntryl_midge::WriteOptions::cloud_strict());
+        StreamStorageLayout::PromotionFrontier,
+        StreamStorageWriteOptions::cloud_background(),
+    );
 
     // Assert
-    assert_eq!(
-        sink.sync_write_mode_for_tests(),
-        crate::domains::stream::protocol::StreamWriteMode::CloudStrict
+    if let Err(error) = result {
+        panic!("cloud Stream sink creation failed: {error}");
+    }
+}
+
+#[test]
+fn should_configure_strict_cloud_writes_before_stream_initialization() {
+    // Arrange
+    let tempdir = tempfile::TempDir::new().expect("create cloud simulation directory");
+    let store = Arc::new(
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::cloud_simulated(
+                tempdir.path(),
+                "fitz-stream-sink",
+                "strict",
+            )
+            .build()
+            .expect("build cloud-simulated options"),
+        )
+        .expect("open cloud-simulated engine"),
     );
+    store
+        .create_column_family("tenant_default")
+        .expect("create route-family column family");
+
+    // Act
+    let result = StreamDomainSink::new_with_layout(
+        store,
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+        StreamStorageLayout::PromotionFrontier,
+        StreamStorageWriteOptions::cloud_strict(),
+    );
+
+    // Assert
+    assert!(result.is_ok());
 }
 
 #[test]
@@ -697,8 +749,8 @@ fn should_keep_sync_commits_local_given_local_sync_policy() {
         crate::benchkit::create_bench_store(),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-    )
-    .with_sync_write_options(cntryl_midge::WriteOptions::sync());
+        StreamStorageWriteOptions::local(),
+    );
 
     // Assert
     assert_eq!(

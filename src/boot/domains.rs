@@ -409,6 +409,7 @@ pub struct DomainSetupOptions {
     pub queue_write_options: cntryl_midge::WriteOptions,
     pub queue_fast_flush_interval: Option<std::time::Duration>,
     pub request_sync_write_options: cntryl_midge::WriteOptions,
+    pub request_buffered_write_options: cntryl_midge::WriteOptions,
     pub rpc_request_timeout: Option<std::time::Duration>,
     pub stream_storage_layout: crate::domains::stream::StreamStorageLayout,
 }
@@ -420,6 +421,30 @@ fn provisioned_route_families(options: &DomainSetupOptions) -> Vec<RouteFamily> 
         .copied()
         .map(RouteFamily::new)
         .collect()
+}
+
+fn create_stream_sink(
+    storage: crate::storage::FitzStorageEngine,
+    router: &StdArc<Router>,
+    admin_read_model: &Arc<crate::control::admin::read_model::AdminReadModel>,
+    options: &DomainSetupOptions,
+    route_families: &[RouteFamily],
+    metrics: &crate::observability::metrics::MetricsCollector,
+) -> BootResult<Arc<StreamDomainSink>> {
+    Ok(Arc::new(
+        StreamDomainSink::new_with_storage_layout_and_families(
+            storage,
+            router.clone(),
+            admin_read_model.clone(),
+            options.stream_storage_layout,
+            Some(route_families),
+            crate::domains::stream::sink::StreamStorageWriteOptions::new(
+                options.request_sync_write_options,
+                options.request_buffered_write_options,
+            ),
+        )?
+        .with_metrics(metrics.clone()),
+    ))
 }
 
 /// Set up all 7 domain actors and register them with the router.
@@ -443,7 +468,10 @@ pub fn setup(
 
     let kv_sink = Arc::new(
         KvDomainSink::new(store.clone(), router.clone(), admin_read_model.clone())
-            .with_sync_write_options(options.request_sync_write_options)
+            .with_write_options(
+                options.request_sync_write_options,
+                options.request_buffered_write_options,
+            )
             .with_metrics(metrics.clone()),
     );
     DomainKind::Kv
@@ -477,17 +505,14 @@ pub fn setup(
         .register_sink(router, notice_sink.clone() as Arc<dyn MailboxSink>);
     tracing::info!("Registered Notice domain (handles notice://* across all route families)");
 
-    let stream_sink = Arc::new(
-        StreamDomainSink::new_with_storage_layout_and_families(
-            storage.clone(),
-            router.clone(),
-            admin_read_model.clone(),
-            options.stream_storage_layout,
-            Some(&route_families),
-        )?
-        .with_sync_write_options(options.request_sync_write_options)
-        .with_metrics(metrics.clone()),
-    );
+    let stream_sink = create_stream_sink(
+        storage.clone(),
+        router,
+        admin_read_model,
+        options,
+        &route_families,
+        &metrics,
+    )?;
     DomainKind::Stream
         .descriptor()
         .register_sink(router, stream_sink.clone() as Arc<dyn MailboxSink>);
@@ -562,8 +587,58 @@ mod tests {
             queue_write_options: cntryl_midge::WriteOptions::best_effort(),
             queue_fast_flush_interval: Some(std::time::Duration::from_millis(100)),
             request_sync_write_options: cntryl_midge::WriteOptions::sync(),
+            request_buffered_write_options: cntryl_midge::WriteOptions::buffered(),
             rpc_request_timeout: None,
             stream_storage_layout: crate::domains::stream::StreamStorageLayout::default(),
+        }
+    }
+
+    fn cloud_domain_setup_options(
+        durable_write_options: cntryl_midge::WriteOptions,
+    ) -> DomainSetupOptions {
+        DomainSetupOptions {
+            route_families: vec![1],
+            schedule_write_options: durable_write_options,
+            queue_write_options: durable_write_options,
+            queue_fast_flush_interval: None,
+            request_sync_write_options: durable_write_options,
+            request_buffered_write_options: cntryl_midge::WriteOptions::cloud_async(),
+            rpc_request_timeout: None,
+            stream_storage_layout: crate::domains::stream::StreamStorageLayout::default(),
+        }
+    }
+
+    fn assert_cloud_domain_bootstrap(
+        prefix: &str,
+        durable_write_options: cntryl_midge::WriteOptions,
+    ) {
+        let tempdir = tempfile::TempDir::new().expect("create cloud simulation directory");
+        let store = Arc::new(
+            cntryl_midge::Engine::open(
+                cntryl_midge::OpenOptions::cloud_simulated(
+                    tempdir.path(),
+                    "fitz-domain-bootstrap",
+                    prefix,
+                )
+                .build()
+                .expect("build cloud-simulated options"),
+            )
+            .expect("open cloud-simulated engine"),
+        );
+        crate::boot::storage::ensure_route_family(&store, RouteFamily::new(1))
+            .expect("provision route family");
+        let router = Arc::new(Router::new());
+        let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+
+        let result = setup(
+            &router,
+            &store,
+            &admin_read_model,
+            &cloud_domain_setup_options(durable_write_options),
+        );
+
+        if let Err(error) = result {
+            panic!("cloud domain bootstrap failed: {error}");
         }
     }
 
@@ -698,6 +773,26 @@ mod tests {
 
         // Assert
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn should_bootstrap_domains_with_background_cloud_write_options() {
+        // Arrange
+
+        // Act
+        assert_cloud_domain_bootstrap("background", cntryl_midge::WriteOptions::cloud_async());
+
+        // Assert
+    }
+
+    #[test]
+    fn should_bootstrap_domains_with_strict_cloud_write_options() {
+        // Arrange
+
+        // Act
+        assert_cloud_domain_bootstrap("strict", cntryl_midge::WriteOptions::cloud_strict());
+
+        // Assert
     }
 
     #[test]

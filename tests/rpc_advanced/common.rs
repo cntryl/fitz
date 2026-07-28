@@ -264,6 +264,7 @@ pub(crate) fn domain_handles_with_rpc_sink(
             store.clone(),
             router.clone(),
             admin_read_model.clone(),
+            fitz::domains::stream::sink::StreamStorageWriteOptions::local(),
         )),
         rpc,
         Arc::new(LeaseDomainSink::new(

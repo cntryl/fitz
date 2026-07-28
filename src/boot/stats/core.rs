@@ -162,6 +162,7 @@ impl Runtime {
                 queue_write_options: cntryl_midge::WriteOptions::best_effort(),
                 queue_fast_flush_interval: Some(Duration::from_millis(100)),
                 request_sync_write_options: cntryl_midge::WriteOptions::sync(),
+                request_buffered_write_options: cntryl_midge::WriteOptions::buffered(),
                 rpc_request_timeout: None,
                 stream_storage_layout: crate::domains::stream::StreamStorageLayout::default(),
             },
