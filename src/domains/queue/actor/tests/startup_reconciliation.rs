@@ -99,6 +99,61 @@ fn should_reconcile_orphan_queue_body_for_fast_policy_during_preflight() {
 }
 
 #[test]
+fn should_reconcile_orphan_queue_body_with_background_cloud_recovery() {
+    // Arrange
+    let tempdir = tempfile::TempDir::new().expect("create cloud simulation directory");
+    let store = Arc::new(
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::cloud_simulated(
+                tempdir.path(),
+                "fitz-queue-recovery",
+                "background",
+            )
+            .build()
+            .expect("build cloud-simulated options"),
+        )
+        .expect("open cloud-simulated engine"),
+    );
+    store
+        .create_column_family("tenant_default")
+        .expect("create route-family column family");
+    let body_suffix = authoritative_queue_validation_suffix(QUEUE_KEY_FAMILY_BODY, Some(1));
+    let ready_index_suffix =
+        authoritative_queue_validation_suffix(QUEUE_KEY_FAMILY_READY_INDEX, Some(1));
+    for (suffix, value) in [
+        (&body_suffix, b"payload".to_vec()),
+        (&ready_index_suffix, vec![1]),
+    ] {
+        let mut txn = store
+            .begin_tx(1, cntryl_midge::TransactionMode::ReadWrite)
+            .expect("begin cloud queue seed transaction");
+        txn.put(
+            storage_key::prefixed_key("test", DomainKeyspace::Queue, suffix),
+            value,
+            None,
+        )
+        .expect("write cloud queue seed row");
+        txn.commit(cntryl_midge::WriteOptions::cloud_async())
+            .expect("commit cloud queue seed row");
+    }
+
+    // Act
+    let result = QueueActor::prepare_persisted_state_for_existing_families(
+        store.as_ref(),
+        cntryl_midge::WriteOptions::best_effort(),
+        cntryl_midge::WriteOptions::cloud_async(),
+    );
+
+    // Assert
+    assert!(
+        result.is_ok(),
+        "cloud queue reconciliation failed: {result:?}"
+    );
+    assert!(read_queue_validation_row(store.as_ref(), &body_suffix).is_none());
+    assert!(read_queue_validation_row(store.as_ref(), &ready_index_suffix).is_none());
+}
+
+#[test]
 fn should_reject_partial_queue_rows_for_buffered_and_strict_policies() {
     // Arrange
     let policies = [

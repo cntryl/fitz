@@ -75,6 +75,7 @@ fn runtime_with_preloaded_schedule() -> Arc<Runtime> {
             store.clone(),
             router.clone(),
             admin_read_model.clone(),
+            crate::domains::stream::sink::StreamStorageWriteOptions::local(),
         )),
         Arc::new(RpcDomainSink::new(router.clone(), admin_read_model.clone())),
         Arc::new(LeaseDomainSink::new(

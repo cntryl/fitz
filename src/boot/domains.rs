@@ -438,8 +438,10 @@ fn create_stream_sink(
             admin_read_model.clone(),
             options.stream_storage_layout,
             Some(route_families),
-            options.request_sync_write_options,
-            options.request_buffered_write_options,
+            crate::domains::stream::sink::StreamStorageWriteOptions::new(
+                options.request_sync_write_options,
+                options.request_buffered_write_options,
+            ),
         )?
         .with_metrics(metrics.clone()),
     ))

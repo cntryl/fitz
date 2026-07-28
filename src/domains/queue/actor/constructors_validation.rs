@@ -442,7 +442,10 @@ impl QueueActor {
         if incomplete_rows.is_empty() {
             return Ok(());
         }
-        if !recovery_write_options.is_sync() && !recovery_write_options.is_cloud_strict() {
+        if !recovery_write_options.is_sync()
+            && !recovery_write_options.is_cloud_async()
+            && !recovery_write_options.is_cloud_strict()
+        {
             return Err(format!(
                 "queue reconciliation failed: family={family} key_category=reconciliation error=durable recovery write policy required"
             ));
