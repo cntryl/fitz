@@ -276,6 +276,64 @@ fn should_map_buffered_begin_to_cloud_async_given_cloud_storage() {
 }
 
 #[test]
+fn should_derive_cloud_async_buffered_policy_given_strict_cloud_sync_builder() {
+    // Arrange
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = KvDomainSink::new(store, router, admin_read_model)
+        .with_sync_write_options(cntryl_midge::WriteOptions::cloud_strict());
+    let message = crate::domains::kv::KvMessage::Begin {
+        route_family: RouteFamily::new(1),
+        realm: "acme".to_string(),
+        area: "app".to_string(),
+        resource: "users".to_string(),
+        mode: crate::domains::kv::TxMode::ReadWrite,
+        write_options: cntryl_midge::WriteOptions::buffered(),
+    };
+
+    // Act
+    let mapped = sink.apply_write_options(message);
+
+    // Assert
+    match mapped {
+        crate::domains::kv::KvMessage::Begin { write_options, .. } => {
+            assert!(write_options.is_cloud_async());
+        }
+        _ => panic!("expected KV begin message"),
+    }
+}
+
+#[test]
+fn should_derive_cloud_async_buffered_policy_given_background_cloud_sync_builder() {
+    // Arrange
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = KvDomainSink::new(store, router, admin_read_model)
+        .with_sync_write_options(cntryl_midge::WriteOptions::cloud_async());
+    let message = crate::domains::kv::KvMessage::Begin {
+        route_family: RouteFamily::new(1),
+        realm: "acme".to_string(),
+        area: "app".to_string(),
+        resource: "users".to_string(),
+        mode: crate::domains::kv::TxMode::ReadWrite,
+        write_options: cntryl_midge::WriteOptions::buffered(),
+    };
+
+    // Act
+    let mapped = sink.apply_write_options(message);
+
+    // Assert
+    match mapped {
+        crate::domains::kv::KvMessage::Begin { write_options, .. } => {
+            assert!(write_options.is_cloud_async());
+        }
+        _ => panic!("expected KV begin message"),
+    }
+}
+
+#[test]
 fn should_release_resource_lock_given_session_cleanup() {
     // Arrange
     let family = RouteFamily::new(1);

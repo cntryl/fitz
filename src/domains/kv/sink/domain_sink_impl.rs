@@ -81,11 +81,14 @@ impl KvDomainSink {
     }
 
     #[must_use]
-    pub fn with_sync_write_options(mut self, write_options: cntryl_midge::WriteOptions) -> Self {
-        self.actor.stop();
-        self.state_for_builder().core.sync_write_options = write_options;
-        self.rebuild_actor();
-        self
+    pub fn with_sync_write_options(self, write_options: cntryl_midge::WriteOptions) -> Self {
+        let buffered_write_options =
+            if write_options.is_cloud_async() || write_options.is_cloud_strict() {
+                cntryl_midge::WriteOptions::cloud_async()
+            } else {
+                cntryl_midge::WriteOptions::buffered()
+            };
+        self.with_write_options(write_options, buffered_write_options)
     }
 
     #[must_use]
