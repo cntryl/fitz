@@ -104,7 +104,7 @@ fn should_generate_valid_jwt() {
 }
 
 #[tokio::test]
-async fn should_shutdown_with_active_tcp_and_websocket_sessions() {
+async fn should_cleanup_all_session_state_given_abrupt_websocket_disconnect() {
     // Arrange
     let server = TestServer::start().await.expect("start test server");
     let _tcp = server.connect().await.expect("connect tcp client");
@@ -305,7 +305,7 @@ async fn should_reject_websocket_upgrade_when_broker_is_draining() {
 }
 
 #[tokio::test]
-async fn should_reject_tcp_session_when_broker_is_draining() {
+async fn should_reject_new_data_plane_work_given_runtime_drain() {
     // Arrange
     let server = TestServer::start().await.expect("start test server");
     server.runtime.begin_drain();
