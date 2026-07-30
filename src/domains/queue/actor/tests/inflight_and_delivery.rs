@@ -596,7 +596,7 @@ fn should_move_to_dlq_after_max_attempts() {
 }
 
 #[test]
-fn should_not_requeue_dlq_message_after_restart() {
+fn should_not_requeue_completed_dead_letter_given_restart() {
     // Arrange
     let clock = MockClock::new();
     let store = Arc::new(
