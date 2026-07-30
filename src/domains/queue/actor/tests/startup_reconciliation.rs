@@ -273,7 +273,7 @@ fn should_leave_complete_split_and_embedded_queue_records_untouched() {
 }
 
 #[test]
-fn should_not_match_split_queue_rows_across_realms_during_preflight() {
+fn should_preserve_queue_realm_isolation_given_split_record_recovery() {
     // Arrange
     let store = create_test_engine_with_cfs(vec![1]);
     let header_suffix = authoritative_queue_validation_suffix(QUEUE_KEY_FAMILY_HEADER, Some(1));

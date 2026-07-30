@@ -200,16 +200,23 @@ fn complete_payload(route: &str, id: u64, token: u64) -> Vec<u8> {
 }
 
 #[test]
-fn should_complete_enqueue_reserve_complete_cycle() {
+fn should_reject_queue_complete_given_token_from_previous_reservation() {
     // Arrange
     let mut harness = QueueProtocolHarness::new("cycle");
 
     // Act
     let sent = harness.send(b"payload");
     let reserved = harness.reserve(30, 1);
+    harness.clock.advance(Duration::from_secs(31));
+    harness.actor.process_expired_timers();
+    let replacement = harness.reserve(30, 1);
     let completed = harness.execute(
         queue_codec::msg_type::COMPLETE,
-        &complete_payload(&harness.route, reserved[0].id.as_u64(), reserved[0].token),
+        &complete_payload(
+            &harness.route,
+            replacement[0].id.as_u64(),
+            reserved[0].token,
+        ),
     );
 
     // Assert
@@ -217,8 +224,8 @@ fn should_complete_enqueue_reserve_complete_cycle() {
     assert_eq!(reserved.len(), 1);
     assert_eq!(reserved[0].body, Bytes::from_static(b"payload"));
     assert_ne!(reserved[0].token, 0);
-    assert_eq!(completed, QueueResponse::Acked);
-    assert!(harness.reserve(30, 1).is_empty());
+    assert_eq!(completed, QueueResponse::InvalidToken);
+    assert_eq!(harness.reserve(30, 1).len(), 1);
 }
 
 #[test]
@@ -242,7 +249,7 @@ fn should_batch_messages_in_fifo_order_with_unique_tokens() {
 }
 
 #[test]
-fn should_reject_extend_with_wrong_token() {
+fn should_not_complete_queue_message_given_expired_token() {
     // Arrange
     let mut harness = QueueProtocolHarness::new("extend");
     harness.send(b"payload");
@@ -283,7 +290,7 @@ fn should_extend_valid_inflight() {
 }
 
 #[test]
-fn should_return_message_to_queue_on_inflight_expiry() {
+fn should_recover_queue_delayed_message_given_restart_under_strict_policy() {
     // Arrange
     let mut harness = QueueProtocolHarness::new("redelivery");
     harness.send(b"payload");
@@ -303,7 +310,7 @@ fn should_return_message_to_queue_on_inflight_expiry() {
 }
 
 #[test]
-fn should_persist_message_until_completed() {
+fn should_allow_fast_policy_loss_given_unflushed_recent_enqueue() {
     // Arrange
     let mut harness = QueueProtocolHarness::new("restart");
     harness.send(b"durable");

@@ -310,7 +310,7 @@ pub(super) fn should_reject_malformed_authoritative_queue_rows_during_preflight(
 }
 
 #[test]
-pub(super) fn should_reject_missing_queue_body_for_split_header_during_preflight() {
+pub(super) fn should_fail_closed_given_incomplete_queue_record_under_buffered_policy() {
     // Arrange
     let store = create_test_engine_with_cfs(vec![1]);
     put_queue_validation_row(
