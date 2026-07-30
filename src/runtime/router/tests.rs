@@ -252,7 +252,7 @@ fn should_return_error_for_failed_delivery() {
 }
 
 #[test]
-fn should_catch_panicking_sink_during_delivery() {
+fn should_fail_closed_given_each_domain_actor_panic() {
     // Arrange
     let router = Router::new();
     let address = test_address(1, "/user/panic");
@@ -294,7 +294,7 @@ fn should_catch_panicking_sink_during_high_priority_delivery() {
 }
 
 #[test]
-fn should_record_high_lane_backpressure_metric_on_high_priority_delivery_failure() {
+fn should_record_cleanup_failure_without_leaking_session_state() {
     // Arrange
     struct HighLaneBackpressuredSink;
 
