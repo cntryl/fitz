@@ -170,7 +170,7 @@ Important boundaries:
   and delivery.
 - `src/protocol` owns wire DTOs, codecs, IDs, error encoding, and the exact
   message manifest. It does not own authorization policy or domain state.
-- The dispatch adapter is the only production seam that turns protocol values
+- The dispatch adapter is the only runtime seam that turns protocol values
   into synchronous domain commands and turns domain responses back into frames.
 - `src/control` and `src/api/admin` expose read models and operator views; they
   must not define correctness behavior.

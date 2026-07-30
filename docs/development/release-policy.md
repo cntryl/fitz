@@ -6,7 +6,7 @@ Fitz release work is focused on explicit change communication and operator safet
 
 1. Every release includes migration notes when compatibility risk exists.
 2. Behavior changes affecting durability, routing, or auth require prominent documentation.
-3. All production-impacting changes require rollback instructions.
+3. Changes that affect stored data, wire behavior, or deployment configuration require rollback instructions.
 
 ## Release Gates
 

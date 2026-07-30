@@ -16,7 +16,7 @@ Use this checklist before approving a Fitz release.
 
 ## Operations Readiness
 
-1. [production-runbook.md](production-runbook.md) reviewed and current.
+1. [operations-runbook.md](operations-runbook.md) reviewed and current.
 2. Alerts and dashboards updated for new signals.
 3. Rollback plan verified.
 

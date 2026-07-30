@@ -45,4 +45,4 @@ flush can expose a policy-permitted remnant after restart.
 ## Related Docs
 
 - [storage-invariants.md](storage-invariants.md)
-- [../operations/production-runbook.md](../operations/production-runbook.md)
+- [../operations/operations-runbook.md](../operations/operations-runbook.md)

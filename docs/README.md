@@ -1,6 +1,8 @@
 # Fitz Documentation
 
-Fitz is a production-ready, single-node application broker with seven clear primitives: durable streams, queues, live fanout, RPC, KV, leases, and schedules.
+Fitz is a single-node application broker with seven primitives: Stream, Queue,
+Notice, RPC, KV, Lease, and Schedule. Their persistence and session semantics
+are documented separately.
 
 This index is the public reading path. It keeps product usage, operations, client implementation, and contributor internals separate.
 
@@ -24,9 +26,9 @@ This index is the public reading path. It keeps product usage, operations, clien
 ## Operate Fitz
 
 - [Storage setup](operations/cloud-setup.md)
-- [Production auth](operations/production-auth.md)
+- [Auth and browser deployment](operations/auth-browser-deployment.md)
 - [Probes and observability](operations/observability.md)
-- [Production runbook](operations/production-runbook.md)
+- [Operations runbook](operations/operations-runbook.md)
 - [Resource limits](operations/resource-limits.md)
 - [Performance tuning](operations/performance-tuning.md)
 - [Release checklist](operations/release-checklist.md)

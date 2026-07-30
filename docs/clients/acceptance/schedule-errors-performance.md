@@ -165,9 +165,9 @@ Clients **MUST** interpret error codes using this mapping.
 
 ### AC-PERF-001: Frame Size Limits
 
-**MUST** respect maximum frame size (default 1 MB production, configurable)
+**MUST** respect the configurable maximum frame size (1 MiB by default)
 **Given:** Client attempts to send large payload  
-**When:** Payload exceeds configured limit (1 MB production default)  
+**When:** Payload exceeds the configured server limit (1 MiB by default)
 **Then:**
 
 - Client either:
@@ -181,7 +181,7 @@ Clients **MUST** interpret error codes using this mapping.
 - Other domains (e.g., KV, Queue) should use multiple logical operations or application-level chunking; clients MUST NOT rely on implicit TLV chunk reassembly in those domains.
   **Configuration:**
 - Server default: 1 MB (configurable via `BootConfig::max_frame_size`)
-- Client SDK default: May be higher (e.g., 100 MB) but should be reduced to match server in production
+- Client SDK limit must be configurable to match the server limit
 - Test environments: May use larger limits (e.g., 16 MB) for convenience
 
 ### AC-PERF-002: Connection Pooling
@@ -417,9 +417,9 @@ Use this checklist to verify client implementation completeness:
 
 All criteria marked as **MUST** - Required for basic Fitz client
 
-### Level 2: Production Ready (SHOULD)
+### Level 2: Recommended Behavior (SHOULD)
 
-All MUST + SHOULD criteria - Recommended for production deployments
+All MUST + SHOULD criteria.
 
 ### Level 3: Full Compliance
 

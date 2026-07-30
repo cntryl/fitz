@@ -527,9 +527,9 @@ Authorization is **always server-side**:
 - If client sends unauthorized request, broker returns error
 - Clients MUST NOT attempt local permission checking
 
-### TLS (Mandatory in Production)
+### TLS on Untrusted Networks
 
-**Production Deployments (REQUIRED):**
+When traffic crosses an untrusted network, clients MUST:
 Clients MUST:
 
 - Use `wss://` for WebSocket (never plain `ws://`)
@@ -540,7 +540,11 @@ Clients MUST:
 - Reject revoked certificates (if OCSP stapling available)
 - Reject self-signed certificates (unless explicitly in trust store via deployment config)
 
-Browser WebSocket deployments must also send a normal HTTP `Origin` header during the upgrade. Production brokers are expected to allow only exact configured browser origins, such as `https://app.example.com`, before accepting the WebSocket. Configured origins must not include paths, query strings, fragments, wildcards, or trailing slashes.
+Browser WebSocket deployments must also send a normal HTTP `Origin` header
+during the upgrade. Fitz accepts only exact configured browser origins, such as
+`https://app.example.com`, when an origin allowlist is configured. Configured
+origins must not include paths, query strings, fragments, wildcards, or trailing
+slashes.
 
   **Development/Testing (MAY Skip with Explicit Flag):**
   Clients MAY accept self-signed or invalid certificates ONLY if:
@@ -551,7 +555,7 @@ Browser WebSocket deployments must also send a normal HTTP `Origin` header durin
 - Skip certificate validation to "work around" deployment issues
 - Accept expired or revoked certificates without explicit flag
 - Disable hostname verification
-- Accept any certificate in production (must validate chain)
+- Accept any certificate on an untrusted network
 
 ## Flow Control & Backpressure
 

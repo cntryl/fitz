@@ -9,7 +9,9 @@ Use these companion artifacts when implementing or reviewing multiple SDKs:
 
 ## Overview
 
-This guide complements **client-spec.md** (wire protocol) and **client-acceptance-criteria.md** (test requirements) by showing you how to build production-ready clients that feel natural in your target language.
+This guide complements **client-spec.md** (wire protocol) and
+**client-acceptance-criteria.md** (test requirements) with language-native API
+patterns and implementation examples.
 
 ### Document Relationship
 

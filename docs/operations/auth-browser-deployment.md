@@ -1,10 +1,10 @@
-# Production Auth and Browser Deployment
+# Auth and Browser Deployment
 
-This guide describes the hardened production path for Fitz authentication and
-browser-facing deployment. The repo compose files are local-only examples and
-must not be copied forward as production manifests.
+This guide describes Fitz authentication and the browser-facing controls
+implemented by the broker. The repository Compose files bind published ports to
+loopback and use development credentials; they are examples for local use.
 
-## Production Baseline
+## Authenticated Deployment Baseline
 
 Use this baseline whenever `FITZ_AUTH_REQUIRED=true` or when the admin surface
 is exposed beyond loopback:
@@ -30,7 +30,7 @@ FITZ_ROUTE_FAMILY_MAP=acme=1
 Add claim-source overrides only when your identity provider requires them, for
 example `FITZ_AUTH_ORG_CLAIM` or `FITZ_ROUTE_FAMILY_CLAIM`.
 
-Production defaults:
+Configuration constraints:
 
 - Use HTTPS JWKS URLs only.
 - Keep `FITZ_JWT_ALLOW_INSECURE_HTTP=false`.
@@ -71,11 +71,13 @@ Operational expectations:
 
 ## What Not To Reuse From Local Examples
 
-Do not carry these local-dev conveniences into production:
+Do not carry these local-development conveniences into an externally reachable
+deployment:
 
 - `FITZ_ADMIN_AUTH_MODE=open`
 - `FITZ_JWT_HMAC_SECRET`
 - `FITZ_JWT_ALLOW_INSECURE_HTTP=true`
 - `FITZ_ASSUME_LOCAL_LOOPBACK_EDGE=true`
 - loopback-only or placeholder origins
-- repo compose files as deployment manifests
+- repository Compose files without reviewing their loopback bindings,
+  credentials, and storage settings

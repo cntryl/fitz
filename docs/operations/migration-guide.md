@@ -6,7 +6,7 @@ This guide covers safe upgrades between Fitz releases.
 
 1. Read [development/format-compatibility.md](../development/format-compatibility.md).
 2. Review [development/release-policy.md](../development/release-policy.md).
-3. Test upgrade path in staging with production-like data.
+3. Test the upgrade path with representative data and a recoverable copy.
 4. Plan a bounded maintenance replacement for each Fitz node. Fitz does not coordinate rolling state transfer between nodes.
 
 ## Route Family Identity Map Migration

@@ -6,7 +6,7 @@ This matrix tracks officially validated environments and compatibility expectati
 
 - Linux x86_64: primary target
 - Linux arm64: secondary target after validation
-- macOS and Windows: development and test support, not production baseline
+- macOS and Windows: exercised by development and test workflows
 
 ## Transport Support
 

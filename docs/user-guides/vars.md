@@ -7,8 +7,8 @@ inferring settings from Compose files, tests, or source code.
 ## Reading the Tables
 
 - **Unset** means Fitz does not supply a value.
-- Settings marked as local-development or benchmark-only are not production
-  runtime configuration.
+- Settings marked as local-development or benchmark-only are scoped to those
+  repository workflows.
 - Provider-specific storage settings are read only when
   `FITZ_STORAGE_MODE=cloud`.
 - Never put passwords, JWT secrets, or provider credentials directly in
@@ -37,7 +37,7 @@ inferring settings from Compose files, tests, or source code.
 | Key | Allowed Values / Format | Default | Description |
 | --- | --- | --- | --- |
 | FITZ_JWT_JWKS_MAP | Comma-separated issuer=jwks_url pairs | Unset | Preferred runtime token verification mode when `FITZ_AUTH_REQUIRED=true`. JWKS URLs must be absolute URLs without credentials or fragments. By default, only `https` is accepted. |
-| FITZ_JWT_HMAC_SECRET | Secret string | Unset | Local-development fallback. Enables HS256 tokens when JWKS is not configured. Do not use for production traffic. |
+| FITZ_JWT_HMAC_SECRET | Secret string | Unset | Local-development fallback. Enables HS256 tokens when JWKS is not configured. Externally reachable authenticated deployments should use issuer-scoped JWKS verification. |
 | FITZ_JWT_AUDIENCES | Comma-separated audience strings | fitz,fitz-broker | Audience allowlist used by runtime JWKS verification. |
 | FITZ_JWT_AUDIENCE | Single audience string | Alias fallback | Legacy/single-value fallback if FITZ_JWT_AUDIENCES is unset. |
 | FITZ_JWT_ALLOW_INSECURE_HTTP | true or false | false | Allows `http://` JWKS URLs for local mock environments when set to `true`. Never enable this outside local development. |
@@ -84,7 +84,7 @@ broker restart.
 
 The repo compose files are local-development examples only:
 
-- `compose.yml`, the provider-specific `compose.s3.yml`, `compose.azure.yml`, and `compose.gcs.yml` profiles, `compose.cloud.yml`, and `compose.sqrzl.yml` publish only to loopback and are not production deployment manifests.
+- `compose.yml`, the provider-specific `compose.s3.yml`, `compose.azure.yml`, and `compose.gcs.yml` profiles, `compose.cloud.yml`, and `compose.sqrzl.yml` publish only to loopback and use local-development settings.
 - `compose.yml`, the provider-specific profiles, and `compose.cloud.yml` keep `fitz-auth` on `FITZ_JWT_HMAC_SECRET` by default so local Compose startup stays short.
 - Those same compose files keep `FITZ_ADMIN_AUTH_MODE=open` because the admin surface is loopback-only and meant for local inspection.
 - Those same compose files set `FITZ_ASSUME_LOCAL_LOOPBACK_EDGE=true` because Fitz binds inside its container while Docker publishes the listeners only on host loopback. This does not assert TLS or enable HSTS.
@@ -98,12 +98,12 @@ To exercise issuer/JWKS plumbing locally instead of the default HMAC flow:
   - `FITZ_JWT_JWKS_MAP="https://fitz.mock/=http://fitz-jwks:8080/.well-known/jwks.json"`
 - Tokens in that mode must use `iss=https://fitz.mock/` and the mock JWKS key material documented in [quick-start.md](quick-start.md).
 
-## Production Baseline
+## Externally Reachable Deployment Baseline
 
 For authenticated browser or API deployments outside local development:
 
 - Set `FITZ_AUTH_REQUIRED=true`.
-- Configure runtime JWT verification with `FITZ_JWT_JWKS_MAP`. Do not rely on `FITZ_JWT_HMAC_SECRET` in production.
+- Configure runtime JWT verification with `FITZ_JWT_JWKS_MAP`; the shared HMAC secret is a local-development fallback.
 - Set `FITZ_ASSUME_EXTERNAL_TLS=true` when TLS terminates outside Fitz.
 - Do not set `FITZ_ASSUME_LOCAL_LOOPBACK_EDGE`; it is only for host-loopback local container publishing.
 - Set `FITZ_WS_ALLOWED_ORIGINS` to the exact public SPA origins allowed to open browser WebSockets.
@@ -111,7 +111,8 @@ For authenticated browser or API deployments outside local development:
 - Expect protected-admin session cookies to expire on broker restart because the signing key is generated in memory per process.
 - Keep Fitz reachable only from your TLS terminator or other trusted network boundary.
 
-For the complete production auth and browser-perimeter checklist, see [../operations/production-auth.md](../operations/production-auth.md).
+For the auth and browser-perimeter checklist, see
+[../operations/auth-browser-deployment.md](../operations/auth-browser-deployment.md).
 
 ## Storage and Durability
 
@@ -163,7 +164,7 @@ age-based expiry; cancellation or deletion is the explicit resolution path.
 | `sqrzl-gcs` | None | Local emulator GCS front door; bucket and endpoint have Compose-oriented defaults. |
 
 Any other provider identifier is rejected at startup. The `sqrzl-*` providers
-are local emulator settings, not production provider choices.
+are local emulator settings, not external provider choices.
 
 ## Observability and Telemetry
 

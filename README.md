@@ -1,12 +1,15 @@
 # fitz
 
-Fitz is a production-ready, single-node application broker for teams that want common application communication primitives without running a fleet of specialized infrastructure.
+Fitz is a single-node application broker that exposes seven communication and
+state primitives through one process and one route model.
 
 The model is simple: one broker, seven application primitives, one deployment model.
 
 ## What Fitz Provides
 
-Fitz combines durable streams, queues, live fanout, RPC, KV, leases, and schedules behind one broker process and one route model. It is built for applications that need clear semantics more than distributed-system ceremony.
+Fitz combines streams, queues, live fanout, RPC, KV, leases, and schedules
+behind one broker process. Each domain has its own persistence, disconnect, and
+restart semantics.
 
 | Domain | Use it for | Durability model |
 | --- | --- | --- |
@@ -22,7 +25,7 @@ Durable paths use Midge-backed persistence. Local storage writes to disk. Blob/o
 
 ## Non-Goals
 
-Fitz is production-ready for its stated single-node model. It does not claim:
+Fitz is single-node software. It does not provide:
 
 - high availability or consensus
 - transparent failover
@@ -87,14 +90,14 @@ recovery until that upstream emulator behavior is corrected.
 - Prometheus metrics: `http://localhost:9090/metrics` on the dedicated unauthenticated listener
 - Authenticated structured metrics: `/api/v1/{family}/metrics` (wildcard admins use `/api/v1/all/metrics`)
 
-## Production Configuration
+## Deployment Configuration
 
-Start production configuration with these docs:
+Use these references to configure and operate a Fitz process:
 
 - Storage: [docs/operations/cloud-setup.md](docs/operations/cloud-setup.md)
-- Auth: [docs/operations/production-auth.md](docs/operations/production-auth.md)
+- Auth and browser perimeter: [docs/operations/auth-browser-deployment.md](docs/operations/auth-browser-deployment.md)
 - Probes and metrics: [docs/operations/observability.md](docs/operations/observability.md)
-- Runbook: [docs/operations/production-runbook.md](docs/operations/production-runbook.md)
+- Operations runbook: [docs/operations/operations-runbook.md](docs/operations/operations-runbook.md)
 - Environment variables: [docs/user-guides/vars.md](docs/user-guides/vars.md)
 
 Important defaults:

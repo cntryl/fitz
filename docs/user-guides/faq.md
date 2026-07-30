@@ -1,8 +1,12 @@
 # FAQ
 
-## Is Fitz production-ready?
+## What deployment model does Fitz implement?
 
-Yes, for Fitz's stated single-node model. Review [../README.md](../README.md), [../operations/production-runbook.md](../operations/production-runbook.md), and [durability.md](durability.md) before a production rollout.
+Fitz runs as a single broker process with one active storage writer. It does not
+provide consensus, transparent failover, or session recovery. Review
+[../README.md](../../README.md), the
+[operations runbook](../operations/operations-runbook.md), and
+[durability.md](durability.md) for the implemented boundaries.
 
 ## How do I choose route family values?
 

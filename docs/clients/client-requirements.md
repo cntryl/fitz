@@ -2,7 +2,9 @@
 
 **Version:** 1.0  
 **Date:** March 24, 2026  
-**Purpose:** Define what a world-class Fitz client looks like across all dimensions — correctness, API design, resilience, concurrency, error handling, observability, performance, testing, and developer experience. This is the definitive grading rubric.
+**Purpose:** Define a review rubric for Fitz client correctness, API design,
+resilience, concurrency, error handling, observability, performance, testing,
+and documentation.
 
 ---
 
@@ -31,10 +33,12 @@ Every requirement belongs to one of three tiers.
 | Tier | Label | Meaning |
 |------|-------|---------|
 | **T0** | Ship Gate | Non-negotiable. A client missing any T0 requirement is broken and must not be published. |
-| **T1** | Production Grade | Required for any client used in a real system. Missing T1 items are production risks. |
-| **T2** | World Class | Separates a good client from a great one. These are the requirements that earn the "world-class" designation. |
+| **T1** | Operational Completeness | Connection, error, concurrency, and observability behavior beyond the protocol minimum. |
+| **T2** | Extended Quality | Additional API, testing, documentation, and performance requirements. |
 
-RFC 2119 keywords (MUST, SHOULD, MAY) apply within each tier. A T0 requirement using MUST is a hard gate. A T2 requirement using SHOULD is still a T2 requirement — it is expected of a world-class client, even if not immediately fatal to skip.
+RFC 2119 keywords (MUST, SHOULD, MAY) apply within each tier. A T0 requirement
+using MUST is a hard gate. Tier completion reports conformance to this rubric;
+it is not a deployment-readiness certification.
 
 ---
 
@@ -293,7 +297,7 @@ Reconnect rebuild behavior is domain-specific:
 
 **REQ-ERR-008 (T2)** Transport-level errors (connection refused, TLS failure, unexpected close) MUST be wrapped in a typed transport error distinct from domain errors, so callers can tell the difference between "server said no" and "could not reach server".
 
-**REQ-ERR-009 (T2)** The client SHOULD log retryable errors at DEBUG level and fatal errors at WARN level (with structured fields: domain, operation, code, route, latency) so production operators get actionable signals without noise.
+**REQ-ERR-009 (T2)** The client SHOULD log retryable errors at DEBUG level and fatal errors at WARN level (with structured fields: domain, operation, code, route, latency) so operators get actionable signals without noise.
 
 ---
 
@@ -420,7 +424,9 @@ These targets apply to a loopback connection (broker and client on the same mach
 
 **REQ-DOCS-006 (T2)** Misuse of the API MUST produce a clear, actionable error at call time — not a panic, not a nil pointer dereference, not a generic "connection error". For example: calling a domain method before `Connect`, or calling `Commit` after `Rollback`, MUST return a typed error with a descriptive message.
 
-**REQ-DOCS-007 (T2)** The module MUST declare a stable `v1` API (`module github.com/cntryl/fitz-go` with no pseudo-version suffix in go.mod) before being considered world-class. Pre-v1 clients can break callers; v1 signals API stability.
+**REQ-DOCS-007 (T2)** A Go module that declares API stability MUST use a stable
+`v1` module version (`module github.com/cntryl/fitz-go` with no pseudo-version
+suffix in `go.mod`). Pre-v1 clients may make breaking API changes.
 
 **REQ-DOCS-008 (T2)** A `CHANGELOG.md` or equivalent SHOULD be maintained with a per-version summary of breaking changes, new features, and bug fixes so consumers can safely upgrade.
 
@@ -436,8 +442,8 @@ Use this table to grade a specific client implementation. For each row, mark:
 
 **Overall grade tiers:**
 - **T0 complete** = all T0 requirements Pass → client is functional
-- **T1 complete** = all T0 + all T1 requirements Pass → client is production-grade
-- **T2 complete** = all T0 + T1 + T2 requirements Pass → client is world-class
+- **T1 complete** = all T0 + all T1 requirements Pass
+- **T2 complete** = all T0 + T1 + T2 requirements Pass
 
 | Req ID | Tier | Area | Short Description |
 |--------|------|------|-------------------|
@@ -567,4 +573,4 @@ Use this table to grade a specific client implementation. For each row, mark:
 | Documentation | 0 | 4 | 4 | 8 |
 | **Total** | **34** | **47** | **26** | **107** |
 
-A world-class client passes all 107 requirements.
+Full T2 conformance requires all 107 requirements to pass.

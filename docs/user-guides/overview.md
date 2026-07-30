@@ -1,6 +1,7 @@
 # Fitz Overview
 
-Fitz is a production-ready, single-node application broker with one route model and seven primitives.
+Fitz is a single-node application broker with one route model and seven
+primitives.
 
 ## The Model
 
