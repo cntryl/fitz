@@ -4,9 +4,9 @@
 //! ephemeral live notifications.
 
 use crate::dispatch::wire::schedule::{
-    ScheduleCreateEntry, ScheduleDeliveryMode, ScheduleMessage, ScheduleResponse,
+    ScheduleCreateEntry, ScheduleDeliveryMode, ScheduleFailure, ScheduleFailureCategory,
+    ScheduleMessage, ScheduleResponse,
 };
-use crate::protocol::error_codes::schedule as schedule_error_codes;
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
@@ -27,7 +27,7 @@ pub fn parse_request(
     route_family: RouteFamily,
     session_id: SessionId,
     subscriber: RouteAddress,
-) -> Result<ScheduleMessage, String> {
+) -> Result<ScheduleMessage, ScheduleFailure> {
     let mut dec = PayloadDecoder::new(payload);
 
     match ctx.msg_type.0 {
@@ -37,7 +37,10 @@ pub fn parse_request(
         703 => parse_subscribe(&mut dec, route_family, session_id, subscriber),
         704 => parse_unsubscribe(&mut dec, route_family, session_id, subscriber),
         706 => parse_create_batch(&mut dec),
-        _ => Err(format!("Unknown operation: {}", ctx.msg_type.0)),
+        _ => Err(ScheduleFailure::parse(format!(
+            "Unknown operation: {}",
+            ctx.msg_type.0
+        ))),
     }
 }
 
@@ -143,8 +146,8 @@ pub fn encode_response_into(enc: &mut PayloadEncoder, response: &ScheduleRespons
         }
         ScheduleResponse::Error(e) => {
             return crate::protocol::error_codes::encode_error_body_into(
-                schedule_error_code_for_message(e),
-                e,
+                e.category.code(),
+                &e.message,
                 enc,
             );
         }
@@ -153,33 +156,20 @@ pub fn encode_response_into(enc: &mut PayloadEncoder, response: &ScheduleRespons
     enc.finish()
 }
 
-fn schedule_error_code_for_message(message: &str) -> u16 {
-    match message {
-        "schedule not found" => schedule_error_codes::ERR_SCHEDULE_NOT_FOUND,
-        "Cron expression must have exactly 5 fields" => schedule_error_codes::ERR_INVALID_CRON,
-        "invalid schedule delivery mode" => schedule_error_codes::ERR_INVALID_DELIVERY_MODE,
-        "schedule route must be schedule://{realm}/{area}/{resource}/{operation}"
-        | "schedule route scheme must be schedule"
-        | "schedule route must not contain wildcards"
-        | "schedule subscription state is owned by the schedule domain sink" => {
-            schedule_error_codes::ERR_INVALID_TARGET
-        }
-        _ => schedule_error_codes::ERR_PARSE_ERROR,
-    }
-}
-
 // ===== Helper Parsers =====
 
 /// Parse CREATE message
 /// Wire format: [string route][string cron][u8 mode][bytes payload]
-fn parse_create(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, String> {
+fn parse_create(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, ScheduleFailure> {
     let route = dec.get_string()?;
     let cron = dec.get_string()?;
-    let delivery_mode = ScheduleDeliveryMode::try_from(dec.get_u8()?)?;
+    let delivery_mode = ScheduleDeliveryMode::try_from(dec.get_u8()?).map_err(|message| {
+        ScheduleFailure::new(ScheduleFailureCategory::InvalidDeliveryMode, message)
+    })?;
     let payload = dec.get_bytes()?;
 
     if !dec.is_complete() {
-        return Err("Trailing data in message".to_string());
+        return Err(ScheduleFailure::parse("Trailing data in message"));
     }
 
     Ok(ScheduleMessage::Create {
@@ -190,7 +180,7 @@ fn parse_create(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, String> {
     })
 }
 
-fn parse_create_batch(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, String> {
+fn parse_create_batch(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, ScheduleFailure> {
     let entry_count = dec.get_u32()? as usize;
     let mut entries = Vec::with_capacity(entry_count.min(256));
 
@@ -198,13 +188,15 @@ fn parse_create_batch(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, Strin
         entries.push(ScheduleCreateEntry {
             route: dec.get_string()?,
             cron: dec.get_string()?,
-            delivery_mode: ScheduleDeliveryMode::try_from(dec.get_u8()?)?,
+            delivery_mode: ScheduleDeliveryMode::try_from(dec.get_u8()?).map_err(|message| {
+                ScheduleFailure::new(ScheduleFailureCategory::InvalidDeliveryMode, message)
+            })?,
             payload: dec.get_bytes()?,
         });
     }
 
     if !dec.is_complete() {
-        return Err("Trailing data in message".to_string());
+        return Err(ScheduleFailure::parse("Trailing data in message"));
     }
 
     Ok(ScheduleMessage::CreateBatch { entries })
@@ -212,11 +204,11 @@ fn parse_create_batch(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, Strin
 
 /// Parse CANCEL message
 /// Wire format: [string route]
-fn parse_cancel(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, String> {
+fn parse_cancel(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, ScheduleFailure> {
     let route = dec.get_string()?;
 
     if !dec.is_complete() {
-        return Err("Trailing data in message".to_string());
+        return Err(ScheduleFailure::parse("Trailing data in message"));
     }
 
     Ok(ScheduleMessage::Cancel { route })
@@ -225,7 +217,7 @@ fn parse_cancel(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, String> {
 /// Parse LIST message
 /// Wire format (optional): [u64 offset][u64 limit]
 /// If no parameters provided, defaults to offset=0, limit=100
-fn parse_list(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, String> {
+fn parse_list(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, ScheduleFailure> {
     if dec.remaining() == 0 {
         return Ok(ScheduleMessage::List {
             offset: 0,
@@ -237,7 +229,7 @@ fn parse_list(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, String> {
     let limit = dec.get_optional_u64()?.unwrap_or(100);
 
     if !dec.is_complete() {
-        return Err("Trailing data in message".to_string());
+        return Err(ScheduleFailure::parse("Trailing data in message"));
     }
 
     Ok(ScheduleMessage::List { offset, limit })
@@ -250,12 +242,12 @@ fn parse_subscribe(
     route_family: RouteFamily,
     session_id: SessionId,
     subscriber: RouteAddress,
-) -> Result<ScheduleMessage, String> {
+) -> Result<ScheduleMessage, ScheduleFailure> {
     let route_str = dec.get_string()?;
     let route = Route::new(route_str);
 
     if !dec.is_complete() {
-        return Err("Trailing data in message".to_string());
+        return Err(ScheduleFailure::parse("Trailing data in message"));
     }
 
     Ok(ScheduleMessage::Subscribe {
@@ -273,12 +265,12 @@ fn parse_unsubscribe(
     route_family: RouteFamily,
     session_id: SessionId,
     subscriber: RouteAddress,
-) -> Result<ScheduleMessage, String> {
+) -> Result<ScheduleMessage, ScheduleFailure> {
     let route_str = dec.get_string()?;
     let route = Route::new(route_str);
 
     if !dec.is_complete() {
-        return Err("Trailing data in message".to_string());
+        return Err(ScheduleFailure::parse("Trailing data in message"));
     }
 
     Ok(ScheduleMessage::Unsubscribe {
@@ -314,12 +306,18 @@ pub fn encode_notify_into(
 #[cfg(test)]
 mod tests {
     use super::{
-        encode_notify, encode_response, extract_batch_auth_routes, parse_create,
-        ScheduleDeliveryMode,
+        encode_notify, encode_response, extract_batch_auth_routes, parse_create, parse_request,
+        ScheduleDeliveryMode, ScheduleFailure, ScheduleFailureCategory,
     };
     use crate::dispatch::wire::schedule::ScheduleResponse;
     use crate::protocol::error_codes::schedule as schedule_error_codes;
+    use crate::protocol::frame::ChannelId;
+    use crate::protocol::frame_context::FrameContext;
     use crate::protocol::payload_codec::PayloadEncoder;
+    use crate::protocol::tlv::MessageType;
+    use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+    use crate::session::SessionId;
+    use bytes::Bytes;
 
     #[test]
     fn should_encode_subscribe_response_with_subscription_id() {
@@ -352,7 +350,10 @@ mod tests {
     #[test]
     fn should_encode_typed_schedule_error_for_known_failure() {
         // Arrange
-        let response = ScheduleResponse::Error("schedule not found".to_string());
+        let response = ScheduleResponse::Error(ScheduleFailure::new(
+            ScheduleFailureCategory::NotFound,
+            "schedule not found",
+        ));
 
         // Act
         let payload = encode_response(&response);
@@ -404,12 +405,10 @@ mod tests {
         let result = parse_create(&mut decoder);
 
         // Assert
+        let failure = result.expect_err("invalid mode");
+        assert_eq!(failure.message, "invalid schedule delivery mode");
         assert_eq!(
-            result.expect_err("invalid mode"),
-            "invalid schedule delivery mode"
-        );
-        assert_eq!(
-            super::schedule_error_code_for_message("invalid schedule delivery mode"),
+            failure.category.code(),
             schedule_error_codes::ERR_INVALID_DELIVERY_MODE
         );
     }
@@ -429,5 +428,29 @@ mod tests {
 
         // Assert
         assert!(result.is_err());
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn should_never_panic_given_arbitrary_schedule_payload(
+            message_type in 700_u16..=706,
+            payload in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..512),
+        ) {
+            // Arrange
+            let family = RouteFamily::new(1);
+            let context = FrameContext::new(
+                1,
+                ChannelId::Pub,
+                MessageType::new(message_type),
+                Bytes::copy_from_slice(&payload),
+                family,
+            );
+            let subscriber = RouteAddress::new(family, Route::new("inbox://session/1"));
+
+            // Act
+            let _ = parse_request(&context, &payload, family, SessionId(1), subscriber);
+
+            // Assert
+        }
     }
 }

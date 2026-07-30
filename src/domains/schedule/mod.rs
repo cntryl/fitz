@@ -28,8 +28,8 @@ pub use actor::ScheduleActor;
 pub use metrics::ScheduleMetrics;
 pub use protocol::{
     CronSchedule, ScheduleClientNotification, ScheduleClientRequest, ScheduleClientResponse,
-    ScheduleCreateEntry, ScheduleDef, ScheduleDeliveryMode, ScheduleError, ScheduleListEntry,
-    ScheduleMessage, ScheduleResponse,
+    ScheduleCreateEntry, ScheduleDef, ScheduleDeliveryMode, ScheduleFailure,
+    ScheduleFailureCategory, ScheduleListEntry, ScheduleMessage, ScheduleResponse,
 };
 pub use session::SessionActor;
 pub use store::ScheduleStore;

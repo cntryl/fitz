@@ -85,7 +85,10 @@ impl ScheduleDomainRuntime<'_> {
 
         if !Self::valid_request_envelope(envelope, meta) {
             let response = crate::domains::schedule::ScheduleResponse::Error(
-                "route family mismatch".to_string(),
+                crate::domains::schedule::ScheduleFailure::new(
+                    crate::domains::schedule::ScheduleFailureCategory::InvalidTarget,
+                    "route family mismatch",
+                ),
             );
             let response_meta = Self::response_meta_for_source(envelope, meta);
             self.route_schedule_response(envelope, response_meta, &response, request_started);
@@ -100,7 +103,10 @@ impl ScheduleDomainRuntime<'_> {
 
         if !Self::valid_schedule_message(envelope, meta, &schedule_msg) {
             let response = crate::domains::schedule::ScheduleResponse::Error(
-                "route family mismatch".to_string(),
+                crate::domains::schedule::ScheduleFailure::new(
+                    crate::domains::schedule::ScheduleFailureCategory::InvalidTarget,
+                    "route family mismatch",
+                ),
             );
             let response_meta = Self::response_meta_for_source(envelope, meta);
             self.route_schedule_response(envelope, response_meta, &response, request_started);
@@ -195,7 +201,10 @@ impl ScheduleDomainRuntime<'_> {
         &self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
-        message: Result<crate::domains::schedule::ScheduleMessage, String>,
+        message: Result<
+            crate::domains::schedule::ScheduleMessage,
+            crate::domains::schedule::ScheduleFailure,
+        >,
         request_started: Option<std::time::Instant>,
     ) -> Option<crate::domains::schedule::ScheduleMessage> {
         match message {
@@ -263,7 +272,9 @@ impl ScheduleDomainRuntime<'_> {
         let actor = match self.get_or_create_actor(&mut actors, route_family) {
             Ok(actor) => actor,
             Err(error) => {
-                let response = ScheduleResponse::Error(error);
+                let response = ScheduleResponse::Error(
+                    crate::domains::schedule::ScheduleFailure::parse(error),
+                );
                 self.route_schedule_response(envelope, meta, &response, request_started);
                 return None;
             }
@@ -279,67 +290,143 @@ impl ScheduleDomainRuntime<'_> {
     ) -> (crate::domains::schedule::ScheduleResponse, bool) {
         use crate::domains::schedule::{ScheduleMessage, ScheduleResponse};
 
-        let mut schedule_snapshot_dirty = false;
-        let response = match schedule_msg {
+        match schedule_msg {
             ScheduleMessage::Create {
                 route,
                 cron,
                 delivery_mode,
                 payload,
-            } => match actor.create_schedule_with_mode(route, cron, delivery_mode, payload) {
-                Ok(changed) => {
-                    if changed {
-                        schedule_snapshot_dirty = true;
-                    }
-                    ScheduleResponse::Ok
-                }
-                Err(e) => ScheduleResponse::Error(e),
-            },
-            ScheduleMessage::CreateBatch { entries } => match actor.create_schedules(entries) {
-                Ok(changed) => {
-                    if changed > 0 {
-                        schedule_snapshot_dirty = true;
-                    }
-                    ScheduleResponse::Ok
-                }
-                Err(e) => ScheduleResponse::Error(e),
-            },
-            ScheduleMessage::Cancel { route } => match actor.delete_schedule(&route) {
-                Ok(removed) => {
-                    if removed {
-                        schedule_snapshot_dirty = true;
-                    }
-                    ScheduleResponse::Ok
-                }
-                Err(e) => ScheduleResponse::Error(e),
-            },
+            } => Self::apply_create_message(actor, route, cron, delivery_mode, payload),
+            ScheduleMessage::CreateBatch { entries } => {
+                Self::apply_create_batch_message(actor, entries)
+            }
+            ScheduleMessage::Cancel { route } => Self::apply_cancel_message(actor, &route),
             ScheduleMessage::List { offset, limit } => {
                 let (entries, total_count) = actor.list_entries(offset, limit);
 
-                ScheduleResponse::ListDefs {
-                    entries,
-                    total_count,
-                }
+                (
+                    ScheduleResponse::ListDefs {
+                        entries,
+                        total_count,
+                    },
+                    false,
+                )
             }
             ScheduleMessage::Subscribe {
                 family_id,
                 route,
                 session_id,
                 subscriber,
-            } => self.apply_subscribe_message(family_id, &route, session_id, subscriber),
+            } => (
+                self.apply_subscribe_message(family_id, &route, session_id, subscriber),
+                false,
+            ),
             ScheduleMessage::Unsubscribe {
                 family_id,
                 route,
                 session_id,
                 ..
-            } => self.apply_unsubscribe_message(family_id, &route, session_id),
+            } => (
+                self.apply_unsubscribe_message(family_id, &route, session_id),
+                false,
+            ),
             ScheduleMessage::UnsubscribeAll { session_id, .. } => {
                 self.unsubscribe_all(session_id);
-                ScheduleResponse::Ok
+                (ScheduleResponse::Ok, false)
             }
+        }
+    }
+
+    fn apply_create_message(
+        actor: &mut crate::domains::schedule::ScheduleActor,
+        route: String,
+        cron: String,
+        delivery_mode: crate::domains::schedule::ScheduleDeliveryMode,
+        payload: bytes::Bytes,
+    ) -> (crate::domains::schedule::ScheduleResponse, bool) {
+        use crate::domains::schedule::{ScheduleFailure, ScheduleResponse};
+
+        if let Some(failure) = Self::schedule_definition_failure(&route, &cron) {
+            return (ScheduleResponse::Error(failure), false);
+        }
+
+        match actor.create_schedule_with_mode(route, cron, delivery_mode, payload) {
+            Ok(changed) => (ScheduleResponse::Ok, changed),
+            Err(error) => (
+                ScheduleResponse::Error(ScheduleFailure::parse(error)),
+                false,
+            ),
+        }
+    }
+
+    fn apply_create_batch_message(
+        actor: &mut crate::domains::schedule::ScheduleActor,
+        entries: Vec<crate::domains::schedule::ScheduleCreateEntry>,
+    ) -> (crate::domains::schedule::ScheduleResponse, bool) {
+        use crate::domains::schedule::{ScheduleFailure, ScheduleResponse};
+
+        if let Some(failure) = entries
+            .iter()
+            .find_map(|entry| Self::schedule_definition_failure(&entry.route, &entry.cron))
+        {
+            return (ScheduleResponse::Error(failure), false);
+        }
+
+        match actor.create_schedules(entries) {
+            Ok(changed) => (ScheduleResponse::Ok, changed > 0),
+            Err(error) => (
+                ScheduleResponse::Error(ScheduleFailure::parse(error)),
+                false,
+            ),
+        }
+    }
+
+    fn apply_cancel_message(
+        actor: &mut crate::domains::schedule::ScheduleActor,
+        route: &str,
+    ) -> (crate::domains::schedule::ScheduleResponse, bool) {
+        use crate::domains::schedule::{
+            ScheduleFailure, ScheduleFailureCategory, ScheduleResponse,
         };
 
-        (response, schedule_snapshot_dirty)
+        if let Err(error) =
+            crate::domains::schedule::protocol::validate_concrete_schedule_route(route)
+        {
+            return (
+                ScheduleResponse::Error(ScheduleFailure::new(
+                    ScheduleFailureCategory::InvalidTarget,
+                    error,
+                )),
+                false,
+            );
+        }
+
+        match actor.delete_schedule(route) {
+            Ok(removed) => (ScheduleResponse::Ok, removed),
+            Err(error) => (
+                ScheduleResponse::Error(ScheduleFailure::parse(error)),
+                false,
+            ),
+        }
+    }
+
+    fn schedule_definition_failure(
+        route: &str,
+        cron: &str,
+    ) -> Option<crate::domains::schedule::ScheduleFailure> {
+        use crate::domains::schedule::{ScheduleFailure, ScheduleFailureCategory};
+
+        if let Err(error) =
+            crate::domains::schedule::protocol::validate_concrete_schedule_route(route)
+        {
+            return Some(ScheduleFailure::new(
+                ScheduleFailureCategory::InvalidTarget,
+                error,
+            ));
+        }
+        crate::domains::schedule::CronSchedule::parse(cron)
+            .err()
+            .map(|error| ScheduleFailure::new(ScheduleFailureCategory::InvalidCron, error))
     }
 
     fn apply_subscribe_message(
@@ -349,12 +436,17 @@ impl ScheduleDomainRuntime<'_> {
         session_id: u64,
         subscriber: crate::runtime::routing::RouteAddress,
     ) -> crate::domains::schedule::ScheduleResponse {
-        use crate::domains::schedule::ScheduleResponse;
+        use crate::domains::schedule::{
+            ScheduleFailure, ScheduleFailureCategory, ScheduleResponse,
+        };
 
         if let Err(error) =
             crate::domains::schedule::protocol::validate_concrete_schedule_route(route.as_str())
         {
-            return ScheduleResponse::Error(error);
+            return ScheduleResponse::Error(ScheduleFailure::new(
+                ScheduleFailureCategory::InvalidTarget,
+                error,
+            ));
         }
 
         let fam_id = family_id.as_u64();
@@ -382,7 +474,10 @@ impl ScheduleDomainRuntime<'_> {
                 if state_empty {
                     families.remove(&fam_id);
                 }
-                return ScheduleResponse::Error("subscription ID space exhausted".to_string());
+                return ScheduleResponse::Error(ScheduleFailure::new(
+                    ScheduleFailureCategory::SubscriptionLimit,
+                    "subscription ID space exhausted",
+                ));
             };
             state.insert(ScheduleSubscription {
                 route: route.as_str().to_string(),
@@ -412,12 +507,17 @@ impl ScheduleDomainRuntime<'_> {
         route: &crate::runtime::routing::Route,
         session_id: u64,
     ) -> crate::domains::schedule::ScheduleResponse {
-        use crate::domains::schedule::ScheduleResponse;
+        use crate::domains::schedule::{
+            ScheduleFailure, ScheduleFailureCategory, ScheduleResponse,
+        };
 
         if let Err(error) =
             crate::domains::schedule::protocol::validate_concrete_schedule_route(route.as_str())
         {
-            return ScheduleResponse::Error(error);
+            return ScheduleResponse::Error(ScheduleFailure::new(
+                ScheduleFailureCategory::InvalidTarget,
+                error,
+            ));
         }
 
         let fam_id = family_id.as_u64();

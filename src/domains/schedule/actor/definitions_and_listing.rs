@@ -60,7 +60,7 @@ impl ScheduleActor {
         }
 
         let cron_obj = self.parsed_cron_for(&cron)?;
-        let next_fire_time = cron_obj.next_fire_time_with_clock(now, self.clock.as_ref());
+        let next_fire_time = cron_obj.try_next_fire_time_with_clock(now, self.clock.as_ref())?;
         let next_fire_ms =
             Self::instant_to_ms_at_with_clock(next_fire_time, now, self.clock.as_ref());
 
@@ -173,8 +173,7 @@ impl ScheduleActor {
             return Err("schedule batch must not be empty".to_string());
         }
 
-        let mut seen_routes =
-            FastSet::with_capacity_and_hasher(entries.len(), FxBuildHasher::default());
+        let mut seen_routes = FastSet::with_capacity_and_hasher(entries.len(), FxBuildHasher);
         let mut pending = Vec::with_capacity(entries.len());
 
         for entry in entries {
@@ -326,7 +325,7 @@ impl ScheduleActor {
     ) -> Result<PendingScheduleCreate, String> {
         let route_parts = parse_concrete_schedule_route(&entry.route)?;
         let parsed_cron = self.parsed_cron_for(&entry.cron)?;
-        let next_fire_time = parsed_cron.next_fire_time_with_clock(now, self.clock.as_ref());
+        let next_fire_time = parsed_cron.try_next_fire_time_with_clock(now, self.clock.as_ref())?;
         let next_fire_ms =
             Self::instant_to_ms_at_with_clock(next_fire_time, now, self.clock.as_ref());
 

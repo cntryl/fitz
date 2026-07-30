@@ -5,8 +5,8 @@ pub(super) use crate::domains::schedule::metrics::{
 pub(super) use crate::domains::schedule::protocol::{
     epoch_ms_to_instant_with_reference, instant_to_epoch_ms_with_reference,
     parse_concrete_schedule_route, Clock, ConcreteScheduleRoute, CronSchedule, ScheduleCreateEntry,
-    ScheduleDef, ScheduleDeliveryMode, ScheduleListEntry, ScheduleMessage, ScheduleResponse,
-    SystemClock,
+    ScheduleDef, ScheduleDeliveryMode, ScheduleFailure, ScheduleFailureCategory, ScheduleListEntry,
+    ScheduleMessage, ScheduleResponse, SystemClock,
 };
 pub(super) use crate::domains::schedule::store::{
     PersistedPendingFireClaim, PersistedSchedule, ScheduleAckDefinition, ScheduleFireClaim,
@@ -16,7 +16,7 @@ pub(super) use crate::prelude::Actor;
 pub(super) use crate::runtime::actor::Context;
 pub(super) use crate::runtime::routing::RouteFamily;
 pub(super) use bytes::Bytes;
-pub(super) use fxhash::FxBuildHasher;
+pub(super) use rustc_hash::FxBuildHasher;
 pub(super) use std::cmp::Reverse;
 pub(super) use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
 pub(super) use std::sync::Arc;

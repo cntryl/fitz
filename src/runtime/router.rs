@@ -38,7 +38,7 @@ use crate::observability as obs;
 use crate::runtime::envelope::Envelope;
 use crate::runtime::routing::RouteAddress;
 use dashmap::DashMap;
-use fxhash::FxBuildHasher;
+use rustc_hash::FxBuildHasher;
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, trace, warn};

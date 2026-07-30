@@ -1,6 +1,6 @@
 //! Actor execution context and environment
 
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use std::time::{Duration, Instant};
 
 fn u128_to_u64_saturating(value: u128) -> u64 {

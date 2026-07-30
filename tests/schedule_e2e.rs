@@ -59,14 +59,38 @@ where
 {
     // Arrange
     let mut client = C::connect(server).await.expect("connect");
-    let frame = build_schedule_create("schedule://test/jobs/bad/run", "invalid cron", b"task");
+    let invalid_expressions = [
+        "invalid cron",
+        "60 0 * * *",
+        "0 9-2 * * *",
+        "*/0 * * * *",
+        "0 0 31 2 *",
+    ];
 
     // Act
-    let response = client.send_and_receive(&frame, 2000).await.expect("send");
+    let mut responses = Vec::new();
+    for expression in invalid_expressions {
+        let frame = build_schedule_create("schedule://test/jobs/bad/run", expression, b"task");
+        responses.push(
+            client
+                .send_and_receive(&frame, 2000)
+                .await
+                .expect("send invalid cron"),
+        );
+    }
 
     // Assert
-    let (_msg_type, status, _data) = parse_schedule_response(&response);
-    assert_ne!(status, 0, "Expected failure for invalid cron expression");
+    for response in responses {
+        let (_msg_type, status, data) = parse_schedule_response(&response);
+        assert_ne!(status, 0, "Expected failure for invalid cron expression");
+        let (code, message) =
+            fitz::protocol::error_codes::decode_error_body(&data).expect("decode schedule error");
+        assert_eq!(
+            code,
+            fitz::protocol::error_codes::schedule::ERR_INVALID_CRON
+        );
+        assert!(!message.is_empty());
+    }
 }
 
 // Generic test helper for cancel nonexistent schedule

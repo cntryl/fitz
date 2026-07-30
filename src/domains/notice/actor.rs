@@ -21,7 +21,7 @@ use crate::runtime::router::MailboxSink;
 use crate::runtime::routing::RouteFamily;
 use crate::runtime::subscriptions::{SubscriptionId, SubscriptionIndex};
 use crate::session::session::SessionId;
-use fxhash::FxBuildHasher;
+use rustc_hash::FxBuildHasher;
 use std::collections::HashMap;
 use std::sync::Arc;
 

@@ -97,9 +97,22 @@ impl ScheduleActor {
                 continue;
             }
 
-            let next_fire_time = def
+            let next_fire_time = match def
                 .parsed_cron
-                .next_fire_time_with_clock(now, self.clock.as_ref());
+                .try_next_fire_time_with_clock(now, self.clock.as_ref())
+            {
+                Ok(next_fire_time) => next_fire_time,
+                Err(error) => {
+                    warn!(
+                        route = %route,
+                        cron = %def.cron,
+                        error = %error,
+                        "Schedule next-fire calculation failed closed"
+                    );
+                    self.ready_heap.push((Reverse(fire_ms), route));
+                    continue;
+                }
+            };
             let next_fire_ms =
                 Self::instant_to_ms_at_with_clock(next_fire_time, now, self.clock.as_ref());
             to_reschedule.push(PendingScheduleFire {
@@ -243,10 +256,8 @@ impl ScheduleActor {
         }
 
         let acknowledged_at_ms = self.clock.now_epoch_ms();
-        let mut acknowledgement_counts: FastMap<&str, u64> = HashMap::with_capacity_and_hasher(
-            handed_off_occurrences.len(),
-            FxBuildHasher::default(),
-        );
+        let mut acknowledgement_counts: FastMap<&str, u64> =
+            HashMap::with_capacity_and_hasher(handed_off_occurrences.len(), FxBuildHasher);
         let store_items: Vec<_> = handed_off_occurrences
             .iter()
             .map(|(fire_ms, route)| {

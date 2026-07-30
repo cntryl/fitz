@@ -37,7 +37,7 @@ use crate::runtime::matcher::{
 };
 use crate::runtime::routing::{Route, RouteFamily};
 use ahash::AHashMap;
-use fxhash::FxBuildHasher;
+use rustc_hash::FxBuildHasher;
 use smallvec::SmallVec;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -110,7 +110,7 @@ impl Default for SegmentInterner {
 
 mod segments_cache {
     use crate::runtime::matcher::{parse_pattern_segments, PatternSegment};
-    use fxhash::FxBuildHasher;
+    use rustc_hash::FxBuildHasher;
     use std::collections::HashMap;
     use std::sync::Arc;
 

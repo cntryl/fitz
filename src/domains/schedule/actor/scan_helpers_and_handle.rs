@@ -1,8 +1,9 @@
 #[cfg(test)]
 use super::model::SystemClock;
 use super::model::{
-    epoch_ms_to_instant_with_reference, instant_to_epoch_ms_with_reference, Clock, Duration,
-    Instant, Reverse, ScheduleActor, ScheduleMessage, ScheduleResponse,
+    epoch_ms_to_instant_with_reference, instant_to_epoch_ms_with_reference,
+    parse_concrete_schedule_route, Clock, CronSchedule, Duration, Instant, Reverse, ScheduleActor,
+    ScheduleFailure, ScheduleFailureCategory, ScheduleMessage, ScheduleResponse,
 };
 
 impl ScheduleActor {
@@ -100,18 +101,56 @@ impl ScheduleActor {
                 cron,
                 delivery_mode,
                 payload,
-            } => match self.create_schedule_with_mode(route, cron, delivery_mode, payload) {
-                Ok(_) => ScheduleResponse::Ok,
-                Err(e) => ScheduleResponse::Error(e),
-            },
-            ScheduleMessage::CreateBatch { entries } => match self.create_schedules(entries) {
-                Ok(_) => ScheduleResponse::Ok,
-                Err(e) => ScheduleResponse::Error(e),
-            },
-            ScheduleMessage::Cancel { route } => match self.delete_schedule(&route) {
-                Ok(_) => ScheduleResponse::Ok,
-                Err(e) => ScheduleResponse::Error(e),
-            },
+            } => {
+                if let Err(error) = parse_concrete_schedule_route(&route) {
+                    return ScheduleResponse::Error(ScheduleFailure::new(
+                        ScheduleFailureCategory::InvalidTarget,
+                        error,
+                    ));
+                }
+                if let Err(error) = CronSchedule::parse(&cron) {
+                    return ScheduleResponse::Error(ScheduleFailure::new(
+                        ScheduleFailureCategory::InvalidCron,
+                        error,
+                    ));
+                }
+                match self.create_schedule_with_mode(route, cron, delivery_mode, payload) {
+                    Ok(_) => ScheduleResponse::Ok,
+                    Err(e) => ScheduleResponse::Error(ScheduleFailure::parse(e)),
+                }
+            }
+            ScheduleMessage::CreateBatch { entries } => {
+                for entry in &entries {
+                    if let Err(error) = parse_concrete_schedule_route(&entry.route) {
+                        return ScheduleResponse::Error(ScheduleFailure::new(
+                            ScheduleFailureCategory::InvalidTarget,
+                            error,
+                        ));
+                    }
+                    if let Err(error) = CronSchedule::parse(&entry.cron) {
+                        return ScheduleResponse::Error(ScheduleFailure::new(
+                            ScheduleFailureCategory::InvalidCron,
+                            error,
+                        ));
+                    }
+                }
+                match self.create_schedules(entries) {
+                    Ok(_) => ScheduleResponse::Ok,
+                    Err(e) => ScheduleResponse::Error(ScheduleFailure::parse(e)),
+                }
+            }
+            ScheduleMessage::Cancel { route } => {
+                if let Err(error) = parse_concrete_schedule_route(&route) {
+                    return ScheduleResponse::Error(ScheduleFailure::new(
+                        ScheduleFailureCategory::InvalidTarget,
+                        error,
+                    ));
+                }
+                match self.delete_schedule(&route) {
+                    Ok(_) => ScheduleResponse::Ok,
+                    Err(e) => ScheduleResponse::Error(ScheduleFailure::parse(e)),
+                }
+            }
             ScheduleMessage::List { offset, limit } => {
                 let (entries, total_count) = self.list_entries(offset, limit);
                 ScheduleResponse::ListDefs {
@@ -121,9 +160,12 @@ impl ScheduleActor {
             }
             ScheduleMessage::Subscribe { .. }
             | ScheduleMessage::Unsubscribe { .. }
-            | ScheduleMessage::UnsubscribeAll { .. } => ScheduleResponse::Error(
-                "schedule subscription state is owned by the schedule domain sink".to_string(),
-            ),
+            | ScheduleMessage::UnsubscribeAll { .. } => {
+                ScheduleResponse::Error(ScheduleFailure::new(
+                    ScheduleFailureCategory::InvalidTarget,
+                    "schedule subscription state is owned by the schedule domain sink",
+                ))
+            }
         }
     }
 }
