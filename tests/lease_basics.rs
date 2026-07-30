@@ -471,7 +471,7 @@ fn should_issue_monotonically_increasing_tokens() {
 }
 
 #[test]
-fn should_isolate_leases_across_route_families() {
+fn should_isolate_same_lease_route_given_different_route_families() {
     // Arrange
     let mut actor = InnerLeaseActor::new(RouteFamily::new(1));
     let mut ctx = make_ctx();
