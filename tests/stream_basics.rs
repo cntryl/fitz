@@ -530,7 +530,7 @@ fn should_abort_append_session_on_owner_cleanup() {
 }
 
 #[test]
-fn should_recover_next_offset_from_store_after_restart() {
+fn should_replay_stream_records_given_resource_offset_after_restart_tcp() {
     // Arrange
     let store = Arc::new(StreamStore::new(create_test_db()));
     let mut writer = make_actor_with_store(store.clone(), "realm1", "area1", "orders");
