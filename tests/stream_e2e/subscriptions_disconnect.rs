@@ -54,9 +54,8 @@ pub(crate) async fn should_retain_other_stream_subscription_after_unsubscribe<C>
     assert_eq!(retained_payload["batch_size"], 1);
 }
 
-pub(crate) async fn should_remove_stream_subscription_when_subscriber_disconnects<C>(
-    server: &TestServer,
-) where
+pub(crate) async fn should_not_recover_stream_subscription_given_disconnect<C>(server: &TestServer)
+where
     C: StreamConnector,
 {
     // Arrange
