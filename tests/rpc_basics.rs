@@ -183,7 +183,7 @@ fn should_define_error_code_6008_rpc_wrong_worker() {
 }
 
 #[test]
-fn should_complete_single_request_response_cycle() {
+fn should_forward_rpc_success_given_registered_worker() {
     // Arrange
     let family = RouteFamily::new(1);
     let correlation_id = Uuid::new_v4();
@@ -235,7 +235,7 @@ fn should_reassemble_multi_chunk_streaming_response() {
 }
 
 #[test]
-fn should_detect_out_of_order_streaming_chunks() {
+fn should_reject_rpc_response_given_sequence_gap() {
     // Arrange
     let correlation_id = Uuid::new_v4();
 
