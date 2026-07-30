@@ -165,7 +165,7 @@ pub(crate) async fn should_preserve_monotonic_stream_realm_offsets_after_restart
 }
 
 #[tokio::test]
-pub(crate) async fn should_drop_uncommitted_stream_batch_on_restart() {
+pub(crate) async fn should_not_expose_uncommitted_values_given_restart() {
     let tempdir = TempDir::new().expect("tempdir");
     let db_path = tempdir.path().join("fitz-stream-uncommitted");
     let db_path = db_path.to_string_lossy().to_string();

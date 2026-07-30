@@ -363,7 +363,7 @@ where
 }
 
 #[tokio::test]
-async fn should_preload_persisted_schedules_before_schedule_traffic_after_restart() {
+async fn should_recover_schedule_definitions_before_accepting_schedule_traffic() {
     let tempdir = tempfile::TempDir::new().expect("tempdir");
     let db_path = tempdir.path().join("fitz-schedule-restart");
     let db_path = db_path.to_string_lossy().to_string();
