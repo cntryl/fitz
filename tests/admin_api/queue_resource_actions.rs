@@ -143,7 +143,7 @@ async fn should_reject_legacy_dead_letter_replay_path() {
 
 #[tokio::test]
 #[serial]
-async fn should_reject_unsafe_admin_request_given_cross_origin() {
+async fn should_reject_admin_mutation_given_cross_origin_request() {
     // Arrange
     let (runtime, store) = queue_runtime_with_domains();
     let message_id = seed_dead_lettered_queue_message(store);

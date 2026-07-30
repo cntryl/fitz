@@ -287,7 +287,7 @@ async fn should_reject_runtime_drain_given_cross_origin_request() {
 
 #[tokio::test]
 #[serial]
-async fn should_create_admin_session_and_set_cookie() {
+async fn should_set_secure_admin_cookie_given_public_bind() {
     // Arrange
     let runtime = test_runtime();
     let req = hyper::http::Request::builder()

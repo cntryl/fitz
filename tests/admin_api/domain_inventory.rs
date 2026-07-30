@@ -155,7 +155,7 @@ async fn should_return_stream_area_watermarks_given_committed_stream_history() {
 
 #[tokio::test]
 #[serial]
-async fn should_isolate_stream_realm_watermarks_by_authorized_route_family() {
+async fn should_filter_admin_resources_given_explicit_route_family() {
     // Arrange
     let _family_guard = EnvGuard::set("FITZ_ADMIN_ROUTE_FAMILIES", "1");
     let runtime = test_runtime();
@@ -523,7 +523,7 @@ async fn should_page_committed_kv_rows_given_route_family_path_segment() {
 
 #[tokio::test]
 #[serial]
-async fn should_reject_committed_kv_read_given_unauthorized_route_family() {
+async fn should_not_leak_admin_resource_given_unauthorized_route_family() {
     // Arrange
     let _family_guard = EnvGuard::set("FITZ_ADMIN_ROUTE_FAMILIES", "1");
     let (runtime, store) = queue_runtime_with_domains();
