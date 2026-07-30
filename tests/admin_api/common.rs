@@ -12,7 +12,7 @@ pub(crate) use fitz::api::runtime_ingress::{Ingress, RuntimeIngress};
 pub(crate) use fitz::boot::domains::DomainHandles;
 pub(crate) use fitz::boot::{BootConfig, Runtime};
 pub(crate) use fitz::domains::kv::sink::KvDomainSink;
-pub(crate) use fitz::domains::kv::{KvActor, KvMessage, KvResponse, TxMode};
+pub(crate) use fitz::domains::kv::{KvActor, KvMessage, KvResourceScope, KvResponse, TxMode};
 pub(crate) use fitz::domains::lease::sink::LeaseDomainSink;
 pub(crate) use fitz::domains::notice::sink::NoticeDomainSink;
 pub(crate) use fitz::domains::queue::sink::QueueDomainSink;
@@ -698,12 +698,10 @@ pub(crate) fn seed_committed_kv_values(
     entries: &[(&[u8], &[u8])],
 ) {
     let route_family = RouteFamily::try_from(family).expect("test family must fit in u32");
+    let scope = KvResourceScope::new(route_family, realm, area, resource);
     let mut actor = KvActor::new(store);
     let tx_id = match actor.handle(KvMessage::Begin {
-        route_family,
-        realm: realm.to_string(),
-        area: area.to_string(),
-        resource: resource.to_string(),
+        scope: scope.clone(),
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     }) {
@@ -714,8 +712,7 @@ pub(crate) fn seed_committed_kv_values(
     for (key, value) in entries {
         match actor.handle(KvMessage::Put {
             tx_id,
-            route_family,
-            resource: resource.to_string(),
+            scope: scope.clone(),
             key: Bytes::copy_from_slice(key),
             value: Bytes::copy_from_slice(value),
         }) {
@@ -724,7 +721,7 @@ pub(crate) fn seed_committed_kv_values(
         }
     }
 
-    match actor.handle(KvMessage::Commit { tx_id }) {
+    match actor.handle(KvMessage::Commit { tx_id, scope }) {
         KvResponse::CommitOk => {}
         other => panic!("Expected CommitOk response, found {other:?}"),
     }
@@ -740,12 +737,10 @@ pub(crate) fn delete_committed_kv_range(
     end: &[u8],
 ) {
     let route_family = RouteFamily::try_from(family).expect("test family must fit in u32");
+    let scope = KvResourceScope::new(route_family, realm, area, resource);
     let mut actor = KvActor::new(store);
     let tx_id = match actor.handle(KvMessage::Begin {
-        route_family,
-        realm: realm.to_string(),
-        area: area.to_string(),
-        resource: resource.to_string(),
+        scope: scope.clone(),
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     }) {
@@ -755,8 +750,7 @@ pub(crate) fn delete_committed_kv_range(
 
     match actor.handle(KvMessage::DeleteRange {
         tx_id,
-        route_family,
-        resource: resource.to_string(),
+        scope: scope.clone(),
         start: Bytes::copy_from_slice(start),
         end: Bytes::copy_from_slice(end),
     }) {
@@ -764,7 +758,7 @@ pub(crate) fn delete_committed_kv_range(
         other => panic!("Expected DeleteRangeOk response, found {other:?}"),
     }
 
-    match actor.handle(KvMessage::Commit { tx_id }) {
+    match actor.handle(KvMessage::Commit { tx_id, scope }) {
         KvResponse::CommitOk => {}
         other => panic!("Expected CommitOk response, found {other:?}"),
     }

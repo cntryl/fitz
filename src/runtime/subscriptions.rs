@@ -124,7 +124,7 @@ mod segments_cache {
     impl SegmentsCache {
         pub fn new() -> Self {
             Self {
-                cache: HashMap::with_capacity_and_hasher(256, FxBuildHasher::default()),
+                cache: HashMap::with_capacity_and_hasher(256, FxBuildHasher),
             }
         }
 
@@ -330,7 +330,7 @@ impl MatchCollector {
         }
 
         let capacity = self.matches.capacity().max(MATCH_DEDUPE_SET_THRESHOLD);
-        let mut seen = HashSet::with_capacity_and_hasher(capacity, FxBuildHasher::default());
+        let mut seen = HashSet::with_capacity_and_hasher(capacity, FxBuildHasher);
         seen.extend(self.matches.iter().copied());
         self.seen = Some(seen);
     }
@@ -364,7 +364,7 @@ impl SubscriptionIndex {
     pub fn new() -> Self {
         Self {
             nodes: Vec::new(),
-            family_roots: HashMap::with_capacity_and_hasher(8, FxBuildHasher::default()),
+            family_roots: HashMap::with_capacity_and_hasher(8, FxBuildHasher),
             segments_cache: SegmentsCache::new(),
             segment_interner: SegmentInterner::new(),
         }

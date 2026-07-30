@@ -65,7 +65,7 @@ impl NoticeRouteActor {
         Self {
             family_id,
             index: SubscriptionIndex::new(),
-            subscriptions: HashMap::with_capacity_and_hasher(64, FxBuildHasher::default()),
+            subscriptions: HashMap::with_capacity_and_hasher(64, FxBuildHasher),
             next_subscription_id: 1,
         }
     }

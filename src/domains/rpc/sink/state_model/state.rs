@@ -21,9 +21,9 @@ enum DispatchAction {
 impl RpcState {
     pub(in crate::domains::rpc::sink) fn new() -> Self {
         Self {
-            routes: HashMap::with_capacity_and_hasher(64, FxBuildHasher::default()),
+            routes: HashMap::with_capacity_and_hasher(64, FxBuildHasher),
             pending: RpcPendingTable::new(),
-            queued: HashMap::with_capacity_and_hasher(256, FxBuildHasher::default()),
+            queued: HashMap::with_capacity_and_hasher(256, FxBuildHasher),
             queued_expirations: BinaryHeap::with_capacity(256),
         }
     }

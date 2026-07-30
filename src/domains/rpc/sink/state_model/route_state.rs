@@ -15,7 +15,7 @@ impl RpcRouteState {
     pub(in crate::domains::rpc::sink) fn new() -> Self {
         Self {
             workers: Vec::new(),
-            worker_index: HashMap::with_capacity_and_hasher(16, FxBuildHasher::default()),
+            worker_index: HashMap::with_capacity_and_hasher(16, FxBuildHasher),
             ready_queue: VecDeque::new(),
             queued: VecDeque::new(),
             live_workers: 0,

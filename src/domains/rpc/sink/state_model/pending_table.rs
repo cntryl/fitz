@@ -28,7 +28,7 @@ pub(in crate::domains::rpc::sink) enum RpcPendingResponseDisposition {
 impl RpcPendingTable {
     pub(in crate::domains::rpc::sink) fn new() -> Self {
         Self {
-            pending: HashMap::with_capacity_and_hasher(256, FxBuildHasher::default()),
+            pending: HashMap::with_capacity_and_hasher(256, FxBuildHasher),
             expirations: BinaryHeap::with_capacity(256),
         }
     }
