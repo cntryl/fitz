@@ -41,9 +41,10 @@ impl SessionActor {
     /// the actor returns [`KvResponse::Error`].
     pub fn begin(&self, msg: KvMessage, kv_actor: &mut KvActor) -> Result<(), String> {
         if let KvMessage::Begin {
-            ref realm, mode, ..
+            ref scope, mode, ..
         } = msg
         {
+            let realm = &scope.realm;
             // Extract realm-based route for authorization check
             // Format: "kv://realm" for basic realm-level authorization
             let route = Route::new(format!("kv://{realm}"));
@@ -96,10 +97,12 @@ impl SessionActor {
             let actor = SessionActor::new(SessionId(1), perms);
             let mut kv = KvActor::new(create_test_engine_with_cfs(vec![1]));
             let msg = KvMessage::Begin {
-                route_family: crate::runtime::routing::RouteFamily::new(1),
-                realm: "acme".to_string(),
-                area: "kv".to_string(),
-                resource: "table1".to_string(),
+                scope: crate::domains::kv::KvResourceScope::new(
+                    crate::runtime::routing::RouteFamily::new(1),
+                    "acme",
+                    "kv",
+                    "table1",
+                ),
                 mode: TxMode::ReadWrite,
                 write_options: cntryl_midge::WriteOptions::buffered(),
             };
@@ -120,10 +123,12 @@ impl SessionActor {
             let actor = SessionActor::new(SessionId(1), perms);
             let mut kv = KvActor::new(create_test_engine_with_cfs(vec![1]));
             let msg = KvMessage::Begin {
-                route_family: crate::runtime::routing::RouteFamily::new(1),
-                realm: "acme".to_string(),
-                area: "kv".to_string(),
-                resource: "table1".to_string(),
+                scope: crate::domains::kv::KvResourceScope::new(
+                    crate::runtime::routing::RouteFamily::new(1),
+                    "acme",
+                    "kv",
+                    "table1",
+                ),
                 mode: TxMode::ReadOnly,
                 write_options: cntryl_midge::WriteOptions::buffered(),
             };
@@ -143,10 +148,12 @@ impl SessionActor {
             let actor = SessionActor::new(SessionId(1), perms);
             let mut kv = KvActor::new(create_test_engine_with_cfs(vec![1]));
             let msg = KvMessage::Begin {
-                route_family: crate::runtime::routing::RouteFamily::new(1),
-                realm: "acme".to_string(),
-                area: "kv".to_string(),
-                resource: "table1".to_string(),
+                scope: crate::domains::kv::KvResourceScope::new(
+                    crate::runtime::routing::RouteFamily::new(1),
+                    "acme",
+                    "kv",
+                    "table1",
+                ),
                 mode: TxMode::ReadWrite,
                 write_options: cntryl_midge::WriteOptions::buffered(),
             };

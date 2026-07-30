@@ -100,6 +100,20 @@ async fn should_reject_operations_on_invalid_transaction_ws() {
 }
 
 #[tokio::test]
+async fn should_preserve_transaction_scope_integrity_ws() {
+    // Arrange
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
+
+    // Act
+    should_preserve_transaction_scope_integrity::<WsConnector>(&server).await;
+
+    // Assert
+    // (assertions are in the helper)
+}
+
+#[tokio::test]
 async fn should_require_connect_message_when_auth_enabled_ws() {
     // Arrange
     let server = TestServer::start_with_auth(true)

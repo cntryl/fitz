@@ -27,6 +27,56 @@ where
     assert_eq!(status, 1, "Expected error status for invalid tx_id");
 }
 
+pub(crate) async fn should_preserve_transaction_scope_integrity<C>(server: &TestServer)
+where
+    C: KvConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("failed to connect");
+    let route = "kv://test/app/users";
+    let begin = client
+        .request(&build_kv_begin(route, 1, 0), 2000)
+        .await
+        .expect("BEGIN response");
+    let tx_id = expect_kv_begin_ok(&begin, "scope integrity");
+
+    // Act
+    for mismatched_route in ["kv://other/app/users", "kv://test/other/users"] {
+        let response = client
+            .request(
+                &build_kv_put(tx_id, mismatched_route, b"rejected", b"value"),
+                2000,
+            )
+            .await
+            .expect("mismatched PUT response");
+        let (_message_type, status, _data) = parse_kv_response(&response);
+        assert_eq!(status, 1, "mismatched PUT must be rejected");
+    }
+    for terminal in [
+        build_kv_commit(tx_id, "kv://other/app/users"),
+        build_kv_rollback(tx_id, "kv://test/other/users"),
+    ] {
+        let response = client
+            .request(&terminal, 2000)
+            .await
+            .expect("mismatched terminal response");
+        let (_message_type, status, _data) = parse_kv_response(&response);
+        assert_eq!(status, 1, "mismatched terminal must be rejected");
+    }
+    let put = client
+        .request(&build_kv_put(tx_id, route, b"accepted", b"value"), 2000)
+        .await
+        .expect("matching PUT response");
+    let commit = client
+        .request(&build_kv_commit(tx_id, route), 2000)
+        .await
+        .expect("matching COMMIT response");
+
+    // Assert
+    assert_eq!(parse_kv_response(&put).1, 0);
+    assert_eq!(parse_kv_response(&commit).1, 0);
+}
+
 pub(crate) async fn should_require_connect_message_when_auth_enabled<C>(server: &TestServer)
 where
     C: KvConnector,

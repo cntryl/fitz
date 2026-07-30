@@ -3,11 +3,15 @@
 
 use bytes::Bytes;
 use fitz::benchkit::create_local_bench_store;
-use fitz::domains::kv::{KvActor, KvMessage, KvResponse, TxMode};
+use fitz::domains::kv::{KvActor, KvMessage, KvResourceScope, KvResponse, TxMode};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
 use std::sync::Arc;
 use std::time::Duration;
+
+fn kv_scope(family: RouteFamily, realm: &str, resource: &str) -> KvResourceScope {
+    KvResourceScope::new(family, realm, "kv", resource)
+}
 
 fn shutdown_local_bench_store(store: Arc<cntryl_midge::Engine>) {
     let mut engine = Arc::try_unwrap(store).unwrap_or_else(|store| {
@@ -38,10 +42,12 @@ fn write_committed_value_for_family(
     value: &'static [u8],
 ) {
     let begin = actor.handle(KvMessage::Begin {
-        route_family: family,
-        realm: "tenant".to_string(),
-        area: "kv".to_string(),
-        resource: "shared".to_string(),
+        scope: KvResourceScope::new(
+            family,
+            "tenant".to_string(),
+            "kv".to_string(),
+            "shared".to_string(),
+        ),
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
@@ -51,23 +57,27 @@ fn write_committed_value_for_family(
 
     let put = actor.handle(KvMessage::Put {
         tx_id,
-        route_family: family,
-        resource: "shared".to_string(),
+        scope: kv_scope(family, "tenant", "shared"),
         key: Bytes::from_static(b"same-key"),
         value: Bytes::from_static(value),
     });
     assert!(matches!(put, KvResponse::PutOk));
 
-    let commit = actor.handle(KvMessage::Commit { tx_id });
+    let commit = actor.handle(KvMessage::Commit {
+        tx_id,
+        scope: kv_scope(family, "tenant", "shared"),
+    });
     assert!(matches!(commit, KvResponse::CommitOk));
 }
 
 fn read_committed_value_for_family(actor: &mut KvActor, family: RouteFamily) -> Bytes {
     let begin = actor.handle(KvMessage::Begin {
-        route_family: family,
-        realm: "tenant".to_string(),
-        area: "kv".to_string(),
-        resource: "shared".to_string(),
+        scope: KvResourceScope::new(
+            family,
+            "tenant".to_string(),
+            "kv".to_string(),
+            "shared".to_string(),
+        ),
         mode: TxMode::ReadOnly,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
@@ -77,12 +87,14 @@ fn read_committed_value_for_family(actor: &mut KvActor, family: RouteFamily) -> 
 
     let response = actor.handle(KvMessage::Get {
         tx_id,
-        route_family: family,
-        resource: "shared".to_string(),
+        scope: kv_scope(family, "tenant", "shared"),
         key: Bytes::from_static(b"same-key"),
     });
 
-    actor.handle(KvMessage::Rollback { tx_id });
+    actor.handle(KvMessage::Rollback {
+        tx_id,
+        scope: kv_scope(family, "tenant", "shared"),
+    });
 
     match response {
         KvResponse::GetResult {
@@ -101,10 +113,12 @@ fn should_show_committed_value_before_restart() {
 
     // Act
     let begin = actor.handle(KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "dur".to_string(),
-        area: "kv".to_string(),
-        resource: "r".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "dur".to_string(),
+            "kv".to_string(),
+            "r".to_string(),
+        ),
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::sync(),
     });
@@ -114,20 +128,24 @@ fn should_show_committed_value_before_restart() {
 
     actor.handle(KvMessage::Put {
         tx_id,
-        route_family: RouteFamily::new(1),
-        resource: "r".to_string(),
+        scope: kv_scope(RouteFamily::new(1), "dur", "r"),
         key: Bytes::from_static(b"k1"),
         value: Bytes::from_static(b"v1"),
     });
 
-    let c = actor.handle(KvMessage::Commit { tx_id });
+    let c = actor.handle(KvMessage::Commit {
+        tx_id,
+        scope: kv_scope(RouteFamily::new(1), "dur", "r"),
+    });
 
     // Assert (verify visibility)
     let b_read = actor.handle(KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "dur".to_string(),
-        area: "kv".to_string(),
-        resource: "r".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "dur".to_string(),
+            "kv".to_string(),
+            "r".to_string(),
+        ),
         mode: TxMode::ReadOnly,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
@@ -139,8 +157,7 @@ fn should_show_committed_value_before_restart() {
     assert!(matches!(c, KvResponse::CommitOk));
     let got_now = actor.handle(KvMessage::Get {
         tx_id: tx_read,
-        route_family: RouteFamily::new(1),
-        resource: "r".to_string(),
+        scope: kv_scope(RouteFamily::new(1), "dur", "r"),
         key: Bytes::from_static(b"k1"),
     });
     match got_now {
@@ -152,7 +169,10 @@ fn should_show_committed_value_before_restart() {
     }
 
     // Cleanup
-    actor.handle(KvMessage::Rollback { tx_id: tx_read });
+    actor.handle(KvMessage::Rollback {
+        tx_id: tx_read,
+        scope: kv_scope(RouteFamily::new(1), "dur", "r"),
+    });
 }
 
 #[test]
@@ -163,10 +183,12 @@ fn should_commit_durable_kv_transaction() {
 
     // Act - create and commit a durable transaction
     let begin = actor.handle(KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "dur".to_string(),
-        area: "kv".to_string(),
-        resource: "r".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "dur".to_string(),
+            "kv".to_string(),
+            "r".to_string(),
+        ),
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::sync(),
     });
@@ -176,13 +198,15 @@ fn should_commit_durable_kv_transaction() {
 
     actor.handle(KvMessage::Put {
         tx_id,
-        route_family: RouteFamily::new(1),
-        resource: "r".to_string(),
+        scope: kv_scope(RouteFamily::new(1), "dur", "r"),
         key: Bytes::from_static(b"k1"),
         value: Bytes::from_static(b"v1"),
     });
 
-    let c = actor.handle(KvMessage::Commit { tx_id });
+    let c = actor.handle(KvMessage::Commit {
+        tx_id,
+        scope: kv_scope(RouteFamily::new(1), "dur", "r"),
+    });
 
     // Assert
     assert!(matches!(c, KvResponse::CommitOk));
@@ -197,10 +221,12 @@ fn should_restore_committed_kv_value_on_engine_restart() {
 
     // Act - create and commit a durable transaction
     let begin = actor.handle(KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "dur".to_string(),
-        area: "kv".to_string(),
-        resource: "r".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "dur".to_string(),
+            "kv".to_string(),
+            "r".to_string(),
+        ),
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::sync(),
     });
@@ -210,13 +236,15 @@ fn should_restore_committed_kv_value_on_engine_restart() {
 
     actor.handle(KvMessage::Put {
         tx_id,
-        route_family: RouteFamily::new(1),
-        resource: "r".to_string(),
+        scope: kv_scope(RouteFamily::new(1), "dur", "r"),
         key: Bytes::from_static(b"k1"),
         value: Bytes::from_static(b"v1"),
     });
 
-    let c = actor.handle(KvMessage::Commit { tx_id });
+    let c = actor.handle(KvMessage::Commit {
+        tx_id,
+        scope: kv_scope(RouteFamily::new(1), "dur", "r"),
+    });
     assert!(matches!(c, KvResponse::CommitOk));
 
     // Simulate process exit and restart
@@ -228,10 +256,12 @@ fn should_restore_committed_kv_value_on_engine_restart() {
 
     let mut actor2 = KvActor::new(reopened);
     let b2 = actor2.handle(KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "dur".to_string(),
-        area: "kv".to_string(),
-        resource: "r".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "dur".to_string(),
+            "kv".to_string(),
+            "r".to_string(),
+        ),
         mode: TxMode::ReadOnly,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
@@ -242,8 +272,7 @@ fn should_restore_committed_kv_value_on_engine_restart() {
     // Assert - Read value after restart
     let got = actor2.handle(KvMessage::Get {
         tx_id: tx2,
-        route_family: RouteFamily::new(1),
-        resource: "r".to_string(),
+        scope: kv_scope(RouteFamily::new(1), "dur", "r"),
         key: Bytes::from_static(b"k1"),
     });
 
@@ -269,7 +298,10 @@ fn should_restore_committed_kv_value_on_engine_restart() {
         }
     }
 
-    actor2.handle(KvMessage::Rollback { tx_id: tx2 });
+    actor2.handle(KvMessage::Rollback {
+        tx_id: tx2,
+        scope: kv_scope(RouteFamily::new(1), "dur", "r"),
+    });
 }
 
 #[test]
@@ -280,10 +312,12 @@ fn should_discard_uncommitted_kv_write_on_engine_restart() {
     let mut actor = KvActor::new(store.clone());
 
     let begin = actor.handle(KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "dur".to_string(),
-        area: "kv".to_string(),
-        resource: "r".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "dur".to_string(),
+            "kv".to_string(),
+            "r".to_string(),
+        ),
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::sync(),
     });
@@ -293,8 +327,7 @@ fn should_discard_uncommitted_kv_write_on_engine_restart() {
 
     let put = actor.handle(KvMessage::Put {
         tx_id,
-        route_family: RouteFamily::new(1),
-        resource: "r".to_string(),
+        scope: kv_scope(RouteFamily::new(1), "dur", "r"),
         key: Bytes::from_static(b"k1"),
         value: Bytes::from_static(b"v1"),
     });
@@ -306,10 +339,12 @@ fn should_discard_uncommitted_kv_write_on_engine_restart() {
     let reopened = reopen_local_bench_store(&temp_path);
     let mut actor2 = KvActor::new(reopened);
     let begin2 = actor2.handle(KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "dur".to_string(),
-        area: "kv".to_string(),
-        resource: "r".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "dur".to_string(),
+            "kv".to_string(),
+            "r".to_string(),
+        ),
         mode: TxMode::ReadOnly,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
@@ -320,8 +355,7 @@ fn should_discard_uncommitted_kv_write_on_engine_restart() {
     // Act
     let got = actor2.handle(KvMessage::Get {
         tx_id: tx2,
-        route_family: RouteFamily::new(1),
-        resource: "r".to_string(),
+        scope: kv_scope(RouteFamily::new(1), "dur", "r"),
         key: Bytes::from_static(b"k1"),
     });
 
@@ -334,7 +368,10 @@ fn should_discard_uncommitted_kv_write_on_engine_restart() {
         other => panic!("Expected uncommitted value to be lost after restart, got {other:?}"),
     }
 
-    let rollback = actor2.handle(KvMessage::Rollback { tx_id: tx2 });
+    let rollback = actor2.handle(KvMessage::Rollback {
+        tx_id: tx2,
+        scope: kv_scope(RouteFamily::new(1), "dur", "r"),
+    });
     assert!(matches!(rollback, KvResponse::RollbackOk));
 }
 
@@ -439,10 +476,12 @@ fn should_handle_high_throughput_batch_puts() {
     // Act - perform many small transactions (fast, buffered)
     for i in 0..200 {
         let begin = actor.handle(KvMessage::Begin {
-            route_family: RouteFamily::new(1),
-            realm: "scale".to_string(),
-            area: "kv".to_string(),
-            resource: "batch".to_string(),
+            scope: KvResourceScope::new(
+                RouteFamily::new(1),
+                "scale".to_string(),
+                "kv".to_string(),
+                "batch".to_string(),
+            ),
             mode: TxMode::ReadWrite,
             write_options: cntryl_midge::WriteOptions::buffered(),
         });
@@ -453,22 +492,26 @@ fn should_handle_high_throughput_batch_puts() {
         let key = Bytes::from(format!("k{i:04}"));
         let _ = actor.handle(KvMessage::Put {
             tx_id,
-            route_family: RouteFamily::new(1),
-            resource: "batch".to_string(),
+            scope: kv_scope(RouteFamily::new(1), "scale", "batch"),
             key: key.clone(),
             value: Bytes::from_static(b"v"),
         });
 
-        let c = actor.handle(KvMessage::Commit { tx_id });
+        let c = actor.handle(KvMessage::Commit {
+            tx_id,
+            scope: kv_scope(RouteFamily::new(1), "scale", "batch"),
+        });
         assert!(matches!(c, KvResponse::CommitOk));
     }
 
     // Verify at least one value persisted
     let b = actor.handle(KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "scale".to_string(),
-        area: "kv".to_string(),
-        resource: "batch".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "scale".to_string(),
+            "kv".to_string(),
+            "batch".to_string(),
+        ),
         mode: TxMode::ReadOnly,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
@@ -478,8 +521,7 @@ fn should_handle_high_throughput_batch_puts() {
 
     let get = actor.handle(KvMessage::Get {
         tx_id: tx,
-        route_family: RouteFamily::new(1),
-        resource: "batch".to_string(),
+        scope: kv_scope(RouteFamily::new(1), "scale", "batch"),
         key: Bytes::from(format!("k{:04}", 42)),
     });
 
@@ -489,5 +531,8 @@ fn should_handle_high_throughput_batch_puts() {
         _ => panic!("Expected a stored key from batch puts"),
     }
 
-    actor.handle(KvMessage::Rollback { tx_id: tx });
+    actor.handle(KvMessage::Rollback {
+        tx_id: tx,
+        scope: kv_scope(RouteFamily::new(1), "scale", "batch"),
+    });
 }

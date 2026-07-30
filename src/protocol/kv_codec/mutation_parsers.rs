@@ -1,45 +1,48 @@
 use bytes::Bytes;
 
-use crate::dispatch::wire::kv::{KvMessage, KvNotification, ScanQuery};
-use crate::protocol::kv_codec::frame_and_routes::{decode_route_str, parse_route_resource};
+use crate::dispatch::wire::kv::{KvMessage, KvNotification, KvResourceScope, ScanQuery};
+use crate::protocol::kv_codec::frame_and_routes::parse_scope;
+use crate::protocol::payload_codec::PayloadDecoder;
 use crate::runtime::routing::{Route, RouteFamily};
 
 fn usize_to_u32_saturating(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }
 
-fn read_optional_scan_key(
-    payload: &[u8],
-    offset: &mut usize,
-    missing_message: &str,
-    length_message: &str,
-    overflow_message: &str,
-) -> Result<Option<Bytes>, String> {
-    if *offset >= payload.len() {
-        return Err(missing_message.to_string());
-    }
+fn read_scope(
+    decoder: &mut PayloadDecoder<'_>,
+    route_family: RouteFamily,
+) -> Result<KvResourceScope, String> {
+    parse_scope(route_family, decoder.get_string_ref()?)
+}
 
-    if payload[*offset] == 1 {
-        *offset += 1;
-        if *offset + 4 > payload.len() {
-            return Err(length_message.to_string());
-        }
-        let len = u32::from_be_bytes([
-            payload[*offset],
-            payload[*offset + 1],
-            payload[*offset + 2],
-            payload[*offset + 3],
-        ]) as usize;
-        *offset += 4;
-        if *offset + len > payload.len() {
-            return Err(overflow_message.to_string());
-        }
-        let key = Bytes::copy_from_slice(&payload[*offset..*offset + len]);
-        *offset += len;
-        Ok(Some(key))
+fn read_optional_bytes(decoder: &mut PayloadDecoder<'_>) -> Result<Option<Bytes>, String> {
+    decoder.get_optional_bytes()
+}
+
+fn read_optional_limit(decoder: &mut PayloadDecoder<'_>) -> Result<Option<usize>, String> {
+    match decoder.get_u8()? {
+        0 => Ok(None),
+        1 => usize::try_from(decoder.get_u32()?)
+            .map(Some)
+            .map_err(|_| "SCAN limit exceeds platform capacity".to_string()),
+        value => Err(format!("Invalid SCAN limit discriminator: {value}")),
+    }
+}
+
+fn read_bool(decoder: &mut PayloadDecoder<'_>, field: &str) -> Result<bool, String> {
+    match decoder.get_u8()? {
+        0 => Ok(false),
+        1 => Ok(true),
+        value => Err(format!("Invalid {field} flag: {value}")),
+    }
+}
+
+fn ensure_complete(decoder: &PayloadDecoder<'_>, op_name: &str) -> Result<(), String> {
+    if decoder.is_complete() {
+        Ok(())
     } else {
-        *offset += 1;
-        Ok(None)
+        Err(format!("Trailing data in {op_name} payload"))
     }
 }
 
@@ -56,504 +59,83 @@ pub fn encode_notify(subscription_id: u64, route: &Route, notification: KvNotifi
 }
 
 pub(super) fn parse_get(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
-    // Wire format per CLIENT_SPEC: [u64 tx_id][u32 route_len][route][u32 key_len][key]
-    if payload.len() < 16 {
-        return Err("GET payload too short".to_string());
-    }
-
-    let mut offset = 0;
-
-    // Read transaction ID (u64)
-    let tx_id = u64::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-        payload[offset + 4],
-        payload[offset + 5],
-        payload[offset + 6],
-        payload[offset + 7],
-    ]);
-    offset += 8;
-
-    // Read route length (u32)
-    if offset + 4 > payload.len() {
-        return Err("GET route length overflow".to_string());
-    }
-    let route_len = u32::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-    ]) as usize;
-    offset += 4;
-
-    // Read route
-    if offset + route_len > payload.len() {
-        return Err("GET route overflow".to_string());
-    }
-    let route_str = decode_route_str(&payload[offset..offset + route_len], "GET")?;
-    offset += route_len;
-
-    // Parse route into realm/area/resource (only resource used in KvMessage)
-    let resource = parse_route_resource(route_str)?;
-
-    // Read key length (u32)
-    if offset + 4 > payload.len() {
-        return Err("GET key length overflow".to_string());
-    }
-    let key_len = u32::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-    ]) as usize;
-    offset += 4;
-
-    // Read key
-    if offset + key_len > payload.len() {
-        return Err("GET key overflow".to_string());
-    }
-    let key = Bytes::copy_from_slice(&payload[offset..offset + key_len]);
-
-    Ok(KvMessage::Get {
-        tx_id,
-        route_family,
-        resource,
-        key,
-    })
+    let mut decoder = PayloadDecoder::new(payload);
+    let tx_id = decoder.get_u64()?;
+    let scope = read_scope(&mut decoder, route_family)?;
+    let key = decoder.get_bytes()?;
+    ensure_complete(&decoder, "GET")?;
+    Ok(KvMessage::Get { tx_id, scope, key })
 }
 
 pub(super) fn parse_put(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
-    // Wire format per CLIENT_SPEC: [u64 tx_id][u32 route_len][route][u32 key_len][key][u32 value_len][value]
-    if payload.len() < 20 {
-        return Err("PUT payload too short".to_string());
-    }
-
-    let mut offset = 0;
-
-    // Read transaction ID (u64)
-    let tx_id = u64::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-        payload[offset + 4],
-        payload[offset + 5],
-        payload[offset + 6],
-        payload[offset + 7],
-    ]);
-    offset += 8;
-
-    // Read route length (u32)
-    if offset + 4 > payload.len() {
-        return Err("PUT route length overflow".to_string());
-    }
-    let route_len = u32::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-    ]) as usize;
-    offset += 4;
-
-    // Read route
-    if offset + route_len > payload.len() {
-        return Err("PUT route overflow".to_string());
-    }
-    let route_str = decode_route_str(&payload[offset..offset + route_len], "PUT")?;
-    offset += route_len;
-
-    // Parse route into realm/area/resource (only resource used in KvMessage)
-    let resource = parse_route_resource(route_str)?;
-
-    // Read key length (u32)
-    if offset + 4 > payload.len() {
-        return Err("PUT key length overflow".to_string());
-    }
-    let key_len = u32::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-    ]) as usize;
-    offset += 4;
-
-    // Read key
-    if offset + key_len > payload.len() {
-        return Err("PUT key overflow".to_string());
-    }
-    let key = Bytes::copy_from_slice(&payload[offset..offset + key_len]);
-    offset += key_len;
-
-    // Read value length (u32)
-    if offset + 4 > payload.len() {
-        return Err("PUT value length overflow".to_string());
-    }
-    let value_len = u32::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-    ]) as usize;
-    offset += 4;
-
-    // Read value
-    if offset + value_len > payload.len() {
-        return Err("PUT value overflow".to_string());
-    }
-    let value = Bytes::copy_from_slice(&payload[offset..offset + value_len]);
-
+    let mut decoder = PayloadDecoder::new(payload);
+    let tx_id = decoder.get_u64()?;
+    let scope = read_scope(&mut decoder, route_family)?;
+    let key = decoder.get_bytes()?;
+    let value = decoder.get_bytes()?;
+    ensure_complete(&decoder, "PUT")?;
     Ok(KvMessage::Put {
         tx_id,
-        route_family,
-        resource,
+        scope,
         key,
         value,
     })
 }
 
 pub(super) fn parse_insert(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
-    // Wire format per CLIENT_SPEC: [u64 tx_id][u32 route_len][route][u32 key_len][key][u32 value_len][value]
-    if payload.len() < 20 {
-        return Err("INSERT payload too short".to_string());
-    }
-
-    let mut offset = 0;
-
-    // Read transaction ID (u64)
-    let tx_id = u64::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-        payload[offset + 4],
-        payload[offset + 5],
-        payload[offset + 6],
-        payload[offset + 7],
-    ]);
-    offset += 8;
-
-    // Read route length (u32)
-    if offset + 4 > payload.len() {
-        return Err("INSERT route length overflow".to_string());
-    }
-    let route_len = u32::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-    ]) as usize;
-    offset += 4;
-
-    // Read route
-    if offset + route_len > payload.len() {
-        return Err("INSERT route overflow".to_string());
-    }
-    let route_str = decode_route_str(&payload[offset..offset + route_len], "INSERT")?;
-    offset += route_len;
-
-    // Parse route into realm/area/resource (only resource used in KvMessage)
-    let resource = parse_route_resource(route_str)?;
-
-    // Read key length (u32)
-    if offset + 4 > payload.len() {
-        return Err("INSERT key length overflow".to_string());
-    }
-    let key_len = u32::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-    ]) as usize;
-    offset += 4;
-
-    // Read key
-    if offset + key_len > payload.len() {
-        return Err("INSERT key overflow".to_string());
-    }
-    let key = Bytes::copy_from_slice(&payload[offset..offset + key_len]);
-    offset += key_len;
-
-    // Read value length (u32)
-    if offset + 4 > payload.len() {
-        return Err("INSERT value length overflow".to_string());
-    }
-    let value_len = u32::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-    ]) as usize;
-    offset += 4;
-
-    // Read value
-    if offset + value_len > payload.len() {
-        return Err("INSERT value overflow".to_string());
-    }
-    let value = Bytes::copy_from_slice(&payload[offset..offset + value_len]);
-
+    let mut decoder = PayloadDecoder::new(payload);
+    let tx_id = decoder.get_u64()?;
+    let scope = read_scope(&mut decoder, route_family)?;
+    let key = decoder.get_bytes()?;
+    let value = decoder.get_bytes()?;
+    ensure_complete(&decoder, "INSERT")?;
     Ok(KvMessage::Insert {
         tx_id,
-        route_family,
-        resource,
+        scope,
         key,
         value,
     })
 }
 
 pub(super) fn parse_delete(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
-    // Wire format per CLIENT_SPEC: [u64 tx_id][u32 route_len][route][u32 key_len][key]
-    if payload.len() < 16 {
-        return Err("DELETE payload too short".to_string());
-    }
-
-    let mut offset = 0;
-
-    // Read transaction ID (u64)
-    let tx_id = u64::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-        payload[offset + 4],
-        payload[offset + 5],
-        payload[offset + 6],
-        payload[offset + 7],
-    ]);
-    offset += 8;
-
-    // Read route length (u32)
-    if offset + 4 > payload.len() {
-        return Err("DELETE route length overflow".to_string());
-    }
-    let route_len = u32::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-    ]) as usize;
-    offset += 4;
-
-    // Read route
-    if offset + route_len > payload.len() {
-        return Err("DELETE route overflow".to_string());
-    }
-    let route_str = decode_route_str(&payload[offset..offset + route_len], "DELETE")?;
-    offset += route_len;
-
-    // Parse route into realm/area/resource (only resource used in KvMessage)
-    let resource = parse_route_resource(route_str)?;
-
-    // Read key length (u32)
-    if offset + 4 > payload.len() {
-        return Err("DELETE key length overflow".to_string());
-    }
-    let key_len = u32::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-    ]) as usize;
-    offset += 4;
-
-    // Read key
-    if offset + key_len > payload.len() {
-        return Err("DELETE key overflow".to_string());
-    }
-    let key = Bytes::copy_from_slice(&payload[offset..offset + key_len]);
-
-    Ok(KvMessage::Delete {
-        tx_id,
-        route_family,
-        resource,
-        key,
-    })
+    let mut decoder = PayloadDecoder::new(payload);
+    let tx_id = decoder.get_u64()?;
+    let scope = read_scope(&mut decoder, route_family)?;
+    let key = decoder.get_bytes()?;
+    ensure_complete(&decoder, "DELETE")?;
+    Ok(KvMessage::Delete { tx_id, scope, key })
 }
 
 pub(super) fn parse_delete_range(
     route_family: RouteFamily,
     payload: &[u8],
 ) -> Result<KvMessage, String> {
-    // Wire format per CLIENT_SPEC: [u64 tx_id][u32 route_len][route][u32 start_len][start][u32 end_len][end]
-    if payload.len() < 20 {
-        return Err("DELETE_RANGE payload too short".to_string());
-    }
-
-    let mut offset = 0;
-
-    // Read transaction ID (u64)
-    let tx_id = u64::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-        payload[offset + 4],
-        payload[offset + 5],
-        payload[offset + 6],
-        payload[offset + 7],
-    ]);
-    offset += 8;
-
-    // Read route length (u32)
-    if offset + 4 > payload.len() {
-        return Err("DELETE_RANGE route length overflow".to_string());
-    }
-    let route_len = u32::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-    ]) as usize;
-    offset += 4;
-
-    // Read route
-    if offset + route_len > payload.len() {
-        return Err("DELETE_RANGE route overflow".to_string());
-    }
-    let route_str = decode_route_str(&payload[offset..offset + route_len], "DELETE_RANGE")?;
-    offset += route_len;
-
-    // Parse route into realm/area/resource (only resource used in KvMessage)
-    let resource = parse_route_resource(route_str)?;
-
-    // Read start key length (u32)
-    if offset + 4 > payload.len() {
-        return Err("DELETE_RANGE start key length overflow".to_string());
-    }
-    let start_len = u32::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-    ]) as usize;
-    offset += 4;
-
-    // Read start key
-    if offset + start_len > payload.len() {
-        return Err("DELETE_RANGE start key overflow".to_string());
-    }
-    let start = Bytes::copy_from_slice(&payload[offset..offset + start_len]);
-    offset += start_len;
-
-    // Read end key length (u32)
-    if offset + 4 > payload.len() {
-        return Err("DELETE_RANGE end key length overflow".to_string());
-    }
-    let end_len = u32::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-    ]) as usize;
-    offset += 4;
-
-    // Read end key
-    if offset + end_len > payload.len() {
-        return Err("DELETE_RANGE end key overflow".to_string());
-    }
-    let end = Bytes::copy_from_slice(&payload[offset..offset + end_len]);
-
+    let mut decoder = PayloadDecoder::new(payload);
+    let tx_id = decoder.get_u64()?;
+    let scope = read_scope(&mut decoder, route_family)?;
+    let start = decoder.get_bytes()?;
+    let end = decoder.get_bytes()?;
+    ensure_complete(&decoder, "DELETE_RANGE")?;
     Ok(KvMessage::DeleteRange {
         tx_id,
-        route_family,
-        resource,
+        scope,
         start,
         end,
     })
 }
 
 pub(super) fn parse_scan(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
-    // Wire format per CLIENT_SPEC: [u64 tx_id][u32 route_len][route][u8 has_start][start?][u8 has_end][end?][u8 has_limit][limit?][u8 reverse]
-    if payload.len() < 15 {
-        return Err("SCAN payload too short".to_string());
-    }
-
-    let mut offset = 0;
-
-    // Read transaction ID (u64)
-    let tx_id = u64::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-        payload[offset + 4],
-        payload[offset + 5],
-        payload[offset + 6],
-        payload[offset + 7],
-    ]);
-    offset += 8;
-
-    // Read route length (u32)
-    if offset + 4 > payload.len() {
-        return Err("SCAN route length overflow".to_string());
-    }
-    let route_len = u32::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-    ]) as usize;
-    offset += 4;
-
-    // Read route
-    if offset + route_len > payload.len() {
-        return Err("SCAN route overflow".to_string());
-    }
-    let route_str = decode_route_str(&payload[offset..offset + route_len], "SCAN")?;
-    offset += route_len;
-
-    // Parse route into realm/area/resource (only resource used in KvMessage)
-    let resource = parse_route_resource(route_str)?;
-
-    let start = read_optional_scan_key(
-        payload,
-        &mut offset,
-        "SCAN start key option byte missing",
-        "SCAN start key length overflow",
-        "SCAN start key overflow",
-    )?;
-
-    let end = read_optional_scan_key(
-        payload,
-        &mut offset,
-        "SCAN end key option byte missing",
-        "SCAN end key length overflow",
-        "SCAN end key overflow",
-    )?;
-
-    // Read limit option (u8): 0=None, 1=Some
-    let limit = if payload.len() > offset && payload[offset] == 1 {
-        offset += 1;
-        if offset + 4 > payload.len() {
-            return Err("SCAN limit overflow".to_string());
-        }
-        let l = u32::from_be_bytes([
-            payload[offset],
-            payload[offset + 1],
-            payload[offset + 2],
-            payload[offset + 3],
-        ]) as usize;
-        offset += 4;
-        Some(l)
-    } else {
-        if payload.len() > offset {
-            offset += 1;
-        }
-        None
-    };
-
-    // Read reverse flag (u8)
-    let reverse = if payload.len() > offset {
-        payload[offset] != 0
-    } else {
-        false
-    };
-
+    let mut decoder = PayloadDecoder::new(payload);
+    let tx_id = decoder.get_u64()?;
+    let scope = read_scope(&mut decoder, route_family)?;
+    let start = read_optional_bytes(&mut decoder)?;
+    let end = read_optional_bytes(&mut decoder)?;
+    let limit = read_optional_limit(&mut decoder)?;
+    let reverse = read_bool(&mut decoder, "SCAN reverse")?;
+    ensure_complete(&decoder, "SCAN")?;
     Ok(KvMessage::Scan {
         tx_id,
-        route_family,
-        resource,
+        scope,
         query: ScanQuery {
             start,
             end,

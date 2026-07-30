@@ -28,10 +28,12 @@ fn should_reject_kv_request_when_source_and_destination_families_differ() {
         ),
         Ok(crate::domains::kv::KvClientFrame::Op(
             crate::domains::kv::KvMessage::Begin {
-                route_family: destination_family,
-                realm: "acme".to_string(),
-                area: "app".to_string(),
-                resource: "users".to_string(),
+                scope: KvResourceScope::new(
+                    destination_family,
+                    "acme".to_string(),
+                    "app".to_string(),
+                    "users".to_string(),
+                ),
                 mode: crate::domains::kv::TxMode::ReadWrite,
                 write_options: cntryl_midge::WriteOptions::best_effort(),
             },
@@ -72,10 +74,12 @@ fn should_reject_kv_operation_when_decoded_family_differs_from_request() {
         ),
         Ok(crate::domains::kv::KvClientFrame::Op(
             crate::domains::kv::KvMessage::Begin {
-                route_family: other_family,
-                realm: "acme".to_string(),
-                area: "app".to_string(),
-                resource: "users".to_string(),
+                scope: KvResourceScope::new(
+                    other_family,
+                    "acme".to_string(),
+                    "app".to_string(),
+                    "users".to_string(),
+                ),
                 mode: crate::domains::kv::TxMode::ReadWrite,
                 write_options: cntryl_midge::WriteOptions::best_effort(),
             },

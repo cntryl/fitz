@@ -2,6 +2,7 @@ use super::*;
 use crate::dispatch::protocol::error_codes;
 use crate::dispatch::protocol::frame::ChannelId;
 use crate::dispatch::protocol::tlv::MessageType;
+use crate::domains::kv::KvResourceScope;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::runtime::Mailbox;
 use bytes::{BufMut, Bytes};
@@ -224,10 +225,12 @@ fn should_map_sync_begin_to_cloud_strict_given_strict_cloud_sync_policy() {
     let sink = KvDomainSink::new(store, router, admin_read_model)
         .with_sync_write_options(cntryl_midge::WriteOptions::cloud_strict());
     let message = crate::domains::kv::KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "acme".to_string(),
-        area: "app".to_string(),
-        resource: "users".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "acme".to_string(),
+            "app".to_string(),
+            "users".to_string(),
+        ),
         mode: crate::domains::kv::TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::sync(),
     };
@@ -255,10 +258,12 @@ fn should_map_buffered_begin_to_cloud_async_given_cloud_storage() {
         cntryl_midge::WriteOptions::cloud_async(),
     );
     let message = crate::domains::kv::KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "acme".to_string(),
-        area: "app".to_string(),
-        resource: "users".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "acme".to_string(),
+            "app".to_string(),
+            "users".to_string(),
+        ),
         mode: crate::domains::kv::TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     };
@@ -284,10 +289,12 @@ fn should_derive_cloud_async_buffered_policy_given_strict_cloud_sync_builder() {
     let sink = KvDomainSink::new(store, router, admin_read_model)
         .with_sync_write_options(cntryl_midge::WriteOptions::cloud_strict());
     let message = crate::domains::kv::KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "acme".to_string(),
-        area: "app".to_string(),
-        resource: "users".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "acme".to_string(),
+            "app".to_string(),
+            "users".to_string(),
+        ),
         mode: crate::domains::kv::TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     };
@@ -313,10 +320,12 @@ fn should_derive_cloud_async_buffered_policy_given_background_cloud_sync_builder
     let sink = KvDomainSink::new(store, router, admin_read_model)
         .with_sync_write_options(cntryl_midge::WriteOptions::cloud_async());
     let message = crate::domains::kv::KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "acme".to_string(),
-        area: "app".to_string(),
-        resource: "users".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "acme".to_string(),
+            "app".to_string(),
+            "users".to_string(),
+        ),
         mode: crate::domains::kv::TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     };
@@ -514,10 +523,12 @@ fn should_route_kv_cleanup_through_managed_actor() {
     let sink = KvDomainSink::new(store.clone(), router, admin_read_model.clone());
     let mut actor = crate::domains::kv::KvActor::new(store);
     let begin_response = actor.handle(crate::domains::kv::KvMessage::Begin {
-        route_family: family,
-        realm: "acme".to_string(),
-        area: "app".to_string(),
-        resource: "users".to_string(),
+        scope: KvResourceScope::new(
+            family,
+            "acme".to_string(),
+            "app".to_string(),
+            "users".to_string(),
+        ),
         mode: crate::domains::kv::TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
@@ -590,10 +601,12 @@ fn should_route_kv_admin_snapshot_sync_through_managed_actor() {
     let sink = KvDomainSink::new(store.clone(), router, admin_read_model.clone());
     let mut actor = crate::domains::kv::KvActor::new(store);
     let begin_response = actor.handle(crate::domains::kv::KvMessage::Begin {
-        route_family: family,
-        realm: "acme".to_string(),
-        area: "app".to_string(),
-        resource: "users".to_string(),
+        scope: KvResourceScope::new(
+            family,
+            "acme".to_string(),
+            "app".to_string(),
+            "users".to_string(),
+        ),
         mode: crate::domains::kv::TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
@@ -690,10 +703,12 @@ fn should_route_kv_sync_write_options_mapping_through_managed_actor() {
     let sink = KvDomainSink::new(store, router, admin_read_model)
         .with_sync_write_options(cntryl_midge::WriteOptions::cloud_strict());
     let message = crate::domains::kv::KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "acme".to_string(),
-        area: "app".to_string(),
-        resource: "users".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "acme".to_string(),
+            "app".to_string(),
+            "users".to_string(),
+        ),
         mode: crate::domains::kv::TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::sync(),
     };
