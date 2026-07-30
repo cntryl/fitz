@@ -619,7 +619,7 @@ mod tests {
     }
 
     #[test]
-    fn should_fairly_rotate_ready_families() {
+    fn should_schedule_ready_families_fairly_given_continuous_load() {
         // Arrange
         let shard_count = shard_count_for_family_count(usize::MAX);
         let family_count = shard_count.saturating_add(1);
@@ -716,7 +716,7 @@ mod tests {
     }
 
     #[test]
-    fn should_prioritize_control_work_over_ready_normal_work() {
+    fn should_drain_control_lane_given_normal_lane_saturation() {
         // Arrange
         let mut pool = FamilyActorPool::<u64>::new(&[family(1)]).expect("pool");
         let ingress = pool.ingress();
@@ -737,7 +737,7 @@ mod tests {
     }
 
     #[test]
-    fn should_preserve_lane_full_errors_with_wake_notifications() {
+    fn should_preserve_control_lane_progress_given_normal_lane_flood() {
         // Arrange
         let pool = FamilyActorPool::<u64>::new(&[family(1)]).expect("pool");
         let ingress = pool.ingress();
@@ -846,7 +846,7 @@ mod tests {
     }
 
     #[test]
-    fn should_fail_closed_and_wake_workers_after_handler_panic() {
+    fn should_reject_new_work_given_failed_family_actor() {
         // Arrange
         let pool = FamilyActorPool::<u64>::new(&[family(1)]).expect("pool");
         let active = Arc::new(AtomicBool::new(true));
