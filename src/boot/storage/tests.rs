@@ -281,7 +281,7 @@ fn should_support_local_storage_mode() {
 }
 
 #[tokio::test]
-async fn should_persist_local_disk_storage_across_restarts() {
+async fn should_reopen_storage_given_clean_shutdown() {
     // Arrange
     let tempdir = TempDir::new().expect("tempdir");
     let db_path = tempdir.path().join("fitz-local");
