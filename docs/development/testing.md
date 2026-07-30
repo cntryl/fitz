@@ -72,6 +72,6 @@ Required coverage patterns:
 
 ```sh
 cargo fmt --all -- --check
-cargo test --workspace
+cargo test --locked --workspace
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic
 ```

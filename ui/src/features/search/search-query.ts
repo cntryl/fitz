@@ -16,7 +16,20 @@ const adminSearchQuery = defineQuery<AdminSearchRequest, AdminSearchResults>({
       request.operation ?? "any",
       request.limit ?? 50,
     ),
-  fetch: ({ signal, ...request }) => searchService.searchAdminState(request, { signal }),
+  fetch: ({ signal, ...request }) => {
+    if (!request.query.trim()) {
+      return Promise.resolve({
+        limit: request.limit ?? 50,
+        query: "",
+        results: [],
+        routeFamily: request.routeFamily,
+        total: 0,
+        truncated: false,
+      });
+    }
+
+    return searchService.searchAdminState(request, { signal });
+  },
 });
 
 export function createAdminSearchQuery(request: AdminSearchRequest) {

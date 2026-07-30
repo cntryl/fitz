@@ -84,15 +84,15 @@ broker restart.
 
 The repo compose files are local-development examples only:
 
-- `compose.yml`, `compose.cloud.yml`, and `compose.sqrzl.yml` publish only to loopback and are not production deployment manifests.
-- `compose.yml` and `compose.cloud.yml` keep `fitz-auth` on `FITZ_JWT_HMAC_SECRET` by default so `docker compose up` stays the shortest successful path.
+- `compose.yml`, the provider-specific `compose.s3.yml`, `compose.azure.yml`, and `compose.gcs.yml` profiles, `compose.cloud.yml`, and `compose.sqrzl.yml` publish only to loopback and are not production deployment manifests.
+- `compose.yml`, the provider-specific profiles, and `compose.cloud.yml` keep `fitz-auth` on `FITZ_JWT_HMAC_SECRET` by default so local Compose startup stays short.
 - Those same compose files keep `FITZ_ADMIN_AUTH_MODE=open` because the admin surface is loopback-only and meant for local inspection.
 - Those same compose files set `FITZ_ASSUME_LOCAL_LOOPBACK_EDGE=true` because Fitz binds inside its container while Docker publishes the listeners only on host loopback. This does not assert TLS or enable HSTS.
 - The built-in loopback defaults for `FITZ_WS_ALLOWED_ORIGINS` are only for local development.
 
 To exercise issuer/JWKS plumbing locally instead of the default HMAC flow:
 
-- Start `docker compose -f compose.yml -f compose.jwks.yml up --build`, or layer the same overlay onto `compose.cloud.yml`.
+- Start `docker compose -f compose.yml -f compose.jwks.yml up --build`, or layer the same overlay onto a provider-specific profile or `compose.cloud.yml`.
 - `compose.jwks.yml` starts a local `fitz-jwks` service and sets:
   - `FITZ_JWT_ALLOW_INSECURE_HTTP=true`
   - `FITZ_JWT_JWKS_MAP="https://fitz.mock/=http://fitz-jwks:8080/.well-known/jwks.json"`

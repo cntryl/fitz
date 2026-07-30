@@ -63,6 +63,21 @@ docker compose up --build
 
 The compose file starts an authenticated broker on `4090`/`4091` and an anonymous broker on `4190`/`4191`. These defaults are for local development: ports are loopback-bound, the admin surface is local, and the authenticated broker uses the shared HS256 dev secret `dev-test-secret`.
 
+Provider-specific development profiles use the Sqrzl storage emulator:
+
+```sh
+docker compose -f compose.s3.yml up --build       # S3-compatible emulator
+docker compose -f compose.azure.yml up --build    # Azure Blob emulator
+docker compose -f compose.gcs.yml up --build      # GCS emulator
+```
+
+Each profile starts the same authenticated and anonymous brokers, provisions
+separate storage namespaces for them, and publishes the emulator on loopback
+port `9000` for local diagnostics. The S3 profile reaches readiness with the
+current emulator image. Its Azure and GCS front doors currently return HTTP 500
+for missing objects, so those two profiles cannot complete Midge's first-start
+recovery until that upstream emulator behavior is corrected.
+
 ## Runtime Surfaces
 
 - HTTP root and admin UI: `http://localhost:4090/`

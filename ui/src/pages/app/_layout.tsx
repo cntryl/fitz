@@ -290,12 +290,7 @@ function WorkspaceShell({
   operator: ReturnType<typeof createOperatorScopeSnapshot>;
 }) {
   return (
-    <Grid
-      class="operator-shell-layout"
-      columns={{ base: 1, md: "13rem minmax(0, 1fr)" }}
-      gap="md"
-      align="start"
-    >
+    <Grid class="operator-shell-layout" gap="md" align="start">
       <OperatorNavigation operator={operator} />
       <div class="route-transition-surface">{children}</div>
     </Grid>

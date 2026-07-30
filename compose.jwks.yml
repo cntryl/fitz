@@ -1,7 +1,8 @@
 # Fitz local JWKS parity overlay
 #
-# Layer this file onto compose.yml or compose.cloud.yml to exercise issuer/JWKS
-# plumbing locally. This is still a local-only development example.
+# Layer this file onto compose.yml, a provider-specific profile, or
+# compose.cloud.yml to exercise issuer/JWKS plumbing locally. This is still a
+# local-only development example.
 
 services:
   fitz-jwks:

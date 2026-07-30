@@ -1,0 +1,16 @@
+# RUSTSEC-2023-0071 remains transitive through cntryl-midge's cloud-gcp
+# service-account signing path. No patched rsa release exists. Remove this
+# exception when Midge migrates to a fixed signing backend.
+[advisories]
+ignore = ["RUSTSEC-2023-0071"]
+informational_warnings = ["unmaintained", "unsound"]
+severity_threshold = "low"
+
+[output]
+deny = ["unmaintained", "unsound", "yanked"]
+quiet = false
+show_tree = true
+
+[yanked]
+enabled = true
+update_index = true

@@ -1,0 +1,76 @@
+# Fitz Message Broker + Sqrzl GCS emulator - local development only
+#
+# This file is a loopback-only example and is not a production deployment
+# manifest. Cloud-backed brokers may restart briefly while writer leases settle;
+# wait for /readyz instead of expecting immediate first-boot readiness.
+
+x-broker-common: &broker-common
+  restart: on-failure
+  build:
+    context: .
+    dockerfile: Dockerfile
+  stop_grace_period: 15s
+  healthcheck:
+    disable: true
+
+x-broker-common-env: &broker-common-env
+  FITZ_STORAGE_MODE: cloud
+  FITZ_STORAGE_PROVIDER: sqrzl-gcs
+  FITZ_STORAGE_ENDPOINT: http://sqrzl-emulator:9000
+  FITZ_STORAGE_CLOUD_DURABILITY: "${FITZ_STORAGE_CLOUD_DURABILITY:-background}"
+  RUST_LOG: info,fitz=trace
+
+services:
+  fitz-auth:
+    <<: *broker-common
+    ports:
+      - "127.0.0.1:${FITZ_AUTH_HOST_HTTP_PORT:-4090}:${FITZ_AUTH_HTTP_PORT:-4090}"
+      - "127.0.0.1:${FITZ_AUTH_HOST_TCP_PORT:-4091}:${FITZ_AUTH_TCP_PORT:-4091}"
+    environment:
+      <<: *broker-common-env
+      FITZ_AUTH_REQUIRED: "true"
+      FITZ_ASSUME_LOCAL_LOOPBACK_EDGE: "true"
+      FITZ_ADMIN_AUTH_MODE: open
+      FITZ_HTTP_PORT: "${FITZ_AUTH_HTTP_PORT:-4090}"
+      FITZ_TCP_PORT: "${FITZ_AUTH_TCP_PORT:-4091}"
+      FITZ_JWT_HMAC_SECRET: "${FITZ_JWT_HMAC_SECRET:-dev-test-secret}"
+      FITZ_JWT_AUDIENCE: fitz
+      FITZ_ROUTE_FAMILY_MAP: dev=1
+      FITZ_WS_ALLOWED_ORIGINS: "http://localhost:${FITZ_AUTH_HOST_HTTP_PORT:-4090},http://127.0.0.1:${FITZ_AUTH_HOST_HTTP_PORT:-4090}"
+      FITZ_STORAGE_BUCKET: fitz-auth
+      FITZ_STORAGE_PREFIX: dev-auth
+      FITZ_STORAGE_CACHE_PATH: /data/fitz-cloud-cache
+    depends_on:
+      - sqrzl-emulator
+    volumes:
+      - fitz-gcs-auth-data:/data
+
+  fitz-anon:
+    <<: *broker-common
+    ports:
+      - "127.0.0.1:${FITZ_ANON_HOST_HTTP_PORT:-4190}:${FITZ_ANON_HTTP_PORT:-4090}"
+      - "127.0.0.1:${FITZ_ANON_HOST_TCP_PORT:-4191}:${FITZ_ANON_TCP_PORT:-4091}"
+    environment:
+      <<: *broker-common-env
+      FITZ_AUTH_REQUIRED: "false"
+      FITZ_ADMIN_AUTH_MODE: open
+      FITZ_HTTP_PORT: "${FITZ_ANON_HTTP_PORT:-4090}"
+      FITZ_TCP_PORT: "${FITZ_ANON_TCP_PORT:-4091}"
+      FITZ_STORAGE_BUCKET: fitz-anon
+      FITZ_STORAGE_PREFIX: dev-anon
+      FITZ_STORAGE_CACHE_PATH: /data/fitz-cloud-cache
+    depends_on:
+      - sqrzl-emulator
+    volumes:
+      - fitz-gcs-anon-data:/data
+
+  sqrzl-emulator:
+    image: ghcr.io/sqrzl/sqrzl-emulator:latest
+    environment:
+      SQRZL_BUCKET_LIST: fitz-auth,fitz-anon
+    ports:
+      - "127.0.0.1:9000:9000"
+
+volumes:
+  fitz-gcs-auth-data:
+  fitz-gcs-anon-data:

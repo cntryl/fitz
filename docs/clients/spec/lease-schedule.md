@@ -593,6 +593,7 @@ Response (success):
 
 Response (error):
   [u8]     1 (status=error)
+  [u32 BE] error_code
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -624,10 +625,19 @@ Brokers MUST support standard 5-field cron format:
 - Lists = `value,value,value` (e.g., `0 9,12,15 * * *` = 9 AM, 12 PM, 3 PM)
 - Steps = `*/step` or `range/step` (e.g., `*/15 * * * *` = every 15 minutes)
 - Combined = (e.g., `0 9-17/2 * * 1-5` = every 2 hours from 9 AM-5 PM on weekdays)
-  **Examples:**
+
+When day-of-month and day-of-week are both restricted, standard cron OR
+semantics apply: a date matches when either field matches. When either field is
+`*`, the other field controls the date match. Brokers MUST reject expressions
+that cannot match a date during a complete Gregorian 400-year cycle, such as
+`0 0 31 2 *`.
+
+**Examples:**
+
 - `0 9 * * 1` = 9:00 AM every Monday
 - `*/5 * * * *` = Every 5 minutes
 - `0 */2 * * *` = Every 2 hours
+- `0 9-17/2 * * *` = Every 2 hours from 9 AM-5 PM
 - `0 9-17 * * 1-5` = Every hour from 9 AM-5 PM on weekdays
 - `30 2 1 * *` = 2:30 AM on the 1st of every month
 

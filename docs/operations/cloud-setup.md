@@ -40,11 +40,29 @@ Use only the keys required by the selected provider. `FITZ_STORAGE_BUCKET` and `
 
 ## Local Emulator Flow
 
-Use [../../compose.cloud.yml](../../compose.cloud.yml) for local blob/object storage testing against `sqrzl-emulator`. This compose file is local-only and keeps the same loopback-bound auth/admin defaults as `compose.yml`.
+Use one of the provider-specific profiles for local blob/object storage testing
+against `sqrzl-emulator`. Each profile is self-contained, local-only, and keeps
+the same loopback-bound auth/admin defaults as `compose.yml`.
 
 ```sh
-docker compose -f compose.cloud.yml up --build
+docker compose -f compose.s3.yml up --build
+docker compose -f compose.azure.yml up --build
+docker compose -f compose.gcs.yml up --build
 ```
+
+The profiles select `sqrzl-s3`, `sqrzl-azure`, and `sqrzl-gcs`, respectively.
+They provision separate `fitz-auth` and `fitz-anon` namespaces in the emulator
+and give each broker its own persistent local cache volume. The generic
+`compose.cloud.yml` profile remains available for compatibility and supports
+provider selection through `FITZ_SQRZL_PROVIDER`.
+
+The S3 profile reaches readiness with the current `sqrzl-emulator` image. The
+same image currently renders missing Azure Blob and GCS objects as HTTP 500
+instead of provider-compatible not-found responses. Midge checks for absent
+lease and metadata objects during first-start recovery, so `compose.azure.yml`
+and `compose.gcs.yml` restart until that upstream emulator behavior is fixed.
+Do not substitute the S3 provider in those profiles; that would test different
+provider semantics.
 
 Expect Fitz to reach readiness after storage startup and writer-lease acquisition. During startup handoff, `/targetz` can succeed before `/healthz` or `/readyz`; the data plane remains closed until strict readiness succeeds.
 

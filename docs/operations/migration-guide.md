@@ -45,6 +45,15 @@ entries return `[route][cron][mode][payload]`. Use `0` for broadcast and `1` for
 single delivery. Unknown values fail with `ERR_INVALID_DELIVERY_MODE` (`7008`).
 The NOTIFY payload and all Schedule message IDs are unchanged.
 
+### Schedule cron day-field compatibility
+
+Schedule evaluation now follows standard cron semantics when both day-of-month
+and day-of-week are restricted: a date fires when either field matches.
+Previously, Fitz required both fields to match. Review existing schedules that
+restrict both fields before upgrading because they can fire more often after
+the change. The broker also rejects calendar-impossible expressions during
+CREATE and startup recovery instead of fabricating a later fire time.
+
 Update admin grants to either `*` or canonical decimal family IDs. Symbolic,
 non-canonical, and overflowed grants are rejected when a session is created or
 validated.

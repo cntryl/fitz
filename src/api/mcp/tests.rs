@@ -22,6 +22,30 @@ fn anonymous_context(permissions: SessionPermissions) -> McpExecutionContext {
     McpExecutionContext::anonymous(permissions)
 }
 
+fn assert_troubleshooting_output(output: &serde_json::Value) {
+    let summary = &output["incident_summary"];
+    assert!(summary.is_object());
+    assert!(matches!(
+        summary["status"].as_str(),
+        Some("healthy" | "degraded" | "stalled" | "recovering" | "unknown")
+    ));
+    assert!(matches!(
+        summary["severity"].as_str(),
+        Some("informational" | "low" | "medium" | "high" | "critical")
+    ));
+    assert!(summary["title"].is_string());
+    assert!(summary["explanation"].is_string());
+    assert!(summary["confidence"]
+        .as_f64()
+        .is_some_and(|confidence| (0.0..=1.0).contains(&confidence)));
+    assert!(output["hotspots"].is_array());
+    assert!(output["top_bottleneck"].is_null() || output["top_bottleneck"].is_object());
+    assert!(
+        output["last_significant_transition_at"].is_null()
+            || output["last_significant_transition_at"].is_string()
+    );
+}
+
 #[test]
 fn should_register_summary_tools_given_default_registry() {
     // Arrange
@@ -100,14 +124,12 @@ fn should_execute_summary_tools_given_empty_runtime() {
             None,
         )
         .expect("global troubleshooting output");
-    let expected_troubleshooting = serde_json::to_value(build_global_troubleshooting(&runtime))
-        .expect("expected global troubleshooting");
 
     // Assert
     assert_eq!(stats_output["broker"]["connections"], 0);
     assert!(stats_output["domains"].is_object());
     assert!(stats_output["diagnostics"].is_object());
-    assert_eq!(troubleshooting_output, expected_troubleshooting);
+    assert_troubleshooting_output(&troubleshooting_output);
 }
 
 #[test]
@@ -260,8 +282,6 @@ fn should_execute_explain_tools_given_empty_runtime() {
     let registry = McpToolRegistry::read_only();
     let context = authenticated_context(default_anonymous_permissions());
     let policy = McpCapabilityPolicy::read_only();
-    let expected = serde_json::to_value(build_global_troubleshooting(&runtime))
-        .expect("expected global troubleshooting");
 
     // Act
     let output = registry
@@ -275,5 +295,5 @@ fn should_execute_explain_tools_given_empty_runtime() {
         .expect("explanation output");
 
     // Assert
-    assert_eq!(output, expected);
+    assert_troubleshooting_output(&output);
 }

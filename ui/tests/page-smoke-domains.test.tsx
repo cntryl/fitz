@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { cleanupApp } from "@askrjs/askr/boot";
 import { queryState } from "@askrjs/askr/testing";
 import { mountRoute, pageSmokeMocks, queryOptions, resetQueries } from "./page-smoke/harness";
@@ -790,16 +790,24 @@ describe("admin page smoke tests", () => {
       input.dispatchEvent(new Event("input", { bubbles: true }));
     }
     form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
 
-    expect(window.location.search).toBe("?q=orders");
-    expect(root.textContent).toContain("Search results");
-    expect(
-      root.querySelector('[aria-label="Admin search results"] a[href="/admin/1/sessions"]'),
-    ).toBeTruthy();
-    expect(
-      root.querySelector('[aria-label="Admin search results"] a[href="/admin/1/kv?realm=acme"]'),
-    ).toBeTruthy();
+    await vi.waitFor(() => {
+      const searchResults = root.querySelector<HTMLElement>("[data-diagnostics-search-results]");
+
+      expect(window.location.search).toBe("?q=orders");
+      expect(searchResults?.hidden).toBe(false);
+      expect(searchResults?.textContent).toContain("Search results");
+      expect(
+        searchResults?.querySelector(
+          '[aria-label="Admin search results"] a[href="/admin/1/sessions"]',
+        ),
+      ).toBeTruthy();
+      expect(
+        searchResults?.querySelector(
+          '[aria-label="Admin search results"] a[href="/admin/1/kv?realm=acme"]',
+        ),
+      ).toBeTruthy();
+    });
   });
   it("keeps dashboard behavior visible while refresh is in flight", async () => {
     const { default: Home } = await import("@/pages/app/home");

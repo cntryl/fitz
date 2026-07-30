@@ -681,12 +681,15 @@ pub(super) fn should_allow_public_bind_without_external_tls_when_admin_open_mode
 }
 
 #[test]
+#[serial]
 pub(super) fn should_read_listener_ports_from_environment() {
     // Arrange
 
     // Act
-    let config = with_env_var("FITZ_HTTP_PORT", "6080", || {
-        with_env_var("FITZ_TCP_PORT", "6081", BootConfig::default)
+    let config = with_clean_config_env(|| {
+        with_env_var("FITZ_HTTP_PORT", "6080", || {
+            with_env_var("FITZ_TCP_PORT", "6081", BootConfig::default)
+        })
     });
 
     // Assert

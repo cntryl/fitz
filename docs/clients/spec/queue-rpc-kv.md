@@ -626,10 +626,10 @@ Response (error):
 [u8]      has_start (0 or 1)
 [u32 BE]  start_key_len (if present)
 [bytes]   start_key
-[u8]      has_end
+[u8]      has_end (0 or 1)
 [u32 BE]  end_key_len (if present)
 [bytes]   end_key
-[u8]      has_limit
+[u8]      has_limit (0 or 1)
 [u32 BE]  limit (if present)
 [u8]      reverse (0 or 1)
 Response (success):
@@ -764,12 +764,17 @@ Only `0` and `1` are valid durability values. Other values are rejected.
 **`reverse` flag:**
 
 - `reverse=0` (forward): Scan keys in ascending lexicographic order
-  - Start at `start_key` (or first key if omitted)
-  - End at `end_key` (or last key if omitted)
+  - Includes keys where `start_key <= key < end_key`
+  - An omitted `start_key` or `end_key` leaves that side unbounded
 - `reverse=1` (backward): Scan keys in descending lexicographic order
-  - Start at `end_key` (or last key if omitted)
-  - End at `start_key` (or first key if omitted)
-- `limit` applies regardless of direction
+  - Includes keys where `end_key < key <= start_key`
+  - An omitted `start_key` starts at the last key; an omitted `end_key` leaves
+    the lower side unbounded
+- Equal bounds, or bounds inverted for the selected direction, return an empty
+  successful result
+- `limit` applies regardless of direction. `has_more=1` means at least one
+  additional matching key exists beyond the returned page; an omitted limit is
+  unlimited and returns `has_more=0`
 
 #### Usage Example
 

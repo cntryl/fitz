@@ -117,6 +117,14 @@ pub struct PayloadDecoder<'a> {
 }
 
 impl<'a> PayloadDecoder<'a> {
+    fn get_optional_flag(&mut self) -> Result<bool, String> {
+        match self.get_u8()? {
+            0 => Ok(false),
+            1 => Ok(true),
+            flag => Err(format!("Invalid optional discriminator: {flag}")),
+        }
+    }
+
     /// Create a new decoder
     #[must_use]
     pub fn new(payload: &'a [u8]) -> Self {
@@ -300,11 +308,10 @@ impl<'a> PayloadDecoder<'a> {
     ///
     /// Returns an error when the optional flag or the contained `u64` is incomplete.
     pub fn get_optional_u64(&mut self) -> Result<Option<u64>, String> {
-        let flag = self.get_u8()?;
-        match flag {
-            0 => Ok(None),
-            1 => self.get_u64().map(Some),
-            value => Err(format!("Invalid optional u64 flag: {value}")),
+        if self.get_optional_flag()? {
+            self.get_u64().map(Some)
+        } else {
+            Ok(None)
         }
     }
 
@@ -315,11 +322,10 @@ impl<'a> PayloadDecoder<'a> {
     /// Returns an error when the optional flag is incomplete or the contained
     /// string cannot be decoded.
     pub fn get_optional_string(&mut self) -> Result<Option<String>, String> {
-        let flag = self.get_u8()?;
-        match flag {
-            0 => Ok(None),
-            1 => self.get_string().map(Some),
-            value => Err(format!("Invalid optional string flag: {value}")),
+        if self.get_optional_flag()? {
+            self.get_string().map(Some)
+        } else {
+            Ok(None)
         }
     }
 
@@ -330,11 +336,10 @@ impl<'a> PayloadDecoder<'a> {
     /// Returns an error when the optional flag is incomplete or the contained
     /// byte payload overruns the input.
     pub fn get_optional_bytes(&mut self) -> Result<Option<bytes::Bytes>, String> {
-        let flag = self.get_u8()?;
-        match flag {
-            0 => Ok(None),
-            1 => self.get_bytes().map(Some),
-            value => Err(format!("Invalid optional bytes flag: {value}")),
+        if self.get_optional_flag()? {
+            self.get_bytes().map(Some)
+        } else {
+            Ok(None)
         }
     }
 
@@ -345,8 +350,7 @@ impl<'a> PayloadDecoder<'a> {
     /// Returns an error when the optional flag is incomplete or the contained
     /// byte payload overruns the input.
     pub fn skip_optional_bytes(&mut self) -> Result<(), String> {
-        let flag = self.get_u8()?;
-        if flag == 1 {
+        if self.get_optional_flag()? {
             self.skip_bytes()
         } else {
             Ok(())
@@ -468,6 +472,25 @@ mod tests {
 
         // Assert
         assert!(dec.get_u32().is_err());
+    }
+
+    #[test]
+    fn should_reject_noncanonical_optional_discriminators() {
+        // Arrange
+        let mut decoders = [
+            PayloadDecoder::new(&[2]),
+            PayloadDecoder::new(&[3]),
+            PayloadDecoder::new(&[u8::MAX]),
+        ];
+
+        // Act
+        let results = decoders
+            .iter_mut()
+            .map(PayloadDecoder::get_optional_bytes)
+            .collect::<Vec<_>>();
+
+        // Assert
+        assert!(results.iter().all(Result::is_err));
     }
 
     #[test]

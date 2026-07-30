@@ -1,6 +1,6 @@
 import { state } from "@askrjs/askr";
 import { Show } from "@askrjs/askr/control";
-import { currentRoute, updateRouteQuery } from "@askrjs/askr/router";
+import { currentRoute, onRouteChange, updateRouteQuery } from "@askrjs/askr/router";
 import { Input, Label } from "@askrjs/ui";
 import { Button, Inline, Stack } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
@@ -16,10 +16,12 @@ import { formatRelativeTime } from "@/shared/format";
 import { useOperatorScope } from "@/shared/operator-scope";
 
 function DiagnosticsSearchResults({
+  active,
   query,
   routeFamilyId,
   routeFamilyLabel,
 }: {
+  active: boolean;
   query: string;
   routeFamilyId: string;
   routeFamilyLabel: string;
@@ -31,14 +33,16 @@ function DiagnosticsSearchResults({
   });
 
   return (
-    <SearchResultsPanel
-      error={search.error}
-      loading={search.loading && !search.data}
-      onRetry={() => search.refresh()}
-      routeFamilyId={routeFamilyId}
-      routeFamilyLabel={routeFamilyLabel}
-      search={search.data}
-    />
+    <div data-diagnostics-search-results hidden={!active}>
+      <SearchResultsPanel
+        error={search.error}
+        loading={search.loading && !search.data}
+        onRetry={() => search.refresh()}
+        routeFamilyId={routeFamilyId}
+        routeFamilyLabel={routeFamilyLabel}
+        search={search.data}
+      />
+    </div>
   );
 }
 
@@ -54,12 +58,19 @@ export default function DiagnosticsPage() {
     route.query.get("routeFamily") ??
     operator.selectedRouteFamilyId;
   const [searchDraft, setSearchDraft] = state(searchQuery ?? "");
+  const [submittedSearch, setSubmittedSearch] = state(searchQuery ?? "");
   const data = system.data;
   const refreshing = system.refreshing || metrics.refreshing || topology.refreshing;
   const stale = system.stale || metrics.stale || topology.stale;
   const partial = Boolean(
     data && ((!metrics.data && metrics.error) || (!topology.data && topology.error)),
   );
+
+  onRouteChange((current) => {
+    const query = current.query.get("q") ?? "";
+    setSearchDraft(query);
+    setSubmittedSearch(query);
+  });
 
   function refreshDiagnostics() {
     void system.refresh();
@@ -71,11 +82,13 @@ export default function DiagnosticsPage() {
     event.preventDefault();
     const query = searchDraft().trim();
 
+    setSubmittedSearch(query);
     updateRouteQuery({ q: query || null }, { history: "push" });
   }
 
   function clearSearch() {
     setSearchDraft("");
+    setSubmittedSearch("");
     updateRouteQuery({ q: null }, { history: "push" });
   }
 
@@ -151,18 +164,15 @@ export default function DiagnosticsPage() {
           </form>
         </section>
 
-        <Show when={searchQuery}>
-          {(query) => (
-            <DiagnosticsSearchResults
-              query={query}
-              routeFamilyId={searchRouteFamily}
-              routeFamilyLabel={
-                operator.routeFamilies.find((family) => family.id === searchRouteFamily)?.label ??
-                operator.selectedRouteFamily.label
-              }
-            />
-          )}
-        </Show>
+        <DiagnosticsSearchResults
+          active={Boolean(submittedSearch())}
+          query={submittedSearch()}
+          routeFamilyId={searchRouteFamily}
+          routeFamilyLabel={
+            operator.routeFamilies.find((family) => family.id === searchRouteFamily)?.label ??
+            operator.selectedRouteFamily.label
+          }
+        />
 
         <Show when={!data && system.loading}>
           <QueryLoadingState description="Loading broker diagnostics..." />
