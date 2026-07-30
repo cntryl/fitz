@@ -398,7 +398,7 @@ fn should_not_fanout_notice_across_route_families_given_same_pattern() {
 }
 
 #[test]
-fn should_not_deliver_notice_after_disconnect_cleanup_given_publish_race() {
+fn should_not_deliver_queued_notification_after_disconnect() {
     // Arrange
     let router = make_router();
     let sink = Arc::new(TestSink::new());
