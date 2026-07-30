@@ -9,7 +9,7 @@ use fitz::benchkit::{
     build_kv_begin, build_kv_commit, build_kv_put, create_local_bench_store,
     create_write_heavy_bench_store, parse_kv_response, parse_kv_tx_id, shared_bench_runtime,
 };
-use fitz::domains::kv::{KvActor, KvMessage, KvResponse, TxMode};
+use fitz::domains::kv::{KvActor, KvMessage, KvResourceScope, KvResponse, TxMode};
 use fitz::protocol::kv_codec::parse_request as parse_kv_request;
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::transport::TlvFrameParser;
@@ -103,11 +103,9 @@ impl DirectLifecycleState {
 }
 
 fn direct_lifecycle(actor: &mut DirectKvActor, commit: bool, key: Bytes, value: Bytes) {
+    let scope = KvResourceScope::new(RouteFamily::new(1), "tier4", "state", "resource");
     let begin = actor.actor.handle(KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "tier4".into(),
-        area: "state".into(),
-        resource: "resource".into(),
+        scope: scope.clone(),
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::sync(),
     });
@@ -117,17 +115,16 @@ fn direct_lifecycle(actor: &mut DirectKvActor, commit: bool, key: Bytes, value: 
     assert!(matches!(
         actor.actor.handle(KvMessage::Put {
             tx_id,
-            route_family: RouteFamily::new(1),
-            resource: "resource".into(),
+            scope: scope.clone(),
             key,
             value,
         }),
         KvResponse::PutOk
     ));
     let response = if commit {
-        actor.actor.handle(KvMessage::Commit { tx_id })
+        actor.actor.handle(KvMessage::Commit { tx_id, scope })
     } else {
-        actor.actor.handle(KvMessage::Rollback { tx_id })
+        actor.actor.handle(KvMessage::Rollback { tx_id, scope })
     };
     assert!(
         matches!(response, KvResponse::CommitOk | KvResponse::RollbackOk),

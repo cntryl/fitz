@@ -14,7 +14,7 @@ use stress_config::StressContextExt;
 
 use bytes::Bytes;
 use cntryl_stress::{stress, stress_main, StressContext};
-use fitz::domains::kv::{KvActor, KvMessage, KvResponse, TxMode};
+use fitz::domains::kv::{KvActor, KvMessage, KvResourceScope, KvResponse, TxMode};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
 
@@ -32,10 +32,12 @@ fn begin_transaction(
     mode: TxMode,
 ) -> Option<u64> {
     let response = actor.handle(KvMessage::Begin {
-        route_family: RouteFamily::try_from(family_id).expect("benchmark family must fit in u32"),
-        realm: "system".to_string(),
-        area: "kv".to_string(),
-        resource: resource.to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::try_from(family_id).expect("benchmark family must fit in u32"),
+            "system",
+            "kv",
+            resource,
+        ),
         mode,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
@@ -73,9 +75,13 @@ fn should_complete_10_puts_per_3_families(ctx: &mut StressContext) {
             for i in 0..TRIPLE_FAMILY_PUTS_PER_FAMILY {
                 actor.handle(KvMessage::Put {
                     tx_id: *tx_id,
-                    route_family: RouteFamily::try_from(*family_id)
-                        .expect("benchmark family must fit in u32"),
-                    resource: resource.clone(),
+                    scope: KvResourceScope::new(
+                        RouteFamily::try_from(*family_id)
+                            .expect("benchmark family must fit in u32"),
+                        "system",
+                        "kv",
+                        resource,
+                    ),
                     key: Bytes::from(format!("k{i}").into_bytes()),
                     value: Bytes::from_static(b"v"),
                 });
@@ -83,8 +89,16 @@ fn should_complete_10_puts_per_3_families(ctx: &mut StressContext) {
         }
     });
 
-    for (_, tx_id, _) in txs {
-        actor.handle(KvMessage::Rollback { tx_id });
+    for (family_id, tx_id, resource) in txs {
+        actor.handle(KvMessage::Rollback {
+            tx_id,
+            scope: KvResourceScope::new(
+                RouteFamily::try_from(family_id).expect("benchmark family must fit in u32"),
+                "system",
+                "kv",
+                resource,
+            ),
+        });
     }
     stress_config::record_completed(ctx, 3 * TRIPLE_FAMILY_PUTS_PER_FAMILY * iterations);
 }

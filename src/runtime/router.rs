@@ -201,8 +201,8 @@ impl RouteRegistry {
             // Router lookups and registrations are hot paths. Use a faster
             // non-cryptographic hasher and reserve a modest working set up front
             // to reduce repeated rehashing during actor registration bursts.
-            sinks: DashMap::with_capacity_and_hasher(1024, FxBuildHasher::default()),
-            domain_patterns: DashMap::with_capacity_and_hasher(32, FxBuildHasher::default()),
+            sinks: DashMap::with_capacity_and_hasher(1024, FxBuildHasher),
+            domain_patterns: DashMap::with_capacity_and_hasher(32, FxBuildHasher),
         }
     }
 
