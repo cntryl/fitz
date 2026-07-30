@@ -657,7 +657,7 @@ pub(crate) async fn should_retain_other_worker_route_after_unsubscribe_ws() {
 
 #[tokio::test]
 #[serial]
-pub(crate) async fn should_return_rpc_timeout_error_after_accept_tcp() {
+pub(crate) async fn should_timeout_rpc_request_given_worker_accepts_without_response_tcp() {
     let server = TestServer::start_with_rpc_timeout(Duration::from_millis(150))
         .await
         .expect("start");
@@ -666,7 +666,7 @@ pub(crate) async fn should_return_rpc_timeout_error_after_accept_tcp() {
 
 #[tokio::test]
 #[serial]
-pub(crate) async fn should_return_rpc_timeout_error_after_accept_ws() {
+pub(crate) async fn should_timeout_rpc_request_given_worker_accepts_without_response_ws() {
     let server = TestServer::start_with_rpc_timeout(Duration::from_millis(150))
         .await
         .expect("start");
@@ -675,7 +675,7 @@ pub(crate) async fn should_return_rpc_timeout_error_after_accept_ws() {
 
 #[tokio::test]
 #[serial]
-pub(crate) async fn should_reject_wrong_correlation_response_after_accept_tcp() {
+pub(crate) async fn should_reject_rpc_response_given_wrong_worker_session_tcp() {
     let server = TestServer::start_with_rpc_timeout(Duration::from_millis(150))
         .await
         .expect("start");
@@ -684,7 +684,7 @@ pub(crate) async fn should_reject_wrong_correlation_response_after_accept_tcp() 
 
 #[tokio::test]
 #[serial]
-pub(crate) async fn should_reject_wrong_correlation_response_after_accept_ws() {
+pub(crate) async fn should_reject_rpc_response_given_wrong_worker_session_ws() {
     let server = TestServer::start_with_rpc_timeout(Duration::from_millis(150))
         .await
         .expect("start");
@@ -693,14 +693,14 @@ pub(crate) async fn should_reject_wrong_correlation_response_after_accept_ws() {
 
 #[tokio::test]
 #[serial]
-pub(crate) async fn should_reject_invalid_sequence_response_after_accept_tcp() {
+pub(crate) async fn should_reject_rpc_response_given_sequence_gap_tcp() {
     let server = TestServer::start().await.expect("start");
     exercise_invalid_sequence_error_after_accept_tcp(&server).await;
 }
 
 #[tokio::test]
 #[serial]
-pub(crate) async fn should_reject_invalid_sequence_response_after_accept_ws() {
+pub(crate) async fn should_reject_rpc_response_given_sequence_gap_ws() {
     let server = TestServer::start().await.expect("start");
     exercise_invalid_sequence_error_after_accept_ws(&server).await;
 }
