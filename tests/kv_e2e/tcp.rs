@@ -74,6 +74,20 @@ async fn should_reject_operations_on_invalid_transaction_tcp() {
 }
 
 #[tokio::test]
+async fn should_preserve_transaction_scope_integrity_tcp() {
+    // Arrange
+    let server = TestServer::start()
+        .await
+        .expect("failed to start test server");
+
+    // Act
+    should_preserve_transaction_scope_integrity::<TcpConnector>(&server).await;
+
+    // Assert
+    // (assertions are in the helper)
+}
+
+#[tokio::test]
 async fn should_require_connect_message_when_auth_enabled_tcp() {
     // Arrange
     let server = TestServer::start_with_auth(true)
@@ -270,7 +284,7 @@ async fn should_handle_connection_drop_during_transaction_tcp() {
 }
 
 #[tokio::test]
-async fn should_reject_stale_transaction_id_after_client_reconnect_tcp() {
+async fn should_reject_kv_operation_after_disconnect_given_old_transaction_id() {
     // Arrange
     let server = TestServer::start()
         .await

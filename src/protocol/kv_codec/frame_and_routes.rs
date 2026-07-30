@@ -1,8 +1,11 @@
 // KV domain TLV message types and codec
 
 use crate::dispatch::wire::kv::KvError;
-use crate::dispatch::wire::kv::{KvMessage, KvResponse, KvSubscriptionMessage, TxMode};
+use crate::dispatch::wire::kv::{
+    KvMessage, KvResourceScope, KvResponse, KvSubscriptionMessage, TxMode,
+};
 use crate::protocol::frame_context::FrameContext;
+use crate::protocol::payload_codec::PayloadDecoder;
 use crate::runtime::routing::{route_exact_triplet, Route, RouteAddress, RouteFamily};
 
 use super::mutation_parsers::{
@@ -86,8 +89,8 @@ pub fn parse_request(
 ) -> Result<KvMessage, String> {
     match msg_type {
         msg_type::BEGIN => parse_begin(route_family, payload),
-        msg_type::COMMIT => parse_commit(payload),
-        msg_type::ROLLBACK => parse_rollback(payload),
+        msg_type::COMMIT => parse_commit(route_family, payload),
+        msg_type::ROLLBACK => parse_rollback(route_family, payload),
         msg_type::GET => parse_get(route_family, payload),
         msg_type::PUT => parse_put(route_family, payload),
         msg_type::INSERT => parse_insert(route_family, payload),
@@ -234,10 +237,13 @@ fn read_route_str<'a>(
     Ok(route_str)
 }
 
-fn parse_route(route_str: &str) -> Result<(String, String, String), String> {
+pub(super) fn parse_scope(
+    route_family: RouteFamily,
+    route_str: &str,
+) -> Result<KvResourceScope, String> {
     match split_route(route_str) {
         Some((realm, area, resource)) => {
-            Ok((realm.to_string(), area.to_string(), resource.to_string()))
+            Ok(KvResourceScope::new(route_family, realm, area, resource))
         }
         None => Err(format!(
             "Route must be realm/area/resource, got '{route_str}'"
@@ -245,12 +251,11 @@ fn parse_route(route_str: &str) -> Result<(String, String, String), String> {
     }
 }
 
-pub(super) fn parse_route_resource(route_str: &str) -> Result<String, String> {
-    match split_route(route_str) {
-        Some((_realm, _area, resource)) => Ok(resource.to_string()),
-        None => Err(format!(
-            "Route must be realm/area/resource, got '{route_str}'"
-        )),
+fn ensure_complete(decoder: &PayloadDecoder<'_>, op_name: &str) -> Result<(), String> {
+    if decoder.is_complete() {
+        Ok(())
+    } else {
+        Err(format!("Trailing data in {op_name} payload"))
     }
 }
 
@@ -317,149 +322,44 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
     }
 }
 
-fn parse_commit(payload: &[u8]) -> Result<KvMessage, String> {
+fn parse_commit(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
     // Wire format per `CLIENT_SPEC`: [u64 tx_id][u32 route_len][route]
-    if payload.len() < 12 {
-        return Err("COMMIT payload too short".to_string());
-    }
-
-    let mut offset = 0;
-
-    // Read transaction ID (u64)
-    let tx_id = u64::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-        payload[offset + 4],
-        payload[offset + 5],
-        payload[offset + 6],
-        payload[offset + 7],
-    ]);
-    offset += 8;
-
-    // Read route length (u32)
-    if offset + 4 > payload.len() {
-        return Err("COMMIT route length overflow".to_string());
-    }
-    let route_len = u32_to_usize(u32::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-    ]));
-    offset += 4;
-
-    // Read route
-    if offset + route_len > payload.len() {
-        return Err("COMMIT route overflow".to_string());
-    }
-    let route_str = decode_route_str(&payload[offset..offset + route_len], "COMMIT")?;
-
-    // Parse route into realm/area/resource (not used in Commit, but validates wire format)
-    validate_route(route_str)?;
-
-    Ok(KvMessage::Commit { tx_id })
+    let mut decoder = PayloadDecoder::new(payload);
+    let tx_id = decoder.get_u64()?;
+    let scope = parse_scope(route_family, decoder.get_string_ref()?)?;
+    ensure_complete(&decoder, "COMMIT")?;
+    Ok(KvMessage::Commit { tx_id, scope })
 }
 
-fn parse_rollback(payload: &[u8]) -> Result<KvMessage, String> {
+fn parse_rollback(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
     // Wire format per `CLIENT_SPEC`: [u64 tx_id][u32 route_len][route]
-    if payload.len() < 12 {
-        return Err("ROLLBACK payload too short".to_string());
-    }
-
-    let mut offset = 0;
-
-    // Read transaction ID (u64)
-    let tx_id = u64::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-        payload[offset + 4],
-        payload[offset + 5],
-        payload[offset + 6],
-        payload[offset + 7],
-    ]);
-    offset += 8;
-
-    // Read route length (u32)
-    if offset + 4 > payload.len() {
-        return Err("ROLLBACK route length overflow".to_string());
-    }
-    let route_len = u32_to_usize(u32::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-    ]));
-    offset += 4;
-
-    // Read route
-    if offset + route_len > payload.len() {
-        return Err("ROLLBACK route overflow".to_string());
-    }
-    let route_str = decode_route_str(&payload[offset..offset + route_len], "ROLLBACK")?;
-
-    // Parse route into realm/area/resource (not used in Rollback, but validates wire format)
-    validate_route(route_str)?;
-
-    Ok(KvMessage::Rollback { tx_id })
+    let mut decoder = PayloadDecoder::new(payload);
+    let tx_id = decoder.get_u64()?;
+    let scope = parse_scope(route_family, decoder.get_string_ref()?)?;
+    ensure_complete(&decoder, "ROLLBACK")?;
+    Ok(KvMessage::Rollback { tx_id, scope })
 }
 
 fn parse_begin(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, String> {
     // Wire format per `CLIENT_SPEC`: [u32 route_len][route][u8 mode][u8 durability]
-    if payload.len() < 6 {
-        return Err("BEGIN payload too short".to_string());
-    }
-
-    let mut offset = 0;
-
-    // Read route length (u32)
-    let route_len = u32_to_usize(u32::from_be_bytes([
-        payload[offset],
-        payload[offset + 1],
-        payload[offset + 2],
-        payload[offset + 3],
-    ]));
-    offset += 4;
-
-    // Read route
-    if offset + route_len > payload.len() {
-        return Err("BEGIN route overflow".to_string());
-    }
-    let route_str = decode_route_str(&payload[offset..offset + route_len], "BEGIN")?;
-    offset += route_len;
-
-    // Parse route into realm/area/resource
-    let (realm, area, resource) = parse_route(route_str)?;
-
-    // Read mode (u8): 0=ReadOnly, 1=ReadWrite
-    if offset >= payload.len() {
-        return Err("BEGIN mode byte missing".to_string());
-    }
-    let mode = match payload[offset] {
+    let mut decoder = PayloadDecoder::new(payload);
+    let scope = parse_scope(route_family, decoder.get_string_ref()?)?;
+    let mode = match decoder.get_u8()? {
         0 => TxMode::ReadOnly,
         1 => TxMode::ReadWrite,
         _ => return Err("Invalid transaction mode".to_string()),
     };
-    offset += 1;
 
     // Read durability (u8): 0=buffered, 1=sync (per `CLIENT_SPEC`)
-    if offset >= payload.len() {
-        return Err("BEGIN durability byte missing".to_string());
-    }
-    let write_options = match payload[offset] {
+    let write_options = match decoder.get_u8()? {
         0 => cntryl_midge::WriteOptions::buffered(),
         1 => cntryl_midge::WriteOptions::sync(),
         value => return Err(format!("Invalid durability mode: {value}")),
     };
+    ensure_complete(&decoder, "BEGIN")?;
 
     Ok(KvMessage::Begin {
-        route_family,
-        realm,
-        area,
-        resource,
+        scope,
         mode,
         write_options,
     })

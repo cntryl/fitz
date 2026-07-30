@@ -301,10 +301,10 @@ impl<'a> PayloadDecoder<'a> {
     /// Returns an error when the optional flag or the contained `u64` is incomplete.
     pub fn get_optional_u64(&mut self) -> Result<Option<u64>, String> {
         let flag = self.get_u8()?;
-        if flag == 1 {
-            self.get_u64().map(Some)
-        } else {
-            Ok(None)
+        match flag {
+            0 => Ok(None),
+            1 => self.get_u64().map(Some),
+            value => Err(format!("Invalid optional u64 flag: {value}")),
         }
     }
 
@@ -316,10 +316,10 @@ impl<'a> PayloadDecoder<'a> {
     /// string cannot be decoded.
     pub fn get_optional_string(&mut self) -> Result<Option<String>, String> {
         let flag = self.get_u8()?;
-        if flag == 1 {
-            self.get_string().map(Some)
-        } else {
-            Ok(None)
+        match flag {
+            0 => Ok(None),
+            1 => self.get_string().map(Some),
+            value => Err(format!("Invalid optional string flag: {value}")),
         }
     }
 
@@ -331,10 +331,10 @@ impl<'a> PayloadDecoder<'a> {
     /// byte payload overruns the input.
     pub fn get_optional_bytes(&mut self) -> Result<Option<bytes::Bytes>, String> {
         let flag = self.get_u8()?;
-        if flag == 1 {
-            self.get_bytes().map(Some)
-        } else {
-            Ok(None)
+        match flag {
+            0 => Ok(None),
+            1 => self.get_bytes().map(Some),
+            value => Err(format!("Invalid optional bytes flag: {value}")),
         }
     }
 

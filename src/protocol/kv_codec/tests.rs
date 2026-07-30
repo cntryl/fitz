@@ -7,6 +7,49 @@ fn len_to_u32(len: usize) -> u32 {
     u32::try_from(len).expect("test payload length should fit in u32")
 }
 
+fn put_route(payload: &mut Vec<u8>, route: &str) {
+    payload.put_u32(len_to_u32(route.len()));
+    payload.put_slice(route.as_bytes());
+}
+
+fn canonical_operation_payloads() -> Vec<(u16, Vec<u8>)> {
+    let route = "kv://acme/kv/users";
+    let mut begin = Vec::new();
+    put_route(&mut begin, route);
+    begin.extend_from_slice(&[1, 0]);
+
+    let mut transaction_only = Vec::new();
+    transaction_only.put_u64(1);
+    put_route(&mut transaction_only, route);
+
+    let mut keyed = transaction_only.clone();
+    keyed.put_u32(1);
+    keyed.put_u8(b'k');
+
+    let mut key_value = keyed.clone();
+    key_value.put_u32(1);
+    key_value.put_u8(b'v');
+
+    let mut range = keyed.clone();
+    range.put_u32(1);
+    range.put_u8(b'z');
+
+    let mut scan = transaction_only.clone();
+    scan.extend_from_slice(&[0, 0, 0, 0]);
+
+    vec![
+        (msg_type::BEGIN, begin),
+        (msg_type::COMMIT, transaction_only.clone()),
+        (msg_type::ROLLBACK, transaction_only),
+        (msg_type::GET, keyed.clone()),
+        (msg_type::PUT, key_value.clone()),
+        (msg_type::INSERT, key_value),
+        (msg_type::DELETE, keyed),
+        (msg_type::DELETE_RANGE, range),
+        (msg_type::SCAN, scan),
+    ]
+}
+
 #[test]
 fn should_parse_begin_read_write_buffered() {
     // Arrange
@@ -40,7 +83,92 @@ fn should_parse_get_with_key() {
     let result = parse_request(msg_type::GET, RouteFamily::new(1), &payload);
 
     // Assert
-    assert!(matches!(result, Ok(KvMessage::Get { tx_id: 1, .. })));
+    let Ok(KvMessage::Get { tx_id, scope, .. }) = result else {
+        panic!("expected parsed GET");
+    };
+    assert_eq!(tx_id, 1);
+    assert_eq!(scope.route_family, RouteFamily::new(1));
+    assert_eq!(scope.realm, "acme");
+    assert_eq!(scope.area, "kv");
+    assert_eq!(scope.resource, "users");
+}
+
+#[test]
+fn should_reject_trailing_bytes_for_every_kv_operation() {
+    // Arrange
+    let payloads = canonical_operation_payloads();
+
+    // Act
+    let results = payloads
+        .into_iter()
+        .map(|(message_type, mut payload)| {
+            payload.push(0xff);
+            parse_request(message_type, RouteFamily::new(1), &payload)
+        })
+        .collect::<Vec<_>>();
+
+    // Assert
+    assert!(results.iter().enumerate().all(|(index, result)| {
+        if result.is_err() {
+            true
+        } else {
+            panic!("noncanonical scan flag set {index} was accepted: {result:?}");
+        }
+    }));
+}
+
+#[test]
+fn should_reject_noncanonical_scan_flags() {
+    // Arrange
+    let mut prefix = Vec::new();
+    prefix.put_u64(1);
+    put_route(&mut prefix, "kv://acme/kv/users");
+    let flag_sets = [[2, 0, 0, 0], [0, 2, 0, 0], [0, 0, 2, 0], [0, 0, 0, 2]];
+
+    // Act
+    let results = flag_sets.map(|flags| {
+        let mut payload = prefix.clone();
+        payload.extend_from_slice(&flags);
+        parse_request(msg_type::SCAN, RouteFamily::new(1), &payload)
+    });
+
+    // Assert
+    for (index, result) in results.iter().enumerate() {
+        assert!(
+            result.is_err(),
+            "noncanonical scan flag set {index} was accepted: {result:?}"
+        );
+    }
+}
+
+#[test]
+fn should_reject_scan_with_any_required_flag_missing() {
+    // Arrange
+    let mut prefix = Vec::new();
+    prefix.put_u64(1);
+    put_route(&mut prefix, "kv://acme/kv/users");
+
+    // Act
+    let results = (0..4)
+        .map(|present_flags| {
+            let mut payload = prefix.clone();
+            payload.resize(payload.len() + present_flags, 0);
+            parse_request(msg_type::SCAN, RouteFamily::new(1), &payload)
+        })
+        .collect::<Vec<_>>();
+
+    // Assert
+    assert!(results.iter().all(Result::is_err));
+}
+
+proptest::proptest! {
+    #[test]
+    fn should_never_panic_given_arbitrary_kv_payload(
+        message_type in msg_type::BEGIN..=msg_type::SCAN,
+        payload in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..512),
+    ) {
+        let _ = parse_request(message_type, RouteFamily::new(1), &payload);
+    }
 }
 
 #[test]

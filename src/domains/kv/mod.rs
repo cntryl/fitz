@@ -60,6 +60,6 @@ pub use actor::KvActor;
 pub use metrics::KvMetrics;
 pub use protocol::{
     KvClientFrame, KvClientNotification, KvClientRequest, KvClientResponse, KvError, KvMessage,
-    KvNotification, KvPair, KvResponse, KvSubscriptionMessage, ScanQuery, TxMode,
+    KvNotification, KvPair, KvResourceScope, KvResponse, KvSubscriptionMessage, ScanQuery, TxMode,
 };
 pub use session::SessionActor;

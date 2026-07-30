@@ -39,7 +39,7 @@ use crate::runtime::actor::Context;
 use crate::runtime::routing::RouteFamily;
 use crate::utils::storage_key::{self, DomainKeyspace};
 
-use super::protocol::{KvError, KvMessage, KvPair, KvResponse, ScanQuery, TxMode};
+use super::protocol::{KvError, KvMessage, KvPair, KvResourceScope, KvResponse, ScanQuery, TxMode};
 
 const KV_KEY_SCOPE_MARKER: u8 = 0x01;
 const KV_INVENTORY_SCOPE_MARKER: u8 = 0x02;
@@ -106,12 +106,8 @@ impl KvInventoryDelta {
 /// uncommitted work and discards the transaction handle instead of attempting
 /// recovery.
 pub struct ActiveKvTx {
-    /// Realm this transaction is bound to (resolved from auth)
-    pub bound_realm: String,
-    /// Area this transaction is bound to
-    pub bound_area: String,
-    /// Resource (table) this transaction is bound to
-    pub bound_resource: String,
+    /// Complete route scope this transaction is bound to.
+    pub scope: KvResourceScope,
     /// Cached realm/area/resource prefix for scoped-key encoding
     pub scoped_prefix: Vec<u8>,
     /// Resolved column family for this transaction
@@ -149,76 +145,56 @@ impl KvActor {
     pub fn handle(&mut self, msg: KvMessage) -> KvResponse {
         match msg {
             KvMessage::Begin {
-                route_family,
-                realm,
-                area,
-                resource,
+                scope,
                 mode,
                 write_options,
-            } => self.handle_begin(route_family, realm, area, resource, mode, write_options),
-            KvMessage::Commit { tx_id } => self.handle_commit(tx_id),
-            KvMessage::Rollback { tx_id } => self.handle_rollback(tx_id),
-            KvMessage::Get {
-                tx_id,
-                route_family,
-                resource,
-                key,
-            } => self.handle_get(tx_id, route_family, &resource, &key),
+            } => self.handle_begin(scope, mode, write_options),
+            KvMessage::Commit { tx_id, scope } => self.handle_commit(tx_id, &scope),
+            KvMessage::Rollback { tx_id, scope } => self.handle_rollback(tx_id, &scope),
+            KvMessage::Get { tx_id, scope, key } => self.handle_get(tx_id, &scope, &key),
             KvMessage::Put {
                 tx_id,
-                route_family,
-                resource,
+                scope,
                 key,
                 value,
-            } => self.handle_put(tx_id, route_family, &resource, &key, &value),
+            } => self.handle_put(tx_id, &scope, &key, &value),
             KvMessage::Insert {
                 tx_id,
-                route_family,
-                resource,
+                scope,
                 key,
                 value,
-            } => self.handle_insert(tx_id, route_family, &resource, &key, &value),
-            KvMessage::Delete {
-                tx_id,
-                route_family,
-                resource,
-                key,
-            } => self.handle_delete(tx_id, route_family, &resource, &key),
+            } => self.handle_insert(tx_id, &scope, &key, &value),
+            KvMessage::Delete { tx_id, scope, key } => self.handle_delete(tx_id, &scope, &key),
             KvMessage::DeleteRange {
                 tx_id,
-                route_family,
-                resource,
+                scope,
                 start,
                 end,
-            } => self.handle_delete_range(tx_id, route_family, &resource, &start, &end),
+            } => self.handle_delete_range(tx_id, &scope, &start, &end),
             KvMessage::Scan {
                 tx_id,
-                route_family,
-                resource,
+                scope,
                 query,
-            } => self.handle_scan(tx_id, route_family, &resource, &query),
+            } => self.handle_scan(tx_id, &scope, &query),
         }
     }
 
     /// Begin a new transaction
     fn handle_begin(
         &mut self,
-        route_family: RouteFamily,
-        realm: String,
-        area: String,
-        resource: String,
+        scope: KvResourceScope,
         mode: TxMode,
         write_options: cntryl_midge::WriteOptions,
     ) -> KvResponse {
         // Validate realm format (strict opaque identifier check)
-        if validate_realm_format(&realm).is_err() {
+        if validate_realm_format(&scope.realm).is_err() {
             return KvResponse::Error {
                 error: KvError::InvalidRealm,
             };
         }
 
         // Resolve column family from RouteFamily + resource
-        let Ok(cf) = Self::resolve_column_family(route_family, &resource) else {
+        let Ok(cf) = Self::resolve_column_family(scope.route_family, &scope.resource) else {
             return KvResponse::Error {
                 error: KvError::InvalidRouteFamily,
             };
@@ -240,7 +216,8 @@ impl KvActor {
             Ok(tx) => {
                 let tx_id = self.next_tx_id;
                 self.next_tx_id = next_tx_id;
-                let scoped_prefix = Self::realm_resource_prefix(&realm, &area, &resource);
+                let scoped_prefix =
+                    Self::realm_resource_prefix(&scope.realm, &scope.area, &scope.resource);
 
                 tracing::trace!(
                     "KvActor assigning transaction ID: {}, next_tx_id is now: {}",
@@ -251,9 +228,7 @@ impl KvActor {
                 self.transactions.insert(
                     tx_id,
                     ActiveKvTx {
-                        bound_realm: realm,
-                        bound_area: area,
-                        bound_resource: resource,
+                        scope,
                         scoped_prefix,
                         column_family: cf,
                         tx,
@@ -271,7 +246,16 @@ impl KvActor {
     }
 
     /// Commit a transaction by ID
-    fn handle_commit(&mut self, tx_id: u64) -> KvResponse {
+    fn handle_commit(&mut self, tx_id: u64, scope: &KvResourceScope) -> KvResponse {
+        let Some(active) = self.transactions.get(&tx_id) else {
+            return KvResponse::Error {
+                error: KvError::InvalidTxId,
+            };
+        };
+        if let Err(response) = Self::validate_operation_scope(active, scope) {
+            return response;
+        }
+
         match self.transactions.remove(&tx_id) {
             None => KvResponse::Error {
                 error: KvError::InvalidTxId,
@@ -292,7 +276,16 @@ impl KvActor {
     }
 
     /// Rollback a transaction by ID
-    fn handle_rollback(&mut self, tx_id: u64) -> KvResponse {
+    fn handle_rollback(&mut self, tx_id: u64, scope: &KvResourceScope) -> KvResponse {
+        let Some(active) = self.transactions.get(&tx_id) else {
+            return KvResponse::Error {
+                error: KvError::InvalidTxId,
+            };
+        };
+        if let Err(response) = Self::validate_operation_scope(active, scope) {
+            return response;
+        }
+
         match self.transactions.remove(&tx_id) {
             None => KvResponse::Error {
                 error: KvError::InvalidTxId,
@@ -305,19 +298,13 @@ impl KvActor {
     }
 
     /// Get a value by key
-    fn handle_get(
-        &mut self,
-        tx_id: u64,
-        route_family: RouteFamily,
-        resource: &str,
-        key: &Bytes,
-    ) -> KvResponse {
+    fn handle_get(&mut self, tx_id: u64, scope: &KvResourceScope, key: &Bytes) -> KvResponse {
         let active = match self.get_transaction_or_err(tx_id) {
             Ok(tx) => tx,
             Err(err) => return err,
         };
 
-        if let Err(response) = Self::validate_operation_scope(active, route_family, resource) {
+        if let Err(response) = Self::validate_operation_scope(active, scope) {
             return response;
         }
 
@@ -342,8 +329,7 @@ impl KvActor {
     fn handle_put(
         &mut self,
         tx_id: u64,
-        route_family: RouteFamily,
-        resource: &str,
+        scope: &KvResourceScope,
         key: &Bytes,
         value: &Bytes,
     ) -> KvResponse {
@@ -352,7 +338,7 @@ impl KvActor {
             Err(err) => return err,
         };
 
-        if let Err(response) = Self::validate_operation_scope(active, route_family, resource) {
+        if let Err(response) = Self::validate_operation_scope(active, scope) {
             return response;
         }
 
@@ -385,8 +371,7 @@ impl KvActor {
     fn handle_insert(
         &mut self,
         tx_id: u64,
-        route_family: RouteFamily,
-        resource: &str,
+        scope: &KvResourceScope,
         key: &Bytes,
         value: &Bytes,
     ) -> KvResponse {
@@ -395,7 +380,7 @@ impl KvActor {
             Err(err) => return err,
         };
 
-        if let Err(response) = Self::validate_operation_scope(active, route_family, resource) {
+        if let Err(response) = Self::validate_operation_scope(active, scope) {
             return response;
         }
 
@@ -433,19 +418,13 @@ impl KvActor {
     }
 
     /// Delete a key
-    fn handle_delete(
-        &mut self,
-        tx_id: u64,
-        route_family: RouteFamily,
-        resource: &str,
-        key: &Bytes,
-    ) -> KvResponse {
+    fn handle_delete(&mut self, tx_id: u64, scope: &KvResourceScope, key: &Bytes) -> KvResponse {
         let active = match self.get_transaction_or_err(tx_id) {
             Ok(tx) => tx,
             Err(err) => return err,
         };
 
-        if let Err(response) = Self::validate_operation_scope(active, route_family, resource) {
+        if let Err(response) = Self::validate_operation_scope(active, scope) {
             return response;
         }
 
@@ -477,8 +456,7 @@ impl KvActor {
     fn handle_delete_range(
         &mut self,
         tx_id: u64,
-        route_family: RouteFamily,
-        resource: &str,
+        scope: &KvResourceScope,
         start: &Bytes,
         end: &Bytes,
     ) -> KvResponse {
@@ -487,7 +465,7 @@ impl KvActor {
             Err(err) => return err,
         };
 
-        if let Err(response) = Self::validate_operation_scope(active, route_family, resource) {
+        if let Err(response) = Self::validate_operation_scope(active, scope) {
             return response;
         }
 
@@ -517,8 +495,7 @@ impl KvActor {
     fn handle_scan(
         &mut self,
         tx_id: u64,
-        route_family: RouteFamily,
-        resource: &str,
+        scope: &KvResourceScope,
         query: &ScanQuery,
     ) -> KvResponse {
         let active = match self.get_transaction_or_err(tx_id) {
@@ -526,19 +503,17 @@ impl KvActor {
             Err(err) => return err,
         };
 
-        if let Err(response) = Self::validate_operation_scope(active, route_family, resource) {
+        if let Err(response) = Self::validate_operation_scope(active, scope) {
             return response;
         }
 
         let prefix = active.scoped_prefix.clone();
-        let start_key = query
-            .start
-            .as_ref()
-            .map_or_else(|| prefix.clone(), |k| Self::encode_scoped_key(&prefix, k));
-        let end_key = query.end.as_ref().map_or_else(
-            || Self::prefix_range_end(&prefix),
-            |k| Self::encode_scoped_key(&prefix, k),
-        );
+        let Some((start_key, end_key)) = Self::scan_bounds(&prefix, query) else {
+            return KvResponse::ScanResult {
+                items: Vec::new(),
+                has_more: false,
+            };
+        };
 
         // Build Midge Query
         let mut midge_query = cntryl_midge::Query::new()
@@ -547,7 +522,7 @@ impl KvActor {
             .end_key(Bytes::from(end_key));
 
         if let Some(limit) = query.limit {
-            midge_query = midge_query.limit(limit);
+            midge_query = midge_query.limit(limit.saturating_add(1));
         }
 
         if query.reverse {
@@ -576,10 +551,12 @@ impl KvActor {
                     });
                 }
 
-                KvResponse::ScanResult {
-                    items,
-                    has_more: false, // Midge doesn't provide continuation tokens yet
+                let has_more = query.limit.is_some_and(|limit| items.len() > limit);
+                if let Some(limit) = query.limit {
+                    items.truncate(limit);
                 }
+
+                KvResponse::ScanResult { items, has_more }
             }
             Err(e) => KvResponse::Error {
                 error: Self::map_midge_error(e),
@@ -606,9 +583,9 @@ impl KvActor {
         self.transactions.get(&tx_id).map(|tx| {
             (
                 u64::from(tx.column_family),
-                tx.bound_realm.clone(),
-                tx.bound_area.clone(),
-                tx.bound_resource.clone(),
+                tx.scope.realm.clone(),
+                tx.scope.area.clone(),
+                tx.scope.resource.clone(),
             )
         })
     }
@@ -621,9 +598,9 @@ impl KvActor {
                 (
                     *tx_id,
                     u64::from(tx.column_family),
-                    tx.bound_realm.clone(),
-                    tx.bound_area.clone(),
-                    tx.bound_resource.clone(),
+                    tx.scope.realm.clone(),
+                    tx.scope.area.clone(),
+                    tx.scope.resource.clone(),
                 )
             })
             .collect()
@@ -636,32 +613,68 @@ impl KvActor {
 
     fn validate_operation_scope(
         active: &ActiveKvTx,
-        route_family: RouteFamily,
-        resource: &str,
+        scope: &KvResourceScope,
     ) -> Result<(), KvResponse> {
-        let column_family =
-            Self::resolve_column_family(route_family, resource).map_err(|_| KvResponse::Error {
-                error: KvError::InvalidRouteFamily,
-            })?;
-
-        if column_family != active.column_family {
+        if scope.route_family != active.scope.route_family {
             return Err(KvResponse::Error {
                 error: KvError::InvalidRouteFamily,
             });
         }
-
-        // Per CLIENT_SPEC: resource is implicit from transaction context.
-        // If resource is provided, validate it matches; if empty, use bound_resource.
-        if !resource.is_empty() && resource != active.bound_resource {
+        if scope.realm != active.scope.realm {
+            return Err(KvResponse::Error {
+                error: KvError::RealmMismatch,
+            });
+        }
+        if scope.area != active.scope.area || scope.resource != active.scope.resource {
             return Err(KvResponse::Error {
                 error: KvError::TxScopeViolation {
-                    expected: active.bound_resource.clone(),
-                    actual: resource.to_string(),
+                    expected: format!("{}/{}", active.scope.area, active.scope.resource),
+                    actual: format!("{}/{}", scope.area, scope.resource),
                 },
             });
         }
 
         Ok(())
+    }
+
+    fn scan_bounds(prefix: &[u8], query: &ScanQuery) -> Option<(Vec<u8>, Vec<u8>)> {
+        if let (Some(start), Some(end)) = (&query.start, &query.end) {
+            let interval_is_empty = if query.reverse {
+                start <= end
+            } else {
+                start >= end
+            };
+            if interval_is_empty {
+                return None;
+            }
+        }
+
+        if query.reverse {
+            let lower = query.end.as_ref().map_or_else(
+                || prefix.to_vec(),
+                |key| Self::immediate_successor(Self::encode_scoped_key(prefix, key)),
+            );
+            let upper = query.start.as_ref().map_or_else(
+                || Self::prefix_range_end(prefix),
+                |key| Self::immediate_successor(Self::encode_scoped_key(prefix, key)),
+            );
+            Some((lower, upper))
+        } else {
+            let lower = query.start.as_ref().map_or_else(
+                || prefix.to_vec(),
+                |key| Self::encode_scoped_key(prefix, key),
+            );
+            let upper = query.end.as_ref().map_or_else(
+                || Self::prefix_range_end(prefix),
+                |key| Self::encode_scoped_key(prefix, key),
+            );
+            Some((lower, upper))
+        }
+    }
+
+    fn immediate_successor(mut key: Vec<u8>) -> Vec<u8> {
+        key.push(0);
+        key
     }
 
     pub(crate) fn realm_resource_prefix(realm: &str, area: &str, resource: &str) -> Vec<u8> {
@@ -748,9 +761,9 @@ impl KvActor {
         }
 
         let key = Self::inventory_metadata_key(
-            &active.bound_realm,
-            &active.bound_area,
-            &active.bound_resource,
+            &active.scope.realm,
+            &active.scope.area,
+            &active.scope.resource,
         );
         let mut estimate = active
             .tx

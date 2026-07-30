@@ -201,10 +201,7 @@ impl KvDomainRuntime<'_> {
     ) -> crate::domains::kv::KvMessage {
         match message {
             crate::domains::kv::KvMessage::Begin {
-                route_family,
-                realm,
-                area,
-                resource,
+                scope,
                 mode,
                 write_options,
             } if write_options.is_sync()
@@ -216,10 +213,7 @@ impl KvDomainRuntime<'_> {
                     self.core.buffered_write_options
                 };
                 crate::domains::kv::KvMessage::Begin {
-                    route_family,
-                    realm,
-                    area,
-                    resource,
+                    scope,
                     mode,
                     write_options,
                 }

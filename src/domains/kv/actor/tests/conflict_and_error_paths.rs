@@ -6,10 +6,12 @@ fn should_handle_concurrent_puts_with_conflict_detection() {
     let mut actor = test_actor();
 
     let b1 = actor.handle(KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "test".to_string(),
-        area: "kv".to_string(),
-        resource: "concurrent".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "test".to_string(),
+            "kv".to_string(),
+            "concurrent".to_string(),
+        ),
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
@@ -18,10 +20,12 @@ fn should_handle_concurrent_puts_with_conflict_detection() {
     };
 
     let b2 = actor.handle(KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "test".to_string(),
-        area: "kv".to_string(),
-        resource: "concurrent".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "test".to_string(),
+            "kv".to_string(),
+            "concurrent".to_string(),
+        ),
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
@@ -32,27 +36,31 @@ fn should_handle_concurrent_puts_with_conflict_detection() {
     // Act
     actor.handle(KvMessage::Put {
         tx_id: tx1,
-        route_family: RouteFamily::new(1),
-        resource: "concurrent".to_string(),
+        scope: KvResourceScope::new(RouteFamily::new(1), "test", "kv", "concurrent".to_string()),
         key: Bytes::from("key"),
         value: Bytes::from("v1"),
     });
 
     actor.handle(KvMessage::Put {
         tx_id: tx2,
-        route_family: RouteFamily::new(1),
-        resource: "concurrent".to_string(),
+        scope: KvResourceScope::new(RouteFamily::new(1), "test", "kv", "concurrent".to_string()),
         key: Bytes::from("key"),
         value: Bytes::from("v2"),
     });
 
     // Assert
     // Commit first tx (expected OK)
-    let c1 = actor.handle(KvMessage::Commit { tx_id: tx1 });
+    let c1 = actor.handle(KvMessage::Commit {
+        tx_id: tx1,
+        scope: KvResourceScope::new(RouteFamily::new(1), "test", "kv", "concurrent"),
+    });
     assert!(matches!(c1, KvResponse::CommitOk));
 
     // Second commit may conflict or succeed depending on storage semantics.
-    let c2 = actor.handle(KvMessage::Commit { tx_id: tx2 });
+    let c2 = actor.handle(KvMessage::Commit {
+        tx_id: tx2,
+        scope: KvResourceScope::new(RouteFamily::new(1), "test", "kv", "concurrent"),
+    });
     assert!(
         matches!(c2, KvResponse::CommitOk)
             || matches!(
@@ -65,10 +73,12 @@ fn should_handle_concurrent_puts_with_conflict_detection() {
 
     // Verify final stored value is one of the two candidates (v1 or v2)
     let b3 = actor.handle(KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "test".to_string(),
-        area: "kv".to_string(),
-        resource: "concurrent".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "test".to_string(),
+            "kv".to_string(),
+            "concurrent".to_string(),
+        ),
         mode: TxMode::ReadOnly,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
@@ -78,8 +88,7 @@ fn should_handle_concurrent_puts_with_conflict_detection() {
 
     let got = actor.handle(KvMessage::Get {
         tx_id: tx3,
-        route_family: RouteFamily::new(1),
-        resource: "concurrent".to_string(),
+        scope: KvResourceScope::new(RouteFamily::new(1), "test", "kv", "concurrent".to_string()),
         key: Bytes::from("key"),
     });
 
@@ -93,7 +102,10 @@ fn should_handle_concurrent_puts_with_conflict_detection() {
         _ => panic!("Expected stored value after commits"),
     }
 
-    actor.handle(KvMessage::Rollback { tx_id: tx3 });
+    actor.handle(KvMessage::Rollback {
+        tx_id: tx3,
+        scope: KvResourceScope::new(RouteFamily::new(1), "test", "kv", "concurrent"),
+    });
 }
 
 #[test]
@@ -102,10 +114,12 @@ fn should_reject_operations_from_wrong_area() {
     let mut actor = test_actor();
 
     let r1 = actor.handle(KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "test".to_string(),
-        area: "area_a".to_string(),
-        resource: "shared".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "test".to_string(),
+            "area_a".to_string(),
+            "shared".to_string(),
+        ),
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
@@ -114,10 +128,12 @@ fn should_reject_operations_from_wrong_area() {
     };
 
     let r2 = actor.handle(KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "test".to_string(),
-        area: "area_b".to_string(),
-        resource: "shared".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "test".to_string(),
+            "area_b".to_string(),
+            "shared".to_string(),
+        ),
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
@@ -128,17 +144,18 @@ fn should_reject_operations_from_wrong_area() {
     // Act
     actor.handle(KvMessage::Put {
         tx_id: tx1,
-        route_family: RouteFamily::new(1),
-        resource: "shared".to_string(),
+        scope: KvResourceScope::new(RouteFamily::new(1), "test", "area_a", "shared"),
         key: Bytes::from("same_key"),
         value: Bytes::from("in_a"),
     });
-    actor.handle(KvMessage::Commit { tx_id: tx1 });
+    actor.handle(KvMessage::Commit {
+        tx_id: tx1,
+        scope: KvResourceScope::new(RouteFamily::new(1), "test", "area_a", "shared"),
+    });
 
     let get_in_b = actor.handle(KvMessage::Get {
         tx_id: tx2,
-        route_family: RouteFamily::new(1),
-        resource: "shared".to_string(),
+        scope: KvResourceScope::new(RouteFamily::new(1), "test", "area_b", "shared"),
         key: Bytes::from("same_key"),
     });
 
@@ -158,7 +175,10 @@ fn should_return_error_for_invalid_txid() {
     let mut actor = test_actor();
 
     // Act
-    let res = actor.handle(KvMessage::Commit { tx_id: 99999 });
+    let res = actor.handle(KvMessage::Commit {
+        tx_id: 99999,
+        scope: KvResourceScope::new(RouteFamily::new(1), "test", "kv", "table1"),
+    });
 
     // Assert
     assert!(matches!(
@@ -174,10 +194,12 @@ fn should_return_not_found_when_key_never_written() {
     // Arrange
     let mut actor = test_actor();
     let begin_response = actor.handle(KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "test".to_string(),
-        area: "kv".to_string(),
-        resource: "table1".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "test".to_string(),
+            "kv".to_string(),
+            "table1".to_string(),
+        ),
         mode: TxMode::ReadOnly,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
@@ -188,8 +210,7 @@ fn should_return_not_found_when_key_never_written() {
     // Act
     let response = actor.handle(KvMessage::Get {
         tx_id,
-        route_family: RouteFamily::new(1),
-        resource: "table1".to_string(),
+        scope: KvResourceScope::new(RouteFamily::new(1), "test", "kv", "table1".to_string()),
         key: Bytes::from("nonexistent"),
     });
 
@@ -208,10 +229,12 @@ fn should_delete_nonexistent_key_without_error() {
     // Arrange
     let mut actor = test_actor();
     let begin_response = actor.handle(KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "test".to_string(),
-        area: "kv".to_string(),
-        resource: "table1".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "test".to_string(),
+            "kv".to_string(),
+            "table1".to_string(),
+        ),
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
@@ -222,8 +245,7 @@ fn should_delete_nonexistent_key_without_error() {
     // Act
     let response = actor.handle(KvMessage::Delete {
         tx_id,
-        route_family: RouteFamily::new(1),
-        resource: "table1".to_string(),
+        scope: KvResourceScope::new(RouteFamily::new(1), "test", "kv", "table1".to_string()),
         key: Bytes::from("never_written"),
     });
 
@@ -236,10 +258,12 @@ fn should_scan_empty_table_returns_empty_result() {
     // Arrange
     let mut actor = test_actor();
     let begin_response = actor.handle(KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "test".to_string(),
-        area: "kv".to_string(),
-        resource: "empty_table".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "test".to_string(),
+            "kv".to_string(),
+            "empty_table".to_string(),
+        ),
         mode: TxMode::ReadOnly,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
@@ -250,8 +274,7 @@ fn should_scan_empty_table_returns_empty_result() {
     // Act
     let response = actor.handle(KvMessage::Scan {
         tx_id,
-        route_family: RouteFamily::new(1),
-        resource: "empty_table".to_string(),
+        scope: KvResourceScope::new(RouteFamily::new(1), "test", "kv", "empty_table".to_string()),
         query: ScanQuery {
             start: None,
             end: None,
@@ -276,10 +299,12 @@ fn should_reject_begin_with_empty_realm() {
 
     // Act
     let response = actor.handle(KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: String::new(),
-        area: "kv".to_string(),
-        resource: "table1".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            String::new(),
+            "kv".to_string(),
+            "table1".to_string(),
+        ),
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
@@ -300,10 +325,12 @@ fn should_reject_begin_with_realm_containing_spaces() {
 
     // Act
     let response = actor.handle(KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "bad realm".to_string(),
-        area: "kv".to_string(),
-        resource: "table1".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "bad realm".to_string(),
+            "kv".to_string(),
+            "table1".to_string(),
+        ),
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
@@ -322,20 +349,28 @@ fn should_reject_commit_on_already_committed_txid() {
     // Arrange
     let mut actor = test_actor();
     let begin_response = actor.handle(KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "test".to_string(),
-        area: "kv".to_string(),
-        resource: "table1".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "test".to_string(),
+            "kv".to_string(),
+            "table1".to_string(),
+        ),
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
     let KvResponse::BeginOk { tx_id } = begin_response else {
         panic!("Expected BeginOk");
     };
-    actor.handle(KvMessage::Commit { tx_id });
+    actor.handle(KvMessage::Commit {
+        tx_id,
+        scope: KvResourceScope::new(RouteFamily::new(1), "test", "kv", "table1"),
+    });
 
     // Act
-    let response = actor.handle(KvMessage::Commit { tx_id });
+    let response = actor.handle(KvMessage::Commit {
+        tx_id,
+        scope: KvResourceScope::new(RouteFamily::new(1), "test", "kv", "table1"),
+    });
 
     // Assert
     assert!(matches!(
@@ -351,20 +386,28 @@ fn should_reject_rollback_on_already_rolled_back_txid() {
     // Arrange
     let mut actor = test_actor();
     let begin_response = actor.handle(KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "test".to_string(),
-        area: "kv".to_string(),
-        resource: "table1".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "test".to_string(),
+            "kv".to_string(),
+            "table1".to_string(),
+        ),
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
     let KvResponse::BeginOk { tx_id } = begin_response else {
         panic!("Expected BeginOk");
     };
-    actor.handle(KvMessage::Rollback { tx_id });
+    actor.handle(KvMessage::Rollback {
+        tx_id,
+        scope: KvResourceScope::new(RouteFamily::new(1), "test", "kv", "table1"),
+    });
 
     // Act
-    let response = actor.handle(KvMessage::Rollback { tx_id });
+    let response = actor.handle(KvMessage::Rollback {
+        tx_id,
+        scope: KvResourceScope::new(RouteFamily::new(1), "test", "kv", "table1"),
+    });
 
     // Assert
     assert!(matches!(
@@ -376,14 +419,16 @@ fn should_reject_rollback_on_already_rolled_back_txid() {
 }
 
 #[test]
-fn should_use_bound_resource_when_resource_param_is_empty() {
+fn should_reject_empty_resource_in_follow_up_scope() {
     // Arrange
     let mut actor = test_actor();
     let begin_response = actor.handle(KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "test".to_string(),
-        area: "kv".to_string(),
-        resource: "table1".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "test".to_string(),
+            "kv".to_string(),
+            "table1".to_string(),
+        ),
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     });
@@ -392,26 +437,23 @@ fn should_use_bound_resource_when_resource_param_is_empty() {
     };
     actor.handle(KvMessage::Put {
         tx_id,
-        route_family: RouteFamily::new(1),
-        resource: "table1".to_string(),
+        scope: KvResourceScope::new(RouteFamily::new(1), "test", "kv", "table1".to_string()),
         key: Bytes::from("key"),
         value: Bytes::from("value"),
     });
 
-    // Act — empty resource falls back to bound_resource ("table1")
+    // Act
     let response = actor.handle(KvMessage::Get {
         tx_id,
-        route_family: RouteFamily::new(1),
-        resource: String::new(),
+        scope: KvResourceScope::new(RouteFamily::new(1), "test", "kv", String::new()),
         key: Bytes::from("key"),
     });
 
     // Assert
     assert!(matches!(
         response,
-        KvResponse::GetResult {
-            found: true,
-            value: Some(_)
+        KvResponse::Error {
+            error: KvError::TxScopeViolation { .. }
         }
     ));
 }

@@ -268,9 +268,7 @@ impl KvDomainRuntime<'_> {
         kv_message: crate::domains::kv::KvMessage,
     ) -> Result<(), DeliveryError> {
         use crate::domains::kv::{KvMessage, TxMode};
-        if Self::kv_message_family(&kv_message)
-            .is_some_and(|family_id| family_id != meta.route_family)
-        {
+        if Self::kv_message_family(&kv_message) != meta.route_family {
             let response = Self::error_response("route family mismatch");
             self.route_kv_response(envelope, meta, &response, request_started)?;
             return Ok(());
@@ -287,25 +285,19 @@ impl KvDomainRuntime<'_> {
         );
 
         let (response, should_sync_admin_snapshot, commit_notification) = match &kv_message {
-            KvMessage::Begin {
-                route_family,
-                realm,
-                area,
-                resource,
-                mode,
-                ..
-            } if *mode == TxMode::ReadWrite => self.handle_begin_read_write(
-                session_id,
-                route_family.as_u64(),
-                realm,
-                area,
-                resource,
-                &kv_message,
-            ),
-            KvMessage::Commit { tx_id } => {
+            KvMessage::Begin { scope, mode, .. } if *mode == TxMode::ReadWrite => self
+                .handle_begin_read_write(
+                    session_id,
+                    scope.route_family.as_u64(),
+                    &scope.realm,
+                    &scope.area,
+                    &scope.resource,
+                    &kv_message,
+                ),
+            KvMessage::Commit { tx_id, .. } => {
                 self.handle_commit_frame(session_id, meta.route_family, *tx_id, &kv_message)
             }
-            KvMessage::Rollback { tx_id } => {
+            KvMessage::Rollback { tx_id, .. } => {
                 self.handle_rollback_frame(session_id, meta.route_family, *tx_id, &kv_message)
             }
             _ => self.handle_regular_operation_frame(session_id, meta.message_type, &kv_message),
@@ -607,17 +599,18 @@ impl KvDomainRuntime<'_> {
 
     fn kv_message_family(
         message: &crate::domains::kv::KvMessage,
-    ) -> Option<crate::runtime::routing::RouteFamily> {
+    ) -> crate::runtime::routing::RouteFamily {
         use crate::domains::kv::KvMessage;
         match message {
-            KvMessage::Begin { route_family, .. }
-            | KvMessage::Get { route_family, .. }
-            | KvMessage::Put { route_family, .. }
-            | KvMessage::Insert { route_family, .. }
-            | KvMessage::Delete { route_family, .. }
-            | KvMessage::DeleteRange { route_family, .. }
-            | KvMessage::Scan { route_family, .. } => Some(*route_family),
-            KvMessage::Commit { .. } | KvMessage::Rollback { .. } => None,
+            KvMessage::Begin { scope, .. }
+            | KvMessage::Commit { scope, .. }
+            | KvMessage::Rollback { scope, .. }
+            | KvMessage::Get { scope, .. }
+            | KvMessage::Put { scope, .. }
+            | KvMessage::Insert { scope, .. }
+            | KvMessage::Delete { scope, .. }
+            | KvMessage::DeleteRange { scope, .. }
+            | KvMessage::Scan { scope, .. } => scope.route_family,
         }
     }
 

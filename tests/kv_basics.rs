@@ -5,7 +5,9 @@
 
 use bytes::Bytes;
 use fitz::auth::{Access, Claims, Permission};
-use fitz::domains::kv::{KvActor, KvMessage, KvResponse, SessionActor as KvSessionActor, TxMode};
+use fitz::domains::kv::{
+    KvActor, KvMessage, KvResourceScope, KvResponse, SessionActor as KvSessionActor, TxMode,
+};
 use fitz::runtime::routing::{Route, RouteFamily};
 use fitz::session::actor::SessionActor as SessionActorLayer2;
 use fitz::session::permissions::SessionPermissions;
@@ -35,10 +37,12 @@ fn should_reject_unauthorized_realm_access() {
 
     // Act
     let msg = KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "realm2".to_string(),
-        area: "kv".to_string(),
-        resource: "users".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "realm2".to_string(),
+            "kv".to_string(),
+            "users".to_string(),
+        ),
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     };
@@ -67,10 +71,12 @@ fn should_allow_authorized_realm_access() {
 
     // Act
     let msg = KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "mycompany".to_string(),
-        area: "kv".to_string(),
-        resource: "users".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "mycompany".to_string(),
+            "kv".to_string(),
+            "users".to_string(),
+        ),
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     };
@@ -99,10 +105,12 @@ fn should_enforce_realm_equality_strictly_in_session() {
 
     for invalid_realm in invalid_realms {
         let msg = KvMessage::Begin {
-            route_family: RouteFamily::new(1),
-            realm: invalid_realm.to_string(),
-            area: "kv".to_string(),
-            resource: "data".to_string(),
+            scope: KvResourceScope::new(
+                RouteFamily::new(1),
+                invalid_realm.to_string(),
+                "kv".to_string(),
+                "data".to_string(),
+            ),
             mode: TxMode::ReadOnly,
             write_options: cntryl_midge::WriteOptions::buffered(),
         };
@@ -128,10 +136,12 @@ fn should_accept_valid_message_type() {
 
     // Act
     let msg = KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "tenant".to_string(),
-        area: "kv".to_string(),
-        resource: "table".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "tenant".to_string(),
+            "kv".to_string(),
+            "table".to_string(),
+        ),
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     };
@@ -154,10 +164,12 @@ fn should_reject_invalid_message_type() {
     // Act
     // Get a tx_id first (we need one to create a Commit message)
     let begin_msg = KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "test".to_string(),
-        area: "kv".to_string(),
-        resource: "data".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "test".to_string(),
+            "kv".to_string(),
+            "data".to_string(),
+        ),
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     };
@@ -166,7 +178,10 @@ fn should_reject_invalid_message_type() {
         panic!("Expected BeginOk");
     };
 
-    let msg = KvMessage::Commit { tx_id }; // Not a Begin message
+    let msg = KvMessage::Commit {
+        tx_id,
+        scope: KvResourceScope::new(RouteFamily::new(1), "test", "kv", "data"),
+    }; // Not a Begin message
 
     let result = session_actor.begin(msg, &mut kv_actor);
 
@@ -186,10 +201,12 @@ fn should_allow_subsequent_operations_after_begin() {
 
     // Act
     let begin_msg = KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "authed".to_string(),
-        area: "kv".to_string(),
-        resource: "data".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "authed".to_string(),
+            "kv".to_string(),
+            "data".to_string(),
+        ),
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     };
@@ -199,10 +216,12 @@ fn should_allow_subsequent_operations_after_begin() {
 
     // Extract tx_id from successful Begin
     let fitz::domains::kv::KvResponse::BeginOk { tx_id } = kv_actor.handle(KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "authed".to_string(),
-        area: "kv".to_string(),
-        resource: "data".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "authed".to_string(),
+            "kv".to_string(),
+            "data".to_string(),
+        ),
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     }) else {
@@ -212,8 +231,7 @@ fn should_allow_subsequent_operations_after_begin() {
     // Continue: Subsequent Put operation (realm already validated)
     let put_msg = KvMessage::Put {
         tx_id,
-        route_family: RouteFamily::new(1),
-        resource: "data".to_string(),
+        scope: KvResourceScope::new(RouteFamily::new(1), "authed", "kv", "data"),
         key: Bytes::from_static(b"key1"),
         value: Bytes::from_static(b"value1"),
     };
@@ -235,10 +253,12 @@ fn should_allow_read_permission_for_transactions() {
 
     // Act
     let msg = KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "analytics".to_string(),
-        area: "kv".to_string(),
-        resource: "reports".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "analytics".to_string(),
+            "kv".to_string(),
+            "reports".to_string(),
+        ),
         mode: TxMode::ReadOnly,
         write_options: cntryl_midge::WriteOptions::buffered(),
     };
@@ -263,10 +283,12 @@ fn should_enforce_realm_isolation_across_sessions() {
 
     // Act
     let msg1 = KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "acme".to_string(),
-        area: "kv".to_string(),
-        resource: "secrets".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "acme".to_string(),
+            "kv".to_string(),
+            "secrets".to_string(),
+        ),
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     };
@@ -276,10 +298,12 @@ fn should_enforce_realm_isolation_across_sessions() {
 
     // Continue: Session2 tries to access acme realm (not authorized)
     let msg2 = KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "acme".to_string(),
-        area: "kv".to_string(),
-        resource: "secrets".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "acme".to_string(),
+            "kv".to_string(),
+            "secrets".to_string(),
+        ),
         mode: TxMode::ReadOnly,
         write_options: cntryl_midge::WriteOptions::buffered(),
     };
@@ -305,10 +329,12 @@ fn should_reject_read_only_session_begin_read_write_permission() {
     let actor = KvSessionActor::new(SessionId(1), perms.clone());
     let mut kv = KvActor::new(create_test_engine_with_cfs(vec![1]));
     let msg = KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "acme".to_string(),
-        area: "kv".to_string(),
-        resource: "table1".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "acme".to_string(),
+            "kv".to_string(),
+            "table1".to_string(),
+        ),
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     };
@@ -329,10 +355,12 @@ fn should_allow_read_only_session_begin_read_only_permission() {
     let actor = KvSessionActor::new(SessionId(1), perms.clone());
     let mut kv = KvActor::new(create_test_engine_with_cfs(vec![1]));
     let msg = KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "acme".to_string(),
-        area: "kv".to_string(),
-        resource: "table1".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "acme".to_string(),
+            "kv".to_string(),
+            "table1".to_string(),
+        ),
         mode: TxMode::ReadOnly,
         write_options: cntryl_midge::WriteOptions::buffered(),
     };
@@ -352,10 +380,12 @@ fn should_allow_write_session_begin_read_write_permission() {
     let actor = KvSessionActor::new(SessionId(1), perms.clone());
     let mut kv = KvActor::new(create_test_engine_with_cfs(vec![1]));
     let msg = KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "acme".to_string(),
-        area: "kv".to_string(),
-        resource: "table1".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "acme".to_string(),
+            "kv".to_string(),
+            "table1".to_string(),
+        ),
         mode: TxMode::ReadWrite,
         write_options: cntryl_midge::WriteOptions::buffered(),
     };
@@ -375,10 +405,12 @@ fn should_allow_write_session_begin_read_only_permission() {
     let actor = KvSessionActor::new(SessionId(1), perms.clone());
     let mut kv = KvActor::new(create_test_engine_with_cfs(vec![1]));
     let msg = KvMessage::Begin {
-        route_family: RouteFamily::new(1),
-        realm: "acme".to_string(),
-        area: "kv".to_string(),
-        resource: "table1".to_string(),
+        scope: KvResourceScope::new(
+            RouteFamily::new(1),
+            "acme".to_string(),
+            "kv".to_string(),
+            "table1".to_string(),
+        ),
         mode: TxMode::ReadOnly,
         write_options: cntryl_midge::WriteOptions::buffered(),
     };

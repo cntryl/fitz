@@ -11,38 +11,62 @@ use bytes::Bytes;
 use cntryl_midge::WriteOptions;
 use serde::{Deserialize, Serialize};
 
+/// Complete namespace and storage scope for one KV resource.
+///
+/// `route_family` is broker-internal isolation. `realm`, `area`, and `resource`
+/// are the independently supplied application-visible route components.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KvResourceScope {
+    pub route_family: RouteFamily,
+    pub realm: String,
+    pub area: String,
+    pub resource: String,
+}
+
+impl KvResourceScope {
+    #[must_use]
+    pub fn new(
+        route_family: RouteFamily,
+        realm: impl Into<String>,
+        area: impl Into<String>,
+        resource: impl Into<String>,
+    ) -> Self {
+        Self {
+            route_family,
+            realm: realm.into(),
+            area: area.into(),
+            resource: resource.into(),
+        }
+    }
+}
+
 /// KV operation request
 #[derive(Debug, Clone)]
 pub enum KvMessage {
     /// Begin a transaction bound to a resource (table)
     Begin {
-        route_family: RouteFamily,
-        realm: String,
-        area: String,
-        resource: String,
+        scope: KvResourceScope,
         mode: TxMode,
         write_options: WriteOptions,
     },
 
     /// Commit a transaction by ID
-    Commit { tx_id: u64 },
+    Commit { tx_id: u64, scope: KvResourceScope },
 
     /// Rollback a transaction by ID
-    Rollback { tx_id: u64 },
+    Rollback { tx_id: u64, scope: KvResourceScope },
 
     /// Get a value by key (requires active tx)
     Get {
         tx_id: u64,
-        route_family: RouteFamily,
-        resource: String,
+        scope: KvResourceScope,
         key: Bytes,
     },
 
     /// Put (upsert) a key-value pair (requires active tx)
     Put {
         tx_id: u64,
-        route_family: RouteFamily,
-        resource: String,
+        scope: KvResourceScope,
         key: Bytes,
         value: Bytes,
     },
@@ -50,8 +74,7 @@ pub enum KvMessage {
     /// Insert a key-value pair, failing if key exists (requires active tx)
     Insert {
         tx_id: u64,
-        route_family: RouteFamily,
-        resource: String,
+        scope: KvResourceScope,
         key: Bytes,
         value: Bytes,
     },
@@ -59,16 +82,14 @@ pub enum KvMessage {
     /// Delete a key (requires active tx)
     Delete {
         tx_id: u64,
-        route_family: RouteFamily,
-        resource: String,
+        scope: KvResourceScope,
         key: Bytes,
     },
 
     /// Delete a range of keys [start, end) (requires active tx)
     DeleteRange {
         tx_id: u64,
-        route_family: RouteFamily,
-        resource: String,
+        scope: KvResourceScope,
         start: Bytes,
         end: Bytes,
     },
@@ -76,8 +97,7 @@ pub enum KvMessage {
     /// Scan a range of keys (requires active tx)
     Scan {
         tx_id: u64,
-        route_family: RouteFamily,
-        resource: String,
+        scope: KvResourceScope,
         query: ScanQuery,
     },
 }
