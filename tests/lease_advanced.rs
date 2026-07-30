@@ -244,7 +244,7 @@ fn should_return_queue_full_when_exceeding_max_queue_depth() {
 }
 
 #[test]
-fn should_grant_fifo_order_verified_via_query() {
+fn should_preserve_fifo_wait_order_given_expiry_and_release_race() {
     // Arrange
     let (mut actor, mut ctx) = create_test_actor();
     let test_route = route("lease://test/app/lock");
@@ -339,7 +339,7 @@ fn should_allow_renew_with_valid_token() {
 }
 
 #[test]
-fn should_fail_renew_with_invalid_token() {
+fn should_reject_lease_renew_given_stale_fencing_token() {
     // Arrange
     let (mut actor, mut ctx) = create_test_actor();
     let test_route = route("lease://test/app/lock");
@@ -413,7 +413,7 @@ fn should_allow_release_with_valid_token() {
 }
 
 #[test]
-fn should_reset_fencing_tokens_when_actor_is_recreated() {
+fn should_not_restore_lease_holder_given_broker_restart() {
     // Arrange
     let (mut first_actor, mut first_ctx) = create_test_actor();
     let first_route = route("lease://test/app/restart-token-a");
