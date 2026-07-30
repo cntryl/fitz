@@ -9,7 +9,7 @@
 use bytes::Bytes;
 use fitz::domains::schedule::protocol::CronSchedule;
 use fitz::domains::schedule::{
-    ScheduleActor, ScheduleCreateEntry, ScheduleMessage, ScheduleResponse,
+    ScheduleActor, ScheduleCreateEntry, ScheduleFailureCategory, ScheduleMessage, ScheduleResponse,
 };
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use fitz::testkit::create_test_engine_with_cfs;
@@ -277,7 +277,8 @@ fn should_reject_invalid_cron_on_create() {
     // Assert
     match response {
         ScheduleResponse::Error(e) => {
-            assert!(e.contains("out of range") || e.contains("Value 60"));
+            assert_eq!(e.category, ScheduleFailureCategory::InvalidCron);
+            assert!(e.message.contains("out of range") || e.message.contains("Value 60"));
         }
         _ => panic!("Expected Error response for invalid cron"),
     }
@@ -299,8 +300,9 @@ fn should_reject_legacy_three_segment_route_on_create() {
     // Assert
     match response {
         ScheduleResponse::Error(error) => {
+            assert_eq!(error.category, ScheduleFailureCategory::InvalidTarget);
             assert_eq!(
-                error,
+                error.message,
                 "schedule route must be schedule://{realm}/{area}/{resource}/{operation}"
             );
         }
@@ -461,7 +463,8 @@ fn should_reject_schedule_batch_given_duplicate_routes() {
     // Assert
     match response {
         ScheduleResponse::Error(error) => {
-            assert!(error.contains("duplicate schedule route in batch"));
+            assert_eq!(error.category, ScheduleFailureCategory::Parse);
+            assert!(error.message.contains("duplicate schedule route in batch"));
         }
         _ => panic!("Expected Error response for duplicate routes"),
     }
@@ -535,8 +538,9 @@ fn should_reject_legacy_three_segment_route_on_cancel() {
     // Assert
     match response {
         ScheduleResponse::Error(error) => {
+            assert_eq!(error.category, ScheduleFailureCategory::InvalidTarget);
             assert_eq!(
-                error,
+                error.message,
                 "schedule route must be schedule://{realm}/{area}/{resource}/{operation}"
             );
         }

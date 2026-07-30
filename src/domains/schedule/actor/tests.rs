@@ -123,6 +123,47 @@ fn should_normalize_overdue_persisted_schedule_forward_on_preload() {
 }
 
 #[test]
+fn should_fail_closed_given_impossible_persisted_cron() {
+    // Arrange
+    let db = create_test_engine_with_cfs(vec![1]);
+    let store = ScheduleStore::new(db.clone());
+    let route = "schedule://acme/jobs/impossible/run";
+    let cron = "0 0 31 2 *";
+    let payload = Bytes::from_static(b"payload");
+    store
+        .insert(
+            1,
+            ScheduleInsert {
+                route,
+                cron,
+                delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
+                payload: &payload,
+                next_fire_ms: ScheduleActor::current_epoch_ms(),
+                previous_fire_ms: None,
+                last_fire_ms: None,
+                executions_total: 0,
+            },
+            cntryl_midge::WriteOptions::buffered(),
+        )
+        .expect("seed invalid persisted schedule");
+
+    // Act
+    let result = ScheduleActor::try_new(
+        RouteFamily::new(1),
+        db,
+        cntryl_midge::WriteOptions::buffered(),
+    );
+    let Err(error) = result else {
+        panic!("invalid persisted cron must stop recovery");
+    };
+
+    // Assert
+    assert!(error.contains(route));
+    assert!(error.contains(cron));
+    assert!(error.contains("no possible fire time"));
+}
+
+#[test]
 fn should_skip_missed_execution_given_overdue_schedule_on_preload() {
     // Arrange
     let db = create_test_engine_with_cfs(vec![1]);

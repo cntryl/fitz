@@ -50,7 +50,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use fxhash::FxBuildHasher;
+use rustc_hash::FxBuildHasher;
 use lexkey::LexKey;
 
 use crate::observability as obs;

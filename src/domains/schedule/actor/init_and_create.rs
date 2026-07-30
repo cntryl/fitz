@@ -119,8 +119,8 @@ impl ScheduleActor {
         let mut actor = Self {
             family,
             store,
-            schedules: HashMap::with_capacity_and_hasher(128, FxBuildHasher::default()),
-            cron_cache: HashMap::with_capacity_and_hasher(32, FxBuildHasher::default()),
+            schedules: HashMap::with_capacity_and_hasher(128, FxBuildHasher),
+            cron_cache: HashMap::with_capacity_and_hasher(32, FxBuildHasher),
             list_entries: Vec::new(),
             list_cache: None,
             write_options,
@@ -233,7 +233,7 @@ impl ScheduleActor {
         } = entry;
         let route_parts = parse_concrete_schedule_route(&route)?;
         let parsed_cron = CronSchedule::parse(&cron).map_err(|error| {
-            format!("parse persisted schedule cron failed for {route}: {error}")
+            format!("parse persisted schedule cron failed for {route} with cron {cron:?}: {error}")
         })?;
         self.cron_cache.insert(cron.clone(), parsed_cron.clone());
 
@@ -249,7 +249,7 @@ impl ScheduleActor {
             now,
             now_ms,
             normalization_batch,
-        );
+        )?;
         let list_index =
             self.push_list_entry(route.as_str(), cron.as_str(), delivery_mode, &payload);
         let def = ScheduleDef {
@@ -286,10 +286,15 @@ impl ScheduleActor {
         now: Instant,
         now_ms: u64,
         normalization_batch: &mut Vec<crate::domains::schedule::store::ScheduleBatchInsert>,
-    ) -> (Instant, u64) {
+    ) -> Result<(Instant, u64), String> {
         if next_fire_ms <= now_ms {
-            let normalized_next_fire_time =
-                parsed_cron.next_fire_time_with_clock(now, self.clock.as_ref());
+            let normalized_next_fire_time = parsed_cron
+                .try_next_fire_time_with_clock(now, self.clock.as_ref())
+                .map_err(|error| {
+                    format!(
+                        "normalize persisted schedule failed for route {route} with cron {cron:?}: {error}"
+                    )
+                })?;
             let normalized_next_fire_ms = Self::instant_to_ms_at_with_clock(
                 normalized_next_fire_time,
                 now,
@@ -305,12 +310,12 @@ impl ScheduleActor {
                 last_fire_ms,
                 executions_total,
             });
-            (normalized_next_fire_time, normalized_next_fire_ms)
+            Ok((normalized_next_fire_time, normalized_next_fire_ms))
         } else {
-            (
+            Ok((
                 Self::ms_to_instant_at_with_clock(next_fire_ms, now, self.clock.as_ref()),
                 next_fire_ms,
-            )
+            ))
         }
     }
 

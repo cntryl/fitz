@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn should_ack_pending_claim_without_subscribers() {
+fn should_ack_broadcast_given_no_subscribers() {
     // Arrange
     let family = RouteFamily::new(1);
     let session_id = 7;
@@ -153,11 +153,14 @@ fn should_retain_pending_claim_when_it_is_older_than_the_former_cleanup_ttl() {
     let claimed = actor.bench_claim_due_fires();
     assert_eq!(claimed.len(), 1);
     clock.advance(Duration::from_millis(11));
+    actor.fail_next_store_commit_for_tests();
     sink.insert_actor_for_tests(family, actor);
 
     // Act
     sink.scan_due_schedules();
 
     // Assert
+    wait_for_ack_failure_count(&sink, 1);
+    wait_for_pending_fire_count(&sink, 1);
     assert_eq!(sink.actor_pending_fire_count_for_tests(family), 1);
 }

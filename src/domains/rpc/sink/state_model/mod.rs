@@ -9,7 +9,7 @@ pub(super) use crate::runtime::{
     DeliveryError, Envelope, FamilyActorPoolRuntime, MailboxSink, ManagedActor, Router,
 };
 pub(super) use chrono::{DateTime, Utc};
-pub(super) use fxhash::FxBuildHasher;
+pub(super) use rustc_hash::FxBuildHasher;
 pub(super) use parking_lot::Mutex;
 pub(super) use std::cmp::Ordering as HeapOrdering;
 pub(super) use std::collections::{BTreeMap, BinaryHeap, HashMap, VecDeque};

@@ -2,7 +2,9 @@ use crate::runtime::routing::{route_exact_quad, route_scheme, Route, RouteAddres
 use crate::runtime::ClientFrameMeta;
 use bytes::Bytes;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+#[cfg(test)]
+use std::time::Duration;
+use std::time::Instant;
 
 pub use crate::runtime::clock::{
     epoch_ms_to_instant_with_reference, instant_to_epoch_ms_with_reference, Clock, SystemClock,
@@ -140,11 +142,11 @@ pub enum ScheduleMessage {
 #[derive(Debug, Clone)]
 pub struct ScheduleClientRequest {
     pub meta: ClientFrameMeta,
-    pub message: Result<ScheduleMessage, String>,
+    pub message: Result<ScheduleMessage, ScheduleFailure>,
 }
 
 impl ScheduleClientRequest {
-    pub fn new(meta: ClientFrameMeta, message: Result<ScheduleMessage, String>) -> Self {
+    pub fn new(meta: ClientFrameMeta, message: Result<ScheduleMessage, ScheduleFailure>) -> Self {
         Self { meta, message }
     }
 }
@@ -208,8 +210,77 @@ pub enum ScheduleResponse {
         entries: Arc<Vec<Arc<ScheduleListEntry>>>,
         total_count: u64,
     },
-    /// Operation failed with error message
-    Error(String),
+    /// Operation failed with a stable wire category and actionable message.
+    Error(ScheduleFailure),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScheduleFailureCategory {
+    NotFound,
+    InvalidCron,
+    Limit,
+    Parse,
+    InvalidTarget,
+    InvalidSubscriptionPattern,
+    SubscriptionLimit,
+    InvalidDeliveryMode,
+    Unauthorized,
+}
+
+impl ScheduleFailureCategory {
+    #[must_use]
+    pub const fn code(self) -> u16 {
+        match self {
+            Self::NotFound => 7001,
+            Self::InvalidCron => 7002,
+            Self::Limit => 7003,
+            Self::Parse => 7004,
+            Self::InvalidTarget => 7005,
+            Self::InvalidSubscriptionPattern => 7006,
+            Self::SubscriptionLimit => 7007,
+            Self::InvalidDeliveryMode => 7008,
+            Self::Unauthorized => 7009,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScheduleFailure {
+    pub category: ScheduleFailureCategory,
+    pub message: String,
+}
+
+impl ScheduleFailure {
+    #[must_use]
+    pub fn new(category: ScheduleFailureCategory, message: impl Into<String>) -> Self {
+        Self {
+            category,
+            message: message.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn parse(message: impl Into<String>) -> Self {
+        Self::new(ScheduleFailureCategory::Parse, message)
+    }
+}
+
+impl std::fmt::Display for ScheduleFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl From<String> for ScheduleFailure {
+    fn from(message: String) -> Self {
+        Self::parse(message)
+    }
+}
+
+impl From<&str> for ScheduleFailure {
+    fn from(message: &str) -> Self {
+        Self::parse(message)
+    }
 }
 
 /// Single schedule entry in LIST response
@@ -337,7 +408,7 @@ impl CronSchedule {
         let month = parse_cron_field(fields[3], 1, 12)?;
         let day_of_week = parse_cron_field(fields[4], 0, 6)?;
 
-        Ok(CronSchedule {
+        let schedule = CronSchedule {
             minute_matcher: FieldMatcher::from_field(&minute, 0, 59),
             hour_matcher: FieldMatcher::from_field(&hour, 0, 23),
             day_of_month_matcher: FieldMatcher::from_field(&day_of_month, 1, 31),
@@ -348,16 +419,61 @@ impl CronSchedule {
             day_of_month,
             month,
             day_of_week,
-        })
+        };
+        if !schedule.is_satisfiable() {
+            return Err("Cron expression has no possible fire time".to_string());
+        }
+        Ok(schedule)
     }
 
-    /// Calculate next fire time from current time
+    /// Calculate next fire time from current time.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a schedule not produced by [`Self::parse`] violates the
+    /// validated-schedule invariant or the next occurrence exceeds the clock's
+    /// representable range.
     #[must_use]
     pub fn next_fire_time(&self, from: Instant) -> Instant {
-        self.next_fire_time_with_clock(from, &SystemClock)
+        self.try_next_fire_time(from)
+            .expect("validated cron schedule must have a next fire time")
     }
 
+    /// Calculate the next fire time, returning an error rather than fabricating
+    /// an occurrence if the validated schedule invariant cannot be satisfied.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no occurrence can be found across a full Gregorian
+    /// calendar cycle.
+    pub fn try_next_fire_time(&self, from: Instant) -> Result<Instant, String> {
+        self.try_next_fire_time_with_clock(from, &SystemClock)
+    }
+
+    #[must_use]
+    /// Calculate the next fire time using an injected clock.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a schedule not produced by [`Self::parse`] violates the
+    /// validated-schedule invariant or the next occurrence exceeds the clock's
+    /// representable range.
     pub fn next_fire_time_with_clock(&self, from: Instant, clock: &dyn Clock) -> Instant {
+        self.try_next_fire_time_with_clock(from, clock)
+            .expect("validated cron schedule must have a next fire time")
+    }
+
+    /// Calculate the next fire time using an injected clock.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no occurrence can be found across a full Gregorian
+    /// calendar cycle.
+    pub fn try_next_fire_time_with_clock(
+        &self,
+        from: Instant,
+        clock: &dyn Clock,
+    ) -> Result<Instant, String> {
         let reference_instant = clock.now_instant();
         let reference_epoch_ms = clock.now_epoch_ms();
         let from_epoch_ms =
@@ -365,17 +481,32 @@ impl CronSchedule {
         let seconds = from_epoch_ms / 1_000;
 
         if let Some(candidate_secs) = self.simple_candidate_seconds(seconds) {
-            return instant_from_epoch_seconds(candidate_secs, from, from_epoch_ms);
+            if candidate_secs > seconds && candidate_secs != u64::MAX {
+                return Ok(instant_from_epoch_seconds(
+                    candidate_secs,
+                    from,
+                    from_epoch_ms,
+                ));
+            }
         }
 
         // Start from next minute (round up). We then jump between matching
         // month/day/hour/minute candidates instead of scanning minute-by-minute.
-        let mut candidate_secs = ((seconds / 60) + 1) * 60;
+        let mut candidate_secs = seconds
+            .checked_div(60)
+            .and_then(|minute| minute.checked_add(1))
+            .and_then(|minute| minute.checked_mul(60))
+            .ok_or_else(|| "Cron next-fire calculation overflowed".to_string())?;
+        let (start_year, _, _, _, _, _) = seconds_to_datetime(candidate_secs);
+        let end_year = start_year.saturating_add(400);
 
-        // Try up to 4 years worth of month/day transitions to handle edge cases
-        // like "Feb 31" without falling back to per-minute scans.
-        for _ in 0..(4 * 366 * 12) {
+        // A Gregorian calendar repeats every 400 years. The iteration cap is
+        // defensive; normal paths jump by month, day, hour, or minute.
+        for _ in 0..(401 * 366 * 4) {
             let (year, month, day, hour, minute, _) = seconds_to_datetime(candidate_secs);
+            if year > end_year {
+                break;
+            }
 
             let Some((target_month, wrapped_month)) = self.month_matcher.next_at_or_after(month)
             else {
@@ -427,12 +558,14 @@ impl CronSchedule {
                 continue;
             }
 
-            return instant_from_epoch_seconds(candidate_secs, from, from_epoch_ms);
+            return Ok(instant_from_epoch_seconds(
+                candidate_secs,
+                from,
+                from_epoch_ms,
+            ));
         }
 
-        // Fallback: if no match found in 4 years, return 1 hour from now
-        // This should never happen with valid cron expressions
-        from + Duration::from_hours(1)
+        Err("Cron schedule has no next fire time within a Gregorian cycle".to_string())
     }
 
     fn simple_candidate_seconds(&self, current_secs: u64) -> Option<u64> {
@@ -527,11 +660,32 @@ impl CronSchedule {
         let end_day = days_in_month(year, month);
         for day in start_day..=end_day {
             let day_of_week = day_of_week_for_date(year, month, day);
-            if self.matches_day_of_month(day) && self.matches_day_of_week(day_of_week) {
+            if self.matches_day(day, day_of_week) {
                 return Some(day);
             }
         }
         None
+    }
+
+    fn matches_day(&self, day: u32, day_of_week: u32) -> bool {
+        match (self.day_of_month.is_any(), self.day_of_week.is_any()) {
+            (true, true) => true,
+            (true, false) => self.matches_day_of_week(day_of_week),
+            (false, true) => self.matches_day_of_month(day),
+            (false, false) => {
+                self.matches_day_of_month(day) || self.matches_day_of_week(day_of_week)
+            }
+        }
+    }
+
+    fn is_satisfiable(&self) -> bool {
+        (2000..2400).any(|year| {
+            (1..=12).any(|month| {
+                self.month_matcher.matches(month)
+                    && (1..=days_in_month(year, month))
+                        .any(|day| self.matches_day(day, day_of_week_for_date(year, month, day)))
+            })
+        })
     }
 }
 
@@ -713,254 +867,84 @@ fn parse_cron_field(field: &str, min: u32, max: u32) -> Result<CronField, String
         return Ok(CronField::Any);
     }
 
-    if let Ok(n) = field.parse::<u32>() {
-        if n >= min && n <= max {
-            return Ok(CronField::Single(n));
-        }
-        return Err(format!("Value {n} out of range [{min}, {max}]"));
-    }
-
-    if field.contains('-') {
-        let parts: Vec<&str> = field.split('-').collect();
-        if parts.len() == 2 {
-            let start = parts[0].parse::<u32>().map_err(|e| e.to_string())?;
-            let end = parts[1].parse::<u32>().map_err(|e| e.to_string())?;
-            if start <= end && start >= min && end <= max {
-                return Ok(CronField::Range(start, end));
-            }
-        }
-        return Err("Invalid range format".to_string());
-    }
-
     if field.contains(',') {
         let mut values = Vec::new();
-        for part in field.split(',') {
-            let v = part.parse::<u32>().map_err(|e| e.to_string())?;
-            if v >= min && v <= max {
-                values.push(v);
-            } else {
-                return Err(format!("Value {v} out of range [{min}, {max}]"));
+        for component in field.split(',') {
+            if component.is_empty() || component == "*" {
+                return Err(format!("Invalid cron list: {field}"));
             }
+            let parsed = parse_cron_component(component, min, max)?;
+            for value in min..=max {
+                if matches_field(&parsed, value) && !values.contains(&value) {
+                    values.push(value);
+                }
+            }
+        }
+        values.sort_unstable();
+        if values.is_empty() {
+            return Err(format!("Cron list has no values: {field}"));
         }
         return Ok(CronField::List(values));
     }
 
-    if field.contains('/') {
-        let parts: Vec<&str> = field.split('/').collect();
-        if parts.len() == 2 {
-            let base = parse_cron_field(parts[0], min, max)?;
-            let step = parts[1].parse::<u32>().map_err(|e| e.to_string())?;
-            if step > 0 {
-                return Ok(CronField::Step(Box::new(base), step));
-            }
+    parse_cron_component(field, min, max)
+}
+
+fn parse_cron_component(component: &str, min: u32, max: u32) -> Result<CronField, String> {
+    if let Some((base, step_text)) = component.split_once('/') {
+        if base.is_empty() || step_text.is_empty() || step_text.contains('/') {
+            return Err("Invalid step format".to_string());
         }
-        return Err("Invalid step format".to_string());
+        let step = step_text
+            .parse::<u32>()
+            .map_err(|_| "Invalid step format".to_string())?;
+        if step == 0 {
+            return Err("Cron step must be greater than zero".to_string());
+        }
+        let base = if base == "*" {
+            CronField::Range(min, max)
+        } else if base.contains('-') {
+            parse_cron_range(base, min, max)?
+        } else {
+            return Err("Cron steps require a wildcard or range base".to_string());
+        };
+        return Ok(CronField::Step(Box::new(base), step));
     }
 
-    Err(format!("Unparseable cron field: {field}"))
+    if component.contains('-') {
+        return parse_cron_range(component, min, max);
+    }
+
+    let value = component
+        .parse::<u32>()
+        .map_err(|_| format!("Unparseable cron field: {component}"))?;
+    if !(min..=max).contains(&value) {
+        return Err(format!("Value {value} out of range [{min}, {max}]"));
+    }
+    Ok(CronField::Single(value))
+}
+
+fn parse_cron_range(range: &str, min: u32, max: u32) -> Result<CronField, String> {
+    let Some((start, end)) = range.split_once('-') else {
+        return Err("Invalid range format".to_string());
+    };
+    if start.is_empty() || end.is_empty() || end.contains('-') {
+        return Err("Invalid range format".to_string());
+    }
+    let start = start
+        .parse::<u32>()
+        .map_err(|_| "Invalid range format".to_string())?;
+    let end = end
+        .parse::<u32>()
+        .map_err(|_| "Invalid range format".to_string())?;
+    if start > end || start < min || end > max {
+        return Err(format!(
+            "Cron range {start}-{end} is outside [{min}, {max}]"
+        ));
+    }
+    Ok(CronField::Range(start, end))
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use chrono::TimeZone;
-
-    struct MockClock {
-        instant: Instant,
-        epoch_ms: u64,
-    }
-
-    impl Clock for MockClock {
-        fn now_instant(&self) -> Instant {
-            self.instant
-        }
-
-        fn now_epoch_ms(&self) -> u64 {
-            self.epoch_ms
-        }
-    }
-
-    #[test]
-    fn should_parse_simple_cron_expression() {
-        // Arrange
-        let cron = "0 12 * * *";
-
-        // Act
-        let result = CronSchedule::parse(cron);
-
-        // Assert
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn should_reject_invalid_cron_field_count() {
-        // Arrange
-        let cron = "0 12 *";
-
-        // Act
-        let result = CronSchedule::parse(cron);
-
-        // Assert
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn should_create_schedule_def() {
-        // Arrange
-        let route = "schedule://acme/jobs/backup/run".to_string();
-        let cron = "0 */6 * * *".to_string();
-        let payload = Bytes::from("backup data");
-
-        // Act
-        let parsed_cron = CronSchedule::parse(&cron).expect("Valid cron");
-        let route_parts = parse_concrete_schedule_route(&route).expect("valid schedule route");
-        let def = ScheduleDef {
-            route,
-            route_parts,
-            cron,
-            delivery_mode: ScheduleDeliveryMode::Broadcast,
-            parsed_cron,
-            payload,
-            next_fire_time: Instant::now(),
-            next_fire_ms: 0,
-            last_fire_ms: None,
-            executions_total: 0,
-            list_index: 0,
-        };
-
-        // Assert
-        assert_eq!(def.route, "schedule://acme/jobs/backup/run");
-    }
-
-    #[test]
-    fn should_parse_concrete_schedule_route_given_valid_route() {
-        // Arrange
-        let input = "schedule://acme/billing/invoice/send";
-
-        // Act
-        let route = parse_concrete_schedule_route(input).unwrap();
-
-        // Assert
-        assert_eq!(route.realm, "acme");
-        assert_eq!(route.area, "billing");
-        assert_eq!(route.resource, "invoice");
-        assert_eq!(route.operation, "send");
-    }
-
-    #[test]
-    fn should_reject_concrete_schedule_route_given_missing_operation() {
-        // Arrange
-        let input = "schedule://acme/billing/invoice";
-
-        // Act
-        let err = parse_concrete_schedule_route(input).unwrap_err();
-
-        // Assert
-        assert_eq!(
-            err,
-            "schedule route must be schedule://{realm}/{area}/{resource}/{operation}"
-        );
-    }
-
-    #[test]
-    fn should_reject_concrete_schedule_route_given_wildcard() {
-        let err = parse_concrete_schedule_route("schedule://acme/billing/*/send").unwrap_err();
-
-        assert_eq!(err, "schedule route must not contain wildcards");
-    }
-
-    #[test]
-    fn should_fast_path_hourly_schedule_given_single_minute() {
-        // Arrange
-        let cron = CronSchedule::parse("0 * * * *").unwrap();
-
-        // Act
-        let candidate = cron.simple_candidate_seconds((10 * 3_600) + (14 * 60) + 30);
-
-        // Assert
-        assert_eq!(candidate, Some(11 * 3_600));
-    }
-
-    #[test]
-    fn should_fast_path_daily_schedule_given_single_hour_and_minute() {
-        // Arrange
-        let cron = CronSchedule::parse("15 6 * * *").unwrap();
-
-        // Act
-        let candidate = cron.simple_candidate_seconds((6 * 3_600) + (20 * 60));
-
-        // Assert
-        assert_eq!(candidate, Some(86_400 + (6 * 3_600) + (15 * 60)));
-    }
-
-    #[test]
-    fn should_fast_path_every_minute_schedule() {
-        // Arrange
-        let cron = CronSchedule::parse("* * * * *").unwrap();
-
-        // Act
-        let candidate = cron.simple_candidate_seconds((10 * 3_600) + (14 * 60) + 30);
-
-        // Assert
-        assert_eq!(candidate, Some((10 * 3_600) + (15 * 60)));
-    }
-
-    #[test]
-    fn should_fast_path_monthly_schedule_given_fixed_day_hour_and_minute() {
-        // Arrange
-        let cron = CronSchedule::parse("0 2 1 * *").unwrap();
-        let current_secs = datetime_to_seconds(2026, 3, 31, 5, 30);
-        let expected_secs = datetime_to_seconds(2026, 4, 1, 2, 0);
-
-        // Act
-        let candidate = cron.simple_candidate_seconds(current_secs);
-
-        // Assert
-        assert_eq!(candidate, Some(expected_secs));
-    }
-
-    #[test]
-    fn should_calculate_next_fire_time_given_fixed_utc_clock_reference() {
-        // Arrange
-        let clock = MockClock {
-            instant: Instant::now(),
-            epoch_ms: u64::try_from(
-                chrono::Utc
-                    .with_ymd_and_hms(2026, 3, 31, 5, 30, 0)
-                    .single()
-                    .expect("valid datetime")
-                    .timestamp_millis(),
-            )
-            .expect("test datetime should be after unix epoch"),
-        };
-        let cron = CronSchedule::parse("0 6 * * *").expect("valid cron");
-
-        // Act
-        let next_fire = cron.next_fire_time_with_clock(clock.now_instant(), &clock);
-
-        // Assert
-        assert_eq!(
-            next_fire.duration_since(clock.now_instant()),
-            Duration::from_mins(30)
-        );
-    }
-}
-
-/// Schedule errors
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ScheduleError {
-    /// Invalid cron expression (7002)
-    InvalidCron,
-    /// Schedule not found (7001)
-    NotFound,
-}
-
-impl ScheduleError {
-    #[must_use]
-    pub fn code(&self) -> u16 {
-        match self {
-            ScheduleError::InvalidCron => 7002,
-            ScheduleError::NotFound => 7001,
-        }
-    }
-}
+#[path = "protocol_tests.rs"]
+mod tests;
