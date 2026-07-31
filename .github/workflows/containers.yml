@@ -3,6 +3,10 @@ name: Containers
 on:
   workflow_dispatch:
 
+concurrency:
+  group: containers
+  cancel-in-progress: false
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -102,24 +106,72 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create manifest list and push
+        id: manifest
         working-directory: /tmp/digests
         env:
           BRANCH: ${{ needs.version.outputs.branch }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
           SEMVER: ${{ needs.version.outputs.semver }}
         run: |
           image="${REGISTRY}/${IMAGE_NAME}"
-          tags=(
-            -t "${image}:${BRANCH}"
-            -t "${image}:${SEMVER}"
-          )
+          tags=()
+          semver_tag=""
+          inspect_tag=""
+
+          if [[ "${REF_TYPE}" == "branch" ]]; then
+            tags+=(-t "${image}:${BRANCH}")
+            inspect_tag="${BRANCH}"
+          fi
+
+          if [[ "${SEMVER}" == *-* ]]; then
+            semver_tag="${image}:${SEMVER}"
+          elif [[ "${REF_TYPE}" == "tag" && "${REF_NAME#v}" == "${SEMVER}" ]]; then
+            semver_tag="${image}:${SEMVER}"
+          else
+            echo "Skipping stable SemVer alias ${SEMVER}; ${REF_NAME} is not a matching Git tag"
+          fi
+
           if [[ "${BRANCH}" == "main" ]]; then
             tags+=(-t "${image}:latest")
           fi
 
-          docker buildx imagetools create \
-            "${tags[@]}" \
-            $(printf "${image}@sha256:%s " *)
+          sources=()
+          for digest in *; do
+            sources+=("${image}@sha256:${digest}")
+          done
+
+          if [[ -n "${semver_tag}" ]]; then
+            inspect_tag="${SEMVER}"
+            docker buildx imagetools create --dry-run "${sources[@]}" > /tmp/proposed-manifest.json
+
+            if docker buildx imagetools inspect --raw "${semver_tag}" > /tmp/published-manifest.json 2>/dev/null; then
+              jq --sort-keys --compact-output . /tmp/proposed-manifest.json > /tmp/proposed-manifest.canonical.json
+              jq --sort-keys --compact-output . /tmp/published-manifest.json > /tmp/published-manifest.canonical.json
+
+              if ! cmp --silent /tmp/proposed-manifest.canonical.json /tmp/published-manifest.canonical.json; then
+                echo "Refusing to replace immutable SemVer tag ${semver_tag}" >&2
+                exit 1
+              fi
+              echo "SemVer tag ${semver_tag} already points at this manifest"
+            else
+              tags+=(-t "${semver_tag}")
+            fi
+          fi
+
+          if [[ -z "${inspect_tag}" ]]; then
+            echo "No publishable container tag for ${REF_TYPE} ref ${REF_NAME}" >&2
+            exit 1
+          fi
+
+          if (( ${#tags[@]} > 0 )); then
+            docker buildx imagetools create \
+              "${tags[@]}" \
+              "${sources[@]}"
+          fi
+
+          echo "inspect_tag=${inspect_tag}" >> "${GITHUB_OUTPUT}"
 
       - name: Inspect image
         run: |
-          docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.version.outputs.semver }}
+          docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.manifest.outputs.inspect_tag }}
