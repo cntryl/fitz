@@ -17,8 +17,8 @@ export type DomainOverviewFixture = {
 export const adminFeatures = {
   admin_auth_required: false,
   admin_auth_mode: "open" as const,
-  route_families: ["1", "7", "42"],
-  route_families_wildcard: false,
+  route_families: ["1", "2", "3", "4", "5"],
+  route_families_wildcard: true,
 };
 
 export async function mockAdminFeatures(page: Page) {

@@ -52,6 +52,7 @@ pub(super) fn auth_error_response(err: AuthFailure) -> Response {
 pub(super) fn parse_domain_path<'a>(
     segments: &'a [&'a str],
     principal: &AdminPrincipal,
+    runtime: &Arc<Runtime>,
 ) -> Result<(AdminFamilyScope, &'a str, &'a [&'a str]), Box<Response>> {
     if segments.len() < 3 || segments[0] != "api" || segments[1] != "v1" {
         return Err(Box::new(super::not_found()));
@@ -61,13 +62,38 @@ pub(super) fn parse_domain_path<'a>(
         return Err(Box::new(super::not_found()));
     }
 
-    let scope = parse_family_scope(segments[2], principal)?;
+    let scope = parse_provisioned_family_scope(segments[2], principal, runtime)?;
     let scheme = segments[3];
     if !is_admin_domain_scheme(scheme) {
         return Err(Box::new(super::not_found()));
     }
 
     Ok((scope, scheme, &segments[4..]))
+}
+
+pub(super) fn parse_provisioned_family_scope(
+    value: &str,
+    principal: &AdminPrincipal,
+    runtime: &Arc<Runtime>,
+) -> Result<AdminFamilyScope, Box<Response>> {
+    let scope = parse_family_scope(value, principal)?;
+
+    if let AdminFamilyScope::Family(family) = scope {
+        let family = u32::try_from(family).map_err(|_| {
+            Box::new(super::error_response(
+                StatusCode::BAD_REQUEST,
+                "Route family exceeds the supported u32 range",
+            ))
+        })?;
+        if !runtime.admin_auth().is_provisioned_route_family(family) {
+            return Err(Box::new(super::error_response(
+                StatusCode::NOT_FOUND,
+                "Route family is not provisioned",
+            )));
+        }
+    }
+
+    Ok(scope)
 }
 
 pub(super) fn is_admin_domain_scheme(value: &str) -> bool {

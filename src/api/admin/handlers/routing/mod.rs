@@ -5,9 +5,9 @@ mod hierarchical_mutations;
 
 use super::auth_and_mutations::{
     handle_queue_dead_letter_purge, handle_queue_dead_letter_replay, handle_runtime_drain,
-    parse_domain_path, parse_event_limit, parse_family_scope, parse_optional_allowed_family_param,
-    parse_optional_u64_param, parse_required_string_query_param, require_admin,
-    require_concrete_route_family, require_data_plane_ready, require_same_origin,
+    parse_domain_path, parse_event_limit, parse_optional_allowed_family_param,
+    parse_optional_u64_param, parse_provisioned_family_scope, parse_required_string_query_param,
+    require_admin, require_concrete_route_family, require_data_plane_ready, require_same_origin,
     resource_family_filter,
 };
 use super::collections_and_details::{
@@ -162,24 +162,10 @@ where
             if segments.len() != 4 || segments[0] != "api" || segments[1] != "v1" {
                 return Ok(not_found());
             }
-            let scope = match parse_family_scope(segments[2], &principal) {
+            let scope = match parse_provisioned_family_scope(segments[2], &principal, &runtime) {
                 Ok(scope) => scope,
                 Err(response) => return Ok(*response),
             };
-            if let AdminFamilyScope::Family(family) = scope {
-                let Ok(family) = u32::try_from(family) else {
-                    return Ok(error_response(
-                        hyper::StatusCode::BAD_REQUEST,
-                        "Route family exceeds the supported u32 range",
-                    ));
-                };
-                if !runtime.admin_auth().is_provisioned_route_family(family) {
-                    return Ok(error_response(
-                        hyper::StatusCode::NOT_FOUND,
-                        "Route family is not provisioned",
-                    ));
-                }
-            }
             Ok(metrics::handle_structured_metrics(
                 runtime.as_ref(),
                 scope.filter(),
@@ -197,7 +183,7 @@ where
                 return Ok(*response);
             }
             let segments = path.trim_matches('/').split('/').collect::<Vec<_>>();
-            let scope = match parse_family_scope(segments[2], &principal) {
+            let scope = match parse_provisioned_family_scope(segments[2], &principal, &runtime) {
                 Ok(scope) => scope,
                 Err(response) => return Ok(*response),
             };
@@ -209,29 +195,16 @@ where
                     "troubleshooting" => Ok(stats::handle_global_troubleshooting(runtime.as_ref())),
                     _ => Ok(not_found()),
                 },
-                AdminFamilyScope::Family(family) => {
-                    let Ok(family_id) = u32::try_from(family) else {
-                        return Ok(error_response(
-                            hyper::StatusCode::BAD_REQUEST,
-                            "Route family exceeds the supported u32 range",
-                        ));
-                    };
-                    if !runtime.admin_auth().is_provisioned_route_family(family_id) {
-                        return Ok(not_found());
-                    }
-                    match segments[3] {
-                        "sessions" => Ok(list::list_sessions_for_family(runtime.as_ref(), family)),
-                        "stats" => Ok(stats::handle_family_stats(runtime.as_ref(), family)),
-                        "topology" => {
-                            Ok(topology::handle_family_topology(runtime.as_ref(), family))
-                        }
-                        "troubleshooting" => Ok(stats::handle_family_troubleshooting(
-                            runtime.as_ref(),
-                            family,
-                        )),
-                        _ => Ok(not_found()),
-                    }
-                }
+                AdminFamilyScope::Family(family) => match segments[3] {
+                    "sessions" => Ok(list::list_sessions_for_family(runtime.as_ref(), family)),
+                    "stats" => Ok(stats::handle_family_stats(runtime.as_ref(), family)),
+                    "topology" => Ok(topology::handle_family_topology(runtime.as_ref(), family)),
+                    "troubleshooting" => Ok(stats::handle_family_troubleshooting(
+                        runtime.as_ref(),
+                        family,
+                    )),
+                    _ => Ok(not_found()),
+                },
             }
         }
 

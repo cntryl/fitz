@@ -1,6 +1,5 @@
 import { defineScope, readScope } from "@askrjs/askr";
 import type { SessionState } from "@/features/session/session-models";
-import type { MessagingTopologyOverview } from "@/features/topology/topology-models";
 
 const unselectedRouteFamilyId = "";
 const routeFamilyPattern = /^\d+$/;
@@ -29,14 +28,6 @@ const unselectedRouteFamily: RouteFamilyOption = {
   label: "Select Route Family",
 };
 
-function optionFromTopologyRouteFamily(routeFamily: number): RouteFamilyOption {
-  return {
-    description: `Resolved broker route family ${routeFamily} from the current admin topology snapshot.`,
-    id: routeFamily.toString(),
-    label: `Route Family ${routeFamily}`,
-  };
-}
-
 function labelFromRouteFamily(routeFamily: string) {
   return `Route Family ${routeFamily}`;
 }
@@ -46,19 +37,6 @@ function optionFromSessionRouteFamily(routeFamily: string, openAccess: boolean):
     description: openAccess
       ? `Available Route Family ${routeFamily} from admin feature discovery.`
       : `Authorized Route Family ${routeFamily} from the current admin session.`,
-    id: routeFamily,
-    label: labelFromRouteFamily(routeFamily),
-  };
-}
-
-function optionFromWildcardRouteFamily(
-  routeFamily: string,
-  openAccess: boolean,
-): RouteFamilyOption {
-  return {
-    description: openAccess
-      ? `Available Route Family ${routeFamily} through open wildcard access.`
-      : `Authorized Route Family ${routeFamily} through this session's wildcard access.`,
     id: routeFamily,
     label: labelFromRouteFamily(routeFamily),
   };
@@ -83,7 +61,6 @@ export function parseConcreteRouteFamilyId(routeFamilyId: string) {
 }
 
 export function createOperatorScopeSnapshot(
-  topology: MessagingTopologyOverview | null | undefined,
   session: SessionState | null | undefined,
   selectedRouteFamilyId: string,
   load: {
@@ -92,34 +69,17 @@ export function createOperatorScopeSnapshot(
     retry?: () => void;
   } = {},
 ): OperatorScopeSnapshot {
-  const topologyFamilies =
-    topology?.sessionGroups.map((group) => optionFromTopologyRouteFamily(group.routeFamily)) ?? [];
   const openAccess = session?.authRequired === false;
   const sessionFamilies =
     session?.routeFamilies
       ?.filter((routeFamily) => routeFamilyPattern.test(routeFamily))
       .map((routeFamily) => optionFromSessionRouteFamily(routeFamily, openAccess)) ?? [];
   const routeFamiliesWildcard = session?.routeFamiliesWildcard === true;
-  const knownRouteFamilies = routeFamiliesWildcard
-    ? uniqueOptions([...sessionFamilies, ...topologyFamilies])
-    : sessionFamilies;
-  const wildcardSelection =
-    routeFamiliesWildcard && routeFamilyPattern.test(selectedRouteFamilyId)
-      ? optionFromWildcardRouteFamily(selectedRouteFamilyId, openAccess)
-      : null;
-  const routeFamilies = uniqueOptions(
-    wildcardSelection ? [wildcardSelection, ...knownRouteFamilies] : knownRouteFamilies,
-  );
+  const routeFamilies = uniqueOptions(sessionFamilies);
   const selectedRouteFamily =
     routeFamilies.find((option) => option.id === selectedRouteFamilyId) ?? unselectedRouteFamily;
   const routeFamilyState: RouteFamilyLoadState =
-    routeFamilies.length > 0 || routeFamiliesWildcard
-      ? "ready"
-      : load.loading
-        ? "loading"
-        : load.error
-          ? "error"
-          : "empty";
+    routeFamilies.length > 0 ? "ready" : load.loading ? "loading" : load.error ? "error" : "empty";
 
   return {
     retryRouteFamilies: load.retry ?? (() => undefined),

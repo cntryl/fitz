@@ -52,7 +52,7 @@ fn handle_hierarchical_get_blocking(
 ) -> Result<Response, Infallible> {
     let path = uri.path();
     let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
-    let (scope, scheme, tail) = match parse_domain_path(&segments, principal) {
+    let (scope, scheme, tail) = match parse_domain_path(&segments, principal, runtime) {
         Ok(parsed) => parsed,
         Err(response) => return Ok(*response),
     };

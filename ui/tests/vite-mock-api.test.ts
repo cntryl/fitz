@@ -33,13 +33,23 @@ describe("Vite mock API", () => {
     );
   });
 
-  it("returns credential-protected features with multiple route families", () => {
-    const response = mockFitzResponse("GET", "/api/v1/features");
-    const body = jsonBody(response);
+  it("hides route families until a protected session is authenticated", () => {
+    const features = jsonBody(mockFitzResponse("GET", "/api/v1/features"));
+    const session = jsonBody(mockFitzResponse("GET", "/api/v1/session"));
 
-    expect(body.route_families).toEqual(["1", "2", "3", "4", "5"]);
-    expect(body.admin_auth_mode).toBe("protected");
-    expect(body.admin_auth_required).toBe(true);
+    expect(features.route_families).toEqual([]);
+    expect(features.admin_auth_mode).toBe("protected");
+    expect(features.admin_auth_required).toBe(true);
+    expect(session.route_families).toEqual(["1", "2", "3", "4", "5"]);
+  });
+
+  it("returns not found for family-scoped endpoints outside the provisioned set", () => {
+    for (const path of ["/api/v1/6/metrics", "/api/v1/6/topology", "/api/v1/6/queue/realms"]) {
+      const response = mockFitzResponse("GET", path);
+
+      expect(response?.status).toBe(404);
+      expect(jsonBody(response).error).toBe("Route family is not provisioned");
+    }
   });
 
   it("accepts only the documented mock admin credentials", () => {

@@ -29,7 +29,6 @@ import {
   type OperatorScopeSnapshot,
 } from "@/shared/operator-scope";
 import { routeFamilyIconColor } from "@/shared/route-family-appearance";
-import { topologyOverview } from "./fixtures/topology";
 
 vi.mock("@/features/session/session-query", () => ({
   createCurrentSessionQuery: () => ({
@@ -155,12 +154,11 @@ describe("shared UI polish contracts", () => {
     expect(document.activeElement).toBe(root.querySelector("main#main-content"));
   });
 
-  it("accepts a concrete URL family through wildcard session access", () => {
+  it("rejects a concrete URL family outside the authoritative wildcard session list", () => {
     const snapshot = createOperatorScopeSnapshot(
-      null,
       {
         authenticated: true,
-        routeFamilies: [],
+        routeFamilies: ["1"],
         routeFamiliesWildcard: true,
         username: "operator",
       },
@@ -169,19 +167,13 @@ describe("shared UI polish contracts", () => {
 
     expect(snapshot.routeFamilyState).toBe("ready");
     expect(snapshot.routeFamiliesWildcard).toBe(true);
-    expect(snapshot.selectedRouteFamilyId).toBe("42");
-    expect(snapshot.selectedRouteFamily.label).toBe("Route Family 42");
+    expect(snapshot.routeFamilies.map((family) => family.id)).toEqual(["1"]);
+    expect(snapshot.selectedRouteFamilyId).toBe("");
+    expect(snapshot.selectedRouteFamily.label).toBe("Select Route Family");
   });
 
-  it("does not add topology families outside the session allowlist", () => {
+  it("uses only session families for the selector", () => {
     const snapshot = createOperatorScopeSnapshot(
-      {
-        ...topologyOverview,
-        sessionGroups: [
-          ...topologyOverview.sessionGroups,
-          { ...topologyOverview.sessionGroups[0]!, routeFamily: 42 },
-        ],
-      },
       {
         authRequired: true,
         authenticated: true,
@@ -195,14 +187,14 @@ describe("shared UI polish contracts", () => {
     expect(snapshot.routeFamilies.map((family) => family.id)).toEqual(["1", "2", "3", "4", "5"]);
   });
 
-  it("offers numeric Route Family entry to wildcard sessions", async () => {
+  it("renders an empty state instead of numeric entry for an empty wildcard session list", async () => {
     const root = await mount(() => (
       <OperatorScope
         value={{
           retryRouteFamilies: vi.fn(),
           routeFamilies: [],
           routeFamilyError: null,
-          routeFamilyState: "ready",
+          routeFamilyState: "empty",
           routeFamiliesWildcard: true,
           selectedRouteFamily: {
             description: "Select a family",
@@ -216,10 +208,8 @@ describe("shared UI polish contracts", () => {
       </OperatorScope>
     ));
 
-    const input = root.querySelector<HTMLInputElement>("#wildcard-route-family");
-    expect(root.textContent).toContain("wildcard access");
-    expect(input?.getAttribute("inputmode")).toBe("numeric");
-    expect(input?.hasAttribute("required")).toBe(true);
+    expect(root.textContent).toContain("No Route Families available");
+    expect(root.querySelector("#wildcard-route-family")).toBeNull();
   });
 
   it("omits numeric Route Family entry when wildcard sessions have a concrete list", async () => {
@@ -386,6 +376,32 @@ describe("shared UI polish contracts", () => {
     expect(root.querySelector('a[href="/admin/1"]')?.textContent).toContain("Route Family 1");
     expect(root.querySelector('a[href="/admin/7"]')?.textContent).toContain("Route Family 7");
     expect(root.querySelector('[data-slot="card"]')).toBeNull();
+  });
+
+  it("renders a dedicated 404 for base and nested unavailable route families", async () => {
+    for (const path of ["/admin/6", "/admin/6/queue"]) {
+      const root = await mount(
+        () => (
+          <AppLayout>
+            <DomainPageFrame>
+              <section>Workspace content</section>
+            </DomainPageFrame>
+          </AppLayout>
+        ),
+        path,
+      );
+
+      expect(root.querySelector("main#main-content")?.textContent).toContain(
+        "Route Family not found",
+      );
+      expect(root.querySelector("main#main-content")?.textContent).toContain("404");
+      expect(root.querySelector('main#main-content a[href="/admin"]')?.textContent).toContain(
+        "Back to Route Families",
+      );
+      expect(root.querySelector('nav[aria-label="Primary navigation"]')).toBeNull();
+      expect(root.textContent).not.toContain("Workspace content");
+      expect(document.title).toBe("Route Family not found · Fitz Admin");
+    }
   });
 
   it("uses icon-backed shell controls with stable labels", async () => {

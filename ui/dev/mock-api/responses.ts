@@ -515,7 +515,7 @@ export function apiResponse(method: string, url: URL, requestBody?: unknown): Mo
     return json({
       admin_auth_mode: "protected",
       admin_auth_required: true,
-      route_families: routeFamilies,
+      route_families: [],
       route_families_wildcard: false,
     });
   }
@@ -569,6 +569,10 @@ export function mockFitzResponse(
   const url = new URL(requestUrl ?? "/", "http://fitz.mock");
 
   if (requestMethod === "OPTIONS") return text("", 204);
+  const concreteFamily = url.pathname.match(/^\/api\/v1\/(\d+)(?:\/|$)/)?.[1];
+  if (concreteFamily && !routeFamilies.includes(concreteFamily)) {
+    return json({ error: "Route family is not provisioned" }, 404);
+  }
   if (url.pathname === "/api/v1/all/metrics") return json(structuredMetrics);
   const familyMetricsMatch = url.pathname.match(/^\/api\/v1\/(\d+)\/metrics$/);
   if (familyMetricsMatch) {

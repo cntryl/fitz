@@ -39,7 +39,7 @@ fn handle_hierarchical_post_blocking(
 ) -> Response {
     let path = uri.path();
     let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
-    let (scope, scheme, tail) = match parse_domain_path(&segments, principal) {
+    let (scope, scheme, tail) = match parse_domain_path(&segments, principal, runtime) {
         Ok(parsed) => parsed,
         Err(response) => return *response,
     };
@@ -88,7 +88,7 @@ fn handle_hierarchical_delete_blocking(
 ) -> Response {
     let path = uri.path();
     let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
-    let (scope, scheme, tail) = match parse_domain_path(&segments, principal) {
+    let (scope, scheme, tail) = match parse_domain_path(&segments, principal, runtime) {
         Ok(parsed) => parsed,
         Err(response) => return *response,
     };

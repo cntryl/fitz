@@ -63,6 +63,37 @@ test("keeps route-family actions as native keyboard links", async ({ page }) => 
   await expect(page).toHaveURL(/\/admin\/1$/);
 });
 
+test("lists every provisioned route family and opens a valid idle family", async ({ page }) => {
+  await mockAdminFeatures(page);
+  await page.goto("/admin");
+
+  for (const family of ["1", "2", "3", "4", "5"]) {
+    await expect(
+      page.getByRole("link", { name: `Open workspace for Route Family ${family}` }),
+    ).toBeVisible();
+  }
+
+  await page.getByRole("link", { name: "Open workspace for Route Family 5" }).click();
+  await expect(page).toHaveURL(/\/admin\/5$/);
+  await expect(page.getByRole("navigation", { name: "Primary navigation" })).toBeVisible();
+});
+
+test("renders unavailable base and nested route families as SPA 404 pages", async ({ page }) => {
+  await mockAdminFeatures(page);
+
+  for (const path of ["/admin/6", "/admin/6/queue"]) {
+    await page.goto(path);
+
+    await expect(page.getByRole("heading", { name: "Route Family not found" })).toBeVisible();
+    await expect(page.getByText(/404/)).toBeVisible();
+    await expect(page.getByRole("link", { name: "Back to Route Families" })).toHaveAttribute(
+      "href",
+      "/admin",
+    );
+    await expect(page.getByRole("navigation", { name: "Primary navigation" })).toHaveCount(0);
+  }
+});
+
 test("captures the desktop dashboard shell in dark mode", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1200 });
   await openDashboard(page, "dark");

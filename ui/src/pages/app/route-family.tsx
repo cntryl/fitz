@@ -1,10 +1,8 @@
-import { state } from "@askrjs/askr";
 import { For } from "@askrjs/askr/control";
 import { task } from "@askrjs/askr/resources";
-import { Link, navigate } from "@askrjs/askr/router";
+import { Link } from "@askrjs/askr/router";
 import { NetworkIcon } from "@askrjs/lucide";
-import { Input, Label } from "@askrjs/ui";
-import { Button, Field, Inline, Main, PageHeader, Stack } from "@askrjs/themes/components";
+import { Button, Main, PageHeader, Stack } from "@askrjs/themes/components";
 import { pathWithRouteFamily } from "@/shared/navigation/domains";
 import { manageRoutePageContext } from "@/components/shared/domain-page-frame";
 import {
@@ -49,45 +47,26 @@ function RouteFamilyList({ routeFamilies }: { routeFamilies: RouteFamilyOption[]
   );
 }
 
-function WildcardRouteFamilyForm() {
-  const [routeFamilyId, setRouteFamilyId] = state("");
-
-  function openRouteFamily(event: Event) {
-    event.preventDefault();
-    const value = routeFamilyId().trim();
-
-    if (/^\d+$/.test(value)) {
-      navigate(selectorTarget(value));
-    }
-  }
+export function RouteFamilyNotFoundPage() {
+  task(() => manageRoutePageContext("Route Family not found"));
 
   return (
-    <section class="route-family-wildcard">
-      <div>
-        <h2>Open another Route Family</h2>
-        <p>
-          This session has wildcard access. Enter the numeric Route Family identifier you want to
-          operate.
-        </p>
-      </div>
-      <form onSubmit={openRouteFamily}>
-        <Inline align="end" gap="3" wrap="wrap">
-          <Field>
-            <Label for="wildcard-route-family">Route Family</Label>
-            <Input
-              id="wildcard-route-family"
-              name="routeFamily"
-              {...({ inputmode: "numeric", pattern: "[0-9]+" } as Record<string, unknown>)}
-              required
-              value={routeFamilyId()}
-              onInput={(event: Event) => setRouteFamilyId((event.target as HTMLInputElement).value)}
-              placeholder="42"
-            />
-          </Field>
-          <Button type="submit">Open</Button>
-        </Inline>
-      </form>
-    </section>
+    <Main
+      id="main-content"
+      class="domain-page-frame route-transition-surface"
+      paddingY="xl"
+      tabIndex={-1}
+    >
+      <Stack gap="4">
+        <PageHeader
+          title="Route Family not found"
+          description="404 · This Route Family is unavailable to the current session."
+        />
+        <Button asChild variant="outline">
+          <Link href="/admin">Back to Route Families</Link>
+        </Button>
+      </Stack>
+    </Main>
   );
 }
 
@@ -126,14 +105,7 @@ export default function RouteFamilySelectorPage() {
           />
         ) : null}
         {operator.routeFamilyState === "ready" ? (
-          <Stack gap="3">
-            {operator.routeFamilies.length > 0 ? (
-              <RouteFamilyList routeFamilies={operator.routeFamilies} />
-            ) : null}
-            {operator.routeFamiliesWildcard && operator.routeFamilies.length === 0 ? (
-              <WildcardRouteFamilyForm />
-            ) : null}
-          </Stack>
+          <RouteFamilyList routeFamilies={operator.routeFamilies} />
         ) : null}
       </Stack>
     </Main>

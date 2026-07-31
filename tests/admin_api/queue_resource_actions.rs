@@ -171,6 +171,62 @@ async fn should_reject_admin_mutation_given_cross_origin_request() {
 
 #[tokio::test]
 #[serial]
+async fn should_reject_unprovisioned_route_family_before_dead_letter_replay() {
+    // Arrange
+    let (runtime, store) = queue_runtime_with_domains();
+    runtime.configure_route_families(&[1]);
+    let message_id = seed_dead_lettered_queue_message(store);
+    let cookie = login_cookie(runtime.clone()).await;
+    let req = hyper::http::Request::builder()
+        .method(Method::POST)
+        .uri(format!(
+            "/api/v1/2/queue/realms/prod/areas/jobs/resources/worker/dead-letters/{message_id}/replay"
+        ))
+        .header(COOKIE, cookie)
+        .header("host", "localhost")
+        .header("origin", "http://localhost")
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+#[serial]
+async fn should_reject_unprovisioned_route_family_before_dead_letter_purge() {
+    // Arrange
+    let (runtime, store) = queue_runtime_with_domains();
+    runtime.configure_route_families(&[1]);
+    let message_id = seed_dead_lettered_queue_message(store);
+    let cookie = login_cookie(runtime.clone()).await;
+    let req = hyper::http::Request::builder()
+        .method(Method::DELETE)
+        .uri(format!(
+            "/api/v1/2/queue/realms/prod/areas/jobs/resources/worker/dead-letters/{message_id}"
+        ))
+        .header(COOKIE, cookie)
+        .header("host", "localhost")
+        .header("origin", "http://localhost")
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+#[serial]
 async fn should_replay_dead_letter_given_family_targeted_admin_request() {
     // Arrange
     let (runtime, store) = queue_runtime_with_domains();

@@ -470,7 +470,7 @@ export const sprint16Routes: RouteScenario[] = [
     title: "primary",
   },
   {
-    path: "/admin/7/lease/default/ops/primary",
+    path: "/admin/5/lease/default/ops/primary",
     shell: "app",
     setup: (page) =>
       mockResourceDetailApis(page, "lease", {

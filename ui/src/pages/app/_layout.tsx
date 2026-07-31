@@ -35,7 +35,6 @@ import {
 import { ThemeToggle } from "@askrjs/themes/theme";
 import AppFooter from "@/components/shared/app-footer";
 import { createCurrentSessionQuery } from "@/features/session/session-query";
-import { createMessagingTopologyQuery } from "@/features/topology/topology-query";
 import {
   adminHref,
   contentPathFromRouteFamilyPath,
@@ -52,7 +51,7 @@ import {
   type RouteFamilyOption,
 } from "@/shared/operator-scope";
 import { routeFamilyIconColor } from "@/shared/route-family-appearance";
-import RouteFamilySelectorPage from "./route-family";
+import RouteFamilySelectorPage, { RouteFamilyNotFoundPage } from "./route-family";
 
 const workspaceLinks = shellLinks.filter(
   (link) =>
@@ -301,25 +300,19 @@ export default function Layout({ children }: { children?: unknown }) {
   const route = currentRoute();
   const currentSession = createCurrentSessionQuery();
   const activeRouteFamilyId = routeFamilyFromPath(route.path) ?? "";
-  const sessionRouteFamilyId =
-    currentSession.data?.routeFamilies.find((family) => /^\d+$/.test(family)) ?? "1";
-  const topology = createMessagingTopologyQuery(activeRouteFamilyId || sessionRouteFamilyId);
-  const operator = createOperatorScopeSnapshot(
-    topology.data,
-    currentSession.data,
-    activeRouteFamilyId,
-    {
-      error: currentSession.error ?? topology.error,
-      loading: currentSession.loading || topology.loading,
-      retry: () => {
-        void currentSession.refresh();
-        void topology.refresh();
-      },
+  const operator = createOperatorScopeSnapshot(currentSession.data, activeRouteFamilyId, {
+    error: currentSession.error,
+    loading: currentSession.loading,
+    retry: () => {
+      void currentSession.refresh();
     },
-  );
+  });
   const scopedFamily = operator.selectedRouteFamilyId;
   const hasRouteFamilyScope =
     activeRouteFamilyId !== "" && operator.selectedRouteFamilyId === activeRouteFamilyId;
+  const sessionDiscovered = currentSession.data !== undefined;
+  const routeFamilyNotFound =
+    activeRouteFamilyId !== "" && sessionDiscovered && !hasRouteFamilyScope;
 
   return (
     <OperatorScope value={operator}>
@@ -374,6 +367,8 @@ export default function Layout({ children }: { children?: unknown }) {
         <Container class="operator-shell-workspace" paddingY="0" grow>
           {hasRouteFamilyScope ? (
             <WorkspaceShell operator={operator}>{children}</WorkspaceShell>
+          ) : routeFamilyNotFound ? (
+            <RouteFamilyNotFoundPage />
           ) : (
             <RouteFamilySelectorPage />
           )}

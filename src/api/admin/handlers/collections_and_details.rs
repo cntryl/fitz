@@ -212,7 +212,11 @@ pub(super) async fn handle_current_session<B>(
     Ok(super::json_response(SessionResponse {
         authenticated: true,
         username: principal.username,
-        route_families: principal.route_family_access.route_families(),
+        route_families: if principal.route_family_access.is_wildcard() {
+            runtime.admin_auth().provisioned_route_families()
+        } else {
+            principal.route_family_access.route_families()
+        },
         route_families_wildcard: principal.route_family_access.is_wildcard(),
     }))
 }

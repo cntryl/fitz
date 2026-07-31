@@ -109,27 +109,6 @@
   outline-offset: -2px;
 }
 
-.route-family-wildcard {
-  display: grid;
-  gap: var(--fitz-section-gap);
-  padding-block-start: var(--ak-space-4, 1rem);
-}
-
-.route-family-wildcard h2,
-.route-family-wildcard p {
-  margin: 0;
-}
-
-.route-family-wildcard h2 {
-  font-size: var(--fitz-section-title-size);
-}
-
-.route-family-wildcard p {
-  margin-block-start: var(--ak-space-1, 0.25rem);
-  color: var(--fitz-text-muted);
-  font-size: var(--fitz-body-size);
-}
-
 .operator-shell-workspace .domain-page-frame {
   max-width: 100%;
   padding-inline: 0;

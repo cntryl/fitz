@@ -95,6 +95,8 @@ export type ListKvRealmsPath = {
 
 export type ListKvRealmsResponse200 = RealmCollection;
 
+export type ListKvRealmsError_404 = Error;
+
 export type GetKvRealmPath = {
   "family": string;
   "realm": string;
@@ -102,12 +104,16 @@ export type GetKvRealmPath = {
 
 export type GetKvRealmResponse200 = RealmDetail;
 
+export type GetKvRealmError_404 = Error;
+
 export type ListKvAreasPath = {
   "family": string;
   "realm": string;
 };
 
 export type ListKvAreasResponse200 = AreaCollection;
+
+export type ListKvAreasError_404 = Error;
 
 export type GetKvAreaPath = {
   "area": string;
@@ -117,6 +123,8 @@ export type GetKvAreaPath = {
 
 export type GetKvAreaResponse200 = AreaDetail;
 
+export type GetKvAreaError_404 = Error;
+
 export type ListKvResourcesPath = {
   "area": string;
   "family": string;
@@ -124,6 +132,8 @@ export type ListKvResourcesPath = {
 };
 
 export type ListKvResourcesResponse200 = ResourceCollection;
+
+export type ListKvResourcesError_404 = Error;
 
 export type GetKvResourcePath = {
   "area": string;
@@ -133,6 +143,8 @@ export type GetKvResourcePath = {
 };
 
 export type GetKvResourceResponse200 = KvResourceDetail;
+
+export type GetKvResourceError_404 = Error;
 
 export type CompareKvResourceSnapshotsPath = {
   "area": string;
@@ -153,6 +165,8 @@ export type CompareKvResourceSnapshotsError_400 = Error;
 
 export type CompareKvResourceSnapshotsError_401 = Error;
 
+export type CompareKvResourceSnapshotsError_404 = Error;
+
 export type CompareKvResourceSnapshotsError_503 = Error;
 
 export type ListKvResourceEventsPath = {
@@ -171,6 +185,8 @@ export type ListKvResourceEventsResponse200 = ResourceTimeline;
 export type ListKvResourceEventsError_400 = Error;
 
 export type ListKvResourceEventsError_401 = Error;
+
+export type ListKvResourceEventsError_404 = Error;
 
 export type ListKvResourceEventsError_503 = Error;
 
@@ -194,6 +210,8 @@ export type ScanKvCommittedPrefixError_400 = Error;
 export type ScanKvCommittedPrefixError_401 = Error;
 
 export type ScanKvCommittedPrefixError_403 = Error;
+
+export type ScanKvCommittedPrefixError_404 = Error;
 
 export type ScanKvCommittedPrefixError_503 = Error;
 
@@ -219,6 +237,8 @@ export type BrowseKvCommittedRowsError_401 = Error;
 
 export type BrowseKvCommittedRowsError_403 = Error;
 
+export type BrowseKvCommittedRowsError_404 = Error;
+
 export type BrowseKvCommittedRowsError_503 = Error;
 
 export type ListKvTransactionsPath = {
@@ -229,6 +249,8 @@ export type ListKvTransactionsPath = {
 };
 
 export type ListKvTransactionsResponse200 = KvTransactionsList;
+
+export type ListKvTransactionsError_404 = Error;
 
 export type GetKvCommittedValuePath = {
   "area": string;
@@ -250,6 +272,8 @@ export type GetKvCommittedValueError_401 = Error;
 
 export type GetKvCommittedValueError_403 = Error;
 
+export type GetKvCommittedValueError_404 = Error;
+
 export type GetKvCommittedValueError_503 = Error;
 
 export type GetKvStatsPath = {
@@ -260,6 +284,8 @@ export type GetKvStatsResponse200 = KvStats;
 
 export type GetKvStatsError_401 = Error;
 
+export type GetKvStatsError_404 = Error;
+
 export type GetKvStatsError_503 = Error;
 
 export type ListLeaseRealmsPath = {
@@ -268,6 +294,8 @@ export type ListLeaseRealmsPath = {
 
 export type ListLeaseRealmsResponse200 = RealmCollection;
 
+export type ListLeaseRealmsError_404 = Error;
+
 export type GetLeaseRealmPath = {
   "family": string;
   "realm": string;
@@ -275,12 +303,16 @@ export type GetLeaseRealmPath = {
 
 export type GetLeaseRealmResponse200 = RealmDetail;
 
+export type GetLeaseRealmError_404 = Error;
+
 export type ListLeaseAreasPath = {
   "family": string;
   "realm": string;
 };
 
 export type ListLeaseAreasResponse200 = AreaCollection;
+
+export type ListLeaseAreasError_404 = Error;
 
 export type GetLeaseAreaPath = {
   "area": string;
@@ -290,6 +322,8 @@ export type GetLeaseAreaPath = {
 
 export type GetLeaseAreaResponse200 = AreaDetail;
 
+export type GetLeaseAreaError_404 = Error;
+
 export type ListLeaseResourcesPath = {
   "area": string;
   "family": string;
@@ -297,6 +331,8 @@ export type ListLeaseResourcesPath = {
 };
 
 export type ListLeaseResourcesResponse200 = ResourceCollection;
+
+export type ListLeaseResourcesError_404 = Error;
 
 export type GetLeaseResourcePath = {
   "area": string;
@@ -306,6 +342,8 @@ export type GetLeaseResourcePath = {
 };
 
 export type GetLeaseResourceResponse200 = LeaseResourceDetail;
+
+export type GetLeaseResourceError_404 = Error;
 
 export type CompareLeaseResourceSnapshotsPath = {
   "area": string;
@@ -326,6 +364,8 @@ export type CompareLeaseResourceSnapshotsError_400 = Error;
 
 export type CompareLeaseResourceSnapshotsError_401 = Error;
 
+export type CompareLeaseResourceSnapshotsError_404 = Error;
+
 export type CompareLeaseResourceSnapshotsError_503 = Error;
 
 export type ListLeaseResourceEventsPath = {
@@ -344,6 +384,8 @@ export type ListLeaseResourceEventsResponse200 = ResourceTimeline;
 export type ListLeaseResourceEventsError_400 = Error;
 
 export type ListLeaseResourceEventsError_401 = Error;
+
+export type ListLeaseResourceEventsError_404 = Error;
 
 export type ListLeaseResourceEventsError_503 = Error;
 
@@ -368,6 +410,8 @@ export type SearchLeaseOwnershipError_401 = Error;
 
 export type SearchLeaseOwnershipError_403 = Error;
 
+export type SearchLeaseOwnershipError_404 = Error;
+
 export type SearchLeaseOwnershipError_503 = Error;
 
 export type GetLeaseStatsPath = {
@@ -377,6 +421,8 @@ export type GetLeaseStatsPath = {
 export type GetLeaseStatsResponse200 = LeaseStats;
 
 export type GetLeaseStatsError_401 = Error;
+
+export type GetLeaseStatsError_404 = Error;
 
 export type GetLeaseStatsError_503 = Error;
 
@@ -414,6 +460,8 @@ export type SearchNoticeDeliveriesError_401 = Error;
 
 export type SearchNoticeDeliveriesError_403 = Error;
 
+export type SearchNoticeDeliveriesError_404 = Error;
+
 export type SearchNoticeDeliveriesError_503 = Error;
 
 export type ListNoticeRealmsPath = {
@@ -422,6 +470,8 @@ export type ListNoticeRealmsPath = {
 
 export type ListNoticeRealmsResponse200 = RealmCollection;
 
+export type ListNoticeRealmsError_404 = Error;
+
 export type GetNoticeRealmPath = {
   "family": string;
   "realm": string;
@@ -429,12 +479,16 @@ export type GetNoticeRealmPath = {
 
 export type GetNoticeRealmResponse200 = RealmDetail;
 
+export type GetNoticeRealmError_404 = Error;
+
 export type ListNoticeAreasPath = {
   "family": string;
   "realm": string;
 };
 
 export type ListNoticeAreasResponse200 = AreaCollection;
+
+export type ListNoticeAreasError_404 = Error;
 
 export type GetNoticeAreaPath = {
   "area": string;
@@ -444,6 +498,8 @@ export type GetNoticeAreaPath = {
 
 export type GetNoticeAreaResponse200 = AreaDetail;
 
+export type GetNoticeAreaError_404 = Error;
+
 export type ListNoticeResourcesPath = {
   "area": string;
   "family": string;
@@ -451,6 +507,8 @@ export type ListNoticeResourcesPath = {
 };
 
 export type ListNoticeResourcesResponse200 = ResourceCollection;
+
+export type ListNoticeResourcesError_404 = Error;
 
 export type GetNoticeResourcePath = {
   "area": string;
@@ -460,6 +518,8 @@ export type GetNoticeResourcePath = {
 };
 
 export type GetNoticeResourceResponse200 = NoticeResourceDetail;
+
+export type GetNoticeResourceError_404 = Error;
 
 export type CompareNoticeResourceSnapshotsPath = {
   "area": string;
@@ -480,6 +540,8 @@ export type CompareNoticeResourceSnapshotsError_400 = Error;
 
 export type CompareNoticeResourceSnapshotsError_401 = Error;
 
+export type CompareNoticeResourceSnapshotsError_404 = Error;
+
 export type CompareNoticeResourceSnapshotsError_503 = Error;
 
 export type ListNoticeResourceEventsPath = {
@@ -499,6 +561,8 @@ export type ListNoticeResourceEventsError_400 = Error;
 
 export type ListNoticeResourceEventsError_401 = Error;
 
+export type ListNoticeResourceEventsError_404 = Error;
+
 export type ListNoticeResourceEventsError_503 = Error;
 
 export type ListNoticeSubscriptionsPath = {
@@ -510,6 +574,8 @@ export type ListNoticeSubscriptionsPath = {
 
 export type ListNoticeSubscriptionsResponse200 = NoticeSubscriptionsList;
 
+export type ListNoticeSubscriptionsError_404 = Error;
+
 export type GetNoticeStatsPath = {
   "family": string;
 };
@@ -517,6 +583,8 @@ export type GetNoticeStatsPath = {
 export type GetNoticeStatsResponse200 = NoticeStats;
 
 export type GetNoticeStatsError_401 = Error;
+
+export type GetNoticeStatsError_404 = Error;
 
 export type GetNoticeStatsError_503 = Error;
 
@@ -526,6 +594,8 @@ export type ListQueueRealmsPath = {
 
 export type ListQueueRealmsResponse200 = QueueRealmCollection;
 
+export type ListQueueRealmsError_404 = Error;
+
 export type GetQueueRealmPath = {
   "family": string;
   "realm": string;
@@ -533,12 +603,16 @@ export type GetQueueRealmPath = {
 
 export type GetQueueRealmResponse200 = QueueRealmDetail;
 
+export type GetQueueRealmError_404 = Error;
+
 export type ListQueueAreasPath = {
   "family": string;
   "realm": string;
 };
 
 export type ListQueueAreasResponse200 = QueueAreaCollection;
+
+export type ListQueueAreasError_404 = Error;
 
 export type GetQueueAreaPath = {
   "area": string;
@@ -548,6 +622,8 @@ export type GetQueueAreaPath = {
 
 export type GetQueueAreaResponse200 = QueueAreaDetail;
 
+export type GetQueueAreaError_404 = Error;
+
 export type ListQueueResourcesPath = {
   "area": string;
   "family": string;
@@ -555,6 +631,8 @@ export type ListQueueResourcesPath = {
 };
 
 export type ListQueueResourcesResponse200 = QueueResourceCollection;
+
+export type ListQueueResourcesError_404 = Error;
 
 export type GetQueueResourcePath = {
   "area": string;
@@ -564,6 +642,8 @@ export type GetQueueResourcePath = {
 };
 
 export type GetQueueResourceResponse200 = QueueResourceDetail;
+
+export type GetQueueResourceError_404 = Error;
 
 export type CompareQueueResourceSnapshotsPath = {
   "area": string;
@@ -585,6 +665,8 @@ export type CompareQueueResourceSnapshotsError_400 = Error;
 
 export type CompareQueueResourceSnapshotsError_401 = Error;
 
+export type CompareQueueResourceSnapshotsError_404 = Error;
+
 export type CompareQueueResourceSnapshotsError_503 = Error;
 
 export type ListQueueDeadLettersPath = {
@@ -597,6 +679,8 @@ export type ListQueueDeadLettersPath = {
 export type ListQueueDeadLettersResponse200 = QueueDeadLettersList;
 
 export type ListQueueDeadLettersError_401 = Error;
+
+export type ListQueueDeadLettersError_404 = Error;
 
 export type ListQueueDeadLettersError_503 = Error;
 
@@ -653,6 +737,8 @@ export type ListQueueResourceEventsError_400 = Error;
 
 export type ListQueueResourceEventsError_401 = Error;
 
+export type ListQueueResourceEventsError_404 = Error;
+
 export type ListQueueResourceEventsError_503 = Error;
 
 export type ListQueueInflightEntriesPath = {
@@ -664,6 +750,8 @@ export type ListQueueInflightEntriesPath = {
 
 export type ListQueueInflightEntriesResponse200 = QueueInflightList;
 
+export type ListQueueInflightEntriesError_404 = Error;
+
 export type GetQueueStatsPath = {
   "family": string;
 };
@@ -671,6 +759,8 @@ export type GetQueueStatsPath = {
 export type GetQueueStatsResponse200 = QueueStats;
 
 export type GetQueueStatsError_401 = Error;
+
+export type GetQueueStatsError_404 = Error;
 
 export type GetQueueStatsError_503 = Error;
 
@@ -696,6 +786,8 @@ export type SearchRpcCallsError_401 = Error;
 
 export type SearchRpcCallsError_403 = Error;
 
+export type SearchRpcCallsError_404 = Error;
+
 export type SearchRpcCallsError_503 = Error;
 
 export type ListRpcPendingRequestsPath = {
@@ -710,6 +802,8 @@ export type ListRpcPendingRequestsResponse200 = RpcPendingList;
 
 export type ListRpcPendingRequestsError_401 = Error;
 
+export type ListRpcPendingRequestsError_404 = Error;
+
 export type ListRpcPendingRequestsError_503 = Error;
 
 export type ListRpcRealmsPath = {
@@ -718,6 +812,8 @@ export type ListRpcRealmsPath = {
 
 export type ListRpcRealmsResponse200 = RealmCollection;
 
+export type ListRpcRealmsError_404 = Error;
+
 export type GetRpcRealmPath = {
   "family": string;
   "realm": string;
@@ -725,12 +821,16 @@ export type GetRpcRealmPath = {
 
 export type GetRpcRealmResponse200 = RealmDetail;
 
+export type GetRpcRealmError_404 = Error;
+
 export type ListRpcAreasPath = {
   "family": string;
   "realm": string;
 };
 
 export type ListRpcAreasResponse200 = AreaCollection;
+
+export type ListRpcAreasError_404 = Error;
 
 export type GetRpcAreaPath = {
   "area": string;
@@ -740,6 +840,8 @@ export type GetRpcAreaPath = {
 
 export type GetRpcAreaResponse200 = AreaDetail;
 
+export type GetRpcAreaError_404 = Error;
+
 export type ListRpcResourcesPath = {
   "area": string;
   "family": string;
@@ -747,6 +849,8 @@ export type ListRpcResourcesPath = {
 };
 
 export type ListRpcResourcesResponse200 = ResourceCollection;
+
+export type ListRpcResourcesError_404 = Error;
 
 export type GetRpcResourcePath = {
   "area": string;
@@ -756,6 +860,8 @@ export type GetRpcResourcePath = {
 };
 
 export type GetRpcResourceResponse200 = OperationCollection;
+
+export type GetRpcResourceError_404 = Error;
 
 export type CompareRpcResourceSnapshotsPath = {
   "area": string;
@@ -776,6 +882,8 @@ export type CompareRpcResourceSnapshotsError_400 = Error;
 
 export type CompareRpcResourceSnapshotsError_401 = Error;
 
+export type CompareRpcResourceSnapshotsError_404 = Error;
+
 export type CompareRpcResourceSnapshotsError_503 = Error;
 
 export type ListRpcResourceEventsPath = {
@@ -795,6 +903,8 @@ export type ListRpcResourceEventsError_400 = Error;
 
 export type ListRpcResourceEventsError_401 = Error;
 
+export type ListRpcResourceEventsError_404 = Error;
+
 export type ListRpcResourceEventsError_503 = Error;
 
 export type ListRpcOperationsPath = {
@@ -806,6 +916,8 @@ export type ListRpcOperationsPath = {
 
 export type ListRpcOperationsResponse200 = OperationCollection;
 
+export type ListRpcOperationsError_404 = Error;
+
 export type GetRpcOperationPath = {
   "area": string;
   "family": string;
@@ -815,6 +927,8 @@ export type GetRpcOperationPath = {
 };
 
 export type GetRpcOperationResponse200 = RpcOperationDetail;
+
+export type GetRpcOperationError_404 = Error;
 
 export type ListRpcOperationWorkersPath = {
   "area": string;
@@ -828,6 +942,8 @@ export type ListRpcOperationWorkersResponse200 = RpcWorkersList;
 
 export type ListRpcOperationWorkersError_401 = Error;
 
+export type ListRpcOperationWorkersError_404 = Error;
+
 export type ListRpcOperationWorkersError_503 = Error;
 
 export type GetRpcStatsPath = {
@@ -837,6 +953,8 @@ export type GetRpcStatsPath = {
 export type GetRpcStatsResponse200 = RpcStats;
 
 export type GetRpcStatsError_401 = Error;
+
+export type GetRpcStatsError_404 = Error;
 
 export type GetRpcStatsError_503 = Error;
 
@@ -859,6 +977,8 @@ export type SearchScheduleMissedHandoffsError_401 = Error;
 
 export type SearchScheduleMissedHandoffsError_403 = Error;
 
+export type SearchScheduleMissedHandoffsError_404 = Error;
+
 export type SearchScheduleMissedHandoffsError_503 = Error;
 
 export type ListScheduleRealmsPath = {
@@ -867,6 +987,8 @@ export type ListScheduleRealmsPath = {
 
 export type ListScheduleRealmsResponse200 = RealmCollection;
 
+export type ListScheduleRealmsError_404 = Error;
+
 export type GetScheduleRealmPath = {
   "family": string;
   "realm": string;
@@ -874,12 +996,16 @@ export type GetScheduleRealmPath = {
 
 export type GetScheduleRealmResponse200 = RealmDetail;
 
+export type GetScheduleRealmError_404 = Error;
+
 export type ListScheduleAreasPath = {
   "family": string;
   "realm": string;
 };
 
 export type ListScheduleAreasResponse200 = AreaCollection;
+
+export type ListScheduleAreasError_404 = Error;
 
 export type GetScheduleAreaPath = {
   "area": string;
@@ -889,6 +1015,8 @@ export type GetScheduleAreaPath = {
 
 export type GetScheduleAreaResponse200 = AreaDetail;
 
+export type GetScheduleAreaError_404 = Error;
+
 export type ListScheduleResourcesPath = {
   "area": string;
   "family": string;
@@ -896,6 +1024,8 @@ export type ListScheduleResourcesPath = {
 };
 
 export type ListScheduleResourcesResponse200 = ResourceCollection;
+
+export type ListScheduleResourcesError_404 = Error;
 
 export type GetScheduleResourcePath = {
   "area": string;
@@ -905,6 +1035,8 @@ export type GetScheduleResourcePath = {
 };
 
 export type GetScheduleResourceResponse200 = ScheduleResourceDetail;
+
+export type GetScheduleResourceError_404 = Error;
 
 export type CompareScheduleResourceSnapshotsPath = {
   "area": string;
@@ -925,6 +1057,8 @@ export type CompareScheduleResourceSnapshotsError_400 = Error;
 
 export type CompareScheduleResourceSnapshotsError_401 = Error;
 
+export type CompareScheduleResourceSnapshotsError_404 = Error;
+
 export type CompareScheduleResourceSnapshotsError_503 = Error;
 
 export type ListScheduleResourceEventsPath = {
@@ -943,6 +1077,8 @@ export type ListScheduleResourceEventsResponse200 = ResourceTimeline;
 export type ListScheduleResourceEventsError_400 = Error;
 
 export type ListScheduleResourceEventsError_401 = Error;
+
+export type ListScheduleResourceEventsError_404 = Error;
 
 export type ListScheduleResourceEventsError_503 = Error;
 
@@ -965,6 +1101,8 @@ export type ListScheduleExecutionObservationsError_401 = Error;
 
 export type ListScheduleExecutionObservationsError_403 = Error;
 
+export type ListScheduleExecutionObservationsError_404 = Error;
+
 export type ListScheduleExecutionObservationsError_503 = Error;
 
 export type GetScheduleStatsPath = {
@@ -974,6 +1112,8 @@ export type GetScheduleStatsPath = {
 export type GetScheduleStatsResponse200 = ScheduleStats;
 
 export type GetScheduleStatsError_401 = Error;
+
+export type GetScheduleStatsError_404 = Error;
 
 export type GetScheduleStatsError_503 = Error;
 
@@ -1011,6 +1151,8 @@ export type ListStreamRealmsPath = {
 
 export type ListStreamRealmsResponse200 = RealmCollection;
 
+export type ListStreamRealmsError_404 = Error;
+
 export type GetStreamRealmPath = {
   "family": string;
   "realm": string;
@@ -1018,12 +1160,16 @@ export type GetStreamRealmPath = {
 
 export type GetStreamRealmResponse200 = RealmDetail;
 
+export type GetStreamRealmError_404 = Error;
+
 export type ListStreamAreasPath = {
   "family": string;
   "realm": string;
 };
 
 export type ListStreamAreasResponse200 = AreaCollection;
+
+export type ListStreamAreasError_404 = Error;
 
 export type GetStreamAreaPath = {
   "area": string;
@@ -1033,6 +1179,8 @@ export type GetStreamAreaPath = {
 
 export type GetStreamAreaResponse200 = AreaDetail;
 
+export type GetStreamAreaError_404 = Error;
+
 export type ListStreamResourcesPath = {
   "area": string;
   "family": string;
@@ -1040,6 +1188,8 @@ export type ListStreamResourcesPath = {
 };
 
 export type ListStreamResourcesResponse200 = ResourceCollection;
+
+export type ListStreamResourcesError_404 = Error;
 
 export type GetStreamResourcePath = {
   "area": string;
@@ -1049,6 +1199,8 @@ export type GetStreamResourcePath = {
 };
 
 export type GetStreamResourceResponse200 = StreamResourceDetail;
+
+export type GetStreamResourceError_404 = Error;
 
 export type CompareStreamResourceSnapshotsPath = {
   "area": string;
@@ -1069,6 +1221,8 @@ export type CompareStreamResourceSnapshotsError_400 = Error;
 
 export type CompareStreamResourceSnapshotsError_401 = Error;
 
+export type CompareStreamResourceSnapshotsError_404 = Error;
+
 export type CompareStreamResourceSnapshotsError_503 = Error;
 
 export type ListStreamResourceEventsPath = {
@@ -1087,6 +1241,8 @@ export type ListStreamResourceEventsResponse200 = ResourceTimeline;
 export type ListStreamResourceEventsError_400 = Error;
 
 export type ListStreamResourceEventsError_401 = Error;
+
+export type ListStreamResourceEventsError_404 = Error;
 
 export type ListStreamResourceEventsError_503 = Error;
 
@@ -1112,6 +1268,8 @@ export type ReadStreamResourceRecordsError_401 = Error;
 
 export type ReadStreamResourceRecordsError_403 = Error;
 
+export type ReadStreamResourceRecordsError_404 = Error;
+
 export type ReadStreamResourceRecordsError_503 = Error;
 
 export type GetStreamAreaWatermarksPath = {
@@ -1124,6 +1282,8 @@ export type GetStreamAreaWatermarksResponse200 = StreamAreaWatermarkDetail;
 
 export type GetStreamAreaWatermarksError_401 = Error;
 
+export type GetStreamAreaWatermarksError_404 = Error;
+
 export type GetStreamAreaWatermarksError_503 = Error;
 
 export type GetStreamRealmWatermarksPath = {
@@ -1134,6 +1294,8 @@ export type GetStreamRealmWatermarksPath = {
 export type GetStreamRealmWatermarksResponse200 = StreamRealmWatermarkDetail;
 
 export type GetStreamRealmWatermarksError_401 = Error;
+
+export type GetStreamRealmWatermarksError_404 = Error;
 
 export type GetStreamRealmWatermarksError_503 = Error;
 
@@ -1159,6 +1321,8 @@ export type SearchStreamRecordsError_401 = Error;
 
 export type SearchStreamRecordsError_403 = Error;
 
+export type SearchStreamRecordsError_404 = Error;
+
 export type SearchStreamRecordsError_503 = Error;
 
 export type GetStreamStatsPath = {
@@ -1168,6 +1332,8 @@ export type GetStreamStatsPath = {
 export type GetStreamStatsResponse200 = StreamStats;
 
 export type GetStreamStatsError_401 = Error;
+
+export type GetStreamStatsError_404 = Error;
 
 export type GetStreamStatsError_503 = Error;
 

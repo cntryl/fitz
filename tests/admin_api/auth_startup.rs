@@ -502,6 +502,110 @@ async fn should_reject_overflowed_route_family_path_segment() {
 
 #[tokio::test]
 #[serial]
+async fn should_list_all_provisioned_route_families_for_wildcard_session() {
+    // Arrange
+    let _mode_guard = EnvGuard::unset("FITZ_ADMIN_AUTH_MODE");
+    let _family_guard = EnvGuard::set("FITZ_ADMIN_ROUTE_FAMILIES", "*");
+    let runtime = test_runtime();
+    runtime.configure_route_families(&[1, 2]);
+    let cookie = login_cookie(runtime.clone()).await;
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/session")
+        .header(COOKIE, cookie)
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    // Assert
+    assert_eq!(payload["route_families"], serde_json::json!(["1", "2"]));
+    assert_eq!(payload["route_families_wildcard"], true);
+}
+
+#[tokio::test]
+#[serial]
+async fn should_list_only_granted_route_families_for_explicit_session() {
+    // Arrange
+    let _mode_guard = EnvGuard::unset("FITZ_ADMIN_AUTH_MODE");
+    let _family_guard = EnvGuard::set("FITZ_ADMIN_ROUTE_FAMILIES", "2");
+    let runtime = test_runtime();
+    runtime.configure_route_families(&[1, 2]);
+    let cookie = login_cookie(runtime.clone()).await;
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/session")
+        .header(COOKIE, cookie)
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    // Assert
+    assert_eq!(payload["route_families"], serde_json::json!(["2"]));
+    assert_eq!(payload["route_families_wildcard"], false);
+}
+
+#[tokio::test]
+#[serial]
+async fn should_return_not_found_for_unprovisioned_hierarchical_route_family() {
+    // Arrange
+    let _family_guard = EnvGuard::set("FITZ_ADMIN_ROUTE_FAMILIES", "*");
+    let runtime = test_runtime();
+    runtime.configure_route_families(&[1]);
+    let cookie = login_cookie(runtime.clone()).await;
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/2/kv/realms")
+        .header(COOKIE, cookie)
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+#[serial]
+async fn should_return_idle_topology_for_provisioned_route_family() {
+    // Arrange
+    let _family_guard = EnvGuard::set("FITZ_ADMIN_ROUTE_FAMILIES", "*");
+    let runtime = test_runtime();
+    runtime.configure_route_families(&[1, 2]);
+    let cookie = login_cookie(runtime.clone()).await;
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/2/topology")
+        .header(COOKIE, cookie)
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+#[serial]
 async fn should_add_security_headers_to_admin_json_response() {
     // Arrange
     let runtime = test_runtime();
