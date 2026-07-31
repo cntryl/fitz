@@ -27,7 +27,7 @@
     "@askrjs/ui": "^0.0.23"
   },
   "devDependencies": {
-    "@askrjs/cli": "0.0.16",
+    "@askrjs/cli": "0.0.17",
     "@askrjs/vite": "0.0.10",
     "@playwright/test": "^1.62.1",
     "@types/node": "^26.1.2",
