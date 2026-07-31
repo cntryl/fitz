@@ -2,6 +2,9 @@ name: CI Backend
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths-ignore:
+      - "ui/**"
   push:
     branches:
       - main
@@ -48,3 +51,16 @@ jobs:
 
       - name: Cargo test
         run: cargo test --locked --workspace
+
+      - name: Stateful model tests (seed variation 1)
+        env:
+          PROPTEST_CASES: "256"
+        run: cargo test --locked --lib state_model
+
+      - name: Stateful model tests (seed variation 2)
+        env:
+          PROPTEST_CASES: "256"
+        run: cargo test --locked --lib state_model
+
+      - name: Parallel library tests
+        run: cargo test --locked --lib -- --test-threads=16

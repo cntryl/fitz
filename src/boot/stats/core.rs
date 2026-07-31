@@ -247,6 +247,10 @@ impl Runtime {
         self.storage_ready.store(1, Ordering::SeqCst);
     }
 
+    pub fn mark_storage_unavailable(&self) {
+        self.storage_ready.store(0, Ordering::SeqCst);
+    }
+
     #[must_use]
     pub fn is_storage_ready(&self) -> bool {
         self.storage_ready.load(Ordering::SeqCst) == 1
@@ -523,6 +527,24 @@ mod tests {
 
         // Assert
         assert!(runtime.is_storage_ready());
+    }
+
+    #[test]
+    fn should_withdraw_traffic_readiness_when_storage_becomes_unavailable() {
+        // Arrange
+        let router = Arc::new(Router::new());
+        let runtime = Runtime::new(router);
+        runtime.mark_storage_ready();
+        runtime.mark_domains_ready();
+        runtime.mark_auth_config_ready();
+        runtime.mark_startup_complete();
+
+        // Act
+        runtime.mark_storage_unavailable();
+
+        // Assert
+        assert!(!runtime.is_storage_ready());
+        assert!(!runtime.is_ready_for_traffic());
     }
 
     #[test]

@@ -11,7 +11,7 @@
 /assets/*                  → SPA static assets (JS, CSS, images)
 /ws                        → WebSocket upgrade (data plane)
 /livez                     → liveness probe
-/targetz                   → Orchestrator target health gate for handoff
+/targetz                   → Scheduling/orchestration health for a non-serving standby
 /healthz                   → Deployment-safe health gate (mirrors readiness)
 /readyz                    → native readiness probe
 /startupz                  → startup probe
@@ -28,7 +28,7 @@
 ```
 **Authentication Rules**:
 - SPA (`/`, `/assets/*`) - Public access
-- Health probes (`/livez`, `/targetz`, `/healthz`, `/readyz`, `/startupz`) - Public access for orchestrators and traffic managers
+- Health probes (`/livez`, `/targetz`, `/healthz`, `/readyz`, `/startupz`) - Public access for orchestrators and traffic managers; `/targetz` is not a customer traffic-admission signal
 - Dedicated Prometheus (`FITZ_METRICS_BIND_ADDR:FITZ_METRICS_PORT/metrics`) - No admin cookie or mutation routes
 - Admin API (`/api/v1/*`) - Requires a cookie-backed admin session; broker-global reads and drain require wildcard authority
 ## Global Endpoints
@@ -51,17 +51,18 @@ GET /livez
 - Runtime is responsive
 - No initialized domain has permanently failed after supervised restart exhaustion
 - Does NOT check downstream dependencies
-#### Orchestrator Target Health Gate
+#### Orchestrator Scheduling Health Gate
 ```
 GET /targetz
 ```
 **Authentication**: None
-**Purpose**: Orchestrator target health gate for single-writer handoff. This endpoint proves the HTTP listener is running and the process is not draining, but it intentionally does not require the Midge writer lease. Use this when a replacement process must become target-eligible before the old writer releases storage ownership.
+**Purpose**: Scheduling/orchestration health for single-writer handoff. This endpoint proves the HTTP listener is running and the process is not draining, but it intentionally does not require the Midge writer lease. Use it only through a control path that can observe a standby without routing customer traffic to it.
 **Do not use this as**:
 - A data-plane readiness signal. WebSocket upgrades and TCP sessions still require `/healthz`/`/readyz` readiness.
 - A storage health signal. `storage_writer_lease` may be `not_ready` while `/targetz` returns `200`.
+- The health check for a customer-facing ALB target group. ALB routes to healthy targets, so a lease-waiting standby would receive traffic that it must reject.
 **Response**:
-- `200 OK` - HTTP target may participate in handoff
+- `200 OK` - Process may participate in an orchestrated handoff without serving traffic
 - `503 Service Unavailable` - Target is draining or shutting down
 ```json
 {
@@ -75,10 +76,12 @@ GET /targetz
 }
 ```
 **Handoff use**:
-- Configure target eligibility to `/targetz`.
-- Keep `/healthz` and `/readyz` for strict data-plane readiness and operator checks.
-- Allow overlap so the replacement target can become eligible before the old process releases the writer lease.
-- Set process termination grace longer than `FITZ_DRAIN_GRACE_SECONDS`.
+- Keep the waiting replacement outside the customer traffic route while an orchestrator observes `/targetz`.
+- Use `/healthz` for customer ALB target-group health and `/readyz` for native readiness.
+- Drain the old writer before waiting for `/healthz` on the replacement and admitting customer traffic.
+- A standard one-target-group ECS rolling deployment cannot perform this sequence with zero downtime. Use a separate standby/controller, blue-green target groups with a custom lifecycle cutover, or a stop-first deployment that accepts downtime.
+- Expected writer-lease contention retries indefinitely with capped exponential backoff; do not use `/healthz`, `/readyz`, or `/startupz` as a liveness restart signal for the waiting task.
+- Use 90 seconds as the termination-grace baseline with the default 25-second drain grace, then increase it for peak session cleanup, domain teardown, and the configured backend/provider worst case. In-flight work is joined before storage release, so it can extend shutdown beyond that baseline.
 #### Data-Plane Health Gate
 ```
 GET /healthz
@@ -88,6 +91,13 @@ GET /healthz
 **Use this when**:
 - Your platform can check only one unauthenticated HTTP endpoint before routing traffic
 - You need a single-writer-safe cutover signal for startup, lease handoff, and shutdown
+
+With a standard one-target-group ECS rolling deployment, strict `/healthz`
+correctly prevents premature traffic but also prevents the replacement from
+becoming healthy while the old task retains the writer lease. Zero-downtime
+handoff therefore requires separate standby orchestration or a blue-green/custom
+lifecycle cutover; stop-first deployment is the downtime-accepting fallback.
+
 **Do not use this as**:
 - A liveness restart signal. `/healthz` is expected to return `503` during startup and shutdown handoff.
 - A replacement for liveness. Use `/livez` for restart decisions.
@@ -114,6 +124,11 @@ GET /healthz
 - Auth configuration validated during boot
 - Listener startup completed
 - Not in shutdown handoff
+
+Fitz continues monitoring Midge lease health after readiness first succeeds. If
+lease renewal becomes unhealthy, Fitz withdraws `/targetz`, `/healthz`, and
+`/readyz` and terminates through the fatal shutdown path. It does not remain
+ready while waiting to reacquire the writer lease.
 #### Readiness Probe
 ```
 GET /readyz
@@ -145,11 +160,17 @@ GET /readyz
 - Ready to process requests
 #### Probe Selection
 - Use `/livez` to decide when Fitz should be restarted.
-- Use `/targetz` when a replacement process must become target-eligible before it can acquire the writer lease.
-- Use `/targetz` for active/passive rolling handoff only when the app must reject WS/TCP until strict data-plane readiness.
+- Use `/targetz` only for scheduling/orchestration of a standby that is not on the customer traffic route.
+- Never use `/targetz` as the health check for the customer-facing ALB target group.
 - Use `/readyz` when your orchestrator supports a distinct readiness probe.
-- Use `/healthz` for strict data-plane traffic admission when your platform can tolerate stopping the old writer before the new target is healthy.
+- Use `/healthz` for strict customer traffic admission.
 - Use `/startupz` to suppress premature liveness checks during long startup windows.
+
+#### Shutdown Modes
+
+- SIGTERM and `POST /api/v1/runtime/drain` are planned shutdowns. After startup completes, they withdraw orchestration health and readiness, wait `FITZ_DRAIN_GRACE_SECONDS`, and then clean up sessions, listeners, domains, and Midge.
+- Ctrl-C and fatal actor or active writer-lease-health failures withdraw target and readiness probes and start cleanup immediately without the configured drain delay.
+- A standby waiting for the writer lease has no admitted data-plane sessions and skips the drain delay for every shutdown trigger. If Midge open or recovery is already in flight, Fitz must join it before exit; the underlying operation is not cooperatively cancellable.
 #### Startup Probe
 ```
 GET /startupz

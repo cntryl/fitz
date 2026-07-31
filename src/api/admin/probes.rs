@@ -141,10 +141,11 @@ pub fn handle_readiness(runtime: &Runtime) -> Response {
         .unwrap()
 }
 
-/// Orchestrator target probe - is this HTTP target alive and eligible for handoff?
+/// Orchestrator standby probe - can a control path observe this process for handoff?
 ///
 /// This intentionally does not require the Midge writer lease. Data-plane
-/// readiness remains owned by `/healthz` and `/readyz`.
+/// readiness remains owned by `/healthz` and `/readyz`; customer-facing load
+/// balancers must not use this endpoint for traffic admission.
 pub fn handle_targetz(runtime: &Runtime) -> Response {
     let response = target_status(runtime);
     let status = if response.status == "ready" {

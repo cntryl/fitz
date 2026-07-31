@@ -22,16 +22,51 @@ This guide explains how to instrument each layer of Fitz with comprehensive obse
 
 **Health Endpoints:**
 - `/livez` reports process liveness only and should drive restart policies.
-- `/targetz` reports HTTP target eligibility for orchestrator handoff and does not require the Midge writer lease.
+- `/targetz` reports scheduling/orchestration health for a non-serving standby and does not require the Midge writer lease.
 - `/readyz` reports native readiness for platforms that support a dedicated readiness probe.
 - `/healthz` mirrors readiness and should drive external traffic admission on platforms that only support one HTTP health check.
 - `/startupz` reports whether Fitz has completed startup and is safe to begin liveness checks.
 
 During planned redeploy drain, `/livez` remains `200`, while `/targetz`,
 `/readyz`, and `/healthz` return `503` with `accepting_target_traffic` or
-`accepting_traffic` set to `"draining"`. This lets a traffic manager or
-orchestrator stop new traffic before Fitz closes existing ephemeral sessions
-after `FITZ_DRAIN_GRACE_SECONDS`.
+`accepting_traffic` set to `"draining"`. Customer traffic admission must use
+`/healthz`; a separate orchestration path may use `/targetz` to coordinate a
+standby. Fitz closes existing ephemeral sessions after
+`FITZ_DRAIN_GRACE_SECONDS`.
+
+While a replacement is waiting for the Midge writer lease, `/livez` and
+`/targetz` return `200`; `/startupz`, `/readyz`, and `/healthz` return `503`.
+Expected contention retries indefinitely with capped exponential backoff.
+Never configure the customer-facing ALB target group to check `/targetz`: ALB
+would route traffic to the waiting task even though its data plane is closed.
+A standard one-target-group ECS rolling deployment therefore cannot provide
+zero-downtime single-writer handoff. Use separate standby orchestration or a
+blue-green/custom lifecycle cutover, or use stop-first deployment and accept
+downtime.
+
+SIGTERM and an authenticated runtime drain request are graceful planned
+shutdowns: an active broker reports draining for its configured grace before
+cleanup. Ctrl-C and fatal actor or writer-lease-health failures withdraw target
+and readiness probes and begin cleanup immediately without that delay. A
+waiting standby skips the active drain grace for every shutdown trigger.
+
+Fitz completes session cleanup and domain joins before releasing storage and
+joins an in-flight Midge open or recovery attempt before exit. Treat 90 seconds
+as the operational termination-grace baseline with the default 25-second drain,
+then increase it for peak session count, domain teardown, and backend/provider
+latency; it is not a guaranteed upper bound.
+
+Once active, Fitz polls Midge writer-lease renewal health as a lifecycle
+invariant rather than deriving behavior from logs. When Midge reports the lease
+unhealthy, Fitz withdraws `/targetz`, `/readyz`, and `/healthz` and requests
+fatal broker termination; the process does not attempt in-process reacquisition.
+
+The pinned Midge revision does not yet expose or independently enforce a
+monotonic lease-valid-until deadline while a provider renewal call is blocked;
+its cloud calls can outlast the 30-second lease TTL. It also treats a malformed
+cloud lease expiration as expired. Until Midge supplies a deadline watchdog and
+fail-closed expiration parsing, do not treat provider-backed cloud takeover as
+split-brain-safe under a stalled provider or corrupt lease object.
 
 ---
 

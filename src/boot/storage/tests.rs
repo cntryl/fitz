@@ -5,6 +5,8 @@ use std::fmt::Write as _;
 use std::time::Duration;
 use tempfile::TempDir;
 
+mod lease_lifecycle;
+
 fn write_marker(engine: &cntryl_midge::Engine, cf_id: u32, key: &[u8], value: &[u8]) {
     write_marker_with_options(engine, cf_id, key, value, WriteOptions::buffered());
 }
@@ -263,97 +265,6 @@ fn should_reduce_cloud_wal_flush_churn_with_throughput_tuning_on_cloud_simulated
         baseline_metrics.pending_cloud_uploads,
         tuned_metrics.pending_cloud_uploads
     );
-}
-
-#[test]
-fn should_support_local_storage_mode() {
-    // Arrange
-    let config = BootConfig::with_local_storage("/data/fitz");
-
-    // Act
-    match &config.storage_mode {
-        crate::boot::runtime::StorageMode::LocalDisk { db_path } => {
-            // Assert
-            assert_eq!(db_path, "/data/fitz");
-        }
-        _ => panic!("Expected local disk storage mode"),
-    }
-}
-
-#[tokio::test]
-async fn should_reopen_storage_given_clean_shutdown() {
-    // Arrange
-    let tempdir = TempDir::new().expect("tempdir");
-    let db_path = tempdir.path().join("fitz-local");
-    let config = BootConfig::with_local_storage(db_path.to_string_lossy().to_string());
-
-    // Act
-    let store = init(&config).await.expect("open first store");
-    let cf = store
-        .get_column_family("tenant_default")
-        .expect("tenant_default cf");
-    write_marker(store.as_ref(), cf.id(), b"marker", b"value");
-    drop(store);
-
-    let reopened = init(&config).await.expect("reopen store");
-    let reopened_cf = reopened
-        .get_column_family("tenant_default")
-        .expect("tenant_default cf after reopen");
-
-    // Assert
-    assert_eq!(
-        read_marker(reopened.as_ref(), reopened_cf.id(), b"marker"),
-        Some(b"value".to_vec())
-    );
-}
-
-#[tokio::test]
-async fn should_retry_local_disk_open_given_active_writer_lease_when_holder_releases() {
-    // Arrange
-    let tempdir = TempDir::new().expect("tempdir");
-    let db_path = tempdir.path().join("fitz-local-retry");
-    let config = BootConfig::with_local_storage(db_path.to_string_lossy().to_string());
-    let store = init(&config).await.expect("open first store");
-    let release_task = tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(150)).await;
-        shutdown_store(store);
-    });
-
-    // Act
-    let reopened = tokio::time::timeout(Duration::from_secs(5), init(&config))
-        .await
-        .expect("local disk retry should not hang")
-        .expect("reopen store after retry");
-
-    // Assert
-    release_task.await.expect("release first store");
-    shutdown_store(reopened);
-}
-
-#[test]
-fn should_detect_retryable_storage_open_error_given_active_writer_lease() {
-    // Arrange
-    let error = cntryl_midge::MidgeError::Internal(
-        "FATAL: another Midge instance is already running against this storage".to_string(),
-    );
-
-    // Act
-    let should_retry = should_retry_storage_open(&error);
-
-    // Assert
-    assert!(should_retry);
-}
-
-#[test]
-fn should_not_retry_storage_open_error_given_non_lease_failure() {
-    // Arrange
-    let error = cntryl_midge::MidgeError::Internal("permission denied".to_string());
-
-    // Act
-    let should_retry = should_retry_storage_open(&error);
-
-    // Assert
-    assert!(!should_retry);
 }
 
 #[test]

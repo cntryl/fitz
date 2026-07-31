@@ -37,7 +37,7 @@ brotli = "8"
 bytes = "1.12"
 chrono = { version = "0.4", features = ["serde"] }
 cntryl-lexkey = { git = "https://github.com/cntryl/lexkey-rs", rev = "9e75be255d73261b88dfd1d273a55fb9eb177e40" }
-cntryl-midge = { git = "https://github.com/cntryl/midge", rev = "29fa79788d5fcf04ea87f83b42c9997ab5764716" }
+cntryl-midge = { git = "https://github.com/cntryl/midge", rev = "67bdb158cfe212894abaf6fefc70ec7cd9c802bb" }
 crossbeam-channel = "0.5"
 dashmap = "6.2.1"
 futures = "0.3"

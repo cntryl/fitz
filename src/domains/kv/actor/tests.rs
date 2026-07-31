@@ -8,4 +8,5 @@ pub(super) fn test_actor() -> KvActor {
 
 mod conflict_and_error_paths;
 mod scope_and_scan;
+mod state_model;
 mod transaction_core;

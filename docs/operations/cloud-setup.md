@@ -64,7 +64,7 @@ and `compose.gcs.yml` restart until that upstream emulator behavior is fixed.
 Do not substitute the S3 provider in those profiles; that would test different
 provider semantics.
 
-Expect Fitz to reach readiness after storage startup and writer-lease acquisition. During startup handoff, `/targetz` can succeed before `/healthz` or `/readyz`; the data plane remains closed until strict readiness succeeds.
+Expect Fitz to reach readiness after storage startup and writer-lease acquisition. During startup handoff, `/targetz` can succeed before `/healthz` or `/readyz`; the data plane remains closed until strict readiness succeeds. Use `/targetz` only through a separate orchestration path, never as the customer-facing ALB target-group health check.
 
 ## Cloud Durability
 
@@ -101,6 +101,6 @@ policies continue to fail startup on the same incomplete authoritative state.
 3. Use a stable `FITZ_STORAGE_PREFIX` per environment, such as `dev`, `staging`, or `prod`.
 4. Configure provider namespace, endpoint, region, and credentials outside the image.
 5. Configure `/livez`, `/targetz`, `/startupz`, `/healthz`, and `/readyz` on the HTTP listener, plus `FITZ_METRICS_BIND_ADDR:FITZ_METRICS_PORT/metrics` for Prometheus before customer traffic.
-6. For single-active rolling handoff, use `/targetz` for target eligibility and keep `/readyz` or `/healthz` for strict data-plane readiness.
+6. For single-active handoff, keep a waiting task outside the customer traffic route while a separate controller observes `/targetz`; use `/healthz` for customer traffic admission. A standard one-target-group ECS rolling deployment cannot provide zero-downtime single-writer handoff.
 
 Endpoint details are in [../admin/admin-api.md](../admin/admin-api.md) and [observability.md](observability.md).

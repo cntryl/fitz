@@ -13,6 +13,32 @@ Use Rust's normal split between unit and integration tests.
 
 Use unit tests for isolated parsing, state transitions, actor helpers, storage-key helpers, and protocol codecs. Use integration tests when a behavior spans transport, session state, runtime routing, storage, auth, or multiple domains.
 
+## Stateful correctness models
+
+Fitz owns stateful reference-model coverage for domain behavior above the
+storage-engine boundary. These tests drive real synchronous domain actors and
+Midge-backed stores through generated operation sequences; the reference
+oracle is test-only and does not call Fitz transition helpers.
+
+Run the focused generated models with:
+
+```bash
+PROPTEST_CASES=256 cargo test --locked --lib state_model
+```
+
+Proptest prints a reproducible seed and minimizes a failing operation sequence.
+Backend CI runs the filtered models twice and also runs the complete library
+suite with 16 test threads to expose seed-dependent and parallel-state leakage.
+The complete default correctness pass remains:
+
+```bash
+cargo test --locked --workspace
+```
+
+Midge continues to own WAL, manifest, corruption, low-level writer fencing,
+and storage failpoint coverage. Fitz owns the domain contract at its actor,
+sink, codec, session, and broker-process boundaries.
+
 ## Naming
 
 Rust test names must start with `should_`.

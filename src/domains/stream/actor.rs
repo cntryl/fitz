@@ -368,6 +368,8 @@ mod tests {
     use crate::domains::stream::store::StreamStorageLayout;
     use crate::testkit::create_test_engine_with_cfs;
 
+    mod state_model;
+
     #[test]
     fn should_return_error_given_legacy_layout_marker_during_actor_recovery() {
         // Arrange

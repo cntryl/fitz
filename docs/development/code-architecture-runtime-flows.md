@@ -23,7 +23,7 @@ sequenceDiagram
     Main->>Boot: boot(config)
     Boot->>Config: validate environment and limits
     Boot->>Runtime: create Router, RuntimeIngress, runtime state
-    Boot->>HTTP: start HTTP listener early for targetz
+    Boot->>HTTP: start HTTP listener early for standby orchestration health
     Boot->>Storage: open configured Midge engine
     Boot->>Runtime: mark storage ready
     Boot->>Domains: construct all domain sinks
@@ -35,8 +35,9 @@ sequenceDiagram
     Boot->>Runtime: mark startup complete
 ```
 
-`/targetz` can come up before storage is ready. Data-plane readiness still
-requires storage, domain registration, and startup completion.
+`/targetz` can come up before storage is ready for observation by a separate
+orchestration path. It is not a customer traffic-admission signal. Data-plane
+readiness still requires storage, domain registration, and startup completion.
 
 ## Frame Dispatch Path
 

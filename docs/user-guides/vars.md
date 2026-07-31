@@ -26,11 +26,17 @@ inferring settings from Compose files, tests, or source code.
 | FITZ_ASSUME_EXTERNAL_TLS | true or false | false | Confirms that a trusted external edge terminates TLS and enables TLS-dependent browser behavior such as HSTS. Fitz refuses to start with runtime auth or protected admin on a non-loopback bind unless this is true. Loopback development can leave it unset. |
 | FITZ_ASSUME_LOCAL_LOOPBACK_EDGE | true or false | false | Confirms that a trusted local container edge publishes Fitz listeners only on host loopback. This allows authenticated local Compose without asserting TLS or enabling HSTS, and requires loopback WebSocket and admin origins. Never enable it outside local development. |
 | FITZ_WS_ALLOWED_ORIGINS | Comma-separated exact browser origins, e.g. https://app.example.com | Local loopback origins for ports 3000 and 4090 | Browser WebSocket Origin allowlist. Values are HTTP origins, not wss URLs, and must not include a path, query, fragment, or trailing slash. Public browser deployments should set this to their exact SPA origins. |
-| FITZ_DRAIN_GRACE_SECONDS | Positive integer seconds | 25 | Planned redeploy drain grace. During drain, `/healthz` and `/readyz` fail and new TCP/WebSocket sessions are rejected before active sessions are closed on shutdown. Set lower than the external termination grace. |
+| FITZ_DRAIN_GRACE_SECONDS | Positive integer seconds | 25 | Planned drain grace for an active broker after SIGTERM or an authenticated runtime drain request. During drain, `/targetz`, `/healthz`, and `/readyz` fail and new TCP/WebSocket sessions are rejected before active sessions are closed. Ctrl-C, fatal actor failure, active Midge writer-lease-health failure, and standby shutdown skip this delay. |
 | FITZ_DRAIN_CLOSE_REASON | Non-empty string | broker draining for redeploy | Server close reason recorded when planned drain shutdown closes active sessions. |
 | FITZ_ROUTE_FAMILIES | Comma-separated u32 list, contiguous from 1 (example: 1,2,3) | 1 | Provisioned route-family allowlist accepted after identity resolution. |
 | FITZ_ROUTE_FAMILY_MAP | Comma-separated identity=family mappings | Empty | Maps verified identity claim values to provisioned route-family numbers. Required when auth is enabled. |
 | FITZ_ROUTE_FAMILY_CLAIM | JWT claim key | tid | Default identity claim key used for route-family resolution. |
+
+Use 90 seconds as the external process-termination-grace baseline with the
+default drain grace, then increase it for peak session cleanup, domain teardown,
+and the configured storage backend and provider's measured worst case. This is
+not a hard upper bound: Fitz joins in-flight work before releasing storage, and
+Midge does not cooperatively cancel open or recovery.
 
 ## JWT Verification
 

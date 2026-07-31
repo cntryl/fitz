@@ -720,14 +720,19 @@ Brokers SHOULD NOT expose session IDs to clients in standard responses. Session 
 **File:** `src/boot/mod.rs`
 ```rust
 pub async fn boot(config: BootConfig) -> Result<()> {
-    // 1. Initialize observability and validate configuration
+    // 1. Register SIGINT/SIGTERM before any blocking startup work
+    let mut shutdown = ShutdownCoordinator::start()?;
+
+    // 2. Initialize observability and validate configuration
     observability::init_observability()?;
     config.validate()?;
 
-    // 2. Initialize runtime before storage so HTTP target health can answer
+    // 3. Initialize runtime before storage so standby orchestration health can answer.
+    //    Runtime drain and fatal actor failure feed the same coordinator.
     let (router, ingress, ingress_config, runtime) = runtime::init(&config)?;
+    shutdown.monitor_runtime(runtime.clone());
 
-    // 3. Start HTTP early for /targetz; WebSocket upgrades stay gated
+    // 4. Start HTTP early for /targetz; WebSocket upgrades stay gated
     let http = handlers::spawn_http_listener(
         &config,
         ingress.clone(),
@@ -735,16 +740,20 @@ pub async fn boot(config: BootConfig) -> Result<()> {
         runtime.clone(),
     ).await?;
     
-    // 4. Open storage and acquire the active Midge writer lease
-    let store = storage::init(&config).await?;
+    // 5. Acquire the Midge writer lease. Expected contention retries forever
+    //    with capped backoff, while shutdown cancels the retry cleanly.
+    let store = match storage::init_with_shutdown(&config, shutdown.receiver()).await? {
+        StorageInitOutcome::Ready(store) => store,
+        StorageInitOutcome::ShutdownRequested => return shutdown_startup().await,
+    };
     runtime.mark_storage_ready();
     
-    // 5. Register domains
+    // 6. Register domains
     let domains = domains::setup(&router, &store)?;
     runtime.attach_domains(domains);
     runtime.mark_domains_ready();
     
-    // 6. Start TCP after domains exist; both TCP and WebSocket require
+    // 7. Start TCP after domains exist; both TCP and WebSocket require
     //    runtime.is_ready_for_traffic() before accepting work.
     if config.tcp_enabled {
         tokio::spawn(handlers::spawn_tcp_listener(
@@ -754,21 +763,54 @@ pub async fn boot(config: BootConfig) -> Result<()> {
         ));
     }
     
-    // 7. Mark startup complete so /readyz and /healthz can pass
+    // 8. Mark startup complete so /readyz and /healthz can pass
     runtime.mark_startup_complete();
     
-    // 8. Wait for shutdown
-    tokio::signal::ctrl_c().await?;
-    tracing::info!("Fitz broker shutting down...");
+    // 9. Every trigger enters explicit cleanup. SIGTERM and admin drain use
+    //    graceful drain; Ctrl-C and fatal failures skip the drain delay.
+    let signal = shutdown.wait().await?;
+    shutdown_broker(signal, context).await?;
     
     Ok(())
 }
 ```
 
 `/targetz` is intentionally reachable after the HTTP listener starts and before
-Midge storage is ready. It is only an orchestrator handoff signal. `/healthz`,
-`/readyz`, WebSocket upgrades, and TCP sessions still require strict data-plane
-readiness, including active Midge writer-lease ownership.
+Midge storage is ready. It is only for a separate orchestration path that does
+not route customer traffic to the waiting process. A customer-facing ALB target
+group must use `/healthz`. `/readyz`, WebSocket upgrades, and TCP sessions still
+require strict data-plane readiness, including active Midge writer-lease ownership.
+
+Writer-lease contention is an expected hot-standby state. Fitz retries it
+indefinitely with exponential backoff capped at five seconds plus jitter.
+`/livez` and `/targetz` remain available while `/startupz`, `/healthz`, and
+`/readyz` remain unavailable. Other storage-open and provisioning failures fail
+startup immediately.
+
+The shutdown coordinator is registered before lease acquisition. A standby
+that receives Ctrl-C, SIGTERM, an authenticated runtime drain request, or a
+fatal shutdown request stops retrying, marks standby health unavailable, closes
+its early listeners, and exits without applying the active-broker drain delay.
+Once startup completes, SIGTERM and authenticated runtime drain apply
+`FITZ_DRAIN_GRACE_SECONDS` before closing ephemeral sessions. Ctrl-C and fatal
+actor or active writer-lease-health failures skip that delay. Both paths join
+listeners, stop domains, and explicitly shut Midge down before returning.
+Startup rollback after storage acquisition uses the same explicit cleanup path.
+
+Cancellation is cooperative between storage-open attempts and during retry
+backoff, but Midge open and recovery are synchronous and are not themselves
+cooperatively cancellable. Fitz therefore joins an in-flight attempt and shuts
+down any Engine it returns. Session cleanup, domain joins, and backend/provider
+latency can extend process termination; the operations guidance treats 90
+seconds as a baseline, not an architectural upper bound.
+
+After activation, the shutdown coordinator also monitors Midge writer-lease
+renewal health. When Midge reports the lease unhealthy, Fitz withdraws
+orchestration health and strict readiness and requests fatal termination without
+attempting in-process lease reacquisition. The pinned Midge revision still needs
+an independent monotonic pre-TTL watchdog for blocked cloud renewal and
+fail-closed parsing for malformed cloud lease expiration; Fitz cannot recreate
+those lease-internal guarantees from the exposed boolean.
 ### Configuration
 **Type:** `BootConfig`
 ```rust

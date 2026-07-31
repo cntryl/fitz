@@ -42,7 +42,7 @@ Operator tooling should not call `/admin/sessions/{id}/close` or
 
 ### Health Probes
 - `GET /livez` - Liveness probe.
-- `GET /targetz` - Orchestrator target health gate.
+- `GET /targetz` - Scheduling/orchestration health for a non-serving standby; not a customer load-balancer admission gate.
 - `GET /healthz` - Deployment-safe health gate.
 - `GET /readyz` - Readiness probe.
 - `GET /startupz` - Startup probe.
@@ -57,7 +57,7 @@ Operator tooling should not call `/admin/sessions/{id}/close` or
 ### Runtime And Observability Routes
 - `GET /api/v1/{family}/metrics` - Structured metrics for one authorized family.
 - `GET /api/v1/all/metrics` - Broker-wide structured metrics; wildcard authority required.
-- `POST /api/v1/runtime/drain` - Begin runtime drain.
+- `POST /api/v1/runtime/drain` - Begin the planned runtime drain and continue automatically through session, listener, domain, and storage shutdown after the configured grace.
 - `GET /api/v1/stats` - Global broker and domain statistics.
 - `GET /api/v1/{family}/stats` - Family-scoped broker and domain statistics.
 - `GET /api/v1/topology` - Messaging topology.
