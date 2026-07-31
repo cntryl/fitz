@@ -77,11 +77,14 @@ GET /api/v1/stream/realms/{realm}/areas/{area}/resources
   "realm": "prod",
   "area": "events",
   "resources": [
-    { "resource": "orders" },
-    { "resource": "payments" }
+    { "resource": "orders", "committed_event_count": 384922, "size_bytes": 52847392, "sessions_active": 3 },
+    { "resource": "payments", "committed_event_count": 812, "size_bytes": 98304, "sessions_active": 0 }
   ]
 }
 ```
+Concrete-family paths report only that family. `/api/v1/all/...` sums committed
+event counts, storage bytes, and live append sessions for identical resource
+paths across accessible families.
 
 #### Get Stream Resource Detail
 ```
@@ -107,6 +110,11 @@ GET /api/v1/stream/realms/{realm}/areas/{area}/resources/{resource}
 - Stream subscriptions remain session-scoped best-effort delivery and are not represented as durable admin state.
 ### Notice Domain
 All Notice admin responses reflect live in-memory broker state only. Notice subscriptions are session-scoped, disappear on disconnect, and are not restored after broker restart.
+
+The Notice resource list includes `subscriptions_active`,
+`notifications_received`, and `publishes_per_minute`. These are current-process
+counters and rates, not durable delivery history. `/all/` sums identical paths
+across accessible families.
 
 #### Get Notice Resource Detail
 ```
@@ -271,6 +279,12 @@ DELETE /api/v1/queue/realms/{realm}/areas/{area}/resources/{resource}/dead-lette
 All RPC admin endpoints expose live in-memory state for the current broker instance only. Worker registrations and pending requests disappear on disconnect or broker restart and are not durable recovery queues.
 The broker updates this read model as a coalesced operational snapshot, so very recent subscribe, unsubscribe, timeout, and cleanup events can lag briefly in admin responses. Treat these endpoints as near-live diagnostics, not strongly consistent reads of the hot path.
 
+The RPC resource list unions worker and pending-only routes and reports
+`workers_registered`, `requests_pending`, and nullable
+`slowest_worker_average_latency_ms`. Latency remains null until a worker has
+handled a request. `/all/` sums counts and takes the slowest available latency
+across accessible families.
+
 #### List Operations For A Resource
 ```
 GET /api/v1/rpc/realms/{realm}/areas/{area}/resources/{resource}/operations
@@ -393,6 +407,10 @@ Like the worker and pending endpoints, these counters are served from the curren
 ### Lease Domain
 All Lease admin responses reflect live in-memory state for the current broker process only. Lease ownership disappears on disconnect cleanup or broker restart, and `fencing_token` values are process-local rather than durable or cross-node identifiers.
 
+The Lease resource list unions owned and waiter-only resources and reports
+`active_leases`, `waiters`, and `oldest_lease_age_seconds`. `/all/` sums counts
+and takes the oldest live age across accessible families.
+
 #### Get Lease Resource Detail
 ```
 GET /api/v1/lease/realms/{realm}/areas/{area}/resources/{resource}
@@ -458,6 +476,12 @@ These values are point-in-time in-memory counts for the running broker process a
 ```
 ### Schedule Domain
 Schedule definitions are durable and are preloaded into per-family Schedule actors during broker boot. Admin schedule views therefore reflect persisted definitions before any schedule-domain traffic reaches that family. Schedule notifications and subscriptions remain live session-scoped delivery only, and `last_run` / `executions_total` are still non-authoritative placeholders in this round.
+
+The Schedule resource list reports enabled definitions as `schedules_active`,
+durable `pending_claims`, and the earliest enabled `next_run`. Disabled-only
+resources remain listed with a null `next_run`; pending-only resources are also
+included. `/all/` sums counts and selects the earliest enabled run across
+accessible families.
 
 #### Get Schedule Resource
 ```

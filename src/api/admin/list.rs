@@ -63,12 +63,14 @@ pub(crate) use dto_resources::{
     MAX_KV_SCAN_LIMIT,
 };
 pub use dto_resources::{
-    AreaCollection, AreaDetail, AreaEntry, KvResourceDetail, LeaseResourceDetail,
-    NoticeResourceDetail, OperationCollection, OperationEntry, QueueAgeBuckets,
-    QueueResourceDetail, RealmCollection, RealmDetail, RealmEntry, ResourceCollection,
-    ResourceEntry, ResourceRef, RpcOperationDetail, ScheduleResourceDetail, StreamAreaWatermark,
-    StreamAreaWatermarkDetail, StreamRealmWatermark, StreamRealmWatermarkDetail,
-    StreamResourceDetail,
+    AreaCollection, AreaDetail, AreaEntry, KvResourceDetail, LeaseResourceCollection,
+    LeaseResourceDetail, LeaseResourceEntry, NoticeResourceCollection, NoticeResourceDetail,
+    NoticeResourceEntry, OperationCollection, OperationEntry, QueueAgeBuckets, QueueResourceDetail,
+    RealmCollection, RealmDetail, RealmEntry, ResourceCollection, ResourceEntry, ResourceRef,
+    RpcOperationDetail, RpcResourceCollection, RpcResourceEntry, ScheduleResourceCollection,
+    ScheduleResourceDetail, ScheduleResourceEntry, StreamAreaWatermark, StreamAreaWatermarkDetail,
+    StreamRealmWatermark, StreamRealmWatermarkDetail, StreamResourceCollection,
+    StreamResourceDetail, StreamResourceEntry,
 };
 pub use query_params::{
     parse_admin_record_limit, parse_kv_query_bytes, parse_kv_scan_limit, parse_limit_query_param,
@@ -77,11 +79,12 @@ pub use query_params::{
 };
 pub(crate) use resource_inventory::kv_byte_value;
 pub use resource_inventory::{
-    collect_areas, collect_kv_resources, collect_realms, collect_resources,
-    kv_committed_value_for_resource, kv_prefix_scan_for_resource, kv_resources,
-    kv_rows_for_resource, kv_transactions_for_resource, lease_resources, list_sessions,
-    list_sessions_for_family, notice_resources, queue_resources, rpc_operations, rpc_resources,
-    schedule_resources, stream_resources,
+    collect_areas, collect_kv_resources, collect_lease_resources, collect_notice_resources,
+    collect_realms, collect_resources, collect_rpc_resources, collect_schedule_resources,
+    collect_stream_resources, kv_committed_value_for_resource, kv_prefix_scan_for_resource,
+    kv_resources, kv_rows_for_resource, kv_transactions_for_resource, lease_resources,
+    list_sessions, list_sessions_for_family, notice_resources, queue_resources, rpc_operations,
+    rpc_resources, schedule_resources, stream_resources,
 };
 pub(crate) use resource_paths::{
     collect_distinct_entries, collect_resource_refs, matches_family, IntoResourceRef,

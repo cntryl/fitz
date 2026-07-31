@@ -2,10 +2,15 @@ use super::{
     collect_distinct_entries, collect_resource_refs, matches_family, parse_flexible_route,
     parse_rpc_operation, AreaCollection, AreaEntry, Infallible, IntoResourceRef, KvByteValue,
     KvCommittedPair, KvCommittedValueResponse, KvPrefixScanResponse, KvRowsResponse,
-    KvTransactionsList, OperationCollection, OperationEntry, RealmCollection, RealmEntry,
-    ResourceCollection, ResourceEntry, ResourcePath, ResourceRef, Response, Runtime, SessionsList,
+    KvTransactionsList, LeaseResourceCollection, LeaseResourceEntry, NoticeResourceCollection,
+    NoticeResourceEntry, OperationCollection, OperationEntry, RealmCollection, RealmEntry,
+    ResourceCollection, ResourceEntry, ResourcePath, ResourceRef, Response, RpcResourceCollection,
+    RpcResourceEntry, Runtime, ScheduleResourceCollection, ScheduleResourceEntry, SessionsList,
+    StreamResourceCollection, StreamResourceEntry,
 };
+use crate::api::admin::troubleshooting;
 use crate::domains::kv::sink::AdminKvRowsRequest;
+use crate::runtime::routing::RouteFamily;
 use base64::Engine;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -63,6 +68,296 @@ pub fn collect_resources(resources: &[ResourceRef], realm: &str, area: &str) -> 
                 .map(|item| item.resource.clone()),
             ResourceEntry::named,
         ),
+    }
+}
+
+#[must_use]
+pub fn collect_stream_resources(
+    runtime: &Runtime,
+    realm: &str,
+    area: &str,
+    family: Option<u64>,
+) -> StreamResourceCollection {
+    let mut resources = BTreeMap::<String, StreamResourceEntry>::new();
+    for stream in runtime
+        .stream_list_streams(Some(realm))
+        .into_iter()
+        .filter(|stream| matches_family(family, stream.route_family) && stream.area == area)
+    {
+        let entry =
+            resources
+                .entry(stream.resource.clone())
+                .or_insert_with(|| StreamResourceEntry {
+                    resource: stream.resource,
+                    committed_event_count: 0,
+                    size_bytes: 0,
+                    sessions_active: 0,
+                });
+        entry.committed_event_count = entry
+            .committed_event_count
+            .saturating_add(stream.offset.saturating_add(1));
+        entry.size_bytes = entry.size_bytes.saturating_add(stream.size_bytes);
+        entry.sessions_active = entry.sessions_active.saturating_add(stream.sessions_active);
+    }
+    StreamResourceCollection {
+        realm: realm.to_string(),
+        area: area.to_string(),
+        resources: resources.into_values().collect(),
+    }
+}
+
+#[must_use]
+pub fn collect_lease_resources(
+    runtime: &Runtime,
+    realm: &str,
+    area: &str,
+    family: Option<u64>,
+) -> LeaseResourceCollection {
+    let mut resources = BTreeMap::<String, LeaseResourceEntry>::new();
+    for lease in runtime
+        .lease_list_leases(Some(realm))
+        .into_iter()
+        .filter(|lease| matches_family(family, lease.route_family) && lease.area == area)
+    {
+        let entry = resources
+            .entry(lease.resource.clone())
+            .or_insert_with(|| LeaseResourceEntry {
+                resource: lease.resource,
+                active_leases: 0,
+                waiters: 0,
+                oldest_lease_age_seconds: 0,
+            });
+        entry.active_leases = entry.active_leases.saturating_add(1);
+        entry.oldest_lease_age_seconds = entry
+            .oldest_lease_age_seconds
+            .max(troubleshooting::age_seconds_since(&lease.acquired_at).unwrap_or(0));
+    }
+    for waiter in runtime.lease_list_waiters().into_iter().filter(|waiter| {
+        matches_family(family, waiter.route_family) && waiter.realm == realm && waiter.area == area
+    }) {
+        let entry =
+            resources
+                .entry(waiter.resource.clone())
+                .or_insert_with(|| LeaseResourceEntry {
+                    resource: waiter.resource,
+                    active_leases: 0,
+                    waiters: 0,
+                    oldest_lease_age_seconds: 0,
+                });
+        entry.waiters = entry.waiters.saturating_add(1);
+    }
+    LeaseResourceCollection {
+        realm: realm.to_string(),
+        area: area.to_string(),
+        resources: resources.into_values().collect(),
+    }
+}
+
+#[must_use]
+pub fn collect_notice_resources(
+    runtime: &Runtime,
+    realm: &str,
+    area: &str,
+    family: Option<u64>,
+) -> NoticeResourceCollection {
+    let mut resources = BTreeMap::<String, NoticeResourceEntry>::new();
+    for subscription in runtime
+        .notice_list_subscriptions(Some(realm), None)
+        .into_iter()
+        .filter(|subscription| matches_family(family, subscription.route_family))
+    {
+        let Some(path) = parse_flexible_route(&subscription.pattern) else {
+            continue;
+        };
+        if path.realm != realm || path.area != area {
+            continue;
+        }
+        let entry = resources
+            .entry(path.resource.clone())
+            .or_insert_with(|| NoticeResourceEntry {
+                resource: path.resource,
+                subscriptions_active: 0,
+                notifications_received: 0,
+                publishes_per_minute: 0.0,
+            });
+        entry.subscriptions_active = entry.subscriptions_active.saturating_add(1);
+        entry.notifications_received = entry
+            .notifications_received
+            .saturating_add(subscription.notifications_received);
+    }
+    for route in runtime
+        .notice_list_routes(Some(realm))
+        .into_iter()
+        .filter(|route| matches_family(family, route.route_family))
+    {
+        let Some(path) = parse_flexible_route(&route.route) else {
+            continue;
+        };
+        if path.realm != realm || path.area != area {
+            continue;
+        }
+        let entry = resources
+            .entry(path.resource.clone())
+            .or_insert_with(|| NoticeResourceEntry {
+                resource: path.resource,
+                subscriptions_active: 0,
+                notifications_received: 0,
+                publishes_per_minute: 0.0,
+            });
+        entry.publishes_per_minute += route.publishes_per_minute;
+    }
+    NoticeResourceCollection {
+        realm: realm.to_string(),
+        area: area.to_string(),
+        resources: resources.into_values().collect(),
+    }
+}
+
+#[must_use]
+pub fn collect_rpc_resources(
+    runtime: &Runtime,
+    realm: &str,
+    area: &str,
+    family: Option<u64>,
+) -> RpcResourceCollection {
+    let mut resources = BTreeMap::<String, RpcResourceEntry>::new();
+    for worker in runtime
+        .rpc_list_workers(Some(realm))
+        .into_iter()
+        .filter(|worker| matches_family(family, worker.route_family))
+    {
+        let Some(operation) = parse_rpc_operation(&worker.route) else {
+            continue;
+        };
+        if operation.realm != realm || operation.area != area {
+            continue;
+        }
+        let entry = resources
+            .entry(operation.resource.clone())
+            .or_insert_with(|| RpcResourceEntry {
+                resource: operation.resource,
+                workers_registered: 0,
+                requests_pending: 0,
+                slowest_worker_average_latency_ms: None,
+            });
+        entry.workers_registered = entry.workers_registered.saturating_add(1);
+        if worker.requests_handled > 0 {
+            entry.slowest_worker_average_latency_ms = Some(
+                entry
+                    .slowest_worker_average_latency_ms
+                    .map_or(worker.average_latency_ms, |latency| {
+                        latency.max(worker.average_latency_ms)
+                    }),
+            );
+        }
+    }
+    for pending in runtime
+        .rpc_list_pending(Some(realm))
+        .into_iter()
+        .filter(|pending| matches_family(family, pending.route_family))
+    {
+        let Some(operation) = parse_rpc_operation(&pending.route) else {
+            continue;
+        };
+        if operation.realm != realm || operation.area != area {
+            continue;
+        }
+        let entry = resources
+            .entry(operation.resource.clone())
+            .or_insert_with(|| RpcResourceEntry {
+                resource: operation.resource,
+                workers_registered: 0,
+                requests_pending: 0,
+                slowest_worker_average_latency_ms: None,
+            });
+        entry.requests_pending = entry.requests_pending.saturating_add(1);
+    }
+    RpcResourceCollection {
+        realm: realm.to_string(),
+        area: area.to_string(),
+        resources: resources.into_values().collect(),
+    }
+}
+
+fn schedule_families(
+    runtime: &Runtime,
+    family: Option<u64>,
+    schedule_rows: &[crate::control::admin::ScheduleInfo],
+) -> Vec<u64> {
+    family.map_or_else(
+        || {
+            let mut families = runtime
+                .admin_auth()
+                .provisioned_route_families()
+                .into_iter()
+                .filter_map(|value| value.parse().ok())
+                .collect::<BTreeSet<_>>();
+            families.extend(schedule_rows.iter().map(|schedule| schedule.route_family));
+            families.into_iter().collect()
+        },
+        |family| vec![family],
+    )
+}
+
+#[must_use]
+pub fn collect_schedule_resources(
+    runtime: &Runtime,
+    realm: &str,
+    area: &str,
+    family: Option<u64>,
+) -> ScheduleResourceCollection {
+    let mut resources = BTreeMap::<String, ScheduleResourceEntry>::new();
+    let schedules = runtime
+        .schedule_list_schedules(Some(realm))
+        .into_iter()
+        .filter(|schedule| matches_family(family, schedule.route_family) && schedule.area == area)
+        .collect::<Vec<_>>();
+    for schedule in &schedules {
+        let entry = resources
+            .entry(schedule.resource.clone())
+            .or_insert_with(|| ScheduleResourceEntry {
+                resource: schedule.resource.clone(),
+                schedules_active: 0,
+                pending_claims: 0,
+                next_run: None,
+            });
+        if schedule.enabled {
+            entry.schedules_active = entry.schedules_active.saturating_add(1);
+            if entry
+                .next_run
+                .as_ref()
+                .is_none_or(|next| schedule.next_run < *next)
+            {
+                entry.next_run = Some(schedule.next_run.clone());
+            }
+        }
+    }
+    for family in schedule_families(runtime, family, &schedules) {
+        let Ok(route_family) = RouteFamily::try_from(family) else {
+            continue;
+        };
+        for claim in runtime.schedule_list_pending_claims(route_family) {
+            let Some(operation) = parse_rpc_operation(&claim.route) else {
+                continue;
+            };
+            if operation.realm != realm || operation.area != area {
+                continue;
+            }
+            let entry = resources
+                .entry(operation.resource.clone())
+                .or_insert_with(|| ScheduleResourceEntry {
+                    resource: operation.resource,
+                    schedules_active: 0,
+                    pending_claims: 0,
+                    next_run: None,
+                });
+            entry.pending_claims = entry.pending_claims.saturating_add(1);
+        }
+    }
+    ScheduleResourceCollection {
+        realm: realm.to_string(),
+        area: area.to_string(),
+        resources: resources.into_values().collect(),
     }
 }
 

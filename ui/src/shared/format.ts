@@ -100,3 +100,10 @@ export function formatDurationSeconds(value: number) {
   const days = Math.floor(hours / 24);
   return `${days}d`;
 }
+
+export function formatBytes(value: number) {
+  if (value < 1024) return `${formatNumber(value)} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`;
+  if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MiB`;
+  return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GiB`;
+}

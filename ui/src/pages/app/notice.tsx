@@ -11,6 +11,7 @@ import {
 } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainInventoryPage from "@/components/shared/domain-inventory-page";
+import type { DomainResourceMetricColumn } from "@/components/shared/domain-resource-inventory-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
 import { queryFreshness, queryHeaderStatus } from "@/components/shared/query-header-status";
@@ -29,6 +30,30 @@ import { createResourceInventoryQuery } from "@/features/resource/resource-query
 import { formatCount, formatNumber } from "@/shared/format";
 import { domainScopeHref, formatFitzRoute } from "@/shared/navigation/domains";
 import NoticeOperationPage from "./notice-operation";
+
+const noticeMetricColumns: readonly DomainResourceMetricColumn[] = [
+  {
+    id: "subscriptions",
+    header: "Subscriptions",
+    width: "16%",
+    cell: (row) => formatNumber(row.subscriptionsActive ?? 0),
+    sortValue: (row) => row.subscriptionsActive,
+  },
+  {
+    id: "publishes",
+    header: "Publishes / min",
+    width: "16%",
+    cell: (row) => (row.publishesPerMinute ?? 0).toFixed(2),
+    sortValue: (row) => row.publishesPerMinute,
+  },
+  {
+    id: "delivered",
+    header: "Delivered",
+    width: "14%",
+    cell: (row) => formatNumber(row.notificationsReceived ?? 0),
+    sortValue: (row) => row.notificationsReceived,
+  },
+];
 
 function decodeParam(value: string | undefined) {
   if (!value) return undefined;
@@ -105,6 +130,7 @@ function NoticeLandingPage() {
       refreshingDescription="Refreshing notice inventory..."
       emptyDescription="No notice resources are currently visible. Check the selected Route Family or broaden scope."
       tableTitle="Resource inventory"
+      metricColumns={noticeMetricColumns}
       stats={[
         {
           label: "Active operation routes",

@@ -214,7 +214,10 @@
 }
 
 .domain-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   min-width: 0;
+  gap: var(--ak-space-md, 1rem);
 }
 
 .chart-grid {

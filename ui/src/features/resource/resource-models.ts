@@ -3,6 +3,8 @@ import type { GenericResourceDomainSegment } from "@/shared/navigation/domains";
 export type DomainId = GenericResourceDomainSegment;
 
 export interface ResourceInventoryResource {
+  activeLeases?: number;
+  committedEventCount?: number;
   estimateComplete?: boolean;
   estimatedRecordCount?: number;
   estimatedStorageBytes?: number;
@@ -17,7 +19,20 @@ export interface ResourceInventoryResource {
   messagesDelayed?: number;
   messagesInflight?: number;
   messagesReady?: number;
+  nextRun?: string | null;
+  notificationsReceived?: number;
   oldestBacklogAgeSeconds?: number;
+  oldestLeaseAgeSeconds?: number;
+  pendingClaims?: number;
+  publishesPerMinute?: number;
+  requestsPending?: number;
+  schedulesActive?: number;
+  sessionsActive?: number;
+  sizeBytes?: number;
+  slowestWorkerAverageLatencyMs?: number | null;
+  subscriptionsActive?: number;
+  waiters?: number;
+  workersRegistered?: number;
 }
 
 export interface ResourceInventoryArea {

@@ -1,7 +1,32 @@
 import DomainInventoryPage from "@/components/shared/domain-inventory-page";
+import type { DomainResourceMetricColumn } from "@/components/shared/domain-resource-inventory-table";
 import { createLeaseOverviewQuery } from "@/features/lease/lease-query";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 import { formatDurationSeconds, formatNumber } from "@/shared/format";
+
+const leaseMetricColumns: readonly DomainResourceMetricColumn[] = [
+  {
+    id: "active",
+    header: "Active",
+    width: "14%",
+    cell: (row) => formatNumber(row.activeLeases ?? 0),
+    sortValue: (row) => row.activeLeases,
+  },
+  {
+    id: "waiters",
+    header: "Waiters",
+    width: "14%",
+    cell: (row) => formatNumber(row.waiters ?? 0),
+    sortValue: (row) => row.waiters,
+  },
+  {
+    id: "oldest",
+    header: "Oldest",
+    width: "18%",
+    cell: (row) => formatDurationSeconds(row.oldestLeaseAgeSeconds ?? 0),
+    sortValue: (row) => row.oldestLeaseAgeSeconds,
+  },
+];
 
 function riskSignal(stats: {
   acquireTimeoutsTotal: number;
@@ -68,6 +93,7 @@ export default function LeasePage() {
       refreshingDescription="Refreshing lease inventory..."
       emptyDescription="No lease resources are currently visible. Check the selected Route Family or broaden scope."
       tableTitle="Resource inventory"
+      metricColumns={leaseMetricColumns}
       stats={[
         { label: "Active leases", value: stats ? formatNumber(stats.leasesActive) : "--" },
         { label: "Waiters", value: stats ? formatNumber(stats.waiterDepth) : "--" },

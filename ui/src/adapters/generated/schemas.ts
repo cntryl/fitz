@@ -230,6 +230,12 @@ export type KvTransactionsList = {
   "transactions": Array<KvTransaction>;
 };
 
+export type LeaseResourceCollection = {
+  "realm": string;
+  "area": string;
+  "resources": Array<LeaseResourceEntry>;
+};
+
 export type LeaseResourceDetail = {
   "realm": string;
   "area": string;
@@ -237,6 +243,13 @@ export type LeaseResourceDetail = {
   "active_leases": number;
   "oldest_lease_age_seconds": number;
   "diagnostics": DiagnosticSnapshot;
+};
+
+export type LeaseResourceEntry = {
+  "resource": string;
+  "active_leases": number;
+  "waiters": number;
+  "oldest_lease_age_seconds": number;
 };
 
 export type LeaseSearchItem = {
@@ -309,12 +322,25 @@ export type NoticeDeliveryObservationList = {
   "observations": Array<NoticeDeliveryObservation>;
 };
 
+export type NoticeResourceCollection = {
+  "realm": string;
+  "area": string;
+  "resources": Array<NoticeResourceEntry>;
+};
+
 export type NoticeResourceDetail = {
   "realm": string;
   "area": string;
   "resource": string;
   "subscriptions_active": number;
   "diagnostics": DiagnosticSnapshot;
+};
+
+export type NoticeResourceEntry = {
+  "resource": string;
+  "subscriptions_active": number;
+  "notifications_received": number;
+  "publishes_per_minute": number;
 };
 
 export type NoticeStats = {
@@ -723,6 +749,19 @@ export type RpcPendingRequest = {
   "worker_session_id": string | null;
 };
 
+export type RpcResourceCollection = {
+  "realm": string;
+  "area": string;
+  "resources": Array<RpcResourceEntry>;
+};
+
+export type RpcResourceEntry = {
+  "resource": string;
+  "workers_registered": number;
+  "requests_pending": number;
+  "slowest_worker_average_latency_ms": number | null;
+};
+
 export type RpcStats = {
   "workers_registered": number;
   "requests_pending": number;
@@ -825,6 +864,12 @@ export type ScheduleMissedObservationList = {
   "observations": Array<ScheduleMissedObservation>;
 };
 
+export type ScheduleResourceCollection = {
+  "realm": string;
+  "area": string;
+  "resources": Array<ScheduleResourceEntry>;
+};
+
 export type ScheduleResourceDetail = {
   "realm": string;
   "area": string;
@@ -834,6 +879,13 @@ export type ScheduleResourceDetail = {
   "next_run"?: string | null;
   "executions_total": number;
   "diagnostics": DiagnosticSnapshot;
+};
+
+export type ScheduleResourceEntry = {
+  "resource": string;
+  "schedules_active": number;
+  "pending_claims": number;
+  "next_run": string | null;
 };
 
 export type ScheduleStats = {
@@ -945,6 +997,12 @@ export type StreamRecordsResponse = {
   "records": Array<StreamAdminRecord>;
 };
 
+export type StreamResourceCollection = {
+  "realm": string;
+  "area": string;
+  "resources": Array<StreamResourceEntry>;
+};
+
 export type StreamResourceDetail = {
   "realm": string;
   "area": string;
@@ -954,6 +1012,13 @@ export type StreamResourceDetail = {
   "size_bytes": number;
   "sessions_active": number;
   "diagnostics": DiagnosticSnapshot;
+};
+
+export type StreamResourceEntry = {
+  "resource": string;
+  "committed_event_count": number;
+  "size_bytes": number;
+  "sessions_active": number;
 };
 
 export type StreamStats = {

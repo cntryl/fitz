@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import {
   applyLeaseOverride,
   domainOverviewPages,
@@ -9,6 +9,45 @@ import {
   mockResourceDetailApis,
   mockScheduleResourceApis,
 } from "./shell/resource-mocks";
+
+async function expectDomainStatsOnSingleRow(page: Page) {
+  const statTops = await page
+    .locator('.domain-stat-grid > [data-slot="card"]')
+    .evaluateAll((cards) => cards.map((card) => Math.round(card.getBoundingClientRect().top)));
+  expect(statTops).toHaveLength(3);
+  expect(new Set(statTops).size).toBe(1);
+}
+
+const rollupHeaders: Record<string, string[]> = {
+  lease: ["Active", "Waiters", "Oldest"],
+  notice: ["Subscriptions", "Publishes / min", "Delivered"],
+  rpc: ["Workers", "Pending", "Slowest avg ms"],
+  schedule: ["Enabled", "Pending claims", "Next run"],
+  stream: ["Committed", "Storage", "Append sessions"],
+};
+
+async function expectInventoryRollups(page: Page, domain: string, mobile: boolean) {
+  const headers = rollupHeaders[domain];
+  if (!headers) return;
+
+  for (const header of headers) {
+    await expect(page.getByRole("columnheader", { name: new RegExp(header) })).toBeVisible();
+  }
+  await page.getByRole("button", { name: new RegExp(`Sort by ${headers[0]}`) }).click();
+  await expect(
+    page.getByRole("button", { name: new RegExp(`Sort by ${headers[0]}, descending`) }),
+  ).toBeVisible();
+  const scrollHint = page.getByText("Scroll horizontally to view every metric.");
+  if (mobile) {
+    await expect(scrollHint).toBeVisible();
+  } else {
+    await expect(scrollHint).toBeHidden();
+  }
+  if (mobile) {
+    const table = page.locator(".domain-resource-virtual-table");
+    expect(await table.evaluate((node) => node.scrollWidth > node.clientWidth)).toBe(true);
+  }
+}
 
 test("captures a domain inventory page", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 1200 });
@@ -313,10 +352,17 @@ test.describe("captures domain overview templates", () => {
     test(`captures ${overviewPage.domain} overview on desktop`, async ({ page }, testInfo) => {
       await page.setViewportSize({ width: 1440, height: 1200 });
       await mockDomainOverviewApis(page);
+      const detailRequests: string[] = [];
+      page.on("request", (request) => {
+        if (/\/resources\/[^/?]+(?:\?.*)?$/.test(request.url())) detailRequests.push(request.url());
+      });
       await page.goto(overviewPage.path);
 
       await expect(page.getByRole("heading", { name: overviewPage.heading })).toBeVisible();
       await expect(page.locator("main#main-content")).toHaveCount(1);
+      await expectDomainStatsOnSingleRow(page);
+      await expectInventoryRollups(page, overviewPage.domain, false);
+      expect(detailRequests).toEqual([]);
 
       await page.screenshot({
         fullPage: true,
@@ -328,10 +374,17 @@ test.describe("captures domain overview templates", () => {
     test(`captures ${overviewPage.domain} overview on mobile`, async ({ page }, testInfo) => {
       await page.setViewportSize({ width: 390, height: 844 });
       await mockDomainOverviewApis(page);
+      const detailRequests: string[] = [];
+      page.on("request", (request) => {
+        if (/\/resources\/[^/?]+(?:\?.*)?$/.test(request.url())) detailRequests.push(request.url());
+      });
       await page.goto(overviewPage.path);
 
       await expect(page.getByRole("heading", { name: overviewPage.heading })).toBeVisible();
       await expect(page.locator("main#main-content")).toHaveCount(1);
+      await expectDomainStatsOnSingleRow(page);
+      await expectInventoryRollups(page, overviewPage.domain, true);
+      expect(detailRequests).toEqual([]);
 
       await page.screenshot({
         fullPage: true,

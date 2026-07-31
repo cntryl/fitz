@@ -1,4 +1,4 @@
-import type { AdminFeaturesResponse, AdminSearchResponse, AreaCollection, AreaDetail, Error, GlobalStats, GlobalTroubleshootingDiagnostics, KvCommittedValueResponse, KvPrefixScanResponse, KvResourceDetail, KvRowsResponse, KvStats, KvTransactionsList, LeaseResourceDetail, LeaseSearchResponse, LeaseStats, LoginRequest, MessagingTopology, NoticeDeliveryObservationList, NoticeResourceDetail, NoticeStats, NoticeSubscriptionsList, OperationCollection, QueueAreaCollection, QueueAreaDetail, QueueDeadLettersList, QueueInflightList, QueueRealmCollection, QueueRealmDetail, QueueResourceCollection, QueueResourceDetail, QueueStats, RealmCollection, RealmDetail, ResourceCollection, ResourceComparison, ResourceTimeline, RpcCallObservationList, RpcOperationDetail, RpcPendingList, RpcStats, RpcWorkersList, RuntimeDrainResponse, ScheduleExecutionObservationList, ScheduleMissedObservationList, ScheduleResourceDetail, ScheduleStats, SessionResponse, SessionsList, StreamAreaWatermarkDetail, StreamRealmWatermarkDetail, StreamRecordsResponse, StreamResourceDetail, StreamStats, StructuredMetricsResponse } from "./schemas";
+import type { AdminFeaturesResponse, AdminSearchResponse, AreaCollection, AreaDetail, Error, GlobalStats, GlobalTroubleshootingDiagnostics, KvCommittedValueResponse, KvPrefixScanResponse, KvResourceDetail, KvRowsResponse, KvStats, KvTransactionsList, LeaseResourceCollection, LeaseResourceDetail, LeaseSearchResponse, LeaseStats, LoginRequest, MessagingTopology, NoticeDeliveryObservationList, NoticeResourceCollection, NoticeResourceDetail, NoticeStats, NoticeSubscriptionsList, OperationCollection, QueueAreaCollection, QueueAreaDetail, QueueDeadLettersList, QueueInflightList, QueueRealmCollection, QueueRealmDetail, QueueResourceCollection, QueueResourceDetail, QueueStats, RealmCollection, RealmDetail, ResourceCollection, ResourceComparison, ResourceTimeline, RpcCallObservationList, RpcOperationDetail, RpcPendingList, RpcResourceCollection, RpcStats, RpcWorkersList, RuntimeDrainResponse, ScheduleExecutionObservationList, ScheduleMissedObservationList, ScheduleResourceCollection, ScheduleResourceDetail, ScheduleStats, SessionResponse, SessionsList, StreamAreaWatermarkDetail, StreamRealmWatermarkDetail, StreamRecordsResponse, StreamResourceCollection, StreamResourceDetail, StreamStats, StructuredMetricsResponse } from "./schemas";
 
 export type GetAllMetricsResponse200 = StructuredMetricsResponse;
 
@@ -330,7 +330,7 @@ export type ListLeaseResourcesPath = {
   "realm": string;
 };
 
-export type ListLeaseResourcesResponse200 = ResourceCollection;
+export type ListLeaseResourcesResponse200 = LeaseResourceCollection;
 
 export type ListLeaseResourcesError_404 = Error;
 
@@ -506,7 +506,7 @@ export type ListNoticeResourcesPath = {
   "realm": string;
 };
 
-export type ListNoticeResourcesResponse200 = ResourceCollection;
+export type ListNoticeResourcesResponse200 = NoticeResourceCollection;
 
 export type ListNoticeResourcesError_404 = Error;
 
@@ -848,7 +848,7 @@ export type ListRpcResourcesPath = {
   "realm": string;
 };
 
-export type ListRpcResourcesResponse200 = ResourceCollection;
+export type ListRpcResourcesResponse200 = RpcResourceCollection;
 
 export type ListRpcResourcesError_404 = Error;
 
@@ -1023,7 +1023,7 @@ export type ListScheduleResourcesPath = {
   "realm": string;
 };
 
-export type ListScheduleResourcesResponse200 = ResourceCollection;
+export type ListScheduleResourcesResponse200 = ScheduleResourceCollection;
 
 export type ListScheduleResourcesError_404 = Error;
 
@@ -1187,7 +1187,7 @@ export type ListStreamResourcesPath = {
   "realm": string;
 };
 
-export type ListStreamResourcesResponse200 = ResourceCollection;
+export type ListStreamResourcesResponse200 = StreamResourceCollection;
 
 export type ListStreamResourcesError_404 = Error;
 

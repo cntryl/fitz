@@ -1,7 +1,35 @@
 import DomainInventoryPage from "@/components/shared/domain-inventory-page";
+import type { DomainResourceMetricColumn } from "@/components/shared/domain-resource-inventory-table";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 import { createRpcOverviewQuery } from "@/features/rpc/rpc-query";
 import { formatNumber } from "@/shared/format";
+
+const rpcMetricColumns: readonly DomainResourceMetricColumn[] = [
+  {
+    id: "workers",
+    header: "Workers",
+    width: "14%",
+    cell: (row) => formatNumber(row.workersRegistered ?? 0),
+    sortValue: (row) => row.workersRegistered,
+  },
+  {
+    id: "pending",
+    header: "Pending",
+    width: "14%",
+    cell: (row) => formatNumber(row.requestsPending ?? 0),
+    sortValue: (row) => row.requestsPending,
+  },
+  {
+    id: "slowest-latency",
+    header: "Slowest avg ms",
+    width: "18%",
+    cell: (row) =>
+      row.slowestWorkerAverageLatencyMs == null
+        ? "--"
+        : row.slowestWorkerAverageLatencyMs.toFixed(1),
+    sortValue: (row) => row.slowestWorkerAverageLatencyMs,
+  },
+];
 
 function summarizeRpcHealth(stats: {
   failureTotal: number;
@@ -85,6 +113,7 @@ export default function RpcPage() {
       refreshingDescription="Refreshing RPC inventory..."
       emptyDescription="No RPC resources are currently visible. Check the selected Route Family or broaden scope."
       tableTitle="Resource inventory"
+      metricColumns={rpcMetricColumns}
       stats={[
         { label: "Pending", value: stats ? formatNumber(stats.requestsPending) : "--" },
         { label: "Workers", value: stats ? formatNumber(stats.workersRegistered) : "--" },

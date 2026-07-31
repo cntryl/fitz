@@ -1,6 +1,6 @@
 import { For, Show } from "@askrjs/askr/control";
 import { currentRoute } from "@askrjs/askr/router";
-import { Alert, Button, Card, CardContent, Grid, Stack, Text } from "@askrjs/themes/components";
+import { Alert, Button, Card, CardContent, Stack, Text } from "@askrjs/themes/components";
 import DomainHeader from "./domain-header";
 import type { DomainHeaderProps } from "./domain-header";
 import DomainPageFrame from "./domain-page-frame";
@@ -133,12 +133,7 @@ export default function DomainInventoryPage<TInventory extends DomainResourceInv
               />
             </Show>
             <Show when={stats.length > 0 && !hasScopedInventory}>
-              <Grid
-                class="domain-stat-grid"
-                columns={{ base: 1, sm: 2, lg: Math.min(stats.length, 3) }}
-                gap="md"
-                aria-label={`${title} key stats`}
-              >
+              <div class="domain-stat-grid" aria-label={`${title} key stats`}>
                 <For each={stats as DomainInventoryStat[]} by={(stat) => stat.label}>
                   {(stat) => (
                     <Card key={stat.label} padding="sm" variant="default">
@@ -166,7 +161,7 @@ export default function DomainInventoryPage<TInventory extends DomainResourceInv
                     </Card>
                   )}
                 </For>
-              </Grid>
+              </div>
             </Show>
             <DomainResourceInventoryTable
               domain={domain}

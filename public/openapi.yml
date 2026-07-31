@@ -1362,7 +1362,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ResourceCollection"
+                $ref: "#/components/schemas/StreamResourceCollection"
   /api/v1/{family}/stream/realms/{realm}/areas/{area}/resources/{resource}:
     get:
       tags: [Stream]
@@ -1694,7 +1694,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ResourceCollection"
+                $ref: "#/components/schemas/LeaseResourceCollection"
   /api/v1/{family}/lease/realms/{realm}/areas/{area}/resources/{resource}:
     get:
       tags: [Lease]
@@ -1906,7 +1906,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ResourceCollection"
+                $ref: "#/components/schemas/ScheduleResourceCollection"
   /api/v1/{family}/schedule/realms/{realm}/areas/{area}/resources/{resource}:
     get:
       tags: [Schedule]
@@ -2201,7 +2201,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ResourceCollection"
+                $ref: "#/components/schemas/NoticeResourceCollection"
   /api/v1/{family}/notice/realms/{realm}/areas/{area}/resources/{resource}:
     get:
       tags: [Notice]
@@ -2381,7 +2381,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ResourceCollection"
+                $ref: "#/components/schemas/RpcResourceCollection"
   /api/v1/{family}/rpc/realms/{realm}/areas/{area}/resources/{resource}:
     get:
       tags: [RPC]
@@ -4944,6 +4944,110 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ResourceEntry"
+
+    StreamResourceCollection:
+      type: object
+      description: Resource rollups combining durable committed Stream metadata with current-process append sessions.
+      required: [realm, area, resources]
+      properties:
+        realm: { type: string }
+        area: { type: string }
+        resources:
+          type: array
+          items: { $ref: "#/components/schemas/StreamResourceEntry" }
+    StreamResourceEntry:
+      type: object
+      description: "`committed_event_count` and `size_bytes` are durable committed metadata. `sessions_active` is live broker-local state and resets on disconnect cleanup or restart."
+      required: [resource, committed_event_count, size_bytes, sessions_active]
+      properties:
+        resource: { type: string }
+        committed_event_count: { type: integer, format: int64 }
+        size_bytes: { type: integer, format: int64 }
+        sessions_active: { type: integer }
+
+    LeaseResourceCollection:
+      type: object
+      description: Current-process Lease ownership and waiter rollups. No field is durable across broker restart.
+      required: [realm, area, resources]
+      properties:
+        realm: { type: string }
+        area: { type: string }
+        resources:
+          type: array
+          items: { $ref: "#/components/schemas/LeaseResourceEntry" }
+    LeaseResourceEntry:
+      type: object
+      description: Live broker-local ownership and contention state. Waiter-only resources are included.
+      required: [resource, active_leases, waiters, oldest_lease_age_seconds]
+      properties:
+        resource: { type: string }
+        active_leases: { type: integer }
+        waiters: { type: integer }
+        oldest_lease_age_seconds: { type: integer, format: int64 }
+
+    NoticeResourceCollection:
+      type: object
+      description: Current-process Notice subscription, delivery-counter, and publish-rate rollups. No field is durable or replayable.
+      required: [realm, area, resources]
+      properties:
+        realm: { type: string }
+        area: { type: string }
+        resources:
+          type: array
+          items: { $ref: "#/components/schemas/NoticeResourceEntry" }
+    NoticeResourceEntry:
+      type: object
+      description: Live broker-local Notice state that resets after reconnect or broker restart.
+      required: [resource, subscriptions_active, notifications_received, publishes_per_minute]
+      properties:
+        resource: { type: string }
+        subscriptions_active: { type: integer }
+        notifications_received: { type: integer, format: int64 }
+        publishes_per_minute: { type: number }
+
+    RpcResourceCollection:
+      type: object
+      description: Current-process RPC worker and pending-request rollups. No field is a durable backlog or call history.
+      required: [realm, area, resources]
+      properties:
+        realm: { type: string }
+        area: { type: string }
+        resources:
+          type: array
+          items: { $ref: "#/components/schemas/RpcResourceEntry" }
+    RpcResourceEntry:
+      type: object
+      description: Live broker-local RPC state. Slowest latency is null until a registered worker has handled a request.
+      required:
+        [resource, workers_registered, requests_pending, slowest_worker_average_latency_ms]
+      properties:
+        resource: { type: string }
+        workers_registered: { type: integer }
+        requests_pending: { type: integer }
+        slowest_worker_average_latency_ms:
+          type: [number, "null"]
+
+    ScheduleResourceCollection:
+      type: object
+      description: Durable Schedule definition and pending-claim rollups. Live subscriber delivery is not represented.
+      required: [realm, area, resources]
+      properties:
+        realm: { type: string }
+        area: { type: string }
+        resources:
+          type: array
+          items: { $ref: "#/components/schemas/ScheduleResourceEntry" }
+    ScheduleResourceEntry:
+      type: object
+      description: "Enabled definitions and pending claims are durable timing intent. `next_run` is the earliest enabled definition and is null when no definition is enabled."
+      required: [resource, schedules_active, pending_claims, next_run]
+      properties:
+        resource: { type: string }
+        schedules_active: { type: integer }
+        pending_claims: { type: integer }
+        next_run:
+          type: [string, "null"]
+          format: date-time
 
     QueueRealmCollection:
       type: object

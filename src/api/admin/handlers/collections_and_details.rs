@@ -68,6 +68,33 @@ pub(super) fn handle_resources_collection(
         ));
     }
 
+    match scheme {
+        "stream" => {
+            return super::json_response(list::collect_stream_resources(
+                runtime, realm, area, family,
+            ));
+        }
+        "lease" => {
+            return super::json_response(list::collect_lease_resources(
+                runtime, realm, area, family,
+            ));
+        }
+        "notice" => {
+            return super::json_response(list::collect_notice_resources(
+                runtime, realm, area, family,
+            ));
+        }
+        "rpc" => {
+            return super::json_response(list::collect_rpc_resources(runtime, realm, area, family));
+        }
+        "schedule" => {
+            return super::json_response(list::collect_schedule_resources(
+                runtime, realm, area, family,
+            ));
+        }
+        _ => {}
+    }
+
     let resources = resources_for_scheme(scheme, runtime.as_ref(), family);
     super::json_response(list::collect_resources(&resources, realm, area))
 }

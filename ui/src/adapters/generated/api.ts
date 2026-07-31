@@ -1,6 +1,6 @@
 import { defineApi, createClient, del, empty, get, json, post } from "@askrjs/fetch";
 import type { ClientOptions } from "@askrjs/fetch";
-import type { AdminFeaturesResponse, AdminSearchResponse, AreaCollection, AreaDetail, Error, GlobalStats, GlobalTroubleshootingDiagnostics, KvCommittedValueResponse, KvPrefixScanResponse, KvResourceDetail, KvRowsResponse, KvStats, KvTransactionsList, LeaseResourceDetail, LeaseSearchResponse, LeaseStats, LoginRequest, MessagingTopology, NoticeDeliveryObservationList, NoticeResourceDetail, NoticeStats, NoticeSubscriptionsList, OperationCollection, QueueAreaCollection, QueueAreaDetail, QueueDeadLettersList, QueueInflightList, QueueRealmCollection, QueueRealmDetail, QueueResourceCollection, QueueResourceDetail, QueueStats, RealmCollection, RealmDetail, ResourceCollection, ResourceComparison, ResourceTimeline, RpcCallObservationList, RpcOperationDetail, RpcPendingList, RpcStats, RpcWorkersList, RuntimeDrainResponse, ScheduleExecutionObservationList, ScheduleMissedObservationList, ScheduleResourceDetail, ScheduleStats, SessionResponse, SessionsList, StreamAreaWatermarkDetail, StreamRealmWatermarkDetail, StreamRecordsResponse, StreamResourceDetail, StreamStats, StructuredMetricsResponse } from "./schemas";
+import type { AdminFeaturesResponse, AdminSearchResponse, AreaCollection, AreaDetail, Error, GlobalStats, GlobalTroubleshootingDiagnostics, KvCommittedValueResponse, KvPrefixScanResponse, KvResourceDetail, KvRowsResponse, KvStats, KvTransactionsList, LeaseResourceCollection, LeaseResourceDetail, LeaseSearchResponse, LeaseStats, LoginRequest, MessagingTopology, NoticeDeliveryObservationList, NoticeResourceCollection, NoticeResourceDetail, NoticeStats, NoticeSubscriptionsList, OperationCollection, QueueAreaCollection, QueueAreaDetail, QueueDeadLettersList, QueueInflightList, QueueRealmCollection, QueueRealmDetail, QueueResourceCollection, QueueResourceDetail, QueueStats, RealmCollection, RealmDetail, ResourceCollection, ResourceComparison, ResourceTimeline, RpcCallObservationList, RpcOperationDetail, RpcPendingList, RpcResourceCollection, RpcStats, RpcWorkersList, RuntimeDrainResponse, ScheduleExecutionObservationList, ScheduleMissedObservationList, ScheduleResourceCollection, ScheduleResourceDetail, ScheduleStats, SessionResponse, SessionsList, StreamAreaWatermarkDetail, StreamRealmWatermarkDetail, StreamRecordsResponse, StreamResourceCollection, StreamResourceDetail, StreamStats, StructuredMetricsResponse } from "./schemas";
 import type { BrowseKvCommittedRowsPath, BrowseKvCommittedRowsQuery, CompareKvResourceSnapshotsPath, CompareKvResourceSnapshotsQuery, CompareLeaseResourceSnapshotsPath, CompareLeaseResourceSnapshotsQuery, CompareNoticeResourceSnapshotsPath, CompareNoticeResourceSnapshotsQuery, CompareQueueResourceSnapshotsPath, CompareQueueResourceSnapshotsQuery, CompareRpcResourceSnapshotsPath, CompareRpcResourceSnapshotsQuery, CompareScheduleResourceSnapshotsPath, CompareScheduleResourceSnapshotsQuery, CompareStreamResourceSnapshotsPath, CompareStreamResourceSnapshotsQuery, GetFamilyMetricsPath, GetFamilyStatsPath, GetFamilyTopologyPath, GetFamilyTroubleshootingGuidancePath, GetKvAreaPath, GetKvCommittedValuePath, GetKvCommittedValueQuery, GetKvRealmPath, GetKvResourcePath, GetKvStatsPath, GetLeaseAreaPath, GetLeaseRealmPath, GetLeaseResourcePath, GetLeaseStatsPath, GetNoticeAreaPath, GetNoticeRealmPath, GetNoticeResourcePath, GetNoticeStatsPath, GetQueueAreaPath, GetQueueRealmPath, GetQueueResourcePath, GetQueueStatsPath, GetRpcAreaPath, GetRpcOperationPath, GetRpcRealmPath, GetRpcResourcePath, GetRpcStatsPath, GetScheduleAreaPath, GetScheduleRealmPath, GetScheduleResourcePath, GetScheduleStatsPath, GetStreamAreaPath, GetStreamAreaWatermarksPath, GetStreamRealmPath, GetStreamRealmWatermarksPath, GetStreamResourcePath, GetStreamStatsPath, ListFamilySessionsPath, ListKvAreasPath, ListKvRealmsPath, ListKvResourceEventsPath, ListKvResourceEventsQuery, ListKvResourcesPath, ListKvTransactionsPath, ListLeaseAreasPath, ListLeaseRealmsPath, ListLeaseResourceEventsPath, ListLeaseResourceEventsQuery, ListLeaseResourcesPath, ListNoticeAreasPath, ListNoticeRealmsPath, ListNoticeResourceEventsPath, ListNoticeResourceEventsQuery, ListNoticeResourcesPath, ListNoticeSubscriptionsPath, ListQueueAreasPath, ListQueueDeadLettersPath, ListQueueInflightEntriesPath, ListQueueRealmsPath, ListQueueResourceEventsPath, ListQueueResourceEventsQuery, ListQueueResourcesPath, ListRpcAreasPath, ListRpcOperationWorkersPath, ListRpcOperationsPath, ListRpcPendingRequestsPath, ListRpcPendingRequestsQuery, ListRpcRealmsPath, ListRpcResourceEventsPath, ListRpcResourceEventsQuery, ListRpcResourcesPath, ListScheduleAreasPath, ListScheduleExecutionObservationsPath, ListScheduleExecutionObservationsQuery, ListScheduleRealmsPath, ListScheduleResourceEventsPath, ListScheduleResourceEventsQuery, ListScheduleResourcesPath, ListStreamAreasPath, ListStreamRealmsPath, ListStreamResourceEventsPath, ListStreamResourceEventsQuery, ListStreamResourcesPath, PurgeQueueDeadLetterPath, ReadStreamResourceRecordsPath, ReadStreamResourceRecordsQuery, ReplayQueueDeadLetterPath, ScanKvCommittedPrefixPath, ScanKvCommittedPrefixQuery, SearchAdminStateQuery, SearchLeaseOwnershipPath, SearchLeaseOwnershipQuery, SearchNoticeDeliveriesPath, SearchNoticeDeliveriesQuery, SearchRpcCallsPath, SearchRpcCallsQuery, SearchScheduleMissedHandoffsPath, SearchScheduleMissedHandoffsQuery, SearchStreamRecordsPath, SearchStreamRecordsQuery } from "./operations";
 
 export const api = defineApi({
@@ -140,7 +140,7 @@ export const api = defineApi({
     .security([{"sessionCookie":[]}]),
   listLeaseResources: get("/api/v1/{family}/lease/realms/{realm}/areas/{area}/resources")
     .params<ListLeaseResourcesPath>({ "area": { style: "simple", explode: false }, "family": { style: "simple", explode: false }, "realm": { style: "simple", explode: false } })
-    .returns(json<ResourceCollection>())
+    .returns(json<LeaseResourceCollection>())
     .errors({ "404": json<Error>() })
     .security([{"sessionCookie":[]}]),
   getLeaseResource: get("/api/v1/{family}/lease/realms/{realm}/areas/{area}/resources/{resource}")
@@ -204,7 +204,7 @@ export const api = defineApi({
     .security([{"sessionCookie":[]}]),
   listNoticeResources: get("/api/v1/{family}/notice/realms/{realm}/areas/{area}/resources")
     .params<ListNoticeResourcesPath>({ "area": { style: "simple", explode: false }, "family": { style: "simple", explode: false }, "realm": { style: "simple", explode: false } })
-    .returns(json<ResourceCollection>())
+    .returns(json<NoticeResourceCollection>())
     .errors({ "404": json<Error>() })
     .security([{"sessionCookie":[]}]),
   getNoticeResource: get("/api/v1/{family}/notice/realms/{realm}/areas/{area}/resources/{resource}")
@@ -335,7 +335,7 @@ export const api = defineApi({
     .security([{"sessionCookie":[]}]),
   listRpcResources: get("/api/v1/{family}/rpc/realms/{realm}/areas/{area}/resources")
     .params<ListRpcResourcesPath>({ "area": { style: "simple", explode: false }, "family": { style: "simple", explode: false }, "realm": { style: "simple", explode: false } })
-    .returns(json<ResourceCollection>())
+    .returns(json<RpcResourceCollection>())
     .errors({ "404": json<Error>() })
     .security([{"sessionCookie":[]}]),
   getRpcResource: get("/api/v1/{family}/rpc/realms/{realm}/areas/{area}/resources/{resource}")
@@ -403,7 +403,7 @@ export const api = defineApi({
     .security([{"sessionCookie":[]}]),
   listScheduleResources: get("/api/v1/{family}/schedule/realms/{realm}/areas/{area}/resources")
     .params<ListScheduleResourcesPath>({ "area": { style: "simple", explode: false }, "family": { style: "simple", explode: false }, "realm": { style: "simple", explode: false } })
-    .returns(json<ResourceCollection>())
+    .returns(json<ScheduleResourceCollection>())
     .errors({ "404": json<Error>() })
     .security([{"sessionCookie":[]}]),
   getScheduleResource: get("/api/v1/{family}/schedule/realms/{realm}/areas/{area}/resources/{resource}")
@@ -466,7 +466,7 @@ export const api = defineApi({
     .security([{"sessionCookie":[]}]),
   listStreamResources: get("/api/v1/{family}/stream/realms/{realm}/areas/{area}/resources")
     .params<ListStreamResourcesPath>({ "area": { style: "simple", explode: false }, "family": { style: "simple", explode: false }, "realm": { style: "simple", explode: false } })
-    .returns(json<ResourceCollection>())
+    .returns(json<StreamResourceCollection>())
     .errors({ "404": json<Error>() })
     .security([{"sessionCookie":[]}]),
   getStreamResource: get("/api/v1/{family}/stream/realms/{realm}/areas/{area}/resources/{resource}")

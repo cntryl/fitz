@@ -182,7 +182,9 @@ beforeEach(() => {
     data: {
       area: "ops",
       realm: "default",
-      resources: [{ resource: "primary" }],
+      resources: [
+        { active_leases: 2, oldest_lease_age_seconds: 42, resource: "primary", waiters: 1 },
+      ],
     },
   });
   mocks.apiv1.searchStreamRecords.mockResolvedValue({
@@ -227,7 +229,9 @@ beforeEach(() => {
     data: {
       area: "ops",
       realm: "default",
-      resources: [{ resource: "reconcile" }],
+      resources: [
+        { next_run: null, pending_claims: 2, resource: "reconcile", schedules_active: 0 },
+      ],
     },
   });
   mocks.apiv1.getScheduleResource.mockResolvedValue({
@@ -294,7 +298,14 @@ beforeEach(() => {
     data: {
       area: "ops",
       realm: "default",
-      resources: [{ resource: "primary" }],
+      resources: [
+        {
+          notifications_received: 8,
+          publishes_per_minute: 3.5,
+          resource: "primary",
+          subscriptions_active: 2,
+        },
+      ],
     },
   });
   mocks.apiv1.searchRpcCalls.mockResolvedValue({
@@ -314,7 +325,18 @@ beforeEach(() => {
   mocks.apiv1.listRpcResources.mockResolvedValue({
     ok: true,
     status: 200,
-    data: { area: "ops", realm: "default", resources: [{ resource: "primary" }] },
+    data: {
+      area: "ops",
+      realm: "default",
+      resources: [
+        {
+          requests_pending: 1,
+          resource: "primary",
+          slowest_worker_average_latency_ms: null,
+          workers_registered: 0,
+        },
+      ],
+    },
   });
   mocks.apiv1.getRpcResource.mockResolvedValue({
     ok: true,
@@ -354,7 +376,13 @@ beforeEach(() => {
   mocks.apiv1.listStreamResources.mockResolvedValue({
     ok: true,
     status: 200,
-    data: { area: "ops", realm: "default", resources: [{ resource: "events" }] },
+    data: {
+      area: "ops",
+      realm: "default",
+      resources: [
+        { committed_event_count: 12, resource: "events", sessions_active: 1, size_bytes: 4096 },
+      ],
+    },
   });
   mocks.apiv1.getStreamRealmWatermarks.mockResolvedValue({
     ok: true,

@@ -66,6 +66,162 @@ async fn should_return_resource_collection_route() {
 
 #[tokio::test]
 #[serial]
+async fn should_return_stream_resource_rollup_fields() {
+    // Arrange
+    let runtime = test_runtime();
+    seed_cross_family_stream_watermark_data(&runtime);
+    let cookie = login_cookie(runtime.clone()).await;
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/1/stream/realms/prod/areas/logs/resources")
+        .header(COOKIE, cookie)
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["resources"][0]["committed_event_count"], 5);
+    assert_eq!(payload["resources"][0]["size_bytes"], 32);
+    assert_eq!(payload["resources"][0]["sessions_active"], 0);
+}
+
+#[tokio::test]
+#[serial]
+async fn should_return_lease_resource_rollup_fields() {
+    // Arrange
+    let runtime = test_runtime();
+    runtime.admin_read_model().replace_leases(vec![LeaseInfo {
+        route_family: 1,
+        realm: "prod".to_string(),
+        area: "locks".to_string(),
+        resource: "cache".to_string(),
+        owner_session_id: "owner".to_string(),
+        acquired_at: "2026-01-01T00:00:00Z".to_string(),
+        expires_at: "2099-01-01T00:00:00Z".to_string(),
+        renewals: 0,
+        fencing_token: 1,
+    }]);
+    let cookie = login_cookie(runtime.clone()).await;
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/1/lease/realms/prod/areas/locks/resources")
+        .header(COOKIE, cookie)
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["resources"][0]["active_leases"], 1);
+    assert_eq!(payload["resources"][0]["waiters"], 0);
+    assert!(
+        payload["resources"][0]["oldest_lease_age_seconds"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn should_return_notice_resource_rollup_fields() {
+    // Arrange
+    let runtime = test_runtime();
+    seed_snapshot_data(&runtime);
+    let cookie = login_cookie(runtime.clone()).await;
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/1/notice/realms/prod/areas/events/resources")
+        .header(COOKIE, cookie)
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["resources"][0]["subscriptions_active"], 3);
+    assert_eq!(payload["resources"][0]["notifications_received"], 8);
+    assert_eq!(payload["resources"][0]["publishes_per_minute"], 0.0);
+}
+
+#[tokio::test]
+#[serial]
+async fn should_return_rpc_resource_rollup_fields() {
+    // Arrange
+    let runtime = test_runtime();
+    seed_snapshot_data(&runtime);
+    let cookie = login_cookie(runtime.clone()).await;
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/1/rpc/realms/prod/areas/api/resources")
+        .header(COOKIE, cookie)
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["resources"][0]["workers_registered"], 1);
+    assert_eq!(payload["resources"][0]["requests_pending"], 1);
+    assert_eq!(
+        payload["resources"][0]["slowest_worker_average_latency_ms"],
+        4.5
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn should_return_schedule_resource_rollup_fields() {
+    // Arrange
+    let (runtime, store, schedule) = schedule_runtime_with_domains();
+    seed_pending_schedule_claim(store);
+    schedule
+        .preload_persisted_families()
+        .expect("preload schedules");
+    let cookie = login_cookie(runtime.clone()).await;
+    let req = hyper::http::Request::builder()
+        .method(Method::GET)
+        .uri("/api/v1/1/schedule/realms/prod/areas/jobs/resources")
+        .header(COOKIE, cookie)
+        .body(Body::default())
+        .unwrap();
+
+    // Act
+    let response = fitz::api::admin::handlers::handle_request(req, runtime)
+        .await
+        .unwrap();
+
+    // Assert
+    let body = body::to_bytes(response.into_body()).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["resources"][0]["schedules_active"], 1);
+    assert_eq!(payload["resources"][0]["pending_claims"], 1);
+    assert!(payload["resources"][0]["next_run"].is_string());
+}
+
+#[tokio::test]
+#[serial]
 async fn should_return_leaf_resource_detail() {
     let runtime = test_runtime();
     let cookie = login_cookie(runtime.clone()).await;

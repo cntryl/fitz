@@ -1,9 +1,25 @@
-import { apiParams, apiv1, type ResourceEntry } from "@/adapters";
+import {
+  apiParams,
+  apiv1,
+  type LeaseResourceEntry,
+  type NoticeResourceEntry,
+  type ResourceEntry,
+  type RpcResourceEntry,
+  type ScheduleResourceEntry,
+  type StreamResourceEntry,
+} from "@/adapters";
 import { unwrapResponse, type ServiceRequestOptions } from "@/shared/errors/api";
 import { apiRouteFamilySegment } from "@/shared/navigation/domains";
 import type { DomainId } from "./resource-models";
 
-type ResourceEntryWithOperation = ResourceEntry & { operation?: string };
+export type InventoryResourceEntry = Partial<
+  ResourceEntry &
+    LeaseResourceEntry &
+    NoticeResourceEntry &
+    RpcResourceEntry &
+    ScheduleResourceEntry &
+    StreamResourceEntry
+> & { operation?: string; resource: string };
 
 export interface ResourceInventoryAdapter {
   domain: DomainId;
@@ -12,7 +28,7 @@ export interface ResourceInventoryAdapter {
   listResources(
     ref: { area: string; realm: string },
     options: ServiceRequestOptions,
-  ): Promise<ResourceEntryWithOperation[]>;
+  ): Promise<InventoryResourceEntry[]>;
 }
 
 function family() {

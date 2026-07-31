@@ -337,24 +337,29 @@ export function PureDomainResourceInventoryTable({
       ) : rows.length === 0 ? (
         <QueryEmptyState description="No resource routes match the current search. Clear filters to show all routes." />
       ) : (
-        <VirtualTable<DomainResourceInventoryRow>
-          id={`${domain}-inventory-table`}
-          aria-label={title}
-          class="domain-resource-virtual-table"
-          data-has-metrics={hasMetrics ? "true" : "false"}
-          columns={columns}
-          getKey={(row) => `${row.realm}:${row.area}:${row.resource}:${row.operation ?? ""}`}
-          headerHeight={44}
-          onRowClick={(row, _rowIndex, _rowKey, event) => {
-            if (!shouldIgnoreRowClick(event)) {
-              onRowOpen(row);
-            }
-          }}
-          overscan={8}
-          rowHeight={48}
-          rows={rows}
-          style={{ height: tableHeight(rows.length) }}
-        />
+        <>
+          {hasMetrics ? (
+            <p class="domain-inventory-scroll-hint">Scroll horizontally to view every metric.</p>
+          ) : null}
+          <VirtualTable<DomainResourceInventoryRow>
+            id={`${domain}-inventory-table`}
+            aria-label={title}
+            class="domain-resource-virtual-table"
+            data-has-metrics={hasMetrics ? "true" : "false"}
+            columns={columns}
+            getKey={(row) => `${row.realm}:${row.area}:${row.resource}:${row.operation ?? ""}`}
+            headerHeight={44}
+            onRowClick={(row, _rowIndex, _rowKey, event) => {
+              if (!shouldIgnoreRowClick(event)) {
+                onRowOpen(row);
+              }
+            }}
+            overscan={8}
+            rowHeight={48}
+            rows={rows}
+            style={{ height: tableHeight(rows.length) }}
+          />
+        </>
       )}
     </section>
   );

@@ -25,6 +25,14 @@ fn current_epoch_ms() -> u64 {
     .unwrap_or(u64::MAX)
 }
 
+fn snapshot_runtime() -> Arc<Runtime> {
+    let read_model = crate::control::admin::read_model::AdminReadModel::new();
+    Arc::new(Runtime::with_admin_read_model(
+        Arc::new(Router::new()),
+        read_model,
+    ))
+}
+
 fn runtime_with_preloaded_schedule() -> Arc<Runtime> {
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
@@ -356,6 +364,214 @@ fn should_collect_resources_given_area_filter() {
     assert_eq!(collection.resources.len(), 2);
     assert_eq!(collection.resources[0].resource, "active");
     assert_eq!(collection.resources[1].resource, "pending");
+}
+
+#[test]
+fn should_aggregate_stream_resource_rollups_across_families() {
+    // Arrange
+    let runtime = snapshot_runtime();
+    runtime.admin_read_model().replace_streams(vec![
+        StreamInfo {
+            route_family: 1,
+            realm: "prod".to_string(),
+            area: "events".to_string(),
+            resource: "orders".to_string(),
+            offset: 2,
+            watermark: 2,
+            size_bytes: 100,
+            sessions_active: 1,
+        },
+        StreamInfo {
+            route_family: 2,
+            realm: "prod".to_string(),
+            area: "events".to_string(),
+            resource: "orders".to_string(),
+            offset: 4,
+            watermark: 4,
+            size_bytes: 250,
+            sessions_active: 2,
+        },
+    ]);
+
+    // Act
+    let collection = collect_stream_resources(&runtime, "prod", "events", None);
+
+    // Assert
+    assert_eq!(collection.resources.len(), 1);
+    assert_eq!(collection.resources[0].committed_event_count, 8);
+    assert_eq!(collection.resources[0].size_bytes, 350);
+    assert_eq!(collection.resources[0].sessions_active, 3);
+}
+
+#[test]
+fn should_isolate_stream_resource_rollups_by_family() {
+    // Arrange
+    let runtime = snapshot_runtime();
+    runtime.admin_read_model().replace_streams(vec![
+        StreamInfo {
+            route_family: 1,
+            realm: "prod".to_string(),
+            area: "events".to_string(),
+            resource: "orders".to_string(),
+            offset: 2,
+            watermark: 2,
+            size_bytes: 100,
+            sessions_active: 1,
+        },
+        StreamInfo {
+            route_family: 2,
+            realm: "prod".to_string(),
+            area: "events".to_string(),
+            resource: "orders".to_string(),
+            offset: 4,
+            watermark: 4,
+            size_bytes: 250,
+            sessions_active: 2,
+        },
+    ]);
+
+    // Act
+    let collection = collect_stream_resources(&runtime, "prod", "events", Some(1));
+
+    // Assert
+    assert_eq!(collection.resources[0].committed_event_count, 3);
+    assert_eq!(collection.resources[0].size_bytes, 100);
+    assert_eq!(collection.resources[0].sessions_active, 1);
+}
+
+#[test]
+fn should_aggregate_notice_resource_counters_and_exclude_invalid_routes() {
+    // Arrange
+    let runtime = snapshot_runtime();
+    runtime
+        .admin_read_model()
+        .replace_notice_subscriptions(vec![NoticeSubscription {
+            route_family: 1,
+            subscription_id: 7,
+            session_id: "session".to_string(),
+            realm: "prod".to_string(),
+            pattern: "notice://prod/events/orders".to_string(),
+            created_at: "2026-07-31T12:00:00Z".to_string(),
+            notifications_received: 12,
+        }]);
+    runtime.admin_read_model().replace_notice_routes(vec![
+        NoticeRouteInfo {
+            route_family: 1,
+            route: "notice://prod/events/orders".to_string(),
+            subscribers: 1,
+            publishes_total: 20,
+            publishes_per_minute: 2.5,
+        },
+        NoticeRouteInfo {
+            route_family: 1,
+            route: "invalid".to_string(),
+            subscribers: 1,
+            publishes_total: 20,
+            publishes_per_minute: 9.0,
+        },
+    ]);
+
+    // Act
+    let collection = collect_notice_resources(&runtime, "prod", "events", Some(1));
+
+    // Assert
+    assert_eq!(collection.resources.len(), 1);
+    assert_eq!(collection.resources[0].subscriptions_active, 1);
+    assert_eq!(collection.resources[0].notifications_received, 12);
+    assert!((collection.resources[0].publishes_per_minute - 2.5).abs() < f64::EPSILON);
+}
+
+#[test]
+fn should_include_pending_only_rpc_resource_with_missing_latency() {
+    // Arrange
+    let runtime = snapshot_runtime();
+    runtime
+        .admin_read_model()
+        .replace_rpc_pending(vec![RpcPendingRequest {
+            route_family: 1,
+            correlation_id: "request".to_string(),
+            route: "rpc://prod/jobs/reconcile/run".to_string(),
+            submitted_at: "2026-07-31T12:00:00Z".to_string(),
+            age_seconds: 1,
+            worker_session_id: None,
+        }]);
+
+    // Act
+    let collection = collect_rpc_resources(&runtime, "prod", "jobs", Some(1));
+
+    // Assert
+    assert_eq!(collection.resources.len(), 1);
+    assert_eq!(collection.resources[0].workers_registered, 0);
+    assert_eq!(collection.resources[0].requests_pending, 1);
+    assert_eq!(
+        collection.resources[0].slowest_worker_average_latency_ms,
+        None
+    );
+}
+
+#[test]
+fn should_select_slowest_rpc_worker_latency_across_duplicate_paths() {
+    // Arrange
+    let runtime = snapshot_runtime();
+    runtime.admin_read_model().replace_rpc_workers(vec![
+        RpcWorker {
+            route_family: 1,
+            session_id: "one".to_string(),
+            realm: "prod".to_string(),
+            route: "rpc://prod/jobs/reconcile/run".to_string(),
+            registered_at: "2026-07-31T12:00:00Z".to_string(),
+            requests_handled: 2,
+            average_latency_ms: 3.0,
+        },
+        RpcWorker {
+            route_family: 2,
+            session_id: "two".to_string(),
+            realm: "prod".to_string(),
+            route: "rpc://prod/jobs/reconcile/execute".to_string(),
+            registered_at: "2026-07-31T12:00:00Z".to_string(),
+            requests_handled: 1,
+            average_latency_ms: 8.0,
+        },
+    ]);
+
+    // Act
+    let collection = collect_rpc_resources(&runtime, "prod", "jobs", None);
+
+    // Assert
+    assert_eq!(collection.resources[0].workers_registered, 2);
+    assert_eq!(
+        collection.resources[0].slowest_worker_average_latency_ms,
+        Some(8.0)
+    );
+}
+
+#[test]
+fn should_leave_schedule_next_run_missing_given_disabled_definitions() {
+    // Arrange
+    let runtime = snapshot_runtime();
+    runtime
+        .admin_read_model()
+        .replace_schedules(vec![ScheduleInfo {
+            route_family: 1,
+            realm: "prod".to_string(),
+            area: "jobs".to_string(),
+            resource: "cleanup".to_string(),
+            operation: "run".to_string(),
+            cron: "0 * * * *".to_string(),
+            delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
+            next_run: "2026-08-01T12:00:00Z".to_string(),
+            last_run: None,
+            executions_total: 0,
+            enabled: false,
+        }]);
+
+    // Act
+    let collection = collect_schedule_resources(&runtime, "prod", "jobs", Some(1));
+
+    // Assert
+    assert_eq!(collection.resources[0].schedules_active, 0);
+    assert_eq!(collection.resources[0].pending_claims, 0);
+    assert_eq!(collection.resources[0].next_run, None);
 }
 
 #[test]

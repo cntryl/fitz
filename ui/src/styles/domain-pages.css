@@ -45,6 +45,13 @@
   line-height: var(--fitz-body-line-height);
 }
 
+.domain-inventory-scroll-hint {
+  display: none;
+  margin: 0;
+  color: var(--fitz-text-muted);
+  font-size: var(--fitz-caption-size);
+}
+
 .domain-table-wrap {
   max-width: 100%;
   overflow-x: auto;
@@ -176,6 +183,10 @@
 }
 
 @media (max-width: 47.999rem) {
+  .domain-inventory-scroll-hint {
+    display: block;
+  }
+
   .domain-header-title-row,
   .domain-inventory-toolbar,
   .domain-inventory-search-shell,

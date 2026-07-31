@@ -78,6 +78,81 @@ pub struct ResourceEntry {
     pub transactions_active: Option<usize>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamResourceCollection {
+    pub realm: String,
+    pub area: String,
+    pub resources: Vec<StreamResourceEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamResourceEntry {
+    pub resource: String,
+    pub committed_event_count: u64,
+    pub size_bytes: u64,
+    pub sessions_active: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LeaseResourceCollection {
+    pub realm: String,
+    pub area: String,
+    pub resources: Vec<LeaseResourceEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LeaseResourceEntry {
+    pub resource: String,
+    pub active_leases: usize,
+    pub waiters: usize,
+    pub oldest_lease_age_seconds: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoticeResourceCollection {
+    pub realm: String,
+    pub area: String,
+    pub resources: Vec<NoticeResourceEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoticeResourceEntry {
+    pub resource: String,
+    pub subscriptions_active: usize,
+    pub notifications_received: u64,
+    pub publishes_per_minute: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RpcResourceCollection {
+    pub realm: String,
+    pub area: String,
+    pub resources: Vec<RpcResourceEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RpcResourceEntry {
+    pub resource: String,
+    pub workers_registered: usize,
+    pub requests_pending: usize,
+    pub slowest_worker_average_latency_ms: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScheduleResourceCollection {
+    pub realm: String,
+    pub area: String,
+    pub resources: Vec<ScheduleResourceEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScheduleResourceEntry {
+    pub resource: String,
+    pub schedules_active: usize,
+    pub pending_claims: usize,
+    pub next_run: Option<String>,
+}
+
 impl ResourceEntry {
     pub(super) fn named(resource: String) -> Self {
         Self {

@@ -372,14 +372,37 @@ export function domainAreasByRealm(_domain: string, _realm: string) {
 }
 
 export function domainResourcesByArea(domain: string, realm: string, area: string) {
+  const metrics =
+    {
+      lease: { active_leases: 2, oldest_lease_age_seconds: 47, waiters: 1 },
+      notice: {
+        notifications_received: 128,
+        publishes_per_minute: 12.5,
+        subscriptions_active: 3,
+      },
+      rpc: {
+        requests_pending: 2,
+        slowest_worker_average_latency_ms: 18.4,
+        workers_registered: 4,
+      },
+      schedule: {
+        next_run: "2026-08-01T12:00:00Z",
+        pending_claims: 1,
+        schedules_active: 2,
+      },
+      stream: { committed_event_count: 384, sessions_active: 2, size_bytes: 65536 },
+    }[domain] ?? {};
   return (
     {
       [domain]: {
         [realm]: {
-          [area]: [{ resource: "primary" }, { resource: "tenant-dashboard-stateful-resource" }],
+          [area]: [
+            { resource: "primary", ...metrics },
+            { resource: "tenant-dashboard-stateful-resource", ...metrics },
+          ],
         },
       },
-    }[domain]?.[realm]?.[area] ?? [{ resource: "primary" }]
+    }[domain]?.[realm]?.[area] ?? [{ resource: "primary", ...metrics }]
   );
 }
 

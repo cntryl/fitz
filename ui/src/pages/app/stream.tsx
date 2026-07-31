@@ -1,9 +1,34 @@
 import DomainInventoryPage from "@/components/shared/domain-inventory-page";
+import type { DomainResourceMetricColumn } from "@/components/shared/domain-resource-inventory-table";
 import { queryHeaderStatus } from "@/components/shared/query-header-status";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 import { createStreamOverviewQuery } from "@/features/stream/stream-query";
 import type { StreamLagBucketsSummary } from "@/features/stream/stream-models";
-import { formatCount, formatNumber } from "@/shared/format";
+import { formatBytes, formatCount, formatNumber } from "@/shared/format";
+
+const streamMetricColumns: readonly DomainResourceMetricColumn[] = [
+  {
+    id: "committed",
+    header: "Committed",
+    width: "14%",
+    cell: (row) => formatNumber(row.committedEventCount ?? 0),
+    sortValue: (row) => row.committedEventCount,
+  },
+  {
+    id: "storage",
+    header: "Storage",
+    width: "14%",
+    cell: (row) => formatBytes(row.sizeBytes ?? 0),
+    sortValue: (row) => row.sizeBytes,
+  },
+  {
+    id: "sessions",
+    header: "Append sessions",
+    width: "18%",
+    cell: (row) => formatNumber(row.sessionsActive ?? 0),
+    sortValue: (row) => row.sessionsActive,
+  },
+];
 
 type StreamPostureTone = "success" | "warning" | "danger" | "info";
 
@@ -120,6 +145,7 @@ export default function StreamPage() {
       refreshingDescription="Refreshing stream inventory..."
       emptyDescription="No stream resources are currently visible. Check the selected Route Family or broaden scope."
       tableTitle="Resource inventory"
+      metricColumns={streamMetricColumns}
       stats={[
         { label: "Committed events", value: stats ? formatNumber(stats.eventsTotal) : "--" },
         { label: "Streams", value: stats ? formatNumber(stats.streamsActive) : "--" },

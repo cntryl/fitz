@@ -4,6 +4,33 @@ import { serviceContractMocks } from "./service-contract/setup";
 const mocks = serviceContractMocks();
 
 describe("service endpoint contracts", () => {
+  it("maps domain resource rollups without detail requests", async () => {
+    const { mapInventoryResource } = await import("@/features/resource/resource-service");
+
+    expect(
+      mapInventoryResource({
+        committed_event_count: 12,
+        resource: "events",
+        sessions_active: 1,
+        size_bytes: 4096,
+      }),
+    ).toMatchObject({ committedEventCount: 12, sessionsActive: 1, sizeBytes: 4096 });
+    expect(
+      mapInventoryResource({
+        requests_pending: 2,
+        resource: "jobs",
+        slowest_worker_average_latency_ms: null,
+        workers_registered: 0,
+      }),
+    ).toMatchObject({
+      requestsPending: 2,
+      slowestWorkerAverageLatencyMs: null,
+      workersRegistered: 0,
+    });
+    expect(mocks.apiv1.getStreamResource).not.toHaveBeenCalled();
+    expect(mocks.apiv1.getRpcResource).not.toHaveBeenCalled();
+  });
+
   it("fans out generic resource inventory requests through the domain endpoints", async () => {
     const { resourceService } = await import("@/features/resource/resource-service");
 

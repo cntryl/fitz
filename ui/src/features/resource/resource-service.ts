@@ -1,9 +1,10 @@
-import type { ResourceEntry } from "@/adapters";
 import type { ServiceRequestOptions } from "@/shared/errors/api";
-import { getResourceInventoryAdapter } from "./resource-domain-adapters";
+import {
+  getResourceInventoryAdapter,
+  type InventoryResourceEntry,
+} from "./resource-domain-adapters";
 import type { DomainId, ResourceInventory, ResourceInventoryResource } from "./resource-models";
 
-type ResourceEntryWithOperation = ResourceEntry & { operation?: string };
 const RESOURCE_INVENTORY_CONCURRENCY = 4;
 
 async function mapWithConcurrency<T, R>(items: T[], worker: (item: T) => Promise<R>): Promise<R[]> {
@@ -24,7 +25,7 @@ async function mapWithConcurrency<T, R>(items: T[], worker: (item: T) => Promise
   return results as R[];
 }
 
-function mapInventoryResource(entry: ResourceEntryWithOperation): ResourceInventoryResource {
+export function mapInventoryResource(entry: InventoryResourceEntry): ResourceInventoryResource {
   const resource: ResourceInventoryResource = {
     resource: entry.resource,
   };
@@ -52,6 +53,33 @@ function mapInventoryResource(entry: ResourceEntryWithOperation): ResourceInvent
   if (entry.write_latency_p95_ms !== undefined) {
     resource.writeLatencyP95Ms = entry.write_latency_p95_ms;
   }
+  if ("active_leases" in entry) resource.activeLeases = entry.active_leases;
+  if ("committed_event_count" in entry) {
+    resource.committedEventCount = entry.committed_event_count;
+  }
+  if ("next_run" in entry) resource.nextRun = entry.next_run;
+  if ("notifications_received" in entry) {
+    resource.notificationsReceived = entry.notifications_received;
+  }
+  if ("oldest_lease_age_seconds" in entry) {
+    resource.oldestLeaseAgeSeconds = entry.oldest_lease_age_seconds;
+  }
+  if ("pending_claims" in entry) resource.pendingClaims = entry.pending_claims;
+  if ("publishes_per_minute" in entry) {
+    resource.publishesPerMinute = entry.publishes_per_minute;
+  }
+  if ("requests_pending" in entry) resource.requestsPending = entry.requests_pending;
+  if ("schedules_active" in entry) resource.schedulesActive = entry.schedules_active;
+  if ("sessions_active" in entry) resource.sessionsActive = entry.sessions_active;
+  if ("size_bytes" in entry) resource.sizeBytes = entry.size_bytes;
+  if ("slowest_worker_average_latency_ms" in entry) {
+    resource.slowestWorkerAverageLatencyMs = entry.slowest_worker_average_latency_ms;
+  }
+  if ("subscriptions_active" in entry) {
+    resource.subscriptionsActive = entry.subscriptions_active;
+  }
+  if ("waiters" in entry) resource.waiters = entry.waiters;
+  if ("workers_registered" in entry) resource.workersRegistered = entry.workers_registered;
 
   return resource;
 }
