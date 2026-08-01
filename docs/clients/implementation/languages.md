@@ -474,19 +474,28 @@ pub struct Transaction {
 }
 ```
 
-**3. Notice subscriptions with channels**
+**3. Notice subscriptions as bounded streams**
 
 ```rust
-use tokio::sync::mpsc;
+use futures_core::Stream;
+use std::{pin::Pin, task::{Context, Poll}};
+use tokio_stream::wrappers::BroadcastStream;
 
 pub struct Subscription {
-    subscription_id: u64,
-    receiver: mpsc::UnboundedReceiver<Notice>,
+    // Wire IDs stay private and may change during reconnect restoration.
+    registration: RestorableRegistration,
+    receiver: BroadcastStream<Vec<u8>>,
 }
 
-impl Subscription {
-    pub async fn recv(&mut self) -> Option<Notice> {
-        self.receiver.recv().await
+impl Stream for Subscription {
+    type Item = Result<Notice, NoticeError>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>)
+        -> Poll<Option<Self::Item>>
+    {
+        // Decode only notifications for registration.wire_id(). A lagged
+        // bounded receiver terminates with typed backpressure.
+        todo!()
     }
 }
 
@@ -498,19 +507,14 @@ impl NoticeClient {
         
         let resp = self.client.send_request(MessageType::Subscribe, req).await?;
         
-        let (tx, rx) = mpsc::unbounded_channel();
-        self.subscriptions.lock().await.insert(resp.subscription_id, tx);
-        
-        Ok(Subscription {
-            subscription_id: resp.subscription_id,
-            receiver: rx,
-        })
+        self.register_bounded_subscription(pattern, resp.subscription_id).await
     }
 }
 
 // Usage
-let mut sub = client.notice.subscribe("notice://prod/orders/*").await?;
-while let Some(notice) = sub.recv().await {
+let mut sub = client.notice()?.subscribe("notice://prod/orders/*").await?;
+while let Some(notice) = sub.next().await {
+    let notice = notice?;
     println!("Route: {}, Payload: {:?}", notice.route, notice.payload);
 }
 ```
@@ -518,44 +522,13 @@ while let Some(notice) = sub.recv().await {
 **4. Builder pattern for config**
 
 ```rust
-pub struct ClientBuilder {
-    url: String,
-    reconnect: bool,
-    max_retries: usize,
-    timeout: Duration,
-}
-
-impl ClientBuilder {
-    pub fn new(url: impl Into<String>) -> Self {
-        Self {
-            url: url.into(),
-            reconnect: true,
-            max_retries: 5,
-            timeout: Duration::from_secs(30),
-        }
-    }
-    
-    pub fn reconnect(mut self, enabled: bool) -> Self {
-        self.reconnect = enabled;
-        self
-    }
-    
-    pub fn max_retries(mut self, retries: usize) -> Self {
-        self.max_retries = retries;
-        self
-    }
-    
-    pub async fn build(self) -> Result<Client, ClientError> {
-        Client::connect(self).await
-    }
-}
-
 // Usage
-let client = ClientBuilder::new("ws://localhost:4090")
-    .reconnect(true)
-    .max_retries(10)
-    .build()
-    .await?;
+let client = Client::builder("ws://localhost:4090/ws", token_provider)
+    .request_timeout(Duration::from_secs(30))
+    .max_in_flight_requests(256)
+    .reconnect_policy(ReconnectPolicy::default())
+    .build()?;
+client.connect().await?;
 ```
 
 **5. Zero-copy where possible**
@@ -583,7 +556,7 @@ impl<'a> PutRequest<'a> {
 
 - ✅ Use `thiserror` for error types
 - ✅ Use `tokio` for async runtime
-- ✅ Use `Arc<Mutex<T>>` for shared state
+- ✅ Keep write admission bounded and response/notification dispatch independent
 - ✅ Prefer zero-copy with lifetimes where possible
 - ✅ Use builder pattern for complex construction
 - ✅ Implement `Drop` for cleanup (subscriptions, transactions)
@@ -617,25 +590,21 @@ fitz-ts/
 **1. Promise-based API**
 
 ```typescript
-export class FitzClient {
-    private connection: Connection;
-    public readonly kv: KvClient;
-    public readonly notice: NoticeClient;
-    
-    constructor(url: string) {
-        this.connection = new Connection(url);
-        this.kv = new KvClient(this.connection);
-        this.notice = new NoticeClient(this.connection);
-    }
-    
-    async connect(jwt: string): Promise<void> {
-        await this.connection.connect(jwt);
-    }
-    
-    async close(): Promise<void> {
-        await this.connection.close();
-    }
+export interface Client {
+    readonly kv: KvClient;
+    readonly queue: QueueClient;
+    readonly rpc: RpcClient;
+    readonly lease: LeaseClient;
+    readonly notice: NoticeClient;
+    readonly stream: StreamClient;
+    readonly schedule: ScheduleClient;
+    connect(): Promise<void>;
+    close(): Promise<void>;
 }
+
+// Closure-backed factories may return plain objects. Domain properties are
+// readonly and created lazily from the active connection.
+export function createClient(config: ClientConfig): Client;
 ```
 
 **2. Union types for results**
@@ -976,4 +945,3 @@ public class Transaction : IAsyncDisposable
 - ✅ Follow .NET naming conventions (PascalCase for public APIs)
 
 ---
-

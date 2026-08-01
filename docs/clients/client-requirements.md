@@ -92,7 +92,7 @@ The acceptance criteria in `client-acceptance-criteria.md` are the normative sou
 
 **REQ-PROTO-009 (T0)** The client MUST treat JWT as opaque bytes. It MUST NOT generate, sign, validate, or inspect JWT claims.
 
-**REQ-PROTO-010 (T0)** Routes MUST be treated as opaque URI strings. The client MUST NOT parse, validate, or normalize route strings.
+**REQ-PROTO-010 (T0)** Route values, including `realm`, MUST remain opaque and application-defined. Clients MAY validate the required scheme, segment count, empty segments, and whole-segment `*`/`**` wildcard syntax. Clients MUST NOT normalize route values, infer route existence, authorize a route, assign business meaning to `realm`, or derive/substitute `realm` and `route_family` from one another.
 
 ### T1 — Protocol Edge Cases
 
@@ -456,7 +456,7 @@ Use this table to grade a specific client implementation. For each row, mark:
 | REQ-PROTO-007 | T0 | Protocol | All acceptance criteria AC-* pass |
 | REQ-PROTO-008 | T0 | Protocol | Auth rejection handled; no retry with same JWT |
 | REQ-PROTO-009 | T0 | Protocol | JWT treated as opaque bytes |
-| REQ-PROTO-010 | T0 | Protocol | Routes treated as opaque strings |
+| REQ-PROTO-010 | T0 | Protocol | Route values remain opaque; shape-only validation allowed |
 | REQ-PROTO-011 | T1 | Protocol | Error code domain mapping correct |
 | REQ-PROTO-012 | T1 | Protocol | Retryable vs. fatal error categorization |
 | REQ-PROTO-013 | T1 | Protocol | Frame size respected; configurable |

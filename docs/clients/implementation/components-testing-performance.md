@@ -327,7 +327,9 @@ let route = std::str::from_utf8(&payload[offset..offset+route_len])?;
 
 ### 4. Subscription Buffering
 
-Buffer notices to avoid blocking:
+Use bounded buffers so notice delivery cannot block the receive loop or grow
+without limit. When the buffer fills, terminate only that local consumer with
+a typed backpressure error; sibling consumers remain active:
 
 ```python
 class NoticeSubscription:

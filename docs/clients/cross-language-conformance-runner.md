@@ -118,6 +118,7 @@ Minimal matrix:
 - CS-001..CS-003 map directly to connection and basic operation criteria.
 - CS-004..CS-006 map to error handling criteria.
 - CS-007..CS-010 enforce timeout/cancel/reconnect behavior parity.
+- CS-010 MUST drop the live TCP or WebSocket transport while leaving the broker available, then prove recovery through the same client instance. Closing one client and constructing another is not reconnect evidence.
 - CS-011..CS-013 enforce stream semantics.
 - CS-016 enforces filtered stream replay, optional stream metadata, and typed handling of unsupported or malformed filter payloads.
 - CS-014..CS-017 enforce concurrency, bounded-load, and lifecycle cleanup semantics.

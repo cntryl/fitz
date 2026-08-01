@@ -165,6 +165,7 @@ scenarios:
       transport: ["websocket", "tcp"]
       auth_mode: ["anonymous", "valid_jwt"]
     expected:
+      - "the same client instance observes a real transport loss; constructing a replacement client does not pass"
       - "client performs configured reconnect backoff"
       - "client re-creates reconnect-safe subscriptions and worker registrations"
       - "client fails or invalidates stale session-bound handles"
