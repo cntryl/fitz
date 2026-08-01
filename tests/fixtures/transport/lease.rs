@@ -150,10 +150,10 @@ pub fn build_lease_query(route: &str) -> Vec<u8> {
 }
 
 /// Build LEASE SUBSCRIBE frame (`msg_type` 407)
-pub fn build_lease_subscribe(pattern: &str) -> Vec<u8> {
+pub fn build_lease_subscribe(route: &str) -> Vec<u8> {
     let mut buf = Vec::new();
-    buf.put_u32(u32_len(pattern.len()));
-    buf.put_slice(pattern.as_bytes());
+    buf.put_u32(u32_len(route.len()));
+    buf.put_slice(route.as_bytes());
 
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(407, &buf);
@@ -161,10 +161,10 @@ pub fn build_lease_subscribe(pattern: &str) -> Vec<u8> {
 }
 
 /// Build LEASE UNSUBSCRIBE frame (`msg_type` 408)
-pub fn build_lease_unsubscribe(pattern: &str) -> Vec<u8> {
+pub fn build_lease_unsubscribe(route: &str) -> Vec<u8> {
     let mut buf = Vec::new();
-    buf.put_u32(u32_len(pattern.len()));
-    buf.put_slice(pattern.as_bytes());
+    buf.put_u32(u32_len(route.len()));
+    buf.put_slice(route.as_bytes());
 
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(408, &buf);

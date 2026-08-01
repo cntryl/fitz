@@ -542,6 +542,69 @@ where
     );
 }
 
+async fn should_reject_non_exact_lease_subscription_routes<C>(server: &TestServer)
+where
+    C: LeaseConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+    let invalid_routes = [
+        "lease://test/locks/*",
+        "lease://test/**",
+        "lease://test/locks/lock*",
+        "notice://test/locks/primary",
+        "lease://test/locks",
+        "lease://test/locks/primary/extra",
+    ];
+
+    // Act / Assert
+    for route in invalid_routes {
+        for frame in [build_lease_subscribe(route), build_lease_unsubscribe(route)] {
+            let response = client
+                .send_and_receive(&frame, 2000)
+                .await
+                .expect("invalid Lease subscription response");
+            let (_message_type, status, data) = parse_lease_response(&response);
+            assert_eq!(status, 1, "non-exact route must fail: {route}");
+            let (code, _message) = fitz::protocol::error_codes::decode_error_body(&data)
+                .expect("Lease subscription error envelope");
+            assert_eq!(
+                code,
+                fitz::protocol::error_codes::lease::ERR_INVALID_SUBSCRIPTION_ROUTE
+            );
+        }
+    }
+}
+
+async fn should_keep_exact_lease_subscription_idempotent<C>(server: &TestServer)
+where
+    C: LeaseConnector,
+{
+    // Arrange
+    let route = "lease://test/locks/idempotent";
+    let mut client = C::connect(server).await.expect("connect");
+
+    // Act
+    let first = client
+        .send_and_receive(&build_lease_subscribe(route), 2000)
+        .await
+        .expect("first exact Lease subscription");
+    let second = client
+        .send_and_receive(&build_lease_subscribe(route), 2000)
+        .await
+        .expect("duplicate exact Lease subscription");
+
+    // Assert
+    let (_, first_status, first_data) = parse_lease_response(&first);
+    let (_, second_status, second_data) = parse_lease_response(&second);
+    assert_eq!(first_status, 0);
+    assert_eq!(second_status, 0);
+    assert_eq!(
+        extract_lease_subscription_id(&first_data).expect("first Lease subscription id"),
+        extract_lease_subscription_id(&second_data).expect("duplicate Lease subscription id")
+    );
+}
+
 // ===== TCP TESTS =====
 
 #[tokio::test]
@@ -628,6 +691,18 @@ async fn should_not_deliver_lease_watch_notification_after_unsubscribe_tcp() {
         .await;
 }
 
+#[tokio::test]
+async fn should_reject_non_exact_lease_subscription_routes_tcp() {
+    let server = TestServer::start().await.expect("start");
+    should_reject_non_exact_lease_subscription_routes::<TcpLeaseConnector>(&server).await;
+}
+
+#[tokio::test]
+async fn should_keep_exact_lease_subscription_idempotent_tcp() {
+    let server = TestServer::start().await.expect("start");
+    should_keep_exact_lease_subscription_idempotent::<TcpLeaseConnector>(&server).await;
+}
+
 // ===== WEBSOCKET TESTS =====
 
 #[tokio::test]
@@ -712,4 +787,16 @@ async fn should_not_deliver_lease_watch_notification_after_unsubscribe_ws() {
     let server = TestServer::start().await.expect("start");
     should_not_deliver_lease_watch_notification_after_unsubscribe::<WsLeaseConnector>(&server)
         .await;
+}
+
+#[tokio::test]
+async fn should_reject_non_exact_lease_subscription_routes_ws() {
+    let server = TestServer::start().await.expect("start");
+    should_reject_non_exact_lease_subscription_routes::<WsLeaseConnector>(&server).await;
+}
+
+#[tokio::test]
+async fn should_keep_exact_lease_subscription_idempotent_ws() {
+    let server = TestServer::start().await.expect("start");
+    should_keep_exact_lease_subscription_idempotent::<WsLeaseConnector>(&server).await;
 }

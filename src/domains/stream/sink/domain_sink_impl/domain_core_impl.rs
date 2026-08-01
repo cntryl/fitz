@@ -23,9 +23,9 @@ impl StreamDomainCore {
         if parts.realm.is_empty()
             || parts.area.is_empty()
             || parts.resource.is_empty()
-            || parts.realm == "*"
-            || parts.area == "*"
-            || parts.resource == "*"
+            || parts.realm.contains('*')
+            || parts.area.contains('*')
+            || parts.resource.contains('*')
         {
             return Err("stream append routes require concrete realm/area/resource".to_string());
         }
@@ -111,7 +111,10 @@ impl StreamDomainCore {
     pub(in crate::domains::stream::sink) fn stream_response_is_failure(
         response: &StreamClientResponseBody,
     ) -> bool {
-        matches!(response, StreamClientResponseBody::Error(_))
+        matches!(
+            response,
+            StreamClientResponseBody::Error(_) | StreamClientResponseBody::SubscriptionError(_)
+        )
     }
 
     pub(in crate::domains::stream::sink) fn refresh_admin_snapshot_if_dirty(&self) {

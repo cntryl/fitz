@@ -8,14 +8,6 @@
 //! Production request forwarding, terminal error delivery, and caller-disconnect
 //! handling live in `RpcDomainSink`.
 //!
-//! # Performance Characteristics (Hardened v2)
-//!
-//! - **Dispatch latency**: ~140ns (zero-allocation hot path)
-//! - **Worker lookup**: O(1) index-based (no linear search)
-//! - **Lease expiration**: O(K) min-heap (K = expired count, not total leases)
-//! - **Scaling**: Stable to 10k+ in-flight requests and 256+ workers
-//! - **Throughput**: 7M+ dispatches/sec single-threaded
-//!
 //! # Semantics
 //!
 //! - **Single-worker dispatch**: Each accepted request is assigned to one live
@@ -23,6 +15,8 @@
 //! - **Strict correlation**: Responses must include the original correlation ID
 //!   to match the live in-flight request
 //! - **FIFO ordering**: Requests dispatched in arrival order per route
+//! - **Fair wildcard dispatch**: Ready concrete routes rotate while sharing a
+//!   wildcard registration's concurrency credit
 //! - **Bounded queue**: Backpressure when queue reaches capacity (default: 1000)
 //! - **Streaming support**: Workers can send multi-chunk responses with sequence numbers
 //! - **Explicitly ephemeral**: Worker registrations and pending requests live only in memory
@@ -34,22 +28,24 @@
 //!
 //! # Worker Model
 //!
-//! Workers register with exact route strings (no wildcards). Each worker can
-//! handle `max_concurrent` requests (default: 1). The actor maintains in-flight
-//! tracking and assigns new requests only to available workers. Disconnect or
-//! broker restart clears the worker pool; there is no durable worker recovery.
+//! Each `(session, pattern)` registration owns one compiled exact or wildcard
+//! pattern and one shared `max_concurrent` credit pool. Overlapping exact and
+//! wildcard registrations are independent, equal candidates. A duplicate
+//! registration is idempotent; workers must unregister before changing credit.
+//! Disconnect or broker restart clears registrations; there is no durable
+//! worker recovery.
 //!
 //! # Route Format
 //!
-//! RPC request and worker routes are exact route strings. Operation-style routes
-//! commonly use:
+//! RPC calls use concrete routes. Worker registrations may use strict
+//! whole-segment `*` and `**` patterns. Operation-style routes commonly use:
 //!
 //! ```text
 //! rpc://{realm}/{area}/{resource}/{operation}
 //! ```
 //!
 //! The `{operation}` represents the business operation (create, update, authenticate, etc.),
-//! not Fitz internal operations. Each unique route has its own actor and worker pool.
+//! not Fitz internal operations.
 //!
 //! Examples:
 //! - `rpc://acme/auth/user/create`
@@ -68,7 +64,7 @@ pub use errors::{RpcError, RpcErrorCode};
 pub use metrics::RpcMetrics;
 pub use protocol::{
     RpcClientForwardedResponse, RpcClientForwardedResponseBody, RpcClientRequest,
-    RpcClientResponse, RpcClientResponseBody, RpcMessage, RpcRequest, RpcResponse, RpcWorkItem,
-    RpcWorkerRequestDelivery,
+    RpcClientResponse, RpcClientResponseBody, RpcDecodeError, RpcMessage, RpcRequest, RpcResponse,
+    RpcWorkItem, RpcWorkerRequestDelivery,
 };
 pub use reply_inbox::{InboxMessage, ReplyInboxActor};

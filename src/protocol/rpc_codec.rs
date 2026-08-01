@@ -6,7 +6,9 @@
 //! `route_family` is a server-internal concept supplied by the session layer
 //! — it never appears on the wire.
 
-use crate::dispatch::wire::rpc::{RpcClientResponseBody, RpcMessage, RpcRequest, RpcResponse};
+use crate::dispatch::wire::rpc::{
+    RpcClientResponseBody, RpcDecodeError, RpcMessage, RpcRequest, RpcResponse,
+};
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use crate::protocol::tlv::MessageType;
@@ -178,7 +180,7 @@ pub fn parse_request(
     ctx: &FrameContext,
     payload: &[u8],
     route_family: RouteFamily,
-) -> Result<RpcMessage, String> {
+) -> Result<RpcMessage, RpcDecodeError> {
     let mut dec = PayloadDecoder::new(payload);
 
     match ctx.msg_type.0 {
@@ -186,8 +188,13 @@ pub fn parse_request(
         301 => parse_unsubscribe(&mut dec, route_family),
         302 => parse_rpc_request(&mut dec, route_family),
         303 => parse_rpc_response(&mut dec),
-        304 => Err("Unsupported RPC operation: 304".to_string()),
-        _ => Err(format!("Unknown operation: {}", ctx.msg_type.0)),
+        304 => Err(RpcDecodeError::from(
+            "Unsupported RPC operation: 304".to_string(),
+        )),
+        _ => Err(RpcDecodeError::from(format!(
+            "Unknown operation: {}",
+            ctx.msg_type.0
+        ))),
     }
 }
 
@@ -322,12 +329,19 @@ fn validate_max_concurrent(max_concurrent: u32) -> Result<usize, String> {
 fn parse_subscribe(
     dec: &mut PayloadDecoder,
     route_family: RouteFamily,
-) -> Result<RpcMessage, String> {
-    let worker_addr = RouteAddress::new(route_family, Route::new(dec.get_string_ref()?));
+) -> Result<RpcMessage, RpcDecodeError> {
+    let pattern = dec.get_string_ref()?;
+    crate::runtime::matcher::compile_registration_pattern(
+        pattern,
+        "rpc",
+        crate::runtime::matcher::PatternDepth::Flexible,
+    )
+    .map_err(RpcDecodeError::invalid_registration_pattern)?;
+    let worker_addr = RouteAddress::new(route_family, Route::new(pattern));
     let max_concurrent = validate_max_concurrent(dec.get_u32()?)?;
 
     if !dec.is_complete() {
-        return Err("Trailing data in message".to_string());
+        return Err("Trailing data in message".to_string().into());
     }
 
     Ok(RpcMessage::RegisterWorker {
@@ -340,11 +354,18 @@ fn parse_subscribe(
 fn parse_unsubscribe(
     dec: &mut PayloadDecoder,
     route_family: RouteFamily,
-) -> Result<RpcMessage, String> {
-    let worker_addr = RouteAddress::new(route_family, Route::new(dec.get_string_ref()?));
+) -> Result<RpcMessage, RpcDecodeError> {
+    let pattern = dec.get_string_ref()?;
+    crate::runtime::matcher::compile_registration_pattern(
+        pattern,
+        "rpc",
+        crate::runtime::matcher::PatternDepth::Flexible,
+    )
+    .map_err(RpcDecodeError::invalid_registration_pattern)?;
+    let worker_addr = RouteAddress::new(route_family, Route::new(pattern));
 
     if !dec.is_complete() {
-        return Err("Trailing data in message".to_string());
+        return Err("Trailing data in message".to_string().into());
     }
 
     Ok(RpcMessage::UnregisterWorker { worker_addr })
@@ -354,13 +375,25 @@ fn parse_unsubscribe(
 fn parse_rpc_request(
     dec: &mut PayloadDecoder,
     route_family: RouteFamily,
-) -> Result<RpcMessage, String> {
+) -> Result<RpcMessage, RpcDecodeError> {
     let correlation_id = get_uuid(dec)?;
-    let route = Route::new(dec.get_string_ref()?);
+    let route_value = dec.get_string_ref()?;
+    let compiled = crate::runtime::matcher::compile_registration_pattern(
+        route_value,
+        "rpc",
+        crate::runtime::matcher::PatternDepth::Flexible,
+    )
+    .map_err(RpcDecodeError::invalid_call_route)?;
+    if compiled.route().contains('*') {
+        return Err(RpcDecodeError::invalid_call_route(
+            "RPC call route must be concrete",
+        ));
+    }
+    let route = Route::new(route_value);
     let body = dec.get_bytes()?;
 
     if !dec.is_complete() {
-        return Err("Trailing data in message".to_string());
+        return Err("Trailing data in message".to_string().into());
     }
 
     Ok(RpcMessage::Request(RpcRequest::new(
@@ -371,18 +404,18 @@ fn parse_rpc_request(
     )))
 }
 
-fn parse_rpc_response(dec: &mut PayloadDecoder) -> Result<RpcMessage, String> {
+fn parse_rpc_response(dec: &mut PayloadDecoder) -> Result<RpcMessage, RpcDecodeError> {
     let correlation_id = get_uuid(dec)?;
     let seq = dec.get_u64()?;
     let flags = dec.get_u8()?;
     if flags & !RPC_RESPONSE_FLAGS_SUPPORTED != 0 {
-        return Err(format!("Unsupported RPC response flags: {flags:#04x}"));
+        return Err(format!("Unsupported RPC response flags: {flags:#04x}").into());
     }
     let body = dec.get_bytes()?;
     let stream_end = flags & RPC_RESPONSE_FLAG_STREAM_END != 0;
 
     if !dec.is_complete() {
-        return Err("Trailing data in message".to_string());
+        return Err("Trailing data in message".to_string().into());
     }
 
     Ok(RpcMessage::Response(RpcResponse {

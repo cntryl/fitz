@@ -2,9 +2,8 @@ use super::state_model::{
     rpc_admin_snapshot_due, rpc_timeout_sweep_interval, Arc, AtomicBool, DeliveryError, Duration,
     Envelope, Instant, Ordering, Route, RouteAddress, RpcDomainActor, RpcDomainCommand,
     RpcDomainCore, RpcDomainRuntime, RpcDomainSink, RpcLiveCounts, RpcPendingErrorDelivery,
-    RpcPendingRequest, RpcQueuedDispatch, RpcRouteState, RpcSessionCleanupResult,
-    RpcWorkerCleanupResult, RpcWorkerDispatch, RPC_BACKPRESSURE_ERROR, RPC_TIMEOUT_ERROR,
-    RPC_WORKER_NOT_FOUND_ERROR,
+    RpcPendingRequest, RpcQueuedDispatch, RpcSessionCleanupResult, RpcWorkerCleanupResult,
+    RpcWorkerDispatch, RPC_BACKPRESSURE_ERROR, RPC_TIMEOUT_ERROR, RPC_WORKER_NOT_FOUND_ERROR,
 };
 #[cfg(test)]
 use super::state_model::{RpcQueuedRequest, RpcWorker};
@@ -172,10 +171,7 @@ impl RpcDomainSink {
 
     #[cfg(test)]
     pub(super) fn register_worker_for_tests(&self, worker: RpcWorker) {
-        let mut state = self.core.state.lock();
-        state
-            .ensure_route_state_for_family(*worker.addr.family(), worker.addr.route())
-            .register_worker(worker);
+        self.core.state.lock().register_worker(worker);
     }
 
     #[cfg(test)]
@@ -401,7 +397,7 @@ impl RpcDomainRuntime<'_> {
 
     pub(super) fn live_counts(&self) -> RpcLiveCounts {
         let state = self.state.lock();
-        let workers = state.routes.values().map(RpcRouteState::worker_count).sum();
+        let workers = state.registration_count();
         RpcLiveCounts {
             workers,
             pending_requests: state.live_request_count(),
@@ -764,27 +760,19 @@ impl RpcDomainRuntime<'_> {
         self.router.route(request_envelope)
     }
 
-    pub(super) fn dispatch_queued_requests_for_route(
+    pub(super) fn dispatch_queued_requests_for_family(
         &self,
-        route: &Route,
         family: crate::runtime::routing::RouteFamily,
     ) {
         let mut snapshot_dirty = false;
-
         loop {
-            let next_dispatch = {
-                let mut state = self.state.lock();
-                state.next_queued_dispatch_for_family(route, family)
-            };
-
+            let next_dispatch = self.state.lock().next_ready_dispatch_for_family(family);
             let Some(dispatch) = next_dispatch else {
                 break;
             };
-
             self.forward_queued_dispatch(&dispatch);
             snapshot_dirty = true;
         }
-
         if snapshot_dirty {
             self.schedule_admin_snapshot(false);
         }
@@ -807,10 +795,6 @@ impl RpcDomainRuntime<'_> {
                 self.counter_inc("rpc_request_forward_errors_total");
                 let cleanup_result = self.apply_session_cleanup(dispatch.worker.session_id);
                 self.forward_worker_disconnect_errors(cleanup_result.disconnect_deliveries);
-                self.dispatch_queued_requests_for_route(
-                    &dispatch.request.route,
-                    *dispatch.worker.addr.family(),
-                );
             }
             Err(crate::runtime::RouteError::DeliveryFailed(
                 _,
@@ -850,13 +834,14 @@ impl RpcDomainRuntime<'_> {
     }
 
     pub(super) fn dispatch_all_queued_requests(&self) {
-        let routes: Vec<(crate::runtime::routing::RouteFamily, Route)> = {
+        let mut families: Vec<crate::runtime::routing::RouteFamily> = {
             let state = self.state.lock();
-            state.routes.keys().cloned().collect()
+            state.routes.keys().map(|(family, _)| *family).collect()
         };
-
-        for (family, route) in routes {
-            self.dispatch_queued_requests_for_route(&route, family);
+        families.sort_by_key(crate::runtime::routing::RouteFamily::id);
+        families.dedup();
+        for family in families {
+            self.dispatch_queued_requests_for_family(family);
         }
     }
 

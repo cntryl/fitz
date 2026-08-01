@@ -78,7 +78,7 @@ fn should_reject_lease_subscription_before_allocating_family_state() {
         Ok(crate::domains::lease::LeaseClientFrame::Sub(
             crate::domains::lease::LeaseSubscriptionMessage::Subscribe {
                 family_id: family,
-                pattern: Route::new(""),
+                route: Route::new(""),
                 session_id: 7,
                 subscriber: source.clone(),
             },
@@ -93,7 +93,7 @@ fn should_reject_lease_subscription_before_allocating_family_state() {
     // Assert
     assert_eq!(
         code,
-        crate::dispatch::protocol::error_codes::lease::ERR_BAD_REQUEST
+        crate::dispatch::protocol::error_codes::lease::ERR_INVALID_SUBSCRIPTION_ROUTE
     );
     assert!(sink.watch_families_are_empty_for_tests());
 }

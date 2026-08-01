@@ -363,27 +363,37 @@ impl QueueDomainCore {
                 false,
             );
         }
-        if pattern.as_str().is_empty() {
-            return (
-                crate::domains::queue::QueueResponse::BadRequest {
-                    reason: "empty pattern".to_string(),
-                },
-                None,
-                false,
-            );
-        }
-
         let pattern_str = pattern.as_str();
-        let parsed_pattern = crate::runtime::matcher::Pattern::new(pattern_str);
-        let subscription_id = {
+        let parsed_pattern = match crate::runtime::matcher::compile_registration_pattern(
+            pattern_str,
+            "queue",
+            crate::runtime::matcher::PatternDepth::CanMatch(3),
+        ) {
+            Ok(pattern) => pattern,
+            Err(reason) => {
+                return (
+                    crate::domains::queue::QueueResponse::InvalidSubscriptionPattern { reason },
+                    None,
+                    false,
+                );
+            }
+        };
+        let (subscription_id, state_changed) = {
             let mut families = self.families.lock();
             let state = families
                 .entry(family_id.as_u64())
                 .or_insert_with(RoutedSubscriptionSet::new);
 
             if let Some(id) = state.find_existing_id(session_id, pattern_str) {
-                id
+                (id, false)
             } else {
+                if state.wildcard_registration_limit_reached(session_id, &parsed_pattern) {
+                    return (
+                        crate::domains::queue::QueueResponse::SubscriptionLimit,
+                        None,
+                        false,
+                    );
+                }
                 let Ok(id) = self.next_sub_id.fetch_update(
                     Ordering::Relaxed,
                     Ordering::Relaxed,
@@ -410,7 +420,7 @@ impl QueueDomainCore {
                         subscriber: subscriber.clone(),
                     },
                 );
-                id
+                (id, true)
             }
         };
 
@@ -423,7 +433,7 @@ impl QueueDomainCore {
                 subscription_id,
                 subscriber,
             )),
-            true,
+            state_changed,
         )
     }
 
@@ -445,11 +455,13 @@ impl QueueDomainCore {
                 false,
             );
         }
-        if pattern.as_str().is_empty() {
+        if let Err(reason) = crate::runtime::matcher::compile_registration_pattern(
+            pattern.as_str(),
+            "queue",
+            crate::runtime::matcher::PatternDepth::CanMatch(3),
+        ) {
             return (
-                crate::domains::queue::QueueResponse::BadRequest {
-                    reason: "empty pattern".to_string(),
-                },
+                crate::domains::queue::QueueResponse::InvalidSubscriptionPattern { reason },
                 None,
                 false,
             );

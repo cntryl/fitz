@@ -190,73 +190,101 @@ impl KvDomainRuntime<'_> {
                 pattern,
                 session_id,
                 subscriber,
-            } => {
-                if !Self::valid_subscription_request(
-                    envelope,
-                    meta,
-                    family_id,
-                    session_id,
-                    &subscriber,
-                ) {
-                    Self::error_response("route family mismatch")
-                } else if pattern.as_str().is_empty() {
-                    Self::error_response("empty pattern")
-                } else {
-                    let subscription_id = {
-                        let mut watch_actors = self.core.watch_actors.lock();
-                        let actor = watch_actors.entry(family_id.as_u64()).or_insert_with(|| {
-                            crate::domains::kv::watch::KvWatchActor::new(family_id)
-                        });
-                        let subscription_id =
-                            actor.subscribe(session_id, pattern.as_str(), subscriber);
-                        if subscription_id.is_none() {
-                            watch_actors.remove(&family_id.as_u64());
-                        }
-                        subscription_id
-                    };
-                    match subscription_id {
-                        Some(subscription_id) => {
-                            crate::domains::kv::KvResponse::SubscribeOk { subscription_id }
-                        }
-                        None => Self::error_response("subscription ID space exhausted"),
-                    }
-                }
-            }
+            } => self
+                .handle_kv_subscribe(envelope, meta, family_id, &pattern, session_id, subscriber),
             crate::domains::kv::KvSubscriptionMessage::Unsubscribe {
                 family_id,
                 pattern,
                 session_id,
                 subscriber,
-            } => {
-                if !Self::valid_subscription_request(
-                    envelope,
-                    meta,
-                    family_id,
-                    session_id,
-                    &subscriber,
-                ) {
-                    Self::error_response("route family mismatch")
-                } else if pattern.as_str().is_empty() {
-                    Self::error_response("empty pattern")
-                } else {
-                    let mut watch_actors = self.core.watch_actors.lock();
-                    let remove_family =
-                        if let Some(actor) = watch_actors.get_mut(&family_id.as_u64()) {
-                            actor.unsubscribe(session_id, pattern.as_str());
-                            actor.is_empty()
-                        } else {
-                            false
-                        };
-                    if remove_family {
-                        watch_actors.remove(&family_id.as_u64());
-                    }
-                    crate::domains::kv::KvResponse::UnsubscribeOk
-                }
-            }
+            } => self.handle_kv_unsubscribe(
+                envelope,
+                meta,
+                family_id,
+                &pattern,
+                session_id,
+                &subscriber,
+            ),
         };
 
         self.refresh_metrics_gauges();
         self.route_kv_response(envelope, meta, &response, request_started)
+    }
+
+    fn handle_kv_subscribe(
+        &self,
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+        family_id: crate::runtime::routing::RouteFamily,
+        pattern: &crate::runtime::routing::Route,
+        session_id: u64,
+        subscriber: crate::runtime::routing::RouteAddress,
+    ) -> crate::domains::kv::KvResponse {
+        if Self::valid_subscription_request(envelope, meta, family_id, session_id, &subscriber) {
+            let compiled = match Self::compile_kv_subscription_pattern(pattern) {
+                Ok(compiled) => compiled,
+                Err(response) => return response,
+            };
+            let subscription_id = {
+                let mut watch_actors = self.core.watch_actors.lock();
+                let actor = watch_actors
+                    .entry(family_id.as_u64())
+                    .or_insert_with(|| crate::domains::kv::watch::KvWatchActor::new(family_id));
+                let subscription_id = actor.subscribe(session_id, compiled, subscriber);
+                if subscription_id.is_err() && actor.is_empty() {
+                    watch_actors.remove(&family_id.as_u64());
+                }
+                subscription_id
+            };
+            subscription_id.map_or_else(
+                |error| crate::domains::kv::KvResponse::Error { error },
+                |subscription_id| crate::domains::kv::KvResponse::SubscribeOk { subscription_id },
+            )
+        } else {
+            Self::error_response("route family mismatch")
+        }
+    }
+
+    fn handle_kv_unsubscribe(
+        &self,
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+        family_id: crate::runtime::routing::RouteFamily,
+        pattern: &crate::runtime::routing::Route,
+        session_id: u64,
+        subscriber: &crate::runtime::routing::RouteAddress,
+    ) -> crate::domains::kv::KvResponse {
+        if Self::valid_subscription_request(envelope, meta, family_id, session_id, subscriber) {
+            if let Err(response) = Self::compile_kv_subscription_pattern(pattern) {
+                return response;
+            }
+            let mut watch_actors = self.core.watch_actors.lock();
+            let remove_family = if let Some(actor) = watch_actors.get_mut(&family_id.as_u64()) {
+                actor.unsubscribe(session_id, pattern.as_str());
+                actor.is_empty()
+            } else {
+                false
+            };
+            if remove_family {
+                watch_actors.remove(&family_id.as_u64());
+            }
+            crate::domains::kv::KvResponse::UnsubscribeOk
+        } else {
+            Self::error_response("route family mismatch")
+        }
+    }
+
+    fn compile_kv_subscription_pattern(
+        pattern: &crate::runtime::routing::Route,
+    ) -> Result<crate::runtime::matcher::Pattern, crate::domains::kv::KvResponse> {
+        crate::runtime::matcher::compile_registration_pattern(
+            pattern.as_str(),
+            "kv",
+            crate::runtime::matcher::PatternDepth::CanMatch(3),
+        )
+        .map_err(|error| crate::domains::kv::KvResponse::Error {
+            error: crate::domains::kv::KvError::InvalidSubscriptionPattern(error),
+        })
     }
 
     fn handle_actor_operation_frame(

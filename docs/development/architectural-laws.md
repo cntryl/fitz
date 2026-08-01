@@ -182,6 +182,9 @@ must not be used as a correctness or recovery mechanism.
 Protocol validation follows one exact manifest. A numeric range, domain name,
 or admin route must not grant access by itself; the manifest entry, required
 scheme, direction, and family-scoped authorization policy are authoritative.
+Authorizing a registration pattern requires its complete concrete-route match
+set to be contained by one granted permission pattern; matching the literal
+registration string is never sufficient.
 
 If any answer is wrong, reject the change.
 
@@ -197,9 +200,23 @@ Fitz must remain a runtime of narrow, composable primitives:
 - Lease = explicit ownership coordination
 - Schedule = durable timing intent
 
+KV, Queue, Notice, Stream, RPC, and Schedule registration patterns use strict
+whole-segment `*` and `**` syntax. Each domain caps wildcard registrations at
+128 per session while exact registrations remain uncapped by that wildcard
+limit. Duplicates are idempotent and checked before the cap; overlaps stay
+independent, notification routes stay concrete, and matching never crosses a
+`RouteFamily` boundary. Lease is exact by design: Lease watches reject every
+wildcard and require `lease://realm/area/resource`.
+
+RPC concrete-route dispatch state exists only while that route has queued or
+pending calls. Schedule fair cursors exist only while at least one live
+registration still matches their concrete route.
+
 Schedule definitions select a required live delivery mode. `broadcast` attempts
-every currently connected exact-route subscriber; `single` attempts one
-currently connected exact-route subscriber using an ephemeral fair cursor.
+every currently connected matching registration; `single` attempts one
+currently connected matching registration using a per-concrete-route ephemeral
+fair cursor. Registration patterns use strict whole-segment `*` and `**`
+wildcards and never cross `RouteFamily` boundaries.
 Neither mode makes downstream delivery durable, retryable, or exactly-once.
 An occurrence is acknowledged and advances when no subscriber accepts it.
 This is intentional: subscriber availability must not turn Schedule into a

@@ -43,7 +43,27 @@ Upgrade every client Schedule codec atomically with the broker. CREATE entries
 are now `[route][cron][mode][payload]`; CREATE_BATCH repeats that shape; LIST
 entries return `[route][cron][mode][payload]`. Use `0` for broadcast and `1` for
 single delivery. Unknown values fail with `ERR_INVALID_DELIVERY_MODE` (`7008`).
-The NOTIFY payload and all Schedule message IDs are unchanged.
+SCHEDULE_NOTIFY (`705`) is a clean wire break from
+`[subscription_id][payload]` to `[subscription_id][exact_route][payload]`.
+Upgrade every Schedule client decoder before routing traffic to the new broker.
+Rollback requires restoring the prior broker and prior client codec together;
+mixed versions cannot safely decode 705 frames.
+
+### Subscription registration contract
+
+KV, Queue, Notice, Stream, RPC, and Schedule now share strict whole-segment
+`*`/`**` registration validation and a 128-wildcard-registration session limit.
+Exact registrations do not count, and duplicates remain idempotent. Clients
+must surface the domain-specific validation and limit codes: KV 1012/1013,
+Stream 2010/2011, Notice 3002/3003, Queue 4010/4011, RPC 6012/6013, and Schedule
+7006/7007.
+
+Lease watches are exact-only. Rename Lease client request fields from `pattern`
+to `route` and reject non-concrete `lease://realm/area/resource` input locally
+when convenient; the broker returns 5010 authoritatively. The encoded string
+payload is unchanged. Queue availability notifications now carry the concrete
+three-segment Queue resource route rather than a synthetic `/ready` suffix.
+Update Queue notification routing before upgrading the broker.
 
 ### Schedule cron day-field compatibility
 

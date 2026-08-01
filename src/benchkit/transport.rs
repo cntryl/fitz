@@ -279,11 +279,7 @@ pub fn build_queue_dequeue(queue_name: &str) -> Vec<u8> {
 /// Build QUEUE WATCH frame (`msg_type` 207).
 #[must_use]
 pub fn build_queue_watch(queue_name: &str) -> Vec<u8> {
-    let pattern = if queue_name.contains('*') || queue_name.ends_with("/ready") {
-        queue_name.to_string()
-    } else {
-        format!("{queue_name}/ready")
-    };
+    let pattern = queue_name;
     let mut payload = Vec::new();
     payload.extend_from_slice(&(u32_len(pattern.len())).to_be_bytes());
     payload.extend_from_slice(pattern.as_bytes());

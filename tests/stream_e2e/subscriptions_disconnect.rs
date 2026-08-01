@@ -186,3 +186,131 @@ where
     let records = parse_stream_read_records(&read_response);
     assert_eq!(records, vec![(0, b"committed".to_vec())]);
 }
+
+pub(crate) async fn should_reject_invalid_stream_subscription_patterns<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+    let invalid_patterns = [
+        "notice://test/app/events",
+        "stream://test//events",
+        "stream://test/app/event*",
+        "stream://test/app",
+        "stream://test/app/events/extra",
+    ];
+
+    // Act / Assert
+    for pattern in invalid_patterns {
+        for frame in [
+            build_stream_subscribe(pattern),
+            build_stream_unsubscribe(pattern),
+        ] {
+            let response = client
+                .send_and_receive(&frame, 2000)
+                .await
+                .expect("invalid Stream subscription response");
+            let (_message_type, status, data) = parse_stream_response(&response);
+            assert_eq!(status, 1, "invalid pattern must fail: {pattern}");
+            let (code, _message) = fitz::protocol::error_codes::decode_error_body(&data)
+                .expect("Stream subscription error envelope");
+            assert_eq!(
+                code,
+                fitz::protocol::error_codes::stream::ERR_INVALID_SUBSCRIPTION_PATTERN
+            );
+        }
+    }
+}
+
+pub(crate) async fn should_enforce_stream_wildcard_registration_limit<C>(server: &TestServer)
+where
+    C: StreamConnector,
+{
+    // Arrange
+    let mut client = C::connect(server).await.expect("connect");
+    let mut first_subscription_id = None;
+    for index in 0..128 {
+        let pattern = format!("stream://*/limit/{index}");
+        let response = client
+            .send_and_receive(&build_stream_subscribe(&pattern), 2000)
+            .await
+            .expect("Stream wildcard registration");
+        let (_, status, data) = parse_stream_response(&response);
+        assert_eq!(status, 0, "wildcard registration {index} must succeed");
+        let id = parse_stream_session_id(&data).expect("Stream subscription id");
+        first_subscription_id.get_or_insert(id);
+    }
+
+    // Act
+    let duplicate = client
+        .send_and_receive(&build_stream_subscribe("stream://*/limit/0"), 2000)
+        .await
+        .expect("duplicate Stream registration");
+    let exact = client
+        .send_and_receive(&build_stream_subscribe("stream://test/limit/exact"), 2000)
+        .await
+        .expect("exact Stream registration at wildcard cap");
+    let overflow = client
+        .send_and_receive(&build_stream_subscribe("stream://*/limit/overflow"), 2000)
+        .await
+        .expect("Stream wildcard overflow response");
+
+    // Assert
+    let (_, duplicate_status, duplicate_data) = parse_stream_response(&duplicate);
+    assert_eq!(duplicate_status, 0);
+    assert_eq!(
+        parse_stream_session_id(&duplicate_data).expect("duplicate subscription id"),
+        first_subscription_id.expect("first subscription id")
+    );
+    assert_eq!(parse_stream_response(&exact).1, 0);
+    let (_, overflow_status, overflow_data) = parse_stream_response(&overflow);
+    assert_eq!(overflow_status, 1);
+    let (code, _message) = fitz::protocol::error_codes::decode_error_body(&overflow_data)
+        .expect("Stream overflow error envelope");
+    assert_eq!(
+        code,
+        fitz::protocol::error_codes::stream::ERR_SUBSCRIPTION_LIMIT
+    );
+}
+
+pub(crate) async fn should_deliver_stream_notification_for_overlapping_wildcards<C>(
+    server: &TestServer,
+) where
+    C: StreamConnector,
+{
+    // Arrange
+    let route = "stream://test/app/wildcard-events";
+    let mut subscriber = C::connect(server).await.expect("connect subscriber");
+    let mut writer = C::connect(server).await.expect("connect writer");
+    let mut subscription_ids = Vec::new();
+    for pattern in ["stream://*/app/*", "stream://test/**"] {
+        let response = subscriber
+            .send_and_receive(&build_stream_subscribe(pattern), 2000)
+            .await
+            .expect("register Stream wildcard");
+        let (_, status, data) = parse_stream_response(&response);
+        assert_eq!(status, 0);
+        subscription_ids.push(parse_stream_session_id(&data).expect("Stream subscription id"));
+    }
+
+    // Act
+    commit_stream_record(&mut writer, route, b"event").await;
+    let first = subscriber
+        .recv_frame(2000)
+        .await
+        .expect("first Stream delivery");
+    let second = subscriber
+        .recv_frame(2000)
+        .await
+        .expect("second Stream delivery");
+
+    // Assert
+    let mut deliveries =
+        [first, second].map(|frame| parse_stream_delivery(&frame).expect("Stream delivery"));
+    deliveries.sort_by_key(|delivery| delivery.subscription_id);
+    subscription_ids.sort_unstable();
+    let delivery_ids = [deliveries[0].subscription_id, deliveries[1].subscription_id];
+    assert_eq!(delivery_ids.as_slice(), subscription_ids.as_slice());
+    assert!(deliveries.iter().all(|delivery| delivery.route == route));
+}

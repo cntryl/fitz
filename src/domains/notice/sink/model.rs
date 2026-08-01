@@ -4,8 +4,6 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// Per-session wildcard cap used to keep the in-memory matcher bounded.
-pub(super) const MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION: usize = 128;
 pub(super) type NoticeDeliveryTargets = SmallVec<[NoticeDeliveryTarget; 8]>;
 pub(super) type NoticeMatchedRoutePatterns = SmallVec<[Arc<str>; 8]>;
 pub(super) type NoticeRouteStatsKey = (u64, Arc<str>);

@@ -31,8 +31,10 @@
 
 use crate::runtime::routing::Route;
 use smallvec::SmallVec;
+use std::collections::{HashSet, VecDeque};
 
 type RouteSegments<'a> = SmallVec<[&'a str; 16]>;
+const MAX_PATTERN_COVERAGE_STATES: usize = 16_384;
 
 /// Wildcard pattern for route subscriptions
 ///
@@ -57,6 +59,61 @@ pub enum PatternSegment {
     DoubleStar,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PatternDepth {
+    Flexible,
+    CanMatch(usize),
+}
+
+/// Compile and validate a registration pattern for a domain.
+///
+/// Registration patterns require the expected scheme, non-empty path
+/// segments, and whole-segment wildcards. `CanMatch` additionally rejects a
+/// pattern that can never match a concrete route of the requested depth.
+///
+/// # Errors
+///
+/// Returns an error when the scheme, segments, wildcard tokens, or requested
+/// concrete depth are invalid.
+pub fn compile_registration_pattern(
+    route: &str,
+    expected_scheme: &str,
+    depth: PatternDepth,
+) -> Result<Pattern, String> {
+    let Some((scheme, path)) = route.split_once("://") else {
+        return Err(format!(
+            "subscription pattern must use {expected_scheme}://"
+        ));
+    };
+    if scheme != expected_scheme {
+        return Err(format!(
+            "subscription pattern scheme must be {expected_scheme}"
+        ));
+    }
+    if path.is_empty() || path.split('/').any(str::is_empty) {
+        return Err("subscription pattern must contain non-empty segments".to_string());
+    }
+
+    let segments: Vec<&str> = path.split('/').collect();
+    if segments
+        .iter()
+        .any(|segment| segment.contains('*') && !matches!(*segment, "*" | "**"))
+    {
+        return Err("wildcards must occupy a complete segment".to_string());
+    }
+    if let PatternDepth::CanMatch(required) = depth {
+        let fixed = segments.iter().filter(|segment| **segment != "**").count();
+        let flexible = segments.contains(&"**");
+        if fixed > required || (!flexible && fixed != required) {
+            return Err(format!(
+                "subscription pattern cannot match a route with {required} segments"
+            ));
+        }
+    }
+
+    Ok(Pattern::new(route))
+}
+
 impl Pattern {
     /// Create a new pattern from a route string
     #[inline]
@@ -75,6 +132,15 @@ impl Pattern {
     #[must_use]
     pub fn route(&self) -> &str {
         &self.route
+    }
+
+    /// Return whether this registration contains a wildcard segment.
+    #[inline]
+    #[must_use]
+    pub fn is_wildcard(&self) -> bool {
+        self.segments
+            .iter()
+            .any(|segment| matches!(segment, PatternSegment::Star | PatternSegment::DoubleStar))
     }
 
     /// Check if this pattern matches a given route
@@ -98,6 +164,96 @@ impl Pattern {
 
         match_segments(&self.segments, &route_segments)
     }
+
+    /// Return whether this pattern covers every route matched by `requested`.
+    ///
+    /// This is the authorization relation for wildcard registrations: matching
+    /// the registration string itself is insufficient because wildcard tokens
+    /// are data to the ordinary route matcher. The product-state walk below
+    /// proves language inclusion for the complete `*`/`**` grammar.
+    #[must_use]
+    pub fn covers(&self, requested: &Self) -> bool {
+        match (self.scheme.as_deref(), requested.scheme.as_deref()) {
+            (Some(allowed), Some(requested)) if allowed != requested => return false,
+            (Some(_), None) => return false,
+            _ => {}
+        }
+
+        pattern_language_is_subset(&requested.segments, &self.segments)
+    }
+}
+
+fn pattern_language_is_subset(requested: &[PatternSegment], allowed: &[PatternSegment]) -> bool {
+    if requested.len() >= u128::BITS as usize || allowed.len() >= u128::BITS as usize {
+        return false;
+    }
+
+    let mut symbols = vec![None];
+    for segment in requested.iter().chain(allowed) {
+        if let PatternSegment::Literal(literal) = segment {
+            let symbol = Some(literal.as_str());
+            if !symbols.contains(&symbol) {
+                symbols.push(symbol);
+            }
+        }
+    }
+
+    let start = (epsilon_closure(requested, 1), epsilon_closure(allowed, 1));
+    let mut pending = VecDeque::from([start]);
+    let mut visited = HashSet::from([start]);
+
+    while let Some((requested_states, allowed_states)) = pending.pop_front() {
+        if accepts(requested_states, requested.len()) && !accepts(allowed_states, allowed.len()) {
+            return false;
+        }
+
+        for symbol in &symbols {
+            let next_requested = transition(requested, requested_states, *symbol);
+            if next_requested == 0 {
+                continue;
+            }
+            let next = (next_requested, transition(allowed, allowed_states, *symbol));
+            if visited.insert(next) {
+                if visited.len() > MAX_PATTERN_COVERAGE_STATES {
+                    return false;
+                }
+                pending.push_back(next);
+            }
+        }
+    }
+
+    true
+}
+
+fn epsilon_closure(pattern: &[PatternSegment], mut states: u128) -> u128 {
+    for (index, segment) in pattern.iter().enumerate() {
+        if states & (1 << index) != 0 && matches!(segment, PatternSegment::DoubleStar) {
+            states |= 1 << (index + 1);
+        }
+    }
+    states
+}
+
+fn transition(pattern: &[PatternSegment], states: u128, symbol: Option<&str>) -> u128 {
+    let mut next = 0;
+    for (index, segment) in pattern.iter().enumerate() {
+        if states & (1 << index) == 0 {
+            continue;
+        }
+        match segment {
+            PatternSegment::Literal(literal) if symbol == Some(literal.as_str()) => {
+                next |= 1 << (index + 1);
+            }
+            PatternSegment::Star => next |= 1 << (index + 1),
+            PatternSegment::DoubleStar => next |= 1 << index,
+            PatternSegment::Literal(_) => {}
+        }
+    }
+    epsilon_closure(pattern, next)
+}
+
+fn accepts(states: u128, pattern_len: usize) -> bool {
+    states & (1 << pattern_len) != 0
 }
 
 /// Parse a route pattern into segments
@@ -262,6 +418,58 @@ mod tests {
     fn should_match_exact_route() {
         let pattern = Pattern::new("notice://acme/orders/create");
         assert!(pattern.matches(&route("notice://acme/orders/create")));
+    }
+
+    #[test]
+    fn should_not_cover_deeper_registration_given_fixed_depth_permission() {
+        // Arrange
+        let permission = Pattern::new("rpc://acme/orders/*/*");
+        let registration = Pattern::new("rpc://acme/orders/**/**");
+
+        // Act
+        let covers = permission.covers(&registration);
+
+        // Assert
+        assert!(!covers);
+    }
+
+    #[test]
+    fn should_cover_narrower_registration_given_recursive_permission() {
+        // Arrange
+        let permission = Pattern::new("rpc://acme/orders/**");
+        let registration = Pattern::new("rpc://acme/orders/*/*");
+
+        // Act
+        let covers = permission.covers(&registration);
+
+        // Assert
+        assert!(covers);
+    }
+
+    #[test]
+    fn should_not_cover_registration_on_different_scheme() {
+        // Arrange
+        let permission = Pattern::new("queue://acme/**");
+        let registration = Pattern::new("rpc://acme/orders/*");
+
+        // Act
+        let covers = permission.covers(&registration);
+
+        // Assert
+        assert!(!covers);
+    }
+
+    #[test]
+    fn should_cover_registration_given_scheme_agnostic_permission() {
+        // Arrange
+        let permission = Pattern::new("**");
+        let registration = Pattern::new("rpc://acme/orders/**");
+
+        // Act
+        let covers = permission.covers(&registration);
+
+        // Assert
+        assert!(covers);
     }
 
     #[test]
@@ -546,5 +754,58 @@ mod tests {
 
         // Assert
         assert!(result);
+    }
+
+    #[test]
+    fn should_compile_registration_wildcards_in_any_segment() {
+        // Arrange
+        let patterns = ["notice://*/orders/created", "notice://acme/*/**"];
+
+        // Act
+        let results: Vec<_> = patterns
+            .iter()
+            .map(|pattern| compile_registration_pattern(pattern, "notice", PatternDepth::Flexible))
+            .collect();
+
+        // Assert
+        assert!(results.iter().all(Result::is_ok));
+    }
+
+    #[test]
+    fn should_reject_malformed_registration_patterns() {
+        // Arrange
+        let patterns = [
+            "rpc://acme//run",
+            "notice://acme/order*",
+            "queue://acme/orders",
+        ];
+
+        // Act
+        let results: Vec<_> = patterns
+            .iter()
+            .map(|pattern| compile_registration_pattern(pattern, "rpc", PatternDepth::Flexible))
+            .collect();
+
+        // Assert
+        assert!(results.iter().all(Result::is_err));
+    }
+
+    #[test]
+    fn should_require_schedule_pattern_to_match_four_segments() {
+        // Arrange
+        let valid = ["schedule://*/jobs/*/run", "schedule://**"];
+        let invalid = ["schedule://acme/jobs/run", "schedule://a/b/c/d/e"];
+
+        // Act
+        let valid_results = valid.map(|pattern| {
+            compile_registration_pattern(pattern, "schedule", PatternDepth::CanMatch(4))
+        });
+        let invalid_results = invalid.map(|pattern| {
+            compile_registration_pattern(pattern, "schedule", PatternDepth::CanMatch(4))
+        });
+
+        // Assert
+        assert!(valid_results.iter().all(Result::is_ok));
+        assert!(invalid_results.iter().all(Result::is_err));
     }
 }

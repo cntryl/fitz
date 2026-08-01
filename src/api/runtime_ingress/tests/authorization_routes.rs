@@ -29,7 +29,7 @@ fn should_derive_canonical_routes_for_scheme_less_domain_payloads() {
         .unwrap()
         .unwrap();
 
-    let pattern = b"patterns/*";
+    let pattern = b"notice://patterns/*";
     let mut notice_payload = Vec::new();
     notice_payload.extend_from_slice(
         &u32::try_from(pattern.len())
@@ -209,7 +209,7 @@ fn should_canonicalize_domain_identity_routes_for_authorization() {
     let kv_begin = crate::benchkit::build_kv_begin("kv://acme/app/users/extra", 0, 0);
     let (_, kv_payload) = crate::benchkit::extract_single_tlv_field(&kv_begin);
     let queue_payload = encode_queue_send("queue://acme/app/jobs/process", b"job");
-    let lease_payload = encode_lease_subscribe("lease://acme/locks/db/migration");
+    let lease_payload = encode_lease_subscribe("lease://acme/locks/db");
     let stream_begin = crate::benchkit::build_stream_begin("stream://acme/logs/events/append");
     let (_, stream_payload) = crate::benchkit::extract_single_tlv_field(&stream_begin);
 
@@ -418,6 +418,93 @@ async fn should_require_all_for_rpc_worker_registration_at_ingress() {
     assert_eq!(allowed_decision, IngressDecision::Accept);
     assert_eq!(allowed_frame.msg_type, MessageType::new(300));
     assert!(all_inbox.receiver().try_recv().is_err());
+}
+
+#[tokio::test]
+async fn should_reject_rpc_registration_exceeding_permission_match_set_at_ingress() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 612;
+    let router = Arc::new(crate::runtime::Router::new());
+    let domain_mailbox = Arc::new(Mailbox::new(8));
+    let inbox_mailbox = Arc::new(Mailbox::new(8));
+    router.register_domain_pattern("rpc", domain_mailbox.clone());
+    router.register(
+        RouteAddress::new(family, Route::new("inbox://session/612")),
+        inbox_mailbox.clone(),
+    );
+    let ingress = runtime_ingress_with_jwks_auth().with_router(router);
+    let session = make_authenticated_session_info(
+        session_id,
+        TransportKind::Tcp,
+        family,
+        &["rpc://acme/orders/*/*#*"],
+    );
+    ingress.on_open(session).await.unwrap();
+    let register_frame = crate::benchkit::build_rpc_subscribe("rpc://acme/orders/**/**");
+    let (_, register_payload) = crate::benchkit::extract_single_tlv_field(&register_frame);
+
+    // Act
+    let decision = ingress
+        .on_frame(
+            session_id,
+            ChannelId::Rpc,
+            MessageType::new(300),
+            register_payload,
+        )
+        .await;
+    let denied_frame = receive_frame(&inbox_mailbox, "rpc unauthorized response");
+
+    // Assert
+    assert_eq!(decision, IngressDecision::Accept);
+    assert_eq!(
+        decode_domain_error_code(denied_frame.payload.as_ref()),
+        crate::protocol::error_codes::rpc::ERR_UNAUTHORIZED
+    );
+    assert!(domain_mailbox.receiver().try_recv().is_err());
+}
+
+#[tokio::test]
+async fn should_close_auth_required_session_before_dispatch_given_unparseable_registration_route() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 613;
+    let router = Arc::new(crate::runtime::Router::new());
+    let domain_mailbox = Arc::new(Mailbox::new(8));
+    router.register_domain_pattern("notice", domain_mailbox.clone());
+    let ingress = runtime_ingress_with_jwks_auth().with_router(router);
+    let session = make_authenticated_session_info(
+        session_id,
+        TransportKind::Tcp,
+        family,
+        &["notice://acme/allowed/**#read"],
+    );
+    ingress.on_open(session).await.unwrap();
+    let route = b"acme/forbidden/**";
+    let mut payload = Vec::with_capacity(4 + route.len());
+    payload.extend_from_slice(
+        &u32::try_from(route.len())
+            .expect("route length fits in u32")
+            .to_be_bytes(),
+    );
+    payload.extend_from_slice(route);
+
+    // Act
+    let decision = ingress
+        .on_frame(
+            session_id,
+            ChannelId::Sub,
+            MessageType::new(501),
+            Bytes::from(payload),
+        )
+        .await;
+
+    // Assert
+    assert!(matches!(
+        decision,
+        IngressDecision::Close(reason) if reason.contains("authorization parse failed")
+    ));
+    assert!(domain_mailbox.receiver().try_recv().is_err());
 }
 
 #[tokio::test]

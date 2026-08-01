@@ -65,7 +65,7 @@ Domains are selected by **message type ranges**, not by scheme:
 kv://{realm}/{area}/{resource}
 ```
 
-**Segments**: Exactly 3 (realm, area, resource)  
+**Segments**: Exactly 3 (realm, area, resource)
 **Operation**: Not in route path (encoded in message type)
 
 #### Route Identity
@@ -129,7 +129,9 @@ let (realm, area, resource) = (parts[0], parts[1], parts[2]);
 
 #### Special Rules
 
-- **No wildcards**: Routes must be exact (no `*` or `**` patterns)
+- **Concrete operations**: Transaction and mutation routes are exact
+- **Pattern watches**: SUBSCRIBE and UNSUBSCRIBE accept exact routes or strict
+  whole-segment `*`/`**` patterns capable of matching three segments
 - **Transaction isolation**: Each transaction operates on single resource
 - **Read-write modes**: Transactions can be read-only or read-write
 - **No cross-resource operations**: Cannot access multiple resources in one transaction
@@ -148,7 +150,7 @@ let (realm, area, resource) = (parts[0], parts[1], parts[2]);
 queue://{realm}/{area}/{resource}
 ```
 
-**Segments**: 3+ (realm, area, resource, trailing ignored)  
+**Segments**: Exactly 3 (realm, area, resource)
 **Operation**: Not in route path (encoded in message type)
 
 #### Route Identity
@@ -229,7 +231,9 @@ impl QueueKey {
 - **Token protocol**: Random u64 tokens prevent duplicate operations
 - **Optional DLQ**: Dead-letter queue after max_attempts threshold
 - **FIFO ordering**: Messages delivered in insertion order
-- **No wildcards**: Routes must be exact
+- **Concrete operations**: ENQUEUE, RESERVE, EXTEND, and COMPLETE routes are exact
+- **Pattern watches**: SUBSCRIBE and UNSUBSCRIBE accept exact routes or strict
+  whole-segment `*`/`**` patterns capable of matching three segments
 
 ---
 
@@ -299,13 +303,16 @@ pub struct RpcRoute {
 
 #### Special Rules
 
-- **Worker pools**: Each route maintains independent worker pool
-- **Credit-biased dispatch**: Requests use available worker credit before fanning out
+- **Registration-owned credit**: Each exact or wildcard registration owns one
+  credit pool shared across every concrete route it matches
+- **Fair ready-route dispatch**: One route-local FIFO head is dispatched before
+  rotating to another ready concrete route that shares registration credit
 - **Correlation protocol**: UUID correlation_id links request/response
 - **Streaming support**: Multi-chunk responses with sequence numbers
 - **FIFO ordering**: Requests dispatched in arrival order
 - **Bounded queue**: Default 1000 request capacity per route
-- **No wildcards**: Workers register for exact routes
+- **Wildcard workers**: registrations accept whole-segment `*` and `**`, including in `realm`; calls remain concrete
+- **Overlaps are distinct**: exact and wildcard registrations are equal candidates with independent credit
 - **Session cleanup**: Worker registrations auto-removed on disconnect
 
 ---
@@ -624,7 +631,7 @@ schedule://{realm}/{area}/{resource}/{operation}
 #### Route Identity
 
 ```rust
-(RouteFamily, realm, area, resource)
+(RouteFamily, realm, area, resource, operation)
 ```
 
 #### Supported Operations
@@ -641,9 +648,9 @@ schedule://{realm}/{area}/{resource}/{operation}
 #### Route Validation Rules
 
 1. **Segment count**: Exactly 4 segments required
-2. **Wildcard subscriptions**: Can use `*` for route pattern matching
+2. **Wildcard subscriptions**: Can use strict whole-segment `*` and `**` patterns
 3. **Exact creation**: Create operations require exact route and operation
-4. **Target routes**: Embedded in schedule payload (cross-domain)
+4. **Notification route**: NOTIFY carries the exact fired route alongside the payload
 
 #### Examples
 
@@ -661,7 +668,7 @@ schedule://prod/jobs/*              # All jobs in prod/jobs
 schedule://prod/**                  # All schedules in prod
 ```
 
-**Invalid**:
+**Invalid creation/cancel routes**:
 ```
 schedule://prod/jobs                # Too few segments
 schedule://prod/jobs/cleanup        # Missing operation
@@ -682,9 +689,11 @@ if parts.len() != 4 {
 #### Special Rules
 
 - **Cron expressions**: Standard 5-field cron syntax
-- **Dual emission**: Fires emit to both:
-  1. `schedule://` subscribers (SCHEDULE_NOTIFY message)
-  2. Target resource route (cross-domain execution)
+- **Notification-only**: A due occurrence attempts ephemeral SCHEDULE_NOTIFY
+  handoffs to matching live registrations; it never dispatches a target-domain
+  operation
+- **Live-only advance**: No matching registration or all rejected handoffs still
+  acknowledge and advance the occurrence without a delivery backlog
 - **Coalescing semantics**: Missed ticks fire at most once
 - **Time-based**: Wall-clock scheduling (not logical time)
 - **Durable**: Schedules persisted to Midge
@@ -707,13 +716,13 @@ if parts.len() != 4 {
 
 | Domain | Wildcard Support | Pattern Types | Use Case |
 |--------|------------------|---------------|----------|
-| KV | ❌ No | N/A | Exact key access |
-| Queue | ❌ No | N/A | Specific queue targeting |
-| RPC | ❌ No | N/A | Exact service routing |
+| KV | ⚠️ Registration only | `*`, `**` | Change-watch patterns; operations are concrete |
+| Queue | ⚠️ Registration only | `*`, `**` | Availability-watch patterns; operations are concrete |
+| RPC | ⚠️ Registration only | `*`, `**` | Worker registration patterns; calls are concrete |
 | Lease | ❌ No | N/A | Specific lock identity |
 | Notice | ✅ Yes | `*`, `**` | Event pattern matching |
-| Stream | ⚠️ Limited | `*` (reads only) | Area/realm aggregation |
-| Schedule | ⚠️ Limited | `*` (subscribe only) | Job monitoring |
+| Stream | ✅ READ + registration | `*`, `**` | Replay reads and change-watch patterns; writes are concrete |
+| Schedule | ⚠️ Registration only | `*`, `**` | Live notification patterns; definitions are concrete |
 
 ### Permission Model
 
@@ -788,9 +797,12 @@ rpc://tenant-a/**#write   # RPC request access
 - No need for component extraction
 - Better support for API-style paths
 
-### Why No Wildcards in Most Domains?
+### Why Wildcards Stay at Read and Registration Boundaries
 
-**Decision**: Only Notice (and limited Stream/Schedule) support wildcards.
+**Decision**: KV, Queue, Notice, Stream, RPC, and Schedule registrations share
+strict whole-segment wildcard syntax. Stream also supports READ patterns. Calls,
+mutations, Queue work operations, Stream writes, and Schedule definitions remain
+concrete. Lease operations and watches are always exact.
 
 **Rationale**:
 1. **Performance**: Exact matching orders of magnitude faster
@@ -798,7 +810,10 @@ rpc://tenant-a/**#write   # RPC request access
 3. **Authorization**: Simpler permission model
 4. **State management**: Exact keys enable better sharding
 
-**Exception**: Notice is designed for pattern-based live fanout and requires wildcards.
+The six wildcard-capable domains allow at most 128 wildcard registrations per
+session. Exact registrations do not count; duplicates are idempotent and checked
+before the limit. Matching remains inside one `RouteFamily`, overlaps stay
+independent, and notifications carry the exact concrete route.
 
 ### Operation Placement Variations
 
@@ -820,13 +835,13 @@ rpc://tenant-a/**#write   # RPC request access
 
 | Domain | Format | Segments | Wildcards | State |
 |--------|--------|----------|-----------|-------|
-| KV | `realm/area/resource` | Exactly 3 | No | Persistent |
-| Queue | `realm/area/resource` | 3+ | No | Persistent |
-| RPC | Flexible | Any | No | Ephemeral |
-| Lease | `realm/area/resource` | 3+ | No | Ephemeral |
+| KV | `realm/area/resource` | Exactly 3 | Registrations only | Persistent |
+| Queue | `realm/area/resource` | Exactly 3 | Registrations only | Persistent |
+| RPC | Flexible | Any | Registrations only | Ephemeral |
+| Lease | `realm/area/resource` | Exactly 3 | No | Ephemeral |
 | Notice | Flexible | Any | Yes | Ephemeral |
-| Stream | `realm/area/resource` | 3+ | Limited | Persistent |
-| Schedule | `realm/area/resource/{operation}` | Exactly 4 | Limited | Persistent |
+| Stream | `realm/area/resource` | Exactly 3 | READ and registrations | Persistent |
+| Schedule | `realm/area/resource/{operation}` | Exactly 4 | Registrations only | Persistent |
 
 ### Message Type Ranges
 

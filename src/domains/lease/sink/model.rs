@@ -157,7 +157,7 @@ pub struct LeaseDomainSink {
 }
 
 pub(super) struct LeaseSubscription {
-    pub(super) pattern: crate::runtime::matcher::Pattern,
+    pub(super) route: crate::runtime::matcher::Pattern,
     pub(super) session_id: u64,
     pub(super) route_address: crate::runtime::routing::RouteAddress,
     pub(super) subscription_id: u64,
@@ -165,7 +165,7 @@ pub(super) struct LeaseSubscription {
 
 impl RoutedSubscription for LeaseSubscription {
     fn pattern(&self) -> &crate::runtime::matcher::Pattern {
-        &self.pattern
+        &self.route
     }
 
     fn session_id(&self) -> u64 {

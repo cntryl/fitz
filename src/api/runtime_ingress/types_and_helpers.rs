@@ -81,14 +81,53 @@ pub(super) fn extract_auth_route_for_domain(
         .extract_auth_route(msg_type, payload)
         .and_then(|route| {
             route
-                .map(|route| canonicalize_dispatch_route_str(domain, route))
+                .map(|route| {
+                    if let Some(depth) = subscription_registration_depth(domain, msg_type) {
+                        let compiled = crate::runtime::matcher::compile_registration_pattern(
+                            route,
+                            domain.as_str(),
+                            depth,
+                        )?;
+                        if domain == DispatchDomain::Lease && compiled.is_wildcard() {
+                            return Err(
+                                "Lease subscription route must not contain wildcards".to_string()
+                            );
+                        }
+                        return Ok(Cow::Borrowed(route));
+                    }
+                    canonicalize_dispatch_route_str(domain, route)
+                })
                 .transpose()
         })
+}
+
+pub(super) fn is_subscription_registration_message(domain: DispatchDomain, msg_type: u16) -> bool {
+    subscription_registration_depth(domain, msg_type).is_some()
+}
+
+fn subscription_registration_depth(
+    domain: DispatchDomain,
+    msg_type: u16,
+) -> Option<crate::runtime::matcher::PatternDepth> {
+    use crate::runtime::matcher::PatternDepth;
+
+    match (domain, msg_type) {
+        (DispatchDomain::Kv, 109 | 110)
+        | (DispatchDomain::Queue, 207 | 208)
+        | (DispatchDomain::Stream, 607 | 608)
+        | (DispatchDomain::Lease, 407 | 408) => Some(PatternDepth::CanMatch(3)),
+        (DispatchDomain::Schedule, 703 | 704) => Some(PatternDepth::CanMatch(4)),
+        (DispatchDomain::Notice, 501) | (DispatchDomain::Rpc, 300 | 301) => {
+            Some(PatternDepth::Flexible)
+        }
+        _ => None,
+    }
 }
 
 pub(super) enum AuthorizationTargets<'a> {
     SessionOwned,
     Single(Cow<'a, str>),
+    Registration(Cow<'a, str>),
     Multiple(Vec<Cow<'a, str>>),
 }
 
@@ -141,7 +180,7 @@ impl AuthorizationTargets<'_> {
     pub(super) fn span_target(&self) -> (&str, usize) {
         match self {
             Self::SessionOwned => ("<session-owned>", 1),
-            Self::Single(route) => (route.as_ref(), 1),
+            Self::Single(route) | Self::Registration(route) => (route.as_ref(), 1),
             Self::Multiple(routes) => (
                 routes
                     .first()
@@ -162,6 +201,15 @@ impl AuthorizationTargets<'_> {
             Self::Single(route) => {
                 let route = route.as_ref();
                 (actor_ref.authorize_route(route, access), route, 1)
+            }
+            Self::Registration(route) => {
+                let route = route.as_ref();
+                let pattern = crate::runtime::matcher::Pattern::new(route);
+                (
+                    actor_ref.authorize_registration_pattern(&pattern, access),
+                    route,
+                    1,
+                )
             }
             Self::Multiple(routes) => {
                 let authorized = routes

@@ -1,4 +1,4 @@
-use super::{DateTime, Instant, Route, RouteAddress, RpcWorkerDispatch, Utc};
+use super::{DateTime, Instant, Route, RouteAddress, RpcRegistrationId, RpcWorkerDispatch, Utc};
 
 #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
 #[derive(Debug, Clone)]
@@ -9,7 +9,7 @@ pub(in crate::domains::rpc::sink) struct RpcPendingRequest {
     pub(in crate::domains::rpc::sink) caller_inbox_addr: Option<RouteAddress>,
     pub(in crate::domains::rpc::sink) worker_addr: RouteAddress,
     pub(in crate::domains::rpc::sink) worker_session_id: u64,
-    pub(in crate::domains::rpc::sink) worker_slot: usize,
+    pub(in crate::domains::rpc::sink) registration_id: RpcRegistrationId,
     pub(in crate::domains::rpc::sink) next_expected_seq: u64,
     pub(in crate::domains::rpc::sink) submitted_at: DateTime<Utc>,
     pub(in crate::domains::rpc::sink) submitted_at_instant: Instant,
@@ -19,10 +19,11 @@ pub(in crate::domains::rpc::sink) struct RpcPendingRequest {
 #[derive(Debug)]
 pub(in crate::domains::rpc::sink) struct RpcPendingDispatchInfo {
     pub(in crate::domains::rpc::sink) family: crate::runtime::routing::RouteFamily,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(in crate::domains::rpc::sink) route: Route,
     pub(in crate::domains::rpc::sink) caller_session_id: u64,
     pub(in crate::domains::rpc::sink) caller_inbox_addr: Option<RouteAddress>,
-    pub(in crate::domains::rpc::sink) worker_slot: usize,
+    pub(in crate::domains::rpc::sink) registration_id: RpcRegistrationId,
     pub(in crate::domains::rpc::sink) submitted_at_instant: Instant,
 }
 
@@ -32,7 +33,7 @@ pub(in crate::domains::rpc::sink) struct RpcPendingRequestInit {
     pub(in crate::domains::rpc::sink) caller_inbox_addr: RouteAddress,
     pub(in crate::domains::rpc::sink) worker_addr: RouteAddress,
     pub(in crate::domains::rpc::sink) worker_session_id: u64,
-    pub(in crate::domains::rpc::sink) worker_slot: usize,
+    pub(in crate::domains::rpc::sink) registration_id: RpcRegistrationId,
     pub(in crate::domains::rpc::sink) submitted_at: DateTime<Utc>,
     pub(in crate::domains::rpc::sink) submitted_at_instant: Instant,
     pub(in crate::domains::rpc::sink) expires_at: Instant,
@@ -46,7 +47,7 @@ impl RpcPendingRequest {
             caller_inbox_addr,
             worker_addr,
             worker_session_id,
-            worker_slot,
+            registration_id,
             submitted_at,
             submitted_at_instant,
             expires_at,
@@ -59,7 +60,7 @@ impl RpcPendingRequest {
             caller_inbox_addr: Some(caller_inbox_addr),
             worker_addr,
             worker_session_id,
-            worker_slot,
+            registration_id,
             next_expected_seq: 0,
             submitted_at,
             submitted_at_instant,
@@ -81,7 +82,7 @@ impl RpcPendingRequest {
             caller_inbox_addr,
             worker_addr: worker.addr.clone(),
             worker_session_id: worker.session_id,
-            worker_slot: worker.slot,
+            registration_id: worker.registration_id,
             submitted_at: Utc::now(),
             submitted_at_instant,
             expires_at,
@@ -94,7 +95,7 @@ impl RpcPendingRequest {
             route: self.route.clone(),
             caller_session_id: self.caller_session_id,
             caller_inbox_addr: self.caller_inbox_addr.clone(),
-            worker_slot: self.worker_slot,
+            registration_id: self.registration_id,
             submitted_at_instant: self.submitted_at_instant,
         }
     }
@@ -105,7 +106,7 @@ impl RpcPendingRequest {
             route: self.route,
             caller_session_id: self.caller_session_id,
             caller_inbox_addr: self.caller_inbox_addr,
-            worker_slot: self.worker_slot,
+            registration_id: self.registration_id,
             submitted_at_instant: self.submitted_at_instant,
         }
     }

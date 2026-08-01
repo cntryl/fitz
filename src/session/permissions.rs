@@ -128,6 +128,19 @@ impl SessionPermissions {
         allowed
     }
 
+    /// Check whether one permission covers the complete match set of a
+    /// registration pattern.
+    #[must_use]
+    pub fn allows_registration_pattern(
+        &self,
+        requested: &crate::runtime::matcher::Pattern,
+        access: Access,
+    ) -> bool {
+        self.compiled.iter().any(|permission| {
+            access_grants(permission.access, access) && permission.pattern.covers(requested)
+        })
+    }
+
     fn from_parts(inner: HashMap<String, String>, compiled: Vec<CompiledPermission>) -> Self {
         Self {
             inner: Arc::new(inner),
@@ -275,6 +288,34 @@ mod tests {
         // Assert
         assert!(!notify_allowed);
         assert!(!queue_allowed);
+    }
+
+    #[test]
+    fn should_reject_registration_exceeding_permission_match_set() {
+        // Arrange
+        let permission = Permission::parse("rpc://acme/orders/*/*#*").unwrap();
+        let permissions = SessionPermissions::from_permissions(vec![permission]);
+        let registration = crate::runtime::matcher::Pattern::new("rpc://acme/orders/**/**");
+
+        // Act
+        let allowed = permissions.allows_registration_pattern(&registration, Access::All);
+
+        // Assert
+        assert!(!allowed);
+    }
+
+    #[test]
+    fn should_allow_registration_within_permission_match_set() {
+        // Arrange
+        let permission = Permission::parse("rpc://acme/orders/**#*").unwrap();
+        let permissions = SessionPermissions::from_permissions(vec![permission]);
+        let registration = crate::runtime::matcher::Pattern::new("rpc://acme/orders/*/*");
+
+        // Act
+        let allowed = permissions.allows_registration_pattern(&registration, Access::All);
+
+        // Assert
+        assert!(allowed);
     }
 
     #[test]

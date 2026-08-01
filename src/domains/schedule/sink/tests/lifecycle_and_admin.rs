@@ -16,6 +16,74 @@ fn should_create_schedule_domain_sink() {
 }
 
 #[test]
+fn should_prune_unmatched_schedule_cursor_when_registration_is_removed() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let removed_route = "schedule://acme/churn/nightly/run";
+    let mut subscriptions = ScheduleSubscriptionSet::new();
+    for (subscription_id, route) in [(1, "schedule://acme/keeper/**"), (2, removed_route)] {
+        subscriptions.insert(
+            family,
+            ScheduleSubscription {
+                pattern: crate::runtime::matcher::Pattern::new(route),
+                session_id: subscription_id,
+                subscription_id,
+                subscriber: RouteAddress::new(
+                    family,
+                    Route::new(format!("inbox://session/{subscription_id}")),
+                ),
+            },
+        );
+    }
+    subscriptions
+        .round_robin_cursors
+        .insert(removed_route.to_string(), 1);
+
+    // Act
+    let removed = subscriptions.remove_session_route(family, 2, removed_route);
+
+    // Assert
+    assert_eq!(removed, 1);
+    assert_eq!(subscriptions.subscription_count(), 1);
+    assert!(subscriptions.round_robin_cursors.is_empty());
+}
+
+#[test]
+fn should_retain_schedule_cursor_while_registration_still_matches() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let concrete_route = "schedule://acme/jobs/nightly/run";
+    let mut subscriptions = ScheduleSubscriptionSet::new();
+    for (subscription_id, route) in [(1, "schedule://acme/jobs/**"), (2, concrete_route)] {
+        subscriptions.insert(
+            family,
+            ScheduleSubscription {
+                pattern: crate::runtime::matcher::Pattern::new(route),
+                session_id: subscription_id,
+                subscription_id,
+                subscriber: RouteAddress::new(
+                    family,
+                    Route::new(format!("inbox://session/{subscription_id}")),
+                ),
+            },
+        );
+    }
+    subscriptions
+        .round_robin_cursors
+        .insert(concrete_route.to_string(), 1);
+
+    // Act
+    let removed = subscriptions.remove_session_route(family, 2, concrete_route);
+
+    // Assert
+    assert_eq!(removed, 1);
+    assert_eq!(
+        subscriptions.round_robin_cursors.get(concrete_route),
+        Some(&1)
+    );
+}
+
+#[test]
 fn should_store_cloud_strict_write_options_given_strict_cloud_policy() {
     // Arrange
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
@@ -174,12 +242,15 @@ fn should_route_schedule_live_stats_through_actor_command() {
     assert_eq!(actor.bench_claim_due_fires().len(), 1);
     sink.insert_actor_for_tests(family, actor);
     let mut subscriptions = ScheduleSubscriptionSet::new();
-    subscriptions.insert(ScheduleSubscription {
-        route: schedule_route.to_string(),
-        session_id,
-        subscription_id: 1,
-        subscriber: RouteAddress::new(family, Route::new("inbox://session/7")),
-    });
+    subscriptions.insert(
+        family,
+        ScheduleSubscription {
+            pattern: crate::runtime::matcher::Pattern::new(schedule_route),
+            session_id,
+            subscription_id: 1,
+            subscriber: RouteAddress::new(family, Route::new("inbox://session/7")),
+        },
+    );
     sink.insert_subscriptions_for_tests(family.as_u64(), subscriptions);
     sink.push_recent_acknowledgement_for_tests(now_epoch_ms());
     sink.set_live_publish_failures_for_tests(2);

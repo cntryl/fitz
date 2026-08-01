@@ -63,17 +63,21 @@ fn subscribe_fixture_route(
     let _subscribe_ack = receive_envelope(&fixture.subscriber_mailbox, label);
 }
 
-fn unsubscribe_removed_route(fixture: &UnsubscribeFixture) -> u8 {
+fn unsubscribe_fixture_route(
+    fixture: &UnsubscribeFixture,
+    address: &RouteAddress,
+    route: &str,
+) -> u8 {
     fixture
         .sink
         .deliver(Envelope::from_route(
             fixture.subscriber_address.clone(),
-            fixture.removed_address.clone(),
+            address.clone(),
             FrameContext::new(
                 fixture.session_id,
                 ChannelId::Sub,
                 MessageType::new(704),
-                encode_schedule_subscribe(fixture.removed_route),
+                encode_schedule_subscribe(route),
                 fixture.family,
             ),
         ))
@@ -111,6 +115,7 @@ fn receive_schedule_notify_payload(mailbox: &Mailbox, label: &str) -> Bytes {
     assert_eq!(notify_frame.msg_type.as_u16(), 705);
     let mut notify_decoder = PayloadDecoder::new(&notify_frame.payload);
     let _subscription_id = notify_decoder.get_u64().expect("notify subscription id");
+    let _route = notify_decoder.get_string().expect("notify exact route");
     let notified_payload = notify_decoder.get_bytes().expect("notify payload");
     assert!(notify_decoder.is_complete());
     notified_payload
@@ -192,9 +197,11 @@ fn should_publish_schedule_notify_to_subscribers_when_due() {
 
     let mut notify_decoder = PayloadDecoder::new(&notify_frame.payload);
     let notified_subscription_id = notify_decoder.get_u64().expect("notify subscription id");
+    let notified_route = notify_decoder.get_string().expect("notify exact route");
     let notified_payload = notify_decoder.get_bytes().expect("notify payload");
 
     assert_eq!(notified_subscription_id, subscription_id);
+    assert_eq!(notified_route, schedule_route);
     assert_eq!(notified_payload.as_ref(), b"nightly");
     assert!(notify_decoder.is_complete());
 }
@@ -285,7 +292,8 @@ fn should_retain_other_schedule_subscription_given_unsubscribe_on_same_session()
     drain_mailbox(&fixture.subscriber_mailbox);
 
     // Act
-    let unsubscribe_status = unsubscribe_removed_route(&fixture);
+    let unsubscribe_status =
+        unsubscribe_fixture_route(&fixture, &fixture.removed_address, fixture.removed_route);
     wait_for_subscription_count(&fixture.sink, 1);
     publish_fixture_event(&fixture, fixture.removed_route, b"nightly");
     let removed_notification = fixture
@@ -304,6 +312,111 @@ fn should_retain_other_schedule_subscription_given_unsubscribe_on_same_session()
     assert!(removed_notification.is_err());
     assert_eq!(retained_payload.as_ref(), b"weekly");
     assert_no_envelope(&fixture.subscriber_mailbox);
+}
+
+#[test]
+fn should_deliver_schedule_notify_for_overlapping_exact_and_wildcard_registrations() {
+    // Arrange
+    let fixture = create_unsubscribe_fixture();
+    let wildcard_route = "schedule://acme/jobs/**";
+    let wildcard_address = RouteAddress::new(fixture.family, Route::new(wildcard_route));
+    subscribe_fixture_route(
+        &fixture,
+        &fixture.removed_address,
+        fixture.removed_route,
+        "exact subscribe ack envelope",
+    );
+    subscribe_fixture_route(
+        &fixture,
+        &wildcard_address,
+        wildcard_route,
+        "wildcard subscribe ack envelope",
+    );
+    wait_for_subscription_count(&fixture.sink, 2);
+    drain_mailbox(&fixture.subscriber_mailbox);
+
+    // Act
+    publish_fixture_event(&fixture, fixture.removed_route, b"nightly");
+    let first = receive_schedule_notify_payload(
+        &fixture.subscriber_mailbox,
+        "first overlapping schedule notify",
+    );
+    let second = receive_schedule_notify_payload(
+        &fixture.subscriber_mailbox,
+        "second overlapping schedule notify",
+    );
+
+    // Assert
+    assert_eq!(first.as_ref(), b"nightly");
+    assert_eq!(second.as_ref(), b"nightly");
+    assert_no_envelope(&fixture.subscriber_mailbox);
+}
+
+#[test]
+fn should_isolate_wildcard_schedule_registration_by_route_family() {
+    // Arrange
+    let fixture = create_unsubscribe_fixture();
+    let wildcard_route = "schedule://acme/jobs/**";
+    let wildcard_address = RouteAddress::new(fixture.family, Route::new(wildcard_route));
+    subscribe_fixture_route(
+        &fixture,
+        &wildcard_address,
+        wildcard_route,
+        "wildcard subscribe ack envelope",
+    );
+    wait_for_subscription_count(&fixture.sink, 1);
+    drain_mailbox(&fixture.subscriber_mailbox);
+
+    // Act
+    fixture
+        .sink
+        .deliver(Envelope::new(
+            RouteAddress::new(RouteFamily::new(2), Route::new("schedule://events/test")),
+            crate::runtime::DomainPublishEvent::new(
+                RouteFamily::new(2),
+                Route::new(fixture.removed_route),
+                Bytes::from_static(b"nightly"),
+            ),
+        ))
+        .expect("deliver other-family schedule event");
+    let notification = fixture
+        .subscriber_mailbox
+        .receiver()
+        .recv_timeout(Duration::from_millis(50));
+
+    // Assert
+    assert!(notification.is_err());
+    assert_eq!(fixture.sink.subscription_count(), 1);
+}
+
+#[test]
+fn should_remove_wildcard_schedule_registration_given_matching_unsubscribe_pattern() {
+    // Arrange
+    let fixture = create_unsubscribe_fixture();
+    let wildcard_route = "schedule://acme/jobs/**";
+    let wildcard_address = RouteAddress::new(fixture.family, Route::new(wildcard_route));
+    subscribe_fixture_route(
+        &fixture,
+        &wildcard_address,
+        wildcard_route,
+        "wildcard subscribe ack envelope",
+    );
+    wait_for_subscription_count(&fixture.sink, 1);
+    drain_mailbox(&fixture.subscriber_mailbox);
+
+    // Act
+    let status = unsubscribe_fixture_route(&fixture, &wildcard_address, wildcard_route);
+    wait_for_subscription_count(&fixture.sink, 0);
+    publish_fixture_event(&fixture, fixture.removed_route, b"nightly");
+    let notification = fixture
+        .subscriber_mailbox
+        .receiver()
+        .recv_timeout(Duration::from_millis(50));
+
+    // Assert
+    assert_eq!(status, 0);
+    assert!(notification.is_err());
+    assert!(fixture.sink.subscriptions_are_empty_for_tests());
 }
 
 #[test]

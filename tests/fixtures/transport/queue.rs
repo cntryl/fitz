@@ -56,12 +56,7 @@ fn normalize_queue_route(queue_name: &str) -> String {
 }
 
 fn normalize_queue_watch_pattern(pattern: &str) -> String {
-    let normalized = normalize_queue_route(pattern);
-    if normalized.contains('*') || normalized.ends_with("/ready") {
-        normalized
-    } else {
-        format!("{normalized}/ready")
-    }
+    normalize_queue_route(pattern)
 }
 
 pub fn build_queue_enqueue(queue_name: &str, data: &[u8]) -> Vec<u8> {

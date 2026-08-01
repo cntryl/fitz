@@ -1,7 +1,7 @@
 use super::state_model::{
     session_inbox_address, Envelope, Instant, RpcDeliveryOutcome as DeliveryOutcome,
     RpcDomainRuntime, RpcPendingDispatchInfo, RpcPendingErrorDelivery,
-    RpcPendingResponseDisposition, RpcQueuedDispatch, RpcState, RPC_CORRELATION_NOT_FOUND_ERROR,
+    RpcPendingResponseDisposition, RpcState, RPC_CORRELATION_NOT_FOUND_ERROR,
     RPC_INVALID_SEQUENCE_ERROR, RPC_WRONG_WORKER_ERROR,
 };
 #[cfg(test)]
@@ -142,19 +142,10 @@ impl RpcDomainRuntime<'_> {
             pending_route_lookup_us,
         } = context;
         let mut state_changed = false;
-        let mut queued_dispatch = None;
-
         if removed_pending {
             self.release_global_pending(1);
             let completion_latency_us = elapsed_micros_u64(caller_info.submitted_at_instant);
             state.release_worker_for_dispatch_info(caller_info, Some(completion_latency_us));
-            queued_dispatch = state.next_queued_dispatch_for_family(
-                &caller_info.route,
-                caller_info
-                    .caller_inbox_addr
-                    .as_ref()
-                    .map_or(caller_info.family, |addr| *addr.family()),
-            );
             let live_request_count = state.live_request_count();
             self.histogram_observe_us("rpc_pending_route_remove_us", pending_route_lookup_us);
             self.histogram_observe_us("rpc_pending_untrack_us", pending_route_lookup_us);
@@ -180,16 +171,15 @@ impl RpcDomainRuntime<'_> {
 
         if state_changed {
             self.schedule_admin_snapshot(false);
-            self.forward_selected_queued_dispatch(queued_dispatch);
+            self.dispatch_queued_requests_for_family(
+                caller_info
+                    .caller_inbox_addr
+                    .as_ref()
+                    .map_or(caller_info.family, |addr| *addr.family()),
+            );
         }
 
         (None, state_changed.then_some(false), false)
-    }
-
-    fn forward_selected_queued_dispatch(&self, selected: Option<RpcQueuedDispatch>) {
-        if let Some(dispatch) = selected {
-            self.forward_queued_dispatch(&dispatch);
-        }
     }
 
     fn forward_response_to_requester(
@@ -280,8 +270,7 @@ impl RpcDomainRuntime<'_> {
         self.counter_inc("rpc_response_invalid_sequence_total");
         self.counter_inc("rpc_cleanup_pending_removed_total");
         self.schedule_admin_snapshot(false);
-        self.dispatch_queued_requests_for_route(
-            &caller_info.route,
+        self.dispatch_queued_requests_for_family(
             caller_info
                 .caller_inbox_addr
                 .as_ref()

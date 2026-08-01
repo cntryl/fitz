@@ -8,7 +8,8 @@
 
 use crate::dispatch::wire::stream::{
     IngestMetadata, StreamClientFrame, StreamClientResponseBody, StreamDiscriminator,
-    StreamFilterSet, StreamMessage, StreamSubscriptionMessage, StreamWriteMode,
+    StreamFilterSet, StreamMessage, StreamSubscriptionFailure, StreamSubscriptionMessage,
+    StreamWriteMode,
 };
 use crate::protocol::frame_context::FrameContext;
 use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
@@ -152,6 +153,21 @@ pub fn encode_response_into(
             return crate::protocol::error_codes::encode_error_body_into(
                 stream_error_code_for_message(e),
                 e,
+                enc,
+            );
+        }
+        StreamClientResponseBody::SubscriptionError(error) => {
+            let code = match error {
+                StreamSubscriptionFailure::InvalidPattern(_) => {
+                    crate::protocol::error_codes::stream::ERR_INVALID_SUBSCRIPTION_PATTERN
+                }
+                StreamSubscriptionFailure::Limit => {
+                    crate::protocol::error_codes::stream::ERR_SUBSCRIPTION_LIMIT
+                }
+            };
+            return crate::protocol::error_codes::encode_error_body_into(
+                code,
+                &error.to_string(),
                 enc,
             );
         }

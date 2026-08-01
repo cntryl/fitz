@@ -12,29 +12,33 @@ fn should_remove_only_matching_pending_given_worker_unsubscribe() {
     let removed_correlation_id = uuid::Uuid::new_v4();
     let retained_correlation_id = uuid::Uuid::new_v4();
 
-    state
-        .ensure_route_state(&removed_route)
-        .register_worker(test_rpc_worker(family, &removed_route, 42));
-    state
-        .ensure_route_state(&retained_route)
-        .register_worker(test_rpc_worker(family, &retained_route, 42));
+    state.register_worker(test_rpc_worker(family, &removed_route, 42));
+    state.register_worker(test_rpc_worker(family, &retained_route, 42));
+    let removed_registration_id = state
+        .registration_id_for(&removed_worker_addr, 42)
+        .expect("removed registration id");
+    let retained_registration_id = state
+        .registration_id_for(&retained_worker_addr, 42)
+        .expect("retained registration id");
     state.pending.track_pending(
         removed_correlation_id,
-        test_pending_request(
+        test_pending_request_with_registration(
             family,
             &removed_route,
             99,
             42,
+            removed_registration_id,
             Instant::now() + Duration::from_secs(30),
         ),
     );
     state.pending.track_pending(
         retained_correlation_id,
-        test_pending_request(
+        test_pending_request_with_registration(
             family,
             &retained_route,
             100,
             42,
+            retained_registration_id,
             Instant::now() + Duration::from_secs(30),
         ),
     );
@@ -68,7 +72,7 @@ fn should_remove_only_matching_pending_given_worker_unsubscribe() {
         .expect("retained worker pending should remain tracked");
     assert_eq!(retained_pending.worker_addr, retained_worker_addr);
     assert_eq!(state.pending.len(), 1);
-    assert_eq!(state.route_count(), 1);
+    assert_eq!(state.route_count(), 0);
 }
 
 #[test]
@@ -686,7 +690,7 @@ fn should_remove_pending_request_on_stream_end_given_rpc_pending_table() {
             caller_inbox_addr: caller_inbox_addr.clone(),
             worker_addr: worker_addr.clone(),
             worker_session_id: 77,
-            worker_slot: 0,
+            registration_id: 0,
             submitted_at: test_rpc_timestamp(),
             submitted_at_instant: Instant::now(),
             expires_at: Instant::now() + Duration::from_secs(30),
@@ -706,7 +710,7 @@ fn should_remove_pending_request_on_stream_end_given_rpc_pending_table() {
             assert_eq!(tracked.caller_session_id, 42);
             assert_eq!(tracked.caller_inbox_addr, Some(caller_inbox_addr));
             assert_eq!(&tracked.route, worker_addr.route());
-            assert_eq!(tracked.worker_slot, 0);
+            assert_eq!(tracked.registration_id, 0);
             assert!(removed_pending);
             assert_eq!(pending.len(), 0);
         }

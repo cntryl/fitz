@@ -36,25 +36,34 @@ pub(super) fn schedule_admin_snapshot_due(
 }
 
 pub(super) struct ScheduleSubscription {
-    pub(super) route: String,
+    pub(super) pattern: crate::runtime::matcher::Pattern,
     pub(super) session_id: u64,
     pub(super) subscription_id: u64,
     pub(super) subscriber: crate::runtime::routing::RouteAddress,
 }
 
+impl crate::domains::subscription_state::RoutedSubscription for ScheduleSubscription {
+    fn pattern(&self) -> &crate::runtime::matcher::Pattern {
+        &self.pattern
+    }
+    fn session_id(&self) -> u64 {
+        self.session_id
+    }
+    fn subscription_id(&self) -> u64 {
+        self.subscription_id
+    }
+}
+
 pub(super) struct ScheduleSubscriptionSet {
-    pub(super) subscriptions: HashMap<u64, ScheduleSubscription>,
-    pub(super) session_routes: HashMap<u64, HashMap<String, u64>>,
-    pub(super) exact_routes: HashMap<String, Vec<u64>>,
+    pub(super) subscriptions:
+        crate::domains::subscription_state::RoutedSubscriptionSet<ScheduleSubscription>,
     pub(super) round_robin_cursors: HashMap<String, usize>,
 }
 
 impl ScheduleSubscriptionSet {
     pub(super) fn new() -> Self {
         Self {
-            subscriptions: HashMap::new(),
-            session_routes: HashMap::new(),
-            exact_routes: HashMap::new(),
+            subscriptions: crate::domains::subscription_state::RoutedSubscriptionSet::new(),
             round_robin_cursors: HashMap::new(),
         }
     }
@@ -64,81 +73,60 @@ impl ScheduleSubscriptionSet {
     }
 
     pub(super) fn subscription_count(&self) -> usize {
-        self.subscriptions.len()
+        self.subscriptions.subscription_count()
     }
 
     pub(super) fn find_existing_id(&self, session_id: u64, route: &str) -> Option<u64> {
-        self.session_routes
-            .get(&session_id)
-            .and_then(|routes| routes.get(route).copied())
+        self.subscriptions.find_existing_id(session_id, route)
     }
 
-    pub(super) fn insert(&mut self, subscription: ScheduleSubscription) {
-        let subscription_id = subscription.subscription_id;
-        let session_id = subscription.session_id;
-        let route = subscription.route.clone();
-
-        self.session_routes
-            .entry(session_id)
-            .or_default()
-            .insert(route.clone(), subscription_id);
-        self.exact_routes
-            .entry(route)
-            .or_default()
-            .push(subscription_id);
-        self.subscriptions.insert(subscription_id, subscription);
+    pub(super) fn insert(
+        &mut self,
+        family: crate::runtime::routing::RouteFamily,
+        subscription: ScheduleSubscription,
+    ) {
+        self.subscriptions.insert(family, subscription);
     }
 
-    pub(super) fn remove_session_route(&mut self, session_id: u64, route: &str) -> usize {
-        let Some(subscription_id) = self.find_existing_id(session_id, route) else {
-            return 0;
-        };
-
-        usize::from(self.remove_subscription(subscription_id))
-    }
-
-    pub(super) fn remove_session(&mut self, session_id: u64) -> usize {
-        let Some(routes) = self.session_routes.remove(&session_id) else {
-            return 0;
-        };
-
-        let removed_ids: Vec<u64> = routes.into_values().collect();
-        for subscription_id in &removed_ids {
-            self.remove_subscription(*subscription_id);
+    pub(super) fn remove_session_route(
+        &mut self,
+        family: crate::runtime::routing::RouteFamily,
+        session_id: u64,
+        route: &str,
+    ) -> usize {
+        let removed = self
+            .subscriptions
+            .remove_session_pattern(family, session_id, route);
+        if removed > 0 {
+            self.prune_unmatched_cursors(family);
         }
-
-        removed_ids.len()
+        removed
     }
 
-    pub(super) fn remove_subscription(&mut self, subscription_id: u64) -> bool {
-        let Some(subscription) = self.subscriptions.remove(&subscription_id) else {
-            return false;
-        };
-
-        let session_routes_empty =
-            if let Some(routes) = self.session_routes.get_mut(&subscription.session_id) {
-                routes.remove(subscription.route.as_str());
-                routes.is_empty()
-            } else {
-                false
-            };
-        if session_routes_empty {
-            self.session_routes.remove(&subscription.session_id);
+    pub(super) fn remove_session(
+        &mut self,
+        family: crate::runtime::routing::RouteFamily,
+        session_id: u64,
+    ) -> usize {
+        let removed = self.subscriptions.remove_session(family, session_id);
+        if removed > 0 {
+            self.prune_unmatched_cursors(family);
         }
+        removed
+    }
 
-        let route_entries_empty =
-            if let Some(route_entries) = self.exact_routes.get_mut(subscription.route.as_str()) {
-                route_entries.retain(|id| *id != subscription_id);
-                route_entries.is_empty()
-            } else {
-                false
-            };
-        if route_entries_empty {
-            self.exact_routes.remove(subscription.route.as_str());
-            self.round_robin_cursors.remove(subscription.route.as_str());
-        }
+    pub(super) fn matching_ids(
+        &self,
+        family: crate::runtime::routing::RouteFamily,
+        route: &str,
+    ) -> Vec<u64> {
+        self.subscriptions.matching_ids(family, route)
+    }
 
-        true
+    fn prune_unmatched_cursors(&mut self, family: crate::runtime::routing::RouteFamily) {
+        let subscriptions = &self.subscriptions;
+        self.round_robin_cursors
+            .retain(|route, _| !subscriptions.matching_ids(family, route).is_empty());
     }
 }
 

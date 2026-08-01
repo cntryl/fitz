@@ -119,6 +119,8 @@ pub fn encode_response(response: &QueueResponse) -> Vec<u8> {
         | QueueResponse::InflightExpired
         | QueueResponse::NotFound
         | QueueResponse::BadRequest { .. }
+        | QueueResponse::InvalidSubscriptionPattern { .. }
+        | QueueResponse::SubscriptionLimit
         | QueueResponse::QueueNotFound
         | QueueResponse::Error { .. } => {
             let (code, message) = queue_error_code_and_message(response);
@@ -138,6 +140,13 @@ fn queue_error_code_and_message(response: &QueueResponse) -> (u16, String) {
         }
         QueueResponse::NotFound => (queue::ERR_MESSAGE_NOT_FOUND, "NotFound".to_string()),
         QueueResponse::BadRequest { reason } => (queue::ERR_BAD_REQUEST, reason.clone()),
+        QueueResponse::InvalidSubscriptionPattern { reason } => {
+            (queue::ERR_INVALID_SUBSCRIPTION_PATTERN, reason.clone())
+        }
+        QueueResponse::SubscriptionLimit => (
+            queue::ERR_SUBSCRIPTION_LIMIT,
+            "wildcard subscription limit exceeded".to_string(),
+        ),
         QueueResponse::QueueNotFound => (queue::ERR_QUEUE_NOT_FOUND, "QueueNotFound".to_string()),
         QueueResponse::Error { message } => (queue::ERR_BACKEND_ERROR, message.clone()),
         _ => unreachable!("queue_error_code_and_message called for success response"),

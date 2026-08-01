@@ -134,7 +134,7 @@ fn should_reject_kv_subscription_before_allocating_family_state() {
     // Assert
     assert_eq!(
         decode_error_code(&response.payload),
-        error_codes::kv::ERR_INVALID_ROUTE
+        error_codes::kv::ERR_INVALID_SUBSCRIPTION_PATTERN
     );
     assert!(sink.watch_actors_are_empty_for_tests());
 }

@@ -1,6 +1,5 @@
 use super::state_model::{
-    route_quad, Arc, Instant, Mutex, RpcDomainCore, RpcDomainRuntime, RpcLiveCounts, RpcRouteState,
-    RpcState,
+    Arc, Instant, Mutex, RpcDomainCore, RpcDomainRuntime, RpcLiveCounts, RpcState,
 };
 
 impl RpcDomainCore {
@@ -23,7 +22,7 @@ impl RpcDomainCore {
         if family_cores.is_empty() {
             let state = self.state.lock();
             return RpcLiveCounts {
-                workers: state.routes.values().map(RpcRouteState::worker_count).sum(),
+                workers: state.registration_count(),
                 pending_requests: state.live_request_count(),
             };
         }
@@ -32,9 +31,7 @@ impl RpcDomainCore {
             .into_iter()
             .fold(RpcLiveCounts::default(), |mut total, family_core| {
                 let state = family_core.state.lock();
-                total.workers = total
-                    .workers
-                    .saturating_add(state.routes.values().map(RpcRouteState::worker_count).sum());
+                total.workers = total.workers.saturating_add(state.registration_count());
                 total.pending_requests = total
                     .pending_requests
                     .saturating_add(state.live_request_count());
@@ -84,22 +81,19 @@ impl RpcDomainRuntime<'_> {
         pending: &mut Vec<crate::control::admin::RpcPendingRequest>,
     ) {
         let state = state.lock();
-        workers.extend(state.routes.iter().flat_map(|((_, route), route_state)| {
-            route_state.workers.iter().filter_map(|worker| {
-                let worker = worker.as_ref()?;
-                route_quad(route.as_str()).map(|parts| {
-                    let registered_at = worker.registered_at_rfc3339();
-                    crate::control::admin::RpcWorker::snapshot(
-                        worker.addr.family().as_u64(),
-                        worker.session_id,
-                        parts.realm,
-                        route.as_str(),
-                        &registered_at,
-                        worker.requests_handled,
-                        worker.average_latency_ms(),
-                    )
-                })
-            })
+        workers.extend(state.registrations.values().filter_map(|worker| {
+            let route = worker.addr.route().as_str();
+            let realm = route.strip_prefix("rpc://")?.split('/').next()?;
+            let registered_at = worker.registered_at_rfc3339();
+            Some(crate::control::admin::RpcWorker::snapshot(
+                worker.addr.family().as_u64(),
+                worker.session_id,
+                realm,
+                route,
+                &registered_at,
+                worker.requests_handled,
+                worker.average_latency_ms(),
+            ))
         }));
         pending.extend(state.queued.iter().map(|(correlation_key, queued)| {
             crate::control::admin::RpcPendingRequest::snapshot(

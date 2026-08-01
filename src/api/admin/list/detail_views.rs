@@ -743,5 +743,13 @@ pub(crate) fn matches_resource_route(route: &str, path: &ResourcePath<'_>) -> bo
 }
 
 pub(crate) fn matches_operation_route(route: &str, path: &RpcOperationPath<'_>) -> bool {
-    parse_rpc_operation(route).is_some_and(|parsed| parsed.matches_operation_path(path))
+    if !route.contains('*') {
+        return parse_rpc_operation(route)
+            .is_some_and(|parsed| parsed.matches_operation_path(path));
+    }
+    let concrete = format!(
+        "rpc://{}/{}/{}/{}",
+        path.realm, path.area, path.resource, path.operation
+    );
+    crate::runtime::matcher::Pattern::new(route).matches_str(&concrete)
 }

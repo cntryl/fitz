@@ -3,7 +3,8 @@ use super::{
     QueueInfo, RpcPendingRequest, RpcWorker, ScheduleInfo, SessionInfo, StreamAreaWatermarkDetail,
     StreamInfo, StreamRealmWatermarkDetail,
 };
-use crate::runtime::routing::{route_quad, route_triplet};
+use crate::runtime::matcher::{parse_pattern_segments, PatternSegment};
+use crate::runtime::routing::route_triplet;
 use crate::session::session::SessionInfo as RuntimeSessionInfo;
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
@@ -91,7 +92,14 @@ fn matches_notice_route_realm(realm: Option<&str>, route: &str) -> bool {
 }
 
 fn matches_rpc_route_realm(realm: Option<&str>, route: &str) -> bool {
-    realm.is_none_or(|needle| route_quad(route).is_some_and(|parts| parts.realm == needle))
+    realm.is_none_or(|needle| {
+        parse_pattern_segments(route)
+            .first()
+            .is_some_and(|segment| match segment {
+                PatternSegment::Literal(value) => value == needle,
+                PatternSegment::Star | PatternSegment::DoubleStar => true,
+            })
+    })
 }
 
 fn collect_slice_matches<T: Clone>(items: &[T], include: impl Fn(&T) -> bool) -> Vec<T> {
@@ -263,7 +271,7 @@ impl AdminReadModel {
 
     pub fn rpc_workers(&self, realm: Option<&str>) -> Vec<RpcWorker> {
         let workers = self.rpc_workers.read();
-        collect_slice_matches(&workers, |item| matches_realm(realm, &item.realm))
+        collect_slice_matches(&workers, |item| matches_rpc_route_realm(realm, &item.route))
     }
 
     pub fn replace_rpc_pending(&self, requests: Vec<RpcPendingRequest>) {
@@ -553,6 +561,28 @@ mod tests {
         // Assert
         assert_eq!(routes.len(), 1);
         assert_eq!(routes[0].route, "notice://acme/app/orders");
+    }
+
+    #[test]
+    fn should_include_wildcard_rpc_worker_given_matching_realm_filter() {
+        // Arrange
+        let read_model = AdminReadModel::default();
+        read_model.replace_rpc_workers(vec![RpcWorker::snapshot(
+            1,
+            7,
+            "*",
+            "rpc://*/billing/**",
+            "2026-08-01T00:00:00Z",
+            0,
+            0.0,
+        )]);
+
+        // Act
+        let workers = read_model.rpc_workers(Some("acme"));
+
+        // Assert
+        assert_eq!(workers.len(), 1);
+        assert_eq!(workers[0].route, "rpc://*/billing/**");
     }
 
     #[test]

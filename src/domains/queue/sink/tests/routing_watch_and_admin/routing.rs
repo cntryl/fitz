@@ -386,7 +386,7 @@ pub(super) fn should_notify_queue_watch_given_queue_send_when_queue_transitions_
         1,
         ChannelId::Pub,
         MessageType::new(207),
-        encode_queue_watch("queue://realm/area/resource/ready"),
+        encode_queue_watch("queue://realm/area/resource"),
         family,
     );
     let watch_env =
@@ -438,7 +438,7 @@ pub(super) fn should_notify_queue_watch_given_queue_send_when_queue_transitions_
     let (delivered_subscription_id, delivered_route, ready_messages) =
         decode_queue_watch_delivery(&notify_frame);
     assert_eq!(delivered_subscription_id, subscription_id);
-    assert_eq!(delivered_route, "queue://realm/area/resource/ready");
+    assert_eq!(delivered_route, "queue://realm/area/resource");
     assert_eq!(ready_messages, 1);
     assert!(receiver_mailbox.receiver().try_recv().is_err());
 }

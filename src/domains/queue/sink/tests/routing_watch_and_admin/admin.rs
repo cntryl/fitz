@@ -5,7 +5,7 @@ pub(super) fn should_emit_ready_notification_with_counts_given_first_enqueue_on_
     // Arrange
     let harness = QueueWatchHarness::new();
     let queue_route = "queue://acme/jobs/emails";
-    let subscription_id = harness.watch("queue://acme/jobs/emails/ready");
+    let subscription_id = harness.watch("queue://acme/jobs/emails");
 
     // Act
     harness.send(queue_route, b"email");
@@ -14,7 +14,7 @@ pub(super) fn should_emit_ready_notification_with_counts_given_first_enqueue_on_
 
     // Assert
     assert_eq!(delivered_subscription_id, subscription_id);
-    assert_eq!(delivered_route, "queue://acme/jobs/emails/ready");
+    assert_eq!(delivered_route, "queue://acme/jobs/emails");
     assert_eq!(ready, 1);
     assert_eq!(delayed, 0);
     assert_eq!(inflight, 0);
@@ -26,7 +26,7 @@ pub(super) fn should_not_emit_duplicate_ready_notification_given_enqueue_while_a
     // Arrange
     let harness = QueueWatchHarness::new();
     let queue_route = "queue://acme/jobs/emails";
-    harness.watch("queue://acme/jobs/emails/ready");
+    harness.watch("queue://acme/jobs/emails");
     harness.send(queue_route, b"first");
     let _initial_ready = harness.next_watch_notification();
 
@@ -42,7 +42,7 @@ pub(super) fn should_emit_ready_notification_after_queue_returns_to_empty() {
     // Arrange
     let harness = QueueWatchHarness::new();
     let queue_route = "queue://acme/jobs/emails";
-    let subscription_id = harness.watch("queue://acme/jobs/emails/ready");
+    let subscription_id = harness.watch("queue://acme/jobs/emails");
     harness.send(queue_route, b"first");
     let _initial_ready = harness.next_watch_notification();
     let (id, token) = harness.reserve_one(queue_route);
@@ -55,7 +55,7 @@ pub(super) fn should_emit_ready_notification_after_queue_returns_to_empty() {
 
     // Assert
     assert_eq!(delivered_subscription_id, subscription_id);
-    assert_eq!(delivered_route, "queue://acme/jobs/emails/ready");
+    assert_eq!(delivered_route, "queue://acme/jobs/emails");
     assert_eq!(ready, 1);
     assert_eq!(delayed, 0);
     assert_eq!(inflight, 0);
@@ -67,7 +67,7 @@ pub(super) fn should_delay_ready_notification_until_delayed_message_is_promoted(
     // Arrange
     let harness = QueueWatchHarness::new();
     let queue_route = "queue://acme/jobs/emails";
-    let subscription_id = harness.watch("queue://acme/jobs/emails/ready");
+    let subscription_id = harness.watch("queue://acme/jobs/emails");
 
     // Act
     harness.send_delayed(queue_route, b"later", 1);
@@ -83,7 +83,7 @@ pub(super) fn should_delay_ready_notification_until_delayed_message_is_promoted(
 
     // Assert
     assert_eq!(delivered_subscription_id, subscription_id);
-    assert_eq!(delivered_route, "queue://acme/jobs/emails/ready");
+    assert_eq!(delivered_route, "queue://acme/jobs/emails");
     assert_eq!(ready, 1);
     assert_eq!(delayed, 0);
     assert_eq!(inflight, 0);
@@ -95,7 +95,7 @@ pub(super) fn should_register_queue_watch_given_watch_request() {
     // Arrange
     let family = RouteFamily::new(1);
     let subscriber_session_id = 7;
-    let queue_route = "queue://acme/jobs/emails/ready";
+    let queue_route = "queue://acme/jobs/emails";
     let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
     let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
     let subscriber_mailbox = Arc::new(Mailbox::new(8));
@@ -141,7 +141,7 @@ pub(super) fn should_remove_queue_watch_given_unwatch_request() {
     // Arrange
     let family = RouteFamily::new(1);
     let subscriber_session_id = 7;
-    let queue_route = "queue://acme/jobs/emails/ready";
+    let queue_route = "queue://acme/jobs/emails";
     let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
     let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
     let subscriber_mailbox = Arc::new(Mailbox::new(16));
@@ -315,7 +315,7 @@ pub(super) fn should_refresh_queue_admin_snapshot_with_live_queue_state() {
             9,
             ChannelId::Pub,
             MessageType::new(207),
-            encode_queue_watch("queue://acme/jobs/emails/ready"),
+            encode_queue_watch("queue://acme/jobs/emails"),
             family,
         ),
     ))

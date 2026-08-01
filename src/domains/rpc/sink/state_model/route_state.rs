@@ -1,83 +1,99 @@
-use super::{
-    FxBuildHasher, HashMap, RouteAddress, RpcFastMap, RpcWorker, RpcWorkerDispatch, RpcWorkerKey,
-    VecDeque,
-};
+use super::{HashSet, RpcRegistrationId, VecDeque};
 
 pub(in crate::domains::rpc::sink) struct RpcRouteState {
-    pub(in crate::domains::rpc::sink) workers: Vec<Option<RpcWorker>>,
-    worker_index: RpcFastMap<RpcWorkerKey, usize>,
-    pub(in crate::domains::rpc::sink) ready_queue: VecDeque<usize>,
     pub(in crate::domains::rpc::sink) queued: VecDeque<uuid::Uuid>,
-    live_workers: usize,
+    pub(in crate::domains::rpc::sink) first_seen_sequence: u64,
+    registration_ids: Vec<RpcRegistrationId>,
+    next_registration_index: usize,
+    ready: bool,
 }
 
 impl RpcRouteState {
-    pub(in crate::domains::rpc::sink) fn new() -> Self {
+    pub(in crate::domains::rpc::sink) fn new(
+        first_seen_sequence: u64,
+        registration_ids: Vec<RpcRegistrationId>,
+    ) -> Self {
         Self {
-            workers: Vec::new(),
-            worker_index: HashMap::with_capacity_and_hasher(16, FxBuildHasher),
-            ready_queue: VecDeque::new(),
             queued: VecDeque::new(),
-            live_workers: 0,
+            first_seen_sequence,
+            registration_ids,
+            next_registration_index: 0,
+            ready: false,
         }
     }
 
-    pub(in crate::domains::rpc::sink) fn register_worker(&mut self, worker: RpcWorker) {
-        let key = RpcWorkerKey::from_parts(&worker.addr, worker.session_id);
-        if self.worker_index.contains_key(&key) {
-            return;
-        }
-
-        let index = self
-            .workers
-            .iter()
-            .position(Option::is_none)
-            .unwrap_or_else(|| {
-                self.workers.push(None);
-                self.workers.len() - 1
-            });
-        let is_available = worker.is_available();
-        self.workers[index] = Some(worker);
-        self.worker_index.insert(key, index);
-        self.live_workers = self.live_workers.saturating_add(1);
-        if is_available {
-            self.ready_queue.push_back(index);
-        }
+    pub(in crate::domains::rpc::sink) fn has_registrations(&self) -> bool {
+        !self.registration_ids.is_empty()
     }
 
-    pub(in crate::domains::rpc::sink) fn unregister_worker(
+    pub(in crate::domains::rpc::sink) fn registration_ids(&self) -> &[RpcRegistrationId] {
+        &self.registration_ids
+    }
+
+    pub(in crate::domains::rpc::sink) fn next_registration_index(&self) -> usize {
+        self.next_registration_index
+    }
+
+    pub(in crate::domains::rpc::sink) fn advance_registration_cursor(&mut self, index: usize) {
+        self.next_registration_index = if self.registration_ids.is_empty() {
+            0
+        } else {
+            (index + 1) % self.registration_ids.len()
+        };
+    }
+
+    pub(in crate::domains::rpc::sink) fn add_registration(
         &mut self,
-        worker_addr: &RouteAddress,
-        session_id: u64,
+        registration_id: RpcRegistrationId,
     ) {
-        let key = RpcWorkerKey::from_parts(worker_addr, session_id);
-        self.unregister_worker_key(&key);
-    }
-
-    pub(in crate::domains::rpc::sink) fn worker_count(&self) -> usize {
-        self.live_workers
-    }
-
-    pub(in crate::domains::rpc::sink) fn unregister_session(&mut self, session_id: u64) -> usize {
-        let keys: Vec<RpcWorkerKey> = self
-            .workers
-            .iter()
-            .filter_map(|worker| {
-                let worker = worker.as_ref()?;
-                (worker.session_id == session_id)
-                    .then(|| RpcWorkerKey::new(worker.addr.clone(), worker.session_id))
-            })
-            .collect();
-
-        let removed = keys.len();
-        for key in keys {
-            self.unregister_worker_key(&key);
+        match self.registration_ids.binary_search(&registration_id) {
+            Ok(_) => {}
+            Err(index) => {
+                self.registration_ids.insert(index, registration_id);
+                if index < self.next_registration_index {
+                    self.next_registration_index = self.next_registration_index.saturating_add(1);
+                }
+            }
         }
-        removed
     }
 
-    pub(in crate::domains::rpc::sink) fn has_available_worker(&self) -> bool {
-        !self.ready_queue.is_empty()
+    pub(in crate::domains::rpc::sink) fn remove_registration(
+        &mut self,
+        registration_id: RpcRegistrationId,
+    ) {
+        let Ok(index) = self.registration_ids.binary_search(&registration_id) else {
+            return;
+        };
+        self.registration_ids.remove(index);
+        if index < self.next_registration_index {
+            self.next_registration_index = self.next_registration_index.saturating_sub(1);
+        }
+        if self.next_registration_index >= self.registration_ids.len() {
+            self.next_registration_index = 0;
+        }
+    }
+
+    pub(in crate::domains::rpc::sink) fn remove_registrations(
+        &mut self,
+        registration_ids: &HashSet<RpcRegistrationId>,
+    ) {
+        let next_registration_id = self
+            .registration_ids
+            .get(self.next_registration_index)
+            .copied();
+        self.registration_ids
+            .retain(|registration_id| !registration_ids.contains(registration_id));
+        self.next_registration_index = next_registration_id.map_or(0, |registration_id| {
+            self.registration_ids
+                .binary_search(&registration_id)
+                .unwrap_or_else(|index| {
+                    if index == self.registration_ids.len() {
+                        0
+                    } else {
+                        index
+                    }
+                })
+        });
     }
 
     pub(in crate::domains::rpc::sink) fn has_queued_requests(&self) -> bool {
@@ -105,62 +121,15 @@ impl RpcRouteState {
         before != self.queued.len()
     }
 
-    pub(in crate::domains::rpc::sink) fn claim_worker(&mut self) -> Option<RpcWorkerDispatch> {
-        while let Some(index) = self.ready_queue.pop_front() {
-            let Some(Some(worker)) = self.workers.get_mut(index) else {
-                continue;
-            };
-            if !worker.is_available() {
-                continue;
-            }
-
-            worker.claim_slot();
-            let dispatch = worker.dispatch_view(index);
-            if worker.is_available() {
-                self.ready_queue.push_front(index);
-            }
-
-            return Some(dispatch);
-        }
-
-        None
-    }
-
-    pub(in crate::domains::rpc::sink) fn release_worker_slot(
-        &mut self,
-        worker_slot: usize,
-        latency_us: Option<u64>,
-    ) -> bool {
-        let Some(Some(worker)) = self.workers.get_mut(worker_slot) else {
+    pub(in crate::domains::rpc::sink) fn mark_ready(&mut self) -> bool {
+        if self.ready {
             return false;
-        };
-        let was_available = worker.is_available();
-        if let Some(latency_us) = latency_us {
-            worker.record_completion(latency_us);
         }
-        worker.release_slot();
-        if !was_available && worker.is_available() {
-            if worker.max_concurrent > 1 {
-                self.ready_queue.push_front(worker_slot);
-            } else {
-                self.ready_queue.push_back(worker_slot);
-            }
-        }
-
+        self.ready = true;
         true
     }
 
-    fn unregister_worker_key(&mut self, key: &RpcWorkerKey) -> bool {
-        let Some(index) = self.worker_index.remove(key) else {
-            return false;
-        };
-
-        if self.workers.get_mut(index).and_then(Option::take).is_some() {
-            self.live_workers = self.live_workers.saturating_sub(1);
-            self.ready_queue.retain(|ready_index| *ready_index != index);
-            return true;
-        }
-
-        false
+    pub(in crate::domains::rpc::sink) fn clear_ready(&mut self) {
+        self.ready = false;
     }
 }

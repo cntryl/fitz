@@ -58,6 +58,6 @@ pub use protocol::{
     AppendResponse, GetMetadataResponse, ReadResponse, StreamClientFrame, StreamClientNotification,
     StreamClientRequest, StreamClientResponse, StreamClientResponseBody, StreamDiscriminator,
     StreamError, StreamFilterClause, StreamFilterSet, StreamFilteredReason, StreamMessage,
-    StreamMetadata, StreamReadItem, StreamRecord,
+    StreamMetadata, StreamReadItem, StreamRecord, StreamSubscriptionFailure,
 };
 pub use store::{StreamStorageLayout, StreamStore};

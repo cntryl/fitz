@@ -313,12 +313,12 @@ fn should_reject_wildcard_subscription_when_session_limit_is_exceeded() {
     let notice_address = RouteAddress::new(family, Route::new("notice://acme/app/events"));
     let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
     let router = Arc::new(Router::new());
-    let subscriber_mailbox = Arc::new(Mailbox::new(MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION + 4));
+    let subscriber_mailbox = Arc::new(Mailbox::new(MAX_WILDCARD_REGISTRATIONS_PER_SESSION + 4));
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
     let sink = NoticeDomainSink::new(router, admin_read_model.clone());
 
-    for pattern_index in 0..MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION {
+    for pattern_index in 0..MAX_WILDCARD_REGISTRATIONS_PER_SESSION {
         let pattern = format!("notice://acme/app/{pattern_index}/*");
         subscribe_notice_pattern(
             &sink,
@@ -353,12 +353,12 @@ fn should_reject_wildcard_subscription_when_session_limit_is_exceeded() {
     );
     assert_eq!(
         sink.subscription_count(),
-        MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION
+        MAX_WILDCARD_REGISTRATIONS_PER_SESSION
     );
     refresh_notice_admin_snapshot(&sink);
     assert_eq!(
         admin_read_model.notice_subscriptions(None, None).len(),
-        MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION
+        MAX_WILDCARD_REGISTRATIONS_PER_SESSION
     );
 }
 
@@ -371,7 +371,7 @@ fn should_return_existing_subscription_id_given_idempotent_wildcard_subscribe_at
     let notice_address = RouteAddress::new(family, Route::new("notice://acme/app/events"));
     let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
     let router = Arc::new(Router::new());
-    let subscriber_mailbox = Arc::new(Mailbox::new(MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION + 5));
+    let subscriber_mailbox = Arc::new(Mailbox::new(MAX_WILDCARD_REGISTRATIONS_PER_SESSION + 5));
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
     let sink = NoticeDomainSink::new(
         router,
@@ -391,7 +391,7 @@ fn should_return_existing_subscription_id_given_idempotent_wildcard_subscribe_at
         .subscription_id
         .expect("first subscription id");
 
-    for pattern_index in 1..MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION {
+    for pattern_index in 1..MAX_WILDCARD_REGISTRATIONS_PER_SESSION {
         let pattern = format!("notice://acme/app/{pattern_index}/*");
         subscribe_notice_pattern(
             &sink,
@@ -424,6 +424,6 @@ fn should_return_existing_subscription_id_given_idempotent_wildcard_subscribe_at
     );
     assert_eq!(
         sink.subscription_count(),
-        MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION
+        MAX_WILDCARD_REGISTRATIONS_PER_SESSION
     );
 }

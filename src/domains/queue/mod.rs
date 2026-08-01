@@ -132,7 +132,7 @@
 //! - `QueueDomainSink` is a thin mailbox adapter
 //! - `QueueDomainActor` is the managed production actor for delivery, cleanup, runtime sweeps,
 //!   live admin refresh, DLQ replay/purge commands, and broker-local watch state
-//! - Watches target `queue://{realm}/{area}/{resource}/ready`
+//! - Watches target exact or wildcard `queue://{realm}/{area}/{resource}` routes
 //! - Notifications signal availability and never carry queue message bodies
 //! - Delayed visibility and inflight-expiry transitions are surfaced through queue-local runtime sweeps
 //!

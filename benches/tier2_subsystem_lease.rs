@@ -21,8 +21,6 @@ use std::time::{Duration, Instant};
 const WATCH_ROUTE: &str = "lease://realm/locks/primary";
 const NOTIFY_REPEAT_COUNT: u64 = 32_768;
 const EXACT_ROUTE_64_NOTIFY_REPEAT_COUNT: u64 = 131_072;
-const SINGLE_STAR_16_NOTIFY_REPEAT_COUNT: u64 = 131_072;
-const DOUBLE_STAR_64_NOTIFY_REPEAT_COUNT: u64 = 131_072;
 const NOTIFY_CHUNK_SIZE: u64 = 512;
 
 struct PreparedLeaseNotifyCase {
@@ -75,9 +73,9 @@ impl PreparedLeaseNotifyCase {
     }
 }
 
-fn encode_lease_subscribe(pattern: &str) -> Bytes {
+fn encode_lease_subscribe(route: &str) -> Bytes {
     let mut encoder = PayloadEncoder::new();
-    encoder.put_string(pattern);
+    encoder.put_string(route);
     Bytes::from(encoder.finish())
 }
 
@@ -87,7 +85,7 @@ fn register_lease_watch(
     source: &RouteAddress,
     destination: &str,
     session_id: u64,
-    pattern: &str,
+    route: &str,
 ) {
     route_frame(
         router.as_ref(),
@@ -96,13 +94,13 @@ fn register_lease_watch(
         session_id,
         ChannelId::Sub,
         msg_type::SUBSCRIBE,
-        encode_lease_subscribe(pattern),
+        encode_lease_subscribe(route),
         family,
     )
     .expect("lease watch registration");
 }
 
-fn prepare_notify_case(watcher_count: usize, pattern: &str) -> PreparedLeaseNotifyCase {
+fn prepare_notify_case(watcher_count: usize, route: &str) -> PreparedLeaseNotifyCase {
     let family = RouteFamily::new(1);
     let router = Arc::new(Router::new());
     let sink = create_bench_lease_sink(router.clone());
@@ -119,7 +117,7 @@ fn prepare_notify_case(watcher_count: usize, pattern: &str) -> PreparedLeaseNoti
             &watcher_source,
             WATCH_ROUTE,
             session_id,
-            pattern,
+            route,
         );
         assert_eq!(
             watcher_sink.wait_for_count(1, Duration::from_secs(1)),
@@ -140,9 +138,9 @@ fn prepare_notify_case(watcher_count: usize, pattern: &str) -> PreparedLeaseNoti
     case
 }
 
-fn notify_watchers(ctx: &mut StressContext, name: &str, watcher_count: usize, pattern: &str) {
-    let case = prepare_notify_case(watcher_count, pattern);
-    let repeat_count = notify_repeat_count(watcher_count, pattern);
+fn notify_watchers(ctx: &mut StressContext, name: &str, watcher_count: usize, route: &str) {
+    let case = prepare_notify_case(watcher_count, route);
+    let repeat_count = notify_repeat_count(watcher_count, route);
     let mut remaining = repeat_count;
     let mut total = Duration::ZERO;
     while remaining > 0 {
@@ -167,23 +165,19 @@ fn notify_watchers(ctx: &mut StressContext, name: &str, watcher_count: usize, pa
     );
 }
 
-fn notify_repeat_count(watcher_count: usize, pattern: &str) -> u64 {
-    if watcher_count == 64 && pattern == WATCH_ROUTE {
+fn notify_repeat_count(watcher_count: usize, route: &str) -> u64 {
+    if watcher_count == 64 && route == WATCH_ROUTE {
         EXACT_ROUTE_64_NOTIFY_REPEAT_COUNT
-    } else if watcher_count == 16 && pattern == "lease://realm/locks/*" {
-        SINGLE_STAR_16_NOTIFY_REPEAT_COUNT
-    } else if watcher_count == 64 && pattern == "lease://realm/**" {
-        DOUBLE_STAR_64_NOTIFY_REPEAT_COUNT
     } else {
         NOTIFY_REPEAT_COUNT
     }
 }
 
 macro_rules! lease_notify_bench {
-    ($fn_name:ident, $stress_name:literal, $watchers:expr, $pattern:expr) => {
+    ($fn_name:ident, $stress_name:literal, $watchers:expr, $route:expr) => {
         #[stress(tier = 2)]
         fn $fn_name(ctx: &mut StressContext) {
-            notify_watchers(ctx, $stress_name, $watchers, $pattern);
+            notify_watchers(ctx, $stress_name, $watchers, $route);
         }
     };
 }
@@ -206,35 +200,4 @@ lease_notify_bench!(
     256,
     WATCH_ROUTE
 );
-lease_notify_bench!(
-    should_notify_single_star_16_watchers_primary,
-    "notify_single_star_16_watchers_primary",
-    16,
-    "lease://realm/locks/*"
-);
-lease_notify_bench!(
-    should_notify_single_star_64_watchers_primary,
-    "notify_single_star_64_watchers_primary",
-    64,
-    "lease://realm/locks/*"
-);
-lease_notify_bench!(
-    should_notify_single_star_256_watchers_primary,
-    "notify_single_star_256_watchers_primary",
-    256,
-    "lease://realm/locks/*"
-);
-lease_notify_bench!(
-    should_notify_double_star_64_watchers_primary,
-    "notify_double_star_64_watchers_primary",
-    64,
-    "lease://realm/**"
-);
-lease_notify_bench!(
-    should_notify_double_star_256_watchers_primary,
-    "notify_double_star_256_watchers_primary",
-    256,
-    "lease://realm/**"
-);
-
 stress_main!();

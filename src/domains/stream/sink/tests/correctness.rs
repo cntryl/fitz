@@ -115,7 +115,7 @@ fn should_reject_stream_subscription_given_empty_pattern() {
     // Assert
     assert_eq!(
         decode_stream_error_message(response.as_ref()).expect("empty pattern error"),
-        "empty pattern"
+        "subscription pattern must use stream://"
     );
     assert_eq!(context.sink.subscription_count(), 0);
 }

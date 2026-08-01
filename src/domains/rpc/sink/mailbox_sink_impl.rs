@@ -252,16 +252,27 @@ impl RpcDomainRuntime<'_> {
         });
         {
             let mut state = self.state.lock();
-            let route_state =
-                state.ensure_route_state_for_family(*worker_addr.family(), worker_addr.route());
-            route_state.register_worker(RpcWorker::new(
-                worker_addr.clone(),
-                worker_inbox_addr,
-                meta.session_id,
-                max_concurrent,
-            ));
+            if matches!(
+                state.register_worker(RpcWorker::new(
+                    worker_addr.clone(),
+                    worker_inbox_addr,
+                    meta.session_id,
+                    max_concurrent,
+                )),
+                super::state_model::RpcWorkerRegistration::WildcardLimit
+            ) {
+                return (
+                    Some(RpcClientResponseBody::CodeError {
+                        code: crate::dispatch::protocol::error_codes::rpc::ERR_SUBSCRIPTION_LIMIT,
+                        message: "wildcard subscription limit exceeded (128 per session)"
+                            .to_string(),
+                    }),
+                    Some(false),
+                    false,
+                );
+            }
         }
-        self.dispatch_queued_requests_for_route(worker_addr.route(), *worker_addr.family());
+        self.dispatch_queued_requests_for_family(*worker_addr.family());
         tracing::debug!(
             domain = "rpc",
             worker = worker_addr.route().as_str(),
@@ -478,7 +489,7 @@ impl RpcDomainRuntime<'_> {
         self.histogram_observe_us("rpc_pending_route_index_us", 0);
         self.gauge_set("rpc_pending_requests", live_request_count as u64);
         self.schedule_admin_snapshot(false);
-        self.dispatch_queued_requests_for_route(route, family);
+        self.dispatch_queued_requests_for_family(family);
 
         tracing::debug!(
             domain = "rpc",
@@ -668,7 +679,10 @@ impl RpcDomainRuntime<'_> {
         &self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
-        message: Result<crate::domains::rpc::protocol::RpcMessage, String>,
+        message: Result<
+            crate::domains::rpc::protocol::RpcMessage,
+            crate::domains::rpc::protocol::RpcDecodeError,
+        >,
         raw_payload: &[u8],
         request_started: Option<Instant>,
     ) -> Option<crate::domains::rpc::protocol::RpcMessage> {
@@ -680,6 +694,22 @@ impl RpcDomainRuntime<'_> {
                     metrics.record_failure(started_at);
                 }
                 tracing::warn!(domain = "rpc", error = %e, "Failed to parse RPC message");
+                let (error_code, error_message) = match &e {
+                    crate::domains::rpc::protocol::RpcDecodeError::InvalidCallRoute(_) => (
+                        crate::dispatch::protocol::error_codes::rpc::ERR_INVALID_ROUTE,
+                        "Invalid RPC call route",
+                    ),
+                    crate::domains::rpc::protocol::RpcDecodeError::InvalidRegistrationPattern(
+                        _,
+                    ) => (
+                        crate::dispatch::protocol::error_codes::rpc::ERR_INVALID_SUBSCRIPTION_PATTERN,
+                        "Invalid RPC registration pattern",
+                    ),
+                    crate::domains::rpc::protocol::RpcDecodeError::StructurallyUndecodable(_) => (
+                        crate::dispatch::protocol::error_codes::rpc::ERR_BACKEND_ERROR,
+                        "RPC message parse failed",
+                    ),
+                };
                 if meta.message_type == 302 {
                     if let Ok(correlation_id) =
                         crate::dispatch::protocol::rpc_codec::extract_request_correlation_id(
@@ -690,8 +720,8 @@ impl RpcDomainRuntime<'_> {
                             envelope,
                             Self::response_meta_for_source(envelope, meta),
                             correlation_id,
-                            crate::dispatch::protocol::error_codes::rpc::ERR_BACKEND_ERROR,
-                            "RPC request parse failed",
+                            error_code,
+                            error_message,
                         );
                         return None;
                     }
@@ -699,7 +729,10 @@ impl RpcDomainRuntime<'_> {
                 self.route_rpc_client_response(
                     envelope,
                     Self::response_meta_for_source(envelope, meta),
-                    &RpcClientResponseBody::Error("RPC message parse failed".to_string()),
+                    &RpcClientResponseBody::CodeError {
+                        code: error_code,
+                        message: error_message.to_string(),
+                    },
                 );
                 None
             }

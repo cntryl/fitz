@@ -31,7 +31,7 @@
 //! Queue availability is surfaced through explicit watch notifications:
 //! - `QueueActor` always returns immediately (never blocks)
 //! - `QueueDomainSink` owns ephemeral watch state for the current broker process
-//! - Watches target `queue://{realm}/{area}/{resource}/ready`
+//! - Watches target exact or wildcard `queue://{realm}/{area}/{resource}` routes
 //! - Notifications are readiness signals only; they never carry queue message bodies
 
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
@@ -258,6 +258,12 @@ pub enum QueueResponse {
 
     /// Bad request (malformed parameters)
     BadRequest { reason: String },
+
+    /// Invalid exact or wildcard Queue subscription pattern.
+    InvalidSubscriptionPattern { reason: String },
+
+    /// Per-session wildcard subscription limit reached.
+    SubscriptionLimit,
 
     /// Queue does not exist
     QueueNotFound,

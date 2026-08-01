@@ -47,14 +47,27 @@ impl KvWatchActor {
         }
     }
 
+    /// # Errors
+    ///
+    /// Returns `KvError::SubscriptionLimit` when a new wildcard registration
+    /// would exceed the per-session wildcard quota.
     pub fn subscribe(
         &mut self,
         session_id: u64,
-        pattern: &str,
+        pattern: Pattern,
         subscriber: RouteAddress,
-    ) -> Option<u64> {
-        if let Some(existing_id) = self.subscriptions.find_existing_id(session_id, pattern) {
-            return Some(existing_id);
+    ) -> Result<u64, crate::domains::kv::KvError> {
+        if let Some(existing_id) = self
+            .subscriptions
+            .find_existing_id(session_id, pattern.route())
+        {
+            return Ok(existing_id);
+        }
+        if self
+            .subscriptions
+            .wildcard_registration_limit_reached(session_id, &pattern)
+        {
+            return Err(crate::domains::kv::KvError::SubscriptionLimit);
         }
 
         let subscription_id = self
@@ -62,17 +75,17 @@ impl KvWatchActor {
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
                 current.checked_add(1)
             })
-            .ok()?;
+            .map_err(|_| crate::domains::kv::KvError::SubscriptionLimit)?;
         self.subscriptions.insert(
             self.family_id,
             KvWatchSubscription {
-                pattern: Pattern::new(pattern),
+                pattern,
                 session_id,
                 subscription_id,
                 subscriber,
             },
         );
-        Some(subscription_id)
+        Ok(subscription_id)
     }
 
     pub fn unsubscribe(&mut self, session_id: u64, pattern: &str) -> usize {
@@ -124,8 +137,12 @@ mod tests {
         let family = RouteFamily::new(1);
         let mut actor = KvWatchActor::new(family);
         let route = RouteAddress::new(family, Route::new("inbox://session/7"));
-        actor.subscribe(7, "kv://acme/app/users", route.clone());
-        actor.subscribe(7, "kv://acme/app/orders", route);
+        actor
+            .subscribe(7, Pattern::new("kv://acme/app/users"), route.clone())
+            .expect("subscribe users");
+        actor
+            .subscribe(7, Pattern::new("kv://acme/app/orders"), route)
+            .expect("subscribe orders");
 
         // Act
         let removed = actor.remove_session(7);

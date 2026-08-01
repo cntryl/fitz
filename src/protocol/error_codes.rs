@@ -66,6 +66,8 @@ pub mod kv {
     pub const ERR_BACKEND_ERROR: u16 = 1009;
     pub const ERR_TRANSACTION_ABORTED: u16 = 1010;
     pub const ERR_UNAUTHORIZED: u16 = 1011; // AC-KV-010: Permission denied for KV operation
+    pub const ERR_INVALID_SUBSCRIPTION_PATTERN: u16 = 1012;
+    pub const ERR_SUBSCRIPTION_LIMIT: u16 = 1013;
 }
 
 /// Stream domain error codes (per `CLIENT_SPEC` Stream Domain section)
@@ -103,6 +105,8 @@ pub mod queue {
     pub const ERR_BAD_REQUEST: u16 = 4006;
     pub const ERR_BACKEND_ERROR: u16 = 4007;
     pub const ERR_UNAUTHORIZED: u16 = 4009; // AC-QUEUE-008: Permission denied for queue operation
+    pub const ERR_INVALID_SUBSCRIPTION_PATTERN: u16 = 4010;
+    pub const ERR_SUBSCRIPTION_LIMIT: u16 = 4011;
 }
 
 /// Lease domain error codes (per `CLIENT_SPEC` Lease Domain section)
@@ -116,6 +120,7 @@ pub mod lease {
     pub const ERR_QUEUE_FULL: u16 = 5007;
     pub const ERR_BAD_REQUEST: u16 = 5008;
     pub const ERR_UNAUTHORIZED: u16 = 5009; // AC-LEASE-010: Permission denied for lease operation
+    pub const ERR_INVALID_SUBSCRIPTION_ROUTE: u16 = 5010;
 }
 
 /// RPC domain error codes (per `CLIENT_SPEC` RPC Domain section)
@@ -130,6 +135,9 @@ pub mod rpc {
     pub const ERR_RPC_WRONG_WORKER: u16 = 6008; // Response or ACK came from a worker that does not own the request
     pub const ERR_UNAUTHORIZED: u16 = 6009; // AC-RPC-007, AC-RPC-008: Permission denied for RPC operation
     pub const ERR_BACKEND_ERROR: u16 = 6010;
+    pub const ERR_INVALID_ROUTE: u16 = 6011;
+    pub const ERR_INVALID_SUBSCRIPTION_PATTERN: u16 = 6012;
+    pub const ERR_SUBSCRIPTION_LIMIT: u16 = 6013;
 }
 
 /// Schedule domain error codes (per `CLIENT_SPEC` Schedule Domain section)

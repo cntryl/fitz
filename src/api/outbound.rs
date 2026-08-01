@@ -390,6 +390,7 @@ impl SessionOutboundSink {
         let encode_start = Self::encode_latency_start();
         let payload = crate::protocol::schedule_codec::encode_notify(
             notification.subscription_id,
+            &notification.route,
             &notification.payload,
         );
         let bytes = encode_single_tlv_frame(crate::protocol::tlv::MessageType::new(705), &payload);

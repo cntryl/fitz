@@ -43,9 +43,9 @@ fn encode_lease_query(route: &str) -> Bytes {
     Bytes::from(encoder.finish())
 }
 
-fn encode_lease_subscribe(pattern: &str) -> Bytes {
+fn encode_lease_subscribe(route: &str) -> Bytes {
     let mut encoder = PayloadEncoder::new();
-    encoder.put_string(pattern);
+    encoder.put_string(route);
     Bytes::from(encoder.finish())
 }
 

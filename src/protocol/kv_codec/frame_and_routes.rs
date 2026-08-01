@@ -183,6 +183,8 @@ fn kv_error_code(error: &KvError) -> u16 {
         KvError::AlreadyExists => kv::ERR_KEY_EXISTS,
         KvError::RealmMismatch => kv::ERR_REALM_MISMATCH,
         KvError::BackendUnavailable(_) | KvError::BackendError(_) => kv::ERR_BACKEND_ERROR,
+        KvError::InvalidSubscriptionPattern(_) => kv::ERR_INVALID_SUBSCRIPTION_PATTERN,
+        KvError::SubscriptionLimit => kv::ERR_SUBSCRIPTION_LIMIT,
         KvError::InvalidRoute(_)
         | KvError::InvalidRequest(_)
         | KvError::InvalidRealm
@@ -199,7 +201,13 @@ fn kv_error_code(error: &KvError) -> u16 {
 fn split_route(route_str: &str) -> Option<(&str, &str, &str)> {
     let parts = route_exact_triplet(route_str)?;
 
-    if parts.realm.is_empty() || parts.area.is_empty() || parts.resource.is_empty() {
+    if parts.realm.is_empty()
+        || parts.area.is_empty()
+        || parts.resource.is_empty()
+        || parts.realm.contains('*')
+        || parts.area.contains('*')
+        || parts.resource.contains('*')
+    {
         return None;
     }
 
@@ -294,7 +302,6 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
         msg_type::SUBSCRIBE | msg_type::UNSUBSCRIBE => {
             let mut offset = 0;
             let route_str = read_route_str(payload, &mut offset, "KV watch")?;
-            validate_route(route_str)?;
             if offset != payload.len() {
                 return Err("Trailing data in KV watch payload".to_string());
             }
@@ -373,7 +380,6 @@ fn parse_subscribe(
 ) -> Result<KvSubscriptionMessage, String> {
     let mut offset = 0;
     let pattern_str = read_route_str(payload, &mut offset, "KV SUBSCRIBE")?;
-    validate_route(pattern_str)?;
     if offset != payload.len() {
         return Err("Trailing data in KV SUBSCRIBE payload".to_string());
     }
@@ -394,7 +400,6 @@ fn parse_unsubscribe(
 ) -> Result<KvSubscriptionMessage, String> {
     let mut offset = 0;
     let pattern_str = read_route_str(payload, &mut offset, "KV UNSUBSCRIBE")?;
-    validate_route(pattern_str)?;
     if offset != payload.len() {
         return Err("Trailing data in KV UNSUBSCRIBE payload".to_string());
     }

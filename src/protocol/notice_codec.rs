@@ -140,6 +140,9 @@ fn notice_error_code_for_message(message: &str) -> u16 {
 
     match message {
         "empty pattern" => notice::ERR_INVALID_PATTERN,
+        message if message.contains("subscription pattern") || message.contains("wildcards") => {
+            notice::ERR_INVALID_PATTERN
+        }
         message if message.contains("subscription") && message.contains("limit") => {
             notice::ERR_SUBSCRIPTION_LIMIT
         }

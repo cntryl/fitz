@@ -79,7 +79,10 @@ fn should_reject_notice_subscription_before_allocating_family_state() {
 
     // Assert
     assert_eq!(response.status, 1);
-    assert_eq!(response.error.as_deref(), Some("empty pattern"));
+    assert_eq!(
+        response.error.as_deref(),
+        Some("subscription pattern must use notice://")
+    );
     assert_eq!(sink.subscription_family_count(), 0);
 }
 

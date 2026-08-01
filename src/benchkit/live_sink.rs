@@ -545,6 +545,7 @@ fn frame_context_from_envelope(envelope: &Envelope) -> Option<FrameContext> {
             MessageType::new(705),
             Bytes::from(crate::protocol::schedule_codec::encode_notify(
                 notification.subscription_id,
+                &notification.route,
                 notification.payload.as_ref(),
             )),
             notification.route_family,

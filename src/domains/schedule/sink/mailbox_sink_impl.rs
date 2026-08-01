@@ -440,14 +440,37 @@ impl ScheduleDomainRuntime<'_> {
             ScheduleFailure, ScheduleFailureCategory, ScheduleResponse,
         };
 
-        if let Err(error) =
-            crate::domains::schedule::protocol::validate_concrete_schedule_route(route.as_str())
-        {
-            return ScheduleResponse::Error(ScheduleFailure::new(
-                ScheduleFailureCategory::InvalidTarget,
-                error,
-            ));
-        }
+        let compiled = crate::runtime::matcher::compile_registration_pattern(
+            route.as_str(),
+            "schedule",
+            crate::runtime::matcher::PatternDepth::CanMatch(4),
+        );
+        let Err(error) = &compiled else {
+            return self.insert_schedule_subscription(
+                family_id,
+                route,
+                session_id,
+                subscriber,
+                compiled.expect("checked pattern"),
+            );
+        };
+        ScheduleResponse::Error(ScheduleFailure::new(
+            ScheduleFailureCategory::InvalidSubscriptionPattern,
+            error.clone(),
+        ))
+    }
+
+    fn insert_schedule_subscription(
+        &self,
+        family_id: crate::runtime::routing::RouteFamily,
+        route: &crate::runtime::routing::Route,
+        session_id: u64,
+        subscriber: crate::runtime::routing::RouteAddress,
+        pattern: crate::runtime::matcher::Pattern,
+    ) -> crate::domains::schedule::ScheduleResponse {
+        use crate::domains::schedule::{
+            ScheduleFailure, ScheduleFailureCategory, ScheduleResponse,
+        };
 
         let fam_id = family_id.as_u64();
         let mut families = self.core.sub_families.lock();
@@ -465,6 +488,18 @@ impl ScheduleDomainRuntime<'_> {
             );
             id
         } else {
+            if state
+                .subscriptions
+                .wildcard_registration_limit_reached(session_id, &pattern)
+            {
+                return ScheduleResponse::Error(ScheduleFailure::new(
+                    ScheduleFailureCategory::SubscriptionLimit,
+                    format!(
+                        "wildcard subscription limit exceeded ({} per session)",
+                        crate::domains::subscription_state::MAX_WILDCARD_REGISTRATIONS_PER_SESSION
+                    ),
+                ));
+            }
             let Ok(new_id) = self.core.next_sub_id.fetch_update(
                 Ordering::Relaxed,
                 Ordering::Relaxed,
@@ -479,12 +514,15 @@ impl ScheduleDomainRuntime<'_> {
                     "subscription ID space exhausted",
                 ));
             };
-            state.insert(ScheduleSubscription {
-                route: route.as_str().to_string(),
-                session_id,
-                subscription_id: new_id,
-                subscriber,
-            });
+            state.insert(
+                family_id,
+                ScheduleSubscription {
+                    pattern,
+                    session_id,
+                    subscription_id: new_id,
+                    subscriber,
+                },
+            );
 
             tracing::debug!(
                 domain = "schedule",
@@ -511,11 +549,13 @@ impl ScheduleDomainRuntime<'_> {
             ScheduleFailure, ScheduleFailureCategory, ScheduleResponse,
         };
 
-        if let Err(error) =
-            crate::domains::schedule::protocol::validate_concrete_schedule_route(route.as_str())
-        {
+        if let Err(error) = crate::runtime::matcher::compile_registration_pattern(
+            route.as_str(),
+            "schedule",
+            crate::runtime::matcher::PatternDepth::CanMatch(4),
+        ) {
             return ScheduleResponse::Error(ScheduleFailure::new(
-                ScheduleFailureCategory::InvalidTarget,
+                ScheduleFailureCategory::InvalidSubscriptionPattern,
                 error,
             ));
         }
@@ -523,7 +563,7 @@ impl ScheduleDomainRuntime<'_> {
         let fam_id = family_id.as_u64();
         let mut families = self.core.sub_families.lock();
         let remove_family = if let Some(state) = families.get_mut(&fam_id) {
-            state.remove_session_route(session_id, route.as_str());
+            state.remove_session_route(family_id, session_id, route.as_str());
             state.is_empty()
         } else {
             false

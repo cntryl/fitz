@@ -697,7 +697,7 @@ A request is valid **only if**:
 ## Global Route Rules (Normative)
 
 - Routes are opaque strings with a fixed, domain-defined shape
-- `{realm}` is **always concrete** (never `*`)
+- `{realm}` may be a whole-segment wildcard for registration operations that support patterns
 - `*` MAY appear only in positions explicitly allowed by the domain
 - Extra path segments are **forbidden**
 - Route shape validation occurs **before** permission or dispatch checks
@@ -705,20 +705,31 @@ A request is valid **only if**:
 ### Wildcard Support by Domain
 
 **Domains supporting wildcards (`*` and `**` patterns):**
+- **KV:** SUBSCRIBE and UNSUBSCRIBE accept patterns capable of matching a three-segment route; mutations remain concrete
+- **Stream:** READ patterns and SUBSCRIBE/UNSUBSCRIBE registration patterns are supported; writes remain concrete
+- **Queue:** SUBSCRIBE and UNSUBSCRIBE accept patterns capable of matching a three-segment route; Queue operations remain concrete
 - **Notice:** Full wildcard support in SUBSCRIBE patterns (`notice://realm/area/*`, `notice://realm/**`)
-- **Stream:** Wildcards in READ patterns (check Stream domain spec for details)
-- **Queue:** Wildcards in RESERVE patterns (check Queue domain spec for details)
+- **RPC:** Worker registrations accept `*` and `**`; calls remain concrete
+- **Schedule:** SUBSCRIBE and UNSUBSCRIBE accept patterns capable of matching a four-segment route; CREATE and CANCEL remain concrete
 
 **Domains requiring concrete routes only (no wildcards):**
-- **KV:** All operations use concrete routes only (`kv://realm/area/resource`)
 - **Lease:** All operations use concrete routes only (`lease://realm/area/resource`)
-- **RPC:** Worker registrations and requests use exact routes only. The common operation-style form is `rpc://realm/area/resource/operation`
-- **Schedule:** `CREATE`, `CANCEL`, `SUBSCRIBE`, and `UNSUBSCRIBE` use concrete routes only (`schedule://realm/area/resource/operation`)
+- **KV mutations:** use concrete routes only (`kv://realm/area/resource`)
+- **Queue operations:** use concrete routes only (`queue://realm/area/resource`)
+- **Stream writes:** use concrete routes only (`stream://realm/area/resource`)
+- **RPC calls:** use concrete routes only (`rpc://realm/area/resource/operation`)
+- **Schedule definitions:** `CREATE` and `CANCEL` use concrete routes only (`schedule://realm/area/resource/operation`)
 
 **Pattern matching semantics:**
 - `*` matches exactly one path segment
 - `**` matches zero or more path segments (greedy)
 - Concrete routes (no wildcards) match exactly
+- KV, Queue, Notice, Stream, RPC, and Schedule each permit at most 128 wildcard
+  registrations per session. Exact registrations do not count, and duplicate
+  `(session, original registration string)` requests are checked before the limit
+- Wildcards never cross `RouteFamily` or permission boundaries, and overlapping registrations have no exact-pattern precedence
+- Notifications carry the matching `subscription_id` and the exact concrete
+  route, never the registration pattern
 
 ## Route Shapes by Domain
 
@@ -730,6 +741,8 @@ A request is valid **only if**:
 - `kv://{realm}/{area}/{resource}`
 - `kv://{realm}/{area}/*`
 - `kv://{realm}/*/*`
+- `kv://{realm}/**`
+- `kv://*/{area}/{resource}`
   **Method Acceptance:**
   | Method | Accepted Route Shapes |
   | ---------------- | ----------------------------------------------- |
@@ -756,6 +769,8 @@ A request is valid **only if**:
 - `stream://{realm}/{area}/{resource}`
 - `stream://{realm}/{area}/*`
 - `stream://{realm}/*/*`
+- `stream://{realm}/**`
+- `stream://*/{area}/{resource}`
   **Method Acceptance:**
   | Method | Accepted Route Shapes |
   | ---------------- | -------------------------------------------------------------- |
@@ -779,6 +794,8 @@ A request is valid **only if**:
 - `queue://{realm}/{area}/{resource}`
 - `queue://{realm}/{area}/*`
 - `queue://{realm}/*/*`
+- `queue://{realm}/**`
+- `queue://*/{area}/{resource}`
 
 **Route format:** For per-resource isolation, use the 3-segment form `queue://{realm}/{area}/{resource}`. Each distinct resource has its own queue and lease state.
 
@@ -792,6 +809,8 @@ A request is valid **only if**:
   | `RESERVE` | `{realm}/{area}/{resource}` |
   | `COMPLETE` | `{realm}/{area}/{resource}` |
   | `EXTEND` | `{realm}/{area}/{resource}` |
+  | `SUBSCRIBE` | exact route or whole-segment pattern capable of matching three segments |
+  | `UNSUBSCRIBE` | same as `SUBSCRIBE` |
 
   **Note:** `LIST` is a broker-internal management operation not currently exposed in the client wire protocol. Clients should use: ENQUEUE, RESERVE, COMPLETE, EXTEND as documented in the wire format section.
 
@@ -806,7 +825,7 @@ A request is valid **only if**:
   | `CREATE` | `{realm}/{area}/{resource}/{operation}` |
   | `CANCEL` | `{realm}/{area}/{resource}/{operation}` |
   | `LIST` | no route payload; optional `[offset][limit]` pagination fields only |
-  | `SUBSCRIBE` | `{realm}/{area}/{resource}/{operation}` |
+  | `SUBSCRIBE` | exact route or whole-segment pattern capable of matching four segments |
   | `UNSUBSCRIBE` | same as `SUBSCRIBE` |
 
   **Note:** `DELETE` (admin) and `TRIGGER` operations are broker-internal. Clients should use: CREATE, CANCEL, LIST, SUBSCRIBE, UNSUBSCRIBE as documented in the wire format section. LIST returns a single response payload containing `total_count` plus zero or more schedule entries.
@@ -826,6 +845,9 @@ A request is valid **only if**:
   | `SUBSCRIBE` | `{realm}/{area}/{resource}` |
   | `UNSUBSCRIBE` | same as `SUBSCRIBE` |
 
+Lease subscription routes are exact. Any wildcard, wrong scheme, empty segment,
+or route with fewer or more than three segments is rejected with 5010.
+
 ### Notice Domain
 
 **Valid Route Shapes:**
@@ -844,14 +866,20 @@ A request is valid **only if**:
 
 **Route Shape Guidance:**
 
-- Worker registrations and request routes use exact route strings only.
-- Wildcard worker registration is not part of the contract.
+- Calls use concrete route strings. Worker registrations accept strict
+  whole-segment `*` and `**` patterns, including wildcard realm.
+- Every registration owns independent concurrency credit across all concrete
+  routes it matches. Exact and wildcard overlaps are equal candidates.
+- Ready concrete routes rotate fairly within one `RouteFamily`; matching never
+  crosses a family boundary.
+- A session may retain at most 128 wildcard RPC registrations. Duplicate
+  `(session, pattern)` registration is idempotent and retains its original credit.
 - The common operation-style form is `rpc://{realm}/{area}/{resource}/{operation}`.
   **Method Acceptance:**
   | Method | Accepted Route Shapes |
-  | ------------- | ----------------------------------------------- |
+  | ------------- | ------------------------------------------------------------ |
   | `CALL` | exact route (commonly `{realm}/{area}/{resource}/{operation}`) |
-  | `SUBSCRIBE` | exact route only |
+  | `SUBSCRIBE` | exact route or whole-segment wildcard pattern |
   | `UNSUBSCRIBE` | same as `SUBSCRIBE` |
 
 ## Lock-In Rule

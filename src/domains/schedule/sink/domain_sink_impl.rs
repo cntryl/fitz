@@ -623,11 +623,13 @@ impl ScheduleDomainRuntime<'_> {
         session_id: u64,
         subscription_id: u64,
         subscriber: &crate::runtime::routing::RouteAddress,
+        route: &str,
         payload: &bytes::Bytes,
     ) -> bool {
         #[cfg(test)]
         let notify_payload = crate::dispatch::protocol::schedule_codec::encode_notify(
             subscription_id,
+            route,
             payload.as_ref(),
         );
 
@@ -650,6 +652,7 @@ impl ScheduleDomainRuntime<'_> {
                 session_id,
                 *subscriber.family(),
                 subscription_id,
+                route.to_string(),
                 payload.clone(),
             ),
         );
@@ -670,9 +673,8 @@ impl ScheduleDomainRuntime<'_> {
         let Some(state) = families.get_mut(&family.as_u64()) else {
             return false;
         };
-        let Some(subscription_ids) = state.exact_routes.get(route).cloned() else {
-            return false;
-        };
+        let mut subscription_ids = state.matching_ids(family, route);
+        subscription_ids.sort_unstable();
         if subscription_ids.is_empty() {
             return false;
         }
@@ -682,12 +684,13 @@ impl ScheduleDomainRuntime<'_> {
                 let mut any_accepted = false;
                 for subscription in subscription_ids
                     .iter()
-                    .filter_map(|id| state.subscriptions.get(id))
+                    .filter_map(|id| state.subscriptions.get(*id))
                 {
                     any_accepted |= self.route_live_notify(
                         subscription.session_id,
                         subscription.subscription_id,
                         &subscription.subscriber,
+                        route,
                         payload,
                     );
                 }
@@ -698,7 +701,7 @@ impl ScheduleDomainRuntime<'_> {
                     % subscription_ids.len();
                 for offset in 0..subscription_ids.len() {
                     let index = (start + offset) % subscription_ids.len();
-                    let Some(subscription) = state.subscriptions.get(&subscription_ids[index])
+                    let Some(subscription) = state.subscriptions.get(subscription_ids[index])
                     else {
                         continue;
                     };
@@ -706,6 +709,7 @@ impl ScheduleDomainRuntime<'_> {
                         subscription.session_id,
                         subscription.subscription_id,
                         &subscription.subscriber,
+                        route,
                         payload,
                     ) {
                         state
@@ -733,8 +737,13 @@ impl ScheduleDomainRuntime<'_> {
 
     pub fn unsubscribe_all(&self, session_id: u64) {
         let mut families = self.core.sub_families.lock();
-        for state in families.values_mut() {
-            state.remove_session(session_id);
+        for (family, state) in families.iter_mut() {
+            state.remove_session(
+                crate::runtime::routing::RouteFamily::new(
+                    u32::try_from(*family).unwrap_or(u32::MAX),
+                ),
+                session_id,
+            );
         }
         families.retain(|_, state| !state.is_empty());
         tracing::debug!(

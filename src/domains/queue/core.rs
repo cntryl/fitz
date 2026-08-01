@@ -20,9 +20,9 @@ impl QueueKey {
         if !parts.realm.is_empty()
             && !parts.area.is_empty()
             && !parts.resource.is_empty()
-            && !matches!(parts.realm, "*" | "**")
-            && !matches!(parts.area, "*" | "**")
-            && !matches!(parts.resource, "*" | "**")
+            && !parts.realm.contains('*')
+            && !parts.area.contains('*')
+            && !parts.resource.contains('*')
         {
             Some(QueueKey {
                 family,

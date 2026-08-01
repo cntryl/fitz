@@ -85,9 +85,12 @@ definitions and pending fire claims are recovered before schedule traffic is
 accepted.
 
 Each definition persists one delivery mode. `broadcast` attempts all live
-exact-route subscribers. `single` selects at most one accepted live handoff by
-round-robin. The cursor and subscriptions are ephemeral; an occurrence advances
-even when there are no subscribers or every live handoff is rejected.
+matching registrations. `single` selects at most one accepted live handoff by
+a per-concrete-route round-robin cursor. Strict whole-segment `*` and `**`
+patterns are session-scoped and `RouteFamily`-isolated. The cursor and
+registrations are ephemeral; an occurrence advances even when there are no
+matches or every live handoff is rejected. A cursor is discarded once no live
+registration matches its concrete route.
 
 The complete live-delivery behavior is:
 
@@ -104,8 +107,8 @@ The complete live-delivery behavior is:
 | `single` | one or more, all rejecting | Try every candidate once, advance the cursor safely, acknowledge the pending claim, and advance. |
 
 An accepted handoff means the in-process router accepted the notification; it
-is not a consumer acknowledgement. Subscriber disconnects remove candidates,
-duplicate subscriptions from the same session to the same route are
+is not a consumer acknowledgement. Session disconnects remove candidates,
+duplicate registrations from the same session for the same pattern are
 idempotent, and candidates in another `RouteFamily` never participate.
 
 These rules deliberately keep Schedule responsible only for *when* an
@@ -258,6 +261,30 @@ subscription as one.
 
 ## 4. Core Guarantees
 
+### Shared live registration contract
+
+KV, Queue, Notice, Stream, RPC, and Schedule registrations accept exact routes
+or strict whole-segment `*` and `**` patterns, including wildcard realms. KV,
+Queue, and Stream patterns must be capable of matching three segments; Schedule
+patterns must be capable of matching four; Notice and RPC retain flexible
+depth. Wrong schemes, empty segments, partial wildcard tokens, and impossible
+depths are rejected before state mutation.
+
+Each wildcard-capable domain retains at most 128 wildcard registrations per
+session. Exact registrations do not count. A duplicate `(session, original
+registration string)` is idempotent and checked before the limit. Matching does
+not cross `RouteFamily`; exact and wildcard registrations are equal candidates,
+overlapping registrations stay independent, and notifications report the exact
+concrete route.
+
+Registration authorization covers the complete concrete-route match set. One
+granted permission pattern must contain the requested registration pattern;
+authorizing the literal wildcard-bearing string alone is insufficient.
+
+Lease does not participate in this wildcard contract. Lease SUBSCRIBE and
+UNSUBSCRIBE accept only exact three-segment `lease://realm/area/resource` routes,
+reject every wildcard, and have no wildcard-registration quota.
+
 ### Notice
 
 Notice guarantees:
@@ -349,6 +376,12 @@ RPC guarantees:
 - explicit timeout behavior
 - in-order chunk sequencing for one streaming response
 - worker registrations declare explicit `max_concurrent` credit in the range `1..=1024`
+- worker registrations accept strict whole-segment `*` and `**` patterns; calls remain concrete
+- registration credit is shared across every concrete route matched by that registration
+- exact and wildcard registrations are equal candidates; overlapping registrations remain distinct
+- at most 128 wildcard worker registrations are retained per session
+- queued concrete routes rotate fairly when they share wildcard registration credit
+- per-concrete-route dispatch state is removed when no call is queued or pending
 - successful request submission does not produce an immediate success frame
 
 RPC does NOT guarantee:
@@ -365,6 +398,7 @@ RPC does NOT guarantee:
 Lease guarantees:
 
 - one live holder per lease identity in the running broker
+- exact-route live watches; wildcard Lease watches are rejected
 - fencing tokens that are monotonic within the local broker lifetime
 - explicit held, waiting, renewed, released, and expired outcomes
 - eventual reacquisition after expiry or release

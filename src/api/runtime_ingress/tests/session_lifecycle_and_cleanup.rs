@@ -278,9 +278,9 @@ pub(super) fn encode_lease_acquire(route: &str, owner_id: &str, ttl_secs: u64) -
     Bytes::from(encoder.finish())
 }
 
-pub(super) fn encode_lease_subscribe(pattern: &str) -> Bytes {
+pub(super) fn encode_lease_subscribe(route: &str) -> Bytes {
     let mut encoder = PayloadEncoder::new();
-    encoder.put_string(pattern);
+    encoder.put_string(route);
     Bytes::from(encoder.finish())
 }
 

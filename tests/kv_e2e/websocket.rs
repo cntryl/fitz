@@ -239,3 +239,39 @@ async fn should_unregister_websocket_inbox_route_on_disconnect() {
         .await
         .expect("route cleanup");
 }
+
+#[tokio::test]
+async fn should_reject_invalid_kv_subscription_patterns_ws() {
+    // Arrange
+    let server = TestServer::start().await.expect("start test server");
+
+    // Act
+    should_reject_invalid_kv_subscription_patterns::<WsConnector>(&server).await;
+
+    // Assert
+    // (assertions are in the helper)
+}
+
+#[tokio::test]
+async fn should_enforce_kv_wildcard_registration_limit_ws() {
+    // Arrange
+    let server = TestServer::start().await.expect("start test server");
+
+    // Act
+    should_enforce_kv_wildcard_registration_limit::<WsConnector>(&server).await;
+
+    // Assert
+    // (assertions are in the helper)
+}
+
+#[tokio::test]
+async fn should_deliver_kv_notification_for_overlapping_wildcards_ws() {
+    // Arrange
+    let server = TestServer::start().await.expect("start test server");
+
+    // Act
+    should_deliver_kv_notification_for_overlapping_wildcards::<WsConnector>(&server).await;
+
+    // Assert
+    // (assertions are in the helper)
+}

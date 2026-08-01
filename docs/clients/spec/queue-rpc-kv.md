@@ -94,6 +94,11 @@ Response (status=1):
 - 4003 = ERR_MESSAGE_NOT_FOUND
 - 4004 = ERR_QUEUE_NOT_FOUND
 - 4005 = ERR_QUEUE_FULL
+- 4006 = ERR_BAD_REQUEST
+- 4007 = ERR_BACKEND_ERROR
+- 4009 = ERR_UNAUTHORIZED
+- 4010 = ERR_INVALID_SUBSCRIPTION_PATTERN
+- 4011 = ERR_SUBSCRIPTION_LIMIT
 
 #### Queue SUBSCRIBE (207)
 
@@ -119,12 +124,20 @@ The success response uses the "optional u64" encoding pattern: a 1-byte flag fol
 - `queue://realm/area/resource` — specific resource availability
 - `queue://realm/area/*` — area-level (all resources in area)
 - `queue://realm/**` — realm-level (all areas and resources in realm)
+- `queue://*/area/resource` — the same concrete area and resource in any realm
 
 **Semantics:**
 - Subscriptions are **session-scoped** — all subscriptions are lost on disconnect
 - Idempotent: re-subscribing to the same pattern returns the same `subscription_id`
 - Server tracks subscriptions by `(session_id, route_pattern)` tuple
-- Wildcard patterns follow the same matching rules as Notice domain
+- `*` matches exactly one segment and `**` matches zero or more complete segments
+- The scheme must be `queue://`, segments must be non-empty, wildcards must be
+  whole segments, and the pattern must be capable of matching a concrete
+  three-segment Queue route; invalid SUBSCRIBE or UNSUBSCRIBE input returns 4010
+- A session may retain at most 128 wildcard registrations. Exact registrations
+  do not count, and a duplicate is checked before the limit; overflow returns 4011
+- Matching is isolated by `RouteFamily`. Overlapping registrations remain
+  independent and exact registrations have no precedence
 - Notifications are sent when messages become available in matching queues
 
 #### Queue UNSUBSCRIBE (208)
@@ -480,6 +493,9 @@ Every operation includes full context:
 | 6008 | ERR_RPC_WRONG_WORKER | Response or ACK came from a worker that does not own the request | Fatal for the current correlation; do not retry the same correlation |
 | 6009 | ERR_UNAUTHORIZED | Permissions do not allow this RPC operation | Fatal until credentials or permissions change |
 | 6010 | ERR_BACKEND_ERROR | Broker-side parse or backend failure while handling the RPC | Inspect the error text; do not blindly retry malformed-request parse failures, and retry only when the message indicates a transient backend or infrastructure failure |
+| 6011 | ERR_INVALID_ROUTE | An RPC call route is malformed or contains a wildcard | Correct the call to use a concrete `rpc://` route |
+| 6012 | ERR_INVALID_SUBSCRIPTION_PATTERN | A worker registration has the wrong scheme, an empty segment, or a partial wildcard token | Correct the registration to use whole-segment `*` or `**` wildcards |
+| 6013 | ERR_SUBSCRIPTION_LIMIT | A session attempted to exceed 128 wildcard worker registrations | Unregister an existing wildcard pattern before registering another |
 
 #### Acceptance Tests
 
@@ -675,7 +691,18 @@ Response (error):
   [bytes]  error_msg
 ```
 
-`route_pattern` MAY be an exact resource route like `kv://realm/area/resource` or a wildcard pattern like `kv://realm/area/*` or `kv://realm/*/*`.
+`route_pattern` MAY be an exact resource route like
+`kv://realm/area/resource` or a wildcard pattern like `kv://realm/area/*`,
+`kv://realm/**`, or `kv://*/area/resource`. The scheme must be `kv://`,
+segments must be non-empty, wildcards must be whole `*` or `**` segments, and
+the pattern must be capable of matching a concrete three-segment KV route.
+Invalid SUBSCRIBE or UNSUBSCRIBE input returns 1012.
+
+Registrations are session-scoped and isolated by `RouteFamily`. Overlapping
+registrations remain independent and exact registrations have no precedence. A
+session may retain at most 128 wildcard registrations; exact registrations do
+not count. Duplicate `(session, original registration string)` requests are
+idempotent and checked before the limit. Overflow returns 1013.
 
 #### UNSUBSCRIBE Request
 
@@ -699,7 +726,10 @@ Response (error):
 [u64 BE]  mutation_count
 ```
 
-`NOTIFY` is server-to-client only. The broker emits it after a successful `COMMIT` when the committed transaction changed at least one key in a watched resource.
+`NOTIFY` is server-to-client only. The broker emits it after a successful
+`COMMIT` when the committed transaction changed at least one key in a watched
+resource. `route` is always the exact concrete resource route, even when the
+registration was a wildcard pattern.
 
 #### ROLLBACK Request
 
@@ -823,6 +853,9 @@ still maintains live session-scoped transaction state keyed by `tx_id`.
 - 1008 = ERR_REALM_MISMATCH
 - 1009 = ERR_BACKEND_ERROR
 - 1010 = ERR_TRANSACTION_ABORTED
+- 1011 = ERR_UNAUTHORIZED
+- 1012 = ERR_INVALID_SUBSCRIPTION_PATTERN
+- 1013 = ERR_SUBSCRIPTION_LIMIT
 
 #### Acceptance Tests
 

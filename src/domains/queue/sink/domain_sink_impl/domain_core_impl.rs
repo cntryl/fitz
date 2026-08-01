@@ -97,7 +97,7 @@ impl QueueDomainCore {
         key: &crate::domains::queue::QueueKey,
     ) -> crate::runtime::routing::Route {
         crate::runtime::routing::Route::new(format!(
-            "queue://{}/{}/{}/ready",
+            "queue://{}/{}/{}",
             key.realm, key.area, key.resource
         ))
     }

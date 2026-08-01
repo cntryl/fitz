@@ -86,6 +86,39 @@ pub(crate) fn assert_rpc_route_not_registered_error_response(frame: &[u8]) {
     assert_eq!(message, "No workers registered for route");
 }
 
+pub(crate) fn assert_rpc_terminal_validation_error_response(
+    frame: &[u8],
+    expected_code: u16,
+    expected_message: &str,
+) {
+    let response = parse_rpc_response_delivery(frame).expect("parse RPC terminal validation error");
+    assert_eq!(response.msg_type, 303);
+    assert_eq!(response.seq, 0);
+    assert!(response.stream_end);
+    let (code, message) =
+        fitz::protocol::rpc_codec::decode_error_body(&response.body).expect("decode RPC error");
+    assert_eq!(code, expected_code);
+    assert_eq!(message, expected_message);
+}
+
+pub(crate) fn assert_rpc_control_validation_error_response(
+    frame: &[u8],
+    expected_message_type: u16,
+    expected_code: u16,
+    expected_message: &str,
+) {
+    let mut parser = TlvFrameParser::new(frame);
+    let (message_type, payload) = parser
+        .next_field()
+        .expect("RPC control validation response");
+    assert_eq!(message_type, expected_message_type);
+    assert!(parser.next_field().is_none());
+    let (code, message) =
+        fitz::protocol::rpc_codec::decode_error_body(&payload).expect("decode RPC control error");
+    assert_eq!(code, expected_code);
+    assert_eq!(message, expected_message);
+}
+
 pub(crate) fn assert_forwarded_rpc_response_frame(
     frame: &[u8],
     expected_correlation_id: uuid::Uuid,

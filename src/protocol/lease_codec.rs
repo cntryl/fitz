@@ -128,7 +128,7 @@ pub(crate) fn parse_prepared_request(
     }
 }
 
-/// Extract the lease route or pattern needed for authorization.
+/// Extract the exact Lease route needed for authorization.
 ///
 /// # Errors
 ///
@@ -200,7 +200,6 @@ pub fn encode_domain_response_into(
     response: &DomainLeaseResponse,
 ) -> Vec<u8> {
     use acquire_response_type::{ACQUIRED, ALREADY_HELD, ALREADY_QUEUED, QUEUED};
-
     enc.clear();
 
     match response {
@@ -242,17 +241,15 @@ pub fn encode_domain_response_into(
             fencing_token: _,
             expires_in_secs,
             pending_waiters,
-        } => {
-            enc.put_u8(0);
-            enc.put_u8(1); // has_holder=true
-            enc.put_string(owner_id);
-            enc.put_u64(*expires_in_secs);
-            enc.put_u32(usize_to_u32_saturating(*pending_waiters));
-            enc.finish()
-        }
+        } => encode_status_into(enc, owner_id, *expires_in_secs, *pending_waiters),
         DomainLeaseResponse::Error(message) => encode_error_into(
             enc,
             crate::protocol::error_codes::lease::ERR_BAD_REQUEST,
+            message,
+        ),
+        DomainLeaseResponse::InvalidSubscriptionRoute(message) => encode_error_into(
+            enc,
+            crate::protocol::error_codes::lease::ERR_INVALID_SUBSCRIPTION_ROUTE,
             message,
         ),
         DomainLeaseResponse::NotFound => {
@@ -297,6 +294,20 @@ pub fn encode_domain_response_into(
             enc.finish()
         }
     }
+}
+
+fn encode_status_into(
+    enc: &mut PayloadEncoder,
+    owner_id: &str,
+    expires_in_secs: u64,
+    pending_waiters: usize,
+) -> Vec<u8> {
+    enc.put_u8(0);
+    enc.put_u8(1); // has_holder=true
+    enc.put_string(owner_id);
+    enc.put_u64(expires_in_secs);
+    enc.put_u32(usize_to_u32_saturating(pending_waiters));
+    enc.finish()
 }
 
 fn encode_error_into(enc: &mut PayloadEncoder, code: u16, msg: &str) -> Vec<u8> {
@@ -495,14 +506,14 @@ fn parse_prepared_query(
     })
 }
 
-/// Wire format: `[string pattern]`
+/// Wire format: `[string route]`
 fn parse_subscribe(
     dec: &mut PayloadDecoder,
     route_family: RouteFamily,
     session_id: u64,
     subscriber: RouteAddress,
 ) -> Result<LeaseSubscriptionMessage, String> {
-    let pattern = dec.get_string_ref()?;
+    let route = dec.get_string_ref()?;
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
@@ -510,20 +521,20 @@ fn parse_subscribe(
 
     Ok(LeaseSubscriptionMessage::Subscribe {
         family_id: route_family,
-        pattern: Route::from_ref(pattern),
+        route: Route::from_ref(route),
         session_id,
         subscriber,
     })
 }
 
-/// Wire format: `[string pattern]`
+/// Wire format: `[string route]`
 fn parse_unsubscribe(
     dec: &mut PayloadDecoder,
     route_family: RouteFamily,
     session_id: u64,
     subscriber: RouteAddress,
 ) -> Result<LeaseSubscriptionMessage, String> {
-    let pattern = dec.get_string_ref()?;
+    let route = dec.get_string_ref()?;
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
@@ -531,7 +542,7 @@ fn parse_unsubscribe(
 
     Ok(LeaseSubscriptionMessage::Unsubscribe {
         family_id: route_family,
-        pattern: Route::from_ref(pattern),
+        route: Route::from_ref(route),
         session_id,
         subscriber,
     })

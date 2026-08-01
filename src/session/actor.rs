@@ -94,6 +94,21 @@ impl SessionActor {
         self.permissions.allows_route(route, access)
     }
 
+    /// Authorize every concrete route that a subscription registration can
+    /// match, rather than only the registration string itself.
+    #[must_use]
+    pub fn authorize_registration_pattern(
+        &self,
+        pattern: &crate::runtime::matcher::Pattern,
+        access: Access,
+    ) -> bool {
+        if self.is_token_expired() {
+            return false;
+        }
+        self.permissions
+            .allows_registration_pattern(pattern, access)
+    }
+
     /// Session-owned domain state has already been bound to this session, but
     /// the session token must still be fresh before follow-up operations run.
     #[must_use]

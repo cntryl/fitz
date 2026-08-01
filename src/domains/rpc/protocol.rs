@@ -1,8 +1,8 @@
 //! RPC protocol message types
 //!
 //! Defines the message types used for request/response operations:
-//! - **`RegisterWorker`**: Worker registers to handle requests for a route
-//! - **`UnregisterWorker`**: Worker stops handling requests for a route
+//! - **`RegisterWorker`**: Worker registers an exact route or wildcard pattern
+//! - **`UnregisterWorker`**: Worker removes that registration pattern
 //! - **Request**: Client request routed to available worker
 //! - **Response**: Worker response forwarded to client (supports streaming)
 //!
@@ -26,7 +26,45 @@
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::runtime::ClientFrameMeta;
 use bytes::Bytes;
+use std::fmt;
 use uuid::Uuid;
+
+/// Typed RPC decode and validation failure used to select the documented wire error.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RpcDecodeError {
+    StructurallyUndecodable(String),
+    InvalidCallRoute(String),
+    InvalidRegistrationPattern(String),
+}
+
+impl RpcDecodeError {
+    pub(crate) fn invalid_call_route(message: impl Into<String>) -> Self {
+        Self::InvalidCallRoute(message.into())
+    }
+
+    pub(crate) fn invalid_registration_pattern(message: impl Into<String>) -> Self {
+        Self::InvalidRegistrationPattern(message.into())
+    }
+}
+
+impl From<String> for RpcDecodeError {
+    fn from(message: String) -> Self {
+        Self::StructurallyUndecodable(message)
+    }
+}
+
+impl fmt::Display for RpcDecodeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let message = match self {
+            Self::StructurallyUndecodable(message)
+            | Self::InvalidCallRoute(message)
+            | Self::InvalidRegistrationPattern(message) => message,
+        };
+        formatter.write_str(message)
+    }
+}
+
+impl std::error::Error for RpcDecodeError {}
 
 /// RPC request from client to route actor
 ///
@@ -109,23 +147,24 @@ impl RpcResponse {
 /// These messages coordinate worker registration, request routing, and response delivery.
 #[derive(Debug, Clone)]
 pub enum RpcMessage {
-    /// Worker registers to handle requests for this route
+    /// Worker registers to handle requests matching this pattern
     ///
-    /// Sent by workers to register as handlers for the route. Workers are
-    /// assigned requests while their declared credit is available.
+    /// Sent by workers to register as handlers for an exact route or wildcard
+    /// pattern. Workers are assigned requests while registration-owned credit
+    /// is available.
     RegisterWorker {
-        /// Address of the worker actor
+        /// Registered exact route or wildcard pattern
         worker_addr: RouteAddress,
         /// Maximum number of concurrent requests this worker accepts
         max_concurrent: usize,
     },
 
-    /// Worker unregisters from this route
+    /// Worker unregisters this exact route or wildcard pattern
     ///
     /// Sent by workers to stop receiving requests. Cleans up worker registration
     /// and any in-flight tracking for this worker.
     UnregisterWorker {
-        /// Address of the worker actor
+        /// Exact route or wildcard pattern to remove
         worker_addr: RouteAddress,
     },
 
@@ -184,12 +223,12 @@ impl RpcMessage {
 #[derive(Debug, Clone)]
 pub struct RpcClientRequest {
     pub meta: ClientFrameMeta,
-    pub message: Result<RpcMessage, String>,
+    pub message: Result<RpcMessage, RpcDecodeError>,
     pub raw_payload: Bytes,
 }
 
 impl RpcClientRequest {
-    pub fn new(meta: ClientFrameMeta, message: Result<RpcMessage, String>) -> Self {
+    pub fn new(meta: ClientFrameMeta, message: Result<RpcMessage, RpcDecodeError>) -> Self {
         Self {
             meta,
             message,
@@ -199,7 +238,7 @@ impl RpcClientRequest {
 
     pub fn new_with_payload(
         meta: ClientFrameMeta,
-        message: Result<RpcMessage, String>,
+        message: Result<RpcMessage, RpcDecodeError>,
         raw_payload: Bytes,
     ) -> Self {
         Self {

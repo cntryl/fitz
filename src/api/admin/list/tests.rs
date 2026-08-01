@@ -182,6 +182,23 @@ fn should_match_operation_route_given_matching_path() {
 }
 
 #[test]
+fn should_match_wildcard_worker_registration_given_operation_path() {
+    // Arrange
+    let path = RpcOperationPath {
+        realm: "acme",
+        area: "billing",
+        resource: "invoices",
+        operation: "send",
+    };
+
+    // Act
+    let result = matches_operation_route("rpc://*/billing/**", &path);
+
+    // Assert
+    assert!(result);
+}
+
+#[test]
 fn should_collect_resource_refs_given_resource_items() {
     // Arrange
     let items = vec![QueueInfo::snapshot(&QueueInfoSnapshot {

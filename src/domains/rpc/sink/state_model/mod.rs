@@ -2,9 +2,7 @@ pub(super) use crate::domains::rpc::{RpcClientRequest, RpcClientResponseBody};
 pub(super) type RpcDeliveryOutcome = (Option<RpcClientResponseBody>, Option<bool>, bool);
 #[cfg(test)]
 pub(super) use crate::dispatch::protocol::frame_context::FrameContext;
-pub(super) use crate::runtime::routing::{
-    route_quad, session_inbox_address, Route, RouteAddress, RouteFamily,
-};
+pub(super) use crate::runtime::routing::{session_inbox_address, Route, RouteAddress, RouteFamily};
 pub(super) use crate::runtime::{
     DeliveryError, Envelope, FamilyActorPoolRuntime, MailboxSink, ManagedActor, Router,
 };
@@ -12,7 +10,7 @@ pub(super) use chrono::{DateTime, Utc};
 pub(super) use parking_lot::Mutex;
 pub(super) use rustc_hash::FxBuildHasher;
 pub(super) use std::cmp::Ordering as HeapOrdering;
-pub(super) use std::collections::{BTreeMap, BinaryHeap, HashMap, VecDeque};
+pub(super) use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet, VecDeque};
 pub(super) use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 pub(super) use std::sync::{Arc, Weak};
 pub(super) use std::time::{Duration, Instant};
@@ -55,5 +53,5 @@ pub(super) use sink::{
     RpcDomainActor, RpcDomainCommand, RpcDomainCore, RpcDomainRuntime, RpcLiveCounts,
 };
 pub(super) use snapshot::rpc_admin_snapshot_due;
-pub(super) use state::RpcState;
-pub(super) use worker::{RpcWorker, RpcWorkerDispatch, RpcWorkerKey};
+pub(super) use state::{RpcState, RpcWorkerRegistration};
+pub(super) use worker::{RpcRegistrationId, RpcWorker, RpcWorkerDispatch, RpcWorkerKey};

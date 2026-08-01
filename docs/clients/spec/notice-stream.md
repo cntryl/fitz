@@ -127,6 +127,14 @@ Response (status=1):
 - `*` matches one segment (e.g., `notice://realm/*/events` matches `notice://realm/orders/events`)
 - `**` matches zero or more segments (e.g., `notice://realm/**` matches all routes in realm)
 - Exact routes (no wildcards) also supported
+- Wildcard realms are valid (for example, `notice://*/orders/events`)
+- The scheme must be `notice://`, segments must be non-empty, and wildcards
+  must occupy whole segments; invalid patterns return 3002
+- A session may retain at most 128 wildcard registrations. Exact registrations
+  do not count, and duplicate `(session, original registration string)` requests
+  are idempotent and checked before the limit; overflow returns 3003
+- Matching is isolated by `RouteFamily`. Overlapping registrations remain
+  independent and exact registrations have no precedence
 
 #### Client-Side Multiplexing
 
@@ -351,6 +359,8 @@ CLIENT → SERVER (second unsubscribe, last handler removed):
 - 3002 = ERR_INVALID_PATTERN
 - 3003 = ERR_SUBSCRIPTION_LIMIT
 - 3004 = ERR_TRANSPORT_CLOSED
+- 3005 = ERR_BACKEND_ERROR
+- 3009 = ERR_UNAUTHORIZED
 
 #### Acceptance Tests
 
@@ -637,8 +647,10 @@ class StreamSession:
 - 2005 = ERR_RESOURCE_NOT_FOUND
 - 2006 = ERR_STREAM_FILTER_UNSUPPORTED_VERSION (read filter marker/version is not supported by this broker)
 - 2007 = ERR_STREAM_FILTER_INVALID_PAYLOAD (read filter payload malformed)
+- 2009 = ERR_UNAUTHORIZED
 - 2010 = ERR_INVALID_SUBSCRIPTION_PATTERN
 - 2011 = ERR_SUBSCRIPTION_LIMIT
+- 2012 = ERR_BACKEND_ERROR
 
 #### Acceptance Tests
 
@@ -674,12 +686,20 @@ The success response uses the "optional u64" encoding pattern: a 1-byte flag fol
 - `stream://realm/area/resource` — specific resource changes
 - `stream://realm/area/*` — area-level (all resources in area)
 - `stream://realm/**` — realm-level (all areas and resources in realm)
+- `stream://*/area/resource` — the same concrete area and resource in any realm
 
 **Semantics:**
 - Subscriptions are **session-scoped** — all subscriptions are lost on disconnect
 - Idempotent: re-subscribing to the same pattern returns the same `subscription_id`
 - Server tracks subscriptions by `(session_id, route_pattern)` tuple
-- Wildcard patterns follow the same matching rules as Notice domain
+- `*` matches exactly one segment and `**` matches zero or more complete segments
+- The scheme must be `stream://`, segments must be non-empty, wildcards must be
+  whole segments, and the pattern must be capable of matching a concrete
+  three-segment Stream route; invalid SUBSCRIBE or UNSUBSCRIBE input returns 2010
+- A session may retain at most 128 wildcard registrations. Exact registrations
+  do not count, and a duplicate is checked before the limit; overflow returns 2011
+- Matching is isolated by `RouteFamily`. Overlapping registrations remain
+  independent and exact registrations have no precedence
 
 #### Stream UNSUBSCRIBE (608)
 

@@ -566,7 +566,7 @@ Current Notice behavior is intentionally ephemeral:
 
 #### RPC
 - Actor owner: `RpcDomainActor` is the managed runtime actor for high-priority cleanup, timeout sweeps, live count queries, and admin snapshot sync; normal RPC delivery executes synchronously through `RpcDomainSink` against the mutex-protected `RpcDomainCore`.
-- Current runtime boundary: `RpcDomainSink` is the mailbox adapter, and `RpcDomainRuntime` owns the live in-process worker, pending-call, timeout, and admin snapshot state.
+- Current runtime boundary: `RpcDomainSink` is the mailbox adapter, and `RpcDomainRuntime` owns the live in-process worker, pending-call, timeout, and admin snapshot state. Per-concrete-route dispatch and fairness state is removed once that route has no queued or pending call, even while a wildcard registration remains live.
 - Persistence: worker registrations, pending calls, and reply assembly are ephemeral; RPC does not provide restart-safe backlog durability.
 - Cleanup: disconnect unregisters workers, expires pending session state, and never restores inflight calls or subscriptions.
 - `RouteFamily`/`realm`: dispatch and replies stay within the exact `RouteFamily`; `realm` remains an application-defined route component for operation naming and filters.
@@ -585,7 +585,7 @@ Current Notice behavior is intentionally ephemeral:
 - Current runtime boundary: `ScheduleDomainSink` is the mailbox adapter, and `ScheduleDomainRuntime` executes against `ScheduleDomainCore` inside the managed actor mailbox.
 - Persistence: schedule definitions, next-fire state, and pending claims are durable timing intent; subscriber watches and transient handoff coordination are ephemeral.
 - Cleanup: disconnect removes live watches but does not erase persisted schedule intent or imply replay of every missed interval after downtime.
-- Delivery boundary: `broadcast` attempts every live exact-route subscriber; `single` attempts candidates in ephemeral round-robin order until one router handoff succeeds. Zero accepted handoffs still acknowledge the pending claim and advance, because Schedule owns timing rather than durable consumer availability.
+- Delivery boundary: `broadcast` attempts every matching live registration; `single` uses registration order and a per-concrete-route ephemeral round-robin cursor until one router handoff succeeds. A cursor is discarded when no live registration still matches its concrete route. Strict `*` and `**` registration patterns never cross RouteFamily boundaries. Zero accepted handoffs still acknowledge the pending claim and advance, because Schedule owns timing rather than durable consumer availability.
 - `RouteFamily`/`realm`: schedules stay partitioned by exact `RouteFamily`, while `realm` remains an application-defined route label that is never derived from the family.
 - Admin path: schedule projections flow through `Runtime::schedule_list_schedules()` after actor-owned snapshot refresh; live counters and pending claim inspection use command/reply reads to `ScheduleDomainActor`.
 
@@ -632,7 +632,16 @@ impl NoticeActor {
 }
 ```
 ### Pattern Matching
-For Notice live fanout and Stream subscriptions, implement wildcard matching:
+KV, Queue, Notice, and Stream subscriptions, RPC worker registrations, and
+Schedule live notification registrations use the shared whole-segment wildcard
+matcher. The expected scheme, non-empty segments, whole-segment `*`/`**` syntax,
+and structured-domain matchable depth are validated before state mutation.
+Each domain permits 128 wildcard registrations per session; exact registrations
+do not count, and duplicate original registration strings are resolved before
+the limit. Matching and overlap handling stay isolated by `RouteFamily`, and
+notifications carry the exact concrete route. Lease watches bypass wildcard
+registration entirely and require an exact three-segment `lease://` route.
+
 ```rust
 /// Match a route against a pattern.
 /// `*` = one segment, `**` = zero or more segments
@@ -687,6 +696,7 @@ Brokers MUST validate JWT in CONNECT handshake:
    - server-side route family from `FITZ_ROUTE_FAMILY_MAP`; the resolved family must be provisioned by `FITZ_ROUTE_FAMILIES`
 4. **Permission Enforcement:** For each request, verify:
    - Request route matches a compiled permission pattern
+   - A registration pattern's complete concrete-route match set is contained by one compiled permission pattern
    - Requested access is granted by the matching permission access fragment
 If any check fails:
 - Reject with domain error code `*001` (ERR_UNAUTHORIZED)

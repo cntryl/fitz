@@ -265,6 +265,12 @@ pub enum KvError {
     /// Invalid request parameters
     InvalidRequest(String),
 
+    /// Invalid exact or wildcard KV subscription pattern.
+    InvalidSubscriptionPattern(String),
+
+    /// Per-session wildcard subscription limit reached.
+    SubscriptionLimit,
+
     /// Realm validation failed
     InvalidRealm,
 
@@ -307,6 +313,14 @@ impl std::fmt::Display for KvError {
         match self {
             KvError::InvalidRoute(msg) => write!(f, "Invalid route: {msg}"),
             KvError::InvalidRequest(msg) => write!(f, "Invalid request: {msg}"),
+            KvError::InvalidSubscriptionPattern(msg) => {
+                write!(f, "Invalid subscription pattern: {msg}")
+            }
+            KvError::SubscriptionLimit => write!(
+                f,
+                "Wildcard subscription limit exceeded ({} per session)",
+                crate::domains::subscription_state::MAX_WILDCARD_REGISTRATIONS_PER_SESSION
+            ),
             KvError::InvalidRealm => write!(f, "Invalid realm"),
             KvError::InvalidRouteFamily => {
                 write!(f, "Invalid route family (cannot be zero)")

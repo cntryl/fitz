@@ -117,14 +117,14 @@ pub enum ScheduleMessage {
         /// Maximum number of entries to return (0 = all remaining). Default: 100
         limit: u64,
     },
-    /// Subscribe to live notifications for one exact schedule route.
+    /// Subscribe to live notifications for a schedule route pattern.
     Subscribe {
         family_id: RouteFamily,
         route: Route,
         session_id: u64,
         subscriber: RouteAddress,
     },
-    /// Remove one live notification subscription for one exact schedule route.
+    /// Remove one live notification subscription for a schedule route pattern.
     Unsubscribe {
         family_id: RouteFamily,
         route: Route,
@@ -171,6 +171,7 @@ pub struct ScheduleClientNotification {
     pub session_id: u64,
     pub route_family: RouteFamily,
     pub subscription_id: u64,
+    pub route: String,
     pub payload: Bytes,
 }
 
@@ -179,12 +180,14 @@ impl ScheduleClientNotification {
         session_id: u64,
         route_family: RouteFamily,
         subscription_id: u64,
+        route: String,
         payload: Bytes,
     ) -> Self {
         Self {
             session_id,
             route_family,
             subscription_id,
+            route,
             payload,
         }
     }

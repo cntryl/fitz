@@ -17,6 +17,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 const ROUTE_STR: &str = "rpc://bench/subsystem/route";
+const WILDCARD_ROUTE_PATTERN: &str = "rpc://bench/subsystem/*";
+const WILDCARD_ROUTE_A: &str = "rpc://bench/subsystem/route-a";
+const WILDCARD_ROUTE_B: &str = "rpc://bench/subsystem/route-b";
 const REQUESTER_SESSION_ID: u64 = 1;
 const REQUEST_FRAME_RING_SIZE: usize = 4096;
 const DISPATCH_BATCH_SIZE: usize = 32_768;
@@ -244,6 +247,65 @@ fn dispatch_response_cleanup_workers(ctx: &mut StressContext, worker_count: usiz
 )]
 fn should_dispatch_response_cleanup_32768_ops_256_workers_primary(ctx: &mut StressContext) {
     dispatch_response_cleanup_workers(ctx, 256);
+}
+
+#[stress(
+    tier = 2,
+    name = "dispatch_response_cleanup_wildcard_32768_ops_primary"
+)]
+fn should_dispatch_response_cleanup_wildcard_32768_ops_primary(ctx: &mut StressContext) {
+    let (router, family, requester_source, requester_inbox) = setup_rpc_sink();
+    let registration_destination = route_address(family, WILDCARD_ROUTE_PATTERN);
+    let worker =
+        register_worker_for_destination(&router, family, 50_000, &registration_destination);
+    let destinations = [
+        route_address(family, WILDCARD_ROUTE_A),
+        route_address(family, WILDCARD_ROUTE_B),
+    ];
+    let mut request_rings = [
+        RequestFrameRing::new(
+            WILDCARD_ROUTE_A,
+            b"wildcard dispatch payload",
+            REQUEST_FRAME_RING_SIZE,
+        ),
+        RequestFrameRing::new(
+            WILDCARD_ROUTE_B,
+            b"wildcard dispatch payload",
+            REQUEST_FRAME_RING_SIZE,
+        ),
+    ];
+    let mut next_route_index = 0usize;
+    configure_cleanup_measurement(ctx);
+    ctx.parameter("registration", "wildcard");
+    ctx.parameter("concrete_route_count", destinations.len().to_string());
+
+    tier2_stress::measure_iterations(
+        ctx,
+        "dispatch_response_cleanup_wildcard",
+        usize_to_u64_saturating(DISPATCH_BATCH_SIZE),
+        || {
+            for _ in 0..DISPATCH_BATCH_SIZE {
+                let route_index = next_route_index;
+                let (request_msg_type, request_payload) = request_rings[route_index].next_frame();
+                dispatch_request_to_destination(
+                    &router,
+                    family,
+                    &requester_source,
+                    &destinations[route_index],
+                    request_msg_type,
+                    black_box(request_payload),
+                );
+                cleanup_worker_request_on_destination(
+                    &router,
+                    family,
+                    &destinations[route_index],
+                    &worker,
+                );
+                next_route_index = (next_route_index + 1) % destinations.len();
+                requester_inbox.clear();
+            }
+        },
+    );
 }
 
 stress_main!();

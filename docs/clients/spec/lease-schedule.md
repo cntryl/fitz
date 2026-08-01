@@ -152,6 +152,8 @@
 
 **Design Notes:**
 - Watches are exact-route subscriptions on `lease://{realm}/{area}/{resource}`
+- The route must use the `lease://` scheme and contain exactly three non-empty
+  concrete segments. `*`, `**`, and partial wildcard tokens are rejected with 5010
 - Duplicate subscribe calls for the same `(session, route)` return the existing `subscription_id`
 - Subscriptions are session-scoped and are removed automatically on disconnect
 
@@ -170,6 +172,7 @@
 
 **Design Notes:**
 - Unsubscribe is idempotent; removing a missing watch still returns success
+- The same exact-route validation applies; invalid routes return 5010
 
 **Response (status=0, success):**
 ```
@@ -475,13 +478,15 @@ elif response.type == "Fenced":
 #### Error Codes (5xxx)
 
 - 5001 = ERR_LEASE_HELD (immediate rejection with `wait_seconds=0`)
-- 5002 = ERR_LEASE_HELD_BY_OTHER (detailed: `current_owner` provided)
-- 5003 = ERR_INVALID_FENCE (token mismatch on RENEW/RELEASE)
-- 5004 = ERR_LEASE_EXPIRED (lease no longer valid)
-- 5005 = ERR_LEASE_NOT_FOUND (route never acquired)
-- 5006 = ERR_QUEUE_FULL (too many pending waiters)
-- 5007 = ERR_INVALID_OWNER (owner_id mismatch on RENEW/RELEASE)
-- 5008 = ERR_WAIT_OUT_OF_RANGE (wait_seconds > 30)
+- 5002 = ERR_INVALID_FENCE (fencing token invalid or out of order)
+- 5003 = ERR_LEASE_EXPIRED (lease no longer valid)
+- 5004 = ERR_LEASE_NOT_FOUND (route never acquired)
+- 5005 = ERR_INVALID_TOKEN (lease token invalid or wrong)
+- 5006 = ERR_TIMEOUT (pending acquire timed out)
+- 5007 = ERR_QUEUE_FULL (too many pending waiters)
+- 5008 = ERR_BAD_REQUEST (malformed Lease operation request)
+- 5009 = ERR_UNAUTHORIZED
+- 5010 = ERR_INVALID_SUBSCRIPTION_ROUTE
 
 #### Acceptance Tests
 
@@ -538,11 +543,12 @@ Response (error=1):
 **Semantics:**
 - Route serves as the unique schedule identifier (upsert behavior)
 - Creating a schedule with an existing route updates that schedule
-- Payload is arbitrary binary data delivered to subscribers on notification
+- Payload is arbitrary binary data delivered to matching live registrations on notification
 - Delivery mode is required. Unknown values return error code 7008.
-- `broadcast` attempts every connected exact-route subscriber. `single` fairly
-  rotates one accepted live handoff across connected exact-route subscribers.
-- Both modes are ephemeral downstream delivery. No subscriber or all rejected
+- `broadcast` attempts every connected matching registration. `single` fairly
+  rotates one accepted live handoff across matching registrations for the
+  concrete fired route.
+- Both modes are ephemeral downstream delivery. No match or all rejected
   handoffs still complete the occurrence without backlog or retry.
 - Invalid cron expression returns error code 7002
 
@@ -668,7 +674,7 @@ client.schedule_subscribe(
 )
 
 # Receive notification when schedule fires (Message Type 705)
-# Server sends: SCHEDULE_NOTIFY(subscription_id, payload)
+# Server sends: SCHEDULE_NOTIFY(subscription_id, exact_route, payload)
 
 # List schedules
 schedules = client.schedule_list()
@@ -687,7 +693,7 @@ client.schedule_cancel(
 
 - **Route-Based Identity**: Routes uniquely identify schedules (CREATE is upsert)
 - **Durability**: Schedules persist across broker restarts
-- **Notification-Only**: When schedules fire, SCHEDULE_NOTIFY (705) is sent to subscribers
+- **Notification-Only**: When schedules fire, SCHEDULE_NOTIFY (705) is attempted for matching live registrations
 - **Recurring**: Interval-based recurring tasks (cron-like)
 - **Cancellation**: Cancels future runs; already-delivered notifications cannot be revoked
 - **Realm Scoped**: Schedules isolated per realm
@@ -697,8 +703,9 @@ client.schedule_cancel(
 When a schedule fires, the broker performs **one action**:
 
 **SCHEDULE_NOTIFY (705):** In broadcast mode the broker attempts every connected
-exact-route subscriber. In single mode it attempts subscribers in round-robin
-order until one accepts. The notification wire payload is unchanged.
+matching registration. In single mode it attempts matching registrations in
+registration order from a per-concrete-route round-robin cursor until one accepts.
+The notification wire payload is `[subscription_id][exact_route][payload]`.
 
 | Mode | Live subscriber result | Occurrence result |
 |---|---|---|
@@ -710,8 +717,10 @@ order until one accepts. The notification wire payload is unchanged.
 | `single` | all reject | Try every candidate once, advance the cursor, acknowledge and advance. |
 
 “Accepts” means the broker's in-process router accepted the handoff. Schedule
-notifications have no consumer acknowledgement. Subscriptions match only the
-exact route in the same route family; they and the round-robin cursor are lost
+notifications have no consumer acknowledgement. Subscriptions accept strict
+whole-segment `*` and `**` patterns, including wildcard realm. Overlapping
+patterns remain distinct. Matching stays in the same route family; subscriptions
+and the round-robin cursor are lost
 on restart. A persisted pending claim may therefore be attempted again after a
 restart, but it does not provide exactly-once delivery.
 
@@ -720,7 +729,9 @@ would make live subscriber availability create a work backlog and duplicate
 Queue's reservation, retry, and consumer-acknowledgement responsibilities. Use
 Queue when an occurrence must remain available for eventual processing.
 
-**Client observability:** Clients observe schedule execution by subscribing to schedule routes via `SCHEDULE_SUBSCRIBE` to receive `SCHEDULE_NOTIFY` when schedules fire.
+**Client observability:** Clients observe schedule execution by registering exact
+or wildcard Schedule patterns via `SCHEDULE_SUBSCRIBE` and receiving
+`SCHEDULE_NOTIFY` when a matching occurrence fires.
 
 **Payload semantics:** The payload is opaque to Fitz — clients can encode configuration, task identifiers, or any data needed to handle the notification. Common patterns:
 - JSON-encoded task config
@@ -728,18 +739,13 @@ Queue when an occurrence must remain available for eventual processing.
 - Simple string identifiers
 - Arbitrary binary data
 
-**Client observability:** Clients have two options for observing schedule execution:
-- **Direct:** Subscribe to the schedule route via `SCHEDULE_SUBSCRIBE` to receive `SCHEDULE_NOTIFY` when the schedule fires
-- **Indirect:** Subscribe to the target resource via the appropriate domain (e.g., Notice SUBSCRIBE for Notice targets, Queue RESERVE for Queue targets)
-
 #### Error Codes (7xxx)
 
 - 7001 = ERR_SCHEDULE_NOT_FOUND
-- 7002 = ERR_INVALID_CRON (informational - cancel is idempotent)
 - 7002 = ERR_INVALID_CRON
 - 7003 = ERR_SCHEDULE_LIMIT
 - 7004 = ERR_PARSE_ERROR
-- 7005 = ERR_INVALID_ROUTE
+- 7005 = ERR_INVALID_TARGET
 - 7006 = ERR_INVALID_SUBSCRIPTION_PATTERN
 - 7007 = ERR_SUBSCRIPTION_LIMIT
 - 7008 = ERR_INVALID_DELIVERY_MODE
@@ -752,11 +758,12 @@ Queue when an occurrence must remain available for eventual processing.
 - cancel on nonexistent route succeeds (idempotent)
 - list returns all created schedules
 - schedule persists across broker restart
-- subscribers receive SCHEDULE_NOTIFY when schedule fires
+- matching live registrations receive SCHEDULE_NOTIFY when schedule fires
 - invalid cron expression rejected with 7002
 #### Schedule SUBSCRIBE (703)
 
-Subscribe to schedule fire notifications for an exact schedule route.
+Subscribe to schedule fire notifications for an exact route or strict
+whole-segment `*`/`**` route pattern.
 
 ```
 [u32 BE]  route_len
@@ -771,15 +778,23 @@ Response (status=1):
   [bytes]  error_msg
 ```
 
-**Route Example:**
+**Route Examples:**
 - `schedule://realm/area/resource/operation` — specific schedule fires
+- `schedule://realm/area/*/run` — every matching `run` occurrence
+- `schedule://**` — every schedule occurrence visible in this `RouteFamily`
 
 **Semantics:**
 - Subscriptions are **session-scoped** — all subscriptions are lost on disconnect
-- Idempotent: re-subscribing to the same route returns the same `subscription_id`
+- Idempotent: re-subscribing to the same pattern returns the same `subscription_id`
 - Client is responsible for local multiplexing when multiple handlers share the same route
-- Wildcard schedule subscribe is invalid; subscriptions require the exact schedule route
-- When the schedule fires, the server sends SCHEDULE_NOTIFY (705) with subscription_id and payload; the client matches notifications to the route they subscribed with
+- Wildcards must occupy complete segments. Patterns that cannot match a concrete
+  four-segment Schedule route return 7006.
+- A session may retain at most 128 wildcard Schedule registrations; overflow
+  returns 7007.
+- Matching never crosses `RouteFamily` boundaries; overlapping registrations
+  remain distinct.
+- When the schedule fires, the server sends SCHEDULE_NOTIFY (705) with
+  `subscription_id`, the exact fired route, and payload.
 
 #### Schedule UNSUBSCRIBE (704)
 
@@ -797,7 +812,7 @@ Response (status=1):
 ```
 
 **Design Notes:**
-- Client sends the original exact route string used in SUBSCRIBE
+- Client sends the original route pattern used in SUBSCRIBE
 - Idempotent: unsubscribing a non-existent route returns success
 
 #### Schedule NOTIFY (705) — Server to Client
@@ -806,12 +821,16 @@ Server pushes a schedule fire notification to a subscriber.
 
 ```
 [u64 BE]  subscription_id
+[u32 BE]  exact_route_len
+[bytes]   exact_route
 [u32 BE]  payload_len
 [bytes]   payload (the schedule's configured payload bytes)
 ```
 
 **Design Notes:**
-- `subscription_id` tells the client which subscription matched; the subscription already identifies the exact route
+- `subscription_id` tells the client which registration matched
+- `exact_route` identifies the concrete schedule occurrence, including when the
+  registration was a wildcard pattern
 - Payload is the raw payload bytes configured when the schedule was created
 - Client demultiplexes to local handlers registered for that `subscription_id`
 - Delivery is best-effort; notifications may be dropped under backpressure

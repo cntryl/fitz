@@ -7,7 +7,9 @@
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
 use crate::domains::notice::NoticeMetrics;
-use crate::domains::subscription_state::RoutedSubscriptionSet;
+use crate::domains::subscription_state::{
+    RoutedSubscriptionSet, MAX_WILDCARD_REGISTRATIONS_PER_SESSION,
+};
 use crate::runtime::{DeliveryError, Envelope, MailboxSink, ManagedActor, RouteError, Router};
 use chrono::Utc;
 use parking_lot::Mutex;
@@ -25,7 +27,6 @@ use actor_runtime::{NoticeDomainActor, NoticeDomainCommand};
 use model::{
     notice_route_realm, usize_to_u64, NoticeDeliveryTarget, NoticeDeliveryTargets,
     NoticeMatchedRoutePatterns, NoticeRouteStats, NoticeRouteStatsKey, NoticeSubscription,
-    MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION,
 };
 #[cfg(test)]
 use test_channels::{test_client_channel_from_protocol, test_protocol_channel_from_client};
@@ -524,16 +525,6 @@ impl NoticeDomainCore {
             .map(RoutedSubscriptionSet::subscription_count)
             .sum()
     }
-
-    fn wildcard_subscription_limit_reached(
-        state: &RoutedSubscriptionSet<NoticeSubscription>,
-        session_id: u64,
-        pattern: &str,
-    ) -> bool {
-        pattern.contains('*')
-            && state.wildcard_subscription_count_for_session(session_id)
-                >= MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION
-    }
 }
 
 impl MailboxSink for NoticeDomainSink {
@@ -743,17 +734,21 @@ impl NoticeDomainCore {
         use crate::domains::notice::NoticeResponse;
 
         let family_id = sub_msg.family_id.as_u64();
-        if sub_msg.pattern.as_str().is_empty() {
-            tracing::warn!(
-                domain = "notice",
-                session = sub_msg.session_id.0,
-                "Rejected empty subscription pattern"
-            );
-            return (
-                Some(NoticeResponse::Error("empty pattern".to_string())),
-                false,
-            );
-        }
+        let compiled = match crate::runtime::matcher::compile_registration_pattern(
+            sub_msg.pattern.as_str(),
+            "notice",
+            crate::runtime::matcher::PatternDepth::Flexible,
+        ) {
+            Ok(compiled) => compiled,
+            Err(error) => {
+                tracing::warn!(
+                    domain = "notice",
+                    session = sub_msg.session_id.0,
+                    "Rejected invalid subscription pattern"
+                );
+                return (Some(NoticeResponse::Error(error)), false);
+            }
+        };
 
         let mut families = self.families.lock();
         let state = families
@@ -776,22 +771,18 @@ impl NoticeDomainCore {
                 },
                 false,
             )
-        } else if Self::wildcard_subscription_limit_reached(
-            state,
-            sub_msg.session_id.0,
-            sub_msg.pattern.as_str(),
-        ) {
+        } else if state.wildcard_registration_limit_reached(sub_msg.session_id.0, &compiled) {
             tracing::warn!(
                 domain = "notice",
                 session = sub_msg.session_id.0,
                 pattern = sub_msg.pattern.as_str(),
-                limit = MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION,
+                limit = MAX_WILDCARD_REGISTRATIONS_PER_SESSION,
                 "Rejected wildcard notice subscription because session limit was exceeded"
             );
             crate::observability::counter_inc("fitz_notice_wildcard_limit_rejects_total");
             (
                 NoticeResponse::Error(format!(
-                    "wildcard subscription limit exceeded ({MAX_WILDCARD_SUBSCRIPTIONS_PER_SESSION} per session)"
+                    "wildcard subscription limit exceeded ({MAX_WILDCARD_REGISTRATIONS_PER_SESSION} per session)"
                 )),
                 false,
             )
@@ -816,7 +807,7 @@ impl NoticeDomainCore {
             state.insert(
                 sub_msg.family_id,
                 NoticeSubscription {
-                    pattern: crate::runtime::matcher::Pattern::new(sub_msg.pattern.as_str()),
+                    pattern: compiled,
                     pattern_route: Arc::from(sub_msg.pattern.as_str()),
                     session_id: sub_msg.session_id.0,
                     subscription_id: new_id,

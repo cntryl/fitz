@@ -3,6 +3,16 @@ use crate::runtime::routing::{Route, RouteFamily};
 use crate::runtime::{DomainPublishEvent, SubscriptionId, SubscriptionIndex};
 use std::collections::{HashMap, HashSet};
 
+/// Per-session wildcard registration cap shared by every wildcard-capable domain.
+pub(crate) const MAX_WILDCARD_REGISTRATIONS_PER_SESSION: usize = 128;
+
+pub(crate) fn wildcard_registration_limit_reached(
+    pattern: &Pattern,
+    current_wildcard_count: usize,
+) -> bool {
+    pattern.is_wildcard() && current_wildcard_count >= MAX_WILDCARD_REGISTRATIONS_PER_SESSION
+}
+
 pub(crate) trait RoutedSubscription {
     fn pattern(&self) -> &Pattern;
     fn session_id(&self) -> u64;
@@ -47,8 +57,45 @@ impl<T: RoutedSubscription> RoutedSubscriptionSet<T> {
             .unwrap_or(0)
     }
 
+    pub(crate) fn wildcard_registration_limit_reached(
+        &self,
+        session_id: u64,
+        pattern: &Pattern,
+    ) -> bool {
+        wildcard_registration_limit_reached(
+            pattern,
+            self.wildcard_subscription_count_for_session(session_id),
+        )
+    }
+
     pub(crate) fn values(&self) -> impl Iterator<Item = &T> {
         self.subscriptions.values()
+    }
+
+    pub(crate) fn get(&self, subscription_id: u64) -> Option<&T> {
+        self.subscriptions.get(&subscription_id)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn get_mut(&mut self, subscription_id: u64) -> Option<&mut T> {
+        self.subscriptions.get_mut(&subscription_id)
+    }
+
+    pub(crate) fn matching_ids(&self, family_id: RouteFamily, route: &str) -> Vec<u64> {
+        let mut ids = self.exact_routes.get(route).cloned().unwrap_or_default();
+        if self.wildcard_subscription_count > 0 {
+            ids.extend(
+                self.index
+                    .match_all_route_str_with_capacity(
+                        family_id,
+                        route,
+                        self.wildcard_subscription_count,
+                    )
+                    .into_iter()
+                    .map(|id| id.0),
+            );
+        }
+        ids
     }
 
     pub(crate) fn matching_capacity_hint(&self, route: &str) -> usize {
@@ -75,7 +122,7 @@ impl<T: RoutedSubscription> RoutedSubscriptionSet<T> {
             .or_default()
             .insert(subscription_id);
 
-        if pattern.contains('*') {
+        if subscription.pattern().is_wildcard() {
             let route = Route::from_ref(pattern);
             self.index
                 .insert(family_id, &route, SubscriptionId(subscription_id));
@@ -210,7 +257,7 @@ impl<T: RoutedSubscription> RoutedSubscriptionSet<T> {
                 self.session_subscription_ids.remove(&session_id);
             }
 
-            if pattern.contains('*') {
+            if subscription.pattern().is_wildcard() {
                 let route = Route::from_ref(pattern);
                 self.index
                     .remove(family_id, &route, SubscriptionId(subscription_id));

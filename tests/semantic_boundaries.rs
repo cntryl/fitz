@@ -365,6 +365,69 @@ fn should_document_all_rpc_error_codes_in_client_spec() {
 }
 
 #[test]
+fn should_document_unified_wildcard_registration_and_exact_lease_semantics() {
+    // Arrange
+    let root = repo_root().join("docs");
+    let wire = read_source_file(&root.join("clients/spec/wire-routing.md"));
+    let boundaries = read_source_file(&root.join("development/domain-boundaries-spec.md"));
+    let laws = read_source_file(&root.join("development/architectural-laws.md"));
+    let schedule = read_source_file(&root.join("clients/spec/lease-schedule.md"));
+    let operations = read_source_file(&root.join("clients/spec/operations.md"));
+
+    // Act
+    let combined = [
+        wire.as_str(),
+        boundaries.as_str(),
+        laws.as_str(),
+        schedule.as_str(),
+        operations.as_str(),
+    ]
+    .join("\n");
+
+    // Assert
+    assert!(wire
+        .contains("KV, Queue, Notice, Stream, RPC, and Schedule each permit at most 128 wildcard"));
+    assert!(
+        wire.contains("Notifications carry the matching `subscription_id` and the exact concrete")
+    );
+    assert!(wire.contains("Ready concrete routes rotate fairly"));
+    assert!(boundaries.contains("exact and wildcard registrations are equal candidates"));
+    assert!(boundaries.contains("Lease does not participate in this wildcard contract"));
+    assert!(laws.contains("whole-segment `*` and `**`"));
+    assert!(schedule.contains("Overlapping\npatterns remain distinct"));
+    assert!(schedule.contains("Watches are exact-route subscriptions"));
+    assert!(schedule.contains("5010 = ERR_INVALID_SUBSCRIPTION_ROUTE"));
+    assert!(operations.contains("KV, Queue, Notice, Stream, RPC, and Schedule registrations"));
+    assert!(operations.contains("Duplicate `(session, original registration"));
+    assert!(operations.contains("Matching never\ncrosses `RouteFamily`"));
+    assert!(operations.contains("the exact concrete route"));
+    assert!(operations.contains("Lease is intentionally different"));
+    assert!(!combined.contains("Wildcard worker registration is not part of the contract"));
+    assert!(!combined.contains("Workers register exact listening routes"));
+    assert!(!combined.contains("Wildcard schedule subscribe is invalid"));
+    assert!(!combined.contains("Lease subscriptions accept wildcard"));
+    assert!(!combined.contains("Lease watches support `*`"));
+}
+
+#[test]
+fn should_document_route_bearing_schedule_notify_wire_format() {
+    // Arrange
+    let root = repo_root().join("docs");
+    let schedule = read_source_file(&root.join("clients/spec/lease-schedule.md"));
+    let migration = read_source_file(&root.join("operations/migration-guide.md"));
+
+    // Act
+    let has_route_bearing_schema = schedule.contains("[u32 BE]  exact_route_len")
+        && schedule.contains("[bytes]   exact_route")
+        && schedule.contains("[subscription_id][exact_route][payload]");
+
+    // Assert
+    assert!(has_route_bearing_schema);
+    assert!(migration
+        .contains("`[subscription_id][payload]` to `[subscription_id][exact_route][payload]`"));
+}
+
+#[test]
 fn should_keep_runtime_ingress_payload_dispatch_free_of_payload_unwraps() {
     // Arrange
     let repo_root = repo_root();
@@ -707,7 +770,7 @@ fn rpc_error_rows_from_markdown(path: &Path) -> BTreeSet<(u16, String)> {
             let Ok(code) = columns[0].parse::<u16>() else {
                 return None;
             };
-            if !(6001..=6010).contains(&code) {
+            if !(6001..=6013).contains(&code) {
                 return None;
             }
 

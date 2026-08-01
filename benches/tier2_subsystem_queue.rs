@@ -7,7 +7,8 @@ use cntryl_stress::{black_box, stress, stress_main, StressContext};
 use fitz::benchkit::{
     build_queue_complete, build_queue_dequeue, build_queue_enqueue, build_queue_watch,
     create_bench_queue_sink, extract_single_tlv_field, register_session_counting_sink,
-    register_session_queue_sink, route_frame, CountingSink, FrameQueueSink,
+    register_session_queue_sink, route_frame, wait_for_counting_sinks_each_count, CountingSink,
+    FrameQueueSink,
 };
 use fitz::protocol::frame::ChannelId;
 use fitz::runtime::router::{MailboxSink, Router};
@@ -23,6 +24,9 @@ const MULTI_QUEUE_MESSAGES_PER_QUEUE: usize = 1;
 const DEQUEUE_OPERATION_BATCH_SIZE: usize = 256;
 const ACK_OPERATION_BATCH_SIZE: usize = 256;
 const WATCH_REGISTER_BATCH_SIZE: usize = 64;
+const NOTIFY_SUBSCRIBER_COUNT: usize = 64;
+const NOTIFY_QUEUE_COUNT: usize = 256;
+const NOTIFY_PATTERN: &str = "queue://bench/subsystem/*";
 const QUEUE_MEASUREMENT_REPEAT_COUNT: u32 = 8;
 const ACK_MEASUREMENT_REPEAT_COUNT: u32 = 16;
 const MULTI_QUEUE_MEASUREMENT_REPEAT_COUNT: u32 = 32;
@@ -172,7 +176,7 @@ fn parse_single_received_message(response: &[u8]) -> (u64, u64) {
 
 fn build_queue_routes(queue_count: usize) -> Vec<String> {
     (0..queue_count)
-        .map(|index| format!("queue://bench/subsystem/queue/{index}"))
+        .map(|index| format!("queue://bench/subsystem/{index}"))
         .collect()
 }
 
@@ -275,7 +279,7 @@ fn prepare_watch_register_case() -> PreparedWatchRegisterCase {
         .map(|index| {
             let session_id = 10_000 + u64::try_from(index).expect("watch index should fit u64");
             let (source, sink) = register_session_counting_sink(&router, family, session_id);
-            let watch_route = format!("queue://bench/subsystem/watch/{index}/ready");
+            let watch_route = format!("queue://bench/subsystem/{index}");
             let watch_frame = build_queue_watch(&watch_route);
             let (msg_type, payload) = extract_single_tlv_field(&watch_frame);
             (session_id, source, sink, msg_type, payload)
@@ -474,6 +478,84 @@ fn should_watch_register_64_sessions_primary(ctx: &mut StressContext) {
         "watch_register_64_sessions_primary",
         total,
         WATCH_REGISTER_BATCH_SIZE as u64 * u64::from(QUEUE_MEASUREMENT_REPEAT_COUNT),
+    );
+}
+
+#[stress(tier = 2, name = "enqueue_notify_single_star_64_subscribers_primary")]
+fn should_enqueue_notify_single_star_64_subscribers_primary(ctx: &mut StressContext) {
+    let (router, family) = setup_queue_domain();
+    let watch_frame = build_queue_watch(NOTIFY_PATTERN);
+    let (watch_msg_type, watch_payload) = extract_single_tlv_field(&watch_frame);
+    let mut subscriber_sinks = Vec::with_capacity(NOTIFY_SUBSCRIBER_COUNT);
+    for index in 0..NOTIFY_SUBSCRIBER_COUNT {
+        let session_id = 10_000 + u64::try_from(index).expect("watch index should fit u64");
+        let (source, sink) = register_session_counting_sink(&router, family, session_id);
+        send_queue_request(
+            router.as_ref(),
+            &source,
+            ROUTE_STR,
+            session_id,
+            watch_msg_type,
+            watch_payload.clone(),
+            family,
+        );
+        assert_eq!(
+            sink.wait_for_count(1, Duration::from_secs(1)),
+            1,
+            "queue watch registration should ack before notify measurement"
+        );
+        sink.reset();
+        subscriber_sinks.push(sink);
+    }
+
+    let (producer_source, producer_sink) =
+        register_session_counting_sink(&router, family, CLIENT_SESSION_ID);
+    let queue_routes = build_queue_routes(NOTIFY_QUEUE_COUNT);
+    let enqueue_frames = queue_routes
+        .iter()
+        .map(|route| {
+            let frame = build_queue_enqueue(route, b"queue notification payload");
+            extract_single_tlv_field(&frame)
+        })
+        .collect::<Vec<_>>();
+
+    let start = Instant::now();
+    for (route, (msg_type, payload)) in queue_routes.iter().zip(enqueue_frames.iter()) {
+        send_queue_request(
+            router.as_ref(),
+            &producer_source,
+            route,
+            CLIENT_SESSION_ID,
+            *msg_type,
+            black_box(payload.clone()),
+            family,
+        );
+    }
+    assert_eq!(
+        producer_sink.wait_for_count(NOTIFY_QUEUE_COUNT, Duration::from_secs(1)),
+        NOTIFY_QUEUE_COUNT,
+        "queue enqueue should ack every notification-triggering request"
+    );
+    let delivered = wait_for_counting_sinks_each_count(
+        &subscriber_sinks,
+        NOTIFY_QUEUE_COUNT,
+        Duration::from_secs(1),
+    );
+    let duration = start.elapsed();
+    let expected_deliveries = NOTIFY_SUBSCRIBER_COUNT * NOTIFY_QUEUE_COUNT;
+    assert_eq!(
+        delivered, expected_deliveries,
+        "queue notification should reach every matching subscriber"
+    );
+
+    ctx.parameter("registration", "single_star");
+    ctx.parameter("subscriber_count", NOTIFY_SUBSCRIBER_COUNT.to_string());
+    ctx.parameter("concrete_route_count", NOTIFY_QUEUE_COUNT.to_string());
+    tier2_stress::record_duration(
+        ctx,
+        "enqueue_notify_single_star_64_subscribers_primary",
+        duration,
+        expected_deliveries as u64,
     );
 }
 

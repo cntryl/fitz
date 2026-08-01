@@ -91,6 +91,21 @@
 - Server returns error code `4009` (Unauthorized)
 - Message NOT enqueued
 
+### AC-QUEUE-009: Unified availability-watch registration contract
+
+**MUST** apply the shared subscription contract to Queue availability watches
+**Given:** An authenticated session
+**When:** The client subscribes or unsubscribes using exact, `*`, `**`,
+overlapping, or wildcard-realm Queue patterns capable of matching three segments
+**Then:**
+
+- Notifications contain the matching identifier and exact concrete three-segment Queue route
+- Duplicate original registration strings are idempotent and checked before the 128-wildcard cap
+- Exact registration succeeds at the cap; the 129th distinct wildcard returns 4011
+- Wrong schemes, empty segments, partial wildcards, and impossible depths return 4010 on TCP and WebSocket
+- Matching and disconnect cleanup remain isolated by `RouteFamily`
+- ENQUEUE, RESERVE, EXTEND, and COMPLETE continue to require concrete routes
+
 ## Notice Domain
 
 ### AC-NOTICE-001: Subscribe to Route Pattern
@@ -225,6 +240,10 @@
 - Client is registered as worker
 - Client receives REQUEST frames for this route
 - `max_concurrent` values outside `1..=1024` are rejected
+- Whole-segment `*` and `**` are accepted in any registration segment, including realm
+- Credit belongs to the registration and is shared across every concrete route it matches
+- Overlapping exact and wildcard registrations are equal, independent candidates
+- A session may hold at most 128 wildcard RPC registrations; duplicate registration is idempotent
 
 ### AC-RPC-002: RPC Call and Response
 
@@ -430,5 +449,18 @@
 
 - Server returns error code `5009` (Unauthorized)
 - Lease NOT granted
+
+### AC-LEASE-011: Exact-only watch registration
+
+**MUST** keep Lease subscriptions exact
+**Given:** An authenticated session
+**When:** The client subscribes to `lease://realm/area/resource`
+**Then:**
+
+- Duplicate subscribe returns the same identifier
+- Unsubscribe is idempotent and disconnect removes the watch
+- Notifications carry the identifier and exact Lease route
+- `*`, `**`, partial wildcards, wrong schemes, empty segments, and missing or extra segments return 5010 for SUBSCRIBE and UNSUBSCRIBE on TCP and WebSocket
+- Lease has no wildcard registration behavior or wildcard quota
 
 ## Schedule Domain

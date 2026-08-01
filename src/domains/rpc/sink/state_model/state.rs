@@ -1,31 +1,154 @@
 use super::{
-    BinaryHeap, ExpiringPendingRequest, FxBuildHasher, HashMap, Instant, Route, RouteAddress,
-    RouteFamily, RpcCorrelationKey, RpcFastMap, RpcPendingDispatchInfo, RpcPendingErrorDelivery,
-    RpcPendingRequest, RpcPendingRequestInit, RpcPendingTable, RpcPendingTimeoutResult,
-    RpcQueuedDispatch, RpcQueuedRequest, RpcRequestDispatch, RpcRouteState,
-    RpcSessionCleanupResult, RpcWorkerCleanupResult,
+    BTreeMap, BinaryHeap, ExpiringPendingRequest, FxBuildHasher, HashMap, HashSet, Instant, Route,
+    RouteAddress, RouteFamily, RpcCorrelationKey, RpcFastMap, RpcPendingDispatchInfo,
+    RpcPendingErrorDelivery, RpcPendingRequest, RpcPendingRequestInit, RpcPendingTable,
+    RpcPendingTimeoutResult, RpcQueuedDispatch, RpcQueuedRequest, RpcRegistrationId,
+    RpcRequestDispatch, RpcRouteState, RpcSessionCleanupResult, RpcWorker, RpcWorkerCleanupResult,
+    RpcWorkerDispatch, RpcWorkerKey, VecDeque,
 };
 
 pub(in crate::domains::rpc::sink) struct RpcState {
     pub(in crate::domains::rpc::sink) routes: RpcFastMap<(RouteFamily, Route), RpcRouteState>,
+    pub(in crate::domains::rpc::sink) registrations: BTreeMap<RpcRegistrationId, RpcWorker>,
+    registration_index: RpcFastMap<RpcWorkerKey, RpcRegistrationId>,
+    ready_routes: RpcFastMap<RouteFamily, VecDeque<Route>>,
+    next_registration_id: RpcRegistrationId,
+    next_route_sequence: u64,
     pub(in crate::domains::rpc::sink) pending: RpcPendingTable,
     pub(in crate::domains::rpc::sink) queued: RpcFastMap<RpcCorrelationKey, RpcQueuedRequest>,
     pub(in crate::domains::rpc::sink) queued_expirations: BinaryHeap<ExpiringPendingRequest>,
 }
 
+pub(in crate::domains::rpc::sink) enum RpcWorkerRegistration {
+    Registered,
+    Existing,
+    WildcardLimit,
+}
+
 enum DispatchAction {
     Queue,
-    Dispatch(super::RpcWorkerDispatch),
+    Dispatch(RpcWorkerDispatch),
 }
 
 impl RpcState {
     pub(in crate::domains::rpc::sink) fn new() -> Self {
         Self {
             routes: HashMap::with_capacity_and_hasher(64, FxBuildHasher),
+            registrations: BTreeMap::new(),
+            registration_index: HashMap::with_capacity_and_hasher(64, FxBuildHasher),
+            ready_routes: HashMap::with_capacity_and_hasher(8, FxBuildHasher),
+            next_registration_id: 1,
+            next_route_sequence: 1,
             pending: RpcPendingTable::new(),
             queued: HashMap::with_capacity_and_hasher(256, FxBuildHasher),
             queued_expirations: BinaryHeap::with_capacity(256),
         }
+    }
+
+    pub(in crate::domains::rpc::sink) fn register_worker(
+        &mut self,
+        mut worker: RpcWorker,
+    ) -> RpcWorkerRegistration {
+        let key = RpcWorkerKey::from_parts(&worker.addr, worker.session_id);
+        if self.registration_index.contains_key(&key) {
+            return RpcWorkerRegistration::Existing;
+        }
+
+        let session_wildcard_count = self
+            .registrations
+            .values()
+            .filter(|existing| existing.session_id == worker.session_id)
+            .filter(|existing| existing.is_wildcard())
+            .count();
+        if crate::domains::subscription_state::wildcard_registration_limit_reached(
+            worker.pattern(),
+            session_wildcard_count,
+        ) {
+            return RpcWorkerRegistration::WildcardLimit;
+        }
+
+        let registration_id = self.allocate_registration_id();
+        let family = *worker.addr.family();
+        let matching_routes = self
+            .routes
+            .keys()
+            .filter(|(route_family, route)| {
+                *route_family == family && worker.matches(family, route)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        worker.assign_registration_id(registration_id);
+        self.registration_index.insert(key, registration_id);
+        self.registrations.insert(registration_id, worker);
+        for route_key in matching_routes {
+            if let Some(route_state) = self.routes.get_mut(&route_key) {
+                route_state.add_registration(registration_id);
+            }
+        }
+        self.enqueue_eligible_routes_for_family(family);
+        RpcWorkerRegistration::Registered
+    }
+
+    fn allocate_registration_id(&mut self) -> RpcRegistrationId {
+        loop {
+            let candidate = self.next_registration_id;
+            self.next_registration_id = self.next_registration_id.wrapping_add(1).max(1);
+            if !self.registrations.contains_key(&candidate) {
+                return candidate;
+            }
+        }
+    }
+
+    pub(in crate::domains::rpc::sink) fn registration_count(&self) -> usize {
+        self.registrations.len()
+    }
+
+    #[cfg(test)]
+    pub(in crate::domains::rpc::sink) fn registration_count_for_family(
+        &self,
+        family: RouteFamily,
+    ) -> usize {
+        self.registrations
+            .values()
+            .filter(|registration| *registration.addr.family() == family)
+            .count()
+    }
+
+    #[cfg(test)]
+    pub(in crate::domains::rpc::sink) fn registration_id_for(
+        &self,
+        addr: &RouteAddress,
+        session_id: u64,
+    ) -> Option<RpcRegistrationId> {
+        self.registration_index
+            .get(&RpcWorkerKey::from_parts(addr, session_id))
+            .copied()
+    }
+
+    #[cfg(test)]
+    pub(in crate::domains::rpc::sink) fn claim_worker_for_tests(
+        &mut self,
+        family: RouteFamily,
+        route: &Route,
+    ) -> Option<RpcWorkerDispatch> {
+        self.claim_registration(family, route)
+    }
+
+    #[cfg(test)]
+    pub(in crate::domains::rpc::sink) fn release_worker_for_tests(
+        &mut self,
+        registration_id: RpcRegistrationId,
+    ) {
+        self.release_registration(registration_id, None);
+    }
+
+    #[cfg(test)]
+    pub(in crate::domains::rpc::sink) fn release_worker_with_latency_for_tests(
+        &mut self,
+        registration_id: RpcRegistrationId,
+        latency_us: u64,
+    ) {
+        self.release_registration(registration_id, Some(latency_us));
     }
 
     #[cfg(test)]
@@ -33,9 +156,7 @@ impl RpcState {
         &mut self,
         route: &Route,
     ) -> &mut RpcRouteState {
-        self.routes
-            .entry((RouteFamily::new(1), route.clone()))
-            .or_insert_with(RpcRouteState::new)
+        self.ensure_route_state_for_family(RouteFamily::new(1), route)
     }
 
     pub(in crate::domains::rpc::sink) fn ensure_route_state_for_family(
@@ -43,9 +164,25 @@ impl RpcState {
         family: RouteFamily,
         route: &Route,
     ) -> &mut RpcRouteState {
-        self.routes
-            .entry((family, route.clone()))
-            .or_insert_with(RpcRouteState::new)
+        let key = (family, route.clone());
+        if !self.routes.contains_key(&key) {
+            let first_seen_sequence = self.next_route_sequence;
+            self.next_route_sequence = self.next_route_sequence.wrapping_add(1).max(1);
+            let registration_ids = self
+                .registrations
+                .iter()
+                .filter_map(|(registration_id, registration)| {
+                    registration
+                        .matches(family, route)
+                        .then_some(*registration_id)
+                })
+                .collect();
+            self.routes.insert(
+                key.clone(),
+                RpcRouteState::new(first_seen_sequence, registration_ids),
+            );
+        }
+        self.routes.get_mut(&key).expect("ensured RPC route state")
     }
 
     #[cfg(test)]
@@ -56,40 +193,230 @@ impl RpcState {
         self.routes.get_mut(&(RouteFamily::new(1), route.clone()))
     }
 
-    fn prune_route_if_empty_for_family(&mut self, family: RouteFamily, route: &Route) {
-        let key = (family, route.clone());
-        let should_remove = self.routes.get(&key).is_some_and(|route_state| {
-            route_state.worker_count() == 0 && !route_state.has_queued_requests()
-        });
+    fn has_matching_registration(&self, family: RouteFamily, route: &Route) -> bool {
+        self.routes
+            .get(&(family, route.clone()))
+            .is_some_and(RpcRouteState::has_registrations)
+    }
 
+    fn has_available_registration(&self, family: RouteFamily, route: &Route) -> bool {
+        self.available_registration(family, route).is_some()
+    }
+
+    fn available_registration(
+        &self,
+        family: RouteFamily,
+        route: &Route,
+    ) -> Option<(usize, RpcRegistrationId)> {
+        let route_state = self.routes.get(&(family, route.clone()))?;
+        let registration_ids = route_state.registration_ids();
+        let registration_count = registration_ids.len();
+        if registration_count == 0 {
+            return None;
+        }
+        let start = route_state.next_registration_index() % registration_count;
+        (0..registration_count).find_map(|offset| {
+            let index = (start + offset) % registration_count;
+            let registration_id = registration_ids[index];
+            self.registrations
+                .get(&registration_id)
+                .is_some_and(RpcWorker::is_available)
+                .then_some((index, registration_id))
+        })
+    }
+
+    fn claim_registration(
+        &mut self,
+        family: RouteFamily,
+        route: &Route,
+    ) -> Option<RpcWorkerDispatch> {
+        self.ensure_route_state_for_family(family, route);
+        let (registration_index, registration_id) = self.available_registration(family, route)?;
+
+        let registration = self
+            .registrations
+            .get_mut(&registration_id)
+            .expect("selected RPC registration");
+        registration.claim_slot();
+        let dispatch = registration.dispatch_view();
+        self.ensure_route_state_for_family(family, route)
+            .advance_registration_cursor(registration_index);
+        Some(dispatch)
+    }
+
+    fn remove_registration_from_routes(&mut self, registration_id: RpcRegistrationId) {
+        for route_state in self.routes.values_mut() {
+            route_state.remove_registration(registration_id);
+        }
+    }
+
+    fn remove_registrations_from_routes(&mut self, registration_ids: &HashSet<RpcRegistrationId>) {
+        for route_state in self.routes.values_mut() {
+            route_state.remove_registrations(registration_ids);
+        }
+    }
+
+    fn release_registration(
+        &mut self,
+        registration_id: RpcRegistrationId,
+        latency_us: Option<u64>,
+    ) {
+        let Some(registration) = self.registrations.get_mut(&registration_id) else {
+            return;
+        };
+        let was_available = registration.is_available();
+        if let Some(latency_us) = latency_us {
+            registration.record_completion(latency_us);
+        }
+        registration.release_slot();
+        if !was_available && registration.is_available() {
+            let family = *registration.addr.family();
+            self.enqueue_eligible_routes_for_family(family);
+        }
+    }
+
+    fn mark_route_ready_if_eligible(&mut self, family: RouteFamily, route: &Route) {
+        let eligible = self
+            .routes
+            .get(&(family, route.clone()))
+            .is_some_and(RpcRouteState::has_queued_requests)
+            && self.has_available_registration(family, route);
+        if !eligible {
+            return;
+        }
+
+        if self
+            .routes
+            .get_mut(&(family, route.clone()))
+            .is_some_and(RpcRouteState::mark_ready)
+        {
+            self.ready_routes
+                .entry(family)
+                .or_default()
+                .push_back(route.clone());
+        }
+    }
+
+    fn refresh_ready_routes_for_family(&mut self, family: RouteFamily) {
+        if let Some(ready_routes) = self.ready_routes.get_mut(&family) {
+            ready_routes.clear();
+        }
+        let mut routes: Vec<(u64, Route)> = self
+            .routes
+            .iter_mut()
+            .filter_map(|((route_family, route), route_state)| {
+                if *route_family != family {
+                    return None;
+                }
+                route_state.clear_ready();
+                route_state
+                    .has_queued_requests()
+                    .then(|| (route_state.first_seen_sequence, route.clone()))
+            })
+            .collect();
+        routes.sort_by_key(|(first_seen_sequence, _)| *first_seen_sequence);
+        for (_, route) in routes {
+            self.mark_route_ready_if_eligible(family, &route);
+        }
+    }
+
+    fn enqueue_eligible_routes_for_family(&mut self, family: RouteFamily) {
+        let mut routes: Vec<(u64, Route)> = self
+            .routes
+            .iter()
+            .filter(|((route_family, _), route_state)| {
+                *route_family == family && route_state.has_queued_requests()
+            })
+            .map(|((_, route), route_state)| (route_state.first_seen_sequence, route.clone()))
+            .collect();
+        routes.sort_by_key(|(first_seen_sequence, _)| *first_seen_sequence);
+        for (_, route) in routes {
+            self.mark_route_ready_if_eligible(family, &route);
+        }
+    }
+
+    fn remove_ready_route(&mut self, family: RouteFamily, route: &Route) {
+        if let Some(route_state) = self.routes.get_mut(&(family, route.clone())) {
+            route_state.clear_ready();
+        }
+        if let Some(ready_routes) = self.ready_routes.get_mut(&family) {
+            ready_routes.retain(|ready_route| ready_route != route);
+        }
+    }
+
+    fn prune_route_if_unused(&mut self, family: RouteFamily, route: &Route) {
+        let key = (family, route.clone());
+        let should_remove = self
+            .routes
+            .get(&key)
+            .is_some_and(|route_state| !route_state.has_queued_requests())
+            && !self.pending.has_pending_for_route(family, route);
         if should_remove {
+            self.remove_ready_route(family, route);
             self.routes.remove(&key);
         }
+    }
+
+    fn prune_unused_routes_for_family(&mut self, family: RouteFamily) {
+        let routes: Vec<Route> = self
+            .routes
+            .keys()
+            .filter(|(route_family, _)| *route_family == family)
+            .map(|(_, route)| route.clone())
+            .collect();
+        for route in routes {
+            self.prune_route_if_unused(family, &route);
+        }
+    }
+
+    fn remove_registrations_for_session(&mut self, session_id: u64) -> Vec<RpcRegistrationId> {
+        let registration_ids: Vec<_> = self
+            .registrations
+            .iter()
+            .filter_map(|(registration_id, registration)| {
+                (registration.session_id == session_id).then_some(*registration_id)
+            })
+            .collect();
+        for registration_id in &registration_ids {
+            if let Some(registration) = self.registrations.remove(registration_id) {
+                self.registration_index.remove(&RpcWorkerKey::from_parts(
+                    &registration.addr,
+                    registration.session_id,
+                ));
+            }
+        }
+        let registration_ids_set: HashSet<RpcRegistrationId> =
+            registration_ids.iter().copied().collect();
+        if !registration_ids_set.is_empty() {
+            self.remove_registrations_from_routes(&registration_ids_set);
+        }
+        registration_ids
     }
 
     pub(in crate::domains::rpc::sink) fn cleanup_session(
         &mut self,
         session_id: u64,
     ) -> RpcSessionCleanupResult {
-        let mut removed_workers = 0;
-        let mut empty_routes = Vec::new();
-
-        for (key, route_state) in &mut self.routes {
-            removed_workers += route_state.unregister_session(session_id);
-            if route_state.worker_count() == 0 && !route_state.has_queued_requests() {
-                empty_routes.push(key.clone());
-            }
-        }
-
-        for route in empty_routes {
-            self.routes.remove(&route);
-        }
-
+        let mut affected_families: Vec<RouteFamily> = self
+            .registrations
+            .values()
+            .filter_map(|registration| {
+                (registration.session_id == session_id).then_some(*registration.addr.family())
+            })
+            .collect();
+        affected_families.sort_by_key(RouteFamily::id);
+        affected_families.dedup();
+        let removed_registration_ids = self.remove_registrations_for_session(session_id);
         let pending_cleanup = self.pending.cleanup_session(session_id);
         let queued_removed = self.cleanup_queued_session(session_id);
 
+        for family in affected_families {
+            self.refresh_ready_routes_for_family(family);
+            self.prune_unused_routes_for_family(family);
+        }
+
         RpcSessionCleanupResult {
-            removed_workers,
+            removed_workers: removed_registration_ids.len(),
             detached_callers: pending_cleanup.detached_callers,
             removed_pending: pending_cleanup.removed_pending + queued_removed,
             pending_len: self.live_request_count(),
@@ -102,30 +429,27 @@ impl RpcState {
         worker_addr: &RouteAddress,
         session_id: u64,
     ) -> RpcWorkerCleanupResult {
-        let removed_workers = {
-            let mut removed = 0;
-            let mut remove_route = false;
-
-            let key = (*worker_addr.family(), worker_addr.route().clone());
-            if let Some(route_state) = self.routes.get_mut(&key) {
-                let before = route_state.worker_count();
-                route_state.unregister_worker(worker_addr, session_id);
-                removed = before.saturating_sub(route_state.worker_count());
-                remove_route =
-                    route_state.worker_count() == 0 && !route_state.has_queued_requests();
-            }
-
-            if remove_route {
-                self.routes.remove(&key);
-            }
-
-            removed
+        let key = RpcWorkerKey::from_parts(worker_addr, session_id);
+        let Some(registration_id) = self.registration_index.remove(&key) else {
+            return RpcWorkerCleanupResult {
+                pending_len: self.live_request_count(),
+                ..RpcWorkerCleanupResult::default()
+            };
         };
-
-        let pending_cleanup = self.pending.cleanup_worker(worker_addr, session_id);
+        let registration = self
+            .registrations
+            .remove(&registration_id)
+            .expect("indexed RPC registration");
+        self.remove_registration_from_routes(registration_id);
+        let family = *registration.addr.family();
+        let pending_cleanup = self
+            .pending
+            .cleanup_registrations(&HashSet::from([registration_id]));
+        self.refresh_ready_routes_for_family(family);
+        self.prune_unused_routes_for_family(family);
 
         RpcWorkerCleanupResult {
-            removed_workers,
+            removed_workers: 1,
             removed_pending: pending_cleanup.removed_pending,
             pending_len: self.live_request_count(),
             disconnect_deliveries: pending_cleanup.disconnect_deliveries,
@@ -164,10 +488,11 @@ impl RpcState {
         request: RpcQueuedRequest,
     ) {
         let route = request.request.route.clone();
-        self.ensure_route_state_for_family(*request.caller_inbox_addr.family(), &route)
+        let family = *request.caller_inbox_addr.family();
+        self.ensure_route_state_for_family(family, &route)
             .enqueue_request(correlation_id);
         let key = RpcCorrelationKey {
-            family: *request.caller_inbox_addr.family(),
+            family,
             correlation_id,
         };
         self.queued_expirations.push(ExpiringPendingRequest {
@@ -175,6 +500,7 @@ impl RpcState {
             key,
         });
         self.queued.insert(key, request);
+        self.mark_route_ready_if_eligible(family, &route);
     }
 
     #[cfg(test)]
@@ -198,7 +524,7 @@ impl RpcState {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     pub(in crate::domains::rpc::sink) fn dispatch_or_queue_request_with_global_count(
         &mut self,
         request: crate::domains::rpc::protocol::RpcRequest,
@@ -213,20 +539,26 @@ impl RpcState {
         if self.contains_correlation_in_family(family, &request.correlation_id) {
             return RpcRequestDispatch::Duplicate { request };
         }
-
-        let local_live_request_count = self.live_request_count();
         let route = request.route.clone();
-        let Some(route_state) = self.routes.get_mut(&(family, route.clone())) else {
-            return RpcRequestDispatch::NoWorkers { request };
-        };
-
-        if route_state.worker_count() == 0 {
+        self.ensure_route_state_for_family(family, &route);
+        if !self.has_matching_registration(family, &route) {
+            self.prune_route_if_unused(family, &route);
             return RpcRequestDispatch::NoWorkers { request };
         }
 
-        let correlation_id = request.correlation_id;
-        let queued = route_state.has_queued_requests() || !route_state.has_available_worker();
-        if queued && route_state.queued_len() >= route_pending_capacity {
+        let local_live_request_count = self.live_request_count();
+        let route_has_queued = self
+            .routes
+            .get(&(family, route.clone()))
+            .is_some_and(RpcRouteState::has_queued_requests);
+        let queued = route_has_queued || !self.has_available_registration(family, &route);
+        if queued
+            && self
+                .routes
+                .get(&(family, route.clone()))
+                .map_or(0, RpcRouteState::queued_len)
+                >= route_pending_capacity
+        {
             return RpcRequestDispatch::RouteCapacityFull { request };
         }
 
@@ -234,6 +566,7 @@ impl RpcState {
             let mut current = global_pending_count.load(std::sync::atomic::Ordering::Acquire);
             loop {
                 if current >= global_pending_capacity {
+                    self.prune_route_if_unused(family, &route);
                     return RpcRequestDispatch::GlobalCapacityFull { request };
                 }
                 match global_pending_count.compare_exchange_weak(
@@ -248,24 +581,27 @@ impl RpcState {
             }
         } else {
             if local_live_request_count >= global_pending_capacity {
+                self.prune_route_if_unused(family, &route);
                 return RpcRequestDispatch::GlobalCapacityFull { request };
             }
             false
         };
 
+        let correlation_id = request.correlation_id;
         let action = if queued {
-            route_state.enqueue_request(correlation_id);
+            self.ensure_route_state_for_family(family, &route)
+                .enqueue_request(correlation_id);
             DispatchAction::Queue
-        } else {
-            let Some(worker) = route_state.claim_worker() else {
-                if reserved_global_capacity {
-                    if let Some(global_pending_count) = global_pending_count {
-                        global_pending_count.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
-                    }
-                }
-                return RpcRequestDispatch::NoWorkers { request };
-            };
+        } else if let Some(worker) = self.claim_registration(family, &route) {
             DispatchAction::Dispatch(worker)
+        } else {
+            if reserved_global_capacity {
+                if let Some(global_pending_count) = global_pending_count {
+                    global_pending_count.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+                }
+            }
+            self.prune_route_if_unused(family, &route);
+            return RpcRequestDispatch::NoWorkers { request };
         };
 
         let expires_at = Instant::now() + request_timeout;
@@ -284,13 +620,14 @@ impl RpcState {
                 self.queued_expirations
                     .push(ExpiringPendingRequest { expires_at, key });
                 self.queued.insert(key, queued);
+                self.mark_route_ready_if_eligible(family, &route);
                 RpcRequestDispatch::Queued {
                     route,
                     correlation_id,
-                    live_request_count: global_pending_count.map_or_else(
-                        || local_live_request_count,
-                        |count| count.load(std::sync::atomic::Ordering::Acquire),
-                    ),
+                    live_request_count: global_pending_count
+                        .map_or(local_live_request_count.saturating_add(1), |count| {
+                            count.load(std::sync::atomic::Ordering::Acquire)
+                        }),
                 }
             }
             DispatchAction::Dispatch(worker) => {
@@ -308,10 +645,10 @@ impl RpcState {
                 RpcRequestDispatch::Immediate {
                     request,
                     worker,
-                    live_request_count: global_pending_count.map_or_else(
-                        || local_live_request_count,
-                        |count| count.load(std::sync::atomic::Ordering::Acquire),
-                    ),
+                    live_request_count: global_pending_count
+                        .map_or(local_live_request_count.saturating_add(1), |count| {
+                            count.load(std::sync::atomic::Ordering::Acquire)
+                        }),
                 }
             }
         }
@@ -327,11 +664,13 @@ impl RpcState {
             correlation_id: *correlation_id,
         };
         let queued = self.queued.remove(&key)?;
-        let family = *queued.caller_inbox_addr.family();
-        if let Some(route_state) = self.routes.get_mut(&(family, queued.request.route.clone())) {
+        let route = queued.request.route.clone();
+        if let Some(route_state) = self.routes.get_mut(&(family, route.clone())) {
             route_state.remove_queued_request(correlation_id);
         }
-        self.prune_route_if_empty_for_family(family, &queued.request.route);
+        self.remove_ready_route(family, &route);
+        self.mark_route_ready_if_eligible(family, &route);
+        self.prune_route_if_unused(family, &route);
         Some(queued)
     }
 
@@ -343,30 +682,56 @@ impl RpcState {
         self.next_queued_dispatch_for_family(route, RouteFamily::new(1))
     }
 
+    #[cfg(test)]
     pub(in crate::domains::rpc::sink) fn next_queued_dispatch_for_family(
         &mut self,
         route: &Route,
         family: RouteFamily,
     ) -> Option<RpcQueuedDispatch> {
-        let (worker, correlation_id) = {
-            let route_state = self.routes.get_mut(&(family, route.clone()))?;
-            if !route_state.has_available_worker() || !route_state.has_queued_requests() {
-                return None;
-            }
-            let worker = route_state.claim_worker()?;
-            let correlation_id = route_state
-                .pop_queued_request()
-                .expect("queued correlation id for dispatch");
-            (worker, correlation_id)
-        };
+        self.remove_ready_route(family, route);
+        self.dispatch_queued_route(family, route)
+    }
 
+    pub(in crate::domains::rpc::sink) fn next_ready_dispatch_for_family(
+        &mut self,
+        family: RouteFamily,
+    ) -> Option<RpcQueuedDispatch> {
+        loop {
+            let route = self.ready_routes.get_mut(&family)?.pop_front()?;
+            if let Some(route_state) = self.routes.get_mut(&(family, route.clone())) {
+                route_state.clear_ready();
+            }
+            if let Some(dispatch) = self.dispatch_queued_route(family, &route) {
+                return Some(dispatch);
+            }
+        }
+    }
+
+    fn dispatch_queued_route(
+        &mut self,
+        family: RouteFamily,
+        route: &Route,
+    ) -> Option<RpcQueuedDispatch> {
+        if !self
+            .routes
+            .get(&(family, route.clone()))?
+            .has_queued_requests()
+        {
+            return None;
+        }
+        let worker = self.claim_registration(family, route)?;
+        let correlation_id = self
+            .routes
+            .get_mut(&(family, route.clone()))?
+            .pop_queued_request()
+            .expect("queued RPC correlation id for dispatch");
         let queued = self
             .queued
             .remove(&RpcCorrelationKey {
                 family,
                 correlation_id,
             })
-            .expect("queued request for dispatch");
+            .expect("queued RPC request for dispatch");
         let RpcQueuedRequest {
             request,
             caller_session_id,
@@ -375,20 +740,20 @@ impl RpcState {
             submitted_at_instant,
             expires_at,
         } = queued;
-        let route = request.route.clone();
         let pending = RpcPendingRequest::new(RpcPendingRequestInit {
-            route,
+            route: request.route.clone(),
             caller_session_id,
             caller_inbox_addr,
             worker_addr: worker.addr.clone(),
             worker_session_id: worker.session_id,
-            worker_slot: worker.slot,
+            registration_id: worker.registration_id,
             submitted_at,
             submitted_at_instant,
             expires_at,
         });
         self.pending
             .track_pending_for_family(family, correlation_id, pending);
+        self.mark_route_ready_if_eligible(family, route);
 
         Some(RpcQueuedDispatch {
             request,
@@ -402,17 +767,12 @@ impl RpcState {
         family: RouteFamily,
         correlation_id: &uuid::Uuid,
     ) -> Option<(RpcPendingRequest, usize)> {
-        let pending = self.pending.pending.remove(&RpcCorrelationKey {
+        let pending = self.pending.remove(&RpcCorrelationKey {
             family,
             correlation_id: *correlation_id,
         })?;
-        if let Some(route_state) = self
-            .routes
-            .get_mut(&(pending.family, pending.route.clone()))
-        {
-            route_state.release_worker_slot(pending.worker_slot, None);
-        }
-        self.prune_route_if_empty_for_family(pending.family, &pending.route);
+        self.release_registration(pending.registration_id, None);
+        self.prune_route_if_unused(pending.family, &pending.route);
         Some((pending, self.live_request_count()))
     }
 
@@ -421,12 +781,8 @@ impl RpcState {
         pending: &RpcPendingRequest,
         latency_us: Option<u64>,
     ) {
-        if let Some(route_state) = self
-            .routes
-            .get_mut(&(pending.family, pending.route.clone()))
-        {
-            route_state.release_worker_slot(pending.worker_slot, latency_us);
-        }
+        self.release_registration(pending.registration_id, latency_us);
+        self.prune_route_if_unused(pending.family, &pending.route);
     }
 
     pub(in crate::domains::rpc::sink) fn release_worker_for_dispatch_info(
@@ -434,12 +790,8 @@ impl RpcState {
         pending: &RpcPendingDispatchInfo,
         latency_us: Option<u64>,
     ) {
-        if let Some(route_state) = self
-            .routes
-            .get_mut(&(pending.family, pending.route.clone()))
-        {
-            route_state.release_worker_slot(pending.worker_slot, latency_us);
-        }
+        self.release_registration(pending.registration_id, latency_us);
+        self.prune_route_if_unused(pending.family, &pending.route);
     }
 
     pub(in crate::domains::rpc::sink) fn cleanup_queued_session(
@@ -456,7 +808,6 @@ impl RpcState {
         for (family, correlation_id) in &queued_to_remove {
             self.remove_queued_request_for_family(*family, correlation_id);
         }
-
         queued_to_remove.len()
     }
 
@@ -472,7 +823,6 @@ impl RpcState {
             if expiring.expires_at > now {
                 break;
             }
-
             let expiring = self
                 .pending
                 .expirations
@@ -481,20 +831,16 @@ impl RpcState {
             let Some(pending) = self.pending.pending.get(&expiring.key) else {
                 continue;
             };
-
             if pending.expires_at != expiring.expires_at {
                 continue;
             }
 
             let pending = self
                 .pending
-                .pending
                 .remove(&expiring.key)
                 .expect("tracked pending request");
             self.release_worker_for_pending(&pending, None);
-            self.prune_route_if_empty_for_family(pending.family, &pending.route);
             removed_pending = removed_pending.saturating_add(1);
-
             if let Some(caller_inbox_addr) = pending.caller_inbox_addr {
                 timeout_deliveries.push(RpcPendingErrorDelivery {
                     correlation_id: expiring.key.correlation_id,
@@ -510,7 +856,6 @@ impl RpcState {
             if expiring.expires_at > now {
                 break;
             }
-
             let expiring = self
                 .queued_expirations
                 .pop()
@@ -518,7 +863,6 @@ impl RpcState {
             let Some(queued) = self.queued.get(&expiring.key) else {
                 continue;
             };
-
             if queued.expires_at != expiring.expires_at {
                 continue;
             }

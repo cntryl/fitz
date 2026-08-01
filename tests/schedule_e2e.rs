@@ -383,6 +383,7 @@ where
         parse_schedule_delivery(&retained_delivery).expect("parse schedule delivery");
     assert_eq!(retained_delivery.msg_type, 705);
     assert!(retained_delivery.subscription_id > 0);
+    assert_eq!(retained_delivery.route, retained_route);
     assert_eq!(retained_delivery.body.as_slice(), b"retained");
 }
 
@@ -450,6 +451,7 @@ async fn should_recover_schedule_definitions_before_accepting_schedule_traffic()
         .expect("receive restarted schedule delivery");
     let delivery = parse_schedule_delivery(&delivery).expect("parse schedule delivery");
     assert_eq!(delivery.msg_type, 705);
+    assert_eq!(delivery.route, route);
     assert_eq!(delivery.body.as_slice(), b"persisted");
 
     let refreshed = server.runtime.schedule_list_schedules(None);

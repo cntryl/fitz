@@ -48,7 +48,13 @@ impl LeaseKey {
     pub fn from_route_str(family: RouteFamily, route: &str) -> Option<Self> {
         let parts = route_triplet(route)?;
 
-        if !parts.realm.is_empty() && !parts.area.is_empty() && !parts.resource.is_empty() {
+        if !parts.realm.is_empty()
+            && !parts.area.is_empty()
+            && !parts.resource.is_empty()
+            && !parts.realm.contains('*')
+            && !parts.area.contains('*')
+            && !parts.resource.contains('*')
+        {
             Some(LeaseKey {
                 family,
                 realm: parts.realm.to_string(),
@@ -242,10 +248,10 @@ pub enum LeaseMessage {
 /// Lease watch messages handled by `LeaseDomainSink` before actor dispatch.
 #[derive(Debug, Clone)]
 pub enum LeaseSubscriptionMessage {
-    /// Subscribe to lease change notifications for an exact route or wildcard pattern.
+    /// Subscribe to lease change notifications for one exact route.
     Subscribe {
         family_id: RouteFamily,
-        pattern: Route,
+        route: Route,
         session_id: u64,
         subscriber: RouteAddress,
     },
@@ -253,7 +259,7 @@ pub enum LeaseSubscriptionMessage {
     /// Remove an active lease watch for this session.
     Unsubscribe {
         family_id: RouteFamily,
-        pattern: Route,
+        route: Route,
         session_id: u64,
         subscriber: RouteAddress,
     },
@@ -430,6 +436,9 @@ pub enum LeaseResponse {
 
     /// Request rejected before lease state was touched.
     Error(String),
+
+    /// Lease subscription route is not an exact three-segment `lease://` route.
+    InvalidSubscriptionRoute(String),
 
     /// Successfully subscribed to lease notifications
     SubscribeOk { subscription_id: u64 },

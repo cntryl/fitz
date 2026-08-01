@@ -165,6 +165,7 @@ pub fn parse_schedule_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
 pub struct ScheduleDelivery {
     pub msg_type: u16,
     pub subscription_id: u64,
+    pub route: String,
     pub body: Vec<u8>,
 }
 
@@ -181,6 +182,7 @@ pub fn parse_schedule_delivery(frame: &[u8]) -> Result<ScheduleDelivery, String>
 
     let mut dec = PayloadDecoder::new(&payload);
     let subscription_id = dec.get_u64()?;
+    let route = dec.get_string()?;
     let body = dec.get_bytes()?.to_vec();
     if !dec.is_complete() {
         return Err("Trailing data in schedule delivery".to_string());
@@ -189,6 +191,7 @@ pub fn parse_schedule_delivery(frame: &[u8]) -> Result<ScheduleDelivery, String>
     Ok(ScheduleDelivery {
         msg_type,
         subscription_id,
+        route,
         body,
     })
 }

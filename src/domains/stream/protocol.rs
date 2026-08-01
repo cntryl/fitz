@@ -408,6 +408,25 @@ pub enum StreamSubscriptionMessage {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StreamSubscriptionFailure {
+    InvalidPattern(String),
+    Limit,
+}
+
+impl std::fmt::Display for StreamSubscriptionFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidPattern(message) => write!(f, "{message}"),
+            Self::Limit => write!(
+                f,
+                "wildcard subscription limit exceeded ({} per session)",
+                crate::domains::subscription_state::MAX_WILDCARD_REGISTRATIONS_PER_SESSION
+            ),
+        }
+    }
+}
+
 /// Parsed client request delivered to the Stream domain sink.
 #[derive(Debug, Clone)]
 pub struct StreamClientRequest {
@@ -436,6 +455,7 @@ pub enum StreamClientResponseBody {
         data: Vec<u8>,
     },
     Error(String),
+    SubscriptionError(StreamSubscriptionFailure),
 }
 
 /// Stream response routed from the domain sink back to a client session.

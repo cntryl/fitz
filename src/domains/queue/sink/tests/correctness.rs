@@ -112,7 +112,7 @@ fn should_reject_queue_watch_when_subscription_identity_does_not_match_request()
         ClientFrameMeta::new(7, ClientChannel::Sub, 207, family),
         Ok(QueueClientFrame::Sub(QueueSubscriptionMessage::Watch {
             family_id: family,
-            pattern: Route::new("queue://acme/jobs/*/ready"),
+            pattern: Route::new("queue://acme/jobs/*"),
             session_id: 8,
             subscriber: source.clone(),
         })),
@@ -159,7 +159,14 @@ fn should_reject_queue_watch_given_empty_pattern() {
     let response = receive_response(&mailbox, "empty watch response");
 
     // Assert
-    assert_eq!(bad_request_reason(&response), "empty pattern");
+    let (code, message) =
+        crate::dispatch::protocol::error_codes::decode_error_body(response.payload.as_ref())
+            .expect("invalid subscription error envelope");
+    assert_eq!(
+        code,
+        crate::dispatch::protocol::error_codes::queue::ERR_INVALID_SUBSCRIPTION_PATTERN
+    );
+    assert_eq!(message, "subscription pattern must use queue://");
     assert!(sink.watch_families_are_empty_for_tests());
 }
 

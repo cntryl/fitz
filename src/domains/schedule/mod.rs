@@ -8,7 +8,7 @@
 //! - retry of unacknowledged claimed occurrences after restart
 //!
 //! Schedule keeps all delivery state ephemeral:
-//! - subscribers
+//! - live notification registrations
 //! - live notify routing
 //! - session state
 //!

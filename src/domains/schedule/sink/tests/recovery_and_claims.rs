@@ -114,6 +114,7 @@ fn should_retry_ack_without_republishing_given_same_broker_ack_persist_failure()
     assert_eq!(notify_frame.msg_type.as_u16(), 705);
     let mut notify_decoder = PayloadDecoder::new(&notify_frame.payload);
     let _subscription_id = notify_decoder.get_u64().expect("notify subscription id");
+    let _route = notify_decoder.get_string().expect("notify exact route");
     let notified_payload = notify_decoder.get_bytes().expect("notify payload");
     assert_eq!(notified_payload.as_ref(), b"retry");
     assert!(notify_decoder.is_complete());

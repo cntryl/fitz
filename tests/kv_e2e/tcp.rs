@@ -410,4 +410,40 @@ async fn should_handle_large_batch_writes_in_transaction_tcp() {
     // (assertions are in the helper)
 }
 
+#[tokio::test]
+async fn should_reject_invalid_kv_subscription_patterns_tcp() {
+    // Arrange
+    let server = TestServer::start().await.expect("start test server");
+
+    // Act
+    should_reject_invalid_kv_subscription_patterns::<TcpConnector>(&server).await;
+
+    // Assert
+    // (assertions are in the helper)
+}
+
+#[tokio::test]
+async fn should_enforce_kv_wildcard_registration_limit_tcp() {
+    // Arrange
+    let server = TestServer::start().await.expect("start test server");
+
+    // Act
+    should_enforce_kv_wildcard_registration_limit::<TcpConnector>(&server).await;
+
+    // Assert
+    // (assertions are in the helper)
+}
+
+#[tokio::test]
+async fn should_deliver_kv_notification_for_overlapping_wildcards_tcp() {
+    // Arrange
+    let server = TestServer::start().await.expect("start test server");
+
+    // Act
+    should_deliver_kv_notification_for_overlapping_wildcards::<TcpConnector>(&server).await;
+
+    // Assert
+    // (assertions are in the helper)
+}
+
 // ===== WebSocket wrapper tests (added AAA comments) =====

@@ -6,6 +6,27 @@ This section documents the **canonical operations** for each of the seven Fitz d
 Operations are explicitly addressed and avoid implicit routing state, though
 domains may still keep live server-side state where their contract requires it.
 
+### Registration Contract
+
+KV, Queue, Notice, Stream, RPC, and Schedule registrations accept exact routes
+and strict whole-segment `*` or `**` patterns, including wildcard realms. `*`
+matches one segment and `**` matches zero or more segments. The scheme must
+match the domain, segments must be non-empty, partial wildcard tokens are
+invalid, and structured-domain patterns must be capable of matching their
+concrete route depth (three segments for KV, Queue, and Stream; four for
+Schedule). Notice and RPC have flexible depth.
+
+Each wildcard-capable domain permits 128 wildcard registrations per session.
+Exact registrations do not count. Duplicate `(session, original registration
+string)` requests are idempotent and checked before the limit. Matching never
+crosses `RouteFamily`; overlaps remain independent and exact registrations have
+no precedence. Notifications include the matching subscription identifier and
+the exact concrete route.
+
+Lease is intentionally different: every Lease operation, SUBSCRIBE, and
+UNSUBSCRIBE requires an exact `lease://realm/area/resource` route. Lease rejects
+all wildcards and has no wildcard quota.
+
 ### KV Domain (Key-Value Store)
 
 **Purpose:** Transactional key-value storage with ACID isolation.
@@ -32,6 +53,7 @@ domains may still keep live server-side state where their contract requires it.
 - Operations within a single transaction MUST be sequential (no parallel calls with same tx_id)
 - Multiple transactions to different resources MAY be parallel
 - Watches are session-scoped and MUST be re-established after reconnect
+- Watches accept exact routes or patterns capable of matching a three-segment KV route
 - `Notify` is emitted only after a successful `Commit` that applied one or more mutations
 
 ---
@@ -48,14 +70,16 @@ domains may still keep live server-side state where their contract requires it.
 | `Receive` | 202 | C→S | Lease messages for processing |
 | `Extend` | 203 | C→S | Extend message lease TTL |
 | `Ack` | 204 | C→S | Acknowledge and delete message |
-| `Subscribe` | (future) | C→S | Watch queue for availability |
-| `Unsubscribe` | (future) | C→S | Stop watching |
+| `Subscribe` | 207 | C→S | Watch queue for availability |
+| `Unsubscribe` | 208 | C→S | Stop watching |
+| `Notify` | 209 | S→C | Deliver queue availability |
 
 **Constraints:**
 - Messages are reserved with an inflight visibility window (not immediately deleted)
 - Queue inflight token MUST match to complete or extend
 - FIFO ordering preserved within single reserve call
 - Duplicate reserves may violate FIFO (wait or use single-call pattern)
+- Operations use exact three-segment Queue routes; subscriptions accept patterns capable of matching that shape
 
 ---
 
@@ -79,6 +103,7 @@ domains may still keep live server-side state where their contract requires it.
 - Token MUST match to extend or release (prevents cross-holder mutations)
 - Expiry is lazy (expires when next operation touches resource)
 - Watches are session-scoped and are removed automatically on disconnect
+- Watches require exact three-segment `lease://` routes and reject every wildcard
 - `Notify` is a best-effort hint that lease state changed; clients still use `Query` or `Acquire` for authoritative state transitions
 - Disconnect cleanup and broker restart both clear lease ownership; clients MUST reacquire if they still need exclusivity
 - Atomic compare-and-swap via token (no blindupdate)
@@ -101,7 +126,7 @@ domains may still keep live server-side state where their contract requires it.
 
 **Constraints:**
 - PUBLISH is fire-and-forget (no response)
-- Subscriptions use wildcard patterns (`*`, `**`)
+- Subscriptions accept exact routes and flexible-depth whole-segment `*`/`**` patterns
 - Delivery is best-effort (may drop under backpressure)
 - Session-scoped (lost on disconnect)
 - Client-side multiplexing: one server subscription per pattern, multiple handlers per subscription_id
@@ -124,7 +149,9 @@ domains may still keep live server-side state where their contract requires it.
 **Constraints:**
 - Each request uses 16-byte UUID `correlation_id` for matching the live in-flight response
 - Multiple RPC requests MAY be in flight simultaneously (true multiplexing via correlation_id)
-- Workers register exact listening routes with explicit `max_concurrent` credit and receive REQUEST frames as async pushes
+- Workers register exact routes or whole-segment `*`/`**` patterns with explicit
+  `max_concurrent` credit shared across every matching concrete route, and receive
+  REQUEST frames as async pushes
 - The broker derives caller response routing from the source session; callers do not send a reply route
 - Successful REQUEST submission is silent; callers wait for RESPONSE or an error frame
 - Message type 304 is unsupported and MUST NOT be sent
@@ -155,6 +182,8 @@ domains may still keep live server-side state where their contract requires it.
 - COMMIT order defines the durable area and realm order across resources
 - Offset-based reads only; consumer cursors remain client-managed
 - Watermark tracks committed visible data; reads past it return an empty success
+- READ accepts its documented exact/area/realm patterns; live subscriptions
+  accept strict patterns capable of matching a three-segment Stream route
 
 ---
 
@@ -175,8 +204,12 @@ domains may still keep live server-side state where their contract requires it.
 
 **Constraints:**
 - Cron-style scheduling (precise timing, best-effort delivery)
-- Subscriptions are session-scoped
-- NOTIFY is best-effort (may be dropped under backpressure)
+- Exact and whole-segment `*`/`**` registration patterns are session-scoped and
+  limited to 128 wildcard registrations per session
+- NOTIFY carries `[subscription_id][exact_route][payload]` and is best-effort
+  (may be dropped under backpressure)
+- No matching registration or an entirely rejected handoff still advances the
+  occurrence
 
 ---
 

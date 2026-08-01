@@ -355,6 +355,7 @@ impl LeaseDomainRuntime<'_> {
                 | crate::domains::lease::protocol::LeaseResponse::Fenced { .. }
                 | crate::domains::lease::protocol::LeaseResponse::NotFound
                 | crate::domains::lease::protocol::LeaseResponse::Error(_)
+                | crate::domains::lease::protocol::LeaseResponse::InvalidSubscriptionRoute(_)
         )
     }
 }

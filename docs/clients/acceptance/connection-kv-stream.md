@@ -207,6 +207,21 @@
 
 **Note:** The specific error code for invalid range bounds is broker-defined within the 1xxx KV range.
 
+### AC-KV-012: Unified change-watch registration contract
+
+**MUST** implement KV subscriptions with the shared wildcard contract
+**Given:** An authenticated session
+**When:** The client subscribes or unsubscribes using exact, `*`, `**`, or
+wildcard-realm KV patterns capable of matching three segments
+**Then:**
+
+- Exact and overlapping registrations remain independent and notifications carry the exact concrete KV route
+- Duplicate original registration strings return the existing identifier, including at the 128-wildcard cap
+- Exact registrations still succeed at that cap; the 129th distinct wildcard returns 1013
+- Wrong schemes, empty segments, partial wildcards, and impossible depths return 1012 on both TCP and WebSocket
+- Matching and cleanup remain isolated by `RouteFamily`, and disconnect removes the session's registrations
+- KV mutations continue to reject wildcard routes
+
 ## Stream Domain
 
 ### AC-STREAM-001: Append to Stream
@@ -386,5 +401,20 @@
 
 - All `STREAM_SUBSCRIBE` subscriptions for that session are removed
 - No `STREAM_NOTIFY` frames are sent after disconnect
+
+### AC-STREAM-015: Unified live-registration validation and quota
+
+**MUST** apply the shared subscription contract to Stream live watches
+**Given:** An authenticated session
+**When:** The client registers exact, `*`, `**`, overlapping, or wildcard-realm
+patterns capable of matching a three-segment Stream route
+**Then:**
+
+- Notifications contain the matching identifier and exact concrete Stream route
+- Duplicate registration is idempotent and is checked before the 128-wildcard limit
+- Exact registration succeeds at the wildcard cap; the 129th distinct wildcard returns 2011
+- Invalid subscribe and unsubscribe patterns return 2010 on TCP and WebSocket
+- Matching and disconnect cleanup stay isolated by `RouteFamily`
+- Stream writes stay concrete; READ retains its separately documented pattern support
 
 ## Queue Domain

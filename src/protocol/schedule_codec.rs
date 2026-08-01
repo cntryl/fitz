@@ -236,7 +236,7 @@ fn parse_list(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, ScheduleFailu
 }
 
 /// Parse SUBSCRIBE message.
-/// Wire format: [string `exact_route`]
+/// Wire format: [string `route_pattern`]
 fn parse_subscribe(
     dec: &mut PayloadDecoder,
     route_family: RouteFamily,
@@ -259,7 +259,7 @@ fn parse_subscribe(
 }
 
 /// Parse UNSUBSCRIBE message.
-/// Wire format: [string `exact_route`]
+/// Wire format: [string `route_pattern`]
 fn parse_unsubscribe(
     dec: &mut PayloadDecoder,
     route_family: RouteFamily,
@@ -283,22 +283,24 @@ fn parse_unsubscribe(
 
 /// Encode an ephemeral `SCHEDULE_NOTIFY` (705) payload.
 ///
-/// Wire format: [u64 `subscription_id`][bytes payload]
+/// Wire format: [u64 `subscription_id`][string exact_route][bytes payload]
 /// Payload is the stored schedule payload handed to the live notify path. The
 /// notification itself is not durably replayed as a delivery artifact.
 #[must_use]
-pub fn encode_notify(subscription_id: u64, payload: &[u8]) -> Vec<u8> {
+pub fn encode_notify(subscription_id: u64, route: &str, payload: &[u8]) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
-    encode_notify_into(&mut enc, subscription_id, payload)
+    encode_notify_into(&mut enc, subscription_id, route, payload)
 }
 
 pub fn encode_notify_into(
     enc: &mut PayloadEncoder,
     subscription_id: u64,
+    route: &str,
     payload: &[u8],
 ) -> Vec<u8> {
     enc.clear();
     enc.put_u64(subscription_id);
+    enc.put_string(route);
     enc.put_bytes(payload);
     enc.finish()
 }
@@ -337,14 +339,21 @@ mod tests {
     #[test]
     fn should_encode_schedule_notify_with_subscription_id() {
         // Arrange
-        let payload = encode_notify(7, b"fire");
+        let payload = encode_notify(7, "schedule://acme/jobs/report/run", b"fire");
 
         // Act
 
         // Assert
         assert_eq!(&payload[0..8], &7u64.to_be_bytes());
-        assert_eq!(&payload[8..12], &(4u32).to_be_bytes());
-        assert_eq!(&payload[12..], b"fire");
+        let route = b"schedule://acme/jobs/report/run";
+        let route_len = u32::try_from(route.len()).expect("route length fits u32");
+        assert_eq!(&payload[8..12], &route_len.to_be_bytes());
+        assert_eq!(&payload[12..12 + route.len()], route);
+        assert_eq!(
+            &payload[12 + route.len()..16 + route.len()],
+            &(4u32).to_be_bytes()
+        );
+        assert_eq!(&payload[16 + route.len()..], b"fire");
     }
 
     #[test]

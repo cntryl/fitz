@@ -1,8 +1,8 @@
 use super::{
-    canonicalize_dispatch_route_str, extract_auth_route_for_domain, AuthorizationFailure,
-    AuthorizationPolicy, AuthorizationTargets, ChannelId, Cow, DispatchDomain,
-    DomainAuthorizationSpec, DomainDispatchPayload, DomainDispatchRequest, IngressDecision,
-    RuntimeIngress,
+    canonicalize_dispatch_route_str, extract_auth_route_for_domain,
+    is_subscription_registration_message, AuthorizationFailure, AuthorizationPolicy,
+    AuthorizationTargets, ChannelId, Cow, DispatchDomain, DomainAuthorizationSpec,
+    DomainDispatchPayload, DomainDispatchRequest, IngressDecision, RuntimeIngress,
 };
 use crate::observability as obs;
 use bytes::Bytes;
@@ -502,6 +502,16 @@ impl DomainFrameDispatcher<'_> {
                         "RPC request parse failed",
                     );
                 }
+                // No-auth brokers preserve domain-typed registration errors. Auth-required
+                // brokers must never dispatch a frame whose authorization target is invalid.
+                if !self.ingress.auth_required
+                    && is_subscription_registration_message(
+                        dispatch.domain,
+                        dispatch.msg_type.as_u16(),
+                    )
+                {
+                    return self.dispatch_domain_frame(dispatch).await;
+                }
                 return Err(IngressDecision::Close(format!(
                     "authorization parse failed: {error}"
                 )));
@@ -573,13 +583,17 @@ impl DomainFrameDispatcher<'_> {
             }
             AuthorizationPolicy::RouteScoped(access) => {
                 let target = Self::derive_auth_route_for_frame(domain, msg_type, payload)?
-                    .map(AuthorizationTargets::Single)
                     .ok_or_else(|| {
                         format!(
                             "{} route-scoped authorization route missing",
                             domain.as_str()
                         )
                     })?;
+                let target = if is_subscription_registration_message(domain, msg_type.as_u16()) {
+                    AuthorizationTargets::Registration(target)
+                } else {
+                    AuthorizationTargets::Single(target)
+                };
                 Ok((target, access))
             }
         }
