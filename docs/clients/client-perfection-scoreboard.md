@@ -2,6 +2,13 @@
 
 This document is the execution board for strict all-client completion.
 
+The shared CS-001–CS-017 suite proves the common protocol contract; it does not
+by itself prove operational readiness features such as explicit durability,
+managed leases, safe retry boundaries, reconnect defaults, heartbeat,
+observability, error ergonomics, or documentation truth. The independent
+four-client review is tracked in [four-client-parity-ledger.md](four-client-parity-ledger.md)
+and [four-client-parity-ledger.csv](four-client-parity-ledger.csv).
+
 ## Frozen Gate
 
 - Scope: fitz-go, fitz-ts, fitz-py, fitz-rs, fitz-dotnet.
