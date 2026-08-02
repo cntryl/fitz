@@ -25,7 +25,7 @@ Package publication, tags, and version changes are outside this ledger.
 | --- | --- |
 | TypeScript | `c432688f988ed3938bf61808f607893cb6f2bd7e` |
 | Go | `69d4786a484e0adb0b2c0c7146849578e8af5829` |
-| Rust | `9ac477d5976ececc8b586dea95acd71a472933e3` |
+| Rust | `4a535f51c3f0fd3daf86534d0787f48521d6b500` |
 | .NET | `b41d70ab242638a472a5d6dba83eb9a46a3e9efe` |
 
 These hashes identify the immutable inputs to the ledger. Hosted CI status is
