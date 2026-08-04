@@ -157,4 +157,5 @@ pub use projection::{QueueAdminSnapshot, QueueDeadLetterSnapshot, QueueInflightS
 pub use protocol::{
     QueueClientFrame, QueueClientNotification, QueueClientRequest, QueueClientResponse,
     QueueMessage, QueueNotification, QueueResponse, QueueSubscriptionMessage,
+    MAX_RESERVE_BATCH_SIZE,
 };

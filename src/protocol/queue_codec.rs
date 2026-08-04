@@ -115,8 +115,8 @@ pub fn encode_response(response: &QueueResponse) -> Vec<u8> {
             buf.put_u8(0); // status: success
             buf.put_u32(usize_to_u32_saturating(messages.len()));
             for routed in messages {
-                buf.put_u32(usize_to_u32_saturating(routed.route.len()));
-                buf.put_slice(routed.route.as_bytes());
+                buf.put_u32(usize_to_u32_saturating(routed.route.as_str().len()));
+                buf.put_slice(routed.route.as_str().as_bytes());
                 buf.put_u64(routed.message.id.as_u64());
                 buf.put_u64(routed.message.token);
                 buf.put_u32(usize_to_u32_saturating(routed.message.body.len()));
@@ -318,6 +318,12 @@ fn parse_reserve(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage,
                 payload[offset + 3],
             ]) as usize;
             offset += 4;
+            if size > crate::dispatch::wire::queue::MAX_RESERVE_BATCH_SIZE {
+                return Err(format!(
+                    "Queue reserve batch_size must be <= {}",
+                    crate::dispatch::wire::queue::MAX_RESERVE_BATCH_SIZE
+                ));
+            }
             Some(size)
         } else if has_batch_size == 0 {
             None
@@ -564,6 +570,27 @@ mod tests {
     }
 
     #[test]
+    fn should_reject_reserve_batch_above_maximum() {
+        // Arrange
+        let route = "queue://realm/area/test";
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&len_to_u32(route.len()).to_be_bytes());
+        payload.extend_from_slice(route.as_bytes());
+        payload.extend_from_slice(&30u64.to_be_bytes());
+        payload.push(1);
+        payload.extend_from_slice(&1025u32.to_be_bytes());
+
+        // Act
+        let result = parse_request(msg_type::RESERVE, RouteFamily::new(2), &payload);
+
+        // Assert
+        assert_eq!(
+            result.expect_err("oversized reserve batch should fail"),
+            "Queue reserve batch_size must be <= 1024"
+        );
+    }
+
+    #[test]
     fn should_reject_reserve_message_with_trailing_wait_seconds() {
         // Arrange
         let route = "queue://realm/area/test";
@@ -656,7 +683,7 @@ mod tests {
         // Arrange
         let response = QueueResponse::ReceivedRouted {
             messages: vec![crate::dispatch::wire::queue::RoutedReservedMessage {
-                route: "queue://acme/jobs/email".to_string(),
+                route: Route::new("queue://acme/jobs/email"),
                 message: ReservedMessage {
                     id: MessageId::new(1),
                     token: 999,

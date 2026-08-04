@@ -69,7 +69,7 @@ impl QueueKey {
 /// Reserved message paired with its concrete queue route.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoutedReservedMessage {
-    pub route: String,
+    pub route: Route,
     pub message: ReservedMessage,
 }
 

@@ -346,7 +346,7 @@ fn should_bound_wire_batch_preallocation_by_available_work() {
     harness.send(b"one");
 
     // Act
-    let reserved = harness.reserve(30, u32::MAX);
+    let reserved = harness.reserve(30, 1024);
 
     // Assert
     assert_eq!(reserved.len(), 1);

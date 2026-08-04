@@ -40,7 +40,7 @@ Response (status=1):
 [bytes]   route (concrete route or whole-segment wildcard pattern capable of matching 3 segments)
 [u64 BE]  lease_seconds
 [u8]      has_batch_size
-[u32 BE]  batch_size (if present)
+[u32 BE]  batch_size (if present, maximum 1024)
 [u8]      has_wait_seconds
 [u64 BE]  wait_seconds (if present)
 Response (status=0):
@@ -277,7 +277,7 @@ Every operation includes route:
 
 **`wait_seconds` behavior:**
 
-- If messages available: Return immediately (up to `batch_size`)
+- If messages available: Return immediately (up to `batch_size`, maximum 1024)
 - If no messages available:
   - `wait_seconds=0` or omitted: Return empty immediately
   - `wait_seconds>0`: Block up to `wait_seconds` waiting for message

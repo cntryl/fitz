@@ -88,6 +88,10 @@ impl StreamStore {
         filter: Option<&StreamFilterSet>,
     ) -> Result<(Vec<StreamReadItem>, ReadCursor), String> {
         let query = resource_page_query(params);
+        let route = crate::runtime::routing::Route::new(format!(
+            "stream://{}/{}/{}",
+            params.realm, params.area, params.resource
+        ));
 
         let txn = self
             .db
@@ -155,19 +159,13 @@ impl StreamStore {
                 resource_page_record_bytes,
                 update_resource_cursor,
                 |offset, _page_record| StreamReadItem::Filtered {
-                    route: format!(
-                        "stream://{}/{}/{}",
-                        params.realm, params.area, params.resource
-                    ),
+                    route: route.clone(),
                     offset,
                     reason: Some(StreamFilteredReason::ServerFilter),
                 },
                 |resource_offset, page_record| {
                     StreamReadItem::Event(StreamRecord {
-                        route: format!(
-                            "stream://{}/{}/{}",
-                            params.realm, params.area, params.resource
-                        ),
+                        route: route.clone(),
                         resource_offset,
                         area_offset: Some(page_record.area_offset),
                         realm_offset: Some(page_record.realm_offset),
@@ -314,19 +312,19 @@ impl StreamStore {
                 area_page_record_bytes,
                 update_area_cursor,
                 |offset, page_record| StreamReadItem::Filtered {
-                    route: format!(
+                    route: crate::runtime::routing::Route::new(format!(
                         "stream://{}/{}/{}",
                         params.realm, params.area, page_record.resource
-                    ),
+                    )),
                     offset,
                     reason: Some(StreamFilteredReason::ServerFilter),
                 },
                 |area_offset, page_record| {
                     StreamReadItem::Event(StreamRecord {
-                        route: format!(
+                        route: crate::runtime::routing::Route::new(format!(
                             "stream://{}/{}/{}",
                             params.realm, params.area, page_record.resource
-                        ),
+                        )),
                         resource_offset: page_record.resource_offset,
                         area_offset: Some(area_offset),
                         realm_offset: None,
@@ -473,19 +471,19 @@ impl StreamStore {
                 realm_page_record_bytes,
                 update_realm_cursor,
                 |offset, page_record| StreamReadItem::Filtered {
-                    route: format!(
+                    route: crate::runtime::routing::Route::new(format!(
                         "stream://{}/{}/{}",
                         realm, page_record.area, page_record.resource
-                    ),
+                    )),
                     offset,
                     reason: Some(StreamFilteredReason::ServerFilter),
                 },
                 |realm_offset, page_record| {
                     StreamReadItem::Event(StreamRecord {
-                        route: format!(
+                        route: crate::runtime::routing::Route::new(format!(
                             "stream://{}/{}/{}",
                             realm, page_record.area, page_record.resource
-                        ),
+                        )),
                         resource_offset: page_record.resource_offset,
                         area_offset: Some(page_record.area_offset),
                         realm_offset: Some(realm_offset),

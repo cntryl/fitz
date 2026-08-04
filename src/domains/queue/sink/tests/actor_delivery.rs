@@ -479,7 +479,7 @@ fn should_discover_durable_queue_routes_given_wildcard_reserve_after_sink_restar
 }
 
 #[test]
-fn should_bound_wildcard_reserve_capacity_given_maximum_batch_size() {
+fn should_reject_wildcard_reserve_above_maximum_batch_size() {
     // Arrange
     let family = RouteFamily::new(1);
     let queue_route = "queue://acme/cats/cat";
@@ -524,13 +524,17 @@ fn should_bound_wildcard_reserve_capacity_given_maximum_batch_size() {
         ),
     ))
     .expect("reserve with maximum batch size");
-    let response = receive_queue_frame(&worker_mailbox, "wildcard reserve response");
+    let response = receive_queue_frame(&worker_mailbox, "wildcard reserve error response");
 
     // Assert
+    let (code, message) =
+        crate::dispatch::protocol::error_codes::decode_error_body(response.payload.as_ref())
+            .expect("decode reserve batch size error");
     assert_eq!(
-        decode_routed_reserve_response(&response),
-        vec![(queue_route.to_string(), b"one".to_vec())]
+        code,
+        crate::dispatch::protocol::error_codes::queue::ERR_BAD_REQUEST
     );
+    assert_eq!(message, "Queue reserve batch_size must be <= 1024");
 }
 
 #[test]

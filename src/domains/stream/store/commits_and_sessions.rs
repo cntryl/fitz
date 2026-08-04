@@ -487,7 +487,9 @@ impl StreamStore {
                 })?;
                 let slot = u64_to_usize_saturating(resource_offset - page_start);
                 Ok(page.records.get(slot).map(|record| StreamRecord {
-                    route: format!("stream://{realm}/{area}/{resource}"),
+                    route: crate::runtime::routing::Route::new(format!(
+                        "stream://{realm}/{area}/{resource}"
+                    )),
                     resource_offset,
                     area_offset: Some(record.area_offset),
                     realm_offset: Some(record.realm_offset),

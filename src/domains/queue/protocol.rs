@@ -41,6 +41,9 @@ use serde::{Deserialize, Serialize};
 
 pub use super::core::{MessageId, QueueKey, ReservedMessage, RoutedReservedMessage};
 
+/// Maximum number of messages a client may reserve in one request.
+pub const MAX_RESERVE_BATCH_SIZE: usize = 1024;
+
 /// Queue domain messages
 ///
 /// All queue operations are asynchronous and return responses via
