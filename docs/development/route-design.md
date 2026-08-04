@@ -231,7 +231,11 @@ impl QueueKey {
 - **Token protocol**: Random u64 tokens prevent duplicate operations
 - **Optional DLQ**: Dead-letter queue after max_attempts threshold
 - **FIFO ordering**: Messages delivered in insertion order
-- **Concrete operations**: ENQUEUE, RESERVE, EXTEND, and COMPLETE routes are exact
+- **Concrete operations**: ENQUEUE, EXTEND, and COMPLETE routes are exact
+- **Reserve selectors**: RESERVE accepts an exact route or a strict whole-segment
+  `*`/`**` pattern capable of matching a concrete three-segment Queue route;
+  wildcard results include the matched concrete route, while exact results
+  retain the established route-less item encoding
 - **Pattern watches**: SUBSCRIBE and UNSUBSCRIBE accept exact routes or strict
   whole-segment `*`/`**` patterns capable of matching three segments
 

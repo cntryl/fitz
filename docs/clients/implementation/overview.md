@@ -121,6 +121,12 @@ If your language offers builders, wrap the shared `StreamFilterSet` and `StreamF
 
 The wire encoding for stream reads is fixed: `route`, `from_offset`, `limit`, optional `max_bytes`, then an optional raw `StreamFilterSet` blob. Clients SHOULD encode the filter blob with the server's versioned marker and big-endian length fields, and MUST surface `ERR_STREAM_FILTER_UNSUPPORTED_VERSION` and `ERR_STREAM_FILTER_INVALID_PAYLOAD` as typed request errors rather than transport failures.
 
+READ selectors are deliberately narrower than subscription patterns: accept only
+an exact `realm/area/resource`, area-wide `realm/area/*`, or realm-wide
+`realm/*/*` selector. Each returned event, filtered offset, or filtered range
+starts with its exact concrete route; preserve that route in the public result
+even when the request selector was exact.
+
 ---
 
 ## Architecture Patterns

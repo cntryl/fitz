@@ -79,7 +79,9 @@ all wildcards and has no wildcard quota.
 - Queue inflight token MUST match to complete or extend
 - FIFO ordering preserved within single reserve call
 - Duplicate reserves may violate FIFO (wait or use single-call pattern)
-- Operations use exact three-segment Queue routes; subscriptions accept patterns capable of matching that shape
+- ENQUEUE, EXTEND, and COMPLETE use exact three-segment Queue routes
+- RESERVE accepts either an exact route or a whole-segment pattern capable of matching that shape
+- Exact RESERVE items retain the route-less legacy encoding; wildcard RESERVE items carry their matched concrete route
 
 ---
 
@@ -568,9 +570,10 @@ When a single operation generates multiple responses:
 - Worker responses → RESPONSE frame(s), matched by correlation_id
 - Multiple RPC responses matched by correlation_id on same connection
   **Stream READ:**
-- Request → Response 1 (record stream)
-- Multiple records may arrive in single response or multiple frames
-- Broker MAY split large responses across multiple frames
+- Request → one response page containing zero or more route-prefixed items and
+  one cursor
+- Each event, filtered offset, and filtered range includes its exact concrete
+  three-segment route
 
 ### Reconnection & In-Flight Requests
 

@@ -12,13 +12,13 @@ struct DlqTransitionContext {
 }
 
 impl QueueActor {
-    pub(super) fn handle_inflight_expired(&mut self, id: MessageId) {
+    pub(super) fn handle_inflight_expired(&mut self, id: MessageId) -> bool {
         let Some(inflight) = self.load_expired_inflight(id) else {
-            return;
+            return false;
         };
         let now_epoch_ms = self.clock.now_epoch_ms();
         let Some((mut record, record_layout)) = self.load_redelivery_record(id, &inflight) else {
-            return;
+            return false;
         };
 
         let Some(next_attempts) = record.attempts.checked_add(1) else {
@@ -29,20 +29,20 @@ impl QueueActor {
                 "Queue delivery attempt counter exhausted during redelivery"
             );
             self.schedule_inflight_retry(id, &inflight);
-            return;
+            return false;
         };
         record.attempts = next_attempts;
         let Some(txn) = self.begin_redelivery_transaction(id, &inflight) else {
-            return;
+            return false;
         };
         let Some((has_split_record, has_body_key)) =
             self.inspect_redelivery_layout(&txn, id, &inflight)
         else {
-            return;
+            return false;
         };
 
         if self.should_move_to_dlq(record.attempts) {
-            self.handle_redelivery_dlq(
+            return self.handle_redelivery_dlq(
                 id,
                 &inflight,
                 &mut record,
@@ -53,7 +53,6 @@ impl QueueActor {
                     has_body_key,
                 },
             );
-            return;
         }
 
         if !self.persist_redelivery_attempt(
@@ -64,19 +63,21 @@ impl QueueActor {
             has_split_record,
             has_body_key,
         ) {
-            return;
+            return false;
         }
 
         Self::increment_counter(obs::METRIC_QUEUE_REDELIVERIES);
         self.inflight.remove(&id);
         self.finish_redelivery_retry(id, &inflight, &record, record_layout);
+        true
     }
 
     /// # Panics
     ///
     /// Panics only if the timer heap is internally inconsistent after a successful `peek`.
-    pub fn process_expired_timers(&mut self) {
+    pub fn process_expired_timers(&mut self) -> bool {
         let now = self.clock.now_instant();
+        let mut mutated = false;
 
         while let Some(Reverse(expiry)) = self.timers.peek() {
             if expiry.expires_at > now {
@@ -92,12 +93,13 @@ impl QueueActor {
                 }
             }
 
-            self.handle_inflight_expired(expiry.id);
+            mutated |= self.handle_inflight_expired(expiry.id);
         }
 
         if self.timers.is_empty() {
             self.next_expiration_deadline = now + Duration::from_hours(1);
         }
+        mutated
     }
 
     pub(super) fn schedule_inflight_retry(&mut self, id: MessageId, inflight: &Inflight) {
@@ -239,7 +241,7 @@ impl QueueActor {
         record: &mut QueueRecord,
         mut txn: cntryl_midge::Transaction,
         context: DlqTransitionContext,
-    ) {
+    ) -> bool {
         let dead_lettered_at_ms = context.now_epoch_ms;
         let index_plan = self.plan_index_mutation_for_unavailable_message(id);
         Self::prepare_dlq_record(record, dead_lettered_at_ms);
@@ -252,7 +254,7 @@ impl QueueActor {
             &mut txn,
             context.has_body_key,
         ) {
-            return;
+            return false;
         }
 
         if let Err(error) =
@@ -266,7 +268,7 @@ impl QueueActor {
                 "Failed to update queue indexes during DLQ transition"
             );
             self.schedule_inflight_retry(id, inflight);
-            return;
+            return false;
         }
 
         let update_start = Instant::now();
@@ -279,7 +281,7 @@ impl QueueActor {
                 "Failed to commit queue DLQ transition"
             );
             self.schedule_inflight_retry(id, inflight);
-            return;
+            return false;
         }
 
         Self::observe_elapsed_us(obs::METRIC_QUEUE_REDELIVERY_UPDATE_LATENCY, update_start);
@@ -307,6 +309,7 @@ impl QueueActor {
             "Message moved to queue dead letter state"
         );
         Self::increment_counter(obs::METRIC_QUEUE_DLQ_TRANSITIONS);
+        true
     }
 
     fn prepare_dlq_record(record: &mut QueueRecord, dead_lettered_at_ms: u64) {

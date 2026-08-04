@@ -11,6 +11,8 @@ use crate::runtime::{Actor, Context};
 
 type ReadyNotificationEvent = (crate::domains::queue::QueueKey, QueueReadyNotification);
 
+mod wildcard_receive;
+
 #[derive(Clone, Copy)]
 struct OperationRequestContext<'a> {
     envelope: &'a Envelope,
@@ -20,7 +22,7 @@ struct OperationRequestContext<'a> {
 
 struct OperationOutcome {
     response: crate::domains::queue::QueueResponse,
-    ready_notification: Option<ReadyNotificationEvent>,
+    ready_notifications: Vec<ReadyNotificationEvent>,
     mark_admin_snapshot_dirty: bool,
 }
 
@@ -526,7 +528,7 @@ impl QueueDomainCore {
             self.mark_fast_flush_dirty(route_family);
         }
 
-        if let Some((key, notification)) = outcome.ready_notification {
+        for (key, notification) in outcome.ready_notifications {
             self.route_queue_ready_notification(&key, notification);
         }
 
@@ -621,7 +623,7 @@ impl QueueDomainCore {
                     response: crate::domains::queue::QueueResponse::Error {
                         message: "InflightExpired is an internal message".to_string(),
                     },
-                    ready_notification: None,
+                    ready_notifications: Vec::new(),
                     mark_admin_snapshot_dirty: false,
                 }
             }
@@ -643,7 +645,7 @@ impl QueueDomainCore {
             Err(response) => {
                 return Some(OperationOutcome {
                     response,
-                    ready_notification: None,
+                    ready_notifications: Vec::new(),
                     mark_admin_snapshot_dirty: false,
                 });
             }
@@ -654,7 +656,7 @@ impl QueueDomainCore {
         })
         .map(|(response, notification)| OperationOutcome {
             response,
-            ready_notification: notification,
+            ready_notifications: notification.into_iter().collect(),
             mark_admin_snapshot_dirty: true,
         })
     }
@@ -668,25 +670,57 @@ impl QueueDomainCore {
         batch_size: Option<usize>,
         request_context: OperationRequestContext<'_>,
     ) -> Option<OperationOutcome> {
-        let key = match Self::queue_key_for_route(family_id, route) {
-            Ok(key) => key,
+        if let Ok(key) = Self::queue_key_for_route(family_id, route) {
+            return self
+                .with_actor_for_operation(&key, request_context, |actor| {
+                    actor.handle_receive_for_session(session_id, inflight_seconds, batch_size)
+                })
+                .map(|(response, notification)| OperationOutcome {
+                    response,
+                    ready_notifications: notification.into_iter().collect(),
+                    mark_admin_snapshot_dirty: true,
+                });
+        }
+
+        let pattern = match Self::wildcard_queue_selector(route) {
+            Ok(pattern) => pattern,
             Err(response) => {
                 return Some(OperationOutcome {
                     response,
-                    ready_notification: None,
+                    ready_notifications: Vec::new(),
                     mark_admin_snapshot_dirty: false,
                 });
             }
         };
+        Some(self.handle_wildcard_receive(
+            family_id,
+            &pattern,
+            session_id,
+            inflight_seconds,
+            batch_size,
+        ))
+    }
 
-        self.with_actor_for_operation(&key, request_context, |actor| {
-            actor.handle_receive_for_session(session_id, inflight_seconds, batch_size)
-        })
-        .map(|(response, notification)| OperationOutcome {
-            response,
-            ready_notification: notification,
-            mark_admin_snapshot_dirty: true,
-        })
+    fn wildcard_queue_selector(
+        route: &crate::runtime::routing::Route,
+    ) -> Result<crate::runtime::matcher::Pattern, crate::domains::queue::QueueResponse> {
+        if !route.as_str().contains('*') {
+            return Err(crate::domains::queue::QueueResponse::BadRequest {
+                reason: format!("invalid queue route: {}", route.as_str()),
+            });
+        }
+        let pattern = crate::runtime::matcher::compile_registration_pattern(
+            route.as_str(),
+            "queue",
+            crate::runtime::matcher::PatternDepth::CanMatch(3),
+        )
+        .map_err(|reason| crate::domains::queue::QueueResponse::BadRequest { reason })?;
+        if !pattern.is_wildcard() {
+            return Err(crate::domains::queue::QueueResponse::BadRequest {
+                reason: format!("invalid queue route: {}", route.as_str()),
+            });
+        }
+        Ok(pattern)
     }
 
     fn handle_extend_operation(
@@ -701,7 +735,7 @@ impl QueueDomainCore {
             Err(response) => {
                 return Some(OperationOutcome {
                     response,
-                    ready_notification: None,
+                    ready_notifications: Vec::new(),
                     mark_admin_snapshot_dirty: false,
                 });
             }
@@ -717,7 +751,7 @@ impl QueueDomainCore {
         })
         .map(|(response, notification)| OperationOutcome {
             response,
-            ready_notification: notification,
+            ready_notifications: notification.into_iter().collect(),
             mark_admin_snapshot_dirty: true,
         })
     }
@@ -736,7 +770,7 @@ impl QueueDomainCore {
             Err(response) => {
                 return Some(OperationOutcome {
                     response,
-                    ready_notification: None,
+                    ready_notifications: Vec::new(),
                     mark_admin_snapshot_dirty: false,
                 });
             }
@@ -747,7 +781,7 @@ impl QueueDomainCore {
         })
         .map(|(response, notification)| OperationOutcome {
             response,
-            ready_notification: notification,
+            ready_notifications: notification.into_iter().collect(),
             mark_admin_snapshot_dirty: true,
         })
     }
@@ -765,7 +799,7 @@ impl QueueDomainCore {
         F: FnOnce(&mut crate::domains::queue::QueueActor) -> crate::domains::queue::QueueResponse,
     {
         let actor_lock_start = Instant::now();
-        let (actor_handle, _) = match self.get_or_create_actor(key.clone()) {
+        let (actor_handle, _) = match self.get_or_create_actor(key) {
             Ok(actor) => actor,
             Err(message) => {
                 self.route_queue_recovery_error(
@@ -786,7 +820,11 @@ impl QueueDomainCore {
         let actor_exec_start = Instant::now();
         actor.process_due_work();
         let response = operation(&mut actor);
-        let notification = self.record_ready_state(key, actor.live_counts());
+        let counts = actor.live_counts();
+        if counts.total() > 0 {
+            self.known_queue_keys.lock().insert(key.clone());
+        }
+        let notification = self.record_ready_state(key, counts);
         self.observe_histogram_us(
             obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
             Self::u128_to_u64_saturating(actor_exec_start.elapsed().as_micros()),

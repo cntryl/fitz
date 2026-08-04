@@ -402,7 +402,7 @@ where
     FLoadDiscriminator: FnMut(u64, &R) -> Result<Option<String>, String>,
     FRecordBytes: FnMut(&R) -> usize,
     FUpdateCursor: FnMut(&mut ReadCursorState, u64, &R),
-    FFilteredItem: FnMut(u64) -> StreamReadItem,
+    FFilteredItem: FnMut(u64, &R) -> StreamReadItem,
     FEventItem: FnMut(u64, R) -> StreamReadItem,
 {
     let mut stop_scan = false;
@@ -432,7 +432,7 @@ where
             }
 
             update_cursor(state.cursor, offset, &record);
-            state.items.push(filtered_item(offset));
+            state.items.push(filtered_item(offset, &record));
             continue;
         }
 

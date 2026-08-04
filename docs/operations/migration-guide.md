@@ -37,6 +37,26 @@ Admin domain routes now require a concrete family path segment. Replace every
 domain-first paths return `404`. Route-family values are `u32` identifiers:
 wire and admin values above `u32::MAX` are rejected rather than clamped.
 
+### Routed Queue reserve and Stream read upgrade
+
+Existing concrete Queue RESERVE clients remain wire compatible: each item is
+still `[message_id][lease_token][body]`. Clients that send the new wildcard
+RESERVE form must decode each returned item as
+`[concrete_route][message_id][lease_token][body]` and use that route for EXTEND
+or COMPLETE. Stream READ now prefixes every event, filtered marker, and filtered
+range with `concrete_route`; mixed broker/client versions cannot decode Stream
+responses. The byte-exact response layouts are defined in
+[the Queue wire contract](../clients/spec/queue-rpc-kv.md) and
+[the Stream wire contract](../clients/spec/notice-stream.md).
+
+Existing Stream stores require an offline event export/replay into a fresh
+store, or an intentional clear and rebuild of persisted Stream state. The
+promotion-frontier generation marker changes from `0xD1` to `0xD2`; startup
+rejects `0xD1` with reset-required guidance before decoding or scanning any V1
+pages. Compact area/realm pages now require persisted route identity and the old
+route-less markers are rejected. Take and retain a pre-upgrade snapshot. To roll
+back, restore that snapshot and the prior broker/client versions together.
+
 ### Schedule delivery-mode client upgrade
 
 Upgrade every client Schedule codec atomically with the broker. CREATE entries

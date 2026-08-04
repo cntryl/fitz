@@ -401,6 +401,10 @@ pub struct RealmValue {
 
 #[derive(Debug, Clone)]
 pub struct CompactRealmPageRecord {
+    /// Concrete area identity.
+    pub area: String,
+    /// Concrete resource identity.
+    pub resource: String,
     pub area_offset: u64,
     pub resource_offset: u64,
     pub body: Bytes,
@@ -416,6 +420,8 @@ pub struct CompactRealmPageValue {
 /// Promotion-frontier area wildcard page. Bodies stay local to the area plane.
 #[derive(Debug, Clone)]
 pub struct CompactAreaPageRecord {
+    /// Concrete resource identity.
+    pub resource: String,
     pub resource_offset: u64,
     pub body: Bytes,
     pub metadata: Option<Bytes>,
@@ -451,14 +457,15 @@ pub struct CompressedCompactRealmPageValue {
 
 pub(super) const AREA_VALUE_V2_MARKER: [u8; 2] = [0, 0xA1];
 pub(super) const REALM_VALUE_V2_MARKER: [u8; 2] = [0, 0xB1];
-pub(super) const COMPACT_REALM_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xB2];
+pub(super) const COMPACT_REALM_PAGE_VALUE_V2_MARKER: [u8; 2] = [0, 0xB3];
 pub(super) const RESOURCE_VALUE_V2_MARKER: [u8; 2] = [0, 0x91];
 pub(super) const CANONICAL_RESOURCE_VALUE_V1_MARKER: [u8; 2] = [0, 0xC1];
 pub(super) const AREA_LOCATOR_VALUE_V1_MARKER: [u8; 2] = [0, 0xC2];
 pub(super) const REALM_LOCATOR_VALUE_V1_MARKER: [u8; 2] = [0, 0xC3];
 pub(super) const STREAM_LAYOUT_MARKER_VALUE_V1_MARKER: [u8; 2] = [0, 0xD1];
-pub(super) const COMPACT_AREA_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xE4];
-pub(super) const COMPRESSED_COMPACT_REALM_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xE8];
+pub(super) const STREAM_LAYOUT_MARKER_VALUE_V2_MARKER: [u8; 2] = [0, 0xD2];
+pub(super) const COMPACT_AREA_PAGE_VALUE_V2_MARKER: [u8; 2] = [0, 0xE5];
+pub(super) const COMPRESSED_COMPACT_REALM_PAGE_VALUE_V2_MARKER: [u8; 2] = [0, 0xE9];
 pub(super) const COMPACT_RESOURCE_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xEA];
 pub(super) const OPTIONAL_BYTES_ABSENT: u32 = u32::MAX;
 pub(super) const OPTIONAL_OFFSET_ABSENT: u64 = u64::MAX;

@@ -70,12 +70,15 @@ impl QueueDomainSink {
             queue_write_options,
             recovery_write_options,
         )?;
-        Ok(Self::new_with_storage(
+        let known_queue_keys = QueueDomainCore::inventory_existing_queue_keys(&store)?;
+        Ok(Self::new_with_storage_and_inventory(
             store,
             router,
             admin_read_model,
             queue_write_options,
             dedup_store,
+            known_queue_keys,
+            None,
         ))
     }
 
@@ -102,11 +105,46 @@ impl QueueDomainSink {
         queue_write_options: cntryl_midge::WriteOptions,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     ) -> Self {
+        let (known_queue_keys, inventory_error) =
+            match QueueDomainCore::inventory_existing_queue_keys(&store) {
+                Ok(keys) => (keys, None),
+                Err(error) => {
+                    tracing::warn!(
+                        domain = "queue",
+                        error = %error,
+                        "Queue inventory unavailable during infallible sink construction"
+                    );
+                    (HashSet::new(), Some(error))
+                }
+            };
+        Self::new_with_storage_and_inventory(
+            store,
+            router,
+            admin_read_model,
+            queue_write_options,
+            dedup_store,
+            known_queue_keys,
+            inventory_error,
+        )
+    }
+
+    fn new_with_storage_and_inventory(
+        store: crate::storage::FitzStorageEngine,
+        router: Arc<Router>,
+        admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
+        queue_write_options: cntryl_midge::WriteOptions,
+        dedup_store: Arc<crate::utils::idempotency::DedupStore>,
+        known_queue_keys: HashSet<crate::domains::queue::QueueKey>,
+        inventory_error: Option<String>,
+    ) -> Self {
         let core = Arc::new(QueueDomainCore {
             store,
             queue_write_options,
             dedup_store,
             actors: Mutex::new(HashMap::new()),
+            known_queue_keys: Mutex::new(known_queue_keys),
+            inventory_error: Mutex::new(inventory_error),
+            wildcard_reserve_sequence: AtomicU64::new(0),
             families: Mutex::new(HashMap::new()),
             next_sub_id: AtomicU64::new(1),
             ready_states: Mutex::new(HashMap::new()),
@@ -185,6 +223,11 @@ impl QueueDomainSink {
     }
 
     #[cfg(test)]
+    pub(super) fn set_inventory_error_for_tests(&self, error: impl Into<String>) {
+        *self.core.inventory_error.lock() = Some(error.into());
+    }
+
+    #[cfg(test)]
     pub(crate) fn panic_actor_for_tests(&self) {
         let _ = self
             .actor
@@ -204,6 +247,35 @@ impl QueueDomainSink {
     #[cfg(test)]
     pub(super) fn actors_are_empty_for_tests(&self) -> bool {
         self.core.actors.lock().is_empty()
+    }
+
+    #[cfg(test)]
+    pub(super) fn known_queue_count_for_tests(&self) -> usize {
+        self.core.known_queue_keys.lock().len()
+    }
+
+    #[cfg(test)]
+    pub(super) fn known_queue_contains_for_tests(
+        &self,
+        key: &crate::domains::queue::QueueKey,
+    ) -> bool {
+        self.core.known_queue_keys.lock().contains(key)
+    }
+
+    #[cfg(test)]
+    pub(super) fn install_actor_for_tests(
+        &self,
+        key: crate::domains::queue::QueueKey,
+        actor: crate::domains::queue::QueueActor,
+    ) {
+        self.core.known_queue_keys.lock().insert(key.clone());
+        self.core.actors.lock().insert(
+            key,
+            WarmQueueActor {
+                actor: Arc::new(Mutex::new(actor)),
+                last_used: Instant::now(),
+            },
+        );
     }
 
     #[cfg(test)]
@@ -256,6 +328,11 @@ impl QueueDomainSink {
     #[cfg(test)]
     pub(super) fn dirty_fast_flush_is_empty_for_tests(&self) -> bool {
         self.core.dirty_fast_flush_families.lock().is_empty()
+    }
+
+    #[cfg(test)]
+    pub(super) fn clear_dirty_fast_flush_for_tests(&self) {
+        self.core.dirty_fast_flush_families.lock().clear();
     }
 
     #[cfg(test)]

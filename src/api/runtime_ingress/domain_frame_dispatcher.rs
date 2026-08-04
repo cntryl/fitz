@@ -1,8 +1,9 @@
 use super::{
     canonicalize_dispatch_route_str, extract_auth_route_for_domain,
-    is_subscription_registration_message, AuthorizationFailure, AuthorizationPolicy,
-    AuthorizationTargets, ChannelId, Cow, DispatchDomain, DomainAuthorizationSpec,
-    DomainDispatchPayload, DomainDispatchRequest, IngressDecision, RuntimeIngress,
+    is_pattern_authorization_target, is_subscription_registration_message, AuthorizationFailure,
+    AuthorizationPolicy, AuthorizationTargets, ChannelId, Cow, DispatchDomain,
+    DomainAuthorizationSpec, DomainDispatchPayload, DomainDispatchRequest, IngressDecision,
+    RuntimeIngress,
 };
 use crate::observability as obs;
 use bytes::Bytes;
@@ -589,7 +590,11 @@ impl DomainFrameDispatcher<'_> {
                             domain.as_str()
                         )
                     })?;
-                let target = if is_subscription_registration_message(domain, msg_type.as_u16()) {
+                let target = if is_pattern_authorization_target(
+                    domain,
+                    msg_type.as_u16(),
+                    target.as_ref(),
+                ) {
                     AuthorizationTargets::Registration(target)
                 } else {
                     AuthorizationTargets::Single(target)

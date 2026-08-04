@@ -260,9 +260,10 @@ impl QueueActor {
     /// # Panics
     ///
     /// Panics only if the delayed heap is internally inconsistent after a successful `peek`.
-    pub fn process_delayed_messages(&mut self) {
+    pub fn process_delayed_messages(&mut self) -> bool {
         let now = self.clock.now_instant();
         let was_empty = self.ready_count == 0;
+        let mut mutated = false;
 
         while let Some(Reverse(delayed)) = self.delayed.peek() {
             if delayed.visible_at > now {
@@ -279,6 +280,7 @@ impl QueueActor {
                 self.next_delayed_deadline = now + Duration::from_secs(1);
                 break;
             }
+            mutated = true;
         }
 
         // If no more delayed messages, set deadline to far future
@@ -289,18 +291,22 @@ impl QueueActor {
         if was_empty && self.ready_count > 0 {
             self.needs_wake_waiters = true;
         }
+        mutated
     }
 
     /// Process only the timer and delayed-message work that is actually due.
-    pub fn process_due_work(&mut self) {
+    pub fn process_due_work(&mut self) -> bool {
         let now = self.clock.now_instant();
+        let mut mutated = false;
 
         if now >= self.next_expiration_deadline {
-            self.process_expired_timers();
+            mutated |= self.process_expired_timers();
         }
 
         if now >= self.next_delayed_deadline {
-            self.process_delayed_messages();
+            mutated |= self.process_delayed_messages();
         }
+
+        mutated
     }
 }

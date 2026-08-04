@@ -82,9 +82,17 @@ pub(super) fn extract_auth_route_for_domain(
         .and_then(|route| {
             route
                 .map(|route| {
-                    if let Some(depth) = subscription_registration_depth(domain, msg_type) {
+                    let route = canonicalize_dispatch_route_str(domain, route)?;
+                    if is_pattern_authorization_target(domain, msg_type, route.as_ref()) {
+                        let depth =
+                            pattern_authorization_depth(domain, msg_type).ok_or_else(|| {
+                                format!(
+                                    "{} message {msg_type} pattern authorization depth missing",
+                                    domain.as_str()
+                                )
+                            })?;
                         let compiled = crate::runtime::matcher::compile_registration_pattern(
-                            route,
+                            route.as_ref(),
                             domain.as_str(),
                             depth,
                         )?;
@@ -93,9 +101,9 @@ pub(super) fn extract_auth_route_for_domain(
                                 "Lease subscription route must not contain wildcards".to_string()
                             );
                         }
-                        return Ok(Cow::Borrowed(route));
+                        return Ok(route);
                     }
-                    canonicalize_dispatch_route_str(domain, route)
+                    Ok(route)
                 })
                 .transpose()
         })
@@ -103,6 +111,32 @@ pub(super) fn extract_auth_route_for_domain(
 
 pub(super) fn is_subscription_registration_message(domain: DispatchDomain, msg_type: u16) -> bool {
     subscription_registration_depth(domain, msg_type).is_some()
+}
+
+pub(super) fn is_pattern_authorization_target(
+    domain: DispatchDomain,
+    msg_type: u16,
+    target: &str,
+) -> bool {
+    is_subscription_registration_message(domain, msg_type)
+        || (matches!(
+            (domain, msg_type),
+            (DispatchDomain::Queue, 202) | (DispatchDomain::Stream, 604)
+        ) && target.contains('*'))
+}
+
+fn pattern_authorization_depth(
+    domain: DispatchDomain,
+    msg_type: u16,
+) -> Option<crate::runtime::matcher::PatternDepth> {
+    use crate::runtime::matcher::PatternDepth;
+
+    match (domain, msg_type) {
+        (DispatchDomain::Queue, 202) | (DispatchDomain::Stream, 604) => {
+            Some(PatternDepth::CanMatch(3))
+        }
+        _ => subscription_registration_depth(domain, msg_type),
+    }
 }
 
 fn subscription_registration_depth(

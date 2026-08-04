@@ -177,7 +177,8 @@ Clients **MUST** interpret error codes using this mapping.
 - **A single TLV value MUST NOT exceed 65535 bytes (≈64 KiB).** Large payloads **MUST** be chunked across multiple frames or operations; clients and servers **MUST NOT** rely on a single TLV value larger than 65535 bytes even when the frame size permits it.
   **Chunking notes:**
 - **RPC** supports explicit chunked responses (see AC-RPC-005).
-- **Stream** responses MAY be split across multiple frames or partial records.
+- **Stream READ** returns one bounded response page; clients request the next
+  page with the returned cursor and MUST NOT rely on implicit frame reassembly.
 - Other domains (e.g., KV, Queue) should use multiple logical operations or application-level chunking; clients MUST NOT rely on implicit TLV chunk reassembly in those domains.
   **Configuration:**
 - Server default: 1 MB (configurable via `BootConfig::max_frame_size`)

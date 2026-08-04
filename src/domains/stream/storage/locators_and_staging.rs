@@ -4,7 +4,7 @@ use super::{
     AreaCounterValue, AreaLocatorValue, CanonicalResourceValue, CompactRealmPageValue,
     CompressedCompactRealmPageValue, KeyPrefix, OffsetCounterValue, RealmCounterValue,
     RealmLocatorValue, ResourceMetaValue, WatermarkValue, AREA_LOCATOR_VALUE_V1_MARKER,
-    CANONICAL_RESOURCE_VALUE_V1_MARKER, COMPRESSED_COMPACT_REALM_PAGE_VALUE_V1_MARKER,
+    CANONICAL_RESOURCE_VALUE_V1_MARKER, COMPRESSED_COMPACT_REALM_PAGE_VALUE_V2_MARKER,
     OPTIONAL_BYTES_ABSENT, REALM_LOCATOR_VALUE_V1_MARKER,
 };
 use bytes::Bytes;
@@ -21,7 +21,7 @@ fn u32_to_usize(value: u32) -> usize {
 impl CompressedCompactRealmPageValue {
     #[must_use]
     pub fn is_encoded(bytes: &[u8]) -> bool {
-        bytes.starts_with(&COMPRESSED_COMPACT_REALM_PAGE_VALUE_V1_MARKER)
+        bytes.starts_with(&COMPRESSED_COMPACT_REALM_PAGE_VALUE_V2_MARKER)
     }
 
     #[must_use]
@@ -32,7 +32,7 @@ impl CompressedCompactRealmPageValue {
         let compressed_payload = compress_prepend_size(&compact_page.encode());
 
         let mut bytes = Vec::with_capacity(2 + compressed_payload.len());
-        bytes.extend_from_slice(&COMPRESSED_COMPACT_REALM_PAGE_VALUE_V1_MARKER);
+        bytes.extend_from_slice(&COMPRESSED_COMPACT_REALM_PAGE_VALUE_V2_MARKER);
         bytes.extend_from_slice(&compressed_payload);
         bytes
     }

@@ -371,7 +371,7 @@ mod tests {
     mod state_model;
 
     #[test]
-    fn should_return_error_given_legacy_layout_marker_during_actor_recovery() {
+    fn should_return_reset_error_given_previous_layout_marker_during_actor_recovery() {
         // Arrange
         let db = create_test_engine_with_cfs(vec![1]);
         let mut txn = db
@@ -379,7 +379,9 @@ mod tests {
             .expect("begin write tx");
         txn.put(
             encode_stream_layout_marker_key(),
-            StreamLayoutMarkerValue::new(StreamStorageLayout::LegacyCovering).encode(),
+            StreamLayoutMarkerValue::encode_previous_generation_for_tests(
+                StreamStorageLayout::PromotionFrontier,
+            ),
             None,
         )
         .expect("write legacy layout marker");
@@ -400,7 +402,7 @@ mod tests {
         let Err(error) = result else {
             panic!("actor recovery should surface layout mismatch");
         };
-        assert!(error.contains("ERR_STREAM_STORAGE_LAYOUT_MISMATCH"));
+        assert!(error.contains("ERR_STREAM_STORAGE_GENERATION_RESET_REQUIRED"));
     }
 
     #[test]

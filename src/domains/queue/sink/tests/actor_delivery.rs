@@ -66,6 +66,41 @@ fn queue_snapshot(
     sink.queue_snapshot_for_tests(family, queue_route)
 }
 
+fn decode_routed_reserve_response(frame: &FrameContext) -> Vec<(String, Vec<u8>)> {
+    let mut decoder =
+        crate::dispatch::protocol::payload_codec::PayloadDecoder::new(frame.payload.as_ref());
+    assert_eq!(decoder.get_u8().expect("reserve status"), 0);
+    let count = decoder.get_u32().expect("reserve count");
+    let mut items = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let route = decoder.get_string().expect("reserved route");
+        let _id = decoder.get_u64().expect("reserved message id");
+        let _token = decoder.get_u64().expect("reserved lease token");
+        let body = decoder.get_bytes().expect("reserved body").to_vec();
+        items.push((route, body));
+    }
+    assert!(
+        decoder.is_complete(),
+        "reserve response should be fully consumed"
+    );
+    items
+}
+
+fn decode_concrete_reserve_response(frame: &FrameContext) -> Vec<Vec<u8>> {
+    let mut decoder =
+        crate::dispatch::protocol::payload_codec::PayloadDecoder::new(frame.payload.as_ref());
+    assert_eq!(decoder.get_u8().expect("reserve status"), 0);
+    let count = decoder.get_u32().expect("reserve count");
+    let mut items = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let _id = decoder.get_u64().expect("message ID");
+        let _token = decoder.get_u64().expect("lease token");
+        items.push(decoder.get_bytes().expect("message body").to_vec());
+    }
+    assert!(decoder.is_complete());
+    items
+}
+
 fn seed_dead_letter(
     store: Arc<cntryl_midge::Engine>,
     key: &crate::domains::queue::QueueKey,
@@ -112,6 +147,137 @@ fn persisted_dead_letter_count(
 }
 
 #[test]
+fn should_report_due_work_mutation_when_total_count_is_unchanged() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let key = crate::domains::queue::QueueKey {
+        family,
+        realm: "acme".to_string(),
+        area: "jobs".to_string(),
+        resource: "dead".to_string(),
+    };
+    let clock = DlqSeedClock::new();
+    let mut actor = crate::domains::queue::QueueActor::with_clock(
+        family,
+        key,
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        Box::new(clock.clone()),
+        Some(1),
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    assert!(matches!(
+        actor.handle_send(bytes::Bytes::from_static(b"body"), None),
+        crate::domains::queue::QueueResponse::Sent { .. }
+    ));
+    assert!(matches!(
+        actor.handle_receive_for_session(7, 1, Some(1)),
+        crate::domains::queue::QueueResponse::Received { .. }
+    ));
+    let before = actor.live_counts();
+    clock.advance(Duration::from_secs(2));
+
+    // Act
+    let mutated = actor.process_due_work();
+    let after = actor.live_counts();
+
+    // Assert
+    assert!(mutated);
+    assert_eq!(before.total(), after.total());
+    assert_eq!(after.dead_letters, 1);
+}
+
+#[test]
+fn should_preserve_legacy_wire_shape_given_concrete_queue_reserve() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let sender_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let worker_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+    let sender_mailbox = Arc::new(Mailbox::new(8));
+    let worker_mailbox = Arc::new(Mailbox::new(8));
+    let router = Arc::new(Router::new());
+    router.register(sender_address.clone(), sender_mailbox.clone());
+    router.register(worker_address.clone(), worker_mailbox.clone());
+    let sink = new_queue_domain_sink(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+        cntryl_midge::WriteOptions::buffered(),
+    );
+    sink.deliver(Envelope::from_route(
+        sender_address,
+        queue_address.clone(),
+        FrameContext::new(
+            7,
+            ChannelId::Pub,
+            MessageType::new(200),
+            encode_queue_send("acme/cats/cat", b"body"),
+            family,
+        ),
+    ))
+    .expect("enqueue queue message");
+    let _response = receive_queue_frame(&sender_mailbox, "enqueue response");
+
+    // Act
+    sink.deliver(Envelope::from_route(
+        worker_address,
+        queue_address,
+        FrameContext::new(
+            8,
+            ChannelId::Pub,
+            MessageType::new(202),
+            encode_queue_reserve("acme/cats/cat", 30, 1),
+            family,
+        ),
+    ))
+    .expect("reserve concrete queue message");
+    let response = receive_queue_frame(&worker_mailbox, "reserve response");
+
+    // Assert
+    assert_eq!(
+        decode_concrete_reserve_response(&response),
+        vec![b"body".to_vec()]
+    );
+}
+
+#[test]
+fn should_retain_queue_identity_when_dead_letter_actor_is_evicted() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let queue_route = "queue://acme/jobs/dead";
+    let key = crate::domains::queue::QueueKey {
+        family,
+        realm: "acme".to_string(),
+        area: "jobs".to_string(),
+        resource: "dead".to_string(),
+    };
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    seed_dead_letter(store.clone(), &key);
+    let actor = crate::domains::queue::QueueActor::new(
+        family,
+        key.clone(),
+        store.clone(),
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    let sink = new_queue_domain_sink(
+        store,
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+        cntryl_midge::WriteOptions::buffered(),
+    );
+    sink.install_actor_for_tests(key.clone(), actor);
+
+    // Act
+    sink.force_actor_idle_for_tests(family, queue_route);
+    sink.sweep_runtime_state_at(Instant::now());
+
+    // Assert
+    assert!(sink.actors_are_empty_for_tests());
+    assert!(sink.known_queue_contains_for_tests(&key));
+}
+
+#[test]
 fn should_route_queue_delivery_through_managed_actor() {
     // Arrange
     let family = RouteFamily::new(1);
@@ -135,6 +301,368 @@ fn should_route_queue_delivery_through_managed_actor() {
     assert!(!sink.is_actor_running());
     assert!(matches!(result, Err(DeliveryError::ActorStopped)));
     assert!(sink.actors_are_empty_for_tests());
+}
+
+#[test]
+fn should_reserve_concrete_items_given_wildcards_in_unknown_queue_segments() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let sender_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let worker_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+    let sender_mailbox = Arc::new(Mailbox::new(8));
+    let worker_mailbox = Arc::new(Mailbox::new(8));
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let router = Arc::new(Router::new());
+    router.register(sender_address.clone(), sender_mailbox.clone());
+    router.register(worker_address.clone(), worker_mailbox.clone());
+    let sink = new_queue_domain_sink(
+        store,
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+        cntryl_midge::WriteOptions::buffered(),
+    );
+    for (route, body) in [
+        ("queue://acme/cats/cat", b"acme".as_slice()),
+        ("queue://globex/cats/cat", b"globex".as_slice()),
+    ] {
+        sink.deliver(Envelope::from_route(
+            sender_address.clone(),
+            queue_address.clone(),
+            FrameContext::new(
+                7,
+                ChannelId::Pub,
+                MessageType::new(200),
+                encode_queue_send(route, body),
+                family,
+            ),
+        ))
+        .expect("enqueue concrete queue message");
+        let _response = receive_queue_frame(&sender_mailbox, "enqueue response");
+    }
+
+    // Act
+    sink.deliver(Envelope::from_route(
+        worker_address,
+        queue_address,
+        FrameContext::new(
+            8,
+            ChannelId::Pub,
+            MessageType::new(202),
+            encode_queue_reserve("queue://*/cats/*", 30, 2),
+            family,
+        ),
+    ))
+    .expect("reserve wildcard queue messages");
+    let response = receive_queue_frame(&worker_mailbox, "wildcard reserve response");
+    let mut items = decode_routed_reserve_response(&response);
+    items.sort();
+
+    // Assert
+    assert_eq!(
+        items,
+        vec![
+            ("queue://acme/cats/cat".to_string(), b"acme".to_vec()),
+            ("queue://globex/cats/cat".to_string(), b"globex".to_vec()),
+        ]
+    );
+}
+
+#[test]
+fn should_surface_startup_inventory_failure_to_wildcard_reserve() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let worker_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+    let worker_mailbox = Arc::new(Mailbox::new(8));
+    let router = Arc::new(Router::new());
+    router.register(worker_address.clone(), worker_mailbox.clone());
+    let sink = new_queue_domain_sink(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+        cntryl_midge::WriteOptions::buffered(),
+    );
+    sink.set_inventory_error_for_tests("inventory scan failed");
+
+    // Act
+    sink.deliver(Envelope::from_route(
+        worker_address,
+        queue_address,
+        FrameContext::new(
+            8,
+            ChannelId::Pub,
+            MessageType::new(202),
+            encode_queue_reserve("queue://*/cats/*", 30, 2),
+            family,
+        ),
+    ))
+    .expect("dispatch wildcard queue reserve");
+    let response = receive_queue_frame(&worker_mailbox, "wildcard inventory error response");
+
+    // Assert
+    let (code, message) =
+        crate::dispatch::protocol::error_codes::decode_error_body(response.payload.as_ref())
+            .expect("decode queue inventory error");
+    assert_eq!(
+        code,
+        crate::dispatch::protocol::error_codes::queue::ERR_BACKEND_ERROR
+    );
+    assert!(message.contains("Queue inventory unavailable: inventory scan failed"));
+}
+
+#[test]
+fn should_discover_durable_queue_routes_given_wildcard_reserve_after_sink_restart() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let sender_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+    let sender_mailbox = Arc::new(Mailbox::new(8));
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let first_router = Arc::new(Router::new());
+    first_router.register(sender_address.clone(), sender_mailbox.clone());
+    let first_sink = new_queue_domain_sink(
+        store.clone(),
+        first_router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+        cntryl_midge::WriteOptions::sync(),
+    );
+    first_sink
+        .deliver(Envelope::from_route(
+            sender_address,
+            queue_address.clone(),
+            FrameContext::new(
+                7,
+                ChannelId::Pub,
+                MessageType::new(200),
+                encode_queue_send("queue://acme/cats/cat", b"durable"),
+                family,
+            ),
+        ))
+        .expect("enqueue durable queue message");
+    let _response = receive_queue_frame(&sender_mailbox, "enqueue response");
+    first_sink.stop_actor_for_tests();
+    drop(first_sink);
+
+    let worker_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let worker_mailbox = Arc::new(Mailbox::new(8));
+    let second_router = Arc::new(Router::new());
+    second_router.register(worker_address.clone(), worker_mailbox.clone());
+    let second_sink = new_queue_domain_sink(
+        store,
+        second_router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+        cntryl_midge::WriteOptions::sync(),
+    );
+
+    // Act
+    second_sink
+        .deliver(Envelope::from_route(
+            worker_address,
+            queue_address,
+            FrameContext::new(
+                8,
+                ChannelId::Pub,
+                MessageType::new(202),
+                encode_queue_reserve("queue://*/cats/*", 30, 1),
+                family,
+            ),
+        ))
+        .expect("reserve durable wildcard queue message");
+    let response = receive_queue_frame(&worker_mailbox, "wildcard reserve response");
+
+    // Assert
+    assert_eq!(
+        decode_routed_reserve_response(&response),
+        vec![("queue://acme/cats/cat".to_string(), b"durable".to_vec())]
+    );
+}
+
+#[test]
+fn should_bound_wildcard_reserve_capacity_given_maximum_batch_size() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let queue_route = "queue://acme/cats/cat";
+    let sender_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let worker_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+    let sender_mailbox = Arc::new(Mailbox::new(8));
+    let worker_mailbox = Arc::new(Mailbox::new(8));
+    let router = Arc::new(Router::new());
+    router.register(sender_address.clone(), sender_mailbox.clone());
+    router.register(worker_address.clone(), worker_mailbox.clone());
+    let sink = new_queue_domain_sink(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+        cntryl_midge::WriteOptions::buffered(),
+    );
+    sink.deliver(Envelope::from_route(
+        sender_address,
+        queue_address.clone(),
+        FrameContext::new(
+            7,
+            ChannelId::Pub,
+            MessageType::new(200),
+            encode_queue_send(queue_route, b"one"),
+            family,
+        ),
+    ))
+    .expect("enqueue queue message");
+    let _response = receive_queue_frame(&sender_mailbox, "enqueue response");
+
+    // Act
+    sink.deliver(Envelope::from_route(
+        worker_address,
+        queue_address,
+        FrameContext::new(
+            8,
+            ChannelId::Pub,
+            MessageType::new(202),
+            encode_queue_reserve("queue://acme/cats/*", 30, u32::MAX),
+            family,
+        ),
+    ))
+    .expect("reserve with maximum batch size");
+    let response = receive_queue_frame(&worker_mailbox, "wildcard reserve response");
+
+    // Assert
+    assert_eq!(
+        decode_routed_reserve_response(&response),
+        vec![(queue_route.to_string(), b"one".to_vec())]
+    );
+}
+
+#[test]
+fn should_inventory_only_authoritative_non_empty_queue_rows() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let populated_key = crate::domains::queue::QueueKey {
+        family,
+        realm: "acme".to_string(),
+        area: "jobs".to_string(),
+        resource: "populated".to_string(),
+    };
+    let empty_key = crate::domains::queue::QueueKey {
+        family,
+        realm: "acme".to_string(),
+        area: "jobs".to_string(),
+        resource: "empty".to_string(),
+    };
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let mut populated = crate::domains::queue::QueueActor::new(
+        family,
+        populated_key.clone(),
+        store.clone(),
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    assert!(matches!(
+        populated.handle_send(Bytes::from_static(b"queued"), None),
+        crate::domains::queue::QueueResponse::Sent { .. }
+    ));
+    let _empty = crate::domains::queue::QueueActor::new(
+        family,
+        empty_key.clone(),
+        store.clone(),
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    let mut txn = store
+        .begin_tx(1, cntryl_midge::TransactionMode::ReadWrite)
+        .expect("begin foreign-domain write");
+    txn.put(
+        crate::utils::storage_key::prefixed_key(
+            "acme",
+            crate::utils::storage_key::DomainKeyspace::Kv,
+            b"foreign",
+        ),
+        vec![0; 1024],
+        None,
+    )
+    .expect("write foreign-domain row");
+    txn.commit(cntryl_midge::WriteOptions::buffered())
+        .expect("commit foreign-domain row");
+
+    // Act
+    let sink = new_queue_domain_sink(
+        store,
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+        cntryl_midge::WriteOptions::buffered(),
+    );
+
+    // Assert
+    assert_eq!(sink.known_queue_count_for_tests(), 1);
+    assert!(sink.known_queue_contains_for_tests(&populated_key));
+    assert!(!sink.known_queue_contains_for_tests(&empty_key));
+}
+
+#[test]
+fn should_mark_fast_flush_and_admin_dirty_when_wildcard_poll_only_expires_work() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let key = crate::domains::queue::QueueKey {
+        family,
+        realm: "acme".to_string(),
+        area: "jobs".to_string(),
+        resource: "expiring".to_string(),
+    };
+    let clock = DlqSeedClock::new();
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let mut actor = crate::domains::queue::QueueActor::with_clock_and_write_options(
+        family,
+        key.clone(),
+        store.clone(),
+        Box::new(clock.clone()),
+        Some(1),
+        crate::utils::idempotency::default_dedup_store(),
+        cntryl_midge::WriteOptions::best_effort(),
+    );
+    assert!(matches!(
+        actor.handle_send(Bytes::from_static(b"expire"), None),
+        crate::domains::queue::QueueResponse::Sent { .. }
+    ));
+    assert!(matches!(
+        actor.handle_receive_for_session(7, 1, Some(1)),
+        crate::domains::queue::QueueResponse::Received { .. }
+    ));
+    let worker_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let worker_mailbox = Arc::new(Mailbox::new(8));
+    let router = Arc::new(Router::new());
+    router.register(worker_address.clone(), worker_mailbox.clone());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = new_queue_domain_sink(
+        store,
+        router,
+        admin_read_model.clone(),
+        cntryl_midge::WriteOptions::best_effort(),
+    )
+    .with_fast_flush_interval(Some(Duration::from_millis(100)));
+    sink.install_actor_for_tests(key, actor);
+    sink.clear_dirty_fast_flush_for_tests();
+    clock.advance(Duration::from_secs(2));
+
+    // Act
+    sink.deliver(Envelope::from_route(
+        worker_address,
+        RouteAddress::new(family, Route::new("queue://inbound")),
+        FrameContext::new(
+            8,
+            ChannelId::Pub,
+            MessageType::new(202),
+            encode_queue_reserve("queue://acme/jobs/*", 30, 1),
+            family,
+        ),
+    ))
+    .expect("poll expiring queue");
+    let response = receive_queue_frame(&worker_mailbox, "wildcard reserve response");
+    sink.refresh_admin_snapshot_if_dirty();
+
+    // Assert
+    assert!(decode_routed_reserve_response(&response).is_empty());
+    assert!(sink.dirty_fast_flush_contains_family_for_tests(1));
+    assert_eq!(admin_read_model.queues(None)[0].messages_dead_lettered, 1);
 }
 
 #[test]
@@ -239,7 +767,11 @@ fn should_route_queue_cleanup_through_managed_actor() {
         ),
     ))
     .expect("reserve queue message");
-    let _reserve_ack = receive_queue_frame(&worker_mailbox, "reserve response");
+    let reserve_ack = receive_queue_frame(&worker_mailbox, "reserve response");
+    assert_eq!(
+        decode_concrete_reserve_response(&reserve_ack),
+        vec![b"email".to_vec()]
+    );
     assert_eq!(
         queue_snapshot(&sink, family, queue_route).messages_inflight,
         1

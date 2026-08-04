@@ -187,7 +187,8 @@ pub fn parse_queue_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
 }
 
 /// Extract message bodies from `QUEUE_RESERVE` response
-/// Wire format: [`u8 status`][`u32 count`][for each: `u64 id`, `u64 token`, `u32 body_len`, bytes body]
+/// Wire format for a concrete request: [`u8 status`][`u32 count`][for each:
+/// `u64 id`, `u64 token`, bytes body]
 pub fn extract_queue_messages(data: &[u8]) -> Result<Vec<Vec<u8>>, String> {
     if data.len() < 5 {
         return Err("Queue response data too short".to_string());

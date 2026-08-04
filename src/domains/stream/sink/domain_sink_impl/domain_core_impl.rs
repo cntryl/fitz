@@ -9,6 +9,12 @@ use super::{
     StreamRecord, StreamStorageLayout,
 };
 
+enum ReadScope {
+    Resource,
+    Area,
+    Realm,
+}
+
 impl StreamDomainCore {
     pub(in crate::domains::stream::sink) fn storage_layout(&self) -> StreamStorageLayout {
         self.stream_store.storage_layout()
@@ -422,7 +428,7 @@ impl StreamDomainCore {
                 encoder.put_u8(0);
                 Self::encode_stream_record(encoder, record);
             }
-            StreamReadItem::Filtered { offset, reason } => {
+            StreamReadItem::Filtered { offset, reason, .. } => {
                 encoder.put_u8(1);
                 encoder.put_u64(*offset);
                 Self::encode_stream_filtered_reason(encoder, reason.as_ref());
@@ -431,6 +437,7 @@ impl StreamDomainCore {
                 from_offset,
                 to_offset,
                 reason,
+                ..
             } => {
                 encoder.put_u8(2);
                 encoder.put_u64(*from_offset);
@@ -457,6 +464,7 @@ impl StreamDomainCore {
         let mut encoder = PayloadEncoder::new();
         encoder.put_u32(usize_to_u32_saturating(items.len()));
         for item in items {
+            encoder.put_string(item.route());
             Self::encode_stream_read_item(&mut encoder, item);
         }
         Self::encode_stream_cursor(&mut encoder, cursor);
@@ -527,64 +535,81 @@ impl StreamDomainCore {
     ) -> Result<Vec<u8>, String> {
         let parts =
             route_triplet(route.as_str()).ok_or_else(|| "invalid stream route".to_string())?;
+        let scope = if parts.realm.contains('*') {
+            None
+        } else if !parts.area.contains('*') && !parts.resource.contains('*') {
+            Some(ReadScope::Resource)
+        } else if !parts.area.contains('*') && parts.resource == "*" {
+            Some(ReadScope::Area)
+        } else if parts.area == "*" && parts.resource == "*" {
+            Some(ReadScope::Realm)
+        } else {
+            None
+        }
+        .ok_or_else(|| {
+            "stream READ selector must be realm/area/resource, realm/area/*, or realm/*/*"
+                .to_string()
+        })?;
 
         if limit == 0 {
-            let cursor = if parts.area == "*" && parts.resource == "*" {
-                crate::domains::stream::protocol::ReadCursor {
+            let cursor = match scope {
+                ReadScope::Realm => crate::domains::stream::protocol::ReadCursor {
                     last_resource_offset: 0,
                     last_area_offset: None,
                     last_realm_offset: Some(from_offset),
                     has_more: false,
-                }
-            } else if parts.resource == "*" {
-                crate::domains::stream::protocol::ReadCursor {
+                },
+                ReadScope::Area => crate::domains::stream::protocol::ReadCursor {
                     last_resource_offset: 0,
                     last_area_offset: Some(from_offset),
                     last_realm_offset: None,
                     has_more: false,
-                }
-            } else {
-                crate::domains::stream::protocol::ReadCursor {
+                },
+                ReadScope::Resource => crate::domains::stream::protocol::ReadCursor {
                     last_resource_offset: from_offset,
                     last_area_offset: None,
                     last_realm_offset: None,
                     has_more: false,
-                }
+                },
             };
             return Ok(Self::encode_stream_read_data(&[], &cursor));
         }
 
-        let read_response = if parts.area == "*" && parts.resource == "*" {
-            let (items, cursor) = self.stream_store.read_realm_with_filter(
-                family_id.as_u64(),
-                parts.realm,
-                from_offset,
-                limit,
-                max_bytes,
-                filter,
-            )?;
-            ReadResponse { items, cursor }
-        } else if parts.resource == "*" {
-            let (items, cursor) = self.stream_store.read_area_with_filter(
-                &crate::domains::stream::store::ReadAreaParams {
-                    family: family_id.as_u64(),
-                    realm: parts.realm,
-                    area: parts.area,
+        let read_response = match scope {
+            ReadScope::Realm => {
+                let (items, cursor) = self.stream_store.read_realm_with_filter(
+                    family_id.as_u64(),
+                    parts.realm,
                     from_offset,
                     limit,
                     max_bytes,
-                },
-                filter,
-            )?;
-            ReadResponse { items, cursor }
-        } else {
-            let key = Self::actor_key_for_route(family_id, route)?;
-            let actor = self.get_or_create_actor(&key)?;
-            let read_response =
-                actor
-                    .lock()
-                    .read_with_filter(from_offset, limit, max_bytes, filter)?;
-            read_response
+                    filter,
+                )?;
+                ReadResponse { items, cursor }
+            }
+            ReadScope::Area => {
+                let (items, cursor) = self.stream_store.read_area_with_filter(
+                    &crate::domains::stream::store::ReadAreaParams {
+                        family: family_id.as_u64(),
+                        realm: parts.realm,
+                        area: parts.area,
+                        from_offset,
+                        limit,
+                        max_bytes,
+                    },
+                    filter,
+                )?;
+                ReadResponse { items, cursor }
+            }
+            ReadScope::Resource => {
+                let key = Self::actor_key_for_route(family_id, route)?;
+                let actor = self.get_or_create_actor(&key)?;
+                let response =
+                    actor
+                        .lock()
+                        .read_with_filter(from_offset, limit, max_bytes, filter)?;
+                response
+            }
         };
 
         Ok(Self::encode_stream_read_data(

@@ -498,7 +498,16 @@ Response (status=1):
 [u8]      has_filter
 [u32 BE]  filter_len (if has_filter=1)
 [bytes]   filter (StreamFilterSet codec)
-Response: status byte + data
+Response (status=0):
+  [u8]     0
+  [u8]     has_session_id = 0
+  [u32 BE] data_len
+  [bytes]  read_page_data
+Response (status=1):
+  [u8]     1
+  [u32 BE] error_code
+  [u32 BE] error_len
+  [bytes]  error_msg
 ```
 
 **Optional filter:** Clients MAY include a `StreamFilterSet` to request server-side replay filtering. The filter is carried as an optional bytes field after `max_bytes`: a 1-byte presence flag, a u32 BE length when present, and the raw filter payload. The filter payload uses Fitz's custom fixed-field stream filter codec and is conjunctive: all clauses must match the record discriminator.
@@ -523,7 +532,55 @@ Clause payloads:
 
 Missing discriminators are treated as empty strings for matching. Unsupported marker/version and malformed payloads return typed stream errors instead of closing the connection.
 
-**Read page:** On success, the `data` payload is a count-prefixed sequence of tagged delivery items followed by the read cursor. `event` items contain committed records. `filtered` items contain the skipped committed offset and an optional reason. `filtered_range` may compact contiguous skipped offsets. Clients MAY expose the raw page or flatten event-only results, but they MUST preserve cursor progress.
+**Read page:** On success, the `data` payload is a count-prefixed sequence of
+route-prefixed tagged delivery items followed by the read cursor:
+
+```
+[u32 BE] item_count
+repeat item_count times:
+  [u32 BE] concrete_route_len
+  [bytes]  concrete_route
+  [u8]     item_tag
+  if item_tag = 0 (event):
+    [u64 BE] resource_offset
+    [u8]     has_area_offset
+    [u64 BE] area_offset (if has_area_offset=1)
+    [u8]     has_realm_offset
+    [u64 BE] realm_offset (if has_realm_offset=1)
+    [u32 BE] body_len
+    [bytes]  body
+    [u8]     has_metadata
+    [u32 BE] metadata_len (if has_metadata=1)
+    [bytes]  metadata (if has_metadata=1)
+    [u64 BE] created_at
+  if item_tag = 1 (filtered offset):
+    [u64 BE] offset
+    [u8]     reason
+  if item_tag = 2 (filtered range):
+    [u64 BE] from_offset
+    [u64 BE] to_offset
+    [u8]     reason
+[u64 BE] last_resource_offset
+[u8]     has_last_area_offset
+[u64 BE] last_area_offset (if has_last_area_offset=1)
+[u8]     has_last_realm_offset
+[u64 BE] last_realm_offset (if has_last_realm_offset=1)
+[u8]     has_more (0=false, 1=true)
+```
+
+The concrete route is always present, including for exact resource reads. Tag
+`0` is an event record, tag `1` is a filtered offset, and tag `2` is a filtered
+range. Filter reason `0` means unspecified, `1` means server filter, `2` means
+permission, and `3` means projection. Optional flags are exactly `0` or `1`.
+Clients MAY expose the raw page or flatten event-only results, but every public
+item and record MUST retain its concrete route and cursor progress. All fields
+above are inside the single length-prefixed `read_page_data` value; one READ
+request produces one response page.
+
+READ accepts only the hierarchy's ordered scopes:
+`stream://{realm}/{area}/{resource}`, `stream://{realm}/{area}/*`, and
+`stream://{realm}/*/*`. SUBSCRIBE remains a general whole-segment pattern and
+its NOTIFY payload also carries the matched concrete route.
 
 **Cursor:** `ReadCursor` is response metadata that advances with every committed offset the broker considers during replay, including filtered markers. It is not a durable broker-side resume token.
 

@@ -311,6 +311,7 @@ Stream guarantees:
 - exact resource replay suitable for rebuilding client-owned aggregate state or projections
 - replay from client-supplied offsets
 - wildcard area and realm reads gated by committed watermarks
+- a concrete three-segment route on every READ delivery item, including exact reads and filtered markers
 - monotonic committed offsets and watermarks
 - committed history is readable after restart
 

@@ -7,6 +7,24 @@ use super::super::{
 };
 
 impl QueueActor {
+    pub(crate) fn queue_key_from_authoritative_storage_key(
+        family: crate::runtime::routing::RouteFamily,
+        key: &[u8],
+    ) -> Option<QueueKey> {
+        let (_, suffix) = storage_key::split_domain_key(key, DomainKeyspace::Queue)?;
+        let (_, family_marker, message_id) = Self::split_authoritative_key(suffix)?;
+        if !matches!(
+            family_marker,
+            QUEUE_KEY_FAMILY_HEADER | QUEUE_KEY_FAMILY_LEGACY_MESSAGE
+        ) || message_id.len() != 8
+            || u64::from_be_bytes(message_id.try_into().ok()?) == 0
+        {
+            return None;
+        }
+
+        QueueKey::from_storage_key(family, key)
+    }
+
     pub(in crate::domains::queue::actor) fn split_authoritative_key(
         suffix: &[u8],
     ) -> Option<(&[u8], u8, &[u8])> {

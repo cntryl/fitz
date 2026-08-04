@@ -201,6 +201,7 @@ pub(crate) struct WireReadCursor {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct WireReadResponse {
+    pub(crate) routes: Vec<String>,
     pub(crate) records: Vec<WireStreamRecord>,
     pub(crate) cursor: WireReadCursor,
 }
@@ -245,8 +246,10 @@ pub(crate) fn parse_stream_read_response(frame: &[u8]) -> WireReadResponse {
     let data = decode_stream_ok_data(&payload);
     let mut dec = PayloadDecoder::new(&data);
     let count = dec.get_u32().expect("stream read record count") as usize;
+    let mut routes = Vec::with_capacity(count);
     let mut records = Vec::with_capacity(count);
     for _ in 0..count {
+        routes.push(dec.get_string().expect("stream read item route"));
         match dec.get_u8().expect("stream read item tag") {
             0 => records.push(decode_wire_stream_record(&mut dec)),
             1 => {
@@ -270,7 +273,11 @@ pub(crate) fn parse_stream_read_response(frame: &[u8]) -> WireReadResponse {
     };
     assert!(dec.is_complete(), "expected complete stream read payload");
 
-    WireReadResponse { records, cursor }
+    WireReadResponse {
+        routes,
+        records,
+        cursor,
+    }
 }
 
 pub(crate) fn parse_stream_last_response(frame: &[u8]) -> Option<WireStreamRecord> {

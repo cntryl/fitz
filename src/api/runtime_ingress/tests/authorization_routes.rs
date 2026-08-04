@@ -204,6 +204,76 @@ fn should_require_explicit_wildcard_policy_for_schedule_list_authorization() {
 }
 
 #[test]
+fn should_authorize_wildcard_read_selectors_as_pattern_coverage() {
+    // Arrange
+    let queue_payload = encode_queue_reserve("queue://*/cats/*", 30, 2);
+    let stream_frame = crate::benchkit::build_stream_read("stream://acme/*/*", 0);
+    let (_, stream_payload) = crate::benchkit::extract_single_tlv_field(&stream_frame);
+
+    // Act
+    let queue = RuntimeIngress::resolve_authorization_targets(
+        DispatchDomain::Queue,
+        MessageType::new(202),
+        queue_payload.as_ref(),
+        auth_spec(202).policy,
+    )
+    .expect("resolve wildcard queue reserve authorization");
+    let stream = RuntimeIngress::resolve_authorization_targets(
+        DispatchDomain::Stream,
+        MessageType::new(604),
+        stream_payload.as_ref(),
+        auth_spec(604).policy,
+    )
+    .expect("resolve wildcard stream read authorization");
+
+    // Assert
+    assert!(matches!(queue.0, AuthorizationTargets::Registration(_)));
+    assert_eq!(queue.1, Access::Write);
+    assert!(matches!(stream.0, AuthorizationTargets::Registration(_)));
+    assert_eq!(stream.1, Access::Read);
+}
+
+#[test]
+fn should_authorize_concrete_queue_reserve_and_stream_read_as_single_routes() {
+    // Arrange
+    let queue_payload = encode_queue_reserve("queue://acme/cats/orders", 30, 2);
+    let stream_frame = crate::benchkit::build_stream_read("stream://acme/cats/orders", 0);
+    let (_, stream_payload) = crate::benchkit::extract_single_tlv_field(&stream_frame);
+
+    // Act
+    let queue = RuntimeIngress::resolve_authorization_targets(
+        DispatchDomain::Queue,
+        MessageType::new(202),
+        queue_payload.as_ref(),
+        auth_spec(202).policy,
+    )
+    .expect("resolve concrete queue reserve authorization");
+    let stream = RuntimeIngress::resolve_authorization_targets(
+        DispatchDomain::Stream,
+        MessageType::new(604),
+        stream_payload.as_ref(),
+        auth_spec(604).policy,
+    )
+    .expect("resolve concrete stream read authorization");
+    let queue_route =
+        extract_auth_route_for_domain(DispatchDomain::Queue, 202, queue_payload.as_ref())
+            .expect("extract concrete queue reserve route")
+            .expect("queue reserve route");
+    let stream_route =
+        extract_auth_route_for_domain(DispatchDomain::Stream, 604, stream_payload.as_ref())
+            .expect("extract concrete stream read route")
+            .expect("stream read route");
+
+    // Assert
+    assert!(matches!(queue.0, AuthorizationTargets::Single(_)));
+    assert_eq!(queue.1, Access::Write);
+    assert!(matches!(stream.0, AuthorizationTargets::Single(_)));
+    assert_eq!(stream.1, Access::Read);
+    assert_eq!(queue_route, "queue://acme/cats/orders");
+    assert_eq!(stream_route, "stream://acme/cats/orders");
+}
+
+#[test]
 fn should_canonicalize_domain_identity_routes_for_authorization() {
     // Arrange
     let kv_begin = crate::benchkit::build_kv_begin("kv://acme/app/users/extra", 0, 0);
@@ -480,7 +550,7 @@ async fn should_close_auth_required_session_before_dispatch_given_unparseable_re
         &["notice://acme/allowed/**#read"],
     );
     ingress.on_open(session).await.unwrap();
-    let route = b"acme/forbidden/**";
+    let route = b"acme/for*bidden";
     let mut payload = Vec::with_capacity(4 + route.len());
     payload.extend_from_slice(
         &u32::try_from(route.len())

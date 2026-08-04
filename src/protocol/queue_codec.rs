@@ -111,6 +111,18 @@ pub fn encode_response(response: &QueueResponse) -> Vec<u8> {
                 buf.put_slice(&msg.body);
             }
         }
+        QueueResponse::ReceivedRouted { messages } => {
+            buf.put_u8(0); // status: success
+            buf.put_u32(usize_to_u32_saturating(messages.len()));
+            for routed in messages {
+                buf.put_u32(usize_to_u32_saturating(routed.route.len()));
+                buf.put_slice(routed.route.as_bytes());
+                buf.put_u64(routed.message.id.as_u64());
+                buf.put_u64(routed.message.token);
+                buf.put_u32(usize_to_u32_saturating(routed.message.body.len()));
+                buf.put_slice(&routed.message.body);
+            }
+        }
         QueueResponse::Extended | QueueResponse::Acked => {
             buf.put_u8(0); // status: success
                            // Empty response
@@ -626,7 +638,50 @@ mod tests {
         let encoded = encode_response(&response);
 
         // Assert
-        assert!(!encoded.is_empty());
+        assert_eq!(
+            encoded,
+            vec![
+                0, 0, 0, 0, 1, // status and count
+                0, 0, 0, 0, 0, 0, 0, 1, // message ID
+                0, 0, 0, 0, 0, 0, 3, 231, // lease token
+                0, 0, 0, 4, b't', b'e', b's', b't', // body
+            ]
+        );
+    }
+
+    #[test]
+    fn should_encode_concrete_route_in_routed_reserved_response() {
+        use crate::dispatch::wire::queue::ReservedMessage;
+
+        // Arrange
+        let response = QueueResponse::ReceivedRouted {
+            messages: vec![crate::dispatch::wire::queue::RoutedReservedMessage {
+                route: "queue://acme/jobs/email".to_string(),
+                message: ReservedMessage {
+                    id: MessageId::new(1),
+                    token: 999,
+                    body: Bytes::from_static(b"test"),
+                    inflight_seconds: 30,
+                    attempts: 1,
+                },
+            }],
+        };
+
+        // Act
+        let encoded = encode_response(&response);
+        let mut decoder = crate::protocol::payload_codec::PayloadDecoder::new(&encoded);
+
+        // Assert
+        assert_eq!(decoder.get_u8().expect("status"), 0);
+        assert_eq!(decoder.get_u32().expect("lease count"), 1);
+        assert_eq!(
+            decoder.get_string().expect("concrete route"),
+            "queue://acme/jobs/email"
+        );
+        assert_eq!(decoder.get_u64().expect("message id"), 1);
+        assert_eq!(decoder.get_u64().expect("lease token"), 999);
+        assert_eq!(decoder.get_bytes().expect("body").as_ref(), b"test");
+        assert!(decoder.is_complete());
     }
 
     #[test]

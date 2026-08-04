@@ -383,6 +383,8 @@ fn should_roundtrip_compact_realm_page_value() {
     let value = CompactRealmPageValue {
         records: vec![
             CompactRealmPageRecord {
+                area: "events".to_string(),
+                resource: "orders".to_string(),
                 area_offset: 11,
                 resource_offset: 42,
                 body: Bytes::from("body"),
@@ -390,6 +392,8 @@ fn should_roundtrip_compact_realm_page_value() {
                 created_at: 123,
             },
             CompactRealmPageRecord {
+                area: "events".to_string(),
+                resource: "audits".to_string(),
                 area_offset: 12,
                 resource_offset: 43,
                 body: Bytes::from("body-2"),
@@ -406,6 +410,8 @@ fn should_roundtrip_compact_realm_page_value() {
     // Assert
     assert_eq!(decoded.records.len(), 2);
     assert_eq!(decoded.records[0].area_offset, 11);
+    assert_eq!(decoded.records[0].area, "events");
+    assert_eq!(decoded.records[0].resource, "orders");
     assert_eq!(decoded.records[0].resource_offset, 42);
     assert_eq!(decoded.records[0].body, Bytes::from("body"));
     assert_eq!(decoded.records[0].metadata, Some(Bytes::from("meta")));
@@ -419,8 +425,8 @@ fn should_roundtrip_compact_realm_page_value() {
 fn should_return_error_given_truncated_compact_realm_page_value() {
     // Arrange
     let encoded = vec![
-        COMPACT_REALM_PAGE_VALUE_V1_MARKER[0],
-        COMPACT_REALM_PAGE_VALUE_V1_MARKER[1],
+        COMPACT_REALM_PAGE_VALUE_V2_MARKER[0],
+        COMPACT_REALM_PAGE_VALUE_V2_MARKER[1],
         1,
         0,
         0,
@@ -432,7 +438,7 @@ fn should_return_error_given_truncated_compact_realm_page_value() {
 
     // Assert
     let error = result.expect_err("truncated compact realm page should fail to decode");
-    assert!(error.contains("record header truncated"));
+    assert!(error.contains("route identity length truncated"));
 }
 
 #[test]
@@ -441,12 +447,14 @@ fn should_roundtrip_compact_area_page_value() {
     let value = CompactAreaPageValue {
         records: vec![
             CompactAreaPageRecord {
+                resource: "orders".to_string(),
                 resource_offset: 42,
                 body: Bytes::from("body"),
                 metadata: Some(Bytes::from("meta")),
                 created_at: 123,
             },
             CompactAreaPageRecord {
+                resource: "audits".to_string(),
                 resource_offset: 43,
                 body: Bytes::from("body-2"),
                 metadata: None,
@@ -462,6 +470,7 @@ fn should_roundtrip_compact_area_page_value() {
     // Assert
     assert_eq!(decoded.records.len(), 2);
     assert_eq!(decoded.records[0].resource_offset, 42);
+    assert_eq!(decoded.records[0].resource, "orders");
     assert_eq!(decoded.records[0].body, Bytes::from("body"));
     assert_eq!(decoded.records[0].metadata, Some(Bytes::from("meta")));
     assert_eq!(decoded.records[1].resource_offset, 43);
@@ -513,6 +522,8 @@ fn should_roundtrip_compressed_compact_realm_page_value() {
     let value = CompressedCompactRealmPageValue {
         records: vec![
             CompactRealmPageRecord {
+                area: "events".to_string(),
+                resource: "orders".to_string(),
                 area_offset: 11,
                 resource_offset: 42,
                 body: Bytes::from("body"),
@@ -520,6 +531,8 @@ fn should_roundtrip_compressed_compact_realm_page_value() {
                 created_at: 123,
             },
             CompactRealmPageRecord {
+                area: "events".to_string(),
+                resource: "audits".to_string(),
                 area_offset: 12,
                 resource_offset: 43,
                 body: Bytes::from("body-2"),

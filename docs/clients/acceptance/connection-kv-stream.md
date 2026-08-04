@@ -250,6 +250,11 @@ wildcard-realm KV patterns capable of matching three segments
 - Server returns messages at offsets 1, 2
 - Messages are in order
 - Offset 0 is NOT included
+- Every returned item contains the exact concrete three-segment Stream route
+
+READ accepts only an exact `realm/area/resource` selector, an area-wide
+`realm/area/*` selector, or a realm-wide `realm/*/*` selector. Clients MUST
+reject or surface the broker rejection for partial and cross-realm selectors.
 
 ### AC-STREAM-003: Read Non-Existent Offset
 
@@ -327,6 +332,7 @@ wildcard-realm KV patterns capable of matching three segments
 **Then:**
 
 - Returned read page may contain `event`, `filtered`, or `filtered_range` items
+- Every item type contains the exact concrete three-segment Stream route
 - `filtered.offset` reflects the actual skipped committed offset
 - Event-only convenience APIs MAY flatten filtered items away, but they MUST preserve cursor semantics
 

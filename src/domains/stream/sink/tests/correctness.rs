@@ -138,3 +138,28 @@ fn should_reject_stream_begin_given_wildcard_resource_route() {
     );
     assert_eq!(context.sink.append_session_count(), 0);
 }
+
+#[test]
+fn should_reject_partial_and_cross_realm_stream_read_selectors() {
+    // Arrange
+    let context = setup_test_context();
+    let selectors = [
+        "stream://bench/*/orders",
+        "stream://*/events/*",
+        "stream://bench/**/*",
+        "stream://bench/events/**",
+    ];
+
+    // Act
+    let errors = selectors.map(|selector| {
+        let frame = build_stream_read(selector, 0);
+        let (msg_type, payload) = extract_single_tlv_field(&frame);
+        let response = request(&context, selector, msg_type, payload);
+        decode_stream_error_message(response.as_ref()).expect("invalid read selector error")
+    });
+
+    // Assert
+    assert!(errors.into_iter().all(|error| {
+        error == "stream READ selector must be realm/area/resource, realm/area/*, or realm/*/*"
+    }));
+}

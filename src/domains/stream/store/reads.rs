@@ -15,6 +15,27 @@ fn page_slot_offset(page_start: u64, slot: usize) -> u64 {
     page_start.saturating_add(usize_to_u64_saturating(slot))
 }
 
+fn resource_page_query(params: &ReadResourceParams) -> cntryl_midge::Query {
+    cntryl_midge::Query::new()
+        .start_key(Bytes::from(encode_compact_resource_page_key(
+            params.realm,
+            params.area,
+            params.resource,
+            StreamStore::page_start_offset(params.from_offset),
+        )))
+        .prefix(Bytes::from(
+            StreamStore::build_compact_resource_page_prefix(
+                params.realm,
+                params.area,
+                params.resource,
+            ),
+        ))
+        .limit(StreamStore::compact_page_query_limit(
+            params.from_offset,
+            params.limit,
+        ))
+}
+
 impl StreamStore {
     /// Read resource stream records
     ///
@@ -66,22 +87,7 @@ impl StreamStore {
         params: &ReadResourceParams,
         filter: Option<&StreamFilterSet>,
     ) -> Result<(Vec<StreamReadItem>, ReadCursor), String> {
-        let query = cntryl_midge::Query::new()
-            .start_key(Bytes::from(encode_compact_resource_page_key(
-                params.realm,
-                params.area,
-                params.resource,
-                Self::page_start_offset(params.from_offset),
-            )))
-            .prefix(Bytes::from(Self::build_compact_resource_page_prefix(
-                params.realm,
-                params.area,
-                params.resource,
-            )))
-            .limit(Self::compact_page_query_limit(
-                params.from_offset,
-                params.limit,
-            ));
+        let query = resource_page_query(params);
 
         let txn = self
             .db
@@ -148,12 +154,20 @@ impl StreamStore {
                 },
                 resource_page_record_bytes,
                 update_resource_cursor,
-                |offset| StreamReadItem::Filtered {
+                |offset, _page_record| StreamReadItem::Filtered {
+                    route: format!(
+                        "stream://{}/{}/{}",
+                        params.realm, params.area, params.resource
+                    ),
                     offset,
                     reason: Some(StreamFilteredReason::ServerFilter),
                 },
                 |resource_offset, page_record| {
                     StreamReadItem::Event(StreamRecord {
+                        route: format!(
+                            "stream://{}/{}/{}",
+                            params.realm, params.area, params.resource
+                        ),
                         resource_offset,
                         area_offset: Some(page_record.area_offset),
                         realm_offset: Some(page_record.realm_offset),
@@ -299,12 +313,20 @@ impl StreamStore {
                 },
                 area_page_record_bytes,
                 update_area_cursor,
-                |offset| StreamReadItem::Filtered {
+                |offset, page_record| StreamReadItem::Filtered {
+                    route: format!(
+                        "stream://{}/{}/{}",
+                        params.realm, params.area, page_record.resource
+                    ),
                     offset,
                     reason: Some(StreamFilteredReason::ServerFilter),
                 },
                 |area_offset, page_record| {
                     StreamReadItem::Event(StreamRecord {
+                        route: format!(
+                            "stream://{}/{}/{}",
+                            params.realm, params.area, page_record.resource
+                        ),
                         resource_offset: page_record.resource_offset,
                         area_offset: Some(area_offset),
                         realm_offset: None,
@@ -450,12 +472,20 @@ impl StreamStore {
                 },
                 realm_page_record_bytes,
                 update_realm_cursor,
-                |offset| StreamReadItem::Filtered {
+                |offset, page_record| StreamReadItem::Filtered {
+                    route: format!(
+                        "stream://{}/{}/{}",
+                        realm, page_record.area, page_record.resource
+                    ),
                     offset,
                     reason: Some(StreamFilteredReason::ServerFilter),
                 },
                 |realm_offset, page_record| {
                     StreamReadItem::Event(StreamRecord {
+                        route: format!(
+                            "stream://{}/{}/{}",
+                            realm, page_record.area, page_record.resource
+                        ),
                         resource_offset: page_record.resource_offset,
                         area_offset: Some(page_record.area_offset),
                         realm_offset: Some(realm_offset),

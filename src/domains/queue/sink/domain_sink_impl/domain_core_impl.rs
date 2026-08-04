@@ -1,7 +1,7 @@
 #[cfg(test)]
 use super::FrameContext;
 use super::{
-    Arc, Envelope, Instant, Mutex, QueueDomainCore, QueueLiveCounts, QueueNotification,
+    Arc, Envelope, HashSet, Instant, Mutex, QueueDomainCore, QueueLiveCounts, QueueNotification,
     QueueProjectionEntry, QueueProjectionState, QueueReadyNotification, WarmQueueActor,
     QUEUE_ACTOR_IDLE_TTL, QUEUE_DEDUP_SWEEP_INTERVAL, QUEUE_IDLE_SWEEP_INTERVAL,
 };
@@ -100,6 +100,79 @@ impl QueueDomainCore {
             "queue://{}/{}/{}",
             key.realm, key.area, key.resource
         ))
+    }
+
+    pub(in crate::domains::queue::sink) fn matching_queue_keys(
+        &self,
+        family: crate::runtime::routing::RouteFamily,
+        pattern: &crate::runtime::matcher::Pattern,
+    ) -> Vec<crate::domains::queue::QueueKey> {
+        let mut keys = self
+            .known_queue_keys
+            .lock()
+            .iter()
+            .filter(|key| key.family == family)
+            .filter(|key| pattern.matches(&Self::queue_ready_route(key)))
+            .cloned()
+            .collect::<Vec<_>>();
+        keys.sort_by(|left, right| {
+            (&left.realm, &left.area, &left.resource).cmp(&(
+                &right.realm,
+                &right.area,
+                &right.resource,
+            ))
+        });
+        keys
+    }
+
+    pub(in crate::domains::queue::sink) fn inventory_existing_queue_keys(
+        store: &crate::storage::FitzStorageEngine,
+    ) -> Result<HashSet<crate::domains::queue::QueueKey>, String> {
+        let families = store
+            .list_column_families()
+            .map_err(|error| format!("list queue inventory families failed: {error:?}"))?;
+        let mut known_queue_keys = HashSet::new();
+
+        for family in families {
+            if family.id() == 0 {
+                continue;
+            }
+            let route_family = crate::runtime::routing::RouteFamily::new(family.id());
+            let txn = store
+                .begin_tx(family.id(), cntryl_midge::TransactionMode::ReadOnly)
+                .map_err(|error| {
+                    format!(
+                        "queue inventory transaction failed: family={} error={error:?}",
+                        family.id()
+                    )
+                })?;
+            let rows = txn.scan(&cntryl_midge::Query::new()).map_err(|error| {
+                format!(
+                    "queue inventory scan failed: family={} error={error:?}",
+                    family.id()
+                )
+            })?;
+
+            for row in rows {
+                let (key, value) = row.map_err(|error| {
+                    format!(
+                        "queue inventory scan failed: family={} error={error:?}",
+                        family.id()
+                    )
+                })?;
+                drop(value);
+                if let Some(queue_key) =
+                    crate::domains::queue::QueueActor::queue_key_from_authoritative_storage_key(
+                        route_family,
+                        &key,
+                    )
+                {
+                    known_queue_keys.insert(queue_key);
+                }
+            }
+        }
+
+        Ok(known_queue_keys)
     }
 
     pub(in crate::domains::queue::sink) fn record_ready_state(
@@ -362,13 +435,12 @@ impl QueueDomainCore {
 
     pub(in crate::domains::queue::sink) fn get_or_create_actor(
         &self,
-        key: crate::domains::queue::QueueKey,
+        key: &crate::domains::queue::QueueKey,
     ) -> Result<(Arc<Mutex<crate::domains::queue::QueueActor>>, bool), String> {
         use std::collections::hash_map::Entry;
 
         let now = Instant::now();
-        let mut actors = self.actors.lock();
-        match actors.entry(key.clone()) {
+        match self.actors.lock().entry(key.clone()) {
             Entry::Occupied(mut entry) => {
                 entry.get_mut().last_used = now;
                 Ok((entry.get().actor.clone(), false))
@@ -377,7 +449,7 @@ impl QueueDomainCore {
                 let actor = Arc::new(Mutex::new(
                     crate::domains::queue::QueueActor::try_new_with_write_options(
                         key.family,
-                        key,
+                        key.clone(),
                         self.store.clone_inner(),
                         None,
                         self.dedup_store.clone(),
@@ -481,19 +553,17 @@ impl QueueDomainCore {
         let mut changed = false;
         let mut notifications = Vec::new();
         let mut removed_keys = Vec::new();
+        let mut empty_removed_keys = Vec::new();
+        let mut dirty_families = HashSet::new();
         let mut actors = self.actors.lock();
 
         actors.retain(|key, warm_actor| {
             let mut actor = warm_actor.actor.lock();
-            let ready_before = actor.ready_len();
-            let inflight_before = actor.inflight.len();
-            actor.process_due_work();
-            let ready_after = actor.ready_len();
-            let inflight_after = actor.inflight.len();
-            let counts = actor.live_counts();
-            if ready_before != ready_after || inflight_before != inflight_after {
+            if actor.process_due_work() {
                 changed = true;
+                dirty_families.insert(key.family);
             }
+            let counts = actor.live_counts();
 
             if let Some(notification) = self.record_ready_state(key, counts) {
                 notifications.push((key.clone(), notification));
@@ -505,6 +575,9 @@ impl QueueDomainCore {
             if !should_keep {
                 changed = true;
                 removed_keys.push(key.clone());
+                if counts.total() == 0 {
+                    empty_removed_keys.push(key.clone());
+                }
             }
             should_keep
         });
@@ -515,6 +588,15 @@ impl QueueDomainCore {
             for key in removed_keys {
                 ready_states.remove(&key);
             }
+        }
+        if !empty_removed_keys.is_empty() {
+            let mut known_queue_keys = self.known_queue_keys.lock();
+            for key in empty_removed_keys {
+                known_queue_keys.remove(&key);
+            }
+        }
+        for family in dirty_families {
+            self.mark_fast_flush_dirty(family);
         }
         if changed {
             self.mark_admin_snapshot_dirty();
@@ -595,7 +677,7 @@ impl QueueDomainCore {
         key: &crate::domains::queue::QueueKey,
         id: crate::domains::queue::MessageId,
     ) -> Result<bool, String> {
-        let (actor_handle, created_actor) = self.get_or_create_actor(key.clone())?;
+        let (actor_handle, created_actor) = self.get_or_create_actor(key)?;
         let result = {
             let mut actor = actor_handle.lock();
             actor.replay_dead_letter(id)
@@ -619,6 +701,7 @@ impl QueueDomainCore {
             if should_remove {
                 self.actors.lock().remove(key);
                 self.ready_states.lock().remove(key);
+                self.known_queue_keys.lock().remove(key);
                 self.mark_admin_snapshot_dirty();
             }
         }
@@ -636,7 +719,7 @@ impl QueueDomainCore {
         key: &crate::domains::queue::QueueKey,
         id: crate::domains::queue::MessageId,
     ) -> Result<bool, String> {
-        let (actor_handle, created_actor) = self.get_or_create_actor(key.clone())?;
+        let (actor_handle, created_actor) = self.get_or_create_actor(key)?;
         let result = {
             let mut actor = actor_handle.lock();
             actor.purge_dead_letter(id)
@@ -655,6 +738,7 @@ impl QueueDomainCore {
             if should_remove {
                 self.actors.lock().remove(key);
                 self.ready_states.lock().remove(key);
+                self.known_queue_keys.lock().remove(key);
                 self.mark_admin_snapshot_dirty();
             }
         }

@@ -39,7 +39,7 @@ use crate::runtime::ClientFrameMeta;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
-pub use super::core::{MessageId, QueueKey, ReservedMessage};
+pub use super::core::{MessageId, QueueKey, ReservedMessage, RoutedReservedMessage};
 
 /// Queue domain messages
 ///
@@ -240,6 +240,11 @@ pub enum QueueResponse {
 
     /// Messages successfully received
     Received { messages: Vec<ReservedMessage> },
+
+    /// Reserved messages paired with their concrete queue routes.
+    ReceivedRouted {
+        messages: Vec<RoutedReservedMessage>,
+    },
 
     /// Inflight entry successfully extended
     Extended,

@@ -28,6 +28,7 @@ Response (status=0):
   [u64 BE] message_id
 Response (status=1):
   [u8]     1
+  [u32 BE] error_code
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -36,7 +37,7 @@ Response (status=1):
 
 ```
 [u32 BE]  route_len
-[bytes]   route
+[bytes]   route (concrete route or whole-segment wildcard pattern capable of matching 3 segments)
 [u64 BE]  lease_seconds
 [u8]      has_batch_size
 [u32 BE]  batch_size (if present)
@@ -45,16 +46,32 @@ Response (status=1):
 Response (status=0):
   [u8]     0
   [u32 BE] lease_count
-  [repeat for each lease]
+  [repeat for each lease when the request route is concrete]
+    [u64 BE] message_id
+    [u64 BE] lease_token
+    [u32 BE] body_len
+    [bytes]  body
+  [repeat for each lease when the request route contains a wildcard]
+    [u32 BE] concrete_route_len
+    [bytes]  concrete_route
     [u64 BE] message_id
     [u64 BE] lease_token
     [u32 BE] body_len
     [bytes]  body
 Response (status=1):
   [u8]     1
+  [u32 BE] error_code
   [u32 BE] error_len
   [bytes]  error_msg
 ```
+
+Concrete RESERVE responses retain the established route-less item encoding, so
+existing concrete-route clients remain wire compatible. A wildcard RESERVE
+response uses the routed item encoding because one batch can contain several
+queues. Clients MUST select the decoder from the outbound request: if its route
+contains a whole-segment wildcard, decode `concrete_route` before each item and
+use that route for EXTEND and COMPLETE. Wildcard reservation supports `*` and
+`**` as complete segments, including unknown realm, area, or resource segments.
 
 #### EXTEND Request
 
@@ -218,7 +235,7 @@ for lease in leases:
         process_task(lease.body)
         # Complete includes route for self-contained operation
         client.queue_complete(
-            route="queue://prod/app/tasks",
+            route=lease.route,
             message_id=lease.message_id,
             lease_token=lease.lease_token
         )
@@ -237,7 +254,8 @@ Every operation includes route:
 
 #### Semantics
 
-- **Route-Carrying Operations**: Every request includes the full queue route, but the broker still maintains live lease ownership in memory for the running process
+- **Route-Carrying Operations**: Every request includes its selector or concrete queue route. Wildcard RESERVE items also return their matched concrete route; concrete RESERVE items retain the established route-less response and use the request route. The broker still maintains live lease ownership in memory for the running process
+- **Wildcard Reservation**: RESERVE accepts exact routes and whole-segment `*`/`**` patterns capable of matching a concrete three-segment queue route. Matching is isolated by `RouteFamily` and durable queue routes are discovered after broker restart.
 - **At-Least-Once**: Messages delivered until completed; expired inflight reservations requeue them
 - **FIFO-ish**: Generally delivered in enqueue order; leasing can cause out-of-order
 - **Visibility Timeout**: Reserved messages are invisible to other consumers until expiry

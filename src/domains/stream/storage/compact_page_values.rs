@@ -1,7 +1,7 @@
 use super::{
     CompactAreaPageRecord, CompactAreaPageValue, CompactRealmPageRecord, CompactRealmPageValue,
-    CompactResourcePageRecord, CompactResourcePageValue, COMPACT_AREA_PAGE_VALUE_V1_MARKER,
-    COMPACT_REALM_PAGE_VALUE_V1_MARKER, COMPACT_RESOURCE_PAGE_VALUE_V1_MARKER,
+    CompactResourcePageRecord, CompactResourcePageValue, COMPACT_AREA_PAGE_VALUE_V2_MARKER,
+    COMPACT_REALM_PAGE_VALUE_V2_MARKER, COMPACT_RESOURCE_PAGE_VALUE_V1_MARKER,
     OPTIONAL_BYTES_ABSENT,
 };
 use bytes::Bytes;
@@ -14,25 +14,55 @@ fn u32_to_usize(value: u32) -> usize {
     usize::try_from(value).unwrap_or(usize::MAX)
 }
 
+fn encoded_string_len(value: &str) -> usize {
+    4 + value.len()
+}
+
+fn encode_string(bytes: &mut Vec<u8>, value: &str) {
+    bytes.extend_from_slice(&usize_to_u32_saturating(value.len()).to_le_bytes());
+    bytes.extend_from_slice(value.as_bytes());
+}
+
+fn decode_string(bytes: &[u8], offset: &mut usize, context: &str) -> Result<String, String> {
+    if bytes.len().saturating_sub(*offset) < 4 {
+        return Err(format!("{context}: route identity length truncated"));
+    }
+    let raw = u32::from_le_bytes(bytes[*offset..*offset + 4].try_into().unwrap());
+    *offset += 4;
+    let length = u32_to_usize(raw);
+    if bytes.len().saturating_sub(*offset) < length {
+        return Err(format!("{context}: route identity truncated"));
+    }
+    let value = std::str::from_utf8(&bytes[*offset..*offset + length])
+        .map_err(|_| format!("{context}: route identity is not UTF-8"))?
+        .to_string();
+    *offset += length;
+    Ok(value)
+}
+
 impl CompactRealmPageValue {
     #[must_use]
     pub fn is_encoded(bytes: &[u8]) -> bool {
-        bytes.starts_with(&COMPACT_REALM_PAGE_VALUE_V1_MARKER)
+        bytes.starts_with(&COMPACT_REALM_PAGE_VALUE_V2_MARKER)
     }
 
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut total_len = 6;
         for record in &self.records {
+            total_len += encoded_string_len(&record.area);
+            total_len += encoded_string_len(&record.resource);
             total_len += 8 + 8 + 8 + 4 + 4 + record.body.len();
             total_len += record.metadata.as_ref().map_or(0, Bytes::len);
         }
 
         let mut bytes = Vec::with_capacity(total_len);
-        bytes.extend_from_slice(&COMPACT_REALM_PAGE_VALUE_V1_MARKER);
+        bytes.extend_from_slice(&COMPACT_REALM_PAGE_VALUE_V2_MARKER);
         bytes.extend_from_slice(&usize_to_u32_saturating(self.records.len()).to_le_bytes());
 
         for record in &self.records {
+            encode_string(&mut bytes, &record.area);
+            encode_string(&mut bytes, &record.resource);
             bytes.extend_from_slice(&record.area_offset.to_le_bytes());
             bytes.extend_from_slice(&record.resource_offset.to_le_bytes());
             bytes.extend_from_slice(&record.created_at.to_le_bytes());
@@ -88,6 +118,8 @@ impl CompactRealmPageValue {
 
         let mut records = Vec::with_capacity(record_count);
         for _ in 0..record_count {
+            let area = decode_string(bytes, &mut offset, "decode compact realm page value")?;
+            let resource = decode_string(bytes, &mut offset, "decode compact realm page value")?;
             if bytes.len().saturating_sub(offset) < 32 {
                 return Err("decode compact realm page value: record header truncated".to_string());
             }
@@ -129,6 +161,8 @@ impl CompactRealmPageValue {
             };
 
             records.push(CompactRealmPageRecord {
+                area,
+                resource,
                 area_offset,
                 resource_offset,
                 body,
@@ -147,22 +181,24 @@ impl CompactRealmPageValue {
 impl CompactAreaPageValue {
     #[must_use]
     pub fn is_encoded(bytes: &[u8]) -> bool {
-        bytes.starts_with(&COMPACT_AREA_PAGE_VALUE_V1_MARKER)
+        bytes.starts_with(&COMPACT_AREA_PAGE_VALUE_V2_MARKER)
     }
 
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut total_len = 6;
         for record in &self.records {
+            total_len += encoded_string_len(&record.resource);
             total_len += 8 + 8 + 4 + 4 + record.body.len();
             total_len += record.metadata.as_ref().map_or(0, Bytes::len);
         }
 
         let mut bytes = Vec::with_capacity(total_len);
-        bytes.extend_from_slice(&COMPACT_AREA_PAGE_VALUE_V1_MARKER);
+        bytes.extend_from_slice(&COMPACT_AREA_PAGE_VALUE_V2_MARKER);
         bytes.extend_from_slice(&usize_to_u32_saturating(self.records.len()).to_le_bytes());
 
         for record in &self.records {
+            encode_string(&mut bytes, &record.resource);
             bytes.extend_from_slice(&record.resource_offset.to_le_bytes());
             bytes.extend_from_slice(&record.created_at.to_le_bytes());
             bytes.extend_from_slice(&usize_to_u32_saturating(record.body.len()).to_le_bytes());
@@ -217,6 +253,7 @@ impl CompactAreaPageValue {
 
         let mut records = Vec::with_capacity(record_count);
         for _ in 0..record_count {
+            let resource = decode_string(bytes, &mut offset, "decode compact area page value")?;
             if bytes.len().saturating_sub(offset) < 24 {
                 return Err("decode compact area page value: record header truncated".to_string());
             }
@@ -256,6 +293,7 @@ impl CompactAreaPageValue {
             };
 
             records.push(CompactAreaPageRecord {
+                resource,
                 resource_offset,
                 body,
                 metadata,

@@ -68,6 +68,12 @@ pub(super) struct QueueDomainCore {
     pub(super) dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     /// Per-queue actors keyed by `QueueKey`
     pub(super) actors: Mutex<HashMap<crate::domains::queue::QueueKey, WarmQueueActor>>,
+    /// Durable and live queue identities available to wildcard reserve selectors.
+    pub(super) known_queue_keys: Mutex<HashSet<crate::domains::queue::QueueKey>>,
+    /// Startup inventory failure surfaced by wildcard reserve on infallible constructors.
+    pub(super) inventory_error: Mutex<Option<String>>,
+    /// Bounded, allocation-free rotation seed for fair wildcard reserve starts.
+    pub(super) wildcard_reserve_sequence: AtomicU64,
     /// Queue-local watch subscriptions scoped to this broker process.
     pub(super) families: Mutex<HashMap<u64, RoutedSubscriptionSet<QueueSubscription>>>,
     pub(super) next_sub_id: AtomicU64,

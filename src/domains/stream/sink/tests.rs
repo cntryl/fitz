@@ -102,6 +102,7 @@ struct DecodedStreamWireRecord {
 
 #[derive(Debug)]
 struct DecodedStreamReadPayload {
+    routes: Vec<String>,
     records: Vec<DecodedStreamWireRecord>,
     last_resource_offset: u64,
     last_area_offset: Option<u64>,
@@ -144,8 +145,10 @@ fn decode_stream_wire_record(
 fn decode_stream_read_payload(data: &[u8]) -> DecodedStreamReadPayload {
     let mut decoder = crate::dispatch::protocol::payload_codec::PayloadDecoder::new(data);
     let count = decoder.get_u32().expect("stream read record count") as usize;
+    let mut routes = Vec::with_capacity(count);
     let mut records = Vec::with_capacity(count);
     for _ in 0..count {
+        routes.push(decoder.get_string().expect("concrete stream route"));
         match decoder.get_u8().expect("stream read item kind") {
             0 => records.push(decode_stream_wire_record(&mut decoder)),
             1 => {
@@ -175,12 +178,50 @@ fn decode_stream_read_payload(data: &[u8]) -> DecodedStreamReadPayload {
     );
 
     DecodedStreamReadPayload {
+        routes,
         records,
         last_resource_offset,
         last_area_offset,
         last_realm_offset,
         has_more,
     }
+}
+
+fn decode_routed_stream_read_routes(data: &[u8]) -> Vec<String> {
+    let mut decoder = crate::dispatch::protocol::payload_codec::PayloadDecoder::new(data);
+    let count = decoder.get_u32().expect("stream read record count") as usize;
+    let mut routes = Vec::with_capacity(count);
+    for _ in 0..count {
+        routes.push(decoder.get_string().expect("concrete stream route"));
+        match decoder.get_u8().expect("stream read item kind") {
+            0 => {
+                let _record = decode_stream_wire_record(&mut decoder);
+            }
+            1 => {
+                decoder.get_u64().expect("stream filtered offset");
+                decoder.get_u8().expect("stream filtered reason");
+            }
+            2 => {
+                decoder.get_u64().expect("stream filtered range start");
+                decoder.get_u64().expect("stream filtered range end");
+                decoder.get_u8().expect("stream filtered reason");
+            }
+            kind => panic!("unexpected stream read item kind: {kind}"),
+        }
+    }
+    decoder.get_u64().expect("stream cursor resource offset");
+    decoder
+        .get_optional_u64()
+        .expect("stream cursor area offset");
+    decoder
+        .get_optional_u64()
+        .expect("stream cursor realm offset");
+    decoder.get_u8().expect("stream cursor has_more");
+    assert!(
+        decoder.is_complete(),
+        "expected complete routed stream read"
+    );
+    routes
 }
 
 fn decode_stream_success_data(payload: &[u8]) -> Bytes {
@@ -473,6 +514,31 @@ fn should_return_all_area_records_given_two_resource_batches_on_direct_sink_path
     // Assert
     assert_eq!(area_records.len(), 100);
     assert_eq!(response_count, 100);
+}
+
+#[test]
+fn should_return_concrete_routes_given_wildcard_stream_read() {
+    // Arrange
+    let context = setup_test_context();
+    seed_committed_stream_route(&context, "stream://bench/area/orders", 1, b"orders");
+    seed_committed_stream_route(&context, "stream://bench/area/audits", 1, b"audits");
+
+    // Act
+    let frame = build_stream_read_with_limit("stream://bench/area/*", 0, 2);
+    let (msg_type, payload) = extract_single_tlv_field(&frame);
+    let response = request(&context, "stream://bench/area/*", msg_type, payload);
+    let data = decode_stream_success_data(response.as_ref());
+    let mut routes = decode_routed_stream_read_routes(&data);
+    routes.sort();
+
+    // Assert
+    assert_eq!(
+        routes,
+        vec![
+            "stream://bench/area/audits".to_string(),
+            "stream://bench/area/orders".to_string(),
+        ]
+    );
 }
 
 #[test]
@@ -964,6 +1030,7 @@ fn should_encode_exact_resource_read_payload_given_committed_record_with_metadat
 
     // Assert
     assert_eq!(read_payload.records.len(), 1);
+    assert_eq!(read_payload.routes, vec!["stream://bench/events/orders"]);
     assert_eq!(read_payload.records[0].resource_offset, 0);
     assert_eq!(read_payload.records[0].area_offset, Some(0));
     assert_eq!(read_payload.records[0].realm_offset, Some(0));

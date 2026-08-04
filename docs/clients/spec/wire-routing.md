@@ -707,7 +707,8 @@ A request is valid **only if**:
 **Domains supporting wildcards (`*` and `**` patterns):**
 - **KV:** SUBSCRIBE and UNSUBSCRIBE accept patterns capable of matching a three-segment route; mutations remain concrete
 - **Stream:** READ patterns and SUBSCRIBE/UNSUBSCRIBE registration patterns are supported; writes remain concrete
-- **Queue:** SUBSCRIBE and UNSUBSCRIBE accept patterns capable of matching a three-segment route; Queue operations remain concrete
+- **Queue:** RESERVE, SUBSCRIBE, and UNSUBSCRIBE accept patterns capable of
+  matching a three-segment route; other Queue operations remain concrete
 - **Notice:** Full wildcard support in SUBSCRIBE patterns (`notice://realm/area/*`, `notice://realm/**`)
 - **RPC:** Worker registrations accept `*` and `**`; calls remain concrete
 - **Schedule:** SUBSCRIBE and UNSUBSCRIBE accept patterns capable of matching a four-segment route; CREATE and CANCEL remain concrete
@@ -715,7 +716,8 @@ A request is valid **only if**:
 **Domains requiring concrete routes only (no wildcards):**
 - **Lease:** All operations use concrete routes only (`lease://realm/area/resource`)
 - **KV mutations:** use concrete routes only (`kv://realm/area/resource`)
-- **Queue operations:** use concrete routes only (`queue://realm/area/resource`)
+- **Queue mutations:** ENQUEUE, EXTEND, and COMPLETE use concrete routes only
+  (`queue://realm/area/resource`)
 - **Stream writes:** use concrete routes only (`stream://realm/area/resource`)
 - **RPC calls:** use concrete routes only (`rpc://realm/area/resource/operation`)
 - **Schedule definitions:** `CREATE` and `CANCEL` use concrete routes only (`schedule://realm/area/resource/operation`)
@@ -790,7 +792,6 @@ A request is valid **only if**:
 
 **Valid Route Shapes:**
 
-- `queue://{realm}/{area}`
 - `queue://{realm}/{area}/{resource}`
 - `queue://{realm}/{area}/*`
 - `queue://{realm}/*/*`
@@ -799,6 +800,12 @@ A request is valid **only if**:
 
 **Route format:** For per-resource isolation, use the 3-segment form `queue://{realm}/{area}/{resource}`. Each distinct resource has its own queue and lease state.
 
+RESERVE response items are selector-dependent without adding a negotiation
+field: an exact request returns the established route-less item shape, while a
+request containing a whole-segment wildcard returns the matched concrete route
+before each item. The client always knows which decoder to use from the request
+it sent.
+
 **Lease expiry:** Servers process lease expiry lazily (e.g. when the next RESERVE or other operation runs). A reserved message whose lease has expired is returned to the ready queue on the next operation that touches that queue. Clients that rely on lease expiry (e.g. to re-reserve) should allow for this delay (e.g. wait a few seconds after lease TTL before re-reserving).
 
   **Method Acceptance:**
@@ -806,7 +813,7 @@ A request is valid **only if**:
   | ---------- | ----------------------------------------------- |
   | `LIST` | `{realm}/{area}`, `{realm}/*/*` |
   | `ENQUEUE` | `{realm}/{area}/{resource}` |
-  | `RESERVE` | `{realm}/{area}/{resource}` |
+  | `RESERVE` | exact route or whole-segment pattern capable of matching three segments |
   | `COMPLETE` | `{realm}/{area}/{resource}` |
   | `EXTEND` | `{realm}/{area}/{resource}` |
   | `SUBSCRIBE` | exact route or whole-segment pattern capable of matching three segments |

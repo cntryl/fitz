@@ -113,6 +113,9 @@ impl Default for OffsetLease {
 /// A durable event record in a stream
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamRecord {
+    /// Fully resolved concrete route for this record.
+    pub route: String,
+
     /// Strict order within resource stream (server-assigned by `StreamActor`, strictly increasing)
     pub resource_offset: u64,
 
@@ -316,14 +319,26 @@ pub enum StreamFilteredReason {
 pub enum StreamReadItem {
     Event(StreamRecord),
     Filtered {
+        route: String,
         offset: u64,
         reason: Option<StreamFilteredReason>,
     },
     FilteredRange {
+        route: String,
         from_offset: u64,
         to_offset: u64,
         reason: Option<StreamFilteredReason>,
     },
+}
+
+impl StreamReadItem {
+    #[must_use]
+    pub fn route(&self) -> &str {
+        match self {
+            Self::Event(record) => &record.route,
+            Self::Filtered { route, .. } | Self::FilteredRange { route, .. } => route,
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

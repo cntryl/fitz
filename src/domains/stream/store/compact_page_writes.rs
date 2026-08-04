@@ -31,6 +31,8 @@ struct PromotionFrontierBatchWritePlan {
 impl StreamStore {
     pub(super) fn build_realm_page_records(
         events: &[EventPayload],
+        area: &str,
+        resource: &str,
         first_resource_offset: u64,
         first_area_offset: u64,
         created_at: u64,
@@ -42,6 +44,8 @@ impl StreamStore {
             let area_offset = first_area_offset + index as u64;
 
             realm_records.push(CompactRealmPageRecord {
+                area: area.to_string(),
+                resource: resource.to_string(),
                 area_offset,
                 resource_offset,
                 body: event.body.clone(),
@@ -55,6 +59,7 @@ impl StreamStore {
 
     pub(super) fn build_promotion_frontier_area_records(
         events: &[EventPayload],
+        resource: &str,
         first_resource_offset: u64,
         created_at: u64,
     ) -> Vec<CompactAreaPageRecord> {
@@ -62,6 +67,7 @@ impl StreamStore {
 
         for (index, event) in events.iter().enumerate() {
             records.push(CompactAreaPageRecord {
+                resource: resource.to_string(),
                 resource_offset: first_resource_offset + index as u64,
                 body: event.body.clone(),
                 metadata: event.metadata.clone(),
@@ -337,8 +343,12 @@ impl StreamStore {
             self.ttl.ttl_seconds,
         )?;
 
-        let area_records =
-            Self::build_promotion_frontier_area_records(events, first_resource_offset, created_at);
+        let area_records = Self::build_promotion_frontier_area_records(
+            events,
+            resource,
+            first_resource_offset,
+            created_at,
+        );
         Self::write_compact_area_records(
             txn,
             realm,
@@ -350,6 +360,8 @@ impl StreamStore {
 
         let realm_records = Self::build_realm_page_records(
             events,
+            area,
+            resource,
             first_resource_offset,
             first_area_offset,
             created_at,

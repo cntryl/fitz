@@ -46,11 +46,13 @@ where
         bodies,
         vec![b"order-created".to_vec(), b"audit-recorded".to_vec()]
     );
+    assert_eq!(first.routes, vec![orders_route, audits_route]);
     assert_eq!(area_offsets, vec![Some(0), Some(1)]);
     assert_eq!(first.cursor.last_area_offset, Some(1));
     assert!(first.cursor.has_more);
 
     assert_eq!(second.records.len(), 1);
+    assert_eq!(second.routes, vec![orders_route]);
     assert_eq!(second.records[0].body, b"order-shipped".to_vec());
     assert_eq!(second.records[0].area_offset, Some(2));
     assert_eq!(second.cursor.last_area_offset, Some(2));
@@ -100,11 +102,13 @@ where
         .map(|record| record.realm_offset)
         .collect();
     assert_eq!(bodies, vec![b"realm-one".to_vec(), b"realm-two".to_vec()]);
+    assert_eq!(first.routes, vec![events_route, audit_route]);
     assert_eq!(realm_offsets, vec![Some(0), Some(1)]);
     assert_eq!(first.cursor.last_realm_offset, Some(1));
     assert!(first.cursor.has_more);
 
     assert_eq!(second.records.len(), 1);
+    assert_eq!(second.routes, vec![events_route]);
     assert_eq!(second.records[0].body, b"realm-three".to_vec());
     assert_eq!(second.records[0].realm_offset, Some(2));
     assert_eq!(second.cursor.last_realm_offset, Some(2));

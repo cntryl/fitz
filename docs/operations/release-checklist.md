@@ -13,12 +13,14 @@ Use this checklist before approving a Fitz release.
 1. [docs/README.md](../README.md) links validated.
 2. API and admin behavior changes documented.
 3. Migration notes added for any compatibility impacts.
+4. Broker and all supported client codecs validated against each breaking wire contract.
 
 ## Operations Readiness
 
 1. [operations-runbook.md](operations-runbook.md) reviewed and current.
 2. Alerts and dashboards updated for new signals.
 3. Rollback plan verified.
+4. Required storage export/replay or reset rehearsed for breaking persisted-format changes.
 
 ## Sign-off
 

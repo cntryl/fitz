@@ -458,6 +458,50 @@ fn should_evict_idle_queue_actor_without_losing_committed_state() {
 }
 
 #[test]
+fn should_prune_empty_queue_identity_when_actor_is_evicted() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let queue_route = "queue://acme/jobs/finished";
+    let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+    let sender_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let worker_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let sender_mailbox = Arc::new(Mailbox::new(8));
+    let worker_mailbox = Arc::new(Mailbox::new(8));
+    let router = Arc::new(Router::new());
+    router.register(sender_address.clone(), sender_mailbox.clone());
+    router.register(worker_address.clone(), worker_mailbox.clone());
+    let sink = new_queue_domain_sink(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+        cntryl_midge::WriteOptions::buffered(),
+    );
+    let request_context = QueueRequestContext {
+        sink: &sink,
+        queue_address,
+        queue_route,
+        family,
+    };
+    request_context.deliver_send(sender_address, 7);
+    let _send = receive_queue_frame(&sender_mailbox, "send response");
+    request_context.deliver_reserve(worker_address.clone(), 8);
+    let reserve = receive_queue_frame(&worker_mailbox, "reserve response");
+    let (id, token) = receive_response_first_message(&reserve);
+    request_context.deliver_ack(worker_address, 8, id, token, "complete queue message");
+    let complete = receive_queue_frame(&worker_mailbox, "complete response");
+    assert_success(&complete);
+    assert_eq!(sink.known_queue_count_for_tests(), 1);
+
+    // Act
+    force_actor_idle(&sink, queue_route, family);
+    sink.refresh_admin_snapshot_if_dirty();
+
+    // Assert
+    assert!(sink.actors_are_empty_for_tests());
+    assert_eq!(sink.known_queue_count_for_tests(), 0);
+}
+
+#[test]
 fn should_not_evict_idle_queue_actor_with_live_inflight() {
     // Arrange
     let family = RouteFamily::new(1);

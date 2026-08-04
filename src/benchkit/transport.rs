@@ -763,6 +763,7 @@ pub fn count_stream_read_records_from_payload(payload: &[u8]) -> Result<usize, S
     let count = u32_to_usize(decoder.get_u32()?);
 
     for item_index in 0..count {
+        decoder.get_string()?;
         if let Err(err) = skip_stream_read_item(&mut decoder) {
             let offset = decoder.offset();
             return Err(format!(

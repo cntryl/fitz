@@ -315,6 +315,11 @@ impl StreamStore {
             .get(&marker_key)
             .map_err(|e| LayoutActivationFailure::Other(format!("get error: {e:?}")))?
         {
+            if StreamLayoutMarkerValue::is_previous_generation(&bytes) {
+                return Err(LayoutActivationFailure::ResetRequired(
+                    Self::stream_storage_generation_reset_required_error(family),
+                ));
+            }
             let marker =
                 StreamLayoutMarkerValue::decode(&bytes).map_err(LayoutActivationFailure::Other)?;
             if marker.layout != self.layout {
@@ -400,6 +405,12 @@ impl StreamStore {
             "ERR_STREAM_STORAGE_LAYOUT_RESET_REQUIRED: family={} requested={} existing unmarked stream data must be reset before opening with promotion-frontier",
             family,
             requested_layout.as_str()
+        )
+    }
+
+    pub(super) fn stream_storage_generation_reset_required_error(family: u64) -> String {
+        format!(
+            "ERR_STREAM_STORAGE_GENERATION_RESET_REQUIRED: family={family} previous promotion-frontier generation is incompatible; clear and rebuild persisted Stream state or start with a fresh storage path"
         )
     }
 

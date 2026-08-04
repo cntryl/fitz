@@ -120,17 +120,12 @@ pub(super) fn receive_response_message_count(frame: &FrameContext) -> u32 {
 }
 
 pub(super) fn receive_response_first_message(frame: &FrameContext) -> (u64, u64) {
-    assert_eq!(receive_response_message_count(frame), 1);
-    let id = u64::from_be_bytes(
-        frame.payload[5..13]
-            .try_into()
-            .expect("receive payload should include message id"),
-    );
-    let token = u64::from_be_bytes(
-        frame.payload[13..21]
-            .try_into()
-            .expect("receive payload should include token"),
-    );
+    let mut decoder =
+        crate::dispatch::protocol::payload_codec::PayloadDecoder::new(frame.payload.as_ref());
+    assert_eq!(decoder.get_u8().expect("receive status"), 0);
+    assert_eq!(decoder.get_u32().expect("receive count"), 1);
+    let id = decoder.get_u64().expect("receive message id");
+    let token = decoder.get_u64().expect("receive token");
     (id, token)
 }
 

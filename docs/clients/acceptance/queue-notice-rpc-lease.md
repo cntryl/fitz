@@ -104,7 +104,10 @@ overlapping, or wildcard-realm Queue patterns capable of matching three segments
 - Exact registration succeeds at the cap; the 129th distinct wildcard returns 4011
 - Wrong schemes, empty segments, partial wildcards, and impossible depths return 4010 on TCP and WebSocket
 - Matching and disconnect cleanup remain isolated by `RouteFamily`
-- ENQUEUE, RESERVE, EXTEND, and COMPLETE continue to require concrete routes
+- ENQUEUE, EXTEND, and COMPLETE continue to require concrete routes
+- RESERVE accepts exact routes and valid whole-segment Queue patterns
+- Exact RESERVE retains `[message_id][lease_token][body]` per item; wildcard
+  RESERVE prefixes every item with the matched concrete route used for EXTEND or COMPLETE
 
 ## Notice Domain
 
