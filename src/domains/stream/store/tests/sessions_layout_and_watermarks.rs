@@ -49,24 +49,6 @@ pub(super) fn write_layout_marker(
         .expect("commit layout marker");
 }
 
-pub(super) fn write_previous_layout_marker(
-    engine: &cntryl_midge::Engine,
-    family: u32,
-    layout: StreamStorageLayout,
-) {
-    let mut txn = engine
-        .begin_tx(family, cntryl_midge::TransactionMode::ReadWrite)
-        .expect("begin write tx");
-    txn.put(
-        encode_stream_layout_marker_key(),
-        StreamLayoutMarkerValue::encode_previous_generation_for_tests(layout),
-        None,
-    )
-    .expect("write previous layout marker");
-    txn.commit(cntryl_midge::WriteOptions::sync())
-        .expect("commit previous layout marker");
-}
-
 pub(super) fn single_event(body: &'static [u8]) -> Vec<EventPayload> {
     vec![EventPayload {
         body: Bytes::from_static(body),
@@ -531,23 +513,6 @@ pub(super) fn should_use_selected_stream_storage_layout_given_explicit_layout() 
 }
 
 #[test]
-pub(super) fn should_normalize_legacy_stream_storage_layout_given_explicit_layout() {
-    // Arrange
-
-    // Act
-    let store = StreamStore::with_layout(
-        create_test_engine_with_cfs(vec![1]),
-        StreamStorageLayout::LegacyCovering,
-    );
-
-    // Assert
-    assert_eq!(
-        store.storage_layout(),
-        StreamStorageLayout::PromotionFrontier
-    );
-}
-
-#[test]
 pub(super) fn should_persist_promotion_frontier_stream_layout_marker_given_first_real_store_write()
 {
     // Arrange
@@ -624,56 +589,6 @@ pub(super) fn should_return_error_given_unmarked_stream_data_on_default_promotio
     // Assert
     let error = result.expect_err("promotion frontier should reject unmarked legacy data");
     assert!(error.contains("ERR_STREAM_STORAGE_LAYOUT_RESET_REQUIRED"));
-}
-
-#[test]
-pub(super) fn should_return_error_given_legacy_layout_marker() {
-    // Arrange
-    let db = create_test_engine_with_cfs(vec![1]);
-    write_layout_marker(db.as_ref(), 1, StreamStorageLayout::LegacyCovering);
-    let store = StreamStore::new(db);
-
-    // Act
-    let result = store.get_next_resource_offset(1, "test", "events", "orders");
-
-    // Assert
-    let error = result.expect_err("promotion store should reject legacy marker");
-    assert!(error.contains("ERR_STREAM_STORAGE_LAYOUT_MISMATCH"));
-    assert!(error.contains("legacy-covering"));
-    assert!(error.contains("promotion-frontier"));
-}
-
-#[test]
-pub(super) fn should_return_error_given_legacy_layout_marker_on_existing_families_boot_scan() {
-    // Arrange
-    let db = create_test_engine_with_cfs(vec![1, 2]);
-    write_layout_marker(db.as_ref(), 2, StreamStorageLayout::LegacyCovering);
-    let store = StreamStore::new(db);
-
-    // Act
-    let result = store.ensure_layout_activation_for_existing_families();
-
-    // Assert
-    let error = result.expect_err("legacy layout marker should fail boot scan");
-    assert!(error.contains("ERR_STREAM_STORAGE_LAYOUT_MISMATCH"));
-    assert!(error.contains("family=2"));
-}
-
-#[test]
-pub(super) fn should_require_reset_given_previous_promotion_frontier_generation() {
-    // Arrange
-    let db = create_test_engine_with_cfs(vec![1]);
-    write_previous_layout_marker(db.as_ref(), 1, StreamStorageLayout::PromotionFrontier);
-    let store = StreamStore::new(db);
-
-    // Act
-    let result = store.ensure_layout_activation_for_existing_families();
-
-    // Assert
-    let error = result.expect_err("previous storage generation must fail activation");
-    assert!(error.contains("ERR_STREAM_STORAGE_GENERATION_RESET_REQUIRED"));
-    assert!(error.contains("clear and rebuild persisted Stream state"));
-    assert!(error.contains("fresh storage path"));
 }
 
 #[test]

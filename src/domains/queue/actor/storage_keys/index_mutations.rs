@@ -1,22 +1,12 @@
-use super::super::{
-    MessageId, PersistedIndexMutationPlan, PersistedReadyMutation, QueueActor, StoredRecordLayout,
-};
+use super::super::{MessageId, PersistedIndexMutationPlan, PersistedReadyMutation, QueueActor};
 
 impl QueueActor {
-    pub(in crate::domains::queue::actor) fn delete_record_for_layout(
+    pub(in crate::domains::queue::actor) fn delete_record(
         txn: &mut cntryl_midge::Transaction,
-        layout: StoredRecordLayout,
         header_key: Vec<u8>,
         body_key: Vec<u8>,
-        legacy_key: Vec<u8>,
     ) -> cntryl_midge::MidgeResult<()> {
-        match layout {
-            StoredRecordLayout::EmbeddedHeader => txn.delete(header_key),
-            StoredRecordLayout::SplitHeaderBody => {
-                txn.delete(header_key).and_then(|()| txn.delete(body_key))
-            }
-            StoredRecordLayout::LegacyKey => txn.delete(legacy_key),
-        }
+        txn.delete(header_key).and_then(|()| txn.delete(body_key))
     }
 
     pub(in crate::domains::queue::actor) fn staged_ready_count_after_mutation(

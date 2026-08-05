@@ -1,7 +1,7 @@
 use super::model::{
     parse_concrete_schedule_route, BTreeMap, Bytes, PersistedPendingFireClaim, PersistedSchedule,
-    ScheduleDefinitionData, ScheduleStore, WriteOptions, DEFINITION_PREFIX, DUE_INDEX_VALUE,
-    DUE_PREFIX, LEGACY_INDEX_PREFIX, LEGACY_PREFIX, PENDING_FIRE_PREFIX,
+    ScheduleStore, WriteOptions, DEFINITION_PREFIX, DUE_INDEX_VALUE, DUE_PREFIX,
+    PENDING_FIRE_PREFIX,
 };
 
 impl ScheduleStore {
@@ -10,8 +10,8 @@ impl ScheduleStore {
     /// # Errors
     ///
     /// Returns an error when stored schedule rows cannot be read, decoded,
-    /// normalized, or durably rewritten for the current family. Legacy schedule
-    /// storage layouts are rejected instead of migrated.
+    /// normalized, or durably rewritten for the current family. Only the
+    /// current row generation is read; no other layout is migrated.
     pub fn load_all(
         &self,
         cf_id: u64,
@@ -24,21 +24,11 @@ impl ScheduleStore {
             .map_err(|e| format!("begin_tx failed: {e:?}"))?;
 
         let mut schedules = BTreeMap::<String, PersistedSchedule>::new();
-        let mut normalized_definitions = Vec::<PersistedSchedule>::new();
         let mut metadata_rows = BTreeMap::<String, (u64, Option<u64>, u64)>::new();
 
         let definition_rows = Self::scan_schedule_rows(&read_tx, DEFINITION_PREFIX)?;
         let body_rows = Self::scan_schedule_rows(&read_tx, super::model::BODY_PREFIX)?;
-        let legacy_rows = Self::scan_schedule_rows(&read_tx, LEGACY_PREFIX)?;
-        let legacy_index_rows = Self::scan_schedule_rows(&read_tx, LEGACY_INDEX_PREFIX)?;
-        Self::reject_legacy_schedule_rows(&legacy_rows, &legacy_index_rows)?;
-
-        Self::decode_definition_rows(
-            definition_rows,
-            &mut schedules,
-            &mut normalized_definitions,
-            &mut metadata_rows,
-        )?;
+        Self::decode_definition_rows(definition_rows, &mut metadata_rows)?;
 
         let mut body_definitions = BTreeMap::new();
         Self::decode_body_rows(body_rows, &mut body_definitions)?;
@@ -53,7 +43,6 @@ impl ScheduleStore {
             .begin_tx(cf_id_u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("begin schedule load tx failed: {e:?}"))?;
 
-        Self::rewrite_normalized_definitions(&mut write_tx, &normalized_definitions)?;
         Self::rewrite_due_index(&mut write_tx, due_rows, schedules.values())?;
 
         self.commit_or_inject(write_tx, write_options)?;
@@ -156,8 +145,6 @@ impl ScheduleStore {
 
     fn decode_definition_rows(
         definition_rows: Vec<(Vec<u8>, Vec<u8>)>,
-        schedules: &mut BTreeMap<String, PersistedSchedule>,
-        normalized_definitions: &mut Vec<PersistedSchedule>,
         metadata_rows: &mut BTreeMap<String, (u64, Option<u64>, u64)>,
     ) -> Result<(), String> {
         for (key, value) in definition_rows {
@@ -167,29 +154,7 @@ impl ScheduleStore {
             ) {
                 (
                     Ok(route),
-                    Ok(super::model::DecodedDefinitionRow::Inline {
-                        next_fire_ms,
-                        cron,
-                        payload,
-                        last_fire_ms,
-                        executions_total,
-                    }),
-                ) => {
-                    let persisted = PersistedSchedule {
-                        route: route.clone(),
-                        cron,
-                        delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
-                        payload,
-                        next_fire_ms,
-                        last_fire_ms,
-                        executions_total,
-                    };
-                    normalized_definitions.push(persisted.clone());
-                    schedules.insert(route, persisted);
-                }
-                (
-                    Ok(route),
-                    Ok(super::model::DecodedDefinitionRow::Metadata {
+                    Ok(super::model::DecodedDefinitionRow {
                         next_fire_ms,
                         last_fire_ms,
                         executions_total,
@@ -270,44 +235,6 @@ impl ScheduleStore {
                     ));
                 }
             }
-        }
-
-        Ok(())
-    }
-
-    fn reject_legacy_schedule_rows(
-        legacy_rows: &[(Vec<u8>, Vec<u8>)],
-        legacy_index_rows: &[(Vec<u8>, Vec<u8>)],
-    ) -> Result<(), String> {
-        if legacy_rows.is_empty() && legacy_index_rows.is_empty() {
-            return Ok(());
-        }
-
-        Err(format!(
-            "unsupported legacy schedule storage layout: found {} legacy definition row(s) and {} legacy index row(s)",
-            legacy_rows.len(),
-            legacy_index_rows.len()
-        ))
-    }
-
-    fn rewrite_normalized_definitions(
-        write_tx: &mut cntryl_midge::Transaction,
-        normalized_definitions: &[PersistedSchedule],
-    ) -> Result<(), String> {
-        for schedule in normalized_definitions {
-            Self::put_schedule_definition(
-                write_tx,
-                &schedule.route,
-                &ScheduleDefinitionData {
-                    next_fire_ms: schedule.next_fire_ms,
-                    last_fire_ms: schedule.last_fire_ms,
-                    executions_total: schedule.executions_total,
-                    cron: &schedule.cron,
-                    delivery_mode: schedule.delivery_mode,
-                    payload: &schedule.payload,
-                },
-            )
-            .map_err(|error| format!("write schedule definition failed: {error}"))?;
         }
 
         Ok(())

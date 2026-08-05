@@ -1,6 +1,6 @@
 use super::{
     obs, Bytes, DelayedMessage, Duration, Instant, MessageId, QueueActor, QueueRecord,
-    QueueResponse, ReadyRange, Reverse, StoredRecordLayout,
+    QueueResponse, ReadyRange, Reverse,
 };
 
 struct SendTiming {
@@ -46,10 +46,10 @@ impl QueueActor {
         // Allocate message ID
         let id = MessageId::new(self.next_id);
         let cached_body = body;
-        let record = QueueRecord::metadata_only(0, timing.visible_at_ms);
         let reserved_limit = self.reserved_id_limit_for(1);
         let staged_next_id = reserved_limit.unwrap_or(self.next_id_limit);
         let is_ready = timing.visible_at <= now_instant;
+        let record = QueueRecord::enqueued(id, timing.visible_at_ms, is_ready, now_epoch_ms);
         let staged_ready_count = self
             .persisted_ready_count
             .saturating_add(usize::from(is_ready));
@@ -191,7 +191,7 @@ impl QueueActor {
         }
         for (id, record, cached_body, visible_at) in plan.post_commit {
             let visible_at_ms = record.visible_at_ms;
-            self.cache_record(id, record, StoredRecordLayout::EmbeddedHeader);
+            self.cache_record(id, record);
             self.cache_body(id, cached_body);
             if visible_at <= now_instant {
                 self.push_ready(id);
@@ -274,15 +274,17 @@ impl QueueActor {
         ready_index_write: Option<(usize, ReadyRange)>,
         visible_at_ms: u64,
     ) -> Result<(), QueueResponse> {
-        let header_key = self.cached_header_key(id);
-        let header_value = Self::encode_legacy_record(&QueueRecord::loaded(
-            body.clone(),
-            record.attempts,
-            record.visible_at_ms,
-        ));
-        txn.put(header_key, header_value, None)
+        txn.put(
+            self.cached_header_key(id),
+            Self::encode_record_header(record),
+            None,
+        )
+        .map_err(|error| QueueResponse::Error {
+            message: format!("Failed to add message header to transaction: {error:?}"),
+        })?;
+        txn.put(self.cached_body_key(id), body.to_vec(), None)
             .map_err(|error| QueueResponse::Error {
-                message: format!("Failed to add message header to transaction: {error:?}"),
+                message: format!("Failed to add message body to transaction: {error:?}"),
             })?;
 
         if let Some((shard, range)) = ready_index_write {
@@ -350,7 +352,7 @@ impl QueueActor {
         if let Some(limit) = reserved_limit {
             self.next_id_limit = limit;
         }
-        self.cache_record(id, record, StoredRecordLayout::EmbeddedHeader);
+        self.cache_record(id, record);
         self.cache_body(id, cached_body);
 
         if is_ready {
@@ -397,7 +399,8 @@ impl QueueActor {
         for (body, delay_seconds) in items {
             let timing = Self::send_timing(*delay_seconds, now_instant, now_epoch_ms)?;
             let id = MessageId::new(next_id);
-            let record = QueueRecord::metadata_only(0, timing.visible_at_ms);
+            let record =
+                QueueRecord::enqueued(id, timing.visible_at_ms, timing.delay_ms == 0, now_epoch_ms);
             let ready_index_write = if timing.delay_ms == 0 {
                 let (shard, range) = Self::prepare_persisted_ready_append(
                     staged_ready_tails[Self::shard_for_id(id)],

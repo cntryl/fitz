@@ -1,6 +1,5 @@
 use super::{
-    DecodedIndexMeta, DelayedMessage, IndexRecoveryAttempt, MessageId, QueueActor, QueueState,
-    RecoveryPath,
+    DelayedMessage, IndexRecoveryAttempt, MessageId, QueueActor, QueueState, RecoveryPath,
 };
 use crate::observability as obs;
 use bytes::Bytes;
@@ -225,8 +224,6 @@ impl QueueActor {
 
         let header_query =
             cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&self.header_key_prefix));
-        let legacy_query = cntryl_midge::Query::new()
-            .prefix(Bytes::copy_from_slice(&self.legacy_message_key_prefix));
 
         let mut header_iter = match txn.scan(&header_query) {
             Ok(iter) => iter,
@@ -235,23 +232,13 @@ impl QueueActor {
                 return Err(format!("Failed to scan queue headers for recovery: {e:?}"));
             }
         };
-        let mut legacy_iter = match txn.scan(&legacy_query) {
-            Ok(iter) => iter,
-            Err(e) if Self::is_missing_read_snapshot_error(&e) => return Ok(None),
-            Err(e) => {
-                return Err(format!(
-                    "Failed to scan legacy queue records for recovery: {e:?}"
-                ));
-            }
-        };
 
         let header_entries = Self::collect_scan_entries(&mut header_iter)?;
-        let legacy_entries = Self::collect_scan_entries(&mut legacy_iter)?;
-        if header_entries.is_empty() && legacy_entries.is_empty() {
+        if header_entries.is_empty() {
             return Ok(None);
         }
 
-        let recovered_count = header_entries.len() + legacy_entries.len();
+        let recovered_count = header_entries.len();
         let per_shard = recovered_count / Self::READY_SHARDS + 1;
         for shard in &mut self.ready_shards {
             shard.reserve(per_shard);
@@ -273,14 +260,6 @@ impl QueueActor {
             &mut recovered_ready_ids,
             &mut max_id,
         )?;
-        self.recover_legacy_entries(
-            &legacy_entries,
-            now_epoch_ms,
-            now_instant,
-            &mut recovered_ready_ids,
-            &mut max_id,
-        )?;
-
         if self.delayed.is_empty() {
             self.next_delayed_deadline = now_instant + Duration::from_hours(1);
         }
@@ -400,16 +379,7 @@ impl QueueActor {
         };
 
         let meta_snapshot = match Self::decode_index_meta(&index_meta) {
-            Ok(DecodedIndexMeta::V2(snapshot)) => snapshot,
-            Ok(DecodedIndexMeta::LegacyV1) => {
-                self.index_meta_written = false;
-                Self::increment_counter(obs::METRIC_QUEUE_RECOVERY_INDEX_INVALID);
-                return Err(IndexRecoveryAttempt::Invalid {
-                    next_id: self.load_next_id_from_meta_key(),
-                    reason: "Queue index meta is legacy v1 and missing authoritative counters"
-                        .to_string(),
-                });
-            }
+            Ok(snapshot) => snapshot,
             Err(reason) => {
                 self.index_meta_written = false;
                 Self::increment_counter(obs::METRIC_QUEUE_RECOVERY_INDEX_INVALID);
@@ -620,46 +590,11 @@ impl QueueActor {
             else {
                 return Err("Malformed authoritative queue header key".to_string());
             };
-            let record = if let Ok(record) = Self::decode_record_header(value_bytes) {
-                record
-            } else if let Ok(record) = Self::decode_legacy_record(value_bytes.clone()) {
-                record.metadata_only_from()
-            } else {
+            let Ok(record) = Self::decode_record_header(value_bytes) else {
                 return Err(format!(
                     "Malformed authoritative queue header record for message {id}"
                 ));
             };
-
-            self.recover_record(
-                id,
-                &record,
-                now_epoch_ms,
-                now_instant,
-                recovered_ready_ids,
-                max_id,
-            );
-        }
-
-        Ok(())
-    }
-
-    fn recover_legacy_entries(
-        &mut self,
-        entries: &RecoveryScanEntries,
-        now_epoch_ms: u64,
-        now_instant: Instant,
-        recovered_ready_ids: &mut Vec<MessageId>,
-        max_id: &mut Option<u64>,
-    ) -> Result<(), String> {
-        for (key_bytes, value_bytes) in entries {
-            let Some(id) =
-                Self::parse_message_id_from_key(key_bytes, &self.legacy_message_key_prefix)
-            else {
-                return Err("Malformed authoritative legacy queue message key".to_string());
-            };
-            let record = Self::decode_legacy_record(value_bytes.clone()).map_err(|error| {
-                format!("Malformed authoritative legacy queue message {id}: {error}")
-            })?;
 
             self.recover_record(
                 id,

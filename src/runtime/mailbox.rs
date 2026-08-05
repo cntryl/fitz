@@ -63,12 +63,6 @@ impl Mailbox {
         &self.receiver
     }
 
-    /// Get the high-priority sender (runtime-internal use only)
-    #[allow(dead_code)]
-    pub(crate) fn high_priority_sender(&self) -> Sender<Envelope> {
-        self.high_priority.clone()
-    }
-
     /// Get the high-priority receiver (runtime-internal use only)
     pub(crate) fn high_priority_receiver(&self) -> &Receiver<Envelope> {
         &self.high_receiver

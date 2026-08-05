@@ -82,20 +82,6 @@ fn should_keep_memory_schedule_mode_best_effort() {
 }
 
 #[test]
-fn should_normalize_legacy_stream_storage_layout_given_explicit_boot_config() {
-    // Arrange
-
-    // Act
-    let config = BootConfig::new().with_stream_storage_layout(StreamStorageLayout::LegacyCovering);
-
-    // Assert
-    assert_eq!(
-        config.stream_storage_layout,
-        StreamStorageLayout::PromotionFrontier
-    );
-}
-
-#[test]
 #[serial]
 fn should_accept_contiguous_route_family_allowlist() {
     with_clean_config_env(|| {

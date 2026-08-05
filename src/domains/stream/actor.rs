@@ -28,7 +28,6 @@ impl ActiveAppendSession {}
 /// The actor holds only live session state for the current broker process.
 /// Committed events, offsets, and metadata stay in [`StreamStore`].
 pub struct StreamActor {
-    #[allow(dead_code)]
     family_id: RouteFamily,
     realm: String,
     area: String,
@@ -395,48 +394,9 @@ impl StreamActor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domains::stream::storage::{
-        encode_stream_layout_marker_key, StreamLayoutMarkerValue,
-    };
-    use crate::domains::stream::store::StreamStorageLayout;
     use crate::testkit::create_test_engine_with_cfs;
 
     mod state_model;
-
-    #[test]
-    fn should_return_reset_error_given_previous_layout_marker_during_actor_recovery() {
-        // Arrange
-        let db = create_test_engine_with_cfs(vec![1]);
-        let mut txn = db
-            .begin_tx(1, cntryl_midge::TransactionMode::ReadWrite)
-            .expect("begin write tx");
-        txn.put(
-            encode_stream_layout_marker_key(),
-            StreamLayoutMarkerValue::encode_previous_generation_for_tests(
-                StreamStorageLayout::PromotionFrontier,
-            ),
-            None,
-        )
-        .expect("write legacy layout marker");
-        txn.commit(cntryl_midge::WriteOptions::sync())
-            .expect("commit legacy layout marker");
-        let store = Arc::new(StreamStore::new(db));
-
-        // Act
-        let result = StreamActor::new(
-            RouteFamily::new(1),
-            "test".to_string(),
-            "events".to_string(),
-            "orders".to_string(),
-            store,
-        );
-
-        // Assert
-        let Err(error) = result else {
-            panic!("actor recovery should surface layout mismatch");
-        };
-        assert!(error.contains("ERR_STREAM_STORAGE_GENERATION_RESET_REQUIRED"));
-    }
 
     #[test]
     fn should_preserve_active_session_given_store_commit_failure() {

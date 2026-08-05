@@ -1,9 +1,7 @@
 use super::super::{
-    storage_key, DomainKeyspace, LexKey, MessageId, QueueActor, QueueKey,
-    QUEUE_KEY_FAMILY_ACK_DEDUP, QUEUE_KEY_FAMILY_BODY, QUEUE_KEY_FAMILY_DELAYED_INDEX,
-    QUEUE_KEY_FAMILY_DLQ_INDEX, QUEUE_KEY_FAMILY_HEADER, QUEUE_KEY_FAMILY_INDEX_META,
-    QUEUE_KEY_FAMILY_INFLIGHT_INDEX, QUEUE_KEY_FAMILY_LEGACY_MESSAGE, QUEUE_KEY_FAMILY_META,
-    QUEUE_KEY_FAMILY_READY_INDEX,
+    storage_key, DomainKeyspace, LexKey, MessageId, QueueActor, QueueKey, QUEUE_KEY_FAMILY_BODY,
+    QUEUE_KEY_FAMILY_DELAYED_INDEX, QUEUE_KEY_FAMILY_DLQ_INDEX, QUEUE_KEY_FAMILY_HEADER,
+    QUEUE_KEY_FAMILY_INDEX_META, QUEUE_KEY_FAMILY_META, QUEUE_KEY_FAMILY_READY_INDEX,
 };
 
 impl QueueActor {
@@ -13,10 +11,8 @@ impl QueueActor {
     ) -> Option<QueueKey> {
         let (_, suffix) = storage_key::split_domain_key(key, DomainKeyspace::Queue)?;
         let (_, family_marker, message_id) = Self::split_authoritative_key(suffix)?;
-        if !matches!(
-            family_marker,
-            QUEUE_KEY_FAMILY_HEADER | QUEUE_KEY_FAMILY_LEGACY_MESSAGE
-        ) || message_id.len() != 8
+        if family_marker != QUEUE_KEY_FAMILY_HEADER
+            || message_id.len() != 8
             || u64::from_be_bytes(message_id.try_into().ok()?) == 0
         {
             return None;
@@ -124,15 +120,6 @@ impl QueueActor {
         Self::prefixed_queue_key(queue_key, QUEUE_KEY_FAMILY_INDEX_META)
     }
 
-    /// Midge key for legacy combined message record
-    #[cfg(test)]
-    pub(in crate::domains::queue::actor) fn legacy_message_key(
-        queue_key: &QueueKey,
-        id: MessageId,
-    ) -> Vec<u8> {
-        Self::cached_id_key(&Self::legacy_message_key_prefix(queue_key), id)
-    }
-
     /// Midge key for persisted message header
     #[cfg(test)]
     pub(in crate::domains::queue::actor) fn header_key(
@@ -167,22 +154,8 @@ impl QueueActor {
         Self::prefixed_queue_key(queue_key, QUEUE_KEY_FAMILY_DELAYED_INDEX)
     }
 
-    pub(in crate::domains::queue::actor) fn inflight_index_prefix(queue_key: &QueueKey) -> Vec<u8> {
-        Self::prefixed_queue_key(queue_key, QUEUE_KEY_FAMILY_INFLIGHT_INDEX)
-    }
-
     pub(in crate::domains::queue::actor) fn dlq_index_prefix(queue_key: &QueueKey) -> Vec<u8> {
         Self::prefixed_queue_key(queue_key, QUEUE_KEY_FAMILY_DLQ_INDEX)
-    }
-
-    pub(in crate::domains::queue::actor) fn ack_dedup_prefix(queue_key: &QueueKey) -> Vec<u8> {
-        Self::prefixed_queue_key(queue_key, QUEUE_KEY_FAMILY_ACK_DEDUP)
-    }
-
-    pub(in crate::domains::queue::actor) fn legacy_message_key_prefix(
-        queue_key: &QueueKey,
-    ) -> Vec<u8> {
-        Self::prefixed_queue_key(queue_key, QUEUE_KEY_FAMILY_LEGACY_MESSAGE)
     }
 
     pub(in crate::domains::queue::actor) fn cached_id_key(prefix: &[u8], id: MessageId) -> Vec<u8> {
@@ -200,49 +173,5 @@ impl QueueActor {
     #[inline]
     pub(in crate::domains::queue::actor) fn cached_body_key(&self, id: MessageId) -> Vec<u8> {
         Self::cached_id_key(&self.body_key_prefix, id)
-    }
-
-    #[inline]
-    pub(in crate::domains::queue::actor) fn cached_legacy_message_key(
-        &self,
-        id: MessageId,
-    ) -> Vec<u8> {
-        Self::cached_id_key(&self.legacy_message_key_prefix, id)
-    }
-
-    #[allow(dead_code)]
-    pub(in crate::domains::queue::actor) fn ready_entry_index_key_with_prefix(
-        prefix: &[u8],
-        ready_seq: u64,
-        id: MessageId,
-    ) -> Vec<u8> {
-        let mut key = Vec::with_capacity(prefix.len() + 16);
-        key.extend_from_slice(prefix);
-        key.extend_from_slice(&ready_seq.to_be_bytes());
-        key.extend_from_slice(&id.as_u64().to_be_bytes());
-        key
-    }
-
-    #[allow(dead_code)]
-    pub(in crate::domains::queue::actor) fn ready_entry_index_key(
-        &self,
-        ready_seq: u64,
-        id: MessageId,
-    ) -> Vec<u8> {
-        Self::ready_entry_index_key_with_prefix(&self.ready_index_prefix, ready_seq, id)
-    }
-
-    #[allow(dead_code)]
-    pub(in crate::domains::queue::actor) fn parse_ready_entry_index_key(
-        key: &[u8],
-        prefix: &[u8],
-    ) -> Option<(u64, MessageId)> {
-        let rest = key.strip_prefix(prefix)?;
-        if rest.len() != 16 {
-            return None;
-        }
-        let ready_seq = u64::from_be_bytes(rest[0..8].try_into().ok()?);
-        let id = u64::from_be_bytes(rest[8..16].try_into().ok()?);
-        Some((ready_seq, MessageId::new(id)))
     }
 }

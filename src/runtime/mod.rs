@@ -35,7 +35,7 @@ pub mod managed_actor;
 pub mod matcher;
 pub mod router;
 pub mod routing;
-/// Legacy actor fixture retained only for unit tests; production uses family
+/// Actor-spawning fixture used only by unit tests; production uses family
 /// actor pools and managed actors directly.
 #[cfg(test)]
 pub(crate) mod scheduler;

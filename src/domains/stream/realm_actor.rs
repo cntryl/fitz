@@ -1,4 +1,4 @@
-//! Realm actor: mints realm-level offsets and tracks the realm watermark
+//! Realm actor: tracks the realm watermark
 
 use bytes::Bytes;
 use std::collections::BTreeMap;
@@ -10,13 +10,12 @@ use crate::runtime::domain_event::DomainPublishEvent;
 use crate::runtime::routing::{Route, RouteFamily};
 
 use super::constants::{NOTICE_DEBOUNCE_MS, WATERMARK_PERSIST_RETRY_MS};
-use super::protocol::{LeaseGranted, StreamCoordinationMessage};
+use super::protocol::StreamCoordinationMessage;
 use super::store::StreamStore;
 
-/// `RealmActor` coordinates realm-level offsets and tracks the realm watermark
+/// `RealmActor` tracks the realm watermark
 ///
 /// Responsibilities:
-/// - Mint realm offset leases for `AreaActors`
 /// - Track committed realm-wide ranges from `BatchCommitted` notifications
 /// - Calculate and advance the realm watermark (highest contiguous
 ///   *realm-wide* offset), mirroring `AreaActor`'s own contiguous-range
@@ -35,9 +34,6 @@ pub struct RealmActor {
 
     /// Storage layer for watermark persistence
     store: Arc<StreamStore>,
-
-    /// Next realm offset to assign
-    next_realm_offset: u64,
 
     /// Realm watermark (highest contiguous committed realm-wide offset).
     ///
@@ -83,27 +79,12 @@ impl RealmActor {
             family_id,
             realm,
             store,
-            next_realm_offset: 0,
             realm_watermark,
             watermark_initialized,
             committed_ranges: BTreeMap::new(),
             notification_timer: None,
             pending_publish: None,
             watermark_retry_timer: None,
-        }
-    }
-
-    /// Grant realm offset lease to `AreaActor`
-    fn handle_request_realm_lease(&mut self, count: u64, _ctx: &mut Context<Self>) -> LeaseGranted {
-        let start = self.next_realm_offset;
-        let end_excl = start + count;
-        self.next_realm_offset = end_excl;
-
-        LeaseGranted {
-            area_start: 0, // Will be filled by AreaActor
-            area_end_exclusive: 0,
-            realm_start: start,
-            realm_end_exclusive: end_excl, // End-exclusive
         }
     }
 
@@ -263,9 +244,6 @@ impl Actor for RealmActor {
 
     fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
         match msg {
-            StreamCoordinationMessage::RequestRealmLease { count, .. } => {
-                let _ = self.handle_request_realm_lease(count, ctx);
-            }
             StreamCoordinationMessage::BatchCommitted(commit) => {
                 self.handle_batch_committed(
                     commit.first_realm_offset,
@@ -273,8 +251,6 @@ impl Actor for RealmActor {
                     ctx,
                 );
             }
-            StreamCoordinationMessage::RequestLease { .. }
-            | StreamCoordinationMessage::LeaseGranted { .. } => {}
         }
     }
 
@@ -347,37 +323,6 @@ mod tests {
         let actor = RealmActor::new(family, "realm1".to_string(), store);
         let ctx = Context::new(addr, router);
         (actor, ctx, stream_mailbox)
-    }
-
-    #[test]
-    fn should_mint_realm_offsets_from_zero() {
-        // Arrange
-        let (mut actor, mut ctx) = make_test_actor();
-
-        // Act
-        let grant = actor.handle_request_realm_lease(100, &mut ctx);
-
-        // Assert
-        assert_eq!(grant.realm_start, 0);
-        assert_eq!(grant.realm_end_exclusive, 100);
-        assert_eq!(actor.next_realm_offset, 100);
-    }
-
-    #[test]
-    fn should_mint_sequential_realm_offset_blocks() {
-        // Arrange
-        let (mut actor, mut ctx) = make_test_actor();
-
-        // Act
-        let grant1 = actor.handle_request_realm_lease(50, &mut ctx);
-        let grant2 = actor.handle_request_realm_lease(30, &mut ctx);
-
-        // Assert
-        assert_eq!(grant1.realm_start, 0);
-        assert_eq!(grant1.realm_end_exclusive, 50);
-        assert_eq!(grant2.realm_start, 50);
-        assert_eq!(grant2.realm_end_exclusive, 80);
-        assert_eq!(actor.next_realm_offset, 80);
     }
 
     #[test]

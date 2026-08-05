@@ -5,14 +5,6 @@ use super::{
 };
 
 impl RuntimeIngress {
-    #[allow(dead_code)]
-    pub(super) fn cached_session_inbox_route(
-        &self,
-        session_id: u64,
-    ) -> crate::runtime::routing::Route {
-        self.session_registry().cached_inbox_route(session_id)
-    }
-
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn domain_dispatch_for_msg_type(
         msg_type: crate::protocol::tlv::MessageType,

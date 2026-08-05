@@ -1,15 +1,8 @@
 use super::{
     DlqReason, Duration, Inflight, InflightExpiry, Instant, MessageId, QueueActor, QueueRecord,
-    QueueState, Reverse, StoredRecordLayout,
+    QueueState, Reverse,
 };
 use crate::observability as obs;
-
-#[derive(Clone, Copy)]
-struct DlqTransitionContext {
-    record_layout: StoredRecordLayout,
-    now_epoch_ms: u64,
-    has_body_key: bool,
-}
 
 impl QueueActor {
     pub(super) fn handle_inflight_expired(&mut self, id: MessageId) -> bool {
@@ -17,7 +10,7 @@ impl QueueActor {
             return false;
         };
         let now_epoch_ms = self.clock.now_epoch_ms();
-        let Some((mut record, record_layout)) = self.load_redelivery_record(id, &inflight) else {
+        let Some(mut record) = self.load_redelivery_record(id, &inflight) else {
             return false;
         };
 
@@ -35,40 +28,17 @@ impl QueueActor {
         let Some(txn) = self.begin_redelivery_transaction(id, &inflight) else {
             return false;
         };
-        let Some((has_split_record, has_body_key)) =
-            self.inspect_redelivery_layout(&txn, id, &inflight)
-        else {
-            return false;
-        };
-
         if self.should_move_to_dlq(record.attempts) {
-            return self.handle_redelivery_dlq(
-                id,
-                &inflight,
-                &mut record,
-                txn,
-                DlqTransitionContext {
-                    record_layout,
-                    now_epoch_ms,
-                    has_body_key,
-                },
-            );
+            return self.handle_redelivery_dlq(id, &inflight, &mut record, txn, now_epoch_ms);
         }
 
-        if !self.persist_redelivery_attempt(
-            id,
-            &inflight,
-            &record,
-            txn,
-            has_split_record,
-            has_body_key,
-        ) {
+        if !self.persist_redelivery_attempt(id, &inflight, &record, txn) {
             return false;
         }
 
         Self::increment_counter(obs::METRIC_QUEUE_REDELIVERIES);
         self.inflight.remove(&id);
-        self.finish_redelivery_retry(id, &inflight, &record, record_layout);
+        self.finish_redelivery_retry(id, &inflight, &record);
         true
     }
 
@@ -124,19 +94,9 @@ impl QueueActor {
         Some(inflight)
     }
 
-    fn load_redelivery_record(
-        &self,
-        id: MessageId,
-        inflight: &Inflight,
-    ) -> Option<(QueueRecord, StoredRecordLayout)> {
+    fn load_redelivery_record(&self, id: MessageId, inflight: &Inflight) -> Option<QueueRecord> {
         if let Some(cached) = self.records.get(&id) {
-            return Some((
-                cached.clone(),
-                self.record_layouts
-                    .get(&id)
-                    .copied()
-                    .unwrap_or(StoredRecordLayout::EmbeddedHeader),
-            ));
+            return Some(cached.clone());
         }
 
         match self.load_record_metadata_from_store(id) {
@@ -188,72 +148,19 @@ impl QueueActor {
         }
     }
 
-    fn inspect_redelivery_layout(
-        &mut self,
-        txn: &cntryl_midge::Transaction,
-        id: MessageId,
-        inflight: &Inflight,
-    ) -> Option<(bool, bool)> {
-        let header_key = self.cached_header_key(id);
-        let body_key = self.cached_body_key(id);
-        let has_split_record = match txn.get(&header_key) {
-            Ok(Some(_)) => true,
-            Ok(None) => false,
-            Err(error) => {
-                tracing::warn!(
-                    queue = ?self.queue_key,
-                    route_family = self.queue_key.family.as_u64(),
-                    message_id = id.as_u64(),
-                    error = ?error,
-                    "Failed to inspect queue storage layout during redelivery"
-                );
-                self.schedule_inflight_retry(id, inflight);
-                return None;
-            }
-        };
-
-        let has_body_key = if has_split_record {
-            match txn.get(&body_key) {
-                Ok(Some(_)) => true,
-                Ok(None) => false,
-                Err(error) => {
-                    tracing::warn!(
-                        queue = ?self.queue_key,
-                        route_family = self.queue_key.family.as_u64(),
-                        message_id = id.as_u64(),
-                        error = ?error,
-                        "Failed to inspect queue body storage layout during redelivery"
-                    );
-                    false
-                }
-            }
-        } else {
-            false
-        };
-
-        Some((has_split_record, has_body_key))
-    }
-
     fn handle_redelivery_dlq(
         &mut self,
         id: MessageId,
         inflight: &Inflight,
         record: &mut QueueRecord,
         mut txn: cntryl_midge::Transaction,
-        context: DlqTransitionContext,
+        now_epoch_ms: u64,
     ) -> bool {
-        let dead_lettered_at_ms = context.now_epoch_ms;
+        let dead_lettered_at_ms = now_epoch_ms;
         let index_plan = self.plan_index_mutation_for_unavailable_message(id);
         Self::prepare_dlq_record(record, dead_lettered_at_ms);
 
-        if !self.persist_dlq_record(
-            id,
-            inflight,
-            record,
-            context.record_layout,
-            &mut txn,
-            context.has_body_key,
-        ) {
+        if !self.persist_dlq_record(id, inflight, record, &mut txn) {
             return false;
         }
 
@@ -294,11 +201,7 @@ impl QueueActor {
             record.last_inflight_at_ms,
         );
         self.apply_index_mutation_plan(id, index_plan, Some(dead_lettered_at_ms));
-        self.cache_record(
-            id,
-            record.metadata_only_from(),
-            StoredRecordLayout::SplitHeaderBody,
-        );
+        self.cache_record(id, record.metadata_only_from());
         self.evict_cached_body(id);
 
         tracing::info!(
@@ -327,21 +230,16 @@ impl QueueActor {
         id: MessageId,
         inflight: &Inflight,
         record: &mut QueueRecord,
-        record_layout: StoredRecordLayout,
         txn: &mut cntryl_midge::Transaction,
-        has_body_key: bool,
     ) -> bool {
-        let header_key = self.cached_header_key(id);
-        let write_result =
-            if matches!(record_layout, StoredRecordLayout::SplitHeaderBody) && has_body_key {
-                txn.put(header_key, Self::encode_record_header(record), None)
-                    .map_err(|error| format!("Failed to write DLQ header: {error:?}"))
-            } else {
-                if record.body.is_none() && !self.load_body_into_record(id, record, inflight) {
-                    return false;
-                }
-                self.write_record_as_split(txn, id, record, Some(record_layout))
-            };
+        let _ = inflight;
+        let write_result = txn
+            .put(
+                self.cached_header_key(id),
+                Self::encode_record_header(record),
+                None,
+            )
+            .map_err(|error| format!("Failed to write DLQ header: {error:?}"));
 
         if let Err(error) = write_result {
             tracing::warn!(
@@ -358,45 +256,14 @@ impl QueueActor {
         true
     }
 
-    fn load_body_into_record(
-        &mut self,
-        id: MessageId,
-        record: &mut QueueRecord,
-        inflight: &Inflight,
-    ) -> bool {
-        match self.load_body_from_store(id) {
-            Ok(body) => {
-                record.body = Some(body);
-                true
-            }
-            Err(error) => {
-                tracing::warn!(
-                    queue = ?self.queue_key,
-                    route_family = self.queue_key.family.as_u64(),
-                    message_id = id.as_u64(),
-                    error_reason = %error,
-                    "Failed to load queue body for DLQ transition"
-                );
-                self.schedule_inflight_retry(id, inflight);
-                false
-            }
-        }
-    }
-
     fn persist_redelivery_attempt(
         &mut self,
         id: MessageId,
         inflight: &Inflight,
         record: &QueueRecord,
         mut txn: cntryl_midge::Transaction,
-        has_split_record: bool,
-        has_body_key: bool,
     ) -> bool {
-        let write_result = if has_split_record {
-            self.persist_split_redelivery_attempt(id, record, &mut txn, has_body_key)
-        } else {
-            self.persist_legacy_redelivery_attempt(id, record, &mut txn)
-        };
+        let write_result = self.persist_split_redelivery_attempt(id, record, &mut txn);
 
         if let Err(error) = write_result {
             tracing::warn!(
@@ -432,25 +299,9 @@ impl QueueActor {
         id: MessageId,
         record: &QueueRecord,
         txn: &mut cntryl_midge::Transaction,
-        has_body_key: bool,
     ) -> Result<(), String> {
         let header_key = self.cached_header_key(id);
         match txn.get(&header_key) {
-            Ok(Some(bytes)) if !has_body_key && bytes.len() >= 16 => {
-                match Self::decode_legacy_record(bytes) {
-                    Ok(mut embedded_record) => {
-                        embedded_record.attempts = record.attempts;
-                        embedded_record.visible_at_ms = record.visible_at_ms;
-                        let value = Self::encode_legacy_record(&embedded_record);
-                        txn.put(header_key, value, None).map_err(|error| {
-                            format!("persist embedded redelivery failed: {error:?}")
-                        })
-                    }
-                    Err(error) => Err(format!(
-                        "Failed to decode embedded queue message during redelivery: {error}"
-                    )),
-                }
-            }
             Ok(Some(_)) => txn
                 .put(header_key, Self::encode_record_header(record), None)
                 .map_err(|error| format!("persist split redelivery failed: {error:?}")),
@@ -461,44 +312,15 @@ impl QueueActor {
         }
     }
 
-    fn persist_legacy_redelivery_attempt(
-        &self,
-        id: MessageId,
-        record: &QueueRecord,
-        txn: &mut cntryl_midge::Transaction,
-    ) -> Result<(), String> {
-        let legacy_key = self.cached_legacy_message_key(id);
-        match txn.get(&legacy_key) {
-            Ok(Some(bytes)) => match Self::decode_legacy_record(bytes) {
-                Ok(mut legacy_record) => {
-                    legacy_record.attempts = record.attempts;
-                    legacy_record.visible_at_ms = record.visible_at_ms;
-                    let value = Self::encode_legacy_record(&legacy_record);
-                    txn.put(legacy_key, value, None)
-                        .map_err(|error| format!("persist legacy redelivery failed: {error:?}"))
-                }
-                Err(error) => Err(format!(
-                    "Failed to decode legacy queue message during redelivery: {error}"
-                )),
-            },
-            Ok(None) => Err("Legacy queue message disappeared during redelivery".to_string()),
-            Err(error) => Err(format!(
-                "Failed to read legacy queue message during redelivery: {error:?}"
-            )),
-        }
-    }
-
     fn finish_redelivery_retry(
         &mut self,
         id: MessageId,
         inflight: &Inflight,
         record: &QueueRecord,
-        record_layout: StoredRecordLayout,
     ) {
         self.cache_record(
             id,
             QueueRecord::metadata_only(record.attempts, record.visible_at_ms),
-            record_layout,
         );
         self.update_cached_inflight_metadata(
             id,

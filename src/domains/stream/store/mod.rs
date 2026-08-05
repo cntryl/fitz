@@ -272,7 +272,6 @@ impl LayoutActivationFailure {
 pub enum StreamStorageLayout {
     #[default]
     PromotionFrontier,
-    LegacyCovering,
 }
 
 impl StreamStorageLayout {
@@ -283,13 +282,6 @@ impl StreamStorageLayout {
 
         match raw_value.as_str() {
             "promotion-frontier" | "frontier" => Self::PromotionFrontier,
-            "legacy" | "legacy-covering" | "covering" => {
-                tracing::warn!(
-                    layout = raw_value.as_str(),
-                    "Legacy stream storage layout is no longer supported; using promotion frontier layout"
-                );
-                Self::PromotionFrontier
-            }
             _ => {
                 tracing::warn!(
                     layout = raw_value,
@@ -301,23 +293,8 @@ impl StreamStorageLayout {
     }
 
     #[must_use]
-    pub fn normalize_requested(self) -> Self {
-        match self {
-            Self::PromotionFrontier => Self::PromotionFrontier,
-            Self::LegacyCovering => {
-                tracing::warn!(
-                    requested = self.as_str(),
-                    "Legacy stream storage layout is no longer supported; using promotion frontier layout"
-                );
-                Self::PromotionFrontier
-            }
-        }
-    }
-
-    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::LegacyCovering => "legacy-covering",
             Self::PromotionFrontier => "promotion-frontier",
         }
     }

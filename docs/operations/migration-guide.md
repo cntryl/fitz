@@ -123,12 +123,12 @@ Concrete Stream routes are unaffected: `BEGIN` still addresses
 `{realm}/{area}/{resource}/{operation}` and still authorizes against its
 resource identity.
 
-## Deprecated Runtime Matcher And Routing Helpers
+## Removed Runtime Matcher And Routing Helpers
 
-The following `fitz::runtime` items still compile but are now
-`#[deprecated]` and will be removed in a later release:
+The following previously `#[deprecated]` `fitz::runtime` items have been
+removed:
 
-| Deprecated | Replacement |
+| Removed | Replacement |
 | --- | --- |
 | `runtime::matcher::extract_route_segments` | `runtime::matcher::extract_route_segments_borrowed` |
 | `runtime::matcher::match_pattern_segments` | `Pattern::matches` / `Pattern::matches_str` |
@@ -136,7 +136,7 @@ The following `fitz::runtime` items still compile but are now
 | `runtime::routing::RouteFamily::from_u32` | `RouteFamily::new` (identical behavior) |
 | `runtime::router::Router::resolve_domain_sink` | `Router::route_to_domain` |
 
-The `match_pattern_segments` helpers compare path segments only and do not
+The `match_pattern_segments` helpers compared path segments only and did not
 enforce a pattern's scheme; `Pattern::matches` does. Callers that relied on the
 segment-only comparison must add their own scheme check, or they will accept
 routes from other domains.
@@ -144,6 +144,33 @@ routes from other domains.
 `Router::route_to_domain` resolves the sink and delivers in one step, so the
 route-miss path stays instrumented; resolving the sink separately bypassed the
 mismatch counter.
+
+`runtime::Scheduler::new` no longer takes a worker-thread count. Each spawned
+actor already gets its own processing thread, so the argument had no effect;
+call `Scheduler::new()`.
+
+## Breaking: Single-Generation Storage Formats
+
+**This upgrade cannot read any store written by an earlier broker.** Every
+prior-generation storage reader has been removed across Queue, Schedule, and
+Stream. Old rows are not migrated, and in the Schedule case they are not even
+detected — they are silently ignored.
+
+Queue enqueues now write the versioned split header plus a separate body row.
+Previously the enqueue path wrote the older embedded-header encoding and rows
+were only rewritten into the split layout when a message was redelivered or
+dead-lettered.
+
+See [../development/format-compatibility.md](../development/format-compatibility.md)
+for the per-domain format detail.
+
+**Required procedure:** drain every queue, stream, and schedule before
+upgrading, then start the new broker on a fresh storage path. There is no
+in-place upgrade and no rewrite tool. Rollback means restoring the pre-upgrade
+store snapshot together with the old broker binary.
+
+`FITZ_STREAM_STORAGE_LAYOUT` no longer accepts the `legacy`, `legacy-covering`,
+or `covering` aliases; `promotion-frontier` is the only layout.
 
 ## New Domain Delivery-Drop Metrics
 
@@ -164,6 +191,7 @@ than the `notify` spelling used by the other domains.
 3. Confirm client compatibility for target version.
 4. Freeze nonessential schema or config changes.
 5. Confirm the broker has `FITZ_ROUTE_FAMILY_MAP` entries for every identity value expected in incoming tokens.
+6. Drain every queue, stream, and schedule, then provision a fresh storage path — persisted state from an earlier broker is unreadable.
 
 ## During Upgrade
 

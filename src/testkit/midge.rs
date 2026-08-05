@@ -122,29 +122,3 @@ pub fn create_test_engine_with_cfs(cf_ids: Vec<u32>) -> Arc<Engine> {
 
     engine
 }
-
-/// Create a test engine with default configuration
-///
-/// **DEPRECATED: DO NOT USE IN NEW CODE**
-///
-/// This function exists only for legacy compatibility and will be removed.
-/// It creates an engine that may only support the default CF (CF=0).
-///
-/// **Use `create_test_engine_with_cfs(vec![1, 2, ...])` instead.**
-///
-/// # Panics
-///
-/// This function will be updated to panic in the future. Migrate to
-/// `create_test_engine_with_cfs` immediately.
-#[deprecated(
-    since = "0.1.0",
-    note = "Use create_test_engine_with_cfs to explicitly configure column families"
-)]
-#[must_use]
-pub fn create_test_engine() -> Arc<Engine> {
-    panic!(
-        "CRITICAL TEST VIOLATION: create_test_engine() is FORBIDDEN. \
-         Use create_test_engine_with_cfs(vec![1, 2, ...]) to explicitly configure \
-         column families. The default CF (CF=0) must never be used."
-    );
-}

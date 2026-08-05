@@ -185,7 +185,7 @@ pub fn handle_startup(runtime: &Runtime) -> Response {
         .unwrap()
 }
 
-/// Legacy health check
+/// `/health` alias for [`handle_healthz`].
 pub fn handle_health(runtime: &Runtime) -> Response {
     handle_healthz(runtime)
 }

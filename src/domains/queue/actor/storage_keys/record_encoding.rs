@@ -19,18 +19,4 @@ impl QueueActor {
         buf.push(record.dlq_reason.map_or(0, |value| value as u8));
         buf
     }
-
-    /// Serialize a legacy combined `QueueRecord` for compatibility writes.
-    pub(in crate::domains::queue::actor) fn encode_legacy_record(record: &QueueRecord) -> Vec<u8> {
-        let body = record
-            .body
-            .as_ref()
-            .expect("legacy queue record must have a body before persistence");
-        let mut buf = Vec::with_capacity(16 + body.len());
-        buf.extend_from_slice(&record.attempts.to_le_bytes());
-        buf.extend_from_slice(&record.visible_at_ms.to_le_bytes());
-        buf.extend_from_slice(&u32::try_from(body.len()).unwrap_or(u32::MAX).to_le_bytes());
-        buf.extend_from_slice(body);
-        buf
-    }
 }

@@ -133,7 +133,7 @@ For the auth and browser-perimeter checklist, see
 | FITZ_STORAGE_MEMTABLE_BYTES | Unsigned integer byte count | Auto | Optional explicit memtable size override for embedded engine. |
 | FITZ_QUEUE_WRITE_POLICY | fast, buffered, or strict | fast | Queue mutation write policy. `fast` skips WAL and flushes in the background; `buffered` uses local buffered WAL or cloud asynchronous durability; `strict` waits for local sync or cloud provider acknowledgement. |
 | FITZ_QUEUE_LOSS_WINDOW_MS | Positive integer millisecond count | 100 | Target background flush interval for fast queue writes. Accepted recent queue mutations can be lost before this window closes. |
-| FITZ_STREAM_STORAGE_LAYOUT | promotion-frontier or aliases | promotion-frontier | Stream layout selector. Legacy aliases are accepted but normalized to promotion-frontier. |
+| FITZ_STREAM_STORAGE_LAYOUT | promotion-frontier or frontier | promotion-frontier | Stream layout selector. `promotion-frontier` is the only supported layout; any other value warns and falls back to it. |
 | FITZ_MIN_MEMORY_BYTES | Unsigned integer byte count | 134217728 | Startup preflight minimum cgroup memory threshold. Set 0 to bypass memory-limit check. |
 
 Schedule persistence follows the selected storage mode. `memory` mode uses

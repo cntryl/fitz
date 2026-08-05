@@ -2,7 +2,7 @@ use super::super::store::StreamStorageLayout;
 use super::{
     AreaValue, RealmValue, ResourceValue, StreamLayoutMarkerValue, AREA_VALUE_V2_MARKER,
     OPTIONAL_BYTES_ABSENT, OPTIONAL_OFFSET_ABSENT, REALM_VALUE_V2_MARKER, RESOURCE_VALUE_V2_MARKER,
-    STREAM_LAYOUT_MARKER_VALUE_V1_MARKER, STREAM_LAYOUT_MARKER_VALUE_V2_MARKER,
+    STREAM_LAYOUT_MARKER_VALUE_V2_MARKER,
 };
 use bytes::Bytes;
 
@@ -26,7 +26,6 @@ impl StreamLayoutMarkerValue {
             STREAM_LAYOUT_MARKER_VALUE_V2_MARKER[0],
             STREAM_LAYOUT_MARKER_VALUE_V2_MARKER[1],
             match self.layout {
-                StreamStorageLayout::LegacyCovering => 0,
                 StreamStorageLayout::PromotionFrontier => 1,
             },
         ]
@@ -42,7 +41,6 @@ impl StreamLayoutMarkerValue {
         }
 
         let layout = match bytes[2] {
-            0 => StreamStorageLayout::LegacyCovering,
             1 => StreamStorageLayout::PromotionFrontier,
             other => {
                 return Err(format!(
@@ -52,26 +50,6 @@ impl StreamLayoutMarkerValue {
         };
 
         Ok(Self { layout })
-    }
-
-    #[must_use]
-    pub fn is_previous_generation(bytes: &[u8]) -> bool {
-        bytes.len() == 3
-            && (bytes.starts_with(&STREAM_LAYOUT_MARKER_VALUE_V1_MARKER)
-                || bytes.starts_with(&[0, 0xD2]))
-    }
-
-    #[cfg(test)]
-    #[must_use]
-    pub fn encode_previous_generation_for_tests(layout: StreamStorageLayout) -> Vec<u8> {
-        vec![
-            0,
-            0xD2,
-            match layout {
-                StreamStorageLayout::LegacyCovering => 0,
-                StreamStorageLayout::PromotionFrontier => 1,
-            },
-        ]
     }
 }
 

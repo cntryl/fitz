@@ -1,10 +1,9 @@
 use super::model::{
     parse_concrete_schedule_route, storage_key, Arc, Bytes, ConcreteScheduleRoute,
     DecodedDefinitionRow, DomainKeyspace, Encoder, LexKey, ScheduleDefinitionData,
-    ScheduleDeliveryMode, ScheduleRows, ScheduleStore, BODY_PREFIX, BODY_VALUE_VERSION_V1,
-    BODY_VALUE_VERSION_V2, DEFINITION_PREFIX, DEFINITION_VALUE_VERSION_V1,
-    DEFINITION_VALUE_VERSION_V2, DEFINITION_VALUE_VERSION_V3, DUE_PREFIX, PENDING_FIRE_PREFIX,
-    PENDING_FIRE_VALUE_VERSION_V1, PENDING_FIRE_VALUE_VERSION_V2, PENDING_FIRE_VALUE_VERSION_V3,
+    ScheduleDeliveryMode, ScheduleRows, ScheduleStore, BODY_PREFIX, BODY_VALUE_VERSION_V2,
+    DEFINITION_PREFIX, DEFINITION_VALUE_VERSION_V3, PENDING_FIRE_PREFIX,
+    PENDING_FIRE_VALUE_VERSION_V3,
 };
 
 impl ScheduleStore {
@@ -188,9 +187,12 @@ impl ScheduleStore {
         Self::encode_prefixed_route_key(route, BODY_PREFIX)
     }
 
-    #[allow(dead_code)]
+    /// Build a due-index key. Production writes due rows through
+    /// `encode_prefixed_timed_route_key` directly; this exists so store tests
+    /// can seed and assert on due rows.
+    #[cfg(test)]
     pub(crate) fn encode_due_key(next_fire_ms: u64, route: &str) -> Vec<u8> {
-        Self::encode_prefixed_timed_route_key(next_fire_ms, route, DUE_PREFIX)
+        Self::encode_prefixed_timed_route_key(next_fire_ms, route, super::model::DUE_PREFIX)
     }
 
     pub(crate) fn encode_pending_fire_key(fire_ms: u64, route: &str) -> Vec<u8> {
@@ -247,11 +249,6 @@ impl ScheduleStore {
         Ok((fire_ms, route))
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn decode_due_key(key: &[u8]) -> Result<(u64, String), String> {
-        Self::decode_due_key_with_prefix(key, DUE_PREFIX)
-    }
-
     pub(super) fn decode_pending_fire_key(key: &[u8]) -> Result<(u64, String), String> {
         Self::decode_due_key_with_prefix(key, PENDING_FIRE_PREFIX)
     }
@@ -290,70 +287,6 @@ impl ScheduleStore {
         }
 
         match value[0] {
-            DEFINITION_VALUE_VERSION_V1 => {
-                if value.len() < 17 {
-                    return Err("Schedule definition value too short".to_string());
-                }
-
-                let next_fire_ms = u64::from_be_bytes(value[1..9].try_into().unwrap());
-                let cron_len = u32::from_be_bytes(value[9..13].try_into().unwrap()) as usize;
-                let cron_start = 13;
-                let cron_end = cron_start + cron_len;
-                if value.len() < cron_end + 4 {
-                    return Err("Schedule definition value truncated before cron".to_string());
-                }
-
-                let cron = String::from_utf8(value[cron_start..cron_end].to_vec())
-                    .map_err(|e| format!("Invalid cron encoding: {e}"))?;
-                let payload_len =
-                    u32::from_be_bytes(value[cron_end..cron_end + 4].try_into().unwrap()) as usize;
-                let payload_start = cron_end + 4;
-                let payload_end = payload_start + payload_len;
-                if value.len() != payload_end {
-                    return Err("Schedule definition value has invalid payload length".to_string());
-                }
-
-                Ok(DecodedDefinitionRow::Inline {
-                    next_fire_ms,
-                    cron,
-                    payload: Bytes::copy_from_slice(&value[payload_start..payload_end]),
-                    last_fire_ms: None,
-                    executions_total: 0,
-                })
-            }
-            DEFINITION_VALUE_VERSION_V2 => {
-                if value.len() < 33 {
-                    return Err("Schedule definition value too short".to_string());
-                }
-
-                let next_fire_ms = u64::from_be_bytes(value[1..9].try_into().unwrap());
-                let last_fire_ms = u64::from_be_bytes(value[9..17].try_into().unwrap());
-                let executions_total = u64::from_be_bytes(value[17..25].try_into().unwrap());
-                let cron_len = u32::from_be_bytes(value[25..29].try_into().unwrap()) as usize;
-                let cron_start = 29;
-                let cron_end = cron_start + cron_len;
-                if value.len() < cron_end + 4 {
-                    return Err("Schedule definition value truncated before cron".to_string());
-                }
-
-                let cron = String::from_utf8(value[cron_start..cron_end].to_vec())
-                    .map_err(|e| format!("Invalid cron encoding: {e}"))?;
-                let payload_len =
-                    u32::from_be_bytes(value[cron_end..cron_end + 4].try_into().unwrap()) as usize;
-                let payload_start = cron_end + 4;
-                let payload_end = payload_start + payload_len;
-                if value.len() != payload_end {
-                    return Err("Schedule definition value has invalid payload length".to_string());
-                }
-
-                Ok(DecodedDefinitionRow::Inline {
-                    next_fire_ms,
-                    cron,
-                    payload: Bytes::copy_from_slice(&value[payload_start..payload_end]),
-                    last_fire_ms: (last_fire_ms != 0).then_some(last_fire_ms),
-                    executions_total,
-                })
-            }
             DEFINITION_VALUE_VERSION_V3 => {
                 if value.len() != 25 {
                     return Err("Schedule definition metadata value has invalid length".to_string());
@@ -362,7 +295,7 @@ impl ScheduleStore {
                 let next_fire_ms = u64::from_be_bytes(value[1..9].try_into().unwrap());
                 let last_fire_ms = u64::from_be_bytes(value[9..17].try_into().unwrap());
                 let executions_total = u64::from_be_bytes(value[17..25].try_into().unwrap());
-                Ok(DecodedDefinitionRow::Metadata {
+                Ok(DecodedDefinitionRow {
                     next_fire_ms,
                     last_fire_ms: (last_fire_ms != 0).then_some(last_fire_ms),
                     executions_total,
@@ -382,19 +315,12 @@ impl ScheduleStore {
         }
 
         match value[0] {
-            BODY_VALUE_VERSION_V1 | BODY_VALUE_VERSION_V2 => {
-                if value.len() < 9 {
+            BODY_VALUE_VERSION_V2 => {
+                if value.len() < 10 {
                     return Err("Schedule definition body value too short".to_string());
                 }
 
-                let (delivery_mode, length_start) = if value[0] == BODY_VALUE_VERSION_V1 {
-                    (ScheduleDeliveryMode::Broadcast, 1)
-                } else {
-                    if value.len() < 10 {
-                        return Err("Schedule definition body value too short".to_string());
-                    }
-                    (ScheduleDeliveryMode::try_from(value[1])?, 2)
-                };
+                let (delivery_mode, length_start) = (ScheduleDeliveryMode::try_from(value[1])?, 2);
                 let cron_len =
                     u32::from_be_bytes(value[length_start..length_start + 4].try_into().unwrap())
                         as usize;
@@ -449,25 +375,6 @@ impl ScheduleStore {
         }
 
         match value[0] {
-            PENDING_FIRE_VALUE_VERSION_V1 => Ok((
-                0,
-                ScheduleDeliveryMode::Broadcast,
-                Bytes::copy_from_slice(&value[1..]),
-            )),
-            PENDING_FIRE_VALUE_VERSION_V2 => {
-                if value.len() < 1 + std::mem::size_of::<u64>() {
-                    return Err(
-                        "Schedule pending fire value missing claimed-at timestamp".to_string()
-                    );
-                }
-
-                let claimed_at_ms = u64::from_le_bytes(value[1..9].try_into().unwrap());
-                Ok((
-                    claimed_at_ms,
-                    ScheduleDeliveryMode::Broadcast,
-                    Bytes::copy_from_slice(&value[9..]),
-                ))
-            }
             PENDING_FIRE_VALUE_VERSION_V3 => {
                 if value.len() < 10 {
                     return Err("Schedule pending fire value missing delivery mode".to_string());

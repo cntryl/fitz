@@ -1,6 +1,4 @@
-use super::{
-    DelayedMessage, Duration, MessageId, QueueActor, QueueState, Reverse, StoredRecordLayout,
-};
+use super::{DelayedMessage, Duration, MessageId, QueueActor, QueueState, Reverse};
 
 impl QueueActor {
     /// # Errors
@@ -9,7 +7,7 @@ impl QueueActor {
     pub fn replay_dead_letter(&mut self, id: MessageId) -> Result<bool, String> {
         self.process_due_work();
 
-        let (mut record, record_layout) = match self.load_full_record_for_admin_mutation(id) {
+        let mut record = match self.load_full_record_for_admin_mutation(id) {
             Ok(value) => value,
             Err(error) if error == format!("Message {id} disappeared from storage") => {
                 return Ok(false);
@@ -48,7 +46,7 @@ impl QueueActor {
             .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("Failed to begin replay tx for message {id}: {e:?}"))?;
 
-        self.write_record_as_split(&mut txn, id, &record, Some(record_layout))?;
+        self.write_record_as_split(&mut txn, id, &record)?;
         txn.delete(self.dlq_index_key(dead_lettered_at_ms, id))
             .map_err(|e| format!("Failed to delete queue DLQ index for message {id}: {e:?}"))?;
         txn.put(
@@ -72,7 +70,7 @@ impl QueueActor {
             .map_err(|e| format!("Failed to commit replay tx for message {id}: {e:?}"))?;
 
         self.remove_persisted_dlq(id);
-        self.cache_record_state(id, &record, StoredRecordLayout::SplitHeaderBody);
+        self.cache_record_state(id, &record);
         self.push_ready_entry(ready_seq, id);
         self.next_ready_seq = self.next_ready_seq.saturating_add(1);
         self.push_persisted_ready(id);
@@ -86,14 +84,8 @@ impl QueueActor {
     pub fn purge_dead_letter(&mut self, id: MessageId) -> Result<bool, String> {
         self.process_due_work();
 
-        let (record, record_layout) = if let Some(record) = self.records.get(&id).cloned() {
-            (
-                record,
-                self.record_layouts
-                    .get(&id)
-                    .copied()
-                    .unwrap_or(StoredRecordLayout::EmbeddedHeader),
-            )
+        let record = if let Some(record) = self.records.get(&id).cloned() {
+            record
         } else {
             match self.load_record_metadata_from_store(id) {
                 Ok(record) => record,
@@ -118,12 +110,10 @@ impl QueueActor {
             .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("Failed to begin purge tx for message {id}: {e:?}"))?;
 
-        Self::delete_record_for_layout(
+        Self::delete_record(
             &mut txn,
-            record_layout,
             self.cached_header_key(id),
             self.cached_body_key(id),
-            self.cached_legacy_message_key(id),
         )
         .map_err(|e| format!("Failed to delete message {id} in purge tx: {e:?}"))?;
         txn.delete(self.dlq_index_key(dead_lettered_at_ms, id))

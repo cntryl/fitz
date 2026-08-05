@@ -1,54 +1,14 @@
-use super::super::{DecodedIndexMeta, IndexMetaSnapshot, QueueActor, QueueMetaSnapshot};
+use super::super::{IndexMetaSnapshot, QueueActor};
 
 impl QueueActor {
-    #[allow(dead_code)]
-    pub(in crate::domains::queue::actor) fn encode_meta(meta: QueueMetaSnapshot) -> Vec<u8> {
-        let mut out = Vec::with_capacity(1 + (8 * 7));
-        out.push(Self::META_VERSION_V2);
-        out.extend_from_slice(&meta.next_id.to_le_bytes());
-        out.extend_from_slice(&meta.next_ready_seq.to_le_bytes());
-        out.extend_from_slice(&meta.ready_count.to_le_bytes());
-        out.extend_from_slice(&meta.delayed_count.to_le_bytes());
-        out.extend_from_slice(&meta.inflight_count.to_le_bytes());
-        out.extend_from_slice(&meta.dlq_count.to_le_bytes());
-        out.extend_from_slice(&meta.oldest_ready_enqueued_at_ms.unwrap_or(0).to_le_bytes());
-        out
-    }
-
-    pub(in crate::domains::queue::actor) fn decode_meta(bytes: &[u8]) -> Option<QueueMetaSnapshot> {
-        if bytes.len() == 8 {
-            let next_id = u64::from_le_bytes(bytes.try_into().ok()?);
-            return Some(QueueMetaSnapshot {
-                next_id,
-                next_ready_seq: next_id,
-                ready_count: 0,
-                delayed_count: 0,
-                inflight_count: 0,
-                dlq_count: 0,
-                oldest_ready_enqueued_at_ms: None,
-            });
-        }
-
-        if bytes.first().copied()? != Self::META_VERSION_V2 || bytes.len() != 57 {
-            return None;
-        }
-
-        let next_id = u64::from_le_bytes(bytes[1..9].try_into().ok()?);
-        let next_ready_seq = u64::from_le_bytes(bytes[9..17].try_into().ok()?);
-        let ready_count = u64::from_le_bytes(bytes[17..25].try_into().ok()?);
-        let delayed_count = u64::from_le_bytes(bytes[25..33].try_into().ok()?);
-        let inflight_count = u64::from_le_bytes(bytes[33..41].try_into().ok()?);
-        let dlq_count = u64::from_le_bytes(bytes[41..49].try_into().ok()?);
-        let oldest_ready = u64::from_le_bytes(bytes[49..57].try_into().ok()?);
-        Some(QueueMetaSnapshot {
-            next_id,
-            next_ready_seq,
-            ready_count,
-            delayed_count,
-            inflight_count,
-            dlq_count,
-            oldest_ready_enqueued_at_ms: (oldest_ready != 0).then_some(oldest_ready),
-        })
+    /// Decode the persisted queue meta row and return its reserved `next_id`.
+    ///
+    /// The row holds exactly one little-endian `u64`, written by
+    /// `write_enqueue_meta` whenever the actor extends its id reservation. A
+    /// row of any other length is rejected so a corrupt row fails closed
+    /// rather than seeding a bogus id.
+    pub(in crate::domains::queue::actor) fn decode_meta(bytes: &[u8]) -> Option<u64> {
+        Some(u64::from_le_bytes(bytes.try_into().ok()?))
     }
 
     pub(in crate::domains::queue::actor) fn encode_index_meta(
@@ -77,7 +37,7 @@ impl QueueActor {
 
     pub(in crate::domains::queue::actor) fn decode_index_meta(
         bytes: &[u8],
-    ) -> Result<DecodedIndexMeta, String> {
+    ) -> Result<IndexMetaSnapshot, String> {
         if bytes.len() < 2 {
             return Err("Queue index meta too short".to_string());
         }
@@ -86,7 +46,6 @@ impl QueueActor {
         }
 
         match bytes[0] {
-            Self::INDEX_VERSION_V1 => Ok(DecodedIndexMeta::LegacyV1),
             Self::INDEX_VERSION_V2 => {
                 if bytes.len() < 34 {
                     return Err("Queue index meta v2 payload too short".to_string());
@@ -118,34 +77,19 @@ impl QueueActor {
                     );
                 }
 
-                Ok(DecodedIndexMeta::V2(IndexMetaSnapshot {
+                Ok(IndexMetaSnapshot {
                     next_id,
                     ready_count,
                     delayed_count,
                     next_delayed_visibility_ms,
-                }))
+                })
             }
             other => Err(format!("Unsupported queue index meta version {other}")),
         }
     }
 
     pub(in crate::domains::queue::actor) fn decode_next_id(bytes: Option<&[u8]>) -> u64 {
-        bytes
-            .and_then(Self::decode_meta)
-            .map_or(1, |meta| meta.next_id)
-    }
-
-    #[allow(dead_code)]
-    pub(in crate::domains::queue::actor) fn load_meta_from_store(
-        &self,
-    ) -> Option<QueueMetaSnapshot> {
-        let cf_id = self.queue_key.family.id();
-        let txn = self
-            .store
-            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
-            .ok()?;
-        let bytes = txn.get(&self.meta_key).ok()??;
-        Self::decode_meta(bytes.as_ref())
+        bytes.and_then(Self::decode_meta).unwrap_or(1)
     }
 
     pub(in crate::domains::queue::actor) fn load_next_id_from_meta_key(&self) -> u64 {

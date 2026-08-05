@@ -140,65 +140,6 @@ fn should_recover_mixed_batch_visibility_counts_after_restart() {
 }
 
 #[test]
-fn should_recover_legacy_combined_records_after_storage_split() {
-    // Arrange
-    let store = Arc::new(
-        cntryl_midge::Engine::open(
-            cntryl_midge::OpenOptions::in_memory()
-                .build()
-                .expect("build in-memory test options"),
-        )
-        .expect("Failed to open Midge"),
-    );
-    let queue_key = unique_queue_key("jobs-legacy-storage");
-    let msg_id = MessageId::new(1);
-    let cf_id = queue_key.family.id();
-    let mut txn = store
-        .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
-        .expect("begin tx");
-
-    txn.put(
-        QueueActor::meta_key(&queue_key),
-        2_u64.to_le_bytes().to_vec(),
-        None,
-    )
-    .expect("write queue meta");
-    txn.put(
-        QueueActor::legacy_message_key(&queue_key, msg_id),
-        QueueActor::encode_legacy_record(&QueueRecord::loaded(
-            Bytes::from_static(b"legacy-message"),
-            0,
-            1_700_000_000_000,
-        )),
-        None,
-    )
-    .expect("write legacy queue record");
-    txn.commit(cntryl_midge::WriteOptions::buffered())
-        .expect("commit legacy queue record");
-
-    // Act
-    let mut actor = QueueActor::new(
-        RouteFamily::new(0),
-        queue_key,
-        store,
-        None,
-        crate::utils::idempotency::default_dedup_store(),
-    );
-
-    // Assert
-    assert_eq!(actor.ready_len(), 1);
-
-    match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1)) {
-        QueueResponse::Received { messages } => {
-            assert_eq!(messages.len(), 1);
-            assert_eq!(messages[0].id, msg_id);
-            assert_eq!(messages[0].body, Bytes::from_static(b"legacy-message"));
-        }
-        _ => panic!("Expected Received response"),
-    }
-}
-
-#[test]
 fn should_hydrate_oversized_body_from_store_without_caching() {
     // Arrange
     let store = Arc::new(

@@ -500,7 +500,7 @@ pub struct AreaValue {
     pub created_at: u64,
 }
 
-/// Value stored in legacy realm index rows (covering index with full event)
+/// Value stored in realm index rows, carrying the full event inline
 #[derive(Debug, Clone)]
 pub struct RealmValue {
     pub area_offset: u64,
@@ -603,7 +603,6 @@ pub(super) const RESOURCE_VALUE_V2_MARKER: [u8; 2] = [0, 0x91];
 pub(super) const CANONICAL_RESOURCE_VALUE_V1_MARKER: [u8; 2] = [0, 0xC1];
 pub(super) const AREA_LOCATOR_VALUE_V1_MARKER: [u8; 2] = [0, 0xC2];
 pub(super) const REALM_LOCATOR_VALUE_V1_MARKER: [u8; 2] = [0, 0xC3];
-pub(super) const STREAM_LAYOUT_MARKER_VALUE_V1_MARKER: [u8; 2] = [0, 0xD1];
 pub(super) const STREAM_LAYOUT_MARKER_VALUE_V2_MARKER: [u8; 2] = [0, 0xD3];
 pub(super) const COMPACT_AREA_PAGE_VALUE_V2_MARKER: [u8; 2] = [0, 0xE5];
 pub(super) const COMPRESSED_COMPACT_REALM_PAGE_VALUE_V2_MARKER: [u8; 2] = [0, 0xE9];

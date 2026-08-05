@@ -83,12 +83,10 @@ const QUEUE_KEY_FAMILY_META: u8 = 0x01;
 const QUEUE_KEY_FAMILY_INDEX_META: u8 = 0x02;
 const QUEUE_KEY_FAMILY_HEADER: u8 = 0x03;
 const QUEUE_KEY_FAMILY_BODY: u8 = 0x04;
-const QUEUE_KEY_FAMILY_LEGACY_MESSAGE: u8 = 0x05;
 const QUEUE_KEY_FAMILY_READY_INDEX: u8 = 0x10;
 const QUEUE_KEY_FAMILY_DELAYED_INDEX: u8 = 0x11;
 const QUEUE_KEY_FAMILY_INFLIGHT_INDEX: u8 = 0x12;
 const QUEUE_KEY_FAMILY_DLQ_INDEX: u8 = 0x13;
-const QUEUE_KEY_FAMILY_ACK_DEDUP: u8 = 0x14;
 
 fn encode_cached_response(response: &QueueResponse) -> Option<Vec<u8>> {
     match response {
@@ -160,16 +158,11 @@ enum DlqReason {
     MaxAttemptsExceeded = 1,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StoredRecordLayout {
-    EmbeddedHeader,
-    SplitHeaderBody,
-    LegacyKey,
-}
-
 impl QueueRecord {
+    /// Build a ready-state record. Production enqueues build records inline;
+    /// this exists so storage tests can seed ready rows directly.
+    #[cfg(test)]
     #[inline]
-    #[allow(dead_code)]
     fn ready(body: Bytes, enqueue_seq: u64, ready_seq: u64, now_epoch_ms: u64) -> Self {
         Self {
             body: Some(body),
@@ -188,13 +181,22 @@ impl QueueRecord {
         }
     }
 
+    /// Build the metadata for a freshly enqueued message.
+    ///
+    /// `enqueue_seq` seeds from the message id so recovery keeps delayed
+    /// ordering stable, and the state reflects whether the message is
+    /// immediately visible. `ready_seq` stays `None` because ready ordering is
+    /// owned by the ready index, not the record header.
     #[inline]
-    #[allow(dead_code)]
-    fn delayed(body: Bytes, enqueue_seq: u64, visible_at_ms: u64, now_epoch_ms: u64) -> Self {
+    fn enqueued(id: MessageId, visible_at_ms: u64, is_ready: bool, now_epoch_ms: u64) -> Self {
         Self {
-            body: Some(body),
-            state: QueueState::Delayed,
-            enqueue_seq,
+            body: None,
+            state: if is_ready {
+                QueueState::Ready
+            } else {
+                QueueState::Delayed
+            },
+            enqueue_seq: id.as_u64(),
             ready_seq: None,
             attempts: 0,
             visible_at_ms,
@@ -209,9 +211,9 @@ impl QueueRecord {
     }
 
     #[inline]
-    fn loaded_legacy(body: Bytes, attempts: u32, visible_at_ms: u64) -> Self {
+    fn metadata_only(attempts: u32, visible_at_ms: u64) -> Self {
         Self {
-            body: Some(body),
+            body: None,
             state: QueueState::Ready,
             enqueue_seq: 0,
             ready_seq: None,
@@ -225,18 +227,6 @@ impl QueueRecord {
             dead_lettered_at_ms: None,
             dlq_reason: None,
         }
-    }
-
-    #[inline]
-    fn loaded(body: Bytes, attempts: u32, visible_at_ms: u64) -> Self {
-        Self::loaded_legacy(body, attempts, visible_at_ms)
-    }
-
-    #[inline]
-    fn metadata_only(attempts: u32, visible_at_ms: u64) -> Self {
-        let mut record = Self::loaded_legacy(Bytes::new(), attempts, visible_at_ms);
-        record.body = None;
-        record
     }
 
     #[inline]
@@ -332,18 +322,6 @@ struct ReadyEntry {
     ready_seq: u64,
     id: MessageId,
     ready_enqueued_at_ms: u64,
-}
-
-#[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
-struct QueueMetaSnapshot {
-    next_id: u64,
-    next_ready_seq: u64,
-    ready_count: u64,
-    delayed_count: u64,
-    inflight_count: u64,
-    dlq_count: u64,
-    oldest_ready_enqueued_at_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -500,17 +478,10 @@ struct IndexMetaSnapshot {
     next_delayed_visibility_ms: Option<u64>,
 }
 
-#[derive(Debug, Clone, Copy)]
-enum DecodedIndexMeta {
-    LegacyV1,
-    V2(IndexMetaSnapshot),
-}
-
 /// Queue actor managing a single message queue
 ///
 /// # State
 ///
-/// - `family`: `RouteFamily` this actor serves (for validation)
 /// - `queue_key`: Queue identity (realm/area/resource)
 /// - `store`: Midge storage handle (for persistence)
 /// - `next_id`: Message ID counter (monotonic)
@@ -528,18 +499,13 @@ enum DecodedIndexMeta {
 /// - Persist deletes on successful completion
 /// - Never persist inflight state
 pub struct QueueActor {
-    /// Route family this actor serves (for validation)
-    #[allow(dead_code)]
-    family: RouteFamily,
-
     /// Queue identity
     queue_key: QueueKey,
 
     /// Cached Midge metadata key for this queue.
     meta_key: Vec<u8>,
 
-    /// Legacy recovery-index metadata key.
-    #[allow(dead_code)]
+    /// Key for the durable recovery-index metadata row (counters + reserved id).
     index_meta_key: Vec<u8>,
 
     /// Cached Midge header-key prefix for this queue.
@@ -548,26 +514,14 @@ pub struct QueueActor {
     /// Cached Midge body-key prefix for this queue.
     body_key_prefix: Vec<u8>,
 
-    /// Cached Midge legacy record-key prefix for this queue.
-    legacy_message_key_prefix: Vec<u8>,
-
     /// Cached Midge ready-index prefix for this queue.
     ready_index_prefix: Vec<u8>,
 
     /// Cached Midge delayed-index prefix for this queue.
     delayed_index_prefix: Vec<u8>,
 
-    /// Cached Midge inflight-index prefix for this queue.
-    #[allow(dead_code)]
-    inflight_index_prefix: Vec<u8>,
-
     /// Cached Midge dead-letter index prefix for this queue.
-    #[allow(dead_code)]
     dlq_index_prefix: Vec<u8>,
-
-    /// Cached Midge durable COMPLETE deduplication prefix for this queue.
-    #[allow(dead_code)]
-    ack_dedup_prefix: Vec<u8>,
 
     /// Midge storage handle (for durable persistence)
     store: Arc<cntryl_midge::MidgeEngine>,
@@ -583,46 +537,39 @@ pub struct QueueActor {
     /// Next durable ready ordering sequence.
     next_ready_seq: u64,
 
-    /// Legacy reserved ID upper bound retained while the actor migrates away
-    /// from the old range-index path.
-    #[allow(dead_code)]
+    /// Upper bound of the currently reserved message-id block. Ids are handed
+    /// out below this limit without a durable write; crossing it forces a new
+    /// reservation to be persisted.
     next_id_limit: u64,
 
     /// Ready queue ordered by durable ready sequence.
     ready: VecDeque<ReadyEntry>,
 
-    /// Legacy sharded ready queue retained for compile-time compatibility while
-    /// the durable ready-sequence path replaces it.
-    #[allow(dead_code)]
+    /// In-memory ready ranges, sharded to keep append and pop O(1).
     ready_shards: Vec<VecDeque<ReadyRange>>,
 
-    /// Legacy persisted ready range index retained for compatibility.
-    #[allow(dead_code)]
+    /// Mirror of `ready_shards` reflecting what is durably in the ready index.
     persisted_ready_shards: Vec<VecDeque<ReadyRange>>,
 
-    /// Legacy persisted ready count retained for compatibility.
-    #[allow(dead_code)]
+    /// Durable ready-message count, kept in step with `persisted_ready_shards`.
     persisted_ready_count: usize,
 
     /// Cached total number of ready messages across all shards.
     ready_count: usize,
 
     /// Durable dead-letter count.
-    #[allow(dead_code)]
     dlq_count: usize,
 
     /// Oldest ready-message enqueue timestamp.
     oldest_ready_enqueued_at_ms: Option<u64>,
 
-    /// Legacy round-robin shard cursor retained for compatibility.
-    #[allow(dead_code)]
+    /// Round-robin cursor giving competing consumers fair shard coverage.
     next_ready_shard: usize,
 
     /// Bounded in-memory message metadata cache (durable backing is Midge).
     records: FastMap<MessageId, QueueRecord>,
 
     /// Storage layout cache aligned with `records`.
-    record_layouts: FastMap<MessageId, StoredRecordLayout>,
 
     /// FIFO eviction order for the bounded metadata cache.
     record_cache_fifo: VecDeque<MessageId>,
@@ -655,12 +602,10 @@ pub struct QueueActor {
     /// Cached minimum delayed visibility across `persisted_delayed`.
     persisted_next_delayed_visibility_ms: Option<u64>,
 
-    /// Legacy persisted-index marker retained for compatibility.
-    #[allow(dead_code)]
+    /// Whether the durable index-meta row has been written this lifetime.
     index_meta_written: bool,
 
-    /// Legacy recovery mode retained for compatibility with existing tests.
-    #[allow(dead_code)]
+    /// Which recovery path this actor took at startup, surfaced to admin stats.
     recovery_path: RecoveryPath,
 
     /// Flag indicating that queue-local waiters should be re-checked.

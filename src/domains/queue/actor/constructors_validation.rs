@@ -3,7 +3,7 @@ use super::{
     QueueActor, QueueKey, RecoveryPath, RollingRateWindow, RouteFamily, SystemClock, VecDeque,
     QUEUE_KEY_FAMILY_BODY, QUEUE_KEY_FAMILY_DELAYED_INDEX, QUEUE_KEY_FAMILY_DLQ_INDEX,
     QUEUE_KEY_FAMILY_HEADER, QUEUE_KEY_FAMILY_INDEX_META, QUEUE_KEY_FAMILY_INFLIGHT_INDEX,
-    QUEUE_KEY_FAMILY_LEGACY_MESSAGE, QUEUE_KEY_FAMILY_META, QUEUE_KEY_FAMILY_READY_INDEX,
+    QUEUE_KEY_FAMILY_META, QUEUE_KEY_FAMILY_READY_INDEX,
 };
 
 struct QueueValidationRow {
@@ -23,12 +23,7 @@ struct QueueValidationScan {
 impl QueueActor {
     pub(in crate::domains::queue::actor) const READY_SHARDS: usize = 8;
     pub(in crate::domains::queue::actor) const ID_RESERVATION_BLOCK: u64 = 256;
-    #[allow(dead_code)]
-    pub(in crate::domains::queue::actor) const META_VERSION_V2: u8 = 2;
     pub(in crate::domains::queue::actor) const HEADER_VERSION_V2: u8 = 2;
-    #[allow(dead_code)]
-    pub(in crate::domains::queue::actor) const ACK_DEDUP_TTL_MS: u64 = 5 * 60 * 1_000;
-    pub(in crate::domains::queue::actor) const INDEX_VERSION_V1: u8 = 1;
     pub(in crate::domains::queue::actor) const INDEX_VERSION_V2: u8 = 2;
     pub(in crate::domains::queue::actor) const INDEX_META_VALID_MARKER: u8 = 1;
     pub(in crate::domains::queue::actor) const INDEX_META_NEXT_DELAY_NONE: u64 = u64::MAX;
@@ -171,17 +166,13 @@ impl QueueActor {
         let now = Instant::now();
 
         let mut actor = Self {
-            family,
             meta_key: Self::meta_key(&queue_key),
             index_meta_key: Self::index_meta_key(&queue_key),
             header_key_prefix: Self::header_key_prefix(&queue_key),
             body_key_prefix: Self::body_key_prefix(&queue_key),
-            legacy_message_key_prefix: Self::legacy_message_key_prefix(&queue_key),
             ready_index_prefix: Self::ready_index_prefix(&queue_key),
             delayed_index_prefix: Self::delayed_index_prefix(&queue_key),
-            inflight_index_prefix: Self::inflight_index_prefix(&queue_key),
             dlq_index_prefix: Self::dlq_index_prefix(&queue_key),
-            ack_dedup_prefix: Self::ack_dedup_prefix(&queue_key),
             queue_key,
             store,
             commit_write_options,
@@ -197,7 +188,6 @@ impl QueueActor {
             oldest_ready_enqueued_at_ms: None,
             next_ready_shard: 0,
             records: HashMap::with_capacity_and_hasher(128, FxBuildHasher),
-            record_layouts: HashMap::with_capacity_and_hasher(128, FxBuildHasher),
             record_cache_fifo: VecDeque::with_capacity(128),
             body_cache: HashMap::with_capacity_and_hasher(128, FxBuildHasher),
             body_cache_fifo: VecDeque::with_capacity(Self::BODY_CACHE_LIMIT),
@@ -338,12 +328,12 @@ impl QueueActor {
 
             match family_marker {
                 QUEUE_KEY_FAMILY_META => {
-                    let Some(meta) = Self::decode_meta(&value) else {
+                    let Some(next_id) = Self::decode_meta(&value) else {
                         return Err(format!(
                             "queue validation failed: family={family} key_category=meta error=invalid encoding"
                         ));
                     };
-                    if meta.next_id == 0 {
+                    if next_id == 0 {
                         return Err(format!(
                             "queue validation failed: family={family} key_category=meta error=next_id is zero"
                         ));
@@ -351,38 +341,25 @@ impl QueueActor {
                 }
                 QUEUE_KEY_FAMILY_HEADER => {
                     Self::validate_authoritative_message_id(family, "header", suffix_tail)?;
-                    let is_split = Self::is_versioned_header(&value) || value.len() == 12;
-                    if Self::decode_record_header(&value).is_err()
-                        && Self::decode_legacy_record(value.clone()).is_err()
-                    {
+                    if Self::decode_record_header(&value).is_err() {
                         return Err(format!(
                             "queue validation failed: family={family} key_category=header error=invalid encoding"
                         ));
                     }
-                    if is_split {
-                        let body_key = Self::queue_storage_key(
-                            &queue_storage_prefix,
-                            QUEUE_KEY_FAMILY_BODY,
-                            suffix_tail,
-                        );
-                        scan.required_bodies.insert(
-                            body_key,
-                            QueueValidationRow {
-                                key: key.to_vec(),
-                                queue_storage_prefix,
-                                message_id: Self::message_id_from_validated_tail(suffix_tail),
-                                category: "header",
-                            },
-                        );
-                    }
-                }
-                QUEUE_KEY_FAMILY_LEGACY_MESSAGE => {
-                    Self::validate_authoritative_message_id(family, "legacy_message", suffix_tail)?;
-                    Self::decode_legacy_record(value).map_err(|error| {
-                        format!(
-                            "queue validation failed: family={family} key_category=legacy_message error={error}"
-                        )
-                    })?;
+                    let body_key = Self::queue_storage_key(
+                        &queue_storage_prefix,
+                        QUEUE_KEY_FAMILY_BODY,
+                        suffix_tail,
+                    );
+                    scan.required_bodies.insert(
+                        body_key,
+                        QueueValidationRow {
+                            key: key.to_vec(),
+                            queue_storage_prefix,
+                            message_id: Self::message_id_from_validated_tail(suffix_tail),
+                            category: "header",
+                        },
+                    );
                 }
                 QUEUE_KEY_FAMILY_BODY => {
                     Self::validate_authoritative_message_id(family, "body", suffix_tail)?;

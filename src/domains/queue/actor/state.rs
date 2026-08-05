@@ -1,6 +1,6 @@
 use super::{
     Bytes, MessageId, PersistedReadyMutation, QueueActor, QueueRecord, ReadyEntry, ReadyRange,
-    StoredRecordLayout, VecDeque,
+    VecDeque,
 };
 
 impl QueueActor {
@@ -273,16 +273,10 @@ impl QueueActor {
         }
     }
 
-    pub(super) fn cache_record(
-        &mut self,
-        id: MessageId,
-        record: QueueRecord,
-        layout: StoredRecordLayout,
-    ) {
+    pub(super) fn cache_record(&mut self, id: MessageId, record: QueueRecord) {
         if self.records.insert(id, record).is_none() {
             self.record_cache_fifo.push_back(id);
         }
-        self.record_layouts.insert(id, layout);
 
         self.compact_record_cache_fifo_if_needed();
 
@@ -291,13 +285,11 @@ impl QueueActor {
                 break;
             };
             self.records.remove(&evicted_id);
-            self.record_layouts.remove(&evicted_id);
         }
     }
 
     pub(super) fn evict_cached_record(&mut self, id: MessageId) {
         self.records.remove(&id);
-        self.record_layouts.remove(&id);
         self.compact_record_cache_fifo_if_needed();
     }
 

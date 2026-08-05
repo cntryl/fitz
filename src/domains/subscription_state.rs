@@ -76,11 +76,6 @@ impl<T: RoutedSubscription> RoutedSubscriptionSet<T> {
         self.subscriptions.get(&subscription_id)
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn get_mut(&mut self, subscription_id: u64) -> Option<&mut T> {
-        self.subscriptions.get_mut(&subscription_id)
-    }
-
     pub(crate) fn matching_ids(&self, family_id: RouteFamily, route: &str) -> Vec<u64> {
         let mut ids = self.exact_routes.get(route).cloned().unwrap_or_default();
         if self.wildcard_subscription_count > 0 {

@@ -115,7 +115,6 @@ impl QueueActor {
                     .or_else(|| {
                         self.load_record_metadata_from_store(*id)
                             .ok()
-                            .map(|(record, _)| record)
                             .filter(|record| matches!(record.state, QueueState::Dlq))
                     });
 

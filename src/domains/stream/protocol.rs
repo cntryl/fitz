@@ -35,77 +35,6 @@ pub fn parse_stream_route(route: &Route) -> Result<(String, String, String, Stri
 /// Maximum size for a single event (body + metadata combined)
 pub const MAX_EVENT_SIZE: usize = 1_048_576; // 1 MB
 
-/// Default lease size when requesting offsets from `AreaActor`
-/// Optimized for bulk workloads: 10K events amortizes coordination overhead
-pub const DEFAULT_LEASE_SIZE: u64 = 10_000;
-
-/// Default realm lease block size when `AreaActor` requests from `RealmActor`
-pub const DEFAULT_REALM_LEASE_BLOCK: u64 = 10_000;
-
-// ═══════════════════════════════════════════════════════════════════════════
-// OFFSET LEASE MANAGEMENT
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// Lease for area or realm offsets with end-exclusive semantics
-///
-/// **CRITICAL**: `end` is EXCLUSIVE (not inclusive)
-/// Valid range: [next, end)
-#[derive(Debug, Clone)]
-pub struct OffsetLease {
-    pub next: u64,
-    pub end: u64, // exclusive
-}
-
-impl OffsetLease {
-    /// Create empty lease (no offsets available)
-    #[must_use]
-    pub fn new() -> Self {
-        Self { next: 0, end: 0 }
-    }
-
-    /// Check if lease has no remaining offsets
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.next >= self.end
-    }
-
-    /// Get number of remaining offsets
-    #[must_use]
-    pub fn remaining(&self) -> u64 {
-        self.end.saturating_sub(self.next)
-    }
-
-    /// Consume N offsets and return the starting offset
-    ///
-    /// Returns None if insufficient offsets available
-    pub fn consume(&mut self, count: u64) -> Option<u64> {
-        if self.remaining() < count {
-            return None;
-        }
-        let start = self.next;
-        self.next += count;
-        Some(start)
-    }
-
-    /// Update lease from area-level grant
-    pub fn update_from_area_lease(&mut self, grant: &LeaseGranted) {
-        self.next = grant.area_start;
-        self.end = grant.area_end_exclusive;
-    }
-
-    /// Update lease from realm-level grant
-    pub fn update_from_realm_lease(&mut self, grant: &LeaseGranted) {
-        self.next = grant.realm_start;
-        self.end = grant.realm_end_exclusive;
-    }
-}
-
-impl Default for OffsetLease {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // CORE DATA TYPES
 // ═══════════════════════════════════════════════════════════════════════════
@@ -528,47 +457,15 @@ impl StreamClientNotification {
 // INTERNAL MESSAGES (Actor-to-actor communication)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Messages exchanged between `AreaActor`, `RealmActor`, and `StreamActor` for
-/// offset lease coordination and watermark propagation.
+/// Messages exchanged between `StreamActor` and the `AreaActor`/`RealmActor`
+/// watermark trackers.
 ///
 /// These are internal to the stream module and must never appear on the
 /// client-facing `StreamMessage` enum or be routed through the public sink.
 #[derive(Debug, Clone)]
 pub enum StreamCoordinationMessage {
-    /// Request paired area+realm offsets from `AreaActor` (`StreamActor` -> `AreaActor`)
-    RequestLease {
-        realm: String,
-        area: String,
-        count: u64,
-        reply_to: String,
-    },
-    /// Lease granted from `AreaActor` to `StreamActor`
-    LeaseGranted { grant: LeaseGranted },
-    /// Request realm offsets from `RealmActor` (`AreaActor` -> `RealmActor`)
-    RequestRealmLease { count: u64 },
     /// Batch committed notification from `StreamActor` to `AreaActor`
     BatchCommitted(BatchCommitted),
-}
-
-/// Request lease from `AreaActor`
-#[derive(Debug, Clone)]
-pub struct RequestLease {
-    pub realm: String,
-    pub area: String,
-    pub count: u64,
-    pub reply_to: String, // StreamActor ID
-}
-
-/// Lease granted by `AreaActor` (paired area+realm ranges)
-///
-/// **CRITICAL: All ranges are END-EXCLUSIVE**
-/// Valid range: [start, `end_exclusive`)
-#[derive(Debug, Clone, Copy)]
-pub struct LeaseGranted {
-    pub area_start: u64,
-    pub area_end_exclusive: u64,
-    pub realm_start: u64,
-    pub realm_end_exclusive: u64,
 }
 
 /// Write mode for stream commits

@@ -75,52 +75,6 @@ impl QueueActor {
         Self::delayed_index_key_with_prefix(&self.delayed_index_prefix, visible_at_ms, id)
     }
 
-    #[allow(dead_code)]
-    pub(in crate::domains::queue::actor) fn delayed_entry_index_key(
-        &self,
-        visible_at_ms: u64,
-        enqueue_seq: u64,
-        id: MessageId,
-    ) -> Vec<u8> {
-        let mut key = Vec::with_capacity(self.delayed_index_prefix.len() + 24);
-        key.extend_from_slice(&self.delayed_index_prefix);
-        key.extend_from_slice(&visible_at_ms.to_be_bytes());
-        key.extend_from_slice(&enqueue_seq.to_be_bytes());
-        key.extend_from_slice(&id.as_u64().to_be_bytes());
-        key
-    }
-
-    #[allow(dead_code)]
-    pub(in crate::domains::queue::actor) fn parse_delayed_entry_index_key(
-        key: &[u8],
-        prefix: &[u8],
-    ) -> Option<(u64, u64, MessageId)> {
-        let rest = key.strip_prefix(prefix)?;
-        if rest.len() != 24 {
-            return None;
-        }
-        let visible_at_ms = u64::from_be_bytes(rest[0..8].try_into().ok()?);
-        let enqueue_seq = u64::from_be_bytes(rest[8..16].try_into().ok()?);
-        let id = u64::from_be_bytes(rest[16..24].try_into().ok()?);
-        Some((visible_at_ms, enqueue_seq, MessageId::new(id)))
-    }
-
-    #[allow(dead_code)]
-    pub(in crate::domains::queue::actor) fn inflight_index_key(
-        &self,
-        expires_at_ms: u64,
-        inflight_epoch: u64,
-        id: MessageId,
-    ) -> Vec<u8> {
-        let mut key = Vec::with_capacity(self.inflight_index_prefix.len() + 24);
-        key.extend_from_slice(&self.inflight_index_prefix);
-        key.extend_from_slice(&expires_at_ms.to_be_bytes());
-        key.extend_from_slice(&inflight_epoch.to_be_bytes());
-        key.extend_from_slice(&id.as_u64().to_be_bytes());
-        key
-    }
-
-    #[allow(dead_code)]
     pub(in crate::domains::queue::actor) fn dlq_index_key(
         &self,
         dead_lettered_at_ms: u64,
@@ -130,19 +84,6 @@ impl QueueActor {
         key.extend_from_slice(&self.dlq_index_prefix);
         key.extend_from_slice(&dead_lettered_at_ms.to_be_bytes());
         key.extend_from_slice(&id.as_u64().to_be_bytes());
-        key
-    }
-
-    #[allow(dead_code)]
-    pub(in crate::domains::queue::actor) fn ack_dedup_key(
-        &self,
-        id: MessageId,
-        token: u64,
-    ) -> Vec<u8> {
-        let mut key = Vec::with_capacity(self.ack_dedup_prefix.len() + 16);
-        key.extend_from_slice(&self.ack_dedup_prefix);
-        key.extend_from_slice(&id.as_u64().to_be_bytes());
-        key.extend_from_slice(&token.to_be_bytes());
         key
     }
 

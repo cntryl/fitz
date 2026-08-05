@@ -289,19 +289,6 @@ impl RouteFamily {
         Self { id }
     }
 
-    /// Create a route family directly from a u32 value.
-    ///
-    /// # Deprecated
-    ///
-    /// Retained only so existing callers keep compiling. This is identical to
-    /// [`RouteFamily::new`]; use that instead.
-    #[deprecated(since = "0.0.2", note = "use RouteFamily::new")]
-    #[inline]
-    #[must_use]
-    pub fn from_u32(id: u32) -> Self {
-        Self::new(id)
-    }
-
     /// Get the family ID as u32
     #[inline]
     #[must_use]

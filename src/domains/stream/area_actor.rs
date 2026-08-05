@@ -2,24 +2,24 @@
 
 use bytes::Bytes;
 use std::collections::BTreeMap;
-use std::collections::VecDeque;
 use std::sync::Arc;
 
 use crate::prelude::Actor;
 use crate::runtime::actor::Context;
 use crate::runtime::domain_event::DomainPublishEvent;
-use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+use crate::runtime::routing::{Route, RouteFamily};
 
-use super::constants::{INTERNAL_REALM_SEGMENT, NOTICE_DEBOUNCE_MS, WATERMARK_PERSIST_RETRY_MS};
-use super::protocol::{LeaseGranted, StreamCoordinationMessage, DEFAULT_REALM_LEASE_BLOCK};
+use super::constants::{NOTICE_DEBOUNCE_MS, WATERMARK_PERSIST_RETRY_MS};
+use super::protocol::StreamCoordinationMessage;
 use super::store::StreamStore;
 
-/// `AreaActor` coordinates area-level offsets and watermark
+/// `AreaActor` tracks the area-level watermark
 ///
 /// Responsibilities:
-/// - Mint area offset leases for `StreamActors`
 /// - Track committed ranges from `BatchCommitted` notifications
 /// - Calculate and advance area watermark (highest contiguous offset)
+///
+/// Area offsets themselves are minted by `StreamStore`, not here.
 pub struct AreaActor {
     family_id: RouteFamily,
 
@@ -29,9 +29,6 @@ pub struct AreaActor {
 
     /// Storage layer for watermark persistence
     store: Arc<StreamStore>,
-
-    /// Next area offset to assign
-    next_area_offset: u64,
 
     /// Area watermark (highest contiguous committed offset).
     ///
@@ -45,13 +42,6 @@ pub struct AreaActor {
     /// Committed ranges from resources (for watermark calculation)
     /// Key: `first_offset`, Value: `last_offset`
     committed_ranges: BTreeMap<u64, u64>,
-
-    /// Realm offset lease (pre-allocated from `RealmActor`)
-    realm_lease_next: u64,
-    realm_lease_end: u64,
-
-    /// Pending lease requests awaiting realm lease grant
-    pending_lease_requests: VecDeque<(String, String, u64, String)>,
 
     /// Debounce timer id for area watermark notification
     notification_timer: Option<crate::runtime::context::TimerId>,
@@ -92,82 +82,13 @@ impl AreaActor {
             realm,
             area,
             store,
-            next_area_offset: 0,
             area_watermark,
             watermark_initialized,
             committed_ranges: BTreeMap::new(),
-            realm_lease_next: 0,
-            realm_lease_end: 0,
-            pending_lease_requests: VecDeque::new(),
             notification_timer: None,
             pending_publish: None,
             watermark_retry_timer: None,
         }
-    }
-
-    /// Get `RouteAddress` for `RealmActor` coordination
-    fn realm_actor_address(&self) -> RouteAddress {
-        let route = Route::new(format!(
-            "stream://{}/{}",
-            self.realm, INTERNAL_REALM_SEGMENT
-        ));
-        RouteAddress::new(self.family_id, route)
-    }
-
-    /// Handle `RequestLease` from `StreamActor` and mint paired area+realm offsets
-    fn handle_request_lease(
-        &mut self,
-        realm: &str,
-        area: &str,
-        count: u64,
-        reply_to: &str,
-        ctx: &mut Context<Self>,
-    ) {
-        // Ensure we have sufficient realm lease capacity
-        let realm_remaining = self.realm_lease_end.saturating_sub(self.realm_lease_next);
-
-        if realm_remaining < count {
-            // Request realm lease from RealmActor
-            let lease_size = DEFAULT_REALM_LEASE_BLOCK.max(count);
-            let lease_req = StreamCoordinationMessage::RequestRealmLease { count: lease_size };
-            let realm_addr = self.realm_actor_address();
-            let _ = ctx.send(realm_addr, lease_req);
-
-            // Queue this request to be processed when realm lease arrives
-            self.pending_lease_requests.push_back((
-                realm.to_string(),
-                area.to_string(),
-                count,
-                reply_to.to_string(),
-            ));
-            return;
-        }
-
-        // Mint paired area+realm ranges with END-EXCLUSIVE semantics
-        let area_start = self.next_area_offset;
-        let area_end_excl = area_start + count;
-        self.next_area_offset = area_end_excl;
-
-        let realm_start = self.realm_lease_next;
-        let realm_count = count.min(realm_remaining);
-        let realm_end_excl = realm_start + realm_count;
-        self.realm_lease_next = realm_end_excl;
-
-        // Build paired grant
-        let grant = LeaseGranted {
-            area_start,
-            area_end_exclusive: area_end_excl,
-            realm_start,
-            realm_end_exclusive: realm_end_excl,
-        };
-
-        // Reply to StreamActor
-        let reply_route = Route::new(format!("stream://{realm}/{area}/{reply_to}"));
-        let reply_addr = RouteAddress::new(self.family_id, reply_route);
-        let _ = ctx.send(
-            reply_addr,
-            StreamCoordinationMessage::LeaseGranted { grant },
-        );
     }
 
     /// Handle `BatchCommitted` from `StreamActor`
@@ -310,34 +231,10 @@ impl AreaActor {
         self.watermark_retry_timer = Some(timer_id);
     }
 
-    /// Update realm lease from `RealmActor` grant
-    pub fn update_realm_lease(&mut self, grant: LeaseGranted) {
-        self.realm_lease_next = grant.realm_start;
-        self.realm_lease_end = grant.realm_end_exclusive; // Already exclusive
-    }
-
     /// Get current watermark (for testing)
     #[cfg(test)]
     pub fn watermark(&self) -> u64 {
         self.area_watermark.unwrap_or(0)
-    }
-
-    /// Process pending lease requests after realm lease grant arrives
-    fn process_pending_lease_requests(&mut self, ctx: &mut Context<Self>) {
-        // Process all pending requests that now have sufficient realm lease
-        while let Some((realm, area, count, reply_to)) = self.pending_lease_requests.pop_front() {
-            let realm_remaining = self.realm_lease_end.saturating_sub(self.realm_lease_next);
-
-            // If still insufficient, re-queue and stop
-            if realm_remaining < count {
-                self.pending_lease_requests
-                    .push_front((realm, area, count, reply_to));
-                break;
-            }
-
-            // Process this request (will succeed now)
-            self.handle_request_lease(&realm, &area, count, &reply_to, ctx);
-        }
     }
 
     /// Get committed ranges (for testing)
@@ -355,25 +252,9 @@ impl Actor for AreaActor {
 
     fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
         match msg {
-            StreamCoordinationMessage::RequestLease {
-                realm,
-                area,
-                count,
-                reply_to,
-            } => {
-                self.handle_request_lease(&realm, &area, count, &reply_to, ctx);
-            }
             StreamCoordinationMessage::BatchCommitted(commit) => {
                 self.handle_batch_committed(commit.first_area_offset, commit.last_area_offset, ctx);
             }
-            StreamCoordinationMessage::LeaseGranted { grant } => {
-                // Update realm lease from RealmActor
-                self.update_realm_lease(grant);
-
-                // Process any pending lease requests now that we have realm lease
-                self.process_pending_lease_requests(ctx);
-            }
-            StreamCoordinationMessage::RequestRealmLease { .. } => {}
         }
     }
 
@@ -397,7 +278,7 @@ impl Actor for AreaActor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::routing::Route;
+    use crate::runtime::routing::{Route, RouteAddress};
     use crate::runtime::Mailbox;
 
     fn make_test_actor_with_watermark(
@@ -447,47 +328,6 @@ mod tests {
         let actor = AreaActor::new(family, "realm1".to_string(), "area1".to_string(), store);
         let ctx = Context::new(addr, router);
         (actor, ctx, stream_mailbox)
-    }
-
-    #[test]
-    fn should_mint_area_offsets_from_zero() {
-        // Arrange
-        let (mut actor, mut ctx) = make_test_actor();
-
-        // Grant realm lease first
-        actor.update_realm_lease(LeaseGranted {
-            area_start: 0,
-            area_end_exclusive: 0,
-            realm_start: 0,
-            realm_end_exclusive: 1000,
-        });
-
-        // Act
-        actor.handle_request_lease("realm1", "area1", 10, "stream1", &mut ctx);
-
-        // Assert
-        assert_eq!(actor.next_area_offset, 10); // Moved to next block
-    }
-
-    #[test]
-    fn should_mint_sequential_area_offset_blocks() {
-        // Arrange
-        let (mut actor, mut ctx) = make_test_actor();
-
-        // Grant realm lease first
-        actor.update_realm_lease(LeaseGranted {
-            area_start: 0,
-            area_end_exclusive: 0,
-            realm_start: 0,
-            realm_end_exclusive: 1000,
-        });
-
-        // Act
-        actor.handle_request_lease("realm1", "area1", 5, "stream1", &mut ctx);
-        actor.handle_request_lease("realm1", "area1", 3, "stream2", &mut ctx);
-
-        // Assert
-        assert_eq!(actor.next_area_offset, 8); // 5 + 3
     }
 
     #[test]

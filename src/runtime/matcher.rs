@@ -274,61 +274,6 @@ pub fn parse_pattern_segments(route: &str) -> Vec<PatternSegment> {
         .collect()
 }
 
-/// Extract path segments from a route string as owned `String`s.
-///
-/// # Deprecated
-///
-/// Retained only so existing callers keep compiling. Use
-/// [`extract_route_segments_borrowed`], which returns borrowed slices and
-/// allocates nothing on the matching hot path.
-#[deprecated(
-    since = "0.0.2",
-    note = "use extract_route_segments_borrowed for zero-copy matching"
-)]
-#[must_use]
-pub fn extract_route_segments(route: &str) -> Vec<String> {
-    extract_route_segments_borrowed(route)
-        .into_iter()
-        .map(std::string::ToString::to_string)
-        .collect()
-}
-
-/// Match pattern segments against owned route segments.
-///
-/// # Deprecated
-///
-/// Retained only so existing callers keep compiling. Use
-/// [`Pattern::matches`] or [`Pattern::matches_str`], which also enforce the
-/// pattern's scheme; this helper compares path segments alone.
-#[deprecated(since = "0.0.2", note = "use Pattern::matches or Pattern::matches_str")]
-#[must_use]
-pub fn match_pattern_segments(
-    patterns: &[PatternSegment],
-    pat_idx: usize,
-    route: &[String],
-    route_idx: usize,
-) -> bool {
-    match_segments_dynamic(patterns, pat_idx, route, route_idx)
-}
-
-/// Match pattern segments against borrowed route segments.
-///
-/// # Deprecated
-///
-/// Retained only so existing callers keep compiling. Use
-/// [`Pattern::matches`] or [`Pattern::matches_str`], which also enforce the
-/// pattern's scheme; this helper compares path segments alone.
-#[deprecated(since = "0.0.2", note = "use Pattern::matches or Pattern::matches_str")]
-#[must_use]
-pub fn match_pattern_segments_borrowed(
-    patterns: &[PatternSegment],
-    pat_idx: usize,
-    route: &[&str],
-    route_idx: usize,
-) -> bool {
-    match_segments_dynamic(patterns, pat_idx, route, route_idx)
-}
-
 /// Extract an optional scheme and borrowed path segments from a route string.
 #[inline]
 fn split_route(route: &str) -> (Option<&str>, RouteSegments<'_>) {

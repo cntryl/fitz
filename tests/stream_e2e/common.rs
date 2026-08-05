@@ -5,9 +5,6 @@ pub(crate) use crate::fixtures::define_transport_tests;
 pub(crate) use crate::fixtures::transport::*;
 pub(crate) use bytes::{BufMut, Bytes};
 pub(crate) use fitz::domains::stream::protocol::StreamWriteMode;
-pub(crate) use fitz::domains::stream::storage::{
-    encode_stream_layout_marker_key, StreamLayoutMarkerValue,
-};
 pub(crate) use fitz::domains::stream::store::StreamStore;
 pub(crate) use fitz::domains::stream::{
     StreamActor, StreamReadItem, StreamRecord, StreamStorageLayout,

@@ -710,18 +710,3 @@ fn handle_schedule_stats(
 ) -> Response {
     crate::api::admin::json_response(build_schedule_stats(runtime, diagnostics))
 }
-
-/// Parse realm filter from query string
-#[allow(dead_code)] // Kept for admin endpoints that need shared realm-filter parsing.
-pub fn parse_realm_filter(query: Option<&str>) -> Option<String> {
-    query.and_then(|q| {
-        q.split('&').find_map(|pair| {
-            let mut parts = pair.split('=');
-            if parts.next()? == "realm" {
-                parts.next().map(std::string::ToString::to_string)
-            } else {
-                None
-            }
-        })
-    })
-}

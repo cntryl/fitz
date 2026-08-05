@@ -569,10 +569,9 @@ fn should_move_to_dlq_after_max_attempts() {
     assert_eq!(actor.inflight.len(), 0);
     assert_eq!(actor.dlq_count, 1);
 
-    let (record, layout) = actor
+    let record = actor
         .load_record_metadata_from_store(msg_id)
         .expect("dlq record should remain in storage");
-    assert_eq!(layout, StoredRecordLayout::SplitHeaderBody);
     assert_eq!(record.state, QueueState::Dlq);
     assert_eq!(record.attempts, 3);
     assert!(record.dead_lettered_at_ms.is_some());
@@ -656,10 +655,9 @@ fn should_not_requeue_completed_dead_letter_given_restart() {
         other => panic!("Expected empty queue after restart, found {other:?}"),
     }
 
-    let (record, layout) = recovered
+    let record = recovered
         .load_record_metadata_from_store(msg_id)
         .expect("dlq record should remain in storage after restart");
-    assert_eq!(layout, StoredRecordLayout::SplitHeaderBody);
     assert_eq!(record.state, QueueState::Dlq);
 }
 

@@ -145,11 +145,6 @@ mod segments_cache {
             segments
         }
 
-        #[allow(dead_code)]
-        pub fn clear(&mut self) {
-            self.cache.clear();
-        }
-
         #[cfg(test)]
         pub fn len(&self) -> usize {
             self.cache.len()

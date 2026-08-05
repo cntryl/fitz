@@ -3,12 +3,9 @@
 
 use bytes::Bytes;
 use fitz::domains::stream::protocol::StreamWriteMode;
-use fitz::domains::stream::storage::{
-    encode_offset_counter_key, encode_stream_layout_marker_key, OffsetCounterValue,
-    StreamLayoutMarkerValue,
-};
+use fitz::domains::stream::storage::{encode_offset_counter_key, OffsetCounterValue};
 use fitz::domains::stream::store::{
-    CommitRecordsParams, EventPayload, StreamAdminRecord, StreamStorageLayout, StreamStore,
+    CommitRecordsParams, EventPayload, StreamAdminRecord, StreamStore,
 };
 use fitz::domains::stream::{StreamReadItem, StreamRecord};
 use fitz::testkit::create_test_engine_with_cfs;
@@ -54,20 +51,6 @@ fn seed_unmarked_stream_data(engine: &cntryl_midge::Engine, family: u32) {
     .expect("write unmarked stream metadata");
     tx.commit(cntryl_midge::WriteOptions::sync())
         .expect("commit unmarked stream metadata");
-}
-
-fn seed_layout_marker(engine: &cntryl_midge::Engine, family: u32, layout: StreamStorageLayout) {
-    let mut tx = engine
-        .begin_tx(family, cntryl_midge::TransactionMode::ReadWrite)
-        .expect("begin write tx");
-    tx.put(
-        encode_stream_layout_marker_key(),
-        StreamLayoutMarkerValue::new(layout).encode(),
-        None,
-    )
-    .expect("write layout marker");
-    tx.commit(cntryl_midge::WriteOptions::sync())
-        .expect("commit layout marker");
 }
 
 fn event_records(items: &[StreamReadItem]) -> Vec<StreamRecord> {
@@ -128,23 +111,6 @@ fn should_return_reset_required_given_unmarked_stream_data_when_listing_metadata
     // Assert
     let error = result.expect_err("unmarked stream data should fail layout activation");
     assert!(error.contains("ERR_STREAM_STORAGE_LAYOUT_RESET_REQUIRED"));
-    assert!(error.contains("promotion-frontier"));
-}
-
-#[test]
-fn should_return_layout_mismatch_given_legacy_layout_marker_when_listing_metadata() {
-    // Arrange
-    let engine = create_test_engine_with_cfs(vec![1]);
-    seed_layout_marker(engine.as_ref(), 1, StreamStorageLayout::LegacyCovering);
-    let store = StreamStore::new(engine);
-
-    // Act
-    let result = store.list_resource_metadata(1);
-
-    // Assert
-    let error = result.expect_err("legacy marker should fail layout activation");
-    assert!(error.contains("ERR_STREAM_STORAGE_LAYOUT_MISMATCH"));
-    assert!(error.contains("legacy-covering"));
     assert!(error.contains("promotion-frontier"));
 }
 

@@ -1,18 +1,16 @@
 use super::{
     decode_cached_response, encode_cached_response, obs, Duration, HashSet, Inflight,
     InflightExpiry, Instant, MessageId, PersistedIndexMutationPlan, PersistedReadyMutation,
-    QueueActor, QueueResponse, ReadyRange, ReservedMessage, Reverse, StoredRecordLayout, VecDeque,
+    QueueActor, QueueResponse, ReadyRange, ReservedMessage, Reverse, VecDeque,
 };
 use crate::utils::idempotency::{DedupIdentifier, DedupKey, Domain};
 
 struct AckBatchDelete {
     id: MessageId,
     dedup_key: DedupKey,
-    stored_layout: StoredRecordLayout,
     index_plan: PersistedIndexMutationPlan,
     header_key: Vec<u8>,
     body_key: Vec<u8>,
-    legacy_key: Vec<u8>,
 }
 
 impl QueueActor {
@@ -355,9 +353,8 @@ impl QueueActor {
             return QueueResponse::InflightExpired;
         }
 
-        let stored_layout = self.load_stored_layout_for_ack(id);
         let index_plan = self.plan_index_mutation_for_unavailable_message(id);
-        if let Err(message) = self.commit_ack_delete(id, stored_layout, index_plan) {
+        if let Err(message) = self.commit_ack_delete(id, index_plan) {
             return QueueResponse::Error { message };
         }
 
@@ -413,7 +410,6 @@ impl QueueActor {
             deletes.push(AckBatchDelete {
                 id,
                 dedup_key,
-                stored_layout: self.load_stored_layout_for_ack(id),
                 index_plan: PersistedIndexMutationPlan {
                     ready_mutation,
                     delayed_index_delete,
@@ -423,7 +419,6 @@ impl QueueActor {
                 },
                 header_key: self.cached_header_key(id),
                 body_key: self.cached_body_key(id),
-                legacy_key: self.cached_legacy_message_key(id),
             });
         }
 
@@ -483,41 +478,20 @@ impl QueueActor {
         None
     }
 
-    fn load_stored_layout_for_ack(&self, id: MessageId) -> StoredRecordLayout {
-        if self.records.contains_key(&id) {
-            return self
-                .record_layouts
-                .get(&id)
-                .copied()
-                .unwrap_or(StoredRecordLayout::EmbeddedHeader);
-        }
-
-        self.load_record_metadata_from_store(id)
-            .map_or(StoredRecordLayout::EmbeddedHeader, |(_, layout)| layout)
-    }
-
     fn commit_ack_delete(
         &mut self,
         id: MessageId,
-        stored_layout: StoredRecordLayout,
         index_plan: PersistedIndexMutationPlan,
     ) -> Result<(), String> {
         let header_key = self.cached_header_key(id);
         let body_key = self.cached_body_key(id);
-        let legacy_key = self.cached_legacy_message_key(id);
 
         match self.store.begin_tx(
             self.queue_key.family.id(),
             cntryl_midge::TransactionMode::ReadWrite,
         ) {
             Ok(mut txn) => {
-                if let Err(error) = Self::delete_record_for_layout(
-                    &mut txn,
-                    stored_layout,
-                    header_key,
-                    body_key,
-                    legacy_key,
-                ) {
+                if let Err(error) = Self::delete_record(&mut txn, header_key, body_key) {
                     tracing::warn!(
                         queue = ?self.queue_key,
                         route_family = self.queue_key.family.as_u64(),
@@ -558,19 +532,13 @@ impl QueueActor {
             .map_err(|error| format!("Failed to begin queue ack batch tx: {error:?}"))?;
 
         for delete in deletes {
-            Self::delete_record_for_layout(
-                &mut txn,
-                delete.stored_layout,
-                delete.header_key.clone(),
-                delete.body_key.clone(),
-                delete.legacy_key.clone(),
-            )
-            .map_err(|error| {
-                format!(
-                    "Failed to delete message {} in queue ack batch tx: {error:?}",
-                    delete.id
-                )
-            })?;
+            Self::delete_record(&mut txn, delete.header_key.clone(), delete.body_key.clone())
+                .map_err(|error| {
+                    format!(
+                        "Failed to delete message {} in queue ack batch tx: {error:?}",
+                        delete.id
+                    )
+                })?;
             self.write_index_mutation_plan(&mut txn, delete.id, delete.index_plan, None)?;
         }
 

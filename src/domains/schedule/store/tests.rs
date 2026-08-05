@@ -10,10 +10,6 @@ fn u64_to_u32_saturating(value: u64) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }
 
-fn usize_to_u32_saturating(value: usize) -> u32 {
-    u32::try_from(value).unwrap_or(u32::MAX)
-}
-
 fn put_raw(
     db: &Arc<cntryl_midge::Engine>,
     cf_id: u64,
@@ -78,38 +74,6 @@ fn should_encode_schedule_definition_key_with_typed_segments() {
 }
 
 #[test]
-fn should_order_schedule_due_keys_by_fire_time_before_route_segments() {
-    // Arrange
-    let first = ScheduleStore::encode_due_key(1_700_000_000_001, "schedule://acme/jobs/a/run");
-    let second = ScheduleStore::encode_due_key(1_700_000_000_010, "schedule://acme/jobs/a/run");
-
-    // Act
-    let ordered = first < second;
-
-    // Assert
-    assert!(ordered);
-}
-
-fn encode_inline_definition_value_v2(
-    next_fire_ms: u64,
-    cron: &str,
-    payload: &Bytes,
-    last_fire_ms: Option<u64>,
-    executions_total: u64,
-) -> Vec<u8> {
-    let mut value = Vec::with_capacity(1 + 8 + 8 + 8 + 4 + cron.len() + 4 + payload.len());
-    value.push(DEFINITION_VALUE_VERSION_V2);
-    value.extend_from_slice(&next_fire_ms.to_be_bytes());
-    value.extend_from_slice(&last_fire_ms.unwrap_or(0).to_be_bytes());
-    value.extend_from_slice(&executions_total.to_be_bytes());
-    value.extend_from_slice(&usize_to_u32_saturating(cron.len()).to_be_bytes());
-    value.extend_from_slice(cron.as_bytes());
-    value.extend_from_slice(&usize_to_u32_saturating(payload.len()).to_be_bytes());
-    value.extend_from_slice(payload);
-    value
-}
-
-#[test]
 fn should_persist_definition_without_due_index_for_inserted_schedule() {
     // Arrange
     let (store, db) = make_store();
@@ -145,7 +109,7 @@ fn should_persist_definition_without_due_index_for_inserted_schedule() {
     assert_eq!(stored_due_key, expected_due_key);
     assert_eq!(
         ScheduleStore::decode_definition_value(&definition_value).unwrap(),
-        DecodedDefinitionRow::Metadata {
+        DecodedDefinitionRow {
             next_fire_ms,
             last_fire_ms: None,
             executions_total: 0,
@@ -219,131 +183,6 @@ fn should_rebuild_due_index_from_inserted_schedule_definitions_on_load() {
     assert_eq!(
         read_raw_value(&db, 1, &expected_due_key),
         Some(DUE_INDEX_VALUE.to_vec())
-    );
-}
-
-#[test]
-fn should_reject_unsupported_legacy_schedule_storage_layout() {
-    // Arrange
-    let (store, db) = make_store();
-    let route = "schedule://acme/jobs/legacy/run";
-    let legacy_definition_key = {
-        let minute_epoch = 1_700_000_002_000_u64 / 60_000;
-        let ms_offset = 1_700_000_002_000_u64 % 60_000;
-        let mut key = Vec::new();
-        key.extend_from_slice(LEGACY_PREFIX);
-        key.extend_from_slice(minute_epoch.to_be_bytes().as_slice());
-        key.push(b'/');
-        key.extend_from_slice(ms_offset.to_be_bytes().as_slice());
-        key.push(b':');
-        key.extend_from_slice(route.as_bytes());
-        key
-    };
-    let mut legacy_index_key = Vec::from(LEGACY_INDEX_PREFIX);
-    legacy_index_key.extend_from_slice(route.as_bytes());
-
-    put_raw(
-        &db,
-        1,
-        legacy_definition_key,
-        b"*/5 * * * *|legacy".to_vec(),
-    )
-    .expect("write legacy row");
-    put_raw(&db, 1, legacy_index_key, DUE_INDEX_VALUE.to_vec()).expect("write legacy index row");
-    put_raw(
-        &db,
-        1,
-        ScheduleStore::encode_due_key(9_999_999_999_999, "schedule://stale/index/only/run"),
-        DUE_INDEX_VALUE.to_vec(),
-    )
-    .expect("write stale due row");
-
-    // Act
-    let error = store
-        .load_all(1, WriteOptions::buffered())
-        .expect_err("legacy layout should be unsupported");
-
-    // Assert
-    assert!(error.contains("unsupported legacy schedule storage layout"));
-    assert_eq!(count_prefix(&db, 1, LEGACY_PREFIX), 1);
-    assert_eq!(count_prefix(&db, 1, LEGACY_INDEX_PREFIX), 1);
-    assert!(
-        read_raw_value(
-            &db,
-            1,
-            &ScheduleStore::encode_due_key(9_999_999_999_999, "schedule://stale/index/only/run"),
-        )
-        .is_some(),
-        "stale due index row should be untouched when legacy layout is rejected"
-    );
-    assert!(
-        read_raw_value(&db, 1, &ScheduleStore::encode_definition_key(route)).is_none(),
-        "legacy row must not be imported into current definition storage"
-    );
-}
-
-#[test]
-fn should_split_inline_definition_rows_on_load() {
-    // Arrange
-    let (store, db) = make_store();
-    let route = "schedule://acme/jobs/migrate/run";
-    let payload = Bytes::from_static(b"payload");
-    let next_fire_ms = 1_700_000_003_000_u64;
-    let last_fire_ms = Some(1_700_000_002_500_u64);
-    let executions_total = 7;
-
-    put_raw(
-        &db,
-        1,
-        ScheduleStore::encode_definition_key(route),
-        encode_inline_definition_value_v2(
-            next_fire_ms,
-            "*/10 * * * *",
-            &payload,
-            last_fire_ms,
-            executions_total,
-        ),
-    )
-    .expect("write inline definition row");
-    put_raw(
-        &db,
-        1,
-        ScheduleStore::encode_due_key(next_fire_ms, route),
-        DUE_INDEX_VALUE.to_vec(),
-    )
-    .expect("write due row");
-
-    // Act
-    let loaded = store
-        .load_all(1, WriteOptions::buffered())
-        .expect("load schedules");
-    let metadata = read_raw_value(&db, 1, &ScheduleStore::encode_definition_key(route))
-        .expect("definition metadata row");
-    let body = read_raw_value(&db, 1, &ScheduleStore::encode_body_key(route)).expect("body row");
-
-    // Assert
-    assert_eq!(loaded.len(), 1);
-    assert_eq!(loaded[0].route, route);
-    assert_eq!(loaded[0].cron, "*/10 * * * *");
-    assert_eq!(loaded[0].payload, payload);
-    assert_eq!(loaded[0].next_fire_ms, next_fire_ms);
-    assert_eq!(loaded[0].last_fire_ms, last_fire_ms);
-    assert_eq!(loaded[0].executions_total, executions_total);
-    assert_eq!(
-        ScheduleStore::decode_definition_value(&metadata).unwrap(),
-        DecodedDefinitionRow::Metadata {
-            next_fire_ms,
-            last_fire_ms,
-            executions_total,
-        }
-    );
-    assert_eq!(
-        ScheduleStore::decode_definition_body_value(&body).unwrap(),
-        (
-            "*/10 * * * *".to_string(),
-            ScheduleDeliveryMode::Broadcast,
-            Bytes::from_static(b"payload"),
-        )
     );
 }
 

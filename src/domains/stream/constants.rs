@@ -18,12 +18,6 @@ pub const MAX_POSTING_FRAGMENTS_FETCHED: usize = 1_024;
 /// Maximum live per-scope watermark coordinator actors in each keyed pool.
 pub const MAX_WATERMARK_COORDINATORS: usize = 64;
 
-/// Default lease size for resource-level offsets
-pub const DEFAULT_LEASE_SIZE: u64 = 10_000;
-
-/// Default lease block size for realm-level offsets
-pub const DEFAULT_REALM_LEASE_BLOCK: u64 = 10_000;
-
 /// Area segment reserved for internal broker coordination (`RealmActor` routing).
 ///
 /// Clients must not use this string as an area name. Any route with this area

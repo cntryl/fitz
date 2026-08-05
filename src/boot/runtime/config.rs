@@ -677,7 +677,7 @@ impl BootConfig {
 
     #[must_use]
     pub fn with_stream_storage_layout(mut self, layout: StreamStorageLayout) -> Self {
-        self.stream_storage_layout = layout.normalize_requested();
+        self.stream_storage_layout = layout;
         self
     }
 

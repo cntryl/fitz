@@ -1,4 +1,4 @@
-use super::{DispatchDomain, RuntimeIngress, SessionEvent, SessionInfo};
+use super::{RuntimeIngress, SessionEvent, SessionInfo};
 use dashmap::DashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -121,32 +121,6 @@ impl RuntimeIngress {
     #[must_use]
     pub fn session_count(&self) -> usize {
         self.session_registry().session_count()
-    }
-
-    #[allow(dead_code)]
-    pub(super) fn finalize_session_close(&self, session_id: u64) {
-        self.session_registry().finalize_close(session_id);
-    }
-
-    #[allow(dead_code)]
-    pub(super) fn record_cleanup_failure(
-        &self,
-        session_id: u64,
-        route_family: crate::runtime::routing::RouteFamily,
-        failed_domains: &[DispatchDomain],
-        store_retry_ticket: bool,
-    ) {
-        self.session_cleanup_coordinator().record_failure(
-            session_id,
-            route_family,
-            failed_domains,
-            store_retry_ticket,
-        );
-    }
-
-    #[allow(dead_code)]
-    pub(super) fn retry_pending_session_cleanups(&self) {
-        self.session_cleanup_coordinator().retry_pending();
     }
 
     /// Drain the dedicated cleanup worker before runtime teardown.

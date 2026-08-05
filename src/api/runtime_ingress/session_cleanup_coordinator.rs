@@ -104,13 +104,6 @@ impl SessionCleanupCoordinator<'_> {
         );
     }
 
-    /// Compatibility hook for tests and explicit shutdown callers. Runtime
-    /// traffic does not call this method; ticket creation wakes the worker.
-    pub(super) fn retry_pending(&self) {
-        self.ingress.ensure_cleanup_worker();
-        self.ingress.cleanup_wake.notify_one();
-    }
-
     pub(super) async fn cleanup_on_close(
         &self,
         session_id: u64,

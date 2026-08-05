@@ -117,18 +117,18 @@ fn handle_fired_timers<A: Actor>(actor: &mut A, ctx: &mut Context<A>, address: &
 pub struct Scheduler {
     router: Arc<Router>,
     running: Arc<AtomicBool>,
-    #[allow(dead_code)]
-    worker_threads: usize,
 }
 
 impl Scheduler {
-    /// Create a new scheduler with the specified number of worker threads
+    /// Create a new scheduler.
+    ///
+    /// Each spawned actor gets its own dedicated processing thread, so the
+    /// scheduler holds no worker-thread pool of its own.
     #[must_use]
-    pub fn new(worker_threads: usize) -> Self {
+    pub fn new() -> Self {
         Self {
             router: Arc::new(Router::new()),
             running: Arc::new(AtomicBool::new(false)),
-            worker_threads: worker_threads.max(1),
         }
     }
 
@@ -325,7 +325,7 @@ impl Scheduler {
 
 impl Default for Scheduler {
     fn default() -> Self {
-        Self::new(num_cpus::get())
+        Self::new()
     }
 }
 
@@ -435,12 +435,11 @@ mod tests {
     }
 
     #[test]
-    fn should_create_scheduler_with_workers() {
+    fn should_create_scheduler_in_stopped_state() {
         // Arrange
-        let worker_count = 4;
 
         // Act
-        let scheduler = Scheduler::new(worker_count);
+        let scheduler = Scheduler::new();
 
         // Assert
         assert!(!scheduler.is_running());
@@ -449,7 +448,7 @@ mod tests {
     #[test]
     fn should_start_scheduler() {
         // Arrange
-        let scheduler = Scheduler::new(2);
+        let scheduler = Scheduler::new();
 
         // Act
         scheduler.start();
@@ -461,7 +460,7 @@ mod tests {
     #[test]
     fn should_stop_scheduler() {
         // Arrange
-        let scheduler = Scheduler::new(2);
+        let scheduler = Scheduler::new();
         scheduler.start();
 
         // Act
@@ -474,7 +473,7 @@ mod tests {
     #[test]
     fn should_generate_unique_actor_ids() {
         // Arrange
-        let scheduler = Scheduler::new(2);
+        let scheduler = Scheduler::new();
         scheduler.start();
         let actor1 = CounterActor { count: 0 };
         let actor2 = CounterActor { count: 0 };
@@ -490,7 +489,7 @@ mod tests {
     #[test]
     fn should_process_messages_in_sequence() {
         // Arrange
-        let scheduler = Scheduler::new(1);
+        let scheduler = Scheduler::new();
         scheduler.start();
         let actor = CounterActor { count: 0 };
         let actor_ref = scheduler.spawn(actor, test_address(1, "/test/counter"), 10);
@@ -512,7 +511,7 @@ mod tests {
     #[test]
     fn should_drop_expired_messages() {
         // Arrange
-        let scheduler = Scheduler::new(1);
+        let scheduler = Scheduler::new();
         scheduler.start();
         let actor = CounterActor { count: 0 };
         let address = test_address(1, "/test/counter");
@@ -544,7 +543,7 @@ mod tests {
     #[allow(clippy::items_after_statements)]
     fn should_enable_actor_to_actor_messaging() {
         // Arrange
-        let scheduler = Scheduler::new(2);
+        let scheduler = Scheduler::new();
         scheduler.start();
         let (incremented_tx, incremented_rx) = crossbeam_channel::bounded(1);
 
@@ -625,7 +624,7 @@ mod tests {
     #[allow(clippy::items_after_statements)]
     fn should_support_reply_pattern() {
         // Arrange
-        let scheduler = Scheduler::new(2);
+        let scheduler = Scheduler::new();
         scheduler.start();
         let (response_tx, response_rx) = crossbeam_channel::bounded(1);
 
@@ -722,7 +721,7 @@ mod tests {
             }
         }
 
-        let scheduler = Scheduler::new(1);
+        let scheduler = Scheduler::new();
         scheduler.start();
         let order = Arc::new(parking_lot::Mutex::new(Vec::new()));
         let (started_tx, started_rx) = crossbeam_channel::bounded(1);
@@ -782,7 +781,7 @@ mod tests {
         // Arrange
         let metrics = crate::observability::metrics();
         let before = metrics.counter_get(obs::METRIC_WORKER_BUSY_TIME);
-        let scheduler = Scheduler::new(1);
+        let scheduler = Scheduler::new();
         scheduler.start();
         let actor = CounterActor { count: 0 };
         let actor_ref = scheduler.spawn(actor, test_address(1, "/test/busy-counter"), 10);
@@ -810,7 +809,7 @@ mod tests {
         // Arrange
         let metrics = crate::observability::metrics();
         let before = metrics.counter_get(obs::METRIC_WORKER_IDLE_TIME);
-        let scheduler = Scheduler::new(1);
+        let scheduler = Scheduler::new();
         scheduler.start();
         let actor = CounterActor { count: 0 };
         let actor_ref = scheduler.spawn(actor, test_address(1, "/test/idle-counter"), 10);

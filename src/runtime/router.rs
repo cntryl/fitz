@@ -427,19 +427,6 @@ impl Router {
         self.registry.get(address)
     }
 
-    /// Resolve a sink for a registered domain pattern.
-    ///
-    /// # Deprecated
-    ///
-    /// Retained only so existing callers keep compiling. Use
-    /// [`Router::route_to_domain`], which resolves the sink and delivers in one
-    /// step so the miss path stays instrumented.
-    #[deprecated(since = "0.0.2", note = "use Router::route_to_domain")]
-    #[must_use]
-    pub fn resolve_domain_sink(&self, domain: &str) -> Option<Arc<dyn MailboxSink>> {
-        self.registry.get_by_domain(domain)
-    }
-
     /// Register a domain pattern (e.g., "kv", "queue", "notice")
     ///
     /// Domain patterns are used as a fallback when exact `RouteAddress` lookup fails.

@@ -221,14 +221,12 @@ fn should_require_durable_write_policy_for_fast_queue_reconciliation() {
 }
 
 #[test]
-fn should_leave_complete_split_and_embedded_queue_records_untouched() {
+fn should_leave_complete_split_queue_records_untouched() {
     // Arrange
     let store = create_test_engine_with_cfs(vec![1]);
     let split_header_suffix =
         authoritative_queue_validation_suffix(QUEUE_KEY_FAMILY_HEADER, Some(1));
     let split_body_suffix = authoritative_queue_validation_suffix(QUEUE_KEY_FAMILY_BODY, Some(1));
-    let embedded_header_suffix =
-        authoritative_queue_validation_suffix(QUEUE_KEY_FAMILY_HEADER, Some(2));
     let split_header = QueueActor::encode_record_header(&QueueRecord::ready(
         Bytes::from_static(b"split"),
         1,
@@ -236,18 +234,8 @@ fn should_leave_complete_split_and_embedded_queue_records_untouched() {
         1_700_000_000_000,
     ));
     let split_body = b"split".to_vec();
-    let embedded_header = QueueActor::encode_legacy_record(&QueueRecord::loaded(
-        Bytes::from_static(b"embedded"),
-        0,
-        1_700_000_000_000,
-    ));
     put_queue_validation_row(store.as_ref(), &split_header_suffix, split_header.clone());
     put_queue_validation_row(store.as_ref(), &split_body_suffix, split_body.clone());
-    put_queue_validation_row(
-        store.as_ref(),
-        &embedded_header_suffix,
-        embedded_header.clone(),
-    );
 
     // Act
     QueueActor::prepare_persisted_state_for_existing_families(
@@ -265,10 +253,6 @@ fn should_leave_complete_split_and_embedded_queue_records_untouched() {
     assert_eq!(
         read_queue_validation_row(store.as_ref(), &split_body_suffix),
         Some(Bytes::from(split_body))
-    );
-    assert_eq!(
-        read_queue_validation_row(store.as_ref(), &embedded_header_suffix),
-        Some(Bytes::from(embedded_header))
     );
 }
 

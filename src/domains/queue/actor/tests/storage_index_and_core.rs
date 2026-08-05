@@ -282,11 +282,6 @@ pub(super) fn should_reject_malformed_authoritative_queue_rows_during_preflight(
             b"broken".to_vec(),
             "header",
         ),
-        (
-            authoritative_queue_validation_suffix(QUEUE_KEY_FAMILY_LEGACY_MESSAGE, Some(1)),
-            b"broken".to_vec(),
-            "legacy_message",
-        ),
     ];
 
     // Act

@@ -10,21 +10,14 @@ pub(super) use crate::domains::schedule::protocol::{
 };
 pub(super) use crate::utils::storage_key::{self, DomainKeyspace};
 
-pub(super) const DEFINITION_VALUE_VERSION_V1: u8 = 1;
-pub(super) const DEFINITION_VALUE_VERSION_V2: u8 = 2;
 pub(super) const DEFINITION_VALUE_VERSION_V3: u8 = 3;
-pub(super) const BODY_VALUE_VERSION_V1: u8 = 1;
 pub(super) const BODY_VALUE_VERSION_V2: u8 = 2;
-pub(super) const PENDING_FIRE_VALUE_VERSION_V1: u8 = 1;
-pub(super) const PENDING_FIRE_VALUE_VERSION_V2: u8 = 2;
 pub(super) const PENDING_FIRE_VALUE_VERSION_V3: u8 = 3;
 pub(super) const DEFINITION_PREFIX: &[u8] = &[0x01];
 pub(super) const BODY_PREFIX: &[u8] = &[0x02];
 pub(super) const DUE_PREFIX: &[u8] = &[0x03];
 pub(super) const PENDING_FIRE_PREFIX: &[u8] = &[0x04];
 pub(super) const DUE_INDEX_VALUE: &[u8] = &[1];
-pub(super) const LEGACY_PREFIX: &[u8] = b"sched:m";
-pub(super) const LEGACY_INDEX_PREFIX: &[u8] = b"sched:idx:";
 
 pub struct ScheduleBatchInsert {
     pub route: String,
@@ -114,17 +107,8 @@ pub struct ScheduleStore {
 pub(super) type ScheduleRows = Vec<(Vec<u8>, Vec<u8>)>;
 
 #[derive(Debug, PartialEq, Eq)]
-pub(super) enum DecodedDefinitionRow {
-    Inline {
-        next_fire_ms: u64,
-        cron: String,
-        payload: Bytes,
-        last_fire_ms: Option<u64>,
-        executions_total: u64,
-    },
-    Metadata {
-        next_fire_ms: u64,
-        last_fire_ms: Option<u64>,
-        executions_total: u64,
-    },
+pub(super) struct DecodedDefinitionRow {
+    pub(super) next_fire_ms: u64,
+    pub(super) last_fire_ms: Option<u64>,
+    pub(super) executions_total: u64,
 }
