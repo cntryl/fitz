@@ -20,6 +20,7 @@ This index is the public reading path. It keeps product usage, operations, clien
 - [Quick start](user-guides/quick-start.md)
 - [API guide](user-guides/api-guide.md)
 - [Troubleshooting](user-guides/troubleshooting.md)
+- [FAQ](user-guides/faq.md)
 - [Environment variables](user-guides/vars.md)
 - [Auth0 setup](user-guides/auth0.md)
 

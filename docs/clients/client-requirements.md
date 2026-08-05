@@ -22,6 +22,8 @@ client-perfection-scoreboard.csv      ← Machine-friendly matrix template (oper
 client-requirements.md              ← THIS FILE: grading rubric covering all dimensions
 ```
 
+- [Client perfection scoreboard](client-perfection-scoreboard.md)
+
 This document references the above as authoritative sources. It adds requirements for dimensions that the acceptance criteria do not cover: API ergonomics, concurrency safety, resilience, observability, performance, and testing completeness. The scoreboard artifacts are operational tracking aids and do not change normative protocol or acceptance requirements.
 
 ---
