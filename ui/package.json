@@ -20,9 +20,9 @@
     "gen:adapters": "askr generate ../public/openapi.yml -o ./src/adapters/generated"
   },
   "dependencies": {
-    "@askrjs/askr": "^0.0.86",
-    "@askrjs/fetch": "0.0.3",
-    "@askrjs/lucide": "0.0.7",
+    "@askrjs/askr": "^0.0.87",
+    "@askrjs/fetch": "0.0.4",
+    "@askrjs/lucide": "0.0.8",
     "@askrjs/themes": "0.0.22",
     "@askrjs/ui": "^0.0.25"
   },

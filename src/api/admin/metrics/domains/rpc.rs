@@ -100,6 +100,17 @@ fn append_latency_bucket_metrics(output: &mut String, runtime: &Runtime) {
 }
 
 fn append_counter_metrics(output: &mut String, runtime: &Runtime) {
+    output.push_str(
+        "# HELP fitz_rpc_response_drops_total Total RPC responses dropped by this broker process\n",
+    );
+    output.push_str("# TYPE fitz_rpc_response_drops_total counter\n");
+    let _ = writeln!(
+        output,
+        "fitz_rpc_response_drops_total {}",
+        runtime.rpc_response_drops_total()
+    );
+    output.push('\n');
+
     output.push_str("# HELP fitz_rpc_request_timeouts_total Total RPC requests that timed out before completion\n");
     output.push_str("# TYPE fitz_rpc_request_timeouts_total counter\n");
     let _ = writeln!(

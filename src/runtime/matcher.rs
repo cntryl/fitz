@@ -6,17 +6,17 @@
 //! # Wildcard Syntax
 //!
 //! - `*` (single-level): Matches any sequence of characters within a single path segment
-//!   - Example: `notify://acme/orders/*` matches:
-//!     - `notify://acme/orders/create`
-//!     - `notify://acme/orders/update`
-//!     - `notify://acme/orders/delete`
-//!   - But NOT `notify://acme/orders/items/create` (different level)
+//!   - Example: `notice://acme/orders/*` matches:
+//!     - `notice://acme/orders/create`
+//!     - `notice://acme/orders/update`
+//!     - `notice://acme/orders/delete`
+//!   - But NOT `notice://acme/orders/items/create` (different level)
 //!
 //! - `**` (multi-level): Matches zero or more complete path segments
-//!   - Example: `notify://acme/**` matches:
-//!     - `notify://acme/orders`
-//!     - `notify://acme/orders/create`
-//!     - `notify://acme/inventory/check`
+//!   - Example: `notice://acme/**` matches:
+//!     - `notice://acme/orders`
+//!     - `notice://acme/orders/create`
+//!     - `notice://acme/inventory/check`
 //!   - But only within the realm prefix
 //!
 //! # Path Structure
@@ -80,6 +80,7 @@ pub fn compile_registration_pattern(
     expected_scheme: &str,
     depth: PatternDepth,
 ) -> Result<Pattern, String> {
+    crate::utils::route_shape::validate_route_shape(route)?;
     let Some((scheme, path)) = route.split_once("://") else {
         return Err(format!(
             "subscription pattern must use {expected_scheme}://"
@@ -273,28 +274,68 @@ pub fn parse_pattern_segments(route: &str) -> Vec<PatternSegment> {
         .collect()
 }
 
+/// Extract path segments from a route string as owned `String`s.
+///
+/// # Deprecated
+///
+/// Retained only so existing callers keep compiling. Use
+/// [`extract_route_segments_borrowed`], which returns borrowed slices and
+/// allocates nothing on the matching hot path.
+#[deprecated(
+    since = "0.0.2",
+    note = "use extract_route_segments_borrowed for zero-copy matching"
+)]
+#[must_use]
+pub fn extract_route_segments(route: &str) -> Vec<String> {
+    extract_route_segments_borrowed(route)
+        .into_iter()
+        .map(std::string::ToString::to_string)
+        .collect()
+}
+
+/// Match pattern segments against owned route segments.
+///
+/// # Deprecated
+///
+/// Retained only so existing callers keep compiling. Use
+/// [`Pattern::matches`] or [`Pattern::matches_str`], which also enforce the
+/// pattern's scheme; this helper compares path segments alone.
+#[deprecated(since = "0.0.2", note = "use Pattern::matches or Pattern::matches_str")]
+#[must_use]
+pub fn match_pattern_segments(
+    patterns: &[PatternSegment],
+    pat_idx: usize,
+    route: &[String],
+    route_idx: usize,
+) -> bool {
+    match_segments_dynamic(patterns, pat_idx, route, route_idx)
+}
+
+/// Match pattern segments against borrowed route segments.
+///
+/// # Deprecated
+///
+/// Retained only so existing callers keep compiling. Use
+/// [`Pattern::matches`] or [`Pattern::matches_str`], which also enforce the
+/// pattern's scheme; this helper compares path segments alone.
+#[deprecated(since = "0.0.2", note = "use Pattern::matches or Pattern::matches_str")]
+#[must_use]
+pub fn match_pattern_segments_borrowed(
+    patterns: &[PatternSegment],
+    pat_idx: usize,
+    route: &[&str],
+    route_idx: usize,
+) -> bool {
+    match_segments_dynamic(patterns, pat_idx, route, route_idx)
+}
+
 /// Extract an optional scheme and borrowed path segments from a route string.
-/// Optimized to minimize allocations and use faster byte scanning.
 #[inline]
 fn split_route(route: &str) -> (Option<&str>, RouteSegments<'_>) {
-    let bytes = route.as_bytes();
-
-    // Fast path: scan for "://" using bytes directly
-    let path_start = if bytes.len() >= 3 {
-        // SIMD-like scan: check if "://" pattern exists
-        for i in 0..bytes.len().saturating_sub(2) {
-            if bytes[i] == b':' && bytes[i + 1] == b'/' && bytes[i + 2] == b'/' {
-                // Found scheme://
-                let scheme = &route[..i];
-                return (Some(scheme), collect_path_segments_fast(&route[i + 3..]));
-            }
-        }
-        None
-    } else {
-        None
-    };
-
-    (path_start, collect_path_segments_fast(route))
+    match crate::runtime::routing::split_scheme(route) {
+        Some((scheme, path)) => (Some(scheme), collect_path_segments_fast(path)),
+        None => (None, collect_path_segments_fast(route)),
+    }
 }
 
 /// Fast path segment collection without intermediate allocations.
@@ -310,10 +351,10 @@ fn collect_path_segments_fast(path: &str) -> RouteSegments<'_> {
 }
 
 fn parse_pattern(route: &str) -> (Option<String>, Vec<PatternSegment>) {
+    // `split_route` already drops empty segments.
     let (scheme, segments) = split_route(route);
     let segments = segments
         .into_iter()
-        .filter(|s| !s.is_empty())
         .map(|segment| match segment {
             "**" => PatternSegment::DoubleStar,
             "*" => PatternSegment::Star,
@@ -323,48 +364,12 @@ fn parse_pattern(route: &str) -> (Option<String>, Vec<PatternSegment>) {
     (scheme.map(str::to_string), segments)
 }
 
-/// Extract path segments from a route string as Strings
-/// DEPRECATED: Use `extract_route_segments_borrowed` for zero-copy matching
-#[must_use]
-pub fn extract_route_segments(route: &str) -> Vec<String> {
-    split_route(route)
-        .1
-        .into_iter()
-        .map(std::string::ToString::to_string)
-        .collect()
-}
-
 /// Extract path segments from a route string as borrowed string slices
 /// Zero-copy variant for hot-path matching
 #[inline]
 #[must_use]
 pub fn extract_route_segments_borrowed(route: &str) -> RouteSegments<'_> {
     split_route(route).1
-}
-
-/// Match pattern segments against route segments without recursion.
-/// Used by both Pattern matching and `SubscriptionIndex` suffix matching
-#[must_use]
-pub fn match_pattern_segments(
-    patterns: &[PatternSegment],
-    pat_idx: usize,
-    route: &[String],
-    route_idx: usize,
-) -> bool {
-    match_segments_dynamic(patterns, pat_idx, route, route_idx)
-}
-
-/// Match pattern segments against route segments with borrowed strings
-/// Zero-copy variant for hot-path matching
-#[inline]
-#[must_use]
-pub fn match_pattern_segments_borrowed(
-    patterns: &[PatternSegment],
-    pat_idx: usize,
-    route: &[&str],
-    route_idx: usize,
-) -> bool {
-    match_segments_dynamic(patterns, pat_idx, route, route_idx)
 }
 
 /// Match route segments against pattern segments with bounded heap state.
@@ -710,11 +715,11 @@ mod tests {
         let pattern = Pattern::new("notice://acme/orders/**");
 
         // Act
-        let notify_match = pattern.matches(&route("notify://acme/orders/create"));
+        let unregistered_scheme_match = pattern.matches(&route("notify://acme/orders/create"));
         let queue_match = pattern.matches(&route("queue://acme/orders/create"));
 
         // Assert
-        assert!(!notify_match);
+        assert!(!unregistered_scheme_match);
         assert!(!queue_match);
     }
 
@@ -814,6 +819,29 @@ mod tests {
 
         // Assert
         assert!(results.iter().all(Result::is_err));
+    }
+
+    #[test]
+    fn should_reject_registration_pattern_exceeding_shared_route_shape_bounds() {
+        // Arrange
+        let too_many_segments = format!(
+            "notice://{}",
+            vec!["a"; crate::utils::route_shape::MAX_ROUTE_SEGMENTS + 1].join("/")
+        );
+        let too_many_bytes = format!(
+            "notice://{}",
+            "a".repeat(crate::utils::route_shape::MAX_ROUTE_BYTES)
+        );
+
+        // Act
+        let segment_result =
+            compile_registration_pattern(&too_many_segments, "notice", PatternDepth::Flexible);
+        let byte_result =
+            compile_registration_pattern(&too_many_bytes, "notice", PatternDepth::Flexible);
+
+        // Assert
+        assert!(segment_result.is_err());
+        assert!(byte_result.is_err());
     }
 
     #[test]

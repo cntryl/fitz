@@ -9,6 +9,9 @@ pub const METRIC_ACTIVE_GAUGE: &str = "fitz_stream_active_gauge";
 pub const METRIC_SUBSCRIPTIONS_GAUGE: &str = "fitz_stream_subscriptions_gauge";
 pub const METRIC_APPEND_SESSIONS_GAUGE: &str = "fitz_stream_append_sessions_active";
 pub const METRIC_RESPONSE_DROPS_TOTAL: &str = "fitz_stream_response_drops_total";
+pub const METRIC_NOTIFY_DROPS_TOTAL: &str = "fitz_stream_notify_drops_total";
+pub const METRIC_WATERMARK_COORDINATION_DROPS_TOTAL: &str =
+    "fitz_stream_watermark_coordination_drops_total";
 
 #[derive(Clone)]
 pub struct StreamMetrics {

@@ -16,6 +16,26 @@ use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream,
 };
 
+/// Scale a test frame timeout by `FITZ_TEST_TIMEOUT_MULTIPLIER`.
+///
+/// End-to-end tests pass fixed millisecond deadlines that are generous on a
+/// developer machine but not on a heavily oversubscribed CI runner, where the
+/// same suite has been observed running roughly two orders of magnitude slower
+/// and tripping a 2s frame deadline on work that normally completes in
+/// milliseconds. Scaling centrally keeps every call site's relative deadline
+/// intact while letting a loaded environment opt into more headroom.
+///
+/// Unset, unparseable, or non-positive values leave the deadline unchanged, so
+/// the default behavior matches the literal each test passes.
+fn scaled_timeout(timeout_ms: u64) -> Duration {
+    let multiplier = std::env::var("FITZ_TEST_TIMEOUT_MULTIPLIER")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(1);
+    Duration::from_millis(timeout_ms.saturating_mul(u64::from(multiplier)))
+}
+
 use super::{
     server::init_test_runtime_jwks_cache, TEST_AUDIENCE, TEST_ISSUER, TEST_RUNTIME_AUTH_SECRET,
 };
@@ -114,7 +134,7 @@ impl TestClient {
         timeout_ms: u64,
     ) -> Result<Bytes, Box<dyn std::error::Error>> {
         timeout(
-            Duration::from_millis(timeout_ms),
+            scaled_timeout(timeout_ms),
             self.recv_frame_bytes_without_timeout(),
         )
         .await
@@ -285,7 +305,7 @@ impl TestWebSocketClient {
         timeout_ms: u64,
     ) -> Result<Bytes, Box<dyn std::error::Error>> {
         timeout(
-            Duration::from_millis(timeout_ms),
+            scaled_timeout(timeout_ms),
             self.recv_frame_bytes_without_timeout(),
         )
         .await

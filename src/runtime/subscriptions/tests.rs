@@ -779,3 +779,135 @@ proptest::proptest! {
         }
     }
 }
+
+#[test]
+fn should_match_double_star_dense_pattern_in_bounded_time() {
+    // A backtracking `**` implementation is exponential in the number of `**`
+    // segments. Registrations accept non-adjacent `**` up to the shared segment
+    // bound, so one legal Notice/RPC pattern could otherwise stall the domain
+    // actor for minutes on a single publish.
+
+    // Arrange
+    let mut segments = Vec::new();
+    for _ in 0..12 {
+        segments.push("**");
+        segments.push("a");
+    }
+    segments.push("zzz");
+    let pattern = route(&format!("notice://{}", segments.join("/")));
+    let published = route(&format!("notice://{}", vec!["a"; 40].join("/")));
+    let f = family(1);
+    let mut index = SubscriptionIndex::new();
+    index.insert(f, &pattern, sub_id(1));
+
+    // Act
+    let started_at = std::time::Instant::now();
+    let matches = index.match_all(f, &published);
+    let elapsed = started_at.elapsed();
+
+    // Assert
+    assert!(matches.is_empty());
+    assert!(
+        elapsed < std::time::Duration::from_secs(1),
+        "dense ** matching took {elapsed:?}; matching must stay polynomial"
+    );
+}
+
+#[test]
+fn should_match_double_star_suffix_consistently_with_pattern_matcher() {
+    // `SubscriptionIndex` and `Pattern` carry separate `**` implementations, so
+    // they must agree on every shape or delivery diverges from authorization.
+
+    // Arrange
+    let cases = [
+        ("notice://a/**/d", "notice://a/b/c/d", true),
+        ("notice://a/**/d", "notice://a/d", true),
+        ("notice://a/**/d", "notice://a/d/e", false),
+        ("notice://**/d", "notice://a/b/d", true),
+        ("notice://a/**/c/**/e", "notice://a/b/c/d/e", true),
+        ("notice://a/**/c/**/e", "notice://a/b/c/d", false),
+        ("notice://a/**", "notice://a", true),
+        ("notice://a/*/**/z", "notice://a/b/z", true),
+        ("notice://a/*/**/z", "notice://a/z", false),
+    ];
+    let f = family(1);
+
+    // Act
+    let results: Vec<(bool, bool)> = cases
+        .iter()
+        .map(|(pattern_str, route_str, _)| {
+            let mut index = SubscriptionIndex::new();
+            index.insert(f, &route(pattern_str), sub_id(1));
+            let indexed = !index.match_all(f, &route(route_str)).is_empty();
+            let direct =
+                crate::runtime::matcher::Pattern::new(pattern_str).matches(&route(route_str));
+            (indexed, direct)
+        })
+        .collect();
+
+    // Assert
+    for ((pattern_str, route_str, expected), (indexed, direct)) in cases.iter().zip(&results) {
+        assert_eq!(indexed, expected, "index: {pattern_str} vs {route_str}");
+        assert_eq!(direct, expected, "matcher: {pattern_str} vs {route_str}");
+    }
+}
+
+#[test]
+fn should_reclaim_trie_nodes_when_patterns_are_removed() {
+    // The node pool only ever grew before: a session churning distinct wildcard
+    // patterns retained one node per pattern segment for the process lifetime,
+    // and the per-session wildcard cap bounds live registrations only.
+
+    // Arrange
+    let f = family(1);
+    let mut index = SubscriptionIndex::new();
+    let churn = |index: &mut SubscriptionIndex, generation: usize| {
+        for pattern_index in 0..64_u64 {
+            let pattern = route(&format!(
+                "notice://realm/gen{generation}/area{pattern_index}/*"
+            ));
+            index.insert(f, &pattern, sub_id(pattern_index));
+            index.remove(f, &pattern, sub_id(pattern_index));
+        }
+    };
+
+    // Act
+    churn(&mut index, 0);
+    let pool_after_first_generation = index.node_pool_len();
+    for generation in 1..10 {
+        churn(&mut index, generation);
+    }
+    let pool_after_ten_generations = index.node_pool_len();
+
+    // Assert
+    assert_eq!(
+        pool_after_first_generation, pool_after_ten_generations,
+        "node pool must not grow across churned pattern generations"
+    );
+    assert_eq!(index.count_subscriptions(f), 0);
+}
+
+#[test]
+fn should_keep_matching_correct_after_node_slots_are_reused() {
+    // A reused slot must carry none of its previous occupant's state.
+
+    // Arrange
+    let f = family(1);
+    let mut index = SubscriptionIndex::new();
+    let retired = route("notice://realm/retired/*");
+    index.insert(f, &retired, sub_id(1));
+    index.remove(f, &retired, sub_id(1));
+
+    // Act
+    let replacement = route("notice://realm/live/*");
+    index.insert(f, &replacement, sub_id(2));
+    let retired_matches = index.match_all(f, &route("notice://realm/retired/thing"));
+    let live_matches = index.match_all(f, &route("notice://realm/live/thing"));
+
+    // Assert
+    assert!(
+        retired_matches.is_empty(),
+        "removed pattern must not match through a recycled node"
+    );
+    assert_eq!(live_matches.as_slice(), [sub_id(2)]);
+}

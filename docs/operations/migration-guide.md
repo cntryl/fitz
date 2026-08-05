@@ -98,6 +98,65 @@ Update admin grants to either `*` or canonical decimal family IDs. Symbolic,
 non-canonical, and overflowed grants are rejected when a session is created or
 validated.
 
+## Stream `**` Selector Aliases Now Reach Authorization
+
+The two canonical `**` aliases in routing-design.md §8.1, `stream://**` and
+`stream://{realm}/**`, were rejected during ingress authorization because Stream
+routes were canonicalized through the generic realm/area/resource parser, which
+requires three segments. Clients running with authorization enabled could not
+use either alias; with authorization disabled they worked, because the rejection
+happened only on the authorization path.
+
+Stream selectors now canonicalize through the §8.1 grammar and fold to their
+expanded spelling, so `stream://acme/**` authorizes identically to
+`stream://acme/*/*` as §11.2 requires. Two consequences for operators:
+
+- Permissions written either way now grant the same concrete-route language. No
+  permission rewrite is required, but a grant that was previously unreachable
+  will now take effect. Review Stream grants containing `**` before upgrading.
+- Noncanonical spellings such as `stream://acme/**/orders`, `stream://*/**`, and
+  `stream://**/orders` are now rejected at ingress instead of passing the
+  generic depth check and failing later in the domain. Requests using them
+  change from a domain-level error to an authorization-level rejection.
+
+Concrete Stream routes are unaffected: `BEGIN` still addresses
+`{realm}/{area}/{resource}/{operation}` and still authorizes against its
+resource identity.
+
+## Deprecated Runtime Matcher And Routing Helpers
+
+The following `fitz::runtime` items still compile but are now
+`#[deprecated]` and will be removed in a later release:
+
+| Deprecated | Replacement |
+| --- | --- |
+| `runtime::matcher::extract_route_segments` | `runtime::matcher::extract_route_segments_borrowed` |
+| `runtime::matcher::match_pattern_segments` | `Pattern::matches` / `Pattern::matches_str` |
+| `runtime::matcher::match_pattern_segments_borrowed` | `Pattern::matches` / `Pattern::matches_str` |
+| `runtime::routing::RouteFamily::from_u32` | `RouteFamily::new` (identical behavior) |
+| `runtime::router::Router::resolve_domain_sink` | `Router::route_to_domain` |
+
+The `match_pattern_segments` helpers compare path segments only and do not
+enforce a pattern's scheme; `Pattern::matches` does. Callers that relied on the
+segment-only comparison must add their own scheme check, or they will accept
+routes from other domains.
+
+`Router::route_to_domain` resolves the sink and delivers in one step, so the
+route-miss path stays instrumented; resolving the sink separately bypassed the
+mismatch counter.
+
+## New Domain Delivery-Drop Metrics
+
+RPC previously discarded undeliverable client responses, including terminal
+error responses, with no log or counter. Dashboards can now alert on:
+
+- `fitz_rpc_response_drops_total` (new)
+- `fitz_kv_notify_drops_total` (now exposed through `DomainStats`)
+
+Existing drop-counter names are unchanged, including
+`fitz_notice_delivery_drops_total`, which keeps its `delivery` spelling rather
+than the `notify` spelling used by the other domains.
+
 ## Pre-Upgrade Checklist
 
 1. Back up durability-sensitive state.

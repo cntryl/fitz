@@ -38,7 +38,9 @@ impl KvDomainRuntime<'_> {
             );
             let notify_envelope = Envelope::new(subscriber.clone(), notify_ctx);
             if self.core.router.route(notify_envelope).is_err() {
-                crate::observability::counter_inc("fitz_kv_notify_drops_total");
+                crate::observability::counter_inc(
+                    crate::domains::kv::metrics::METRIC_NOTIFY_DROPS_TOTAL,
+                );
             }
         }
 
@@ -53,7 +55,9 @@ impl KvDomainRuntime<'_> {
             );
             let notify_envelope = Envelope::new(subscriber.clone(), notification);
             if self.core.router.route(notify_envelope).is_err() {
-                crate::observability::counter_inc("fitz_kv_notify_drops_total");
+                crate::observability::counter_inc(
+                    crate::domains::kv::metrics::METRIC_NOTIFY_DROPS_TOTAL,
+                );
             }
         }
     }
@@ -157,7 +161,13 @@ impl KvDomainRuntime<'_> {
                     error = ?error,
                     "Failed to route response"
                 );
-                Err(DeliveryError::ActorStopped)
+                // Preserve why delivery failed. Reporting backpressure as a
+                // stopped actor discards the occupancy the caller needs to tell
+                // a transient full mailbox from a dead one.
+                Err(match error {
+                    crate::runtime::RouteError::DeliveryFailed(_, delivery_error) => delivery_error,
+                    crate::runtime::RouteError::RouteNotFound(_) => DeliveryError::ActorStopped,
+                })
             }
         }
     }

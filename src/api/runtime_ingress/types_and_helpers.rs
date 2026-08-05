@@ -84,23 +84,13 @@ pub(super) fn extract_auth_route_for_domain(
                 .map(|route| {
                     let route = canonicalize_dispatch_route_str(domain, route)?;
                     if is_pattern_authorization_target(domain, msg_type, route.as_ref()) {
-                        let depth =
-                            pattern_authorization_depth(domain, msg_type).ok_or_else(|| {
-                                format!(
-                                    "{} message {msg_type} pattern authorization depth missing",
-                                    domain.as_str()
-                                )
-                            })?;
-                        let compiled = crate::runtime::matcher::compile_registration_pattern(
-                            route.as_ref(),
-                            domain.as_str(),
-                            depth,
-                        )?;
-                        if domain == DispatchDomain::Lease && compiled.is_wildcard() {
-                            return Err(
-                                "Lease subscription route must not contain wildcards".to_string()
-                            );
-                        }
+                        // Scheme, depth, and the exact-only rule all come from
+                        // the domain descriptor, so ingress authorization and
+                        // the domain sink cannot accept different pattern
+                        // languages (routing-design.md §4).
+                        domain
+                            .descriptor()
+                            .compile_registration_pattern(route.as_ref())?;
                         return Ok(route);
                     }
                     Ok(route)
@@ -110,7 +100,7 @@ pub(super) fn extract_auth_route_for_domain(
 }
 
 pub(super) fn is_subscription_registration_message(domain: DispatchDomain, msg_type: u16) -> bool {
-    subscription_registration_depth(domain, msg_type).is_some()
+    is_subscription_registration(domain, msg_type)
 }
 
 pub(super) fn is_pattern_authorization_target(
@@ -125,37 +115,21 @@ pub(super) fn is_pattern_authorization_target(
         ) && target.contains('*'))
 }
 
-fn pattern_authorization_depth(
-    domain: DispatchDomain,
-    msg_type: u16,
-) -> Option<crate::runtime::matcher::PatternDepth> {
-    use crate::runtime::matcher::PatternDepth;
-
-    match (domain, msg_type) {
-        (DispatchDomain::Queue, 202) | (DispatchDomain::Stream, 604) => {
-            Some(PatternDepth::CanMatch(3))
-        }
-        _ => subscription_registration_depth(domain, msg_type),
-    }
-}
-
-fn subscription_registration_depth(
-    domain: DispatchDomain,
-    msg_type: u16,
-) -> Option<crate::runtime::matcher::PatternDepth> {
-    use crate::runtime::matcher::PatternDepth;
-
-    match (domain, msg_type) {
+/// Message types that carry a retained registration pattern.
+///
+/// This table is message-type routing, not domain policy: the grammar each
+/// pattern must satisfy comes from the domain descriptor.
+fn is_subscription_registration(domain: DispatchDomain, msg_type: u16) -> bool {
+    matches!(
+        (domain, msg_type),
         (DispatchDomain::Kv, 109 | 110)
-        | (DispatchDomain::Queue, 207 | 208)
-        | (DispatchDomain::Stream, 607 | 608)
-        | (DispatchDomain::Lease, 407 | 408) => Some(PatternDepth::CanMatch(3)),
-        (DispatchDomain::Schedule, 703 | 704) => Some(PatternDepth::CanMatch(4)),
-        (DispatchDomain::Notice, 501) | (DispatchDomain::Rpc, 300 | 301) => {
-            Some(PatternDepth::Flexible)
-        }
-        _ => None,
-    }
+            | (DispatchDomain::Queue, 207 | 208)
+            | (DispatchDomain::Stream, 607 | 608)
+            | (DispatchDomain::Lease, 407 | 408)
+            | (DispatchDomain::Schedule, 703 | 704)
+            | (DispatchDomain::Notice, 501)
+            | (DispatchDomain::Rpc, 300 | 301)
+    )
 }
 
 pub(super) enum AuthorizationTargets<'a> {

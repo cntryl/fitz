@@ -1,5 +1,6 @@
 //! Shared domain inventory used by boot registration and ingress cleanup.
 
+use crate::runtime::matcher::PatternDepth;
 use crate::runtime::routing::Route;
 use crate::runtime::{MailboxSink, Router};
 use once_cell::sync::Lazy;
@@ -78,6 +79,14 @@ pub struct DomainDescriptor {
     inbound_route: fn() -> &'static Route,
     cleanup_route: fn() -> &'static Route,
     pub wildcard_route: &'static str,
+    /// Concrete-route depth every retained registration pattern must be able to
+    /// match. This is the domain's routing physics, so it lives here rather
+    /// than being restated at each ingress and sink call site.
+    pub registration_depth: PatternDepth,
+    /// Whether the domain retains wildcard registrations at all. Lease is
+    /// exact by design (architectural-laws.md), so its patterns must stay
+    /// concrete.
+    pub wildcard_registrations_allowed: bool,
 }
 
 impl DomainDescriptor {
@@ -89,6 +98,40 @@ impl DomainDescriptor {
     #[must_use]
     pub fn cleanup_route(&self) -> &'static Route {
         (self.cleanup_route)()
+    }
+
+    /// Compile and validate a registration pattern under this domain's rules.
+    ///
+    /// Ingress authorization and the domain sink must accept exactly the same
+    /// pattern language: routing-design.md §4 calls a pattern that one layer
+    /// accepts and another interprets differently a correctness defect. Both
+    /// call this, so the scheme, depth, and wildcard rules cannot drift.
+    ///
+    /// Domains with a narrower selector vocabulary than the generic grammar
+    /// (Stream) still apply their own grammar afterwards; this is the shared
+    /// floor, not the whole contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the pattern violates the shared route grammar,
+    /// cannot match this domain's concrete depth, or uses a wildcard in a
+    /// domain that retains only exact registrations.
+    pub fn compile_registration_pattern(
+        &self,
+        route: &str,
+    ) -> Result<crate::runtime::matcher::Pattern, String> {
+        let pattern = crate::runtime::matcher::compile_registration_pattern(
+            route,
+            self.scheme,
+            self.registration_depth,
+        )?;
+        if pattern.is_wildcard() && !self.wildcard_registrations_allowed {
+            return Err(format!(
+                "{} registrations require an exact route",
+                self.scheme
+            ));
+        }
+        Ok(pattern)
     }
 
     pub fn register_sink(&self, router: &Router, sink: Arc<dyn MailboxSink>) {
@@ -122,6 +165,8 @@ pub const DOMAIN_DESCRIPTORS: [DomainDescriptor; 7] = [
         inbound_route: kv_inbound_route,
         cleanup_route: kv_cleanup_route,
         wildcard_route: "kv://**",
+        registration_depth: PatternDepth::CanMatch(3),
+        wildcard_registrations_allowed: true,
     },
     DomainDescriptor {
         kind: DomainKind::Queue,
@@ -129,6 +174,8 @@ pub const DOMAIN_DESCRIPTORS: [DomainDescriptor; 7] = [
         inbound_route: queue_inbound_route,
         cleanup_route: queue_cleanup_route,
         wildcard_route: "queue://**",
+        registration_depth: PatternDepth::CanMatch(3),
+        wildcard_registrations_allowed: true,
     },
     DomainDescriptor {
         kind: DomainKind::Notice,
@@ -136,6 +183,8 @@ pub const DOMAIN_DESCRIPTORS: [DomainDescriptor; 7] = [
         inbound_route: notice_inbound_route,
         cleanup_route: notice_cleanup_route,
         wildcard_route: "notice://**",
+        registration_depth: PatternDepth::Flexible,
+        wildcard_registrations_allowed: true,
     },
     DomainDescriptor {
         kind: DomainKind::Stream,
@@ -143,6 +192,8 @@ pub const DOMAIN_DESCRIPTORS: [DomainDescriptor; 7] = [
         inbound_route: stream_inbound_route,
         cleanup_route: stream_cleanup_route,
         wildcard_route: "stream://**",
+        registration_depth: PatternDepth::CanMatch(3),
+        wildcard_registrations_allowed: true,
     },
     DomainDescriptor {
         kind: DomainKind::Rpc,
@@ -150,6 +201,8 @@ pub const DOMAIN_DESCRIPTORS: [DomainDescriptor; 7] = [
         inbound_route: rpc_inbound_route,
         cleanup_route: rpc_cleanup_route,
         wildcard_route: "rpc://**",
+        registration_depth: PatternDepth::Flexible,
+        wildcard_registrations_allowed: true,
     },
     DomainDescriptor {
         kind: DomainKind::Lease,
@@ -157,6 +210,8 @@ pub const DOMAIN_DESCRIPTORS: [DomainDescriptor; 7] = [
         inbound_route: lease_inbound_route,
         cleanup_route: lease_cleanup_route,
         wildcard_route: "lease://**",
+        registration_depth: PatternDepth::CanMatch(3),
+        wildcard_registrations_allowed: false,
     },
     DomainDescriptor {
         kind: DomainKind::Schedule,
@@ -164,6 +219,8 @@ pub const DOMAIN_DESCRIPTORS: [DomainDescriptor; 7] = [
         inbound_route: schedule_inbound_route,
         cleanup_route: schedule_cleanup_route,
         wildcard_route: "schedule://**",
+        registration_depth: PatternDepth::CanMatch(4),
+        wildcard_registrations_allowed: true,
     },
 ];
 
@@ -257,6 +314,22 @@ mod tests {
         // Assert
         assert_eq!(descriptors.len(), DomainKind::ALL.len());
         assert_eq!(descriptor_kinds, all_kinds);
+    }
+
+    #[test]
+    fn should_resolve_each_domain_kind_to_its_own_descriptor() {
+        // `descriptor()` maps each variant to a hardcoded `DOMAIN_DESCRIPTORS`
+        // index. Set-equality alone cannot catch a reordered array, which would
+        // silently give every domain another domain's scheme and routes.
+
+        // Arrange
+        let kinds = DomainKind::ALL;
+
+        // Act
+        let resolved = kinds.map(|kind| kind.descriptor().kind);
+
+        // Assert
+        assert_eq!(resolved, kinds);
     }
 
     #[test]

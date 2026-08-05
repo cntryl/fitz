@@ -171,16 +171,15 @@ impl std::fmt::Display for RouteError {
 
 impl std::error::Error for RouteError {}
 
-/// Fast domain extraction from route string (no allocation)
+/// Extract the domain-pattern key from a route string.
+///
+/// Domain sinks register under their scheme (`DomainDescriptor::register_sink`),
+/// so the scheme is the lookup key for the domain-pattern fallback. Fitz keeps
+/// scheme and domain 1:1 for the seven built-in domains; if that ever stops
+/// holding, this lookup — not just the parse — has to change with it.
 #[inline]
 fn extract_domain(route_str: &str) -> Option<&str> {
-    let bytes = route_str.as_bytes();
-    for i in 0..bytes.len().saturating_sub(2) {
-        if bytes[i] == b':' && bytes[i + 1] == b'/' && bytes[i + 2] == b'/' {
-            return Some(&route_str[..i]);
-        }
-    }
-    None
+    crate::runtime::routing::split_scheme(route_str).map(|(scheme, _)| scheme)
 }
 
 /// Route registry mapping `RouteAddress` to mailbox sinks
@@ -430,9 +429,12 @@ impl Router {
 
     /// Resolve a sink for a registered domain pattern.
     ///
-    /// This is intended for hot paths that already know the destination domain
-    /// and want to avoid an exact-route miss before falling back to domain
-    /// pattern matching.
+    /// # Deprecated
+    ///
+    /// Retained only so existing callers keep compiling. Use
+    /// [`Router::route_to_domain`], which resolves the sink and delivers in one
+    /// step so the miss path stays instrumented.
+    #[deprecated(since = "0.0.2", note = "use Router::route_to_domain")]
     #[must_use]
     pub fn resolve_domain_sink(&self, domain: &str) -> Option<Arc<dyn MailboxSink>> {
         self.registry.get_by_domain(domain)

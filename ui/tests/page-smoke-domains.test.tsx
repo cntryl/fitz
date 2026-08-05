@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { cleanupApp } from "@askrjs/askr/boot";
-import { queryState } from "@askrjs/askr/testing";
+import { click, queryState, submit, type } from "@askrjs/askr/testing";
 import { mountRoute, pageSmokeMocks, queryOptions, resetQueries } from "./page-smoke/harness";
 import {
   diagnostics,
@@ -746,9 +746,10 @@ describe("admin page smoke tests", () => {
       DiagnosticsPage,
     );
 
-    root
-      .querySelector('button[aria-label="Refresh diagnostics"]')
-      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    const refresh = root.querySelector<HTMLButtonElement>(
+      'button[aria-label="Refresh diagnostics"]',
+    );
+    if (refresh) click(refresh);
 
     expect(mocks.refresh).toHaveBeenCalledTimes(3);
   });
@@ -786,10 +787,9 @@ describe("admin page smoke tests", () => {
     const form = root.querySelector('form[role="search"]');
 
     if (input) {
-      input.value = "orders";
-      input.dispatchEvent(new Event("input", { bubbles: true }));
+      type(input, "orders");
     }
-    form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    if (form instanceof HTMLFormElement) submit(form);
 
     await vi.waitFor(() => {
       const searchResults = root.querySelector<HTMLElement>("[data-diagnostics-search-results]");

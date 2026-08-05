@@ -9,6 +9,7 @@
 ## Read First
 - [docs/development/architectural-laws.md](docs/development/architectural-laws.md)
 - [docs/development/domain-boundaries-spec.md](docs/development/domain-boundaries-spec.md)
+- [docs/development/routing-design.md](docs/development/routing-design.md)
 - [docs/development/architecture.md](docs/development/architecture.md)
 - [docs/development/testing.md](docs/development/testing.md)
 - [docs/development/benchmarks.md](docs/development/benchmarks.md)

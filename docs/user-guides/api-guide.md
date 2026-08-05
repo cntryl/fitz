@@ -14,7 +14,7 @@ This guide maps common user intent to Fitz domain APIs.
 
 ## Route and Dispatch Model
 
-Routes describe logical target paths, while message types determine domain dispatch. See the [routing design](../../routing-design.md).
+Routes describe logical target paths, while message types determine domain dispatch. See the [routing design](../development/routing-design.md).
 
 ## Protocol References
 

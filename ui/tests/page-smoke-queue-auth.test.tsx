@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { cleanupApp } from "@askrjs/askr/boot";
-import { queryState } from "@askrjs/askr/testing";
+import { queryState, submit, type } from "@askrjs/askr/testing";
 import { mountRoute, pageSmokeMocks, queryOptions } from "./page-smoke/harness";
 import { queueInventory, queueResource, resourceDetail } from "./page-smoke/fixtures";
 
@@ -125,13 +125,10 @@ describe("admin page smoke tests", () => {
 
     const exactKey = root.querySelector<HTMLInputElement>("#kv-exact-key");
     if (exactKey) {
-      exactKey.value = "user:1";
-      exactKey.dispatchEvent(new Event("input", { bubbles: true }));
+      type(exactKey, "user:1");
     }
-    root
-      .querySelector<HTMLFormElement>("#kv-exact-key")
-      ?.closest("form")
-      ?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    const exactKeyForm = root.querySelector<HTMLInputElement>("#kv-exact-key")?.closest("form");
+    if (exactKeyForm) submit(exactKeyForm);
     await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
 
     expect(root.textContent).toContain("Exact key result");

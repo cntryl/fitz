@@ -438,7 +438,9 @@ impl NoticeDomainCore {
                     std::thread::yield_now();
                 }
                 Err(_) => {
-                    crate::observability::counter_inc("fitz_notice_delivery_drops_total");
+                    crate::observability::counter_inc(
+                        crate::domains::notice::metrics::METRIC_DELIVERY_DROPS_TOTAL,
+                    );
                     return;
                 }
             }
@@ -734,11 +736,10 @@ impl NoticeDomainCore {
         use crate::domains::notice::NoticeResponse;
 
         let family_id = sub_msg.family_id.as_u64();
-        let compiled = match crate::runtime::matcher::compile_registration_pattern(
-            sub_msg.pattern.as_str(),
-            "notice",
-            crate::runtime::matcher::PatternDepth::Flexible,
-        ) {
+        let compiled = match crate::runtime::DomainKind::Notice
+            .descriptor()
+            .compile_registration_pattern(sub_msg.pattern.as_str())
+        {
             Ok(compiled) => compiled,
             Err(error) => {
                 tracing::warn!(

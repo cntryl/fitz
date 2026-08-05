@@ -184,9 +184,11 @@ async fn should_return_kv_failure_stats_given_recorded_metrics() {
     let rollbacks_before = metrics.counter_get("fitz_kv_rollbacks_total");
     let invalid_transaction_rejects_before =
         metrics.counter_get("fitz_kv_invalid_transaction_rejects_total");
+    let notify_drops_before = metrics.counter_get("fitz_kv_notify_drops_total");
     metrics.counter_add("fitz_kv_commits_failed_total", 3);
     metrics.counter_add("fitz_kv_rollbacks_total", 5);
     metrics.counter_add("fitz_kv_invalid_transaction_rejects_total", 7);
+    metrics.counter_add("fitz_kv_notify_drops_total", 11);
     let cookie = login_cookie(runtime.clone()).await;
 
     let kv_req = hyper::http::Request::builder()
@@ -266,6 +268,11 @@ async fn should_return_kv_failure_stats_given_recorded_metrics() {
         "fitz_kv_invalid_transaction_rejects_total",
         invalid_transaction_rejects_before + 7,
     );
+    assert_prometheus_counter(
+        &metrics_payload,
+        "fitz_kv_notify_drops_total",
+        notify_drops_before + 11,
+    );
 }
 
 #[tokio::test]
@@ -329,6 +336,7 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
         metrics.counter_get("rpc_invalid_sequence_errors_forwarded_total");
     let rpc_invalid_dropped_before =
         metrics.counter_get("rpc_invalid_sequence_errors_dropped_total");
+    let rpc_response_drops_before = metrics.counter_get("fitz_rpc_response_drops_total");
     let lease_requests_before = metrics.counter_get("fitz_lease_requests_total");
     let lease_success_before = metrics.counter_get("fitz_lease_success_total");
     let lease_failure_before = metrics.counter_get("fitz_lease_failure_total");
@@ -349,6 +357,7 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
     metrics.counter_add("rpc_response_invalid_sequence_total", 17);
     metrics.counter_add("rpc_invalid_sequence_errors_forwarded_total", 19);
     metrics.counter_add("rpc_invalid_sequence_errors_dropped_total", 23);
+    metrics.counter_add("fitz_rpc_response_drops_total", 29);
     metrics.counter_add("fitz_lease_requests_total", 4);
     metrics.counter_add("fitz_lease_success_total", 2);
     metrics.counter_add("fitz_lease_failure_total", 1);
@@ -512,6 +521,11 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
         &metrics_payload,
         "fitz_rpc_invalid_sequence_errors_dropped_total",
         rpc_invalid_dropped_before + 23,
+    );
+    assert_prometheus_counter(
+        &metrics_payload,
+        "fitz_rpc_response_drops_total",
+        rpc_response_drops_before + 29,
     );
     assert!(metrics_payload.contains("fitz_lease_oldest_lease_age_seconds"));
     assert_prometheus_counter(

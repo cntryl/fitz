@@ -85,6 +85,11 @@ impl Runtime {
     }
 
     #[must_use]
+    pub fn kv_notify_drops_total(&self) -> u64 {
+        metric_counter(crate::domains::kv::metrics::METRIC_NOTIFY_DROPS_TOTAL)
+    }
+
+    #[must_use]
     pub fn notice_subscriptions_active(&self) -> usize {
         self.admin_read_model.notice_subscriptions(None, None).len()
     }
@@ -174,7 +179,7 @@ impl Runtime {
 
     #[must_use]
     pub fn queue_notify_drops_total(&self) -> u64 {
-        metric_counter("fitz_queue_notify_drops_total")
+        metric_counter(crate::domains::queue::metrics::METRIC_NOTIFY_DROPS_TOTAL)
     }
 
     #[must_use]
@@ -372,12 +377,12 @@ impl Runtime {
 
     #[must_use]
     pub fn stream_notify_drops_total(&self) -> u64 {
-        metric_counter("fitz_stream_notify_drops_total")
+        metric_counter(crate::domains::stream::metrics::METRIC_NOTIFY_DROPS_TOTAL)
     }
 
     #[must_use]
     pub fn stream_response_drops_total(&self) -> u64 {
-        metric_counter("fitz_stream_response_drops_total")
+        metric_counter(crate::domains::stream::metrics::METRIC_RESPONSE_DROPS_TOTAL)
     }
 
     #[must_use]
@@ -462,12 +467,12 @@ impl Runtime {
 
     #[must_use]
     pub fn notice_delivery_drops_total(&self) -> u64 {
-        metric_counter("fitz_notice_delivery_drops_total")
+        metric_counter(crate::domains::notice::metrics::METRIC_DELIVERY_DROPS_TOTAL)
     }
 
     #[must_use]
     pub fn notice_response_drops_total(&self) -> u64 {
-        metric_counter("fitz_notice_response_drops_total")
+        metric_counter(crate::domains::notice::metrics::METRIC_RESPONSE_DROPS_TOTAL)
     }
 
     #[must_use]
@@ -513,6 +518,11 @@ impl Runtime {
     #[must_use]
     pub fn rpc_failure_total(&self) -> u64 {
         metric_counter("fitz_rpc_failure_total")
+    }
+
+    #[must_use]
+    pub fn rpc_response_drops_total(&self) -> u64 {
+        metric_counter(crate::domains::rpc::metrics::METRIC_RESPONSE_DROPS_TOTAL)
     }
 
     #[must_use]
@@ -609,12 +619,12 @@ impl Runtime {
 
     #[must_use]
     pub fn lease_response_drops_total(&self) -> u64 {
-        metric_counter("fitz_lease_response_drops_total")
+        metric_counter(crate::domains::lease::metrics::METRIC_RESPONSE_DROPS_TOTAL)
     }
 
     #[must_use]
     pub fn lease_notify_drops_total(&self) -> u64 {
-        metric_counter("fitz_lease_notify_drops_total")
+        metric_counter(crate::domains::lease::metrics::METRIC_NOTIFY_DROPS_TOTAL)
     }
 
     #[must_use]
@@ -702,7 +712,7 @@ impl Runtime {
 
     #[must_use]
     pub fn schedule_response_drops_total(&self) -> u64 {
-        metric_counter("fitz_schedule_response_drops_total")
+        metric_counter(crate::domains::schedule::metrics::METRIC_RESPONSE_DROPS_TOTAL)
     }
 
     #[must_use]

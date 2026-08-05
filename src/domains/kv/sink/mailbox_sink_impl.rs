@@ -277,14 +277,12 @@ impl KvDomainRuntime<'_> {
     fn compile_kv_subscription_pattern(
         pattern: &crate::runtime::routing::Route,
     ) -> Result<crate::runtime::matcher::Pattern, crate::domains::kv::KvResponse> {
-        crate::runtime::matcher::compile_registration_pattern(
-            pattern.as_str(),
-            "kv",
-            crate::runtime::matcher::PatternDepth::CanMatch(3),
-        )
-        .map_err(|error| crate::domains::kv::KvResponse::Error {
-            error: crate::domains::kv::KvError::InvalidSubscriptionPattern(error),
-        })
+        crate::runtime::DomainKind::Kv
+            .descriptor()
+            .compile_registration_pattern(pattern.as_str())
+            .map_err(|error| crate::domains::kv::KvResponse::Error {
+                error: crate::domains::kv::KvError::InvalidSubscriptionPattern(error),
+            })
     }
 
     fn handle_actor_operation_frame(

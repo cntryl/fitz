@@ -8,6 +8,7 @@ pub const METRIC_LATENCY_MS: &str = "fitz_queue_latency_ms";
 pub const METRIC_READY_GAUGE: &str = "fitz_queue_ready_gauge";
 pub const METRIC_DELAYED_GAUGE: &str = "fitz_queue_delayed_gauge";
 pub const METRIC_INFLIGHT_GAUGE: &str = "fitz_queue_inflight_gauge";
+pub const METRIC_NOTIFY_DROPS_TOTAL: &str = "fitz_queue_notify_drops_total";
 
 // Operation-specific counters
 pub const METRIC_ENQUEUE_TOTAL: &str = "fitz_queue_enqueue_total";

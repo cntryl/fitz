@@ -209,6 +209,26 @@ impl Node {
         self.terminals.retain(|id| *id != subscription_id);
     }
 
+    /// Whether this node holds no subscriptions and no child edges.
+    ///
+    /// Such a node can never contribute a match, so it is returned to the pool
+    /// instead of being retained for the life of the process.
+    fn is_reclaimable(&self) -> bool {
+        self.exact.is_empty()
+            && self.single_wildcard.is_none()
+            && self.terminals.is_empty()
+            && self.double_star_subs.is_empty()
+    }
+
+    /// Clear all state so the slot can be handed to a new pattern.
+    fn reset(&mut self) {
+        self.exact.clear();
+        self.single_wildcard = None;
+        self.terminals.clear();
+        self.double_star_subs.clear();
+        self.double_star_suffixes.clear();
+    }
+
     fn add_double_star(
         &mut self,
         subscription_id: SubscriptionId,
@@ -356,6 +376,13 @@ pub struct SubscriptionIndex {
     segments_cache: SegmentsCache,
     /// Interned IDs for exact literal segments used in hot trie lookups.
     segment_interner: SegmentInterner,
+    /// Node slots freed by removal, reused before the pool grows.
+    ///
+    /// Without this the pool only ever grows: a session that registers and
+    /// unregisters distinct wildcard patterns would retain one node per pattern
+    /// segment for the life of the process. The per-session wildcard cap bounds
+    /// live registrations, not cumulative allocation.
+    free_nodes: Vec<NodeId>,
 }
 
 impl SubscriptionIndex {
@@ -367,14 +394,28 @@ impl SubscriptionIndex {
             family_roots: HashMap::with_capacity_and_hasher(8, FxBuildHasher),
             segments_cache: SegmentsCache::new(),
             segment_interner: SegmentInterner::new(),
+            free_nodes: Vec::new(),
         }
     }
 
-    /// Allocate a new node and return its ID
+    /// Allocate a node, reusing a freed slot when one is available.
     fn alloc_node(&mut self) -> NodeId {
+        if let Some(id) = self.free_nodes.pop() {
+            self.nodes[id as usize].reset();
+            return id;
+        }
         let id = usize_to_node_id_saturating(self.nodes.len());
         self.nodes.push(Node::new());
         id
+    }
+
+    /// Return an empty node to the pool.
+    ///
+    /// Roots stay allocated: `family_roots` holds them regardless of occupancy,
+    /// and reclaiming one would leave a dangling entry.
+    fn release_node(&mut self, node_id: NodeId) {
+        self.nodes[node_id as usize].reset();
+        self.free_nodes.push(node_id);
     }
 
     /// Get or create the root node for a `RouteFamily`
@@ -536,6 +577,13 @@ impl SubscriptionIndex {
         collector.into_matches()
     }
 
+    /// Number of allocated node slots, including those currently on the free
+    /// list. Used by tests to assert the pool does not grow under churn.
+    #[cfg(test)]
+    pub(crate) fn node_pool_len(&self) -> usize {
+        self.nodes.len()
+    }
+
     /// Count subscriptions in a specific `RouteFamily` (for diagnostics/metrics)
     #[must_use]
     pub fn count_subscriptions(&self, family_id: RouteFamily) -> usize {
@@ -624,11 +672,21 @@ impl SubscriptionIndex {
             CompiledPatternSegment::Star => {
                 if let Some(child) = self.nodes[node_id as usize].single_wildcard {
                     self.remove_from_trie(child, segments, seg_idx + 1, subscription_id);
+                    // Prune on the way back up so an emptied branch is released
+                    // in one pass rather than surviving until process exit.
+                    if self.nodes[child as usize].is_reclaimable() {
+                        self.nodes[node_id as usize].single_wildcard = None;
+                        self.release_node(child);
+                    }
                 }
             }
             CompiledPatternSegment::Exact(seg_id) => {
                 if let Some(&child) = self.nodes[node_id as usize].exact.get(seg_id) {
                     self.remove_from_trie(child, segments, seg_idx + 1, subscription_id);
+                    if self.nodes[child as usize].is_reclaimable() {
+                        self.nodes[node_id as usize].exact.remove(seg_id);
+                        self.release_node(child);
+                    }
                 }
             }
         }
@@ -699,79 +757,43 @@ impl Default for SubscriptionIndex {
     }
 }
 
-/// Check if a suffix pattern matches remaining route segments at any starting position.
+/// Check if a suffix pattern matches the route tail at any starting position.
+///
+/// The leading implicit `**` is represented by initializing every empty-pattern
+/// state as reachable. The rolling frontier keeps this bounded by
+/// `O(pattern_len * route_len)` and avoids recursive backtracking.
 #[inline]
 fn matches_suffix_compiled(
     suffix: &[CompiledPatternSegment],
     route: &[CompiledRouteSegment],
     start_idx: usize,
 ) -> bool {
-    if suffix.is_empty() {
-        return true;
-    }
-    for try_idx in start_idx..=route.len() {
-        if match_compiled_pattern_segments(suffix, 0, route, try_idx) {
-            return true;
-        }
-    }
-    false
-}
+    let route = route.get(start_idx..).unwrap_or_default();
+    let mut previous = vec![true; route.len() + 1];
 
-#[inline]
-fn match_compiled_pattern_segments(
-    pattern_segments: &[CompiledPatternSegment],
-    pattern_idx: usize,
-    route_segments: &[CompiledRouteSegment],
-    route_idx: usize,
-) -> bool {
-    if pattern_idx >= pattern_segments.len() {
-        return route_idx >= route_segments.len();
-    }
-
-    match pattern_segments[pattern_idx] {
-        CompiledPatternSegment::DoubleStar => {
-            if pattern_idx + 1 >= pattern_segments.len() {
-                true
-            } else {
-                for skip_count in route_idx..=route_segments.len() {
-                    if match_compiled_pattern_segments(
-                        pattern_segments,
-                        pattern_idx + 1,
-                        route_segments,
-                        skip_count,
-                    ) {
-                        return true;
-                    }
+    for pattern in suffix {
+        let mut current = vec![false; route.len() + 1];
+        match pattern {
+            CompiledPatternSegment::DoubleStar => {
+                current[0] = previous[0];
+                for index in 1..=route.len() {
+                    current[index] = previous[index] || current[index - 1];
                 }
-                false
+            }
+            CompiledPatternSegment::Star => {
+                current[1..].copy_from_slice(&previous[..route.len()]);
+            }
+            CompiledPatternSegment::Exact(expected_id) => {
+                for index in 1..=route.len() {
+                    current[index] =
+                        previous[index - 1] && route[index - 1].exact_id == Some(*expected_id);
+                }
             }
         }
-        CompiledPatternSegment::Star => {
-            if route_idx >= route_segments.len() {
-                false
-            } else {
-                match_compiled_pattern_segments(
-                    pattern_segments,
-                    pattern_idx + 1,
-                    route_segments,
-                    route_idx + 1,
-                )
-            }
-        }
-        CompiledPatternSegment::Exact(expected_id) => {
-            if route_idx >= route_segments.len() {
-                false
-            } else {
-                route_segments[route_idx].exact_id == Some(expected_id)
-                    && match_compiled_pattern_segments(
-                        pattern_segments,
-                        pattern_idx + 1,
-                        route_segments,
-                        route_idx + 1,
-                    )
-            }
-        }
+        previous = current;
     }
+
+    previous[route.len()]
 }
 
 #[cfg(test)]

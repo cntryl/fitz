@@ -412,12 +412,10 @@ impl StreamDomainCore {
                 crate::domains::stream::StreamSubscriptionFailure::InvalidPattern(error),
             )
         };
-        let compiled = crate::runtime::matcher::compile_registration_pattern(
-            pattern.as_str(),
-            "stream",
-            crate::runtime::matcher::PatternDepth::Flexible,
-        )
-        .map_err(invalid_pattern)?;
+        let compiled = crate::runtime::DomainKind::Stream
+            .descriptor()
+            .compile_registration_pattern(pattern.as_str())
+            .map_err(invalid_pattern)?;
         crate::domains::stream::route_grammar::classify_stream_route_shape(pattern.as_str())
             .map_err(invalid_pattern)?;
         Ok(compiled)

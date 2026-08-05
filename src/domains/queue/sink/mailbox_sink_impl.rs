@@ -366,11 +366,10 @@ impl QueueDomainCore {
             );
         }
         let pattern_str = pattern.as_str();
-        let parsed_pattern = match crate::runtime::matcher::compile_registration_pattern(
-            pattern_str,
-            "queue",
-            crate::runtime::matcher::PatternDepth::CanMatch(3),
-        ) {
+        let parsed_pattern = match crate::runtime::DomainKind::Queue
+            .descriptor()
+            .compile_registration_pattern(pattern_str)
+        {
             Ok(pattern) => pattern,
             Err(reason) => {
                 return (
@@ -457,11 +456,10 @@ impl QueueDomainCore {
                 false,
             );
         }
-        if let Err(reason) = crate::runtime::matcher::compile_registration_pattern(
-            pattern.as_str(),
-            "queue",
-            crate::runtime::matcher::PatternDepth::CanMatch(3),
-        ) {
+        if let Err(reason) = crate::runtime::DomainKind::Queue
+            .descriptor()
+            .compile_registration_pattern(pattern.as_str())
+        {
             return (
                 crate::domains::queue::QueueResponse::InvalidSubscriptionPattern { reason },
                 None,
@@ -709,12 +707,10 @@ impl QueueDomainCore {
                 reason: format!("invalid queue route: {}", route.as_str()),
             });
         }
-        let pattern = crate::runtime::matcher::compile_registration_pattern(
-            route.as_str(),
-            "queue",
-            crate::runtime::matcher::PatternDepth::CanMatch(3),
-        )
-        .map_err(|reason| crate::domains::queue::QueueResponse::BadRequest { reason })?;
+        let pattern = crate::runtime::DomainKind::Queue
+            .descriptor()
+            .compile_registration_pattern(route.as_str())
+            .map_err(|reason| crate::domains::queue::QueueResponse::BadRequest { reason })?;
         if !pattern.is_wildcard() {
             return Err(crate::domains::queue::QueueResponse::BadRequest {
                 reason: format!("invalid queue route: {}", route.as_str()),

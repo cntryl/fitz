@@ -243,7 +243,9 @@ impl QueueDomainCore {
             );
             let notify_envelope = Envelope::new(subscriber.clone(), notify_ctx);
             if self.router.route(notify_envelope).is_err() {
-                crate::observability::counter_inc("fitz_queue_notify_drops_total");
+                crate::observability::counter_inc(
+                    crate::domains::queue::metrics::METRIC_NOTIFY_DROPS_TOTAL,
+                );
             }
         }
 
@@ -262,7 +264,9 @@ impl QueueDomainCore {
             );
             let notify_envelope = Envelope::new(subscriber.clone(), notification);
             if self.router.route(notify_envelope).is_err() {
-                crate::observability::counter_inc("fitz_queue_notify_drops_total");
+                crate::observability::counter_inc(
+                    crate::domains::queue::metrics::METRIC_NOTIFY_DROPS_TOTAL,
+                );
             }
         }
     }

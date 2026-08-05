@@ -160,12 +160,10 @@ fn parse_publish(
     route_family: RouteFamily,
 ) -> Result<PublishMessage, String> {
     let route = Route::from_ref(dec.get_string_ref()?);
-    let pattern = crate::runtime::matcher::compile_registration_pattern(
-        route.as_str(),
-        "notice",
-        crate::runtime::matcher::PatternDepth::Flexible,
-    )
-    .map_err(|error| format!("invalid notice publish route: {error}"))?;
+    let pattern = crate::runtime::DomainKind::Notice
+        .descriptor()
+        .compile_registration_pattern(route.as_str())
+        .map_err(|error| format!("invalid notice publish route: {error}"))?;
     if pattern.is_wildcard() {
         return Err("notice publish route must not contain wildcards".to_string());
     }

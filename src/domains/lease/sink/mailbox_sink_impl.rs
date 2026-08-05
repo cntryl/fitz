@@ -427,19 +427,12 @@ impl LeaseDomainRuntime<'_> {
     {
         use crate::domains::lease::protocol::LeaseResponse;
 
-        let compiled = crate::runtime::matcher::compile_registration_pattern(
-            route.as_str(),
-            "lease",
-            crate::runtime::matcher::PatternDepth::CanMatch(3),
-        )
-        .map_err(LeaseResponse::InvalidSubscriptionRoute)?;
-        if compiled.is_wildcard() {
-            Err(LeaseResponse::InvalidSubscriptionRoute(
-                "Lease subscriptions require an exact route".to_string(),
-            ))
-        } else {
-            Ok(compiled)
-        }
+        // The exact-only rule lives on the Lease descriptor so ingress and
+        // this sink reject the same patterns.
+        crate::runtime::DomainKind::Lease
+            .descriptor()
+            .compile_registration_pattern(route.as_str())
+            .map_err(LeaseResponse::InvalidSubscriptionRoute)
     }
 
     fn handle_actor_operation_frame(

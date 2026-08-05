@@ -452,24 +452,18 @@ impl ScheduleDomainRuntime<'_> {
             ScheduleFailure, ScheduleFailureCategory, ScheduleResponse,
         };
 
-        let compiled = crate::runtime::matcher::compile_registration_pattern(
-            route.as_str(),
-            "schedule",
-            crate::runtime::matcher::PatternDepth::CanMatch(4),
-        );
-        let Err(error) = &compiled else {
-            return self.insert_schedule_subscription(
-                family_id,
-                route,
-                session_id,
-                subscriber,
-                compiled.expect("checked pattern"),
-            );
-        };
-        ScheduleResponse::Error(ScheduleFailure::new(
-            ScheduleFailureCategory::InvalidSubscriptionPattern,
-            error.clone(),
-        ))
+        match crate::runtime::DomainKind::Schedule
+            .descriptor()
+            .compile_registration_pattern(route.as_str())
+        {
+            Ok(pattern) => {
+                self.insert_schedule_subscription(family_id, route, session_id, subscriber, pattern)
+            }
+            Err(error) => ScheduleResponse::Error(ScheduleFailure::new(
+                ScheduleFailureCategory::InvalidSubscriptionPattern,
+                error,
+            )),
+        }
     }
 
     fn insert_schedule_subscription(
@@ -561,11 +555,10 @@ impl ScheduleDomainRuntime<'_> {
             ScheduleFailure, ScheduleFailureCategory, ScheduleResponse,
         };
 
-        if let Err(error) = crate::runtime::matcher::compile_registration_pattern(
-            route.as_str(),
-            "schedule",
-            crate::runtime::matcher::PatternDepth::CanMatch(4),
-        ) {
+        if let Err(error) = crate::runtime::DomainKind::Schedule
+            .descriptor()
+            .compile_registration_pattern(route.as_str())
+        {
             return ScheduleResponse::Error(ScheduleFailure::new(
                 ScheduleFailureCategory::InvalidSubscriptionPattern,
                 error,

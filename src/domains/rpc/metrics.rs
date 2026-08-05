@@ -7,6 +7,7 @@ pub const METRIC_FAILURE_TOTAL: &str = "fitz_rpc_failure_total";
 pub const METRIC_LATENCY_MS: &str = "fitz_rpc_latency_ms";
 pub const METRIC_WORKERS_GAUGE: &str = "fitz_rpc_workers_gauge";
 pub const METRIC_PENDING_GAUGE: &str = "fitz_rpc_pending_gauge";
+pub const METRIC_RESPONSE_DROPS_TOTAL: &str = "fitz_rpc_response_drops_total";
 
 #[derive(Clone)]
 pub struct RpcMetrics {

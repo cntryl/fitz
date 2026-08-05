@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { cleanupApp, createSPA } from "@askrjs/askr/boot";
 import { createRouteRegistry, group, type RouteHandler, route } from "@askrjs/askr/router";
+import { click } from "@askrjs/askr/testing";
 import { Card, CardContent } from "@askrjs/themes/components";
 import { ThemeScope } from "@askrjs/themes/theme";
 import AppLayout from "@/pages/app/_layout";
@@ -280,7 +281,7 @@ describe("shared UI polish contracts", () => {
       </main>
     ));
 
-    root.querySelector("button")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    click(root.querySelector("button")!);
     expect(onSearchChange).toHaveBeenCalledWith("");
   });
 
@@ -460,7 +461,7 @@ describe("shared UI polish contracts", () => {
         ?.getAttribute("aria-current"),
     ).toBe("page");
 
-    routeFamilySelector?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    click(routeFamilySelector!);
     await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
 
     expect(document.body.textContent).toContain("Route Family");
@@ -732,7 +733,7 @@ describe("shared UI polish contracts", () => {
     expect(sort?.textContent).toBe("Ready");
     expect(root.textContent).not.toContain("route order");
 
-    sort?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    click(sort!);
     await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
     expect(root.querySelector('button[aria-label="Sort by Ready, descending"]')).toBeTruthy();
   });

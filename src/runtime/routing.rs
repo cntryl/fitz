@@ -28,9 +28,16 @@
 //! ```
 //!
 //! **Components:**
-//! - **scheme**: Addressing intent or interaction pattern (e.g., `rpc`, `inbox`, `notify`, `queue`, `stream`)
-//!   - Scheme is NOT a domain; multiple schemes may map to the same domain
-//!   - Domain dispatch is resolved from the Route, not assumed from scheme alone
+//! - **scheme**: Addressing intent or interaction pattern (e.g., `rpc`, `kv`,
+//!   `queue`, `stream`, `notice`, `lease`, `schedule`, plus the runtime-internal
+//!   `inbox`)
+//!   - Each of the seven domains owns exactly one scheme, and registers its sink
+//!     under that scheme (`DomainDescriptor::register_sink`). The router's
+//!     domain-pattern fallback keys off it directly.
+//!   - Domain dispatch for client frames is resolved from the message type via
+//!     the protocol manifest, not from the scheme. The scheme is then required
+//!     to agree with the resolved domain, so a route cannot be dispatched to one
+//!     domain while naming another.
 //!
 //! - **realm**: Top-level logical namespace
 //!   - May represent tenant, organization, department, environment, or any root concept
@@ -46,7 +53,7 @@
 //! **Examples:**
 //! ```text
 //! rpc://acme/auth/users/authenticate
-//! notify://acme/events/orders/created
+//! notice://acme/events/orders/created
 //! queue://acme/jobs/worker/process
 //! stream://acme/analytics/events/append
 //! lease://acme/locks/db/migration/acquire
@@ -78,8 +85,10 @@
 //! 4. **No cross-family state**: Domains operate within `RouteFamily` boundaries;
 //!    state changes in family A never affect family B.
 //!
-//! 5. **Schemes don't imply domains**: Multiple schemes can map to the same
-//!    domain; routing is resolved from the full Route, not just the scheme.
+//! 5. **Scheme must agree with the dispatched domain**: A client frame's domain
+//!    comes from its message type via the protocol manifest. The route's scheme
+//!    is then checked against that domain and rejected on mismatch, so naming
+//!    one domain's scheme never reaches another domain's sink.
 //!
 //! 6. **Realm semantics are opaque**: The runtime does not interpret realm
 //!    values; users define their own organizational semantics.
@@ -204,12 +213,23 @@ pub(crate) fn route_exact_quad(route: &str) -> Option<RouteQuad<'_>> {
     Some(quad)
 }
 
+/// Split a route into its scheme and path, or `None` when it carries no scheme.
+///
+/// This is the single definition of where a route's scheme ends. Route parsing,
+/// wildcard matching, and router dispatch all resolve the `://` boundary the
+/// same way, so a route can never be read as one scheme by one layer and a
+/// different one by another.
+#[inline]
+pub(crate) fn split_scheme(route: &str) -> Option<(&str, &str)> {
+    route.split_once("://")
+}
+
 pub(crate) fn route_scheme(route: &str) -> Option<&str> {
-    route.split_once("://").map(|(scheme, _)| scheme)
+    split_scheme(route).map(|(scheme, _)| scheme)
 }
 
 fn route_path(route: &str) -> &str {
-    route.split_once("://").map_or(route, |(_, path)| path)
+    split_scheme(route).map_or(route, |(_, path)| path)
 }
 
 fn route_segments(route: &str) -> std::str::Split<'_, char> {
@@ -269,11 +289,17 @@ impl RouteFamily {
         Self { id }
     }
 
-    /// Create a route family directly from a u32 value
+    /// Create a route family directly from a u32 value.
+    ///
+    /// # Deprecated
+    ///
+    /// Retained only so existing callers keep compiling. This is identical to
+    /// [`RouteFamily::new`]; use that instead.
+    #[deprecated(since = "0.0.2", note = "use RouteFamily::new")]
     #[inline]
     #[must_use]
     pub fn from_u32(id: u32) -> Self {
-        Self { id }
+        Self::new(id)
     }
 
     /// Get the family ID as u32
@@ -340,7 +366,7 @@ impl fmt::Display for RouteFamily {
 ///
 /// ```text
 /// rpc://acme/auth/users/authenticate
-/// notify://acme/events/orders/created
+/// notice://acme/events/orders/created
 /// queue://acme/jobs/worker/process
 /// stream://acme/analytics/events/append
 /// lease://acme/locks/db/migration/acquire

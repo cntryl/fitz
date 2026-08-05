@@ -66,7 +66,9 @@ impl RpcDomainRuntime<'_> {
         let response_ctx = RpcClientResponse::new(meta, response.clone());
 
         if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
-            let _ = self.router.route(response_envelope);
+            if let Err(error) = self.router.route(response_envelope) {
+                Self::record_response_drop(meta.session_id, "response", &error);
+            }
         }
     }
 
@@ -119,8 +121,33 @@ impl RpcDomainRuntime<'_> {
         );
 
         if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
-            let _ = self.router.route(response_envelope);
+            if let Err(error) = self.router.route(response_envelope) {
+                Self::record_response_drop(meta.session_id, "terminal_error", &error);
+            }
         }
+    }
+
+    /// Record a client response the router could not deliver.
+    ///
+    /// A dropped RPC response is invisible to the caller until its own timeout
+    /// expires, and a dropped terminal error converts a fast failure into that
+    /// same silent wait. Per Law 7 this only reports the drop; delivery is not
+    /// retried and correctness does not depend on the counter existing.
+    fn record_response_drop(
+        session_id: u64,
+        response_kind: &'static str,
+        error: &crate::runtime::RouteError,
+    ) {
+        crate::observability::counter_inc(
+            crate::domains::rpc::metrics::METRIC_RESPONSE_DROPS_TOTAL,
+        );
+        tracing::warn!(
+            domain = "rpc",
+            session = session_id,
+            response_kind = response_kind,
+            error = %error,
+            "Failed to route RPC client response"
+        );
     }
 }
 

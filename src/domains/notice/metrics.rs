@@ -7,6 +7,8 @@ pub const METRIC_FAILURE_TOTAL: &str = "fitz_notice_failure_total";
 pub const METRIC_LATENCY_MS: &str = "fitz_notice_latency_ms";
 pub const METRIC_SUBSCRIPTIONS_GAUGE: &str = "fitz_notice_subscriptions_gauge";
 pub const METRIC_RESPONSE_DROPS_TOTAL: &str = "fitz_notice_response_drops_total";
+// Wire name kept as `delivery` rather than `notify` for dashboard compatibility.
+pub const METRIC_DELIVERY_DROPS_TOTAL: &str = "fitz_notice_delivery_drops_total";
 
 #[derive(Clone)]
 pub struct NoticeMetrics {

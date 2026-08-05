@@ -32,15 +32,50 @@ impl RuntimeIngress {
 
         let canonical = match domain {
             DispatchDomain::Kv => Self::canonicalize_triplet_route_str(domain, route, true),
-            DispatchDomain::Queue | DispatchDomain::Lease | DispatchDomain::Stream => {
+            DispatchDomain::Queue | DispatchDomain::Lease => {
                 Self::canonicalize_triplet_route_str(domain, route, false)
             }
+            DispatchDomain::Stream => Self::canonicalize_stream_route_str(route),
             DispatchDomain::Rpc | DispatchDomain::Notice | DispatchDomain::Schedule => {
                 Ok(Self::scheme_prefixed_route_str(domain.as_str(), route))
             }
         }?;
         crate::utils::route_shape::validate_route_shape(canonical.as_ref())?;
         Ok(canonical)
+    }
+
+    /// Canonicalize a Stream route for authorization.
+    ///
+    /// Stream carries two route shapes, and they canonicalize differently:
+    ///
+    /// - **Selectors** (any route bearing a wildcard, used by `READ`, `LAST`,
+    ///   `GET_METADATA`, and `SUBSCRIBE`) must be one of the 10 shapes in
+    ///   `routing-design.md` §8.1, and fold to their expanded literal-or-`*`
+    ///   spelling. That implements the §11.2 alias rule: `stream://acme/**` and
+    ///   `stream://acme/*/*` are the same selector, so they must authorize
+    ///   against the same concrete-route language instead of being compared as
+    ///   two unrelated wildcard patterns. Routing them through the generic
+    ///   triplet parser instead rejected both `**` aliases outright, because
+    ///   they carry fewer than three segments.
+    ///
+    /// - **Concrete routes** (`BEGIN` addresses
+    ///   `{realm}/{area}/{resource}/{operation}`) authorize against their
+    ///   resource identity, so the trailing operation segment is dropped.
+    ///
+    /// Splitting on the wildcard keeps noncanonical spellings such as
+    /// `stream://acme/**/orders` out of the selector path, where the generic
+    /// depth check would otherwise accept a shape the domain sink rejects.
+    fn canonicalize_stream_route_str(route: &str) -> Result<Cow<'_, str>, String> {
+        if !route.contains('*') {
+            return Self::canonicalize_triplet_route_str(DispatchDomain::Stream, route, false);
+        }
+
+        let scheme_qualified =
+            Self::scheme_prefixed_route_str(DispatchDomain::Stream.as_str(), route);
+        let shape = crate::domains::stream::route_grammar::classify_stream_route_shape(
+            scheme_qualified.as_ref(),
+        )?;
+        Ok(Cow::Owned(format!("stream://{}", shape.canonical())))
     }
 
     fn validate_qualified_domain_scheme(domain: DispatchDomain, route: &str) -> Result<(), String> {

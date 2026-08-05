@@ -331,12 +331,10 @@ fn parse_subscribe(
     route_family: RouteFamily,
 ) -> Result<RpcMessage, RpcDecodeError> {
     let pattern = dec.get_string_ref()?;
-    crate::runtime::matcher::compile_registration_pattern(
-        pattern,
-        "rpc",
-        crate::runtime::matcher::PatternDepth::Flexible,
-    )
-    .map_err(RpcDecodeError::invalid_registration_pattern)?;
+    crate::runtime::DomainKind::Rpc
+        .descriptor()
+        .compile_registration_pattern(pattern)
+        .map_err(RpcDecodeError::invalid_registration_pattern)?;
     let worker_addr = RouteAddress::new(route_family, Route::new(pattern));
     let max_concurrent = validate_max_concurrent(dec.get_u32()?)?;
 
@@ -356,12 +354,10 @@ fn parse_unsubscribe(
     route_family: RouteFamily,
 ) -> Result<RpcMessage, RpcDecodeError> {
     let pattern = dec.get_string_ref()?;
-    crate::runtime::matcher::compile_registration_pattern(
-        pattern,
-        "rpc",
-        crate::runtime::matcher::PatternDepth::Flexible,
-    )
-    .map_err(RpcDecodeError::invalid_registration_pattern)?;
+    crate::runtime::DomainKind::Rpc
+        .descriptor()
+        .compile_registration_pattern(pattern)
+        .map_err(RpcDecodeError::invalid_registration_pattern)?;
     let worker_addr = RouteAddress::new(route_family, Route::new(pattern));
 
     if !dec.is_complete() {
@@ -378,13 +374,11 @@ fn parse_rpc_request(
 ) -> Result<RpcMessage, RpcDecodeError> {
     let correlation_id = get_uuid(dec)?;
     let route_value = dec.get_string_ref()?;
-    let compiled = crate::runtime::matcher::compile_registration_pattern(
-        route_value,
-        "rpc",
-        crate::runtime::matcher::PatternDepth::Flexible,
-    )
-    .map_err(RpcDecodeError::invalid_call_route)?;
-    if compiled.route().contains('*') {
+    let compiled = crate::runtime::DomainKind::Rpc
+        .descriptor()
+        .compile_registration_pattern(route_value)
+        .map_err(RpcDecodeError::invalid_call_route)?;
+    if compiled.is_wildcard() {
         return Err(RpcDecodeError::invalid_call_route(
             "RPC call route must be concrete",
         ));

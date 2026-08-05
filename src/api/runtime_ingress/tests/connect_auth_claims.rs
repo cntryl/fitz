@@ -862,6 +862,63 @@ fn should_canonicalize_scheme_less_domain_routes_for_authorization() {
 }
 
 #[test]
+fn should_canonicalize_stream_double_star_aliases_to_their_expanded_shape() {
+    // routing-design.md §8.1 blesses `stream://**` and `stream://{realm}/**`,
+    // and §11.2 requires each to authorize as the same language as its expanded
+    // spelling. The generic realm/area/resource canonicalization rejected both
+    // outright, so the aliases were unreachable once authorization ran.
+
+    // Arrange
+    let cases = [
+        ("stream://**", "stream://*/*/*"),
+        ("stream://acme/**", "stream://acme/*/*"),
+        ("stream://acme/*/*", "stream://acme/*/*"),
+        ("stream://acme/events/orders", "stream://acme/events/orders"),
+        ("stream://*/events/*", "stream://*/events/*"),
+    ];
+
+    // Act
+    let canonical = cases.map(|(input, _)| {
+        RuntimeIngress::canonicalize_domain_route(DispatchDomain::Stream, &Route::new(input))
+            .unwrap_or_else(|error| panic!("expected {input} to canonicalize: {error}"))
+    });
+
+    // Assert
+    for ((input, expected), actual) in cases.iter().zip(&canonical) {
+        assert_eq!(actual.as_str(), *expected, "canonical form of {input}");
+    }
+}
+
+#[test]
+fn should_reject_stream_routes_outside_the_selector_grammar() {
+    // Deeper routes previously canonicalized by silently dropping trailing
+    // segments, so authorization ran against a different route than the client
+    // sent. The shared grammar rejects them instead.
+
+    // Arrange
+    let invalid = [
+        "stream://acme/events",
+        "stream://acme//orders",
+        // Noncanonical `**` spellings the domain sink rejects must not be
+        // authorized as if they were a blessed selector.
+        "stream://acme/**/orders",
+        "stream://*/**",
+        "stream://**/orders",
+        "stream://acme/event*/orders",
+    ];
+
+    // Act
+    let results = invalid.map(|route| {
+        RuntimeIngress::canonicalize_domain_route(DispatchDomain::Stream, &Route::new(route))
+    });
+
+    // Assert
+    for (route, result) in invalid.iter().zip(&results) {
+        assert!(result.is_err(), "expected {route} to be rejected");
+    }
+}
+
+#[test]
 fn should_reject_qualified_route_with_a_different_domain_scheme() {
     // Arrange
     let route = crate::runtime::routing::Route::new("queue://test/area/resource");

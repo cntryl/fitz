@@ -89,17 +89,15 @@ impl IngressDomainRegistry {
         Ok(Some(Self::descriptor_for_domain(domain)))
     }
 
+    /// Resolve a manifest domain name back to its dispatch domain.
+    ///
+    /// Derived from the shared descriptor table rather than a separate literal
+    /// match, so the name accepted here is always the one `as_str` produces and
+    /// the two cannot drift apart.
     fn domain_from_manifest_name(name: &str) -> Option<DispatchDomain> {
-        match name {
-            "kv" => Some(DispatchDomain::Kv),
-            "queue" => Some(DispatchDomain::Queue),
-            "notice" => Some(DispatchDomain::Notice),
-            "stream" => Some(DispatchDomain::Stream),
-            "rpc" => Some(DispatchDomain::Rpc),
-            "lease" => Some(DispatchDomain::Lease),
-            "schedule" => Some(DispatchDomain::Schedule),
-            _ => None,
-        }
+        DispatchDomain::ALL
+            .into_iter()
+            .find(|domain| domain.as_str() == name)
     }
 }
 
@@ -219,6 +217,40 @@ mod tests {
         // Assert
         assert_eq!(descriptors.len(), DomainKind::ALL.len());
         assert_eq!(descriptor_kinds, all_kinds);
+    }
+
+    #[test]
+    fn should_resolve_each_domain_to_its_own_ingress_descriptor() {
+        // `descriptor_for_domain` maps each variant to a hardcoded
+        // `INGRESS_DOMAIN_DESCRIPTORS` index. Set-equality alone cannot catch a
+        // reordered array, which would silently pair every domain with another
+        // domain's auth-route extractor and unauthorized error code.
+
+        // Arrange
+        let domains = DomainKind::ALL;
+
+        // Act
+        let resolved =
+            domains.map(|domain| IngressDomainRegistry::descriptor_for_domain(domain).kind());
+
+        // Assert
+        assert_eq!(resolved, domains);
+    }
+
+    #[test]
+    fn should_resolve_every_manifest_domain_name() {
+        // Arrange
+        let names = DomainKind::ALL.map(DomainKind::as_str);
+
+        // Act
+        let resolved = names.map(IngressDomainRegistry::domain_from_manifest_name);
+
+        // Assert
+        assert_eq!(resolved, DomainKind::ALL.map(Some));
+        assert_eq!(
+            IngressDomainRegistry::domain_from_manifest_name("nope"),
+            None
+        );
     }
 
     #[test]

@@ -11,7 +11,7 @@ This index is the public reading path. It keeps product usage, operations, clien
 - [Overview](user-guides/overview.md)
 - [Domain boundaries](development/domain-boundaries-spec.md)
 - [Architectural laws](development/architectural-laws.md)
-- [Routing model](../routing-design.md)
+- [Routing model](development/routing-design.md)
 - [Durability](user-guides/durability.md)
 - [Transaction durability contract](user-guides/transaction-durability-contract.md)
 

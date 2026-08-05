@@ -16,6 +16,7 @@ mod notification_gating;
 mod read_finalization;
 mod wire_encoding;
 
+use crate::domains::stream::metrics::METRIC_WATERMARK_COORDINATION_DROPS_TOTAL;
 use read_finalization::apply_global_snapshot_boundary;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -178,7 +179,7 @@ impl StreamDomainCore {
             ),
         );
         if !area_spawned {
-            self.counter_inc("fitz_stream_watermark_coordination_drops_total");
+            self.counter_inc(METRIC_WATERMARK_COORDINATION_DROPS_TOTAL);
             tracing::warn!(
                 domain = "stream",
                 route_family = family_id.id(),
@@ -187,7 +188,7 @@ impl StreamDomainCore {
                 "Stream area watermark coordinator capacity was exhausted"
             );
         } else if let Err(error) = self.router.route_high_priority(area_envelope) {
-            self.counter_inc("fitz_stream_watermark_coordination_drops_total");
+            self.counter_inc(METRIC_WATERMARK_COORDINATION_DROPS_TOTAL);
             tracing::warn!(
                 domain = "stream",
                 route_family = family_id.id(),
@@ -205,7 +206,7 @@ impl StreamDomainCore {
             ),
         );
         if !realm_spawned {
-            self.counter_inc("fitz_stream_watermark_coordination_drops_total");
+            self.counter_inc(METRIC_WATERMARK_COORDINATION_DROPS_TOTAL);
             tracing::warn!(
                 domain = "stream",
                 route_family = family_id.id(),
@@ -213,7 +214,7 @@ impl StreamDomainCore {
                 "Stream realm watermark coordinator capacity was exhausted"
             );
         } else if let Err(error) = self.router.route_high_priority(realm_envelope) {
-            self.counter_inc("fitz_stream_watermark_coordination_drops_total");
+            self.counter_inc(METRIC_WATERMARK_COORDINATION_DROPS_TOTAL);
             tracing::warn!(
                 domain = "stream",
                 route_family = family_id.id(),
@@ -754,7 +755,9 @@ impl StreamDomainCore {
             let target = notification.target;
             let event = notification.event;
             if *target.subscriber.family() != event.family_id {
-                crate::observability::counter_inc("fitz_stream_notify_drops_total");
+                crate::observability::counter_inc(
+                    crate::domains::stream::metrics::METRIC_NOTIFY_DROPS_TOTAL,
+                );
                 continue;
             }
             #[cfg(test)]
@@ -799,7 +802,9 @@ impl StreamDomainCore {
         );
         let notify_envelope = Envelope::new(subscriber.clone(), notify_ctx);
         if self.router.route(notify_envelope).is_err() {
-            crate::observability::counter_inc("fitz_stream_notify_drops_total");
+            crate::observability::counter_inc(
+                crate::domains::stream::metrics::METRIC_NOTIFY_DROPS_TOTAL,
+            );
         }
     }
 
@@ -820,7 +825,9 @@ impl StreamDomainCore {
         );
         let notify_envelope = Envelope::new(subscriber.clone(), notify);
         if self.router.route(notify_envelope).is_err() {
-            crate::observability::counter_inc("fitz_stream_notify_drops_total");
+            crate::observability::counter_inc(
+                crate::domains::stream::metrics::METRIC_NOTIFY_DROPS_TOTAL,
+            );
         }
     }
 

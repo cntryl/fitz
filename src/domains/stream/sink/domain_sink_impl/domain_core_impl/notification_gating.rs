@@ -129,7 +129,7 @@ impl StreamDomainCore {
         *pending = retained;
         if dropped > 0 {
             crate::observability::counter_add(
-                "fitz_stream_notify_drops_total",
+                crate::domains::stream::metrics::METRIC_NOTIFY_DROPS_TOTAL,
                 u64::try_from(dropped).unwrap_or(u64::MAX),
             );
         }
@@ -181,7 +181,9 @@ impl StreamDomainCore {
                     });
                 }
                 Err(_) => {
-                    crate::observability::counter_inc("fitz_stream_notify_drops_total");
+                    crate::observability::counter_inc(
+                        crate::domains::stream::metrics::METRIC_NOTIFY_DROPS_TOTAL,
+                    );
                 }
             }
         }
@@ -192,7 +194,7 @@ impl StreamDomainCore {
             pending.extend(newly_pending.drain(..accepted));
             if !newly_pending.is_empty() {
                 crate::observability::counter_add(
-                    "fitz_stream_notify_drops_total",
+                    crate::domains::stream::metrics::METRIC_NOTIFY_DROPS_TOTAL,
                     u64::try_from(newly_pending.len()).unwrap_or(u64::MAX),
                 );
             }

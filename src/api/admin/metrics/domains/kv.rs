@@ -2,6 +2,17 @@ use crate::boot::Runtime;
 use std::fmt::Write as _;
 
 pub(super) fn append_metrics(output: &mut String, runtime: &Runtime) {
+    output.push_str(
+        "# HELP fitz_kv_notify_drops_total Total KV notifications dropped by this broker process\n",
+    );
+    output.push_str("# TYPE fitz_kv_notify_drops_total counter\n");
+    let _ = writeln!(
+        output,
+        "fitz_kv_notify_drops_total {}",
+        runtime.kv_notify_drops_total()
+    );
+    output.push('\n');
+
     output.push_str("# HELP fitz_kv_transactions_active Active KV transactions\n");
     output.push_str("# TYPE fitz_kv_transactions_active gauge\n");
     let _ = writeln!(
