@@ -203,8 +203,13 @@ fn should_export_schedule_metrics_given_preloaded_schedule_runtime() {
     )));
     assert!(metrics.contains("fitz_schedule_latency_ms_count"));
     assert_metric_exported(&metrics, "fitz_notice_delivery_drops_total");
+    assert_metric_exported(&metrics, "fitz_notice_response_drops_total");
     assert_metric_exported(&metrics, "fitz_stream_notify_drops_total");
+    assert_metric_exported(&metrics, "fitz_stream_response_drops_total");
     assert_metric_exported(&metrics, "fitz_queue_notify_drops_total");
+    assert_metric_exported(&metrics, "fitz_lease_response_drops_total");
+    assert_metric_exported(&metrics, "fitz_lease_notify_drops_total");
+    assert_metric_exported(&metrics, "fitz_schedule_response_drops_total");
     assert_metric_exported(&metrics, "fitz_rpc_request_timeouts_total");
     assert_metric_exported(&metrics, "fitz_rpc_backpressure_rejects_total");
     assert_metric_exported(&metrics, "fitz_rpc_duplicate_correlation_rejects_total");

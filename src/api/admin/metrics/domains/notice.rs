@@ -11,6 +11,14 @@ pub(super) fn append_metrics(output: &mut String, runtime: &Runtime) {
     );
     output.push('\n');
 
+    output.push_str("# HELP fitz_notice_response_drops_total Total Notice responses dropped by this broker process\n# TYPE fitz_notice_response_drops_total counter\n");
+    let _ = writeln!(
+        output,
+        "fitz_notice_response_drops_total {}",
+        runtime.notice_response_drops_total()
+    );
+    output.push('\n');
+
     output.push_str("# HELP fitz_notice_routes_active Active notice routes\n");
     output.push_str("# TYPE fitz_notice_routes_active gauge\n");
     let _ = writeln!(

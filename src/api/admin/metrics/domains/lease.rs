@@ -7,6 +7,22 @@ pub(super) fn append_metrics(output: &mut String, runtime: &Runtime) {
     let _ = writeln!(output, "fitz_lease_active {}", runtime.lease_active());
     output.push('\n');
 
+    output.push_str("# HELP fitz_lease_response_drops_total Total Lease responses dropped by this broker process\n# TYPE fitz_lease_response_drops_total counter\n");
+    let _ = writeln!(
+        output,
+        "fitz_lease_response_drops_total {}",
+        runtime.lease_response_drops_total()
+    );
+    output.push('\n');
+
+    output.push_str("# HELP fitz_lease_notify_drops_total Total Lease notifications dropped by this broker process\n# TYPE fitz_lease_notify_drops_total counter\n");
+    let _ = writeln!(
+        output,
+        "fitz_lease_notify_drops_total {}",
+        runtime.lease_notify_drops_total()
+    );
+    output.push('\n');
+
     output.push_str(
         "# HELP fitz_lease_oldest_lease_age_seconds Oldest active lease age in seconds\n",
     );

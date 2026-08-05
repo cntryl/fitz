@@ -13,6 +13,7 @@ pub const METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL: &str =
     "fitz_schedule_upsert_persistence_failures_total";
 pub const METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL: &str =
     "fitz_schedule_cancel_persistence_failures_total";
+pub const METRIC_RESPONSE_DROPS_TOTAL: &str = "fitz_schedule_response_drops_total";
 
 #[derive(Clone)]
 pub struct ScheduleMetrics {
@@ -67,5 +68,9 @@ impl ScheduleMetrics {
     pub fn record_cancel_persistence_failure(&self) {
         self.metrics
             .counter_inc(METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL);
+    }
+
+    pub fn record_response_drop(&self) {
+        self.metrics.counter_inc(METRIC_RESPONSE_DROPS_TOTAL);
     }
 }

@@ -126,7 +126,22 @@ impl LeaseDomainRuntime<'_> {
             waiter.reply_destination.clone(),
             response_ctx,
         );
-        let _ = self.core.router.route(response_envelope);
+        if let Err(error) = self.core.router.route(response_envelope) {
+            if let Some(metrics) = self.core.metrics.as_ref() {
+                metrics.record_response_drop();
+            } else {
+                crate::observability::counter_inc(
+                    crate::domains::lease::metrics::METRIC_RESPONSE_DROPS_TOTAL,
+                );
+            }
+            tracing::warn!(
+                domain = "lease",
+                session_id = waiter.session_id,
+                route_family = waiter.route_family.as_u64(),
+                error = %error,
+                "Dropped best-effort Lease waiter response"
+            );
+        }
     }
 
     pub(super) fn route_lease_response(
@@ -158,9 +173,37 @@ impl LeaseDomainRuntime<'_> {
                 .router
                 .resolve_sink(response_envelope.destination());
             if let Some(sink) = response_sink {
-                let _ = sink.deliver(response_envelope);
-            } else {
-                let _ = self.core.router.route(response_envelope);
+                if let Err(error) = sink.deliver(response_envelope) {
+                    if let Some(metrics) = self.core.metrics.as_ref() {
+                        metrics.record_response_drop();
+                    } else {
+                        crate::observability::counter_inc(
+                            crate::domains::lease::metrics::METRIC_RESPONSE_DROPS_TOTAL,
+                        );
+                    }
+                    tracing::warn!(
+                        domain = "lease",
+                        session_id = meta.session_id,
+                        route_family = meta.route_family.as_u64(),
+                        error = %error,
+                        "Dropped best-effort Lease response"
+                    );
+                }
+            } else if let Err(error) = self.core.router.route(response_envelope) {
+                if let Some(metrics) = self.core.metrics.as_ref() {
+                    metrics.record_response_drop();
+                } else {
+                    crate::observability::counter_inc(
+                        crate::domains::lease::metrics::METRIC_RESPONSE_DROPS_TOTAL,
+                    );
+                }
+                tracing::warn!(
+                    domain = "lease",
+                    session_id = meta.session_id,
+                    route_family = meta.route_family.as_u64(),
+                    error = %error,
+                    "Dropped best-effort Lease response"
+                );
             }
         }
 
@@ -505,7 +548,22 @@ impl LeaseDomainRuntime<'_> {
                 );
 
                 let notify_envelope = Envelope::new(route_address, notify_ctx);
-                let _ = self.core.router.route(notify_envelope);
+                if let Err(error) = self.core.router.route(notify_envelope) {
+                    if let Some(metrics) = self.core.metrics.as_ref() {
+                        metrics.record_notify_drop();
+                    } else {
+                        crate::observability::counter_inc(
+                            crate::domains::lease::metrics::METRIC_NOTIFY_DROPS_TOTAL,
+                        );
+                    }
+                    tracing::warn!(
+                        domain = "lease",
+                        session_id,
+                        route_family = event.family_id.as_u64(),
+                        error = %error,
+                        "Dropped best-effort Lease notification"
+                    );
+                }
             }
 
             #[cfg(not(test))]
@@ -518,7 +576,22 @@ impl LeaseDomainRuntime<'_> {
                     event.payload.clone(),
                 );
                 let notify_envelope = Envelope::new(route_address, notification);
-                let _ = self.core.router.route(notify_envelope);
+                if let Err(error) = self.core.router.route(notify_envelope) {
+                    if let Some(metrics) = self.core.metrics.as_ref() {
+                        metrics.record_notify_drop();
+                    } else {
+                        crate::observability::counter_inc(
+                            crate::domains::lease::metrics::METRIC_NOTIFY_DROPS_TOTAL,
+                        );
+                    }
+                    tracing::warn!(
+                        domain = "lease",
+                        session_id,
+                        route_family = event.family_id.as_u64(),
+                        error = %error,
+                        "Dropped best-effort Lease notification"
+                    );
+                }
             }
         }
     }

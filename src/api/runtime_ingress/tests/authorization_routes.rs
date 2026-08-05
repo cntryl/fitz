@@ -511,7 +511,7 @@ async fn should_reject_rpc_registration_exceeding_permission_match_set_at_ingres
         &["rpc://acme/orders/*/*#*"],
     );
     ingress.on_open(session).await.unwrap();
-    let register_frame = crate::benchkit::build_rpc_subscribe("rpc://acme/orders/**/**");
+    let register_frame = crate::benchkit::build_rpc_subscribe("rpc://acme/orders/**/created");
     let (_, register_payload) = crate::benchkit::extract_single_tlv_field(&register_frame);
 
     // Act

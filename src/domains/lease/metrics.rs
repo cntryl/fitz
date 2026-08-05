@@ -7,6 +7,8 @@ pub const METRIC_FAILURE_TOTAL: &str = "fitz_lease_failure_total";
 pub const METRIC_LATENCY_MS: &str = "fitz_lease_latency_ms";
 pub const METRIC_ACTIVE_GAUGE: &str = "fitz_lease_active_gauge";
 pub const METRIC_WAITERS_GAUGE: &str = "fitz_lease_waiters_gauge";
+pub const METRIC_RESPONSE_DROPS_TOTAL: &str = "fitz_lease_response_drops_total";
+pub const METRIC_NOTIFY_DROPS_TOTAL: &str = "fitz_lease_notify_drops_total";
 
 #[derive(Clone)]
 pub struct LeaseMetrics {
@@ -42,6 +44,14 @@ impl LeaseMetrics {
 
     pub fn counter_inc(&self, name: &str) {
         self.metrics.counter_inc(name);
+    }
+
+    pub fn record_response_drop(&self) {
+        self.metrics.counter_inc(METRIC_RESPONSE_DROPS_TOTAL);
+    }
+
+    pub fn record_notify_drop(&self) {
+        self.metrics.counter_inc(METRIC_NOTIFY_DROPS_TOTAL);
     }
 
     pub fn set_active_leases(&self, count: usize) {

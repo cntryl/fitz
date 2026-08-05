@@ -456,7 +456,18 @@ impl LeaseActor {
 
                 // NOTE: We use send() directly because current_metadata is not set
                 // This is the deferred reply path
-                let _ = ctx.send(source, response).ok(); // Ignore send errors (best effort)
+                if let Err(error) = ctx.send(source.clone(), response) {
+                    crate::observability::counter_inc(
+                        crate::domains::lease::metrics::METRIC_RESPONSE_DROPS_TOTAL,
+                    );
+                    tracing::warn!(
+                        domain = "lease",
+                        route_family = source.family().as_u64(),
+                        route = %source.route(),
+                        error = %error,
+                        "Dropped best-effort deferred Lease grant response"
+                    );
+                }
             }
 
             // Clean up empty queue
@@ -639,7 +650,21 @@ impl Actor for LeaseActor {
 
     fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
         if let Some(response) = self.handle_message(msg, ctx) {
-            let _ = ctx.reply(response).ok();
+            if let Err(error) = ctx.reply(response) {
+                crate::observability::counter_inc(
+                    crate::domains::lease::metrics::METRIC_RESPONSE_DROPS_TOTAL,
+                );
+                let metadata = ctx.current_metadata();
+                tracing::warn!(
+                    domain = "lease",
+                    route_family = metadata
+                        .as_ref()
+                        .and_then(|m| m.source.as_ref())
+                        .map_or(self.family.as_u64(), |source| source.family().as_u64()),
+                    error = %error,
+                    "Dropped best-effort Lease response"
+                );
+            }
         }
     }
 
@@ -690,7 +715,18 @@ impl Actor for LeaseActor {
             // Send Timeout response to the waiter
             if let Some(source) = waiter.source {
                 let response = LeaseResponse::Timeout;
-                let _ = ctx.send(source, response).ok(); // Best effort
+                if let Err(error) = ctx.send(source.clone(), response) {
+                    crate::observability::counter_inc(
+                        crate::domains::lease::metrics::METRIC_RESPONSE_DROPS_TOTAL,
+                    );
+                    tracing::warn!(
+                        domain = "lease",
+                        route_family = source.family().as_u64(),
+                        route = %source.route(),
+                        error = %error,
+                        "Dropped best-effort Lease timeout response"
+                    );
+                }
             }
 
             // Clean up empty queue

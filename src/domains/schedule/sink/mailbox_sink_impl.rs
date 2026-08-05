@@ -659,7 +659,22 @@ impl ScheduleDomainRuntime<'_> {
             crate::domains::schedule::ScheduleClientResponse::new(meta, response.clone());
 
         if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
-            let _ = self.core.router.route(response_envelope);
+            if let Err(error) = self.core.router.route(response_envelope) {
+                if let Some(metrics) = self.core.metrics.as_ref() {
+                    metrics.record_response_drop();
+                } else {
+                    crate::observability::counter_inc(
+                        crate::domains::schedule::metrics::METRIC_RESPONSE_DROPS_TOTAL,
+                    );
+                }
+                tracing::warn!(
+                    domain = "schedule",
+                    session_id = meta.session_id,
+                    route_family = meta.route_family.as_u64(),
+                    error = %error,
+                    "Dropped best-effort Schedule response"
+                );
+            }
         }
 
         if let (Some(metrics), Some(started_at)) = (self.core.metrics.as_ref(), request_started) {

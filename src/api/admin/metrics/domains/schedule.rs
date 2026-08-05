@@ -12,6 +12,14 @@ fn append_gauge_metrics(output: &mut String, runtime: &Runtime) {
     let _ = writeln!(output, "fitz_schedule_active {}", runtime.schedule_active());
     output.push('\n');
 
+    output.push_str("# HELP fitz_schedule_response_drops_total Total Schedule responses dropped by this broker process\n# TYPE fitz_schedule_response_drops_total counter\n");
+    let _ = writeln!(
+        output,
+        "fitz_schedule_response_drops_total {}",
+        runtime.schedule_response_drops_total()
+    );
+    output.push('\n');
+
     output.push_str("# HELP fitz_schedule_executions_per_minute Acknowledged schedule handoffs over the last minute\n");
     output.push_str("# TYPE fitz_schedule_executions_per_minute gauge\n");
     let _ = writeln!(

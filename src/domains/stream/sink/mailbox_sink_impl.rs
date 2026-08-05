@@ -906,7 +906,22 @@ impl StreamDomainCore {
             crate::domains::stream::StreamClientResponse::new(meta, response.clone());
 
         if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
-            let _ = self.router.route(response_envelope);
+            if let Err(error) = self.router.route(response_envelope) {
+                if let Some(metrics) = self.metrics.as_ref() {
+                    metrics.record_response_drop();
+                } else {
+                    crate::observability::counter_inc(
+                        crate::domains::stream::metrics::METRIC_RESPONSE_DROPS_TOTAL,
+                    );
+                }
+                tracing::warn!(
+                    domain = "stream",
+                    session_id = meta.session_id,
+                    route_family = meta.route_family.as_u64(),
+                    error = %error,
+                    "Dropped best-effort Stream response"
+                );
+            }
         }
 
         if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {

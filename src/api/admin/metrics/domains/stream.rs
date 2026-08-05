@@ -15,6 +15,14 @@ fn append_core_metrics(output: &mut String, runtime: &Runtime) {
     let _ = writeln!(output, "fitz_stream_active {}", runtime.stream_active());
     output.push('\n');
 
+    output.push_str("# HELP fitz_stream_response_drops_total Total Stream responses dropped by this broker process\n# TYPE fitz_stream_response_drops_total counter\n");
+    let _ = writeln!(
+        output,
+        "fitz_stream_response_drops_total {}",
+        runtime.stream_response_drops_total()
+    );
+    output.push('\n');
+
     output.push_str(
         "# HELP fitz_stream_append_sessions_active Live append sessions currently tracked by the broker process\n",
     );

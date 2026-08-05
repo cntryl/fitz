@@ -6,6 +6,7 @@ pub const METRIC_SUCCESS_TOTAL: &str = "fitz_notice_success_total";
 pub const METRIC_FAILURE_TOTAL: &str = "fitz_notice_failure_total";
 pub const METRIC_LATENCY_MS: &str = "fitz_notice_latency_ms";
 pub const METRIC_SUBSCRIPTIONS_GAUGE: &str = "fitz_notice_subscriptions_gauge";
+pub const METRIC_RESPONSE_DROPS_TOTAL: &str = "fitz_notice_response_drops_total";
 
 #[derive(Clone)]
 pub struct NoticeMetrics {
@@ -45,6 +46,10 @@ impl NoticeMetrics {
 
     pub fn counter_add(&self, name: &str, amount: u64) {
         self.metrics.counter_add(name, amount);
+    }
+
+    pub fn record_response_drop(&self) {
+        self.metrics.counter_inc(METRIC_RESPONSE_DROPS_TOTAL);
     }
 
     pub fn set_subscription_count(&self, count: usize) {

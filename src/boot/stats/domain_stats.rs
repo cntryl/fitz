@@ -376,6 +376,11 @@ impl Runtime {
     }
 
     #[must_use]
+    pub fn stream_response_drops_total(&self) -> u64 {
+        metric_counter("fitz_stream_response_drops_total")
+    }
+
+    #[must_use]
     pub fn stream_append_sessions_started_total(&self) -> u64 {
         metric_counter("fitz_stream_append_sessions_started_total")
     }
@@ -458,6 +463,11 @@ impl Runtime {
     #[must_use]
     pub fn notice_delivery_drops_total(&self) -> u64 {
         metric_counter("fitz_notice_delivery_drops_total")
+    }
+
+    #[must_use]
+    pub fn notice_response_drops_total(&self) -> u64 {
+        metric_counter("fitz_notice_response_drops_total")
     }
 
     #[must_use]
@@ -598,6 +608,16 @@ impl Runtime {
     }
 
     #[must_use]
+    pub fn lease_response_drops_total(&self) -> u64 {
+        metric_counter("fitz_lease_response_drops_total")
+    }
+
+    #[must_use]
+    pub fn lease_notify_drops_total(&self) -> u64 {
+        metric_counter("fitz_lease_notify_drops_total")
+    }
+
+    #[must_use]
     pub fn lease_ownership_churn_total(&self) -> u64 {
         metric_counter("fitz_lease_ownership_churn_total")
     }
@@ -678,6 +698,11 @@ impl Runtime {
             .read()
             .as_ref()
             .map_or(0, |domains| domains.schedule_notify_failure_count())
+    }
+
+    #[must_use]
+    pub fn schedule_response_drops_total(&self) -> u64 {
+        metric_counter("fitz_schedule_response_drops_total")
     }
 
     #[must_use]

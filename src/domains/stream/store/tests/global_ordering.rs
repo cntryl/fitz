@@ -621,6 +621,25 @@ fn should_reject_data_transaction_after_direct_writer_epoch_advance() {
     let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
     let events = single_event(b"direct-fenced-writer");
     store
+        .ensure_layout_activation_for_family(1)
+        .expect("activate stream layout");
+    let reservation = store
+        .reserve_global_range(1, events.len())
+        .expect("reserve stale writer range");
+    store.pending_global_reservations.lock().insert(
+        (
+            1,
+            "north".to_string(),
+            "orders".to_string(),
+            "created".to_string(),
+        ),
+        PendingGlobalReservation {
+            resource_offset: 0,
+            event_count: events.len(),
+            reservation,
+        },
+    );
+    store
         .advance_family_writer_epoch(1)
         .expect("advance writer epoch");
 
