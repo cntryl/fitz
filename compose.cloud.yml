@@ -28,7 +28,7 @@ services:
   sqrzl:
     container_name: sqrzl
     hostname: sqrzl
-    image: sqrzl/sqrzl-emulator:latest
+    image: ghcr.io/sqrzl/sqrzl-emulator:latest
     ports:
       - "127.0.0.1:9000:9000"
       - "127.0.0.1:9001:9001"
@@ -36,6 +36,7 @@ services:
       SQRZL_BLOBS_PATH: /app/blobs
       SQRZL_ACCESS_KEY_ID: admin
       SQRZL_SECRET_ACCESS_KEY: sqrzl-secret
+      SQRZL_BUCKET_LIST: fitz-auth,fitz-anon
     volumes:
       - sqrzl_blobs:/app/blobs
 
