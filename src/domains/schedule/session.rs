@@ -45,7 +45,7 @@ impl SessionActor {
                     return Err("unauthorized: write access required".to_string());
                 }
             }
-            ScheduleMessage::List { .. } => {
+            ScheduleMessage::List { .. } | ScheduleMessage::ListV2 { .. } => {
                 // List requires read access
                 if !self.permissions.allows(route, Access::Read) {
                     return Err("unauthorized: read access required".to_string());

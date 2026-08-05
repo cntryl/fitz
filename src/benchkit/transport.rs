@@ -621,6 +621,53 @@ pub fn build_stream_read_with_limit(route: &str, start_offset: u64, limit: u64) 
     builder.build()
 }
 
+/// Build STREAM READ with an optional integrity-protected cursor token.
+#[must_use]
+pub fn build_stream_read_with_cursor(
+    route: &str,
+    start_offset: u64,
+    limit: u64,
+    cursor_fingerprint: Option<u64>,
+) -> Vec<u8> {
+    build_stream_read_with_snapshot_cursor(route, start_offset, limit, cursor_fingerprint, None)
+}
+
+/// Build STREAM READ with the complete snapshot continuation metadata.
+#[must_use]
+pub fn build_stream_read_with_snapshot_cursor(
+    route: &str,
+    start_offset: u64,
+    limit: u64,
+    cursor_fingerprint: Option<u64>,
+    captured_watermark: Option<u64>,
+) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.put_u32(u32_len(route.len()));
+    buf.put_slice(route.as_bytes());
+    buf.put_u64(start_offset);
+    buf.put_u64(limit);
+    buf.put_u8(0); // max_bytes: None
+    buf.put_u8(0); // filter: None
+    match cursor_fingerprint {
+        Some(fingerprint) => {
+            buf.put_u8(1);
+            buf.put_u64(fingerprint);
+        }
+        None => buf.put_u8(0),
+    }
+    match captured_watermark {
+        Some(watermark) => {
+            buf.put_u8(1);
+            buf.put_u64(watermark);
+        }
+        None => buf.put_u8(0),
+    }
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(604, &buf);
+    builder.build()
+}
+
 /// Build STREAM LAST frame (`msg_type` 605)
 #[must_use]
 pub fn build_stream_last(route: &str) -> Vec<u8> {

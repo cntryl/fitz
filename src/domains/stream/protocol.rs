@@ -136,6 +136,9 @@ pub struct StreamRecord {
     /// on-disk `ResourceValue` encodes this as `Option<u64>`.
     pub realm_offset: Option<u64>,
 
+    /// Family-wide order, present for records read from the global plane.
+    pub global_offset: Option<u64>,
+
     /// Event payload
     pub body: Bytes,
 
@@ -386,6 +389,12 @@ pub enum StreamMessage {
         limit: u64,
         max_bytes: Option<usize>,
         filter: Option<StreamFilterSet>,
+        /// Echoes the prior page's integrity token when continuing a read.
+        /// The token binds the family, selector, filter, snapshot watermark,
+        /// and exact next offset.
+        cursor_fingerprint: Option<u64>,
+        /// Governing visibility frontier captured by the first page.
+        captured_watermark: Option<u64>,
     },
 
     /// Get the last visible entry in the stream (tail operation)
@@ -539,8 +548,6 @@ pub enum StreamCoordinationMessage {
     RequestRealmLease { count: u64 },
     /// Batch committed notification from `StreamActor` to `AreaActor`
     BatchCommitted(BatchCommitted),
-    /// Area watermark advanced from `AreaActor` to `RealmActor`
-    AreaWatermarkAdvanced(AreaWatermarkAdvanced),
 }
 
 /// Request lease from `AreaActor`
@@ -582,13 +589,8 @@ pub struct BatchCommitted {
     pub last_area_offset: u64,
     pub first_realm_offset: u64,
     pub last_realm_offset: u64,
-}
-
-/// Area watermark advanced notification from `AreaActor` to `RealmActor`
-#[derive(Debug, Clone)]
-pub struct AreaWatermarkAdvanced {
-    pub area: String,
-    pub watermark: u64,
+    pub first_global_offset: u64,
+    pub last_global_offset: u64,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -616,6 +618,8 @@ pub struct CommitSessionResponse {
     pub last_area_offset: u64,
     pub first_realm_offset: u64,
     pub last_realm_offset: u64,
+    pub first_global_offset: u64,
+    pub last_global_offset: u64,
     pub batch_size: usize,
     pub ingest_metadata: Option<IngestMetadata>,
 }
@@ -626,7 +630,17 @@ pub struct ReadCursor {
     pub last_resource_offset: u64,
     pub last_area_offset: Option<u64>,
     pub last_realm_offset: Option<u64>,
+    pub last_global_offset: Option<u64>,
     pub has_more: bool,
+    /// Binds this cursor to the route family, canonical selector, and filter
+    /// that produced it (routing-design.md §11.2). A client resuming a
+    /// paginated read must echo this back on `Read::cursor_fingerprint`; a
+    /// value that does not match the current request's
+    /// family/selector/filter is rejected rather than silently read from the
+    /// wrong offset space.
+    pub cursor_fingerprint: Option<u64>,
+    /// Exclusive snapshot boundary retained across every continuation.
+    pub captured_watermark: Option<u64>,
 }
 
 /// Response for read operation (streaming batch)

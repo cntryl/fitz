@@ -9,7 +9,8 @@ pub(super) use crate::domains::stream::{
 pub(super) use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 pub(super) use crate::runtime::routing::{route_triplet, Route, RouteAddress, RouteFamily};
 pub(super) use crate::runtime::{
-    DeliveryError, Envelope, FamilyActorPoolRuntime, MailboxSink, ManagedActor, Router,
+    DeliveryError, Envelope, FamilyActorPoolRuntime, KeyedActorPool, MailboxSink, ManagedActor,
+    Router,
 };
 pub(super) use parking_lot::Mutex;
 pub(super) use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -21,6 +22,42 @@ pub(super) struct StreamSubscription {
     pub(super) session_id: u64,
     pub(super) subscription_id: u64,
     pub(super) subscriber: RouteAddress,
+}
+
+#[derive(Clone)]
+pub(super) struct StreamNotificationTarget {
+    pub(super) session_id: u64,
+    pub(super) subscription_id: u64,
+    pub(super) subscriber: RouteAddress,
+}
+
+#[derive(Clone)]
+pub(super) enum StreamVisibilityFrontier {
+    Resource,
+    Area {
+        realm: String,
+        area: String,
+        last_offset: u64,
+    },
+    Realm {
+        realm: String,
+        last_offset: u64,
+    },
+    Global {
+        last_offset: u64,
+    },
+}
+
+pub(super) struct PendingStreamNotification {
+    pub(super) target: StreamNotificationTarget,
+    pub(super) pattern: String,
+    pub(super) event: crate::runtime::DomainPublishEvent,
+    pub(super) frontier: StreamVisibilityFrontier,
+}
+
+pub(super) struct ReadyStreamNotification {
+    pub(super) target: StreamNotificationTarget,
+    pub(super) event: crate::runtime::DomainPublishEvent,
 }
 
 impl RoutedSubscription for StreamSubscription {
@@ -45,6 +82,18 @@ pub struct AdminStreamReadRequest<'a> {
     pub from_offset: u64,
     pub limit: u64,
     pub discriminator: Option<String>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct StreamReadExecution<'a> {
+    pub(super) family_id: RouteFamily,
+    pub(super) route: &'a Route,
+    pub(super) from_offset: u64,
+    pub(super) limit: u64,
+    pub(super) max_bytes: Option<usize>,
+    pub(super) filter: Option<&'a crate::domains::stream::protocol::StreamFilterSet>,
+    pub(super) cursor_fingerprint: Option<u64>,
+    pub(super) captured_watermark: Option<u64>,
 }
 
 /// Storage-mode-compatible write options selected before Stream initialization.
@@ -183,6 +232,8 @@ pub(super) struct StreamDomainCore {
     pub(super) families: Mutex<HashMap<u64, RoutedSubscriptionSet<StreamSubscription>>>,
     pub(super) next_sub_id: Arc<AtomicU64>,
     pub(super) next_session_id: Arc<AtomicU64>,
+    pub(super) cursor_integrity_key: Arc<[u8; 32]>,
+    pub(super) pending_notifications: Mutex<Vec<PendingStreamNotification>>,
     pub(super) router: Arc<Router>,
     pub(super) admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
     pub(super) admin_snapshot_dirty: Arc<AtomicBool>,
@@ -192,6 +243,17 @@ pub(super) struct StreamDomainCore {
     /// Weak family-core registry used only to aggregate live/admin views.
     /// Mutable delivery state itself remains owned by each family core.
     pub(super) family_cores: Arc<Mutex<BTreeMap<u64, Weak<StreamDomainCore>>>>,
+    /// Lazily spawned `AreaActor` mailboxes, keyed by (family, realm, area).
+    pub(super) area_watermark_actors: Arc<
+        KeyedActorPool<
+            (u64, String, String),
+            crate::domains::stream::protocol::StreamCoordinationMessage,
+        >,
+    >,
+    /// Lazily spawned `RealmActor` mailboxes, keyed by (family, realm).
+    pub(super) realm_watermark_actors: Arc<
+        KeyedActorPool<(u64, String), crate::domains::stream::protocol::StreamCoordinationMessage>,
+    >,
 }
 
 pub(super) enum StreamDomainCommand {

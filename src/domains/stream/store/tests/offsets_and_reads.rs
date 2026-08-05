@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn should_preserve_realm_watermark_given_lower_value_than_derived_committed_watermark() {
+fn should_not_hide_committed_realm_records_behind_stale_persisted_watermark() {
     // Arrange
     let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
     let events = vec![
@@ -32,7 +32,7 @@ fn should_preserve_realm_watermark_given_lower_value_than_derived_committed_wate
     // Act
     store
         .set_realm_watermark(1, "test", 0)
-        .expect("lower realm watermark should no-op");
+        .expect("first explicit realm watermark should persist");
 
     // Assert
     assert_eq!(
@@ -40,6 +40,12 @@ fn should_preserve_realm_watermark_given_lower_value_than_derived_committed_wate
             .get_realm_watermark(1, "test")
             .expect("read realm watermark"),
         1
+    );
+    assert_eq!(
+        store
+            .get_persisted_realm_watermark(1, "test")
+            .expect("read persisted realm watermark"),
+        Some(0)
     );
 }
 

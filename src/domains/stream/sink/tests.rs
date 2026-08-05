@@ -95,6 +95,7 @@ struct DecodedStreamWireRecord {
     resource_offset: u64,
     area_offset: Option<u64>,
     realm_offset: Option<u64>,
+    global_offset: Option<u64>,
     body: Bytes,
     metadata: Option<Bytes>,
     created_at: u64,
@@ -107,7 +108,10 @@ struct DecodedStreamReadPayload {
     last_resource_offset: u64,
     last_area_offset: Option<u64>,
     last_realm_offset: Option<u64>,
+    last_global_offset: Option<u64>,
     has_more: bool,
+    cursor_fingerprint: Option<u64>,
+    captured_watermark: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -124,10 +128,14 @@ struct DecodedStreamMetadataPayload {
 
 fn decode_stream_wire_record(
     decoder: &mut crate::dispatch::protocol::payload_codec::PayloadDecoder<'_>,
+    extended: bool,
 ) -> DecodedStreamWireRecord {
     let resource_offset = decoder.get_u64().expect("stream resource offset");
     let area_offset = decoder.get_optional_u64().expect("stream area offset");
     let realm_offset = decoder.get_optional_u64().expect("stream realm offset");
+    let global_offset = extended
+        .then(|| decoder.get_optional_u64().expect("stream global offset"))
+        .flatten();
     let body = decoder.get_bytes().expect("stream body");
     let metadata = decoder.get_optional_bytes().expect("stream metadata");
     let created_at = decoder.get_u64().expect("stream created_at");
@@ -136,13 +144,14 @@ fn decode_stream_wire_record(
         resource_offset,
         area_offset,
         realm_offset,
+        global_offset,
         body,
         metadata,
         created_at,
     }
 }
 
-fn decode_stream_read_payload(data: &[u8]) -> DecodedStreamReadPayload {
+fn decode_stream_read_payload_with_format(data: &[u8], extended: bool) -> DecodedStreamReadPayload {
     let mut decoder = crate::dispatch::protocol::payload_codec::PayloadDecoder::new(data);
     let count = decoder.get_u32().expect("stream read record count") as usize;
     let mut routes = Vec::with_capacity(count);
@@ -150,7 +159,7 @@ fn decode_stream_read_payload(data: &[u8]) -> DecodedStreamReadPayload {
     for _ in 0..count {
         routes.push(decoder.get_string().expect("concrete stream route"));
         match decoder.get_u8().expect("stream read item kind") {
-            0 => records.push(decode_stream_wire_record(&mut decoder)),
+            0 => records.push(decode_stream_wire_record(&mut decoder, extended)),
             1 => {
                 decoder.get_u64().expect("stream filtered offset");
                 decoder.get_u8().expect("stream filtered reason");
@@ -171,7 +180,28 @@ fn decode_stream_read_payload(data: &[u8]) -> DecodedStreamReadPayload {
     let last_realm_offset = decoder
         .get_optional_u64()
         .expect("stream cursor realm offset");
+    let last_global_offset = extended
+        .then(|| {
+            decoder
+                .get_optional_u64()
+                .expect("stream cursor global offset")
+        })
+        .flatten();
     let has_more = decoder.get_u8().expect("stream cursor has_more") == 1;
+    let cursor_fingerprint = extended
+        .then(|| {
+            decoder
+                .get_optional_u64()
+                .expect("stream cursor fingerprint")
+        })
+        .flatten();
+    let captured_watermark = extended
+        .then(|| {
+            decoder
+                .get_optional_u64()
+                .expect("stream cursor captured watermark")
+        })
+        .flatten();
     assert!(
         decoder.is_complete(),
         "expected complete stream read payload"
@@ -183,8 +213,19 @@ fn decode_stream_read_payload(data: &[u8]) -> DecodedStreamReadPayload {
         last_resource_offset,
         last_area_offset,
         last_realm_offset,
+        last_global_offset,
         has_more,
+        cursor_fingerprint,
+        captured_watermark,
     }
+}
+
+fn decode_stream_read_payload(data: &[u8]) -> DecodedStreamReadPayload {
+    decode_stream_read_payload_with_format(data, false)
+}
+
+fn decode_global_stream_read_payload(data: &[u8]) -> DecodedStreamReadPayload {
+    decode_stream_read_payload_with_format(data, true)
 }
 
 fn decode_routed_stream_read_routes(data: &[u8]) -> Vec<String> {
@@ -195,7 +236,7 @@ fn decode_routed_stream_read_routes(data: &[u8]) -> Vec<String> {
         routes.push(decoder.get_string().expect("concrete stream route"));
         match decoder.get_u8().expect("stream read item kind") {
             0 => {
-                let _record = decode_stream_wire_record(&mut decoder);
+                let _record = decode_stream_wire_record(&mut decoder, false);
             }
             1 => {
                 decoder.get_u64().expect("stream filtered offset");
@@ -298,6 +339,59 @@ fn seed_committed_stream_route(
     let commit_frame = build_stream_commit(session_id, 1);
     let (commit_msg_type, commit_payload) = extract_single_tlv_field(&commit_frame);
     let _ = request(context, route, commit_msg_type, commit_payload);
+}
+
+/// Poll `get_realm_watermark_for_tests` until it reaches `expected` or the
+/// timeout elapses, returning the last observed value. Realm watermark
+/// convergence is asynchronous (a separately spawned `RealmActor` processes
+/// `BatchCommitted` off the request path), so a single immediate read after
+/// commit can race the actor pipeline and observe a stale value.
+fn wait_for_realm_watermark(
+    context: &TestContext,
+    realm: &str,
+    expected: u64,
+    timeout: std::time::Duration,
+) -> u64 {
+    let deadline = std::time::Instant::now() + timeout;
+    let mut last = 0;
+    while std::time::Instant::now() < deadline {
+        last = context
+            .sink
+            .get_realm_watermark_for_tests(context.family, realm)
+            .expect("realm watermark");
+        if last == expected {
+            return last;
+        }
+        std::thread::yield_now();
+    }
+    last
+}
+
+/// Poll `get_watermark_for_tests` until it reaches `expected` or the timeout
+/// elapses, returning the last observed value. Area watermark convergence is
+/// asynchronous (a separately spawned `AreaActor` processes `BatchCommitted`
+/// off the request path), so a single immediate read after commit can race
+/// the actor pipeline and observe a stale value.
+fn wait_for_area_watermark(
+    context: &TestContext,
+    realm: &str,
+    area: &str,
+    expected: u64,
+    timeout: std::time::Duration,
+) -> u64 {
+    let deadline = std::time::Instant::now() + timeout;
+    let mut last = 0;
+    while std::time::Instant::now() < deadline {
+        last = context
+            .sink
+            .get_watermark_for_tests(context.family, realm, area)
+            .expect("area watermark");
+        if last == expected {
+            return last;
+        }
+        std::thread::yield_now();
+    }
+    last
 }
 
 fn stream_read_response(
@@ -493,6 +587,13 @@ fn should_return_all_area_records_given_two_resource_batches_on_direct_sink_path
         50,
         b"area read event",
     );
+    wait_for_area_watermark(
+        &context,
+        "bench",
+        "area",
+        99,
+        std::time::Duration::from_secs(2),
+    );
 
     // Act
     let area_records = context
@@ -522,6 +623,13 @@ fn should_return_concrete_routes_given_wildcard_stream_read() {
     let context = setup_test_context();
     seed_committed_stream_route(&context, "stream://bench/area/orders", 1, b"orders");
     seed_committed_stream_route(&context, "stream://bench/area/audits", 1, b"audits");
+    wait_for_area_watermark(
+        &context,
+        "bench",
+        "area",
+        2,
+        std::time::Duration::from_secs(1),
+    );
 
     // Act
     let frame = build_stream_read_with_limit("stream://bench/area/*", 0, 2);
@@ -681,6 +789,54 @@ fn should_preserve_append_session_without_notify_given_commit_failure() {
     assert_eq!(stream.offset, 0);
     assert_eq!(stream.sessions_active, 0);
     assert_eq!(context.admin_read_model.stream_events_total(), 1);
+}
+
+#[test]
+fn should_flush_pending_subscription_when_visibility_advances_without_publish() {
+    // Arrange
+    let context = setup_test_context();
+    let pattern = "stream://bench/events/*";
+    let (subscriber, inbox) = register_session_queue_sink(&context.router, context.family, 2);
+    let subscribe = build_stream_subscribe(pattern);
+    let (msg_type, payload) = extract_single_tlv_field(&subscribe);
+    let _response =
+        request_from_session(&context, &subscriber, &inbox, 2, pattern, msg_type, payload);
+    inbox.clear();
+    context
+        .sink
+        .core
+        .stream_store
+        .set_watermark(1, "bench", "events", 0)
+        .expect("set held area watermark");
+    let commit = crate::runtime::DomainPublishEvent::new(
+        context.family,
+        Route::new("stream://bench/events/orders"),
+        Bytes::from(
+            serde_json::json!({
+                "event": "committed",
+                "last_area_offset": 1,
+                "last_realm_offset": 1,
+                "last_global_offset": 1,
+            })
+            .to_string(),
+        ),
+    );
+
+    // Act
+    context.sink.core.handle_domain_publish(&commit);
+    let before = inbox.count();
+    context
+        .sink
+        .core
+        .stream_store
+        .set_watermark(1, "bench", "events", 1)
+        .expect("advance area watermark");
+    context.sink.core.handle_visibility_advance(context.family);
+
+    // Assert
+    assert_eq!(before, 0);
+    assert_eq!(inbox.count(), 1);
+    assert!(context.sink.core.pending_notifications.lock().is_empty());
 }
 
 #[test]
@@ -1034,6 +1190,7 @@ fn should_encode_exact_resource_read_payload_given_committed_record_with_metadat
     assert_eq!(read_payload.records[0].resource_offset, 0);
     assert_eq!(read_payload.records[0].area_offset, Some(0));
     assert_eq!(read_payload.records[0].realm_offset, Some(0));
+    assert_eq!(read_payload.records[0].global_offset, None);
     assert_eq!(read_payload.records[0].body, Bytes::from_static(b"payload"));
     assert_eq!(
         read_payload.records[0].metadata,
@@ -1043,6 +1200,9 @@ fn should_encode_exact_resource_read_payload_given_committed_record_with_metadat
     assert_eq!(read_payload.last_resource_offset, 0);
     assert_eq!(read_payload.last_area_offset, Some(0));
     assert_eq!(read_payload.last_realm_offset, Some(0));
+    assert_eq!(read_payload.last_global_offset, None);
+    assert_eq!(read_payload.cursor_fingerprint, None);
+    assert_eq!(read_payload.captured_watermark, None);
     assert!(!read_payload.has_more);
 }
 
@@ -1073,4 +1233,6 @@ fn should_encode_exact_resource_metadata_payload_given_empty_stream() {
 }
 
 mod correctness;
+mod global_reads;
 mod realm_reads;
+mod watermark_wiring;

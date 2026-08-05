@@ -11,9 +11,7 @@ use crate::runtime::domain_event::DomainPublishEvent;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
 use super::constants::{INTERNAL_REALM_SEGMENT, NOTICE_DEBOUNCE_MS, WATERMARK_PERSIST_RETRY_MS};
-use super::protocol::{
-    AreaWatermarkAdvanced, LeaseGranted, StreamCoordinationMessage, DEFAULT_REALM_LEASE_BLOCK,
-};
+use super::protocol::{LeaseGranted, StreamCoordinationMessage, DEFAULT_REALM_LEASE_BLOCK};
 use super::store::StreamStore;
 
 /// `AreaActor` coordinates area-level offsets and watermark
@@ -22,9 +20,7 @@ use super::store::StreamStore;
 /// - Mint area offset leases for `StreamActors`
 /// - Track committed ranges from `BatchCommitted` notifications
 /// - Calculate and advance area watermark (highest contiguous offset)
-/// - Notify `RealmActor` when watermark advances
 pub struct AreaActor {
-    #[allow(dead_code)]
     family_id: RouteFamily,
 
     /// Realm and area identity
@@ -42,6 +38,9 @@ pub struct AreaActor {
     /// `None` means no offset has committed yet. Offset 0 is a valid committed
     /// watermark because area offsets are minted from zero.
     area_watermark: Option<u64>,
+
+    /// Whether the durable area watermark was loaded successfully.
+    watermark_initialized: bool,
 
     /// Committed ranges from resources (for watermark calculation)
     /// Key: `first_offset`, Value: `last_offset`
@@ -65,20 +64,37 @@ pub struct AreaActor {
 }
 
 impl AreaActor {
-    #[allow(dead_code)]
     pub fn new(
         family_id: RouteFamily,
         realm: String,
         area: String,
         store: Arc<StreamStore>,
     ) -> Self {
+        let (area_watermark, watermark_initialized) = store
+            .get_persisted_area_watermark(family_id.as_u64(), &realm, &area)
+            .map_or_else(
+                |error| {
+                    tracing::warn!(
+                        domain = "stream",
+                        route_family = family_id.id(),
+                        realm = realm.as_str(),
+                        area = area.as_str(),
+                        error = %error,
+                        "Stream area watermark actor initialization failed"
+                    );
+                    (None, false)
+                },
+                |watermark| (watermark, true),
+            );
+
         Self {
             family_id,
             realm,
             area,
             store,
             next_area_offset: 0,
-            area_watermark: None,
+            area_watermark,
+            watermark_initialized,
             committed_ranges: BTreeMap::new(),
             realm_lease_next: 0,
             realm_lease_end: 0,
@@ -191,6 +207,10 @@ impl AreaActor {
     }
 
     fn flush_candidate_watermark(&mut self, ctx: &mut Context<Self>) {
+        if !self.ensure_watermark_initialized(ctx) {
+            return;
+        }
+
         let Some(candidate_watermark) = self.candidate_watermark() else {
             return;
         };
@@ -213,6 +233,36 @@ impl AreaActor {
                     "Stream area watermark persistence failed"
                 );
                 self.schedule_watermark_retry(ctx);
+            }
+        }
+    }
+
+    fn ensure_watermark_initialized(&mut self, ctx: &mut Context<Self>) -> bool {
+        if self.watermark_initialized {
+            return true;
+        }
+
+        match self.store.get_persisted_area_watermark(
+            self.family_id.as_u64(),
+            &self.realm,
+            &self.area,
+        ) {
+            Ok(watermark) => {
+                self.area_watermark = watermark;
+                self.watermark_initialized = true;
+                true
+            }
+            Err(error) => {
+                tracing::warn!(
+                    domain = "stream",
+                    route_family = self.family_id.id(),
+                    realm = self.realm.as_str(),
+                    area = self.area.as_str(),
+                    error = %error,
+                    "Stream area watermark actor initialization retry failed"
+                );
+                self.schedule_watermark_retry(ctx);
+                false
             }
         }
     }
@@ -247,14 +297,6 @@ impl AreaActor {
                 .schedule_once(std::time::Duration::from_millis(NOTICE_DEBOUNCE_MS));
             self.notification_timer = Some(timer_id);
         }
-
-        let notification =
-            StreamCoordinationMessage::AreaWatermarkAdvanced(AreaWatermarkAdvanced {
-                area: self.area.clone(),
-                watermark: current_watermark,
-            });
-        let realm_addr = self.realm_actor_address();
-        let _ = ctx.send(realm_addr, notification);
     }
 
     fn schedule_watermark_retry(&mut self, ctx: &mut Context<Self>) {
@@ -274,14 +316,8 @@ impl AreaActor {
         self.realm_lease_end = grant.realm_end_exclusive; // Already exclusive
     }
 
-    /// Get remaining realm lease capacity
-    #[allow(dead_code)]
-    pub fn realm_lease_remaining(&self) -> u64 {
-        self.realm_lease_end.saturating_sub(self.realm_lease_next)
-    }
-
     /// Get current watermark (for testing)
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn watermark(&self) -> u64 {
         self.area_watermark.unwrap_or(0)
     }
@@ -306,7 +342,6 @@ impl AreaActor {
 
     /// Get committed ranges (for testing)
     #[cfg(test)]
-    #[allow(dead_code)]
     pub fn committed_ranges(&self) -> Vec<std::ops::RangeInclusive<u64>> {
         self.committed_ranges
             .iter()
@@ -338,8 +373,7 @@ impl Actor for AreaActor {
                 // Process any pending lease requests now that we have realm lease
                 self.process_pending_lease_requests(ctx);
             }
-            StreamCoordinationMessage::RequestRealmLease { .. }
-            | StreamCoordinationMessage::AreaWatermarkAdvanced(_) => {}
+            StreamCoordinationMessage::RequestRealmLease { .. } => {}
         }
     }
 
@@ -366,7 +400,9 @@ mod tests {
     use crate::runtime::routing::Route;
     use crate::runtime::Mailbox;
 
-    fn make_test_actor() -> (AreaActor, Context<AreaActor>) {
+    fn make_test_actor_with_watermark(
+        persisted_watermark: Option<u64>,
+    ) -> (AreaActor, Context<AreaActor>) {
         let router = Arc::new(crate::runtime::router::Router::new());
         let family = RouteFamily::new(0);
         let addr = RouteAddress::new(family, Route::new("stream://realm1/area1/__area__"));
@@ -379,9 +415,18 @@ mod tests {
             .expect("Failed to open store"),
         );
         let store = Arc::new(StreamStore::new(db));
+        if let Some(watermark) = persisted_watermark {
+            store
+                .set_watermark(family.as_u64(), "realm1", "area1", watermark)
+                .expect("persist area watermark");
+        }
         let actor = AreaActor::new(family, "realm1".to_string(), "area1".to_string(), store);
         let ctx = Context::new(addr, router);
         (actor, ctx)
+    }
+
+    fn make_test_actor() -> (AreaActor, Context<AreaActor>) {
+        make_test_actor_with_watermark(None)
     }
 
     fn make_test_actor_with_stream_mailbox() -> (AreaActor, Context<AreaActor>, Arc<Mailbox>) {
@@ -458,6 +503,19 @@ mod tests {
     }
 
     #[test]
+    fn should_advance_from_persisted_watermark_after_restart() {
+        // Arrange
+        let (mut actor, mut ctx) = make_test_actor_with_watermark(Some(5));
+
+        // Act
+        actor.handle_batch_committed(6, 6, &mut ctx);
+
+        // Assert
+        assert_eq!(actor.area_watermark, Some(6));
+        assert!(actor.committed_ranges().is_empty());
+    }
+
+    #[test]
     fn should_advance_watermark_given_first_committed_offset_zero() {
         // Arrange
         let (mut actor, mut ctx) = make_test_actor();
@@ -528,7 +586,7 @@ mod tests {
     }
 
     #[test]
-    fn should_retry_failed_area_watermark_persistence_before_notifying_realm_or_publish() {
+    fn should_retry_failed_area_watermark_persistence_before_publish() {
         // Arrange
         let (mut actor, mut ctx, stream_mailbox) = make_test_actor_with_stream_mailbox();
         StreamStore::fail_next_area_watermark_persist_for_tests();
@@ -564,20 +622,7 @@ mod tests {
         );
         assert_eq!(actor.area_watermark, Some(3));
         assert!(actor.watermark_retry_timer.is_none());
-        let notification = stream_mailbox
-            .receiver()
-            .try_recv()
-            .expect("expected realm watermark notification");
-        let advanced = notification
-            .payload::<StreamCoordinationMessage>()
-            .expect("expected stream coordination payload");
-        match advanced {
-            StreamCoordinationMessage::AreaWatermarkAdvanced(advanced) => {
-                assert_eq!(advanced.area, "area1");
-                assert_eq!(advanced.watermark, 3);
-            }
-            other => panic!("expected area watermark notification, found {other:?}"),
-        }
+        assert!(stream_mailbox.receiver().try_recv().is_err());
 
         // Act
         let notification_timer = actor

@@ -242,6 +242,8 @@ impl StreamActor {
             last_area_offset: response.last_area_offset,
             first_realm_offset: response.first_realm_offset,
             last_realm_offset: response.last_realm_offset,
+            first_global_offset: response.first_global_offset,
+            last_global_offset: response.last_global_offset,
             batch_size: response.batch_size,
             ingest_metadata: response.ingest_metadata,
         })
@@ -268,17 +270,45 @@ impl StreamActor {
             return Err("session not found".to_string());
         }
 
+        if let Err(error) = self.store.abandon_pending_global_reservation(
+            self.family_id.as_u64(),
+            &self.realm,
+            &self.area,
+            &self.resource,
+        ) {
+            self.active_session = Some(session);
+            return Err(error);
+        }
+
         Ok(())
     }
 
     pub fn cleanup_session(&mut self, owner_session_id: u64) -> Option<u64> {
-        match self.active_session.as_ref() {
-            Some(session) if session.owner_session_id == owner_session_id => self
-                .active_session
-                .take()
-                .map(|session| session.stream_session_id),
-            _ => None,
+        let matches_owner = self
+            .active_session
+            .as_ref()
+            .is_some_and(|session| session.owner_session_id == owner_session_id);
+        if !matches_owner {
+            return None;
         }
+        let session = self.active_session.take()?;
+        if let Err(error) = self.store.abandon_pending_global_reservation(
+            self.family_id.as_u64(),
+            &self.realm,
+            &self.area,
+            &self.resource,
+        ) {
+            tracing::warn!(
+                domain = "stream",
+                route_family = self.family_id.id(),
+                realm = self.realm.as_str(),
+                area = self.area.as_str(),
+                resource = self.resource.as_str(),
+                error = %error,
+                "Stream cleanup could not resolve an abandoned global reservation"
+            );
+        }
+        Some(session.stream_session_id)
     }
 
     /// # Errors
@@ -310,7 +340,10 @@ impl StreamActor {
                     last_resource_offset: from_offset,
                     last_area_offset: None,
                     last_realm_offset: None,
+                    last_global_offset: None,
                     has_more: false,
+                    cursor_fingerprint: None,
+                    captured_watermark: None,
                 },
             });
         }
@@ -460,6 +493,66 @@ mod tests {
         assert!(!actor.has_active_session());
         assert_eq!(records.len(), 1);
         assert_eq!(cursor.last_resource_offset, 0);
+    }
+
+    #[test]
+    fn should_resolve_retry_reservation_when_session_is_rolled_back() {
+        // Arrange
+        let store = Arc::new(StreamStore::new(create_test_engine_with_cfs(vec![1])));
+        let mut actor = StreamActor::new(
+            RouteFamily::new(1),
+            "test".to_string(),
+            "events".to_string(),
+            "orders".to_string(),
+            store.clone(),
+        )
+        .expect("create actor");
+        actor
+            .begin_append_session(10, 100, None)
+            .expect("begin append session");
+        actor
+            .append_to_session_with_discriminator_for_owner(
+                10,
+                100,
+                0,
+                Bytes::from_static(b"abandoned"),
+                None,
+                None,
+            )
+            .expect("append staged event");
+        store.fail_next_promotion_frontier_commit_for_tests();
+        let _failed = actor.commit_session_for_owner(10, 100, StreamWriteMode::Buffered);
+        let later_events = [EventPayload {
+            body: Bytes::from_static(b"visible"),
+            metadata: None,
+            discriminator: None,
+        }];
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "audit",
+                expected_resource_next_offset: 0,
+                events: &later_events,
+                ingest_metadata: None,
+                mode: StreamWriteMode::Buffered,
+            })
+            .expect("commit later global range");
+        let held_watermark = store.get_global_watermark(1).expect("held watermark");
+
+        // Act
+        actor
+            .rollback_session_for_owner(10, 100)
+            .expect("roll back failed commit session");
+
+        // Assert
+        assert_eq!(held_watermark, 0);
+        assert_eq!(
+            store.get_global_watermark(1).expect("advanced watermark"),
+            2
+        );
+        assert!(!actor.has_active_session());
     }
 
     #[test]

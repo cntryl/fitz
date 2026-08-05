@@ -101,6 +101,9 @@ pub fn compile_registration_pattern(
     {
         return Err("wildcards must occupy a complete segment".to_string());
     }
+    if segments.windows(2).any(|pair| pair == ["**", "**"]) {
+        return Err("adjacent ** segments are not allowed".to_string());
+    }
     if let PatternDepth::CanMatch(required) = depth {
         let fixed = segments.iter().filter(|segment| **segment != "**").count();
         let flexible = segments.contains(&"**");
@@ -769,6 +772,29 @@ mod tests {
 
         // Assert
         assert!(results.iter().all(Result::is_ok));
+    }
+
+    #[test]
+    fn should_reject_adjacent_double_star_registration_segments() {
+        // Arrange
+        let patterns = [
+            "notice://acme/**/**",
+            "queue://acme/**/**",
+            "rpc://acme/**/**",
+            "schedule://acme/**/**",
+        ];
+
+        // Act
+        let results = patterns.map(|pattern| {
+            compile_registration_pattern(
+                pattern,
+                pattern.split("://").next().unwrap(),
+                PatternDepth::Flexible,
+            )
+        });
+
+        // Assert
+        assert!(results.iter().all(Result::is_err));
     }
 
     #[test]

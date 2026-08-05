@@ -279,7 +279,7 @@ fn parse_rollback(dec: &mut PayloadDecoder) -> Result<StreamMessage, String> {
     Ok(StreamMessage::Rollback { session_id })
 }
 
-/// Wire format: `[string route][u64 from_offset][u64 limit][optional u64 max_bytes]`
+/// Wire format: `[string route][u64 from_offset][u64 limit][optional u64 max_bytes][optional bytes filter][optional u64 cursor_token][optional u64 captured_watermark]`
 fn parse_read(
     dec: &mut PayloadDecoder,
     route_family: RouteFamily,
@@ -300,6 +300,16 @@ fn parse_read(
     } else {
         None
     };
+    let cursor_fingerprint = if dec.remaining() > 0 {
+        dec.get_optional_u64()?
+    } else {
+        None
+    };
+    let captured_watermark = if dec.remaining() > 0 {
+        dec.get_optional_u64()?
+    } else {
+        None
+    };
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
@@ -312,6 +322,8 @@ fn parse_read(
         limit,
         max_bytes,
         filter,
+        cursor_fingerprint,
+        captured_watermark,
     })
 }
 

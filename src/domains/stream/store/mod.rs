@@ -2,7 +2,7 @@
 
 use bytes::Bytes;
 use parking_lot::Mutex;
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::{hash_map::Entry, BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use super::protocol::{
@@ -12,19 +12,26 @@ use super::protocol::{
 use super::storage::{
     decode_area_offset_from_key, decode_realm_offset_from_key, decode_resource_offset_from_key,
     decode_staging_value, encode_area_counter_key, encode_compact_area_page_key,
-    encode_compact_resource_page_key, encode_compressed_compact_realm_page_key,
-    encode_realm_counter_key, encode_resource_meta_key, encode_stream_layout_marker_key,
-    encode_watermark_key, AreaCounterValue, AreaLocatorValue, AreaValue, CanonicalResourceValue,
-    CompactAreaPageRecord, CompactAreaPageValue, CompactRealmPageRecord, CompactResourcePageRecord,
-    CompactResourcePageValue, CompressedCompactRealmPageValue, KeyPrefix, OffsetCounterValue,
-    RealmCounterValue, RealmLocatorValue, RealmValue, ResourceMetaValue, ResourceValue,
-    StreamLayoutMarkerValue, WatermarkValue, REALM_PAGE_RECORD_LIMIT,
+    encode_compact_global_page_key, encode_compact_resource_page_key,
+    encode_compressed_compact_realm_page_key, encode_cursor_state_key,
+    encode_family_writer_epoch_key, encode_global_area_posting_key,
+    encode_global_area_resource_posting_key, encode_global_counter_key,
+    encode_global_discriminator_key, encode_global_resource_posting_key,
+    encode_global_watermark_key, encode_realm_counter_key, encode_realm_resource_posting_key,
+    encode_resource_meta_key, encode_stream_layout_marker_key, encode_watermark_key,
+    AreaCounterValue, AreaLocatorValue, AreaValue, CanonicalResourceValue, CompactAreaPageRecord,
+    CompactAreaPageValue, CompactGlobalPageRecord, CompactGlobalPageValue, CompactRealmPageRecord,
+    CompactResourcePageRecord, CompactResourcePageValue, CompressedCompactRealmPageValue,
+    KeyPrefix, OffsetCounterValue, PostingEntry, PostingPageValue, RealmCounterValue,
+    RealmLocatorValue, RealmValue, ResourceMetaValue, ResourceValue, StreamLayoutMarkerValue,
+    WatermarkValue, GLOBAL_PAGE_RECORD_LIMIT, REALM_PAGE_RECORD_LIMIT,
 };
 
 #[cfg(test)]
 std::thread_local! {
     static FAIL_NEXT_AREA_WATERMARK_GUARD_READ: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FAIL_NEXT_REALM_WATERMARK_GUARD_READ: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static FAIL_NEXT_GLOBAL_WATERMARK_PERSIST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FAIL_NEXT_AREA_WATERMARK_PERSIST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FAIL_NEXT_REALM_WATERMARK_PERSIST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
@@ -68,6 +75,68 @@ struct ResourceMetaState {
     snapshot: Option<ResourceMetaValue>,
 }
 
+#[derive(Default)]
+struct GlobalCompletionState {
+    watermark: Option<u64>,
+    resolved: BTreeMap<u64, u64>,
+}
+
+#[derive(Clone, Copy)]
+struct GlobalReservation {
+    first_offset: u64,
+    writer_epoch: u64,
+}
+
+#[derive(Clone, Copy)]
+struct PendingGlobalReservation {
+    resource_offset: u64,
+    event_count: usize,
+    reservation: GlobalReservation,
+}
+
+enum PromotionCommitFailure {
+    ScopeConflict,
+    Retryable(String),
+    Resolved(String),
+}
+
+impl PromotionCommitFailure {
+    fn is_retryable(&self) -> bool {
+        matches!(self, Self::ScopeConflict | Self::Retryable(_))
+    }
+
+    fn is_scope_conflict(&self) -> bool {
+        matches!(self, Self::ScopeConflict)
+    }
+
+    fn into_message(self) -> String {
+        match self {
+            Self::ScopeConflict => "ERR_CONCURRENCY_CONFLICT".to_string(),
+            Self::Retryable(message) | Self::Resolved(message) => message,
+        }
+    }
+}
+
+enum PromotionWriteFailure {
+    ScopeConflict,
+    WriterFenced,
+    Other(String),
+}
+
+impl From<String> for PromotionWriteFailure {
+    fn from(message: String) -> Self {
+        Self::Other(message)
+    }
+}
+
+enum PromotionTransactionFailure {
+    WriteConflict,
+    Other(String),
+}
+
+type GlobalCompletionStateHandle = Arc<Mutex<GlobalCompletionState>>;
+type PendingGlobalReservations = Arc<Mutex<HashMap<SequenceGuardKey, PendingGlobalReservation>>>;
+
 #[derive(Debug, Clone)]
 pub struct BatchLimits {
     pub max_batch_events: usize,
@@ -103,6 +172,26 @@ pub(crate) struct ReadAreaParams<'a> {
     pub(crate) from_offset: u64,
     pub(crate) limit: u64,
     pub(crate) max_bytes: Option<usize>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ReadRealmPostingParams<'a> {
+    pub(crate) family: u64,
+    pub(crate) realm: &'a str,
+    pub(crate) resource: &'a str,
+    pub(crate) from_offset: u64,
+    pub(crate) limit: u64,
+    pub(crate) max_bytes: Option<usize>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ReadGlobalPostingParams<'a> {
+    pub(crate) family: u64,
+    pub(crate) from_offset: u64,
+    pub(crate) limit: u64,
+    pub(crate) max_bytes: Option<usize>,
+    pub(crate) area: Option<&'a str>,
+    pub(crate) resource: Option<&'a str>,
 }
 
 #[derive(Debug, Clone)]
@@ -142,6 +231,7 @@ struct DiscriminatorWriteRowsParams<'a> {
     first_resource_offset: u64,
     first_area_offset: u64,
     first_realm_offset: u64,
+    first_global_offset: u64,
     events: &'a [EventPayload],
     ttl_opt: Option<u64>,
 }
@@ -154,6 +244,8 @@ struct CommitPromotionFrontierBatchParams<'a> {
     first_resource_offset: u64,
     first_area_offset: u64,
     first_realm_offset: u64,
+    first_global_offset: u64,
+    writer_epoch: u64,
     events: &'a [EventPayload],
     committed_size_before: u64,
     ingest_metadata: Option<IngestMetadata>,
@@ -253,6 +345,8 @@ pub struct CommitResponse {
     pub last_area_offset: u64,
     pub first_realm_offset: u64,
     pub last_realm_offset: u64,
+    pub first_global_offset: u64,
+    pub last_global_offset: u64,
     pub batch_size: usize,
     pub ingest_metadata: Option<IngestMetadata>,
 }
@@ -278,8 +372,14 @@ pub struct StreamStore {
     sequencing_guards: Arc<Mutex<HashMap<SequenceGuardKey, SequenceGuard>>>,
     realm_sequence_states: Arc<Mutex<HashMap<RealmSequenceStateKey, RealmSequenceStateHandle>>>,
     resource_meta_states: Arc<Mutex<HashMap<SequenceGuardKey, ResourceMetaStateHandle>>>,
+    family_sequence_guards: Arc<Mutex<HashMap<u64, SequenceGuard>>>,
+    global_completion_states: Arc<Mutex<HashMap<u64, GlobalCompletionStateHandle>>>,
+    recovered_global_families: Arc<Mutex<HashSet<u64>>>,
+    pending_global_reservations: PendingGlobalReservations,
     #[cfg(test)]
     fail_next_promotion_frontier_commit: std::sync::atomic::AtomicBool,
+    #[cfg(test)]
+    fence_next_global_reservation: std::sync::atomic::AtomicBool,
 }
 
 #[allow(clippy::struct_field_names)]
@@ -288,6 +388,7 @@ struct ReadCursorState {
     last_resource_offset: u64,
     last_area_offset: Option<u64>,
     last_realm_offset: Option<u64>,
+    last_global_offset: Option<u64>,
 }
 
 struct ReadPageState<'a> {
@@ -358,7 +459,9 @@ fn family_to_storage_partition(family: u64) -> u32 {
 }
 
 fn read_limit_to_usize(limit: u64) -> usize {
-    usize::try_from(limit).unwrap_or(usize::MAX)
+    usize::try_from(limit)
+        .unwrap_or(usize::MAX)
+        .min(crate::domains::stream::MAX_READ_ITEMS)
 }
 
 fn usize_to_u64_saturating(value: usize) -> u64 {
@@ -375,7 +478,10 @@ impl ReadCursorState {
             last_resource_offset: self.last_resource_offset,
             last_area_offset: self.last_area_offset,
             last_realm_offset: self.last_realm_offset,
+            last_global_offset: self.last_global_offset,
             has_more,
+            cursor_fingerprint: None,
+            captured_watermark: None,
         }
     }
 }
@@ -459,6 +565,7 @@ where
 mod commits_and_sessions;
 mod compact_page_writes;
 mod config_and_layout;
+mod global_recovery;
 mod reads;
 mod sequence_and_filters;
 mod watermarks_and_metadata;

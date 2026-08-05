@@ -2,20 +2,53 @@
 use super::FrameContext;
 use super::{
     route_triplet, u64_to_usize_saturating, usize_to_u32_saturating, usize_to_u64_saturating,
-    AdminStreamReadRequest, Arc, BTreeMap, Envelope, Mutex, Ordering, PayloadEncoder, ReadResponse,
-    Route, RouteFamily, StreamActor, StreamActorKey, StreamAdminRecord, StreamAdminSnapshotMap,
-    StreamAreaSnapshotMap, StreamClientResponseBody, StreamDomainCore, StreamDomainRuntime,
-    StreamFilteredReason, StreamLiveCounts, StreamMetadata, StreamReadItem, StreamRealmSnapshotMap,
-    StreamRecord, StreamStorageLayout,
+    AdminStreamReadRequest, Arc, BTreeMap, Envelope, Mutex, Ordering, PayloadEncoder,
+    PendingStreamNotification, ReadResponse, ReadyStreamNotification, Route, RouteFamily,
+    StreamActor, StreamActorKey, StreamAdminRecord, StreamAdminSnapshotMap, StreamAreaSnapshotMap,
+    StreamClientResponseBody, StreamDomainCore, StreamDomainRuntime, StreamFilteredReason,
+    StreamLiveCounts, StreamMetadata, StreamNotificationTarget, StreamReadExecution,
+    StreamReadItem, StreamRealmSnapshotMap, StreamRecord, StreamStorageLayout,
+    StreamVisibilityFrontier,
 };
 
+mod global_read_support;
+mod notification_gating;
+mod read_finalization;
+mod wire_encoding;
+
+use read_finalization::apply_global_snapshot_boundary;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum ReadScope {
     Resource,
     Area,
     Realm,
+    Global,
 }
 
 impl StreamDomainCore {
+    fn cursor_integrity_token(
+        &self,
+        selector_fingerprint: u64,
+        captured_watermark: u64,
+        next_offset: u64,
+    ) -> u64 {
+        use hmac::{Hmac, KeyInit, Mac};
+
+        let mut mac = Hmac::<sha2::Sha256>::new_from_slice(self.cursor_integrity_key.as_ref())
+            .expect("Stream cursor HMAC key has a valid fixed length");
+        mac.update(&[1]);
+        mac.update(&selector_fingerprint.to_le_bytes());
+        mac.update(&captured_watermark.to_le_bytes());
+        mac.update(&next_offset.to_le_bytes());
+        let bytes = mac.finalize().into_bytes();
+        u64::from_le_bytes(
+            bytes[..8]
+                .try_into()
+                .expect("HMAC-SHA256 output is 32 bytes"),
+        )
+    }
+
     pub(in crate::domains::stream::sink) fn storage_layout(&self) -> StreamStorageLayout {
         self.stream_store.storage_layout()
     }
@@ -39,6 +72,12 @@ impl StreamDomainCore {
             return Err(format!(
                 "area '{}' is reserved for internal broker use",
                 crate::domains::stream::INTERNAL_REALM_SEGMENT
+            ));
+        }
+        if parts.resource == crate::domains::stream::INTERNAL_AREA_SEGMENT {
+            return Err(format!(
+                "resource '{}' is reserved for internal broker use",
+                crate::domains::stream::INTERNAL_AREA_SEGMENT
             ));
         }
         Ok(StreamActorKey {
@@ -70,6 +109,118 @@ impl StreamDomainCore {
                 entry.insert(actor.clone());
                 Ok(actor)
             }
+        }
+    }
+
+    /// Notify the bounded area and realm coordinator pools after a durable
+    /// batch commit. Visibility itself comes from the atomically committed
+    /// scope counters; these actors persist advisory watermark rows and emit
+    /// ephemeral watermark notices.
+    pub(in crate::domains::stream::sink) fn notify_area_batch_committed(
+        &self,
+        family_id: RouteFamily,
+        realm: &str,
+        area: &str,
+        commit: &crate::domains::stream::protocol::BatchCommitted,
+    ) {
+        let realm_address = crate::runtime::routing::RouteAddress::new(
+            family_id,
+            Route::new(format!(
+                "stream://{realm}/{}",
+                crate::domains::stream::INTERNAL_REALM_SEGMENT
+            )),
+        );
+        let realm_spawned = {
+            let store = self.stream_store.clone();
+            let realm_owned = realm.to_string();
+            self.realm_watermark_actors.ensure_spawned(
+                (family_id.as_u64(), realm.to_string()),
+                realm_address.clone(),
+                move || {
+                    crate::domains::stream::realm_actor::RealmActor::new(
+                        family_id,
+                        realm_owned.clone(),
+                        store.clone(),
+                    )
+                },
+            )
+        };
+
+        let area_address = crate::runtime::routing::RouteAddress::new(
+            family_id,
+            Route::new(format!(
+                "stream://{realm}/{area}/{}",
+                crate::domains::stream::INTERNAL_AREA_SEGMENT
+            )),
+        );
+        let area_spawned = {
+            let store = self.stream_store.clone();
+            let realm_owned = realm.to_string();
+            let area_owned = area.to_string();
+            self.area_watermark_actors.ensure_spawned(
+                (family_id.as_u64(), realm.to_string(), area.to_string()),
+                area_address.clone(),
+                move || {
+                    crate::domains::stream::area_actor::AreaActor::new(
+                        family_id,
+                        realm_owned.clone(),
+                        area_owned.clone(),
+                        store.clone(),
+                    )
+                },
+            )
+        };
+
+        let area_envelope = Envelope::new(
+            area_address,
+            crate::domains::stream::protocol::StreamCoordinationMessage::BatchCommitted(
+                commit.clone(),
+            ),
+        );
+        if !area_spawned {
+            self.counter_inc("fitz_stream_watermark_coordination_drops_total");
+            tracing::warn!(
+                domain = "stream",
+                route_family = family_id.id(),
+                realm,
+                area,
+                "Stream area watermark coordinator capacity was exhausted"
+            );
+        } else if let Err(error) = self.router.route_high_priority(area_envelope) {
+            self.counter_inc("fitz_stream_watermark_coordination_drops_total");
+            tracing::warn!(
+                domain = "stream",
+                route_family = family_id.id(),
+                realm,
+                area,
+                error = ?error,
+                "Stream area watermark coordination notice was not accepted"
+            );
+        }
+
+        let realm_envelope = Envelope::new(
+            realm_address,
+            crate::domains::stream::protocol::StreamCoordinationMessage::BatchCommitted(
+                commit.clone(),
+            ),
+        );
+        if !realm_spawned {
+            self.counter_inc("fitz_stream_watermark_coordination_drops_total");
+            tracing::warn!(
+                domain = "stream",
+                route_family = family_id.id(),
+                realm,
+                "Stream realm watermark coordinator capacity was exhausted"
+            );
+        } else if let Err(error) = self.router.route_high_priority(realm_envelope) {
+            self.counter_inc("fitz_stream_watermark_coordination_drops_total");
+            tracing::warn!(
+                domain = "stream",
+                route_family = family_id.id(),
+                realm,
+                error = ?error,
+                "Stream realm watermark coordination notice was not accepted"
+            );
         }
     }
 
@@ -382,320 +533,245 @@ impl StreamDomainCore {
             .replace_stream_events_total(committed_events_total);
     }
 
-    pub(in crate::domains::stream::sink) fn encode_optional_bytes(
-        encoder: &mut PayloadEncoder,
-        value: Option<&bytes::Bytes>,
-    ) {
-        match value {
-            Some(bytes) => {
-                encoder.put_u8(1);
-                encoder.put_bytes(bytes.as_ref());
-            }
-            None => encoder.put_u8(0),
+    fn empty_global_read_cursor(
+        &self,
+        request: &StreamReadExecution<'_>,
+        selector_fingerprint: u64,
+        captured_watermark: u64,
+    ) -> crate::domains::stream::protocol::ReadCursor {
+        crate::domains::stream::protocol::ReadCursor {
+            last_resource_offset: 0,
+            last_area_offset: None,
+            last_realm_offset: None,
+            last_global_offset: None,
+            has_more: request.from_offset < captured_watermark,
+            cursor_fingerprint: Some(self.cursor_integrity_token(
+                selector_fingerprint,
+                captured_watermark,
+                request.from_offset,
+            )),
+            captured_watermark: Some(captured_watermark),
         }
     }
 
-    pub(in crate::domains::stream::sink) fn encode_stream_record(
-        encoder: &mut PayloadEncoder,
-        record: &StreamRecord,
-    ) {
-        encoder.put_u64(record.resource_offset);
-        encoder.put_optional_u64(record.area_offset);
-        encoder.put_optional_u64(record.realm_offset);
-        encoder.put_bytes(record.body.as_ref());
-        Self::encode_optional_bytes(encoder, record.metadata.as_ref());
-        encoder.put_u64(record.created_at);
-    }
-
-    pub(in crate::domains::stream::sink) fn encode_stream_filtered_reason(
-        encoder: &mut PayloadEncoder,
-        reason: Option<&StreamFilteredReason>,
-    ) {
-        match reason {
-            Some(StreamFilteredReason::ServerFilter) => encoder.put_u8(1),
-            Some(StreamFilteredReason::Permission) => encoder.put_u8(2),
-            Some(StreamFilteredReason::Projection) => encoder.put_u8(3),
-            None => encoder.put_u8(0),
-        }
-    }
-
-    pub(in crate::domains::stream::sink) fn encode_stream_read_item(
-        encoder: &mut PayloadEncoder,
-        item: &StreamReadItem,
-    ) {
-        match item {
-            StreamReadItem::Event(record) => {
-                encoder.put_u8(0);
-                Self::encode_stream_record(encoder, record);
+    fn execute_read_plan(
+        &self,
+        scope: ReadScope,
+        route_filter_area: Option<&str>,
+        route_filter_resource: Option<&str>,
+        request: &StreamReadExecution<'_>,
+    ) -> Result<ReadResponse, String> {
+        let parts = route_triplet(request.route.as_str());
+        let (items, cursor) = match scope {
+            ReadScope::Realm => {
+                let parts = parts.ok_or_else(|| "invalid stream route".to_string())?;
+                if let Some(resource) = route_filter_resource {
+                    self.stream_store.read_realm_resource_posting(
+                        &crate::domains::stream::store::ReadRealmPostingParams {
+                            family: request.family_id.as_u64(),
+                            realm: parts.realm,
+                            resource,
+                            from_offset: request.from_offset,
+                            limit: request.limit,
+                            max_bytes: request.max_bytes,
+                        },
+                        request.filter,
+                    )?
+                } else {
+                    self.stream_store.read_realm_with_filter(
+                        request.family_id.as_u64(),
+                        parts.realm,
+                        request.from_offset,
+                        request.limit,
+                        request.max_bytes,
+                        request.filter,
+                    )?
+                }
             }
-            StreamReadItem::Filtered { offset, reason, .. } => {
-                encoder.put_u8(1);
-                encoder.put_u64(*offset);
-                Self::encode_stream_filtered_reason(encoder, reason.as_ref());
+            ReadScope::Area => {
+                let parts = parts.ok_or_else(|| "invalid stream route".to_string())?;
+                self.stream_store.read_area_with_filter(
+                    &crate::domains::stream::store::ReadAreaParams {
+                        family: request.family_id.as_u64(),
+                        realm: parts.realm,
+                        area: parts.area,
+                        from_offset: request.from_offset,
+                        limit: request.limit,
+                        max_bytes: request.max_bytes,
+                    },
+                    request.filter,
+                )?
             }
-            StreamReadItem::FilteredRange {
-                from_offset,
-                to_offset,
-                reason,
-                ..
-            } => {
-                encoder.put_u8(2);
-                encoder.put_u64(*from_offset);
-                encoder.put_u64(*to_offset);
-                Self::encode_stream_filtered_reason(encoder, reason.as_ref());
+            ReadScope::Resource => {
+                let key = Self::actor_key_for_route(request.family_id, request.route)?;
+                let response = self.get_or_create_actor(&key)?.lock().read_with_filter(
+                    request.from_offset,
+                    request.limit,
+                    request.max_bytes,
+                    request.filter,
+                )?;
+                (response.items, response.cursor)
             }
-        }
+            ReadScope::Global => self.stream_store.read_global_posting(
+                &crate::domains::stream::store::ReadGlobalPostingParams {
+                    family: request.family_id.as_u64(),
+                    from_offset: request.from_offset,
+                    limit: request.limit,
+                    max_bytes: request.max_bytes,
+                    area: route_filter_area,
+                    resource: route_filter_resource,
+                },
+                request.filter,
+            )?,
+        };
+        Ok(ReadResponse { items, cursor })
     }
 
-    pub(in crate::domains::stream::sink) fn encode_stream_cursor(
-        encoder: &mut PayloadEncoder,
-        cursor: &crate::domains::stream::protocol::ReadCursor,
-    ) {
-        encoder.put_u64(cursor.last_resource_offset);
-        encoder.put_optional_u64(cursor.last_area_offset);
-        encoder.put_optional_u64(cursor.last_realm_offset);
-        encoder.put_u8(u8::from(cursor.has_more));
-    }
-
-    pub(in crate::domains::stream::sink) fn encode_stream_read_data(
-        items: &[StreamReadItem],
-        cursor: &crate::domains::stream::protocol::ReadCursor,
-    ) -> Vec<u8> {
-        let mut encoder = PayloadEncoder::new();
-        encoder.put_u32(usize_to_u32_saturating(items.len()));
-        for item in items {
-            encoder.put_string(item.route());
-            Self::encode_stream_read_item(&mut encoder, item);
-        }
-        Self::encode_stream_cursor(&mut encoder, cursor);
-        encoder.finish()
-    }
-
-    pub(in crate::domains::stream::sink) fn encode_stream_last_data(
-        record: &StreamRecord,
-    ) -> Vec<u8> {
-        let mut encoder = PayloadEncoder::new();
-        Self::encode_stream_record(&mut encoder, record);
-        encoder.finish()
-    }
-
-    pub(in crate::domains::stream::sink) fn encode_stream_metadata_data(
-        metadata: &StreamMetadata,
-    ) -> Vec<u8> {
-        let mut encoder = PayloadEncoder::new();
-        encoder.put_optional_u64(metadata.first_resource_offset);
-        encoder.put_optional_u64(metadata.last_resource_offset);
-        encoder.put_u64(metadata.resource_count);
-        encoder.put_u64(usize_to_u64_saturating(metadata.max_batch_events));
-        encoder.put_u64(usize_to_u64_saturating(metadata.max_batch_bytes));
-        encoder.put_optional_u64(metadata.ttl_seconds);
-        encoder.put_u64(metadata.area_watermark);
-        encoder.put_u64(metadata.realm_watermark);
-        encoder.finish()
-    }
-
-    pub(in crate::domains::stream::sink) fn encode_stream_commit_notify_payload(
-        first_resource_offset: u64,
-        last_resource_offset: u64,
-        first_area_offset: u64,
-        last_area_offset: u64,
-        first_realm_offset: u64,
-        last_realm_offset: u64,
-        batch_size: usize,
-    ) -> bytes::Bytes {
-        bytes::Bytes::from(
-            serde_json::json!({
-                "event": "committed",
-                "first_resource_offset": first_resource_offset,
-                "last_resource_offset": last_resource_offset,
-                "first_area_offset": first_area_offset,
-                "last_area_offset": last_area_offset,
-                "first_realm_offset": first_realm_offset,
-                "last_realm_offset": last_realm_offset,
-                "batch_size": batch_size,
-            })
-            .to_string(),
-        )
-    }
-
-    pub(in crate::domains::stream::sink) fn stream_error_response(
-        error: impl Into<String>,
-    ) -> StreamClientResponseBody {
-        StreamClientResponseBody::Error(error.into())
+    fn finalize_read_response(
+        &self,
+        request: &StreamReadExecution<'_>,
+        selector_fingerprint: u64,
+        captured_watermark: u64,
+        mut response: ReadResponse,
+    ) -> ReadResponse {
+        apply_global_snapshot_boundary(request.from_offset, captured_watermark, &mut response);
+        let next_offset = response
+            .cursor
+            .last_global_offset
+            .map_or(request.from_offset, |offset| offset.saturating_add(1));
+        response.cursor.cursor_fingerprint = Some(self.cursor_integrity_token(
+            selector_fingerprint,
+            captured_watermark,
+            next_offset,
+        ));
+        response.cursor.captured_watermark = Some(captured_watermark);
+        response
     }
 
     pub(in crate::domains::stream::sink) fn encode_read_response_data(
         &self,
-        family_id: RouteFamily,
-        route: &Route,
-        from_offset: u64,
-        limit: u64,
-        max_bytes: Option<usize>,
-        filter: Option<&crate::domains::stream::protocol::StreamFilterSet>,
+        request: StreamReadExecution<'_>,
     ) -> Result<Vec<u8>, String> {
-        let parts =
-            route_triplet(route.as_str()).ok_or_else(|| "invalid stream route".to_string())?;
-        let scope = if parts.realm.contains('*') {
-            None
-        } else if !parts.area.contains('*') && !parts.resource.contains('*') {
-            Some(ReadScope::Resource)
-        } else if !parts.area.contains('*') && parts.resource == "*" {
-            Some(ReadScope::Area)
-        } else if parts.area == "*" && parts.resource == "*" {
-            Some(ReadScope::Realm)
-        } else {
-            None
-        }
-        .ok_or_else(|| {
-            "stream READ selector must be realm/area/resource, realm/area/*, or realm/*/*"
-                .to_string()
-        })?;
+        use crate::domains::stream::route_grammar::StreamRouteShape;
 
-        if limit == 0 {
-            let cursor = match scope {
-                ReadScope::Realm => crate::domains::stream::protocol::ReadCursor {
-                    last_resource_offset: 0,
-                    last_area_offset: None,
-                    last_realm_offset: Some(from_offset),
-                    has_more: false,
-                },
-                ReadScope::Area => crate::domains::stream::protocol::ReadCursor {
-                    last_resource_offset: 0,
-                    last_area_offset: Some(from_offset),
-                    last_realm_offset: None,
-                    has_more: false,
-                },
-                ReadScope::Resource => crate::domains::stream::protocol::ReadCursor {
-                    last_resource_offset: from_offset,
-                    last_area_offset: None,
-                    last_realm_offset: None,
-                    has_more: false,
-                },
-            };
-            return Ok(Self::encode_stream_read_data(&[], &cursor));
-        }
-
-        let read_response = match scope {
-            ReadScope::Realm => {
-                let (items, cursor) = self.stream_store.read_realm_with_filter(
-                    family_id.as_u64(),
-                    parts.realm,
-                    from_offset,
-                    limit,
-                    max_bytes,
-                    filter,
-                )?;
-                ReadResponse { items, cursor }
+        let shape = crate::domains::stream::route_grammar::classify_stream_route_shape(
+            request.route.as_str(),
+        )?;
+        let (scope, area_filter, resource_filter) = match &shape {
+            StreamRouteShape::Resource { .. } => (ReadScope::Resource, None, None),
+            StreamRouteShape::Area { .. } => (ReadScope::Area, None, None),
+            StreamRouteShape::Realm { .. } => (ReadScope::Realm, None, None),
+            StreamRouteShape::RealmFilterResource { resource, .. } => {
+                (ReadScope::Realm, None, Some(*resource))
             }
-            ReadScope::Area => {
-                let (items, cursor) = self.stream_store.read_area_with_filter(
-                    &crate::domains::stream::store::ReadAreaParams {
-                        family: family_id.as_u64(),
-                        realm: parts.realm,
-                        area: parts.area,
-                        from_offset,
-                        limit,
-                        max_bytes,
-                    },
-                    filter,
-                )?;
-                ReadResponse { items, cursor }
+            StreamRouteShape::Global => (ReadScope::Global, None, None),
+            StreamRouteShape::GlobalFilterArea { area } => (ReadScope::Global, Some(*area), None),
+            StreamRouteShape::GlobalFilterResource { resource } => {
+                (ReadScope::Global, None, Some(*resource))
             }
-            ReadScope::Resource => {
-                let key = Self::actor_key_for_route(family_id, route)?;
-                let actor = self.get_or_create_actor(&key)?;
-                let response =
-                    actor
-                        .lock()
-                        .read_with_filter(from_offset, limit, max_bytes, filter)?;
-                response
+            StreamRouteShape::GlobalFilterAreaResource { area, resource } => {
+                (ReadScope::Global, Some(*area), Some(*resource))
             }
         };
+        if scope != ReadScope::Global {
+            if request.cursor_fingerprint.is_some() || request.captured_watermark.is_some() {
+                return Err(
+                    "ERR_CURSOR_UNSUPPORTED: snapshot cursors require a global stream selector"
+                        .to_string(),
+                );
+            }
+            let response = self.execute_read_plan(scope, area_filter, resource_filter, &request)?;
+            return Ok(Self::encode_stream_read_data(
+                &response.items,
+                &response.cursor,
+                false,
+            ));
+        }
 
+        let selector_fingerprint = crate::domains::stream::route_grammar::cursor_fingerprint(
+            request.family_id,
+            &shape,
+            request.filter,
+        );
+        let current_frontier = self
+            .stream_store
+            .get_global_watermark(request.family_id.as_u64())?;
+        let captured_watermark = request.captured_watermark.unwrap_or(current_frontier);
+        if captured_watermark > current_frontier {
+            return Err(
+                "ERR_CURSOR_WATERMARK_INVALID: captured watermark is ahead of the visible frontier"
+                    .to_string(),
+            );
+        }
+        let is_continuation =
+            request.cursor_fingerprint.is_some() || request.captured_watermark.is_some();
+        let expected_token = self.cursor_integrity_token(
+            selector_fingerprint,
+            captured_watermark,
+            request.from_offset,
+        );
+        if is_continuation && request.cursor_fingerprint != Some(expected_token) {
+            return Err(
+                "ERR_CURSOR_SELECTOR_MISMATCH: cursor was issued for a different stream route \
+                 family, selector, filter, snapshot, or position"
+                    .to_string(),
+            );
+        }
+        if request.limit == 0 {
+            let cursor =
+                self.empty_global_read_cursor(&request, selector_fingerprint, captured_watermark);
+            return Ok(Self::encode_stream_read_data(&[], &cursor, true));
+        }
+        let response = self.execute_read_plan(scope, area_filter, resource_filter, &request)?;
+        let response = self.finalize_read_response(
+            &request,
+            selector_fingerprint,
+            captured_watermark,
+            response,
+        );
         Ok(Self::encode_stream_read_data(
-            &read_response.items,
-            &read_response.cursor,
+            &response.items,
+            &response.cursor,
+            true,
         ))
-    }
-
-    pub(in crate::domains::stream::sink) fn encode_last_response_data(
-        &self,
-        family_id: RouteFamily,
-        route: &Route,
-    ) -> Result<Vec<u8>, String> {
-        let parts =
-            route_triplet(route.as_str()).ok_or_else(|| "invalid stream route".to_string())?;
-        if parts.area == "*" || parts.resource == "*" {
-            return Ok(Vec::new());
-        }
-
-        let key = Self::actor_key_for_route(family_id, route)?;
-        let actor = self.get_or_create_actor(&key)?;
-        let data = actor
-            .lock()
-            .last()?
-            .record
-            .as_ref()
-            .map(Self::encode_stream_last_data)
-            .unwrap_or_default();
-        Ok(data)
-    }
-
-    pub(in crate::domains::stream::sink) fn encode_metadata_response_data(
-        &self,
-        family_id: RouteFamily,
-        route: &Route,
-    ) -> Result<Vec<u8>, String> {
-        let parts =
-            route_triplet(route.as_str()).ok_or_else(|| "invalid stream route".to_string())?;
-        if parts.area == "*" || parts.resource == "*" {
-            return Ok(Vec::new());
-        }
-
-        let key = Self::actor_key_for_route(family_id, route)?;
-        let actor = self.get_or_create_actor(&key)?;
-        let metadata = actor.lock().metadata()?.metadata;
-
-        Ok(Self::encode_stream_metadata_data(&metadata))
     }
 
     pub(in crate::domains::stream::sink) fn handle_domain_publish(
         &self,
         event: &crate::runtime::DomainPublishEvent,
     ) {
-        let family_id = event.family_id.as_u64();
-        let targets = {
-            let families = self.families.lock();
-            let mut targets = Vec::new();
-            if let Some(state) = families.get(&family_id) {
-                state.for_each_matching(event, |subscription| {
-                    targets.push((
-                        subscription.session_id,
-                        subscription.subscription_id,
-                        subscription.subscriber.clone(),
-                    ));
-                });
-            }
-            targets
-        };
+        self.route_ready_notifications(self.collect_ready_notifications(event));
+    }
 
+    pub(in crate::domains::stream::sink) fn handle_visibility_advance(&self, family: RouteFamily) {
+        self.route_ready_notifications(self.collect_visible_pending_notifications(family.as_u64()));
+    }
+
+    fn route_ready_notifications(&self, ready: Vec<ReadyStreamNotification>) {
         #[cfg(test)]
         let mut payload_encoder = PayloadEncoder::with_capacity(256);
-        for (session_id, subscription_id, subscriber) in targets {
-            if *subscriber.family() != event.family_id {
+        for notification in ready {
+            let target = notification.target;
+            let event = notification.event;
+            if *target.subscriber.family() != event.family_id {
                 crate::observability::counter_inc("fitz_stream_notify_drops_total");
                 continue;
             }
             #[cfg(test)]
             self.route_commit_notify(
-                session_id,
-                subscription_id,
-                &subscriber,
-                event,
+                target.session_id,
+                target.subscription_id,
+                &target.subscriber,
+                &event,
                 &mut payload_encoder,
             );
             #[cfg(not(test))]
-            self.route_commit_notify(session_id, subscription_id, &subscriber, event);
+            self.route_commit_notify(
+                target.session_id,
+                target.subscription_id,
+                &target.subscriber,
+                &event,
+            );
         }
     }
 
@@ -759,18 +835,33 @@ impl StreamDomainCore {
         }
         families.retain(|_, state| !state.is_empty());
         drop(families);
+        self.remove_pending_notifications_for_session(session_id);
         self.refresh_metrics_gauges();
     }
 
     pub(in crate::domains::stream::sink) fn cleanup_session(&self, session_id: u64) {
         self.unsubscribe_all(session_id);
 
-        let actors: Vec<Arc<Mutex<StreamActor>>> = self.actors.lock().values().cloned().collect();
+        let actors = self
+            .actors
+            .lock()
+            .iter()
+            .map(|(key, actor)| (key.family_id, actor.clone()))
+            .collect::<Vec<_>>();
         let mut removed_sessions = Vec::new();
-        for actor in actors {
+        let mut advanced_families = std::collections::BTreeSet::new();
+        for (family_id, actor) in actors {
             if let Some(stream_session_id) = actor.lock().cleanup_session(session_id) {
                 removed_sessions.push(stream_session_id);
+                advanced_families.insert(family_id);
             }
+        }
+
+        for family_id in advanced_families {
+            self.handle_visibility_advance(
+                RouteFamily::try_from(family_id)
+                    .expect("stream family IDs originate from RouteFamily"),
+            );
         }
 
         if !removed_sessions.is_empty() {

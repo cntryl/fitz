@@ -12,6 +12,8 @@ use crate::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::session::SessionId;
 
+const MAX_SCHEDULE_LIST_LIMIT: u64 = 1_000;
+
 /// Parse incoming message from TLV-encoded bytes.
 ///
 /// `route_family`, `session_id`, and `subscriber` are injected by the
@@ -34,6 +36,7 @@ pub fn parse_request(
         700 => parse_create(&mut dec),
         701 => parse_cancel(&mut dec),
         702 => parse_list(&mut dec),
+        707 => parse_list_v2(&mut dec),
         703 => parse_subscribe(&mut dec, route_family, session_id, subscriber),
         704 => parse_unsubscribe(&mut dec, route_family, session_id, subscriber),
         706 => parse_create_batch(&mut dec),
@@ -78,9 +81,31 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
             }
 
             dec.get_optional_u64()?;
-            dec.get_optional_u64()?;
+            if let Some(limit) = dec.get_optional_u64()? {
+                if limit == 0 || limit > MAX_SCHEDULE_LIST_LIMIT {
+                    return Err(format!(
+                        "schedule LIST limit must be between 1 and {MAX_SCHEDULE_LIST_LIMIT}"
+                    ));
+                }
+            }
             if !dec.is_complete() {
                 return Err("Trailing data in message".to_string());
+            }
+            Ok(None)
+        }
+        707 => {
+            if dec.remaining() > 0 {
+                dec.get_optional_string()?;
+                if let Some(limit) = dec.get_optional_u64()? {
+                    if limit == 0 || limit > MAX_SCHEDULE_LIST_LIMIT {
+                        return Err(format!(
+                            "schedule LIST limit must be between 1 and {MAX_SCHEDULE_LIST_LIMIT}"
+                        ));
+                    }
+                }
+                if !dec.is_complete() {
+                    return Err("Trailing data in message".to_string());
+                }
             }
             Ok(None)
         }
@@ -143,6 +168,24 @@ pub fn encode_response_into(enc: &mut PayloadEncoder, response: &ScheduleRespons
                 enc.put_bytes(&entry.payload);
             }
             enc.put_u8(0); // end sentinel
+        }
+        ScheduleResponse::ListPage {
+            entries,
+            has_more,
+            continuation,
+        } => {
+            enc.put_u8(0);
+            enc.put_u8(1); // response version
+            enc.put_u8(u8::from(*has_more));
+            enc.put_optional_string(continuation.as_deref());
+            for entry in entries.iter() {
+                enc.put_u8(1);
+                enc.put_string(&entry.route);
+                enc.put_string(&entry.cron);
+                enc.put_u8(entry.delivery_mode as u8);
+                enc.put_bytes(&entry.payload);
+            }
+            enc.put_u8(0);
         }
         ScheduleResponse::Error(e) => {
             return crate::protocol::error_codes::encode_error_body_into(
@@ -227,12 +270,34 @@ fn parse_list(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, ScheduleFailu
 
     let offset = dec.get_optional_u64()?.unwrap_or(0);
     let limit = dec.get_optional_u64()?.unwrap_or(100);
+    if limit == 0 || limit > MAX_SCHEDULE_LIST_LIMIT {
+        return Err(ScheduleFailure::new(
+            ScheduleFailureCategory::Limit,
+            format!("schedule LIST limit must be between 1 and {MAX_SCHEDULE_LIST_LIMIT}"),
+        ));
+    }
 
     if !dec.is_complete() {
         return Err(ScheduleFailure::parse("Trailing data in message"));
     }
 
     Ok(ScheduleMessage::List { offset, limit })
+}
+
+/// Parse versioned live ordered LIST: [optional string cursor][u64 limit].
+fn parse_list_v2(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, ScheduleFailure> {
+    let cursor = dec.get_optional_string()?;
+    let limit = dec.get_optional_u64()?.unwrap_or(100);
+    if limit == 0 || limit > MAX_SCHEDULE_LIST_LIMIT {
+        return Err(ScheduleFailure::new(
+            ScheduleFailureCategory::Limit,
+            format!("schedule LIST limit must be between 1 and {MAX_SCHEDULE_LIST_LIMIT}"),
+        ));
+    }
+    if !dec.is_complete() {
+        return Err(ScheduleFailure::parse("Trailing data in message"));
+    }
+    Ok(ScheduleMessage::ListV2 { cursor, limit })
 }
 
 /// Parse SUBSCRIBE message.
@@ -442,7 +507,7 @@ mod tests {
     proptest::proptest! {
         #[test]
         fn should_never_panic_given_arbitrary_schedule_payload(
-            message_type in 700_u16..=706,
+            message_type in 700_u16..=707,
             payload in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..512),
         ) {
             // Arrange

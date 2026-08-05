@@ -498,6 +498,10 @@ Response (status=1):
 [u8]      has_filter
 [u32 BE]  filter_len (if has_filter=1)
 [bytes]   filter (StreamFilterSet codec)
+[u8]      has_cursor_fingerprint (optional trailing field)
+[u64 BE]  cursor_fingerprint (if has_cursor_fingerprint=1)
+[u8]      has_captured_watermark (optional trailing field)
+[u64 BE]  captured_watermark (if has_captured_watermark=1)
 Response (status=0):
   [u8]     0
   [u8]     has_session_id = 0
@@ -568,6 +572,22 @@ repeat item_count times:
 [u8]     has_more (0=false, 1=true)
 ```
 
+That is the compatibility layout for resource-, area-, and realm-scoped READ.
+For a global-scope selector, the response uses the extended layout:
+
+- event records add `[u8 has_global_offset][u64 BE global_offset]` immediately
+  after the optional realm offset;
+- the cursor adds `[u8 has_last_global_offset][u64 BE last_global_offset]`
+  immediately before `has_more`; and
+- the cursor adds optional `cursor_fingerprint` and `captured_watermark` u64
+  fields immediately after `has_more`.
+
+The global fields are always decoded according to selector scope, not by
+probing the payload. LAST and resource-, area-, and realm-scoped READ never
+contain them. Existing READ requests may omit the two trailing continuation
+fields. A client continuing a global read echoes both values from the prior
+page.
+
 The concrete route is always present, including for exact resource reads. Tag
 `0` is an event record, tag `1` is a filtered offset, and tag `2` is a filtered
 range. Filter reason `0` means unspecified, `1` means server filter, `2` means
@@ -577,10 +597,12 @@ item and record MUST retain its concrete route and cursor progress. All fields
 above are inside the single length-prefixed `read_page_data` value; one READ
 request produces one response page.
 
-READ accepts only the hierarchy's ordered scopes:
-`stream://{realm}/{area}/{resource}`, `stream://{realm}/{area}/*`, and
-`stream://{realm}/*/*`. SUBSCRIBE remains a general whole-segment pattern and
-its NOTIFY payload also carries the matched concrete route.
+READ and SUBSCRIBE accept the same finite selector matrix:
+`stream://{realm}/{area}/{resource}`, `stream://{realm}/{area}/*`,
+`stream://{realm}/*/{resource}`, `stream://{realm}/*/*` (or
+`stream://{realm}/**`), `stream://*/{area}/{resource}`,
+`stream://*/{area}/*`, `stream://*/*/{resource}`, and `stream://*/*/*` (or
+`stream://**`). SUBSCRIBE NOTIFY payloads carry the matched concrete route.
 
 **Cursor:** `ReadCursor` is response metadata that advances with every committed offset the broker considers during replay, including filtered markers. It is not a durable broker-side resume token.
 

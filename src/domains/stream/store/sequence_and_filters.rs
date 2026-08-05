@@ -15,6 +15,33 @@ use std::sync::Arc;
 use super::{FAIL_NEXT_AREA_WATERMARK_GUARD_READ, FAIL_NEXT_REALM_WATERMARK_GUARD_READ};
 
 impl StreamStore {
+    pub(super) fn global_completion_state(
+        &self,
+        family: u64,
+    ) -> super::GlobalCompletionStateHandle {
+        let mut states = self.global_completion_states.lock();
+        match states.entry(family) {
+            Entry::Occupied(entry) => entry.get().clone(),
+            Entry::Vacant(entry) => {
+                let state = Arc::new(Mutex::new(super::GlobalCompletionState::default()));
+                entry.insert(state.clone());
+                state
+            }
+        }
+    }
+
+    pub(super) fn family_sequence_guard(&self, family: u64) -> SequenceGuard {
+        let mut guards = self.family_sequence_guards.lock();
+        match guards.entry(family) {
+            Entry::Occupied(entry) => entry.get().clone(),
+            Entry::Vacant(entry) => {
+                let guard = Arc::new(Mutex::new(()));
+                entry.insert(guard.clone());
+                guard
+            }
+        }
+    }
+
     pub(super) fn resource_sequence_guard(
         &self,
         family: u64,
@@ -129,6 +156,7 @@ impl StreamStore {
             first_resource_offset,
             first_area_offset,
             first_realm_offset,
+            first_global_offset,
             events,
             ttl_opt,
         } = params;
@@ -167,6 +195,15 @@ impl StreamStore {
                 crate::domains::stream::storage::encode_realm_discriminator_key(
                     realm,
                     first_realm_offset + index,
+                ),
+                discriminator_bytes.clone(),
+                ttl_opt,
+            )
+            .map_err(|e| format!("txn put failed: {e:?}"))?;
+
+            txn.put(
+                crate::domains::stream::storage::encode_global_discriminator_key(
+                    first_global_offset + index,
                 ),
                 discriminator_bytes,
                 ttl_opt,
@@ -215,54 +252,6 @@ impl StreamStore {
             })
     }
 
-    pub(super) fn scan_next_area_offset_from_txn(
-        txn: &cntryl_midge::Transaction,
-        realm: &str,
-        area: &str,
-    ) -> Result<u64, String> {
-        let query = cntryl_midge::Query::new().prefix(Bytes::from(
-            Self::build_compact_area_page_prefix(realm, area),
-        ));
-        let iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
-        let results = iter
-            .try_collect()
-            .map_err(|e| format!("scan error: {e:?}"))?;
-
-        for (key, value) in results.into_iter().rev() {
-            let page_start = decode_area_offset_from_key(&key)?;
-            let page = CompactAreaPageValue::try_decode(&value).map_err(|error| {
-                Self::invalid_compact_area_page_error(realm, area, page_start, &error)
-            })?;
-            if !page.records.is_empty() {
-                return Ok(page_start.saturating_add(usize_to_u64_saturating(page.records.len())));
-            }
-        }
-
-        Ok(0)
-    }
-
-    pub(super) fn load_effective_area_watermark_for_guard(
-        txn: &cntryl_midge::Transaction,
-        realm: &str,
-        area: &str,
-        watermark_key: &[u8],
-        counter_key: &[u8],
-    ) -> Result<u64, String> {
-        if let Some(current) = Self::load_existing_area_watermark_for_guard(txn, watermark_key)? {
-            return Ok(current);
-        }
-
-        match txn
-            .get(counter_key)
-            .map_err(|e| format!("midge get error: {e:?}"))?
-        {
-            Some(bytes) => Ok(AreaCounterValue::decode(&bytes)?
-                .next_offset
-                .saturating_sub(1)),
-            None => Ok(Self::scan_next_area_offset_from_txn(txn, realm, area)?.saturating_sub(1)),
-        }
-    }
-
     pub(super) fn load_existing_realm_watermark_for_guard(
         txn: &cntryl_midge::Transaction,
         key: &[u8],
@@ -291,54 +280,6 @@ impl StreamStore {
             })
     }
 
-    pub(super) fn scan_next_realm_offset_from_txn(
-        txn: &cntryl_midge::Transaction,
-        realm: &str,
-    ) -> Result<u64, String> {
-        let query = cntryl_midge::Query::new().prefix(Bytes::from(
-            Self::build_compressed_compact_realm_page_prefix(realm),
-        ));
-        let iter = txn.scan(&query).map_err(|e| format!("scan error: {e:?}"))?;
-        let results = iter
-            .try_collect()
-            .map_err(|e| format!("scan error: {e:?}"))?;
-
-        for (key, value) in results.into_iter().rev() {
-            let page_start_offset = decode_realm_offset_from_key(&key)?;
-            let page = CompressedCompactRealmPageValue::try_decode(&value)
-                .map_err(|error| Self::invalid_compact_realm_page_error(page_start_offset, &error))?
-                .into_compact_realm_page();
-            if !page.records.is_empty() {
-                return Ok(
-                    page_start_offset.saturating_add(usize_to_u64_saturating(page.records.len()))
-                );
-            }
-        }
-
-        Ok(0)
-    }
-
-    pub(super) fn load_effective_realm_watermark_for_guard(
-        txn: &cntryl_midge::Transaction,
-        realm: &str,
-        watermark_key: &[u8],
-        counter_key: &[u8],
-    ) -> Result<u64, String> {
-        if let Some(current) = Self::load_existing_realm_watermark_for_guard(txn, watermark_key)? {
-            return Ok(current);
-        }
-
-        match txn
-            .get(counter_key)
-            .map_err(|e| format!("midge get error: {e:?}"))?
-        {
-            Some(bytes) => Ok(RealmCounterValue::decode(&bytes)?
-                .next_offset
-                .saturating_sub(1)),
-            None => Ok(Self::scan_next_realm_offset_from_txn(txn, realm)?.saturating_sub(1)),
-        }
-    }
-
     #[cfg(test)]
     pub(super) fn fail_next_area_watermark_guard_read_for_tests() {
         FAIL_NEXT_AREA_WATERMARK_GUARD_READ.with(|cell| cell.set(true));
@@ -352,6 +293,12 @@ impl StreamStore {
     #[cfg(test)]
     pub(crate) fn fail_next_promotion_frontier_commit_for_tests(&self) {
         self.fail_next_promotion_frontier_commit
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fence_next_global_reservation_for_tests(&self) {
+        self.fence_next_global_reservation
             .store(true, std::sync::atomic::Ordering::Release);
     }
 

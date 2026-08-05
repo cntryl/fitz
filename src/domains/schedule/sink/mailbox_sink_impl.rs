@@ -312,6 +312,18 @@ impl ScheduleDomainRuntime<'_> {
                     false,
                 )
             }
+            ScheduleMessage::ListV2 { cursor, limit } => {
+                let (entries, has_more, continuation) =
+                    actor.list_entries_v2(cursor.as_deref(), limit);
+                (
+                    ScheduleResponse::ListPage {
+                        entries,
+                        has_more,
+                        continuation,
+                    },
+                    false,
+                )
+            }
             ScheduleMessage::Subscribe {
                 family_id,
                 route,
@@ -713,7 +725,8 @@ impl ScheduleDomainRuntime<'_> {
             ScheduleMessage::Create { .. }
             | ScheduleMessage::CreateBatch { .. }
             | ScheduleMessage::Cancel { .. }
-            | ScheduleMessage::List { .. } => true,
+            | ScheduleMessage::List { .. }
+            | ScheduleMessage::ListV2 { .. } => true,
         }
     }
 }

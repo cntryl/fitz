@@ -66,6 +66,31 @@ fn should_fail_closed_after_stream_actor_panic() {
 }
 
 #[test]
+fn should_fail_closed_given_malformed_stream_commit_notification() {
+    // Arrange
+    let context = setup_test_context();
+    let pattern = "stream://bench/events/*";
+    let (subscriber, inbox) = register_session_queue_sink(&context.router, context.family, 2);
+    let subscribe = build_stream_subscribe(pattern);
+    let (msg_type, payload) = extract_single_tlv_field(&subscribe);
+    let _response =
+        request_from_session(&context, &subscriber, &inbox, 2, pattern, msg_type, payload);
+    inbox.clear();
+    let malformed = crate::runtime::DomainPublishEvent::new(
+        context.family,
+        Route::new("stream://bench/events/orders"),
+        Bytes::from_static(b"not-json"),
+    );
+
+    // Act
+    context.sink.core.handle_domain_publish(&malformed);
+
+    // Assert
+    assert_eq!(inbox.count(), 0);
+    assert!(context.sink.core.pending_notifications.lock().is_empty());
+}
+
+#[test]
 fn should_reject_stream_request_when_source_and_destination_families_differ() {
     // Arrange
     let context = setup_test_context();
@@ -140,14 +165,14 @@ fn should_reject_stream_begin_given_wildcard_resource_route() {
 }
 
 #[test]
-fn should_reject_partial_and_cross_realm_stream_read_selectors() {
+fn should_reject_noncanonical_stream_read_selectors() {
     // Arrange
     let context = setup_test_context();
     let selectors = [
-        "stream://bench/*/orders",
-        "stream://*/events/*",
         "stream://bench/**/*",
         "stream://bench/events/**",
+        "stream://*/**",
+        "stream://**/orders",
     ];
 
     // Act
@@ -159,7 +184,111 @@ fn should_reject_partial_and_cross_realm_stream_read_selectors() {
     });
 
     // Assert
-    assert!(errors.into_iter().all(|error| {
-        error == "stream READ selector must be realm/area/resource, realm/area/*, or realm/*/*"
-    }));
+    assert!(errors
+        .into_iter()
+        .all(|error| error.contains("stream route selector must be one of the 10 shapes")));
+}
+
+#[test]
+fn should_accept_realm_and_global_filtered_stream_read_selectors() {
+    // Arrange
+    let context = setup_test_context();
+    let selectors = [
+        "stream://bench/*/orders",
+        "stream://*/events/*",
+        "stream://*/events/orders",
+        "stream://*/*/orders",
+    ];
+
+    // Act & Assert
+    for selector in selectors {
+        let frame = build_stream_read(selector, 0);
+        let (msg_type, payload) = extract_single_tlv_field(&frame);
+        let response = request(&context, selector, msg_type, payload);
+        assert!(
+            decode_stream_error_message(response.as_ref()).is_err(),
+            "expected {selector} to be accepted"
+        );
+    }
+}
+
+#[test]
+fn should_accept_global_catch_all_stream_read_selector() {
+    // Arrange
+    let context = setup_test_context();
+    let route = "stream://**";
+    let frame = build_stream_read(route, 0);
+    let (msg_type, payload) = extract_single_tlv_field(&frame);
+
+    // Act
+    let response = request(&context, route, msg_type, payload);
+
+    // Assert
+    assert!(decode_stream_error_message(response.as_ref()).is_err());
+}
+
+#[test]
+fn should_accept_global_catch_all_stream_subscribe_pattern() {
+    // Arrange
+    let context = setup_test_context();
+    let pattern = "stream://**";
+    let subscribe_frame = build_stream_subscribe(pattern);
+    let (subscribe_msg_type, subscribe_payload) = extract_single_tlv_field(&subscribe_frame);
+
+    // Act
+    let response = request(
+        &context,
+        "stream://bench/events/orders",
+        subscribe_msg_type,
+        subscribe_payload,
+    );
+
+    // Assert
+    assert!(decode_stream_error_message(response.as_ref()).is_err());
+    assert_eq!(context.sink.subscription_count(), 1);
+}
+
+#[test]
+fn should_reject_stream_subscribe_patterns_wider_than_read_grammar() {
+    // Arrange
+    let context = setup_test_context();
+    let rejected_patterns = ["stream://bench/events/**", "stream://bench/**/orders"];
+
+    // Act
+    let errors = rejected_patterns.map(|pattern| {
+        let subscribe_frame = build_stream_subscribe(pattern);
+        let (subscribe_msg_type, subscribe_payload) = extract_single_tlv_field(&subscribe_frame);
+        let response = request(
+            &context,
+            "stream://bench/events/orders",
+            subscribe_msg_type,
+            subscribe_payload,
+        );
+        decode_stream_error_message(response.as_ref())
+    });
+
+    // Assert
+    assert!(errors.into_iter().all(|error| error.is_ok()));
+}
+
+#[test]
+fn should_reject_global_realm_wildcard_for_concrete_stream_lookups() {
+    // Arrange
+    let context = setup_test_context();
+    let route = "stream://*/events/orders";
+
+    // Act
+    let errors = [
+        crate::benchkit::build_stream_last(route),
+        crate::benchkit::build_stream_get_metadata(route),
+    ]
+    .map(|frame| {
+        let (msg_type, payload) = extract_single_tlv_field(&frame);
+        let response = request(&context, route, msg_type, payload);
+        decode_stream_error_message(response.as_ref())
+            .expect("global-realm wildcard lookup should return an error")
+    });
+
+    // Assert
+    assert!(errors.iter().all(|error| error.contains("concrete")));
 }

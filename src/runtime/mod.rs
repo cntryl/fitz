@@ -29,6 +29,7 @@ pub mod domain_event;
 pub mod domain_manifest;
 pub mod envelope;
 pub mod family_actor_pool;
+pub mod keyed_actor_pool;
 pub mod mailbox;
 pub mod managed_actor;
 pub mod matcher;
@@ -57,6 +58,7 @@ pub use family_actor_pool::{
     FamilyActorPoolRuntime, FamilyActorShard, FamilyActorWork, FAMILY_ACTOR_CONTROL_LANE_CAPACITY,
     FAMILY_ACTOR_NORMAL_LANE_CAPACITY,
 };
+pub use keyed_actor_pool::KeyedActorPool;
 pub use mailbox::Mailbox;
 pub use managed_actor::{ManagedActor, ManagedActorHealthSnapshot};
 pub use matcher::{Pattern, PatternSegment};

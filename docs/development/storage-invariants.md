@@ -18,5 +18,5 @@ This document defines invariants Fitz relies on for correctness.
 ## Related Docs
 
 - [architecture.md](architecture.md)
-- [route-design.md](route-design.md)
+- [Routing design](../../routing-design.md)
 - [recovery-internals.md](recovery-internals.md)

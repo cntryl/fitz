@@ -1,13 +1,187 @@
 use super::{
-    decode_resource_offset_from_key, encode_area_counter_key, encode_realm_counter_key,
-    encode_watermark_key, family_to_storage_partition, usize_to_u64_saturating, AreaCounterValue,
-    Bytes, CompactResourcePageValue, RealmCounterValue, StreamStore, WatermarkValue,
+    decode_resource_offset_from_key, encode_area_counter_key, encode_global_watermark_key,
+    encode_realm_counter_key, encode_watermark_key, family_to_storage_partition,
+    usize_to_u64_saturating, AreaCounterValue, Bytes, CompactResourcePageValue, RealmCounterValue,
+    StreamStore, WatermarkValue,
 };
 
 #[cfg(test)]
-use super::{FAIL_NEXT_AREA_WATERMARK_PERSIST, FAIL_NEXT_REALM_WATERMARK_PERSIST};
+use super::{
+    FAIL_NEXT_AREA_WATERMARK_PERSIST, FAIL_NEXT_GLOBAL_WATERMARK_PERSIST,
+    FAIL_NEXT_REALM_WATERMARK_PERSIST,
+};
 
 impl StreamStore {
+    fn load_persisted_global_watermark(&self, family: u64) -> Result<u64, String> {
+        let txn = self
+            .db
+            .begin_tx(
+                family_to_storage_partition(family),
+                cntryl_midge::TransactionMode::ReadOnly,
+            )
+            .map_err(|error| format!("begin global watermark read failed: {error:?}"))?;
+        txn.get(&encode_global_watermark_key())
+            .map_err(|error| format!("read global watermark failed: {error:?}"))?
+            .map_or(Ok(0), |bytes| {
+                WatermarkValue::decode(&bytes).map(|value| value.watermark)
+            })
+    }
+
+    fn remember_resolved_global_range(&self, family: u64, first: u64, end_exclusive: u64) {
+        self.global_completion_state(family)
+            .lock()
+            .resolved
+            .insert(first, end_exclusive);
+    }
+
+    fn flush_resolved_global_ranges(&self, family: u64) -> Result<u64, String> {
+        let persisted_watermark = self.load_persisted_global_watermark(family)?;
+        let handle = self.global_completion_state(family);
+        let mut state = handle.lock();
+        let previous_watermark = state
+            .watermark
+            .unwrap_or(persisted_watermark)
+            .max(persisted_watermark);
+        state.watermark = Some(previous_watermark);
+        let mut watermark = previous_watermark;
+        let mut consumed = Vec::new();
+        while let Some(end) = state.resolved.get(&watermark).copied() {
+            consumed.push(watermark);
+            watermark = end;
+        }
+        if watermark != previous_watermark {
+            self.set_global_watermark(family, watermark)?;
+            for first in consumed {
+                state.resolved.remove(&first);
+            }
+            state.watermark = Some(watermark);
+        }
+        Ok(watermark)
+    }
+
+    /// Loads an explicitly persisted area watermark without applying the
+    /// read-side counter fallback used by [`Self::get_watermark`].
+    pub(crate) fn get_persisted_area_watermark(
+        &self,
+        family: u64,
+        realm: &str,
+        area: &str,
+    ) -> Result<Option<u64>, String> {
+        self.ensure_layout_activation_for_family(family)?;
+        let txn = self
+            .db
+            .begin_tx(
+                family_to_storage_partition(family),
+                cntryl_midge::TransactionMode::ReadOnly,
+            )
+            .map_err(|error| format!("begin persisted area watermark read failed: {error:?}"))?;
+        Self::load_existing_area_watermark_for_guard(&txn, &encode_watermark_key(realm, area))
+    }
+
+    /// Loads an explicitly persisted realm watermark without applying the
+    /// read-side counter fallback used by [`Self::get_realm_watermark`].
+    pub(crate) fn get_persisted_realm_watermark(
+        &self,
+        family: u64,
+        realm: &str,
+    ) -> Result<Option<u64>, String> {
+        self.ensure_layout_activation_for_family(family)?;
+        let txn = self
+            .db
+            .begin_tx(
+                family_to_storage_partition(family),
+                cntryl_midge::TransactionMode::ReadOnly,
+            )
+            .map_err(|error| format!("begin persisted realm watermark read failed: {error:?}"))?;
+        Self::load_existing_realm_watermark_for_guard(
+            &txn,
+            &crate::domains::stream::storage::encode_realm_watermark_key(realm),
+        )
+    }
+
+    /// Returns the exclusive family-global visibility frontier.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if activation, storage access, or decoding fails.
+    pub fn get_global_watermark(&self, family: u64) -> Result<u64, String> {
+        self.ensure_layout_activation_for_family(family)?;
+        self.flush_resolved_global_ranges(family)
+    }
+
+    pub(super) fn resolve_global_range(
+        &self,
+        family: u64,
+        first: u64,
+        end_exclusive: u64,
+    ) -> Result<(), String> {
+        self.ensure_layout_activation_for_family(family)?;
+        self.remember_resolved_global_range(family, first, end_exclusive);
+        self.flush_resolved_global_ranges(family).map(|_| ())
+    }
+
+    pub(super) fn resolve_durable_global_range(&self, family: u64, first: u64, end_exclusive: u64) {
+        self.remember_resolved_global_range(family, first, end_exclusive);
+        if let Err(error) = self.flush_resolved_global_ranges(family) {
+            tracing::warn!(
+                domain = "stream",
+                route_family = family,
+                first_global_offset = first,
+                end_global_offset = end_exclusive,
+                error = %error,
+                "Durable Stream commit is awaiting global watermark persistence retry"
+            );
+        }
+    }
+
+    /// Advances the exclusive family-global visibility frontier.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if activation or the durable metadata transaction fails.
+    pub fn set_global_watermark(&self, family: u64, watermark: u64) -> Result<(), String> {
+        self.ensure_layout_activation_for_family(family)?;
+        let key = encode_global_watermark_key();
+        let mut txn = self
+            .db
+            .begin_tx(
+                family_to_storage_partition(family),
+                cntryl_midge::TransactionMode::ReadWrite,
+            )
+            .map_err(|error| format!("begin global watermark write failed: {error:?}"))?;
+        if let Some(bytes) = txn
+            .get(&key)
+            .map_err(|error| format!("read global watermark guard failed: {error:?}"))?
+        {
+            if watermark <= WatermarkValue::decode(&bytes)?.watermark {
+                return Ok(());
+            }
+        }
+        txn.put(key, WatermarkValue { watermark }.encode(), None)
+            .map_err(|error| format!("write global watermark failed: {error:?}"))?;
+        #[cfg(test)]
+        {
+            let should_fail = FAIL_NEXT_GLOBAL_WATERMARK_PERSIST.with(|cell| {
+                let should_fail = cell.get();
+                if should_fail {
+                    cell.set(false);
+                }
+                should_fail
+            });
+
+            if should_fail {
+                return Err("Injected global watermark persistence failure".to_string());
+            }
+        }
+        txn.commit(self.sync_write_options)
+            .map_err(|error| format!("commit global watermark failed: {error:?}"))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_next_global_watermark_persist_for_tests() {
+        FAIL_NEXT_GLOBAL_WATERMARK_PERSIST.with(|cell| cell.set(true));
+    }
+
     /// Get the current area watermark.
     ///
     /// # Errors
@@ -27,26 +201,23 @@ impl StreamStore {
                 cntryl_midge::TransactionMode::ReadOnly,
             )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
-        match txn
+        let persisted = txn
             .get(&key)
             .map_err(|e| format!("midge get error: {e:?}"))?
+            .map(|bytes| WatermarkValue::decode(&bytes).map(|value| value.watermark))
+            .transpose()?;
+        let committed = match txn
+            .get(&counter_key)
+            .map_err(|e| format!("midge get error: {e:?}"))?
         {
-            Some(bytes) => {
-                let value = WatermarkValue::decode(&bytes)?;
-                Ok(value.watermark)
-            }
-            None => match txn
-                .get(&counter_key)
-                .map_err(|e| format!("midge get error: {e:?}"))?
-            {
-                Some(bytes) => Ok(AreaCounterValue::decode(&bytes)?
-                    .next_offset
-                    .saturating_sub(1)),
-                None => Ok(self
-                    .scan_next_area_offset(family, realm, area)?
-                    .saturating_sub(1)),
-            },
-        }
+            Some(bytes) => AreaCounterValue::decode(&bytes)?
+                .next_offset
+                .saturating_sub(1),
+            None => self
+                .scan_next_area_offset(family, realm, area)?
+                .saturating_sub(1),
+        };
+        Ok(persisted.map_or(committed, |watermark| watermark.max(committed)))
     }
 
     /// Advance the current area watermark.
@@ -65,7 +236,6 @@ impl StreamStore {
         self.ensure_layout_activation_for_family(family)?;
 
         let key = encode_watermark_key(realm, area);
-        let counter_key = encode_area_counter_key(realm, area);
 
         let mut txn = self
             .db
@@ -75,12 +245,15 @@ impl StreamStore {
             )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
 
-        // Monotonicity guard: watermarks must only advance, never regress.
-        // If the new value is not strictly greater than the current value, no-op.
-        let current =
-            Self::load_effective_area_watermark_for_guard(&txn, realm, area, &key, &counter_key)?;
-        if watermark <= current {
-            return Ok(());
+        // This row is the coordinator's advisory persisted frontier and must
+        // not regress relative to an earlier advisory value. The area counter
+        // commits atomically with records and remains the authoritative
+        // read-side floor in `get_watermark`, so a stale advisory row cannot
+        // hide committed data.
+        if let Some(current) = Self::load_existing_area_watermark_for_guard(&txn, &key)? {
+            if watermark <= current {
+                return Ok(());
+            }
         }
 
         let value = WatermarkValue { watermark };
@@ -123,26 +296,23 @@ impl StreamStore {
                 cntryl_midge::TransactionMode::ReadOnly,
             )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
-        match txn
+        let persisted = txn
             .get(&key)
             .map_err(|e| format!("midge get error: {e:?}"))?
+            .map(|bytes| WatermarkValue::decode(&bytes).map(|value| value.watermark))
+            .transpose()?;
+        let committed = match txn
+            .get(&counter_key)
+            .map_err(|e| format!("midge get error: {e:?}"))?
         {
-            Some(bytes) => {
-                let value = WatermarkValue::decode(&bytes)?;
-                Ok(value.watermark)
-            }
-            None => match txn
-                .get(&counter_key)
-                .map_err(|e| format!("midge get error: {e:?}"))?
-            {
-                Some(bytes) => Ok(RealmCounterValue::decode(&bytes)?
-                    .next_offset
-                    .saturating_sub(1)),
-                None => Ok(self
-                    .scan_next_realm_offset(family, realm)?
-                    .saturating_sub(1)),
-            },
-        }
+            Some(bytes) => RealmCounterValue::decode(&bytes)?
+                .next_offset
+                .saturating_sub(1),
+            None => self
+                .scan_next_realm_offset(family, realm)?
+                .saturating_sub(1),
+        };
+        Ok(persisted.map_or(committed, |watermark| watermark.max(committed)))
     }
 
     /// Advance the current realm watermark.
@@ -160,7 +330,6 @@ impl StreamStore {
         self.ensure_layout_activation_for_family(family)?;
 
         let key = crate::domains::stream::storage::encode_realm_watermark_key(realm);
-        let counter_key = encode_realm_counter_key(realm);
 
         let mut txn = self
             .db
@@ -170,11 +339,15 @@ impl StreamStore {
             )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
 
-        // Monotonicity guard: realm watermarks must only advance, never regress.
-        let current =
-            Self::load_effective_realm_watermark_for_guard(&txn, realm, &key, &counter_key)?;
-        if watermark <= current {
-            return Ok(());
+        // This row is the coordinator's advisory persisted frontier and must
+        // not regress relative to an earlier advisory value. The realm
+        // counter commits atomically with records and remains the
+        // authoritative read-side floor in `get_realm_watermark`, so a stale
+        // advisory row cannot hide committed data.
+        if let Some(current) = Self::load_existing_realm_watermark_for_guard(&txn, &key)? {
+            if watermark <= current {
+                return Ok(());
+            }
         }
 
         let value = WatermarkValue { watermark };

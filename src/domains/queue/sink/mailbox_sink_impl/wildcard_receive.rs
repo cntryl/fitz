@@ -3,6 +3,8 @@ use crate::runtime::routing::RouteFamily;
 use std::sync::atomic::Ordering;
 
 impl QueueDomainCore {
+    const MAX_WILDCARD_RESERVE_MATCHES: usize = 4096;
+
     fn wildcard_inventory_error(&self) -> Option<OperationOutcome> {
         self.inventory_error
             .lock()
@@ -16,6 +18,26 @@ impl QueueDomainCore {
             })
     }
 
+    fn wildcard_reserve_preflight(
+        &self,
+        family_id: RouteFamily,
+        pattern: &crate::runtime::matcher::Pattern,
+    ) -> Option<OperationOutcome> {
+        if let Some(outcome) = self.wildcard_inventory_error() {
+            return Some(outcome);
+        }
+        if self.matching_queue_key_count(family_id, pattern) > Self::MAX_WILDCARD_RESERVE_MATCHES {
+            return Some(OperationOutcome {
+                response: crate::domains::queue::QueueResponse::Error {
+                    message: "wildcard reserve matched too many queues".to_string(),
+                },
+                ready_notifications: Vec::new(),
+                mark_admin_snapshot_dirty: false,
+            });
+        }
+        None
+    }
+
     pub(super) fn handle_wildcard_receive(
         &self,
         family_id: RouteFamily,
@@ -24,7 +46,7 @@ impl QueueDomainCore {
         inflight_seconds: u64,
         batch_size: Option<usize>,
     ) -> OperationOutcome {
-        if let Some(outcome) = self.wildcard_inventory_error() {
+        if let Some(outcome) = self.wildcard_reserve_preflight(family_id, pattern) {
             return outcome;
         }
 

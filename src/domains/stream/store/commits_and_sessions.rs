@@ -1,8 +1,10 @@
 use super::{
-    encode_compact_resource_page_key, AppendSession, CommitPromotionFrontierBatchParams,
-    CommitRecordsParams, CommitResponse, CompactResourcePageValue, EventPayload, IngestMetadata,
-    ResourceMetaValue, SessionId, StreamAdminRecord, StreamRecord, StreamStore, StreamWriteMode,
-    ERR_SESSION_ROUTE_FAMILY_MISMATCH,
+    encode_compact_resource_page_key, encode_family_writer_epoch_key, encode_global_counter_key,
+    family_to_storage_partition, AppendSession, CommitPromotionFrontierBatchParams,
+    CommitRecordsParams, CommitResponse, CompactResourcePageValue, EventPayload, GlobalReservation,
+    IngestMetadata, PendingGlobalReservation, PromotionCommitFailure, RealmCounterValue,
+    ResourceMetaValue, SequenceGuardKey, SessionId, StreamAdminRecord, StreamRecord, StreamStore,
+    StreamWriteMode, ERR_SESSION_ROUTE_FAMILY_MISMATCH,
 };
 
 fn u64_to_u32_saturating(value: u64) -> u32 {
@@ -13,7 +15,225 @@ fn u64_to_usize_saturating(value: u64) -> usize {
     usize::try_from(value).unwrap_or(usize::MAX)
 }
 
+const MAX_SCOPE_CONFLICT_RETRIES: usize = 8;
+
+struct PreparedSessionReservation {
+    key: (u64, String, String, String),
+    reservation: GlobalReservation,
+}
+
 impl StreamStore {
+    fn resolve_pending_global_reservation(
+        &self,
+        key: &SequenceGuardKey,
+        pending: PendingGlobalReservation,
+    ) -> Result<(), String> {
+        let count = u64::try_from(pending.event_count).unwrap_or(u64::MAX);
+        if let Err(error) = self.resolve_global_range(
+            key.0,
+            pending.reservation.first_offset,
+            pending.reservation.first_offset.saturating_add(count),
+        ) {
+            self.pending_global_reservations
+                .lock()
+                .insert(key.clone(), pending);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn commit_with_scope_conflict_retries(
+        &self,
+        params: &CommitPromotionFrontierBatchParams<'_>,
+    ) -> Result<(CommitResponse, ResourceMetaValue), PromotionCommitFailure> {
+        let mut first_area_offset = params.first_area_offset;
+        let mut first_realm_offset = params.first_realm_offset;
+        let mut scope_conflict_retries = 0;
+        loop {
+            let result = self.commit_promotion_frontier_batch(CommitPromotionFrontierBatchParams {
+                family: params.family,
+                realm: params.realm,
+                area: params.area,
+                resource: params.resource,
+                first_resource_offset: params.first_resource_offset,
+                first_area_offset,
+                first_realm_offset,
+                first_global_offset: params.first_global_offset,
+                writer_epoch: params.writer_epoch,
+                events: params.events,
+                committed_size_before: params.committed_size_before,
+                ingest_metadata: params.ingest_metadata.clone(),
+                mode: params.mode,
+            });
+            if !matches!(&result, Err(error) if error.is_scope_conflict())
+                || scope_conflict_retries == MAX_SCOPE_CONFLICT_RETRIES
+            {
+                return result;
+            }
+            scope_conflict_retries += 1;
+            first_area_offset = self
+                .load_area_next_offset_snapshot(params.family, params.realm, params.area)
+                .map(|(offset, _)| offset)
+                .map_err(PromotionCommitFailure::Retryable)?;
+            first_realm_offset = self
+                .load_realm_next_offset_snapshot(params.family, params.realm)
+                .map(|(offset, _)| offset)
+                .map_err(PromotionCommitFailure::Retryable)?;
+        }
+    }
+
+    fn take_commit_session(
+        &self,
+        family: u64,
+        session_id: SessionId,
+    ) -> Result<AppendSession, String> {
+        let session = self
+            .sessions
+            .lock()
+            .remove(&session_id)
+            .ok_or_else(|| "ERR_SESSION_NOT_FOUND".to_string())?;
+        let validation = if session.family != family {
+            Err(ERR_SESSION_ROUTE_FAMILY_MISMATCH.to_string())
+        } else if session.event_count == 0 {
+            Err("ERR_EMPTY_BATCH".to_string())
+        } else {
+            self.ensure_layout_activation_for_family(family)
+        };
+        if let Err(error) = validation {
+            self.sessions.lock().insert(session_id, session);
+            return Err(error);
+        }
+        Ok(session)
+    }
+
+    fn take_or_reserve_global_range(
+        &self,
+        family: u64,
+        key: &SequenceGuardKey,
+        resource_offset: u64,
+        event_count: usize,
+    ) -> Result<GlobalReservation, String> {
+        let pending = self.pending_global_reservations.lock().remove(key);
+        if let Some(pending) = pending {
+            if pending.resource_offset == resource_offset && pending.event_count == event_count {
+                return Ok(pending.reservation);
+            }
+            self.resolve_pending_global_reservation(key, pending)?;
+        }
+        self.reserve_global_range(family, event_count)
+    }
+
+    pub(crate) fn abandon_pending_global_reservation(
+        &self,
+        family: u64,
+        realm: &str,
+        area: &str,
+        resource: &str,
+    ) -> Result<bool, String> {
+        let key = (
+            family,
+            realm.to_string(),
+            area.to_string(),
+            resource.to_string(),
+        );
+        let Some(pending) = self.pending_global_reservations.lock().remove(&key) else {
+            return Ok(false);
+        };
+        self.resolve_pending_global_reservation(&key, pending)?;
+        Ok(true)
+    }
+
+    fn prepare_session_reservation(
+        &self,
+        family: u64,
+        session: &AppendSession,
+        first_resource_offset: u64,
+    ) -> Result<PreparedSessionReservation, String> {
+        let key = (
+            family,
+            session.realm.clone(),
+            session.area.clone(),
+            session.resource.clone(),
+        );
+        let reservation = self.take_or_reserve_global_range(
+            family,
+            &key,
+            first_resource_offset,
+            session.staged_events.len(),
+        )?;
+        Ok(PreparedSessionReservation { key, reservation })
+    }
+
+    pub(super) fn reserve_global_range(
+        &self,
+        family: u64,
+        batch_size: usize,
+    ) -> Result<GlobalReservation, String> {
+        let guard = self.family_sequence_guard(family);
+        let _lock = guard.lock();
+        let mut txn = self
+            .db
+            .begin_tx(
+                family_to_storage_partition(family),
+                cntryl_midge::TransactionMode::ReadWrite,
+            )
+            .map_err(|error| format!("begin global reservation tx failed: {error:?}"))?;
+        let key = encode_global_counter_key();
+        let writer_epoch = txn
+            .get(&encode_family_writer_epoch_key())
+            .map_err(|error| format!("read family writer epoch failed: {error:?}"))?
+            .map_or(Ok(0), |bytes| {
+                RealmCounterValue::decode(&bytes).map(|value| value.next_offset)
+            })?;
+        let first = txn
+            .get(&key)
+            .map_err(|error| format!("read global counter failed: {error:?}"))?
+            .map_or(Ok(0), |bytes| {
+                RealmCounterValue::decode(&bytes).map(|value| value.next_offset)
+            })?;
+        let count =
+            u64::try_from(batch_size).map_err(|_| "ERR_STREAM_OFFSET_EXHAUSTED".to_string())?;
+        let next = first
+            .checked_add(count)
+            .ok_or_else(|| "ERR_STREAM_OFFSET_EXHAUSTED".to_string())?;
+        txn.put(key, RealmCounterValue { next_offset: next }.encode(), None)
+            .map_err(|error| format!("write global counter failed: {error:?}"))?;
+        txn.commit(self.sync_write_options)
+            .map_err(|error| format!("commit global reservation failed: {error:?}"))?;
+        Ok(GlobalReservation {
+            first_offset: first,
+            writer_epoch,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn advance_family_writer_epoch(&self, family: u64) -> Result<u64, String> {
+        let guard = self.family_sequence_guard(family);
+        let _lock = guard.lock();
+        let mut txn = self
+            .db
+            .begin_tx(
+                family_to_storage_partition(family),
+                cntryl_midge::TransactionMode::ReadWrite,
+            )
+            .map_err(|error| format!("begin writer epoch fence failed: {error:?}"))?;
+        let key = encode_family_writer_epoch_key();
+        let current = txn
+            .get(&key)
+            .map_err(|error| format!("read family writer epoch failed: {error:?}"))?
+            .map_or(Ok(0), |bytes| {
+                RealmCounterValue::decode(&bytes).map(|value| value.next_offset)
+            })?;
+        let next = current
+            .checked_add(1)
+            .ok_or_else(|| "ERR_STREAM_WRITER_EPOCH_EXHAUSTED".to_string())?;
+        txn.put(key, RealmCounterValue { next_offset: next }.encode(), None)
+            .map_err(|error| format!("write family writer epoch failed: {error:?}"))?;
+        txn.commit(self.sync_write_options)
+            .map_err(|error| format!("commit writer epoch fence failed: {error:?}"))?;
+        Ok(next)
+    }
+
     /// # Errors
     ///
     /// Returns an error if layout activation fails, the batch is empty, the
@@ -58,38 +278,56 @@ impl StreamStore {
         if resource_meta_before.next_offset != expected_resource_next_offset {
             return Err("ERR_CONCURRENCY_CONFLICT".to_string());
         }
+        let (first_area_offset, _) = self.load_area_next_offset_snapshot(family, realm, area)?;
+        let (first_realm_offset, _) = self.load_realm_next_offset_snapshot(family, realm)?;
 
-        let realm_sequence_state = self.realm_sequence_state(family, realm);
-        let mut realm_sequence_state = realm_sequence_state.lock();
-        let (area_next_offset, _) = self.load_area_next_offset_snapshot(family, realm, area)?;
-        realm_sequence_state
-            .next_area_offsets
-            .insert(area.to_string(), area_next_offset);
-        let (realm_next_offset, _) = self.load_realm_next_offset_snapshot(family, realm)?;
-        realm_sequence_state.next_realm_offset = Some(realm_next_offset);
-
-        let (response, resource_meta_after) =
-            self.commit_promotion_frontier_batch(CommitPromotionFrontierBatchParams {
+        let reservation_key = (
+            family,
+            realm.to_string(),
+            area.to_string(),
+            resource.to_string(),
+        );
+        let global_reservation = self.take_or_reserve_global_range(
+            family,
+            &reservation_key,
+            expected_resource_next_offset,
+            events.len(),
+        )?;
+        let commit_result =
+            self.commit_with_scope_conflict_retries(&CommitPromotionFrontierBatchParams {
                 family,
                 realm,
                 area,
                 resource,
                 first_resource_offset: resource_meta_before.next_offset,
-                first_area_offset: area_next_offset,
-                first_realm_offset: realm_next_offset,
+                first_area_offset,
+                first_realm_offset,
+                first_global_offset: global_reservation.first_offset,
+                writer_epoch: global_reservation.writer_epoch,
                 events,
                 committed_size_before: resource_meta_before.committed_size_bytes,
-                ingest_metadata,
+                ingest_metadata: ingest_metadata.clone(),
                 mode,
-            })?;
+            });
+        let (response, resource_meta_after) = match commit_result {
+            Ok(result) => result,
+            Err(error) => {
+                let retryable = error.is_retryable();
+                if retryable {
+                    self.pending_global_reservations.lock().insert(
+                        reservation_key,
+                        PendingGlobalReservation {
+                            resource_offset: expected_resource_next_offset,
+                            event_count: events.len(),
+                            reservation: global_reservation,
+                        },
+                    );
+                }
+                return Err(error.into_message());
+            }
+        };
 
         resource_meta_state.snapshot = Some(resource_meta_after);
-        realm_sequence_state.next_area_offsets.insert(
-            area.to_string(),
-            response.last_area_offset.saturating_add(1),
-        );
-        realm_sequence_state.next_realm_offset = Some(response.last_realm_offset.saturating_add(1));
-
         Ok(response)
     }
 
@@ -293,27 +531,7 @@ impl StreamStore {
         first_realm_offset: u64,
         mode: StreamWriteMode,
     ) -> Result<CommitResponse, String> {
-        let session = {
-            let mut sessions = self.sessions.lock();
-            sessions
-                .remove(&session_id)
-                .ok_or_else(|| "ERR_SESSION_NOT_FOUND".to_string())?
-        };
-
-        if session.family != family {
-            self.sessions.lock().insert(session_id, session);
-            return Err(ERR_SESSION_ROUTE_FAMILY_MISMATCH.to_string());
-        }
-
-        if session.event_count == 0 {
-            self.sessions.lock().insert(session_id, session);
-            return Err("ERR_EMPTY_BATCH".to_string());
-        }
-
-        if let Err(error) = self.ensure_layout_activation_for_family(family) {
-            self.sessions.lock().insert(session_id, session);
-            return Err(error);
-        }
+        let session = self.take_commit_session(family, session_id)?;
 
         let sequencing_guard =
             self.resource_sequence_guard(family, &session.realm, &session.area, &session.resource);
@@ -344,37 +562,18 @@ impl StreamStore {
             return Err("ERR_CONCURRENCY_CONFLICT".to_string());
         }
 
-        let (area_next_offset, _) =
-            match self.load_area_next_offset_snapshot(family, &session.realm, &session.area) {
-                Ok(snapshot) => snapshot,
+        let prepared =
+            match self.prepare_session_reservation(family, &session, first_resource_offset) {
+                Ok(prepared) => prepared,
                 Err(error) => {
                     self.sessions.lock().insert(session_id, session);
                     return Err(error);
                 }
             };
-        if area_next_offset != first_area_offset {
-            self.sessions.lock().insert(session_id, session);
-            return Err("ERR_CONCURRENCY_CONFLICT".to_string());
-        }
-        realm_sequence_state
-            .next_area_offsets
-            .insert(session.area.clone(), area_next_offset);
+        let global_reservation = prepared.reservation;
+        let reservation_key = prepared.key;
 
-        let (realm_next_offset, _) =
-            match self.load_realm_next_offset_snapshot(family, &session.realm) {
-                Ok(snapshot) => snapshot,
-                Err(error) => {
-                    self.sessions.lock().insert(session_id, session);
-                    return Err(error);
-                }
-            };
-        if realm_next_offset != first_realm_offset {
-            self.sessions.lock().insert(session_id, session);
-            return Err("ERR_CONCURRENCY_CONFLICT".to_string());
-        }
-        realm_sequence_state.next_realm_offset = Some(realm_next_offset);
-
-        let result = self.commit_promotion_frontier_batch(CommitPromotionFrontierBatchParams {
+        let result = self.commit_with_scope_conflict_retries(&CommitPromotionFrontierBatchParams {
             family,
             realm: &session.realm,
             area: &session.area,
@@ -382,6 +581,8 @@ impl StreamStore {
             first_resource_offset,
             first_area_offset,
             first_realm_offset,
+            first_global_offset: global_reservation.first_offset,
+            writer_epoch: global_reservation.writer_epoch,
             events: &session.staged_events,
             committed_size_before: resource_meta_before.committed_size_bytes,
             ingest_metadata: session.ingest_metadata.clone(),
@@ -391,8 +592,18 @@ impl StreamStore {
         let (response, resource_meta_after) = match result {
             Ok(result) => result,
             Err(error) => {
-                self.sessions.lock().insert(session_id, session);
-                return Err(error);
+                if error.is_retryable() {
+                    self.pending_global_reservations.lock().insert(
+                        reservation_key,
+                        PendingGlobalReservation {
+                            resource_offset: first_resource_offset,
+                            event_count: session.staged_events.len(),
+                            reservation: global_reservation,
+                        },
+                    );
+                    self.sessions.lock().insert(session_id, session);
+                }
+                return Err(error.into_message());
             }
         };
 
@@ -410,10 +621,23 @@ impl StreamStore {
     ///
     /// Returns an error if the session does not exist.
     pub fn abort_session(&self, session_id: SessionId) -> Result<(), String> {
-        self.sessions
+        let session = self
+            .sessions
             .lock()
             .remove(&session_id)
             .ok_or_else(|| "ERR_SESSION_NOT_FOUND".to_string())?;
+        let key = (
+            session.family,
+            session.realm.clone(),
+            session.area.clone(),
+            session.resource.clone(),
+        );
+        if let Some(pending) = self.pending_global_reservations.lock().remove(&key) {
+            if let Err(error) = self.resolve_pending_global_reservation(&key, pending) {
+                self.sessions.lock().insert(session_id, session);
+                return Err(error);
+            }
+        }
         Ok(())
     }
 
@@ -493,6 +717,7 @@ impl StreamStore {
                     resource_offset,
                     area_offset: Some(record.area_offset),
                     realm_offset: Some(record.realm_offset),
+                    global_offset: None,
                     body: record.body.clone(),
                     metadata: record.metadata.clone(),
                     created_at: record.created_at,

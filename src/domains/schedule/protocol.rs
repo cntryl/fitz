@@ -117,6 +117,9 @@ pub enum ScheduleMessage {
         /// Maximum number of entries to return (0 = all remaining). Default: 100
         limit: u64,
     },
+    /// Versioned live ordered pagination. The cursor is an opaque route-key
+    /// continuation; omitted cursors start at the first route.
+    ListV2 { cursor: Option<String>, limit: u64 },
     /// Subscribe to live notifications for a schedule route pattern.
     Subscribe {
         family_id: RouteFamily,
@@ -212,6 +215,12 @@ pub enum ScheduleResponse {
     ListDefs {
         entries: Arc<Vec<Arc<ScheduleListEntry>>>,
         total_count: u64,
+    },
+    /// Versioned live ordered LIST page.
+    ListPage {
+        entries: Arc<Vec<Arc<ScheduleListEntry>>>,
+        has_more: bool,
+        continuation: Option<String>,
     },
     /// Operation failed with a stable wire category and actionable message.
     Error(ScheduleFailure),

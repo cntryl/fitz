@@ -5,6 +5,29 @@ use super::model::{
 };
 
 impl ScheduleActor {
+    pub fn list_entries_v2(
+        &mut self,
+        cursor: Option<&str>,
+        limit: u64,
+    ) -> (Arc<Vec<Arc<ScheduleListEntry>>>, bool, Option<String>) {
+        const MAX_LIMIT: usize = 1_000;
+        let take = usize::try_from(limit)
+            .unwrap_or(MAX_LIMIT)
+            .clamp(1, MAX_LIMIT);
+        let mut ordered = self.list_entries.clone();
+        ordered.sort_unstable_by(|left, right| left.route.cmp(&right.route));
+        let family_prefix = format!("schedule-list-v1:{}:", self.family.as_u64());
+        let start = cursor
+            .and_then(|value| value.strip_prefix(&family_prefix))
+            .and_then(|value| ordered.iter().position(|entry| entry.route == value))
+            .map_or(0, |index| index.saturating_add(1));
+        let end = start.saturating_add(take).min(ordered.len());
+        let entries = Arc::new(ordered[start.min(ordered.len())..end].to_vec());
+        let has_more = end < ordered.len();
+        let continuation = has_more.then(|| format!("{family_prefix}{}", ordered[end - 1].route));
+        (entries, has_more, continuation)
+    }
+
     fn u64_to_usize_saturating(value: u64) -> usize {
         usize::try_from(value).unwrap_or(usize::MAX)
     }

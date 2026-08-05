@@ -56,15 +56,17 @@ impl StreamLayoutMarkerValue {
 
     #[must_use]
     pub fn is_previous_generation(bytes: &[u8]) -> bool {
-        bytes.len() == 3 && bytes.starts_with(&STREAM_LAYOUT_MARKER_VALUE_V1_MARKER)
+        bytes.len() == 3
+            && (bytes.starts_with(&STREAM_LAYOUT_MARKER_VALUE_V1_MARKER)
+                || bytes.starts_with(&[0, 0xD2]))
     }
 
     #[cfg(test)]
     #[must_use]
     pub fn encode_previous_generation_for_tests(layout: StreamStorageLayout) -> Vec<u8> {
         vec![
-            STREAM_LAYOUT_MARKER_VALUE_V1_MARKER[0],
-            STREAM_LAYOUT_MARKER_VALUE_V1_MARKER[1],
+            0,
+            0xD2,
             match layout {
                 StreamStorageLayout::LegacyCovering => 0,
                 StreamStorageLayout::PromotionFrontier => 1,

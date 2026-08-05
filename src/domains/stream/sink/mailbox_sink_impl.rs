@@ -2,8 +2,8 @@ use super::model::{
     Arc, DeliveryError, Envelope, MailboxSink, Mutex, Ordering, PayloadEncoder, Route, RouteFamily,
     RoutedSubscriptionSet, StreamActor, StreamClientFrame, StreamClientRequest,
     StreamClientResponseBody, StreamDomainActor, StreamDomainCommand, StreamDomainCore,
-    StreamDomainRuntime, StreamDomainSink, StreamSessionOwner, StreamSubscription,
-    STREAM_OPERATIONS_TOTAL,
+    StreamDomainRuntime, StreamDomainSink, StreamReadExecution, StreamSessionOwner,
+    StreamSubscription, STREAM_OPERATIONS_TOTAL,
 };
 #[cfg(test)]
 use crate::dispatch::protocol::FrameContext;
@@ -393,6 +393,8 @@ impl StreamDomainCore {
             if remove_family {
                 families.remove(&family_id.as_u64());
             }
+            drop(families);
+            self.remove_pending_notifications_for_pattern(session_id, pattern.as_str());
             StreamClientResponseBody::Ok {
                 session_id: None,
                 data: vec![],
@@ -405,16 +407,20 @@ impl StreamDomainCore {
     fn compile_stream_subscription_pattern(
         pattern: &crate::runtime::routing::Route,
     ) -> Result<crate::runtime::matcher::Pattern, StreamClientResponseBody> {
-        crate::runtime::matcher::compile_registration_pattern(
-            pattern.as_str(),
-            "stream",
-            crate::runtime::matcher::PatternDepth::CanMatch(3),
-        )
-        .map_err(|error| {
+        let invalid_pattern = |error: String| {
             StreamClientResponseBody::SubscriptionError(
                 crate::domains::stream::StreamSubscriptionFailure::InvalidPattern(error),
             )
-        })
+        };
+        let compiled = crate::runtime::matcher::compile_registration_pattern(
+            pattern.as_str(),
+            "stream",
+            crate::runtime::matcher::PatternDepth::Flexible,
+        )
+        .map_err(invalid_pattern)?;
+        crate::domains::stream::route_grammar::classify_stream_route_shape(pattern.as_str())
+            .map_err(invalid_pattern)?;
+        Ok(compiled)
     }
 
     fn valid_stream_subscription_request(
@@ -487,14 +493,18 @@ impl StreamDomainCore {
                 limit,
                 max_bytes,
                 filter,
-            } => self.handle_read_operation(
+                cursor_fingerprint,
+                captured_watermark,
+            } => self.handle_read_operation(StreamReadExecution {
                 family_id,
-                &route,
+                route: &route,
                 from_offset,
                 limit,
                 max_bytes,
-                filter.as_ref(),
-            ),
+                filter: filter.as_ref(),
+                cursor_fingerprint,
+                captured_watermark,
+            }),
             StreamMessage::Last { family_id, route } => {
                 self.handle_last_operation(family_id, &route)
             }
@@ -701,15 +711,21 @@ impl StreamDomainCore {
             Ok(commit) => {
                 self.session_owners.lock().remove(&session_id);
                 self.counter_inc("fitz_stream_append_sessions_ended_total");
-                let payload = Self::encode_stream_commit_notify_payload(
-                    commit.first_resource_offset,
-                    commit.last_resource_offset,
-                    commit.first_area_offset,
-                    commit.last_area_offset,
-                    commit.first_realm_offset,
-                    commit.last_realm_offset,
-                    commit.batch_size,
+                self.notify_area_batch_committed(
+                    RouteFamily::try_from(owner.key.family_id)
+                        .expect("stream family IDs originate from RouteFamily"),
+                    &owner.key.realm,
+                    &owner.key.area,
+                    &crate::domains::stream::protocol::BatchCommitted {
+                        first_area_offset: commit.first_area_offset,
+                        last_area_offset: commit.last_area_offset,
+                        first_realm_offset: commit.first_realm_offset,
+                        last_realm_offset: commit.last_realm_offset,
+                        first_global_offset: commit.first_global_offset,
+                        last_global_offset: commit.last_global_offset,
+                    },
                 );
+                let payload = Self::encode_stream_commit_notify_payload(&commit);
                 (
                     StreamClientResponseBody::Ok {
                         session_id: None,
@@ -724,7 +740,10 @@ impl StreamDomainCore {
                     true,
                 )
             }
-            Err(error) => (Self::stream_error_response(error), None, false),
+            Err(error) => {
+                self.handle_visibility_advance(meta.route_family);
+                (Self::stream_error_response(error), None, false)
+            }
         }
     }
 
@@ -753,6 +772,7 @@ impl StreamDomainCore {
             Ok(()) => {
                 self.session_owners.lock().remove(&session_id);
                 self.counter_inc("fitz_stream_append_sessions_ended_total");
+                self.handle_visibility_advance(meta.route_family);
                 (
                     StreamClientResponseBody::Ok {
                         session_id: None,
@@ -788,25 +808,13 @@ impl StreamDomainCore {
 
     fn handle_read_operation(
         &self,
-        family_id: crate::runtime::routing::RouteFamily,
-        route: &Route,
-        from_offset: u64,
-        limit: u64,
-        max_bytes: Option<usize>,
-        filter: Option<&crate::domains::stream::protocol::StreamFilterSet>,
+        request: StreamReadExecution<'_>,
     ) -> (
         StreamClientResponseBody,
         Option<(RouteFamily, Route, bytes::Bytes)>,
         bool,
     ) {
-        Self::encode_operation_result(self.encode_read_response_data(
-            family_id,
-            route,
-            from_offset,
-            limit,
-            max_bytes,
-            filter,
-        ))
+        Self::encode_operation_result(self.encode_read_response_data(request))
     }
 
     fn handle_last_operation(

@@ -16,6 +16,10 @@ fn should_return_all_realm_records_given_two_resource_batches_on_direct_sink_pat
         50,
         b"realm read event",
     );
+    // Realm watermark convergence across two areas is asynchronous; wait for
+    // it before reading, since a realm-scoped read only surfaces data up to
+    // the converged watermark.
+    wait_for_realm_watermark(&context, "bench", 99, std::time::Duration::from_secs(2));
 
     // Act
     let realm_records = context

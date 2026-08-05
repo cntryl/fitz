@@ -158,6 +158,15 @@ impl ScheduleActor {
                     total_count,
                 }
             }
+            ScheduleMessage::ListV2 { cursor, limit } => {
+                let (entries, has_more, continuation) =
+                    self.list_entries_v2(cursor.as_deref(), limit);
+                ScheduleResponse::ListPage {
+                    entries,
+                    has_more,
+                    continuation,
+                }
+            }
             ScheduleMessage::Subscribe { .. }
             | ScheduleMessage::Unsubscribe { .. }
             | ScheduleMessage::UnsubscribeAll { .. } => {

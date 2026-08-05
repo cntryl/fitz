@@ -15,7 +15,14 @@ requests. The new wildcard request form returns routed items, each beginning
 with its matched concrete route; clients choose the response decoder from the
 selector they sent. Stream READ is an intentional clean wire break: every read
 item now begins with its matched concrete route, so Stream clients must upgrade
-with the broker and there is no negotiation shim.
+with the broker and there is no negotiation shim. That routed-item generation
+remains the compatibility baseline: resource-, area-, and realm-scoped READ
+responses retain their established record and cursor layouts, and LAST retains
+its established record layout. The newly introduced global selector family
+uses a selector-specific extended READ layout that adds `global_offset`, the
+cursor integrity token, and the captured watermark. Clients select that decoder
+only after sending a global-scope selector; the broker does not insert those
+fields into existing READ or LAST responses.
 
 Stream compact area, compact realm, and compressed compact realm pages also use
 new required-route formats (`0xE5`, `0xB3`, and `0xE9`). The broker does not read

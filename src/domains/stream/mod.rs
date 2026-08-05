@@ -42,6 +42,7 @@ pub mod constants;
 pub mod events;
 pub mod metrics;
 pub mod protocol;
+pub(crate) mod route_grammar;
 pub mod sink;
 pub mod storage;
 pub mod store;
@@ -51,7 +52,9 @@ mod realm_actor;
 
 pub use actor::StreamActor;
 pub use constants::{
-    DEFAULT_LEASE_SIZE, DEFAULT_REALM_LEASE_BLOCK, INTERNAL_REALM_SEGMENT, NOTICE_DEBOUNCE_MS,
+    DEFAULT_LEASE_SIZE, DEFAULT_REALM_LEASE_BLOCK, INTERNAL_AREA_SEGMENT, INTERNAL_REALM_SEGMENT,
+    MAX_POSTING_ENTRIES_EXAMINED, MAX_POSTING_FRAGMENTS_FETCHED, MAX_READ_ITEMS,
+    MAX_WATERMARK_COORDINATORS, NOTICE_DEBOUNCE_MS,
 };
 pub use metrics::StreamMetrics;
 pub use protocol::{

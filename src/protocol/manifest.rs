@@ -417,6 +417,13 @@ pub const MESSAGE_MANIFEST: &[MessageManifestEntry] = &[
         ManifestAuthorization::MultiRouteWrite,
         ManifestDecoder::Schedule,
     ),
+    client(
+        707,
+        "schedule",
+        Some("schedule"),
+        ManifestAuthorization::WildcardRead,
+        ManifestDecoder::Schedule,
+    ),
 ];
 
 #[must_use]

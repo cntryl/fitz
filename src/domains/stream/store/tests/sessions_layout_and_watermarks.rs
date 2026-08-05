@@ -296,7 +296,7 @@ pub(super) fn should_reject_stale_resource_offset_given_session_commit() {
 }
 
 #[test]
-pub(super) fn should_reject_stale_area_offset_given_session_commit() {
+pub(super) fn should_retry_stale_area_offset_given_session_commit() {
     // Arrange
     let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
     store
@@ -327,24 +327,19 @@ pub(super) fn should_reject_stale_area_offset_given_session_commit() {
         .expect("append retry record");
 
     // Act
-    let stale = store.commit_session(1, session_id, 0, 0, 1, StreamWriteMode::Buffered);
-    let retry = store
-        .commit_session(1, session_id, 0, 1, 1, StreamWriteMode::Buffered)
-        .expect("retry with durable next area offset");
+    let committed = store
+        .commit_session(1, session_id, 0, 0, 1, StreamWriteMode::Buffered)
+        .expect("retry stale area offset internally");
 
     // Assert
-    assert_eq!(
-        stale.expect_err("stale area offset should fail"),
-        "ERR_CONCURRENCY_CONFLICT"
-    );
-    assert_eq!(retry.first_resource_offset, 0);
-    assert_eq!(retry.first_area_offset, 1);
-    assert_eq!(retry.first_realm_offset, 1);
+    assert_eq!(committed.first_resource_offset, 0);
+    assert_eq!(committed.first_area_offset, 1);
+    assert_eq!(committed.first_realm_offset, 1);
     assert_eq!(store.session_event_count(session_id), None);
 }
 
 #[test]
-pub(super) fn should_reject_stale_realm_offset_given_session_commit() {
+pub(super) fn should_retry_stale_realm_offset_given_session_commit() {
     // Arrange
     let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
     store
@@ -375,19 +370,14 @@ pub(super) fn should_reject_stale_realm_offset_given_session_commit() {
         .expect("append retry record");
 
     // Act
-    let stale = store.commit_session(1, session_id, 0, 0, 0, StreamWriteMode::Buffered);
-    let retry = store
-        .commit_session(1, session_id, 0, 0, 1, StreamWriteMode::Buffered)
-        .expect("retry with durable next realm offset");
+    let committed = store
+        .commit_session(1, session_id, 0, 0, 0, StreamWriteMode::Buffered)
+        .expect("retry stale realm offset internally");
 
     // Assert
-    assert_eq!(
-        stale.expect_err("stale realm offset should fail"),
-        "ERR_CONCURRENCY_CONFLICT"
-    );
-    assert_eq!(retry.first_resource_offset, 0);
-    assert_eq!(retry.first_area_offset, 0);
-    assert_eq!(retry.first_realm_offset, 1);
+    assert_eq!(committed.first_resource_offset, 0);
+    assert_eq!(committed.first_area_offset, 0);
+    assert_eq!(committed.first_realm_offset, 1);
     assert_eq!(store.session_event_count(session_id), None);
 }
 
@@ -586,7 +576,7 @@ pub(super) fn should_persist_promotion_frontier_stream_layout_marker_given_first
     );
     assert!(read_layout_marker_bytes(db.as_ref(), 1)
         .expect("fresh store layout marker")
-        .starts_with(&[0, 0xD2]));
+        .starts_with(&[0, 0xD3]));
 }
 
 #[test]
@@ -864,7 +854,7 @@ pub(super) fn should_preserve_area_watermark_given_lower_value_update() {
 }
 
 #[test]
-pub(super) fn should_preserve_area_watermark_given_lower_value_than_derived_committed_watermark() {
+pub(super) fn should_not_hide_committed_area_records_behind_stale_persisted_watermark() {
     // Arrange
     let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
     let events = vec![
@@ -895,7 +885,7 @@ pub(super) fn should_preserve_area_watermark_given_lower_value_than_derived_comm
     // Act
     store
         .set_watermark(1, "test", "events", 0)
-        .expect("lower area watermark should no-op");
+        .expect("first explicit area watermark should persist");
 
     // Assert
     assert_eq!(
@@ -903,6 +893,12 @@ pub(super) fn should_preserve_area_watermark_given_lower_value_than_derived_comm
             .get_watermark(1, "test", "events")
             .expect("read area watermark"),
         1
+    );
+    assert_eq!(
+        store
+            .get_persisted_area_watermark(1, "test", "events")
+            .expect("read persisted area watermark"),
+        Some(0)
     );
 }
 

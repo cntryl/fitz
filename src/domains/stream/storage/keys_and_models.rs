@@ -32,6 +32,16 @@ pub enum KeyPrefix {
     AreaDiscriminator = 0x10,
     /// Realm discriminator sidecar: [RF][realm][`realm_offset`]
     RealmDiscriminator = 0x11,
+    /// Family-global allocation head.
+    GlobalCounter = 0x12,
+    /// Family-global contiguous visibility frontier.
+    GlobalWatermark = 0x13,
+    /// Family-global discriminator sidecar.
+    GlobalDiscriminator = 0x14,
+    /// Durable per-family cursor integrity/version state.
+    CursorState = 0x16,
+    /// Durable generation fencing pre-recovery writers.
+    FamilyWriterEpoch = 0x15,
     /// Prototype canonical resource row for storage redesign research: [`stream_id`][resource_offset]
     CanonicalResource = 0x0B,
     /// Prototype area locator row for storage redesign research: [RF][realm][area][area_offset]
@@ -46,6 +56,16 @@ pub enum KeyPrefix {
     CompressedCompactRealmPage = 0xE8,
     /// Promotion-frontier exact-resource mini-page row: [realm][area][resource][page_start_resource_offset]
     CompactResourcePage = 0xEA,
+    /// Immutable family-global commit fragment.
+    CompactGlobalPage = 0xEB,
+    /// Realm offsets for one resource name across a realm.
+    RealmResourcePostingPage = 0xEC,
+    /// Global offsets for one area name across all realms.
+    GlobalAreaPostingPage = 0xED,
+    /// Global offsets for one resource name across all realms and areas.
+    GlobalResourcePostingPage = 0xEE,
+    /// Global offsets for one area/resource pair across all realms.
+    GlobalAreaResourcePostingPage = 0xEF,
 }
 
 pub(super) fn stream_kind_encoder(
@@ -58,6 +78,97 @@ pub(super) fn stream_kind_encoder(
 
 pub(super) fn stream_kind_key(realm: &str, kind: KeyPrefix, extra_capacity: usize) -> Vec<u8> {
     stream_kind_encoder(realm, kind, extra_capacity).into_vec()
+}
+
+const FAMILY_SCOPE_REALM: &str = "";
+
+#[must_use]
+pub fn encode_global_counter_key() -> Vec<u8> {
+    stream_kind_key(FAMILY_SCOPE_REALM, KeyPrefix::GlobalCounter, 0)
+}
+
+#[must_use]
+pub fn encode_global_watermark_key() -> Vec<u8> {
+    stream_kind_key(FAMILY_SCOPE_REALM, KeyPrefix::GlobalWatermark, 0)
+}
+
+#[must_use]
+pub fn encode_global_discriminator_key(global_offset: u64) -> Vec<u8> {
+    let mut encoder = stream_kind_encoder(FAMILY_SCOPE_REALM, KeyPrefix::GlobalDiscriminator, 8);
+    encoder.encode_u64_into(global_offset);
+    encoder.into_vec()
+}
+
+#[must_use]
+pub fn encode_family_writer_epoch_key() -> Vec<u8> {
+    stream_kind_key(FAMILY_SCOPE_REALM, KeyPrefix::FamilyWriterEpoch, 0)
+}
+
+#[must_use]
+pub fn encode_cursor_state_key() -> Vec<u8> {
+    stream_kind_key(FAMILY_SCOPE_REALM, KeyPrefix::CursorState, 0)
+}
+
+#[must_use]
+pub fn encode_compact_global_page_key(first_global_offset: u64) -> Vec<u8> {
+    let mut encoder = stream_kind_encoder(FAMILY_SCOPE_REALM, KeyPrefix::CompactGlobalPage, 16);
+    encoder.encode_u64_into(first_global_offset / 64 * 64);
+    encoder.encode_u64_into(first_global_offset);
+    encoder.into_vec()
+}
+
+fn encode_posting_key(realm: &str, kind: KeyPrefix, segments: &[&str], offset: u64) -> Vec<u8> {
+    let capacity = segments
+        .iter()
+        .map(|segment| segment.len() + 2)
+        .sum::<usize>()
+        + 8;
+    let mut encoder = stream_kind_encoder(realm, kind, capacity);
+    for segment in segments {
+        storage_key::encode_segment_into(&mut encoder, segment);
+    }
+    encoder.encode_u64_into(offset);
+    encoder.into_vec()
+}
+
+#[must_use]
+pub fn encode_realm_resource_posting_key(realm: &str, resource: &str, offset: u64) -> Vec<u8> {
+    encode_posting_key(
+        realm,
+        KeyPrefix::RealmResourcePostingPage,
+        &[resource],
+        offset,
+    )
+}
+
+#[must_use]
+pub fn encode_global_area_posting_key(area: &str, offset: u64) -> Vec<u8> {
+    encode_posting_key(
+        FAMILY_SCOPE_REALM,
+        KeyPrefix::GlobalAreaPostingPage,
+        &[area],
+        offset,
+    )
+}
+
+#[must_use]
+pub fn encode_global_resource_posting_key(resource: &str, offset: u64) -> Vec<u8> {
+    encode_posting_key(
+        FAMILY_SCOPE_REALM,
+        KeyPrefix::GlobalResourcePostingPage,
+        &[resource],
+        offset,
+    )
+}
+
+#[must_use]
+pub fn encode_global_area_resource_posting_key(area: &str, resource: &str, offset: u64) -> Vec<u8> {
+    encode_posting_key(
+        FAMILY_SCOPE_REALM,
+        KeyPrefix::GlobalAreaResourcePostingPage,
+        &[area, resource],
+        offset,
+    )
 }
 
 #[must_use]
@@ -455,6 +566,36 @@ pub struct CompressedCompactRealmPageValue {
     pub records: Vec<CompactRealmPageRecord>,
 }
 
+#[derive(Debug, Clone)]
+pub struct CompactGlobalPageRecord {
+    pub realm: String,
+    pub area: String,
+    pub resource: String,
+    pub resource_offset: u64,
+    pub area_offset: u64,
+    pub realm_offset: u64,
+    pub body: Bytes,
+    pub metadata: Option<Bytes>,
+    pub created_at: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompactGlobalPageValue {
+    pub records: Vec<CompactGlobalPageRecord>,
+}
+
+/// Sparse immutable fragment referencing offsets in a parent ordering scope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PostingPageValue {
+    pub entries: Vec<PostingEntry>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PostingEntry {
+    pub offset: u64,
+    pub parent_fragment_start: u64,
+}
+
 pub(super) const AREA_VALUE_V2_MARKER: [u8; 2] = [0, 0xA1];
 pub(super) const REALM_VALUE_V2_MARKER: [u8; 2] = [0, 0xB1];
 pub(super) const COMPACT_REALM_PAGE_VALUE_V2_MARKER: [u8; 2] = [0, 0xB3];
@@ -463,10 +604,12 @@ pub(super) const CANONICAL_RESOURCE_VALUE_V1_MARKER: [u8; 2] = [0, 0xC1];
 pub(super) const AREA_LOCATOR_VALUE_V1_MARKER: [u8; 2] = [0, 0xC2];
 pub(super) const REALM_LOCATOR_VALUE_V1_MARKER: [u8; 2] = [0, 0xC3];
 pub(super) const STREAM_LAYOUT_MARKER_VALUE_V1_MARKER: [u8; 2] = [0, 0xD1];
-pub(super) const STREAM_LAYOUT_MARKER_VALUE_V2_MARKER: [u8; 2] = [0, 0xD2];
+pub(super) const STREAM_LAYOUT_MARKER_VALUE_V2_MARKER: [u8; 2] = [0, 0xD3];
 pub(super) const COMPACT_AREA_PAGE_VALUE_V2_MARKER: [u8; 2] = [0, 0xE5];
 pub(super) const COMPRESSED_COMPACT_REALM_PAGE_VALUE_V2_MARKER: [u8; 2] = [0, 0xE9];
 pub(super) const COMPACT_RESOURCE_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xEA];
+pub(super) const COMPACT_GLOBAL_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xEB];
+pub const GLOBAL_PAGE_RECORD_LIMIT: u64 = 64;
 pub(super) const OPTIONAL_BYTES_ABSENT: u32 = u32::MAX;
 pub(super) const OPTIONAL_OFFSET_ABSENT: u64 = u64::MAX;
 

@@ -1,7 +1,7 @@
-//! Realm actor: mints realm-level offsets and aggregates watermarks
+//! Realm actor: mints realm-level offsets and tracks the realm watermark
 
 use bytes::Bytes;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::prelude::Actor;
@@ -13,15 +13,21 @@ use super::constants::{NOTICE_DEBOUNCE_MS, WATERMARK_PERSIST_RETRY_MS};
 use super::protocol::{LeaseGranted, StreamCoordinationMessage};
 use super::store::StreamStore;
 
-/// `RealmActor` coordinates realm-level offsets and aggregates watermarks
+/// `RealmActor` coordinates realm-level offsets and tracks the realm watermark
 ///
 /// Responsibilities:
 /// - Mint realm offset leases for `AreaActors`
-/// - Track area watermarks
-/// - Calculate realm watermark (minimum of all area watermarks)
-#[allow(dead_code)]
+/// - Track committed realm-wide ranges from `BatchCommitted` notifications
+/// - Calculate and advance the realm watermark (highest contiguous
+///   *realm-wide* offset), mirroring `AreaActor`'s own contiguous-range
+///   algorithm but over the realm-wide offset space rather than area-local.
+///
+/// Realm-wide offsets are assigned by one counter shared across every area in
+/// the realm, so the realm watermark cannot be derived by aggregating each
+/// area's own area-local watermark (those are a different, incomparable
+/// numbering space) — it must track realm-wide contiguity directly, the same
+/// way `AreaActor` tracks area-local contiguity.
 pub struct RealmActor {
-    #[allow(dead_code)]
     family_id: RouteFamily,
 
     /// Realm identity
@@ -33,15 +39,18 @@ pub struct RealmActor {
     /// Next realm offset to assign
     next_realm_offset: u64,
 
-    /// Area watermarks (for realm watermark calculation)
-    /// Key: area name, Value: watermark
-    area_watermarks: HashMap<String, u64>,
-
-    /// Realm watermark (minimum of all observed area watermarks).
+    /// Realm watermark (highest contiguous committed realm-wide offset).
     ///
-    /// `None` means no area has reported a committed watermark yet. Offset 0 is
-    /// a valid committed watermark because realm offsets are minted from zero.
+    /// `None` means no offset has committed yet. Offset 0 is a valid
+    /// committed watermark because realm offsets are minted from zero.
     realm_watermark: Option<u64>,
+
+    /// Whether the durable realm watermark was loaded successfully.
+    watermark_initialized: bool,
+
+    /// Committed realm-wide ranges from `BatchCommitted` (for watermark
+    /// calculation). Key: `first_realm_offset`, Value: `last_realm_offset`.
+    committed_ranges: BTreeMap<u64, u64>,
 
     /// Debounce timer id for realm watermark notification
     notification_timer: Option<crate::runtime::context::TimerId>,
@@ -53,16 +62,31 @@ pub struct RealmActor {
     watermark_retry_timer: Option<crate::runtime::context::TimerId>,
 }
 
-#[allow(dead_code)]
 impl RealmActor {
     pub fn new(family_id: RouteFamily, realm: String, store: Arc<StreamStore>) -> Self {
+        let (realm_watermark, watermark_initialized) =
+            match store.get_persisted_realm_watermark(family_id.as_u64(), &realm) {
+                Ok(watermark) => (watermark, true),
+                Err(error) => {
+                    tracing::warn!(
+                        domain = "stream",
+                        route_family = family_id.id(),
+                        realm = realm.as_str(),
+                        error = %error,
+                        "Stream realm watermark actor initialization failed"
+                    );
+                    (None, false)
+                }
+            };
+
         Self {
             family_id,
             realm,
             store,
             next_realm_offset: 0,
-            area_watermarks: HashMap::new(),
-            realm_watermark: None,
+            realm_watermark,
+            watermark_initialized,
+            committed_ranges: BTreeMap::new(),
             notification_timer: None,
             pending_publish: None,
             watermark_retry_timer: None,
@@ -83,31 +107,46 @@ impl RealmActor {
         }
     }
 
-    /// Handle `AreaWatermarkAdvanced` from `AreaActor`
-    fn handle_area_watermark_advanced(
+    /// Handle `BatchCommitted` from `StreamActor`
+    fn handle_batch_committed(
         &mut self,
-        area: String,
-        watermark: u64,
+        first_realm_offset: u64,
+        last_realm_offset: u64,
         ctx: &mut Context<Self>,
     ) {
-        // Update area watermark
-        self.area_watermarks.insert(area, watermark);
+        self.committed_ranges
+            .insert(first_realm_offset, last_realm_offset);
 
         self.flush_candidate_watermark(ctx);
     }
 
-    /// Compute the next visible realm watermark candidate without mutating the
-    /// current persisted view.
+    /// Compute the highest contiguous watermark candidate without mutating
+    /// the currently visible watermark.
     fn candidate_watermark(&self) -> Option<u64> {
-        let candidate = self.area_watermarks.values().copied().min()?;
-        match self.realm_watermark {
-            None => Some(candidate),
-            Some(current) if candidate > current => Some(candidate),
-            Some(_) => None,
+        let mut candidate = self.realm_watermark;
+        let mut next_offset = self
+            .realm_watermark
+            .map_or(Some(0), |watermark| watermark.checked_add(1))?;
+
+        while let Some(last_offset) = self.committed_ranges.get(&next_offset).copied() {
+            candidate = Some(last_offset);
+            let Some(following_offset) = last_offset.checked_add(1) else {
+                break;
+            };
+            next_offset = following_offset;
+        }
+
+        match candidate {
+            Some(candidate) if Some(candidate) != self.realm_watermark => Some(candidate),
+            _ => None,
         }
     }
 
     fn flush_candidate_watermark(&mut self, ctx: &mut Context<Self>) {
+        if !self.ensure_watermark_initialized(ctx) {
+            return;
+        }
+
         let Some(candidate_watermark) = self.candidate_watermark() else {
             return;
         };
@@ -132,9 +171,39 @@ impl RealmActor {
         }
     }
 
+    fn ensure_watermark_initialized(&mut self, ctx: &mut Context<Self>) -> bool {
+        if self.watermark_initialized {
+            return true;
+        }
+
+        match self
+            .store
+            .get_persisted_realm_watermark(self.family_id.as_u64(), &self.realm)
+        {
+            Ok(watermark) => {
+                self.realm_watermark = watermark;
+                self.watermark_initialized = true;
+                true
+            }
+            Err(error) => {
+                tracing::warn!(
+                    domain = "stream",
+                    route_family = self.family_id.id(),
+                    realm = self.realm.as_str(),
+                    error = %error,
+                    "Stream realm watermark actor initialization retry failed"
+                );
+                self.schedule_watermark_retry(ctx);
+                false
+            }
+        }
+    }
+
     fn apply_persisted_watermark(&mut self, current_watermark: u64, ctx: &mut Context<Self>) {
         let previous_watermark = self.realm_watermark.unwrap_or(0);
         self.realm_watermark = Some(current_watermark);
+        self.committed_ranges
+            .retain(|_, last_offset| *last_offset > current_watermark);
 
         if let Some(timer_id) = self.watermark_retry_timer.take() {
             let _ = ctx.timer_manager().cancel(timer_id);
@@ -174,14 +243,18 @@ impl RealmActor {
     }
 
     /// Get current realm watermark (for testing)
+    #[cfg(test)]
     pub fn watermark(&self) -> u64 {
         self.realm_watermark.unwrap_or(0)
     }
 
-    /// Get area watermarks (for testing)
+    /// Get committed ranges (for testing)
     #[cfg(test)]
-    pub fn area_watermarks(&self) -> &HashMap<String, u64> {
-        &self.area_watermarks
+    pub fn committed_ranges(&self) -> Vec<std::ops::RangeInclusive<u64>> {
+        self.committed_ranges
+            .iter()
+            .map(|(&first, &last)| first..=last)
+            .collect()
     }
 }
 
@@ -193,12 +266,15 @@ impl Actor for RealmActor {
             StreamCoordinationMessage::RequestRealmLease { count, .. } => {
                 let _ = self.handle_request_realm_lease(count, ctx);
             }
-            StreamCoordinationMessage::AreaWatermarkAdvanced(adv) => {
-                self.handle_area_watermark_advanced(adv.area, adv.watermark, ctx);
+            StreamCoordinationMessage::BatchCommitted(commit) => {
+                self.handle_batch_committed(
+                    commit.first_realm_offset,
+                    commit.last_realm_offset,
+                    ctx,
+                );
             }
             StreamCoordinationMessage::RequestLease { .. }
-            | StreamCoordinationMessage::LeaseGranted { .. }
-            | StreamCoordinationMessage::BatchCommitted(_) => {}
+            | StreamCoordinationMessage::LeaseGranted { .. } => {}
         }
     }
 
@@ -224,7 +300,9 @@ mod tests {
     use crate::runtime::routing::{Route, RouteAddress};
     use crate::runtime::Mailbox;
 
-    fn make_test_actor() -> (RealmActor, Context<RealmActor>) {
+    fn make_test_actor_with_watermark(
+        persisted_watermark: Option<u64>,
+    ) -> (RealmActor, Context<RealmActor>) {
         let router = Arc::new(crate::runtime::router::Router::new());
         let family = RouteFamily::new(0);
         let addr = RouteAddress::new(family, Route::new("stream://realm1/__realm__"));
@@ -237,9 +315,18 @@ mod tests {
             .expect("Failed to open store"),
         );
         let store = Arc::new(StreamStore::new(db));
+        if let Some(watermark) = persisted_watermark {
+            store
+                .set_realm_watermark(family.as_u64(), "realm1", watermark)
+                .expect("persist realm watermark");
+        }
         let actor = RealmActor::new(family, "realm1".to_string(), store);
         let ctx = Context::new(addr, router);
         (actor, ctx)
+    }
+
+    fn make_test_actor() -> (RealmActor, Context<RealmActor>) {
+        make_test_actor_with_watermark(None)
     }
 
     fn make_test_actor_with_stream_mailbox() -> (RealmActor, Context<RealmActor>, Arc<Mailbox>) {
@@ -294,111 +381,102 @@ mod tests {
     }
 
     #[test]
-    fn should_calculate_realm_watermark_as_minimum() {
+    fn should_advance_watermark_on_contiguous_commit() {
         // Arrange
         let (mut actor, mut ctx) = make_test_actor();
 
         // Act
-        actor.handle_area_watermark_advanced("area2".to_string(), 50, &mut ctx);
-        actor.handle_area_watermark_advanced("area1".to_string(), 100, &mut ctx);
-        actor.handle_area_watermark_advanced("area3".to_string(), 75, &mut ctx);
+        actor.handle_batch_committed(0, 3, &mut ctx);
 
         // Assert
-        assert_eq!(actor.watermark(), 50); // Minimum of all areas
+        assert_eq!(actor.watermark(), 3);
     }
 
     #[test]
-    fn should_update_realm_watermark_when_minimum_advances() {
+    fn should_advance_from_persisted_watermark_after_restart() {
         // Arrange
-        let (mut actor, mut ctx) = make_test_actor();
+        let (mut actor, mut ctx) = make_test_actor_with_watermark(Some(5));
 
         // Act
-        actor.handle_area_watermark_advanced("area2".to_string(), 50, &mut ctx);
-        actor.handle_area_watermark_advanced("area1".to_string(), 100, &mut ctx);
+        actor.handle_batch_committed(6, 6, &mut ctx);
 
         // Assert
-        assert_eq!(actor.watermark(), 50);
-
-        // Advance area2 (the minimum)
-        actor.handle_area_watermark_advanced("area2".to_string(), 75, &mut ctx);
-
-        // Assert
-        assert_eq!(actor.watermark(), 75); // Now advances to 75
+        assert_eq!(actor.realm_watermark, Some(6));
+        assert!(actor.committed_ranges().is_empty());
     }
 
     #[test]
-    fn should_record_first_realm_watermark_at_offset_zero() {
+    fn should_advance_watermark_given_first_committed_offset_zero() {
         // Arrange
         let (mut actor, mut ctx) = make_test_actor();
 
         // Act
-        actor.handle_area_watermark_advanced("area1".to_string(), 0, &mut ctx);
+        actor.handle_batch_committed(0, 0, &mut ctx);
 
         // Assert
         assert_eq!(actor.realm_watermark, Some(0));
         assert_eq!(actor.watermark(), 0);
+        assert!(actor.committed_ranges().is_empty());
     }
 
     #[test]
-    fn should_not_regress_realm_watermark_given_new_lower_area() {
-        // Arrange
-        let (mut actor, mut ctx) = make_test_actor();
-        actor.handle_area_watermark_advanced("area1".to_string(), 100, &mut ctx);
-
-        // Act
-        actor.handle_area_watermark_advanced("area2".to_string(), 50, &mut ctx);
-
-        // Assert
-        assert_eq!(actor.watermark(), 100);
-        assert_eq!(*actor.area_watermarks().get("area2").expect("area2"), 50);
-    }
-
-    #[test]
-    fn should_not_advance_realm_watermark_if_not_minimum() {
+    fn should_not_advance_watermark_with_gap() {
         // Arrange
         let (mut actor, mut ctx) = make_test_actor();
 
         // Act
-        actor.handle_area_watermark_advanced("area1".to_string(), 50, &mut ctx);
-        actor.handle_area_watermark_advanced("area2".to_string(), 100, &mut ctx);
+        actor.handle_batch_committed(0, 3, &mut ctx);
+        actor.handle_batch_committed(6, 8, &mut ctx); // Gap at 4-5 (e.g. a
+                                                      // different area's
+                                                      // commit still
+                                                      // in-flight)
 
         // Assert
-        assert_eq!(actor.watermark(), 50);
-
-        // Advance area2 (not the minimum)
-        actor.handle_area_watermark_advanced("area2".to_string(), 150, &mut ctx);
-
-        // Assert
-        assert_eq!(actor.watermark(), 50); // Still 50, unchanged
+        assert_eq!(actor.watermark(), 3); // Stuck at 3 due to gap
     }
 
     #[test]
-    fn should_track_multiple_area_watermarks() {
+    fn should_advance_watermark_when_gap_filled() {
         // Arrange
         let (mut actor, mut ctx) = make_test_actor();
 
-        // Act
-        actor.handle_area_watermark_advanced("area1".to_string(), 10, &mut ctx);
-        actor.handle_area_watermark_advanced("area2".to_string(), 20, &mut ctx);
-        actor.handle_area_watermark_advanced("area3".to_string(), 15, &mut ctx);
+        // Act - Create gap then fill it
+        actor.handle_batch_committed(0, 3, &mut ctx);
+        actor.handle_batch_committed(6, 8, &mut ctx);
+        actor.handle_batch_committed(4, 5, &mut ctx); // Fill gap
 
         // Assert
-        assert_eq!(actor.area_watermarks().len(), 3);
-        assert_eq!(*actor.area_watermarks().get("area1").unwrap(), 10);
-        assert_eq!(*actor.area_watermarks().get("area2").unwrap(), 20);
-        assert_eq!(*actor.area_watermarks().get("area3").unwrap(), 15);
+        assert_eq!(actor.watermark(), 8); // Now advanced to 8
     }
 
     #[test]
-    fn should_handle_single_area() {
+    fn should_clean_up_consumed_ranges() {
         // Arrange
         let (mut actor, mut ctx) = make_test_actor();
 
-        // Act
-        actor.handle_area_watermark_advanced("area1".to_string(), 100, &mut ctx);
+        // Act - Commit contiguous ranges from two different areas sharing
+        // this realm's offset space
+        actor.handle_batch_committed(0, 3, &mut ctx);
+        actor.handle_batch_committed(4, 6, &mut ctx);
 
         // Assert
-        assert_eq!(actor.watermark(), 100); // Single area, watermark equals area watermark
+        assert_eq!(actor.watermark(), 6);
+        assert_eq!(actor.committed_ranges().len(), 0); // All consumed
+    }
+
+    #[test]
+    fn should_buffer_out_of_order_ranges() {
+        // Arrange
+        let (mut actor, mut ctx) = make_test_actor();
+
+        // Act - Commit in reverse order
+        actor.handle_batch_committed(11, 13, &mut ctx);
+        actor.handle_batch_committed(6, 8, &mut ctx);
+        actor.handle_batch_committed(0, 3, &mut ctx);
+
+        // Assert
+        assert_eq!(actor.watermark(), 3);
+        assert!(!actor.committed_ranges().is_empty()); // Buffered future ranges
     }
 
     #[test]
@@ -408,7 +486,7 @@ mod tests {
         StreamStore::fail_next_realm_watermark_persist_for_tests();
 
         // Act
-        actor.handle_area_watermark_advanced("area1".to_string(), 3, &mut ctx);
+        actor.handle_batch_committed(0, 3, &mut ctx);
 
         // Assert
         assert_eq!(actor.realm_watermark, None);
@@ -438,7 +516,6 @@ mod tests {
         );
         assert_eq!(actor.realm_watermark, Some(3));
         assert!(actor.watermark_retry_timer.is_none());
-        assert!(stream_mailbox.receiver().try_recv().is_err());
 
         // Act
         let notification_timer = actor

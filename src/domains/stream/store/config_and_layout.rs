@@ -1,10 +1,11 @@
 use super::{
-    decode_staging_value, encode_stream_layout_marker_key, AreaCounterValue, AreaLocatorValue,
-    AreaValue, BatchLimits, CanonicalResourceValue, CompactAreaPageValue, CompactResourcePageValue,
+    decode_staging_value, encode_cursor_state_key, encode_stream_layout_marker_key,
+    AreaCounterValue, AreaLocatorValue, AreaValue, BatchLimits, CanonicalResourceValue,
+    CompactAreaPageValue, CompactGlobalPageValue, CompactResourcePageValue,
     CompressedCompactRealmPageValue, KeyPrefix, LayoutActivationFailure, OffsetCounterValue,
-    RealmCounterValue, RealmLocatorValue, RealmValue, ResourceMetaValue, ResourceValue,
-    StreamLayoutMarkerValue, StreamStorageLayout, StreamStore, StreamTTL, WatermarkValue,
-    REALM_PAGE_RECORD_LIMIT,
+    PostingPageValue, RealmCounterValue, RealmLocatorValue, RealmValue, ResourceMetaValue,
+    ResourceValue, StreamLayoutMarkerValue, StreamStorageLayout, StreamStore, StreamTTL,
+    WatermarkValue, REALM_PAGE_RECORD_LIMIT,
 };
 use parking_lot::Mutex;
 use std::{collections::HashMap, sync::Arc};
@@ -107,8 +108,14 @@ impl StreamStore {
             sequencing_guards: Arc::new(Mutex::new(HashMap::new())),
             realm_sequence_states: Arc::new(Mutex::new(HashMap::new())),
             resource_meta_states: Arc::new(Mutex::new(HashMap::new())),
+            family_sequence_guards: Arc::new(Mutex::new(HashMap::new())),
+            global_completion_states: Arc::new(Mutex::new(HashMap::new())),
+            recovered_global_families: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            pending_global_reservations: Arc::new(Mutex::new(HashMap::new())),
             #[cfg(test)]
             fail_next_promotion_frontier_commit: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            fence_next_global_reservation: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -229,6 +236,10 @@ impl StreamStore {
             return Err(("empty_key", "stream key suffix is empty".to_string()));
         };
 
+        Self::validate_domain_row(prefix, value)
+    }
+
+    fn validate_domain_row(prefix: u8, value: &[u8]) -> Result<(), (&'static str, String)> {
         match prefix {
             prefix if prefix == KeyPrefix::Resource as u8 => ResourceValue::try_decode(value)
                 .map(|_| ())
@@ -285,12 +296,52 @@ impl StreamStore {
                     .map(|_| ())
                     .map_err(|error| ("compact_resource_page", error))
             }
+            prefix if prefix == KeyPrefix::CompactGlobalPage as u8 => {
+                CompactGlobalPageValue::try_decode(value)
+                    .map(|_| ())
+                    .map_err(|error| ("compact_global_page", error))
+            }
+            prefix
+                if [
+                    KeyPrefix::RealmResourcePostingPage as u8,
+                    KeyPrefix::GlobalAreaPostingPage as u8,
+                    KeyPrefix::GlobalResourcePostingPage as u8,
+                    KeyPrefix::GlobalAreaResourcePostingPage as u8,
+                ]
+                .contains(&prefix) =>
+            {
+                PostingPageValue::try_decode(value)
+                    .map(|_| ())
+                    .map_err(|error| ("posting_page", error))
+            }
+            prefix
+                if prefix == KeyPrefix::GlobalCounter as u8
+                    || prefix == KeyPrefix::FamilyWriterEpoch as u8 =>
+            {
+                RealmCounterValue::decode(value)
+                    .map(|_| ())
+                    .map_err(|error| ("global_counter_or_epoch", error))
+            }
+            prefix if prefix == KeyPrefix::GlobalWatermark as u8 => WatermarkValue::decode(value)
+                .map(|_| ())
+                .map_err(|error| ("global_watermark", error)),
+            prefix if prefix == KeyPrefix::CursorState as u8 => {
+                if value.len() == 2 && value[0] == 1 {
+                    Ok(())
+                } else {
+                    Err((
+                        "cursor_state",
+                        "invalid cursor state version or budget".to_string(),
+                    ))
+                }
+            }
             _ => Ok(()),
         }
     }
 
     pub(super) fn ensure_layout_activation_for_family(&self, family: u64) -> Result<(), String> {
-        self.inspect_and_activate_layout_for_family(family)
+        self.inspect_and_activate_layout_for_family(family)?;
+        self.recover_global_ordering_once(family)
     }
 
     pub(super) fn inspect_and_activate_layout_for_family(&self, family: u64) -> Result<(), String> {
@@ -328,6 +379,7 @@ impl StreamStore {
                 ));
             }
 
+            Self::ensure_cursor_state(&self.db, family, self.sync_write_options)?;
             return Ok(());
         }
 
@@ -346,6 +398,39 @@ impl StreamStore {
         txn.commit(self.sync_write_options)
             .map_err(|e| LayoutActivationFailure::Other(format!("midge commit error: {e:?}")))?;
 
+        Self::ensure_cursor_state(&self.db, family, self.sync_write_options)?;
+
+        Ok(())
+    }
+
+    fn ensure_cursor_state(
+        db: &crate::storage::FitzStorageEngine,
+        family: u64,
+        write_options: cntryl_midge::WriteOptions,
+    ) -> Result<(), LayoutActivationFailure> {
+        let mut txn = db
+            .begin_tx(
+                u64_to_u32_saturating(family),
+                cntryl_midge::TransactionMode::ReadWrite,
+            )
+            .map_err(|error| {
+                LayoutActivationFailure::Other(format!("cursor tx failed: {error:?}"))
+            })?;
+        let key = encode_cursor_state_key();
+        if txn
+            .get(&key)
+            .map_err(|error| {
+                LayoutActivationFailure::Other(format!("cursor read failed: {error:?}"))
+            })?
+            .is_none()
+        {
+            txn.put(key, vec![1, 1], None).map_err(|error| {
+                LayoutActivationFailure::Other(format!("cursor write failed: {error:?}"))
+            })?;
+            txn.commit(write_options).map_err(|error| {
+                LayoutActivationFailure::Other(format!("cursor commit failed: {error:?}"))
+            })?;
+        }
         Ok(())
     }
 
@@ -366,6 +451,15 @@ impl StreamStore {
             KeyPrefix::CompactAreaPage as u8,
             KeyPrefix::CompressedCompactRealmPage as u8,
             KeyPrefix::CompactResourcePage as u8,
+            KeyPrefix::GlobalCounter as u8,
+            KeyPrefix::GlobalWatermark as u8,
+            KeyPrefix::GlobalDiscriminator as u8,
+            KeyPrefix::FamilyWriterEpoch as u8,
+            KeyPrefix::CompactGlobalPage as u8,
+            KeyPrefix::RealmResourcePostingPage as u8,
+            KeyPrefix::GlobalAreaPostingPage as u8,
+            KeyPrefix::GlobalResourcePostingPage as u8,
+            KeyPrefix::GlobalAreaResourcePostingPage as u8,
         ];
 
         let query = cntryl_midge::Query::new();

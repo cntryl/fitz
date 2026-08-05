@@ -125,6 +125,19 @@ impl QueueDomainCore {
         keys
     }
 
+    pub(in crate::domains::queue::sink) fn matching_queue_key_count(
+        &self,
+        family: crate::runtime::routing::RouteFamily,
+        pattern: &crate::runtime::matcher::Pattern,
+    ) -> usize {
+        self.known_queue_keys
+            .lock()
+            .iter()
+            .filter(|key| key.family == family)
+            .filter(|key| pattern.matches(&Self::queue_ready_route(key)))
+            .count()
+    }
+
     pub(in crate::domains::queue::sink) fn inventory_existing_queue_keys(
         store: &crate::storage::FitzStorageEngine,
     ) -> Result<HashSet<crate::domains::queue::QueueKey>, String> {

@@ -1,11 +1,12 @@
 use super::model::{
     route_triplet, AdminStreamReadRequest, AdminStreamReadRequestOwned, Arc, AtomicBool, AtomicU64,
-    BTreeMap, Envelope, HashMap, Mutex, Ordering, PayloadEncoder, ReadResponse, Route,
-    RouteAddress, RouteFamily, Router, StreamActor, StreamActorKey, StreamAdminReadCommand,
-    StreamAdminRecord, StreamAreaSnapshot, StreamClientResponseBody, StreamDomainActor,
-    StreamDomainCommand, StreamDomainCore, StreamDomainRuntime, StreamDomainSink,
-    StreamFilteredReason, StreamLiveCounts, StreamMetadata, StreamMetrics, StreamReadItem,
-    StreamRealmSnapshot, StreamRecord, StreamStorageLayout, StreamStore,
+    BTreeMap, Envelope, HashMap, Mutex, Ordering, PayloadEncoder, PendingStreamNotification,
+    ReadResponse, ReadyStreamNotification, Route, RouteAddress, RouteFamily, Router, StreamActor,
+    StreamActorKey, StreamAdminReadCommand, StreamAdminRecord, StreamAreaSnapshot,
+    StreamClientResponseBody, StreamDomainActor, StreamDomainCommand, StreamDomainCore,
+    StreamDomainRuntime, StreamDomainSink, StreamFilteredReason, StreamLiveCounts, StreamMetadata,
+    StreamMetrics, StreamNotificationTarget, StreamReadExecution, StreamReadItem,
+    StreamRealmSnapshot, StreamRecord, StreamStorageLayout, StreamStore, StreamVisibilityFrontier,
 };
 #[cfg(test)]
 use crate::dispatch::protocol::FrameContext;
@@ -126,7 +127,11 @@ impl StreamDomainSink {
         );
         stream_store.ensure_layout_activation_for_existing_families()?;
         stream_store.validate_persisted_state_for_existing_families()?;
+        let mut cursor_integrity_key = [0u8; 32];
+        getrandom::fill(&mut cursor_integrity_key)
+            .map_err(|error| format!("generate Stream cursor integrity key failed: {error}"))?;
 
+        let router_for_watermark_actors = router.clone();
         let core = Arc::new(StreamDomainCore {
             stream_store,
             store,
@@ -135,6 +140,8 @@ impl StreamDomainSink {
             families: Mutex::new(HashMap::new()),
             next_sub_id: Arc::new(AtomicU64::new(1)),
             next_session_id: Arc::new(AtomicU64::new(1)),
+            cursor_integrity_key: Arc::new(cursor_integrity_key),
+            pending_notifications: Mutex::new(Vec::new()),
             router,
             admin_read_model,
             admin_snapshot_dirty: Arc::new(AtomicBool::new(true)),
@@ -142,6 +149,16 @@ impl StreamDomainSink {
             metrics: None,
             active: Arc::new(AtomicBool::new(true)),
             family_cores: Arc::new(Mutex::new(BTreeMap::new())),
+            area_watermark_actors: Arc::new(crate::runtime::KeyedActorPool::new(
+                router_for_watermark_actors.clone(),
+                crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
+                crate::domains::stream::MAX_WATERMARK_COORDINATORS,
+            )),
+            realm_watermark_actors: Arc::new(crate::runtime::KeyedActorPool::new(
+                router_for_watermark_actors,
+                crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
+                crate::domains::stream::MAX_WATERMARK_COORDINATORS,
+            )),
         });
         let actor = Self::spawn_actor(core.clone());
         let family_families = provisioned_families.map(<[RouteFamily]>::to_vec);
@@ -228,6 +245,8 @@ impl StreamDomainSink {
             families: Mutex::new(HashMap::new()),
             next_sub_id: shared.next_sub_id.clone(),
             next_session_id: shared.next_session_id.clone(),
+            cursor_integrity_key: shared.cursor_integrity_key.clone(),
+            pending_notifications: Mutex::new(Vec::new()),
             router: shared.router.clone(),
             admin_read_model: shared.admin_read_model.clone(),
             admin_snapshot_dirty: shared.admin_snapshot_dirty.clone(),
@@ -235,6 +254,8 @@ impl StreamDomainSink {
             metrics: shared.metrics.clone(),
             active: shared.active.clone(),
             family_cores: shared.family_cores.clone(),
+            area_watermark_actors: shared.area_watermark_actors.clone(),
+            realm_watermark_actors: shared.realm_watermark_actors.clone(),
         });
         shared
             .family_cores
@@ -421,6 +442,29 @@ impl StreamDomainSink {
     }
 
     #[cfg(test)]
+    pub(super) fn get_watermark_for_tests(
+        &self,
+        family: RouteFamily,
+        realm: &str,
+        area: &str,
+    ) -> Result<u64, String> {
+        self.core
+            .stream_store
+            .get_watermark(family.as_u64(), realm, area)
+    }
+
+    #[cfg(test)]
+    pub(super) fn get_realm_watermark_for_tests(
+        &self,
+        family: RouteFamily,
+        realm: &str,
+    ) -> Result<u64, String> {
+        self.core
+            .stream_store
+            .get_realm_watermark(family.as_u64(), realm)
+    }
+
+    #[cfg(test)]
     pub(super) fn delete_compact_resource_page_for_tests(
         &self,
         family: RouteFamily,
@@ -466,8 +510,16 @@ impl StreamDomainSink {
         max_bytes: Option<usize>,
         filter: Option<&crate::domains::stream::protocol::StreamFilterSet>,
     ) -> Result<Vec<u8>, String> {
-        self.core
-            .encode_read_response_data(family, route, from_offset, limit, max_bytes, filter)
+        self.core.encode_read_response_data(StreamReadExecution {
+            family_id: family,
+            route,
+            from_offset,
+            limit,
+            max_bytes,
+            filter,
+            cursor_fingerprint: None,
+            captured_watermark: None,
+        })
     }
 
     pub fn refresh_admin_snapshot_if_dirty(&self) {

@@ -271,6 +271,20 @@ mod tests {
                     AuthorizationPolicy::MultiRouteScoped(crate::auth::Access::Write),
                 )),
             ),
+            (
+                707,
+                Some((
+                    DomainKind::Schedule,
+                    AuthorizationPolicy::WildcardScoped(crate::auth::Access::Read),
+                )),
+            ),
+            (
+                707,
+                Some((
+                    DomainKind::Schedule,
+                    AuthorizationPolicy::WildcardScoped(crate::auth::Access::Read),
+                )),
+            ),
         ];
 
         // Act
@@ -298,7 +312,7 @@ mod tests {
         // Arrange
         let cases = [
             111, 112, 199, 209, 201, 205, 299, 304, 305, 306, 399, 409, 404, 504, 505, 609, 610,
-            699, 705, 707, 799,
+            699, 705, 799,
         ];
 
         // Act

@@ -186,6 +186,7 @@ pub(crate) struct WireStreamRecord {
     pub(crate) resource_offset: u64,
     pub(crate) area_offset: Option<u64>,
     pub(crate) realm_offset: Option<u64>,
+    pub(crate) global_offset: Option<u64>,
     pub(crate) body: Vec<u8>,
     pub(crate) metadata: Option<Vec<u8>>,
     pub(crate) created_at: u64,
@@ -196,7 +197,10 @@ pub(crate) struct WireReadCursor {
     pub(crate) last_resource_offset: u64,
     pub(crate) last_area_offset: Option<u64>,
     pub(crate) last_realm_offset: Option<u64>,
+    pub(crate) last_global_offset: Option<u64>,
     pub(crate) has_more: bool,
+    pub(crate) cursor_fingerprint: Option<u64>,
+    pub(crate) captured_watermark: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -233,6 +237,7 @@ pub(crate) fn decode_wire_stream_record(dec: &mut PayloadDecoder<'_>) -> WireStr
         resource_offset,
         area_offset,
         realm_offset,
+        global_offset: None,
         body,
         metadata,
         created_at,
@@ -269,7 +274,10 @@ pub(crate) fn parse_stream_read_response(frame: &[u8]) -> WireReadResponse {
         last_resource_offset: dec.get_u64().expect("stream cursor resource offset"),
         last_area_offset: dec.get_optional_u64().expect("stream cursor area offset"),
         last_realm_offset: dec.get_optional_u64().expect("stream cursor realm offset"),
+        last_global_offset: None,
         has_more: dec.get_u8().expect("stream cursor has_more") == 1,
+        cursor_fingerprint: None,
+        captured_watermark: None,
     };
     assert!(dec.is_complete(), "expected complete stream read payload");
 

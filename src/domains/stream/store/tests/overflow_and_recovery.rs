@@ -101,6 +101,72 @@ fn should_reject_commit_given_committed_size_exhaustion() {
 }
 
 #[test]
+fn should_not_reuse_resolved_global_reservation_after_terminal_plan_failure() {
+    // Arrange
+    let db = create_test_engine_with_cfs(vec![1]);
+    let store = StreamStore::new(db.clone());
+    store
+        .ensure_layout_activation_for_family(1)
+        .expect("activate stream layout");
+    let mut txn = db
+        .begin_tx(1, cntryl_midge::TransactionMode::ReadWrite)
+        .expect("begin metadata transaction");
+    txn.put(
+        encode_resource_meta_key("test", "events", "orders"),
+        ResourceMetaValue {
+            next_offset: 0,
+            committed_size_bytes: u64::MAX,
+        }
+        .encode(),
+        None,
+    )
+    .expect("write exhausted resource metadata");
+    txn.commit(cntryl_midge::WriteOptions::sync())
+        .expect("commit exhausted resource metadata");
+    let events = single_event(b"overflow");
+    let commit = || {
+        store.commit_records(CommitRecordsParams {
+            family: 1,
+            realm: "test",
+            area: "events",
+            resource: "orders",
+            expected_resource_next_offset: 0,
+            events: &events,
+            ingest_metadata: None,
+            mode: StreamWriteMode::Buffered,
+        })
+    };
+
+    // Act
+    let first = commit();
+    let first_watermark = store.get_global_watermark(1).expect("first watermark");
+    let second = commit();
+    let second_watermark = store.get_global_watermark(1).expect("second watermark");
+    let (area_next_offset, _) = store
+        .load_area_next_offset_snapshot(1, "test", "events")
+        .expect("read area allocation head");
+    let (realm_next_offset, _) = store
+        .load_realm_next_offset_snapshot(1, "test")
+        .expect("read realm allocation head");
+
+    // Assert
+    assert_eq!(
+        first.expect_err("first plan should fail"),
+        "ERR_STREAM_SIZE_EXHAUSTED"
+    );
+    assert_eq!(
+        second.expect_err("second plan should fail"),
+        "ERR_STREAM_SIZE_EXHAUSTED"
+    );
+    assert_eq!(first_watermark, 1);
+    assert_eq!(second_watermark, 2);
+    assert_eq!(area_next_offset, 0);
+    assert_eq!(realm_next_offset, 0);
+    assert!(store.pending_global_reservations.lock().is_empty());
+    assert!(store.global_completion_state(1).lock().resolved.is_empty());
+}
+
+#[test]
 fn should_isolate_resource_offsets_between_route_families() {
     // Arrange
     let store = StreamStore::new(create_test_engine_with_cfs(vec![1, 2]));
