@@ -194,6 +194,14 @@ impl DomainHandles {
         self.schedule.scan_due_schedules();
     }
 
+    pub(crate) fn stream_is_active(&self) -> bool {
+        self.stream.is_active()
+    }
+
+    pub(crate) fn stream_run_maintenance_slice(&self) {
+        self.stream.run_maintenance_slice();
+    }
+
     pub(crate) fn schedule_force_due_scan_for_tests(&self, ready_count: usize) {
         self.schedule.force_due_scan_for_tests(ready_count);
     }

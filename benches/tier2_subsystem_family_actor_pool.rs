@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 const FAMILY_COUNT: usize = 8;
 const BATCH_SIZE: usize = 1024;
+const BURST_WAVE_COUNT: usize = 1024;
 const IDLE_WAKE_SAMPLES: usize = 128;
 
 fn provisioned_families() -> Vec<RouteFamily> {
@@ -118,7 +119,7 @@ fn should_dispatch_coalesced_burst(ctx: &mut StressContext) {
         |_| 0_usize,
         move |completed, _family, _lane, _message| {
             *completed += 1;
-            if *completed == BATCH_SIZE {
+            if *completed % BATCH_SIZE == 0 {
                 completed_tx.send(()).expect("burst completion observer");
             }
         },
@@ -128,16 +129,22 @@ fn should_dispatch_coalesced_burst(ctx: &mut StressContext) {
     tier2_stress::measure_once(
         ctx,
         "dispatch_coalesced_burst_1024",
-        BATCH_SIZE as u64,
+        (BATCH_SIZE * BURST_WAVE_COUNT) as u64,
         || {
-            for value in 0..BATCH_SIZE {
-                runtime
-                    .try_enqueue(family, FamilyActorLane::Normal, value as u64)
-                    .expect("burst enqueue");
+            for wave in 0..BURST_WAVE_COUNT {
+                for value in 0..BATCH_SIZE {
+                    runtime
+                        .try_enqueue(
+                            family,
+                            FamilyActorLane::Normal,
+                            (wave * BATCH_SIZE + value) as u64,
+                        )
+                        .expect("burst enqueue");
+                }
+                completed_rx
+                    .recv_timeout(Duration::from_secs(1))
+                    .expect("coalesced burst dispatch");
             }
-            completed_rx
-                .recv_timeout(Duration::from_secs(1))
-                .expect("coalesced burst dispatch");
         },
     );
 }

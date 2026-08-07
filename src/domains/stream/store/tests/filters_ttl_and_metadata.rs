@@ -1,4 +1,221 @@
 use super::*;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
+
+struct TestStreamClock {
+    epoch_ms: AtomicU64,
+}
+
+impl TestStreamClock {
+    fn new(epoch_ms: u64) -> Self {
+        Self {
+            epoch_ms: AtomicU64::new(epoch_ms),
+        }
+    }
+
+    fn set(&self, epoch_ms: u64) {
+        self.epoch_ms.store(epoch_ms, Ordering::Release);
+    }
+}
+
+impl crate::runtime::clock::Clock for TestStreamClock {
+    fn now_instant(&self) -> std::time::Instant {
+        std::time::Instant::now()
+    }
+
+    fn now_epoch_ms(&self) -> u64 {
+        self.epoch_ms.load(Ordering::Acquire)
+    }
+}
+
+#[test]
+fn should_compact_zero_ttl_fragments_without_positional_gaps() {
+    // Arrange
+    let db = create_test_engine_with_cfs(vec![1]);
+    let store = StreamStore::with_config(
+        db.clone(),
+        BatchLimits::default(),
+        StreamTTL::with_seconds(0),
+    );
+    for round in 0..2 {
+        for offset in round * 9..(round + 1) * 9 {
+            store
+                .commit_records(CommitRecordsParams {
+                    family: 1,
+                    realm: "north",
+                    area: "orders",
+                    resource: "created",
+                    expected_resource_next_offset: offset,
+                    events: &single_event(b"expired"),
+                    ingest_metadata: None,
+                    mode: StreamWriteMode::Sync,
+                })
+                .expect("commit zero-TTL fragment");
+        }
+        store
+            .run_maintenance(1)
+            .expect("compact zero-TTL fragment round");
+    }
+
+    // Act
+    let result = store.run_maintenance(1);
+    let records = store
+        .read_resource(&ReadResourceParams {
+            family: 1,
+            realm: "north",
+            area: "orders",
+            resource: "created",
+            from_offset: 0,
+            limit: 64,
+            max_bytes: None,
+        })
+        .expect("read zero-TTL resource")
+        .0;
+    let compacted_rows: Vec<_> = db
+        .begin_tx(1, cntryl_midge::TransactionMode::ReadOnly)
+        .expect("begin zero-TTL generation scan")
+        .scan(&cntryl_midge::Query::new().prefix(Bytes::from(
+            StreamStore::build_compact_resource_page_prefix("north", "orders", "created"),
+        )))
+        .expect("scan zero-TTL generations")
+        .try_collect()
+        .expect("collect zero-TTL generations");
+    let generation = u64::from_be_bytes(
+        compacted_rows[0].0[compacted_rows[0].0.len() - 8..]
+            .try_into()
+            .expect("decode compacted generation"),
+    );
+
+    // Assert
+    assert_eq!(
+        result.expect("drain zero-TTL fragments").buckets_compacted,
+        0
+    );
+    assert!(records.is_empty());
+    assert_eq!(compacted_rows.len(), 1);
+    assert_eq!(generation, 2);
+}
+
+fn compacted_resource_records(db: &cntryl_midge::Engine) -> Vec<CompactResourcePageRecord> {
+    let rows: Vec<_> = db
+        .begin_tx(1, cntryl_midge::TransactionMode::ReadOnly)
+        .expect("begin compacted TTL row scan")
+        .scan(&cntryl_midge::Query::new().prefix(Bytes::from(
+            StreamStore::build_compact_resource_page_prefix("north", "orders", "created"),
+        )))
+        .expect("scan compacted TTL resource rows")
+        .try_collect()
+        .expect("collect compacted TTL resource rows");
+    CompactResourcePageValue::try_decode(&rows[0].1)
+        .expect("decode compacted TTL resource row")
+        .records
+}
+
+#[test]
+fn should_preserve_absolute_expiration_before_and_after_compaction() {
+    // Arrange
+    let db = create_test_engine_with_cfs(vec![1]);
+    let clock = Arc::new(TestStreamClock::new(1_000));
+    let store = StreamStore::with_config(
+        db.clone(),
+        BatchLimits::default(),
+        StreamTTL::with_seconds(10),
+    )
+    .with_clock_for_tests(clock.clone());
+    for offset in 0..5 {
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "north",
+                area: "orders",
+                resource: "created",
+                expected_resource_next_offset: offset,
+                events: &single_event(b"early"),
+                ingest_metadata: None,
+                mode: StreamWriteMode::Sync,
+            })
+            .expect("commit early TTL fragment");
+    }
+    clock.set(5_000);
+    for offset in 5..9 {
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "north",
+                area: "orders",
+                resource: "created",
+                expected_resource_next_offset: offset,
+                events: &single_event(b"late"),
+                ingest_metadata: None,
+                mode: StreamWriteMode::Sync,
+            })
+            .expect("commit late TTL fragment");
+    }
+    clock.set(12_000);
+
+    // Act
+    let before = store
+        .read_resource(&ReadResourceParams {
+            family: 1,
+            realm: "north",
+            area: "orders",
+            resource: "created",
+            from_offset: 0,
+            limit: 64,
+            max_bytes: None,
+        })
+        .expect("read before TTL compaction")
+        .0;
+    let maintenance = store.run_maintenance(1).expect("compact TTL fragments");
+    let after = store
+        .read_resource(&ReadResourceParams {
+            family: 1,
+            realm: "north",
+            area: "orders",
+            resource: "created",
+            from_offset: 0,
+            limit: 64,
+            max_bytes: None,
+        })
+        .expect("read after TTL compaction")
+        .0;
+    let area_after = store
+        .read_area(1, "north", "orders", 0, 64, None)
+        .expect("read area after TTL compaction")
+        .0;
+    let realm_after = store
+        .read_realm(1, "north", 0, 64, None)
+        .expect("read realm after TTL compaction")
+        .0;
+    let compacted_records = compacted_resource_records(&db);
+    let reopened =
+        StreamStore::with_config(db, BatchLimits::default(), StreamTTL::with_seconds(10))
+            .with_clock_for_tests(clock);
+    let global_after_reopen = reopened
+        .read_global(1, 0, 64, None, None)
+        .expect("read global after reopen")
+        .0;
+
+    // Assert
+    let before = event_records(before);
+    let after = event_records(after);
+    assert_eq!(before.len(), 4);
+    assert!(before.iter().all(|record| record.body == b"late"[..]));
+    assert_eq!(after.len(), 4);
+    assert!(after.iter().all(|record| record.body == b"late"[..]));
+    assert_eq!(event_records(area_after).len(), 4);
+    assert_eq!(event_records(realm_after).len(), 4);
+    assert_eq!(event_records(global_after_reopen).len(), 4);
+    assert!(compacted_records[..5]
+        .iter()
+        .all(|record| record.body.is_empty() && record.metadata.is_none()));
+    assert!(compacted_records[5..]
+        .iter()
+        .all(|record| record.body == b"late"[..]));
+    assert!(maintenance.buckets_compacted > 0);
+}
 
 #[test]
 fn should_resume_filtered_resource_read_across_compact_page_boundary() {

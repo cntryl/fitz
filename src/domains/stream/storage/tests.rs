@@ -115,6 +115,19 @@ fn should_decode_resource_offset_from_compact_resource_page_key() {
 }
 
 #[test]
+fn should_order_resource_fragment_generations_after_their_logical_offset() {
+    // Arrange
+    let generation_zero = encode_compact_resource_fragment_key("realm", "area", "resource", 42, 0);
+    let generation_one = encode_compact_resource_fragment_key("realm", "area", "resource", 42, 1);
+    let next_offset = encode_compact_resource_fragment_key("realm", "area", "resource", 43, 0);
+
+    // Act / Assert
+    assert!(generation_zero < generation_one);
+    assert!(generation_one < next_offset);
+    assert_eq!(decode_resource_offset_from_key(&generation_one), Ok(42));
+}
+
+#[test]
 fn should_roundtrip_resource_value() {
     // Arrange
     let value = ResourceValue {
@@ -390,6 +403,7 @@ fn should_roundtrip_compact_realm_page_value() {
                 body: Bytes::from("body"),
                 metadata: Some(Bytes::from("meta")),
                 created_at: 123,
+                expires_at: None,
             },
             CompactRealmPageRecord {
                 area: "events".to_string(),
@@ -399,6 +413,7 @@ fn should_roundtrip_compact_realm_page_value() {
                 body: Bytes::from("body-2"),
                 metadata: None,
                 created_at: 124,
+                expires_at: Some(456),
             },
         ],
     };
@@ -419,6 +434,7 @@ fn should_roundtrip_compact_realm_page_value() {
     assert_eq!(decoded.records[1].resource_offset, 43);
     assert_eq!(decoded.records[1].body, Bytes::from("body-2"));
     assert_eq!(decoded.records[1].metadata, None);
+    assert_eq!(decoded.records[1].expires_at, Some(456));
 }
 
 #[test]
@@ -452,6 +468,7 @@ fn should_roundtrip_compact_area_page_value() {
                 body: Bytes::from("body"),
                 metadata: Some(Bytes::from("meta")),
                 created_at: 123,
+                expires_at: None,
             },
             CompactAreaPageRecord {
                 resource: "audits".to_string(),
@@ -459,6 +476,7 @@ fn should_roundtrip_compact_area_page_value() {
                 body: Bytes::from("body-2"),
                 metadata: None,
                 created_at: 124,
+                expires_at: Some(456),
             },
         ],
     };
@@ -476,6 +494,7 @@ fn should_roundtrip_compact_area_page_value() {
     assert_eq!(decoded.records[1].resource_offset, 43);
     assert_eq!(decoded.records[1].body, Bytes::from("body-2"));
     assert_eq!(decoded.records[1].metadata, None);
+    assert_eq!(decoded.records[1].expires_at, Some(456));
 }
 
 #[test]
@@ -489,6 +508,7 @@ fn should_roundtrip_compact_resource_page_value() {
                 body: Bytes::from("body"),
                 metadata: Some(Bytes::from("meta")),
                 created_at: 123,
+                expires_at: None,
             },
             CompactResourcePageRecord {
                 area_offset: 12,
@@ -496,6 +516,7 @@ fn should_roundtrip_compact_resource_page_value() {
                 body: Bytes::from("body-2"),
                 metadata: None,
                 created_at: 124,
+                expires_at: Some(456),
             },
         ],
     };
@@ -514,6 +535,7 @@ fn should_roundtrip_compact_resource_page_value() {
     assert_eq!(decoded.records[1].realm_offset, 22);
     assert_eq!(decoded.records[1].body, Bytes::from("body-2"));
     assert_eq!(decoded.records[1].metadata, None);
+    assert_eq!(decoded.records[1].expires_at, Some(456));
 }
 
 #[test]
@@ -529,6 +551,7 @@ fn should_roundtrip_compressed_compact_realm_page_value() {
                 body: Bytes::from("body"),
                 metadata: Some(Bytes::from("meta")),
                 created_at: 123,
+                expires_at: None,
             },
             CompactRealmPageRecord {
                 area: "events".to_string(),
@@ -538,6 +561,7 @@ fn should_roundtrip_compressed_compact_realm_page_value() {
                 body: Bytes::from("body-2"),
                 metadata: None,
                 created_at: 124,
+                expires_at: Some(456),
             },
         ],
     };
@@ -560,60 +584,26 @@ fn should_roundtrip_compressed_compact_realm_page_value() {
 }
 
 #[test]
-fn should_roundtrip_canonical_resource_value() {
+fn should_roundtrip_posting_expirations() {
     // Arrange
-    let value = CanonicalResourceValue {
-        area_offset: 11,
-        realm_offset: 19,
-        body: Bytes::from("body"),
-        metadata: Some(Bytes::from("meta")),
-        created_at: 123,
+    let value = PostingPageValue {
+        entries: vec![
+            PostingEntry {
+                offset: 7,
+                parent_fragment_start: 4,
+                expires_at: None,
+            },
+            PostingEntry {
+                offset: 8,
+                parent_fragment_start: 4,
+                expires_at: Some(12_345),
+            },
+        ],
     };
 
     // Act
-    let encoded = value.encode();
-    let decoded = CanonicalResourceValue::decode(&encoded);
+    let decoded = PostingPageValue::try_decode(&value.encode()).expect("decode posting page");
 
     // Assert
-    assert_eq!(decoded.area_offset, value.area_offset);
-    assert_eq!(decoded.realm_offset, value.realm_offset);
-    assert_eq!(decoded.body, value.body);
-    assert_eq!(decoded.metadata, value.metadata);
-    assert_eq!(decoded.created_at, value.created_at);
-}
-
-#[test]
-fn should_roundtrip_area_locator_value() {
-    // Arrange
-    let value = AreaLocatorValue {
-        stream_id: 7,
-        resource_offset: 42,
-    };
-
-    // Act
-    let encoded = value.encode();
-    let decoded = AreaLocatorValue::decode(&encoded);
-
-    // Assert
-    assert_eq!(decoded.stream_id, value.stream_id);
-    assert_eq!(decoded.resource_offset, value.resource_offset);
-}
-
-#[test]
-fn should_roundtrip_realm_locator_value() {
-    // Arrange
-    let value = RealmLocatorValue {
-        area_offset: 17,
-        stream_id: 9,
-        resource_offset: 42,
-    };
-
-    // Act
-    let encoded = value.encode();
-    let decoded = RealmLocatorValue::decode(&encoded);
-
-    // Assert
-    assert_eq!(decoded.area_offset, value.area_offset);
-    assert_eq!(decoded.stream_id, value.stream_id);
-    assert_eq!(decoded.resource_offset, value.resource_offset);
+    assert_eq!(decoded, value);
 }

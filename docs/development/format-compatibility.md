@@ -27,9 +27,12 @@ fields into existing READ or LAST responses.
 Stream compact area, compact realm, and compressed compact realm pages also use
 new required-route formats (`0xE5`, `0xB3`, and `0xE9`). The broker does not read
 the older route-less page markers (`0xE4`, `0xB2`, and `0xE8`). The
-promotion-frontier layout generation marker advances from `0xD1` to `0xD2`.
-Activation rejects `0xD1` immediately with reset guidance; it does not scan,
-hydrate, decode, or migrate V1 pages. Before upgrading a broker with existing
+promotion-frontier layout generation marker advances to D4 (`[0, 0xD4, 2]`).
+All ordered planes use immutable fragments split at 64-offset boundaries;
+exact-resource appends no longer rewrite a mutable tail page.
+Activation rejects the D3 marker immediately with export/replay-or-reset
+guidance; it does not scan, hydrate, decode, or migrate D3 pages. Before
+upgrading a broker with existing
 Stream data, operators must export/replay the source events into a fresh store
 or intentionally clear and rebuild persisted Stream state. Rollback requires
 restoring the pre-upgrade store snapshot together with the old broker.

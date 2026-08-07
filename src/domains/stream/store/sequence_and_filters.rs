@@ -1,12 +1,11 @@
 use super::{
     decode_area_offset_from_key, decode_realm_offset_from_key, decode_resource_offset_from_key,
     encode_area_counter_key, encode_realm_counter_key, encode_resource_meta_key,
-    family_to_storage_partition, millis_to_u64_saturating, usize_to_u64_saturating,
-    AreaCounterValue, Bytes, CompactAreaPageValue, CompactResourcePageValue,
-    CompressedCompactRealmPageValue, DiscriminatorWriteRowsParams, Entry, EventPayload,
-    RealmCounterValue, RealmSequenceState, RealmSequenceStateHandle, ResourceMetaState,
-    ResourceMetaStateHandle, ResourceMetaValue, SequenceGuard, StreamFilterSet, StreamStore,
-    WatermarkValue,
+    family_to_storage_partition, usize_to_u64_saturating, AreaCounterValue, Bytes,
+    CompactAreaPageValue, CompactResourcePageValue, CompressedCompactRealmPageValue,
+    DiscriminatorWriteRowsParams, Entry, EventPayload, RealmCounterValue, RealmSequenceState,
+    RealmSequenceStateHandle, ResourceMetaState, ResourceMetaStateHandle, ResourceMetaValue,
+    SequenceGuard, StreamFilterSet, StreamStore, WatermarkValue,
 };
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -110,13 +109,17 @@ impl StreamStore {
         }
     }
 
-    pub(in crate::domains::stream::store) fn now_epoch_ms() -> u64 {
-        millis_to_u64_saturating(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis(),
-        )
+    pub(in crate::domains::stream::store) fn now_epoch_ms(&self) -> u64 {
+        self.clock.now_epoch_ms()
+    }
+
+    pub(in crate::domains::stream::store) fn absolute_expiration(
+        &self,
+        created_at: u64,
+    ) -> Option<u64> {
+        self.ttl
+            .ttl_seconds
+            .map(|seconds| created_at.saturating_add(seconds.saturating_mul(1_000)))
     }
 
     pub(in crate::domains::stream::store) fn event_size_bytes(event: &EventPayload) -> u64 {

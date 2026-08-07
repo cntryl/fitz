@@ -300,7 +300,13 @@ impl Engine {
 ```
 **Key-value schema for each domain:**
 - **KV:** `{realm}/{area}/{resource}/{key}` → `{value}`
-- **Stream:** `{realm}/{area}/{resource}/offset:{offset}` → `{record}` plus durable resource metadata / area indexes / realm indexes for committed sequencing state
+- **Stream:** D4 stores committed history as immutable, 64-offset-bucketed
+  resource, area, realm, and family-global fragments plus durable counters,
+  watermarks, metadata, discriminators, sparse locators, and checksum-verified
+  single-copy blobs for payloads above 16 KiB. Absolute per-record expirations
+  remain authoritative across compaction. The public
+  `promotion-frontier` selection name remains stable, but D3 data is not read
+  or migrated in place.
 - **Queue:** `{realm}/{area}/{resource}/msg:{message_id}` → `{body}`
 - **Schedule:** persisted definitions, next-fire state, and pending fire claims for durable timing intent
 

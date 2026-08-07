@@ -31,7 +31,7 @@ const LARGE_PERMISSION_RAW: [&str; 8] = [
     "lease://acme/**#write",
     "kv://acme/**#write",
 ];
-const CACHE_HIT_REPEAT_COUNT: u64 = 268_435_456;
+const CACHE_HIT_REPEAT_COUNT: u64 = 16_777_216;
 
 fn parse_permissions(raws: &[&str]) -> Vec<Permission> {
     raws.iter()

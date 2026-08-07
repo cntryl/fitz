@@ -9,6 +9,7 @@ pub fn start_domain_background_tasks(domains: &Arc<DomainHandles>) {
     start_rpc_timeout_loop(Arc::downgrade(domains));
     start_lease_timeout_loop(Arc::downgrade(domains));
     start_schedule_tick_loop(Arc::downgrade(domains));
+    start_stream_maintenance_loop(Arc::downgrade(domains));
 }
 
 /// Fail closed when a production actor panics. A domain actor owns
@@ -124,6 +125,27 @@ fn start_schedule_tick_loop(domains: Weak<DomainHandles>) {
                 break;
             }
             domains.schedule_scan_due_schedules();
+        }
+    });
+}
+
+fn start_stream_maintenance_loop(domains: Weak<DomainHandles>) {
+    let Ok(handle) = tokio::runtime::Handle::try_current() else {
+        tracing::debug!("Stream maintenance loop not started: no Tokio runtime available");
+        return;
+    };
+    handle.spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            let Some(domains) = domains.upgrade() else {
+                break;
+            };
+            if !domains.stream_is_active() {
+                break;
+            }
+            domains.stream_run_maintenance_slice();
         }
     });
 }

@@ -619,6 +619,8 @@ fn assert_schedule_delivery(frame: &[u8], expected_payload: &[u8]) {
         subscription_id > 0,
         "Schedule subscription id must be nonzero"
     );
+    let route = decoder.get_string().expect("Schedule delivery route");
+    assert_eq!(route, CANONICAL_ROUTE, "Schedule delivery route");
     let body = decoder.get_bytes().expect("Schedule delivery body");
     assert_eq!(body.as_ref(), expected_payload, "Schedule delivery body");
     assert!(

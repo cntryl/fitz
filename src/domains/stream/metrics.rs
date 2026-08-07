@@ -12,6 +12,11 @@ pub const METRIC_RESPONSE_DROPS_TOTAL: &str = "fitz_stream_response_drops_total"
 pub const METRIC_NOTIFY_DROPS_TOTAL: &str = "fitz_stream_notify_drops_total";
 pub const METRIC_WATERMARK_COORDINATION_DROPS_TOTAL: &str =
     "fitz_stream_watermark_coordination_drops_total";
+pub const METRIC_MAINTENANCE_ATTEMPTS_TOTAL: &str = "fitz_stream_maintenance_attempts_total";
+pub const METRIC_MAINTENANCE_FAILURES_TOTAL: &str = "fitz_stream_maintenance_failures_total";
+pub const METRIC_MAINTENANCE_RETRIES_TOTAL: &str = "fitz_stream_maintenance_retries_total";
+pub const METRIC_MAINTENANCE_BUCKETS_COMPACTED_TOTAL: &str =
+    "fitz_stream_maintenance_buckets_compacted_total";
 
 #[derive(Clone)]
 pub struct StreamMetrics {

@@ -62,4 +62,4 @@ pub use protocol::{
     StreamError, StreamFilterClause, StreamFilterSet, StreamFilteredReason, StreamMessage,
     StreamMetadata, StreamReadItem, StreamRecord, StreamSubscriptionFailure,
 };
-pub use store::{StreamStorageLayout, StreamStore};
+pub use store::{StreamMaintenanceResult, StreamStorageLayout, StreamStore};

@@ -13,6 +13,7 @@ pub(super) use crate::domains::kv::{KvClientFrame, KvClientRequest};
 pub(super) use crate::runtime::routing::RouteFamily;
 pub(super) use crate::runtime::{DeliveryError, Envelope, MailboxSink, ManagedActor, Router};
 pub(super) use bytes::Bytes;
+#[cfg(test)]
 pub(super) use chrono::Utc;
 pub(super) use parking_lot::Mutex;
 pub(super) use std::collections::HashMap;
@@ -73,6 +74,12 @@ pub(super) struct KvDomainState {
 pub(super) struct KvDomainRuntime<'a> {
     pub(super) core: &'a KvDomainCore,
     pub(super) active: &'a AtomicBool,
+}
+
+pub(super) enum KvAdminTransactionUpdate {
+    None,
+    Upsert(crate::control::admin::KvTransaction),
+    Remove { session_id: u64, tx_id: u64 },
 }
 
 pub(super) enum KvDomainCommand {

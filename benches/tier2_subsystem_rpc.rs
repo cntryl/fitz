@@ -208,9 +208,13 @@ fn dispatch_response_cleanup_workers(ctx: &mut StressContext, worker_count: usiz
             )
         })
         .collect::<Vec<_>>();
+    assert_eq!(
+        DISPATCH_BATCH_SIZE % workers.len(),
+        0,
+        "dispatch batch must contain complete worker waves"
+    );
     let mut request_ring =
         RequestFrameRing::new(ROUTE_STR, b"dispatch payload", REQUEST_FRAME_RING_SIZE);
-    let mut next_worker_index = 0usize;
     configure_cleanup_measurement(ctx);
 
     tier2_stress::measure_iterations(
@@ -218,23 +222,22 @@ fn dispatch_response_cleanup_workers(ctx: &mut StressContext, worker_count: usiz
         "dispatch_response_cleanup_workers",
         usize_to_u64_saturating(DISPATCH_BATCH_SIZE),
         || {
-            for _ in 0..DISPATCH_BATCH_SIZE {
-                let (request_msg_type, request_payload) = request_ring.next_frame();
-                dispatch_request_to_destination(
-                    &router,
-                    family,
-                    &requester_source,
-                    &destination,
-                    request_msg_type,
-                    black_box(request_payload),
-                );
-                cleanup_worker_request_on_destination(
-                    &router,
-                    family,
-                    &destination,
-                    &workers[next_worker_index],
-                );
-                next_worker_index = (next_worker_index + 1) % workers.len();
+            for _ in 0..(DISPATCH_BATCH_SIZE / workers.len()) {
+                for _ in &workers {
+                    let (request_msg_type, request_payload) = request_ring.next_frame();
+                    dispatch_request_to_destination(
+                        &router,
+                        family,
+                        &requester_source,
+                        &destination,
+                        request_msg_type,
+                        black_box(request_payload),
+                    );
+                }
+
+                for worker in &workers {
+                    cleanup_worker_request_on_destination(&router, family, &destination, worker);
+                }
                 requester_inbox.clear();
             }
         },

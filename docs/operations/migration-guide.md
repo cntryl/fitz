@@ -51,9 +51,9 @@ responses. The byte-exact response layouts are defined in
 
 Existing Stream stores require an offline event export/replay into a fresh
 store, or an intentional clear and rebuild of persisted Stream state. The
-promotion-frontier generation marker changes from `0xD1` to `0xD2`; startup
-rejects `0xD1` with reset-required guidance before decoding or scanning any V1
-pages. Compact area/realm pages now require persisted route identity and the old
+promotion-frontier generation marker changes to D4 (`[0, 0xD4, 2]`); startup
+rejects the D3 marker with reset-required guidance before decoding or scanning
+any D3 pages. Compact area/realm pages now require persisted route identity and the old
 route-less markers are rejected. Take and retain a pre-upgrade snapshot. To roll
 back, restore that snapshot and the prior broker/client versions together.
 

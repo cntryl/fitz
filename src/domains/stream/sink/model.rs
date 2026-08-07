@@ -264,6 +264,10 @@ pub(super) enum StreamDomainCommand {
     ReadLiveCounts(crossbeam_channel::Sender<StreamLiveCounts>),
     ReadResourceRecords(StreamAdminReadCommand),
     RefreshAdminSnapshotIfDirty(crossbeam_channel::Sender<()>),
+    RunMaintenance {
+        family: u64,
+        reply: Option<crossbeam_channel::Sender<()>>,
+    },
     #[cfg(test)]
     SyncAdminSnapshot(crossbeam_channel::Sender<()>),
     #[cfg(test)]

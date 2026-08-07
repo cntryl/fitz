@@ -55,6 +55,10 @@ fn lease_identity_for(info: &LeaseInfo) -> LeaseIdentity {
     lease_identity_key(info.route_family, &info.realm, &info.area, &info.resource)
 }
 
+fn kv_transaction_session_mode(session_id: u64) -> String {
+    format!("session:{session_id}:readwrite")
+}
+
 fn snapshot_session_info(session: &RuntimeSessionInfo, connected_at: String) -> SessionInfo {
     let claims = session.claims.as_ref();
     SessionInfo {
@@ -143,6 +147,31 @@ impl AdminReadModel {
 
     pub fn replace_kv_transactions(&self, transactions: Vec<KvTransaction>) {
         *self.kv_transactions.write() = transactions;
+    }
+
+    pub(crate) fn upsert_kv_transaction(&self, transaction: KvTransaction) {
+        let mut transactions = self.kv_transactions.write();
+        if let Some(existing) = transactions.iter_mut().find(|existing| {
+            existing.tx_id == transaction.tx_id && existing.mode == transaction.mode
+        }) {
+            *existing = transaction;
+        } else {
+            transactions.push(transaction);
+        }
+    }
+
+    pub(crate) fn remove_kv_transaction(&self, session_id: u64, tx_id: u64) {
+        let session_mode = kv_transaction_session_mode(session_id);
+        self.kv_transactions
+            .write()
+            .retain(|transaction| transaction.tx_id != tx_id || transaction.mode != session_mode);
+    }
+
+    pub(crate) fn remove_kv_transactions_for_session(&self, session_id: u64) {
+        let session_mode = kv_transaction_session_mode(session_id);
+        self.kv_transactions
+            .write()
+            .retain(|transaction| transaction.mode != session_mode);
     }
 
     pub fn kv_transactions(&self, realm: Option<&str>) -> Vec<KvTransaction> {
@@ -653,6 +682,72 @@ mod tests {
         // Assert
         assert_eq!(subscriptions.len(), 1);
         assert_eq!(subscriptions[0].pattern, "notice://acme/app/orders");
+    }
+
+    #[test]
+    fn should_update_kv_transactions_given_incremental_session_changes() {
+        // Arrange
+        let read_model = AdminReadModel::default();
+        read_model.upsert_kv_transaction(KvTransaction::snapshot(
+            1,
+            41,
+            7,
+            "acme",
+            "app",
+            "users",
+            "2026-03-31T00:00:00Z",
+        ));
+        read_model.upsert_kv_transaction(KvTransaction::snapshot(
+            1,
+            41,
+            8,
+            "acme",
+            "app",
+            "orders",
+            "2026-03-31T00:00:01Z",
+        ));
+
+        // Act
+        read_model.remove_kv_transaction(7, 41);
+        let after_transaction_remove = read_model.kv_transactions(None);
+        read_model.remove_kv_transactions_for_session(8);
+        let after_session_remove = read_model.kv_transactions(None);
+
+        // Assert
+        assert_eq!(after_transaction_remove.len(), 1);
+        assert_eq!(after_transaction_remove[0].resource, "orders");
+        assert!(after_session_remove.is_empty());
+    }
+
+    #[test]
+    fn should_replace_kv_transaction_given_matching_session_identity() {
+        // Arrange
+        let read_model = AdminReadModel::default();
+        read_model.upsert_kv_transaction(KvTransaction::snapshot(
+            1,
+            41,
+            7,
+            "acme",
+            "app",
+            "users",
+            "2026-03-31T00:00:00Z",
+        ));
+
+        // Act
+        read_model.upsert_kv_transaction(KvTransaction::snapshot(
+            1,
+            41,
+            7,
+            "acme",
+            "app",
+            "orders",
+            "2026-03-31T00:00:01Z",
+        ));
+        let transactions = read_model.kv_transactions(None);
+
+        // Assert
+        assert_eq!(transactions.len(), 1);
+        assert_eq!(transactions[0].resource, "orders");
     }
 
     #[test]

@@ -1,6 +1,7 @@
 use super::model::{
-    DeliveryError, Envelope, KvClientFrame, KvClientRequest, KvDomainActor, KvDomainCommand,
-    KvDomainRuntime, KvDomainSink, KvResourceLockKey, MailboxSink, Ordering,
+    DeliveryError, Envelope, KvAdminTransactionUpdate, KvClientFrame, KvClientRequest,
+    KvDomainActor, KvDomainCommand, KvDomainRuntime, KvDomainSink, KvResourceLockKey, MailboxSink,
+    Ordering,
 };
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
@@ -310,7 +311,7 @@ impl KvDomainRuntime<'_> {
             "KV deliver: getting or creating actor for session"
         );
 
-        let (response, should_sync_admin_snapshot, commit_notification) = match &kv_message {
+        let (response, admin_update, commit_notification) = match &kv_message {
             KvMessage::Begin { scope, mode, .. } if *mode == TxMode::ReadWrite => self
                 .handle_begin_read_write(
                     session_id,
@@ -351,9 +352,7 @@ impl KvDomainRuntime<'_> {
             }
             _ => {}
         }
-        if should_sync_admin_snapshot {
-            self.sync_admin_snapshot();
-        }
+        self.apply_admin_transaction_update(admin_update);
         if let Some((resource_key, mutation_count)) = commit_notification {
             self.route_kv_notification(&resource_key, mutation_count);
         }
@@ -399,7 +398,7 @@ impl KvDomainRuntime<'_> {
         kv_message: &crate::domains::kv::KvMessage,
     ) -> (
         crate::domains::kv::KvResponse,
-        bool,
+        KvAdminTransactionUpdate,
         Option<(KvResourceLockKey, u64)>,
     ) {
         use crate::domains::kv::{KvError, KvResponse};
@@ -414,7 +413,7 @@ impl KvDomainRuntime<'_> {
                 KvResponse::Error {
                     error: KvError::Conflict("resource locked by another session".to_string()),
                 },
-                false,
+                KvAdminTransactionUpdate::None,
                 None,
             );
         }
@@ -438,9 +437,22 @@ impl KvDomainRuntime<'_> {
                 tx_id = tx_id,
                 "BEGIN succeeded with actor-owned transaction scope"
             );
-            (response, true, None)
+            let transaction = crate::control::admin::KvTransaction::snapshot(
+                family_id,
+                tx_id,
+                session_id,
+                realm,
+                area,
+                resource,
+                &chrono::Utc::now().to_rfc3339(),
+            );
+            (
+                response,
+                KvAdminTransactionUpdate::Upsert(transaction),
+                None,
+            )
         } else {
-            (response, false, None)
+            (response, KvAdminTransactionUpdate::None, None)
         }
     }
 
@@ -452,7 +464,7 @@ impl KvDomainRuntime<'_> {
         kv_message: &crate::domains::kv::KvMessage,
     ) -> (
         crate::domains::kv::KvResponse,
-        bool,
+        KvAdminTransactionUpdate,
         Option<(KvResourceLockKey, u64)>,
     ) {
         use crate::domains::kv::KvResponse;
@@ -481,21 +493,27 @@ impl KvDomainRuntime<'_> {
                         "route family mismatch".to_string(),
                     ),
                 },
-                false,
+                KvAdminTransactionUpdate::None,
                 None,
             );
         }
+        let had_transaction = lock_key.is_some();
         let response = actor.handle(kv_message.clone());
+        let admin_update = if had_transaction && actor.resource_scope_for_tx(tx_id).is_none() {
+            KvAdminTransactionUpdate::Remove { session_id, tx_id }
+        } else {
+            KvAdminTransactionUpdate::None
+        };
         if let KvResponse::CommitOk = response {
             if let Some(lock_key) = lock_key {
                 let notify = (mutation_count > 0).then_some((lock_key, mutation_count));
-                (response, true, notify)
+                (response, admin_update, notify)
             } else {
-                (response, true, None)
+                (response, admin_update, None)
             }
         } else {
             crate::observability::counter_inc("fitz_kv_commits_failed_total");
-            (response, false, None)
+            (response, admin_update, None)
         }
     }
 
@@ -507,7 +525,7 @@ impl KvDomainRuntime<'_> {
         kv_message: &crate::domains::kv::KvMessage,
     ) -> (
         crate::domains::kv::KvResponse,
-        bool,
+        KvAdminTransactionUpdate,
         Option<(KvResourceLockKey, u64)>,
     ) {
         use crate::domains::kv::KvResponse;
@@ -519,9 +537,10 @@ impl KvDomainRuntime<'_> {
             tx_id = tx_id,
             "Calling actor.handle() for ROLLBACK"
         );
-        if actor
-            .resource_scope_for_tx(tx_id)
-            .is_some_and(|(family_id, _, _, _)| family_id != route_family.as_u64())
+        let resource_scope = actor.resource_scope_for_tx(tx_id);
+        if resource_scope
+            .as_ref()
+            .is_some_and(|(family_id, _, _, _)| *family_id != route_family.as_u64())
         {
             return (
                 crate::domains::kv::KvResponse::Error {
@@ -529,16 +548,22 @@ impl KvDomainRuntime<'_> {
                         "route family mismatch".to_string(),
                     ),
                 },
-                false,
+                KvAdminTransactionUpdate::None,
                 None,
             );
         }
         let response = actor.handle(kv_message.clone());
+        let admin_update =
+            if resource_scope.is_some() && actor.resource_scope_for_tx(tx_id).is_none() {
+                KvAdminTransactionUpdate::Remove { session_id, tx_id }
+            } else {
+                KvAdminTransactionUpdate::None
+            };
         if let KvResponse::RollbackOk = response {
             crate::observability::counter_inc("fitz_kv_rollbacks_total");
-            (response, true, None)
+            (response, admin_update, None)
         } else {
-            (response, false, None)
+            (response, admin_update, None)
         }
     }
 
@@ -549,7 +574,7 @@ impl KvDomainRuntime<'_> {
         kv_message: &crate::domains::kv::KvMessage,
     ) -> (
         crate::domains::kv::KvResponse,
-        bool,
+        KvAdminTransactionUpdate,
         Option<(KvResourceLockKey, u64)>,
     ) {
         let mut actor = self.actor_for_session(session_id, "other operation");
@@ -559,7 +584,11 @@ impl KvDomainRuntime<'_> {
             msg_type = message_type,
             "Calling actor.handle() for operation"
         );
-        (actor.handle(kv_message.clone()), false, None)
+        (
+            actor.handle(kv_message.clone()),
+            KvAdminTransactionUpdate::None,
+            None,
+        )
     }
 
     fn request_from_envelope(envelope: &Envelope) -> Option<KvClientRequest> {

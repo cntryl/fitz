@@ -40,10 +40,10 @@ The design makes these decisions explicitly:
    transactions cannot leave gaps. The global completion tracker accepts
    out-of-order committed or skipped ranges and advances only across the
    highest contiguous resolved prefix.
-9. Existing payload-bearing resource, area, and realm pages remain. A
-   payload-bearing global page is added. Sparse filtered selectors use compact
-   posting indexes that reference parent-scope offsets rather than duplicating
-   bodies again.
+9. Resource and global fragments are the two payload views. Area and realm
+   fragments plus sparse filtered selectors use compact locators that hydrate
+   global fragments by logical offset. Payloads through 16 KiB therefore occur
+   exactly twice; larger payloads occur once in a checked immutable blob.
 10. Global Stream continuations are selector-bound snapshots that resume after
     the last examined scope offset, not merely the last returned record.
     Resource-, area-, and realm-scoped READ and LAST responses retain their
@@ -429,11 +429,12 @@ subscriptions. Reads select one physical plan:
 | `GlobalFilterResource` | Global resource posting index, then global pages | Global watermark |
 | `Global` | `CompactGlobalPage` | Global watermark |
 
-Exact resource, area, and realm pages remain payload-bearing. The global page
-also carries payloads. This intentionally follows the existing broad-page
-layout: it avoids random body lookups and a rewrite of all existing read tiers.
-Posting indexes contain references only, preventing another full body copy for
-each filtered selector.
+Exact resource and global fragments are payload-bearing. Area and realm
+fragments carry checked global locators, and posting indexes carry checked
+parent-scope locators. Readers cache each distinct parent fragment during a
+read slice. Bodies plus metadata totaling at most 16 KiB are inline in the two
+payload views; larger payloads are stored once in an immutable blob keyed by
+family-global offset, with checksum-verified references in both views.
 
 ### 9.2 Key registry
 
@@ -447,11 +448,12 @@ implementation:
 | Global watermark | `0x13` | `[family]` |
 | Global discriminator | `0x14` | `[family][global_offset]` |
 | Family writer epoch | `0x15` | `[family]` |
-| Compact global page | `0xEB` | `[family][page_start_global_offset]` |
-| Realm-resource posting page | `0xEC` | `[family][realm][resource][page_start_realm_offset]` |
-| Global-area posting page | `0xED` | `[family][area][page_start_global_offset]` |
-| Global-resource posting page | `0xEE` | `[family][resource][page_start_global_offset]` |
-| Global-area-resource posting page | `0xEF` | `[family][area][resource][page_start_global_offset]` |
+| Compact global fragment | `0xEB` | `[family][bucket][first_global_offset][generation]` |
+| Realm-resource posting fragment | `0xEC` | `[family][realm][resource][bucket][first_realm_offset][generation]` |
+| Global-area posting fragment | `0xED` | `[family][area][bucket][first_global_offset][generation]` |
+| Global-resource posting fragment | `0xEE` | `[family][resource][bucket][first_global_offset][generation]` |
+| Global-area-resource posting fragment | `0xEF` | `[family][area][resource][bucket][first_global_offset][generation]` |
+| Large payload blob | `0xF0` | `[family][global_offset]` |
 
 The family is encoded as storage partition/isolation state, never as a route
 segment and never derived from `realm`.
@@ -487,11 +489,28 @@ Posting indexes preserve the order of their parent scope:
 - A realm-resource posting page stores sparse realm offsets and the realm page
   locator needed to fetch their records.
 - Global posting pages store sparse global offsets and global page locators.
-- Wider-scope data and posting writes are immutable commit fragments keyed by
-  their first assigned scope offset. Concurrent resource commits therefore
-  write distinct keys instead of contending on one mutable tail page.
+- Resource, wider-scope data, and posting writes are immutable commit fragments
+  split at fixed 64-offset bucket boundaries and keyed by their exact first
+  assigned scope offset. Appending never reads or rewrites historical payload
+  fragments, and concurrent resource commits write distinct keys instead of
+  contending on a mutable tail page.
 - Background compaction may merge adjacent fragments into larger pages after
   they are below the governing watermark. Readers accept both representations.
+- One synchronous maintenance slice examines at most eight buckets or 4 MiB.
+  Successful commits enqueue only their touched bucket prefixes. The first
+  maintenance slice after restart rebuilds pending work with one lazy family
+  scan; later slices consume the queue without rescanning the family history.
+  `fitz_stream_maintenance_attempts_total`, `_failures_total`,
+  `_retries_total`, and `_buckets_compacted_total` expose process-local
+  maintenance progress. A retry is counted only when this process previously
+  observed the failed attempt; restart discovery is a fresh attempt.
+  The Tokio-owned background loop only enqueues an internal Stream command;
+  bucket discovery, merging, and transactions execute synchronously on the
+  domain actor. Failures are logged and retained for a later command rather
+  than failing the actor or emitting a client notification.
+  Each replacement uses one more than the highest source generation and fails
+  closed on generation exhaustion. Replacement and source deletion commit
+  atomically, and maintenance emits no client notification.
 - Posting fragments are batched and compact; they contain no body or metadata
   copy.
 - Every posting entry is written in the same transaction as its parent page.
@@ -846,7 +865,17 @@ outcome could still change.
 
 TTL and page compaction update all ordered views consistently. Removing an
 expired body must not leave a posting entry that causes an invalid fetch or a
-cursor that can no longer advance. Implementations may remove corresponding
+cursor that can no longer advance. D4 persists the original absolute
+expiration on every data record and posting.
+Readers apply that deadline before payload or blob hydration. A compacted Midge
+row receives a physical TTL ending at the latest contained deadline, so
+fragment merging cannot extend a logical record lifetime or reclaim a live
+record early. Uncompacted positional fragments retain logical deadlines but no
+independent physical TTL; otherwise an older fragment could disappear while a
+newer fragment in the same bucket remains, making an expired prefix
+indistinguishable from corruption. Compaction retains a body-free positional
+range tombstone when every record has expired; sparse postings can be removed
+because they carry explicit offsets. Implementations may remove corresponding
 postings transactionally or retain compact tombstone/range metadata, provided:
 
 - parent-scope offset continuity remains explicit,

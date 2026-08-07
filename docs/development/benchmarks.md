@@ -26,6 +26,18 @@ Do not benchmark fake work, setup-only loops, or getters that cannot inform an
 optimization decision. Keep setup outside the timed section unless the row name
 explicitly says construction/setup is part of the measured behavior.
 
+For Stream D4, keep direct rows for hot-resource append at empty and 100,000
+prior events, 15/16/17 KiB and 256 KiB payloads, sparse and dense locator reads,
+TTL churn, repeated memtable rotation, and replay before/after compaction. A
+benchmark must fail on overlap, corruption, duplicate, or missing-record errors;
+it must not reset a local fixture to conceal an overlapping append.
+
+The D4 shape target records these focused measurements:
+`ttl_churn_commit_and_maintain`, `memtable_rotation_append_4k`,
+`sparse_locator_read`, `dense_locator_read`, `replay_before_compaction`, and
+`replay_after_compaction`. They remain characterization rows until repeated
+same-host runs are stable and baseline-backed.
+
 ## Suite Split
 
 Fitz uses the stress default profile for every documented and CI benchmark
@@ -259,7 +271,15 @@ relevant report has:
 - release `missing == 0`
 - no unreviewed untrustworthy release rows
 - no legacy-adapter records
-- no noisy or untrustworthy current rows
+- no noisy or untrustworthy release rows
+
+The release manifest uses memory-backed TCP and WebSocket lifecycle rows for KV
+and Stream so the regression signal covers the wire and domain lifecycle without
+folding host filesystem scheduling into every sample. The corresponding
+local-disk sync rows remain in the deep results with
+`target_class = storage_characterization`; review them for storage regressions,
+but do not use them to accept or reject the release suite while their WAL flush
+tail is host-sensitive.
 
 For release runs, run the artifact-backed Rust test after summarizing:
 

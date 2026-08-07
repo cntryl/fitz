@@ -9,6 +9,60 @@ fn new_correctness_sink(router: Arc<Router>) -> KvDomainSink {
 }
 
 #[test]
+fn should_update_kv_admin_transaction_incrementally_given_lifecycle() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 7;
+    let kv_route = "kv://acme/app/users";
+    let kv_address = RouteAddress::new(family, Route::new(kv_route));
+    let source_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let mailbox = Arc::new(Mailbox::new(8));
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let router = Arc::new(Router::new());
+    router.register(source_address.clone(), mailbox.clone());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = KvDomainSink::new(store, router, admin_read_model.clone());
+
+    sink.deliver(Envelope::from_route(
+        source_address.clone(),
+        kv_address.clone(),
+        FrameContext::new(
+            session_id,
+            ChannelId::Sub,
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
+            encode_kv_begin(kv_route, 1, 0),
+            family,
+        ),
+    ))
+    .expect("begin KV transaction");
+    let begin_frame = receive_frame(&mailbox, "begin ack envelope");
+    let tx_id = decode_kv_begin_tx_id(&begin_frame.payload);
+
+    // Act
+    let after_begin = admin_read_model.kv_transactions(None);
+    sink.deliver(Envelope::from_route(
+        source_address,
+        kv_address,
+        FrameContext::new(
+            session_id,
+            ChannelId::Sub,
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::COMMIT),
+            encode_kv_commit(tx_id, kv_route),
+            family,
+        ),
+    ))
+    .expect("commit KV transaction");
+    let _ = receive_envelope(&mailbox, "commit ack envelope");
+    let after_commit = admin_read_model.kv_transactions(None);
+
+    // Assert
+    assert_eq!(after_begin.len(), 1);
+    assert_eq!(after_begin[0].tx_id, tx_id);
+    assert_eq!(after_begin[0].resource, "users");
+    assert!(after_commit.is_empty());
+}
+
+#[test]
 fn should_reject_kv_request_when_source_and_destination_families_differ() {
     // Arrange
     let source_family = RouteFamily::new(2);

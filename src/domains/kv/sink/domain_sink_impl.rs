@@ -1,7 +1,10 @@
+#[cfg(test)]
+use super::model::Utc;
 use super::model::{
     AdminKvPrefixScanResult, AdminKvRowsRequest, AdminKvRowsResult, Arc, AtomicBool, Bytes,
-    HashMap, KvDomainActor, KvDomainCommand, KvDomainCore, KvDomainRuntime, KvDomainSink,
-    KvDomainState, KvResourceLockKey, Mutex, Ordering, Router, Utc, ADMIN_INVENTORY_REFRESH_LIMIT,
+    HashMap, KvAdminTransactionUpdate, KvDomainActor, KvDomainCommand, KvDomainCore,
+    KvDomainRuntime, KvDomainSink, KvDomainState, KvResourceLockKey, Mutex, Ordering, Router,
+    ADMIN_INVENTORY_REFRESH_LIMIT,
 };
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
@@ -639,6 +642,7 @@ impl KvDomainRuntime<'_> {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn sync_admin_snapshot(&self) {
         let started_at = Utc::now().to_rfc3339();
         let transactions = self
@@ -664,6 +668,19 @@ impl KvDomainRuntime<'_> {
             .collect();
         self.core.projection.mark_dirty();
         self.core.projection.refresh_if_dirty(|| transactions);
+        self.refresh_metrics_gauges();
+    }
+
+    pub(super) fn apply_admin_transaction_update(&self, update: KvAdminTransactionUpdate) {
+        match update {
+            KvAdminTransactionUpdate::None => return,
+            KvAdminTransactionUpdate::Upsert(transaction) => {
+                self.core.projection.upsert_transaction(transaction);
+            }
+            KvAdminTransactionUpdate::Remove { session_id, tx_id } => {
+                self.core.projection.remove_transaction(session_id, tx_id);
+            }
+        }
         self.refresh_metrics_gauges();
     }
 

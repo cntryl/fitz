@@ -26,7 +26,7 @@ impl StreamLayoutMarkerValue {
             STREAM_LAYOUT_MARKER_VALUE_V2_MARKER[0],
             STREAM_LAYOUT_MARKER_VALUE_V2_MARKER[1],
             match self.layout {
-                StreamStorageLayout::PromotionFrontier => 1,
+                StreamStorageLayout::PromotionFrontier => 2,
             },
         ]
     }
@@ -41,7 +41,7 @@ impl StreamLayoutMarkerValue {
         }
 
         let layout = match bytes[2] {
-            1 => StreamStorageLayout::PromotionFrontier,
+            2 => StreamStorageLayout::PromotionFrontier,
             other => {
                 return Err(format!(
                     "decode stream layout marker: unknown layout id {other}"

@@ -1,18 +1,14 @@
 use super::{
-    encode_compact_resource_page_key, encode_family_writer_epoch_key, encode_global_counter_key,
-    family_to_storage_partition, AppendSession, CommitPromotionFrontierBatchParams,
-    CommitRecordsParams, CommitResponse, CompactResourcePageValue, EventPayload, GlobalReservation,
-    IngestMetadata, PendingGlobalReservation, PromotionCommitFailure, RealmCounterValue,
-    ResourceMetaValue, SequenceGuardKey, SessionId, StreamAdminRecord, StreamRecord, StreamStore,
+    encode_family_writer_epoch_key, encode_global_counter_key, family_to_storage_partition,
+    AppendSession, CommitPromotionFrontierBatchParams, CommitRecordsParams, CommitResponse,
+    EventPayload, GlobalReservation, IngestMetadata, PendingGlobalReservation,
+    PromotionCommitFailure, ReadResourceParams, RealmCounterValue, ResourceMetaValue,
+    SequenceGuardKey, SessionId, StreamAdminRecord, StreamReadItem, StreamRecord, StreamStore,
     StreamWriteMode, ERR_SESSION_ROUTE_FAMILY_MISMATCH,
 };
 
 fn u64_to_u32_saturating(value: u64) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
-}
-
-fn u64_to_usize_saturating(value: u64) -> usize {
-    usize::try_from(value).unwrap_or(usize::MAX)
 }
 
 const MAX_SCOPE_CONFLICT_RETRIES: usize = 8;
@@ -689,41 +685,23 @@ impl StreamStore {
         resource: &str,
         resource_offset: u64,
     ) -> Result<Option<StreamRecord>, String> {
-        let page_start = Self::page_start_offset(resource_offset);
-        let page_key = encode_compact_resource_page_key(realm, area, resource, page_start);
-        let txn = self
-            .db
-            .begin_tx(
-                u64_to_u32_saturating(family),
-                cntryl_midge::TransactionMode::ReadOnly,
-            )
-            .map_err(|e| format!("failed to begin tx: {e:?}"))?;
-
-        match txn
-            .get(&page_key)
-            .map_err(|e| format!("get error: {e:?}"))?
-        {
-            Some(value_bytes) => {
-                let page = CompactResourcePageValue::try_decode(&value_bytes).map_err(|error| {
-                    Self::invalid_compact_resource_page_error(
-                        realm, area, resource, page_start, &error,
-                    )
-                })?;
-                let slot = u64_to_usize_saturating(resource_offset - page_start);
-                Ok(page.records.get(slot).map(|record| StreamRecord {
-                    route: crate::runtime::routing::Route::new(format!(
-                        "stream://{realm}/{area}/{resource}"
-                    )),
-                    resource_offset,
-                    area_offset: Some(record.area_offset),
-                    realm_offset: Some(record.realm_offset),
-                    global_offset: None,
-                    body: record.body.clone(),
-                    metadata: record.metadata.clone(),
-                    created_at: record.created_at,
-                }))
+        let params = ReadResourceParams {
+            family,
+            realm,
+            area,
+            resource,
+            from_offset: resource_offset,
+            limit: 1,
+            max_bytes: None,
+        };
+        let (items, _) = self.read_resource(&params)?;
+        Ok(items.into_iter().find_map(|item| match item {
+            StreamReadItem::Event(record) if record.resource_offset == resource_offset => {
+                Some(record)
             }
-            None => Ok(None),
-        }
+            StreamReadItem::Event(_)
+            | StreamReadItem::Filtered { .. }
+            | StreamReadItem::FilteredRange { .. } => None,
+        }))
     }
 }

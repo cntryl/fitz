@@ -55,7 +55,8 @@ struct KvResourceLatency {
 
 /// Admin projection for the KV domain.
 ///
-/// Tracks dirty state and rebuilds the admin read model snapshot on demand.
+/// Applies live transaction changes incrementally and can rebuild the complete
+/// admin read model snapshot when reconciliation is requested.
 /// Projection failure must never affect domain correctness.
 pub struct KvAdminProjection<K>
 where
@@ -90,6 +91,19 @@ where
             self.read_model
                 .replace_kv_transactions(build_transactions());
         }
+    }
+
+    pub fn upsert_transaction(&self, transaction: KvTransaction) {
+        self.read_model.upsert_kv_transaction(transaction);
+    }
+
+    pub fn remove_transaction(&self, session_id: u64, tx_id: u64) {
+        self.read_model.remove_kv_transaction(session_id, tx_id);
+    }
+
+    pub fn remove_session_transactions(&self, session_id: u64) {
+        self.read_model
+            .remove_kv_transactions_for_session(session_id);
     }
 
     pub fn record_read_latency(&self, key: &K, latency_ms: f64) {

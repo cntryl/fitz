@@ -197,7 +197,12 @@ pub(crate) fn measure_operations_best_effort(
     });
 
     let completed = u64::try_from(latencies.len()).unwrap_or(u64::MAX);
-    let _ = ctx.correctness().attempted(completed).completed(completed);
+    assert_eq!(
+        attempted,
+        completed.saturating_add(failures),
+        "best-effort attempts must equal completed and failed operations"
+    );
+    let _ = ctx.correctness().attempted(attempted).completed(completed);
     ctx.metadata("attempted_operations", attempted);
 
     ctx.metadata("measurement_kind", "best_effort_diagnostic");

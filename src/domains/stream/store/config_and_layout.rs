@@ -1,9 +1,8 @@
 use super::{
     decode_staging_value, encode_cursor_state_key, encode_stream_layout_marker_key,
-    AreaCounterValue, AreaLocatorValue, AreaValue, BatchLimits, CanonicalResourceValue,
-    CompactAreaPageValue, CompactGlobalPageValue, CompactResourcePageValue,
-    CompressedCompactRealmPageValue, KeyPrefix, LayoutActivationFailure, OffsetCounterValue,
-    PostingPageValue, RealmCounterValue, RealmLocatorValue, RealmValue, ResourceMetaValue,
+    AreaCounterValue, AreaValue, BatchLimits, CompactAreaPageValue, CompactGlobalPageValue,
+    CompactResourcePageValue, CompressedCompactRealmPageValue, KeyPrefix, LayoutActivationFailure,
+    OffsetCounterValue, PostingPageValue, RealmCounterValue, RealmValue, ResourceMetaValue,
     ResourceValue, StreamLayoutMarkerValue, StreamStorageLayout, StreamStore, StreamTTL,
     WatermarkValue, REALM_PAGE_RECORD_LIMIT,
 };
@@ -12,10 +11,6 @@ use std::{collections::HashMap, sync::Arc};
 
 fn u64_to_u32_saturating(value: u64) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
-}
-
-fn u64_to_usize_saturating(value: u64) -> usize {
-    usize::try_from(value).unwrap_or(usize::MAX)
 }
 
 impl StreamStore {
@@ -90,6 +85,24 @@ impl StreamStore {
         )
     }
 
+    #[cfg(test)]
+    pub(super) fn with_clock_for_tests(
+        mut self,
+        clock: Arc<dyn crate::runtime::clock::Clock>,
+    ) -> Self {
+        self.clock = clock;
+        self
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_maintenance_metrics_for_tests(
+        mut self,
+        metrics: crate::observability::metrics::MetricsCollector,
+    ) -> Self {
+        self.maintenance_metrics = metrics;
+        self
+    }
+
     pub(crate) fn with_storage_config_and_layout(
         db: crate::storage::FitzStorageEngine,
         limits: BatchLimits,
@@ -104,6 +117,7 @@ impl StreamStore {
             layout,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             ttl,
+            clock: Arc::new(crate::runtime::clock::SystemClock),
             next_session_id: std::sync::atomic::AtomicU64::new(1),
             sequencing_guards: Arc::new(Mutex::new(HashMap::new())),
             realm_sequence_states: Arc::new(Mutex::new(HashMap::new())),
@@ -112,10 +126,16 @@ impl StreamStore {
             global_completion_states: Arc::new(Mutex::new(HashMap::new())),
             recovered_global_families: Arc::new(Mutex::new(std::collections::HashSet::new())),
             pending_global_reservations: Arc::new(Mutex::new(HashMap::new())),
+            maintenance_queues: Mutex::new(HashMap::new()),
+            maintenance_metrics: crate::observability::metrics().as_ref().clone(),
             #[cfg(test)]
             fail_next_promotion_frontier_commit: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
             fence_next_global_reservation: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            maintenance_failure_stage: std::sync::atomic::AtomicU8::new(0),
+            #[cfg(test)]
+            maintenance_full_scans: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -216,9 +236,10 @@ impl StreamStore {
                 .map_err(|error| ("layout_marker", error));
         }
         if key.first().copied() == Some(KeyPrefix::CanonicalResource as u8) {
-            return CanonicalResourceValue::try_decode(value)
-                .map(|_| ())
-                .map_err(|error| ("canonical_resource", error));
+            return Err((
+                "canonical_resource",
+                "obsolete D3 prototype row; export/replay or reset the Stream family".to_string(),
+            ));
         }
         if key.first().copied() == Some(KeyPrefix::Staging as u8) {
             return decode_staging_value(value)
@@ -268,19 +289,18 @@ impl StreamStore {
             prefix if prefix == KeyPrefix::RealmCounter as u8 => RealmCounterValue::decode(value)
                 .map(|_| ())
                 .map_err(|error| ("realm_counter", error)),
-            prefix if prefix == KeyPrefix::CanonicalResource as u8 => {
-                CanonicalResourceValue::try_decode(value)
-                    .map(|_| ())
-                    .map_err(|error| ("canonical_resource", error))
-            }
-            prefix if prefix == KeyPrefix::AreaLocator as u8 => AreaLocatorValue::try_decode(value)
-                .map(|_| ())
-                .map_err(|error| ("area_locator", error)),
-            prefix if prefix == KeyPrefix::RealmLocator as u8 => {
-                RealmLocatorValue::try_decode(value)
-                    .map(|_| ())
-                    .map_err(|error| ("realm_locator", error))
-            }
+            prefix if prefix == KeyPrefix::CanonicalResource as u8 => Err((
+                "canonical_resource",
+                "obsolete D3 prototype row; export/replay or reset the Stream family".to_string(),
+            )),
+            prefix if prefix == KeyPrefix::AreaLocator as u8 => Err((
+                "area_locator",
+                "obsolete D3 prototype row; export/replay or reset the Stream family".to_string(),
+            )),
+            prefix if prefix == KeyPrefix::RealmLocator as u8 => Err((
+                "realm_locator",
+                "obsolete D3 prototype row; export/replay or reset the Stream family".to_string(),
+            )),
             prefix if prefix == KeyPrefix::CompactAreaPage as u8 => {
                 CompactAreaPageValue::try_decode(value)
                     .map(|_| ())
@@ -335,11 +355,21 @@ impl StreamStore {
                     ))
                 }
             }
+            prefix if prefix == KeyPrefix::PayloadBlob as u8 => super::decode_payload_blob(value)
+                .map(|_| ())
+                .map_err(|error| ("payload_blob", error)),
             _ => Ok(()),
         }
     }
 
     pub(super) fn ensure_layout_activation_for_family(&self, family: u64) -> Result<(), String> {
+        // Recovery is recorded only after the layout marker and cursor have
+        // validated, and Midge holds the family's exclusive writer lease for
+        // this store's lifetime. Rechecking those immutable rows on every
+        // operation only adds storage transactions to the hot path.
+        if self.recovered_global_families.lock().contains(&family) {
+            return Ok(());
+        }
         self.inspect_and_activate_layout_for_family(family)?;
         self.recover_global_ordering_once(family)
     }
@@ -366,6 +396,11 @@ impl StreamStore {
             .get(&marker_key)
             .map_err(|e| LayoutActivationFailure::Other(format!("get error: {e:?}")))?
         {
+            if bytes.starts_with(&[0, 0xD3]) {
+                return Err(LayoutActivationFailure::ResetRequired(
+                    Self::stream_d3_reset_required_error(family),
+                ));
+            }
             let marker =
                 StreamLayoutMarkerValue::decode(&bytes).map_err(LayoutActivationFailure::Other)?;
             if marker.layout != self.layout {
@@ -455,6 +490,7 @@ impl StreamStore {
             KeyPrefix::GlobalAreaPostingPage as u8,
             KeyPrefix::GlobalResourcePostingPage as u8,
             KeyPrefix::GlobalAreaResourcePostingPage as u8,
+            KeyPrefix::PayloadBlob as u8,
         ];
 
         let query = cntryl_midge::Query::new();
@@ -491,9 +527,15 @@ impl StreamStore {
         requested_layout: StreamStorageLayout,
     ) -> String {
         format!(
-            "ERR_STREAM_STORAGE_LAYOUT_RESET_REQUIRED: family={} requested={} existing unmarked stream data must be reset before opening with promotion-frontier",
+            "ERR_STREAM_STORAGE_LAYOUT_RESET_REQUIRED: family={} requested={} existing unmarked stream data requires export/replay into a fresh D4 store or an intentional reset",
             family,
             requested_layout.as_str()
+        )
+    }
+
+    fn stream_d3_reset_required_error(family: u64) -> String {
+        format!(
+            "ERR_STREAM_STORAGE_LAYOUT_RESET_REQUIRED: family={family} stored=D3 requested=D4; export/replay history into a fresh store or intentionally reset Stream data"
         )
     }
 
@@ -563,16 +605,5 @@ impl StreamStore {
 
     pub(super) fn page_start_offset(offset: u64) -> u64 {
         offset / REALM_PAGE_RECORD_LIMIT as u64 * REALM_PAGE_RECORD_LIMIT as u64
-    }
-
-    pub(super) fn compact_page_query_limit(from_offset: u64, limit: u64) -> usize {
-        let page_start = Self::page_start_offset(from_offset);
-        let start_slot = u64_to_usize_saturating(from_offset - page_start);
-        let capped_limit = u64_to_usize_saturating(limit);
-        start_slot
-            .saturating_add(capped_limit)
-            .saturating_add(1)
-            .div_ceil(REALM_PAGE_RECORD_LIMIT)
-            .max(1)
     }
 }

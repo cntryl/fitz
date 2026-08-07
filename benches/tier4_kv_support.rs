@@ -43,7 +43,11 @@ pub(crate) fn dimensions(
         client_count: 1,
         workload_mix: "write_only",
         completed_unit: "transaction_lifecycle",
-        gate_class: "regression_gate",
+        gate_class: if storage == StorageProfile::Memory {
+            "regression_gate"
+        } else {
+            "storage_characterization"
+        },
     }
 }
 

@@ -67,12 +67,14 @@ impl KvDomainRuntime<'_> {
         resource_key: &KvResourceLockKey,
         mutation_count: u64,
     ) {
-        let route = Self::kv_route_for_lock(resource_key);
-        let watch_targets = {
+        let (route, watch_targets) = {
             let watch_actors = self.core.watch_actors.lock();
-            watch_actors
-                .get(&resource_key.family_id)
-                .map_or_else(Vec::new, |actor| actor.matching_targets(&route))
+            let Some(actor) = watch_actors.get(&resource_key.family_id) else {
+                return;
+            };
+            let route = Self::kv_route_for_lock(resource_key);
+            let watch_targets = actor.matching_targets(&route);
+            (route, watch_targets)
         };
         for target in watch_targets {
             self.route_kv_notify_to_subscription(
@@ -193,7 +195,8 @@ impl KvDomainRuntime<'_> {
             session = session_id,
             "All KV transactions and resource locks released for session (disconnect cleanup)"
         );
-        self.sync_admin_snapshot();
+        self.core.projection.remove_session_transactions(session_id);
+        self.refresh_metrics_gauges();
     }
 
     pub(in crate::domains::kv::sink) fn active_transaction_count(&self) -> usize {

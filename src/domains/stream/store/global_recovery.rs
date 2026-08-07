@@ -52,7 +52,7 @@ impl StreamStore {
                 RealmCounterValue::decode(&bytes).map(|value| value.next_offset)
             })?;
         let mut prefix = encode_compact_global_page_key(0);
-        prefix.truncate(prefix.len().saturating_sub(16));
+        prefix.truncate(prefix.len().saturating_sub(24));
         let mut rows = txn
             .scan(
                 &cntryl_midge::Query::new()

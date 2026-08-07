@@ -4,13 +4,13 @@ use super::{
     encode_family_writer_epoch_key, encode_global_area_posting_key,
     encode_global_area_resource_posting_key, encode_global_resource_posting_key,
     encode_realm_counter_key, encode_realm_resource_posting_key, encode_resource_meta_key,
-    AreaCounterValue, CommitPromotionFrontierBatchParams, CommitResponse, CompactAreaPageRecord,
-    CompactAreaPageValue, CompactGlobalPageRecord, CompactGlobalPageValue, CompactRealmPageRecord,
-    CompactResourcePageRecord, CompactResourcePageValue, CompressedCompactRealmPageValue,
-    DiscriminatorWriteRowsParams, EventPayload, PostingEntry, PostingPageValue,
-    PromotionCommitFailure, PromotionFrontierWriteRowsParams, PromotionTransactionFailure,
-    PromotionWriteFailure, RealmCounterValue, ResourceMetaValue, StreamStore, StreamWriteMode,
-    GLOBAL_PAGE_RECORD_LIMIT, REALM_PAGE_RECORD_LIMIT,
+    AreaCounterValue, Bytes, CommitPromotionFrontierBatchParams, CommitResponse,
+    CompactAreaPageRecord, CompactAreaPageValue, CompactGlobalPageRecord, CompactGlobalPageValue,
+    CompactRealmPageRecord, CompactResourcePageRecord, CompactResourcePageValue,
+    CompressedCompactRealmPageValue, DiscriminatorWriteRowsParams, EventPayload, PostingEntry,
+    PostingPageValue, PromotionCommitFailure, PromotionFrontierWriteRowsParams,
+    PromotionTransactionFailure, PromotionWriteFailure, RealmCounterValue, ResourceMetaValue,
+    StreamStore, StreamWriteMode, GLOBAL_PAGE_RECORD_LIMIT, REALM_PAGE_RECORD_LIMIT,
 };
 
 #[cfg(test)]
@@ -41,6 +41,7 @@ fn posting_entry_pages(entries: &[PostingEntry], page_size: u64) -> Vec<&[Postin
 
 struct PromotionFrontierBatchWritePlan {
     created_at: u64,
+    expires_at: Option<u64>,
     batch_size: usize,
     last_resource_offset: u64,
     last_area_offset: u64,
@@ -50,6 +51,63 @@ struct PromotionFrontierBatchWritePlan {
 }
 
 impl StreamStore {
+    fn queue_committed_maintenance_buckets(
+        &self,
+        params: &CommitPromotionFrontierBatchParams<'_>,
+        plan: &PromotionFrontierBatchWritePlan,
+    ) {
+        let queue_range = |first: u64, last: u64, build_key: &dyn Fn(u64) -> Vec<u8>| {
+            let mut offset = first;
+            loop {
+                self.queue_maintenance_key(params.family, &build_key(offset));
+                if offset / GLOBAL_PAGE_RECORD_LIMIT == last / GLOBAL_PAGE_RECORD_LIMIT {
+                    break;
+                }
+                offset = (offset / GLOBAL_PAGE_RECORD_LIMIT + 1) * GLOBAL_PAGE_RECORD_LIMIT;
+            }
+        };
+        queue_range(
+            params.first_resource_offset,
+            plan.last_resource_offset,
+            &|offset| {
+                encode_compact_resource_page_key(params.realm, params.area, params.resource, offset)
+            },
+        );
+        queue_range(params.first_area_offset, plan.last_area_offset, &|offset| {
+            encode_compact_area_page_key(params.realm, params.area, offset)
+        });
+        queue_range(
+            params.first_realm_offset,
+            plan.last_realm_offset,
+            &|offset| encode_compressed_compact_realm_page_key(params.realm, offset),
+        );
+        queue_range(
+            params.first_global_offset,
+            plan.last_global_offset,
+            &|offset| encode_compact_global_page_key(offset),
+        );
+        queue_range(
+            params.first_realm_offset,
+            plan.last_realm_offset,
+            &|offset| encode_realm_resource_posting_key(params.realm, params.resource, offset),
+        );
+        queue_range(
+            params.first_global_offset,
+            plan.last_global_offset,
+            &|offset| encode_global_area_posting_key(params.area, offset),
+        );
+        queue_range(
+            params.first_global_offset,
+            plan.last_global_offset,
+            &|offset| encode_global_resource_posting_key(params.resource, offset),
+        );
+        queue_range(
+            params.first_global_offset,
+            plan.last_global_offset,
+            &|offset| encode_global_area_resource_posting_key(params.area, params.resource, offset),
+        );
+    }
+
     fn verify_current_writer_epoch(
         &self,
         family: u64,
@@ -83,9 +141,10 @@ impl StreamStore {
     fn build_global_page_records(
         params: &CommitPromotionFrontierBatchParams<'_>,
         created_at: u64,
+        expires_at: Option<u64>,
+        events: &[EventPayload],
     ) -> Vec<CompactGlobalPageRecord> {
-        params
-            .events
+        events
             .iter()
             .enumerate()
             .map(|(index, event)| CompactGlobalPageRecord {
@@ -98,32 +157,87 @@ impl StreamStore {
                 body: event.body.clone(),
                 metadata: event.metadata.clone(),
                 created_at,
+                expires_at,
+            })
+            .collect()
+    }
+
+    fn write_large_payload_blobs(
+        &self,
+        txn: &mut cntryl_midge::Transaction,
+        params: &CommitPromotionFrontierBatchParams<'_>,
+    ) -> Result<Vec<EventPayload>, String> {
+        params
+            .events
+            .iter()
+            .enumerate()
+            .map(|(index, event)| {
+                let payload_bytes = event
+                    .body
+                    .len()
+                    .saturating_add(event.metadata.as_ref().map_or(0, Bytes::len));
+                let collides_with_blob_reference =
+                    event.body.starts_with(&super::PAYLOAD_BLOB_REF_MARKER);
+                if payload_bytes <= super::INLINE_PAYLOAD_LIMIT && !collides_with_blob_reference {
+                    return Ok(event.clone());
+                }
+                let global_offset = params
+                    .first_global_offset
+                    .checked_add(index as u64)
+                    .ok_or_else(|| "ERR_STREAM_OFFSET_EXHAUSTED".to_string())?;
+                let checksum = super::payload_checksum(&event.body, event.metadata.as_ref());
+                txn.put(
+                    super::encode_payload_blob_key(global_offset),
+                    super::encode_payload_blob(&event.body, event.metadata.as_ref(), checksum)?,
+                    self.ttl.ttl_seconds,
+                )
+                .map_err(|error| format!("write Stream payload blob failed: {error:?}"))?;
+                Ok(EventPayload {
+                    body: super::encode_payload_blob_ref(global_offset, checksum),
+                    metadata: None,
+                    discriminator: event.discriminator.clone(),
+                })
             })
             .collect()
     }
 
     pub(super) fn build_realm_page_records(
-        events: &[EventPayload],
-        area: &str,
-        resource: &str,
-        first_resource_offset: u64,
-        first_area_offset: u64,
-        created_at: u64,
+        params: &PromotionFrontierWriteRowsParams<'_>,
+        expires_at: Option<u64>,
     ) -> Vec<CompactRealmPageRecord> {
+        let PromotionFrontierWriteRowsParams {
+            area,
+            resource,
+            first_resource_offset,
+            first_area_offset,
+            first_global_offset,
+            events,
+            created_at,
+            ..
+        } = *params;
         let mut realm_records = Vec::with_capacity(events.len());
 
-        for (index, event) in events.iter().enumerate() {
+        for (index, _event) in events.iter().enumerate() {
             let resource_offset = first_resource_offset + index as u64;
             let area_offset = first_area_offset + index as u64;
+            let global_offset = first_global_offset + index as u64;
+            let parent_fragment_start = if global_offset / GLOBAL_PAGE_RECORD_LIMIT
+                == first_global_offset / GLOBAL_PAGE_RECORD_LIMIT
+            {
+                first_global_offset
+            } else {
+                global_offset / GLOBAL_PAGE_RECORD_LIMIT * GLOBAL_PAGE_RECORD_LIMIT
+            };
 
             realm_records.push(CompactRealmPageRecord {
                 area: area.to_string(),
                 resource: resource.to_string(),
                 area_offset,
                 resource_offset,
-                body: event.body.clone(),
-                metadata: event.metadata.clone(),
+                body: super::encode_payload_locator(global_offset, parent_fragment_start),
+                metadata: None,
                 created_at,
+                expires_at,
             });
         }
 
@@ -134,17 +248,28 @@ impl StreamStore {
         events: &[EventPayload],
         resource: &str,
         first_resource_offset: u64,
+        first_global_offset: u64,
         created_at: u64,
+        expires_at: Option<u64>,
     ) -> Vec<CompactAreaPageRecord> {
         let mut records = Vec::with_capacity(events.len());
 
-        for (index, event) in events.iter().enumerate() {
+        for (index, _event) in events.iter().enumerate() {
+            let global_offset = first_global_offset + index as u64;
+            let parent_fragment_start = if global_offset / GLOBAL_PAGE_RECORD_LIMIT
+                == first_global_offset / GLOBAL_PAGE_RECORD_LIMIT
+            {
+                first_global_offset
+            } else {
+                global_offset / GLOBAL_PAGE_RECORD_LIMIT * GLOBAL_PAGE_RECORD_LIMIT
+            };
             records.push(CompactAreaPageRecord {
                 resource: resource.to_string(),
                 resource_offset: first_resource_offset + index as u64,
-                body: event.body.clone(),
-                metadata: event.metadata.clone(),
+                body: super::encode_payload_locator(global_offset, parent_fragment_start),
+                metadata: None,
                 created_at,
+                expires_at,
             });
         }
 
@@ -156,6 +281,7 @@ impl StreamStore {
         first_area_offset: u64,
         first_realm_offset: u64,
         created_at: u64,
+        expires_at: Option<u64>,
     ) -> Vec<CompactResourcePageRecord> {
         let mut records = Vec::with_capacity(events.len());
 
@@ -166,6 +292,7 @@ impl StreamStore {
                 body: event.body.clone(),
                 metadata: event.metadata.clone(),
                 created_at,
+                expires_at,
             });
         }
 
@@ -213,39 +340,6 @@ impl StreamStore {
         Ok(())
     }
 
-    pub(super) fn load_compact_resource_page_for_write(
-        txn: &cntryl_midge::Transaction,
-        realm: &str,
-        area: &str,
-        resource: &str,
-        page_start_offset: u64,
-    ) -> Result<CompactResourcePageValue, String> {
-        match txn
-            .get(&encode_compact_resource_page_key(
-                realm,
-                area,
-                resource,
-                page_start_offset,
-            ))
-            .map_err(|e| format!("get error: {e:?}"))?
-        {
-            Some(value_bytes) => {
-                CompactResourcePageValue::try_decode(&value_bytes).map_err(|error| {
-                    Self::invalid_compact_resource_page_error(
-                        realm,
-                        area,
-                        resource,
-                        page_start_offset,
-                        &error,
-                    )
-                })
-            }
-            None => Ok(CompactResourcePageValue {
-                records: Vec::new(),
-            }),
-        }
-    }
-
     pub(super) fn write_compact_resource_records(
         txn: &mut cntryl_midge::Transaction,
         realm: &str,
@@ -259,32 +353,24 @@ impl StreamStore {
             return Ok(());
         }
 
+        // D4 resource history is immutable just like the broader planes. Each
+        // commit writes a uniquely keyed fragment and never reads or rewrites
+        // historical payload bytes.
         let mut next_record_index = 0usize;
         let mut current_resource_offset = first_resource_offset;
 
         while next_record_index < records.len() {
             let page_start_offset = Self::page_start_offset(current_resource_offset);
             let page_offset = u64_to_usize_saturating(current_resource_offset - page_start_offset);
-            let mut page = Self::load_compact_resource_page_for_write(
-                txn,
-                realm,
-                area,
-                resource,
-                page_start_offset,
-            )?;
-
-            if page.records.len() != page_offset {
-                return Err("ERR_OVERLAPPING_COMPACT_RESOURCE_PAGE_APPEND".to_string());
-            }
-
             let append_count =
                 (REALM_PAGE_RECORD_LIMIT - page_offset).min(records.len() - next_record_index);
-            page.records
-                .extend_from_slice(&records[next_record_index..next_record_index + append_count]);
 
             txn.put(
-                encode_compact_resource_page_key(realm, area, resource, page_start_offset),
-                page.encode(),
+                encode_compact_resource_page_key(realm, area, resource, current_resource_offset),
+                CompactResourcePageValue {
+                    records: records[next_record_index..next_record_index + append_count].to_vec(),
+                }
+                .encode(),
                 ttl_opt,
             )
             .map_err(|e| format!("txn put failed: {e:?}"))?;
@@ -346,14 +432,17 @@ impl StreamStore {
             first_resource_offset,
             first_area_offset,
             first_realm_offset,
+            first_global_offset,
             events,
             created_at,
         } = *params;
+        let expires_at = self.absolute_expiration(created_at);
         let resource_records = Self::build_promotion_frontier_resource_records(
             events,
             first_area_offset,
             first_realm_offset,
             created_at,
+            expires_at,
         );
         Self::write_compact_resource_records(
             txn,
@@ -362,38 +451,26 @@ impl StreamStore {
             resource,
             first_resource_offset,
             &resource_records,
-            self.ttl.ttl_seconds,
+            None,
         )?;
 
         let area_records = Self::build_promotion_frontier_area_records(
             events,
             resource,
             first_resource_offset,
+            first_global_offset,
             created_at,
+            expires_at,
         );
-        Self::write_compact_area_records(
-            txn,
-            realm,
-            area,
-            first_area_offset,
-            &area_records,
-            self.ttl.ttl_seconds,
-        )?;
+        Self::write_compact_area_records(txn, realm, area, first_area_offset, &area_records, None)?;
 
-        let realm_records = Self::build_realm_page_records(
-            events,
-            area,
-            resource,
-            first_resource_offset,
-            first_area_offset,
-            created_at,
-        );
+        let realm_records = Self::build_realm_page_records(params, expires_at);
         Self::write_compressed_compact_realm_records(
             txn,
             realm,
             first_realm_offset,
             &realm_records,
-            self.ttl.ttl_seconds,
+            None,
         )
     }
 
@@ -401,7 +478,7 @@ impl StreamStore {
         &self,
         params: CommitPromotionFrontierBatchParams<'_>,
     ) -> Result<(CommitResponse, ResourceMetaValue), PromotionCommitFailure> {
-        let plan = match Self::derive_promotion_frontier_batch_write_plan(&params) {
+        let plan = match self.derive_promotion_frontier_batch_write_plan(&params) {
             Ok(plan) => plan,
             Err(error) => {
                 let count = u64::try_from(params.events.len()).unwrap_or(u64::MAX);
@@ -447,6 +524,7 @@ impl StreamStore {
                 return Err(PromotionCommitFailure::Retryable(error));
             }
         }
+        self.queue_committed_maintenance_buckets(&params, &plan);
         self.resolve_durable_global_range(
             params.family,
             params.first_global_offset,
@@ -460,9 +538,10 @@ impl StreamStore {
     }
 
     fn derive_promotion_frontier_batch_write_plan(
+        &self,
         params: &CommitPromotionFrontierBatchParams<'_>,
     ) -> Result<PromotionFrontierBatchWritePlan, String> {
-        let created_at = Self::now_epoch_ms();
+        let created_at = self.now_epoch_ms();
         let batch_size = params.events.len();
         let batch_size_u64 =
             u64::try_from(batch_size).map_err(|_| "ERR_STREAM_OFFSET_EXHAUSTED".to_string())?;
@@ -499,6 +578,7 @@ impl StreamStore {
 
         Ok(PromotionFrontierBatchWritePlan {
             created_at,
+            expires_at: self.absolute_expiration(created_at),
             batch_size,
             last_resource_offset,
             last_area_offset,
@@ -558,6 +638,8 @@ impl StreamStore {
 
         self.reserve_broad_scope_ranges(&mut txn, params, plan)?;
 
+        let stored_events = self.write_large_payload_blobs(&mut txn, params)?;
+
         self.write_promotion_frontier_event_rows(
             &mut txn,
             &PromotionFrontierWriteRowsParams {
@@ -567,7 +649,8 @@ impl StreamStore {
                 first_resource_offset: params.first_resource_offset,
                 first_area_offset: params.first_area_offset,
                 first_realm_offset: params.first_realm_offset,
-                events: params.events,
+                first_global_offset: params.first_global_offset,
+                events: &stored_events,
                 created_at: plan.created_at,
             },
         )?;
@@ -585,7 +668,12 @@ impl StreamStore {
                 ttl_opt: self.ttl.ttl_seconds,
             },
         )?;
-        let global_records = Self::build_global_page_records(params, plan.created_at);
+        let global_records = Self::build_global_page_records(
+            params,
+            plan.created_at,
+            plan.expires_at,
+            &stored_events,
+        );
         let mut record_index = 0usize;
         while record_index < global_records.len() {
             let fragment_start = params.first_global_offset + record_index as u64;
@@ -599,13 +687,13 @@ impl StreamStore {
                     records: global_records[record_index..record_index + count].to_vec(),
                 }
                 .encode(),
-                self.ttl.ttl_seconds,
+                None,
             )
             .map_err(|error| format!("write compact global page failed: {error:?}"))?;
             record_index += count;
         }
 
-        Self::write_posting_rows(&mut txn, params, plan, self.ttl.ttl_seconds)?;
+        Self::write_posting_rows(&mut txn, params, plan, None)?;
 
         Ok(txn)
     }
@@ -692,6 +780,7 @@ impl StreamStore {
                     params.first_realm_offset,
                     REALM_PAGE_RECORD_LIMIT as u64,
                 ),
+                expires_at: plan.expires_at,
             })
             .collect();
         for entries in posting_entry_pages(&realm_entries, REALM_PAGE_RECORD_LIMIT as u64) {
@@ -715,6 +804,7 @@ impl StreamStore {
                     params.first_global_offset,
                     GLOBAL_PAGE_RECORD_LIMIT,
                 ),
+                expires_at: plan.expires_at,
             })
             .collect();
         for entries in posting_entry_pages(&global_entries, GLOBAL_PAGE_RECORD_LIMIT) {

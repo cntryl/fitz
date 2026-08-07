@@ -2,7 +2,7 @@
 
 use bytes::Bytes;
 use parking_lot::Mutex;
-use std::collections::{hash_map::Entry, BTreeMap, HashMap, HashSet};
+use std::collections::{hash_map::Entry, BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 use super::protocol::{
@@ -17,14 +17,14 @@ use super::storage::{
     encode_family_writer_epoch_key, encode_global_area_posting_key,
     encode_global_area_resource_posting_key, encode_global_counter_key,
     encode_global_discriminator_key, encode_global_resource_posting_key,
-    encode_global_watermark_key, encode_realm_counter_key, encode_realm_resource_posting_key,
-    encode_resource_meta_key, encode_stream_layout_marker_key, encode_watermark_key,
-    AreaCounterValue, AreaLocatorValue, AreaValue, CanonicalResourceValue, CompactAreaPageRecord,
-    CompactAreaPageValue, CompactGlobalPageRecord, CompactGlobalPageValue, CompactRealmPageRecord,
+    encode_global_watermark_key, encode_payload_blob_key, encode_realm_counter_key,
+    encode_realm_resource_posting_key, encode_resource_meta_key, encode_stream_layout_marker_key,
+    encode_watermark_key, AreaCounterValue, AreaValue, CompactAreaPageRecord, CompactAreaPageValue,
+    CompactGlobalPageRecord, CompactGlobalPageValue, CompactRealmPageRecord,
     CompactResourcePageRecord, CompactResourcePageValue, CompressedCompactRealmPageValue,
-    KeyPrefix, OffsetCounterValue, PostingEntry, PostingPageValue, RealmCounterValue,
-    RealmLocatorValue, RealmValue, ResourceMetaValue, ResourceValue, StreamLayoutMarkerValue,
-    WatermarkValue, GLOBAL_PAGE_RECORD_LIMIT, REALM_PAGE_RECORD_LIMIT,
+    KeyPrefix, OffsetCounterValue, PostingEntry, PostingPageValue, RealmCounterValue, RealmValue,
+    ResourceMetaValue, ResourceValue, StreamLayoutMarkerValue, WatermarkValue,
+    GLOBAL_PAGE_RECORD_LIMIT, REALM_PAGE_RECORD_LIMIT,
 };
 
 #[cfg(test)]
@@ -219,6 +219,7 @@ struct PromotionFrontierWriteRowsParams<'a> {
     first_resource_offset: u64,
     first_area_offset: u64,
     first_realm_offset: u64,
+    first_global_offset: u64,
     events: &'a [EventPayload],
     created_at: u64,
 }
@@ -345,6 +346,7 @@ pub struct StreamStore {
     layout: StreamStorageLayout,
     sessions: Arc<Mutex<HashMap<SessionId, AppendSession>>>,
     ttl: StreamTTL,
+    clock: Arc<dyn crate::runtime::clock::Clock>,
     next_session_id: std::sync::atomic::AtomicU64,
     sequencing_guards: Arc<Mutex<HashMap<SequenceGuardKey, SequenceGuard>>>,
     realm_sequence_states: Arc<Mutex<HashMap<RealmSequenceStateKey, RealmSequenceStateHandle>>>,
@@ -353,10 +355,23 @@ pub struct StreamStore {
     global_completion_states: Arc<Mutex<HashMap<u64, GlobalCompletionStateHandle>>>,
     recovered_global_families: Arc<Mutex<HashSet<u64>>>,
     pending_global_reservations: PendingGlobalReservations,
+    maintenance_queues: Mutex<HashMap<u64, MaintenanceQueueState>>,
+    maintenance_metrics: crate::observability::metrics::MetricsCollector,
     #[cfg(test)]
     fail_next_promotion_frontier_commit: std::sync::atomic::AtomicBool,
     #[cfg(test)]
     fence_next_global_reservation: std::sync::atomic::AtomicBool,
+    #[cfg(test)]
+    maintenance_failure_stage: std::sync::atomic::AtomicU8,
+    #[cfg(test)]
+    maintenance_full_scans: std::sync::atomic::AtomicUsize,
+}
+
+#[derive(Default)]
+struct MaintenanceQueueState {
+    initialized: bool,
+    buckets: BTreeSet<Vec<u8>>,
+    retry_buckets: BTreeSet<Vec<u8>>,
 }
 
 #[allow(clippy::struct_field_names)]
@@ -445,8 +460,137 @@ fn usize_to_u64_saturating(value: usize) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
 }
 
-fn millis_to_u64_saturating(millis: u128) -> u64 {
-    u64::try_from(millis).unwrap_or(u64::MAX)
+fn record_is_expired(expires_at: Option<u64>, now_epoch_ms: u64) -> bool {
+    expires_at.is_some_and(|deadline| deadline <= now_epoch_ms)
+}
+
+const PAYLOAD_LOCATOR_MARKER: [u8; 3] = [0, 0xD4, 0x4C];
+const PAYLOAD_BLOB_REF_MARKER: [u8; 3] = [0, 0xD4, 0xB0];
+const PAYLOAD_BLOB_VALUE_MARKER: [u8; 3] = [0, 0xD4, 0xB1];
+const INLINE_PAYLOAD_LIMIT: usize = 16 * 1024;
+
+fn encode_payload_locator(global_offset: u64, parent_fragment_start: u64) -> Bytes {
+    let mut bytes = Vec::with_capacity(19);
+    bytes.extend_from_slice(&PAYLOAD_LOCATOR_MARKER);
+    bytes.extend_from_slice(&global_offset.to_le_bytes());
+    bytes.extend_from_slice(&parent_fragment_start.to_le_bytes());
+    Bytes::from(bytes)
+}
+
+fn decode_payload_locator(bytes: &[u8]) -> Result<Option<(u64, u64)>, String> {
+    if !bytes.starts_with(&PAYLOAD_LOCATOR_MARKER) {
+        return Ok(None);
+    }
+    if bytes.len() != 19 {
+        return Err("ERR_STREAM_CORRUPT_LOCATOR: invalid payload locator length".to_string());
+    }
+    let global_offset = u64::from_le_bytes(
+        bytes[3..11]
+            .try_into()
+            .map_err(|_| "ERR_STREAM_CORRUPT_LOCATOR: invalid global offset".to_string())?,
+    );
+    let parent_fragment_start = u64::from_le_bytes(
+        bytes[11..19]
+            .try_into()
+            .map_err(|_| "ERR_STREAM_CORRUPT_LOCATOR: invalid parent offset".to_string())?,
+    );
+    Ok(Some((global_offset, parent_fragment_start)))
+}
+
+fn payload_checksum(body: &[u8], metadata: Option<&Bytes>) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut digest = Sha256::new();
+    digest.update((body.len() as u64).to_le_bytes());
+    digest.update(body);
+    match metadata {
+        Some(metadata) => {
+            digest.update([1]);
+            digest.update((metadata.len() as u64).to_le_bytes());
+            digest.update(metadata);
+        }
+        None => digest.update([0]),
+    }
+    digest.finalize().into()
+}
+
+fn encode_payload_blob_ref(global_offset: u64, checksum: [u8; 32]) -> Bytes {
+    let mut bytes = Vec::with_capacity(43);
+    bytes.extend_from_slice(&PAYLOAD_BLOB_REF_MARKER);
+    bytes.extend_from_slice(&global_offset.to_le_bytes());
+    bytes.extend_from_slice(&checksum);
+    Bytes::from(bytes)
+}
+
+fn decode_payload_blob_ref(bytes: &[u8]) -> Result<Option<(u64, [u8; 32])>, String> {
+    if !bytes.starts_with(&PAYLOAD_BLOB_REF_MARKER) {
+        return Ok(None);
+    }
+    if bytes.len() != 43 {
+        return Err("ERR_STREAM_CORRUPT_BLOB: invalid blob reference length".to_string());
+    }
+    let global_offset = u64::from_le_bytes(
+        bytes[3..11]
+            .try_into()
+            .map_err(|_| "ERR_STREAM_CORRUPT_BLOB: invalid blob offset".to_string())?,
+    );
+    let checksum = bytes[11..43]
+        .try_into()
+        .map_err(|_| "ERR_STREAM_CORRUPT_BLOB: invalid blob checksum".to_string())?;
+    Ok(Some((global_offset, checksum)))
+}
+
+fn encode_payload_blob(
+    body: &Bytes,
+    metadata: Option<&Bytes>,
+    checksum: [u8; 32],
+) -> Result<Vec<u8>, String> {
+    let body_len = u32::try_from(body.len())
+        .map_err(|_| "ERR_STREAM_PAYLOAD_TOO_LARGE: body exceeds blob format".to_string())?;
+    let metadata_len = metadata
+        .map(|value| {
+            u32::try_from(value.len()).map_err(|_| {
+                "ERR_STREAM_PAYLOAD_TOO_LARGE: metadata exceeds blob format".to_string()
+            })
+        })
+        .transpose()?
+        .unwrap_or(u32::MAX);
+    let mut bytes =
+        Vec::with_capacity(3 + 32 + 4 + 4 + body.len() + metadata.map_or(0, Bytes::len));
+    bytes.extend_from_slice(&PAYLOAD_BLOB_VALUE_MARKER);
+    bytes.extend_from_slice(&checksum);
+    bytes.extend_from_slice(&body_len.to_le_bytes());
+    bytes.extend_from_slice(&metadata_len.to_le_bytes());
+    bytes.extend_from_slice(body);
+    if let Some(metadata) = metadata {
+        bytes.extend_from_slice(metadata);
+    }
+    Ok(bytes)
+}
+
+fn decode_payload_blob(bytes: &[u8]) -> Result<(Bytes, Option<Bytes>, [u8; 32]), String> {
+    if bytes.len() < 43 || !bytes.starts_with(&PAYLOAD_BLOB_VALUE_MARKER) {
+        return Err("ERR_STREAM_CORRUPT_BLOB: invalid blob header".to_string());
+    }
+    let checksum: [u8; 32] = bytes[3..35]
+        .try_into()
+        .map_err(|_| "ERR_STREAM_CORRUPT_BLOB: invalid checksum".to_string())?;
+    let body_len = u32::from_le_bytes(bytes[35..39].try_into().unwrap()) as usize;
+    let metadata_raw = u32::from_le_bytes(bytes[39..43].try_into().unwrap());
+    let metadata_len = (metadata_raw != u32::MAX).then_some(metadata_raw as usize);
+    let expected = 43usize
+        .checked_add(body_len)
+        .and_then(|value| value.checked_add(metadata_len.unwrap_or(0)))
+        .ok_or_else(|| "ERR_STREAM_CORRUPT_BLOB: length overflow".to_string())?;
+    if bytes.len() != expected {
+        return Err("ERR_STREAM_CORRUPT_BLOB: invalid payload length".to_string());
+    }
+    let body = Bytes::copy_from_slice(&bytes[43..43 + body_len]);
+    let metadata = metadata_len
+        .map(|length| Bytes::copy_from_slice(&bytes[43 + body_len..43 + body_len + length]));
+    if payload_checksum(&body, metadata.as_ref()) != checksum {
+        return Err("ERR_STREAM_CORRUPT_BLOB: checksum mismatch".to_string());
+    }
+    Ok((body, metadata, checksum))
 }
 
 impl ReadCursorState {
@@ -543,6 +687,12 @@ mod commits_and_sessions;
 mod compact_page_writes;
 mod config_and_layout;
 mod global_recovery;
+mod maintenance;
+#[cfg(test)]
+pub(super) use maintenance::MaintenanceFailureStage;
+pub use maintenance::StreamMaintenanceResult;
+mod ordered_reads;
+mod read_support;
 mod reads;
 mod sequence_and_filters;
 mod watermarks_and_metadata;

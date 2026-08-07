@@ -541,7 +541,7 @@ pub(super) fn should_persist_promotion_frontier_stream_layout_marker_given_first
     );
     assert!(read_layout_marker_bytes(db.as_ref(), 1)
         .expect("fresh store layout marker")
-        .starts_with(&[0, 0xD3]));
+        .starts_with(&[0, 0xD4]));
 }
 
 #[test]
@@ -592,6 +592,29 @@ pub(super) fn should_return_error_given_unmarked_stream_data_on_default_promotio
 }
 
 #[test]
+fn should_reject_d3_layout_with_export_or_reset_guidance() {
+    // Arrange
+    let db = create_test_engine_with_cfs(vec![1]);
+    let mut txn = db
+        .begin_tx(1, cntryl_midge::TransactionMode::ReadWrite)
+        .expect("begin D3 marker transaction");
+    txn.put(encode_stream_layout_marker_key(), vec![0, 0xD3, 1], None)
+        .expect("write D3 marker");
+    txn.commit(cntryl_midge::WriteOptions::sync())
+        .expect("commit D3 marker");
+    let store = StreamStore::new(db);
+
+    // Act
+    let result = store.get_next_resource_offset(1, "test", "events", "orders");
+
+    // Assert
+    let error = result.expect_err("D3 must be a clean on-disk break");
+    assert!(error.contains("stored=D3 requested=D4"));
+    assert!(error.contains("export/replay"));
+    assert!(error.contains("reset"));
+}
+
+#[test]
 pub(super) fn should_reject_corrupt_persisted_rows_for_each_stream_decoder_family() {
     // Arrange
     let stream_key = |prefix| {
@@ -616,7 +639,7 @@ pub(super) fn should_reject_corrupt_persisted_rows_for_each_stream_decoder_famil
         (stream_key(KeyPrefix::AreaCounter as u8), "area_counter"),
         (stream_key(KeyPrefix::RealmCounter as u8), "realm_counter"),
         (
-            crate::domains::stream::storage::encode_canonical_resource_key(1, 1),
+            vec![KeyPrefix::CanonicalResource as u8],
             "canonical_resource",
         ),
         (stream_key(KeyPrefix::AreaLocator as u8), "area_locator"),

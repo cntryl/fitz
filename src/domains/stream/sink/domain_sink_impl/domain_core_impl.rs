@@ -28,6 +28,17 @@ enum ReadScope {
 }
 
 impl StreamDomainCore {
+    pub(in crate::domains::stream::sink) fn run_maintenance_slice(&self, family: u64) {
+        if let Err(error) = self.stream_store.run_maintenance(family) {
+            tracing::warn!(
+                domain = "stream",
+                family,
+                error,
+                "Stream maintenance slice failed; queued work will be retried"
+            );
+        }
+    }
+
     fn cursor_integrity_token(
         &self,
         selector_fingerprint: u64,
@@ -931,6 +942,10 @@ impl StreamDomainCore {
 }
 
 impl StreamDomainRuntime<'_> {
+    pub(in crate::domains::stream::sink) fn run_maintenance_slice(&self, family: u64) {
+        self.core.run_maintenance_slice(family);
+    }
+
     pub(in crate::domains::stream::sink) fn refresh_admin_snapshot_if_dirty(&self) {
         self.core.refresh_admin_snapshot_if_dirty();
     }

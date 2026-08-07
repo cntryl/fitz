@@ -9,7 +9,10 @@ mod tier4_stream_transport;
 #[path = "tier4_support.rs"]
 mod tier4_support;
 
-use crate::tier4_stream_direct::measure_direct_write;
+use crate::tier4_stream_direct::{
+    measure_compaction_replay, measure_direct_write, measure_direct_write_after_history,
+    measure_filtered_locator_read, measure_memtable_rotation_write, measure_ttl_churn,
+};
 use crate::tier4_stream_support::{
     measure_operations, tag_row, LayerKind, ReadScope, RowDimensions, StorageProfile,
     TransportKind, CANONICAL_PAYLOAD_SIZE, STREAM_SYNC_COMMIT_MODE,
@@ -247,6 +250,49 @@ payload_row!(
     StreamWriteMode::Sync,
     "payload_size_memory_write"
 );
+
+#[stress(tier = 4)]
+fn should_characterize_hot_resource_append_after_100000_events(ctx: &mut StressContext) {
+    measure_direct_write_after_history(
+        ctx,
+        StorageProfile::LocalDisk,
+        64,
+        StreamWriteMode::Sync,
+        "hot_resource_append",
+        "hot_resource_append_depth_100000",
+        100_000,
+    );
+}
+
+#[stress(tier = 4)]
+fn should_characterize_repeated_memtable_rotation(ctx: &mut StressContext) {
+    measure_memtable_rotation_write(ctx);
+}
+
+#[stress(tier = 4)]
+fn should_characterize_ttl_churn(ctx: &mut StressContext) {
+    measure_ttl_churn(ctx);
+}
+
+#[stress(tier = 4)]
+fn should_characterize_sparse_locator_read(ctx: &mut StressContext) {
+    measure_filtered_locator_read(ctx, true);
+}
+
+#[stress(tier = 4)]
+fn should_characterize_dense_locator_read(ctx: &mut StressContext) {
+    measure_filtered_locator_read(ctx, false);
+}
+
+#[stress(tier = 4)]
+fn should_characterize_replay_before_compaction(ctx: &mut StressContext) {
+    measure_compaction_replay(ctx, false);
+}
+
+#[stress(tier = 4)]
+fn should_characterize_replay_after_compaction(ctx: &mut StressContext) {
+    measure_compaction_replay(ctx, true);
+}
 payload_row!(
     should_characterize_memory_append_1k,
     "memory_append_1k",
@@ -256,10 +302,26 @@ payload_row!(
     "payload_size_memory_write"
 );
 payload_row!(
+    should_characterize_memory_append_15k,
+    "memory_append_15k",
+    StorageProfile::Memory,
+    15 * 1_024,
+    StreamWriteMode::Sync,
+    "payload_size_memory_write"
+);
+payload_row!(
     should_characterize_memory_append_16k,
     "memory_append_16k",
     StorageProfile::Memory,
     16 * 1_024,
+    StreamWriteMode::Sync,
+    "payload_size_memory_write"
+);
+payload_row!(
+    should_characterize_memory_append_17k,
+    "memory_append_17k",
+    StorageProfile::Memory,
+    17 * 1_024,
     StreamWriteMode::Sync,
     "payload_size_memory_write"
 );
@@ -288,10 +350,26 @@ payload_row!(
     "payload_size_sync_write"
 );
 payload_row!(
+    should_characterize_disk_sync_write_15k,
+    "disk_sync_write_15k",
+    StorageProfile::LocalDisk,
+    15 * 1_024,
+    StreamWriteMode::Sync,
+    "payload_size_sync_write"
+);
+payload_row!(
     should_characterize_disk_sync_write_16k,
     "disk_sync_write_16k",
     StorageProfile::LocalDisk,
     16 * 1_024,
+    StreamWriteMode::Sync,
+    "payload_size_sync_write"
+);
+payload_row!(
+    should_characterize_disk_sync_write_17k,
+    "disk_sync_write_17k",
+    StorageProfile::LocalDisk,
+    17 * 1_024,
     StreamWriteMode::Sync,
     "payload_size_sync_write"
 );

@@ -8,6 +8,60 @@
 use super::*;
 
 #[test]
+fn should_run_bounded_stream_maintenance_through_internal_actor_command() {
+    // Arrange
+    let context = setup_test_context();
+    for offset in 0..9 {
+        context
+            .sink
+            .core
+            .stream_store
+            .commit_records(crate::domains::stream::store::CommitRecordsParams {
+                family: context.family.as_u64(),
+                realm: "bench",
+                area: "events",
+                resource: "orders",
+                expected_resource_next_offset: offset,
+                events: &[crate::domains::stream::store::EventPayload {
+                    body: Bytes::from_static(b"event"),
+                    metadata: None,
+                    discriminator: None,
+                }],
+                ingest_metadata: None,
+                mode: crate::domains::stream::protocol::StreamWriteMode::Sync,
+            })
+            .expect("commit maintenance fragment");
+    }
+
+    // Act
+    context.sink.run_maintenance_slice_for_tests(context.family);
+    let records = context
+        .sink
+        .core
+        .stream_store
+        .read_resource(&crate::domains::stream::store::ReadResourceParams {
+            family: context.family.as_u64(),
+            realm: "bench",
+            area: "events",
+            resource: "orders",
+            from_offset: 0,
+            limit: 64,
+            max_bytes: None,
+        })
+        .expect("read actor-maintained resource")
+        .0;
+
+    // Assert
+    assert_eq!(records.len(), 9);
+    assert!(!context
+        .sink
+        .core
+        .stream_store
+        .has_pending_maintenance(context.family.as_u64()));
+    assert!(context.sink.is_actor_running());
+}
+
+#[test]
 fn should_reject_stream_delivery_when_managed_actor_is_stopped() {
     // Arrange
     let router = Arc::new(Router::new());

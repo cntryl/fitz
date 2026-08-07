@@ -54,7 +54,8 @@ pub enum KeyPrefix {
     CompactAreaPage = 0xE4,
     /// Promotion-frontier compressed compact realm page row: [realm][page_start_realm_offset]
     CompressedCompactRealmPage = 0xE8,
-    /// Promotion-frontier exact-resource mini-page row: [realm][area][resource][page_start_resource_offset]
+    /// D4 immutable exact-resource fragment:
+    /// [realm][area][resource][64-offset bucket][first resource offset]
     CompactResourcePage = 0xEA,
     /// Immutable family-global commit fragment.
     CompactGlobalPage = 0xEB,
@@ -66,6 +67,8 @@ pub enum KeyPrefix {
     GlobalResourcePostingPage = 0xEE,
     /// Global offsets for one area/resource pair across all realms.
     GlobalAreaResourcePostingPage = 0xEF,
+    /// D4 immutable large-payload blob, keyed by family-global offset.
+    PayloadBlob = 0xF0,
 }
 
 pub(super) fn stream_kind_encoder(
@@ -100,6 +103,13 @@ pub fn encode_global_discriminator_key(global_offset: u64) -> Vec<u8> {
 }
 
 #[must_use]
+pub fn encode_payload_blob_key(global_offset: u64) -> Vec<u8> {
+    let mut encoder = stream_kind_encoder(FAMILY_SCOPE_REALM, KeyPrefix::PayloadBlob, 8);
+    encoder.encode_u64_into(global_offset);
+    encoder.into_vec()
+}
+
+#[must_use]
 pub fn encode_family_writer_epoch_key() -> Vec<u8> {
     stream_kind_key(FAMILY_SCOPE_REALM, KeyPrefix::FamilyWriterEpoch, 0)
 }
@@ -111,9 +121,10 @@ pub fn encode_cursor_state_key() -> Vec<u8> {
 
 #[must_use]
 pub fn encode_compact_global_page_key(first_global_offset: u64) -> Vec<u8> {
-    let mut encoder = stream_kind_encoder(FAMILY_SCOPE_REALM, KeyPrefix::CompactGlobalPage, 16);
+    let mut encoder = stream_kind_encoder(FAMILY_SCOPE_REALM, KeyPrefix::CompactGlobalPage, 24);
     encoder.encode_u64_into(first_global_offset / 64 * 64);
     encoder.encode_u64_into(first_global_offset);
+    encoder.encode_u64_into(0);
     encoder.into_vec()
 }
 
@@ -122,12 +133,14 @@ fn encode_posting_key(realm: &str, kind: KeyPrefix, segments: &[&str], offset: u
         .iter()
         .map(|segment| segment.len() + 2)
         .sum::<usize>()
-        + 8;
+        + 24;
     let mut encoder = stream_kind_encoder(realm, kind, capacity);
     for segment in segments {
         storage_key::encode_segment_into(&mut encoder, segment);
     }
+    encoder.encode_u64_into(offset / 64 * 64);
     encoder.encode_u64_into(offset);
+    encoder.encode_u64_into(0);
     encoder.into_vec()
 }
 
@@ -267,10 +280,10 @@ pub fn encode_realm_key(realm: &str, realm_offset: u64) -> Vec<u8> {
 /// Returns an error if the key is too short to contain the trailing encoded
 /// offset.
 pub fn decode_area_offset_from_key(key: &[u8]) -> Result<u64, String> {
-    if key.len() < 8 {
+    if key.len() < 16 {
         return Err("key too short".to_string());
     }
-    let offset_bytes = &key[key.len() - 8..];
+    let offset_bytes = &key[key.len() - 16..key.len() - 8];
     let mut arr = [0u8; 8];
     arr.copy_from_slice(offset_bytes);
     Ok(u64::from_be_bytes(arr))
@@ -283,10 +296,10 @@ pub fn decode_area_offset_from_key(key: &[u8]) -> Result<u64, String> {
 /// Returns an error if the key is too short to contain the trailing encoded
 /// offset.
 pub fn decode_realm_offset_from_key(key: &[u8]) -> Result<u64, String> {
-    if key.len() < 8 {
+    if key.len() < 16 {
         return Err("key too short".to_string());
     }
-    let offset_bytes = &key[key.len() - 8..];
+    let offset_bytes = &key[key.len() - 16..key.len() - 8];
     let mut arr = [0u8; 8];
     arr.copy_from_slice(offset_bytes);
     Ok(u64::from_be_bytes(arr))
@@ -382,33 +395,6 @@ pub fn encode_realm_discriminator_key(realm: &str, realm_offset: u64) -> Vec<u8>
     encoder.into_vec()
 }
 
-/// Encodes a prototype canonical resource key.
-#[must_use]
-pub fn encode_canonical_resource_key(stream_id: u64, resource_offset: u64) -> Vec<u8> {
-    let mut encoder = lexkey::Encoder::with_capacity(17);
-    encoder.push_byte(KeyPrefix::CanonicalResource as u8);
-    encoder.encode_u64_into(stream_id);
-    encoder.encode_u64_into(resource_offset);
-    encoder.into_vec()
-}
-
-/// Encodes a prototype area locator key.
-#[must_use]
-pub fn encode_area_locator_key(realm: &str, area: &str, area_offset: u64) -> Vec<u8> {
-    let mut encoder = stream_kind_encoder(realm, KeyPrefix::AreaLocator, area.len() + 10);
-    storage_key::encode_segment_into(&mut encoder, area);
-    encoder.encode_u64_into(area_offset);
-    encoder.into_vec()
-}
-
-/// Encodes a prototype realm locator key.
-#[must_use]
-pub fn encode_realm_locator_key(realm: &str, realm_offset: u64) -> Vec<u8> {
-    let mut encoder = stream_kind_encoder(realm, KeyPrefix::RealmLocator, 9);
-    encoder.encode_u64_into(realm_offset);
-    encoder.into_vec()
-}
-
 /// Encodes a promotion-frontier compact area page key.
 #[must_use]
 pub fn encode_compact_area_page_key(
@@ -416,9 +402,11 @@ pub fn encode_compact_area_page_key(
     area: &str,
     area_page_start_offset: u64,
 ) -> Vec<u8> {
-    let mut encoder = stream_kind_encoder(realm, KeyPrefix::CompactAreaPage, area.len() + 10);
+    let mut encoder = stream_kind_encoder(realm, KeyPrefix::CompactAreaPage, area.len() + 26);
     storage_key::encode_segment_into(&mut encoder, area);
+    encoder.encode_u64_into(area_page_start_offset / 64 * 64);
     encoder.encode_u64_into(area_page_start_offset);
+    encoder.encode_u64_into(0);
     encoder.into_vec()
 }
 
@@ -428,8 +416,10 @@ pub fn encode_compressed_compact_realm_page_key(
     realm: &str,
     page_start_realm_offset: u64,
 ) -> Vec<u8> {
-    let mut encoder = stream_kind_encoder(realm, KeyPrefix::CompressedCompactRealmPage, 9);
+    let mut encoder = stream_kind_encoder(realm, KeyPrefix::CompressedCompactRealmPage, 24);
+    encoder.encode_u64_into(page_start_realm_offset / 64 * 64);
     encoder.encode_u64_into(page_start_realm_offset);
+    encoder.encode_u64_into(0);
     encoder.into_vec()
 }
 
@@ -441,14 +431,27 @@ pub fn encode_compact_resource_page_key(
     resource: &str,
     page_start_resource_offset: u64,
 ) -> Vec<u8> {
+    encode_compact_resource_fragment_key(realm, area, resource, page_start_resource_offset, 0)
+}
+
+#[must_use]
+pub(crate) fn encode_compact_resource_fragment_key(
+    realm: &str,
+    area: &str,
+    resource: &str,
+    first_resource_offset: u64,
+    generation: u64,
+) -> Vec<u8> {
     let mut encoder = stream_kind_encoder(
         realm,
         KeyPrefix::CompactResourcePage,
-        area.len() + resource.len() + 10,
+        area.len() + resource.len() + 26,
     );
     storage_key::encode_segment_into(&mut encoder, area);
     storage_key::encode_segment_into(&mut encoder, resource);
-    encoder.encode_u64_into(page_start_resource_offset);
+    encoder.encode_u64_into(first_resource_offset / 64 * 64);
+    encoder.encode_u64_into(first_resource_offset);
+    encoder.encode_u64_into(generation);
     encoder.into_vec()
 }
 
@@ -459,10 +462,10 @@ pub fn encode_compact_resource_page_key(
 /// Returns an error if the key is too short to contain the trailing encoded
 /// offset.
 pub fn decode_resource_offset_from_key(key: &[u8]) -> Result<u64, String> {
-    if key.len() < 8 {
+    if key.len() < 16 {
         return Err("key too short".to_string());
     }
-    let offset_bytes = &key[key.len() - 8..];
+    let offset_bytes = &key[key.len() - 16..key.len() - 8];
     let mut arr = [0u8; 8];
     arr.copy_from_slice(offset_bytes);
     Ok(u64::from_be_bytes(arr))
@@ -521,6 +524,8 @@ pub struct CompactRealmPageRecord {
     pub body: Bytes,
     pub metadata: Option<Bytes>,
     pub created_at: u64,
+    /// Absolute Unix epoch deadline in milliseconds.
+    pub expires_at: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -537,6 +542,8 @@ pub struct CompactAreaPageRecord {
     pub body: Bytes,
     pub metadata: Option<Bytes>,
     pub created_at: u64,
+    /// Absolute Unix epoch deadline in milliseconds.
+    pub expires_at: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -552,6 +559,8 @@ pub struct CompactResourcePageRecord {
     pub body: Bytes,
     pub metadata: Option<Bytes>,
     pub created_at: u64,
+    /// Absolute Unix epoch deadline in milliseconds.
+    pub expires_at: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -577,6 +586,8 @@ pub struct CompactGlobalPageRecord {
     pub body: Bytes,
     pub metadata: Option<Bytes>,
     pub created_at: u64,
+    /// Absolute Unix epoch deadline in milliseconds.
+    pub expires_at: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -594,16 +605,17 @@ pub struct PostingPageValue {
 pub struct PostingEntry {
     pub offset: u64,
     pub parent_fragment_start: u64,
+    /// Absolute Unix epoch deadline in milliseconds.
+    pub expires_at: Option<u64>,
 }
 
 pub(super) const AREA_VALUE_V2_MARKER: [u8; 2] = [0, 0xA1];
 pub(super) const REALM_VALUE_V2_MARKER: [u8; 2] = [0, 0xB1];
 pub(super) const COMPACT_REALM_PAGE_VALUE_V2_MARKER: [u8; 2] = [0, 0xB3];
 pub(super) const RESOURCE_VALUE_V2_MARKER: [u8; 2] = [0, 0x91];
-pub(super) const CANONICAL_RESOURCE_VALUE_V1_MARKER: [u8; 2] = [0, 0xC1];
-pub(super) const AREA_LOCATOR_VALUE_V1_MARKER: [u8; 2] = [0, 0xC2];
-pub(super) const REALM_LOCATOR_VALUE_V1_MARKER: [u8; 2] = [0, 0xC3];
-pub(super) const STREAM_LAYOUT_MARKER_VALUE_V2_MARKER: [u8; 2] = [0, 0xD3];
+/// D4 is an intentional clean on-disk break. The public layout selection name
+/// remains stable, but the marker and layout id do not accept D3 stores.
+pub(super) const STREAM_LAYOUT_MARKER_VALUE_V2_MARKER: [u8; 2] = [0, 0xD4];
 pub(super) const COMPACT_AREA_PAGE_VALUE_V2_MARKER: [u8; 2] = [0, 0xE5];
 pub(super) const COMPRESSED_COMPACT_REALM_PAGE_VALUE_V2_MARKER: [u8; 2] = [0, 0xE9];
 pub(super) const COMPACT_RESOURCE_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xEA];
@@ -643,31 +655,6 @@ pub struct AreaCounterValue {
 #[derive(Debug, Clone)]
 pub struct RealmCounterValue {
     pub next_offset: u64,
-}
-
-/// Prototype canonical body row used to benchmark canonical-body plus locator layouts.
-#[derive(Debug, Clone)]
-pub struct CanonicalResourceValue {
-    pub area_offset: u64,
-    pub realm_offset: u64,
-    pub body: Bytes,
-    pub metadata: Option<Bytes>,
-    pub created_at: u64,
-}
-
-/// Prototype area locator row used to benchmark batched wildcard hydration.
-#[derive(Debug, Clone)]
-pub struct AreaLocatorValue {
-    pub stream_id: u64,
-    pub resource_offset: u64,
-}
-
-/// Prototype realm locator row used to benchmark batched wildcard hydration.
-#[derive(Debug, Clone)]
-pub struct RealmLocatorValue {
-    pub area_offset: u64,
-    pub stream_id: u64,
-    pub resource_offset: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

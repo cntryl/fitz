@@ -4,13 +4,15 @@ use bytes::Bytes;
 use parking_lot::Mutex;
 use std::convert::TryFrom;
 use std::sync::Arc;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 // Initial capacity for the per-connection write buffer (length prefix + typical frame).
 // Grows automatically for larger frames; the allocation is reused across all frames
 // on the same connection so there is at most one heap allocation per connection.
 const WRITE_BUF_INIT_CAPACITY: usize = 512;
+const MAX_WRITE_BATCH_BYTES: usize = 64 * 1024;
+const MAX_WRITE_BATCH_FRAMES: usize = 64;
 
 fn should_ignore_unknown_session_error(error: &crate::session::SessionError) -> bool {
     matches!(
@@ -40,19 +42,67 @@ fn frame_length_prefix(frame_len: usize) -> Result<[u8; 4], std::num::TryFromInt
     u32::try_from(frame_len).map(u32::to_be_bytes)
 }
 
-async fn write_tcp_frame(
-    write_half: &mut tokio::net::tcp::OwnedWriteHalf,
-    write_buf: &mut Vec<u8>,
-    frame: Bytes,
-) -> Result<(), std::io::Error> {
-    write_buf.clear();
+fn append_tcp_frame(write_buf: &mut Vec<u8>, frame: &Bytes) -> Result<(), std::io::Error> {
     write_buf
         .extend_from_slice(&frame_length_prefix(frame.len()).map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, "frame too large")
         })?);
-    write_buf.extend_from_slice(&frame);
+    write_buf.extend_from_slice(frame);
+    Ok(())
+}
+
+async fn write_tcp_frames<W: AsyncWrite + Unpin>(
+    write_half: &mut W,
+    write_buf: &mut Vec<u8>,
+    first_frame: Bytes,
+    outbound_rx: &mut tokio::sync::mpsc::Receiver<Bytes>,
+) -> Result<usize, std::io::Error> {
+    write_buf.clear();
+    append_tcp_frame(write_buf, &first_frame)?;
+    let mut frame_count = 1usize;
+    while frame_count < MAX_WRITE_BATCH_FRAMES && write_buf.len() < MAX_WRITE_BATCH_BYTES {
+        let Ok(frame) = outbound_rx.try_recv() else {
+            break;
+        };
+        append_tcp_frame(write_buf, &frame)?;
+        frame_count += 1;
+    }
     write_half.write_all(write_buf).await?;
-    write_half.flush().await
+    write_half.flush().await?;
+    Ok(frame_count)
+}
+
+fn spawn_tcp_writer_task(
+    mut write_half: tokio::net::tcp::OwnedWriteHalf,
+    mut outbound_rx: tokio::sync::mpsc::Receiver<Bytes>,
+    session_id: u64,
+    runtime: Arc<crate::boot::Runtime>,
+    ingress: Arc<dyn Ingress>,
+) -> tokio::task::JoinHandle<Result<(), String>> {
+    tokio::spawn(async move {
+        tracing::debug!(session_id, "TCP outbound writer task started");
+        let mut write_buf = Vec::with_capacity(WRITE_BUF_INIT_CAPACITY);
+        while let Some(frame) = outbound_rx.recv().await {
+            tracing::debug!(
+                session_id,
+                frame_len = frame.len(),
+                "TCP outbound: sending frame to wire"
+            );
+            let frame_count =
+                write_tcp_frames(&mut write_half, &mut write_buf, frame, &mut outbound_rx)
+                    .await
+                    .map_err(|error| {
+                        tracing::error!(session_id, %error, "TCP outbound write error");
+                        format!("TCP outbound write error: {error}")
+                    })?;
+            for _ in 0..frame_count {
+                runtime.increment_messages_sent();
+                ingress.record_frame_sent(session_id);
+            }
+        }
+        tracing::debug!(session_id, "TCP outbound writer task ended");
+        Ok(())
+    })
 }
 
 struct TcpFrameTaskContext {
@@ -253,8 +303,7 @@ pub(super) async fn handle_tcp_connection(
         create_session(ingress.clone(), config.clone(), stream, frame_tx.clone()).await?;
     let session_id = handler.session_id;
 
-    let (outbound_tx, mut outbound_rx) =
-        tokio::sync::mpsc::channel::<Bytes>(config.channel_capacity);
+    let (outbound_tx, outbound_rx) = tokio::sync::mpsc::channel::<Bytes>(config.channel_capacity);
 
     let sink = std::sync::Arc::new(crate::api::outbound::SessionOutboundSink::new(
         outbound_tx.clone(),
@@ -282,35 +331,13 @@ pub(super) async fn handle_tcp_connection(
         inbox_route.clone(),
     ));
 
-    let tcp_session_id = session_id;
-    let runtime_for_writes = runtime.clone();
-    let ingress_for_writes = ingress.clone();
-    let mut write_half = write_half;
-    let writer_handle = tokio::spawn(async move {
-        tracing::debug!(
-            session_id = tcp_session_id,
-            "TCP outbound writer task started"
-        );
-        let mut write_buf: Vec<u8> = Vec::with_capacity(WRITE_BUF_INIT_CAPACITY);
-        while let Some(frame) = outbound_rx.recv().await {
-            tracing::debug!(
-                session_id = tcp_session_id,
-                frame_len = frame.len(),
-                "TCP outbound: sending frame to wire"
-            );
-            if let Err(e) = write_tcp_frame(&mut write_half, &mut write_buf, frame).await {
-                tracing::error!(session_id = tcp_session_id, error = %e, "TCP outbound write error");
-                return Err(format!("TCP outbound write error: {e}"));
-            }
-            runtime_for_writes.increment_messages_sent();
-            ingress_for_writes.record_frame_sent(tcp_session_id);
-        }
-        tracing::debug!(
-            session_id = tcp_session_id,
-            "TCP outbound writer task ended"
-        );
-        Ok(())
-    });
+    let writer_handle = spawn_tcp_writer_task(
+        write_half,
+        outbound_rx,
+        session_id,
+        runtime.clone(),
+        ingress.clone(),
+    );
 
     let frame_handle = spawn_tcp_frame_task(
         frame_rx,
@@ -356,12 +383,15 @@ pub(super) async fn handle_tcp_connection(
 
 #[cfg(test)]
 mod tests {
-    use super::{close_tcp_session_on_frame_error, should_ignore_unknown_session_error};
+    use super::{
+        close_tcp_session_on_frame_error, should_ignore_unknown_session_error, write_tcp_frames,
+    };
     use crate::api::runtime_ingress::{Ingress, IngressDecision};
     use crate::protocol::frame::ChannelId;
     use crate::session::{CloseReason, SessionError, SessionInfo};
     use bytes::Bytes;
     use std::sync::{Arc, Mutex};
+    use tokio::io::AsyncReadExt;
 
     struct RecordingIngress {
         closes: Arc<Mutex<Vec<CloseReason>>>,
@@ -424,5 +454,36 @@ mod tests {
 
         // Assert
         assert!(result);
+    }
+
+    #[tokio::test]
+    async fn should_batch_queued_tcp_frames_in_wire_order() {
+        // Arrange
+        let (mut writer, mut reader) = tokio::io::duplex(64);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        tx.try_send(Bytes::from_static(b"bc"))
+            .expect("queue second frame");
+        tx.try_send(Bytes::from_static(b"def"))
+            .expect("queue third frame");
+        let mut write_buf = Vec::new();
+
+        // Act
+        let frame_count = write_tcp_frames(
+            &mut writer,
+            &mut write_buf,
+            Bytes::from_static(b"a"),
+            &mut rx,
+        )
+        .await
+        .expect("write TCP frame batch");
+        let mut encoded = vec![0; write_buf.len()];
+        reader
+            .read_exact(&mut encoded)
+            .await
+            .expect("read TCP frame batch");
+
+        // Assert
+        assert_eq!(frame_count, 3);
+        assert_eq!(encoded, b"\0\0\0\x01a\0\0\0\x02bc\0\0\0\x03def");
     }
 }

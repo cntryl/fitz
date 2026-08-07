@@ -220,6 +220,17 @@ impl StreamDomainSink {
                     core.refresh_admin_snapshot_if_dirty();
                     let _ = reply.send(());
                 }
+                StreamDomainCommand::RunMaintenance {
+                    family: requested_family,
+                    reply,
+                } => {
+                    if requested_family == family.as_u64() {
+                        core.run_maintenance_slice(requested_family);
+                    }
+                    if let Some(reply) = reply {
+                        let _ = reply.send(());
+                    }
+                }
                 #[cfg(test)]
                 StreamDomainCommand::SyncAdminSnapshot(reply) => {
                     core.sync_admin_snapshot();
@@ -307,6 +318,61 @@ impl StreamDomainSink {
         self.actor.stop();
     }
 
+    pub(crate) fn is_active(&self) -> bool {
+        self.core.active.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn run_maintenance_slice(&self) {
+        let families: Vec<u64> = if let Some(families) = self.family_families.as_ref() {
+            families.iter().map(RouteFamily::as_u64).collect()
+        } else {
+            match self.core.store.list_column_families() {
+                Ok(families) => families
+                    .into_iter()
+                    .map(|family| u64::from(family.id()))
+                    .filter(|family| *family != 0)
+                    .collect(),
+                Err(error) => {
+                    tracing::warn!(domain = "stream", error = ?error, "Stream maintenance family discovery failed");
+                    return;
+                }
+            }
+        };
+        for family in families {
+            if !self.core.stream_store.has_pending_maintenance(family) {
+                continue;
+            }
+            let command = StreamDomainCommand::RunMaintenance {
+                family,
+                reply: None,
+            };
+            let enqueue = if let Some(runtime) = self.family_runtime.as_ref() {
+                let Ok(family_id) = u32::try_from(family) else {
+                    continue;
+                };
+                runtime
+                    .try_enqueue(
+                        RouteFamily::new(family_id),
+                        crate::runtime::FamilyActorLane::Control,
+                        command,
+                    )
+                    .map_err(|error| error.to_string())
+            } else {
+                self.actor
+                    .try_send_high_priority(command)
+                    .map_err(|error| error.to_string())
+            };
+            if let Err(error) = enqueue {
+                tracing::warn!(
+                    domain = "stream",
+                    family,
+                    error,
+                    "Stream maintenance enqueue failed"
+                );
+            }
+        }
+    }
+
     #[must_use]
     pub fn storage_layout(&self) -> StreamStorageLayout {
         self.core.storage_layout()
@@ -364,6 +430,27 @@ impl StreamDomainSink {
                 .family_runtime
                 .as_ref()
                 .is_none_or(crate::runtime::FamilyActorPoolRuntime::is_running)
+    }
+
+    #[cfg(test)]
+    pub(super) fn run_maintenance_slice_for_tests(&self, family: RouteFamily) {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        let command = StreamDomainCommand::RunMaintenance {
+            family: family.as_u64(),
+            reply: Some(reply_tx),
+        };
+        if let Some(runtime) = self.family_runtime.as_ref() {
+            runtime
+                .try_enqueue(family, crate::runtime::FamilyActorLane::Control, command)
+                .expect("enqueue test Stream maintenance command");
+        } else {
+            self.actor
+                .try_send_high_priority(command)
+                .expect("enqueue test Stream maintenance command");
+        }
+        reply_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("receive test Stream maintenance reply");
     }
 
     pub(crate) fn actor_health_snapshot(&self) -> crate::runtime::ManagedActorHealthSnapshot {

@@ -201,6 +201,10 @@ impl MetricsCollector {
 
     /// Increment a counter by a specific value.
     pub fn counter_add(&self, name: &str, amount: u64) {
+        if let Some(counter) = self.counters.get(name) {
+            counter.fetch_add(amount, Ordering::Relaxed);
+            return;
+        }
         let counter = self
             .counters
             .entry(name.to_string())
@@ -223,6 +227,10 @@ impl MetricsCollector {
 
     /// Set a gauge to a specific value.
     pub fn gauge_set(&self, name: &str, value: u64) {
+        if let Some(gauge) = self.gauges.get(name) {
+            gauge.store(value, Ordering::Relaxed);
+            return;
+        }
         let gauge = self
             .gauges
             .entry(name.to_string())
@@ -233,6 +241,10 @@ impl MetricsCollector {
 
     /// Increment a gauge.
     pub fn gauge_inc(&self, name: &str) {
+        if let Some(gauge) = self.gauges.get(name) {
+            gauge.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
         let gauge = self
             .gauges
             .entry(name.to_string())
@@ -243,6 +255,10 @@ impl MetricsCollector {
 
     /// Decrement a gauge.
     pub fn gauge_dec(&self, name: &str) {
+        if let Some(gauge) = self.gauges.get(name) {
+            gauge.fetch_sub(1, Ordering::Relaxed);
+            return;
+        }
         let gauge = self
             .gauges
             .entry(name.to_string())
@@ -265,6 +281,10 @@ impl MetricsCollector {
 
     /// Record an observation (in milliseconds) to a histogram.
     pub fn histogram_observe_ms(&self, name: &str, value_ms: u64) {
+        if let Some(histogram) = self.histograms.get(name) {
+            histogram.observe_ms(value_ms);
+            return;
+        }
         let histogram = self
             .histograms
             .entry(name.to_string())
@@ -275,6 +295,10 @@ impl MetricsCollector {
 
     /// Record an observation (in microseconds) to a histogram.
     pub fn histogram_observe_us(&self, name: &str, value_us: u64) {
+        if let Some(histogram) = self.histograms.get(name) {
+            histogram.observe_us(value_us);
+            return;
+        }
         let histogram = self
             .histograms
             .entry(name.to_string())
@@ -374,9 +398,15 @@ mod tests {
 
     #[test]
     fn should_increment_counter() {
+        // Arrange
         let mc = MetricsCollector::new();
+
+        // Act
         mc.counter_inc("test_counter");
-        assert_eq!(mc.counter_get("test_counter"), 1);
+        mc.counter_inc("test_counter");
+
+        // Assert
+        assert_eq!(mc.counter_get("test_counter"), 2);
     }
 
     #[test]
@@ -388,9 +418,15 @@ mod tests {
 
     #[test]
     fn should_set_gauge() {
+        // Arrange
         let mc = MetricsCollector::new();
+
+        // Act
         mc.gauge_set("test_gauge", 42);
-        assert_eq!(mc.gauge_get("test_gauge"), 42);
+        mc.gauge_set("test_gauge", 7);
+
+        // Assert
+        assert_eq!(mc.gauge_get("test_gauge"), 7);
     }
 
     #[test]

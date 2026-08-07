@@ -27,6 +27,12 @@ For a full tier refresh, use the release or deep command lists in [Benchmark Gui
 
 Make one focused change, then rerun the same correctness checks and benchmark command. Compare the regenerated `target/bench_summary.md` and `target/bench_results.json` with the baseline output you captured before the change.
 
+For Stream storage changes, compare three-run medians on the same host. Existing
+regression-gate throughput must remain at least 90% of baseline with p95 at most
+110%; the 256 KiB write row must retain 95% throughput with p95 at most 105%;
+and hot-resource append with 100,000 prior events must remain within 10% of an
+empty resource.
+
 ## Selection Rules
 
 Use [config/perf_targets.json](../../config/perf_targets.json) and [Performance targets](bench-targets.md) to choose optimization candidates. Prefer the scenario furthest over its operational target inside the relevant bucket, then use stretch-target distance and current `mean_us` to break ties.

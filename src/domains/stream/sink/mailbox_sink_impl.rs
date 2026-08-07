@@ -61,6 +61,12 @@ impl Actor for StreamDomainActor {
                 runtime.refresh_admin_snapshot_if_dirty();
                 let _ = reply.send(());
             }
+            StreamDomainCommand::RunMaintenance { family, reply } => {
+                runtime.run_maintenance_slice(family);
+                if let Some(reply) = reply {
+                    let _ = reply.send(());
+                }
+            }
             #[cfg(test)]
             StreamDomainCommand::SyncAdminSnapshot(reply) => {
                 runtime.sync_admin_snapshot();

@@ -464,6 +464,26 @@ pub fn encode_notify_into(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::frame::ChannelId;
+    use crate::protocol::manifest::{self, ManifestDecoder, ManifestDirection};
+    use crate::protocol::tlv::MessageType;
+    use bytes::Bytes;
+
+    const ROUTE_BYTES: &[u8] = b"\0\0\0\x0estream://r/a/x";
+
+    fn context(message_type: u16, payload: &[u8]) -> FrameContext {
+        FrameContext::new(
+            11,
+            ChannelId::Sub,
+            MessageType::new(message_type),
+            Bytes::copy_from_slice(payload),
+            RouteFamily::new(7),
+        )
+    }
+
+    fn subscriber() -> RouteAddress {
+        RouteAddress::new(RouteFamily::new(7), Route::new("session://subscriber"))
+    }
 
     #[test]
     fn should_encode_begin_success_without_optional_session_flag() {
@@ -522,5 +542,108 @@ mod tests {
             &read[1..5],
             &u32::from(crate::protocol::error_codes::stream::ERR_SESSION_NOT_FOUND).to_be_bytes()
         );
+    }
+
+    #[test]
+    fn should_parse_frozen_stream_request_golden_vectors() {
+        // Arrange
+        let mut begin = ROUTE_BYTES.to_vec();
+        begin.push(0);
+        let append = vec![
+            0, 0, 0, 0, 0, 0, 0, 1, // session
+            0, 0, 0, 0, 0, 0, 0, 2, // expected offset
+            0, 0, 0, 1, b'x', // body
+            0,    // metadata absent
+            1, 0, 0, 0, 1, b'd', // discriminator present
+        ];
+        let commit = vec![0, 0, 0, 0, 0, 0, 0, 1, 1];
+        let rollback = vec![0, 0, 0, 0, 0, 0, 0, 1];
+        let mut read = ROUTE_BYTES.to_vec();
+        read.extend_from_slice(&[
+            0, 0, 0, 0, 0, 0, 0, 2, // from
+            0, 0, 0, 0, 0, 0, 0, 3, // limit
+            1, 0, 0, 0, 0, 0, 0, 0, 4, // max bytes
+            0, // filter absent
+            1, 0, 0, 0, 0, 0, 0, 0, 5, // cursor fingerprint
+            1, 0, 0, 0, 0, 0, 0, 0, 6, // captured watermark
+        ]);
+        let route_only = ROUTE_BYTES.to_vec();
+        let cases = [
+            (600, begin),
+            (601, append),
+            (602, commit),
+            (603, rollback),
+            (604, read),
+            (605, route_only.clone()),
+            (606, route_only.clone()),
+            (607, route_only.clone()),
+            (608, route_only),
+        ];
+
+        // Act / Assert
+        for (message_type, payload) in cases {
+            parse_request(
+                &context(message_type, &payload),
+                &payload,
+                RouteFamily::new(7),
+                SessionId(11),
+                subscriber(),
+            )
+            .unwrap_or_else(|error| panic!("golden message {message_type} failed: {error}"));
+        }
+    }
+
+    #[test]
+    fn should_encode_frozen_stream_response_and_notification_vectors() {
+        // Arrange / Act
+        let success = encode_response(
+            604,
+            &StreamClientResponseBody::Ok {
+                session_id: Some(9),
+                data: b"ok".to_vec(),
+            },
+        );
+        let error = encode_response(
+            604,
+            &StreamClientResponseBody::Error("session not found".to_string()),
+        );
+        let notification = encode_notify(7, &Route::new("stream://r/a/x"), b"ab");
+
+        // Assert
+        assert_eq!(
+            success,
+            vec![0, 1, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 2, b'o', b'k']
+        );
+        assert_eq!(
+            error,
+            vec![
+                1, 0, 0, 7, 0xD3, 0, 0, 0, 17, b's', b'e', b's', b's', b'i', b'o', b'n', b' ',
+                b'n', b'o', b't', b' ', b'f', b'o', b'u', b'n', b'd',
+            ]
+        );
+        let mut expected_notification = vec![0, 0, 0, 0, 0, 0, 0, 7];
+        expected_notification.extend_from_slice(ROUTE_BYTES);
+        expected_notification.extend_from_slice(&[0, 0, 0, 2, b'a', b'b']);
+        assert_eq!(notification, expected_notification);
+    }
+
+    #[test]
+    fn should_keep_stream_manifest_ids_and_directions_frozen() {
+        // Arrange / Act / Assert
+        for message_id in 600..=609 {
+            let entry = manifest::entry(MessageType::new(message_id))
+                .unwrap_or_else(|| panic!("missing Stream manifest entry {message_id}"));
+            assert_eq!(entry.message_id, message_id);
+            assert_eq!(entry.domain, "stream");
+            assert_eq!(entry.decoder, ManifestDecoder::Stream);
+            assert_eq!(
+                entry.direction,
+                if message_id == 609 {
+                    ManifestDirection::ServerToClient
+                } else {
+                    ManifestDirection::ClientToServer
+                }
+            );
+        }
     }
 }

@@ -34,10 +34,13 @@ fn append_dimensions(transport: TransportKind) -> RowDimensions<'static> {
     }
 }
 
-fn write_dimensions(transport: TransportKind) -> RowDimensions<'static> {
+fn write_dimensions(
+    storage_profile: StorageProfile,
+    transport: TransportKind,
+) -> RowDimensions<'static> {
     RowDimensions {
         scenario: "sync_write_lifecycle",
-        storage_profile: StorageProfile::LocalDisk,
+        storage_profile,
         layer: LayerKind::from(transport),
         write_mode: "sync",
         write_operation: "begin_append_commit",
@@ -50,7 +53,11 @@ fn write_dimensions(transport: TransportKind) -> RowDimensions<'static> {
         client_count: 1,
         workload_mix: "write_only",
         completed_unit: "write_lifecycle",
-        gate_class: "regression_gate",
+        gate_class: if storage_profile == StorageProfile::Memory {
+            "regression_gate"
+        } else {
+            "storage_characterization"
+        },
     }
 }
 
@@ -98,7 +105,7 @@ fn should_measure_memory_ws_append_open_session(ctx: &mut StressContext) {
 fn should_measure_local_disk_tcp_sync_write_lifecycle(ctx: &mut StressContext) {
     measure_write_lifecycle(
         ctx,
-        write_dimensions(TransportKind::Tcp),
+        write_dimensions(StorageProfile::LocalDisk, TransportKind::Tcp),
         TransportKind::Tcp,
         "local_disk_tcp_sync_write_lifecycle",
     );
@@ -108,9 +115,29 @@ fn should_measure_local_disk_tcp_sync_write_lifecycle(ctx: &mut StressContext) {
 fn should_measure_local_disk_ws_sync_write_lifecycle(ctx: &mut StressContext) {
     measure_write_lifecycle(
         ctx,
-        write_dimensions(TransportKind::WebSocket),
+        write_dimensions(StorageProfile::LocalDisk, TransportKind::WebSocket),
         TransportKind::WebSocket,
         "local_disk_ws_sync_write_lifecycle",
+    );
+}
+
+#[stress(tier = 4)]
+fn should_measure_memory_tcp_sync_write_lifecycle(ctx: &mut StressContext) {
+    measure_write_lifecycle(
+        ctx,
+        write_dimensions(StorageProfile::Memory, TransportKind::Tcp),
+        TransportKind::Tcp,
+        "memory_tcp_sync_write_lifecycle",
+    );
+}
+
+#[stress(tier = 4)]
+fn should_measure_memory_ws_sync_write_lifecycle(ctx: &mut StressContext) {
+    measure_write_lifecycle(
+        ctx,
+        write_dimensions(StorageProfile::Memory, TransportKind::WebSocket),
+        TransportKind::WebSocket,
+        "memory_ws_sync_write_lifecycle",
     );
 }
 

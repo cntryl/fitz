@@ -6,6 +6,7 @@ use crate::session::{
     generate_session_id, CloseReason, Session, SessionMetadata, SessionPermissions, TransportKind,
 };
 use bytes::Bytes;
+use futures_util::{Sink, SinkExt};
 use hyper_tungstenite::tungstenite::error::ProtocolError;
 use hyper_tungstenite::tungstenite::protocol::WebSocketConfig;
 use hyper_tungstenite::tungstenite::Error as WsError;
@@ -13,6 +14,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::info;
+
+const MAX_WEBSOCKET_WRITE_BATCH_FRAMES: usize = 64;
 
 fn websocket_session_frame_error_reason(error: &crate::session::SessionError) -> String {
     format!("session frame error: {error:?}")
@@ -155,6 +158,39 @@ fn websocket_origin_allowed<B>(
         .any(|allowed| allowed.same_origin(&origin))
 }
 
+async fn send_websocket_batch<S>(
+    ws_sender: &mut S,
+    first_frame: Bytes,
+    outbound_rx: &mut tokio::sync::mpsc::Receiver<Bytes>,
+) -> Result<usize, String>
+where
+    S: Sink<hyper_tungstenite::tungstenite::Message> + Unpin,
+    S::Error: std::fmt::Display,
+{
+    use hyper_tungstenite::tungstenite::Message;
+
+    ws_sender
+        .feed(Message::Binary(first_frame))
+        .await
+        .map_err(|error| format!("WebSocket writer error: {error}"))?;
+    let mut frame_count = 1usize;
+    while frame_count < MAX_WEBSOCKET_WRITE_BATCH_FRAMES {
+        let Ok(frame) = outbound_rx.try_recv() else {
+            break;
+        };
+        ws_sender
+            .feed(Message::Binary(frame))
+            .await
+            .map_err(|error| format!("WebSocket writer error: {error}"))?;
+        frame_count += 1;
+    }
+    ws_sender
+        .flush()
+        .await
+        .map_err(|error| format!("WebSocket writer error: {error}"))?;
+    Ok(frame_count)
+}
+
 async fn run_websocket_writer<S>(
     mut ws_sender: futures_util::stream::SplitSink<
         hyper_tungstenite::WebSocketStream<S>,
@@ -170,7 +206,6 @@ async fn run_websocket_writer<S>(
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
-    use futures_util::SinkExt;
     use hyper_tungstenite::tungstenite::Message;
 
     tracing::debug!(
@@ -189,9 +224,15 @@ where
                 match frame {
                     Some(frame) => {
                         tracing::debug!(session_id = ws_session_id, frame_len = frame.len(), "WS outbound: sending frame to wire");
-                        ws_sender.send(Message::Binary(frame)).await.map_err(|error| format!("WebSocket writer error: {error}"))?;
-                        runtime_for_writes.increment_messages_sent();
-                        ingress_for_writes.record_frame_sent(ws_session_id);
+                        let frame_count = send_websocket_batch(
+                            &mut ws_sender,
+                            frame,
+                            &mut outbound_rx,
+                        ).await?;
+                        for _ in 0..frame_count {
+                            runtime_for_writes.increment_messages_sent();
+                            ingress_for_writes.record_frame_sent(ws_session_id);
+                        }
                     }
                     None => outbound_open = false,
                 }
@@ -505,14 +546,16 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        bounded_websocket_config, is_normal_websocket_disconnect, websocket_close_reason,
-        websocket_origin_allowed, websocket_session_frame_error_reason,
+        bounded_websocket_config, is_normal_websocket_disconnect, send_websocket_batch,
+        websocket_close_reason, websocket_origin_allowed, websocket_session_frame_error_reason,
     };
     use crate::protocol::frame::ChannelId;
     use crate::session::{CloseReason, SessionError};
+    use bytes::Bytes;
     use hyper::Request;
     use hyper_tungstenite::tungstenite::error::ProtocolError;
     use hyper_tungstenite::tungstenite::Error as WsError;
+    use hyper_tungstenite::tungstenite::Message;
 
     #[test]
     fn should_treat_websocket_backpressure_as_terminal_session_error() {
@@ -555,6 +598,39 @@ mod tests {
         // Assert
         assert_eq!(config.max_message_size, Some(max_frame_size));
         assert_eq!(config.max_frame_size, Some(max_frame_size));
+    }
+
+    #[tokio::test]
+    async fn should_batch_queued_websocket_frames_in_wire_order() {
+        // Arrange
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        tx.try_send(Bytes::from_static(b"second"))
+            .expect("queue second frame");
+        tx.try_send(Bytes::from_static(b"third"))
+            .expect("queue third frame");
+        let mut messages = Vec::new();
+
+        // Act
+        let frame_count = {
+            let mut sink = futures_util::sink::unfold(&mut messages, |messages, message| {
+                messages.push(message);
+                std::future::ready(Ok::<_, std::convert::Infallible>(messages))
+            });
+            send_websocket_batch(&mut sink, Bytes::from_static(b"first"), &mut rx)
+                .await
+                .expect("send WebSocket frame batch")
+        };
+
+        // Assert
+        assert_eq!(frame_count, 3);
+        assert_eq!(
+            messages,
+            vec![
+                Message::Binary(Bytes::from_static(b"first")),
+                Message::Binary(Bytes::from_static(b"second")),
+                Message::Binary(Bytes::from_static(b"third")),
+            ]
+        );
     }
 
     #[test]

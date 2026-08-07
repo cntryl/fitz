@@ -571,7 +571,8 @@ Allowed complexity:
 - replay
 - watermarks and offsets
 - retention and ordering rules
-- the promotion-frontier storage layout and explicit reset or cutover errors for legacy stream rows
+- the D4 immutable-fragment promotion-frontier storage layout and explicit
+  export/replay or reset errors for D3 and unmarked Stream rows
 
 Not allowed:
 

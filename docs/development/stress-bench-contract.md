@@ -57,6 +57,10 @@ This document defines the contract for Tier 2 through Tier 4 benchmarks using th
 - Regenerate release IDs only for real ID changes, such as a workload-defining
   parameter change. Do not rename readable measurements to generic
   `operation` or `workload` suffixes.
+- Keep host-sensitive local-disk KV and Stream sync rows as
+  `storage_characterization`. Their memory-backed TCP and WebSocket lifecycle
+  counterparts are the release regression gates; paired latency records remain
+  report-only.
 - `high_allocations` diagnostics are advisory for rows whose measured behavior
   is construction, parsing, or allocation. Keep allocation statistics visible;
   do not switch those rows to `record_external` solely to hide allocation
