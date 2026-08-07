@@ -204,7 +204,7 @@ impl EncodedLifecycleState {
         let response = self.fixture.actor.handle(message);
         assert!(matches!(response, ScheduleResponse::Ok));
         assert_eq!(
-            encode_response(&response),
+            encode_response(700, &response),
             vec![0],
             "encoded Schedule response"
         );

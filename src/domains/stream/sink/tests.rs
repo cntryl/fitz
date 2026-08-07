@@ -319,7 +319,14 @@ fn begin_stream(context: &TestContext, route: &str) -> u64 {
 }
 
 fn decode_stream_error_message(payload: &[u8]) -> Result<String, String> {
-    crate::dispatch::protocol::error_codes::decode_error_body(payload).map(|(_, message)| message)
+    if let Ok((_, message)) = crate::dispatch::protocol::error_codes::decode_error_body(payload) {
+        return Ok(message);
+    }
+    let mut decoder = crate::dispatch::protocol::payload_codec::PayloadDecoder::new(payload);
+    if decoder.get_u8()? != 1 {
+        return Err("stream response is not an error".to_string());
+    }
+    decoder.get_string()
 }
 
 fn seed_committed_stream_route(

@@ -760,6 +760,8 @@ A request is valid **only if**:
   | `SCAN` | `{realm}/{area}/{resource}`, `{realm}/{area}/*` |
   | `SUBSCRIBE` | `{realm}/{area}/{resource}`, `{realm}/{area}/*`, `{realm}/*/*` |
   | `UNSUBSCRIBE` | same as `SUBSCRIBE` |
+  | `CREATE_BATCH` | broker extension; repeated canonical CREATE entries |
+  | `LIST_V2` | broker extension; cursor pagination, not a replacement for LIST 702 |
   | `COMMIT` | `{realm}/{area}/{resource}` |
   | `ROLLBACK` | `{realm}/{area}/{resource}` |
   **Note:** `LIST`, `CREATE`, and `DELETE` (admin) operations are broker-internal management operations not currently exposed in the client wire protocol. Clients should focus on data operations: BEGIN, GET, PUT, INSERT, DELETE, DELETE_RANGE, SCAN, SUBSCRIBE, UNSUBSCRIBE, COMMIT, ROLLBACK.
@@ -835,7 +837,7 @@ it sent.
   | `SUBSCRIBE` | exact route or whole-segment pattern capable of matching four segments |
   | `UNSUBSCRIBE` | same as `SUBSCRIBE` |
 
-  **Note:** `DELETE` (admin) and `TRIGGER` operations are broker-internal. Clients should use: CREATE, CANCEL, LIST, SUBSCRIBE, UNSUBSCRIBE as documented in the wire format section. LIST returns a single response payload containing `total_count` plus zero or more schedule entries.
+  **Note:** `DELETE` (admin) and `TRIGGER` operations are broker-internal. Portable clients should use CREATE, CANCEL, LIST, SUBSCRIBE, and UNSUBSCRIBE as documented in the wire format section. The broker additionally advertises CREATE_BATCH 706 and LIST_V2 707; LIST 702 remains the canonical cross-client operation and returns a single response payload containing `total_count` plus zero or more schedule entries.
 
 ### Lease Domain
 
@@ -971,6 +973,8 @@ Clients MUST:
 | Schedule | SUBSCRIBE          |       703 | Data          | Subscribe to fires      |
 | Schedule | UNSUBSCRIBE        |       704 | Data          | Unsubscribe             |
 | Schedule | NOTIFY             |       705 | Server→Client | Fire notification       |
+| Schedule | CREATE_BATCH       |       706 | Data          | Broker batch extension  |
+| Schedule | LIST_V2            |       707 | Data          | Broker cursor extension |
 
 ### MessageType Ranges Are Non-Overlapping
 

@@ -67,7 +67,7 @@
 | 607 | SUBSCRIBE |
 | 608 | UNSUBSCRIBE |
 | 609 | NOTIFY |
-**Schedule Domain (700–705):**
+**Schedule Domain (700–707):**
 | Value | Name |
 |---:|---|
 | 700 | CREATE |
@@ -76,6 +76,8 @@
 | 703 | SUBSCRIBE |
 | 704 | UNSUBSCRIBE |
 | 705 | NOTIFY |
+| 706 | CREATE_BATCH (broker extension) |
+| 707 | LIST_V2 (broker extension; canonical clients use LIST 702) |
 
 ### MessageType Routing
 

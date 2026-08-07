@@ -324,6 +324,7 @@ pub(super) fn encode_queue_reserve(route: &str, inflight_seconds: u64, batch_siz
     bytes::BufMut::put_u64(&mut payload, inflight_seconds);
     bytes::BufMut::put_u8(&mut payload, 1);
     bytes::BufMut::put_u32(&mut payload, batch_size);
+    bytes::BufMut::put_u8(&mut payload, 0);
     Bytes::from(payload)
 }
 

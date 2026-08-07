@@ -888,6 +888,7 @@ impl StreamDomainCore {
                 crate::dispatch::protocol::payload_codec::PayloadEncoder::with_capacity(256);
             let response_bytes = crate::dispatch::protocol::stream_codec::encode_response_into(
                 &mut payload_encoder,
+                meta.message_type,
                 response,
             );
             FrameContext::new(

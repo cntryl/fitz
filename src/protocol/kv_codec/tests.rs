@@ -1,5 +1,5 @@
 use super::*;
-use crate::dispatch::wire::kv::{KvMessage, KvResponse};
+use crate::dispatch::wire::kv::{KvError, KvMessage, KvResponse};
 use crate::runtime::routing::RouteFamily;
 use bytes::{BufMut, Bytes};
 
@@ -330,4 +330,16 @@ fn should_encode_subscribe_ok_response() {
     assert_eq!(encoded.len(), 9);
     assert_eq!(encoded[0], 0);
     assert_eq!(u64::from_be_bytes(encoded[1..9].try_into().unwrap()), 9);
+}
+
+#[test]
+fn should_encode_read_only_write_with_canonical_error_code() {
+    let response = KvResponse::Error {
+        error: KvError::BackendError("Cannot write in ReadOnly transaction".to_string()),
+    };
+
+    let encoded = encode_response(&response);
+
+    assert_eq!(encoded[0], 1);
+    assert_eq!(u32::from_be_bytes(encoded[1..5].try_into().unwrap()), 1005);
 }

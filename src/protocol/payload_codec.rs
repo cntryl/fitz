@@ -82,6 +82,11 @@ impl PayloadEncoder {
         self.buf.put_slice(val);
     }
 
+    /// Append bytes without a length prefix.
+    pub fn put_raw(&mut self, val: &[u8]) {
+        self.buf.put_slice(val);
+    }
+
     /// Encode an optional value (1-byte flag, then value if present)
     pub fn put_optional_u64(&mut self, val: Option<u64>) {
         match val {

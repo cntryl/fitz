@@ -264,12 +264,14 @@ pub fn build_queue_enqueue(queue_name: &str, data: &[u8]) -> Vec<u8> {
 /// Build QUEUE RESERVE frame (`msg_type` 202)
 #[must_use]
 pub fn build_queue_dequeue(queue_name: &str) -> Vec<u8> {
-    // Wire format: [u32 route_len][route][u64 lease_seconds][u8 has_batch=0]
+    // Wire format: [u32 route_len][route][u64 lease_seconds]
+    //              [u8 has_batch=0][u8 has_wait=0]
     let mut payload = Vec::new();
     payload.extend_from_slice(&(u32_len(queue_name.len())).to_be_bytes());
     payload.extend_from_slice(queue_name.as_bytes());
     payload.extend_from_slice(&30_u64.to_be_bytes());
     payload.push(0); // has_batch_size = false
+    payload.push(0); // has_wait_seconds = false
 
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(202, &payload);
@@ -292,13 +294,15 @@ pub fn build_queue_watch(queue_name: &str) -> Vec<u8> {
 /// Build QUEUE RESERVE frame (`msg_type` 202) with an explicit batch size.
 #[must_use]
 pub fn build_queue_dequeue_batch(queue_name: &str, batch_size: u32) -> Vec<u8> {
-    // Wire format: [u32 route_len][route][u64 lease_seconds][u8 has_batch=1][u32 batch]
+    // Wire format: [u32 route_len][route][u64 lease_seconds]
+    //              [u8 has_batch=1][u32 batch][u8 has_wait=0]
     let mut payload = Vec::new();
     payload.extend_from_slice(&(u32_len(queue_name.len())).to_be_bytes());
     payload.extend_from_slice(queue_name.as_bytes());
     payload.extend_from_slice(&30_u64.to_be_bytes());
     payload.push(1); // has_batch_size = true
     payload.extend_from_slice(&batch_size.to_be_bytes());
+    payload.push(0); // has_wait_seconds = false
 
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(202, &payload);
@@ -727,16 +731,10 @@ pub fn parse_stream_session_id(data: &[u8]) -> Result<u64, String> {
     let mut decoder = PayloadDecoder::new(data);
     let status = decoder.get_u8()?;
     if status != 0 {
-        let error = crate::protocol::error_codes::decode_error_body(data).map_or_else(
-            |_| "Stream BEGIN operation failed".to_string(),
-            |(_, message)| message,
-        );
-        return Err(error);
+        return Err(decoder.get_string()?);
     }
 
-    let session_id = decoder
-        .get_optional_u64()?
-        .ok_or_else(|| "No session_id in response".to_string())?;
+    let session_id = decoder.get_u64()?;
     decoder.get_bytes()?;
     if !decoder.is_complete() {
         return Err("Trailing data in stream BEGIN response".to_string());

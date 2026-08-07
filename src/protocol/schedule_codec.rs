@@ -82,9 +82,9 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
 
             dec.get_optional_u64()?;
             if let Some(limit) = dec.get_optional_u64()? {
-                if limit == 0 || limit > MAX_SCHEDULE_LIST_LIMIT {
+                if limit > MAX_SCHEDULE_LIST_LIMIT {
                     return Err(format!(
-                        "schedule LIST limit must be between 1 and {MAX_SCHEDULE_LIST_LIMIT}"
+                        "schedule LIST limit must be at most {MAX_SCHEDULE_LIST_LIMIT}"
                     ));
                 }
             }
@@ -97,9 +97,9 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
             if dec.remaining() > 0 {
                 dec.get_optional_string()?;
                 if let Some(limit) = dec.get_optional_u64()? {
-                    if limit == 0 || limit > MAX_SCHEDULE_LIST_LIMIT {
+                    if limit > MAX_SCHEDULE_LIST_LIMIT {
                         return Err(format!(
-                            "schedule LIST limit must be between 1 and {MAX_SCHEDULE_LIST_LIMIT}"
+                            "schedule LIST limit must be at most {MAX_SCHEDULE_LIST_LIMIT}"
                         ));
                     }
                 }
@@ -138,12 +138,16 @@ pub fn extract_batch_auth_routes(payload: &[u8]) -> Result<Vec<&str>, String> {
 
 /// Encode domain response to TLV-encoded bytes
 #[must_use]
-pub fn encode_response(response: &ScheduleResponse) -> Vec<u8> {
+pub fn encode_response(message_type: u16, response: &ScheduleResponse) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
-    encode_response_into(&mut enc, response)
+    encode_response_into(&mut enc, message_type, response)
 }
 
-pub fn encode_response_into(enc: &mut PayloadEncoder, response: &ScheduleResponse) -> Vec<u8> {
+pub fn encode_response_into(
+    enc: &mut PayloadEncoder,
+    message_type: u16,
+    response: &ScheduleResponse,
+) -> Vec<u8> {
     enc.clear();
 
     match response {
@@ -188,11 +192,15 @@ pub fn encode_response_into(enc: &mut PayloadEncoder, response: &ScheduleRespons
             enc.put_u8(0);
         }
         ScheduleResponse::Error(e) => {
-            return crate::protocol::error_codes::encode_error_body_into(
-                e.category.code(),
-                &e.message,
-                enc,
-            );
+            if message_type == 702 {
+                return crate::protocol::error_codes::encode_error_body_into(
+                    e.category.code(),
+                    &e.message,
+                    enc,
+                );
+            }
+            enc.put_u8(1);
+            enc.put_string(&e.message);
         }
     }
 
@@ -270,10 +278,10 @@ fn parse_list(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, ScheduleFailu
 
     let offset = dec.get_optional_u64()?.unwrap_or(0);
     let limit = dec.get_optional_u64()?.unwrap_or(100);
-    if limit == 0 || limit > MAX_SCHEDULE_LIST_LIMIT {
+    if limit > MAX_SCHEDULE_LIST_LIMIT {
         return Err(ScheduleFailure::new(
             ScheduleFailureCategory::Limit,
-            format!("schedule LIST limit must be between 1 and {MAX_SCHEDULE_LIST_LIMIT}"),
+            format!("schedule LIST limit must be at most {MAX_SCHEDULE_LIST_LIMIT}"),
         ));
     }
 
@@ -288,10 +296,10 @@ fn parse_list(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, ScheduleFailu
 fn parse_list_v2(dec: &mut PayloadDecoder) -> Result<ScheduleMessage, ScheduleFailure> {
     let cursor = dec.get_optional_string()?;
     let limit = dec.get_optional_u64()?.unwrap_or(100);
-    if limit == 0 || limit > MAX_SCHEDULE_LIST_LIMIT {
+    if limit > MAX_SCHEDULE_LIST_LIMIT {
         return Err(ScheduleFailure::new(
             ScheduleFailureCategory::Limit,
-            format!("schedule LIST limit must be between 1 and {MAX_SCHEDULE_LIST_LIMIT}"),
+            format!("schedule LIST limit must be at most {MAX_SCHEDULE_LIST_LIMIT}"),
         ));
     }
     if !dec.is_complete() {
@@ -389,9 +397,12 @@ mod tests {
     #[test]
     fn should_encode_subscribe_response_with_subscription_id() {
         // Arrange
-        let payload = encode_response(&ScheduleResponse::SubscribeOk {
-            subscription_id: 42,
-        });
+        let payload = encode_response(
+            703,
+            &ScheduleResponse::SubscribeOk {
+                subscription_id: 42,
+            },
+        );
 
         // Act
 
@@ -422,7 +433,7 @@ mod tests {
     }
 
     #[test]
-    fn should_encode_typed_schedule_error_for_known_failure() {
+    fn should_encode_typed_schedule_list_error_for_known_failure() {
         // Arrange
         let response = ScheduleResponse::Error(ScheduleFailure::new(
             ScheduleFailureCategory::NotFound,
@@ -430,7 +441,7 @@ mod tests {
         ));
 
         // Act
-        let payload = encode_response(&response);
+        let payload = encode_response(702, &response);
 
         // Assert
         assert_eq!(payload[0], 1);
@@ -438,6 +449,22 @@ mod tests {
             &payload[1..5],
             &u32::from(schedule_error_codes::ERR_SCHEDULE_NOT_FOUND).to_be_bytes()
         );
+    }
+
+    #[test]
+    fn should_encode_plain_schedule_error_for_non_list_operation() {
+        // Arrange
+        let response = ScheduleResponse::Error(ScheduleFailure::new(
+            ScheduleFailureCategory::NotFound,
+            "schedule not found",
+        ));
+
+        // Act
+        let payload = encode_response(701, &response);
+
+        // Assert
+        assert_eq!(&payload[..5], &[1, 0, 0, 0, 18]);
+        assert_eq!(&payload[5..], b"schedule not found");
     }
 
     #[test]

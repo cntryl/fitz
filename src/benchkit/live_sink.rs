@@ -415,6 +415,7 @@ fn frame_context_from_envelope(envelope: &Envelope) -> Option<FrameContext> {
         return Some(client_response_frame(
             response.meta,
             Bytes::from(crate::protocol::queue_codec::encode_response(
+                response.meta.message_type,
                 &response.response,
             )),
         ));
@@ -474,6 +475,7 @@ fn frame_context_from_envelope(envelope: &Envelope) -> Option<FrameContext> {
             response.meta,
             Bytes::from(crate::protocol::stream_codec::encode_response_into(
                 &mut encoder,
+                response.meta.message_type,
                 &response.response,
             )),
         ));
@@ -531,6 +533,7 @@ fn frame_context_from_envelope(envelope: &Envelope) -> Option<FrameContext> {
             response.meta,
             Bytes::from(crate::protocol::schedule_codec::encode_response_into(
                 &mut encoder,
+                response.meta.message_type,
                 &response.response,
             )),
         ));

@@ -14,7 +14,6 @@ fn schedule_error_message(mailbox: &Mailbox, label: &str) -> String {
         .expect("schedule response frame");
     let mut decoder = PayloadDecoder::new(&frame.payload);
     assert_eq!(decoder.get_u8().expect("schedule response status"), 1);
-    let _code = decoder.get_u32().expect("schedule error code");
     decoder.get_string().expect("schedule error message")
 }
 

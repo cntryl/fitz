@@ -101,6 +101,59 @@ fn decode_concrete_reserve_response(frame: &FrameContext) -> Vec<Vec<u8>> {
     items
 }
 
+#[test]
+fn should_wake_fifo_long_poll_reserve_when_matching_message_is_enqueued() {
+    let family = RouteFamily::new(1);
+    let route = "queue://acme/jobs/email";
+    let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+    let producer_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let consumer_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let producer_mailbox = Arc::new(Mailbox::new(8));
+    let consumer_mailbox = Arc::new(Mailbox::new(8));
+    let router = Arc::new(Router::new());
+    router.register(producer_address.clone(), producer_mailbox.clone());
+    router.register(consumer_address.clone(), consumer_mailbox.clone());
+    let sink = new_queue_domain_sink(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+        cntryl_midge::WriteOptions::buffered(),
+    );
+
+    sink.deliver(Envelope::from_route(
+        consumer_address,
+        queue_address.clone(),
+        FrameContext::new(
+            8,
+            ChannelId::Pub,
+            MessageType::new(202),
+            encode_queue_reserve_wait(route, 30, 1, 5),
+            family,
+        ),
+    ))
+    .expect("queue long-poll reserve");
+    assert!(consumer_mailbox.receiver().try_recv().is_err());
+
+    sink.deliver(Envelope::from_route(
+        producer_address,
+        queue_address,
+        FrameContext::new(
+            7,
+            ChannelId::Pub,
+            MessageType::new(200),
+            encode_queue_send(route, b"late"),
+            family,
+        ),
+    ))
+    .expect("enqueue matching queue message");
+    let _enqueue = receive_queue_frame(&producer_mailbox, "enqueue response");
+    let reserve = receive_queue_frame(&consumer_mailbox, "deferred reserve response");
+    assert_eq!(
+        decode_concrete_reserve_response(&reserve),
+        vec![b"late".to_vec()]
+    );
+}
+
 fn seed_dead_letter(
     store: Arc<cntryl_midge::Engine>,
     key: &crate::domains::queue::QueueKey,

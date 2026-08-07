@@ -219,9 +219,9 @@ pub fn parse_stream_response(response: &[u8]) -> (u8, u8, Vec<u8>) {
 }
 
 /// Parse `session_id` from `STREAM` `BEGIN` response data
-/// Wire format: [`u8 status`][`u8 has_session_id`][`u64 session_id`][bytes data]
+/// Wire format: [`u8 status`][`u64 session_id`][bytes data]
 pub fn parse_stream_session_id(data: &[u8]) -> Result<u64, String> {
-    if data.len() < 2 {
+    if data.len() < 10 {
         return Err("Stream response data too short".to_string());
     }
 
@@ -231,21 +231,29 @@ pub fn parse_stream_session_id(data: &[u8]) -> Result<u64, String> {
         return Err("Stream BEGIN operation failed".to_string());
     }
 
-    // Byte 1: has_session_id flag (1 = Some, 0 = None)
-    let has_session_id = data[1];
-    if has_session_id == 0 {
-        return Err("No session_id in response".to_string());
+    let (session_id, payload_offset) = if data[1] == 1 && data.len() >= 14 {
+        (
+            u64::from_be_bytes(data[2..10].try_into().expect("checked length")),
+            10,
+        )
+    } else {
+        (
+            u64::from_be_bytes(data[1..9].try_into().expect("checked length")),
+            9,
+        )
+    };
+    if data.len() < payload_offset + 4 {
+        return Err("Stream response data too short".to_string());
     }
-
-    // Bytes 2-9: session_id value (u64 big-endian)
-    if data.len() < 10 {
-        return Err("Session ID data incomplete".to_string());
+    let payload_len = u32::from_be_bytes(
+        data[payload_offset..payload_offset + 4]
+            .try_into()
+            .expect("checked length"),
+    ) as usize;
+    if data.len() != payload_offset + 4 + payload_len {
+        return Err("Invalid Stream BEGIN payload length".to_string());
     }
-
-    let bytes = [
-        data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9],
-    ];
-    Ok(u64::from_be_bytes(bytes))
+    Ok(session_id)
 }
 
 pub struct StreamDelivery {

@@ -37,7 +37,10 @@ impl QueueDomainCore {
     ) {
         #[cfg(test)]
         {
-            let response_bytes = crate::dispatch::protocol::queue_codec::encode_response(response);
+            let response_bytes = crate::dispatch::protocol::queue_codec::encode_response(
+                meta.message_type,
+                response,
+            );
             let response_ctx = FrameContext::new(
                 meta.session_id,
                 test_protocol_channel_from_client(meta.channel),
@@ -339,6 +342,7 @@ impl QueueDomainCore {
     }
 
     pub(in crate::domains::queue::sink) fn sweep_runtime_state_at(&self, now: Instant) {
+        self.expire_pending_reserves_at(now);
         self.sweep_idle_actors_at(now);
         self.maybe_cleanup_dedup_at(now);
         self.maybe_flush_dirty_fast_families_at(now);
@@ -620,6 +624,8 @@ impl QueueDomainCore {
         }
         for (key, notification) in notifications {
             self.route_queue_ready_notification(&key, notification);
+            let route = Self::queue_ready_route(&key);
+            self.wake_pending_reserves_for_route(key.family, &route, now);
         }
     }
 
@@ -627,6 +633,9 @@ impl QueueDomainCore {
     /// those accepted messages to the ready queue. Inflight ownership is
     /// broker-local runtime state only.
     pub(in crate::domains::queue::sink) fn cleanup_session(&self, session_id: u64) {
+        self.pending_reserves
+            .lock()
+            .retain(|pending| pending.meta.session_id != session_id);
         let mut released_any = false;
         let mut notifications = Vec::new();
         let mut actors = self.actors.lock();
@@ -658,6 +667,8 @@ impl QueueDomainCore {
 
         for (key, notification) in notifications {
             self.route_queue_ready_notification(&key, notification);
+            let route = Self::queue_ready_route(&key);
+            self.wake_pending_reserves_for_route(key.family, &route, Instant::now());
         }
 
         tracing::debug!(

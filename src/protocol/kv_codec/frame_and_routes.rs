@@ -182,6 +182,14 @@ fn kv_error_code(error: &KvError) -> u16 {
         KvError::Conflict(_) => kv::ERR_ISOLATION_CONFLICT,
         KvError::AlreadyExists => kv::ERR_KEY_EXISTS,
         KvError::RealmMismatch => kv::ERR_REALM_MISMATCH,
+        KvError::BackendError(message)
+            if {
+                let normalized = message.to_ascii_lowercase();
+                normalized.contains("read-only") || normalized.contains("readonly")
+            } =>
+        {
+            kv::ERR_WRITE_IN_READONLY
+        }
         KvError::BackendUnavailable(_) | KvError::BackendError(_) => kv::ERR_BACKEND_ERROR,
         KvError::InvalidSubscriptionPattern(_) => kv::ERR_INVALID_SUBSCRIPTION_PATTERN,
         KvError::SubscriptionLimit => kv::ERR_SUBSCRIPTION_LIMIT,

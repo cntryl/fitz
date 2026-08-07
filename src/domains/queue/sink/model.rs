@@ -9,7 +9,7 @@ pub(super) use crate::domains::subscription_state::{RoutedSubscription, RoutedSu
 pub(super) use crate::observability as obs;
 pub(super) use crate::runtime::{DeliveryError, Envelope, MailboxSink, ManagedActor, Router};
 pub(super) use parking_lot::Mutex;
-pub(super) use std::collections::{HashMap, HashSet};
+pub(super) use std::collections::{HashMap, HashSet, VecDeque};
 pub(super) use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 pub(super) use std::sync::Arc;
 pub(super) use std::time::{Duration, Instant};
@@ -46,6 +46,14 @@ pub(super) struct QueueReadyNotification {
     pub(super) counts: QueueActorLiveCounts,
 }
 
+pub(super) struct PendingQueueReserve {
+    pub(super) envelope: Envelope,
+    pub(super) meta: crate::runtime::ClientFrameMeta,
+    pub(super) request_started: Option<Instant>,
+    pub(super) message: crate::domains::queue::protocol::QueueMessage,
+    pub(super) deadline: Instant,
+}
+
 pub(super) const QUEUE_ACTOR_IDLE_TTL: Duration = Duration::from_mins(5);
 pub(super) const QUEUE_IDLE_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 pub(super) const QUEUE_DEDUP_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
@@ -78,6 +86,8 @@ pub(super) struct QueueDomainCore {
     pub(super) families: Mutex<HashMap<u64, RoutedSubscriptionSet<QueueSubscription>>>,
     pub(super) next_sub_id: AtomicU64,
     pub(super) ready_states: Mutex<HashMap<crate::domains::queue::QueueKey, bool>>,
+    /// FIFO long-poll RESERVE requests waiting for a matching ready message.
+    pub(super) pending_reserves: Mutex<VecDeque<PendingQueueReserve>>,
     /// Router for routing response envelopes back
     pub(super) router: Arc<Router>,
     pub(super) projection: QueueAdminProjection,

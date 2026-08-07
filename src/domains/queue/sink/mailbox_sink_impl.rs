@@ -1,8 +1,8 @@
 use super::model::{
-    obs, DeliveryError, Duration, Envelope, Instant, MailboxSink, Ordering, QueueClientFrame,
-    QueueClientRequest, QueueDomainActor, QueueDomainCommand, QueueDomainCore, QueueDomainRuntime,
-    QueueDomainSink, QueueLiveCounts, QueueReadyNotification, QueueSubscription,
-    QueueSubscriptionMessage, RoutedSubscriptionSet,
+    obs, DeliveryError, Duration, Envelope, Instant, MailboxSink, Ordering, PendingQueueReserve,
+    QueueClientFrame, QueueClientRequest, QueueDomainActor, QueueDomainCommand, QueueDomainCore,
+    QueueDomainRuntime, QueueDomainSink, QueueLiveCounts, QueueReadyNotification,
+    QueueSubscription, QueueSubscriptionMessage, RoutedSubscriptionSet, VecDeque,
 };
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
@@ -11,6 +11,7 @@ use crate::runtime::{Actor, Context};
 
 type ReadyNotificationEvent = (crate::domains::queue::QueueKey, QueueReadyNotification);
 
+mod pending_reserves;
 mod wildcard_receive;
 
 #[derive(Clone, Copy)]
@@ -515,11 +516,60 @@ impl QueueDomainCore {
         }
 
         let op_kind = Self::classify_operation(&queue_msg);
+        let wait_seconds = match &queue_msg {
+            crate::domains::queue::protocol::QueueMessage::Receive { wait_seconds, .. } => {
+                *wait_seconds
+            }
+            _ => None,
+        };
+        let wake_route = match &queue_msg {
+            crate::domains::queue::protocol::QueueMessage::Send { route, .. } => {
+                Some(route.clone())
+            }
+            _ => None,
+        };
+        let pending_message = queue_msg.clone();
         let Some(outcome) =
             self.dispatch_actor_operation(envelope, meta, request_started, queue_msg)
         else {
             return;
         };
+
+        if matches!(
+            &outcome.response,
+            crate::domains::queue::QueueResponse::Received { messages } if messages.is_empty()
+        ) || matches!(
+            &outcome.response,
+            crate::domains::queue::QueueResponse::ReceivedRouted { messages } if messages.is_empty()
+        ) {
+            if let Some(wait_seconds) = wait_seconds.filter(|seconds| *seconds > 0) {
+                if let Some(source) = envelope.source() {
+                    let mut message = pending_message;
+                    if let crate::domains::queue::protocol::QueueMessage::Receive {
+                        wait_seconds,
+                        ..
+                    } = &mut message
+                    {
+                        *wait_seconds = None;
+                    }
+                    let deadline = Instant::now()
+                        .checked_add(Duration::from_secs(wait_seconds))
+                        .unwrap_or_else(Instant::now);
+                    self.pending_reserves.lock().push_back(PendingQueueReserve {
+                        envelope: Envelope::from_route(
+                            source.clone(),
+                            envelope.destination().clone(),
+                            (),
+                        ),
+                        meta,
+                        request_started,
+                        message,
+                        deadline,
+                    });
+                    return;
+                }
+            }
+        }
 
         if outcome.mark_admin_snapshot_dirty {
             self.mark_admin_snapshot_dirty();
@@ -532,6 +582,9 @@ impl QueueDomainCore {
 
         self.route_queue_response(envelope, meta, &outcome.response);
         self.record_operation_metrics(request_started, &outcome.response, op_kind);
+        if let Some(route) = wake_route.as_ref() {
+            self.wake_pending_reserves_for_route(meta.route_family, route, Instant::now());
+        }
     }
 
     fn queue_message_family(
@@ -578,6 +631,7 @@ impl QueueDomainCore {
                 route,
                 inflight_seconds,
                 batch_size,
+                wait_seconds: _,
             } => self.handle_receive_operation(
                 family_id,
                 &route,

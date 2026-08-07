@@ -204,6 +204,10 @@ all wildcards and has no wildcard quota.
 | `Unsubscribe` | 704 | C→S | Stop watching |
 | `Notify` | 705 | S→C | Fire notification |
 
+The broker manifest also exposes additive `CreateBatch` (706) and `ListV2`
+(707) extensions. They are not substitutes for the canonical cross-client
+operations above; in particular, portable clients use offset/limit `List` 702.
+
 **Constraints:**
 - Cron-style scheduling (precise timing, best-effort delivery)
 - Exact and whole-segment `*`/`**` registration patterns are session-scoped and

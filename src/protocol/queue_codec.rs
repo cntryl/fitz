@@ -78,7 +78,7 @@ pub fn parse_request(
 
 /// Encode Queue response to bytes
 #[must_use]
-pub fn encode_response(response: &QueueResponse) -> Vec<u8> {
+pub fn encode_response(message_type: u16, response: &QueueResponse) -> Vec<u8> {
     use bytes::BufMut;
 
     let mut buf = Vec::new();
@@ -89,6 +89,7 @@ pub fn encode_response(response: &QueueResponse) -> Vec<u8> {
         }
         QueueResponse::WatchOk { subscription_id } => {
             buf.put_u8(0); // status: success
+            buf.put_u8(1); // has_subscription_id
             buf.put_u64(*subscription_id);
         }
         QueueResponse::UnwatchOk => {
@@ -136,7 +137,12 @@ pub fn encode_response(response: &QueueResponse) -> Vec<u8> {
         | QueueResponse::QueueNotFound
         | QueueResponse::Error { .. } => {
             let (code, message) = queue_error_code_and_message(response);
-            return crate::protocol::error_codes::encode_error_body(code, &message);
+            if matches!(message_type, msg_type::ENQUEUE | msg_type::RESERVE) {
+                return crate::protocol::error_codes::encode_error_body(code, &message);
+            }
+            buf.put_u8(1);
+            buf.put_u32(usize_to_u32_saturating(message.len()));
+            buf.put_slice(message.as_bytes());
         }
     }
     buf
@@ -281,7 +287,8 @@ fn parse_enqueue(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage,
 }
 
 fn parse_reserve(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage, String> {
-    // Wire format per CLIENT_SPEC: [u32 route_len][route][u64 inflight_seconds][u8 has_batch_size][u32 batch?]
+    // Wire format per CLIENT_SPEC: [string route][u64 inflight_seconds]
+    // [u8 has_batch_size][u32 batch?][u8 has_wait_seconds][u64 wait_seconds?]
     let mut offset = 0;
 
     // Parse route
@@ -304,7 +311,10 @@ fn parse_reserve(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage,
     offset += 8;
 
     // Parse batch_size (1 byte flag, then u32 if present)
-    let batch_size = if offset < payload.len() {
+    if offset >= payload.len() {
+        return Err("Missing batch_size presence flag".to_string());
+    }
+    let batch_size = {
         let has_batch_size = payload[offset];
         offset += 1;
         if has_batch_size == 1 {
@@ -330,8 +340,30 @@ fn parse_reserve(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage,
         } else {
             return Err("Invalid batch_size flag".to_string());
         }
-    } else {
-        None
+    };
+
+    if offset >= payload.len() {
+        return Err("Missing wait_seconds presence flag".to_string());
+    }
+    let wait_seconds = {
+        let has_wait_seconds = payload[offset];
+        offset += 1;
+        if has_wait_seconds == 1 {
+            if offset + 8 > payload.len() {
+                return Err("Incomplete wait_seconds".to_string());
+            }
+            let wait = u64::from_be_bytes(
+                payload[offset..offset + 8]
+                    .try_into()
+                    .expect("validated wait_seconds width"),
+            );
+            offset += 8;
+            Some(wait)
+        } else if has_wait_seconds == 0 {
+            None
+        } else {
+            return Err("Invalid wait_seconds flag".to_string());
+        }
     };
 
     if offset != payload.len() {
@@ -343,6 +375,7 @@ fn parse_reserve(family_id: RouteFamily, payload: &[u8]) -> Result<QueueMessage,
         route: Route::from_ref(route_str),
         inflight_seconds,
         batch_size,
+        wait_seconds,
     })
 }
 
@@ -561,6 +594,7 @@ mod tests {
         payload.extend_from_slice(&30u64.to_be_bytes()); // inflight_seconds
         payload.push(1); // batch_size present
         payload.extend_from_slice(&5u32.to_be_bytes()); // batch_size = 5
+        payload.push(0); // wait_seconds absent
 
         // Act
         let result = parse_request(msg_type::RESERVE, RouteFamily::new(2), &payload);
@@ -591,7 +625,7 @@ mod tests {
     }
 
     #[test]
-    fn should_reject_reserve_message_with_trailing_wait_seconds() {
+    fn should_parse_reserve_message_with_wait_seconds() {
         // Arrange
         let route = "queue://realm/area/test";
         let mut payload = Vec::new();
@@ -607,10 +641,11 @@ mod tests {
         let result = parse_request(msg_type::RESERVE, RouteFamily::new(2), &payload);
 
         // Assert
-        match result {
-            Err(error) => assert_eq!(error, "Trailing data in reserve request"),
-            Ok(message) => panic!("expected trailing-data error, got {message:?}"),
-        }
+        let QueueMessage::Receive { wait_seconds, .. } = result.expect("reserve should parse")
+        else {
+            panic!("expected reserve message");
+        };
+        assert_eq!(wait_seconds, Some(5));
     }
 
     #[test]
@@ -638,7 +673,7 @@ mod tests {
         };
 
         // Act
-        let encoded = encode_response(&response);
+        let encoded = encode_response(msg_type::ENQUEUE, &response);
 
         // Assert
         assert_eq!(encoded.len(), 9); // 1 status byte + 8 bytes for u64
@@ -662,7 +697,7 @@ mod tests {
         };
 
         // Act
-        let encoded = encode_response(&response);
+        let encoded = encode_response(msg_type::RESERVE, &response);
 
         // Assert
         assert_eq!(
@@ -695,7 +730,7 @@ mod tests {
         };
 
         // Act
-        let encoded = encode_response(&response);
+        let encoded = encode_response(msg_type::RESERVE, &response);
         let mut decoder = crate::protocol::payload_codec::PayloadDecoder::new(&encoded);
 
         // Assert
@@ -719,11 +754,12 @@ mod tests {
         };
 
         // Act
-        let encoded = encode_response(&response);
+        let encoded = encode_response(msg_type::WATCH, &response);
 
         // Assert
-        assert_eq!(encoded.len(), 9);
+        assert_eq!(encoded.len(), 10);
         assert_eq!(encoded[0], 0);
-        assert_eq!(u64::from_be_bytes(encoded[1..9].try_into().unwrap()), 42);
+        assert_eq!(encoded[1], 1);
+        assert_eq!(u64::from_be_bytes(encoded[2..10].try_into().unwrap()), 42);
     }
 }

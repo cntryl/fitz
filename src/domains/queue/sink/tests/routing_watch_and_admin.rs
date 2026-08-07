@@ -43,6 +43,19 @@ pub(super) fn encode_queue_reserve(route: &str, inflight_seconds: u64, batch_siz
     payload.put_u64(inflight_seconds);
     payload.put_u8(1);
     payload.put_u32(batch_size);
+    payload.put_u8(0);
+    Bytes::from(payload)
+}
+
+pub(super) fn encode_queue_reserve_wait(
+    route: &str,
+    inflight_seconds: u64,
+    batch_size: u32,
+    wait_seconds: u64,
+) -> Bytes {
+    let mut payload = encode_queue_reserve(route, inflight_seconds, batch_size).to_vec();
+    *payload.last_mut().expect("wait presence flag") = 1;
+    payload.put_u64(wait_seconds);
     Bytes::from(payload)
 }
 
@@ -85,6 +98,12 @@ pub(super) fn encode_queue_ack(route: &str, id: u64, token: u64) -> Bytes {
 }
 
 pub(super) fn bad_request_reason(frame: &FrameContext) -> String {
+    if !matches!(frame.msg_type.as_u16(), 200 | 202) {
+        let mut decoder =
+            crate::dispatch::protocol::payload_codec::PayloadDecoder::new(frame.payload.as_ref());
+        assert_eq!(decoder.get_u8().expect("error status"), 1);
+        return decoder.get_string().expect("plain queue error envelope");
+    }
     let (code, message) =
         crate::dispatch::protocol::error_codes::decode_error_body(frame.payload.as_ref())
             .expect("bad request error envelope");
@@ -129,13 +148,6 @@ pub(super) fn receive_response_first_message(frame: &FrameContext) -> (u64, u64)
     (id, token)
 }
 
-pub(super) fn queue_simple_error_code(frame: &FrameContext) -> u16 {
-    let (code, _) =
-        crate::dispatch::protocol::error_codes::decode_error_body(frame.payload.as_ref())
-            .expect("queue error envelope");
-    code
-}
-
 pub(super) fn receive_queue_frame(mailbox: &Mailbox, label: &str) -> FrameContext {
     mailbox
         .receiver()
@@ -147,8 +159,12 @@ pub(super) fn receive_queue_frame(mailbox: &Mailbox, label: &str) -> FrameContex
 
 pub(super) fn watch_response_subscription_id(frame: &FrameContext) -> u64 {
     assert_eq!(frame.payload[0], 0, "expected success status");
+    assert_eq!(
+        frame.payload[1], 1,
+        "expected subscription id presence flag"
+    );
     u64::from_be_bytes(
-        frame.payload[1..9]
+        frame.payload[2..10]
             .try_into()
             .expect("watch payload should include subscription id"),
     )

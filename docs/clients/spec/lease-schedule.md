@@ -518,6 +518,13 @@ elif response.type == "Fenced":
 |  703 | SUBSCRIBE   | Client → Server            |
 |  704 | UNSUBSCRIBE | Client → Server            |
 |  705 | NOTIFY      | Server → Client (delivery) |
+|  706 | CREATE_BATCH | Client → Server (broker extension) |
+|  707 | LIST_V2     | Client → Server (broker extension) |
+
+Codes 700–705 are the canonical cross-client surface. The current broker also
+advertises 706 and 707 in its protocol manifest. They are additive extensions:
+clients MUST use LIST 702 for portable pagination and MUST NOT substitute the
+cursor-shaped LIST_V2 707 for canonical LIST.
 
 #### CREATE Request
 
@@ -608,6 +615,14 @@ Response (error):
 - Omitting the payload defaults to `offset=0, limit=100`
 - `limit=0` means "all remaining entries from offset"
 - LIST is scoped to the current route family and returns a single response payload, not a multi-frame stream
+
+#### Broker Extensions
+
+- `CREATE_BATCH` (706) encodes `[u32 entry_count]` followed by the CREATE fields
+  for each entry and returns the same plain success/error envelope as CREATE.
+- `LIST_V2` (707) encodes `[optional string continuation][optional u64 limit]`
+  and returns its versioned cursor page. It exists for broker compatibility;
+  portable clients use canonical offset/limit LIST (702).
 
 #### Cron Syntax (Broker-Enforced)
 

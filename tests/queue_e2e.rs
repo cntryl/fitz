@@ -286,12 +286,7 @@ where
                 .expect("invalid queue subscription response");
             let (_message_type, status, data) = parse_queue_response(&response);
             assert_eq!(status, 1, "invalid pattern must fail: {pattern}");
-            let (code, _message) = fitz::protocol::error_codes::decode_error_body(&data)
-                .expect("queue subscription error envelope");
-            assert_eq!(
-                code,
-                fitz::protocol::error_codes::queue::ERR_INVALID_SUBSCRIPTION_PATTERN
-            );
+            assert!(!decode_plain_queue_error(&data).is_empty());
         }
     }
 }
@@ -339,12 +334,18 @@ where
     assert_eq!(parse_queue_response(&exact).1, 0);
     let (_, overflow_status, overflow_data) = parse_queue_response(&overflow);
     assert_eq!(overflow_status, 1);
-    let (code, _message) = fitz::protocol::error_codes::decode_error_body(&overflow_data)
-        .expect("queue overflow error envelope");
     assert_eq!(
-        code,
-        fitz::protocol::error_codes::queue::ERR_SUBSCRIPTION_LIMIT
+        decode_plain_queue_error(&overflow_data),
+        "wildcard subscription limit exceeded"
     );
+}
+
+fn decode_plain_queue_error(data: &[u8]) -> String {
+    assert_eq!(data.first(), Some(&1));
+    assert!(data.len() >= 5);
+    let length = u32::from_be_bytes(data[1..5].try_into().expect("error length")) as usize;
+    assert_eq!(data.len(), 5 + length);
+    String::from_utf8(data[5..].to_vec()).expect("UTF-8 queue error")
 }
 
 async fn should_deliver_queue_notification_for_overlapping_wildcards<C>(server: &TestServer)

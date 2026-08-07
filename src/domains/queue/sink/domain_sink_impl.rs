@@ -7,7 +7,7 @@ use super::model::{
 };
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
-use std::sync::Arc;
+use std::{collections::VecDeque, sync::Arc};
 
 mod domain_core_impl;
 
@@ -148,6 +148,7 @@ impl QueueDomainSink {
             families: Mutex::new(HashMap::new()),
             next_sub_id: AtomicU64::new(1),
             ready_states: Mutex::new(HashMap::new()),
+            pending_reserves: Mutex::new(VecDeque::default()),
             router,
             projection: QueueAdminProjection::new(admin_read_model),
             metrics: None,

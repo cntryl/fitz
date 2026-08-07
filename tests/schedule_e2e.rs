@@ -83,12 +83,11 @@ where
     for response in responses {
         let (_msg_type, status, data) = parse_schedule_response(&response);
         assert_ne!(status, 0, "Expected failure for invalid cron expression");
-        let (code, message) =
-            fitz::protocol::error_codes::decode_error_body(&data).expect("decode schedule error");
-        assert_eq!(
-            code,
-            fitz::protocol::error_codes::schedule::ERR_INVALID_CRON
-        );
+        assert!(data.len() >= 5);
+        let length =
+            u32::from_be_bytes(data[1..5].try_into().expect("schedule error length")) as usize;
+        assert_eq!(data.len(), 5 + length);
+        let message = String::from_utf8(data[5..].to_vec()).expect("schedule error UTF-8");
         assert!(!message.is_empty());
     }
 }

@@ -114,6 +114,12 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
             if dec.remaining() > 0 {
                 dec.skip_optional_bytes()?;
             }
+            if dec.remaining() > 0 {
+                dec.get_optional_u64()?;
+            }
+            if dec.remaining() > 0 {
+                dec.get_optional_u64()?;
+            }
             if !dec.is_complete() {
                 return Err("Trailing data in message".to_string());
             }
@@ -132,13 +138,14 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
 
 /// Encode domain response to TLV-encoded bytes
 #[must_use]
-pub fn encode_response(response: &StreamClientResponseBody) -> Vec<u8> {
+pub fn encode_response(message_type: u16, response: &StreamClientResponseBody) -> Vec<u8> {
     let mut enc = PayloadEncoder::new();
-    encode_response_into(&mut enc, response)
+    encode_response_into(&mut enc, message_type, response)
 }
 
 pub fn encode_response_into(
     enc: &mut PayloadEncoder,
+    message_type: u16,
     response: &StreamClientResponseBody,
 ) -> Vec<u8> {
     enc.clear();
@@ -146,15 +153,36 @@ pub fn encode_response_into(
     match response {
         StreamClientResponseBody::Ok { session_id, data } => {
             enc.put_u8(0); // success flag
-            enc.put_optional_u64(*session_id);
-            enc.put_bytes(data);
+            match message_type {
+                600 => {
+                    if let Some(session_id) = session_id {
+                        enc.put_u64(*session_id);
+                    }
+                    enc.put_bytes(data);
+                }
+                601 | 602 => {
+                    enc.put_bytes(data);
+                }
+                603 | 608 => {}
+                605 | 606 => {
+                    enc.put_raw(data);
+                }
+                _ => {
+                    enc.put_optional_u64(*session_id);
+                    enc.put_bytes(data);
+                }
+            }
         }
         StreamClientResponseBody::Error(e) => {
-            return crate::protocol::error_codes::encode_error_body_into(
-                stream_error_code_for_message(e),
-                e,
-                enc,
-            );
+            if message_type == 604 {
+                return crate::protocol::error_codes::encode_error_body_into(
+                    stream_error_code_for_message(e),
+                    e,
+                    enc,
+                );
+            }
+            enc.put_u8(1);
+            enc.put_string(e);
         }
         StreamClientResponseBody::SubscriptionError(error) => {
             let code = match error {
@@ -165,11 +193,15 @@ pub fn encode_response_into(
                     crate::protocol::error_codes::stream::ERR_SUBSCRIPTION_LIMIT
                 }
             };
-            return crate::protocol::error_codes::encode_error_body_into(
-                code,
-                &error.to_string(),
-                enc,
-            );
+            if message_type == 604 {
+                return crate::protocol::error_codes::encode_error_body_into(
+                    code,
+                    &error.to_string(),
+                    enc,
+                );
+            }
+            enc.put_u8(1);
+            enc.put_string(&error.to_string());
         }
     }
 
@@ -427,4 +459,68 @@ pub fn encode_notify_into(
     enc.put_string(route.as_str());
     enc.put_bytes(payload);
     enc.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_encode_begin_success_without_optional_session_flag() {
+        // Arrange
+        let response = StreamClientResponseBody::Ok {
+            session_id: Some(42),
+            data: b"meta".to_vec(),
+        };
+
+        // Act
+        let encoded = encode_response(600, &response);
+
+        // Assert
+        assert_eq!(
+            encoded,
+            [
+                vec![0],
+                42u64.to_be_bytes().to_vec(),
+                vec![0, 0, 0, 4],
+                b"meta".to_vec()
+            ]
+            .concat()
+        );
+    }
+
+    #[test]
+    fn should_encode_append_success_without_optional_session_flag() {
+        // Arrange
+        let response = StreamClientResponseBody::Ok {
+            session_id: None,
+            data: 7u64.to_be_bytes().to_vec(),
+        };
+
+        // Act
+        let encoded = encode_response(601, &response);
+
+        // Assert
+        assert_eq!(
+            encoded,
+            [vec![0, 0, 0, 0, 8], 7u64.to_be_bytes().to_vec()].concat()
+        );
+    }
+
+    #[test]
+    fn should_encode_plain_stream_error_except_for_read() {
+        // Arrange
+        let response = StreamClientResponseBody::Error("session not found".to_string());
+
+        // Act
+        let begin = encode_response(600, &response);
+        let read = encode_response(604, &response);
+
+        // Assert
+        assert_eq!(&begin[..5], &[1, 0, 0, 0, 17]);
+        assert_eq!(
+            &read[1..5],
+            &u32::from(crate::protocol::error_codes::stream::ERR_SESSION_NOT_FOUND).to_be_bytes()
+        );
+    }
 }

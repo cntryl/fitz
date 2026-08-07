@@ -79,6 +79,7 @@ pub enum QueueMessage {
         route: Route,
         inflight_seconds: u64,
         batch_size: Option<usize>,
+        wait_seconds: Option<u64>,
     },
 
     /// Extend inflight reservation

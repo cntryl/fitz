@@ -76,13 +76,15 @@ pub fn build_queue_enqueue(queue_name: &str, data: &[u8]) -> Vec<u8> {
 
 /// Build QUEUE RESERVE frame (`msg_type` 202)
 pub fn build_queue_dequeue(queue_name: &str) -> Vec<u8> {
-    // Wire format: [u32 route_len][route][u64 lease_seconds][u8 has_batch=0]
+    // Wire format: [u32 route_len][route][u64 lease_seconds]
+    //              [u8 has_batch=0][u8 has_wait=0]
     let route = normalize_queue_route(queue_name);
     let mut payload = Vec::new();
     payload.extend_from_slice(&(u32_len(route.len())).to_be_bytes());
     payload.extend_from_slice(route.as_bytes());
     payload.extend_from_slice(&30_u64.to_be_bytes()); // lease_seconds = 30
     payload.push(0); // has_batch_size = false
+    payload.push(0); // has_wait_seconds = false
 
     let mut builder = TlvFrameBuilder::new();
     builder.encode_field(202, &payload);
@@ -124,13 +126,13 @@ pub struct QueueWatchDelivery {
 }
 
 pub fn extract_queue_subscription_id(data: &[u8]) -> Result<u64, String> {
-    if data.len() < 9 {
+    if data.len() != 10 || data[0] != 0 || data[1] != 1 {
         return Err("Queue watch response too short".to_string());
     }
 
-    Ok(u64::from_be_bytes(data[1..9].try_into().map_err(|_| {
-        "Queue watch response missing subscription id".to_string()
-    })?))
+    Ok(u64::from_be_bytes(data[2..10].try_into().map_err(
+        |_| "Queue watch response missing subscription id".to_string(),
+    )?))
 }
 
 pub fn parse_queue_watch_delivery(frame: &[u8]) -> Result<QueueWatchDelivery, String> {

@@ -370,7 +370,10 @@ impl SessionOutboundSink {
             "Outbound sink: encoding Schedule response"
         );
         let encode_start = Self::encode_latency_start();
-        let payload = crate::protocol::schedule_codec::encode_response(&response.response);
+        let payload = crate::protocol::schedule_codec::encode_response(
+            response.meta.message_type,
+            &response.response,
+        );
         let bytes = encode_single_tlv_frame(
             crate::protocol::tlv::MessageType::new(response.meta.message_type),
             &payload,
@@ -409,7 +412,10 @@ impl SessionOutboundSink {
             "Outbound sink: encoding Stream response"
         );
         let encode_start = Self::encode_latency_start();
-        let payload = crate::protocol::stream_codec::encode_response(&response.response);
+        let payload = crate::protocol::stream_codec::encode_response(
+            response.meta.message_type,
+            &response.response,
+        );
         let bytes = encode_single_tlv_frame(
             crate::protocol::tlv::MessageType::new(response.meta.message_type),
             &payload,
@@ -449,7 +455,10 @@ impl SessionOutboundSink {
             "Outbound sink: encoding Queue response"
         );
         let encode_start = Self::encode_latency_start();
-        let payload = crate::protocol::queue_codec::encode_response(&response.response);
+        let payload = crate::protocol::queue_codec::encode_response(
+            response.meta.message_type,
+            &response.response,
+        );
         let bytes = encode_single_tlv_frame(
             crate::protocol::tlv::MessageType::new(response.meta.message_type),
             &payload,

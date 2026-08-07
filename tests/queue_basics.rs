@@ -181,6 +181,7 @@ fn reserve_payload(route: &str, inflight_seconds: u64, batch_size: u32) -> Vec<u
     payload.extend_from_slice(&inflight_seconds.to_be_bytes());
     payload.push(1);
     payload.extend_from_slice(&batch_size.to_be_bytes());
+    payload.push(0);
     payload
 }
 
