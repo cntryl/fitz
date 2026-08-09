@@ -17,13 +17,13 @@ use bytes::Bytes;
 pub enum NotificationMessage {
     /// Publish a message to all matching subscribers (from any domain/client)
     Publish(PublishMessage),
-    /// Subscribe to messages matching a pattern (from `SessionActor`)
+    /// Subscribe to messages matching a pattern after runtime-ingress authorization
     Subscribe(SubscribeMessage),
-    /// Unsubscribe from a subscription ID (from `SessionActor`)
+    /// Unsubscribe from a subscription ID after runtime-ingress authorization
     Unsubscribe(UnsubscribeMessage),
     /// Unsubscribe all subscriptions for a session (called on disconnect)
     UnsubscribeAll(UnsubscribeAllMessage),
-    /// Deliver a published message to a subscriber (internal to `NoticeRouteActor`)
+    /// Deliver a published message to a subscriber (internal to Notice delivery)
     Deliver(DeliverMessage),
 }
 
@@ -50,8 +50,8 @@ impl PublishMessage {
 
 /// Subscribe to messages matching a pattern (may include wildcards `*` and `**`)
 ///
-/// Sent from `SessionActor` to `NoticeRouteActor` after authorization is verified.
-/// `SessionActor` has already enforced prefix-based auth rules.
+/// Runtime ingress authorizes the complete concrete-route match set before the
+/// production `NoticeDomainActor` receives this message.
 #[derive(Debug, Clone)]
 pub struct SubscribeMessage {
     /// Route family for isolation
@@ -60,7 +60,7 @@ pub struct SubscribeMessage {
     pub pattern: Route,
     /// Session making the subscription
     pub session_id: SessionId,
-    /// Address to send notifications to (typically the `SessionActor`)
+    /// Address to send notifications to (typically the session inbox)
     pub subscriber: RouteAddress,
 }
 
@@ -83,7 +83,7 @@ impl SubscribeMessage {
 
 /// Unsubscribe from a subscription
 ///
-/// Sent from `SessionActor` to `NoticeRouteActor`.
+/// Sent to the production `NoticeDomainActor` after ingress authorization.
 #[derive(Debug, Clone)]
 pub struct UnsubscribeMessage {
     /// Route family for isolation
@@ -107,8 +107,8 @@ impl UnsubscribeMessage {
 
 /// Unsubscribe all subscriptions for a session (called on disconnect)
 ///
-/// `SessionActor` sends this to all `NoticeRouteActor`s when the session terminates.
-/// Cleanup is best-effort; a `NoticeRouteActor` may not have received all subscribe messages yet.
+/// Runtime ingress sends this to the production `NoticeDomainActor` when the
+/// ephemeral session terminates. Cleanup is best-effort.
 #[derive(Debug, Clone)]
 pub struct UnsubscribeAllMessage {
     /// Session being disconnected

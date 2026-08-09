@@ -248,6 +248,111 @@ fn should_keep_rpc_route_actor_removed_from_default_surface() {
 }
 
 #[test]
+fn should_keep_shadow_notice_surface_removed() {
+    // Arrange
+    let repo_root = repo_root();
+    let notice_dir = repo_root.join("src").join("domains").join("notice");
+    let notice_mod = read_source_file(&notice_dir.join("mod.rs"));
+    let forbidden_exports = [
+        "\npub mod actor;",
+        "\npub mod events;",
+        "\npub mod session;",
+        "\npub use actor::NoticeRouteActor;",
+        "\npub use session::SessionActor;",
+    ];
+
+    // Act
+    let mut violations = forbidden_exports
+        .iter()
+        .filter(|forbidden| notice_mod.contains(**forbidden))
+        .map(|forbidden| format!("src/domains/notice/mod.rs exposes `{}`", forbidden.trim()))
+        .collect::<Vec<_>>();
+    for relative in [
+        "src/domains/notice/actor.rs",
+        "src/domains/notice/events.rs",
+        "src/domains/notice/session.rs",
+        "tests/notice_basics.rs",
+        "tests/notice_advanced.rs",
+    ] {
+        if repo_root.join(relative).exists() {
+            violations.push(format!("{relative} retains the shadow Notice surface"));
+        }
+    }
+    let report = format_violation_report(&violations);
+
+    // Assert
+    assert!(
+        report.is_empty(),
+        "shadow Notice actors and events must stay absent:\n{report}"
+    );
+}
+
+#[test]
+fn should_keep_notice_family_state_key_type_safe() {
+    // Arrange
+    let repo_root = repo_root();
+    let sink = read_source_file(
+        &repo_root
+            .join("src")
+            .join("domains")
+            .join("notice")
+            .join("sink.rs"),
+    );
+
+    // Act
+    let has_typed_key = sink.contains(
+        "HashMap<crate::runtime::routing::RouteFamily, RoutedSubscriptionSet<NoticeSubscription>>",
+    );
+    let retains_round_trip = sink.contains("RouteFamily::try_from(*family_id)");
+
+    // Assert
+    assert!(
+        has_typed_key,
+        "Notice family state must use RouteFamily keys"
+    );
+    assert!(
+        !retains_round_trip,
+        "Notice cleanup must not reconstruct RouteFamily from an integer key"
+    );
+}
+
+#[test]
+fn should_keep_notice_backpressure_and_duplicate_paths_bounded() {
+    // Arrange
+    let repo_root = repo_root();
+    let notice_sink_dir = repo_root
+        .join("src")
+        .join("domains")
+        .join("notice")
+        .join("sink");
+    let sink = read_source_file(&repo_root.join("src/domains/notice/sink.rs"));
+    let delivery_worker = read_source_file(&notice_sink_dir.join("delivery_worker.rs"));
+
+    // Act
+    let duplicate_check = sink.find("state.find_existing_id");
+    let pattern_compile = sink.find(".compile_registration_pattern");
+    let has_deadline_retry = delivery_worker.contains("NOTICE_MAILBOX_RETRY_TIMEOUT")
+        && delivery_worker.contains("Instant::now() < deadline");
+    let has_fixed_retry_loop = delivery_worker.contains("MAX_RETRIES");
+
+    // Assert
+    assert!(
+        duplicate_check
+            .zip(pattern_compile)
+            .is_some_and(|(check, compile)| check < compile),
+        "Notice duplicate lookup must precede pattern compilation"
+    );
+    assert!(
+        has_deadline_retry,
+        "Notice backpressure retry must use a deadline"
+    );
+    assert!(
+        !has_fixed_retry_loop,
+        "Notice retry must not restore a fixed spin count"
+    );
+}
+
+#[test]
 fn should_keep_shadow_lease_actor_removed_from_default_surface() {
     // Arrange
     let repo_root = repo_root();
