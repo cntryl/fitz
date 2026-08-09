@@ -4,6 +4,7 @@
 //! DomainSink` path that the live server uses, without standing up TCP/WS transport.
 
 use super::{create_bench_store, create_local_bench_store, create_write_heavy_bench_store};
+#[cfg(any(test, feature = "benchkit"))]
 use crate::domains::lease::protocol::{LeaseKey, LeaseResponse};
 use crate::domains::lease::sink::LeaseDomainSink;
 use crate::domains::notice::sink::NoticeDomainSink;
@@ -606,6 +607,7 @@ pub fn create_bench_lease_sink(router: Arc<Router>) -> Arc<LeaseDomainSink> {
     ))
 }
 
+#[cfg(any(test, feature = "benchkit"))]
 pub struct DirectLeaseAcquireRelease {
     sink: Arc<LeaseDomainSink>,
     key: LeaseKey,
@@ -615,6 +617,7 @@ pub struct DirectLeaseAcquireRelease {
     ttl_secs: u64,
 }
 
+#[cfg(any(test, feature = "benchkit"))]
 impl DirectLeaseAcquireRelease {
     /// Create a direct lease acquire/release benchmark driver.
     ///
@@ -673,6 +676,7 @@ impl DirectLeaseAcquireRelease {
 }
 
 #[must_use]
+#[cfg(any(test, feature = "benchkit"))]
 fn scoped_lease_owner(session_id: u64, owner_id: &str) -> String {
     if owner_id.is_empty() {
         format!("session:{session_id}")

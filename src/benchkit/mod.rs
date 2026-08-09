@@ -11,6 +11,8 @@ pub mod storage;
 pub mod stream;
 pub mod transport;
 
+#[cfg(any(test, feature = "benchkit"))]
+pub use live_sink::DirectLeaseAcquireRelease;
 pub use live_sink::{
     create_bench_lease_sink, create_bench_notice_sink, create_bench_queue_sink,
     create_bench_rpc_sink, create_bench_rpc_sink_with_metrics,
@@ -21,7 +23,7 @@ pub use live_sink::{
     register_session_counting_sink, register_session_queue_sink, route_frame,
     route_frame_to_address, route_raw_frame, session_inbox_route,
     wait_for_counting_sinks_each_count, wait_for_counting_sinks_total_count, CountingSink,
-    DirectLeaseAcquireRelease, FrameQueueSink,
+    FrameQueueSink,
 };
 pub use queue::{create_bench_queue_actor, create_local_bench_queue_actor};
 pub use runtime::shared_bench_runtime;
