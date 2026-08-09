@@ -990,7 +990,7 @@ fn should_keep_boot_runtime_design_seams_explicit() {
         (boot.contains("fn register_domains_stage"), "domain stage"),
         (!boot.contains("clippy::too_many_lines"), "boot line lint"),
         (
-            boot.matches("ShutdownContext {").count() == 2,
+            boot.matches("\n    ShutdownContext {").count() == 1,
             "shutdown context construction",
         ),
         (
@@ -1000,6 +1000,11 @@ fn should_keep_boot_runtime_design_seams_explicit() {
         (
             root.join("src/boot/storage/contention.rs").is_file(),
             "storage contention module",
+        ),
+        (
+            read_source_file(&root.join("src/boot/storage/contention.rs"))
+                .contains("enum ContentionKind"),
+            "typed storage contention seam",
         ),
         (
             config.contains("struct TransportConfig"),

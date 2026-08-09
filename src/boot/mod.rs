@@ -37,6 +37,36 @@ struct ShutdownContext {
     tcp_join: Option<tokio::task::JoinHandle<()>>,
 }
 
+type ShutdownCore = (
+    Runtime,
+    Arc<crate::api::runtime_ingress::RuntimeIngress>,
+    Arc<crate::runtime::Router>,
+    Arc<cntryl_midge::Engine>,
+);
+type ListenerShutdown = (
+    tokio::sync::oneshot::Sender<()>,
+    tokio::task::JoinHandle<()>,
+    tokio::sync::oneshot::Sender<()>,
+    tokio::task::JoinHandle<()>,
+);
+
+fn build_shutdown_context(core: ShutdownCore, listeners: ListenerShutdown) -> ShutdownContext {
+    let (runtime, ingress, router, store) = core;
+    let (ws_shutdown, ws_join, metrics_shutdown, metrics_join) = listeners;
+    ShutdownContext {
+        runtime,
+        ingress,
+        router,
+        store,
+        ws_shutdown,
+        ws_join,
+        metrics_shutdown,
+        metrics_join,
+        tcp_shutdown: None,
+        tcp_join: None,
+    }
+}
+
 #[derive(Default)]
 struct BootListenerBindings {
     http: Option<tokio::net::TcpListener>,
@@ -66,7 +96,14 @@ impl BootListenerBindings {
 enum BootStage<T> {
     Continue(T),
     ShutdownRequested,
-    Failed(BootResult<()>),
+    Failed(Box<dyn std::error::Error>),
+}
+
+fn failed_stage<T>(result: BootResult<()>) -> BootStage<T> {
+    match result {
+        Err(error) => BootStage::Failed(error),
+        Ok(()) => unreachable!("failure cleanup must preserve the startup error"),
+    }
 }
 
 struct StartedListeners {
@@ -87,7 +124,7 @@ async fn start_listeners(
         match start_http_listener(bindings, config, ingress, ingress_config, runtime.clone()).await
         {
             Ok(listener) => listener,
-            Err(error) => return BootStage::Failed(Err(error)),
+            Err(error) => return BootStage::Failed(error),
         };
     let crate::api::handlers::ListenerHandle {
         ready: ws_ready,
@@ -95,7 +132,7 @@ async fn start_listeners(
         join: ws_join,
     } = ws_listener;
     if let Err(error) = ws_ready.await {
-        return BootStage::Failed(
+        return failed_stage(
             abort_startup(
                 &runtime,
                 ws_shutdown,
@@ -113,7 +150,7 @@ async fn start_listeners(
     let metrics_listener = match start_metrics_listener(bindings, config, runtime.clone()).await {
         Ok(listener) => listener,
         Err(error) => {
-            return BootStage::Failed(
+            return failed_stage(
                 abort_startup(&runtime, ws_shutdown, ws_join, None, None, error).await,
             );
         }
@@ -124,7 +161,7 @@ async fn start_listeners(
         join: metrics_join,
     } = metrics_listener;
     if let Err(error) = metrics_ready.await {
-        return BootStage::Failed(
+        return failed_stage(
             abort_startup(
                 &runtime,
                 ws_shutdown,
@@ -154,7 +191,7 @@ async fn open_storage_stage(
     match storage::init_with_shutdown(config, shutdown).await {
         Ok(storage::StorageInitOutcome::Ready(store)) => BootStage::Continue(store),
         Ok(storage::StorageInitOutcome::ShutdownRequested) => BootStage::ShutdownRequested,
-        Err(error) => BootStage::Failed(Err(error)),
+        Err(error) => BootStage::Failed(error),
     }
 }
 
@@ -177,7 +214,7 @@ fn register_domains_stage(
     };
     match domains::setup(router, store, &runtime.admin_read_model(), &options) {
         Ok(handles) => BootStage::Continue(handles),
-        Err(error) => BootStage::Failed(Err(error)),
+        Err(error) => BootStage::Failed(error),
     }
 }
 
@@ -213,7 +250,6 @@ async fn boot_with_shutdown_and_listeners(
 ) -> BootResult<()> {
     resource_limits::enforce_startup_resource_limits()?;
 
-    // Step 0: Initialize observability (tracing, metrics, OTEL)
     let _metrics = observability::init_observability()?;
 
     tracing::info!("Starting Fitz broker");
@@ -227,14 +263,8 @@ async fn boot_with_shutdown_and_listeners(
         return Ok(());
     }
 
-    // Step 1: Create runtime infrastructure before opening storage so a
-    // separate orchestration path can observe a standby while Midge waits for
-    // the single-writer lease. Customer traffic still requires strict health.
-    let (router, ingress, ingress_config, runtime) = runtime::init(&config)?;
-    shutdown.monitor_runtime(runtime.clone());
-    tracing::info!("Runtime initialized");
-
-    runtime.mark_auth_config_ready();
+    let (router, ingress, ingress_config, runtime) =
+        initialize_runtime_stage(&config, &mut shutdown)?;
 
     let listeners = match start_listeners(
         &mut listener_bindings,
@@ -246,7 +276,7 @@ async fn boot_with_shutdown_and_listeners(
     .await
     {
         BootStage::Continue(listeners) => listeners,
-        BootStage::Failed(result) => return result,
+        BootStage::Failed(error) => return Err(error),
         BootStage::ShutdownRequested => return Ok(()),
     };
     let StartedListeners {
@@ -256,7 +286,6 @@ async fn boot_with_shutdown_and_listeners(
         metrics_join,
     } = listeners;
 
-    // Step 2: Open storage after HTTP standby health is reachable.
     let store = match open_storage_stage(&config, shutdown.receiver()).await {
         BootStage::Continue(store) => store,
         BootStage::ShutdownRequested => {
@@ -273,7 +302,7 @@ async fn boot_with_shutdown_and_listeners(
             )
             .await;
         }
-        BootStage::Failed(Err(error)) => {
+        BootStage::Failed(error) => {
             return abort_startup(
                 &runtime,
                 ws_shutdown,
@@ -284,42 +313,72 @@ async fn boot_with_shutdown_and_listeners(
             )
             .await;
         }
-        BootStage::Failed(Ok(())) => return Ok(()),
     };
     tracing::info!("Storage initialized");
-    let mut shutdown_context = ShutdownContext {
-        runtime: runtime.clone(),
-        ingress: ingress.clone(),
-        router: router.clone(),
-        store: store.clone(),
-        ws_shutdown,
-        ws_join,
-        metrics_shutdown,
-        metrics_join,
-        tcp_shutdown: None,
-        tcp_join: None,
-    };
+    let shutdown_context = build_shutdown_context(
+        (runtime.clone(), ingress.clone(), router.clone(), store),
+        (ws_shutdown, ws_join, metrics_shutdown, metrics_join),
+    );
 
     if let Some(signal) = shutdown.requested() {
         return shutdown_broker(signal, shutdown.receiver(), shutdown_context).await;
     }
 
     runtime.mark_storage_ready();
-    shutdown.monitor_storage(runtime.clone(), Arc::downgrade(&store));
+    shutdown.monitor_storage(runtime.clone(), Arc::downgrade(&shutdown_context.store));
 
-    // Step 3: Register domain actors
-    let domains = match register_domains_stage(&router, &store, &runtime, &config) {
+    let domains = match register_domains_stage(&router, &shutdown_context.store, &runtime, &config)
+    {
         BootStage::Continue(domains) => domains,
-        BootStage::Failed(Err(error)) => {
+        BootStage::Failed(error) => {
             return fail_started_broker(error, shutdown_context).await;
         }
-        BootStage::ShutdownRequested | BootStage::Failed(Ok(())) => {
+        BootStage::ShutdownRequested => {
             return Err("domain registration ended without a result".into());
         }
     };
     runtime.attach_domains(domains);
     tracing::info!("Domain actors registered");
 
+    complete_startup(
+        config,
+        shutdown,
+        listener_bindings,
+        ingress,
+        ingress_config,
+        runtime,
+        shutdown_context,
+    )
+    .await
+}
+
+fn initialize_runtime_stage(
+    config: &BootConfig,
+    shutdown: &mut ShutdownCoordinator,
+) -> BootResult<(
+    Arc<crate::runtime::Router>,
+    Arc<crate::api::runtime_ingress::RuntimeIngress>,
+    crate::api::ingress::IngressConfig,
+    Runtime,
+)> {
+    // Runtime exists before storage so orchestration can observe a standby
+    // waiting for the single-writer lease while customer traffic stays gated.
+    let (router, ingress, ingress_config, runtime) = runtime::init(config)?;
+    shutdown.monitor_runtime(runtime.clone());
+    runtime.mark_auth_config_ready();
+    tracing::info!("Runtime initialized");
+    Ok((router, ingress, ingress_config, runtime))
+}
+
+async fn complete_startup(
+    config: BootConfig,
+    mut shutdown: ShutdownCoordinator,
+    mut listener_bindings: BootListenerBindings,
+    ingress: Arc<crate::api::runtime_ingress::RuntimeIngress>,
+    ingress_config: crate::api::ingress::IngressConfig,
+    runtime: Runtime,
+    mut shutdown_context: ShutdownContext,
+) -> BootResult<()> {
     // Mark domains ready
     runtime.mark_domains_ready();
 

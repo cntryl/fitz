@@ -72,10 +72,19 @@ fn descriptor(provider: &str) -> Result<&'static ProviderDescriptor, String> {
         })
 }
 
+fn required_namespace(provider: &str) -> Result<String, String> {
+    let descriptor = descriptor(provider)?;
+    let key = match descriptor.namespace {
+        NamespaceShape::Bucket => "FITZ_STORAGE_BUCKET",
+        NamespaceShape::Container => "FITZ_STORAGE_CONTAINER",
+    };
+    required_env(key)
+}
+
 pub(super) fn build_cloud_provider_config(
     provider: &str,
 ) -> Result<cntryl_midge::CloudProviderConfig, String> {
-    let _namespace_shape = descriptor(provider)?.namespace;
+    descriptor(provider)?;
     match provider {
         "sqrzl-s3" => Ok(cntryl_midge::CloudProviderConfig::s3_compatible_static(
             env_non_empty("FITZ_STORAGE_BUCKET")
@@ -112,44 +121,44 @@ pub(super) fn build_cloud_provider_config(
             ),
         }),
         "aws-s3" => Ok(cntryl_midge::CloudProviderConfig::aws_s3(
-            required_env("FITZ_STORAGE_BUCKET")?,
+            required_namespace(provider)?,
             required_region()?,
         )),
-        "s3-compatible" => s3_compatible_provider(
-            required_env("FITZ_STORAGE_BUCKET")?,
+        "s3-compatible" => Ok(s3_compatible_provider(
+            required_namespace(provider)?,
             env_non_empty("FITZ_STORAGE_REGION").unwrap_or_else(|| "us-east-1".to_string()),
             required_env("FITZ_STORAGE_ENDPOINT")?,
             env_bool("FITZ_STORAGE_FORCE_PATH_STYLE", true)?,
-        ),
+        )),
         "minio" => Ok(cntryl_midge::CloudProviderConfig::s3_compatible_env(
-            required_env("FITZ_STORAGE_BUCKET")?,
+            required_namespace(provider)?,
             required_env("FITZ_STORAGE_ENDPOINT")?,
         )),
         "wasabi" => {
-            let bucket = required_env("FITZ_STORAGE_BUCKET")?;
+            let bucket = required_namespace(provider)?;
             let region = required_env("FITZ_STORAGE_REGION")?;
             let endpoint = env_non_empty("FITZ_STORAGE_ENDPOINT")
                 .unwrap_or_else(|| format!("https://s3.{region}.wasabisys.com"));
 
-            s3_compatible_provider(bucket, region, endpoint, true)
+            Ok(s3_compatible_provider(bucket, region, endpoint, true))
         }
         "oci-s3" => {
-            let bucket = required_env("FITZ_STORAGE_BUCKET")?;
+            let bucket = required_namespace(provider)?;
             let namespace = required_env("FITZ_STORAGE_NAMESPACE")?;
             let region = required_env("FITZ_STORAGE_REGION")?;
             let endpoint = env_non_empty("FITZ_STORAGE_ENDPOINT").unwrap_or_else(|| {
                 format!("https://{namespace}.compat.objectstorage.{region}.oraclecloud.com")
             });
 
-            s3_compatible_provider(
+            Ok(s3_compatible_provider(
                 bucket,
                 region,
                 endpoint,
                 env_bool("FITZ_STORAGE_FORCE_PATH_STYLE", false)?,
-            )
+            ))
         }
-        "azure-blob" => build_azure_blob_provider(),
-        "gcs" => build_gcs_provider(),
+        "azure-blob" => build_azure_blob_provider(provider),
+        "gcs" => build_gcs_provider(provider),
         _ => unreachable!("provider descriptor and constructor match must stay aligned"),
     }
 }
@@ -159,19 +168,21 @@ fn s3_compatible_provider(
     region: String,
     endpoint: String,
     path_style: bool,
-) -> Result<cntryl_midge::CloudProviderConfig, String> {
-    Ok(cntryl_midge::CloudProviderConfig::S3Compatible {
+) -> cntryl_midge::CloudProviderConfig {
+    cntryl_midge::CloudProviderConfig::S3Compatible {
         bucket,
         region,
         endpoint,
         path_style,
         credentials: cntryl_midge::S3CredentialSource::environment(),
-    })
+    }
 }
 
-fn build_azure_blob_provider() -> Result<cntryl_midge::CloudProviderConfig, String> {
+fn build_azure_blob_provider(
+    provider_name: &str,
+) -> Result<cntryl_midge::CloudProviderConfig, String> {
     let endpoint = env_non_empty("FITZ_STORAGE_ENDPOINT");
-    let container = required_env("FITZ_STORAGE_CONTAINER")
+    let container = required_namespace(provider_name)
         .map_err(|_| "azure-blob storage requires FITZ_STORAGE_CONTAINER".to_string())?;
 
     let mut provider = if let Some(connection_string) =
@@ -208,8 +219,8 @@ fn build_azure_blob_provider() -> Result<cntryl_midge::CloudProviderConfig, Stri
     Ok(provider)
 }
 
-fn build_gcs_provider() -> Result<cntryl_midge::CloudProviderConfig, String> {
-    let bucket = required_env("FITZ_STORAGE_BUCKET")?;
+fn build_gcs_provider(provider_name: &str) -> Result<cntryl_midge::CloudProviderConfig, String> {
+    let bucket = required_namespace(provider_name)?;
     let mut provider = match (
         env_non_empty("GCS_HMAC_ACCESS_ID"),
         env_non_empty("GCS_HMAC_SECRET"),

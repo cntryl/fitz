@@ -7,6 +7,12 @@ pub(super) enum ProviderShape {
     Other,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ContentionKind {
+    Retryable,
+    Permanent,
+}
+
 pub(super) trait StorageOpenError {
     fn lease_acquisition_detail(&self) -> Option<&str>;
 }
@@ -27,7 +33,11 @@ impl StorageOpenError for cntryl_midge::MidgeError {
 }
 
 pub(super) fn local_is_retryable(error: &impl StorageOpenError) -> bool {
-    error.lease_acquisition_detail().is_some_and(|detail| {
+    local_kind(error) == ContentionKind::Retryable
+}
+
+pub(super) fn local_kind(error: &impl StorageOpenError) -> ContentionKind {
+    if error.lease_acquisition_detail().is_some_and(|detail| {
         detail
             .starts_with("another Midge instance is already running against this storage (holder:")
             || detail.starts_with("lost CAS race: expected holder=")
@@ -35,17 +45,32 @@ pub(super) fn local_is_retryable(error: &impl StorageOpenError) -> bool {
             || detail
                 .strip_prefix("another acquire is in progress: ")
                 .is_some_and(is_already_exists_error)
-    })
+    }) {
+        ContentionKind::Retryable
+    } else {
+        ContentionKind::Permanent
+    }
 }
 
 pub(super) fn cloud_is_retryable(
     error: &impl StorageOpenError,
     provider_shape: ProviderShape,
 ) -> bool {
-    error.lease_acquisition_detail().is_some_and(|detail| {
+    cloud_kind(error, provider_shape) == ContentionKind::Retryable
+}
+
+pub(super) fn cloud_kind(
+    error: &impl StorageOpenError,
+    provider_shape: ProviderShape,
+) -> ContentionKind {
+    if error.lease_acquisition_detail().is_some_and(|detail| {
         detail.starts_with("another instance holds the lease (holder:")
             || cloud_precondition_conflict(detail, provider_shape)
-    })
+    }) {
+        ContentionKind::Retryable
+    } else {
+        ContentionKind::Permanent
+    }
 }
 
 fn is_already_exists_error(error: &str) -> bool {
@@ -85,9 +110,9 @@ mod tests {
         let error = FakeOpenError("cloud lease conditional write failed: HTTP status 409");
 
         // Act
-        let retryable = cloud_is_retryable(&error, ProviderShape::S3Compatible);
+        let kind = cloud_kind(&error, ProviderShape::S3Compatible);
 
         // Assert
-        assert!(retryable);
+        assert_eq!(kind, ContentionKind::Retryable);
     }
 }

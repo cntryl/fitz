@@ -362,7 +362,7 @@ struct TransportConfig<'a> {
 }
 
 impl<'a> TransportConfig<'a> {
-    fn from_env(boot: &'a BootConfig) -> Self {
+    fn from_boot_config(boot: &'a BootConfig) -> Self {
         Self { boot }
     }
 
@@ -407,7 +407,7 @@ struct StorageConfig<'a> {
 }
 
 impl<'a> StorageConfig<'a> {
-    fn from_env(boot: &'a BootConfig) -> Self {
+    fn from_boot_config(boot: &'a BootConfig) -> Self {
         Self { boot }
     }
 
@@ -447,7 +447,7 @@ struct DrainConfig<'a> {
 }
 
 impl<'a> DrainConfig<'a> {
-    fn from_env(boot: &'a BootConfig) -> Self {
+    fn from_boot_config(boot: &'a BootConfig) -> Self {
         Self { boot }
     }
 
@@ -581,10 +581,10 @@ impl BootConfig {
                 cntryl_midge::WriteOptions::best_effort()
             }
             (StorageMode::CloudBacked(_), QueueWritePolicy::Strict) => {
-                cntryl_midge::WriteOptions::cloud_strict()
+                cloud_durable_write_options(&CloudDurabilityMode::Strict)
             }
             (StorageMode::CloudBacked(_), QueueWritePolicy::Buffered) => {
-                cntryl_midge::WriteOptions::cloud_async()
+                cloud_durable_write_options(&CloudDurabilityMode::Background)
             }
             (_, QueueWritePolicy::Strict) => cntryl_midge::WriteOptions::sync(),
             (_, QueueWritePolicy::Buffered | QueueWritePolicy::Invalid { .. }) => {
@@ -867,11 +867,11 @@ impl BootConfig {
     /// Returns an error when drain, transport, auth, storage, origin-security,
     /// or route-family settings are invalid or incomplete for startup.
     pub fn validate(&self) -> BootResult<()> {
-        DrainConfig::from_env(self).validate()?;
-        StorageConfig::from_env(self).validate()?;
+        DrainConfig::from_boot_config(self).validate()?;
+        StorageConfig::from_boot_config(self).validate()?;
         let protected_admin_configured =
             crate::api::admin::auth::protected_admin_configured_from_env();
-        TransportConfig::from_env(self).validate(protected_admin_configured)?;
+        TransportConfig::from_boot_config(self).validate(protected_admin_configured)?;
         self.auth_config
             .validate(self.auth_required)
             .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
