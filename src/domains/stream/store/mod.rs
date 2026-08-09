@@ -64,6 +64,34 @@ type ResourceMetaStateHandle = Arc<Mutex<ResourceMetaState>>;
 
 const ERR_SESSION_ROUTE_FAMILY_MISMATCH: &str = "ERR_SESSION_ROUTE_FAMILY_MISMATCH";
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum StreamStoreError {
+    SessionNotFound,
+    ConcurrencyConflict,
+}
+
+impl StreamStoreError {
+    pub(super) const fn client_message(self) -> &'static str {
+        match self {
+            Self::SessionNotFound => "session not found",
+            Self::ConcurrencyConflict => "concurrency conflict",
+        }
+    }
+
+    pub(super) const fn store_code(self) -> &'static str {
+        match self {
+            Self::SessionNotFound => "ERR_SESSION_NOT_FOUND",
+            Self::ConcurrencyConflict => "ERR_CONCURRENCY_CONFLICT",
+        }
+    }
+
+    pub(super) fn from_store_message(message: &str) -> Option<Self> {
+        [Self::SessionNotFound, Self::ConcurrencyConflict]
+            .into_iter()
+            .find(|error| message == error.store_code())
+    }
+}
+
 #[derive(Default)]
 struct RealmSequenceState {
     next_realm_offset: Option<u64>,
@@ -111,7 +139,9 @@ impl PromotionCommitFailure {
 
     fn into_message(self) -> String {
         match self {
-            Self::ScopeConflict => "ERR_CONCURRENCY_CONFLICT".to_string(),
+            Self::ScopeConflict => StreamStoreError::ConcurrencyConflict
+                .store_code()
+                .to_string(),
             Self::Retryable(message) | Self::Resolved(message) => message,
         }
     }

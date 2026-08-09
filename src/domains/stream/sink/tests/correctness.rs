@@ -87,7 +87,7 @@ fn should_fail_closed_given_malformed_stream_commit_notification() {
 
     // Assert
     assert_eq!(inbox.count(), 0);
-    assert!(context.sink.core.pending_notifications.lock().is_empty());
+    assert!(context.sink.core.subscriptions.pending.lock().is_empty());
 }
 
 #[test]

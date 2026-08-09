@@ -623,6 +623,76 @@ fn should_compress_repeated_global_page_routes() {
 }
 
 #[test]
+fn should_preserve_compact_page_codec_bytes() {
+    // Arrange
+    let global = CompactGlobalPageValue {
+        records: vec![CompactGlobalPageRecord {
+            realm: "r".into(),
+            area: "a".into(),
+            resource: "x".into(),
+            resource_offset: 1,
+            area_offset: 2,
+            realm_offset: 3,
+            body: Bytes::from_static(b"b"),
+            metadata: Some(Bytes::from_static(b"m")),
+            created_at: 4,
+            expires_at: Some(5),
+        }],
+    };
+    let realm = CompactRealmPageValue {
+        records: vec![CompactRealmPageRecord {
+            area: "a".into(),
+            resource: "x".into(),
+            area_offset: 2,
+            resource_offset: 1,
+            body: Bytes::from_static(b"b"),
+            metadata: Some(Bytes::from_static(b"m")),
+            created_at: 4,
+            expires_at: Some(5),
+        }],
+    };
+    let area = CompactAreaPageValue {
+        records: vec![CompactAreaPageRecord {
+            resource: "x".into(),
+            resource_offset: 1,
+            body: Bytes::from_static(b"b"),
+            metadata: Some(Bytes::from_static(b"m")),
+            created_at: 4,
+            expires_at: Some(5),
+        }],
+    };
+    let resource = CompactResourcePageValue {
+        records: vec![CompactResourcePageRecord {
+            area_offset: 2,
+            realm_offset: 3,
+            body: Bytes::from_static(b"b"),
+            metadata: Some(Bytes::from_static(b"m")),
+            created_at: 4,
+            expires_at: Some(5),
+        }],
+    };
+
+    // Act
+    let encoded = [
+        hex::encode(global.encode()),
+        hex::encode(realm.encode()),
+        hex::encode(area.encode()),
+        hex::encode(resource.encode()),
+    ];
+
+    // Assert
+    assert_eq!(
+        encoded,
+        [
+            "00ed45000000400100000004001072050010610500107805000002001002050041000000030600300000040500410000000506000237006001000000626d",
+            "00b3010000000100000061010000007802000000000000000100000000000000040000000000000005000000000000000100000001000000626d",
+            "00e50100000001000000780100000000000000040000000000000005000000000000000100000001000000626d",
+            "00ea0100000002000000000000000300000000000000040000000000000005000000000000000100000001000000626d",
+        ]
+    );
+}
+
+#[test]
 fn should_roundtrip_posting_expirations() {
     // Arrange
     let value = PostingPageValue {

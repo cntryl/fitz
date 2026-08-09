@@ -5,7 +5,7 @@ use super::super::store::StreamStorageLayout;
 use crate::utils::storage_key::{self, DomainKeyspace};
 
 /// Storage key prefixes for stream data
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum KeyPrefix {
     /// Resource stream entry: [RF][realm][area][resource][`resource_offset`]
     Resource = 0x01,
@@ -43,13 +43,15 @@ pub enum KeyPrefix {
     CursorState = 0x16,
     /// Durable generation fencing pre-recovery writers.
     FamilyWriterEpoch = 0x15,
-    /// Prototype canonical resource row for storage redesign research: [`stream_id`][resource_offset]
+    // --- LEGACY D3 PROTOTYPE PREFIXES; REJECTED BY PRODUCTION VALIDATION ---
+    /// Obsolete prototype canonical row. Production code must not write it.
     CanonicalResource = 0x0B,
-    /// Prototype area locator row for storage redesign research: [RF][realm][area][area_offset]
+    /// Obsolete prototype area locator. Production code must not write it.
     AreaLocator = 0x0C,
-    /// Prototype realm locator row for storage redesign research: [RF][realm][`realm_offset`]
+    /// Obsolete prototype realm locator. Production code must not write it.
     RealmLocator = 0x0D,
-    /// Stream storage layout marker for the route family
+    // --- ACTIVE STORAGE CONTROL AND PROMOTION-FRONTIER PREFIXES ---
+    /// Production Stream storage-layout marker for the route family.
     LayoutMarker = 0x0E,
     /// Promotion-frontier area page row: [realm][area][`page_start_area_offset`]
     CompactAreaPage = 0xE4,
@@ -70,6 +72,47 @@ pub enum KeyPrefix {
     GlobalAreaResourcePostingPage = 0xEF,
     /// D4 immutable large-payload blob, keyed by family-global offset.
     PayloadBlob = 0xF0,
+}
+
+impl TryFrom<u8> for KeyPrefix {
+    type Error = u8;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0x01 => Ok(Self::Resource),
+            0x02 => Ok(Self::Area),
+            0x03 => Ok(Self::Realm),
+            0x04 => Ok(Self::Watermark),
+            0x05 => Ok(Self::Staging),
+            0x06 => Ok(Self::OffsetCounter),
+            0x07 => Ok(Self::RealmWatermark),
+            0x08 => Ok(Self::ResourceMeta),
+            0x09 => Ok(Self::AreaCounter),
+            0x0A => Ok(Self::RealmCounter),
+            0x0B => Ok(Self::CanonicalResource),
+            0x0C => Ok(Self::AreaLocator),
+            0x0D => Ok(Self::RealmLocator),
+            0x0E => Ok(Self::LayoutMarker),
+            0x0F => Ok(Self::ResourceDiscriminator),
+            0x10 => Ok(Self::AreaDiscriminator),
+            0x11 => Ok(Self::RealmDiscriminator),
+            0x12 => Ok(Self::GlobalCounter),
+            0x13 => Ok(Self::GlobalWatermark),
+            0x14 => Ok(Self::GlobalDiscriminator),
+            0x15 => Ok(Self::FamilyWriterEpoch),
+            0x16 => Ok(Self::CursorState),
+            0xE4 => Ok(Self::CompactAreaPage),
+            0xE8 => Ok(Self::CompressedCompactRealmPage),
+            0xEA => Ok(Self::CompactResourcePage),
+            0xEB => Ok(Self::CompactGlobalPage),
+            0xEC => Ok(Self::RealmResourcePostingPage),
+            0xED => Ok(Self::GlobalAreaPostingPage),
+            0xEE => Ok(Self::GlobalResourcePostingPage),
+            0xEF => Ok(Self::GlobalAreaResourcePostingPage),
+            0xF0 => Ok(Self::PayloadBlob),
+            unknown => Err(unknown),
+        }
+    }
 }
 
 pub(super) fn stream_kind_encoder(

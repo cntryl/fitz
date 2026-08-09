@@ -630,6 +630,100 @@ fn should_keep_rpc_design_seams_explicit() {
 }
 
 #[test]
+fn should_keep_stream_design_seams_explicit() {
+    // Arrange
+    let stream = repo_root().join("src/domains/stream");
+    let keys = read_source_file(&stream.join("storage/keys_and_models.rs"));
+    let model = read_source_file(&stream.join("sink/model.rs"));
+    let sink = read_source_file(&stream.join("sink/domain_sink_impl.rs"));
+    let core = read_source_file(
+        &stream.join("sink/domain_sink_impl/domain_core_impl/watermark_coordination.rs"),
+    );
+    let codecs = read_source_file(&stream.join("storage/compact_page_values.rs"));
+    let sequence = read_source_file(&stream.join("store/sequence_and_filters.rs"));
+    let actor = read_source_file(&stream.join("actor.rs"));
+    let store = read_source_file(&stream.join("store/mod.rs"));
+    let store_sources = source_files_under(&stream.join("store"))
+        .iter()
+        .map(|path| read_source_file(path))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // Act
+    let violations = [
+        (
+            !keys.contains("impl TryFrom<u8> for KeyPrefix"),
+            "key-prefix decoding",
+        ),
+        (
+            !model.contains("struct SubscriptionRegistry"),
+            "subscription registry",
+        ),
+        (
+            !model.contains("struct AdminSnapshotState"),
+            "admin snapshot state",
+        ),
+        (
+            !model.contains("struct WatermarkCoordinators"),
+            "watermark coordinators",
+        ),
+        (
+            !codecs.contains("trait PageRecordCodec"),
+            "page-record codec",
+        ),
+        (
+            actor.contains("impl ActiveAppendSession {}"),
+            "empty append-session impl",
+        ),
+        (
+            !store.contains("enum StreamStoreError"),
+            "stream store error",
+        ),
+        (
+            [
+                "commit_records_promotion_frontier(",
+                "commit_session_promotion_frontier(",
+                "read_resource_promotion_frontier(",
+                "read_area_promotion_frontier(",
+                "read_realm_promotion_frontier(",
+            ]
+            .iter()
+            .any(|wrapper| store_sources.contains(wrapper)),
+            "single-layout wrapper twins",
+        ),
+        (
+            !core.contains("fn dispatch_watermark_commit<K>"),
+            "shared watermark dispatch",
+        ),
+        (
+            !sink.contains("fn dispatch_family_command<T>"),
+            "shared family command dispatch",
+        ),
+        (
+            !sequence.contains("fn load_existing_watermark_for_guard"),
+            "shared watermark guard read",
+        ),
+        (
+            !sequence.contains("for key in keys"),
+            "discriminator row loop",
+        ),
+        (
+            !keys.contains("LEGACY D3 PROTOTYPE PREFIXES"),
+            "legacy prototype prefix boundary",
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(missing, label)| missing.then_some(label))
+    .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        violations.is_empty(),
+        "missing Stream seams: {violations:?}"
+    );
+}
+
+#[test]
 fn should_document_unified_wildcard_registration_and_exact_lease_semantics() {
     // Arrange
     let root = repo_root().join("docs");

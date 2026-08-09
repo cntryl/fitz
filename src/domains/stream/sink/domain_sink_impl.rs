@@ -1,12 +1,13 @@
 use super::model::{
-    route_triplet, AdminStreamReadRequest, AdminStreamReadRequestOwned, Arc, AtomicBool, AtomicU64,
-    BTreeMap, Envelope, HashMap, Mutex, Ordering, PayloadEncoder, PendingStreamNotification,
-    ReadResponse, ReadyStreamNotification, Route, RouteAddress, RouteFamily, Router, StreamActor,
-    StreamActorKey, StreamAdminReadCommand, StreamAdminRecord, StreamAreaSnapshot,
-    StreamClientResponseBody, StreamDomainActor, StreamDomainCommand, StreamDomainCore,
-    StreamDomainRuntime, StreamDomainSink, StreamFilteredReason, StreamLiveCounts, StreamMetadata,
-    StreamMetrics, StreamNotificationTarget, StreamReadExecution, StreamReadItem,
-    StreamRealmSnapshot, StreamRecord, StreamStorageLayout, StreamStore, StreamVisibilityFrontier,
+    route_triplet, AdminSnapshotState, AdminStreamReadRequest, AdminStreamReadRequestOwned, Arc,
+    AtomicBool, AtomicU64, BTreeMap, Envelope, HashMap, Mutex, Ordering, PayloadEncoder,
+    PendingStreamNotification, ReadResponse, ReadyStreamNotification, Route, RouteAddress,
+    RouteFamily, Router, StreamActor, StreamActorKey, StreamAdminReadCommand, StreamAdminRecord,
+    StreamAreaSnapshot, StreamClientResponseBody, StreamDomainActor, StreamDomainCommand,
+    StreamDomainCore, StreamDomainRuntime, StreamDomainSink, StreamFilteredReason,
+    StreamLiveCounts, StreamMetadata, StreamMetrics, StreamNotificationTarget, StreamReadExecution,
+    StreamReadItem, StreamRealmSnapshot, StreamRecord, StreamStorageLayout, StreamStore,
+    StreamVisibilityFrontier, SubscriptionRegistry, WatermarkCoordinators,
 };
 #[cfg(test)]
 use crate::dispatch::protocol::FrameContext;
@@ -137,28 +138,30 @@ impl StreamDomainSink {
             store,
             actors: Mutex::new(HashMap::new()),
             session_owners: Mutex::new(HashMap::new()),
-            families: Mutex::new(HashMap::new()),
-            next_sub_id: Arc::new(AtomicU64::new(1)),
+            subscriptions: SubscriptionRegistry::new(Arc::new(AtomicU64::new(1))),
             next_session_id: Arc::new(AtomicU64::new(1)),
             cursor_integrity_key: Arc::new(cursor_integrity_key),
-            pending_notifications: Mutex::new(Vec::new()),
             router,
-            admin_read_model,
-            admin_snapshot_dirty: Arc::new(AtomicBool::new(true)),
+            admin_snapshot: AdminSnapshotState::new(
+                admin_read_model,
+                Arc::new(AtomicBool::new(true)),
+            ),
             sync_write_mode: crate::domains::stream::protocol::StreamWriteMode::Sync,
             metrics: None,
             active: Arc::new(AtomicBool::new(true)),
             family_cores: Arc::new(Mutex::new(BTreeMap::new())),
-            area_watermark_actors: Arc::new(crate::runtime::KeyedActorPool::new(
-                router_for_watermark_actors.clone(),
-                crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
-                crate::domains::stream::MAX_WATERMARK_COORDINATORS,
-            )),
-            realm_watermark_actors: Arc::new(crate::runtime::KeyedActorPool::new(
-                router_for_watermark_actors,
-                crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
-                crate::domains::stream::MAX_WATERMARK_COORDINATORS,
-            )),
+            watermark_coordinators: WatermarkCoordinators {
+                area: Arc::new(crate::runtime::KeyedActorPool::new(
+                    router_for_watermark_actors.clone(),
+                    crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
+                    crate::domains::stream::MAX_WATERMARK_COORDINATORS,
+                )),
+                realm: Arc::new(crate::runtime::KeyedActorPool::new(
+                    router_for_watermark_actors,
+                    crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
+                    crate::domains::stream::MAX_WATERMARK_COORDINATORS,
+                )),
+            },
         });
         let actor = Self::spawn_actor(core.clone());
         let family_families = provisioned_families.map(<[RouteFamily]>::to_vec);
@@ -253,20 +256,22 @@ impl StreamDomainSink {
             stream_store: shared.stream_store.clone(),
             actors: Mutex::new(HashMap::new()),
             session_owners: Mutex::new(HashMap::new()),
-            families: Mutex::new(HashMap::new()),
-            next_sub_id: shared.next_sub_id.clone(),
+            subscriptions: SubscriptionRegistry::new(shared.subscriptions.next_id.clone()),
             next_session_id: shared.next_session_id.clone(),
             cursor_integrity_key: shared.cursor_integrity_key.clone(),
-            pending_notifications: Mutex::new(Vec::new()),
             router: shared.router.clone(),
-            admin_read_model: shared.admin_read_model.clone(),
-            admin_snapshot_dirty: shared.admin_snapshot_dirty.clone(),
+            admin_snapshot: AdminSnapshotState::new(
+                shared.admin_snapshot.read_model.clone(),
+                shared.admin_snapshot.dirty.clone(),
+            ),
             sync_write_mode: shared.sync_write_mode,
             metrics: shared.metrics.clone(),
             active: shared.active.clone(),
             family_cores: shared.family_cores.clone(),
-            area_watermark_actors: shared.area_watermark_actors.clone(),
-            realm_watermark_actors: shared.realm_watermark_actors.clone(),
+            watermark_coordinators: WatermarkCoordinators {
+                area: shared.watermark_coordinators.area.clone(),
+                realm: shared.watermark_coordinators.realm.clone(),
+            },
         });
         shared
             .family_cores
@@ -392,32 +397,23 @@ impl StreamDomainSink {
         ),
         String,
     > {
-        if let (Some(runtime), Some(families)) =
-            (self.family_runtime.as_ref(), self.family_families.as_ref())
-        {
-            let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        if self.family_runtime.is_some() {
             let family = request.family;
-            let command = StreamDomainCommand::ReadResourceRecords(StreamAdminReadCommand {
-                request: AdminStreamReadRequestOwned {
-                    family,
-                    realm: request.realm.to_owned(),
-                    area: request.area.to_owned(),
-                    resource: request.resource.to_owned(),
-                    from_offset: request.from_offset,
-                    limit: request.limit,
-                    discriminator: request.discriminator.clone(),
-                },
-                reply: reply_tx,
-            });
-            if !families.contains(&family) {
-                return Err("route family is not provisioned".to_string());
-            }
-            runtime
-                .try_enqueue(family, crate::runtime::FamilyActorLane::Control, command)
-                .map_err(|error| format!("enqueue Stream admin read: {error}"))?;
-            return reply_rx
-                .recv_timeout(std::time::Duration::from_secs(1))
-                .map_err(|error| format!("receive Stream admin read: {error}"))?;
+            let owned = AdminStreamReadRequestOwned {
+                family,
+                realm: request.realm.to_owned(),
+                area: request.area.to_owned(),
+                resource: request.resource.to_owned(),
+                from_offset: request.from_offset,
+                limit: request.limit,
+                discriminator: request.discriminator.clone(),
+            };
+            return self.dispatch_family_command(Some(family), "admin read", move |reply| {
+                StreamDomainCommand::ReadResourceRecords(StreamAdminReadCommand {
+                    request: owned,
+                    reply,
+                })
+            })?;
         }
 
         self.core.admin_read_resource_records(request)
@@ -469,22 +465,7 @@ impl StreamDomainSink {
 
     #[cfg(test)]
     pub(crate) fn panic_actor_for_tests(&self) {
-        if let (Some(runtime), Some(family)) = (
-            self.family_runtime.as_ref(),
-            self.family_families
-                .as_ref()
-                .and_then(|families| families.first()),
-        ) {
-            let _ = runtime.try_enqueue(
-                *family,
-                crate::runtime::FamilyActorLane::Control,
-                StreamDomainCommand::PanicForTests,
-            );
-            return;
-        }
-        let _ = self
-            .actor
-            .try_send_high_priority(StreamDomainCommand::PanicForTests);
+        let _ = self.dispatch_family_control(None, StreamDomainCommand::PanicForTests);
     }
 
     #[cfg(test)]
@@ -626,53 +607,12 @@ impl StreamDomainSink {
         build_command: fn(crossbeam_channel::Sender<()>) -> StreamDomainCommand,
         operation: &'static str,
     ) {
-        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
-        if let (Some(runtime), Some(family)) = (
-            self.family_runtime.as_ref(),
-            self.family_families
-                .as_ref()
-                .and_then(|families| families.first()),
-        ) {
-            if let Err(error) = runtime.try_enqueue(
-                *family,
-                crate::runtime::FamilyActorLane::Control,
-                build_command(reply_tx),
-            ) {
-                tracing::warn!(
-                    domain = "stream",
-                    error = %error,
-                    operation,
-                    "Stream admin snapshot command enqueue failed"
-                );
-                return;
-            }
-            if let Err(error) = reply_rx.recv_timeout(std::time::Duration::from_secs(1)) {
-                tracing::warn!(
-                    domain = "stream",
-                    error = %error,
-                    operation,
-                    "Stream admin snapshot command reply failed"
-                );
-            }
-            return;
-        }
-
-        if let Err(error) = self.actor.try_send_high_priority(build_command(reply_tx)) {
+        if let Err(error) = self.dispatch_family_command(None, operation, build_command) {
             tracing::warn!(
                 domain = "stream",
                 error = %error,
                 operation,
-                "Stream admin snapshot command enqueue failed"
-            );
-            return;
-        }
-
-        if let Err(error) = reply_rx.recv_timeout(std::time::Duration::from_secs(1)) {
-            tracing::warn!(
-                domain = "stream",
-                error = %error,
-                operation,
-                "Stream admin snapshot command reply failed"
+                "Stream admin snapshot command failed"
             );
         }
     }
@@ -690,47 +630,81 @@ impl StreamDomainSink {
     }
 
     fn live_counts(&self) -> StreamLiveCounts {
-        if let (Some(runtime), Some(families)) =
+        if let (Some(_), Some(families)) =
             (self.family_runtime.as_ref(), self.family_families.as_ref())
         {
             let mut total = StreamLiveCounts::default();
             for family in families.iter().copied() {
-                let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
-                if let Err(error) = runtime.try_enqueue(
-                    family,
-                    crate::runtime::FamilyActorLane::Control,
-                    StreamDomainCommand::ReadLiveCounts(reply_tx),
-                ) {
-                    tracing::warn!(
-                        domain = "stream",
-                        family = family.id(),
-                        error = %error,
-                        "Stream live-count query enqueue failed"
-                    );
-                    continue;
-                }
-                let counts = reply_rx.recv_timeout(std::time::Duration::from_secs(1));
-                if let Ok(counts) = counts {
-                    total.streams = total.streams.saturating_add(counts.streams);
-                    total.append_sessions =
-                        total.append_sessions.saturating_add(counts.append_sessions);
-                    total.subscriptions = total.subscriptions.saturating_add(counts.subscriptions);
-                }
+                let counts = self.dispatch_family_command(
+                    Some(family),
+                    "live-count query",
+                    StreamDomainCommand::ReadLiveCounts,
+                );
+                let counts = match counts {
+                    Ok(counts) => counts,
+                    Err(error) => {
+                        tracing::warn!(
+                            domain = "stream",
+                            family = family.id(),
+                            error,
+                            "Stream live-count query failed"
+                        );
+                        continue;
+                    }
+                };
+                total.streams = total.streams.saturating_add(counts.streams);
+                total.append_sessions =
+                    total.append_sessions.saturating_add(counts.append_sessions);
+                total.subscriptions = total.subscriptions.saturating_add(counts.subscriptions);
             }
             return total;
         }
 
-        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
-        if let Err(error) = self
-            .actor
-            .try_send_high_priority(StreamDomainCommand::ReadLiveCounts(reply_tx))
-        {
-            tracing::warn!(domain = "stream", error = %error, "Stream live-count query enqueue failed");
-            return StreamLiveCounts::default();
-        }
+        self.dispatch_family_command(
+            None,
+            "live-count query",
+            StreamDomainCommand::ReadLiveCounts,
+        )
+        .unwrap_or_default()
+    }
 
+    fn dispatch_family_command<T>(
+        &self,
+        family: Option<RouteFamily>,
+        operation: &'static str,
+        build_command: impl FnOnce(crossbeam_channel::Sender<T>) -> StreamDomainCommand,
+    ) -> Result<T, String> {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        self.dispatch_family_control(family, build_command(reply_tx))
+            .map_err(|error| format!("enqueue Stream {operation}: {error}"))?;
         reply_rx
             .recv_timeout(std::time::Duration::from_secs(1))
-            .unwrap_or_default()
+            .map_err(|error| format!("receive Stream {operation}: {error}"))
+    }
+
+    fn dispatch_family_control(
+        &self,
+        family: Option<RouteFamily>,
+        command: StreamDomainCommand,
+    ) -> Result<(), String> {
+        if let Some(runtime) = self.family_runtime.as_ref() {
+            let family = family
+                .or_else(|| self.family_families.as_ref()?.first().copied())
+                .ok_or_else(|| "no Stream route family is provisioned".to_string())?;
+            if self
+                .family_families
+                .as_ref()
+                .is_none_or(|families| !families.contains(&family))
+            {
+                return Err("route family is not provisioned".to_string());
+            }
+            runtime
+                .try_enqueue(family, crate::runtime::FamilyActorLane::Control, command)
+                .map_err(|error| error.to_string())
+        } else {
+            self.actor
+                .try_send_high_priority(command)
+                .map_err(|error| error.to_string())
+        }
     }
 }

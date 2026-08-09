@@ -2,7 +2,7 @@
 use super::FrameContext;
 use super::{
     route_triplet, u64_to_usize_saturating, usize_to_u32_saturating, usize_to_u64_saturating,
-    AdminStreamReadRequest, Arc, BTreeMap, Envelope, Mutex, Ordering, PayloadEncoder,
+    AdminStreamReadRequest, Arc, BTreeMap, Envelope, Mutex, PayloadEncoder,
     PendingStreamNotification, ReadResponse, ReadyStreamNotification, Route, RouteFamily,
     StreamActor, StreamActorKey, StreamAdminRecord, StreamAdminSnapshotMap, StreamAreaSnapshotMap,
     StreamClientResponseBody, StreamDomainCore, StreamDomainRuntime, StreamFilteredReason,
@@ -14,9 +14,9 @@ use super::{
 mod global_read_support;
 mod notification_gating;
 mod read_finalization;
+mod watermark_coordination;
 mod wire_encoding;
 
-use crate::domains::stream::metrics::METRIC_WATERMARK_COORDINATION_DROPS_TOTAL;
 use read_finalization::apply_global_snapshot_boundary;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -124,120 +124,8 @@ impl StreamDomainCore {
         }
     }
 
-    /// Notify the bounded area and realm coordinator pools after a durable
-    /// batch commit. Visibility itself comes from the atomically committed
-    /// scope counters; these actors persist advisory watermark rows and emit
-    /// ephemeral watermark notices.
-    pub(in crate::domains::stream::sink) fn notify_area_batch_committed(
-        &self,
-        family_id: RouteFamily,
-        realm: &str,
-        area: &str,
-        commit: &crate::domains::stream::protocol::BatchCommitted,
-    ) {
-        let realm_address = crate::runtime::routing::RouteAddress::new(
-            family_id,
-            Route::new(format!(
-                "stream://{realm}/{}",
-                crate::domains::stream::INTERNAL_REALM_SEGMENT
-            )),
-        );
-        let realm_spawned = {
-            let store = self.stream_store.clone();
-            let realm_owned = realm.to_string();
-            self.realm_watermark_actors.ensure_spawned(
-                (family_id.as_u64(), realm.to_string()),
-                realm_address.clone(),
-                move || {
-                    crate::domains::stream::realm_actor::RealmActor::new(
-                        family_id,
-                        realm_owned.clone(),
-                        store.clone(),
-                    )
-                },
-            )
-        };
-
-        let area_address = crate::runtime::routing::RouteAddress::new(
-            family_id,
-            Route::new(format!(
-                "stream://{realm}/{area}/{}",
-                crate::domains::stream::INTERNAL_AREA_SEGMENT
-            )),
-        );
-        let area_spawned = {
-            let store = self.stream_store.clone();
-            let realm_owned = realm.to_string();
-            let area_owned = area.to_string();
-            self.area_watermark_actors.ensure_spawned(
-                (family_id.as_u64(), realm.to_string(), area.to_string()),
-                area_address.clone(),
-                move || {
-                    crate::domains::stream::area_actor::AreaActor::new(
-                        family_id,
-                        realm_owned.clone(),
-                        area_owned.clone(),
-                        store.clone(),
-                    )
-                },
-            )
-        };
-
-        let area_envelope = Envelope::new(
-            area_address,
-            crate::domains::stream::protocol::StreamCoordinationMessage::BatchCommitted(
-                commit.clone(),
-            ),
-        );
-        if !area_spawned {
-            self.counter_inc(METRIC_WATERMARK_COORDINATION_DROPS_TOTAL);
-            tracing::warn!(
-                domain = "stream",
-                route_family = family_id.id(),
-                realm,
-                area,
-                "Stream area watermark coordinator capacity was exhausted"
-            );
-        } else if let Err(error) = self.router.route_high_priority(area_envelope) {
-            self.counter_inc(METRIC_WATERMARK_COORDINATION_DROPS_TOTAL);
-            tracing::warn!(
-                domain = "stream",
-                route_family = family_id.id(),
-                realm,
-                area,
-                error = ?error,
-                "Stream area watermark coordination notice was not accepted"
-            );
-        }
-
-        let realm_envelope = Envelope::new(
-            realm_address,
-            crate::domains::stream::protocol::StreamCoordinationMessage::BatchCommitted(
-                commit.clone(),
-            ),
-        );
-        if !realm_spawned {
-            self.counter_inc(METRIC_WATERMARK_COORDINATION_DROPS_TOTAL);
-            tracing::warn!(
-                domain = "stream",
-                route_family = family_id.id(),
-                realm,
-                "Stream realm watermark coordinator capacity was exhausted"
-            );
-        } else if let Err(error) = self.router.route_high_priority(realm_envelope) {
-            self.counter_inc(METRIC_WATERMARK_COORDINATION_DROPS_TOTAL);
-            tracing::warn!(
-                domain = "stream",
-                route_family = family_id.id(),
-                realm,
-                error = ?error,
-                "Stream realm watermark coordination notice was not accepted"
-            );
-        }
-    }
-
     pub(in crate::domains::stream::sink) fn mark_admin_snapshot_dirty(&self) {
-        self.admin_snapshot_dirty.store(true, Ordering::Relaxed);
+        self.admin_snapshot.mark_dirty();
         self.refresh_metrics_gauges();
     }
 
@@ -287,7 +175,7 @@ impl StreamDomainCore {
     }
 
     pub(in crate::domains::stream::sink) fn refresh_admin_snapshot_if_dirty(&self) {
-        if self.admin_snapshot_dirty.swap(false, Ordering::AcqRel) {
+        if self.admin_snapshot.take_dirty() {
             self.sync_admin_snapshot();
         }
     }
@@ -535,13 +423,17 @@ impl StreamDomainCore {
         stream_area_watermarks: Vec<crate::control::admin::StreamAreaWatermarkDetail>,
         committed_events_total: usize,
     ) {
-        self.admin_read_model
+        self.admin_snapshot
+            .read_model
             .replace_streams(streams.into_values().collect());
-        self.admin_read_model
+        self.admin_snapshot
+            .read_model
             .replace_stream_realm_watermarks(stream_realm_watermarks);
-        self.admin_read_model
+        self.admin_snapshot
+            .read_model
             .replace_stream_area_watermarks(stream_area_watermarks);
-        self.admin_read_model
+        self.admin_snapshot
+            .read_model
             .replace_stream_events_total(committed_events_total);
     }
 
@@ -843,7 +735,7 @@ impl StreamDomainCore {
     }
 
     pub(in crate::domains::stream::sink) fn unsubscribe_all(&self, session_id: u64) {
-        let mut families = self.families.lock();
+        let mut families = self.subscriptions.families.lock();
         for (family_id, state) in families.iter_mut() {
             state.remove_session(
                 RouteFamily::try_from(*family_id)
@@ -889,12 +781,13 @@ impl StreamDomainCore {
                 session_owners.remove(&stream_session_id);
             }
             self.counter_add("fitz_stream_append_sessions_ended_total", removed_count);
-            self.admin_snapshot_dirty.store(true, Ordering::Relaxed);
+            self.admin_snapshot.mark_dirty();
         }
     }
 
     pub(in crate::domains::stream::sink) fn live_counts(&self) -> StreamLiveCounts {
         let subscriptions = self
+            .subscriptions
             .families
             .lock()
             .values()
