@@ -5,6 +5,7 @@ mod model;
 #[cfg(test)]
 mod test_actor_commands;
 
+pub(crate) use model::KvResourceLockKey;
 pub use model::{
     AdminKvCommittedPair, AdminKvPrefixScanResult, AdminKvRowsRequest, AdminKvRowsResult,
     KvDomainSink,

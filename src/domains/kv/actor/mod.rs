@@ -39,14 +39,22 @@ use std::time::{Duration, Instant};
 use crate::auth::validate_realm_format;
 use crate::prelude::Actor;
 use crate::runtime::actor::Context;
-use crate::runtime::routing::RouteFamily;
 use crate::utils::storage_key::{self, DomainKeyspace};
 
 use super::protocol::{KvError, KvMessage, KvPair, KvResourceScope, KvResponse, ScanQuery, TxMode};
 
+mod errors;
+mod inventory;
+mod keys;
+
+use inventory::KvInventoryDelta;
+
 const KV_KEY_SCOPE_MARKER: u8 = 0x01;
 const KV_INVENTORY_SCOPE_MARKER: u8 = 0x02;
 const KV_INVENTORY_VALUE_VERSION: u8 = 1;
+const KV_INVENTORY_VALUE_LEN: usize = 18;
+const KV_INVENTORY_RECORD_COUNT_RANGE: std::ops::Range<usize> = 2..10;
+const KV_INVENTORY_STORAGE_BYTES_RANGE: std::ops::Range<usize> = 10..18;
 const MAX_SCAN_ITEMS: usize = 1_024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,43 +71,6 @@ impl Default for KvInventoryEstimate {
             estimated_storage_bytes: 0,
             estimate_complete: true,
         }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-struct KvKeyInventoryChange {
-    before_bytes: Option<usize>,
-    after_bytes: Option<usize>,
-}
-
-#[derive(Default)]
-struct KvInventoryDelta {
-    key_changes: HashMap<Vec<u8>, KvKeyInventoryChange>,
-    estimate_incomplete: bool,
-}
-
-impl KvInventoryDelta {
-    fn is_empty(&self) -> bool {
-        self.key_changes.is_empty() && !self.estimate_incomplete
-    }
-
-    fn mark_incomplete(&mut self) {
-        self.estimate_incomplete = true;
-    }
-
-    fn record_key_change(
-        &mut self,
-        user_key: &[u8],
-        before_bytes: Option<usize>,
-        after_bytes: Option<usize>,
-    ) {
-        self.key_changes
-            .entry(user_key.to_vec())
-            .and_modify(|change| change.after_bytes = after_bytes)
-            .or_insert(KvKeyInventoryChange {
-                before_bytes,
-                after_bytes,
-            });
     }
 }
 
@@ -506,57 +477,60 @@ impl KvActor {
         }
 
         let prefix = active.scoped_prefix.clone();
-        let Some((start_key, end_key)) = Self::scan_bounds(&prefix, query) else {
+        let Some((midge_query, effective_limit)) = Self::build_scan_query(&prefix, query) else {
             return KvResponse::ScanResult {
                 items: Vec::new(),
                 has_more: false,
             };
         };
-
-        // Build Midge Query
-        let mut midge_query = cntryl_midge::Query::new()
-            .prefix(Bytes::from(prefix.clone()))
-            .start_key(Bytes::from(start_key))
-            .end_key(Bytes::from(end_key));
-
-        let effective_limit = query.limit.unwrap_or(MAX_SCAN_ITEMS).min(MAX_SCAN_ITEMS);
-        midge_query = midge_query.limit(effective_limit.saturating_add(1));
-
-        if query.reverse {
-            midge_query = midge_query.reverse();
-        }
-
         match active.tx.scan(&midge_query) {
-            Ok(iterator) => {
-                let mut items = Vec::new();
-
-                for entry in iterator {
-                    let (key, value) = match entry {
-                        Ok(row) => row,
-                        Err(error) => {
-                            return KvResponse::Error {
-                                error: Self::map_midge_error(error),
-                            };
-                        }
-                    };
-                    let Some(user_key) = Self::strip_scoped_prefix(&prefix, &key) else {
-                        continue;
-                    };
-                    items.push(KvPair {
-                        key: Bytes::from(user_key),
-                        value,
-                    });
-                }
-
-                let has_more = items.len() > effective_limit;
-                items.truncate(effective_limit);
-
-                KvResponse::ScanResult { items, has_more }
-            }
+            Ok(iterator) => Self::collect_scan_items(iterator, &prefix, effective_limit),
             Err(e) => KvResponse::Error {
                 error: Self::map_midge_error(e),
             },
         }
+    }
+
+    fn build_scan_query(prefix: &[u8], query: &ScanQuery) -> Option<(cntryl_midge::Query, usize)> {
+        let (start_key, end_key) = Self::scan_bounds(prefix, query)?;
+        let effective_limit = query.limit.unwrap_or(MAX_SCAN_ITEMS).min(MAX_SCAN_ITEMS);
+        let mut midge_query = cntryl_midge::Query::new()
+            .prefix(Bytes::copy_from_slice(prefix))
+            .start_key(Bytes::from(start_key))
+            .end_key(Bytes::from(end_key))
+            .limit(effective_limit.saturating_add(1));
+        if query.reverse {
+            midge_query = midge_query.reverse();
+        }
+        Some((midge_query, effective_limit))
+    }
+
+    fn collect_scan_items(
+        iterator: cntryl_midge::ScanIterator<'_>,
+        prefix: &[u8],
+        effective_limit: usize,
+    ) -> KvResponse {
+        let mut items = Vec::new();
+        for entry in iterator {
+            let (key, value) = match entry {
+                Ok(row) => row,
+                Err(error) => {
+                    return KvResponse::Error {
+                        error: Self::map_midge_error(error),
+                    };
+                }
+            };
+            let Some(user_key) = Self::strip_scoped_prefix(prefix, &key) else {
+                continue;
+            };
+            items.push(KvPair {
+                key: Bytes::from(user_key),
+                value,
+            });
+        }
+        let has_more = items.len() > effective_limit;
+        items.truncate(effective_limit);
+        KvResponse::ScanResult { items, has_more }
     }
 
     /// Get active transaction or return error
@@ -741,7 +715,7 @@ impl KvActor {
     }
 
     pub(crate) fn encode_inventory_estimate(estimate: KvInventoryEstimate) -> Vec<u8> {
-        let mut out = Vec::with_capacity(18);
+        let mut out = Vec::with_capacity(KV_INVENTORY_VALUE_LEN);
         out.push(KV_INVENTORY_VALUE_VERSION);
         out.push(u8::from(estimate.estimate_complete));
         out.extend_from_slice(&estimate.estimated_record_count.to_be_bytes());
@@ -750,17 +724,19 @@ impl KvActor {
     }
 
     pub(crate) fn decode_inventory_estimate(bytes: &[u8]) -> Result<KvInventoryEstimate, String> {
-        if bytes.len() != 18 || bytes.first().copied() != Some(KV_INVENTORY_VALUE_VERSION) {
+        if bytes.len() != KV_INVENTORY_VALUE_LEN
+            || bytes.first().copied() != Some(KV_INVENTORY_VALUE_VERSION)
+        {
             return Err("invalid KV inventory metadata value".to_string());
         }
 
         let estimated_record_count = u64::from_be_bytes(
-            bytes[2..10]
+            bytes[KV_INVENTORY_RECORD_COUNT_RANGE]
                 .try_into()
                 .map_err(|_| "invalid KV inventory record count".to_string())?,
         );
         let estimated_storage_bytes = u64::from_be_bytes(
-            bytes[10..18]
+            bytes[KV_INVENTORY_STORAGE_BYTES_RANGE]
                 .try_into()
                 .map_err(|_| "invalid KV inventory storage estimate".to_string())?,
         );
@@ -835,70 +811,6 @@ impl KvActor {
         tx.commit(cntryl_midge::WriteOptions::buffered())
             .map_err(Self::map_midge_error)
     }
-
-    /// Resolve column family from `RouteFamily` and resource.
-    ///
-    /// Uses explicit mapping: `ColumnFamilyId` = `RouteFamily`.id.
-    /// This ensures data isolation per route family.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `RouteFamily` is 0 (would map to the default CF).
-    pub(crate) fn resolve_column_family(
-        route_family: RouteFamily,
-        _resource: &str,
-    ) -> Result<ColumnFamilyId, String> {
-        // Validate RouteFamily is not zero (would map to default CF)
-        crate::runtime::cf_validation::validate_route_family(route_family)?;
-
-        // Map RouteFamily → ColumnFamily (1:1 by value)
-        // Resource is enforced via key prefixing within the column family.
-        Ok(route_family.id())
-    }
-
-    pub(crate) fn encode_scoped_key(prefix: &[u8], user_key: &[u8]) -> Vec<u8> {
-        let mut out = Vec::with_capacity(prefix.len() + user_key.len());
-        out.extend_from_slice(prefix);
-        out.extend_from_slice(user_key);
-        out
-    }
-
-    pub(crate) fn strip_scoped_prefix(prefix: &[u8], scoped_key: &[u8]) -> Option<Vec<u8>> {
-        scoped_key.strip_prefix(prefix).map(<[u8]>::to_vec)
-    }
-
-    pub(crate) fn prefix_range_end(prefix: &[u8]) -> Vec<u8> {
-        storage_key::prefix_range_end(prefix)
-    }
-
-    /// Map Midge error to KV domain error
-    #[allow(clippy::needless_pass_by_value)]
-    fn map_midge_error(err: cntryl_midge::MidgeError) -> KvError {
-        // Midge errors are currently opaque from this crate's perspective.
-        // Preserve retryability distinctions using message heuristics.
-        Self::classify_midge_message(&err.to_string())
-    }
-
-    fn classify_midge_message(msg: &str) -> KvError {
-        let msg = msg.to_string();
-        let msg_lc = msg.to_lowercase();
-
-        if msg_lc.contains("conflict") || msg_lc.contains("abort") || msg_lc.contains("retry") {
-            return KvError::Conflict(msg);
-        }
-
-        if msg_lc.contains("unavailable")
-            || msg_lc.contains("i/o")
-            || msg_lc.contains("disk")
-            || msg_lc.contains("os error")
-            || msg_lc.contains("closed")
-            || msg_lc.contains("corrupt")
-        {
-            return KvError::BackendUnavailable(msg);
-        }
-
-        KvError::BackendError(msg)
-    }
 }
 
 impl Actor for KvActor {
@@ -906,7 +818,7 @@ impl Actor for KvActor {
 
     fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
         let response = self.handle(msg);
-        let _ = ctx.reply(response).ok();
+        let _ = ctx.reply(response);
     }
 }
 

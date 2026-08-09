@@ -5,6 +5,8 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use super::sink::KvResourceLockKey;
+
 const KV_LATENCY_SAMPLE_LIMIT: usize = 256;
 
 #[allow(clippy::cast_precision_loss)]
@@ -58,19 +60,13 @@ struct KvResourceLatency {
 /// Applies live transaction changes incrementally and can rebuild the complete
 /// admin read model snapshot when reconciliation is requested.
 /// Projection failure must never affect domain correctness.
-pub struct KvAdminProjection<K>
-where
-    K: Clone + Eq + std::hash::Hash,
-{
+pub struct KvAdminProjection {
     read_model: Arc<AdminReadModel>,
     dirty: AtomicBool,
-    latencies: Mutex<HashMap<K, KvResourceLatency>>,
+    latencies: Mutex<HashMap<KvResourceLockKey, KvResourceLatency>>,
 }
 
-impl<K> KvAdminProjection<K>
-where
-    K: Clone + Eq + std::hash::Hash,
-{
+impl KvAdminProjection {
     pub fn new(read_model: Arc<AdminReadModel>) -> Self {
         Self {
             read_model,
@@ -129,7 +125,7 @@ where
             .count()
     }
 
-    pub fn record_read_latency(&self, key: &K, latency_ms: f64) {
+    pub(crate) fn record_read_latency(&self, key: &KvResourceLockKey, latency_ms: f64) {
         self.latencies
             .lock()
             .entry(key.clone())
@@ -138,7 +134,7 @@ where
             .record(latency_ms);
     }
 
-    pub fn record_write_latency(&self, key: &K, latency_ms: f64) {
+    pub(crate) fn record_write_latency(&self, key: &KvResourceLockKey, latency_ms: f64) {
         self.latencies
             .lock()
             .entry(key.clone())
@@ -147,7 +143,10 @@ where
             .record(latency_ms);
     }
 
-    pub fn latency_snapshots(&self, key: &K) -> (KvLatencySnapshot, KvLatencySnapshot) {
+    pub(crate) fn latency_snapshots(
+        &self,
+        key: &KvResourceLockKey,
+    ) -> (KvLatencySnapshot, KvLatencySnapshot) {
         self.latencies
             .lock()
             .get(key)
@@ -164,7 +163,7 @@ mod tests {
     fn should_refresh_projection_when_marked_dirty() {
         // Arrange
         let read_model = AdminReadModel::new();
-        let projection = KvAdminProjection::<String>::new(read_model.clone());
+        let projection = KvAdminProjection::new(read_model.clone());
         projection.mark_dirty();
 
         // Act
@@ -188,8 +187,8 @@ mod tests {
     fn should_record_projection_latency_by_operation_kind() {
         // Arrange
         let read_model = AdminReadModel::new();
-        let projection = KvAdminProjection::<String>::new(read_model);
-        let key = "kv://acme/app/users".to_string();
+        let projection = KvAdminProjection::new(read_model);
+        let key = KvResourceLockKey::new(1, "acme", "app", "users");
 
         // Act
         projection.record_write_latency(&key, 5.0);

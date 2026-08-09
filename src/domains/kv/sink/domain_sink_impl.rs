@@ -1,13 +1,14 @@
 #[cfg(test)]
 use super::model::Utc;
 use super::model::{
-    AdminKvPrefixScanResult, AdminKvRowsRequest, AdminKvRowsResult, Arc, AtomicBool, Bytes,
-    HashMap, KvAdminTransactionUpdate, KvDomainActor, KvDomainCommand, KvDomainCore,
-    KvDomainRuntime, KvDomainSink, KvDomainState, KvResourceLockKey, Mutex, Ordering, Router,
+    AdminKvPrefixScanResult, AdminKvRowsRequest, AdminKvRowsResult, Arc, AtomicBool, HashMap,
+    KvAdminTransactionUpdate, KvDomainActor, KvDomainCommand, KvDomainCore, KvDomainRuntime,
+    KvDomainSink, KvDomainState, KvResourceLockKey, Mutex, Ordering, Router,
     ADMIN_INVENTORY_REFRESH_LIMIT,
 };
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
+mod admin_inventory;
 mod routing;
 #[cfg(test)]
 mod test_channels;
@@ -390,26 +391,13 @@ impl KvDomainRuntime<'_> {
             crate::domains::kv::KvActor::realm_resource_prefix(realm, area, resource);
         let scoped_prefix =
             crate::domains::kv::KvActor::encode_scoped_key(&resource_prefix, key_prefix);
-        let query_limit = limit.saturating_add(1);
-        let midge_query = cntryl_midge::Query::new()
-            .prefix(Bytes::from(scoped_prefix.clone()))
-            .start_key(Bytes::from(scoped_prefix.clone()))
-            .end_key(Bytes::from(crate::domains::kv::KvActor::prefix_range_end(
-                &scoped_prefix,
-            )))
-            .limit(query_limit);
-        let iterator = tx.scan(&midge_query).map_err(|error| error.to_string())?;
-        let mut rows = Vec::new();
-
-        for entry in iterator {
-            let (scoped_key, value) = entry.map_err(|error| error.to_string())?;
-            let Some(user_key) =
-                crate::domains::kv::KvActor::strip_scoped_prefix(&resource_prefix, &scoped_key)
-            else {
-                continue;
-            };
-            rows.push((user_key, value.to_vec()));
-        }
+        let mut rows = Self::scan_scoped_prefix(
+            &tx,
+            &resource_prefix,
+            &scoped_prefix,
+            &scoped_prefix,
+            limit.saturating_add(1),
+        )?;
 
         let has_more = rows.len() > limit;
         rows.truncate(limit);
@@ -456,32 +444,18 @@ impl KvDomainRuntime<'_> {
             || scoped_prefix.clone(),
             |cursor| crate::domains::kv::KvActor::encode_scoped_key(&resource_prefix, cursor),
         );
-        let query_limit = request.limit.saturating_add(1);
-        let midge_query = cntryl_midge::Query::new()
-            .prefix(Bytes::from(scoped_prefix.clone()))
-            .start_key(Bytes::from(scoped_start))
-            .end_key(Bytes::from(crate::domains::kv::KvActor::prefix_range_end(
-                &scoped_prefix,
-            )))
-            .limit(query_limit);
-        let iterator = tx.scan(&midge_query).map_err(|error| error.to_string())?;
-        let mut rows = Vec::new();
-
-        for entry in iterator {
-            let (scoped_key, value) = entry.map_err(|error| error.to_string())?;
-            let Some(user_key) =
-                crate::domains::kv::KvActor::strip_scoped_prefix(&resource_prefix, &scoped_key)
-            else {
-                continue;
-            };
-            if request
+        let mut rows = Self::scan_scoped_prefix(
+            &tx,
+            &resource_prefix,
+            &scoped_prefix,
+            &scoped_start,
+            request.limit.saturating_add(1),
+        )?;
+        rows.retain(|(user_key, _)| {
+            request
                 .cursor
-                .is_some_and(|cursor| user_key.as_slice() <= cursor)
-            {
-                continue;
-            }
-            rows.push((user_key, value.to_vec()));
-        }
+                .is_none_or(|cursor| user_key.as_slice() > cursor)
+        });
 
         let has_more = rows.len() > request.limit;
         rows.truncate(request.limit);
@@ -566,34 +540,21 @@ impl KvDomainRuntime<'_> {
             .map_err(|error| error.to_string())?;
         let resource_prefix =
             crate::domains::kv::KvActor::realm_resource_prefix(realm, area, resource);
-        let query_limit = ADMIN_INVENTORY_REFRESH_LIMIT.saturating_add(1);
-        let query = cntryl_midge::Query::new()
-            .prefix(Bytes::from(resource_prefix.clone()))
-            .start_key(Bytes::from(resource_prefix.clone()))
-            .end_key(Bytes::from(crate::domains::kv::KvActor::prefix_range_end(
-                &resource_prefix,
-            )))
-            .limit(query_limit);
-        let mut iterator = read_tx.scan(&query).map_err(|error| error.to_string())?;
-        let mut count = 0u64;
-        let mut storage_bytes = 0u64;
-        let mut has_more = false;
-
-        for entry in iterator.by_ref() {
-            let (scoped_key, value) = entry.map_err(|error| error.to_string())?;
-            if count >= u64::try_from(ADMIN_INVENTORY_REFRESH_LIMIT).unwrap_or(u64::MAX) {
-                has_more = true;
-                break;
-            }
-            let Some(user_key) =
-                crate::domains::kv::KvActor::strip_scoped_prefix(&resource_prefix, &scoped_key)
-            else {
-                continue;
-            };
-            count = count.saturating_add(1);
-            storage_bytes = storage_bytes.saturating_add(user_key.len() as u64);
-            storage_bytes = storage_bytes.saturating_add(value.len() as u64);
-        }
+        let mut rows = Self::scan_scoped_prefix(
+            &read_tx,
+            &resource_prefix,
+            &resource_prefix,
+            &resource_prefix,
+            ADMIN_INVENTORY_REFRESH_LIMIT.saturating_add(1),
+        )?;
+        let has_more = rows.len() > ADMIN_INVENTORY_REFRESH_LIMIT;
+        rows.truncate(ADMIN_INVENTORY_REFRESH_LIMIT);
+        let count = u64::try_from(rows.len()).unwrap_or(u64::MAX);
+        let storage_bytes = rows.iter().fold(0u64, |total, (key, value)| {
+            total
+                .saturating_add(key.len() as u64)
+                .saturating_add(value.len() as u64)
+        });
 
         let estimate_complete = !has_more;
         let estimate = crate::domains::kv::actor::KvInventoryEstimate {
@@ -602,7 +563,6 @@ impl KvDomainRuntime<'_> {
             estimate_complete,
         };
 
-        drop(iterator);
         drop(read_tx);
 
         if persist_empty || estimate.estimated_record_count > 0 || !estimate.estimate_complete {
