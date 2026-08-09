@@ -37,7 +37,12 @@ use validation::subscription_limit_error;
 /// delivery and admin snapshots. State disappears on session cleanup or broker
 /// restart and is never durably recovered or replayed.
 struct NoticeDomainCore {
-    families: Mutex<HashMap<u64, RoutedSubscriptionSet<NoticeSubscription>>>,
+    /// Actor-owned single-writer state. The mutex supports immutable facade
+    /// methods; production mutation remains serialized by `NoticeDomainActor`.
+    families: Mutex<
+        HashMap<crate::runtime::routing::RouteFamily, RoutedSubscriptionSet<NoticeSubscription>>,
+    >,
+    /// Actor-owned single-writer route telemetry guarded for facade reads.
     route_stats: Mutex<HashMap<NoticeRouteStatsKey, NoticeRouteStats>>,
     next_sub_id: AtomicU64,
     router: Arc<Router>,
@@ -301,7 +306,7 @@ impl NoticeDomainCore {
                 let pattern = subscription.pattern.route().to_string();
                 if let Some(realm) = notice_route_realm(&pattern) {
                     subscriptions.push(crate::control::admin::NoticeSubscription::snapshot(
-                        *route_family,
+                        route_family.as_u64(),
                         subscription.subscription_id,
                         subscription.session_id,
                         realm,
@@ -309,7 +314,10 @@ impl NoticeDomainCore {
                         &created_at,
                     ));
                     let subscribers = routes
-                        .entry((*route_family, Arc::clone(&subscription.pattern_route)))
+                        .entry((
+                            route_family.as_u64(),
+                            Arc::clone(&subscription.pattern_route),
+                        ))
                         .or_insert(0);
                     *subscribers = subscribers.saturating_add(1);
                 }
@@ -444,7 +452,7 @@ impl NoticeDomainCore {
         route: &str,
     ) -> NoticeDeliveryTargets {
         let families = self.families.lock();
-        let Some(state) = families.get(&family_id.as_u64()) else {
+        let Some(state) = families.get(&family_id) else {
             return NoticeDeliveryTargets::new();
         };
 
@@ -491,11 +499,7 @@ impl NoticeDomainCore {
         let mut families = self.families.lock();
         let mut removed = 0;
         for (family_id, state) in families.iter_mut() {
-            removed += state.remove_session(
-                crate::runtime::routing::RouteFamily::try_from(*family_id)
-                    .expect("notice family IDs originate from RouteFamily"),
-                session_id,
-            );
+            removed += state.remove_session(*family_id, session_id);
         }
         families.retain(|_, state| !state.is_empty());
         tracing::debug!(
@@ -686,7 +690,7 @@ impl NoticeDomainCore {
             }
             NotificationMessage::Subscribe(sub_msg) => self.handle_subscribe_message(&sub_msg),
             NotificationMessage::Unsubscribe(unsub_msg) => {
-                let family_id = unsub_msg.family_id.as_u64();
+                let family_id = unsub_msg.family_id;
                 let mut families = self.families.lock();
                 let removed = if let Some(state) = families.get_mut(&family_id) {
                     let removed = state.remove_subscription_for_session(
@@ -726,7 +730,27 @@ impl NoticeDomainCore {
     ) -> (Option<crate::domains::notice::NoticeResponse>, bool) {
         use crate::domains::notice::NoticeResponse;
 
-        let family_id = sub_msg.family_id.as_u64();
+        let family_id = sub_msg.family_id;
+        {
+            let families = self.families.lock();
+            if let Some(id) = families.get(&family_id).and_then(|state| {
+                state.find_existing_id(sub_msg.session_id.0, sub_msg.pattern.as_str())
+            }) {
+                tracing::debug!(
+                    domain = "notice",
+                    session = sub_msg.session_id.0,
+                    subscription_id = id,
+                    pattern = sub_msg.pattern.as_str(),
+                    "Notice subscription already exists (idempotent)"
+                );
+                return (
+                    Some(NoticeResponse::SubscribeOk {
+                        subscription_id: id,
+                    }),
+                    false,
+                );
+            }
+        }
         let compiled = match crate::runtime::DomainKind::Notice
             .descriptor()
             .compile_registration_pattern(sub_msg.pattern.as_str())
@@ -751,23 +775,7 @@ impl NoticeDomainCore {
             .entry(family_id)
             .or_insert_with(RoutedSubscriptionSet::new);
 
-        let existing_sub_id =
-            state.find_existing_id(sub_msg.session_id.0, sub_msg.pattern.as_str());
-        let (response, state_changed) = if let Some(id) = existing_sub_id {
-            tracing::debug!(
-                domain = "notice",
-                session = sub_msg.session_id.0,
-                subscription_id = id,
-                pattern = sub_msg.pattern.as_str(),
-                "Notice subscription already exists (idempotent)"
-            );
-            (
-                NoticeResponse::SubscribeOk {
-                    subscription_id: id,
-                },
-                false,
-            )
-        } else if let Some(error) =
+        let (response, state_changed) = if let Some(error) =
             subscription_limit_error(state, session_subscription_count, sub_msg, &compiled)
         {
             (error, false)
