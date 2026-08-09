@@ -46,6 +46,7 @@ pub(super) fn with_auth_env<T>(values: &[(&str, &str)], test: impl FnOnce() -> T
         "FITZ_ADMIN_PUBLIC_ORIGIN",
         ENV_QUEUE_WRITE_POLICY,
         ENV_QUEUE_LOSS_WINDOW_MS,
+        ENV_KV_IDLE_TRANSACTION_TTL_SECS,
         ENV_DRAIN_GRACE_SECONDS,
         ENV_DRAIN_CLOSE_REASON,
     ];
@@ -95,6 +96,7 @@ pub(super) fn with_storage_env<T>(values: &[(&str, &str)], test: impl FnOnce() -
         "FITZ_STORAGE_MEMTABLE_BYTES",
         ENV_QUEUE_WRITE_POLICY,
         ENV_QUEUE_LOSS_WINDOW_MS,
+        ENV_KV_IDLE_TRANSACTION_TTL_SECS,
         "AWS_REGION",
         "AWS_DEFAULT_REGION",
         "AZURE_STORAGE_ACCOUNT_NAME",

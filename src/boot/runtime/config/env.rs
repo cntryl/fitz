@@ -1,6 +1,7 @@
 use super::{
-    DEFAULT_DRAIN_CLOSE_REASON, DEFAULT_DRAIN_GRACE_SECONDS, DEFAULT_QUEUE_LOSS_WINDOW_MS,
-    ENV_DRAIN_CLOSE_REASON, ENV_DRAIN_GRACE_SECONDS, ENV_QUEUE_LOSS_WINDOW_MS,
+    DEFAULT_DRAIN_CLOSE_REASON, DEFAULT_DRAIN_GRACE_SECONDS, DEFAULT_KV_IDLE_TRANSACTION_TTL_SECS,
+    DEFAULT_QUEUE_LOSS_WINDOW_MS, ENV_DRAIN_CLOSE_REASON, ENV_DRAIN_GRACE_SECONDS,
+    ENV_KV_IDLE_TRANSACTION_TTL_SECS, ENV_QUEUE_LOSS_WINDOW_MS,
 };
 
 pub(super) fn env_non_empty(key: &str) -> Option<String> {
@@ -65,6 +66,28 @@ pub(super) fn queue_loss_window_ms_from_env() -> (u64, Option<String>) {
             0,
             Some(format!(
                 "{ENV_QUEUE_LOSS_WINDOW_MS} must be an unsigned integer millisecond count"
+            )),
+        ),
+    }
+}
+
+pub(super) fn kv_idle_transaction_ttl_seconds_from_env() -> (u64, Option<String>) {
+    let Some(value) = env_non_empty(ENV_KV_IDLE_TRANSACTION_TTL_SECS) else {
+        return (DEFAULT_KV_IDLE_TRANSACTION_TTL_SECS, None);
+    };
+
+    match value.parse::<u64>() {
+        Ok(0) => (
+            0,
+            Some(format!(
+                "{ENV_KV_IDLE_TRANSACTION_TTL_SECS} must be greater than 0"
+            )),
+        ),
+        Ok(seconds) => (seconds, None),
+        Err(_) => (
+            0,
+            Some(format!(
+                "{ENV_KV_IDLE_TRANSACTION_TTL_SECS} must be an unsigned integer second count"
             )),
         ),
     }

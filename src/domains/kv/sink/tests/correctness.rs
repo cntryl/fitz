@@ -121,6 +121,60 @@ fn should_read_admin_transaction_count_while_session_actor_is_busy() {
 }
 
 #[test]
+fn should_expire_idle_read_write_transaction_before_competing_begin() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let kv_route = "kv://acme/app/users";
+    let kv_address = RouteAddress::new(family, Route::new(kv_route));
+    let first_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let second_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let first_mailbox = Arc::new(Mailbox::new(8));
+    let second_mailbox = Arc::new(Mailbox::new(8));
+    let router = Arc::new(Router::new());
+    router.register(first_address.clone(), first_mailbox.clone());
+    router.register(second_address.clone(), second_mailbox.clone());
+    let sink = KvDomainSink::new(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+    )
+    .with_idle_transaction_ttl(Duration::from_millis(1));
+    sink.deliver(Envelope::from_route(
+        first_address,
+        kv_address.clone(),
+        FrameContext::new(
+            7,
+            ChannelId::Sub,
+            MessageType::new(100),
+            encode_kv_begin(kv_route, 1, 0),
+            family,
+        ),
+    ))
+    .expect("begin first KV transaction");
+    let _ = receive_frame(&first_mailbox, "first begin response");
+    std::thread::sleep(Duration::from_millis(5));
+
+    // Act
+    sink.deliver(Envelope::from_route(
+        second_address,
+        kv_address,
+        FrameContext::new(
+            8,
+            ChannelId::Sub,
+            MessageType::new(100),
+            encode_kv_begin(kv_route, 1, 0),
+            family,
+        ),
+    ))
+    .expect("begin competing KV transaction");
+
+    // Assert
+    let response = receive_frame(&second_mailbox, "competing begin response");
+    assert_eq!(response.payload[0], 0);
+    assert_eq!(sink.active_transaction_count(), 1);
+}
+
+#[test]
 fn should_reject_kv_request_when_source_and_destination_families_differ() {
     // Arrange
     let source_family = RouteFamily::new(2);

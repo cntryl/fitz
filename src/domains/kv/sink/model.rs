@@ -64,6 +64,7 @@ pub(super) struct KvDomainCore {
     pub(super) metrics: Option<crate::domains::kv::KvMetrics>,
     pub(super) sync_write_options: cntryl_midge::WriteOptions,
     pub(super) buffered_write_options: cntryl_midge::WriteOptions,
+    pub(super) idle_transaction_ttl: std::time::Duration,
 }
 
 pub(super) struct KvDomainState {

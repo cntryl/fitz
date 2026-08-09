@@ -30,6 +30,7 @@ impl KvDomainState {
                 metrics: None,
                 sync_write_options: cntryl_midge::WriteOptions::sync(),
                 buffered_write_options: cntryl_midge::WriteOptions::buffered(),
+                idle_transaction_ttl: std::time::Duration::from_mins(5),
             },
             active: AtomicBool::new(true),
         }
@@ -104,6 +105,14 @@ impl KvDomainSink {
         let core = &mut self.state_for_builder().core;
         core.sync_write_options = sync_write_options;
         core.buffered_write_options = buffered_write_options;
+        self.rebuild_actor();
+        self
+    }
+
+    #[must_use]
+    pub fn with_idle_transaction_ttl(mut self, ttl: std::time::Duration) -> Self {
+        self.actor.stop();
+        self.state_for_builder().core.idle_transaction_ttl = ttl;
         self.rebuild_actor();
         self
     }

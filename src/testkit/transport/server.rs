@@ -366,6 +366,8 @@ impl TestServer {
             queue_write_policy_source: crate::boot::runtime::QueueWritePolicySource::Explicit,
             queue_loss_window_ms: 100,
             queue_loss_window_error: None,
+            kv_idle_transaction_ttl_seconds: 300,
+            kv_idle_transaction_ttl_error: None,
             assume_external_tls: false,
             local_listener_exposure: crate::boot::runtime::LocalListenerExposure::Direct,
             ws_allowed_origins,
@@ -402,6 +404,9 @@ impl TestServer {
                 request_buffered_write_options: boot_config.request_buffered_write_options(),
                 rpc_request_timeout,
                 stream_storage_layout: boot_config.stream_storage_layout,
+                kv_idle_transaction_ttl: std::time::Duration::from_secs(
+                    boot_config.kv_idle_transaction_ttl_seconds,
+                ),
             },
         )?;
         runtime.attach_domains(domains);

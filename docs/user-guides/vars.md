@@ -133,6 +133,7 @@ For the auth and browser-perimeter checklist, see
 | FITZ_STORAGE_MEMTABLE_BYTES | Unsigned integer byte count | Auto | Optional explicit memtable size override for embedded engine. |
 | FITZ_QUEUE_WRITE_POLICY | fast, buffered, or strict | fast | Queue mutation write policy. `fast` skips WAL and flushes in the background; `buffered` uses local buffered WAL or cloud asynchronous durability; `strict` waits for local sync or cloud provider acknowledgement. |
 | FITZ_QUEUE_LOSS_WINDOW_MS | Positive integer millisecond count | 100 | Target background flush interval for fast queue writes. Accepted recent queue mutations can be lost before this window closes. |
+| FITZ_KV_IDLE_TRANSACTION_TTL_SECS | Positive integer second count | 300 | Maximum inactivity for an open KV transaction before the broker force-rolls it back and releases its broker-local resource lock. |
 | FITZ_STREAM_STORAGE_LAYOUT | promotion-frontier or frontier | promotion-frontier | Stream layout selector. `promotion-frontier` is the only supported layout; any other value warns and falls back to it. |
 | FITZ_MIN_MEMORY_BYTES | Unsigned integer byte count | 134217728 | Startup preflight minimum cgroup memory threshold. Set 0 to bypass memory-limit check. |
 

@@ -32,6 +32,7 @@ use bytes::Bytes;
 use cntryl_midge::{ColumnFamilyId, Engine as MidgeEngine, TransactionMode};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crate::auth::validate_realm_format;
 use crate::prelude::Actor;
@@ -105,7 +106,9 @@ impl KvInventoryDelta {
 /// This state is broker-local and in-memory only. Dropping the owning actor,
 /// cleaning up the owning session, or restarting the broker aborts any
 /// uncommitted work and discards the transaction handle instead of attempting
-/// recovery.
+/// recovery. The broker also force-rolls back transactions that remain idle
+/// beyond its configured transaction TTL so abandoned writers cannot retain a
+/// resource lock indefinitely.
 pub struct ActiveKvTx {
     /// Complete route scope this transaction is bound to.
     pub scope: KvResourceScope,
@@ -121,6 +124,7 @@ pub struct ActiveKvTx {
     pub write_options: cntryl_midge::WriteOptions,
     /// Successful mutating operations performed within this transaction.
     pub mutation_count: u64,
+    last_activity: Instant,
     inventory_delta: KvInventoryDelta,
 }
 
@@ -238,6 +242,7 @@ impl KvActor {
                         tx,
                         write_options,
                         mutation_count: 0,
+                        last_activity: Instant::now(),
                         inventory_delta: KvInventoryDelta::default(),
                     },
                 );
@@ -554,11 +559,29 @@ impl KvActor {
 
     /// Get active transaction or return error
     fn get_transaction_or_err(&mut self, tx_id: u64) -> Result<&mut ActiveKvTx, KvResponse> {
-        self.transactions
+        let transaction = self
+            .transactions
             .get_mut(&tx_id)
             .ok_or_else(|| KvResponse::Error {
                 error: KvError::InvalidTxId,
+            })?;
+        transaction.last_activity = Instant::now();
+        Ok(transaction)
+    }
+
+    pub(crate) fn expire_idle_transactions(&mut self, ttl: Duration) -> Vec<u64> {
+        let now = Instant::now();
+        let expired: Vec<_> = self
+            .transactions
+            .iter()
+            .filter_map(|(tx_id, transaction)| {
+                (now.saturating_duration_since(transaction.last_activity) >= ttl).then_some(*tx_id)
             })
+            .collect();
+        for tx_id in &expired {
+            self.transactions.remove(tx_id);
+        }
+        expired
     }
 
     #[must_use]

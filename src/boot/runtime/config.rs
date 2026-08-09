@@ -14,9 +14,11 @@ const DEFAULT_METRICS_PORT: u16 = 9090;
 const ENV_STORAGE_MEMTABLE_BYTES: &str = "FITZ_STORAGE_MEMTABLE_BYTES";
 const ENV_QUEUE_WRITE_POLICY: &str = "FITZ_QUEUE_WRITE_POLICY";
 const ENV_QUEUE_LOSS_WINDOW_MS: &str = "FITZ_QUEUE_LOSS_WINDOW_MS";
+const ENV_KV_IDLE_TRANSACTION_TTL_SECS: &str = "FITZ_KV_IDLE_TRANSACTION_TTL_SECS";
 const ENV_DRAIN_GRACE_SECONDS: &str = "FITZ_DRAIN_GRACE_SECONDS";
 const ENV_DRAIN_CLOSE_REASON: &str = "FITZ_DRAIN_CLOSE_REASON";
 const DEFAULT_QUEUE_LOSS_WINDOW_MS: u64 = 100;
+const DEFAULT_KV_IDLE_TRANSACTION_TTL_SECS: u64 = 300;
 const DEFAULT_DRAIN_GRACE_SECONDS: u64 = 25;
 const DEFAULT_DRAIN_CLOSE_REASON: &str = "broker draining for redeploy";
 const DEFAULT_LOCAL_WS_ALLOWED_ORIGIN_VALUES: [&str; 4] = [
@@ -308,7 +310,7 @@ use cloud_provider::build_cloud_provider_config;
 mod env;
 use env::{
     drain_close_reason_from_env, drain_grace_seconds_from_env, env_non_empty,
-    queue_loss_window_ms_from_env, required_env,
+    kv_idle_transaction_ttl_seconds_from_env, queue_loss_window_ms_from_env, required_env,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -385,6 +387,9 @@ pub struct BootConfig {
     /// Target dirty-data window before best-effort queue writes are flushed.
     pub queue_loss_window_ms: u64,
     pub(crate) queue_loss_window_error: Option<String>,
+    /// Maximum inactivity before an open KV transaction is force-rolled back.
+    pub kv_idle_transaction_ttl_seconds: u64,
+    pub(crate) kv_idle_transaction_ttl_error: Option<String>,
     /// Whether an external TLS terminator is explicitly protecting public listeners.
     pub assume_external_tls: bool,
     pub(crate) local_listener_exposure: LocalListenerExposure,
@@ -521,6 +526,8 @@ impl Default for BootConfig {
             parse_ws_allowed_origins_from_env().unwrap_or_else(default_local_ws_allowed_origins);
         let (drain_grace_seconds, drain_config_error) = drain_grace_seconds_from_env();
         let (queue_loss_window_ms, queue_loss_window_error) = queue_loss_window_ms_from_env();
+        let (kv_idle_transaction_ttl_seconds, kv_idle_transaction_ttl_error) =
+            kv_idle_transaction_ttl_seconds_from_env();
         let (queue_write_policy, queue_write_policy_source) =
             QueueWritePolicy::from_env_with_source();
         let drain_close_reason = drain_close_reason_from_env();
@@ -553,6 +560,8 @@ impl Default for BootConfig {
             queue_write_policy_source,
             queue_loss_window_ms,
             queue_loss_window_error,
+            kv_idle_transaction_ttl_seconds,
+            kv_idle_transaction_ttl_error,
             assume_external_tls,
             local_listener_exposure,
             ws_allowed_origins,
@@ -753,6 +762,14 @@ impl BootConfig {
         }
         if self.queue_loss_window_ms == 0 {
             return Err(format!("{ENV_QUEUE_LOSS_WINDOW_MS} must be greater than 0").into());
+        }
+        if let Some(error) = &self.kv_idle_transaction_ttl_error {
+            return Err(error.clone().into());
+        }
+        if self.kv_idle_transaction_ttl_seconds == 0 {
+            return Err(
+                format!("{ENV_KV_IDLE_TRANSACTION_TTL_SECS} must be greater than 0").into(),
+            );
         }
         self.storage_memtable
             .validate()
