@@ -290,6 +290,7 @@ impl CompactRealmPageValue {
     ///
     /// Panics if `bytes` do not contain a valid compact realm page encoding.
     #[must_use]
+    #[cfg(test)]
     pub fn decode(bytes: &[u8]) -> Self {
         Self::try_decode(bytes).expect("deserialize compact realm page value")
     }
@@ -434,6 +435,7 @@ impl CompactAreaPageValue {
     ///
     /// Panics if `bytes` do not contain a valid compact area page encoding.
     #[must_use]
+    #[cfg(test)]
     pub fn decode(bytes: &[u8]) -> Self {
         Self::try_decode(bytes).expect("deserialize compact area page value")
     }
@@ -572,6 +574,7 @@ impl CompactResourcePageValue {
     ///
     /// Panics if `bytes` do not contain a valid compact resource page encoding.
     #[must_use]
+    #[cfg(test)]
     pub fn decode(bytes: &[u8]) -> Self {
         Self::try_decode(bytes).expect("deserialize compact resource page value")
     }

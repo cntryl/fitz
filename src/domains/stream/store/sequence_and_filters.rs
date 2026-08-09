@@ -306,6 +306,18 @@ impl StreamStore {
     }
 
     #[cfg(test)]
+    pub(crate) fn conflict_next_promotion_frontier_commit_for_tests(&self) {
+        self.conflict_next_promotion_frontier_commit
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_next_writer_epoch_recheck_for_tests(&self) {
+        self.fail_next_writer_epoch_recheck
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    #[cfg(test)]
     pub(crate) fn fence_next_global_reservation_for_tests(&self) {
         self.fence_next_global_reservation
             .store(true, std::sync::atomic::Ordering::Release);

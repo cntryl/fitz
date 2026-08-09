@@ -99,6 +99,7 @@ impl ResourceValue {
     ///
     /// Panics if `bytes` do not contain a valid resource value encoding.
     #[must_use]
+    #[cfg(test)]
     pub fn decode(bytes: &[u8]) -> Self {
         Self::try_decode(bytes).expect("deserialize resource value")
     }
@@ -191,6 +192,7 @@ impl AreaValue {
     ///
     /// Panics if `bytes` do not contain a valid area value encoding.
     #[must_use]
+    #[cfg(test)]
     pub fn decode(bytes: &[u8]) -> Self {
         Self::try_decode(bytes).expect("deserialize area value")
     }
@@ -281,6 +283,7 @@ impl RealmValue {
     ///
     /// Panics if `bytes` do not contain a valid realm value encoding.
     #[must_use]
+    #[cfg(test)]
     pub fn decode(bytes: &[u8]) -> Self {
         Self::try_decode(bytes).expect("deserialize realm value")
     }

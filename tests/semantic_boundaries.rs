@@ -384,6 +384,22 @@ fn should_keep_shadow_lease_actor_removed_from_default_surface() {
 }
 
 #[test]
+fn should_keep_panicking_stream_storage_decoders_test_only() {
+    // Arrange
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let storage = repo_root.join("src/domains/stream/storage");
+    let compact = read_source_file(&storage.join("compact_page_values.rs"));
+    let hierarchy = read_source_file(&storage.join("resource_area_realm_values.rs"));
+
+    // Act
+    let test_gate = "#[cfg(test)]";
+
+    // Assert
+    assert!(compact.matches(test_gate).count() >= 3);
+    assert!(hierarchy.matches(test_gate).count() >= 3);
+}
+
+#[test]
 fn should_keep_lease_benchmark_mutation_actor_serialized() {
     // Arrange
     let repo_root = repo_root();

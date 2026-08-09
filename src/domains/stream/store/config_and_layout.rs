@@ -133,6 +133,10 @@ impl StreamStore {
             #[cfg(test)]
             fence_next_promotion_frontier_commit: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
+            conflict_next_promotion_frontier_commit: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            fail_next_writer_epoch_recheck: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
             fence_next_global_reservation: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
             maintenance_failure_stage: std::sync::atomic::AtomicU8::new(0),

@@ -213,6 +213,59 @@ fn should_classify_commit_write_conflict_as_writer_fencing_after_epoch_advance()
 }
 
 #[test]
+fn should_retry_commit_write_conflict_when_writer_epoch_is_unchanged() {
+    // Arrange
+    let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+    let events = single_event(b"commit-conflict-same-writer");
+    store.conflict_next_promotion_frontier_commit_for_tests();
+
+    // Act
+    let result = store.commit_records(CommitRecordsParams {
+        family: 1,
+        realm: "north",
+        area: "orders",
+        resource: "created",
+        expected_resource_next_offset: 0,
+        events: &events,
+        ingest_metadata: None,
+        mode: StreamWriteMode::Sync,
+    });
+
+    // Assert
+    assert!(
+        result.is_ok(),
+        "same-epoch conflict should retry: {result:?}"
+    );
+}
+
+#[test]
+fn should_surface_retryable_error_when_writer_epoch_recheck_transiently_fails() {
+    // Arrange
+    let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+    let events = single_event(b"commit-conflict-recheck-error");
+    store.fail_next_writer_epoch_recheck_for_tests();
+    store.conflict_next_promotion_frontier_commit_for_tests();
+
+    // Act
+    let result = store.commit_records(CommitRecordsParams {
+        family: 1,
+        realm: "north",
+        area: "orders",
+        resource: "created",
+        expected_resource_next_offset: 0,
+        events: &events,
+        ingest_metadata: None,
+        mode: StreamWriteMode::Sync,
+    });
+
+    // Assert
+    assert_eq!(
+        result.expect_err("recheck failure must remain retryable"),
+        "Injected writer epoch recheck failure"
+    );
+}
+
+#[test]
 fn should_reject_data_transaction_after_direct_writer_epoch_advance() {
     // Arrange
     let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
