@@ -248,6 +248,63 @@ fn should_keep_rpc_route_actor_removed_from_default_surface() {
 }
 
 #[test]
+fn should_keep_shadow_lease_actor_removed_from_default_surface() {
+    // Arrange
+    let repo_root = repo_root();
+    let lease_dir = repo_root.join("src").join("domains").join("lease");
+    let lease_mod = read_source_file(&lease_dir.join("mod.rs"));
+    let removed_files = [
+        "actor.rs",
+        "guard.rs",
+        "session.rs",
+        "events.rs",
+        "projection.rs",
+    ];
+
+    // Act
+    let exposed_shadow_modules = ["actor", "guard", "session", "events", "projection"]
+        .into_iter()
+        .filter(|module| lease_mod.contains(&format!("pub mod {module};")))
+        .collect::<Vec<_>>();
+    let retained_shadow_files = removed_files
+        .into_iter()
+        .filter(|file| lease_dir.join(file).exists())
+        .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        exposed_shadow_modules.is_empty() && retained_shadow_files.is_empty(),
+        "shadow Lease surface remains: modules={exposed_shadow_modules:?}, files={retained_shadow_files:?}"
+    );
+}
+
+#[test]
+fn should_keep_lease_benchmark_mutation_actor_serialized() {
+    // Arrange
+    let repo_root = repo_root();
+    let lifecycle =
+        read_source_file(&repo_root.join("src/domains/lease/sink/lifecycle_and_admin.rs"));
+
+    // Act
+    let forbidden = [
+        "acquire_direct_for_bench",
+        "release_direct_for_bench",
+        ".runtime().handle_acquire",
+        ".runtime().handle_release",
+    ];
+    let violations = forbidden
+        .into_iter()
+        .filter(|pattern| lifecycle.contains(pattern))
+        .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        violations.is_empty(),
+        "Lease benchmark helpers bypass actor serialization: {violations:?}"
+    );
+}
+
+#[test]
 fn should_keep_scheduler_and_duplicate_transport_surfaces_private() {
     // Arrange
     let repo_root = repo_root();

@@ -65,6 +65,12 @@ impl Actor for LeaseDomainActor {
             LeaseDomainCommand::SweepExpiredState => {
                 runtime.sweep_expired_state();
             }
+            LeaseDomainCommand::ApplyAcquireForBench(request, reply) => {
+                let _ = reply.send(runtime.handle_acquire(request));
+            }
+            LeaseDomainCommand::ApplyReleaseForBench(key, owner_id, fencing_token, reply) => {
+                let _ = reply.send(runtime.handle_release(&key, owner_id.as_str(), fencing_token));
+            }
             #[cfg(test)]
             LeaseDomainCommand::ApplyAcquireForTests(request, reply) => {
                 let _ = reply.send(runtime.handle_acquire(request));

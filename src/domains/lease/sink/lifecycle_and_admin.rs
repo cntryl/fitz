@@ -186,7 +186,7 @@ impl LeaseDomainSink {
     }
 
     #[must_use]
-    pub(crate) fn acquire_direct_for_bench(
+    pub(crate) fn acquire_for_bench(
         &self,
         key: &crate::domains::lease::protocol::LeaseKey,
         owner_session_id: u64,
@@ -194,7 +194,7 @@ impl LeaseDomainSink {
         ttl_secs: u64,
         route_family: RouteFamily,
     ) -> crate::domains::lease::protocol::LeaseResponse {
-        self.state.runtime().handle_acquire(LeaseAcquireRequest {
+        let request = LeaseAcquireRequest {
             key: key.clone(),
             owner_session_id,
             owner_id: owner_id.to_owned(),
@@ -204,19 +204,55 @@ impl LeaseDomainSink {
             reply_destination: None,
             channel: crate::runtime::ClientChannel::Lease,
             route_family,
-        })
+        };
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        if self
+            .actor
+            .try_send(LeaseDomainCommand::ApplyAcquireForBench(request, reply_tx))
+            .is_err()
+        {
+            return crate::domains::lease::protocol::LeaseResponse::Error(
+                "Lease benchmark actor unavailable".to_string(),
+            );
+        }
+        reply_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap_or_else(|_| {
+                crate::domains::lease::protocol::LeaseResponse::Error(
+                    "Lease benchmark actor response timed out".to_string(),
+                )
+            })
     }
 
     #[must_use]
-    pub(crate) fn release_direct_for_bench(
+    pub(crate) fn release_for_bench(
         &self,
         key: &crate::domains::lease::protocol::LeaseKey,
         owner_id: &str,
         fencing_token: u64,
     ) -> crate::domains::lease::protocol::LeaseResponse {
-        self.state
-            .runtime()
-            .handle_release(key, owner_id, fencing_token)
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        if self
+            .actor
+            .try_send(LeaseDomainCommand::ApplyReleaseForBench(
+                key.clone(),
+                owner_id.to_string(),
+                fencing_token,
+                reply_tx,
+            ))
+            .is_err()
+        {
+            return crate::domains::lease::protocol::LeaseResponse::Error(
+                "Lease benchmark actor unavailable".to_string(),
+            );
+        }
+        reply_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap_or_else(|_| {
+                crate::domains::lease::protocol::LeaseResponse::Error(
+                    "Lease benchmark actor response timed out".to_string(),
+                )
+            })
     }
 }
 

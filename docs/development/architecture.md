@@ -579,7 +579,7 @@ Current Notice behavior is intentionally ephemeral:
 - Admin path: worker and pending-call views flow through `Runtime::rpc_list_workers()` and `Runtime::rpc_list_pending()` backed by the read model.
 
 #### Lease
-- Actor owner: `LeaseDomainActor` is the managed runtime actor for delivery, cleanup, and expiry sweeps; `LeaseActor` remains the domain state-machine entrypoint for lease ownership, waiters, expiry, and fencing token progression inside one running broker.
+- Actor owner: `LeaseDomainActor` is the sole managed runtime actor and state-machine entrypoint for delivery, cleanup, expiry sweeps, ownership, waiters, and fencing-token progression inside one running broker.
 - Current runtime boundary: `LeaseDomainSink` is the mailbox adapter, and `LeaseDomainRuntime` executes against `LeaseDomainCore` inside the managed actor mailbox.
 - Persistence: leases, waiters, and fencing tokens are ephemeral broker-local coordination state only; there is no durable lease history or restart recovery.
 - Cleanup: disconnect releases session-owned leases, clears waiters, and never implies cross-restart ownership continuity.

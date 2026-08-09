@@ -650,7 +650,7 @@ impl DirectLeaseAcquireRelease {
     ///
     /// Panics if the lease domain does not acquire or release the lease.
     pub fn complete_roundtrip(&self) {
-        let acquire_response = self.sink.acquire_direct_for_bench(
+        let acquire_response = self.sink.acquire_for_bench(
             &self.key,
             self.owner_session_id,
             self.owner_id.as_str(),
@@ -664,7 +664,7 @@ impl DirectLeaseAcquireRelease {
 
         let release_response =
             self.sink
-                .release_direct_for_bench(&self.key, self.owner_id.as_str(), token);
+                .release_for_bench(&self.key, self.owner_id.as_str(), token);
         assert!(
             matches!(release_response, LeaseResponse::Released),
             "expected direct lease release, got {release_response:?}"
