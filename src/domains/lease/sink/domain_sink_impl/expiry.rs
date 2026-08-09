@@ -19,6 +19,7 @@ fn drain_expired_waiters(
 }
 
 impl LeaseDomainRuntime<'_> {
+    /// Removes every queued waiter owned by the session before empty queues are dropped.
     pub(in crate::domains::lease::sink) fn remove_session_waiters(&self, session_id: u64) -> usize {
         let waiter_refs = self
             .core

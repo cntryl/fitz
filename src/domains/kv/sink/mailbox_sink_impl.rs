@@ -5,6 +5,7 @@ use super::model::{
 };
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
+use crate::domains::kv::{KvActor, KvError, KvResponse};
 use crate::runtime::{Actor, Context};
 
 impl MailboxSink for KvDomainSink {
@@ -220,7 +221,7 @@ impl KvDomainRuntime<'_> {
         pattern: &crate::runtime::routing::Route,
         session_id: u64,
         subscriber: crate::runtime::routing::RouteAddress,
-    ) -> crate::domains::kv::KvResponse {
+    ) -> KvResponse {
         if Self::valid_subscription_request(envelope, meta, family_id, session_id, &subscriber) {
             let compiled = match Self::compile_kv_subscription_pattern(pattern) {
                 Ok(compiled) => compiled,
@@ -238,8 +239,8 @@ impl KvDomainRuntime<'_> {
                 subscription_id
             };
             subscription_id.map_or_else(
-                |error| crate::domains::kv::KvResponse::Error { error },
-                |subscription_id| crate::domains::kv::KvResponse::SubscribeOk { subscription_id },
+                |error| KvResponse::Error { error },
+                |subscription_id| KvResponse::SubscribeOk { subscription_id },
             )
         } else {
             Self::error_response("route family mismatch")
@@ -254,7 +255,7 @@ impl KvDomainRuntime<'_> {
         pattern: &crate::runtime::routing::Route,
         session_id: u64,
         subscriber: &crate::runtime::routing::RouteAddress,
-    ) -> crate::domains::kv::KvResponse {
+    ) -> KvResponse {
         if Self::valid_subscription_request(envelope, meta, family_id, session_id, subscriber) {
             if let Err(response) = Self::compile_kv_subscription_pattern(pattern) {
                 return response;
@@ -269,7 +270,7 @@ impl KvDomainRuntime<'_> {
             if remove_family {
                 watch_actors.remove(&family_id.as_u64());
             }
-            crate::domains::kv::KvResponse::UnsubscribeOk
+            KvResponse::UnsubscribeOk
         } else {
             Self::error_response("route family mismatch")
         }
@@ -277,12 +278,12 @@ impl KvDomainRuntime<'_> {
 
     fn compile_kv_subscription_pattern(
         pattern: &crate::runtime::routing::Route,
-    ) -> Result<crate::runtime::matcher::Pattern, crate::domains::kv::KvResponse> {
+    ) -> Result<crate::runtime::matcher::Pattern, KvResponse> {
         crate::runtime::DomainKind::Kv
             .descriptor()
             .compile_registration_pattern(pattern.as_str())
-            .map_err(|error| crate::domains::kv::KvResponse::Error {
-                error: crate::domains::kv::KvError::InvalidSubscriptionPattern(error),
+            .map_err(|error| KvResponse::Error {
+                error: KvError::InvalidSubscriptionPattern(error),
             })
     }
 
@@ -343,25 +344,20 @@ impl KvDomainRuntime<'_> {
         } = self.dispatch_actor_operation(session_id, meta, kv_message);
         if matches!(
             &response,
-            crate::domains::kv::KvResponse::Error {
-                error: crate::domains::kv::KvError::InvalidTxId,
+            KvResponse::Error {
+                error: KvError::InvalidTxId,
                 ..
             }
         ) {
             crate::observability::counter_inc("fitz_kv_invalid_transaction_rejects_total");
         }
         match (&response, read_tx_id, is_commit) {
-            (
-                crate::domains::kv::KvResponse::GetResult { .. }
-                | crate::domains::kv::KvResponse::ScanResult { .. },
-                Some(tx_id),
-                _,
-            ) => {
+            (KvResponse::GetResult { .. } | KvResponse::ScanResult { .. }, Some(tx_id), _) => {
                 if let Some(resource_key) = self.resource_key_for_tx(session_id, tx_id) {
                     self.record_read_latency(&resource_key, operation_started);
                 }
             }
-            (crate::domains::kv::KvResponse::CommitOk, _, true) => {
+            (KvResponse::CommitOk, _, true) => {
                 if let Some((resource_key, _)) = commit_notification.as_ref() {
                     self.record_write_latency(resource_key, operation_started);
                 }
@@ -415,11 +411,7 @@ impl KvDomainRuntime<'_> {
         }
     }
 
-    fn actor_for_session(
-        &self,
-        session_id: u64,
-        context: &str,
-    ) -> Arc<Mutex<crate::domains::kv::KvActor>> {
+    fn actor_for_session(&self, session_id: u64, context: &str) -> Arc<Mutex<KvActor>> {
         self.core
             .actors
             .lock()
@@ -430,9 +422,7 @@ impl KvDomainRuntime<'_> {
                     session_id = session_id,
                     "Creating new KvActor instance ({context})"
                 );
-                Arc::new(Mutex::new(crate::domains::kv::KvActor::new(
-                    self.core.store.clone(),
-                )))
+                Arc::new(Mutex::new(KvActor::new(self.core.store.clone())))
             })
             .clone()
     }
@@ -444,11 +434,7 @@ impl KvDomainRuntime<'_> {
         }
     }
 
-    fn remove_expired_transactions(
-        &self,
-        session_id: u64,
-        actor: &Arc<Mutex<crate::domains::kv::KvActor>>,
-    ) {
+    fn remove_expired_transactions(&self, session_id: u64, actor: &Arc<Mutex<KvActor>>) {
         for tx_id in actor
             .lock()
             .expire_idle_transactions(self.core.idle_transaction_ttl)
@@ -525,8 +511,6 @@ impl KvDomainRuntime<'_> {
         resource: &str,
         kv_message: crate::domains::kv::KvMessage,
     ) -> KvOperationOutcome {
-        use crate::domains::kv::{KvError, KvResponse};
-
         let lock_key = KvResourceLockKey::new(family_id, realm, area, resource);
         let held_by_same_session = self.session_holds_resource_write_lock(session_id, &lock_key);
         if self
@@ -604,8 +588,6 @@ impl KvDomainRuntime<'_> {
         tx_id: u64,
         kv_message: crate::domains::kv::KvMessage,
     ) -> KvOperationOutcome {
-        use crate::domains::kv::KvResponse;
-
         let actor = self.actor_for_session(session_id, "commit");
         let mut actor = actor.lock();
         tracing::trace!(
@@ -626,10 +608,8 @@ impl KvDomainRuntime<'_> {
             .is_some_and(|key| key.family_id != route_family.as_u64())
         {
             return KvOperationOutcome::new(
-                crate::domains::kv::KvResponse::Error {
-                    error: crate::domains::kv::KvError::InvalidRequest(
-                        "route family mismatch".to_string(),
-                    ),
+                KvResponse::Error {
+                    error: KvError::InvalidRequest("route family mismatch".to_string()),
                 },
                 KvAdminTransactionUpdate::None,
                 None,
@@ -665,8 +645,6 @@ impl KvDomainRuntime<'_> {
         tx_id: u64,
         kv_message: crate::domains::kv::KvMessage,
     ) -> KvOperationOutcome {
-        use crate::domains::kv::KvResponse;
-
         let actor = self.actor_for_session(session_id, "rollback");
         let mut actor = actor.lock();
         tracing::trace!(
@@ -681,10 +659,8 @@ impl KvDomainRuntime<'_> {
             .is_some_and(|(family_id, _, _, _)| *family_id != route_family.as_u64())
         {
             return KvOperationOutcome::new(
-                crate::domains::kv::KvResponse::Error {
-                    error: crate::domains::kv::KvError::InvalidRequest(
-                        "route family mismatch".to_string(),
-                    ),
+                KvResponse::Error {
+                    error: KvError::InvalidRequest("route family mismatch".to_string()),
                 },
                 KvAdminTransactionUpdate::None,
                 None,
@@ -799,9 +775,9 @@ impl KvDomainRuntime<'_> {
         message.scope().route_family
     }
 
-    fn error_response(reason: &str) -> crate::domains::kv::KvResponse {
-        crate::domains::kv::KvResponse::Error {
-            error: crate::domains::kv::KvError::InvalidRequest(reason.to_string()),
+    fn error_response(reason: &str) -> KvResponse {
+        KvResponse::Error {
+            error: KvError::InvalidRequest(reason.to_string()),
         }
     }
 
