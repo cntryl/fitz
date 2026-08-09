@@ -212,6 +212,37 @@ pub enum NoticeResponse {
     Error(String),
 }
 
+impl NoticeResponse {
+    #[must_use]
+    pub const fn is_failure(&self) -> bool {
+        matches!(self, Self::Error(_))
+    }
+}
+
+#[cfg(test)]
+mod response_tests {
+    use super::NoticeResponse;
+
+    #[test]
+    fn should_classify_only_error_responses_as_failures() {
+        // Arrange
+        let responses = [
+            (NoticeResponse::Ok, false),
+            (NoticeResponse::SubscribeOk { subscription_id: 1 }, false),
+            (NoticeResponse::Error("invalid".to_string()), true),
+        ];
+
+        // Act
+        let classifications = responses
+            .iter()
+            .map(|(response, _)| response.is_failure())
+            .collect::<Vec<_>>();
+
+        // Assert
+        assert_eq!(classifications, [false, false, true]);
+    }
+}
+
 /// Notice errors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoticeError {

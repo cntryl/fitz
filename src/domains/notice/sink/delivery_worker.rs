@@ -54,18 +54,18 @@ pub(super) fn spawn_notice_delivery_worker(
 }
 
 pub(super) fn notice_delivery_worker(
-    workers: &Mutex<HashMap<u64, crossbeam_channel::Sender<NoticeDeliveryJob>>>,
+    workers: &Mutex<HashMap<RouteFamily, crossbeam_channel::Sender<NoticeDeliveryJob>>>,
     router: &Arc<Router>,
     family: RouteFamily,
 ) -> Option<crossbeam_channel::Sender<NoticeDeliveryJob>> {
     let mut workers = workers.lock();
-    if let Some(worker) = workers.get(&family.as_u64()) {
+    if let Some(worker) = workers.get(&family) {
         return Some(worker.clone());
     }
 
     match spawn_notice_delivery_worker(router.clone(), family) {
         Ok(worker) => {
-            workers.insert(family.as_u64(), worker.clone());
+            workers.insert(family, worker.clone());
             Some(worker)
         }
         Err(error) => {
@@ -81,43 +81,24 @@ pub(super) fn notice_delivery_worker(
 }
 
 fn deliver_notice(router: &Router, target: &NoticeDeliveryTarget, route: &Route, payload: &Bytes) {
+    deliver_with_retry(router, &target.subscriber, || {
+        build_notify_envelope(target, route, payload)
+    });
+}
+
+pub(super) fn deliver_with_retry(
+    router: &Router,
+    subscriber: &crate::runtime::routing::RouteAddress,
+    build_envelope: impl Fn() -> Envelope,
+) {
     let deadline = Instant::now() + NOTICE_MAILBOX_RETRY_TIMEOUT;
-    let subscriber_sink = router.resolve_sink(&target.subscriber);
+    let subscriber_sink = router.resolve_sink(subscriber);
 
     loop {
-        #[cfg(test)]
-        let notification = {
-            use crate::dispatch::protocol::frame::ChannelId;
-            use crate::dispatch::protocol::frame_context::FrameContext;
-            use crate::dispatch::protocol::tlv::MessageType;
-
-            let payload = crate::dispatch::protocol::notice_codec::encode_notify(
-                target.subscription_id,
-                route,
-                payload.as_ref(),
-            );
-            FrameContext::new(
-                target.session_id,
-                ChannelId::Sub,
-                MessageType::new(504),
-                payload.into(),
-                *target.subscriber.family(),
-            )
-        };
-
-        #[cfg(not(test))]
-        let notification = crate::domains::notice::NoticeClientNotification::new(
-            target.session_id,
-            *target.subscriber.family(),
-            target.subscription_id,
-            route.clone(),
-            payload.clone(),
-        );
-
-        let envelope = Envelope::new(target.subscriber.clone(), notification);
+        let envelope = build_envelope();
         let result = if let Some(sink) = subscriber_sink.as_ref() {
             sink.deliver(envelope)
-                .map_err(|error| RouteError::DeliveryFailed(target.subscriber.clone(), error))
+                .map_err(|error| RouteError::DeliveryFailed(subscriber.clone(), error))
         } else {
             router.route(envelope)
         };
@@ -137,4 +118,41 @@ fn deliver_notice(router: &Router, target: &NoticeDeliveryTarget, route: &Route,
             }
         }
     }
+}
+
+fn build_notify_envelope(
+    target: &NoticeDeliveryTarget,
+    route: &Route,
+    payload: &Bytes,
+) -> Envelope {
+    #[cfg(test)]
+    let notification = {
+        use crate::dispatch::protocol::frame::ChannelId;
+        use crate::dispatch::protocol::frame_context::FrameContext;
+        use crate::dispatch::protocol::tlv::MessageType;
+
+        let payload = crate::dispatch::protocol::notice_codec::encode_notify(
+            target.subscription_id,
+            route,
+            payload.as_ref(),
+        );
+        FrameContext::new(
+            target.session_id,
+            ChannelId::Sub,
+            MessageType::new(504),
+            payload.into(),
+            *target.subscriber.family(),
+        )
+    };
+
+    #[cfg(not(test))]
+    let notification = crate::domains::notice::NoticeClientNotification::new(
+        target.session_id,
+        *target.subscriber.family(),
+        target.subscription_id,
+        route.clone(),
+        payload.clone(),
+    );
+
+    Envelope::new(target.subscriber.clone(), notification)
 }
