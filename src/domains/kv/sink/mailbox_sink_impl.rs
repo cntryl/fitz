@@ -1,7 +1,7 @@
 use super::model::{
     Arc, DeliveryError, Envelope, KvAdminTransactionUpdate, KvClientFrame, KvClientRequest,
-    KvDomainActor, KvDomainCommand, KvDomainRuntime, KvDomainSink, KvResourceLockKey, MailboxSink,
-    Mutex, Ordering,
+    KvDomainActor, KvDomainCommand, KvDomainRuntime, KvDomainSink, KvResourceLockKey,
+    KvResourceLockOwner, MailboxSink, Mutex, Ordering,
 };
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
@@ -311,7 +311,14 @@ impl KvDomainRuntime<'_> {
                 ..
             }
         ) {
-            self.expire_all_idle_transactions();
+            if let KvMessage::Begin { scope, .. } = &kv_message {
+                self.expire_resource_lock_if_idle(&KvResourceLockKey::new(
+                    scope.route_family.as_u64(),
+                    &scope.realm,
+                    &scope.area,
+                    &scope.resource,
+                ));
+            }
         } else {
             self.expire_idle_transactions_for_session(session_id);
         }
@@ -341,6 +348,7 @@ impl KvDomainRuntime<'_> {
             }
             _ => self.handle_regular_operation_frame(session_id, meta.message_type, &kv_message),
         };
+        self.touch_resource_lock(session_id, &kv_message);
         if matches!(
             &response,
             crate::domains::kv::KvResponse::Error {
@@ -401,19 +409,6 @@ impl KvDomainRuntime<'_> {
             .clone()
     }
 
-    fn expire_all_idle_transactions(&self) {
-        let actors: Vec<_> = self
-            .core
-            .actors
-            .lock()
-            .iter()
-            .map(|(session_id, actor)| (*session_id, actor.clone()))
-            .collect();
-        for (session_id, actor) in actors {
-            self.remove_expired_transactions(session_id, &actor);
-        }
-    }
-
     fn expire_idle_transactions_for_session(&self, session_id: u64) {
         let actor = self.core.actors.lock().get(&session_id).cloned();
         if let Some(actor) = actor {
@@ -430,7 +425,66 @@ impl KvDomainRuntime<'_> {
             .lock()
             .expire_idle_transactions(self.core.idle_transaction_ttl)
         {
+            self.core
+                .resource_locks
+                .lock()
+                .retain(|_, owner| owner.session_id != session_id || owner.tx_id != tx_id);
             self.core.projection.remove_transaction(session_id, tx_id);
+        }
+    }
+
+    fn expire_resource_lock_if_idle(&self, resource_key: &KvResourceLockKey) {
+        let owner = self.core.resource_locks.lock().get(resource_key).copied();
+        let Some(owner) =
+            owner.filter(|owner| owner.last_activity.elapsed() >= self.core.idle_transaction_ttl)
+        else {
+            return;
+        };
+        let actor = self.core.actors.lock().get(&owner.session_id).cloned();
+        if let Some(actor) = actor {
+            actor.lock().rollback_transaction(owner.tx_id);
+        }
+        self.core.resource_locks.lock().remove(resource_key);
+        self.core
+            .projection
+            .remove_transaction(owner.session_id, owner.tx_id);
+    }
+
+    fn transaction_resource(
+        message: &crate::domains::kv::KvMessage,
+    ) -> Option<(u64, KvResourceLockKey)> {
+        use crate::domains::kv::KvMessage;
+        let (tx_id, scope) = match message {
+            KvMessage::Begin { .. } => return None,
+            KvMessage::Commit { tx_id, scope }
+            | KvMessage::Rollback { tx_id, scope }
+            | KvMessage::Get { tx_id, scope, .. }
+            | KvMessage::Put { tx_id, scope, .. }
+            | KvMessage::Insert { tx_id, scope, .. }
+            | KvMessage::Delete { tx_id, scope, .. }
+            | KvMessage::DeleteRange { tx_id, scope, .. }
+            | KvMessage::Scan { tx_id, scope, .. } => (*tx_id, scope),
+        };
+        Some((
+            tx_id,
+            KvResourceLockKey::new(
+                scope.route_family.as_u64(),
+                &scope.realm,
+                &scope.area,
+                &scope.resource,
+            ),
+        ))
+    }
+
+    fn touch_resource_lock(&self, session_id: u64, message: &crate::domains::kv::KvMessage) {
+        let Some((tx_id, resource_key)) = Self::transaction_resource(message) else {
+            return;
+        };
+        let mut locks = self.core.resource_locks.lock();
+        if let Some(owner) = locks.get_mut(&resource_key) {
+            if owner.session_id == session_id && owner.tx_id == tx_id {
+                owner.last_activity = std::time::Instant::now();
+            }
         }
     }
 
@@ -486,6 +540,14 @@ impl KvDomainRuntime<'_> {
         );
         let response = actor.handle(kv_message.clone());
         if let KvResponse::BeginOk { tx_id } = response {
+            self.core.resource_locks.lock().insert(
+                lock_key,
+                KvResourceLockOwner {
+                    session_id,
+                    tx_id,
+                    last_activity: std::time::Instant::now(),
+                },
+            );
             tracing::trace!(
                 domain = "kv",
                 session_id = session_id,
@@ -556,6 +618,9 @@ impl KvDomainRuntime<'_> {
         let had_transaction = lock_key.is_some();
         let response = actor.handle(kv_message.clone());
         let admin_update = if had_transaction && actor.resource_scope_for_tx(tx_id).is_none() {
+            if let Some(lock_key) = &lock_key {
+                self.core.resource_locks.lock().remove(lock_key);
+            }
             KvAdminTransactionUpdate::Remove { session_id, tx_id }
         } else {
             KvAdminTransactionUpdate::None
@@ -612,6 +677,12 @@ impl KvDomainRuntime<'_> {
         let response = actor.handle(kv_message.clone());
         let admin_update =
             if resource_scope.is_some() && actor.resource_scope_for_tx(tx_id).is_none() {
+                if let Some((family_id, realm, area, resource)) = &resource_scope {
+                    self.core
+                        .resource_locks
+                        .lock()
+                        .remove(&KvResourceLockKey::new(*family_id, realm, area, resource));
+                }
                 KvAdminTransactionUpdate::Remove { session_id, tx_id }
             } else {
                 KvAdminTransactionUpdate::None

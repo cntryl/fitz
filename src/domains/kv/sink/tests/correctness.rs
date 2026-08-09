@@ -175,6 +175,77 @@ fn should_expire_idle_read_write_transaction_before_competing_begin() {
 }
 
 #[test]
+fn should_begin_write_without_scanning_unrelated_session_actors() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let first_route = "kv://acme/app/users";
+    let second_route = "kv://acme/app/orders";
+    let first_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let second_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let first_mailbox = Arc::new(Mailbox::new(8));
+    let second_mailbox = Arc::new(Mailbox::new(8));
+    let router = Arc::new(Router::new());
+    router.register(first_address.clone(), first_mailbox.clone());
+    router.register(second_address.clone(), second_mailbox.clone());
+    let sink = new_correctness_sink(router);
+    sink.deliver(Envelope::from_route(
+        first_address,
+        RouteAddress::new(family, Route::new(first_route)),
+        FrameContext::new(
+            7,
+            ChannelId::Sub,
+            MessageType::new(100),
+            encode_kv_begin(first_route, 1, 0),
+            family,
+        ),
+    ))
+    .expect("begin unrelated transaction");
+    let _ = receive_frame(&first_mailbox, "unrelated begin response");
+    let actor = sink
+        .state
+        .core
+        .actors
+        .lock()
+        .get(&7)
+        .expect("unrelated actor")
+        .clone();
+    let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let holder = std::thread::spawn(move || {
+        let _guard = actor.lock();
+        locked_tx.send(()).expect("report actor lock");
+        release_rx.recv().expect("wait to release actor lock");
+    });
+    locked_rx.recv().expect("wait for actor lock");
+
+    // Act
+    let (result_tx, result_rx) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        sink.deliver(Envelope::from_route(
+            second_address,
+            RouteAddress::new(family, Route::new(second_route)),
+            FrameContext::new(
+                8,
+                ChannelId::Sub,
+                MessageType::new(100),
+                encode_kv_begin(second_route, 1, 0),
+                family,
+            ),
+        ))
+        .expect("deliver independent begin");
+        let status = receive_frame(&second_mailbox, "independent begin response").payload[0];
+        result_tx.send(status).expect("report competing begin");
+    });
+    let result = result_rx.recv_timeout(Duration::from_millis(200));
+    release_tx.send(()).expect("release unrelated actor");
+    holder.join().expect("actor lock holder");
+    worker.join().expect("begin worker");
+
+    // Assert
+    assert_eq!(result.expect("begin must not scan unrelated actors"), 0);
+}
+
+#[test]
 fn should_reject_kv_request_when_source_and_destination_families_differ() {
     // Arrange
     let source_family = RouteFamily::new(2);

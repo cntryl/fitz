@@ -181,6 +181,10 @@ impl KvDomainRuntime<'_> {
     /// model is refreshed so no durable recovery is implied.
     pub(in crate::domains::kv::sink) fn cleanup_session(&self, session_id: u64) {
         self.core.actors.lock().remove(&session_id);
+        self.core
+            .resource_locks
+            .lock()
+            .retain(|_, owner| owner.session_id != session_id);
 
         {
             let mut watch_actors = self.core.watch_actors.lock();
