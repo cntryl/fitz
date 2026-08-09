@@ -302,6 +302,10 @@ fn should_retry_notice_delivery_when_outbound_mailbox_is_temporarily_full() {
     .expect("publish notice event");
 
     // Assert
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while !retry_state.lock().is_empty() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(1));
+    }
     assert!(retry_state.lock().is_empty());
 }
 
