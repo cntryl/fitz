@@ -1,4 +1,48 @@
 use super::*;
+
+#[test]
+fn should_commit_disjoint_writes_without_inventory_conflict() {
+    // Arrange
+    let mut actor = test_actor();
+    let scope = KvResourceScope::new(RouteFamily::new(1), "test", "kv", "shared");
+    let begin = |actor: &mut KvActor| {
+        let KvResponse::BeginOk { tx_id } = actor.handle(KvMessage::Begin {
+            scope: scope.clone(),
+            mode: TxMode::ReadWrite,
+            write_options: cntryl_midge::WriteOptions::buffered(),
+        }) else {
+            panic!("transaction should begin");
+        };
+        tx_id
+    };
+    let first = begin(&mut actor);
+    let second = begin(&mut actor);
+    for (tx_id, key) in [(first, "first"), (second, "second")] {
+        assert!(matches!(
+            actor.handle(KvMessage::Put {
+                tx_id,
+                scope: scope.clone(),
+                key: Bytes::from(key),
+                value: Bytes::from_static(b"value"),
+            }),
+            KvResponse::PutOk
+        ));
+    }
+
+    // Act
+    let first_commit = actor.handle(KvMessage::Commit {
+        tx_id: first,
+        scope: scope.clone(),
+    });
+    let second_commit = actor.handle(KvMessage::Commit {
+        tx_id: second,
+        scope,
+    });
+
+    // Assert
+    assert!(matches!(first_commit, KvResponse::CommitOk));
+    assert!(matches!(second_commit, KvResponse::CommitOk));
+}
 #[test]
 pub(super) fn should_begin_transaction_for_resource() {
     // Arrange

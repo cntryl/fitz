@@ -319,6 +319,38 @@ fn should_reject_begin_with_empty_realm() {
 }
 
 #[test]
+fn should_not_classify_ordinary_operation_text_as_backend_unavailable() {
+    // Arrange
+    let messages = [
+        "transaction condition violated",
+        "operation exception",
+        "revision mismatch",
+    ];
+
+    // Act
+    let classifications = messages.map(KvActor::classify_midge_message);
+
+    // Assert
+    assert!(classifications
+        .iter()
+        .all(|classification| matches!(classification, KvError::BackendError(_))));
+}
+
+#[test]
+fn should_classify_explicit_io_indicators_as_backend_unavailable() {
+    // Arrange
+    let messages = ["I/O failure", "disk full", "os error 28"];
+
+    // Act
+    let classifications = messages.map(KvActor::classify_midge_message);
+
+    // Assert
+    assert!(classifications
+        .iter()
+        .all(|classification| matches!(classification, KvError::BackendUnavailable(_))));
+}
+
+#[test]
 fn should_reject_begin_with_realm_containing_spaces() {
     // Arrange
     let mut actor = test_actor();

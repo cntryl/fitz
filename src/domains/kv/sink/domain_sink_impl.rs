@@ -744,6 +744,25 @@ impl KvDomainRuntime<'_> {
             })
     }
 
+    pub(super) fn session_holds_resource_write_lock(
+        &self,
+        session_id: u64,
+        resource_key: &KvResourceLockKey,
+    ) -> bool {
+        self.core
+            .actors
+            .lock()
+            .get(&session_id)
+            .is_some_and(|actor| {
+                actor.has_read_write_transaction_for_scope(
+                    resource_key.family_id,
+                    &resource_key.realm,
+                    &resource_key.area,
+                    &resource_key.resource,
+                )
+            })
+    }
+
     pub(super) fn latency_snapshots(
         &self,
         resource_key: &KvResourceLockKey,

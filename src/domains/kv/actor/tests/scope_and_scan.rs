@@ -1,4 +1,48 @@
 use super::*;
+
+#[test]
+fn should_cap_scan_when_client_omits_limit() {
+    // Arrange
+    let mut actor = test_actor();
+    let scope = KvResourceScope::new(RouteFamily::new(1), "test", "kv", "bounded-scan");
+    let KvResponse::BeginOk { tx_id } = actor.handle(KvMessage::Begin {
+        scope: scope.clone(),
+        mode: TxMode::ReadWrite,
+        write_options: cntryl_midge::WriteOptions::buffered(),
+    }) else {
+        panic!("transaction should begin");
+    };
+    for index in 0..=MAX_SCAN_ITEMS {
+        assert!(matches!(
+            actor.handle(KvMessage::Put {
+                tx_id,
+                scope: scope.clone(),
+                key: Bytes::from(format!("key-{index:04}")),
+                value: Bytes::from_static(b"value"),
+            }),
+            KvResponse::PutOk
+        ));
+    }
+
+    // Act
+    let response = actor.handle(KvMessage::Scan {
+        tx_id,
+        scope,
+        query: ScanQuery {
+            start: None,
+            end: None,
+            limit: None,
+            reverse: false,
+        },
+    });
+
+    // Assert
+    let KvResponse::ScanResult { items, has_more } = response else {
+        panic!("scan should succeed");
+    };
+    assert_eq!(items.len(), MAX_SCAN_ITEMS);
+    assert!(has_more);
+}
 fn begin_with_scope(actor: &mut KvActor, scope: KvResourceScope) -> u64 {
     let response = actor.handle(KvMessage::Begin {
         scope,

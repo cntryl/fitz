@@ -44,6 +44,7 @@ use super::protocol::{KvError, KvMessage, KvPair, KvResourceScope, KvResponse, S
 const KV_KEY_SCOPE_MARKER: u8 = 0x01;
 const KV_INVENTORY_SCOPE_MARKER: u8 = 0x02;
 const KV_INVENTORY_VALUE_VERSION: u8 = 1;
+const MAX_SCAN_ITEMS: usize = 1_024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct KvInventoryEstimate {
@@ -108,6 +109,8 @@ impl KvInventoryDelta {
 pub struct ActiveKvTx {
     /// Complete route scope this transaction is bound to.
     pub scope: KvResourceScope,
+    /// Client-declared transaction access mode.
+    pub mode: TxMode,
     /// Cached realm/area/resource prefix for scoped-key encoding
     pub scoped_prefix: Vec<u8>,
     /// Resolved column family for this transaction
@@ -229,6 +232,7 @@ impl KvActor {
                     tx_id,
                     ActiveKvTx {
                         scope,
+                        mode,
                         scoped_prefix,
                         column_family: cf,
                         tx,
@@ -261,12 +265,22 @@ impl KvActor {
                 error: KvError::InvalidTxId,
             },
             Some(mut active) => {
-                if let Err(error) = Self::apply_inventory_delta(&mut active) {
-                    return KvResponse::Error { error };
-                }
+                let inventory_scope = active.scope.clone();
+                let inventory_column_family = active.column_family;
+                let inventory_delta = std::mem::take(&mut active.inventory_delta);
                 // Use write options provided by user at transaction begin
                 match active.tx.commit(active.write_options) {
-                    Ok(()) => KvResponse::CommitOk,
+                    Ok(()) => {
+                        if let Err(error) = Self::apply_inventory_delta(
+                            &self.store,
+                            inventory_column_family,
+                            &inventory_scope,
+                            &inventory_delta,
+                        ) {
+                            tracing::warn!(?error, "KV inventory estimate update failed");
+                        }
+                        KvResponse::CommitOk
+                    }
                     Err(e) => KvResponse::Error {
                         error: Self::map_midge_error(e),
                     },
@@ -343,22 +357,10 @@ impl KvActor {
         }
 
         let scoped_key = Self::encode_scoped_key(&active.scoped_prefix, key);
-        let before_bytes = match active.tx.get(&scoped_key) {
-            Ok(value) => value.as_ref().map(|value| key.len() + value.len()),
-            Err(e) => {
-                return KvResponse::Error {
-                    error: Self::map_midge_error(e),
-                };
-            }
-        };
-        let after_bytes = Some(key.len() + value.len());
-
         match active.tx.put(scoped_key, value.to_vec(), None) {
             Ok(()) => {
                 active.mutation_count = active.mutation_count.saturating_add(1);
-                active
-                    .inventory_delta
-                    .record_key_change(key, before_bytes, after_bytes);
+                active.inventory_delta.mark_incomplete();
                 KvResponse::PutOk
             }
             Err(e) => KvResponse::Error {
@@ -429,21 +431,10 @@ impl KvActor {
         }
 
         let scoped_key = Self::encode_scoped_key(&active.scoped_prefix, key);
-        let before_bytes = match active.tx.get(&scoped_key) {
-            Ok(value) => value.as_ref().map(|value| key.len() + value.len()),
-            Err(e) => {
-                return KvResponse::Error {
-                    error: Self::map_midge_error(e),
-                };
-            }
-        };
-
         match active.tx.delete(scoped_key) {
             Ok(()) => {
                 active.mutation_count = active.mutation_count.saturating_add(1);
-                active
-                    .inventory_delta
-                    .record_key_change(key, before_bytes, None);
+                active.inventory_delta.mark_incomplete();
                 KvResponse::DeleteOk
             }
             Err(e) => KvResponse::Error {
@@ -521,9 +512,8 @@ impl KvActor {
             .start_key(Bytes::from(start_key))
             .end_key(Bytes::from(end_key));
 
-        if let Some(limit) = query.limit {
-            midge_query = midge_query.limit(limit.saturating_add(1));
-        }
+        let effective_limit = query.limit.unwrap_or(MAX_SCAN_ITEMS).min(MAX_SCAN_ITEMS);
+        midge_query = midge_query.limit(effective_limit.saturating_add(1));
 
         if query.reverse {
             midge_query = midge_query.reverse();
@@ -551,10 +541,8 @@ impl KvActor {
                     });
                 }
 
-                let has_more = query.limit.is_some_and(|limit| items.len() > limit);
-                if let Some(limit) = query.limit {
-                    items.truncate(limit);
-                }
+                let has_more = items.len() > effective_limit;
+                items.truncate(effective_limit);
 
                 KvResponse::ScanResult { items, has_more }
             }
@@ -604,6 +592,22 @@ impl KvActor {
                 )
             })
             .collect()
+    }
+
+    pub(crate) fn has_read_write_transaction_for_scope(
+        &self,
+        family_id: u64,
+        realm: &str,
+        area: &str,
+        resource: &str,
+    ) -> bool {
+        self.transactions.values().any(|active| {
+            active.mode == TxMode::ReadWrite
+                && u64::from(active.scope.route_family.id()) == family_id
+                && active.scope.realm == realm
+                && active.scope.area == area
+                && active.scope.resource == resource
+        })
     }
 
     #[must_use]
@@ -755,18 +759,21 @@ impl KvActor {
         })
     }
 
-    fn apply_inventory_delta(active: &mut ActiveKvTx) -> Result<(), KvError> {
-        if active.inventory_delta.is_empty() {
+    fn apply_inventory_delta(
+        store: &MidgeEngine,
+        column_family: ColumnFamilyId,
+        scope: &KvResourceScope,
+        inventory_delta: &KvInventoryDelta,
+    ) -> Result<(), KvError> {
+        if inventory_delta.is_empty() {
             return Ok(());
         }
 
-        let key = Self::inventory_metadata_key(
-            &active.scope.realm,
-            &active.scope.area,
-            &active.scope.resource,
-        );
-        let mut estimate = active
-            .tx
+        let key = Self::inventory_metadata_key(&scope.realm, &scope.area, &scope.resource);
+        let mut tx = store
+            .begin_tx(column_family, TransactionMode::ReadWrite)
+            .map_err(Self::map_midge_error)?;
+        let mut estimate = tx
             .get(&key)
             .map_err(Self::map_midge_error)?
             .as_deref()
@@ -775,7 +782,7 @@ impl KvActor {
             .map_err(KvError::BackendError)?
             .unwrap_or_default();
 
-        for change in active.inventory_delta.key_changes.values() {
+        for change in inventory_delta.key_changes.values() {
             match (change.before_bytes, change.after_bytes) {
                 (None, Some(after)) => {
                     estimate.estimated_record_count =
@@ -806,13 +813,13 @@ impl KvActor {
             }
         }
 
-        if active.inventory_delta.estimate_incomplete {
+        if inventory_delta.estimate_incomplete {
             estimate.estimate_complete = false;
         }
 
-        active
-            .tx
-            .put(key, Self::encode_inventory_estimate(estimate), None)
+        tx.put(key, Self::encode_inventory_estimate(estimate), None)
+            .map_err(Self::map_midge_error)?;
+        tx.commit(cntryl_midge::WriteOptions::buffered())
             .map_err(Self::map_midge_error)
     }
 
@@ -856,7 +863,11 @@ impl KvActor {
     fn map_midge_error(err: cntryl_midge::MidgeError) -> KvError {
         // Midge errors are currently opaque from this crate's perspective.
         // Preserve retryability distinctions using message heuristics.
-        let msg = err.to_string();
+        Self::classify_midge_message(&err.to_string())
+    }
+
+    fn classify_midge_message(msg: &str) -> KvError {
+        let msg = msg.to_string();
         let msg_lc = msg.to_lowercase();
 
         if msg_lc.contains("conflict") || msg_lc.contains("abort") || msg_lc.contains("retry") {
@@ -864,7 +875,9 @@ impl KvActor {
         }
 
         if msg_lc.contains("unavailable")
-            || msg_lc.contains("io")
+            || msg_lc.contains("i/o")
+            || msg_lc.contains("disk")
+            || msg_lc.contains("os error")
             || msg_lc.contains("closed")
             || msg_lc.contains("corrupt")
         {
