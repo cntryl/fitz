@@ -82,6 +82,8 @@
 //! 5. Consumer A crashes → Inflight entry expires after 30 seconds
 //! 6. Consumer C: Reserve(inflight_secs=30) → (id=1, token=xyz789, body="task")
 //!    ^^^ Message 1 redelivered with same body but new token
+//!    When `max_attempts` is configured, each redelivery increments `attempts`
+//!    and the message moves to the DLQ when the limit is reached.
 //! 7. Consumer A recovers: Try Complete(id=1, token=abc123) → InflightExpired (old token invalid)
 //! 8. Consumer C: Complete(id=1, token=xyz789) → OK (new token valid)
 //! ```
