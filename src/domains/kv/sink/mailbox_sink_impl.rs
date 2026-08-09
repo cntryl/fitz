@@ -1,7 +1,7 @@
 use super::model::{
-    DeliveryError, Envelope, KvAdminTransactionUpdate, KvClientFrame, KvClientRequest,
+    Arc, DeliveryError, Envelope, KvAdminTransactionUpdate, KvClientFrame, KvClientRequest,
     KvDomainActor, KvDomainCommand, KvDomainRuntime, KvDomainSink, KvResourceLockKey, MailboxSink,
-    Ordering,
+    Mutex, Ordering,
 };
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
@@ -371,21 +371,22 @@ impl KvDomainRuntime<'_> {
         &self,
         session_id: u64,
         context: &str,
-    ) -> parking_lot::lock_api::MappedMutexGuard<
-        '_,
-        parking_lot::RawMutex,
-        crate::domains::kv::KvActor,
-    > {
-        parking_lot::MutexGuard::map(self.core.actors.lock(), |actors| {
-            actors.entry(session_id).or_insert_with(|| {
+    ) -> Arc<Mutex<crate::domains::kv::KvActor>> {
+        self.core
+            .actors
+            .lock()
+            .entry(session_id)
+            .or_insert_with(|| {
                 tracing::trace!(
                     domain = "kv",
                     session_id = session_id,
                     "Creating new KvActor instance ({context})"
                 );
-                crate::domains::kv::KvActor::new(self.core.store.clone())
+                Arc::new(Mutex::new(crate::domains::kv::KvActor::new(
+                    self.core.store.clone(),
+                )))
             })
-        })
+            .clone()
     }
 
     fn handle_begin_read_write(
@@ -431,7 +432,8 @@ impl KvDomainRuntime<'_> {
         }
 
         let log_context = "BEGIN (ReadWrite, acquiring lock)";
-        let mut actor = self.actor_for_session(session_id, "begin");
+        let actor = self.actor_for_session(session_id, "begin");
+        let mut actor = actor.lock();
         tracing::trace!(
             domain = "kv",
             session_id = session_id,
@@ -477,7 +479,8 @@ impl KvDomainRuntime<'_> {
     ) {
         use crate::domains::kv::KvResponse;
 
-        let mut actor = self.actor_for_session(session_id, "commit");
+        let actor = self.actor_for_session(session_id, "commit");
+        let mut actor = actor.lock();
         tracing::trace!(
             domain = "kv",
             session_id = session_id,
@@ -538,7 +541,8 @@ impl KvDomainRuntime<'_> {
     ) {
         use crate::domains::kv::KvResponse;
 
-        let mut actor = self.actor_for_session(session_id, "rollback");
+        let actor = self.actor_for_session(session_id, "rollback");
+        let mut actor = actor.lock();
         tracing::trace!(
             domain = "kv",
             session_id = session_id,
@@ -585,7 +589,8 @@ impl KvDomainRuntime<'_> {
         KvAdminTransactionUpdate,
         Option<(KvResourceLockKey, u64)>,
     ) {
-        let mut actor = self.actor_for_session(session_id, "other operation");
+        let actor = self.actor_for_session(session_id, "other operation");
+        let mut actor = actor.lock();
         tracing::trace!(
             domain = "kv",
             session_id = session_id,

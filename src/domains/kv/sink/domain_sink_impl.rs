@@ -645,13 +645,17 @@ impl KvDomainRuntime<'_> {
     #[cfg(test)]
     pub(super) fn sync_admin_snapshot(&self) {
         let started_at = Utc::now().to_rfc3339();
-        let transactions = self
+        let actors: Vec<_> = self
             .core
             .actors
             .lock()
             .iter()
+            .map(|(session_id, actor)| (*session_id, actor.clone()))
+            .collect();
+        let transactions = actors
+            .iter()
             .flat_map(|(session_id, actor)| {
-                actor.active_transaction_scopes().into_iter().map(
+                actor.lock().active_transaction_scopes().into_iter().map(
                     |(tx_id, family_id, realm, area, resource)| {
                         crate::control::admin::KvTransaction::snapshot(
                             family_id,
@@ -704,18 +708,12 @@ impl KvDomainRuntime<'_> {
         &self,
         resource_key: &KvResourceLockKey,
     ) -> usize {
-        self.core
-            .actors
-            .lock()
-            .values()
-            .flat_map(crate::domains::kv::KvActor::active_transaction_scopes)
-            .filter(|(_tx_id, family_id, realm, area, resource)| {
-                *family_id == resource_key.family_id
-                    && realm == &resource_key.realm
-                    && area == &resource_key.area
-                    && resource == &resource_key.resource
-            })
-            .count()
+        self.core.projection.active_transactions_for_resource(
+            resource_key.family_id,
+            &resource_key.realm,
+            &resource_key.area,
+            &resource_key.resource,
+        )
     }
 
     pub(super) fn conflicting_session_for_resource(
@@ -723,25 +721,30 @@ impl KvDomainRuntime<'_> {
         session_id: u64,
         resource_key: &KvResourceLockKey,
     ) -> Option<u64> {
-        self.core
+        let actors: Vec<_> = self
+            .core
             .actors
             .lock()
             .iter()
-            .find_map(|(active_session_id, actor)| {
-                if *active_session_id == session_id {
-                    return None;
-                }
+            .map(|(session_id, actor)| (*session_id, actor.clone()))
+            .collect();
+        actors.iter().find_map(|(active_session_id, actor)| {
+            if *active_session_id == session_id {
+                return None;
+            }
 
-                actor.active_transaction_scopes().into_iter().find_map(
-                    |(_tx_id, family_id, realm, area, resource)| {
-                        (family_id == resource_key.family_id
-                            && realm == resource_key.realm
-                            && area == resource_key.area
-                            && resource == resource_key.resource)
-                            .then_some(*active_session_id)
-                    },
-                )
-            })
+            actor
+                .lock()
+                .active_transaction_scopes()
+                .into_iter()
+                .find_map(|(_tx_id, family_id, realm, area, resource)| {
+                    (family_id == resource_key.family_id
+                        && realm == resource_key.realm
+                        && area == resource_key.area
+                        && resource == resource_key.resource)
+                        .then_some(*active_session_id)
+                })
+        })
     }
 
     pub(super) fn session_holds_resource_write_lock(
@@ -749,18 +752,15 @@ impl KvDomainRuntime<'_> {
         session_id: u64,
         resource_key: &KvResourceLockKey,
     ) -> bool {
-        self.core
-            .actors
-            .lock()
-            .get(&session_id)
-            .is_some_and(|actor| {
-                actor.has_read_write_transaction_for_scope(
-                    resource_key.family_id,
-                    &resource_key.realm,
-                    &resource_key.area,
-                    &resource_key.resource,
-                )
-            })
+        let actor = self.core.actors.lock().get(&session_id).cloned();
+        actor.is_some_and(|actor| {
+            actor.lock().has_read_write_transaction_for_scope(
+                resource_key.family_id,
+                &resource_key.realm,
+                &resource_key.area,
+                &resource_key.resource,
+            )
+        })
     }
 
     pub(super) fn latency_snapshots(
@@ -798,11 +798,9 @@ impl KvDomainRuntime<'_> {
         session_id: u64,
         tx_id: u64,
     ) -> Option<KvResourceLockKey> {
-        self.core
-            .actors
-            .lock()
-            .get(&session_id)
-            .and_then(|actor| actor.resource_scope_for_tx(tx_id))
+        let actor = self.core.actors.lock().get(&session_id).cloned();
+        actor
+            .and_then(|actor| actor.lock().resource_scope_for_tx(tx_id))
             .map(|(family_id, realm, area, resource)| {
                 KvResourceLockKey::new(family_id, &realm, &area, &resource)
             })

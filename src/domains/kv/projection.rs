@@ -106,6 +106,29 @@ where
             .remove_kv_transactions_for_session(session_id);
     }
 
+    pub fn active_transaction_count(&self) -> usize {
+        self.read_model.kv_transactions(None).len()
+    }
+
+    pub fn active_transactions_for_resource(
+        &self,
+        family_id: u64,
+        realm: &str,
+        area: &str,
+        resource: &str,
+    ) -> usize {
+        self.read_model
+            .kv_transactions(None)
+            .into_iter()
+            .filter(|transaction| {
+                transaction.route_family == family_id
+                    && transaction.realm == realm
+                    && transaction.area == area
+                    && transaction.resource == resource
+            })
+            .count()
+    }
+
     pub fn record_read_latency(&self, key: &K, latency_ms: f64) {
         self.latencies
             .lock()

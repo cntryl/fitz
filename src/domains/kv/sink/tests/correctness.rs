@@ -63,6 +63,64 @@ fn should_update_kv_admin_transaction_incrementally_given_lifecycle() {
 }
 
 #[test]
+fn should_read_admin_transaction_count_while_session_actor_is_busy() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 7;
+    let route = "kv://acme/app/users";
+    let source = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let destination = RouteAddress::new(family, Route::new(route));
+    let mailbox = Arc::new(Mailbox::new(8));
+    let router = Arc::new(Router::new());
+    router.register(source.clone(), mailbox.clone());
+    let sink = new_correctness_sink(router);
+    sink.deliver(Envelope::from_route(
+        source,
+        destination,
+        FrameContext::new(
+            session_id,
+            ChannelId::Sub,
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
+            encode_kv_begin(route, 1, 0),
+            family,
+        ),
+    ))
+    .expect("begin transaction");
+    let _ = receive_frame(&mailbox, "begin response");
+    let actor = sink
+        .state
+        .core
+        .actors
+        .lock()
+        .get(&session_id)
+        .expect("session actor")
+        .clone();
+    let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let holder = std::thread::spawn(move || {
+        let _guard = actor.lock();
+        locked_tx.send(()).expect("report held actor lock");
+        release_rx.recv().expect("wait to release actor lock");
+    });
+    locked_rx.recv().expect("wait for held actor lock");
+
+    // Act
+    let (count_tx, count_rx) = std::sync::mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        count_tx
+            .send(sink.active_transaction_count())
+            .expect("report admin transaction count");
+    });
+    let count = count_rx.recv_timeout(Duration::from_millis(200));
+    release_tx.send(()).expect("release actor lock");
+    holder.join().expect("actor lock holder");
+    reader.join().expect("admin transaction reader");
+
+    // Assert
+    assert_eq!(count.expect("admin read must not wait for actor lock"), 1);
+}
+
+#[test]
 fn should_reject_kv_request_when_source_and_destination_families_differ() {
     // Arrange
     let source_family = RouteFamily::new(2);

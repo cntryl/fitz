@@ -12,7 +12,10 @@ impl KvDomainSink {
         session_id: u64,
         actor: crate::domains::kv::KvActor,
     ) {
-        self.state.core.actors.lock().insert(session_id, actor);
+        self.state.core.actors.lock().insert(
+            session_id,
+            std::sync::Arc::new(parking_lot::Mutex::new(actor)),
+        );
     }
 
     pub(super) fn watch_actors_are_empty_for_tests(&self) -> bool {
