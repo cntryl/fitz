@@ -58,6 +58,7 @@ pub(super) const QUEUE_ACTOR_IDLE_TTL: Duration = Duration::from_mins(5);
 pub(super) const QUEUE_IDLE_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 pub(super) const QUEUE_IDLE_SWEEP_BATCH_SIZE: usize = 64;
 pub(super) const QUEUE_DEDUP_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
+pub(super) use crate::domains::queue::actor::QUEUE_ACTOR_REPLY_TIMEOUT;
 
 /// Queue domain runtime core with per-queue `QueueActor` instances.
 ///

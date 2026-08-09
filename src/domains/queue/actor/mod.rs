@@ -49,6 +49,10 @@ use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+const QUEUE_IDLE_HORIZON: Duration = Duration::from_hours(1);
+const QUEUE_STORAGE_RETRY_BACKOFF: Duration = Duration::from_secs(1);
+pub(super) const QUEUE_ACTOR_REPLY_TIMEOUT: Duration = Duration::from_secs(1);
+
 use bytes::Bytes;
 use lexkey::LexKey;
 use rustc_hash::FxBuildHasher;
@@ -161,6 +165,38 @@ enum DlqReason {
     InflightEpochExhausted = 4,
 }
 
+#[derive(Clone, Copy)]
+enum QueueCommit {
+    Ack,
+    Redelivery,
+}
+
+impl DlqReason {
+    const fn wire_code(self) -> u8 {
+        self as u8
+    }
+
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::MaxAttemptsExceeded => "max_attempts_exceeded",
+            Self::HydrationFailed => "hydration_failed",
+            Self::DeliveryAttemptsExhausted => "delivery_attempts_exhausted",
+            Self::InflightEpochExhausted => "inflight_epoch_exhausted",
+        }
+    }
+
+    fn from_wire_code(code: u8) -> Result<Option<Self>, String> {
+        match code {
+            0 => Ok(None),
+            1 => Ok(Some(Self::MaxAttemptsExceeded)),
+            2 => Ok(Some(Self::HydrationFailed)),
+            3 => Ok(Some(Self::DeliveryAttemptsExhausted)),
+            4 => Ok(Some(Self::InflightEpochExhausted)),
+            other => Err(format!("Unknown DLQ reason {other}")),
+        }
+    }
+}
+
 impl QueueRecord {
     /// Build a ready-state record. Production enqueues build records inline;
     /// this exists so storage tests can seed ready rows directly.
@@ -268,6 +304,52 @@ pub struct Inflight {
     attempts: u32,
     /// Durable inflight epoch for stale-event suppression.
     inflight_epoch: u64,
+}
+
+/// Queue operations used by live producers and consumers.
+pub trait QueueDataPlane {}
+
+/// Queue operations used only by administration and runtime management.
+pub trait QueueAdminPlane {
+    fn admin_snapshot(&self) -> QueueAdminSnapshot;
+    fn admin_inflight(&self) -> Vec<QueueInflightSnapshot>;
+    fn admin_dead_letters(&self) -> Vec<QueueDeadLetterSnapshot>;
+    /// Replays a dead letter into the ready queue.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the durable transition cannot be committed.
+    fn replay_dead_letter(&mut self, id: MessageId) -> Result<bool, String>;
+    /// Permanently removes a dead letter.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the durable deletion cannot be committed.
+    fn purge_dead_letter(&mut self, id: MessageId) -> Result<bool, String>;
+}
+
+impl QueueDataPlane for QueueActor {}
+
+impl QueueAdminPlane for QueueActor {
+    fn admin_snapshot(&self) -> QueueAdminSnapshot {
+        QueueActor::admin_snapshot(self)
+    }
+
+    fn admin_inflight(&self) -> Vec<QueueInflightSnapshot> {
+        QueueActor::admin_inflight(self)
+    }
+
+    fn admin_dead_letters(&self) -> Vec<QueueDeadLetterSnapshot> {
+        QueueActor::admin_dead_letters(self)
+    }
+
+    fn replay_dead_letter(&mut self, id: MessageId) -> Result<bool, String> {
+        QueueActor::replay_dead_letter(self, id)
+    }
+
+    fn purge_dead_letter(&mut self, id: MessageId) -> Result<bool, String> {
+        QueueActor::purge_dead_letter(self, id)
+    }
 }
 
 /// Timer event for inflight expiration
@@ -640,10 +722,12 @@ pub struct QueueActor {
 
 mod admin_snapshot;
 mod constructors_validation;
-mod dead_letters_and_timers;
+mod dead_letter_admin;
+mod dlq;
 mod enqueue;
 mod recovery_state;
 mod reserve_and_ack;
+mod startup_reconciliation;
 mod storage_keys;
 
 #[cfg(test)]

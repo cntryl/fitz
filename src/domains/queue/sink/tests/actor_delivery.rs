@@ -765,11 +765,11 @@ fn should_route_queue_live_counts_through_managed_actor() {
     );
     sink.deliver(queue_send_envelope(family, queue_route))
         .expect("enqueue queue message");
-    assert_eq!(sink.ready_message_count(), 1);
+    assert_eq!(sink.counts().ready, 1);
 
     // Act
     sink.stop_actor_for_tests();
-    let ready_messages = sink.ready_message_count();
+    let ready_messages = sink.counts().ready;
 
     // Assert
     assert!(!sink.is_actor_running());

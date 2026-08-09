@@ -281,23 +281,23 @@ impl DomainHandles {
     }
 
     pub(crate) fn queue_ready_message_count(&self) -> usize {
-        self.queue.ready_message_count()
+        self.queue.counts().ready
     }
 
     pub(crate) fn queue_delayed_message_count(&self) -> usize {
-        self.queue.delayed_message_count()
+        self.queue.counts().delayed
     }
 
     pub(crate) fn queue_pending_message_count(&self) -> usize {
-        self.queue.pending_message_count()
+        self.queue.counts().pending
     }
 
     pub(crate) fn queue_dead_letter_count(&self) -> usize {
-        self.queue.dead_letter_count()
+        self.queue.counts().dead_letters
     }
 
     pub(crate) fn queue_active_inflight_count(&self) -> usize {
-        self.queue.active_inflight_count()
+        self.queue.counts().inflight
     }
 
     pub(crate) fn queue_replay_dead_letter(

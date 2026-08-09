@@ -1,4 +1,4 @@
-use super::{Duration, MessageId, QueueActor};
+use super::{MessageId, QueueActor, QUEUE_IDLE_HORIZON};
 
 impl QueueActor {
     pub(in crate::domains::queue::actor) fn reset_recovery_state(&mut self) {
@@ -6,7 +6,7 @@ impl QueueActor {
         self.reset_persisted_index_state();
         self.delayed.clear();
         let now = self.clock.now_instant();
-        self.next_delayed_deadline = now + Duration::from_hours(1);
+        self.next_delayed_deadline = now + QUEUE_IDLE_HORIZON;
     }
 
     pub(in crate::domains::queue::actor) fn populate_live_ready_from_persisted(

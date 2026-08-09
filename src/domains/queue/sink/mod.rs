@@ -2,6 +2,7 @@ mod domain_sink_impl;
 mod mailbox_sink_impl;
 mod model;
 
+pub use domain_sink_impl::QueueCounts;
 pub use model::QueueDomainSink;
 
 #[cfg(test)]

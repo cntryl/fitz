@@ -129,7 +129,7 @@ impl QueueActor {
                 let reason = record
                     .as_ref()
                     .and_then(|record| record.dlq_reason)
-                    .map_or("unknown", Self::dlq_reason_label);
+                    .map_or("unknown", DlqReason::as_str);
 
                 QueueDeadLetterSnapshot {
                     message_id: id.as_u64(),
@@ -145,15 +145,6 @@ impl QueueActor {
                 .cmp(&(right.dead_lettered_at_epoch_ms, right.message_id))
         });
         dead_letters
-    }
-
-    fn dlq_reason_label(reason: DlqReason) -> &'static str {
-        match reason {
-            DlqReason::MaxAttemptsExceeded => "max_attempts_exceeded",
-            DlqReason::HydrationFailed => "hydration_failed",
-            DlqReason::DeliveryAttemptsExhausted => "delivery_attempts_exhausted",
-            DlqReason::InflightEpochExhausted => "inflight_epoch_exhausted",
-        }
     }
 
     /// Drop any live inflight entries owned by a disconnected session and return the

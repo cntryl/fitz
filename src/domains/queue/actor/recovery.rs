@@ -1,5 +1,6 @@
 use super::{
     DelayedMessage, IndexRecoveryAttempt, MessageId, QueueActor, QueueState, RecoveryPath,
+    QUEUE_IDLE_HORIZON,
 };
 use crate::observability as obs;
 use bytes::Bytes;
@@ -261,7 +262,7 @@ impl QueueActor {
             &mut max_id,
         )?;
         if self.delayed.is_empty() {
-            self.next_delayed_deadline = now_instant + Duration::from_hours(1);
+            self.next_delayed_deadline = now_instant + QUEUE_IDLE_HORIZON;
         }
 
         recovered_ready_ids.sort_unstable_by_key(MessageId::as_u64);
@@ -418,7 +419,7 @@ impl QueueActor {
         self.scan_dlq_entries(dlq_iter, next_id, &mut stats)?;
 
         if self.delayed.is_empty() {
-            self.next_delayed_deadline = now_instant + Duration::from_hours(1);
+            self.next_delayed_deadline = now_instant + QUEUE_IDLE_HORIZON;
         }
 
         Ok(stats)

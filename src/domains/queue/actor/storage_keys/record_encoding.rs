@@ -1,4 +1,4 @@
-use super::super::{QueueActor, QueueRecord};
+use super::super::{DlqReason, QueueActor, QueueRecord};
 
 impl QueueActor {
     /// Serialize `QueueRecord` header to bytes.
@@ -16,7 +16,7 @@ impl QueueActor {
         buf.extend_from_slice(&record.inflight_token.unwrap_or(0).to_le_bytes());
         buf.extend_from_slice(&record.inflight_expires_at_ms.unwrap_or(0).to_le_bytes());
         buf.extend_from_slice(&record.dead_lettered_at_ms.unwrap_or(0).to_le_bytes());
-        buf.push(record.dlq_reason.map_or(0, |value| value as u8));
+        buf.push(record.dlq_reason.map_or(0, DlqReason::wire_code));
         buf
     }
 }
