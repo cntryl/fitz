@@ -337,6 +337,8 @@ impl QueueActor {
                 self.handle_ack_authorized(session_id, id, token)
             }
             Some(_) => QueueResponse::NotFound,
+            // A missing live entry may be a retry of an already-completed acknowledgement;
+            // intentionally fall through so the dedup cache can return the original response.
             None => self.handle_ack_authorized(session_id, id, token),
         }
     }

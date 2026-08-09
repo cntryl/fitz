@@ -56,6 +56,7 @@ pub(super) struct PendingQueueReserve {
 
 pub(super) const QUEUE_ACTOR_IDLE_TTL: Duration = Duration::from_mins(5);
 pub(super) const QUEUE_IDLE_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
+pub(super) const QUEUE_IDLE_SWEEP_BATCH_SIZE: usize = 64;
 pub(super) const QUEUE_DEDUP_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Queue domain runtime core with per-queue `QueueActor` instances.
@@ -76,6 +77,8 @@ pub(super) struct QueueDomainCore {
     pub(super) dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     /// Per-queue actors keyed by `QueueKey`
     pub(super) actors: Mutex<HashMap<crate::domains::queue::QueueKey, WarmQueueActor>>,
+    /// Round-robin actor keys used to bound idle-sweep work per tick.
+    pub(super) idle_sweep_keys: Mutex<VecDeque<crate::domains::queue::QueueKey>>,
     /// Durable and live queue identities available to wildcard reserve selectors.
     pub(super) known_queue_keys: Mutex<HashSet<crate::domains::queue::QueueKey>>,
     /// Startup inventory failure surfaced by wildcard reserve on infallible constructors.

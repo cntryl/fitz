@@ -3,7 +3,8 @@ use super::model::{
     QueueAdminProjection, QueueDomainActor, QueueDomainCommand, QueueDomainCore,
     QueueDomainRuntime, QueueDomainSink, QueueLiveCounts, QueueMetrics, QueueNotification,
     QueueProjectionEntry, QueueProjectionState, QueueReadyNotification, Router, WarmQueueActor,
-    QUEUE_ACTOR_IDLE_TTL, QUEUE_DEDUP_SWEEP_INTERVAL, QUEUE_IDLE_SWEEP_INTERVAL,
+    QUEUE_ACTOR_IDLE_TTL, QUEUE_DEDUP_SWEEP_INTERVAL, QUEUE_IDLE_SWEEP_BATCH_SIZE,
+    QUEUE_IDLE_SWEEP_INTERVAL,
 };
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
@@ -142,6 +143,7 @@ impl QueueDomainSink {
             queue_write_options,
             dedup_store,
             actors: Mutex::new(HashMap::new()),
+            idle_sweep_keys: Mutex::new(VecDeque::new()),
             known_queue_keys: Mutex::new(known_queue_keys),
             inventory_error: Mutex::new(inventory_error),
             wildcard_reserve_sequence: AtomicU64::new(0),
@@ -271,12 +273,13 @@ impl QueueDomainSink {
     ) {
         self.core.known_queue_keys.lock().insert(key.clone());
         self.core.actors.lock().insert(
-            key,
+            key.clone(),
             WarmQueueActor {
                 actor: Arc::new(Mutex::new(actor)),
                 last_used: Instant::now(),
             },
         );
+        self.core.idle_sweep_keys.lock().push_back(key);
     }
 
     #[cfg(test)]
