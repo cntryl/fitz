@@ -1,7 +1,7 @@
 import { askr } from "@askrjs/vite";
 import autoprefixer from "autoprefixer";
 import { defineConfig } from "vite-plus";
-import { fitzMockApiPlugin } from "./dev/mock-api";
+import { fitzMockApiPlugin } from "./dev/mock-api.ts";
 
 function fileUrlPath(path: string) {
   return decodeURIComponent(new URL(path, import.meta.url).pathname).replace(

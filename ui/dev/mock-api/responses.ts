@@ -31,8 +31,8 @@ import {
   text,
   timeline,
   topology,
-} from "./fixtures";
-import { applyFamilyScenario } from "./scenarios";
+} from "./fixtures.ts";
+import { applyFamilyScenario } from "./scenarios.ts";
 
 export function domainResponse(
   familyValue: string,

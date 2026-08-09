@@ -71,6 +71,9 @@ jobs:
       - name: UI tests
         run: npm run test -- --run
 
+      - name: Production preview smoke
+        run: npm run test:e2e:preview
+
       - name: Playwright route suite
         run: npm run test:e2e
 

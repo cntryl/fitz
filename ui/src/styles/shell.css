@@ -87,7 +87,38 @@
 }
 
 .route-family-icon {
+  color-scheme: light;
   flex: none;
+}
+
+:is([data-theme="dark"], [data-theme="torty"], [data-theme="tuxedo"]) .route-family-icon {
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .route-family-icon {
+    color-scheme: dark;
+  }
+}
+
+.route-family-icon[data-route-family-identity="identity-0"] {
+  color: light-dark(#0f5da8, #78b7ff);
+}
+
+.route-family-icon[data-route-family-identity="identity-1"] {
+  color: light-dark(#6b46a3, #c4a2ff);
+}
+
+.route-family-icon[data-route-family-identity="identity-2"] {
+  color: light-dark(#0f766e, #63d6c8);
+}
+
+.route-family-icon[data-route-family-identity="identity-3"] {
+  color: light-dark(#9a4b00, #ffb870);
+}
+
+.route-family-icon[data-route-family-identity="identity-4"] {
+  color: light-dark(#9f3f7b, #f4a6d7);
 }
 
 .operator-route-family-option {

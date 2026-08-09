@@ -1,5 +1,5 @@
-import type { Domain, MockResponse } from "./fixtures";
-import { domains, json, now } from "./fixtures";
+import type { Domain, MockResponse } from "./fixtures.ts";
+import { domains, json, now } from "./fixtures.ts";
 
 export type MockDomainState = "idle" | "healthy" | "unhealthy" | "chaos";
 

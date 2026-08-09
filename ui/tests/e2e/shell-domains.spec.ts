@@ -11,9 +11,11 @@ import {
 } from "./shell/resource-mocks";
 
 async function expectDomainStatsOnSingleRow(page: Page) {
-  const statTops = await page
-    .locator('.domain-stat-grid > [data-slot="card"]')
-    .evaluateAll((cards) => cards.map((card) => Math.round(card.getBoundingClientRect().top)));
+  const cards = page.locator('.domain-stat-grid > [data-slot="card"]');
+  await expect(cards).toHaveCount(3);
+  const statTops = await cards.evaluateAll((elements) =>
+    elements.map((card) => Math.round(card.getBoundingClientRect().top)),
+  );
   expect(statTops).toHaveLength(3);
   expect(new Set(statTops).size).toBe(1);
 }
