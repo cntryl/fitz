@@ -1,7 +1,8 @@
 use super::{
-    decode_cached_response, encode_cached_response, obs, Duration, HashSet, Inflight,
+    decode_cached_response, encode_cached_response, obs, DlqReason, Duration, HashSet, Inflight,
     InflightExpiry, Instant, MessageId, PersistedIndexMutationPlan, PersistedReadyMutation,
-    QueueActor, QueueResponse, ReadyRange, ReservedMessage, Reverse, VecDeque,
+    QueueActor, QueueRecord, QueueResponse, QueueState, ReadyRange, ReservedMessage, Reverse,
+    VecDeque,
 };
 use crate::utils::idempotency::{DedupIdentifier, DedupKey, Domain};
 
@@ -40,7 +41,7 @@ impl QueueActor {
 
         let mut messages = Vec::with_capacity(self.ready.len().min(batch_size));
 
-        for _ in 0..batch_size {
+        while messages.len() < batch_size {
             let Some(id) = self.ready.front().map(|entry| entry.id) else {
                 break;
             };
@@ -55,15 +56,17 @@ impl QueueActor {
                         error_reason = %e,
                         "Failed to hydrate queue record for receive"
                     );
+                    if self.divert_ready_or_log(id, DlqReason::HydrationFailed, now_epoch_ms) {
+                        continue;
+                    }
                     break;
                 }
             };
 
             let Some(next_attempts) = attempts.checked_add(1) else {
-                if messages.is_empty() {
-                    return QueueResponse::Error {
-                        message: "queue delivery attempt counter exhausted".to_string(),
-                    };
+                if self.divert_ready_or_log(id, DlqReason::DeliveryAttemptsExhausted, now_epoch_ms)
+                {
+                    continue;
                 }
                 break;
             };
@@ -72,10 +75,8 @@ impl QueueActor {
                 .get(&id)
                 .map_or(Some(1), |record| record.inflight_epoch.checked_add(1));
             let Some(inflight_epoch) = inflight_epoch else {
-                if messages.is_empty() {
-                    return QueueResponse::Error {
-                        message: "queue inflight epoch exhausted".to_string(),
-                    };
+                if self.divert_ready_or_log(id, DlqReason::InflightEpochExhausted, now_epoch_ms) {
+                    continue;
                 }
                 break;
             };
@@ -138,6 +139,77 @@ impl QueueActor {
         }
 
         QueueResponse::Received { messages }
+    }
+
+    fn divert_ready_or_log(
+        &mut self,
+        id: MessageId,
+        reason: DlqReason,
+        dead_lettered_at_ms: u64,
+    ) -> bool {
+        if let Err(error) = self.divert_ready_to_dlq(id, reason, dead_lettered_at_ms) {
+            tracing::error!(
+                queue = ?self.queue_key,
+                message_id = id.as_u64(),
+                error_reason = %error,
+                "Failed to divert undeliverable queue message"
+            );
+            return false;
+        }
+        true
+    }
+
+    fn divert_ready_to_dlq(
+        &mut self,
+        id: MessageId,
+        reason: DlqReason,
+        dead_lettered_at_ms: u64,
+    ) -> Result<(), String> {
+        let ready_entry = self
+            .ready
+            .front()
+            .copied()
+            .filter(|entry| entry.id == id)
+            .ok_or_else(|| format!("Message {id} is no longer ready"))?;
+        let mut record = self.records.get(&id).cloned().unwrap_or_else(|| {
+            QueueRecord::enqueued(id, 0, true, ready_entry.ready_enqueued_at_ms)
+        });
+        record.state = QueueState::Dlq;
+        record.ready_seq = None;
+        record.visible_at_ms = 0;
+        record.inflight_token = None;
+        record.inflight_expires_at_ms = None;
+        record.dead_lettered_at_ms = Some(dead_lettered_at_ms);
+        record.dlq_reason = Some(reason);
+
+        let index_plan = self.plan_index_mutation_for_unavailable_message(id);
+        let mut txn = self
+            .store
+            .begin_tx(
+                self.queue_key.family.id(),
+                cntryl_midge::TransactionMode::ReadWrite,
+            )
+            .map_err(|error| format!("Failed to begin ready diversion for {id}: {error:?}"))?;
+        txn.put(
+            self.cached_header_key(id),
+            Self::encode_record_header(&record),
+            None,
+        )
+        .map_err(|error| format!("Failed to write diverted queue header for {id}: {error:?}"))?;
+        self.write_index_mutation_plan(&mut txn, id, index_plan, Some(dead_lettered_at_ms))?;
+        txn.commit(self.commit_write_options)
+            .map_err(|error| format!("Failed to commit ready diversion for {id}: {error:?}"))?;
+
+        let popped = self.pop_ready();
+        debug_assert_eq!(popped, Some(id));
+        self.apply_index_mutation_plan(id, index_plan, Some(dead_lettered_at_ms));
+        self.cache_record(id, record.metadata_only_from());
+        self.evict_cached_body(id);
+        Self::increment_counter(obs::METRIC_QUEUE_DLQ_TRANSITIONS);
+        if reason == DlqReason::HydrationFailed {
+            Self::increment_counter(obs::METRIC_QUEUE_HYDRATION_DLQ_TRANSITIONS);
+        }
+        Ok(())
     }
 
     fn inflight_expiration(

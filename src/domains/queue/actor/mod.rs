@@ -156,6 +156,9 @@ enum QueueState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DlqReason {
     MaxAttemptsExceeded = 1,
+    HydrationFailed = 2,
+    DeliveryAttemptsExhausted = 3,
+    InflightEpochExhausted = 4,
 }
 
 impl QueueRecord {
