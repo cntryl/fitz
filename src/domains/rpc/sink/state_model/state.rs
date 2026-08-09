@@ -298,6 +298,9 @@ impl RpcState {
     }
 
     fn refresh_ready_routes_for_family(&mut self, family: RouteFamily) {
+        // Registration and cleanup are control-plane churn, so rebuilding the family's sorted
+        // route set is intentionally simple. Benchmark high-churn, high-cardinality families
+        // before replacing this O(routes log routes) path with incremental bookkeeping.
         if let Some(ready_routes) = self.ready_routes.get_mut(&family) {
             ready_routes.clear();
         }

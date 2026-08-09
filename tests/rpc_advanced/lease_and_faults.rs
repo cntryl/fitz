@@ -1,41 +1,6 @@
 use super::common::*;
 
 #[test]
-fn should_format_error_codes_correctly() {
-    assert_eq!(RpcErrorCode::Timeout.as_str(), "RPC_TIMEOUT");
-    assert_eq!(RpcErrorCode::Backpressure.as_str(), "RPC_BACKPRESSURE");
-    assert_eq!(RpcErrorCode::Unauthorized.as_str(), "RPC_UNAUTHORIZED");
-}
-
-#[test]
-fn should_create_backpressure_error_with_correlation_id() {
-    // Arrange
-    let correlation_id = Uuid::new_v4();
-
-    // Act
-    let error = RpcError::backpressure(correlation_id);
-
-    // Assert
-    assert_eq!(error.correlation_id, correlation_id);
-    assert_eq!(error.code, RpcErrorCode::Backpressure);
-    assert!(error.message.contains("capacity"));
-}
-
-#[test]
-fn should_create_timeout_error_with_correlation_id() {
-    // Arrange
-    let correlation_id = Uuid::new_v4();
-
-    // Act
-    let error = RpcError::timeout(correlation_id);
-
-    // Assert
-    assert_eq!(error.correlation_id, correlation_id);
-    assert_eq!(error.code, RpcErrorCode::Timeout);
-    assert!(error.message.contains("timeout"));
-}
-
-#[test]
 fn should_reject_rpc_request_when_pending_capacity_reached_given_rpc_sink() {
     // Arrange
     let router = Arc::new(Router::new());

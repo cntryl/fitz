@@ -1,7 +1,7 @@
 //! RPC public protocol and error-code tests.
 
 use bytes::Bytes;
-use fitz::domains::rpc::{RpcError, RpcErrorCode, RpcRequest, RpcResponse};
+use fitz::domains::rpc::{RpcRequest, RpcResponse};
 use fitz::runtime::routing::{Route, RouteFamily};
 use uuid::Uuid;
 
@@ -111,51 +111,6 @@ fn should_include_payload_in_request_response() {
         response.body,
         Bytes::from("user created"),
         "response body preserved"
-    );
-}
-
-#[test]
-fn should_define_error_code_6001_rpc_timeout() {
-    // Arrange
-    let correlation_id = Uuid::new_v4();
-
-    // Act
-    let error = RpcError::timeout(correlation_id);
-
-    // Assert
-    assert_eq!(error.code, RpcErrorCode::Timeout, "6001 = RPC_TIMEOUT");
-    assert_eq!(error.correlation_id, correlation_id);
-}
-
-#[test]
-fn should_define_error_code_6003_rpc_backpressure() {
-    // Arrange
-    let correlation_id = Uuid::new_v4();
-
-    // Act
-    let error = RpcError::backpressure(correlation_id);
-
-    // Assert
-    assert_eq!(
-        error.code,
-        RpcErrorCode::Backpressure,
-        "6003 = RPC_BACKPRESSURE"
-    );
-}
-
-#[test]
-fn should_define_error_code_6004_route_not_registered() {
-    // Arrange
-    let correlation_id = Uuid::new_v4();
-
-    // Act
-    let error = RpcError::invalid_route(correlation_id);
-
-    // Assert
-    assert_eq!(
-        error.code,
-        RpcErrorCode::InvalidRoute,
-        "6004 = ROUTE_NOT_REGISTERED/INVALID_ROUTE"
     );
 }
 

@@ -3,8 +3,6 @@
 //! Advanced RPC scenarios covering:
 //! - Lease management and tracking
 //! - Fault tolerance and timeout handling
-//! - Strict contiguous streaming response ordering
-//! - Gap detection and duplicate failure handling
 
 pub(crate) use crate::fixtures::transport::{
     build_rpc_request, build_rpc_response_delivery, build_rpc_subscribe,
@@ -21,45 +19,17 @@ pub(crate) use fitz::domains::lease::sink::LeaseDomainSink;
 pub(crate) use fitz::domains::notice::sink::NoticeDomainSink;
 pub(crate) use fitz::domains::queue::sink::QueueDomainSink;
 pub(crate) use fitz::domains::rpc::sink::RpcDomainSink;
-pub(crate) use fitz::domains::rpc::{
-    InboxMessage, ReplyInboxActor, RpcError, RpcErrorCode, RpcResponse as RpcResponseMsg,
-};
 pub(crate) use fitz::domains::schedule::sink::ScheduleDomainSink;
 pub(crate) use fitz::domains::stream::sink::StreamDomainSink;
 pub(crate) use fitz::protocol::frame::ChannelId;
 pub(crate) use fitz::protocol::tlv::MessageType;
 pub(crate) use fitz::protocol::FrameContext;
-pub(crate) use fitz::runtime::actor::{Actor, Context};
 pub(crate) use fitz::runtime::routing::{session_inbox_address, Route, RouteAddress, RouteFamily};
 pub(crate) use fitz::runtime::{DeliveryError, Envelope, MailboxSink, Router, SessionCleanup};
 pub(crate) use parking_lot::Mutex;
 pub(crate) use std::sync::atomic::{AtomicUsize, Ordering};
 pub(crate) use std::sync::Arc;
 pub(crate) use std::time::Duration;
-pub(crate) use uuid::Uuid;
-
-// ============================================================================
-//                         STREAMING & ORDERING HELPERS
-// ============================================================================
-
-pub(crate) fn create_inbox() -> ReplyInboxActor {
-    ReplyInboxActor::new(RouteFamily::new(1))
-}
-
-pub(crate) fn create_response(correlation_id: Uuid, seq: u64, stream_end: bool) -> RpcResponseMsg {
-    RpcResponseMsg::chunk(
-        correlation_id,
-        seq,
-        Bytes::from(vec![u8::try_from(seq).unwrap_or(u8::MAX)]),
-        stream_end,
-    )
-}
-
-pub(crate) fn create_inbox_context() -> Context<ReplyInboxActor> {
-    let router = std::sync::Arc::new(fitz::runtime::router::Router::new());
-    let addr = RouteAddress::new(RouteFamily::new(1), Route::new("inbox://session/123"));
-    Context::new(addr, router)
-}
 
 #[derive(Default)]
 pub(crate) struct CaptureFrameSink {

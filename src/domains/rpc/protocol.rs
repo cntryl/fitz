@@ -179,12 +179,6 @@ pub enum RpcMessage {
     /// Contains `correlation_id` matching the original request. Responses that do
     /// not follow strict contiguous sequence order are terminally rejected.
     Response(RpcResponse),
-
-    /// Request delivery to worker (internal routing message)
-    ///
-    /// Sent from RPC routing state to a worker session to deliver a request.
-    /// The session encodes this as message type 302 (REQUEST) on the wire.
-    Deliver(RpcWorkItem),
 }
 
 impl RpcMessage {
@@ -211,11 +205,6 @@ impl RpcMessage {
     /// Create Response message
     pub fn response(resp: RpcResponse) -> Self {
         Self::Response(resp)
-    }
-
-    /// Create Deliver message
-    pub fn deliver(work_item: RpcWorkItem) -> Self {
-        Self::Deliver(work_item)
     }
 }
 
@@ -320,40 +309,4 @@ pub enum RpcClientForwardedResponseBody {
         code: u16,
         message: &'static str,
     },
-}
-
-/// Work item dispatched to a worker
-///
-/// Contains the minimal information needed for a worker to process a request.
-/// Created from `RpcRequest` before dispatching to the worker pool.
-#[derive(Debug, Clone)]
-pub struct RpcWorkItem {
-    /// Correlation ID for tracking
-    pub correlation_id: Uuid,
-
-    /// Target route (for worker context/logging)
-    pub route: Route,
-
-    /// Request payload
-    pub body: Bytes,
-}
-
-impl RpcWorkItem {
-    /// Create work item from request
-    pub fn from_request(req: &RpcRequest) -> Self {
-        Self {
-            correlation_id: req.correlation_id,
-            route: req.route.clone(),
-            body: req.body.clone(),
-        }
-    }
-
-    /// Create work item directly
-    pub fn new(correlation_id: Uuid, route: Route, body: Bytes) -> Self {
-        Self {
-            correlation_id,
-            route,
-            body,
-        }
-    }
 }
