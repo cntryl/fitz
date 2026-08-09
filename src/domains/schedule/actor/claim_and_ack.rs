@@ -1,8 +1,26 @@
 use super::model::{
     info, warn, Arc, Bytes, FastMap, FxBuildHasher, HashMap, Instant, PendingClaim,
     PendingScheduleFire, PersistedPendingFireClaim, Reverse, ScheduleAckDefinition, ScheduleActor,
-    ScheduleFireClaim, ScheduleListEntry, SchedulePendingFireClaimAck,
+    ScheduleFireClaim, ScheduleListEntry, SchedulePendingFireClaimAck, SchedulePersistence,
 };
+
+fn persist_claim_batch<P: SchedulePersistence>(
+    persistence: &P,
+    family_id: u64,
+    claims: &[ScheduleFireClaim<'_>],
+    write_options: cntryl_midge::WriteOptions,
+) -> Result<(), String> {
+    persistence.persist_claims(family_id, claims, write_options)
+}
+
+fn acknowledge_claim_batch<P: SchedulePersistence>(
+    persistence: &P,
+    family_id: u64,
+    claims: &[SchedulePendingFireClaimAck<'_>],
+    write_options: cntryl_midge::WriteOptions,
+) -> Result<(), String> {
+    persistence.acknowledge_claims(family_id, claims, write_options)
+}
 
 impl ScheduleActor {
     pub fn list_entries_v2(
@@ -91,85 +109,87 @@ impl ScheduleActor {
             .collect()
     }
 
-    pub(super) fn claim_due_fires_at(&mut self, now: Instant) -> Vec<PersistedPendingFireClaim> {
-        if now.duration_since(self.last_scan_time) < self.scan_dedup_window {
-            return Vec::new();
-        }
-        self.last_scan_time = now;
-
-        let now_ms = Self::instant_to_ms_at_with_clock(now, now, self.clock.as_ref());
-        let mut heap_popped = Vec::new();
+    fn pop_due_from_heap(&mut self, now_ms: u64) -> Vec<(u64, String)> {
+        let mut popped = Vec::new();
         while let Some(&(Reverse(fire_ms), _)) = self.ready_heap.peek() {
             if fire_ms > now_ms {
                 break;
             }
             if let Some((Reverse(fire_ms), route)) = self.ready_heap.pop() {
-                heap_popped.push((fire_ms, route));
+                popped.push((fire_ms, route));
             }
         }
+        popped
+    }
 
-        let mut to_reschedule = Vec::new();
-        for (fire_ms, route) in heap_popped {
+    fn recompute_next_fires(
+        &mut self,
+        popped: Vec<(u64, String)>,
+        now: Instant,
+    ) -> Vec<PendingScheduleFire> {
+        let mut rescheduled = Vec::new();
+        for (fire_ms, route) in popped {
             let Some(def) = self.schedules.get(&route) else {
                 continue;
             };
             if def.next_fire_ms != fire_ms {
                 continue;
             }
-
-            let next_fire_time = match def
+            let Ok(next_fire_time) = def
                 .parsed_cron
                 .try_next_fire_time_with_clock(now, self.clock.as_ref())
-            {
-                Ok(next_fire_time) => next_fire_time,
-                Err(error) => {
-                    warn!(
-                        route = %route,
-                        cron = %def.cron,
-                        error = %error,
-                        "Schedule next-fire calculation failed closed"
-                    );
-                    self.ready_heap.push((Reverse(fire_ms), route));
-                    continue;
-                }
+                .inspect_err(|error| {
+                    warn!(route = %route, cron = %def.cron, error = %error, "Schedule next-fire calculation failed closed");
+                })
+            else {
+                self.ready_heap.push((Reverse(fire_ms), route));
+                continue;
             };
-            let next_fire_ms =
-                Self::instant_to_ms_at_with_clock(next_fire_time, now, self.clock.as_ref());
-            to_reschedule.push(PendingScheduleFire {
+            rescheduled.push(PendingScheduleFire {
+                next_fire_ms: Self::instant_to_ms_at_with_clock(
+                    next_fire_time,
+                    now,
+                    self.clock.as_ref(),
+                ),
                 route,
                 next_fire_time,
-                next_fire_ms,
                 previous_fire_ms: fire_ms,
             });
         }
+        rescheduled
+    }
 
-        if to_reschedule.is_empty() {
-            return Vec::new();
-        }
-
-        let store_items = self.store_claims_for(&to_reschedule, now_ms);
-
-        if let Err(error) =
-            self.store
-                .claim_due_batch(self.family.as_u64(), &store_items, self.write_options)
-        {
-            warn!("Failed to persist schedule reschedule batch: {}", error);
-            for item in to_reschedule {
+    fn persist_claims(&mut self, claims: &[PendingScheduleFire], claimed_at_ms: u64) -> bool {
+        let store_items = self.store_claims_for(claims, claimed_at_ms);
+        if let Err(error) = persist_claim_batch(
+            &self.store,
+            self.family.as_u64(),
+            &store_items,
+            self.write_options,
+        ) {
+            warn!("Failed to persist schedule reschedule batch: {error}");
+            for item in claims {
                 self.ready_heap
-                    .push((Reverse(item.previous_fire_ms), item.route));
+                    .push((Reverse(item.previous_fire_ms), item.route.clone()));
             }
-            return Vec::new();
+            return false;
         }
+        true
+    }
 
-        let mut claimed = Vec::with_capacity(store_items.len());
-        for item in to_reschedule {
+    fn apply_claims_to_state(
+        &mut self,
+        claims: Vec<PendingScheduleFire>,
+        claimed_at_ms: u64,
+    ) -> Vec<PersistedPendingFireClaim> {
+        let mut claimed = Vec::with_capacity(claims.len());
+        for item in claims {
             let Some(def) = self.schedules.get_mut(&item.route) else {
                 continue;
             };
             if def.next_fire_ms != item.previous_fire_ms {
                 continue;
             }
-
             def.next_fire_time = item.next_fire_time;
             def.next_fire_ms = item.next_fire_ms;
             let payload = def.payload.clone();
@@ -180,14 +200,14 @@ impl ScheduleActor {
                 PendingClaim {
                     payload: payload.clone(),
                     delivery_mode: def.delivery_mode,
-                    claimed_at_ms: now_ms,
+                    claimed_at_ms,
                 },
             );
             claimed.push(PersistedPendingFireClaim {
                 route: item.route,
                 payload,
                 delivery_mode: def.delivery_mode,
-                claimed_at_ms: now_ms,
+                claimed_at_ms,
                 fire_ms: item.previous_fire_ms,
             });
             info!(
@@ -196,8 +216,27 @@ impl ScheduleActor {
                 item.next_fire_time
             );
         }
-
         claimed
+    }
+
+    pub(super) fn claim_due_fires_at(&mut self, now: Instant) -> Vec<PersistedPendingFireClaim> {
+        if now.duration_since(self.last_scan_time) < self.scan_dedup_window {
+            return Vec::new();
+        }
+        self.last_scan_time = now;
+
+        let now_ms = Self::instant_to_ms_at_with_clock(now, now, self.clock.as_ref());
+        let heap_popped = self.pop_due_from_heap(now_ms);
+        let to_reschedule = self.recompute_next_fires(heap_popped, now);
+
+        if to_reschedule.is_empty() {
+            return Vec::new();
+        }
+
+        if !self.persist_claims(&to_reschedule, now_ms) {
+            return Vec::new();
+        }
+        self.apply_claims_to_state(to_reschedule, now_ms)
     }
 
     pub(super) fn collect_due_occurrences_for_publish_at(
@@ -309,7 +348,8 @@ impl ScheduleActor {
             })
             .collect();
 
-        self.store.ack_pending_fire_claims(
+        acknowledge_claim_batch(
+            &self.store,
             self.family.as_u64(),
             &store_items,
             self.write_options,
@@ -372,6 +412,46 @@ impl ScheduleActor {
 mod tests {
     use super::*;
     use crate::runtime::routing::RouteFamily;
+
+    struct FailingPersistence;
+
+    impl SchedulePersistence for FailingPersistence {
+        fn persist_claims(
+            &self,
+            _family_id: u64,
+            _claims: &[ScheduleFireClaim<'_>],
+            _write_options: cntryl_midge::WriteOptions,
+        ) -> Result<(), String> {
+            Err("claim failed".to_string())
+        }
+
+        fn acknowledge_claims(
+            &self,
+            _family_id: u64,
+            _claims: &[SchedulePendingFireClaimAck<'_>],
+            _write_options: cntryl_midge::WriteOptions,
+        ) -> Result<(), String> {
+            Err("ack failed".to_string())
+        }
+    }
+
+    #[test]
+    fn should_surface_claim_error_from_fake_persistence() {
+        // Arrange
+        let persistence = FailingPersistence;
+        let claims = [];
+
+        // Act
+        let result = persist_claim_batch(
+            &persistence,
+            1,
+            &claims,
+            cntryl_midge::WriteOptions::buffered(),
+        );
+
+        // Assert
+        assert_eq!(result, Err("claim failed".to_string()));
+    }
 
     #[test]
     fn should_skip_claim_persistence_item_when_schedule_disappears() {

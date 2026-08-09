@@ -104,6 +104,49 @@ pub struct ScheduleStore {
     pub(super) fail_next_commit: Arc<std::sync::atomic::AtomicBool>,
 }
 
+/// Narrow persistence boundary used by schedule claim and acknowledgement policy.
+pub trait SchedulePersistence {
+    /// # Errors
+    ///
+    /// Returns an error when the claim batch cannot be committed.
+    fn persist_claims(
+        &self,
+        family_id: u64,
+        claims: &[ScheduleFireClaim<'_>],
+        write_options: WriteOptions,
+    ) -> Result<(), String>;
+
+    /// # Errors
+    ///
+    /// Returns an error when the acknowledgement batch cannot be committed.
+    fn acknowledge_claims(
+        &self,
+        family_id: u64,
+        claims: &[SchedulePendingFireClaimAck<'_>],
+        write_options: WriteOptions,
+    ) -> Result<(), String>;
+}
+
+impl SchedulePersistence for ScheduleStore {
+    fn persist_claims(
+        &self,
+        family_id: u64,
+        claims: &[ScheduleFireClaim<'_>],
+        write_options: WriteOptions,
+    ) -> Result<(), String> {
+        self.claim_due_batch(family_id, claims, write_options)
+    }
+
+    fn acknowledge_claims(
+        &self,
+        family_id: u64,
+        claims: &[SchedulePendingFireClaimAck<'_>],
+        write_options: WriteOptions,
+    ) -> Result<(), String> {
+        self.ack_pending_fire_claims(family_id, claims, write_options)
+    }
+}
+
 pub(super) type ScheduleRows = Vec<(Vec<u8>, Vec<u8>)>;
 
 #[derive(Debug, PartialEq, Eq)]

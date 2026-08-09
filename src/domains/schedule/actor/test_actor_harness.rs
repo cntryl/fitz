@@ -1,3 +1,5 @@
+//! Test-only generic actor adapter for direct Schedule actor tests.
+
 use super::model::{Actor, Context, ScheduleActor, ScheduleMessage};
 
 impl Actor for ScheduleActor {

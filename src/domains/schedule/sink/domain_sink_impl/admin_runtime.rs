@@ -1,6 +1,6 @@
 use super::super::model::{
-    now_epoch_ms, schedule_admin_snapshot_due, HashSet, Ordering, ScheduleDomainRuntime,
-    ScheduleLiveCounts,
+    now_epoch_ms, schedule_admin_snapshot_due, Ordering, ScheduleDomainRuntime, ScheduleLiveCounts,
+    EXECUTIONS_WINDOW_MS,
 };
 
 impl ScheduleDomainRuntime<'_> {
@@ -31,7 +31,7 @@ impl ScheduleDomainRuntime<'_> {
     /// Legacy metric name: counts acknowledged live handoffs over the last minute.
     pub fn executions_per_minute(&self) -> f64 {
         let now_ms = now_epoch_ms();
-        let cutoff = now_ms.saturating_sub(60_000);
+        let cutoff = now_ms.saturating_sub(EXECUTIONS_WINDOW_MS);
         let mut deque = self.core.recent_acknowledgement_ms.lock();
         while deque.front().copied().is_some_and(|t| t < cutoff) {
             deque.pop_front();
@@ -49,7 +49,10 @@ impl ScheduleDomainRuntime<'_> {
 
     pub fn pending_ack_retry_count(&self) -> usize {
         let pending_ack_retries = self.core.pending_ack_retries.lock();
-        pending_ack_retries.values().map(HashSet::len).sum()
+        pending_ack_retries
+            .values()
+            .map(std::collections::HashMap::len)
+            .sum()
     }
 
     pub fn admin_pending_claims(

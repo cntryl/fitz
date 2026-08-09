@@ -125,7 +125,7 @@ impl ScheduleActor {
             list_cache: None,
             write_options,
             last_scan_time: now,
-            scan_dedup_window: std::time::Duration::from_millis(10),
+            scan_dedup_window: super::SCAN_DEDUP_WINDOW,
             ready_heap: BinaryHeap::new(),
             pending_claimed_occurrences: BTreeMap::new(),
             clock,

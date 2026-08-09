@@ -9,6 +9,7 @@ pub(super) use std::time::Instant;
 
 #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
 pub(super) const SCHEDULE_ADMIN_SNAPSHOT_INTERVAL_US: u64 = 250_000;
+pub(super) const EXECUTIONS_WINDOW_MS: u64 = 60_000;
 
 pub(super) fn now_epoch_ms() -> u64 {
     u64::try_from(
@@ -21,6 +22,15 @@ pub(super) fn now_epoch_ms() -> u64 {
 }
 
 pub(super) type PendingFireKey = (u64, String);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PendingFireState {
+    Claimed,
+    HandedOff,
+    Acknowledged,
+}
+
+pub(super) type PendingFireStates = HashMap<PendingFireKey, PendingFireState>;
 
 #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
 pub(super) fn schedule_admin_snapshot_due(
@@ -152,7 +162,7 @@ pub(super) struct ScheduleDomainCore {
     pub(super) ack_failures: AtomicU64,
     /// Pending fire claims already handed off to the live publish path in this
     /// broker process but still waiting for durable acknowledgement retry.
-    pub(super) pending_ack_retries: Mutex<HashMap<u64, HashSet<PendingFireKey>>>,
+    pub(super) pending_ack_retries: Mutex<HashMap<u64, PendingFireStates>>,
     /// Rolling window of acknowledged handoff timestamps for executions-per-minute.
     pub(super) recent_acknowledgement_ms: Mutex<VecDeque<u64>>,
     /// Write options for schedule persistence.
@@ -165,6 +175,8 @@ pub(super) struct ScheduleDomainState {
     pub(super) active: AtomicBool,
 }
 
+/// Runtime body methods intentionally share names with their sink wrapper methods:
+/// the wrapper crosses the mailbox, while the runtime body performs the work.
 pub(super) struct ScheduleDomainRuntime<'a> {
     pub(super) core: &'a ScheduleDomainCore,
     pub(super) active: &'a AtomicBool,

@@ -8,7 +8,8 @@ mod tests;
 
 pub use model::{
     PersistedPendingFireClaim, PersistedSchedule, ScheduleAckDefinition, ScheduleBatchInsert,
-    ScheduleFireClaim, ScheduleInsert, SchedulePendingFireClaimAck, ScheduleStore,
+    ScheduleFireClaim, ScheduleInsert, SchedulePendingFireClaimAck, SchedulePersistence,
+    ScheduleStore,
 };
 
 #[cfg(test)]

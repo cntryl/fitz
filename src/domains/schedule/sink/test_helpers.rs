@@ -105,6 +105,9 @@ impl ScheduleDomainSink {
             .lock()
             .entry(family_id)
             .or_default()
-            .insert((fire_id, route.to_string()));
+            .insert(
+                (fire_id, route.to_string()),
+                super::model::PendingFireState::HandedOff,
+            );
     }
 }
