@@ -36,7 +36,7 @@ base64 = "0.23.1"
 brotli = "8"
 bytes = "1.12"
 chrono = { version = "0.4", features = ["serde"] }
-cntryl-lexkey = { git = "https://github.com/cntryl/lexkey-rs", rev = "9e75be255d73261b88dfd1d273a55fb9eb177e40" }
+cntryl-lexkey = { git = "https://github.com/cntryl/lexkey-rs", rev = "40cb5e21" }
 cntryl-midge = { git = "https://github.com/cntryl/midge", rev = "81a8cb1" }
 crossbeam-channel = "0.5"
 dashmap = "6.2.1"

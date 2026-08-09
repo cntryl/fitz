@@ -303,7 +303,7 @@ checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
 [[package]]
 name = "cntryl-lexkey"
 version = "0.1.0"
-source = "git+https://github.com/cntryl/lexkey-rs?rev=9e75be255d73261b88dfd1d273a55fb9eb177e40#9e75be255d73261b88dfd1d273a55fb9eb177e40"
+source = "git+https://github.com/cntryl/lexkey-rs?rev=40cb5e21#40cb5e21cbafba763b7931a04f6c6ae2fc5a67a3"
 dependencies = [
  "bytes",
  "hex",
