@@ -404,7 +404,7 @@ impl KvDomainRuntime<'_> {
         use crate::domains::kv::{KvError, KvResponse};
 
         let lock_key = KvResourceLockKey::new(family_id, realm, area, resource);
-        let held_by_same_session = self.active_transactions_for_resource(&lock_key) > 0;
+        let held_by_same_session = self.session_holds_resource_write_lock(session_id, &lock_key);
         if self
             .conflicting_session_for_resource(session_id, &lock_key)
             .is_some()
@@ -417,12 +417,20 @@ impl KvDomainRuntime<'_> {
                 None,
             );
         }
+        if held_by_same_session {
+            return (
+                KvResponse::Error {
+                    error: KvError::Conflict(
+                        "resource already has a read-write transaction for this session"
+                            .to_string(),
+                    ),
+                },
+                KvAdminTransactionUpdate::None,
+                None,
+            );
+        }
 
-        let log_context = if held_by_same_session {
-            "BEGIN (ReadWrite)"
-        } else {
-            "BEGIN (ReadWrite, acquiring lock)"
-        };
+        let log_context = "BEGIN (ReadWrite, acquiring lock)";
         let mut actor = self.actor_for_session(session_id, "begin");
         tracing::trace!(
             domain = "kv",
