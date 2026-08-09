@@ -72,13 +72,10 @@ impl ScheduleActor {
     ) -> Vec<ScheduleFireClaim<'a>> {
         to_reschedule
             .iter()
-            .map(|item| {
-                let schedule = self
-                    .schedules
-                    .get(&item.route)
-                    .expect("due schedule should still exist before persistence");
+            .filter_map(|item| {
+                let schedule = self.schedules.get(&item.route)?;
 
-                ScheduleFireClaim {
+                Some(ScheduleFireClaim {
                     route: &item.route,
                     route_parts: &schedule.route_parts,
                     cron: &schedule.cron,
@@ -89,7 +86,7 @@ impl ScheduleActor {
                     previous_fire_ms: item.previous_fire_ms,
                     last_fire_ms: schedule.last_fire_ms,
                     executions_total: schedule.executions_total,
-                }
+                })
             })
             .collect()
     }
@@ -281,6 +278,9 @@ impl ScheduleActor {
         let acknowledged_at_ms = self.clock.now_epoch_ms();
         let mut acknowledgement_counts: FastMap<&str, u64> =
             HashMap::with_capacity_and_hasher(handed_off_occurrences.len(), FxBuildHasher);
+        // `handed_off_occurrences` comes from the pending-claim BTreeMap in ascending
+        // `(fire_ms, route)` order. Preserve that order: each per-route running count below must
+        // describe the number of earlier occurrences included in this same persisted batch.
         let store_items: Vec<_> = handed_off_occurrences
             .iter()
             .map(|(fire_ms, route)| {
@@ -365,5 +365,33 @@ impl ScheduleActor {
 
     pub(crate) fn overdue_normalization_count(&self) -> u64 {
         self.overdue_normalizations
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::routing::RouteFamily;
+
+    #[test]
+    fn should_skip_claim_persistence_item_when_schedule_disappears() {
+        // Arrange
+        let actor = ScheduleActor::new(
+            RouteFamily::new(1),
+            crate::testkit::create_test_engine_with_cfs(vec![1]),
+            cntryl_midge::WriteOptions::buffered(),
+        );
+        let pending = [PendingScheduleFire {
+            route: "schedule://acme/jobs/missing/run".to_string(),
+            next_fire_time: Instant::now(),
+            next_fire_ms: 2,
+            previous_fire_ms: 1,
+        }];
+
+        // Act
+        let claims = actor.store_claims_for(&pending, 1);
+
+        // Assert
+        assert!(claims.is_empty());
     }
 }
