@@ -8,7 +8,7 @@ fn register(
     max_concurrent: usize,
 ) -> RouteAddress {
     let addr = RouteAddress::new(family, Route::new(pattern));
-    state.register_worker(RpcWorker::new(
+    state.register_registration(RpcWorker::new(
         addr.clone(),
         session_inbox_address(family, session_id),
         session_id,
@@ -438,7 +438,7 @@ fn should_remove_only_owning_overlap_registration_and_pending_call() {
     );
 
     // Act
-    let cleanup = state.unregister_worker(&exact, 10);
+    let cleanup = state.unregister_registration(&exact, 10);
 
     // Assert
     assert_eq!(cleanup.removed_workers, 1);
@@ -567,7 +567,7 @@ fn should_cap_wildcard_registrations_per_session() {
     );
 
     // Act
-    let result = state.register_worker(overflow);
+    let result = state.register_registration(overflow);
 
     // Assert
     assert!(matches!(result, RpcWorkerRegistration::WildcardLimit));
@@ -583,7 +583,7 @@ fn should_snapshot_unused_wildcard_registration_once() {
     let router = Arc::new(Router::new());
     let admin = crate::control::admin::read_model::AdminReadModel::new();
     let sink = RpcDomainSink::new(router, admin.clone());
-    sink.register_worker_for_tests(RpcWorker::with_stats(
+    sink.register_registration_for_tests(RpcWorker::with_stats(
         RouteAddress::new(RouteFamily::new(1), Route::new("rpc://bench/system/*/*")),
         session_inbox_address(RouteFamily::new(1), 10),
         10,
@@ -609,7 +609,7 @@ fn should_aggregate_wildcard_completion_statistics_across_routes() {
     let router = Arc::new(Router::new());
     let admin = crate::control::admin::read_model::AdminReadModel::new();
     let sink = RpcDomainSink::new(router, admin.clone());
-    sink.register_worker_for_tests(RpcWorker::with_stats(
+    sink.register_registration_for_tests(RpcWorker::with_stats(
         RouteAddress::new(family, Route::new("rpc://bench/system/*/*")),
         session_inbox_address(family, 10),
         10,

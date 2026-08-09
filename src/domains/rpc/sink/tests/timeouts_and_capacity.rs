@@ -83,7 +83,7 @@ pub(super) fn should_forward_timeout_error_given_expired_pending_request() {
     });
     router.register(request_source.clone(), reply_sink as Arc<dyn MailboxSink>);
     router.register(worker_source.clone(), worker_sink as Arc<dyn MailboxSink>);
-    sink.register_worker_for_tests(test_rpc_worker(family, &request_route, 42));
+    sink.register_registration_for_tests(test_rpc_worker(family, &request_route, 42));
     let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
     let (request_msg_type, request_payload) =
         crate::benchkit::extract_single_tlv_field(&request_frame);
@@ -137,7 +137,7 @@ pub(super) fn should_forward_timeout_error_given_expired_queued_request() {
         }) as Arc<dyn MailboxSink>,
     );
     let correlation_id = uuid::Uuid::new_v4();
-    sink.register_worker_for_tests(test_rpc_worker(family, &route, 42));
+    sink.register_registration_for_tests(test_rpc_worker(family, &route, 42));
     sink.queue_request_for_tests(
         correlation_id,
         RpcQueuedRequest::from_request(
@@ -196,7 +196,7 @@ pub(super) fn should_drop_timeout_error_given_requester_cleanup_before_expiratio
     });
     router.register(request_source.clone(), reply_sink as Arc<dyn MailboxSink>);
     router.register(worker_source.clone(), worker_sink as Arc<dyn MailboxSink>);
-    sink.register_worker_for_tests(test_rpc_worker(family, &request_route, 42));
+    sink.register_registration_for_tests(test_rpc_worker(family, &request_route, 42));
     let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
     let (request_msg_type, request_payload) =
         crate::benchkit::extract_single_tlv_field(&request_frame);
@@ -255,7 +255,7 @@ pub(super) fn should_reject_rpc_request_when_pending_capacity_reached() {
     });
     router.register(source_addr.clone(), reply_sink as Arc<dyn MailboxSink>);
     router.register(worker_inbox_addr, worker_sink as Arc<dyn MailboxSink>);
-    sink.register_worker_for_tests(test_rpc_worker(family, &request_route, 42));
+    sink.register_registration_for_tests(test_rpc_worker(family, &request_route, 42));
     for _ in 0..RPC_MAX_PENDING_REQUESTS {
         sink.track_pending_request_for_tests(
             uuid::Uuid::new_v4(),

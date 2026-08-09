@@ -570,6 +570,7 @@ fn should_keep_rpc_design_seams_explicit() {
     let requests = read_source_file(&rpc.join("state_model/requests.rs"));
     let route_state = read_source_file(&rpc.join("state_model/route_state.rs"));
     let state = read_source_file(&rpc.join("state_model/state.rs"));
+    let worker = read_source_file(&rpc.join("state_model/worker.rs"));
     let registration_table = read_source_file(&rpc.join("state_model/registration_table.rs"));
     let ready_queue = read_source_file(&rpc.join("state_model/ready_queue.rs"));
     let response_forwarder = read_source_file(&rpc.join("response_forwarder.rs"));
@@ -619,6 +620,31 @@ fn should_keep_rpc_design_seams_explicit() {
         (
             !response_forwarder.contains("struct RpcResponseForwarder"),
             "response forwarder",
+        ),
+        (
+            !worker.contains("struct RegistrationCredit"),
+            "registration credit accounting",
+        ),
+        (
+            [
+                "/// Selects the next available registration",
+                "/// Claims one registration credit",
+                "/// Reserves one unit of global pending capacity",
+                "/// Coordinates duplicate, capacity, fairness, and tracking policy",
+            ]
+            .iter()
+            .any(|contract| !state.contains(contract)),
+            "RPC state policy documentation",
+        ),
+        (
+            [
+                "fn register_worker(",
+                "fn unregister_worker(",
+                "fn release_worker_for_",
+            ]
+            .iter()
+            .any(|mixed_name| state.contains(mixed_name)),
+            "registration vocabulary",
         ),
     ]
     .into_iter()
