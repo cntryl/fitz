@@ -188,7 +188,7 @@ impl RpcDomainRuntime<'_> {
             return Ok(());
         };
 
-        if !Self::valid_rpc_message(envelope, meta, &rpc_msg) {
+        if !Self::valid_rpc_message(meta, &rpc_msg) {
             let response_meta = Self::response_meta_for_source(envelope, meta);
             self.route_rpc_client_response(
                 envelope,
@@ -229,13 +229,6 @@ impl RpcDomainRuntime<'_> {
             }
             RpcMessage::Request(req) => self.handle_request_message(envelope, meta, req),
             RpcMessage::Response(resp) => self.handle_response_message(envelope, meta, &resp),
-            RpcMessage::Deliver(_) => (
-                Some(RpcClientResponseBody::Error(
-                    "Deliver not valid client message".to_string(),
-                )),
-                None,
-                true,
-            ),
         }
     }
 
@@ -760,7 +753,6 @@ impl RpcDomainRuntime<'_> {
     }
 
     fn valid_rpc_message(
-        envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         message: &crate::domains::rpc::protocol::RpcMessage,
     ) -> bool {
@@ -773,10 +765,6 @@ impl RpcDomainRuntime<'_> {
             }
             RpcMessage::Request(request) => request.family_id == meta.route_family,
             RpcMessage::Response(_) => true,
-            RpcMessage::Deliver(_) => {
-                meta.channel == crate::runtime::ClientChannel::Internal
-                    && envelope.source().is_none()
-            }
         }
     }
 

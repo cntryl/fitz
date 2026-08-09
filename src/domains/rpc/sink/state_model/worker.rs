@@ -47,6 +47,10 @@ impl RpcWorker {
         session_id: u64,
         max_concurrent: usize,
     ) -> Self {
+        debug_assert!(
+            (1..=1024).contains(&max_concurrent),
+            "RPC worker max_concurrent must be in 1..=1024"
+        );
         let pattern = Pattern::new(addr.route().as_str());
         Self {
             registration_id: 0,
@@ -155,5 +159,24 @@ impl RpcWorker {
 
         let average_latency_us = self.total_latency_us / self.requests_handled;
         std::time::Duration::from_micros(average_latency_us).as_secs_f64() * 1000.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "RPC worker max_concurrent must be in 1..=1024")]
+    fn should_reject_zero_max_concurrent_at_domain_boundary() {
+        // Arrange
+        let family = RouteFamily::new(1);
+        let worker = RouteAddress::new(family, Route::new("rpc://acme/jobs/run"));
+        let inbox = RouteAddress::new(family, Route::new("inbox://session/1"));
+
+        // Act
+        let _worker = RpcWorker::new(worker, inbox, 1, 0);
+
+        // Assert: construction must panic before an invalid worker can enter domain state.
     }
 }

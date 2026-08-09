@@ -52,19 +52,14 @@
 //! - `rpc://acme/inventory/item/update`
 //! - `rpc://acme/reports/monthly/generate`
 
-pub mod errors;
-pub mod events;
 pub mod metrics;
 pub mod projection;
 pub mod protocol;
-pub mod reply_inbox;
 pub mod sink;
 
-pub use errors::{RpcError, RpcErrorCode};
 pub use metrics::RpcMetrics;
 pub use protocol::{
     RpcClientForwardedResponse, RpcClientForwardedResponseBody, RpcClientRequest,
     RpcClientResponse, RpcClientResponseBody, RpcDecodeError, RpcMessage, RpcRequest, RpcResponse,
-    RpcWorkItem, RpcWorkerRequestDelivery,
+    RpcWorkerRequestDelivery,
 };
-pub use reply_inbox::{InboxMessage, ReplyInboxActor};

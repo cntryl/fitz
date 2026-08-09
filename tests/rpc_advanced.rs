@@ -5,5 +5,4 @@ mod fixtures;
 mod rpc_advanced {
     mod common;
     mod lease_and_faults;
-    mod streaming_order;
 }

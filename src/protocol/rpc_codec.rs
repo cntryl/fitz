@@ -422,35 +422,9 @@ fn parse_rpc_response(dec: &mut PayloadDecoder) -> Result<RpcMessage, RpcDecodeE
 
 // ===== Encoders for Outbound Messages =====
 
-/// Encode RPC REQUEST delivery to worker (message type 302)
-///
-/// Wire format: `[uuid16 correlation_id][string route][bytes body]`
-///
-/// This encodes the `RpcWorkItem` to be sent from route actor to worker session actor.
-pub fn encode_request_delivery(work_item: &crate::dispatch::wire::rpc::RpcWorkItem) -> Vec<u8> {
-    let capacity = UUID_BYTES_LEN
-        + encoded_string_len(work_item.route.as_str())
-        + encoded_bytes_len(work_item.body.len());
-    let mut enc = PayloadEncoder::with_capacity(capacity);
-    encode_request_delivery_into(work_item, &mut enc)
-}
-
 /// Encode an RPC request payload directly from `RpcRequest` for dispatch to a worker.
 pub fn encode_request_into(request: &RpcRequest, enc: &mut PayloadEncoder) -> Vec<u8> {
     encode_request_fields_into(&request.correlation_id, &request.route, &request.body, enc)
-}
-
-/// Encode RPC REQUEST delivery using a reusable payload encoder.
-pub fn encode_request_delivery_into(
-    work_item: &crate::dispatch::wire::rpc::RpcWorkItem,
-    enc: &mut PayloadEncoder,
-) -> Vec<u8> {
-    encode_request_fields_into(
-        &work_item.correlation_id,
-        &work_item.route,
-        &work_item.body,
-        enc,
-    )
 }
 
 fn encode_request_fields_into(
