@@ -47,7 +47,7 @@ fn should_remove_only_matching_pending_given_worker_unsubscribe() {
     let cleanup = state.unregister_registration(&removed_worker_addr, 42);
 
     // Assert
-    assert_eq!(cleanup.removed_workers, 1);
+    assert_eq!(cleanup.removed_registrations, 1);
     assert_eq!(cleanup.removed_pending, 1);
     assert_eq!(cleanup.pending_len, 1);
     assert_eq!(cleanup.disconnect_deliveries.len(), 1);
@@ -688,8 +688,8 @@ fn should_remove_pending_request_on_stream_end_given_rpc_pending_table() {
             route: worker_addr.route().clone(),
             caller_session_id: 42,
             caller_inbox_addr: caller_inbox_addr.clone(),
-            worker_addr: worker_addr.clone(),
-            worker_session_id: 77,
+            registration_addr: worker_addr.clone(),
+            registration_session_id: 77,
             registration_id: 0,
             submitted_at: test_rpc_timestamp(),
             submitted_at_instant: Instant::now(),

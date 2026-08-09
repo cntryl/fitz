@@ -331,7 +331,7 @@ fn should_wake_queued_route_when_new_registration_adds_credit() {
 
     // Assert
     assert_eq!(dispatch.request.correlation_id, queued_id);
-    assert_eq!(dispatch.worker.session_id, 11);
+    assert_eq!(dispatch.registration.session_id, 11);
 }
 
 #[test]
@@ -371,10 +371,10 @@ fn should_keep_exact_and_wildcard_registration_credit_independent() {
 
     // Assert
     assert!(
-        matches!(first, RpcRequestDispatch::Immediate { worker, .. } if worker.session_id == 10)
+        matches!(first, RpcRequestDispatch::Immediate { registration, .. } if registration.session_id == 10)
     );
     assert!(
-        matches!(second, RpcRequestDispatch::Immediate { worker, .. } if worker.session_id == 11)
+        matches!(second, RpcRequestDispatch::Immediate { registration, .. } if registration.session_id == 11)
     );
     assert!(matches!(third, RpcRequestDispatch::Queued { .. }));
 }
@@ -441,7 +441,7 @@ fn should_remove_only_owning_overlap_registration_and_pending_call() {
     let cleanup = state.unregister_registration(&exact, 10);
 
     // Assert
-    assert_eq!(cleanup.removed_workers, 1);
+    assert_eq!(cleanup.removed_registrations, 1);
     assert_eq!(cleanup.removed_pending, 1);
     assert_eq!(state.registration_count(), 1);
     assert_eq!(state.pending.len(), 1);
@@ -476,7 +476,7 @@ fn should_remove_only_disconnected_sessions_overlap_registration() {
     let cleanup = state.cleanup_session(10);
 
     // Assert
-    assert_eq!(cleanup.removed_workers, 1);
+    assert_eq!(cleanup.removed_registrations, 1);
     assert_eq!(cleanup.removed_pending, 1);
     assert_eq!(state.registration_count(), 1);
     assert_eq!(state.pending.len(), 1);

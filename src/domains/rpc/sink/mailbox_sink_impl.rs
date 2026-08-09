@@ -327,7 +327,7 @@ impl RpcDomainRuntime<'_> {
             domain = "rpc",
             worker = worker_addr.route().as_str(),
             session = meta.session_id,
-            removed_workers = cleanup_result.removed_workers,
+            removed_workers = cleanup_result.removed_registrations,
             removed_pending = cleanup_result.removed_pending,
             "Worker unregistered"
         );
@@ -388,11 +388,15 @@ impl RpcDomainRuntime<'_> {
             ),
             super::state_model::RpcRequestDispatch::Immediate {
                 request,
-                worker,
+                registration,
                 live_request_count,
-            } => {
-                self.forward_immediate_request(envelope, meta, request, &worker, live_request_count)
-            }
+            } => self.forward_immediate_request(
+                envelope,
+                meta,
+                request,
+                &registration,
+                live_request_count,
+            ),
         }
     }
 

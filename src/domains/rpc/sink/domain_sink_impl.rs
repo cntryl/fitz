@@ -481,10 +481,10 @@ impl RpcDomainRuntime<'_> {
 
         self.gauge_set("rpc_pending_requests", cleanup_result.pending_len as u64);
         self.release_global_pending(cleanup_result.removed_pending);
-        if cleanup_result.removed_workers > 0 {
+        if cleanup_result.removed_registrations > 0 {
             self.counter_add(
                 "rpc_cleanup_workers_removed_total",
-                cleanup_result.removed_workers as u64,
+                cleanup_result.removed_registrations as u64,
             );
         }
         if cleanup_result.detached_callers > 0 {
@@ -499,7 +499,7 @@ impl RpcDomainRuntime<'_> {
                 cleanup_result.removed_pending as u64,
             );
         }
-        if cleanup_result.removed_workers > 0
+        if cleanup_result.removed_registrations > 0
             || cleanup_result.detached_callers > 0
             || cleanup_result.removed_pending > 0
         {
@@ -510,7 +510,7 @@ impl RpcDomainRuntime<'_> {
         tracing::debug!(
             domain = "rpc",
             session_id,
-            removed_workers = cleanup_result.removed_workers,
+            removed_workers = cleanup_result.removed_registrations,
             detached_callers = cleanup_result.detached_callers,
             removed_pending = cleanup_result.removed_pending,
             pending_len = cleanup_result.pending_len,
@@ -532,10 +532,10 @@ impl RpcDomainRuntime<'_> {
 
         self.gauge_set("rpc_pending_requests", cleanup_result.pending_len as u64);
         self.release_global_pending(cleanup_result.removed_pending);
-        if cleanup_result.removed_workers > 0 {
+        if cleanup_result.removed_registrations > 0 {
             self.counter_add(
                 "rpc_cleanup_workers_removed_total",
-                cleanup_result.removed_workers as u64,
+                cleanup_result.removed_registrations as u64,
             );
         }
         if cleanup_result.removed_pending > 0 {
@@ -544,7 +544,7 @@ impl RpcDomainRuntime<'_> {
                 cleanup_result.removed_pending as u64,
             );
         }
-        if cleanup_result.removed_workers > 0 || cleanup_result.removed_pending > 0 {
+        if cleanup_result.removed_registrations > 0 || cleanup_result.removed_pending > 0 {
             self.schedule_admin_snapshot(false);
         }
         self.refresh_metrics_gauges();
@@ -553,7 +553,7 @@ impl RpcDomainRuntime<'_> {
             domain = "rpc",
             worker = worker_addr.route().as_str(),
             session_id,
-            removed_workers = cleanup_result.removed_workers,
+            removed_workers = cleanup_result.removed_registrations,
             removed_pending = cleanup_result.removed_pending,
             pending_len = cleanup_result.pending_len,
             "RPC worker cleanup applied"
@@ -664,7 +664,7 @@ impl RpcDomainRuntime<'_> {
     pub(super) fn forward_queued_dispatch(&self, dispatch: &RpcQueuedDispatch) {
         self.gauge_set("rpc_pending_requests", dispatch.live_request_count as u64);
 
-        match self.forward_request_to_worker(&dispatch.request, &dispatch.worker) {
+        match self.forward_request_to_worker(&dispatch.request, &dispatch.registration) {
             Ok(()) => {
                 self.counter_inc("rpc_requests_dispatched_total");
             }
@@ -678,7 +678,7 @@ impl RpcDomainRuntime<'_> {
                 ),
             ) => {
                 self.counter_inc("rpc_request_forward_errors_total");
-                let cleanup_result = self.apply_session_cleanup(dispatch.worker.session_id);
+                let cleanup_result = self.apply_session_cleanup(dispatch.registration.session_id);
                 self.forward_worker_disconnect_errors(cleanup_result.disconnect_deliveries);
             }
             Err(crate::runtime::RouteError::DeliveryFailed(
@@ -688,7 +688,7 @@ impl RpcDomainRuntime<'_> {
                 self.counter_inc("rpc_request_forward_errors_total");
                 self.counter_inc("rpc_backpressure_rejects_total");
                 if let Some((pending, pending_len)) = self.remove_pending_request_for_family(
-                    *dispatch.worker.addr.family(),
+                    *dispatch.registration.addr.family(),
                     &dispatch.request.correlation_id,
                 ) {
                     if let Some(caller_inbox_addr) = pending.dispatch_info.caller_inbox_addr {

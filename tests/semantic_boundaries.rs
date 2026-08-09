@@ -636,16 +636,6 @@ fn should_keep_rpc_design_seams_explicit() {
             .any(|contract| !state.contains(contract)),
             "RPC state policy documentation",
         ),
-        (
-            [
-                "fn register_worker(",
-                "fn unregister_worker(",
-                "fn release_worker_for_",
-            ]
-            .iter()
-            .any(|mixed_name| state.contains(mixed_name)),
-            "registration vocabulary",
-        ),
     ]
     .into_iter()
     .filter_map(|(missing, label)| missing.then_some(label))
@@ -653,6 +643,37 @@ fn should_keep_rpc_design_seams_explicit() {
 
     // Assert
     assert!(violations.is_empty(), "missing RPC seams: {violations:?}");
+}
+
+#[test]
+fn should_use_registration_vocabulary_throughout_rpc_state_model_source() {
+    // Arrange
+    let state = read_source_file(&repo_root().join("src/domains/rpc/sink/state_model/state.rs"));
+    let registration_table = read_source_file(
+        &repo_root().join("src/domains/rpc/sink/state_model/registration_table.rs"),
+    );
+
+    // Act
+    // Scan comments and literals too: these internal model files should use one vocabulary.
+    let mixed_terms = [
+        ("state.rs", state),
+        ("registration_table.rs", registration_table),
+    ]
+    .into_iter()
+    .flat_map(|(file, source)| {
+        source
+            .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+            .filter(|identifier| identifier.contains("worker"))
+            .map(move |identifier| format!("{file}:{identifier}"))
+            .collect::<Vec<_>>()
+    })
+    .collect::<BTreeSet<_>>();
+
+    // Assert
+    assert!(
+        mixed_terms.is_empty(),
+        "RPC state model source must use registration vocabulary: {mixed_terms:?}"
+    );
 }
 
 #[test]
