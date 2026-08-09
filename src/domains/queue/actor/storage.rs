@@ -1,4 +1,6 @@
-use super::{Bytes, DlqReason, Instant, MessageId, QueueActor, QueueRecord, QueueState};
+use super::{
+    Bytes, DlqReason, Instant, MessageId, QueueActor, QueueCommit, QueueRecord, QueueState,
+};
 #[cfg(test)]
 use super::{FAIL_NEXT_ACK_COMMIT, FAIL_NEXT_REDELIVERY_COMMIT};
 use crate::observability as obs;
@@ -26,14 +28,7 @@ impl QueueActor {
         let inflight_token = u64::from_le_bytes(bytes[54..62].try_into().unwrap());
         let inflight_expires_at_ms = u64::from_le_bytes(bytes[62..70].try_into().unwrap());
         let dead_lettered_at_ms = u64::from_le_bytes(bytes[70..78].try_into().unwrap());
-        let dlq_reason = match bytes[78] {
-            0 => None,
-            1 => Some(DlqReason::MaxAttemptsExceeded),
-            2 => Some(DlqReason::HydrationFailed),
-            3 => Some(DlqReason::DeliveryAttemptsExhausted),
-            4 => Some(DlqReason::InflightEpochExhausted),
-            other => return Err(format!("Unknown DLQ reason {other}")),
-        };
+        let dlq_reason = DlqReason::from_wire_code(bytes[78])?;
 
         Ok(QueueRecord {
             body: None,
@@ -227,13 +222,18 @@ impl QueueActor {
         }
     }
 
-    pub(super) fn commit_ack_transaction(
+    pub(super) fn commit_transaction(
         txn: cntryl_midge::Transaction,
         write_options: cntryl_midge::WriteOptions,
+        commit: QueueCommit,
     ) -> Result<(), String> {
         #[cfg(test)]
         {
-            let should_fail = FAIL_NEXT_ACK_COMMIT.with(|cell| {
+            let failpoint = match commit {
+                QueueCommit::Ack => &FAIL_NEXT_ACK_COMMIT,
+                QueueCommit::Redelivery => &FAIL_NEXT_REDELIVERY_COMMIT,
+            };
+            let should_fail = failpoint.with(|cell| {
                 let should_fail = cell.get();
                 if should_fail {
                     cell.set(false);
@@ -242,31 +242,16 @@ impl QueueActor {
             });
 
             if should_fail {
-                return Err("Injected queue ack commit failure".to_string());
+                let operation = match commit {
+                    QueueCommit::Ack => "ack",
+                    QueueCommit::Redelivery => "redelivery",
+                };
+                return Err(format!("Injected queue {operation} commit failure"));
             }
         }
 
-        txn.commit(write_options).map_err(|e| format!("{e:?}"))
-    }
-
-    pub(super) fn commit_redelivery_transaction(
-        txn: cntryl_midge::Transaction,
-        write_options: cntryl_midge::WriteOptions,
-    ) -> Result<(), String> {
-        #[cfg(test)]
-        {
-            let should_fail = FAIL_NEXT_REDELIVERY_COMMIT.with(|cell| {
-                let should_fail = cell.get();
-                if should_fail {
-                    cell.set(false);
-                }
-                should_fail
-            });
-
-            if should_fail {
-                return Err("Injected queue redelivery commit failure".to_string());
-            }
-        }
+        #[cfg(not(test))]
+        let _ = commit;
 
         txn.commit(write_options).map_err(|e| format!("{e:?}"))
     }

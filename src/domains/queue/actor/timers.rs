@@ -1,6 +1,9 @@
+//! Inflight-expiration and redelivery timer processing.
+
 use super::{
-    DlqReason, Duration, Inflight, InflightExpiry, Instant, MessageId, QueueActor, QueueRecord,
-    QueueState, Reverse,
+    dlq::{decide_redelivery, RedeliveryOutcome},
+    Inflight, InflightExpiry, Instant, MessageId, QueueActor, QueueCommit, QueueRecord, Reverse,
+    QUEUE_IDLE_HORIZON, QUEUE_STORAGE_RETRY_BACKOFF,
 };
 use crate::observability as obs;
 
@@ -25,11 +28,12 @@ impl QueueActor {
             return false;
         };
         record.attempts = next_attempts;
+        let outcome = decide_redelivery(self.max_attempts, &record, &inflight);
         let Some(txn) = self.begin_redelivery_transaction(id, &inflight) else {
             return false;
         };
-        if self.should_move_to_dlq(record.attempts) {
-            return self.handle_redelivery_dlq(id, &inflight, &mut record, txn, now_epoch_ms);
+        if outcome == RedeliveryOutcome::DeadLetter {
+            return self.persist_dlq_transition(id, &inflight, &mut record, txn, now_epoch_ms);
         }
 
         if !self.persist_redelivery_attempt(id, &inflight, &record, txn) {
@@ -67,13 +71,13 @@ impl QueueActor {
         }
 
         if self.timers.is_empty() {
-            self.next_expiration_deadline = now + Duration::from_hours(1);
+            self.next_expiration_deadline = now + QUEUE_IDLE_HORIZON;
         }
         mutated
     }
 
     pub(super) fn schedule_inflight_retry(&mut self, id: MessageId, inflight: &Inflight) {
-        let retry_at = self.clock.now_instant() + Duration::from_secs(1);
+        let retry_at = self.clock.now_instant() + QUEUE_STORAGE_RETRY_BACKOFF;
         self.timers.push(Reverse(InflightExpiry {
             id,
             inflight_epoch: inflight.inflight_epoch,
@@ -119,11 +123,6 @@ impl QueueActor {
         );
     }
 
-    fn should_move_to_dlq(&self, attempts: u32) -> bool {
-        self.max_attempts
-            .is_some_and(|max_attempts| attempts >= max_attempts)
-    }
-
     fn begin_redelivery_transaction(
         &mut self,
         id: MessageId,
@@ -148,114 +147,6 @@ impl QueueActor {
         }
     }
 
-    fn handle_redelivery_dlq(
-        &mut self,
-        id: MessageId,
-        inflight: &Inflight,
-        record: &mut QueueRecord,
-        mut txn: cntryl_midge::Transaction,
-        now_epoch_ms: u64,
-    ) -> bool {
-        let dead_lettered_at_ms = now_epoch_ms;
-        let index_plan = self.plan_index_mutation_for_unavailable_message(id);
-        Self::prepare_dlq_record(record, dead_lettered_at_ms);
-
-        if !self.persist_dlq_record(id, inflight, record, &mut txn) {
-            return false;
-        }
-
-        if let Err(error) =
-            self.write_index_mutation_plan(&mut txn, id, index_plan, Some(dead_lettered_at_ms))
-        {
-            tracing::warn!(
-                queue = ?self.queue_key,
-                route_family = self.queue_key.family.as_u64(),
-                message_id = id.as_u64(),
-                error_reason = %error,
-                "Failed to update queue indexes during DLQ transition"
-            );
-            self.schedule_inflight_retry(id, inflight);
-            return false;
-        }
-
-        let update_start = Instant::now();
-        if let Err(error) = Self::commit_redelivery_transaction(txn, self.commit_write_options) {
-            tracing::warn!(
-                queue = ?self.queue_key,
-                route_family = self.queue_key.family.as_u64(),
-                message_id = id.as_u64(),
-                error = ?error,
-                "Failed to commit queue DLQ transition"
-            );
-            self.schedule_inflight_retry(id, inflight);
-            return false;
-        }
-
-        Self::observe_elapsed_us(obs::METRIC_QUEUE_REDELIVERY_UPDATE_LATENCY, update_start);
-        self.inflight.remove(&id);
-        self.update_cached_inflight_metadata(
-            id,
-            inflight.inflight_epoch,
-            None,
-            None,
-            record.last_inflight_at_ms,
-        );
-        self.apply_index_mutation_plan(id, index_plan, Some(dead_lettered_at_ms));
-        self.cache_record(id, record.metadata_only_from());
-        self.evict_cached_body(id);
-
-        tracing::info!(
-            queue = ?self.queue_key,
-            route_family = self.queue_key.family.as_u64(),
-            message_id = id.as_u64(),
-            attempts = record.attempts,
-            "Message moved to queue dead letter state"
-        );
-        Self::increment_counter(obs::METRIC_QUEUE_DLQ_TRANSITIONS);
-        true
-    }
-
-    fn prepare_dlq_record(record: &mut QueueRecord, dead_lettered_at_ms: u64) {
-        record.state = QueueState::Dlq;
-        record.ready_seq = None;
-        record.visible_at_ms = 0;
-        record.inflight_token = None;
-        record.inflight_expires_at_ms = None;
-        record.dead_lettered_at_ms = Some(dead_lettered_at_ms);
-        record.dlq_reason = Some(DlqReason::MaxAttemptsExceeded);
-    }
-
-    fn persist_dlq_record(
-        &mut self,
-        id: MessageId,
-        inflight: &Inflight,
-        record: &mut QueueRecord,
-        txn: &mut cntryl_midge::Transaction,
-    ) -> bool {
-        let _ = inflight;
-        let write_result = txn
-            .put(
-                self.cached_header_key(id),
-                Self::encode_record_header(record),
-                None,
-            )
-            .map_err(|error| format!("Failed to write DLQ header: {error:?}"));
-
-        if let Err(error) = write_result {
-            tracing::warn!(
-                queue = ?self.queue_key,
-                route_family = self.queue_key.family.as_u64(),
-                message_id = id.as_u64(),
-                error = ?error,
-                "Failed to persist queue DLQ record"
-            );
-            self.schedule_inflight_retry(id, inflight);
-            return false;
-        }
-
-        true
-    }
-
     fn persist_redelivery_attempt(
         &mut self,
         id: MessageId,
@@ -278,7 +169,9 @@ impl QueueActor {
         }
 
         let update_start = Instant::now();
-        if let Err(error) = Self::commit_redelivery_transaction(txn, self.commit_write_options) {
+        if let Err(error) =
+            Self::commit_transaction(txn, self.commit_write_options, QueueCommit::Redelivery)
+        {
             tracing::warn!(
                 queue = ?self.queue_key,
                 route_family = self.queue_key.family.as_u64(),

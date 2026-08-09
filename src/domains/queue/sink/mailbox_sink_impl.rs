@@ -3,6 +3,7 @@ use super::model::{
     QueueClientFrame, QueueClientRequest, QueueDomainActor, QueueDomainCommand, QueueDomainCore,
     QueueDomainRuntime, QueueDomainSink, QueueLiveCounts, QueueReadyNotification,
     QueueSubscription, QueueSubscriptionMessage, RoutedSubscriptionSet, VecDeque,
+    QUEUE_ACTOR_REPLY_TIMEOUT,
 };
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
@@ -12,6 +13,7 @@ use crate::runtime::{Actor, Context};
 type ReadyNotificationEvent = (crate::domains::queue::QueueKey, QueueReadyNotification);
 
 mod pending_reserves;
+mod runtime_adapter;
 mod wildcard_receive;
 
 #[derive(Clone, Copy)]
@@ -120,46 +122,8 @@ impl QueueDomainSink {
         enqueue_result?;
 
         reply_rx
-            .recv_timeout(Duration::from_secs(1))
+            .recv_timeout(QUEUE_ACTOR_REPLY_TIMEOUT)
             .unwrap_or(Err(DeliveryError::ActorStopped))
-    }
-}
-
-impl QueueDomainRuntime<'_> {
-    fn deliver_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {
-        self.core.deliver_envelope(envelope)
-    }
-
-    fn refresh_admin_snapshot_if_dirty(&self) {
-        self.core.refresh_admin_snapshot_if_dirty();
-    }
-
-    fn live_counts(&self) -> QueueLiveCounts {
-        self.core.live_counts()
-    }
-
-    fn cleanup_session(&self, session_id: u64) {
-        self.core.cleanup_session(session_id);
-    }
-
-    fn sweep_runtime_state_at(&self, now: Instant) {
-        self.core.sweep_runtime_state_at(now);
-    }
-
-    fn replay_dead_letter(
-        &self,
-        key: &crate::domains::queue::QueueKey,
-        id: crate::domains::queue::MessageId,
-    ) -> Result<bool, String> {
-        self.core.replay_dead_letter(key, id)
-    }
-
-    fn purge_dead_letter(
-        &self,
-        key: &crate::domains::queue::QueueKey,
-        id: crate::domains::queue::MessageId,
-    ) -> Result<bool, String> {
-        self.core.purge_dead_letter(key, id)
     }
 }
 

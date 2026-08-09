@@ -724,6 +724,68 @@ fn should_keep_stream_design_seams_explicit() {
 }
 
 #[test]
+fn should_keep_queue_design_seams_explicit() {
+    // Arrange
+    let queue = repo_root().join("src/domains/queue");
+    let actor = read_source_file(&queue.join("actor/mod.rs"));
+    let ack = read_source_file(&queue.join("actor/reserve_and_ack.rs"));
+    let storage = read_source_file(&queue.join("actor/storage.rs"));
+    let sink = read_source_file(&queue.join("sink/domain_sink_impl.rs"));
+
+    // Act
+    let violations = [
+        (
+            !queue.join("actor/dlq.rs").exists(),
+            "DLQ transition module",
+        ),
+        (
+            !queue.join("actor/dead_letter_admin.rs").exists(),
+            "dead-letter admin module",
+        ),
+        (
+            !queue.join("actor/startup_reconciliation.rs").exists(),
+            "startup reconciliation module",
+        ),
+        (
+            !actor.contains("fn wire_code") || !actor.contains("fn as_str"),
+            "DLQ reason mappings",
+        ),
+        (
+            !actor.contains("trait QueueDataPlane") || !actor.contains("trait QueueAdminPlane"),
+            "queue interface traits",
+        ),
+        (
+            !ack.contains("fn validate_ack_authorization"),
+            "ack authorization seam",
+        ),
+        (
+            !ack.contains("stage_delayed") || !ack.contains("fast path"),
+            "ack staging and fast-path documentation",
+        ),
+        (
+            !storage.contains("fn commit_transaction"),
+            "shared transaction commit",
+        ),
+        (
+            !sink.contains("struct QueueCounts"),
+            "queue counts accessor",
+        ),
+        (
+            !actor.contains("QUEUE_IDLE_HORIZON")
+                || !actor.contains("QUEUE_STORAGE_RETRY_BACKOFF")
+                || !actor.contains("QUEUE_ACTOR_REPLY_TIMEOUT"),
+            "queue timing constants",
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(missing, label)| missing.then_some(label))
+    .collect::<Vec<_>>();
+
+    // Assert
+    assert!(violations.is_empty(), "missing Queue seams: {violations:?}");
+}
+
+#[test]
 fn should_document_unified_wildcard_registration_and_exact_lease_semantics() {
     // Arrange
     let root = repo_root().join("docs");

@@ -1,4 +1,9 @@
-use super::{DelayedMessage, Duration, MessageId, QueueActor, QueueState, Reverse};
+//! Dead-letter administration and delayed-message promotion.
+
+use super::{
+    DelayedMessage, MessageId, QueueActor, QueueState, Reverse, QUEUE_IDLE_HORIZON,
+    QUEUE_STORAGE_RETRY_BACKOFF,
+};
 
 impl QueueActor {
     /// # Errors
@@ -267,7 +272,7 @@ impl QueueActor {
 
             if !self.promote_delayed_message(delayed) {
                 self.delayed.push(Reverse(delayed));
-                self.next_delayed_deadline = now + Duration::from_secs(1);
+                self.next_delayed_deadline = now + QUEUE_STORAGE_RETRY_BACKOFF;
                 break;
             }
             mutated = true;
@@ -275,7 +280,7 @@ impl QueueActor {
 
         // If no more delayed messages, set deadline to far future
         if self.delayed.is_empty() {
-            self.next_delayed_deadline = now + Duration::from_hours(1); // 1 hour
+            self.next_delayed_deadline = now + QUEUE_IDLE_HORIZON;
         }
 
         if was_empty && self.ready_count > 0 {

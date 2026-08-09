@@ -1,10 +1,32 @@
+//! Queue receive, lease extension, and acknowledgement processing.
+
 use super::{
-    decode_cached_response, encode_cached_response, obs, DlqReason, Duration, HashSet, Inflight,
-    InflightExpiry, Instant, MessageId, PersistedIndexMutationPlan, PersistedReadyMutation,
-    QueueActor, QueueRecord, QueueResponse, QueueState, ReadyRange, ReservedMessage, Reverse,
-    VecDeque,
+    decode_cached_response, encode_cached_response, obs, DlqReason, Duration, FxBuildHasher,
+    HashMap, HashSet, Inflight, InflightExpiry, Instant, MessageId, PersistedIndexMutationPlan,
+    PersistedReadyMutation, QueueActor, QueueCommit, QueueRecord, QueueResponse, QueueState,
+    ReadyRange, ReservedMessage, Reverse, VecDeque,
 };
 use crate::utils::idempotency::{DedupIdentifier, DedupKey, Domain};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AckAuthorizationError {
+    InvalidToken,
+    Expired,
+}
+
+fn validate_ack_authorization(
+    inflight: &Inflight,
+    token: u64,
+    now: Instant,
+) -> Result<(), AckAuthorizationError> {
+    if inflight.token != token {
+        return Err(AckAuthorizationError::InvalidToken);
+    }
+    if inflight.expires_at <= now {
+        return Err(AckAuthorizationError::Expired);
+    }
+    Ok(())
+}
 
 struct AckBatchDelete {
     id: MessageId,
@@ -352,6 +374,7 @@ impl QueueActor {
             return Vec::new();
         }
         if acknowledgements.len() == 1 {
+            // This fast path aliases the single-ack implementation and must remain behaviorally identical.
             let (id, token) = acknowledgements[0];
             return vec![self.handle_ack_for_session(session_id, id, token)];
         }
@@ -413,18 +436,16 @@ impl QueueActor {
             return QueueResponse::NotFound;
         };
 
-        // Validate token
-        if inflight.token != token {
+        if let Err(rejection) = validate_ack_authorization(&inflight, token, now) {
             Self::increment_counter(obs::METRIC_QUEUE_COMPLETE_REJECTED);
-            // Don't cache invalid token - security: wrong token should fail every time
-            return QueueResponse::InvalidToken;
-        }
-
-        // Check if already expired
-        if inflight.expires_at <= now {
-            self.handle_inflight_expired(id);
-            Self::increment_counter(obs::METRIC_QUEUE_COMPLETE_REJECTED);
-            return QueueResponse::InflightExpired;
+            return match rejection {
+                // Invalid tokens are deliberately not cached: every attempt must fail.
+                AckAuthorizationError::InvalidToken => QueueResponse::InvalidToken,
+                AckAuthorizationError::Expired => {
+                    self.handle_inflight_expired(id);
+                    QueueResponse::InflightExpired
+                }
+            };
         }
 
         let index_plan = self.plan_index_mutation_for_unavailable_message(id);
@@ -476,10 +497,11 @@ impl QueueActor {
                 );
             }
 
-            let delayed_index_delete = staged_delayed.remove(&id);
-            if delayed_index_delete.is_some() {
-                staged_next_delayed_visibility = staged_delayed.values().copied().min();
-            }
+            let delayed_index_delete = Self::stage_delayed_mutation(
+                &mut staged_delayed,
+                &mut staged_next_delayed_visibility,
+                id,
+            );
 
             deletes.push(AckBatchDelete {
                 id,
@@ -522,6 +544,18 @@ impl QueueActor {
         *staged_ready_count = staged_ready_count
             .saturating_sub(removed_len)
             .saturating_add(inserted_len);
+    }
+
+    fn stage_delayed_mutation(
+        staged_delayed: &mut HashMap<MessageId, u64, FxBuildHasher>,
+        staged_next_delayed_visibility: &mut Option<u64>,
+        id: MessageId,
+    ) -> Option<u64> {
+        let removed = staged_delayed.remove(&id);
+        if removed.is_some() {
+            *staged_next_delayed_visibility = staged_delayed.values().copied().min();
+        }
+        removed
     }
 
     fn ack_response_dedup_key(&self, owner_session_id: u64, id: MessageId, token: u64) -> DedupKey {
@@ -577,16 +611,17 @@ impl QueueActor {
                 }
 
                 self.write_index_mutation_plan(&mut txn, id, index_plan, None)?;
-                Self::commit_ack_transaction(txn, self.commit_write_options).map_err(|error| {
-                    tracing::warn!(
-                        queue = ?self.queue_key,
-                        route_family = self.queue_key.family.as_u64(),
-                        message_id = id.as_u64(),
-                        error_reason = %error,
-                        "Failed to commit queue delete transaction"
-                    );
-                    format!("Failed to commit delete txn for message {id}: {error}")
-                })?;
+                Self::commit_transaction(txn, self.commit_write_options, QueueCommit::Ack)
+                    .map_err(|error| {
+                        tracing::warn!(
+                            queue = ?self.queue_key,
+                            route_family = self.queue_key.family.as_u64(),
+                            message_id = id.as_u64(),
+                            error_reason = %error,
+                            "Failed to commit queue delete transaction"
+                        );
+                        format!("Failed to commit delete txn for message {id}: {error}")
+                    })?;
                 self.apply_index_mutation_plan(id, index_plan, None);
                 Ok(())
             }
@@ -616,16 +651,18 @@ impl QueueActor {
             self.write_index_mutation_plan(&mut txn, delete.id, delete.index_plan, None)?;
         }
 
-        Self::commit_ack_transaction(txn, self.commit_write_options).map_err(|error| {
-            tracing::warn!(
-                queue = ?self.queue_key,
-                route_family = self.queue_key.family.as_u64(),
-                error_reason = %error,
-                ack_count = deletes.len(),
-                "Failed to commit queue ack batch transaction"
-            );
-            format!("Failed to commit queue ack batch transaction: {error}")
-        })
+        Self::commit_transaction(txn, self.commit_write_options, QueueCommit::Ack).map_err(
+            |error| {
+                tracing::warn!(
+                    queue = ?self.queue_key,
+                    route_family = self.queue_key.family.as_u64(),
+                    error_reason = %error,
+                    ack_count = deletes.len(),
+                    "Failed to commit queue ack batch transaction"
+                );
+                format!("Failed to commit queue ack batch transaction: {error}")
+            },
+        )
     }
 
     fn finish_ack_success(&mut self, id: MessageId, dedup_key: DedupKey) -> QueueResponse {
@@ -649,5 +686,30 @@ impl QueueActor {
         );
 
         response
+    }
+}
+
+#[cfg(test)]
+mod authorization_tests {
+    use super::*;
+
+    #[test]
+    fn should_reject_wrong_ack_token_without_transaction() {
+        // Arrange
+        let now = Instant::now();
+        let inflight = Inflight {
+            token: 7,
+            expires_at: now + Duration::from_secs(30),
+            expires_at_epoch_ms: 30_000,
+            owner_session_id: Some(1),
+            attempts: 1,
+            inflight_epoch: 1,
+        };
+
+        // Act
+        let result = validate_ack_authorization(&inflight, 8, now);
+
+        // Assert
+        assert_eq!(result, Err(AckAuthorizationError::InvalidToken));
     }
 }

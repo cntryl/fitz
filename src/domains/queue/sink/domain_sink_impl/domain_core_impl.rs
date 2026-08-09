@@ -1,9 +1,9 @@
 #[cfg(test)]
 use super::FrameContext;
 use super::{
-    Arc, Envelope, HashSet, Instant, Mutex, QueueDomainCore, QueueLiveCounts, QueueNotification,
-    QueueProjectionEntry, QueueProjectionState, QueueReadyNotification, WarmQueueActor,
-    QUEUE_ACTOR_IDLE_TTL, QUEUE_DEDUP_SWEEP_INTERVAL, QUEUE_IDLE_SWEEP_BATCH_SIZE,
+    Arc, Envelope, HashSet, Instant, Mutex, QueueAdminPlane, QueueDomainCore, QueueLiveCounts,
+    QueueNotification, QueueProjectionEntry, QueueProjectionState, QueueReadyNotification,
+    WarmQueueActor, QUEUE_ACTOR_IDLE_TTL, QUEUE_DEDUP_SWEEP_INTERVAL, QUEUE_IDLE_SWEEP_BATCH_SIZE,
     QUEUE_IDLE_SWEEP_INTERVAL,
 };
 
@@ -543,10 +543,10 @@ impl QueueDomainCore {
                 });
                 QueueProjectionEntry {
                     key: key.clone(),
-                    snapshot: actor.admin_snapshot(),
+                    snapshot: QueueAdminPlane::admin_snapshot(&*actor),
                     subscriptions_active,
-                    inflight: actor.admin_inflight(),
-                    dead_letters: actor.admin_dead_letters(),
+                    inflight: QueueAdminPlane::admin_inflight(&*actor),
+                    dead_letters: QueueAdminPlane::admin_dead_letters(&*actor),
                 }
             })
             .collect();
@@ -736,7 +736,7 @@ impl QueueDomainCore {
         let (actor_handle, created_actor) = self.get_or_create_actor(key)?;
         let result = {
             let mut actor = actor_handle.lock();
-            actor.replay_dead_letter(id)
+            QueueAdminPlane::replay_dead_letter(&mut *actor, id)
         };
 
         if matches!(result, Ok(true)) {
@@ -778,7 +778,7 @@ impl QueueDomainCore {
         let (actor_handle, created_actor) = self.get_or_create_actor(key)?;
         let result = {
             let mut actor = actor_handle.lock();
-            actor.purge_dead_letter(id)
+            QueueAdminPlane::purge_dead_letter(&mut *actor, id)
         };
 
         if matches!(result, Ok(true)) {

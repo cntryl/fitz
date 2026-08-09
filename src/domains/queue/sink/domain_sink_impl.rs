@@ -3,14 +3,24 @@ use super::model::{
     QueueAdminProjection, QueueDomainActor, QueueDomainCommand, QueueDomainCore,
     QueueDomainRuntime, QueueDomainSink, QueueLiveCounts, QueueMetrics, QueueNotification,
     QueueProjectionEntry, QueueProjectionState, QueueReadyNotification, Router, WarmQueueActor,
-    QUEUE_ACTOR_IDLE_TTL, QUEUE_DEDUP_SWEEP_INTERVAL, QUEUE_IDLE_SWEEP_BATCH_SIZE,
-    QUEUE_IDLE_SWEEP_INTERVAL,
+    QUEUE_ACTOR_IDLE_TTL, QUEUE_ACTOR_REPLY_TIMEOUT, QUEUE_DEDUP_SWEEP_INTERVAL,
+    QUEUE_IDLE_SWEEP_BATCH_SIZE, QUEUE_IDLE_SWEEP_INTERVAL,
 };
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
+use crate::domains::queue::actor::QueueAdminPlane;
 use std::{collections::VecDeque, sync::Arc};
 
 mod domain_core_impl;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct QueueCounts {
+    pub pending: usize,
+    pub ready: usize,
+    pub delayed: usize,
+    pub inflight: usize,
+    pub dead_letters: usize,
+}
 
 impl QueueDomainActor {
     pub(super) fn new(core: Arc<QueueDomainCore>) -> Self {
@@ -293,14 +303,9 @@ impl QueueDomainSink {
             &crate::runtime::routing::Route::new(queue_route),
         )
         .expect("queue key");
-        self.core
-            .actors
-            .lock()
-            .get(&key)
-            .expect("warm queue actor")
-            .actor
-            .lock()
-            .admin_snapshot()
+        let actors = self.core.actors.lock();
+        let actor = actors.get(&key).expect("warm queue actor").actor.lock();
+        QueueAdminPlane::admin_snapshot(&*actor)
     }
 
     #[cfg(test)]
@@ -365,7 +370,7 @@ impl QueueDomainSink {
             return;
         }
 
-        if let Err(error) = reply_rx.recv_timeout(Duration::from_secs(1)) {
+        if let Err(error) = reply_rx.recv_timeout(QUEUE_ACTOR_REPLY_TIMEOUT) {
             tracing::warn!(domain = "queue", operation, error = %error, "Queue actor command reply failed");
         }
     }
@@ -385,7 +390,7 @@ impl QueueDomainSink {
             ));
         }
 
-        reply_rx.recv_timeout(Duration::from_secs(1)).map_err(|error| {
+        reply_rx.recv_timeout(QUEUE_ACTOR_REPLY_TIMEOUT).map_err(|error| {
             tracing::warn!(domain = "queue", operation, error = %error, "Queue actor command reply failed");
             format!("Queue actor command reply failed for {operation}: {error}")
         })?
@@ -409,28 +414,19 @@ impl QueueDomainSink {
         }
 
         reply_rx
-            .recv_timeout(Duration::from_secs(1))
+            .recv_timeout(QUEUE_ACTOR_REPLY_TIMEOUT)
             .unwrap_or_default()
     }
 
-    pub fn pending_message_count(&self) -> usize {
-        self.live_counts().pending
-    }
-
-    pub fn ready_message_count(&self) -> usize {
-        self.live_counts().ready
-    }
-
-    pub fn delayed_message_count(&self) -> usize {
-        self.live_counts().delayed
-    }
-
-    pub fn active_inflight_count(&self) -> usize {
-        self.live_counts().inflight
-    }
-
-    pub fn dead_letter_count(&self) -> usize {
-        self.live_counts().dead_letters
+    pub fn counts(&self) -> QueueCounts {
+        let counts = self.live_counts();
+        QueueCounts {
+            pending: counts.pending,
+            ready: counts.ready,
+            delayed: counts.delayed,
+            inflight: counts.inflight,
+            dead_letters: counts.dead_letters,
+        }
     }
 
     pub fn cleanup_session(&self, session_id: u64) {
