@@ -477,6 +477,11 @@ These values are point-in-time in-memory counts for the running broker process a
 ### Schedule Domain
 Schedule definitions are durable and are preloaded into per-family Schedule actors during broker boot. Admin schedule views therefore reflect persisted definitions before any schedule-domain traffic reaches that family. Schedule notifications and subscriptions remain live session-scoped delivery only, and `last_run` / `executions_total` are still non-authoritative placeholders in this round.
 
+Schedule delivery metrics cover two different boundaries. A notification handoff is accepted when
+the in-process router accepts it; this is not a consumer acknowledgement or durable-delivery proof.
+`notify_failures` counts router handoff rejections, while `ack_failures` counts failures to persist
+the Schedule-owned claim acknowledgement after handoff attempts. Read the two independently.
+
 The Schedule resource list reports enabled definitions as `schedules_active`,
 durable `pending_claims`, and the earliest enabled `next_run`. Disabled-only
 resources remain listed with a null `next_run`; pending-only resources are also
