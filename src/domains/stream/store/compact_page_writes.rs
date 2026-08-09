@@ -114,6 +114,13 @@ impl StreamStore {
         expected: u64,
         epoch_key: &[u8],
     ) -> Result<bool, String> {
+        #[cfg(test)]
+        if self
+            .fail_next_writer_epoch_recheck
+            .swap(false, Ordering::AcqRel)
+        {
+            return Err("Injected writer epoch recheck failure".to_string());
+        }
         let actual = self
             .db
             .begin_tx(
@@ -914,6 +921,12 @@ impl StreamStore {
             {
                 self.advance_family_writer_epoch(family)
                     .map_err(PromotionTransactionFailure::Other)?;
+                return Err(PromotionTransactionFailure::WriteConflict);
+            }
+            if self
+                .conflict_next_promotion_frontier_commit
+                .swap(false, Ordering::AcqRel)
+            {
                 return Err(PromotionTransactionFailure::WriteConflict);
             }
         }

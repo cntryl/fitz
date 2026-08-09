@@ -362,6 +362,10 @@ pub struct StreamStore {
     #[cfg(test)]
     fence_next_promotion_frontier_commit: std::sync::atomic::AtomicBool,
     #[cfg(test)]
+    conflict_next_promotion_frontier_commit: std::sync::atomic::AtomicBool,
+    #[cfg(test)]
+    fail_next_writer_epoch_recheck: std::sync::atomic::AtomicBool,
+    #[cfg(test)]
     fence_next_global_reservation: std::sync::atomic::AtomicBool,
     #[cfg(test)]
     maintenance_failure_stage: std::sync::atomic::AtomicU8,
