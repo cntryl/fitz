@@ -113,44 +113,54 @@ impl StreamStore {
         family: u64,
         expected: u64,
         epoch_key: &[u8],
-    ) -> Result<(), PromotionWriteFailure> {
+    ) -> Result<bool, String> {
         let actual = self
             .db
             .begin_tx(
                 u64_to_u32_saturating(family),
                 cntryl_midge::TransactionMode::ReadOnly,
             )
-            .map_err(|error| {
-                PromotionWriteFailure::Other(format!("begin epoch recheck failed: {error:?}"))
-            })?
+            .map_err(|error| format!("begin epoch recheck failed: {error:?}"))?
             .get(epoch_key)
-            .map_err(|error| {
-                PromotionWriteFailure::Other(format!(
-                    "re-read family writer epoch failed: {error:?}"
-                ))
-            })?
+            .map_err(|error| format!("re-read family writer epoch failed: {error:?}"))?
             .map_or(Ok(0), |bytes| {
                 RealmCounterValue::decode(&bytes).map(|value| value.next_offset)
             })?;
-        if actual != expected {
-            return Err(PromotionWriteFailure::WriterFenced);
-        }
-        Ok(())
+        Ok(actual == expected)
     }
 
-    fn build_global_page_records(
+    fn ensure_current_writer_epoch(
+        &self,
+        family: u64,
+        expected: u64,
+        epoch_key: &[u8],
+    ) -> Result<(), PromotionWriteFailure> {
+        if self
+            .verify_current_writer_epoch(family, expected, epoch_key)
+            .map_err(PromotionWriteFailure::Other)?
+        {
+            Ok(())
+        } else {
+            Err(PromotionWriteFailure::WriterFenced)
+        }
+    }
+
+    pub(super) fn build_global_page_records(
         params: &CommitPromotionFrontierBatchParams<'_>,
         created_at: u64,
         expires_at: Option<u64>,
         events: &[EventPayload],
     ) -> Vec<CompactGlobalPageRecord> {
+        let realm = std::sync::Arc::<str>::from(params.realm);
+        let area = std::sync::Arc::<str>::from(params.area);
+        let resource = std::sync::Arc::<str>::from(params.resource);
         events
             .iter()
             .enumerate()
             .map(|(index, event)| CompactGlobalPageRecord {
-                realm: params.realm.to_string(),
-                area: params.area.to_string(),
-                resource: params.resource.to_string(),
+                realm: realm.clone(),
+                area: area.clone(),
+                resource: resource.clone(),
                 resource_offset: params.first_resource_offset + index as u64,
                 area_offset: params.first_area_offset + index as u64,
                 realm_offset: params.first_realm_offset + index as u64,
@@ -216,6 +226,8 @@ impl StreamStore {
             ..
         } = *params;
         let mut realm_records = Vec::with_capacity(events.len());
+        let area = std::sync::Arc::<str>::from(area);
+        let resource = std::sync::Arc::<str>::from(resource);
 
         for (index, _event) in events.iter().enumerate() {
             let resource_offset = first_resource_offset + index as u64;
@@ -230,8 +242,8 @@ impl StreamStore {
             };
 
             realm_records.push(CompactRealmPageRecord {
-                area: area.to_string(),
-                resource: resource.to_string(),
+                area: area.clone(),
+                resource: resource.clone(),
                 area_offset,
                 resource_offset,
                 body: super::encode_payload_locator(global_offset, parent_fragment_start),
@@ -253,6 +265,7 @@ impl StreamStore {
         expires_at: Option<u64>,
     ) -> Vec<CompactAreaPageRecord> {
         let mut records = Vec::with_capacity(events.len());
+        let resource = std::sync::Arc::<str>::from(resource);
 
         for (index, _event) in events.iter().enumerate() {
             let global_offset = first_global_offset + index as u64;
@@ -264,7 +277,7 @@ impl StreamStore {
                 global_offset / GLOBAL_PAGE_RECORD_LIMIT * GLOBAL_PAGE_RECORD_LIMIT
             };
             records.push(CompactAreaPageRecord {
-                resource: resource.to_string(),
+                resource: resource.clone(),
                 resource_offset: first_resource_offset + index as u64,
                 body: super::encode_payload_locator(global_offset, parent_fragment_start),
                 metadata: None,
@@ -515,10 +528,33 @@ impl StreamStore {
         let resource_meta_after =
             Self::persist_promotion_frontier_counters_and_metadata(&mut txn, &params, &plan)
                 .map_err(PromotionCommitFailure::Retryable)?;
-        match self.commit_promotion_frontier_tx(txn, params.mode) {
+        match self.commit_promotion_frontier_tx(txn, params.family, params.mode) {
             Ok(()) => {}
             Err(PromotionTransactionFailure::WriteConflict) => {
-                return Err(PromotionCommitFailure::ScopeConflict);
+                let epoch_key = encode_family_writer_epoch_key();
+                match self.verify_current_writer_epoch(
+                    params.family,
+                    params.writer_epoch,
+                    &epoch_key,
+                ) {
+                    Ok(true) => {
+                        return Err(PromotionCommitFailure::ScopeConflict);
+                    }
+                    Ok(false) => {
+                        self.resolve_global_range(
+                            params.family,
+                            params.first_global_offset,
+                            end_global_offset,
+                        )
+                        .map_err(PromotionCommitFailure::Resolved)?;
+                        return Err(PromotionCommitFailure::Resolved(
+                            "ERR_STREAM_WRITER_FENCED".to_string(),
+                        ));
+                    }
+                    Err(error) => {
+                        return Err(PromotionCommitFailure::Retryable(error));
+                    }
+                }
             }
             Err(PromotionTransactionFailure::Other(error)) => {
                 return Err(PromotionCommitFailure::Retryable(error));
@@ -634,7 +670,7 @@ impl StreamStore {
             self.advance_family_writer_epoch(params.family)
                 .map_err(PromotionWriteFailure::Other)?;
         }
-        self.verify_current_writer_epoch(params.family, params.writer_epoch, &epoch_key)?;
+        self.ensure_current_writer_epoch(params.family, params.writer_epoch, &epoch_key)?;
 
         self.reserve_broad_scope_ranges(&mut txn, params, plan)?;
 
@@ -851,6 +887,7 @@ impl StreamStore {
     fn commit_promotion_frontier_tx(
         &self,
         txn: cntryl_midge::Transaction,
+        family: u64,
         mode: StreamWriteMode,
     ) -> Result<(), PromotionTransactionFailure> {
         let write_options = match mode {
@@ -858,6 +895,8 @@ impl StreamStore {
             StreamWriteMode::Buffered => self.buffered_write_options,
             StreamWriteMode::CloudStrict => cntryl_midge::WriteOptions::cloud_strict(),
         };
+        #[cfg(not(test))]
+        let _ = family;
         #[cfg(test)]
         {
             let should_fail = self
@@ -868,6 +907,14 @@ impl StreamStore {
                 return Err(PromotionTransactionFailure::Other(
                     "Injected stream commit failure".to_string(),
                 ));
+            }
+            if self
+                .fence_next_promotion_frontier_commit
+                .swap(false, Ordering::AcqRel)
+            {
+                self.advance_family_writer_epoch(family)
+                    .map_err(PromotionTransactionFailure::Other)?;
+                return Err(PromotionTransactionFailure::WriteConflict);
             }
         }
         txn.commit(write_options).map_err(|error| match error {

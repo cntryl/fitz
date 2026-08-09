@@ -1,6 +1,49 @@
 use super::*;
 
 #[test]
+fn should_share_route_segments_across_global_page_batch_records() {
+    // Arrange
+    let events = vec![
+        EventPayload {
+            body: Bytes::from_static(b"one"),
+            metadata: None,
+            discriminator: None,
+        },
+        EventPayload {
+            body: Bytes::from_static(b"two"),
+            metadata: None,
+            discriminator: None,
+        },
+    ];
+    let params = CommitPromotionFrontierBatchParams {
+        family: 1,
+        realm: "north",
+        area: "orders",
+        resource: "created",
+        first_resource_offset: 0,
+        first_area_offset: 0,
+        first_realm_offset: 0,
+        first_global_offset: 0,
+        writer_epoch: 0,
+        events: &events,
+        committed_size_before: 0,
+        ingest_metadata: None,
+        mode: StreamWriteMode::Sync,
+    };
+
+    // Act
+    let records = StreamStore::build_global_page_records(&params, 1, None, &events);
+
+    // Assert
+    assert!(std::sync::Arc::ptr_eq(&records[0].realm, &records[1].realm));
+    assert!(std::sync::Arc::ptr_eq(&records[0].area, &records[1].area));
+    assert!(std::sync::Arc::ptr_eq(
+        &records[0].resource,
+        &records[1].resource
+    ));
+}
+
+#[test]
 fn should_not_truncate_fragment_reads_when_starting_mid_bucket() {
     // Arrange
     let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
@@ -139,6 +182,34 @@ fn should_reject_data_transaction_after_writer_epoch_fence() {
         "ERR_STREAM_WRITER_FENCED"
     );
     assert_eq!(store.get_global_watermark(1).expect("read watermark"), 1);
+}
+
+#[test]
+fn should_classify_commit_write_conflict_as_writer_fencing_after_epoch_advance() {
+    // Arrange
+    let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+    let events = single_event(b"commit-conflict-fenced-writer");
+    store.fence_next_promotion_frontier_commit_for_tests();
+
+    // Act
+    let result = store.commit_records(CommitRecordsParams {
+        family: 1,
+        realm: "north",
+        area: "orders",
+        resource: "created",
+        expected_resource_next_offset: 0,
+        events: &events,
+        ingest_metadata: None,
+        mode: StreamWriteMode::Sync,
+    });
+
+    // Assert
+    assert_eq!(
+        result.expect_err("commit conflict from a new epoch must fence the writer"),
+        "ERR_STREAM_WRITER_FENCED"
+    );
+    assert_eq!(store.get_global_watermark(1).expect("read watermark"), 1);
+    assert!(store.pending_global_reservations.lock().is_empty());
 }
 
 #[test]

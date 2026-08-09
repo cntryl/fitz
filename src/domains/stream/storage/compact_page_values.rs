@@ -2,10 +2,12 @@ use super::{
     CompactAreaPageRecord, CompactAreaPageValue, CompactGlobalPageRecord, CompactGlobalPageValue,
     CompactRealmPageRecord, CompactRealmPageValue, CompactResourcePageRecord,
     CompactResourcePageValue, PostingEntry, PostingPageValue, COMPACT_AREA_PAGE_VALUE_V2_MARKER,
-    COMPACT_GLOBAL_PAGE_VALUE_V1_MARKER, COMPACT_REALM_PAGE_VALUE_V2_MARKER,
-    COMPACT_RESOURCE_PAGE_VALUE_V1_MARKER, OPTIONAL_BYTES_ABSENT, OPTIONAL_OFFSET_ABSENT,
+    COMPACT_GLOBAL_PAGE_VALUE_V1_MARKER, COMPACT_GLOBAL_PAGE_VALUE_V2_MARKER,
+    COMPACT_REALM_PAGE_VALUE_V2_MARKER, COMPACT_RESOURCE_PAGE_VALUE_V1_MARKER,
+    OPTIONAL_BYTES_ABSENT, OPTIONAL_OFFSET_ABSENT,
 };
 use bytes::Bytes;
+use lz4_flex::block::{compress_prepend_size, decompress_size_prepended};
 
 fn usize_to_u32_saturating(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
@@ -104,25 +106,24 @@ impl PostingPageValue {
 impl CompactGlobalPageValue {
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(&COMPACT_GLOBAL_PAGE_VALUE_V1_MARKER);
-        bytes.extend_from_slice(&usize_to_u32_saturating(self.records.len()).to_le_bytes());
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&usize_to_u32_saturating(self.records.len()).to_le_bytes());
         for record in &self.records {
-            encode_string(&mut bytes, &record.realm);
-            encode_string(&mut bytes, &record.area);
-            encode_string(&mut bytes, &record.resource);
-            bytes.extend_from_slice(&record.resource_offset.to_le_bytes());
-            bytes.extend_from_slice(&record.area_offset.to_le_bytes());
-            bytes.extend_from_slice(&record.realm_offset.to_le_bytes());
-            bytes.extend_from_slice(&record.created_at.to_le_bytes());
-            bytes.extend_from_slice(
+            encode_string(&mut payload, &record.realm);
+            encode_string(&mut payload, &record.area);
+            encode_string(&mut payload, &record.resource);
+            payload.extend_from_slice(&record.resource_offset.to_le_bytes());
+            payload.extend_from_slice(&record.area_offset.to_le_bytes());
+            payload.extend_from_slice(&record.realm_offset.to_le_bytes());
+            payload.extend_from_slice(&record.created_at.to_le_bytes());
+            payload.extend_from_slice(
                 &record
                     .expires_at
                     .unwrap_or(OPTIONAL_OFFSET_ABSENT)
                     .to_le_bytes(),
             );
-            bytes.extend_from_slice(&usize_to_u32_saturating(record.body.len()).to_le_bytes());
-            bytes.extend_from_slice(
+            payload.extend_from_slice(&usize_to_u32_saturating(record.body.len()).to_le_bytes());
+            payload.extend_from_slice(
                 &record
                     .metadata
                     .as_ref()
@@ -131,11 +132,15 @@ impl CompactGlobalPageValue {
                     })
                     .to_le_bytes(),
             );
-            bytes.extend_from_slice(&record.body);
+            payload.extend_from_slice(&record.body);
             if let Some(metadata) = &record.metadata {
-                bytes.extend_from_slice(metadata);
+                payload.extend_from_slice(metadata);
             }
         }
+        let compressed = compress_prepend_size(&payload);
+        let mut bytes = Vec::with_capacity(2 + compressed.len());
+        bytes.extend_from_slice(&COMPACT_GLOBAL_PAGE_VALUE_V2_MARKER);
+        bytes.extend_from_slice(&compressed);
         bytes
     }
 
@@ -149,10 +154,22 @@ impl CompactGlobalPageValue {
     /// Panics only if fixed-width slices fail conversion after their lengths
     /// have been validated.
     pub fn try_decode(bytes: &[u8]) -> Result<Self, String> {
-        if !bytes.starts_with(&COMPACT_GLOBAL_PAGE_VALUE_V1_MARKER) || bytes.len() < 6 {
+        let decompressed;
+        let bytes = if bytes.starts_with(&COMPACT_GLOBAL_PAGE_VALUE_V1_MARKER) {
+            bytes
+                .get(2..)
+                .ok_or_else(|| "decode compact global page value: invalid header".to_string())?
+        } else if bytes.starts_with(&COMPACT_GLOBAL_PAGE_VALUE_V2_MARKER) {
+            decompressed = decompress_size_prepended(bytes.get(2..).unwrap_or_default())
+                .map_err(|error| format!("decode compact global page value: {error}"))?;
+            decompressed.as_slice()
+        } else {
+            return Err("decode compact global page value: invalid header".to_string());
+        };
+        if bytes.len() < 4 {
             return Err("decode compact global page value: invalid header".to_string());
         }
-        let mut offset = 2;
+        let mut offset = 0;
         let count = u32_to_usize(u32::from_le_bytes(
             bytes[offset..offset + 4].try_into().unwrap(),
         ));
@@ -199,9 +216,9 @@ impl CompactGlobalPageValue {
                 None
             };
             records.push(CompactGlobalPageRecord {
-                realm,
-                area,
-                resource,
+                realm: realm.into(),
+                area: area.into(),
+                resource: resource.into(),
                 resource_offset,
                 area_offset,
                 realm_offset,
@@ -347,8 +364,8 @@ impl CompactRealmPageValue {
             };
 
             records.push(CompactRealmPageRecord {
-                area,
-                resource,
+                area: area.into(),
+                resource: resource.into(),
                 area_offset,
                 resource_offset,
                 body,
@@ -488,7 +505,7 @@ impl CompactAreaPageValue {
             };
 
             records.push(CompactAreaPageRecord {
-                resource,
+                resource: resource.into(),
                 resource_offset,
                 body,
                 metadata,

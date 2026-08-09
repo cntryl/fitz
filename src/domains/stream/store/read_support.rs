@@ -170,8 +170,8 @@ pub(super) fn hydrate_area_locator(
         return Err("ERR_STREAM_CORRUPT_LOCATOR: area record has inline payload".to_string());
     };
     let global = load_global_locator_record(txn, global_offset, parent, cache)?;
-    if global.realm != realm
-        || global.area != area
+    if global.realm.as_ref() != realm
+        || global.area.as_ref() != area
         || global.resource != record.resource
         || global.resource_offset != record.resource_offset
         || global.expires_at != record.expires_at
@@ -195,7 +195,7 @@ pub(super) fn hydrate_realm_locator(
         return Err("ERR_STREAM_CORRUPT_LOCATOR: realm record has inline payload".to_string());
     };
     let global = load_global_locator_record(txn, global_offset, parent, cache)?;
-    if global.realm != realm
+    if global.realm.as_ref() != realm
         || global.area != record.area
         || global.resource != record.resource
         || global.area_offset != record.area_offset
