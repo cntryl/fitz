@@ -1,0 +1,92 @@
+name: Dependency drift
+
+on:
+  schedule:
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  git-pins:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Report stale git pins
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require("node:fs");
+            const cargo = fs.readFileSync("Cargo.toml", "utf8");
+            const dependencies = [
+              { name: "cntryl-lexkey", owner: "cntryl", repo: "lexkey-rs" },
+              { name: "cntryl-midge", owner: "cntryl", repo: "midge" },
+            ];
+            const stale = [];
+
+            for (const dependency of dependencies) {
+              const escaped = dependency.name.replaceAll("-", "\\-");
+              const match = cargo.match(
+                new RegExp(`^${escaped}\\s*=.*\\brev\\s*=\\s*"([^"]+)"`, "m"),
+              );
+              if (!match) {
+                core.setFailed(`Could not find a rev pin for ${dependency.name}`);
+                return;
+              }
+
+              const pinned = match[1];
+              const repository = await github.rest.repos.get({
+                owner: dependency.owner,
+                repo: dependency.repo,
+              });
+              const branch = repository.data.default_branch;
+              const comparison = await github.rest.repos.compareCommitsWithBasehead({
+                owner: dependency.owner,
+                repo: dependency.repo,
+                basehead: `${pinned}...${branch}`,
+              });
+              if (comparison.data.ahead_by > 0) {
+                stale.push(
+                  `- ${dependency.name}: ${pinned} is ${comparison.data.ahead_by} commit(s) behind ${branch}`,
+                );
+              }
+            }
+
+            const title = "[Deps] Git dependency pins have drifted";
+            const query = `repo:${context.repo.owner}/${context.repo.repo} is:issue is:open in:title "${title}"`;
+            const existing = await github.rest.search.issuesAndPullRequests({ q: query });
+            if (stale.length === 0) {
+              core.summary.addHeading("Git dependency pins are current").write();
+              return;
+            }
+
+            const body = [
+              "The weekly dependency check found stale git revision pins:",
+              "",
+              ...stale,
+              "",
+              `Detected by workflow run ${context.runId}. Evaluate each update on its own merits.`,
+            ].join("\n");
+            core.summary.addHeading("Stale git dependency pins").addRaw(body).write();
+
+            if (existing.data.total_count === 0) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ["dependencies"],
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.data.items[0].number,
+                body,
+              });
+            }
