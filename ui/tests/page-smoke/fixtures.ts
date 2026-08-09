@@ -795,32 +795,6 @@ export function leaseResourceRowsFixture(expiresOffsetSeconds = 120) {
   };
 }
 
-export const resourceDetail = {
-  comparison: null,
-  detailMetrics: [
-    { label: "Keys", value: 12 },
-    { label: "Ops / sec", value: "2.50" },
-  ],
-  domain: "kv",
-  raw: {
-    detail: {},
-  },
-  ref: {
-    area: "ops",
-    realm: "default",
-    resource: "primary",
-  },
-  related: [],
-  timeline: {
-    derived: false,
-    events: [],
-    limit: 10,
-    area: "ops",
-    realm: "default",
-    resource: "primary",
-  },
-};
-
 export const scheduleHierarchyRoutes = [
   {
     assertText: "Schedule inventory",

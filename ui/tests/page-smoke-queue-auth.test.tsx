@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { cleanupApp } from "@askrjs/askr/boot";
 import { queryState, submit, type } from "@askrjs/askr/testing";
 import { mountRoute, pageSmokeMocks, queryOptions } from "./page-smoke/harness";
-import { queueInventory, queueResource, resourceDetail } from "./page-smoke/fixtures";
+import { queueInventory, queueResource } from "./page-smoke/fixtures";
 
 const mocks = pageSmokeMocks();
 
@@ -83,29 +83,6 @@ describe("admin page smoke tests", () => {
 
     cleanupApp(root);
     document.body.innerHTML = "";
-
-    mocks.queryStates.resource = queryState.fresh(
-      {
-        ...resourceDetail,
-        comparison: {
-          comparisonMode: "resource",
-          derived: false,
-          metrics: [{ label: "Delta", value: 0 }],
-          leftScope: {
-            area: "ops",
-            realm: "default",
-            resource: "primary",
-          },
-          rightScope: {
-            area: "ops",
-            realm: "default",
-            resource: "secondary",
-          },
-          summary: "No material difference",
-        },
-      },
-      queryOptions(),
-    );
 
     const { default: KvResourcePage } = await import("@/pages/app/kv-resource");
     root = await mountRoute(

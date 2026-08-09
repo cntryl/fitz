@@ -11,7 +11,7 @@ import {
   QueryLoadingState,
 } from "@/components/shared/query-state";
 import { useOperatorScope, type RouteFamilyOption } from "@/shared/operator-scope";
-import { routeFamilyIconColor } from "@/shared/route-family-appearance";
+import { routeFamilyIconSlot } from "@/shared/route-family-appearance";
 
 function selectorTarget(routeFamilyId: string) {
   if (typeof window === "undefined") {
@@ -34,8 +34,8 @@ function RouteFamilyList({ routeFamilies }: { routeFamilies: RouteFamilyOption[]
             >
               <NetworkIcon
                 class="route-family-icon"
+                data-route-family-identity={routeFamilyIconSlot(family.id)}
                 size={18}
-                style={{ color: routeFamilyIconColor(family.id) }}
                 aria-hidden="true"
               />
               <span>{family.label}</span>

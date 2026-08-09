@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, vi } from "vite-plus/test";
-import { cleanupApp, createSPA } from "@askrjs/askr/boot";
 import { createRouteRegistry, route } from "@askrjs/askr/router";
-import type { Query } from "@askrjs/askr/data";
+import type { DataRuntime, Query } from "@askrjs/askr/data";
 import type { RouteHandler } from "@askrjs/askr/router";
-import { queryState } from "@askrjs/askr/testing";
+import { queryState, renderRoute, type RenderResult } from "@askrjs/askr/testing";
 
 type MutationState = {
   abort: ReturnType<typeof vi.fn>;
@@ -33,6 +32,8 @@ const mocks = vi.hoisted(() => {
     mutation,
   };
 });
+
+let activeRender: RenderResult | null = null;
 
 export function pageSmokeMocks() {
   return mocks;
@@ -139,7 +140,6 @@ vi.mock("@/features/stream/stream-query", () => ({
 
 vi.mock("@/features/resource/resource-query", () => ({
   createResourceInventoryQuery: () => mocks.queryStates.inventory,
-  createResourceQuery: () => mocks.queryStates.resource,
 }));
 import {
   activeSessions,
@@ -161,7 +161,6 @@ import {
   queueOverview,
   queueRealmDetail,
   queueResource,
-  resourceDetail,
   rpcArea,
   rpcOperation,
   rpcOverview,
@@ -271,7 +270,6 @@ export function resetQueries() {
   mocks.queryStates.streamArea = queryState.fresh(streamArea, queryOptions());
   mocks.queryStates.streamResource = queryState.fresh(streamResource, queryOptions());
   mocks.queryStates.inventory = queryState.fresh(inventory, queryOptions());
-  mocks.queryStates.resource = queryState.fresh(resourceDetail, queryOptions());
   mocks.queryStates.kvRows = queryState.fresh(kvRows, queryOptions());
   mocks.queryStates.kvValue = queryState.fresh(
     {
@@ -290,29 +288,37 @@ export function resetQueries() {
   mocks.mutation.result = null;
 }
 
-export async function mountRoute(path: string, routePath: string, handler: RouteHandler) {
-  cleanupApp("app");
+export async function mountRoute(
+  path: string,
+  routePath: string,
+  handler: RouteHandler,
+  dataRuntime?: DataRuntime,
+) {
+  activeRender?.cleanup();
+  activeRender = null;
   document.body.innerHTML = '<div id="app"></div>';
-  window.history.pushState({}, "", path);
 
   const root = document.getElementById("app");
   if (!root) {
     throw new Error("Missing test app root");
   }
 
-  await createSPA({
-    root,
+  activeRender = await renderRoute({
+    container: root,
+    dataRuntime,
     registry: createRouteRegistry(() => {
       route(routePath, handler);
     }),
+    url: path,
   });
 
   await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
-  return root;
+  return activeRender.root;
 }
 
 afterEach(() => {
-  cleanupApp("app");
+  activeRender?.cleanup();
+  activeRender = null;
   document.body.innerHTML = "";
   vi.clearAllMocks();
 });

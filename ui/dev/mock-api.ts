@@ -1,4 +1,4 @@
-import { mockFitzResponse } from "./mock-api/responses";
+import { mockFitzResponse } from "./mock-api/responses.ts";
 
 export { mockFitzResponse };
 

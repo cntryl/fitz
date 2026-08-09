@@ -50,7 +50,7 @@ import {
   OperatorScope,
   type RouteFamilyOption,
 } from "@/shared/operator-scope";
-import { routeFamilyIconColor } from "@/shared/route-family-appearance";
+import { routeFamilyIconSlot } from "@/shared/route-family-appearance";
 import RouteFamilySelectorPage, { RouteFamilyNotFoundPage } from "./route-family";
 
 const workspaceLinks = shellLinks.filter(
@@ -103,8 +103,8 @@ function RouteFamilyMenuItem({
     >
       <NetworkIcon
         class="route-family-icon"
+        data-route-family-identity={routeFamilyIconSlot(family.id)}
         size={16}
-        style={{ color: routeFamilyIconColor(family.id) }}
         aria-hidden="true"
       />
       <span>{family.label}</span>
@@ -208,8 +208,8 @@ function OperatorNavigation({
                 >
                   <NetworkIcon
                     class="route-family-icon"
+                    data-route-family-identity={routeFamilyIconSlot(selectedRouteFamily.id)}
                     size={16}
-                    style={{ color: routeFamilyIconColor(selectedRouteFamily.id) }}
                     aria-hidden="true"
                   />
                   <Text as="span" size="sm" weight="medium">

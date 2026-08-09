@@ -9,6 +9,7 @@
     "preview": "vp preview",
     "test": "vp test",
     "test:e2e": "playwright test",
+    "test:e2e:preview": "npm run build && PLAYWRIGHT_PREVIEW=1 playwright test",
     "test:e2e:ui": "playwright test --ui",
     "install:browsers": "playwright install chromium",
     "check:generated": "askr generate ../public/openapi.yml -o ./src/adapters/generated --check",
@@ -20,22 +21,22 @@
     "gen:adapters": "askr generate ../public/openapi.yml -o ./src/adapters/generated"
   },
   "dependencies": {
-    "@askrjs/askr": "^0.0.87",
-    "@askrjs/fetch": "0.0.4",
-    "@askrjs/lucide": "0.0.8",
-    "@askrjs/themes": "0.0.22",
-    "@askrjs/ui": "^0.0.25"
+    "@askrjs/askr": "^0.0.91",
+    "@askrjs/fetch": "0.0.5",
+    "@askrjs/lucide": "0.0.9",
+    "@askrjs/themes": "0.0.25",
+    "@askrjs/ui": "^0.0.27"
   },
   "devDependencies": {
-    "@askrjs/cli": "0.0.21",
-    "@askrjs/vite": "0.0.12",
+    "@askrjs/cli": "0.0.23",
+    "@askrjs/vite": "0.0.13",
     "@playwright/test": "^1.62.1",
-    "@types/node": "^26.1.2",
+    "@types/node": "^26.2.0",
     "autoprefixer": "^10.5.4",
     "jsdom": "^30.0.1",
-    "postcss": "^8.5.25",
+    "postcss": "^8.5.26",
     "typescript": "^7.0.2",
-    "vite-plus": "^0.2.7"
+    "vite-plus": "^0.2.8"
   },
   "packageManager": "npm@12.0.2"
 }

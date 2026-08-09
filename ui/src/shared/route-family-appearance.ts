@@ -1,10 +1,17 @@
-export function routeFamilyIconColor(routeFamilyId: string) {
+const ROUTE_FAMILY_ICON_SLOTS = [
+  "identity-0",
+  "identity-1",
+  "identity-2",
+  "identity-3",
+  "identity-4",
+] as const;
+
+export function routeFamilyIconSlot(routeFamilyId: string) {
   let hash = 0;
 
   for (const character of routeFamilyId) {
     hash = (Math.imul(hash, 31) + character.charCodeAt(0)) >>> 0;
   }
 
-  const hue = (Math.imul(hash, 137) + 210) % 360;
-  return `hsl(${hue} 68% 48%)`;
+  return ROUTE_FAMILY_ICON_SLOTS[hash % ROUTE_FAMILY_ICON_SLOTS.length];
 }

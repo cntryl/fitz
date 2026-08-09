@@ -29,7 +29,7 @@ import {
   OperatorScope,
   type OperatorScopeSnapshot,
 } from "@/shared/operator-scope";
-import { routeFamilyIconColor } from "@/shared/route-family-appearance";
+import { routeFamilyIconSlot } from "@/shared/route-family-appearance";
 
 vi.mock("@/features/session/session-query", () => ({
   createCurrentSessionQuery: () => ({
@@ -76,12 +76,6 @@ async function mount(handler: RouteHandler, path = "/") {
 
   await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
   return root;
-}
-
-function browserColor(value: string) {
-  const element = document.createElement("span");
-  element.style.color = value;
-  return element.style.color;
 }
 
 afterEach(() => {
@@ -448,9 +442,11 @@ describe("shared UI polish contracts", () => {
     expect(routeFamilySelector).toBeTruthy();
     expect(root.querySelector('form[role="search"]')).toBeNull();
     expect(routeFamilySelector?.querySelector('[data-slot="icon"]')).toBeTruthy();
-    expect(routeFamilySelector?.querySelector<HTMLElement>(".route-family-icon")?.style.color).toBe(
-      browserColor(routeFamilyIconColor("1")),
-    );
+    expect(
+      routeFamilySelector
+        ?.querySelector<HTMLElement>(".route-family-icon")
+        ?.getAttribute("data-route-family-identity"),
+    ).toBe(routeFamilyIconSlot("1"));
     const signOut = root.querySelector('a[aria-label="Sign out"]');
     expect(signOut?.getAttribute("href")).toBe("/logout");
     expect(signOut?.textContent).toBe("");
@@ -466,10 +462,12 @@ describe("shared UI polish contracts", () => {
 
     expect(document.body.textContent).toContain("Route Family");
     expect(
-      document.body.querySelector<HTMLElement>(
-        '.operator-route-family-option[data-route-family="7"] .route-family-icon',
-      )?.style.color,
-    ).toBe(browserColor(routeFamilyIconColor("7")));
+      document.body
+        .querySelector<HTMLElement>(
+          '.operator-route-family-option[data-route-family="7"] .route-family-icon',
+        )
+        ?.getAttribute("data-route-family-identity"),
+    ).toBe(routeFamilyIconSlot("7"));
 
     expect(root.querySelector('button[aria-label="Account menu"]')).toBeNull();
   });
