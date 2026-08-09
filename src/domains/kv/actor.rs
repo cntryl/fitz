@@ -584,6 +584,10 @@ impl KvActor {
         expired
     }
 
+    pub(crate) fn rollback_transaction(&mut self, tx_id: u64) -> bool {
+        self.transactions.remove(&tx_id).is_some()
+    }
+
     #[must_use]
     pub fn mutation_count_for_tx(&self, tx_id: u64) -> Option<u64> {
         self.transactions.get(&tx_id).map(|tx| tx.mutation_count)
@@ -615,22 +619,6 @@ impl KvActor {
                 )
             })
             .collect()
-    }
-
-    pub(crate) fn has_read_write_transaction_for_scope(
-        &self,
-        family_id: u64,
-        realm: &str,
-        area: &str,
-        resource: &str,
-    ) -> bool {
-        self.transactions.values().any(|active| {
-            active.mode == TxMode::ReadWrite
-                && u64::from(active.scope.route_family.id()) == family_id
-                && active.scope.realm == realm
-                && active.scope.area == area
-                && active.scope.resource == resource
-        })
     }
 
     #[must_use]

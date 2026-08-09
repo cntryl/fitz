@@ -22,6 +22,7 @@ impl KvDomainState {
             core: KvDomainCore {
                 store,
                 actors: Arc::new(Mutex::new(HashMap::new())),
+                resource_locks: Mutex::new(HashMap::new()),
                 watch_actors: Mutex::new(HashMap::new()),
                 router,
                 projection: crate::domains::kv::projection::KvAdminProjection::new(
@@ -730,30 +731,12 @@ impl KvDomainRuntime<'_> {
         session_id: u64,
         resource_key: &KvResourceLockKey,
     ) -> Option<u64> {
-        let actors: Vec<_> = self
-            .core
-            .actors
+        self.core
+            .resource_locks
             .lock()
-            .iter()
-            .map(|(session_id, actor)| (*session_id, actor.clone()))
-            .collect();
-        actors.iter().find_map(|(active_session_id, actor)| {
-            if *active_session_id == session_id {
-                return None;
-            }
-
-            actor
-                .lock()
-                .active_transaction_scopes()
-                .into_iter()
-                .find_map(|(_tx_id, family_id, realm, area, resource)| {
-                    (family_id == resource_key.family_id
-                        && realm == resource_key.realm
-                        && area == resource_key.area
-                        && resource == resource_key.resource)
-                        .then_some(*active_session_id)
-                })
-        })
+            .get(resource_key)
+            .filter(|owner| owner.session_id != session_id)
+            .map(|owner| owner.session_id)
     }
 
     pub(super) fn session_holds_resource_write_lock(
@@ -761,15 +744,11 @@ impl KvDomainRuntime<'_> {
         session_id: u64,
         resource_key: &KvResourceLockKey,
     ) -> bool {
-        let actor = self.core.actors.lock().get(&session_id).cloned();
-        actor.is_some_and(|actor| {
-            actor.lock().has_read_write_transaction_for_scope(
-                resource_key.family_id,
-                &resource_key.realm,
-                &resource_key.area,
-                &resource_key.resource,
-            )
-        })
+        self.core
+            .resource_locks
+            .lock()
+            .get(resource_key)
+            .is_some_and(|owner| owner.session_id == session_id)
     }
 
     pub(super) fn latency_snapshots(
