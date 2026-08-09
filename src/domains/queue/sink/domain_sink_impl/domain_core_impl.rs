@@ -3,7 +3,8 @@ use super::FrameContext;
 use super::{
     Arc, Envelope, HashSet, Instant, Mutex, QueueDomainCore, QueueLiveCounts, QueueNotification,
     QueueProjectionEntry, QueueProjectionState, QueueReadyNotification, WarmQueueActor,
-    QUEUE_ACTOR_IDLE_TTL, QUEUE_DEDUP_SWEEP_INTERVAL, QUEUE_IDLE_SWEEP_INTERVAL,
+    QUEUE_ACTOR_IDLE_TTL, QUEUE_DEDUP_SWEEP_INTERVAL, QUEUE_IDLE_SWEEP_BATCH_SIZE,
+    QUEUE_IDLE_SWEEP_INTERVAL,
 };
 
 impl QueueDomainCore {
@@ -481,6 +482,7 @@ impl QueueDomainCore {
                     actor: actor.clone(),
                     last_used: now,
                 });
+                self.idle_sweep_keys.lock().push_back(key.clone());
                 Ok((actor, true))
             }
         }
@@ -576,34 +578,60 @@ impl QueueDomainCore {
         let mut removed_keys = Vec::new();
         let mut empty_removed_keys = Vec::new();
         let mut dirty_families = HashSet::new();
-        let mut actors = self.actors.lock();
+        let sweep_keys = {
+            let mut idle_sweep_keys = self.idle_sweep_keys.lock();
+            let count = idle_sweep_keys.len().min(QUEUE_IDLE_SWEEP_BATCH_SIZE);
+            idle_sweep_keys.drain(..count).collect::<Vec<_>>()
+        };
 
-        actors.retain(|key, warm_actor| {
-            let mut actor = warm_actor.actor.lock();
+        for key in sweep_keys {
+            let Some((actor_ref, last_used)) = self
+                .actors
+                .lock()
+                .get(&key)
+                .map(|warm_actor| (warm_actor.actor.clone(), warm_actor.last_used))
+            else {
+                continue;
+            };
+            let mut actor = actor_ref.lock();
             if actor.process_due_work() {
                 changed = true;
                 dirty_families.insert(key.family);
             }
             let counts = actor.live_counts();
 
-            if let Some(notification) = self.record_ready_state(key, counts) {
+            if let Some(notification) = self.record_ready_state(&key, counts) {
                 notifications.push((key.clone(), notification));
             }
 
-            let idle_for = now.saturating_duration_since(warm_actor.last_used);
+            let idle_for = now.saturating_duration_since(last_used);
             let should_keep =
                 idle_for < QUEUE_ACTOR_IDLE_TTL || counts.delayed > 0 || counts.inflight > 0;
-            if !should_keep {
+            drop(actor);
+
+            if should_keep {
+                self.idle_sweep_keys.lock().push_back(key);
+                continue;
+            }
+
+            let removed = {
+                let mut actors = self.actors.lock();
+                let unchanged = actors.get(&key).is_some_and(|warm_actor| {
+                    warm_actor.last_used == last_used && Arc::ptr_eq(&warm_actor.actor, &actor_ref)
+                });
+                unchanged && actors.remove(&key).is_some()
+            };
+            if removed {
                 changed = true;
                 removed_keys.push(key.clone());
                 if counts.total() == 0 {
-                    empty_removed_keys.push(key.clone());
+                    empty_removed_keys.push(key);
                 }
+            } else {
+                self.idle_sweep_keys.lock().push_back(key);
             }
-            should_keep
-        });
+        }
 
-        drop(actors);
         if !removed_keys.is_empty() {
             let mut ready_states = self.ready_states.lock();
             for key in removed_keys {

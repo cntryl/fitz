@@ -24,6 +24,8 @@
 //! Consumer A crashes before completing message 1
 //! After 30s, inflight entry expires → message 1 returns to ready queue
 //! Consumer C tries again → gets message 1 (redelivery)
+//! Each delivery increments `attempts`; when `max_attempts` is configured, reaching it moves the
+//! message to the DLQ instead of allowing another redelivery.
 //! ```
 //!
 //! # Key Design Decisions
@@ -39,6 +41,9 @@
 //!   Crashes automatically trigger redelivery (inflight state not persisted).
 //! - **Fair distribution**: Reserve operations pop from front of ready queue (simple FIFO internally).
 //!   Multiple competing consumers naturally distribute work.
+//! - **Single execution lane**: The current single-node MVP runs all Queue operations through one
+//!   broker-wide mailbox thread. Unrelated queues therefore share one execution ceiling; multiple
+//!   consumers describe client-side competition, not parallel Queue execution inside the broker.
 //!
 //! # Intent vs Events
 //!

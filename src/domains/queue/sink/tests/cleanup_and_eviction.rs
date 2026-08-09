@@ -458,6 +458,46 @@ fn should_evict_idle_queue_actor_without_losing_committed_state() {
 }
 
 #[test]
+fn should_bound_idle_actor_sweep_work_per_tick() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let sink = new_queue_domain_sink(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+        cntryl_midge::WriteOptions::buffered(),
+    );
+    let actor_count = QUEUE_IDLE_SWEEP_BATCH_SIZE + 5;
+    for index in 0..actor_count {
+        let key = QueueKey::from_route(
+            family,
+            &Route::new(format!("queue://acme/jobs/bounded-{index}")),
+        )
+        .expect("queue key");
+        sink.core
+            .get_or_create_actor(&key)
+            .expect("create queue actor");
+    }
+    let now = Instant::now();
+    for warm_actor in sink.core.actors.lock().values_mut() {
+        warm_actor.last_used = now
+            .checked_sub(QUEUE_ACTOR_IDLE_TTL + Duration::from_secs(1))
+            .expect("idle deadline");
+    }
+
+    // Act
+    sink.core.sweep_idle_actors_at(now);
+
+    // Assert
+    assert_eq!(
+        sink.actor_count_for_tests(),
+        actor_count - QUEUE_IDLE_SWEEP_BATCH_SIZE
+    );
+    sink.core.sweep_idle_actors_at(now);
+    assert!(sink.actors_are_empty_for_tests());
+}
+
+#[test]
 fn should_prune_empty_queue_identity_when_actor_is_evicted() {
     // Arrange
     let family = RouteFamily::new(1);
