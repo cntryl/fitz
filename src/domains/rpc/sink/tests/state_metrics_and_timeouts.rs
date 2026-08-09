@@ -197,8 +197,8 @@ pub(super) fn test_pending_request_with_registration(
         route: route.clone(),
         caller_session_id,
         caller_inbox_addr: session_inbox_address(family, caller_session_id),
-        worker_addr: RouteAddress::new(family, route.clone()),
-        worker_session_id,
+        registration_addr: RouteAddress::new(family, route.clone()),
+        registration_session_id: worker_session_id,
         registration_id,
         submitted_at: test_rpc_timestamp(),
         submitted_at_instant,
@@ -328,7 +328,7 @@ pub(super) fn should_route_rpc_session_cleanup_helper_through_managed_actor() {
 
     // Assert
     assert!(!sink.is_actor_running());
-    assert_eq!(cleanup.removed_workers, 0);
+    assert_eq!(cleanup.removed_registrations, 0);
     assert_eq!(cleanup.detached_callers, 0);
     assert_eq!(cleanup.removed_pending, 0);
     assert_eq!(cleanup.pending_len, 0);
@@ -366,7 +366,7 @@ pub(super) fn should_route_rpc_worker_unsubscribe_helper_through_managed_actor()
 
     // Assert
     assert!(!sink.is_actor_running());
-    assert_eq!(cleanup.removed_workers, 0);
+    assert_eq!(cleanup.removed_registrations, 0);
     assert_eq!(cleanup.removed_pending, 0);
     assert_eq!(cleanup.pending_len, 0);
     assert_eq!(pending_count, 1);
@@ -583,8 +583,8 @@ pub(super) fn should_snapshot_live_pending_request_details_given_rpc_admin_snaps
             route: route.clone(),
             caller_session_id: 7,
             caller_inbox_addr: session_inbox_address(family, 7),
-            worker_addr: RouteAddress::new(family, route.clone()),
-            worker_session_id: 42,
+            registration_addr: RouteAddress::new(family, route.clone()),
+            registration_session_id: 42,
             registration_id: 0,
             submitted_at: test_rpc_timestamp(),
             submitted_at_instant: Instant::now().checked_sub(Duration::from_secs(9)).unwrap(),
@@ -673,8 +673,8 @@ pub(super) fn should_snapshot_live_worker_metrics_after_terminal_response_given_
             route: route.clone(),
             caller_session_id: 7,
             caller_inbox_addr: caller_addr.clone(),
-            worker_addr: request_addr.clone(),
-            worker_session_id: 42,
+            registration_addr: request_addr.clone(),
+            registration_session_id: 42,
             registration_id,
             submitted_at: test_rpc_timestamp(),
             submitted_at_instant: Instant::now()
@@ -771,7 +771,7 @@ pub(super) fn should_accumulate_cleanup_counters_given_rpc_session_cleanup() {
     let cleanup = sink.apply_session_cleanup(42);
 
     // Assert
-    assert_eq!(cleanup.removed_workers, 2);
+    assert_eq!(cleanup.removed_registrations, 2);
     assert_eq!(cleanup.detached_callers, 2);
     assert_eq!(cleanup.removed_pending, 2);
     assert_eq!(cleanup.pending_len, 2);
@@ -844,7 +844,7 @@ pub(super) fn should_accumulate_pending_removed_counter_given_rpc_worker_unsubsc
     let cleanup = sink.apply_worker_unsubscribe(&removed_addr, 42);
 
     // Assert
-    assert_eq!(cleanup.removed_workers, 1);
+    assert_eq!(cleanup.removed_registrations, 1);
     assert_eq!(cleanup.removed_pending, 2);
     assert_eq!(cleanup.pending_len, 1);
     assert_eq!(metrics.counter_get("rpc_cleanup_workers_removed_total"), 1);

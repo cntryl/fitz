@@ -5,7 +5,7 @@ use super::{
 /// Owns registration identity, lookup, and lifecycle bookkeeping.
 pub(in crate::domains::rpc::sink) struct RegistrationTable {
     by_id: BTreeMap<RpcRegistrationId, RpcWorker>,
-    by_worker: RpcFastMap<RpcWorkerKey, RpcRegistrationId>,
+    by_registration: RpcFastMap<RpcWorkerKey, RpcRegistrationId>,
     next_id: RpcRegistrationId,
 }
 
@@ -13,24 +13,24 @@ impl RegistrationTable {
     pub(in crate::domains::rpc::sink) fn new() -> Self {
         Self {
             by_id: BTreeMap::new(),
-            by_worker: HashMap::with_capacity_and_hasher(64, FxBuildHasher),
+            by_registration: HashMap::with_capacity_and_hasher(64, FxBuildHasher),
             next_id: 1,
         }
     }
 
-    pub(in crate::domains::rpc::sink) fn contains_worker(&self, key: &RpcWorkerKey) -> bool {
-        self.by_worker.contains_key(key)
+    pub(in crate::domains::rpc::sink) fn contains_registration(&self, key: &RpcWorkerKey) -> bool {
+        self.by_registration.contains_key(key)
     }
 
     pub(in crate::domains::rpc::sink) fn insert(
         &mut self,
         key: RpcWorkerKey,
-        mut worker: RpcWorker,
+        mut registration: RpcWorker,
     ) -> RpcRegistrationId {
         let registration_id = self.allocate_id();
-        worker.assign_registration_id(registration_id);
-        self.by_worker.insert(key, registration_id);
-        self.by_id.insert(registration_id, worker);
+        registration.assign_registration_id(registration_id);
+        self.by_registration.insert(key, registration_id);
+        self.by_id.insert(registration_id, registration);
         registration_id
     }
 
@@ -49,7 +49,7 @@ impl RegistrationTable {
         &self,
         key: &RpcWorkerKey,
     ) -> Option<RpcRegistrationId> {
-        self.by_worker.get(key).copied()
+        self.by_registration.get(key).copied()
     }
 
     pub(in crate::domains::rpc::sink) fn get(
@@ -84,12 +84,12 @@ impl RegistrationTable {
         &mut self,
         key: &RpcWorkerKey,
     ) -> Option<(RpcRegistrationId, RpcWorker)> {
-        let registration_id = self.by_worker.remove(key)?;
-        let worker = self
+        let registration_id = self.by_registration.remove(key)?;
+        let registration = self
             .by_id
             .remove(&registration_id)
             .expect("indexed RPC registration");
-        Some((registration_id, worker))
+        Some((registration_id, registration))
     }
 
     pub(in crate::domains::rpc::sink) fn remove_session(
@@ -97,7 +97,7 @@ impl RegistrationTable {
         session_id: u64,
     ) -> Vec<(RpcRegistrationId, RpcWorker)> {
         let keys = self
-            .by_worker
+            .by_registration
             .keys()
             .filter(|key| key.session_id == session_id)
             .cloned()

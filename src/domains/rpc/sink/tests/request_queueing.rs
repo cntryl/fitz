@@ -675,8 +675,8 @@ fn should_detach_caller_pending_given_rpc_session_cleanup() {
             route: route.clone(),
             caller_session_id: 7,
             caller_inbox_addr: caller_inbox_addr.clone(),
-            worker_addr: RouteAddress::new(family, route.clone()),
-            worker_session_id: 42,
+            registration_addr: RouteAddress::new(family, route.clone()),
+            registration_session_id: 42,
             registration_id: 0,
             submitted_at: test_rpc_timestamp(),
             submitted_at_instant: Instant::now(),
@@ -688,7 +688,7 @@ fn should_detach_caller_pending_given_rpc_session_cleanup() {
     let caller_cleanup = state.cleanup_session(7);
 
     // Assert
-    assert_eq!(caller_cleanup.removed_workers, 0);
+    assert_eq!(caller_cleanup.removed_registrations, 0);
     assert_eq!(caller_cleanup.detached_callers, 1);
     assert_eq!(caller_cleanup.removed_pending, 0);
     assert_eq!(caller_cleanup.pending_len, 1);
@@ -738,7 +738,7 @@ fn should_remove_queued_request_given_rpc_session_cleanup() {
     let caller_cleanup = state.cleanup_session(7);
 
     // Assert
-    assert_eq!(caller_cleanup.removed_workers, 0);
+    assert_eq!(caller_cleanup.removed_registrations, 0);
     assert_eq!(caller_cleanup.detached_callers, 0);
     assert_eq!(caller_cleanup.removed_pending, 1);
     assert_eq!(caller_cleanup.pending_len, 0);
@@ -759,7 +759,7 @@ fn should_remove_worker_entries_given_rpc_session_cleanup() {
     let worker_cleanup = state.cleanup_session(42);
 
     // Assert
-    assert_eq!(worker_cleanup.removed_workers, 1);
+    assert_eq!(worker_cleanup.removed_registrations, 1);
     assert_eq!(worker_cleanup.detached_callers, 0);
     assert_eq!(worker_cleanup.removed_pending, 0);
     assert_eq!(worker_cleanup.pending_len, 0);
@@ -787,7 +787,7 @@ fn should_remove_worker_owned_pending_given_rpc_session_cleanup() {
     let worker_cleanup = state.cleanup_session(42);
 
     // Assert
-    assert_eq!(worker_cleanup.removed_workers, 0);
+    assert_eq!(worker_cleanup.removed_registrations, 0);
     assert_eq!(worker_cleanup.detached_callers, 0);
     assert_eq!(worker_cleanup.removed_pending, 1);
     assert_eq!(worker_cleanup.pending_len, 0);

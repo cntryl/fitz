@@ -26,8 +26,8 @@ pub(in crate::domains::rpc::sink) struct RpcPendingRequestInit {
     pub(in crate::domains::rpc::sink) route: Route,
     pub(in crate::domains::rpc::sink) caller_session_id: u64,
     pub(in crate::domains::rpc::sink) caller_inbox_addr: RouteAddress,
-    pub(in crate::domains::rpc::sink) worker_addr: RouteAddress,
-    pub(in crate::domains::rpc::sink) worker_session_id: u64,
+    pub(in crate::domains::rpc::sink) registration_addr: RouteAddress,
+    pub(in crate::domains::rpc::sink) registration_session_id: u64,
     pub(in crate::domains::rpc::sink) registration_id: RpcRegistrationId,
     pub(in crate::domains::rpc::sink) submitted_at: DateTime<Utc>,
     pub(in crate::domains::rpc::sink) submitted_at_instant: Instant,
@@ -40,8 +40,8 @@ impl RpcPendingRequest {
             route,
             caller_session_id,
             caller_inbox_addr,
-            worker_addr,
-            worker_session_id,
+            registration_addr,
+            registration_session_id,
             registration_id,
             submitted_at,
             submitted_at_instant,
@@ -50,15 +50,15 @@ impl RpcPendingRequest {
 
         Self {
             dispatch_info: RpcPendingDispatchInfo {
-                family: *worker_addr.family(),
+                family: *registration_addr.family(),
                 route,
                 caller_session_id,
                 caller_inbox_addr: Some(caller_inbox_addr),
                 registration_id,
                 submitted_at_instant,
             },
-            worker_addr,
-            worker_session_id,
+            worker_addr: registration_addr,
+            worker_session_id: registration_session_id,
             next_expected_seq: 0,
             submitted_at,
             expires_at,
@@ -69,7 +69,7 @@ impl RpcPendingRequest {
         req: &crate::domains::rpc::protocol::RpcRequest,
         caller_session_id: u64,
         caller_inbox_addr: RouteAddress,
-        worker: &RpcWorkerDispatch,
+        registration: &RpcWorkerDispatch,
         expires_at: Instant,
     ) -> Self {
         let submitted_at_instant = Instant::now();
@@ -77,9 +77,9 @@ impl RpcPendingRequest {
             route: req.route.clone(),
             caller_session_id,
             caller_inbox_addr,
-            worker_addr: worker.addr.clone(),
-            worker_session_id: worker.session_id,
-            registration_id: worker.registration_id,
+            registration_addr: registration.addr.clone(),
+            registration_session_id: registration.session_id,
+            registration_id: registration.registration_id,
             submitted_at: Utc::now(),
             submitted_at_instant,
             expires_at,
@@ -162,7 +162,7 @@ pub(in crate::domains::rpc::sink) struct RpcPendingCleanupResult {
 
 #[derive(Default)]
 pub(in crate::domains::rpc::sink) struct RpcSessionCleanupResult {
-    pub(in crate::domains::rpc::sink) removed_workers: usize,
+    pub(in crate::domains::rpc::sink) removed_registrations: usize,
     pub(in crate::domains::rpc::sink) detached_callers: usize,
     pub(in crate::domains::rpc::sink) removed_pending: usize,
     pub(in crate::domains::rpc::sink) pending_len: usize,
@@ -171,7 +171,7 @@ pub(in crate::domains::rpc::sink) struct RpcSessionCleanupResult {
 
 #[derive(Default)]
 pub(in crate::domains::rpc::sink) struct RpcWorkerCleanupResult {
-    pub(in crate::domains::rpc::sink) removed_workers: usize,
+    pub(in crate::domains::rpc::sink) removed_registrations: usize,
     pub(in crate::domains::rpc::sink) removed_pending: usize,
     pub(in crate::domains::rpc::sink) pending_len: usize,
     pub(in crate::domains::rpc::sink) disconnect_deliveries: Vec<RpcPendingErrorDelivery>,
@@ -186,7 +186,7 @@ pub(in crate::domains::rpc::sink) struct RpcPendingTimeoutResult {
 
 pub(in crate::domains::rpc::sink) struct RpcQueuedDispatch {
     pub(in crate::domains::rpc::sink) request: crate::domains::rpc::protocol::RpcRequest,
-    pub(in crate::domains::rpc::sink) worker: RpcWorkerDispatch,
+    pub(in crate::domains::rpc::sink) registration: RpcWorkerDispatch,
     pub(in crate::domains::rpc::sink) live_request_count: usize,
 }
 
@@ -211,7 +211,7 @@ pub(in crate::domains::rpc::sink) enum RpcRequestDispatch {
     },
     Immediate {
         request: crate::domains::rpc::protocol::RpcRequest,
-        worker: RpcWorkerDispatch,
+        registration: RpcWorkerDispatch,
         live_request_count: usize,
     },
 }

@@ -58,7 +58,7 @@ pub(in crate::domains::rpc::sink) trait RpcResponseState {
         &mut self,
         family: RouteFamily,
         correlation_id: &uuid::Uuid,
-        worker_session_id: u64,
+        registration_session_id: u64,
         response_seq: u64,
         stream_end: bool,
     ) -> super::RpcPendingResponseDisposition;
@@ -110,14 +110,14 @@ impl RpcResponseState for RpcState {
         &mut self,
         family: RouteFamily,
         correlation_id: &uuid::Uuid,
-        worker_session_id: u64,
+        registration_session_id: u64,
         response_seq: u64,
         stream_end: bool,
     ) -> super::RpcPendingResponseDisposition {
         self.pending.pending_for_response_in_family(
             family,
             correlation_id,
-            worker_session_id,
+            registration_session_id,
             response_seq,
             stream_end,
         )
@@ -150,7 +150,7 @@ impl RpcState {
         registration: RpcWorker,
     ) -> RpcWorkerRegistration {
         let key = RpcWorkerKey::from_parts(&registration.addr, registration.session_id);
-        if self.registrations.contains_worker(&key) {
+        if self.registrations.contains_registration(&key) {
             return RpcWorkerRegistration::Existing;
         }
 
@@ -433,7 +433,7 @@ impl RpcState {
         }
 
         RpcSessionCleanupResult {
-            removed_workers: removed_registration_ids.len(),
+            removed_registrations: removed_registration_ids.len(),
             detached_callers: pending_cleanup.detached_callers,
             removed_pending: pending_cleanup.removed_pending + queued_removed,
             pending_len: self.live_request_count(),
@@ -462,7 +462,7 @@ impl RpcState {
         self.prune_unused_routes_for_family(family);
 
         RpcWorkerCleanupResult {
-            removed_workers: 1,
+            removed_registrations: 1,
             removed_pending: pending_cleanup.removed_pending,
             pending_len: self.live_request_count(),
             disconnect_deliveries: pending_cleanup.disconnect_deliveries,
@@ -639,7 +639,7 @@ impl RpcState {
                         }),
                 }
             }
-            DispatchAction::Dispatch(worker) => {
+            DispatchAction::Dispatch(registration) => {
                 self.pending.track_pending_for_family(
                     family,
                     correlation_id,
@@ -647,13 +647,13 @@ impl RpcState {
                         &request,
                         caller_session_id,
                         caller_inbox_addr,
-                        &worker,
+                        &registration,
                         expires_at,
                     ),
                 );
                 RpcRequestDispatch::Immediate {
                     request,
-                    worker,
+                    registration,
                     live_request_count: global_pending_count
                         .map_or(local_live_request_count.saturating_add(1), |count| {
                             count.load(std::sync::atomic::Ordering::Acquire)
@@ -710,7 +710,7 @@ impl RpcState {
         {
             return None;
         }
-        let worker = self.claim_registration(family, route)?;
+        let registration = self.claim_registration(family, route)?;
         let correlation_id = self
             .routes
             .get_mut(&(family, route.clone()))?
@@ -735,9 +735,9 @@ impl RpcState {
             route: request.route.clone(),
             caller_session_id,
             caller_inbox_addr,
-            worker_addr: worker.addr.clone(),
-            worker_session_id: worker.session_id,
-            registration_id: worker.registration_id,
+            registration_addr: registration.addr.clone(),
+            registration_session_id: registration.session_id,
+            registration_id: registration.registration_id,
             submitted_at,
             submitted_at_instant,
             expires_at,
@@ -748,7 +748,7 @@ impl RpcState {
 
         Some(RpcQueuedDispatch {
             request,
-            worker,
+            registration,
             live_request_count: self.live_request_count(),
         })
     }
