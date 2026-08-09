@@ -265,7 +265,11 @@ impl QueueActor {
                 self.handle_ack_authorized(session_id, id, token)
             }
             Some(_) => QueueResponse::NotFound,
-            None => self.handle_ack_authorized(session_id, id, token),
+            None => {
+                // A missing inflight entry may be an idempotent retry; let the
+                // dedup cache in the authorized path decide the response.
+                self.handle_ack_authorized(session_id, id, token)
+            }
         }
     }
 
