@@ -15,10 +15,7 @@ use crate::session::permissions::SessionPermissions;
 use crate::session::session::SessionId;
 
 /// Lightweight `SessionActor` helpers for the KV domain.
-///
-/// Responsibilities:
-/// - Enforce session-level authorization for KV operations
-/// - Forward authorized operations to the `KvActor`
+/// See the module documentation for its authorization and forwarding responsibilities.
 pub struct SessionActor {
     pub session_id: SessionId,
     pub permissions: SessionPermissions,
@@ -84,12 +81,7 @@ impl SessionActor {
     /// Forward subsequent KV operations (after begin).
     /// Realm authorization was already checked at begin time.
     ///
-    /// # Errors
-    ///
-    /// Returns an error only if later validation logic adds one; current
-    /// operation forwarding is infallible.
-    pub fn operation(&self, kv_actor: &mut KvActor, msg: KvMessage) -> Result<(), String> {
-        kv_actor.handle(msg);
-        Ok(())
+    pub fn operation(&self, kv_actor: &mut KvActor, msg: KvMessage) -> KvResponse {
+        kv_actor.handle(msg)
     }
 }

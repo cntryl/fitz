@@ -239,7 +239,7 @@ fn should_allow_subsequent_operations_after_begin() {
     let result = session_actor.operation(&mut kv_actor, put_msg);
 
     // Assert
-    assert!(result.is_ok());
+    assert!(matches!(result, KvResponse::PutOk));
 }
 
 #[test]

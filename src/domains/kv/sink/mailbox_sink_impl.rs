@@ -1,7 +1,7 @@
 use super::model::{
     Arc, DeliveryError, Envelope, KvAdminTransactionUpdate, KvClientFrame, KvClientRequest,
-    KvDomainActor, KvDomainCommand, KvDomainRuntime, KvDomainSink, KvResourceLockKey,
-    KvResourceLockOwner, MailboxSink, Mutex, Ordering,
+    KvDomainActor, KvDomainCommand, KvDomainRuntime, KvDomainSink, KvOperationOutcome,
+    KvResourceLockKey, KvResourceLockOwner, MailboxSink, Mutex, Ordering,
 };
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
@@ -336,8 +336,11 @@ impl KvDomainRuntime<'_> {
         );
 
         self.touch_resource_lock(session_id, &kv_message);
-        let (response, admin_update, commit_notification) =
-            self.dispatch_actor_operation(session_id, meta, kv_message);
+        let KvOperationOutcome {
+            response,
+            admin_update,
+            commit_notification,
+        } = self.dispatch_actor_operation(session_id, meta, kv_message);
         if matches!(
             &response,
             crate::domains::kv::KvResponse::Error {
@@ -385,11 +388,7 @@ impl KvDomainRuntime<'_> {
         session_id: u64,
         meta: crate::runtime::ClientFrameMeta,
         kv_message: crate::domains::kv::KvMessage,
-    ) -> (
-        crate::domains::kv::KvResponse,
-        KvAdminTransactionUpdate,
-        Option<(KvResourceLockKey, u64)>,
-    ) {
+    ) -> KvOperationOutcome {
         use crate::domains::kv::{KvMessage, TxMode};
         let write_scope = match &kv_message {
             KvMessage::Begin { scope, mode, .. } if *mode == TxMode::ReadWrite => Some((
@@ -525,11 +524,7 @@ impl KvDomainRuntime<'_> {
         area: &str,
         resource: &str,
         kv_message: crate::domains::kv::KvMessage,
-    ) -> (
-        crate::domains::kv::KvResponse,
-        KvAdminTransactionUpdate,
-        Option<(KvResourceLockKey, u64)>,
-    ) {
+    ) -> KvOperationOutcome {
         use crate::domains::kv::{KvError, KvResponse};
 
         let lock_key = KvResourceLockKey::new(family_id, realm, area, resource);
@@ -538,7 +533,7 @@ impl KvDomainRuntime<'_> {
             .conflicting_session_for_resource(session_id, &lock_key)
             .is_some()
         {
-            return (
+            return KvOperationOutcome::new(
                 KvResponse::Error {
                     error: KvError::Conflict("resource locked by another session".to_string()),
                 },
@@ -547,7 +542,7 @@ impl KvDomainRuntime<'_> {
             );
         }
         if held_by_same_session {
-            return (
+            return KvOperationOutcome::new(
                 KvResponse::Error {
                     error: KvError::Conflict(
                         "resource already has a read-write transaction for this session"
@@ -592,13 +587,13 @@ impl KvDomainRuntime<'_> {
                 resource,
                 &chrono::Utc::now().to_rfc3339(),
             );
-            (
+            KvOperationOutcome::new(
                 response,
                 KvAdminTransactionUpdate::Upsert(transaction),
                 None,
             )
         } else {
-            (response, KvAdminTransactionUpdate::None, None)
+            KvOperationOutcome::new(response, KvAdminTransactionUpdate::None, None)
         }
     }
 
@@ -608,11 +603,7 @@ impl KvDomainRuntime<'_> {
         route_family: crate::runtime::routing::RouteFamily,
         tx_id: u64,
         kv_message: crate::domains::kv::KvMessage,
-    ) -> (
-        crate::domains::kv::KvResponse,
-        KvAdminTransactionUpdate,
-        Option<(KvResourceLockKey, u64)>,
-    ) {
+    ) -> KvOperationOutcome {
         use crate::domains::kv::KvResponse;
 
         let actor = self.actor_for_session(session_id, "commit");
@@ -634,7 +625,7 @@ impl KvDomainRuntime<'_> {
             .as_ref()
             .is_some_and(|key| key.family_id != route_family.as_u64())
         {
-            return (
+            return KvOperationOutcome::new(
                 crate::domains::kv::KvResponse::Error {
                     error: crate::domains::kv::KvError::InvalidRequest(
                         "route family mismatch".to_string(),
@@ -657,13 +648,13 @@ impl KvDomainRuntime<'_> {
         if let KvResponse::CommitOk = response {
             if let Some(lock_key) = lock_key {
                 let notify = (mutation_count > 0).then_some((lock_key, mutation_count));
-                (response, admin_update, notify)
+                KvOperationOutcome::new(response, admin_update, notify)
             } else {
-                (response, admin_update, None)
+                KvOperationOutcome::new(response, admin_update, None)
             }
         } else {
             crate::observability::counter_inc("fitz_kv_commits_failed_total");
-            (response, admin_update, None)
+            KvOperationOutcome::new(response, admin_update, None)
         }
     }
 
@@ -673,11 +664,7 @@ impl KvDomainRuntime<'_> {
         route_family: crate::runtime::routing::RouteFamily,
         tx_id: u64,
         kv_message: crate::domains::kv::KvMessage,
-    ) -> (
-        crate::domains::kv::KvResponse,
-        KvAdminTransactionUpdate,
-        Option<(KvResourceLockKey, u64)>,
-    ) {
+    ) -> KvOperationOutcome {
         use crate::domains::kv::KvResponse;
 
         let actor = self.actor_for_session(session_id, "rollback");
@@ -693,7 +680,7 @@ impl KvDomainRuntime<'_> {
             .as_ref()
             .is_some_and(|(family_id, _, _, _)| *family_id != route_family.as_u64())
         {
-            return (
+            return KvOperationOutcome::new(
                 crate::domains::kv::KvResponse::Error {
                     error: crate::domains::kv::KvError::InvalidRequest(
                         "route family mismatch".to_string(),
@@ -718,9 +705,9 @@ impl KvDomainRuntime<'_> {
             };
         if let KvResponse::RollbackOk = response {
             crate::observability::counter_inc("fitz_kv_rollbacks_total");
-            (response, admin_update, None)
+            KvOperationOutcome::new(response, admin_update, None)
         } else {
-            (response, admin_update, None)
+            KvOperationOutcome::new(response, admin_update, None)
         }
     }
 
@@ -729,11 +716,7 @@ impl KvDomainRuntime<'_> {
         session_id: u64,
         message_type: u16,
         kv_message: crate::domains::kv::KvMessage,
-    ) -> (
-        crate::domains::kv::KvResponse,
-        KvAdminTransactionUpdate,
-        Option<(KvResourceLockKey, u64)>,
-    ) {
+    ) -> KvOperationOutcome {
         let actor = self.actor_for_session(session_id, "other operation");
         let mut actor = actor.lock();
         tracing::trace!(
@@ -742,7 +725,7 @@ impl KvDomainRuntime<'_> {
             msg_type = message_type,
             "Calling actor.handle() for operation"
         );
-        (
+        KvOperationOutcome::new(
             actor.handle(kv_message),
             KvAdminTransactionUpdate::None,
             None,
@@ -813,18 +796,7 @@ impl KvDomainRuntime<'_> {
     fn kv_message_family(
         message: &crate::domains::kv::KvMessage,
     ) -> crate::runtime::routing::RouteFamily {
-        use crate::domains::kv::KvMessage;
-        match message {
-            KvMessage::Begin { scope, .. }
-            | KvMessage::Commit { scope, .. }
-            | KvMessage::Rollback { scope, .. }
-            | KvMessage::Get { scope, .. }
-            | KvMessage::Put { scope, .. }
-            | KvMessage::Insert { scope, .. }
-            | KvMessage::Delete { scope, .. }
-            | KvMessage::DeleteRange { scope, .. }
-            | KvMessage::Scan { scope, .. } => scope.route_family,
-        }
+        message.scope().route_family
     }
 
     fn error_response(reason: &str) -> crate::domains::kv::KvResponse {

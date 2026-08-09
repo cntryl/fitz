@@ -12,7 +12,6 @@ pub(super) use crate::dispatch::protocol::frame_context::FrameContext;
 pub(super) use crate::domains::kv::{KvClientFrame, KvClientRequest};
 pub(super) use crate::runtime::routing::RouteFamily;
 pub(super) use crate::runtime::{DeliveryError, Envelope, MailboxSink, ManagedActor, Router};
-pub(super) use bytes::Bytes;
 #[cfg(test)]
 pub(super) use chrono::Utc;
 pub(super) use parking_lot::Mutex;
@@ -37,7 +36,7 @@ pub struct AdminKvRowsRequest<'a> {
 pub(super) const ADMIN_INVENTORY_REFRESH_LIMIT: usize = 10_000;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(super) struct KvResourceLockKey {
+pub(crate) struct KvResourceLockKey {
     pub(super) family_id: u64,
     pub(super) realm: String,
     pub(super) area: String,
@@ -45,7 +44,7 @@ pub(super) struct KvResourceLockKey {
 }
 
 impl KvResourceLockKey {
-    pub(super) fn new(family_id: u64, realm: &str, area: &str, resource: &str) -> Self {
+    pub(crate) fn new(family_id: u64, realm: &str, area: &str, resource: &str) -> Self {
         Self {
             family_id,
             realm: realm.to_string(),
@@ -68,7 +67,7 @@ pub(super) struct KvDomainCore {
     pub(super) resource_locks: Mutex<HashMap<KvResourceLockKey, KvResourceLockOwner>>,
     pub(super) watch_actors: Mutex<HashMap<u64, crate::domains::kv::watch::KvWatchActor>>,
     pub(super) router: Arc<Router>,
-    pub(super) projection: crate::domains::kv::projection::KvAdminProjection<KvResourceLockKey>,
+    pub(super) projection: crate::domains::kv::projection::KvAdminProjection,
     pub(super) metrics: Option<crate::domains::kv::KvMetrics>,
     pub(super) sync_write_options: cntryl_midge::WriteOptions,
     pub(super) buffered_write_options: cntryl_midge::WriteOptions,
@@ -89,6 +88,26 @@ pub(super) enum KvAdminTransactionUpdate {
     None,
     Upsert(crate::control::admin::KvTransaction),
     Remove { session_id: u64, tx_id: u64 },
+}
+
+pub(super) struct KvOperationOutcome {
+    pub(super) response: crate::domains::kv::KvResponse,
+    pub(super) admin_update: KvAdminTransactionUpdate,
+    pub(super) commit_notification: Option<(KvResourceLockKey, u64)>,
+}
+
+impl KvOperationOutcome {
+    pub(super) fn new(
+        response: crate::domains::kv::KvResponse,
+        admin_update: KvAdminTransactionUpdate,
+        commit_notification: Option<(KvResourceLockKey, u64)>,
+    ) -> Self {
+        Self {
+            response,
+            admin_update,
+            commit_notification,
+        }
+    }
 }
 
 pub(super) enum KvDomainCommand {
