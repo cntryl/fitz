@@ -1,7 +1,7 @@
-use super::model::{
-    Arc, AtomicBool, AtomicU64, HashMap, Instant, LeaseAcquireRequest, LeaseDomainActor,
-    LeaseDomainCommand, LeaseDomainCore, LeaseDomainRuntime, LeaseDomainSink, LeaseDomainState,
-    LeaseLiveCounts, LeaseMetrics, Mutex, Ordering, SinkLeaseState, Utc, VecDeque,
+use super::super::model::{
+    Arc, AtomicBool, AtomicU64, HashMap, LeaseAcquireRequest, LeaseDomainActor, LeaseDomainCommand,
+    LeaseDomainCore, LeaseDomainRuntime, LeaseDomainSink, LeaseDomainState, LeaseLiveCounts,
+    LeaseMetrics, Mutex, Ordering, LEASE_ACTOR_REPLY_TIMEOUT,
 };
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::runtime::Router;
@@ -28,7 +28,7 @@ impl LeaseDomainState {
         }
     }
 
-    pub(super) fn runtime(&self) -> LeaseDomainRuntime<'_> {
+    pub(in crate::domains::lease::sink) fn runtime(&self) -> LeaseDomainRuntime<'_> {
         LeaseDomainRuntime {
             core: &self.core,
             active: &self.active,
@@ -37,11 +37,11 @@ impl LeaseDomainState {
 }
 
 impl LeaseDomainActor {
-    pub(super) fn new(state: Arc<LeaseDomainState>) -> Self {
+    pub(in crate::domains::lease::sink) fn new(state: Arc<LeaseDomainState>) -> Self {
         Self { state }
     }
 
-    pub(super) fn route_address() -> RouteAddress {
+    pub(in crate::domains::lease::sink) fn route_address() -> RouteAddress {
         RouteAddress::new(RouteFamily::new(0), Route::new("internal://domain/lease"))
     }
 }
@@ -100,7 +100,7 @@ impl LeaseDomainSink {
     }
 
     #[cfg(test)]
-    pub(super) fn is_actor_running(&self) -> bool {
+    pub(in crate::domains::lease::sink) fn is_actor_running(&self) -> bool {
         self.actor.is_running()
     }
 
@@ -116,7 +116,7 @@ impl LeaseDomainSink {
     }
 
     #[cfg(test)]
-    pub(super) fn stop_actor_for_tests(&self) {
+    pub(in crate::domains::lease::sink) fn stop_actor_for_tests(&self) {
         self.actor.stop();
     }
 
@@ -166,7 +166,7 @@ impl LeaseDomainSink {
         }
 
         reply_rx
-            .recv_timeout(std::time::Duration::from_secs(1))
+            .recv_timeout(LEASE_ACTOR_REPLY_TIMEOUT)
             .unwrap_or_default()
     }
 
@@ -181,7 +181,7 @@ impl LeaseDomainSink {
         }
 
         reply_rx
-            .recv_timeout(std::time::Duration::from_secs(1))
+            .recv_timeout(LEASE_ACTOR_REPLY_TIMEOUT)
             .unwrap_or_default()
     }
 
@@ -216,7 +216,7 @@ impl LeaseDomainSink {
             );
         }
         reply_rx
-            .recv_timeout(std::time::Duration::from_secs(1))
+            .recv_timeout(LEASE_ACTOR_REPLY_TIMEOUT)
             .unwrap_or_else(|_| {
                 crate::domains::lease::protocol::LeaseResponse::Error(
                     "Lease benchmark actor response timed out".to_string(),
@@ -247,160 +247,11 @@ impl LeaseDomainSink {
             );
         }
         reply_rx
-            .recv_timeout(std::time::Duration::from_secs(1))
+            .recv_timeout(LEASE_ACTOR_REPLY_TIMEOUT)
             .unwrap_or_else(|_| {
                 crate::domains::lease::protocol::LeaseResponse::Error(
                     "Lease benchmark actor response timed out".to_string(),
                 )
             })
-    }
-}
-
-impl LeaseDomainRuntime<'_> {
-    #[cfg(test)]
-    pub(super) fn session_inbox_address(
-        route_family: crate::runtime::routing::RouteFamily,
-        session_id: u64,
-    ) -> crate::runtime::routing::RouteAddress {
-        let route = format!("inbox://session/{session_id}");
-        crate::runtime::routing::RouteAddress::new(
-            route_family,
-            crate::runtime::routing::Route::new(route.as_str()),
-        )
-    }
-
-    pub(super) fn lease_info_from_state(
-        key: &crate::domains::lease::protocol::LeaseKey,
-        state: &SinkLeaseState,
-    ) -> crate::control::admin::LeaseInfo {
-        let now = std::time::Instant::now();
-        let expires_at = Utc::now()
-            .checked_add_signed(chrono::TimeDelta::seconds(
-                state
-                    .expiry
-                    .saturating_duration_since(now)
-                    .as_secs()
-                    .cast_signed(),
-            ))
-            .unwrap_or_else(Utc::now)
-            .to_rfc3339();
-        crate::control::admin::LeaseInfo::snapshot(
-            key.family.as_u64(),
-            &key.realm,
-            &key.area,
-            &key.resource,
-            &state.owner_id,
-            &state.acquired_at,
-            expires_at,
-            state.renewals,
-            state.fencing_token,
-        )
-    }
-
-    pub(super) fn upsert_admin_lease(
-        &self,
-        key: &crate::domains::lease::protocol::LeaseKey,
-        state: &SinkLeaseState,
-    ) {
-        self.core
-            .admin_read_model
-            .upsert_lease(Self::lease_info_from_state(key, state));
-    }
-
-    pub(super) fn remove_admin_lease(&self, key: &crate::domains::lease::protocol::LeaseKey) {
-        self.core.admin_read_model.remove_lease(
-            key.family.as_u64(),
-            &key.realm,
-            &key.area,
-            &key.resource,
-        );
-    }
-
-    pub(super) fn refresh_metrics_gauges(&self) {
-        let lease_count = self.lease_count();
-        let waiter_count = self.waiter_count();
-
-        if let Some(metrics) = &self.core.metrics {
-            metrics.set_active_leases(lease_count);
-            metrics.set_waiter_depth(waiter_count);
-        } else {
-            crate::observability::gauge_set("fitz_lease_active_gauge", lease_count as u64);
-            crate::observability::gauge_set("fitz_lease_waiter_depth", waiter_count as u64);
-        }
-    }
-
-    pub(super) fn counter_inc(&self, name: &str) {
-        if let Some(metrics) = &self.core.metrics {
-            metrics.counter_inc(name);
-        } else {
-            crate::observability::counter_inc(name);
-        }
-    }
-
-    pub(super) fn waiter_count(&self) -> usize {
-        self.core
-            .pending_acquires
-            .lock()
-            .values()
-            .map(VecDeque::len)
-            .sum()
-    }
-
-    pub(super) fn live_counts(&self) -> LeaseLiveCounts {
-        LeaseLiveCounts {
-            leases: self.lease_count(),
-            subscriptions: self.subscription_count(),
-        }
-    }
-
-    pub fn admin_waiters(&self) -> Vec<crate::control::admin::LeaseWaiterInfo> {
-        let now = Instant::now();
-        let mut waiters = Vec::new();
-
-        for (key, queue) in self.core.pending_acquires.lock().iter() {
-            for waiter in queue {
-                let expires_at = Utc::now()
-                    .checked_add_signed(chrono::TimeDelta::seconds(
-                        waiter
-                            .expires_at
-                            .saturating_duration_since(now)
-                            .as_secs()
-                            .cast_signed(),
-                    ))
-                    .unwrap_or_else(Utc::now)
-                    .to_rfc3339();
-
-                waiters.push(crate::control::admin::LeaseWaiterInfo {
-                    route_family: key.family.as_u64(),
-                    realm: key.realm.clone(),
-                    area: key.area.clone(),
-                    resource: key.resource.clone(),
-                    owner_id: waiter.owner_id.clone(),
-                    session_id: waiter.session_id.to_string(),
-                    queued_token: waiter.queued_token,
-                    expires_at,
-                });
-            }
-        }
-
-        waiters
-    }
-
-    pub(super) fn lease_response_is_failure(
-        response: &crate::domains::lease::protocol::LeaseResponse,
-    ) -> bool {
-        matches!(
-            response,
-            crate::domains::lease::protocol::LeaseResponse::Timeout
-                | crate::domains::lease::protocol::LeaseResponse::HeldByOther { .. }
-                | crate::domains::lease::protocol::LeaseResponse::AlreadyQueued { .. }
-                | crate::domains::lease::protocol::LeaseResponse::QueueFull { .. }
-                | crate::domains::lease::protocol::LeaseResponse::NotHeld
-                | crate::domains::lease::protocol::LeaseResponse::Expired
-                | crate::domains::lease::protocol::LeaseResponse::Fenced { .. }
-                | crate::domains::lease::protocol::LeaseResponse::NotFound
-                | crate::domains::lease::protocol::LeaseResponse::Error(_)
-                | crate::domains::lease::protocol::LeaseResponse::InvalidSubscriptionRoute(_)
-        )
     }
 }
