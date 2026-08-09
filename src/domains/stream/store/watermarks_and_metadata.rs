@@ -410,27 +410,6 @@ impl StreamStore {
         })
     }
 
-    /// Get the last committed resource offset for recovery
-    ///
-    /// **CRITICAL**: `StreamActor` must call this on initialization to recover
-    /// `next_resource_offset` and avoid reusing offsets after restart.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if layout activation, storage transaction creation,
-    /// page scanning, or page decoding fails.
-    pub fn get_last_resource_offset(
-        &self,
-        family: u64,
-        realm: &str,
-        area: &str,
-        resource: &str,
-    ) -> Result<Option<u64>, String> {
-        self.ensure_layout_activation_for_family(family)?;
-
-        self.get_last_resource_offset_promotion_frontier(family, realm, area, resource)
-    }
-
     #[cfg(test)]
     pub(crate) fn fail_next_area_watermark_persist_for_tests() {
         FAIL_NEXT_AREA_WATERMARK_PERSIST.with(|cell| cell.set(true));
@@ -441,13 +420,22 @@ impl StreamStore {
         FAIL_NEXT_REALM_WATERMARK_PERSIST.with(|cell| cell.set(true));
     }
 
-    pub(in crate::domains::stream::store) fn get_last_resource_offset_promotion_frontier(
+    /// Get the last committed resource offset for recovery.
+    ///
+    /// `StreamActor` calls this during initialization to avoid offset reuse.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if layout activation, transaction creation, page
+    /// scanning, or page decoding fails.
+    pub fn get_last_resource_offset(
         &self,
         family: u64,
         realm: &str,
         area: &str,
         resource: &str,
     ) -> Result<Option<u64>, String> {
+        self.ensure_layout_activation_for_family(family)?;
         let query = cntryl_midge::Query::new().prefix(Bytes::from(
             Self::build_compact_resource_page_prefix(realm, area, resource),
         ));
@@ -496,17 +484,6 @@ impl StreamStore {
         resource: &str,
     ) -> Result<Option<u64>, String> {
         self.ensure_layout_activation_for_family(family)?;
-
-        self.get_first_resource_offset_promotion_frontier(family, realm, area, resource)
-    }
-
-    pub(super) fn get_first_resource_offset_promotion_frontier(
-        &self,
-        family: u64,
-        realm: &str,
-        area: &str,
-        resource: &str,
-    ) -> Result<Option<u64>, String> {
         let query = cntryl_midge::Query::new().prefix(Bytes::from(
             Self::build_compact_resource_page_prefix(realm, area, resource),
         ));
@@ -552,17 +529,6 @@ impl StreamStore {
         resource: &str,
     ) -> Result<u64, String> {
         self.ensure_layout_activation_for_family(family)?;
-
-        self.get_next_resource_offset_promotion_frontier(family, realm, area, resource)
-    }
-
-    pub(super) fn get_next_resource_offset_promotion_frontier(
-        &self,
-        family: u64,
-        realm: &str,
-        area: &str,
-        resource: &str,
-    ) -> Result<u64, String> {
         let txn = self
             .db
             .begin_tx(

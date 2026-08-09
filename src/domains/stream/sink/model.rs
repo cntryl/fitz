@@ -224,36 +224,73 @@ pub(super) struct StreamSessionOwner {
     pub(super) actor: Arc<Mutex<StreamActor>>,
 }
 
+pub(super) struct SubscriptionRegistry {
+    pub(super) families: Mutex<HashMap<u64, RoutedSubscriptionSet<StreamSubscription>>>,
+    pub(super) next_id: Arc<AtomicU64>,
+    pub(super) pending: Mutex<Vec<PendingStreamNotification>>,
+}
+
+impl SubscriptionRegistry {
+    pub(super) fn new(next_id: Arc<AtomicU64>) -> Self {
+        Self {
+            families: Mutex::new(HashMap::new()),
+            next_id,
+            pending: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+pub(super) struct AdminSnapshotState {
+    pub(super) read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
+    pub(super) dirty: Arc<AtomicBool>,
+}
+
+impl AdminSnapshotState {
+    pub(super) fn new(
+        read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
+        dirty: Arc<AtomicBool>,
+    ) -> Self {
+        Self { read_model, dirty }
+    }
+
+    pub(super) fn mark_dirty(&self) {
+        self.dirty.store(true, Ordering::Relaxed);
+    }
+
+    pub(super) fn take_dirty(&self) -> bool {
+        self.dirty.swap(false, Ordering::AcqRel)
+    }
+}
+
+pub(super) struct WatermarkCoordinators {
+    pub(super) area: Arc<
+        KeyedActorPool<
+            (u64, String, String),
+            crate::domains::stream::protocol::StreamCoordinationMessage,
+        >,
+    >,
+    pub(super) realm: Arc<
+        KeyedActorPool<(u64, String), crate::domains::stream::protocol::StreamCoordinationMessage>,
+    >,
+}
+
 pub(super) struct StreamDomainCore {
     pub(super) store: crate::storage::FitzStorageEngine,
     pub(super) stream_store: Arc<StreamStore>,
     pub(super) actors: Mutex<HashMap<StreamActorKey, Arc<Mutex<StreamActor>>>>,
     pub(super) session_owners: Mutex<HashMap<u64, StreamSessionOwner>>,
-    pub(super) families: Mutex<HashMap<u64, RoutedSubscriptionSet<StreamSubscription>>>,
-    pub(super) next_sub_id: Arc<AtomicU64>,
+    pub(super) subscriptions: SubscriptionRegistry,
     pub(super) next_session_id: Arc<AtomicU64>,
     pub(super) cursor_integrity_key: Arc<[u8; 32]>,
-    pub(super) pending_notifications: Mutex<Vec<PendingStreamNotification>>,
     pub(super) router: Arc<Router>,
-    pub(super) admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
-    pub(super) admin_snapshot_dirty: Arc<AtomicBool>,
+    pub(super) admin_snapshot: AdminSnapshotState,
     pub(super) sync_write_mode: crate::domains::stream::protocol::StreamWriteMode,
     pub(super) metrics: Option<StreamMetrics>,
     pub(super) active: Arc<AtomicBool>,
     /// Weak family-core registry used only to aggregate live/admin views.
     /// Mutable delivery state itself remains owned by each family core.
     pub(super) family_cores: Arc<Mutex<BTreeMap<u64, Weak<StreamDomainCore>>>>,
-    /// Lazily spawned `AreaActor` mailboxes, keyed by (family, realm, area).
-    pub(super) area_watermark_actors: Arc<
-        KeyedActorPool<
-            (u64, String, String),
-            crate::domains::stream::protocol::StreamCoordinationMessage,
-        >,
-    >,
-    /// Lazily spawned `RealmActor` mailboxes, keyed by (family, realm).
-    pub(super) realm_watermark_actors: Arc<
-        KeyedActorPool<(u64, String), crate::domains::stream::protocol::StreamCoordinationMessage>,
-    >,
+    pub(super) watermark_coordinators: WatermarkCoordinators,
 }
 
 pub(super) enum StreamDomainCommand {

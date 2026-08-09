@@ -43,13 +43,13 @@ impl StreamStore {
     ///
     /// Returns an error if layout activation, storage transaction creation,
     /// page scanning, page decoding, or discriminator loading fails.
+    #[allow(clippy::too_many_lines)]
     pub fn read_resource_with_filter(
         &self,
         params: &ReadResourceParams,
         filter: Option<&StreamFilterSet>,
     ) -> Result<(Vec<StreamReadItem>, ReadCursor), String> {
         self.ensure_layout_activation_for_family(params.family)?;
-
         if params.limit == 0 {
             return Ok((
                 Vec::new(),
@@ -64,16 +64,6 @@ impl StreamStore {
                 },
             ));
         }
-
-        self.read_resource_promotion_frontier(params, filter)
-    }
-
-    #[allow(clippy::too_many_lines)]
-    pub(super) fn read_resource_promotion_frontier(
-        &self,
-        params: &ReadResourceParams,
-        filter: Option<&StreamFilterSet>,
-    ) -> Result<(Vec<StreamReadItem>, ReadCursor), String> {
         let route = stream_route(params.realm, params.area, params.resource);
 
         let txn = begin_read_tx(self, params.family, "resource")?;
@@ -216,13 +206,13 @@ impl StreamStore {
         self.read_area_with_filter(&params, None)
     }
 
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn read_area_with_filter(
         &self,
         params: &ReadAreaParams<'_>,
         filter: Option<&StreamFilterSet>,
     ) -> Result<(Vec<StreamReadItem>, ReadCursor), String> {
         self.ensure_layout_activation_for_family(params.family)?;
-
         if params.limit == 0 {
             return Ok((
                 Vec::new(),
@@ -237,16 +227,6 @@ impl StreamStore {
                 },
             ));
         }
-
-        self.read_area_promotion_frontier(params, filter)
-    }
-
-    #[allow(clippy::too_many_lines)]
-    pub(super) fn read_area_promotion_frontier(
-        &self,
-        params: &ReadAreaParams<'_>,
-        filter: Option<&StreamFilterSet>,
-    ) -> Result<(Vec<StreamReadItem>, ReadCursor), String> {
         let watermark = self.get_watermark(params.family, params.realm, params.area)?;
         let txn = begin_read_tx(self, params.family, "area")?;
         let (results, fragments_exhausted) = bounded_fragment_rows(
@@ -385,6 +365,7 @@ impl StreamStore {
     /// Returns an error if layout activation, realm watermark loading,
     /// storage transaction creation, page scanning, page decoding, or
     /// discriminator loading fails.
+    #[allow(clippy::too_many_lines)]
     pub fn read_realm_with_filter(
         &self,
         family: u64,
@@ -395,7 +376,6 @@ impl StreamStore {
         filter: Option<&StreamFilterSet>,
     ) -> Result<(Vec<StreamReadItem>, ReadCursor), String> {
         self.ensure_layout_activation_for_family(family)?;
-
         if limit == 0 {
             return Ok((
                 Vec::new(),
@@ -410,20 +390,6 @@ impl StreamStore {
                 },
             ));
         }
-
-        self.read_realm_promotion_frontier(family, realm, from_offset, limit, max_bytes, filter)
-    }
-
-    #[allow(clippy::too_many_lines)]
-    pub(super) fn read_realm_promotion_frontier(
-        &self,
-        family: u64,
-        realm: &str,
-        from_offset: u64,
-        limit: u64,
-        max_bytes: Option<usize>,
-        filter: Option<&StreamFilterSet>,
-    ) -> Result<(Vec<StreamReadItem>, ReadCursor), String> {
         let realm_watermark = self.get_realm_watermark(family, realm)?;
         let txn = begin_read_tx(self, family, "realm")?;
         let (results, fragments_exhausted) = bounded_fragment_rows(

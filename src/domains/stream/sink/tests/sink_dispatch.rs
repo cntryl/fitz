@@ -490,7 +490,7 @@ fn should_flush_pending_subscription_when_visibility_advances_without_publish() 
     // Assert
     assert_eq!(before, 0);
     assert_eq!(inbox.count(), 1);
-    assert!(context.sink.core.pending_notifications.lock().is_empty());
+    assert!(context.sink.core.subscriptions.pending.lock().is_empty());
 }
 
 #[test]

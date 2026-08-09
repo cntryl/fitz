@@ -102,7 +102,7 @@ impl StreamDomainCore {
         cache: &mut VisibilityCache,
     ) -> Vec<ReadyStreamNotification> {
         let drained = {
-            let mut pending = self.pending_notifications.lock();
+            let mut pending = self.subscriptions.pending.lock();
             std::mem::take(&mut *pending)
         };
         let mut ready = Vec::new();
@@ -121,7 +121,7 @@ impl StreamDomainCore {
                 retained.push(notification);
             }
         }
-        let mut pending = self.pending_notifications.lock();
+        let mut pending = self.subscriptions.pending.lock();
         let available = MAX_PENDING_NOTIFICATIONS.saturating_sub(retained.len());
         let dropped = pending.len().saturating_sub(available);
         let accepted = available.min(pending.len());
@@ -144,7 +144,7 @@ impl StreamDomainCore {
         let mut visibility_cache = VisibilityCache::default();
         let mut ready = self.drain_visible_pending(family, &mut visibility_cache);
         let matches = {
-            let families = self.families.lock();
+            let families = self.subscriptions.families.lock();
             let Some(state) = families.get(&family) else {
                 return ready;
             };
@@ -188,7 +188,7 @@ impl StreamDomainCore {
             }
         }
         if !newly_pending.is_empty() {
-            let mut pending = self.pending_notifications.lock();
+            let mut pending = self.subscriptions.pending.lock();
             let available = MAX_PENDING_NOTIFICATIONS.saturating_sub(pending.len());
             let accepted = available.min(newly_pending.len());
             pending.extend(newly_pending.drain(..accepted));
@@ -210,7 +210,8 @@ impl StreamDomainCore {
     }
 
     pub(super) fn remove_pending_notifications_for_session(&self, session_id: u64) {
-        self.pending_notifications
+        self.subscriptions
+            .pending
             .lock()
             .retain(|pending| pending.target.session_id != session_id);
     }
@@ -220,7 +221,7 @@ impl StreamDomainCore {
         session_id: u64,
         pattern: &str,
     ) {
-        self.pending_notifications.lock().retain(|pending| {
+        self.subscriptions.pending.lock().retain(|pending| {
             pending.target.session_id != session_id || pending.pattern != pattern
         });
     }

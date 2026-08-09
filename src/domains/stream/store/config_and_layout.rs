@@ -267,91 +267,78 @@ impl StreamStore {
     }
 
     fn validate_domain_row(prefix: u8, value: &[u8]) -> Result<(), (&'static str, String)> {
+        let Ok(prefix) = KeyPrefix::try_from(prefix) else {
+            return Ok(());
+        };
         match prefix {
-            prefix if prefix == KeyPrefix::Resource as u8 => ResourceValue::try_decode(value)
+            KeyPrefix::Resource => ResourceValue::try_decode(value)
                 .map(|_| ())
                 .map_err(|error| ("resource", error)),
-            prefix if prefix == KeyPrefix::Area as u8 => AreaValue::try_decode(value)
+            KeyPrefix::Area => AreaValue::try_decode(value)
                 .map(|_| ())
                 .map_err(|error| ("area", error)),
-            prefix if prefix == KeyPrefix::Realm as u8 => RealmValue::try_decode(value)
+            KeyPrefix::Realm => RealmValue::try_decode(value)
                 .map(|_| ())
                 .map_err(|error| ("realm", error)),
-            prefix if prefix == KeyPrefix::Watermark as u8 => WatermarkValue::decode(value)
+            KeyPrefix::Watermark => WatermarkValue::decode(value)
                 .map(|_| ())
                 .map_err(|error| ("watermark", error)),
-            prefix if prefix == KeyPrefix::OffsetCounter as u8 => OffsetCounterValue::decode(value)
+            KeyPrefix::OffsetCounter => OffsetCounterValue::decode(value)
                 .map(|_| ())
                 .map_err(|error| ("offset_counter", error)),
-            prefix if prefix == KeyPrefix::RealmWatermark as u8 => WatermarkValue::decode(value)
+            KeyPrefix::RealmWatermark => WatermarkValue::decode(value)
                 .map(|_| ())
                 .map_err(|error| ("realm_watermark", error)),
-            prefix if prefix == KeyPrefix::ResourceMeta as u8 => ResourceMetaValue::decode(value)
+            KeyPrefix::ResourceMeta => ResourceMetaValue::decode(value)
                 .map(|_| ())
                 .map_err(|error| ("resource_meta", error)),
-            prefix if prefix == KeyPrefix::AreaCounter as u8 => AreaCounterValue::decode(value)
+            KeyPrefix::AreaCounter => AreaCounterValue::decode(value)
                 .map(|_| ())
                 .map_err(|error| ("area_counter", error)),
-            prefix if prefix == KeyPrefix::RealmCounter as u8 => RealmCounterValue::decode(value)
+            KeyPrefix::RealmCounter => RealmCounterValue::decode(value)
                 .map(|_| ())
                 .map_err(|error| ("realm_counter", error)),
-            prefix if prefix == KeyPrefix::CanonicalResource as u8 => Err((
+            KeyPrefix::CanonicalResource => Err((
                 "canonical_resource",
                 "obsolete D3 prototype row; export/replay or reset the Stream family".to_string(),
             )),
-            prefix if prefix == KeyPrefix::AreaLocator as u8 => Err((
+            KeyPrefix::AreaLocator => Err((
                 "area_locator",
                 "obsolete D3 prototype row; export/replay or reset the Stream family".to_string(),
             )),
-            prefix if prefix == KeyPrefix::RealmLocator as u8 => Err((
+            KeyPrefix::RealmLocator => Err((
                 "realm_locator",
                 "obsolete D3 prototype row; export/replay or reset the Stream family".to_string(),
             )),
-            prefix if prefix == KeyPrefix::CompactAreaPage as u8 => {
-                CompactAreaPageValue::try_decode(value)
-                    .map(|_| ())
-                    .map_err(|error| ("compact_area_page", error))
-            }
-            prefix if prefix == KeyPrefix::CompressedCompactRealmPage as u8 => {
+            KeyPrefix::CompactAreaPage => CompactAreaPageValue::try_decode(value)
+                .map(|_| ())
+                .map_err(|error| ("compact_area_page", error)),
+            KeyPrefix::CompressedCompactRealmPage => {
                 CompressedCompactRealmPageValue::try_decode(value)
                     .map(|_| ())
                     .map_err(|error| ("compressed_compact_realm_page", error))
             }
-            prefix if prefix == KeyPrefix::CompactResourcePage as u8 => {
-                CompactResourcePageValue::try_decode(value)
-                    .map(|_| ())
-                    .map_err(|error| ("compact_resource_page", error))
-            }
-            prefix if prefix == KeyPrefix::CompactGlobalPage as u8 => {
-                CompactGlobalPageValue::try_decode(value)
-                    .map(|_| ())
-                    .map_err(|error| ("compact_global_page", error))
-            }
-            prefix
-                if [
-                    KeyPrefix::RealmResourcePostingPage as u8,
-                    KeyPrefix::GlobalAreaPostingPage as u8,
-                    KeyPrefix::GlobalResourcePostingPage as u8,
-                    KeyPrefix::GlobalAreaResourcePostingPage as u8,
-                ]
-                .contains(&prefix) =>
-            {
-                PostingPageValue::try_decode(value)
-                    .map(|_| ())
-                    .map_err(|error| ("posting_page", error))
-            }
-            prefix
-                if prefix == KeyPrefix::GlobalCounter as u8
-                    || prefix == KeyPrefix::FamilyWriterEpoch as u8 =>
-            {
+            KeyPrefix::CompactResourcePage => CompactResourcePageValue::try_decode(value)
+                .map(|_| ())
+                .map_err(|error| ("compact_resource_page", error)),
+            KeyPrefix::CompactGlobalPage => CompactGlobalPageValue::try_decode(value)
+                .map(|_| ())
+                .map_err(|error| ("compact_global_page", error)),
+            KeyPrefix::RealmResourcePostingPage
+            | KeyPrefix::GlobalAreaPostingPage
+            | KeyPrefix::GlobalResourcePostingPage
+            | KeyPrefix::GlobalAreaResourcePostingPage => PostingPageValue::try_decode(value)
+                .map(|_| ())
+                .map_err(|error| ("posting_page", error)),
+            KeyPrefix::GlobalCounter | KeyPrefix::FamilyWriterEpoch => {
                 RealmCounterValue::decode(value)
                     .map(|_| ())
                     .map_err(|error| ("global_counter_or_epoch", error))
             }
-            prefix if prefix == KeyPrefix::GlobalWatermark as u8 => WatermarkValue::decode(value)
+            KeyPrefix::GlobalWatermark => WatermarkValue::decode(value)
                 .map(|_| ())
                 .map_err(|error| ("global_watermark", error)),
-            prefix if prefix == KeyPrefix::CursorState as u8 => {
+            KeyPrefix::CursorState => {
                 if value.len() == 2 && value[0] == 1 {
                     Ok(())
                 } else {
@@ -361,10 +348,15 @@ impl StreamStore {
                     ))
                 }
             }
-            prefix if prefix == KeyPrefix::PayloadBlob as u8 => super::decode_payload_blob(value)
+            KeyPrefix::PayloadBlob => super::decode_payload_blob(value)
                 .map(|_| ())
                 .map_err(|error| ("payload_blob", error)),
-            _ => Ok(()),
+            KeyPrefix::Staging
+            | KeyPrefix::LayoutMarker
+            | KeyPrefix::ResourceDiscriminator
+            | KeyPrefix::AreaDiscriminator
+            | KeyPrefix::RealmDiscriminator
+            | KeyPrefix::GlobalDiscriminator => Ok(()),
         }
     }
 

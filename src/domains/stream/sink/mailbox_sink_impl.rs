@@ -8,6 +8,7 @@ use super::model::{
 #[cfg(test)]
 use crate::dispatch::protocol::FrameContext;
 use crate::domains::stream::protocol::{IngestMetadata, StreamDiscriminator};
+use crate::domains::stream::store::StreamStoreError;
 #[cfg(test)]
 use crate::runtime::routing::RouteAddress;
 use crate::runtime::{Actor, Context};
@@ -329,7 +330,7 @@ impl StreamDomainCore {
                 Ok(compiled) => compiled,
                 Err(response) => return response,
             };
-            let mut families = self.families.lock();
+            let mut families = self.subscriptions.families.lock();
             let state = families
                 .entry(family_id.as_u64())
                 .or_insert_with(RoutedSubscriptionSet::new);
@@ -344,12 +345,11 @@ impl StreamDomainCore {
                     crate::domains::stream::StreamSubscriptionFailure::Limit,
                 );
             }
-            if let Ok(subscription_id) =
-                self.next_sub_id
-                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-                        current.checked_add(1)
-                    })
-            {
+            if let Ok(subscription_id) = self.subscriptions.next_id.fetch_update(
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+                |current| current.checked_add(1),
+            ) {
                 state.insert(
                     family_id,
                     StreamSubscription {
@@ -389,7 +389,7 @@ impl StreamDomainCore {
             if let Err(response) = Self::compile_stream_subscription_pattern(pattern) {
                 return response;
             }
-            let mut families = self.families.lock();
+            let mut families = self.subscriptions.families.lock();
             let remove_family = if let Some(state) = families.get_mut(&family_id.as_u64()) {
                 state.remove_session_pattern(family_id, session_id, pattern.as_str());
                 state.is_empty()
@@ -651,7 +651,7 @@ impl StreamDomainCore {
         let Some(actor) = self.session_actor_for(meta.session_id, meta.route_family, session_id)
         else {
             return (
-                Self::stream_error_response("session not found"),
+                Self::stream_error_response(StreamStoreError::SessionNotFound.client_message()),
                 None,
                 false,
             );
@@ -702,7 +702,7 @@ impl StreamDomainCore {
         let Some(owner) = self.session_owner_for(meta.session_id, meta.route_family, session_id)
         else {
             return (
-                Self::stream_error_response("session not found"),
+                Self::stream_error_response(StreamStoreError::SessionNotFound.client_message()),
                 None,
                 false,
             );
@@ -763,7 +763,7 @@ impl StreamDomainCore {
         let Some(owner) = self.session_owner_for(meta.session_id, meta.route_family, session_id)
         else {
             return (
-                Self::stream_error_response("session not found"),
+                Self::stream_error_response(StreamStoreError::SessionNotFound.client_message()),
                 None,
                 false,
             );

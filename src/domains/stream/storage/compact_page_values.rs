@@ -43,6 +43,372 @@ fn decode_string(bytes: &[u8], offset: &mut usize, context: &str) -> Result<Stri
     Ok(value)
 }
 
+trait PageRecordCodec: Sized {
+    type Specific;
+
+    fn encoded_specific_len(&self) -> usize;
+    fn encode_specific(&self, bytes: &mut Vec<u8>);
+    fn decode_specific(
+        bytes: &[u8],
+        offset: &mut usize,
+        context: &str,
+    ) -> Result<Self::Specific, String>;
+    fn body(&self) -> &Bytes;
+    fn metadata(&self) -> Option<&Bytes>;
+    fn created_at(&self) -> u64;
+    fn expires_at(&self) -> Option<u64>;
+    fn from_parts(
+        specific: Self::Specific,
+        body: Bytes,
+        metadata: Option<Bytes>,
+        created_at: u64,
+        expires_at: Option<u64>,
+    ) -> Self;
+}
+
+fn encoded_record_len<R: PageRecordCodec>(record: &R) -> usize {
+    record
+        .encoded_specific_len()
+        .saturating_add(24)
+        .saturating_add(record.body().len())
+        .saturating_add(record.metadata().map_or(0, Bytes::len))
+}
+
+fn encode_record<R: PageRecordCodec>(bytes: &mut Vec<u8>, record: &R) {
+    record.encode_specific(bytes);
+    bytes.extend_from_slice(&record.created_at().to_le_bytes());
+    bytes.extend_from_slice(
+        &record
+            .expires_at()
+            .unwrap_or(OPTIONAL_OFFSET_ABSENT)
+            .to_le_bytes(),
+    );
+    bytes.extend_from_slice(&usize_to_u32_saturating(record.body().len()).to_le_bytes());
+    bytes.extend_from_slice(
+        &record
+            .metadata()
+            .map_or(OPTIONAL_BYTES_ABSENT, |value| {
+                usize_to_u32_saturating(value.len())
+            })
+            .to_le_bytes(),
+    );
+    bytes.extend_from_slice(record.body());
+    if let Some(metadata) = record.metadata() {
+        bytes.extend_from_slice(metadata);
+    }
+}
+
+fn decode_record<R: PageRecordCodec>(
+    bytes: &[u8],
+    offset: &mut usize,
+    context: &str,
+) -> Result<R, String> {
+    let specific = R::decode_specific(bytes, offset, context)?;
+    if bytes.len().saturating_sub(*offset) < 24 {
+        return Err(format!("{context}: record header truncated"));
+    }
+    let created_at = u64::from_le_bytes(bytes[*offset..*offset + 8].try_into().unwrap());
+    *offset += 8;
+    let expires_at = u64::from_le_bytes(bytes[*offset..*offset + 8].try_into().unwrap());
+    *offset += 8;
+    let body_len = u32_to_usize(u32::from_le_bytes(
+        bytes[*offset..*offset + 4].try_into().unwrap(),
+    ));
+    *offset += 4;
+    let metadata_raw = u32::from_le_bytes(bytes[*offset..*offset + 4].try_into().unwrap());
+    *offset += 4;
+    let metadata_len = (metadata_raw != OPTIONAL_BYTES_ABSENT).then(|| u32_to_usize(metadata_raw));
+    if bytes.len().saturating_sub(*offset) < body_len {
+        return Err(format!("{context}: body truncated"));
+    }
+    let body = Bytes::copy_from_slice(&bytes[*offset..*offset + body_len]);
+    *offset += body_len;
+    let metadata = if let Some(len) = metadata_len {
+        if bytes.len().saturating_sub(*offset) < len {
+            return Err(format!("{context}: metadata truncated"));
+        }
+        let value = Bytes::copy_from_slice(&bytes[*offset..*offset + len]);
+        *offset += len;
+        Some(value)
+    } else {
+        None
+    };
+    Ok(R::from_parts(
+        specific,
+        body,
+        metadata,
+        created_at,
+        (expires_at != OPTIONAL_OFFSET_ABSENT).then_some(expires_at),
+    ))
+}
+
+fn encode_page_payload<R: PageRecordCodec>(records: &[R]) -> Vec<u8> {
+    let capacity = 4usize.saturating_add(records.iter().map(encoded_record_len).sum::<usize>());
+    let mut bytes = Vec::with_capacity(capacity);
+    bytes.extend_from_slice(&usize_to_u32_saturating(records.len()).to_le_bytes());
+    for record in records {
+        encode_record(&mut bytes, record);
+    }
+    bytes
+}
+
+fn decode_page_payload<R: PageRecordCodec>(bytes: &[u8], context: &str) -> Result<Vec<R>, String> {
+    if bytes.len() < 4 {
+        return Err(format!("{context}: invalid header"));
+    }
+    let mut offset = 4;
+    let count = u32_to_usize(u32::from_le_bytes(bytes[..4].try_into().unwrap()));
+    let mut records = Vec::with_capacity(count);
+    for _ in 0..count {
+        records.push(decode_record(bytes, &mut offset, context)?);
+    }
+    if offset != bytes.len() {
+        return Err(format!("{context}: trailing bytes"));
+    }
+    Ok(records)
+}
+
+fn encode_marked_page<R: PageRecordCodec>(marker: [u8; 2], records: &[R]) -> Vec<u8> {
+    let payload = encode_page_payload(records);
+    let mut bytes = Vec::with_capacity(2 + payload.len());
+    bytes.extend_from_slice(&marker);
+    bytes.extend_from_slice(&payload);
+    bytes
+}
+
+fn decode_marked_page<R: PageRecordCodec>(
+    marker: [u8; 2],
+    bytes: &[u8],
+    context: &str,
+) -> Result<Vec<R>, String> {
+    if !bytes.starts_with(&marker) {
+        return Err(format!("{context}: missing marker"));
+    }
+    decode_page_payload(bytes.get(2..).unwrap_or_default(), context)
+}
+
+fn decode_u64(bytes: &[u8], offset: &mut usize, context: &str) -> Result<u64, String> {
+    if bytes.len().saturating_sub(*offset) < 8 {
+        return Err(format!("{context}: record header truncated"));
+    }
+    let value = u64::from_le_bytes(bytes[*offset..*offset + 8].try_into().unwrap());
+    *offset += 8;
+    Ok(value)
+}
+
+macro_rules! common_page_record_accessors {
+    () => {
+        fn body(&self) -> &Bytes {
+            &self.body
+        }
+
+        fn metadata(&self) -> Option<&Bytes> {
+            self.metadata.as_ref()
+        }
+
+        fn created_at(&self) -> u64 {
+            self.created_at
+        }
+
+        fn expires_at(&self) -> Option<u64> {
+            self.expires_at
+        }
+    };
+}
+
+impl PageRecordCodec for CompactGlobalPageRecord {
+    type Specific = (String, String, String, u64, u64, u64);
+
+    fn encoded_specific_len(&self) -> usize {
+        encoded_string_len(&self.realm)
+            + encoded_string_len(&self.area)
+            + encoded_string_len(&self.resource)
+            + 24
+    }
+
+    fn encode_specific(&self, bytes: &mut Vec<u8>) {
+        encode_string(bytes, &self.realm);
+        encode_string(bytes, &self.area);
+        encode_string(bytes, &self.resource);
+        bytes.extend_from_slice(&self.resource_offset.to_le_bytes());
+        bytes.extend_from_slice(&self.area_offset.to_le_bytes());
+        bytes.extend_from_slice(&self.realm_offset.to_le_bytes());
+    }
+
+    fn decode_specific(
+        bytes: &[u8],
+        offset: &mut usize,
+        context: &str,
+    ) -> Result<Self::Specific, String> {
+        Ok((
+            decode_string(bytes, offset, context)?,
+            decode_string(bytes, offset, context)?,
+            decode_string(bytes, offset, context)?,
+            decode_u64(bytes, offset, context)?,
+            decode_u64(bytes, offset, context)?,
+            decode_u64(bytes, offset, context)?,
+        ))
+    }
+
+    common_page_record_accessors!();
+
+    fn from_parts(
+        (realm, area, resource, resource_offset, area_offset, realm_offset): Self::Specific,
+        body: Bytes,
+        metadata: Option<Bytes>,
+        created_at: u64,
+        expires_at: Option<u64>,
+    ) -> Self {
+        Self {
+            realm: realm.into(),
+            area: area.into(),
+            resource: resource.into(),
+            resource_offset,
+            area_offset,
+            realm_offset,
+            body,
+            metadata,
+            created_at,
+            expires_at,
+        }
+    }
+}
+
+impl PageRecordCodec for CompactRealmPageRecord {
+    type Specific = (String, String, u64, u64);
+
+    fn encoded_specific_len(&self) -> usize {
+        encoded_string_len(&self.area) + encoded_string_len(&self.resource) + 16
+    }
+
+    fn encode_specific(&self, bytes: &mut Vec<u8>) {
+        encode_string(bytes, &self.area);
+        encode_string(bytes, &self.resource);
+        bytes.extend_from_slice(&self.area_offset.to_le_bytes());
+        bytes.extend_from_slice(&self.resource_offset.to_le_bytes());
+    }
+
+    fn decode_specific(
+        bytes: &[u8],
+        offset: &mut usize,
+        context: &str,
+    ) -> Result<Self::Specific, String> {
+        Ok((
+            decode_string(bytes, offset, context)?,
+            decode_string(bytes, offset, context)?,
+            decode_u64(bytes, offset, context)?,
+            decode_u64(bytes, offset, context)?,
+        ))
+    }
+
+    common_page_record_accessors!();
+
+    fn from_parts(
+        (area, resource, area_offset, resource_offset): Self::Specific,
+        body: Bytes,
+        metadata: Option<Bytes>,
+        created_at: u64,
+        expires_at: Option<u64>,
+    ) -> Self {
+        Self {
+            area: area.into(),
+            resource: resource.into(),
+            area_offset,
+            resource_offset,
+            body,
+            metadata,
+            created_at,
+            expires_at,
+        }
+    }
+}
+
+impl PageRecordCodec for CompactAreaPageRecord {
+    type Specific = (String, u64);
+
+    fn encoded_specific_len(&self) -> usize {
+        encoded_string_len(&self.resource) + 8
+    }
+
+    fn encode_specific(&self, bytes: &mut Vec<u8>) {
+        encode_string(bytes, &self.resource);
+        bytes.extend_from_slice(&self.resource_offset.to_le_bytes());
+    }
+
+    fn decode_specific(
+        bytes: &[u8],
+        offset: &mut usize,
+        context: &str,
+    ) -> Result<Self::Specific, String> {
+        Ok((
+            decode_string(bytes, offset, context)?,
+            decode_u64(bytes, offset, context)?,
+        ))
+    }
+
+    common_page_record_accessors!();
+
+    fn from_parts(
+        (resource, resource_offset): Self::Specific,
+        body: Bytes,
+        metadata: Option<Bytes>,
+        created_at: u64,
+        expires_at: Option<u64>,
+    ) -> Self {
+        Self {
+            resource: resource.into(),
+            resource_offset,
+            body,
+            metadata,
+            created_at,
+            expires_at,
+        }
+    }
+}
+
+impl PageRecordCodec for CompactResourcePageRecord {
+    type Specific = (u64, u64);
+
+    fn encoded_specific_len(&self) -> usize {
+        16
+    }
+
+    fn encode_specific(&self, bytes: &mut Vec<u8>) {
+        bytes.extend_from_slice(&self.area_offset.to_le_bytes());
+        bytes.extend_from_slice(&self.realm_offset.to_le_bytes());
+    }
+
+    fn decode_specific(
+        bytes: &[u8],
+        offset: &mut usize,
+        context: &str,
+    ) -> Result<Self::Specific, String> {
+        Ok((
+            decode_u64(bytes, offset, context)?,
+            decode_u64(bytes, offset, context)?,
+        ))
+    }
+
+    common_page_record_accessors!();
+
+    fn from_parts(
+        (area_offset, realm_offset): Self::Specific,
+        body: Bytes,
+        metadata: Option<Bytes>,
+        created_at: u64,
+        expires_at: Option<u64>,
+    ) -> Self {
+        Self {
+            area_offset,
+            realm_offset,
+            body,
+            metadata,
+            created_at,
+            expires_at,
+        }
+    }
+}
+
 impl PostingPageValue {
     const MARKER: [u8; 2] = [0, 0xEC];
 
@@ -106,37 +472,7 @@ impl PostingPageValue {
 impl CompactGlobalPageValue {
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
-        let mut payload = Vec::new();
-        payload.extend_from_slice(&usize_to_u32_saturating(self.records.len()).to_le_bytes());
-        for record in &self.records {
-            encode_string(&mut payload, &record.realm);
-            encode_string(&mut payload, &record.area);
-            encode_string(&mut payload, &record.resource);
-            payload.extend_from_slice(&record.resource_offset.to_le_bytes());
-            payload.extend_from_slice(&record.area_offset.to_le_bytes());
-            payload.extend_from_slice(&record.realm_offset.to_le_bytes());
-            payload.extend_from_slice(&record.created_at.to_le_bytes());
-            payload.extend_from_slice(
-                &record
-                    .expires_at
-                    .unwrap_or(OPTIONAL_OFFSET_ABSENT)
-                    .to_le_bytes(),
-            );
-            payload.extend_from_slice(&usize_to_u32_saturating(record.body.len()).to_le_bytes());
-            payload.extend_from_slice(
-                &record
-                    .metadata
-                    .as_ref()
-                    .map_or(OPTIONAL_BYTES_ABSENT, |value| {
-                        usize_to_u32_saturating(value.len())
-                    })
-                    .to_le_bytes(),
-            );
-            payload.extend_from_slice(&record.body);
-            if let Some(metadata) = &record.metadata {
-                payload.extend_from_slice(metadata);
-            }
-        }
+        let payload = encode_page_payload(&self.records);
         let compressed = compress_prepend_size(&payload);
         let mut bytes = Vec::with_capacity(2 + compressed.len());
         bytes.extend_from_slice(&COMPACT_GLOBAL_PAGE_VALUE_V2_MARKER);
@@ -166,72 +502,8 @@ impl CompactGlobalPageValue {
         } else {
             return Err("decode compact global page value: invalid header".to_string());
         };
-        if bytes.len() < 4 {
-            return Err("decode compact global page value: invalid header".to_string());
-        }
-        let mut offset = 0;
-        let count = u32_to_usize(u32::from_le_bytes(
-            bytes[offset..offset + 4].try_into().unwrap(),
-        ));
-        offset += 4;
-        let mut records = Vec::with_capacity(count);
-        for _ in 0..count {
-            let realm = decode_string(bytes, &mut offset, "decode compact global page value")?;
-            let area = decode_string(bytes, &mut offset, "decode compact global page value")?;
-            let resource = decode_string(bytes, &mut offset, "decode compact global page value")?;
-            if bytes.len().saturating_sub(offset) < 48 {
-                return Err("decode compact global page value: record header truncated".to_string());
-            }
-            let resource_offset = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
-            offset += 8;
-            let area_offset = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
-            offset += 8;
-            let realm_offset = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
-            offset += 8;
-            let created_at = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
-            offset += 8;
-            let expires_at = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
-            offset += 8;
-            let body_len = u32_to_usize(u32::from_le_bytes(
-                bytes[offset..offset + 4].try_into().unwrap(),
-            ));
-            offset += 4;
-            let metadata_raw = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
-            offset += 4;
-            let metadata_len =
-                (metadata_raw != OPTIONAL_BYTES_ABSENT).then(|| u32_to_usize(metadata_raw));
-            if bytes.len().saturating_sub(offset) < body_len {
-                return Err("decode compact global page value: body truncated".to_string());
-            }
-            let body = Bytes::copy_from_slice(&bytes[offset..offset + body_len]);
-            offset += body_len;
-            let metadata = if let Some(len) = metadata_len {
-                if bytes.len().saturating_sub(offset) < len {
-                    return Err("decode compact global page value: metadata truncated".to_string());
-                }
-                let value = Bytes::copy_from_slice(&bytes[offset..offset + len]);
-                offset += len;
-                Some(value)
-            } else {
-                None
-            };
-            records.push(CompactGlobalPageRecord {
-                realm: realm.into(),
-                area: area.into(),
-                resource: resource.into(),
-                resource_offset,
-                area_offset,
-                realm_offset,
-                body,
-                metadata,
-                created_at,
-                expires_at: (expires_at != OPTIONAL_OFFSET_ABSENT).then_some(expires_at),
-            });
-        }
-        if offset != bytes.len() {
-            return Err("decode compact global page value: trailing bytes".to_string());
-        }
-        Ok(Self { records })
+        decode_page_payload(bytes, "decode compact global page value")
+            .map(|records| Self { records })
     }
 }
 
@@ -243,47 +515,7 @@ impl CompactRealmPageValue {
 
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
-        let mut total_len = 6;
-        for record in &self.records {
-            total_len += encoded_string_len(&record.area);
-            total_len += encoded_string_len(&record.resource);
-            total_len += 8 + 8 + 8 + 8 + 4 + 4 + record.body.len();
-            total_len += record.metadata.as_ref().map_or(0, Bytes::len);
-        }
-
-        let mut bytes = Vec::with_capacity(total_len);
-        bytes.extend_from_slice(&COMPACT_REALM_PAGE_VALUE_V2_MARKER);
-        bytes.extend_from_slice(&usize_to_u32_saturating(self.records.len()).to_le_bytes());
-
-        for record in &self.records {
-            encode_string(&mut bytes, &record.area);
-            encode_string(&mut bytes, &record.resource);
-            bytes.extend_from_slice(&record.area_offset.to_le_bytes());
-            bytes.extend_from_slice(&record.resource_offset.to_le_bytes());
-            bytes.extend_from_slice(&record.created_at.to_le_bytes());
-            bytes.extend_from_slice(
-                &record
-                    .expires_at
-                    .unwrap_or(OPTIONAL_OFFSET_ABSENT)
-                    .to_le_bytes(),
-            );
-            bytes.extend_from_slice(&usize_to_u32_saturating(record.body.len()).to_le_bytes());
-            bytes.extend_from_slice(
-                &record
-                    .metadata
-                    .as_ref()
-                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| {
-                        usize_to_u32_saturating(metadata.len())
-                    })
-                    .to_le_bytes(),
-            );
-            bytes.extend_from_slice(&record.body);
-            if let Some(metadata) = &record.metadata {
-                bytes.extend_from_slice(metadata);
-            }
-        }
-
-        bytes
+        encode_marked_page(COMPACT_REALM_PAGE_VALUE_V2_MARKER, &self.records)
     }
 
     /// # Panics
@@ -305,81 +537,12 @@ impl CompactRealmPageValue {
     /// Panics if fixed-width header slices fail to convert into arrays after
     /// preceding length checks.
     pub fn try_decode(bytes: &[u8]) -> Result<Self, String> {
-        if !Self::is_encoded(bytes) {
-            return Err("decode compact realm page value: missing marker".to_string());
-        }
-        if bytes.len() < 6 {
-            return Err("decode compact realm page value: header too short".to_string());
-        }
-
-        let mut offset = 2usize;
-        let record_count = u32_to_usize(u32::from_le_bytes(
-            bytes[offset..offset + 4].try_into().unwrap(),
-        ));
-        offset += 4;
-
-        let mut records = Vec::with_capacity(record_count);
-        for _ in 0..record_count {
-            let area = decode_string(bytes, &mut offset, "decode compact realm page value")?;
-            let resource = decode_string(bytes, &mut offset, "decode compact realm page value")?;
-            if bytes.len().saturating_sub(offset) < 40 {
-                return Err("decode compact realm page value: record header truncated".to_string());
-            }
-
-            let area_offset = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
-            offset += 8;
-            let resource_offset = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
-            offset += 8;
-            let created_at = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
-            offset += 8;
-            let expires_at = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
-            offset += 8;
-            let body_len = u32_to_usize(u32::from_le_bytes(
-                bytes[offset..offset + 4].try_into().unwrap(),
-            ));
-            offset += 4;
-            let metadata_len_raw =
-                u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
-            offset += 4;
-            let metadata_len = if metadata_len_raw == OPTIONAL_BYTES_ABSENT {
-                None
-            } else {
-                Some(u32_to_usize(metadata_len_raw))
-            };
-
-            if bytes.len().saturating_sub(offset) < body_len {
-                return Err("decode compact realm page value: truncated body".to_string());
-            }
-            let body = Bytes::copy_from_slice(&bytes[offset..offset + body_len]);
-            offset += body_len;
-
-            let metadata = if let Some(metadata_len) = metadata_len {
-                if bytes.len().saturating_sub(offset) < metadata_len {
-                    return Err("decode compact realm page value: truncated metadata".to_string());
-                }
-                let metadata = Bytes::copy_from_slice(&bytes[offset..offset + metadata_len]);
-                offset += metadata_len;
-                Some(metadata)
-            } else {
-                None
-            };
-
-            records.push(CompactRealmPageRecord {
-                area: area.into(),
-                resource: resource.into(),
-                area_offset,
-                resource_offset,
-                body,
-                metadata,
-                created_at,
-                expires_at: (expires_at != OPTIONAL_OFFSET_ABSENT).then_some(expires_at),
-            });
-        }
-        if offset != bytes.len() {
-            return Err("decode compact realm page value: trailing bytes".to_string());
-        }
-
-        Ok(Self { records })
+        decode_marked_page(
+            COMPACT_REALM_PAGE_VALUE_V2_MARKER,
+            bytes,
+            "decode compact realm page value",
+        )
+        .map(|records| Self { records })
     }
 }
 
@@ -391,44 +554,7 @@ impl CompactAreaPageValue {
 
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
-        let mut total_len = 6;
-        for record in &self.records {
-            total_len += encoded_string_len(&record.resource);
-            total_len += 8 + 8 + 8 + 4 + 4 + record.body.len();
-            total_len += record.metadata.as_ref().map_or(0, Bytes::len);
-        }
-
-        let mut bytes = Vec::with_capacity(total_len);
-        bytes.extend_from_slice(&COMPACT_AREA_PAGE_VALUE_V2_MARKER);
-        bytes.extend_from_slice(&usize_to_u32_saturating(self.records.len()).to_le_bytes());
-
-        for record in &self.records {
-            encode_string(&mut bytes, &record.resource);
-            bytes.extend_from_slice(&record.resource_offset.to_le_bytes());
-            bytes.extend_from_slice(&record.created_at.to_le_bytes());
-            bytes.extend_from_slice(
-                &record
-                    .expires_at
-                    .unwrap_or(OPTIONAL_OFFSET_ABSENT)
-                    .to_le_bytes(),
-            );
-            bytes.extend_from_slice(&usize_to_u32_saturating(record.body.len()).to_le_bytes());
-            bytes.extend_from_slice(
-                &record
-                    .metadata
-                    .as_ref()
-                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| {
-                        usize_to_u32_saturating(metadata.len())
-                    })
-                    .to_le_bytes(),
-            );
-            bytes.extend_from_slice(&record.body);
-            if let Some(metadata) = &record.metadata {
-                bytes.extend_from_slice(metadata);
-            }
-        }
-
-        bytes
+        encode_marked_page(COMPACT_AREA_PAGE_VALUE_V2_MARKER, &self.records)
     }
 
     /// # Panics
@@ -450,76 +576,12 @@ impl CompactAreaPageValue {
     /// Panics if fixed-width header slices fail to convert into arrays after
     /// preceding length checks.
     pub fn try_decode(bytes: &[u8]) -> Result<Self, String> {
-        if !Self::is_encoded(bytes) {
-            return Err("decode compact area page value: missing marker".to_string());
-        }
-        if bytes.len() < 6 {
-            return Err("decode compact area page value: header too short".to_string());
-        }
-
-        let mut offset = 2usize;
-        let record_count = u32_to_usize(u32::from_le_bytes(
-            bytes[offset..offset + 4].try_into().unwrap(),
-        ));
-        offset += 4;
-
-        let mut records = Vec::with_capacity(record_count);
-        for _ in 0..record_count {
-            let resource = decode_string(bytes, &mut offset, "decode compact area page value")?;
-            if bytes.len().saturating_sub(offset) < 32 {
-                return Err("decode compact area page value: record header truncated".to_string());
-            }
-
-            let resource_offset = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
-            offset += 8;
-            let created_at = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
-            offset += 8;
-            let expires_at = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
-            offset += 8;
-            let body_len = u32_to_usize(u32::from_le_bytes(
-                bytes[offset..offset + 4].try_into().unwrap(),
-            ));
-            offset += 4;
-            let metadata_len_raw =
-                u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
-            offset += 4;
-            let metadata_len = if metadata_len_raw == OPTIONAL_BYTES_ABSENT {
-                None
-            } else {
-                Some(u32_to_usize(metadata_len_raw))
-            };
-
-            if bytes.len().saturating_sub(offset) < body_len {
-                return Err("decode compact area page value: truncated body".to_string());
-            }
-            let body = Bytes::copy_from_slice(&bytes[offset..offset + body_len]);
-            offset += body_len;
-
-            let metadata = if let Some(metadata_len) = metadata_len {
-                if bytes.len().saturating_sub(offset) < metadata_len {
-                    return Err("decode compact area page value: truncated metadata".to_string());
-                }
-                let metadata = Bytes::copy_from_slice(&bytes[offset..offset + metadata_len]);
-                offset += metadata_len;
-                Some(metadata)
-            } else {
-                None
-            };
-
-            records.push(CompactAreaPageRecord {
-                resource: resource.into(),
-                resource_offset,
-                body,
-                metadata,
-                created_at,
-                expires_at: (expires_at != OPTIONAL_OFFSET_ABSENT).then_some(expires_at),
-            });
-        }
-        if offset != bytes.len() {
-            return Err("decode compact area page value: trailing bytes".to_string());
-        }
-
-        Ok(Self { records })
+        decode_marked_page(
+            COMPACT_AREA_PAGE_VALUE_V2_MARKER,
+            bytes,
+            "decode compact area page value",
+        )
+        .map(|records| Self { records })
     }
 }
 
@@ -531,43 +593,7 @@ impl CompactResourcePageValue {
 
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
-        let mut total_len = 6;
-        for record in &self.records {
-            total_len += 8 + 8 + 8 + 8 + 4 + 4 + record.body.len();
-            total_len += record.metadata.as_ref().map_or(0, Bytes::len);
-        }
-
-        let mut bytes = Vec::with_capacity(total_len);
-        bytes.extend_from_slice(&COMPACT_RESOURCE_PAGE_VALUE_V1_MARKER);
-        bytes.extend_from_slice(&usize_to_u32_saturating(self.records.len()).to_le_bytes());
-
-        for record in &self.records {
-            bytes.extend_from_slice(&record.area_offset.to_le_bytes());
-            bytes.extend_from_slice(&record.realm_offset.to_le_bytes());
-            bytes.extend_from_slice(&record.created_at.to_le_bytes());
-            bytes.extend_from_slice(
-                &record
-                    .expires_at
-                    .unwrap_or(OPTIONAL_OFFSET_ABSENT)
-                    .to_le_bytes(),
-            );
-            bytes.extend_from_slice(&usize_to_u32_saturating(record.body.len()).to_le_bytes());
-            bytes.extend_from_slice(
-                &record
-                    .metadata
-                    .as_ref()
-                    .map_or(OPTIONAL_BYTES_ABSENT, |metadata| {
-                        usize_to_u32_saturating(metadata.len())
-                    })
-                    .to_le_bytes(),
-            );
-            bytes.extend_from_slice(&record.body);
-            if let Some(metadata) = &record.metadata {
-                bytes.extend_from_slice(metadata);
-            }
-        }
-
-        bytes
+        encode_marked_page(COMPACT_RESOURCE_PAGE_VALUE_V1_MARKER, &self.records)
     }
 
     /// # Panics
@@ -589,80 +615,11 @@ impl CompactResourcePageValue {
     /// Panics if fixed-width header slices fail to convert into arrays after
     /// preceding length checks.
     pub fn try_decode(bytes: &[u8]) -> Result<Self, String> {
-        if !Self::is_encoded(bytes) {
-            return Err("decode compact resource page value: missing marker".to_string());
-        }
-        if bytes.len() < 6 {
-            return Err("decode compact resource page value: header too short".to_string());
-        }
-
-        let mut offset = 2usize;
-        let record_count = u32_to_usize(u32::from_le_bytes(
-            bytes[offset..offset + 4].try_into().unwrap(),
-        ));
-        offset += 4;
-
-        let mut records = Vec::with_capacity(record_count);
-        for _ in 0..record_count {
-            if bytes.len().saturating_sub(offset) < 40 {
-                return Err(
-                    "decode compact resource page value: record header truncated".to_string(),
-                );
-            }
-
-            let area_offset = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
-            offset += 8;
-            let realm_offset = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
-            offset += 8;
-            let created_at = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
-            offset += 8;
-            let expires_at = u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
-            offset += 8;
-            let body_len = u32_to_usize(u32::from_le_bytes(
-                bytes[offset..offset + 4].try_into().unwrap(),
-            ));
-            offset += 4;
-            let metadata_len_raw =
-                u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
-            offset += 4;
-            let metadata_len = if metadata_len_raw == OPTIONAL_BYTES_ABSENT {
-                None
-            } else {
-                Some(u32_to_usize(metadata_len_raw))
-            };
-
-            if bytes.len().saturating_sub(offset) < body_len {
-                return Err("decode compact resource page value: truncated body".to_string());
-            }
-            let body = Bytes::copy_from_slice(&bytes[offset..offset + body_len]);
-            offset += body_len;
-
-            let metadata = if let Some(metadata_len) = metadata_len {
-                if bytes.len().saturating_sub(offset) < metadata_len {
-                    return Err(
-                        "decode compact resource page value: truncated metadata".to_string()
-                    );
-                }
-                let metadata = Bytes::copy_from_slice(&bytes[offset..offset + metadata_len]);
-                offset += metadata_len;
-                Some(metadata)
-            } else {
-                None
-            };
-
-            records.push(CompactResourcePageRecord {
-                area_offset,
-                realm_offset,
-                body,
-                metadata,
-                created_at,
-                expires_at: (expires_at != OPTIONAL_OFFSET_ABSENT).then_some(expires_at),
-            });
-        }
-        if offset != bytes.len() {
-            return Err("decode compact resource page value: trailing bytes".to_string());
-        }
-
-        Ok(Self { records })
+        decode_marked_page(
+            COMPACT_RESOURCE_PAGE_VALUE_V1_MARKER,
+            bytes,
+            "decode compact resource page value",
+        )
+        .map(|records| Self { records })
     }
 }

@@ -9,7 +9,7 @@ use super::protocol::{
     CommitSessionResponse, GetMetadataResponse, IngestMetadata, PeekResponse, ReadResponse,
     StreamDiscriminator, StreamFilterSet, StreamWriteMode, MAX_EVENT_SIZE,
 };
-use super::store::{CommitRecordsParams, EventPayload, StreamStore};
+use super::store::{CommitRecordsParams, EventPayload, StreamStore, StreamStoreError};
 
 #[derive(Debug, Clone)]
 struct ActiveAppendSession {
@@ -20,8 +20,6 @@ struct ActiveAppendSession {
     total_bytes: usize,
     ingest_metadata: Option<IngestMetadata>,
 }
-
-impl ActiveAppendSession {}
 
 /// Warm in-memory append-session state for a single resource stream.
 ///
@@ -123,21 +121,36 @@ impl StreamActor {
                 session.stream_session_id == stream_session_id
                     && session.owner_session_id == owner_session_id
             })
-            .ok_or_else(|| "session not found".to_string())?;
+            .ok_or_else(|| {
+                StreamStoreError::SessionNotFound
+                    .client_message()
+                    .to_string()
+            })?;
 
         let assigned_offset = if let Some(base_expected_offset) = session.expected_offset {
-            let staged_event_count = u64::try_from(session.staged_events.len())
-                .map_err(|_| "concurrency conflict".to_string())?;
+            let staged_event_count = u64::try_from(session.staged_events.len()).map_err(|_| {
+                StreamStoreError::ConcurrencyConflict
+                    .client_message()
+                    .to_string()
+            })?;
             let next_expected_offset = base_expected_offset
                 .checked_add(staged_event_count)
-                .ok_or_else(|| "concurrency conflict".to_string())?;
+                .ok_or_else(|| {
+                    StreamStoreError::ConcurrencyConflict
+                        .client_message()
+                        .to_string()
+                })?;
             if expected_offset != next_expected_offset {
-                return Err("concurrency conflict".to_string());
+                return Err(StreamStoreError::ConcurrencyConflict
+                    .client_message()
+                    .to_string());
             }
             next_expected_offset
         } else {
             if expected_offset != self.next_resource_offset {
-                return Err("concurrency conflict".to_string());
+                return Err(StreamStoreError::ConcurrencyConflict
+                    .client_message()
+                    .to_string());
             }
             session.expected_offset = Some(expected_offset);
             expected_offset
@@ -191,16 +204,19 @@ impl StreamActor {
         stream_session_id: u64,
         mode: StreamWriteMode,
     ) -> Result<CommitSessionResponse, String> {
-        let session = self
-            .active_session
-            .take()
-            .ok_or_else(|| "session not found".to_string())?;
+        let session = self.active_session.take().ok_or_else(|| {
+            StreamStoreError::SessionNotFound
+                .client_message()
+                .to_string()
+        })?;
 
         if session.stream_session_id != stream_session_id
             || session.owner_session_id != owner_session_id
         {
             self.active_session = Some(session);
-            return Err("session not found".to_string());
+            return Err(StreamStoreError::SessionNotFound
+                .client_message()
+                .to_string());
         }
 
         if session.staged_events.is_empty() {
@@ -226,10 +242,8 @@ impl StreamActor {
             Ok(response) => response,
             Err(error) => {
                 self.active_session = Some(session);
-                return Err(match error.as_str() {
-                    "ERR_CONCURRENCY_CONFLICT" => "concurrency conflict".to_string(),
-                    _ => error,
-                });
+                return Err(StreamStoreError::from_store_message(&error)
+                    .map_or(error, |error| error.client_message().to_string()));
             }
         };
 
@@ -257,16 +271,19 @@ impl StreamActor {
         owner_session_id: u64,
         stream_session_id: u64,
     ) -> Result<(), String> {
-        let session = self
-            .active_session
-            .take()
-            .ok_or_else(|| "session not found".to_string())?;
+        let session = self.active_session.take().ok_or_else(|| {
+            StreamStoreError::SessionNotFound
+                .client_message()
+                .to_string()
+        })?;
 
         if session.stream_session_id != stream_session_id
             || session.owner_session_id != owner_session_id
         {
             self.active_session = Some(session);
-            return Err("session not found".to_string());
+            return Err(StreamStoreError::SessionNotFound
+                .client_message()
+                .to_string());
         }
 
         if let Err(error) = self.store.abandon_pending_global_reservation(

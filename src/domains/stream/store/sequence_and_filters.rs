@@ -13,6 +13,12 @@ use std::sync::Arc;
 #[cfg(test)]
 use super::{FAIL_NEXT_AREA_WATERMARK_GUARD_READ, FAIL_NEXT_REALM_WATERMARK_GUARD_READ};
 
+#[derive(Clone, Copy)]
+enum WatermarkGuardScope {
+    Area,
+    Realm,
+}
+
 impl StreamStore {
     pub(super) fn global_completion_state(
         &self,
@@ -171,47 +177,30 @@ impl StreamStore {
             let index = usize_to_u64_saturating(index);
             let discriminator_bytes = discriminator.as_str().as_bytes().to_vec();
 
-            txn.put(
+            let keys = [
                 crate::domains::stream::storage::encode_resource_discriminator_key(
                     realm,
                     area,
                     resource,
                     first_resource_offset + index,
                 ),
-                discriminator_bytes.clone(),
-                ttl_opt,
-            )
-            .map_err(|e| format!("txn put failed: {e:?}"))?;
-
-            txn.put(
                 crate::domains::stream::storage::encode_area_discriminator_key(
                     realm,
                     area,
                     first_area_offset + index,
                 ),
-                discriminator_bytes.clone(),
-                ttl_opt,
-            )
-            .map_err(|e| format!("txn put failed: {e:?}"))?;
-
-            txn.put(
                 crate::domains::stream::storage::encode_realm_discriminator_key(
                     realm,
                     first_realm_offset + index,
                 ),
-                discriminator_bytes.clone(),
-                ttl_opt,
-            )
-            .map_err(|e| format!("txn put failed: {e:?}"))?;
-
-            txn.put(
                 crate::domains::stream::storage::encode_global_discriminator_key(
                     first_global_offset + index,
                 ),
-                discriminator_bytes,
-                ttl_opt,
-            )
-            .map_err(|e| format!("txn put failed: {e:?}"))?;
+            ];
+            for key in keys {
+                txn.put(key, discriminator_bytes.clone(), ttl_opt)
+                    .map_err(|e| format!("txn put failed: {e:?}"))?;
+            }
         }
 
         Ok(())
@@ -231,37 +220,28 @@ impl StreamStore {
         txn: &cntryl_midge::Transaction,
         key: &[u8],
     ) -> Result<Option<u64>, String> {
-        #[cfg(test)]
-        {
-            let should_fail = FAIL_NEXT_AREA_WATERMARK_GUARD_READ.with(|cell| {
-                let should_fail = cell.get();
-                if should_fail {
-                    cell.set(false);
-                }
-                should_fail
-            });
-
-            if should_fail {
-                return Err("Injected area watermark guard read failure".to_string());
-            }
-        }
-
-        txn.get(key)
-            .map_err(|e| format!("midge get error: {e:?}"))
-            .and_then(|existing| {
-                existing
-                    .map(|bytes| WatermarkValue::decode(&bytes).map(|value| value.watermark))
-                    .transpose()
-            })
+        Self::load_existing_watermark_for_guard(txn, key, WatermarkGuardScope::Area)
     }
 
     pub(super) fn load_existing_realm_watermark_for_guard(
         txn: &cntryl_midge::Transaction,
         key: &[u8],
     ) -> Result<Option<u64>, String> {
+        Self::load_existing_watermark_for_guard(txn, key, WatermarkGuardScope::Realm)
+    }
+
+    fn load_existing_watermark_for_guard(
+        txn: &cntryl_midge::Transaction,
+        key: &[u8],
+        scope: WatermarkGuardScope,
+    ) -> Result<Option<u64>, String> {
         #[cfg(test)]
         {
-            let should_fail = FAIL_NEXT_REALM_WATERMARK_GUARD_READ.with(|cell| {
+            let failpoint = match scope {
+                WatermarkGuardScope::Area => &FAIL_NEXT_AREA_WATERMARK_GUARD_READ,
+                WatermarkGuardScope::Realm => &FAIL_NEXT_REALM_WATERMARK_GUARD_READ,
+            };
+            let should_fail = failpoint.with(|cell| {
                 let should_fail = cell.get();
                 if should_fail {
                     cell.set(false);
@@ -270,9 +250,16 @@ impl StreamStore {
             });
 
             if should_fail {
-                return Err("Injected realm watermark guard read failure".to_string());
+                let scope = match scope {
+                    WatermarkGuardScope::Area => "area",
+                    WatermarkGuardScope::Realm => "realm",
+                };
+                return Err(format!("Injected {scope} watermark guard read failure"));
             }
         }
+
+        #[cfg(not(test))]
+        let _ = scope;
 
         txn.get(key)
             .map_err(|e| format!("midge get error: {e:?}"))

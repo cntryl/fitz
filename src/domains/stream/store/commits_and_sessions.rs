@@ -4,7 +4,7 @@ use super::{
     EventPayload, GlobalReservation, IngestMetadata, PendingGlobalReservation,
     PromotionCommitFailure, ReadResourceParams, RealmCounterValue, ResourceMetaValue,
     SequenceGuardKey, SessionId, StreamAdminRecord, StreamReadItem, StreamRecord, StreamStore,
-    StreamWriteMode, ERR_SESSION_ROUTE_FAMILY_MISMATCH,
+    StreamStoreError, StreamWriteMode, ERR_SESSION_ROUTE_FAMILY_MISMATCH,
 };
 
 fn u64_to_u32_saturating(value: u64) -> u32 {
@@ -100,7 +100,7 @@ impl StreamStore {
             .sessions
             .lock()
             .remove(&session_id)
-            .ok_or_else(|| "ERR_SESSION_NOT_FOUND".to_string())?;
+            .ok_or_else(|| StreamStoreError::SessionNotFound.store_code().to_string())?;
         let validation = if session.family != family {
             Err(ERR_SESSION_ROUTE_FAMILY_MISMATCH.to_string())
         } else if session.event_count == 0 {
@@ -253,14 +253,6 @@ impl StreamStore {
         params: CommitRecordsParams<'_>,
     ) -> Result<CommitResponse, String> {
         self.ensure_layout_activation_for_family(params.family)?;
-
-        self.commit_records_promotion_frontier(params)
-    }
-
-    pub(super) fn commit_records_promotion_frontier(
-        &self,
-        params: CommitRecordsParams<'_>,
-    ) -> Result<CommitResponse, String> {
         let CommitRecordsParams {
             family,
             realm,
@@ -288,7 +280,9 @@ impl StreamStore {
             self.load_resource_meta_snapshot(family, realm, area, resource)?;
         resource_meta_state.snapshot = Some(resource_meta_before.clone());
         if resource_meta_before.next_offset != expected_resource_next_offset {
-            return Err("ERR_CONCURRENCY_CONFLICT".to_string());
+            return Err(StreamStoreError::ConcurrencyConflict
+                .store_code()
+                .to_string());
         }
         let (first_area_offset, _) = self.load_area_next_offset_snapshot(family, realm, area)?;
         let (first_realm_offset, _) = self.load_realm_next_offset_snapshot(family, realm)?;
@@ -347,14 +341,6 @@ impl StreamStore {
     /// be completed from storage.
     pub fn list_resource_metadata(&self, family: u64) -> Result<Vec<StreamAdminRecord>, String> {
         self.ensure_layout_activation_for_family(family)?;
-
-        self.list_resource_metadata_promotion_frontier(family)
-    }
-
-    pub(super) fn list_resource_metadata_promotion_frontier(
-        &self,
-        family: u64,
-    ) -> Result<Vec<StreamAdminRecord>, String> {
         let txn = self
             .db
             .begin_tx(
@@ -453,7 +439,7 @@ impl StreamStore {
         let mut sessions = self.sessions.lock();
         let session = sessions
             .get_mut(&session_id)
-            .ok_or_else(|| "ERR_SESSION_NOT_FOUND".to_string())?;
+            .ok_or_else(|| StreamStoreError::SessionNotFound.store_code().to_string())?;
 
         if session.family != family {
             return Err(ERR_SESSION_ROUTE_FAMILY_MISMATCH.to_string());
@@ -522,25 +508,6 @@ impl StreamStore {
         first_realm_offset: u64,
         mode: StreamWriteMode,
     ) -> Result<CommitResponse, String> {
-        self.commit_session_promotion_frontier(
-            family,
-            session_id,
-            first_resource_offset,
-            first_area_offset,
-            first_realm_offset,
-            mode,
-        )
-    }
-
-    pub(super) fn commit_session_promotion_frontier(
-        &self,
-        family: u64,
-        session_id: SessionId,
-        first_resource_offset: u64,
-        first_area_offset: u64,
-        first_realm_offset: u64,
-        mode: StreamWriteMode,
-    ) -> Result<CommitResponse, String> {
         let session = self.take_commit_session(family, session_id)?;
 
         let sequencing_guard =
@@ -570,7 +537,9 @@ impl StreamStore {
 
         if resource_meta_before.next_offset != first_resource_offset {
             self.sessions.lock().insert(session_id, session);
-            return Err("ERR_CONCURRENCY_CONFLICT".to_string());
+            return Err(StreamStoreError::ConcurrencyConflict
+                .store_code()
+                .to_string());
         }
 
         let prepared =
@@ -636,7 +605,7 @@ impl StreamStore {
             .sessions
             .lock()
             .remove(&session_id)
-            .ok_or_else(|| "ERR_SESSION_NOT_FOUND".to_string())?;
+            .ok_or_else(|| StreamStoreError::SessionNotFound.store_code().to_string())?;
         let key = (
             session.family,
             session.realm.clone(),
@@ -673,18 +642,7 @@ impl StreamStore {
         resource: &str,
     ) -> Result<Option<StreamRecord>, String> {
         self.ensure_layout_activation_for_family(family)?;
-
-        self.peek_resource_promotion_frontier(family, realm, area, resource)
-    }
-
-    pub(super) fn peek_resource_promotion_frontier(
-        &self,
-        family: u64,
-        realm: &str,
-        area: &str,
-        resource: &str,
-    ) -> Result<Option<StreamRecord>, String> {
-        match self.get_last_resource_offset_promotion_frontier(family, realm, area, resource)? {
+        match self.get_last_resource_offset(family, realm, area, resource)? {
             Some(last_offset) => {
                 self.load_compact_resource_record(family, realm, area, resource, last_offset)
             }
