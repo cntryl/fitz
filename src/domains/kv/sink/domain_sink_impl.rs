@@ -6,6 +6,7 @@ use super::model::{
     KvDomainSink, KvDomainState, KvResourceLockKey, Mutex, Ordering, Router,
     ADMIN_INVENTORY_REFRESH_LIMIT,
 };
+use crate::domains::kv::KvActor;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
 mod admin_inventory;
@@ -301,9 +302,8 @@ impl KvDomainRuntime<'_> {
         resource: &str,
     ) -> Result<Option<crate::control::admin::KvResourceInventoryEntry>, String> {
         let family_id = route_family.as_u64();
-        let column_family =
-            crate::domains::kv::KvActor::resolve_column_family(route_family, resource)?;
-        let key = crate::domains::kv::KvActor::inventory_metadata_key(realm, area, resource);
+        let column_family = KvActor::resolve_column_family(route_family, resource)?;
+        let key = KvActor::inventory_metadata_key(realm, area, resource);
         let tx = self
             .core
             .store
@@ -311,7 +311,7 @@ impl KvDomainRuntime<'_> {
             .map_err(|error| error.to_string())?;
 
         let estimate = if let Some(value) = tx.get(&key).map_err(|error| error.to_string())? {
-            crate::domains::kv::KvActor::decode_inventory_estimate(&value)?
+            KvActor::decode_inventory_estimate(&value)?
         } else {
             let refreshed =
                 self.refresh_inventory_estimate(family_id, realm, area, resource, false)?;
@@ -345,15 +345,14 @@ impl KvDomainRuntime<'_> {
         key: &[u8],
     ) -> Result<Option<Vec<u8>>, String> {
         let started_at = std::time::Instant::now();
-        let column_family =
-            crate::domains::kv::KvActor::resolve_column_family(route_family, resource)?;
+        let column_family = KvActor::resolve_column_family(route_family, resource)?;
         let tx = self
             .core
             .store
             .begin_tx(column_family, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|error| error.to_string())?;
-        let prefix = crate::domains::kv::KvActor::realm_resource_prefix(realm, area, resource);
-        let scoped_key = crate::domains::kv::KvActor::encode_scoped_key(&prefix, key);
+        let prefix = KvActor::realm_resource_prefix(realm, area, resource);
+        let scoped_key = KvActor::encode_scoped_key(&prefix, key);
         let value = tx
             .get(&scoped_key)
             .map(|value| value.map(|value| value.as_ref().to_vec()))
@@ -380,17 +379,14 @@ impl KvDomainRuntime<'_> {
         limit: usize,
     ) -> Result<AdminKvPrefixScanResult, String> {
         let started_at = std::time::Instant::now();
-        let column_family =
-            crate::domains::kv::KvActor::resolve_column_family(route_family, resource)?;
+        let column_family = KvActor::resolve_column_family(route_family, resource)?;
         let tx = self
             .core
             .store
             .begin_tx(column_family, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|error| error.to_string())?;
-        let resource_prefix =
-            crate::domains::kv::KvActor::realm_resource_prefix(realm, area, resource);
-        let scoped_prefix =
-            crate::domains::kv::KvActor::encode_scoped_key(&resource_prefix, key_prefix);
+        let resource_prefix = KvActor::realm_resource_prefix(realm, area, resource);
+        let scoped_prefix = KvActor::encode_scoped_key(&resource_prefix, key_prefix);
         let mut rows = Self::scan_scoped_prefix(
             &tx,
             &resource_prefix,
@@ -424,25 +420,18 @@ impl KvDomainRuntime<'_> {
             }
         }
 
-        let column_family = crate::domains::kv::KvActor::resolve_column_family(
-            request.route_family,
-            request.resource,
-        )?;
+        let column_family = KvActor::resolve_column_family(request.route_family, request.resource)?;
         let tx = self
             .core
             .store
             .begin_tx(column_family, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|error| error.to_string())?;
-        let resource_prefix = crate::domains::kv::KvActor::realm_resource_prefix(
-            request.realm,
-            request.area,
-            request.resource,
-        );
-        let scoped_prefix =
-            crate::domains::kv::KvActor::encode_scoped_key(&resource_prefix, request.starts_with);
+        let resource_prefix =
+            KvActor::realm_resource_prefix(request.realm, request.area, request.resource);
+        let scoped_prefix = KvActor::encode_scoped_key(&resource_prefix, request.starts_with);
         let scoped_start = request.cursor.map_or_else(
             || scoped_prefix.clone(),
-            |cursor| crate::domains::kv::KvActor::encode_scoped_key(&resource_prefix, cursor),
+            |cursor| KvActor::encode_scoped_key(&resource_prefix, cursor),
         );
         let mut rows = Self::scan_scoped_prefix(
             &tx,
@@ -482,7 +471,7 @@ impl KvDomainRuntime<'_> {
     ) -> Result<Vec<crate::control::admin::KvResourceInventoryEntry>, String> {
         let route_family = crate::runtime::routing::RouteFamily::try_from(family_id)
             .map_err(|_| format!("invalid route family ID: {family_id}"))?;
-        let column_family = crate::domains::kv::KvActor::resolve_column_family(route_family, "")?;
+        let column_family = KvActor::resolve_column_family(route_family, "")?;
         let tx = self
             .core
             .store
@@ -495,12 +484,10 @@ impl KvDomainRuntime<'_> {
 
         for entry in iterator.by_ref() {
             let (key, value) = entry.map_err(|error| error.to_string())?;
-            let Some((realm, area, resource)) =
-                crate::domains::kv::KvActor::parse_inventory_metadata_key(&key)
-            else {
+            let Some((realm, area, resource)) = KvActor::parse_inventory_metadata_key(&key) else {
                 continue;
             };
-            let estimate = crate::domains::kv::KvActor::decode_inventory_estimate(&value)?;
+            let estimate = KvActor::decode_inventory_estimate(&value)?;
             discovered.push((realm, area, resource, estimate));
         }
 
@@ -531,15 +518,13 @@ impl KvDomainRuntime<'_> {
     ) -> Result<crate::domains::kv::actor::KvInventoryEstimate, String> {
         let route_family = crate::runtime::routing::RouteFamily::try_from(family_id)
             .map_err(|_| format!("invalid route family ID: {family_id}"))?;
-        let column_family =
-            crate::domains::kv::KvActor::resolve_column_family(route_family, resource)?;
+        let column_family = KvActor::resolve_column_family(route_family, resource)?;
         let read_tx = self
             .core
             .store
             .begin_tx(column_family, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|error| error.to_string())?;
-        let resource_prefix =
-            crate::domains::kv::KvActor::realm_resource_prefix(realm, area, resource);
+        let resource_prefix = KvActor::realm_resource_prefix(realm, area, resource);
         let mut rows = Self::scan_scoped_prefix(
             &read_tx,
             &resource_prefix,
@@ -573,8 +558,8 @@ impl KvDomainRuntime<'_> {
                 .map_err(|error| error.to_string())?;
             write_tx
                 .put(
-                    crate::domains::kv::KvActor::inventory_metadata_key(realm, area, resource),
-                    crate::domains::kv::KvActor::encode_inventory_estimate(estimate),
+                    KvActor::inventory_metadata_key(realm, area, resource),
+                    KvActor::encode_inventory_estimate(estimate),
                     None,
                 )
                 .map_err(|error| error.to_string())?;

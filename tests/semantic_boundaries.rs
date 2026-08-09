@@ -852,6 +852,52 @@ fn should_keep_schedule_design_seams_explicit() {
 }
 
 #[test]
+fn should_complete_reopened_kv_and_lease_design_criteria() {
+    // Arrange
+    let root = repo_root().join("src/domains");
+    let kv_domain = read_source_file(&root.join("kv/sink/domain_sink_impl.rs"));
+    let kv_mailbox = read_source_file(&root.join("kv/sink/mailbox_sink_impl.rs"));
+    let lease_expiry = read_source_file(&root.join("lease/sink/domain_sink_impl/expiry.rs"));
+    let lease_mailbox = read_source_file(&root.join("lease/sink/mailbox_sink_impl.rs"));
+
+    // Act
+    let violations = [
+        (
+            !kv_domain.contains("use crate::domains::kv::KvActor;")
+                || kv_domain.contains("crate::domains::kv::KvActor::"),
+            "KV domain actor import cleanup",
+        ),
+        (
+            !kv_mailbox.contains("use crate::domains::kv::{KvActor, KvError, KvResponse};")
+                || ["KvActor", "KvError", "KvResponse"]
+                    .iter()
+                    .any(|name| kv_mailbox.contains(&format!("crate::domains::kv::{name}"))),
+            "KV mailbox imports cleanup",
+        ),
+        (
+            !lease_expiry.contains(
+                "/// Removes every queued waiter owned by the session before empty queues are dropped.",
+            ),
+            "Lease session-waiter ordering docs",
+        ),
+        (
+            !lease_mailbox.contains("fn scope_operation_owner")
+                || lease_mailbox.matches("session_scoped_owner_id(").count() != 1,
+            "Lease owner-scoping step",
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(missing, label)| missing.then_some(label))
+    .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        violations.is_empty(),
+        "reopened design criteria remain incomplete: {violations:?}"
+    );
+}
+
+#[test]
 fn should_document_unified_wildcard_registration_and_exact_lease_semantics() {
     // Arrange
     let root = repo_root().join("docs");
