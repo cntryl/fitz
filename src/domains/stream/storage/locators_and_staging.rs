@@ -35,10 +35,10 @@ impl CompressedCompactRealmPageValue {
         bytes
     }
 
+    #[cfg(test)]
     /// # Panics
     ///
-    /// Panics if `bytes` do not contain a valid compressed compact realm page
-    /// encoding.
+    /// Panics when test fixtures contain an invalid compressed page.
     #[must_use]
     pub fn decode(bytes: &[u8]) -> Self {
         Self::try_decode(bytes).expect("deserialize compressed compact realm page value")

@@ -396,8 +396,8 @@ fn should_roundtrip_compact_realm_page_value() {
     let value = CompactRealmPageValue {
         records: vec![
             CompactRealmPageRecord {
-                area: "events".to_string(),
-                resource: "orders".to_string(),
+                area: "events".into(),
+                resource: "orders".into(),
                 area_offset: 11,
                 resource_offset: 42,
                 body: Bytes::from("body"),
@@ -406,8 +406,8 @@ fn should_roundtrip_compact_realm_page_value() {
                 expires_at: None,
             },
             CompactRealmPageRecord {
-                area: "events".to_string(),
-                resource: "audits".to_string(),
+                area: "events".into(),
+                resource: "audits".into(),
                 area_offset: 12,
                 resource_offset: 43,
                 body: Bytes::from("body-2"),
@@ -425,8 +425,8 @@ fn should_roundtrip_compact_realm_page_value() {
     // Assert
     assert_eq!(decoded.records.len(), 2);
     assert_eq!(decoded.records[0].area_offset, 11);
-    assert_eq!(decoded.records[0].area, "events");
-    assert_eq!(decoded.records[0].resource, "orders");
+    assert_eq!(decoded.records[0].area.as_ref(), "events");
+    assert_eq!(decoded.records[0].resource.as_ref(), "orders");
     assert_eq!(decoded.records[0].resource_offset, 42);
     assert_eq!(decoded.records[0].body, Bytes::from("body"));
     assert_eq!(decoded.records[0].metadata, Some(Bytes::from("meta")));
@@ -463,7 +463,7 @@ fn should_roundtrip_compact_area_page_value() {
     let value = CompactAreaPageValue {
         records: vec![
             CompactAreaPageRecord {
-                resource: "orders".to_string(),
+                resource: "orders".into(),
                 resource_offset: 42,
                 body: Bytes::from("body"),
                 metadata: Some(Bytes::from("meta")),
@@ -471,7 +471,7 @@ fn should_roundtrip_compact_area_page_value() {
                 expires_at: None,
             },
             CompactAreaPageRecord {
-                resource: "audits".to_string(),
+                resource: "audits".into(),
                 resource_offset: 43,
                 body: Bytes::from("body-2"),
                 metadata: None,
@@ -488,7 +488,7 @@ fn should_roundtrip_compact_area_page_value() {
     // Assert
     assert_eq!(decoded.records.len(), 2);
     assert_eq!(decoded.records[0].resource_offset, 42);
-    assert_eq!(decoded.records[0].resource, "orders");
+    assert_eq!(decoded.records[0].resource.as_ref(), "orders");
     assert_eq!(decoded.records[0].body, Bytes::from("body"));
     assert_eq!(decoded.records[0].metadata, Some(Bytes::from("meta")));
     assert_eq!(decoded.records[1].resource_offset, 43);
@@ -544,8 +544,8 @@ fn should_roundtrip_compressed_compact_realm_page_value() {
     let value = CompressedCompactRealmPageValue {
         records: vec![
             CompactRealmPageRecord {
-                area: "events".to_string(),
-                resource: "orders".to_string(),
+                area: "events".into(),
+                resource: "orders".into(),
                 area_offset: 11,
                 resource_offset: 42,
                 body: Bytes::from("body"),
@@ -554,8 +554,8 @@ fn should_roundtrip_compressed_compact_realm_page_value() {
                 expires_at: None,
             },
             CompactRealmPageRecord {
-                area: "events".to_string(),
-                resource: "audits".to_string(),
+                area: "events".into(),
+                resource: "audits".into(),
                 area_offset: 12,
                 resource_offset: 43,
                 body: Bytes::from("body-2"),
@@ -581,6 +581,45 @@ fn should_roundtrip_compressed_compact_realm_page_value() {
     assert_eq!(decoded_page.records[1].resource_offset, 43);
     assert_eq!(decoded_page.records[1].body, Bytes::from("body-2"));
     assert_eq!(decoded_page.records[1].metadata, None);
+}
+
+#[test]
+fn should_compress_repeated_global_page_routes() {
+    // Arrange
+    let realm = std::sync::Arc::<str>::from("north-america-production");
+    let area = std::sync::Arc::<str>::from("payments-and-settlement");
+    let resource = std::sync::Arc::<str>::from("completed-transactions");
+    let records = (0..64)
+        .map(|offset| CompactGlobalPageRecord {
+            realm: realm.clone(),
+            area: area.clone(),
+            resource: resource.clone(),
+            resource_offset: offset,
+            area_offset: offset,
+            realm_offset: offset,
+            body: Bytes::from_static(b"x"),
+            metadata: None,
+            created_at: 1,
+            expires_at: None,
+        })
+        .collect();
+    let page = CompactGlobalPageValue { records };
+    let legacy_route_bytes = 64 * (12 + realm.len() + area.len() + resource.len());
+
+    // Act
+    let encoded = page.encode();
+    let decoded = CompactGlobalPageValue::try_decode(&encoded).expect("decode compressed page");
+    let mut legacy = COMPACT_GLOBAL_PAGE_VALUE_V1_MARKER.to_vec();
+    legacy.extend_from_slice(
+        &lz4_flex::block::decompress_size_prepended(&encoded[2..]).expect("recover legacy payload"),
+    );
+    let legacy_decoded = CompactGlobalPageValue::try_decode(&legacy).expect("decode legacy page");
+
+    // Assert
+    assert!(encoded.len() < legacy_route_bytes);
+    assert_eq!(decoded.records.len(), 64);
+    assert_eq!(legacy_decoded.records.len(), 64);
+    assert_eq!(decoded.records[63].resource.as_ref(), resource.as_ref());
 }
 
 #[test]

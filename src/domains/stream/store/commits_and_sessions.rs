@@ -19,6 +19,19 @@ struct PreparedSessionReservation {
 }
 
 impl StreamStore {
+    fn preserve_retryable_global_reservation(
+        &self,
+        key: SequenceGuardKey,
+        pending: PendingGlobalReservation,
+        failure: &PromotionCommitFailure,
+    ) -> bool {
+        if !failure.is_retryable() {
+            return false;
+        }
+        self.pending_global_reservations.lock().insert(key, pending);
+        true
+    }
+
     fn resolve_pending_global_reservation(
         &self,
         key: &SequenceGuardKey,
@@ -264,6 +277,9 @@ impl StreamStore {
         }
 
         let sequencing_guard = self.resource_sequence_guard(family, realm, area, resource);
+        // Known scaling limit: strict compact-page ordering keeps this guard
+        // across the storage commit (and therefore fsync in Sync/CloudStrict).
+        // Revisit with group commit if per-resource throughput becomes limiting.
         let _sequencing_lock = sequencing_guard.lock();
 
         let resource_meta_state = self.resource_meta_state(family, realm, area, resource);
@@ -308,17 +324,15 @@ impl StreamStore {
         let (response, resource_meta_after) = match commit_result {
             Ok(result) => result,
             Err(error) => {
-                let retryable = error.is_retryable();
-                if retryable {
-                    self.pending_global_reservations.lock().insert(
-                        reservation_key,
-                        PendingGlobalReservation {
-                            resource_offset: expected_resource_next_offset,
-                            event_count: events.len(),
-                            reservation: global_reservation,
-                        },
-                    );
-                }
+                self.preserve_retryable_global_reservation(
+                    reservation_key,
+                    PendingGlobalReservation {
+                        resource_offset: expected_resource_next_offset,
+                        event_count: events.len(),
+                        reservation: global_reservation,
+                    },
+                    &error,
+                );
                 return Err(error.into_message());
             }
         };
@@ -531,6 +545,7 @@ impl StreamStore {
 
         let sequencing_guard =
             self.resource_sequence_guard(family, &session.realm, &session.area, &session.resource);
+        // See commit_records: this deliberately spans the durable commit.
         let _sequencing_lock = sequencing_guard.lock();
 
         let resource_meta_state =
@@ -588,15 +603,15 @@ impl StreamStore {
         let (response, resource_meta_after) = match result {
             Ok(result) => result,
             Err(error) => {
-                if error.is_retryable() {
-                    self.pending_global_reservations.lock().insert(
-                        reservation_key,
-                        PendingGlobalReservation {
-                            resource_offset: first_resource_offset,
-                            event_count: session.staged_events.len(),
-                            reservation: global_reservation,
-                        },
-                    );
+                if self.preserve_retryable_global_reservation(
+                    reservation_key,
+                    PendingGlobalReservation {
+                        resource_offset: first_resource_offset,
+                        event_count: session.staged_events.len(),
+                        reservation: global_reservation,
+                    },
+                    &error,
+                ) {
                     self.sessions.lock().insert(session_id, session);
                 }
                 return Err(error.into_message());

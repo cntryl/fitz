@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use std::sync::Arc;
 
 use super::super::store::StreamStorageLayout;
 use crate::utils::storage_key::{self, DomainKeyspace};
@@ -516,9 +517,9 @@ pub struct RealmValue {
 #[derive(Debug, Clone)]
 pub struct CompactRealmPageRecord {
     /// Concrete area identity.
-    pub area: String,
+    pub area: Arc<str>,
     /// Concrete resource identity.
-    pub resource: String,
+    pub resource: Arc<str>,
     pub area_offset: u64,
     pub resource_offset: u64,
     pub body: Bytes,
@@ -537,7 +538,7 @@ pub struct CompactRealmPageValue {
 #[derive(Debug, Clone)]
 pub struct CompactAreaPageRecord {
     /// Concrete resource identity.
-    pub resource: String,
+    pub resource: Arc<str>,
     pub resource_offset: u64,
     pub body: Bytes,
     pub metadata: Option<Bytes>,
@@ -577,9 +578,9 @@ pub struct CompressedCompactRealmPageValue {
 
 #[derive(Debug, Clone)]
 pub struct CompactGlobalPageRecord {
-    pub realm: String,
-    pub area: String,
-    pub resource: String,
+    pub realm: Arc<str>,
+    pub area: Arc<str>,
+    pub resource: Arc<str>,
     pub resource_offset: u64,
     pub area_offset: u64,
     pub realm_offset: u64,
@@ -620,6 +621,7 @@ pub(super) const COMPACT_AREA_PAGE_VALUE_V2_MARKER: [u8; 2] = [0, 0xE5];
 pub(super) const COMPRESSED_COMPACT_REALM_PAGE_VALUE_V2_MARKER: [u8; 2] = [0, 0xE9];
 pub(super) const COMPACT_RESOURCE_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xEA];
 pub(super) const COMPACT_GLOBAL_PAGE_VALUE_V1_MARKER: [u8; 2] = [0, 0xEB];
+pub(super) const COMPACT_GLOBAL_PAGE_VALUE_V2_MARKER: [u8; 2] = [0, 0xED];
 pub const GLOBAL_PAGE_RECORD_LIMIT: u64 = 64;
 pub(super) const OPTIONAL_BYTES_ABSENT: u32 = u32::MAX;
 pub(super) const OPTIONAL_OFFSET_ABSENT: u64 = u64::MAX;
