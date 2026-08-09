@@ -244,6 +244,24 @@ fn should_reject_invalid_queue_loss_window() {
 }
 
 #[test]
+#[serial]
+fn should_reject_invalid_kv_idle_transaction_ttl() {
+    with_storage_env(&[("FITZ_KV_IDLE_TRANSACTION_TTL_SECS", "0")], || {
+        // Arrange
+
+        // Act
+        let result = BootConfig::new().validate();
+
+        // Assert
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("FITZ_KV_IDLE_TRANSACTION_TTL_SECS must be greater than 0"));
+    });
+}
+
+#[test]
 fn should_keep_non_cloud_sync_write_options_local() {
     // Arrange
     let config = BootConfig::with_local_storage("/data/fitz");

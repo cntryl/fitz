@@ -304,6 +304,18 @@ impl KvDomainRuntime<'_> {
         let kv_message = self.apply_write_options(kv_message);
         let session_id = meta.session_id;
 
+        if matches!(
+            &kv_message,
+            KvMessage::Begin {
+                mode: TxMode::ReadWrite,
+                ..
+            }
+        ) {
+            self.expire_all_idle_transactions();
+        } else {
+            self.expire_idle_transactions_for_session(session_id);
+        }
+
         tracing::trace!(
             domain = "kv",
             session_id = session_id,
@@ -387,6 +399,39 @@ impl KvDomainRuntime<'_> {
                 )))
             })
             .clone()
+    }
+
+    fn expire_all_idle_transactions(&self) {
+        let actors: Vec<_> = self
+            .core
+            .actors
+            .lock()
+            .iter()
+            .map(|(session_id, actor)| (*session_id, actor.clone()))
+            .collect();
+        for (session_id, actor) in actors {
+            self.remove_expired_transactions(session_id, &actor);
+        }
+    }
+
+    fn expire_idle_transactions_for_session(&self, session_id: u64) {
+        let actor = self.core.actors.lock().get(&session_id).cloned();
+        if let Some(actor) = actor {
+            self.remove_expired_transactions(session_id, &actor);
+        }
+    }
+
+    fn remove_expired_transactions(
+        &self,
+        session_id: u64,
+        actor: &Arc<Mutex<crate::domains::kv::KvActor>>,
+    ) {
+        for tx_id in actor
+            .lock()
+            .expire_idle_transactions(self.core.idle_transaction_ttl)
+        {
+            self.core.projection.remove_transaction(session_id, tx_id);
+        }
     }
 
     fn handle_begin_read_write(

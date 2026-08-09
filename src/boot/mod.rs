@@ -22,6 +22,7 @@ pub use runtime::{BootConfig, BootResult};
 use shutdown::{ShutdownCoordinator, ShutdownSignal};
 pub use stats::{BrokerLifecycleState, Runtime};
 use std::sync::Arc;
+use std::time::Duration;
 
 struct ShutdownContext {
     runtime: Runtime,
@@ -243,6 +244,7 @@ async fn boot_with_shutdown_and_listeners(
             request_buffered_write_options: config.request_buffered_write_options(),
             rpc_request_timeout: None,
             stream_storage_layout: config.stream_storage_layout,
+            kv_idle_transaction_ttl: Duration::from_secs(config.kv_idle_transaction_ttl_seconds),
         },
     ) {
         Ok(domains) => domains,

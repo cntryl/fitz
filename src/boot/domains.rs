@@ -420,6 +420,7 @@ pub struct DomainSetupOptions {
     pub request_buffered_write_options: cntryl_midge::WriteOptions,
     pub rpc_request_timeout: Option<std::time::Duration>,
     pub stream_storage_layout: crate::domains::stream::StreamStorageLayout,
+    pub kv_idle_transaction_ttl: std::time::Duration,
 }
 
 fn provisioned_route_families(options: &DomainSetupOptions) -> Vec<RouteFamily> {
@@ -455,6 +456,24 @@ fn create_stream_sink(
     ))
 }
 
+fn create_kv_sink(
+    store: &StdArc<cntryl_midge::Engine>,
+    router: &StdArc<Router>,
+    admin_read_model: &Arc<crate::control::admin::read_model::AdminReadModel>,
+    options: &DomainSetupOptions,
+    metrics: &crate::observability::metrics::MetricsCollector,
+) -> Arc<KvDomainSink> {
+    Arc::new(
+        KvDomainSink::new(store.clone(), router.clone(), admin_read_model.clone())
+            .with_idle_transaction_ttl(options.kv_idle_transaction_ttl)
+            .with_write_options(
+                options.request_sync_write_options,
+                options.request_buffered_write_options,
+            )
+            .with_metrics(metrics.clone()),
+    )
+}
+
 /// Set up all 7 domain actors and register them with the router.
 ///
 /// # Errors
@@ -474,14 +493,7 @@ pub fn setup(
         .rpc_request_timeout
         .unwrap_or(std::time::Duration::from_secs(30));
 
-    let kv_sink = Arc::new(
-        KvDomainSink::new(store.clone(), router.clone(), admin_read_model.clone())
-            .with_write_options(
-                options.request_sync_write_options,
-                options.request_buffered_write_options,
-            )
-            .with_metrics(metrics.clone()),
-    );
+    let kv_sink = create_kv_sink(store, router, admin_read_model, options, &metrics);
     DomainKind::Kv
         .descriptor()
         .register_sink(router, kv_sink.clone() as Arc<dyn MailboxSink>);
@@ -598,6 +610,7 @@ mod tests {
             request_buffered_write_options: cntryl_midge::WriteOptions::buffered(),
             rpc_request_timeout: None,
             stream_storage_layout: crate::domains::stream::StreamStorageLayout::default(),
+            kv_idle_transaction_ttl: std::time::Duration::from_mins(5),
         }
     }
 
@@ -613,6 +626,7 @@ mod tests {
             request_buffered_write_options: cntryl_midge::WriteOptions::cloud_async(),
             rpc_request_timeout: None,
             stream_storage_layout: crate::domains::stream::StreamStorageLayout::default(),
+            kv_idle_transaction_ttl: std::time::Duration::from_mins(5),
         }
     }
 
