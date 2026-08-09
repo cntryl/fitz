@@ -448,34 +448,37 @@ impl LeaseDomainRuntime<'_> {
         request_started: Option<std::time::Instant>,
         lease_msg: &crate::domains::lease::protocol::LeaseMessage,
     ) {
-        use crate::domains::lease::protocol::{LeaseKey, LeaseMessage, LeaseResponse};
-
         if !Self::valid_lease_message(envelope, meta, lease_msg) {
             let response = Self::error_response("route family mismatch");
             self.route_lease_response(envelope, meta, &response, request_started);
             return;
         }
 
-        let session_prefix = meta.session_id.to_string();
-        let effective_owner = |owner_id: &str| {
-            if owner_id.is_empty() {
-                let mut scoped = String::with_capacity("session:".len() + session_prefix.len());
-                scoped.push_str("session:");
-                scoped.push_str(&session_prefix);
-                scoped
-            } else {
-                let mut scoped = String::with_capacity(
-                    "session::".len() + session_prefix.len() + owner_id.len(),
-                );
-                scoped.push_str("session:");
-                scoped.push_str(&session_prefix);
-                scoped.push(':');
-                scoped.push_str(owner_id);
-                scoped
+        if matches!(
+            lease_msg,
+            crate::domains::lease::protocol::LeaseMessage::Tick
+        ) {
+            self.sweep_expired_state();
+            if let (Some(metrics), Some(started_at)) = (self.core.metrics.as_ref(), request_started)
+            {
+                metrics.record_success(started_at);
             }
-        };
+            return;
+        }
 
-        let domain_response = match lease_msg {
+        let domain_response = self.dispatch_actor_operation(envelope, meta, lease_msg);
+        self.route_lease_response(envelope, meta, &domain_response, request_started);
+    }
+
+    fn dispatch_actor_operation(
+        &self,
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+        lease_msg: &crate::domains::lease::protocol::LeaseMessage,
+    ) -> crate::domains::lease::protocol::LeaseResponse {
+        use crate::domains::lease::protocol::{LeaseKey, LeaseMessage, LeaseResponse};
+
+        match lease_msg {
             LeaseMessage::Acquire {
                 family_id,
                 route,
@@ -486,7 +489,10 @@ impl LeaseDomainRuntime<'_> {
                 Some(key) => self.handle_acquire(LeaseAcquireRequest {
                     key,
                     owner_session_id: meta.session_id,
-                    owner_id: effective_owner(owner_id),
+                    owner_id: crate::domains::lease::protocol::session_scoped_owner_id(
+                        meta.session_id,
+                        owner_id,
+                    ),
                     ttl_secs: *ttl_secs,
                     wait_seconds: *wait_seconds,
                     reply_source: envelope.destination().clone(),
@@ -503,9 +509,15 @@ impl LeaseDomainRuntime<'_> {
                 fencing_token,
                 ttl_secs,
             } => match LeaseKey::from_route(*family_id, route) {
-                Some(key) => {
-                    self.handle_extend(&key, &effective_owner(owner_id), *fencing_token, *ttl_secs)
-                }
+                Some(key) => self.handle_extend(
+                    &key,
+                    &crate::domains::lease::protocol::session_scoped_owner_id(
+                        meta.session_id,
+                        owner_id,
+                    ),
+                    *fencing_token,
+                    *ttl_secs,
+                ),
                 None => LeaseResponse::NotFound,
             },
             LeaseMessage::Release {
@@ -514,7 +526,14 @@ impl LeaseDomainRuntime<'_> {
                 owner_id,
                 fencing_token,
             } => match LeaseKey::from_route(*family_id, route) {
-                Some(key) => self.handle_release(&key, &effective_owner(owner_id), *fencing_token),
+                Some(key) => self.handle_release(
+                    &key,
+                    &crate::domains::lease::protocol::session_scoped_owner_id(
+                        meta.session_id,
+                        owner_id,
+                    ),
+                    *fencing_token,
+                ),
                 None => LeaseResponse::NotFound,
             },
             LeaseMessage::Query { family_id, route } => {
@@ -523,18 +542,8 @@ impl LeaseDomainRuntime<'_> {
                     None => LeaseResponse::NotFound,
                 }
             }
-            LeaseMessage::Tick => {
-                self.sweep_expired_state();
-                if let (Some(metrics), Some(started_at)) =
-                    (self.core.metrics.as_ref(), request_started)
-                {
-                    metrics.record_success(started_at);
-                }
-                return;
-            }
-        };
-
-        self.route_lease_response(envelope, meta, &domain_response, request_started);
+            LeaseMessage::Tick => unreachable!("tick is handled before operation dispatch"),
+        }
     }
 
     fn handle_prepared_operation_frame(

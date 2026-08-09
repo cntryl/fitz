@@ -387,8 +387,9 @@ fn should_keep_shadow_lease_actor_removed_from_default_surface() {
 fn should_keep_lease_benchmark_mutation_actor_serialized() {
     // Arrange
     let repo_root = repo_root();
-    let lifecycle =
-        read_source_file(&repo_root.join("src/domains/lease/sink/lifecycle_and_admin.rs"));
+    let lifecycle = read_source_file(
+        &repo_root.join("src/domains/lease/sink/lifecycle_and_admin/lifecycle.rs"),
+    );
 
     // Act
     let forbidden = [

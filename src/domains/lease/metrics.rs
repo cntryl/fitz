@@ -62,12 +62,4 @@ impl LeaseMetrics {
     pub fn set_waiter_depth(&self, count: usize) {
         self.metrics.gauge_set(METRIC_WAITERS_GAUGE, count as u64);
     }
-
-    pub fn increment_waiter_depth(&self) {
-        self.metrics.gauge_inc(METRIC_WAITERS_GAUGE);
-    }
-
-    pub fn decrement_waiter_depth(&self) {
-        self.metrics.gauge_dec(METRIC_WAITERS_GAUGE);
-    }
 }

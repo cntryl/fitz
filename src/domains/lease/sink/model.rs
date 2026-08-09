@@ -21,6 +21,7 @@ pub(super) use std::time::{Duration, Instant};
 
 pub(super) const LEASE_MAX_WAIT_SECONDS: u32 = 30;
 pub(super) const LEASE_MAX_QUEUE_DEPTH: usize = 100;
+pub(super) const LEASE_ACTOR_REPLY_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Clone)]
 pub(super) struct SinkLeaseState {
@@ -34,7 +35,7 @@ pub(super) struct SinkLeaseState {
 
 #[derive(Clone)]
 pub(super) struct PendingAcquire {
-    pub(super) session_id: u64,
+    pub(super) owner_session_id: u64,
     pub(super) owner_id: String,
     pub(super) reply_destination: crate::runtime::routing::RouteAddress,
     pub(super) reply_source: crate::runtime::routing::RouteAddress,
