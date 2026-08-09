@@ -11,12 +11,14 @@
 //!
 //! # Write Options
 //!
-//! Durability is user-controlled via `WriteOptions` passed in `Begin`:
+//! Clients select a durability class via `WriteOptions` passed in `Begin`:
 //! - `WriteOptions::synced()` - fsync on every commit (latency-first)
 //! - `WriteOptions::buffered()` - no fsync, OS buffering (throughput-first)
 //!
-//! This follows the same pattern as streams, where the caller declares
-//! durability intent upfront rather than having the domain choose.
+//! The broker may map canonical sync or buffered requests to an
+//! operator-configured policy within the requested class (for example, cloud
+//! strict or cloud asynchronous writes). The client controls the class, while
+//! deployment configuration controls the concrete policy within that class.
 //! These options apply only to committed writes. Open transaction handles,
 //! uncommitted writes, and resource-lock ownership remain broker-local memory
 //! and are lost on session disconnect or broker restart.

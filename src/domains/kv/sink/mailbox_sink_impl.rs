@@ -303,6 +303,11 @@ impl KvDomainRuntime<'_> {
 
         let kv_message = self.apply_write_options(kv_message);
         let session_id = meta.session_id;
+        let read_tx_id = match &kv_message {
+            KvMessage::Get { tx_id, .. } | KvMessage::Scan { tx_id, .. } => Some(*tx_id),
+            _ => None,
+        };
+        let is_commit = matches!(&kv_message, KvMessage::Commit { .. });
 
         if matches!(
             &kv_message,
@@ -330,25 +335,9 @@ impl KvDomainRuntime<'_> {
             "KV deliver: getting or creating actor for session"
         );
 
-        let (response, admin_update, commit_notification) = match &kv_message {
-            KvMessage::Begin { scope, mode, .. } if *mode == TxMode::ReadWrite => self
-                .handle_begin_read_write(
-                    session_id,
-                    scope.route_family.as_u64(),
-                    &scope.realm,
-                    &scope.area,
-                    &scope.resource,
-                    &kv_message,
-                ),
-            KvMessage::Commit { tx_id, .. } => {
-                self.handle_commit_frame(session_id, meta.route_family, *tx_id, &kv_message)
-            }
-            KvMessage::Rollback { tx_id, .. } => {
-                self.handle_rollback_frame(session_id, meta.route_family, *tx_id, &kv_message)
-            }
-            _ => self.handle_regular_operation_frame(session_id, meta.message_type, &kv_message),
-        };
         self.touch_resource_lock(session_id, &kv_message);
+        let (response, admin_update, commit_notification) =
+            self.dispatch_actor_operation(session_id, meta, kv_message);
         if matches!(
             &response,
             crate::domains::kv::KvResponse::Error {
@@ -358,14 +347,18 @@ impl KvDomainRuntime<'_> {
         ) {
             crate::observability::counter_inc("fitz_kv_invalid_transaction_rejects_total");
         }
-        match (&kv_message, &response) {
-            (KvMessage::Get { tx_id, .. }, crate::domains::kv::KvResponse::GetResult { .. })
-            | (KvMessage::Scan { tx_id, .. }, crate::domains::kv::KvResponse::ScanResult { .. }) => {
-                if let Some(resource_key) = self.resource_key_for_tx(session_id, *tx_id) {
+        match (&response, read_tx_id, is_commit) {
+            (
+                crate::domains::kv::KvResponse::GetResult { .. }
+                | crate::domains::kv::KvResponse::ScanResult { .. },
+                Some(tx_id),
+                _,
+            ) => {
+                if let Some(resource_key) = self.resource_key_for_tx(session_id, tx_id) {
                     self.record_read_latency(&resource_key, operation_started);
                 }
             }
-            (KvMessage::Commit { .. }, crate::domains::kv::KvResponse::CommitOk) => {
+            (crate::domains::kv::KvResponse::CommitOk, _, true) => {
                 if let Some((resource_key, _)) = commit_notification.as_ref() {
                     self.record_write_latency(resource_key, operation_started);
                 }
@@ -385,6 +378,42 @@ impl KvDomainRuntime<'_> {
         );
 
         self.route_kv_response(envelope, meta, &response, request_started)
+    }
+
+    fn dispatch_actor_operation(
+        &self,
+        session_id: u64,
+        meta: crate::runtime::ClientFrameMeta,
+        kv_message: crate::domains::kv::KvMessage,
+    ) -> (
+        crate::domains::kv::KvResponse,
+        KvAdminTransactionUpdate,
+        Option<(KvResourceLockKey, u64)>,
+    ) {
+        use crate::domains::kv::{KvMessage, TxMode};
+        let write_scope = match &kv_message {
+            KvMessage::Begin { scope, mode, .. } if *mode == TxMode::ReadWrite => Some((
+                scope.route_family.as_u64(),
+                scope.realm.clone(),
+                scope.area.clone(),
+                scope.resource.clone(),
+            )),
+            _ => None,
+        };
+        if let Some((family_id, realm, area, resource)) = write_scope {
+            return self.handle_begin_read_write(
+                session_id, family_id, &realm, &area, &resource, kv_message,
+            );
+        }
+        match kv_message {
+            message @ KvMessage::Commit { tx_id, .. } => {
+                self.handle_commit_frame(session_id, meta.route_family, tx_id, message)
+            }
+            message @ KvMessage::Rollback { tx_id, .. } => {
+                self.handle_rollback_frame(session_id, meta.route_family, tx_id, message)
+            }
+            message => self.handle_regular_operation_frame(session_id, meta.message_type, message),
+        }
     }
 
     fn actor_for_session(
@@ -495,7 +524,7 @@ impl KvDomainRuntime<'_> {
         realm: &str,
         area: &str,
         resource: &str,
-        kv_message: &crate::domains::kv::KvMessage,
+        kv_message: crate::domains::kv::KvMessage,
     ) -> (
         crate::domains::kv::KvResponse,
         KvAdminTransactionUpdate,
@@ -538,7 +567,7 @@ impl KvDomainRuntime<'_> {
             session_id = session_id,
             "Calling actor.handle() for {log_context}"
         );
-        let response = actor.handle(kv_message.clone());
+        let response = actor.handle(kv_message);
         if let KvResponse::BeginOk { tx_id } = response {
             self.core.resource_locks.lock().insert(
                 lock_key,
@@ -578,7 +607,7 @@ impl KvDomainRuntime<'_> {
         session_id: u64,
         route_family: crate::runtime::routing::RouteFamily,
         tx_id: u64,
-        kv_message: &crate::domains::kv::KvMessage,
+        kv_message: crate::domains::kv::KvMessage,
     ) -> (
         crate::domains::kv::KvResponse,
         KvAdminTransactionUpdate,
@@ -616,7 +645,7 @@ impl KvDomainRuntime<'_> {
             );
         }
         let had_transaction = lock_key.is_some();
-        let response = actor.handle(kv_message.clone());
+        let response = actor.handle(kv_message);
         let admin_update = if had_transaction && actor.resource_scope_for_tx(tx_id).is_none() {
             if let Some(lock_key) = &lock_key {
                 self.core.resource_locks.lock().remove(lock_key);
@@ -643,7 +672,7 @@ impl KvDomainRuntime<'_> {
         session_id: u64,
         route_family: crate::runtime::routing::RouteFamily,
         tx_id: u64,
-        kv_message: &crate::domains::kv::KvMessage,
+        kv_message: crate::domains::kv::KvMessage,
     ) -> (
         crate::domains::kv::KvResponse,
         KvAdminTransactionUpdate,
@@ -674,7 +703,7 @@ impl KvDomainRuntime<'_> {
                 None,
             );
         }
-        let response = actor.handle(kv_message.clone());
+        let response = actor.handle(kv_message);
         let admin_update =
             if resource_scope.is_some() && actor.resource_scope_for_tx(tx_id).is_none() {
                 if let Some((family_id, realm, area, resource)) = &resource_scope {
@@ -699,7 +728,7 @@ impl KvDomainRuntime<'_> {
         &self,
         session_id: u64,
         message_type: u16,
-        kv_message: &crate::domains::kv::KvMessage,
+        kv_message: crate::domains::kv::KvMessage,
     ) -> (
         crate::domains::kv::KvResponse,
         KvAdminTransactionUpdate,
@@ -714,7 +743,7 @@ impl KvDomainRuntime<'_> {
             "Calling actor.handle() for operation"
         );
         (
-            actor.handle(kv_message.clone()),
+            actor.handle(kv_message),
             KvAdminTransactionUpdate::None,
             None,
         )

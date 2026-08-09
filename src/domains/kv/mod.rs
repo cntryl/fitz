@@ -48,7 +48,6 @@
 //! - All KV persistence MUST specify explicit CF via `RouteFamily`
 
 pub mod actor;
-pub mod events;
 pub mod metrics;
 pub mod projection;
 pub mod protocol;

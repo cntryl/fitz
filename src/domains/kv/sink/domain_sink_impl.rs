@@ -507,7 +507,7 @@ impl KvDomainRuntime<'_> {
         family_id: u64,
     ) -> Result<Vec<crate::control::admin::KvResourceInventoryEntry>, String> {
         let route_family = crate::runtime::routing::RouteFamily::try_from(family_id)
-            .expect("KV family IDs originate from RouteFamily");
+            .map_err(|_| format!("invalid route family ID: {family_id}"))?;
         let column_family = crate::domains::kv::KvActor::resolve_column_family(route_family, "")?;
         let tx = self
             .core
@@ -556,7 +556,7 @@ impl KvDomainRuntime<'_> {
         persist_empty: bool,
     ) -> Result<crate::domains::kv::actor::KvInventoryEstimate, String> {
         let route_family = crate::runtime::routing::RouteFamily::try_from(family_id)
-            .expect("KV family IDs originate from RouteFamily");
+            .map_err(|_| format!("invalid route family ID: {family_id}"))?;
         let column_family =
             crate::domains::kv::KvActor::resolve_column_family(route_family, resource)?;
         let read_tx = self

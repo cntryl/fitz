@@ -246,6 +246,21 @@ fn should_begin_write_without_scanning_unrelated_session_actors() {
 }
 
 #[test]
+fn should_reject_invalid_admin_inventory_route_family_without_panicking() {
+    // Arrange
+    let sink = new_correctness_sink(Arc::new(Router::new()));
+
+    // Act
+    let result = sink.state.runtime().admin_inventory_for_family(u64::MAX);
+
+    // Assert
+    assert_eq!(
+        result.expect_err("invalid family must fail"),
+        "invalid route family ID: 18446744073709551615"
+    );
+}
+
+#[test]
 fn should_reject_kv_request_when_source_and_destination_families_differ() {
     // Arrange
     let source_family = RouteFamily::new(2);

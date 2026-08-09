@@ -200,6 +200,7 @@ async fn should_promote_waiting_instance_after_active_writer_shutdown() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn should_release_writer_lease_given_tcp_listener_startup_failure() {
     // Arrange
     let tempdir = tempfile::TempDir::new().expect("tempdir");
