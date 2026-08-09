@@ -3,21 +3,17 @@
 use super::shutdown::ShutdownSignal;
 use crate::boot::runtime::{BootConfig, BootResult, CloudStorageConfig, StorageMode};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 use tokio::sync::watch;
 use tracing::{debug, info, warn};
 
-const STORAGE_OPEN_BASE_BACKOFF: Duration = Duration::from_millis(250);
-const STORAGE_OPEN_MAX_BACKOFF: Duration = Duration::from_secs(5);
-const STORAGE_OPEN_MAX_JITTER_MS: u64 = 250;
+mod backoff;
+mod contention;
 const STORAGE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 const STORAGE_SHUTDOWN_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(5);
 const STORAGE_SHUTDOWN_RETRY_DELAY: Duration = Duration::from_millis(50);
 const STORAGE_REFERENCE_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 const STORAGE_REFERENCE_RETRY_DELAY: Duration = Duration::from_millis(25);
-const MIDGE_LEASE_ACQUISITION_PREFIX: &str =
-    "FATAL: another Midge instance is already running against this storage. \
-     Only one writable instance is allowed at a time. Error: ";
 
 pub(crate) enum StorageInitOutcome {
     Ready(Arc<cntryl_midge::Engine>),
@@ -160,13 +156,35 @@ async fn open_local_disk_with_retry(
     shutdown: &mut watch::Receiver<Option<ShutdownSignal>>,
 ) -> BootResult<Option<cntryl_midge::Engine>> {
     let open_options = build_midge_open_options(cntryl_midge::OpenOptions::local(db_path), config)?;
-    let route_families = config.route_families.clone();
+    open_with_retry(
+        open_options,
+        config.route_families.clone(),
+        shutdown,
+        contention::local_is_retryable,
+        |attempt, elapsed, delay, error| {
+            log_local_lease_contention(db_path, attempt, elapsed, delay, error);
+        },
+        |error| format!("Failed to open Midge at {db_path}: {error}"),
+    )
+    .await
+}
+
+async fn open_with_retry<P, L, C>(
+    open_options: cntryl_midge::OpenOptions,
+    route_families: Vec<u32>,
+    shutdown: &mut watch::Receiver<Option<ShutdownSignal>>,
+    should_retry: P,
+    log_contention: L,
+    error_context: C,
+) -> BootResult<Option<cntryl_midge::Engine>>
+where
+    P: Fn(&cntryl_midge::MidgeError) -> bool,
+    L: Fn(u32, Duration, Duration, &cntryl_midge::MidgeError),
+    C: Fn(&cntryl_midge::MidgeError) -> String,
+{
     let retry_started_at = Instant::now();
     let mut retry_attempt = 0;
 
-    // Lease contention is an expected standby state. Keep this process alive
-    // indefinitely so an orchestrated replacement can wait without requiring
-    // a restart when the current writer eventually exits or is fenced.
     loop {
         if shutdown_requested(shutdown) {
             return Ok(None);
@@ -178,24 +196,15 @@ async fn open_local_disk_with_retry(
         }
         match attempt {
             OpenAttempt::Ready(store) => return Ok(Some(store)),
-            OpenAttempt::OpenFailed(error) if should_retry_local_storage_open(&error) => {
-                let delay = storage_open_retry_delay(retry_attempt);
-                let next_attempt = retry_attempt.saturating_add(1);
-                log_local_lease_contention(
-                    db_path,
-                    next_attempt,
-                    retry_started_at.elapsed(),
-                    delay,
-                    &error,
-                );
-                retry_attempt = next_attempt;
+            OpenAttempt::OpenFailed(error) if should_retry(&error) => {
+                let delay = backoff::retry_delay(retry_attempt);
+                retry_attempt = retry_attempt.saturating_add(1);
+                log_contention(retry_attempt, retry_started_at.elapsed(), delay, &error);
                 if wait_for_retry_or_shutdown(delay, shutdown).await? {
                     return Ok(None);
                 }
             }
-            OpenAttempt::OpenFailed(error) => {
-                return Err(format!("Failed to open Midge at {db_path}: {error}").into());
-            }
+            OpenAttempt::OpenFailed(error) => return Err(error_context(&error).into()),
             OpenAttempt::ProvisionFailed { engine, error } => {
                 return Err(shutdown_after_provision_failure(engine, error).await.into());
             }
@@ -203,89 +212,20 @@ async fn open_local_disk_with_retry(
     }
 }
 
-fn lease_acquisition_detail(error: &cntryl_midge::MidgeError) -> Option<&str> {
-    // Midge currently erases lease-acquisition variants into `Internal`.
-    // Keep retries fail-closed and backend-specific until it exposes a typed
-    // contention error; permanent acquisition failures must reach operators.
-    let cntryl_midge::MidgeError::Internal(message) = error else {
-        return None;
-    };
-    message
-        .strip_prefix(MIDGE_LEASE_ACQUISITION_PREFIX)
-        .map(|detail| {
-            detail
-                .strip_prefix("lease acquisition failed: ")
-                .unwrap_or(detail)
-        })
-}
-
-fn should_retry_local_storage_open(error: &cntryl_midge::MidgeError) -> bool {
-    let Some(detail) = lease_acquisition_detail(error) else {
-        return false;
-    };
-
-    detail.starts_with("another Midge instance is already running against this storage (holder:")
-        || detail.starts_with("lost CAS race: expected holder=")
-        || detail == "leader acquisition lock remained unavailable after stale-lock cleanup"
-        || detail
-            .strip_prefix("another acquire is in progress: ")
-            .is_some_and(is_already_exists_error)
-}
-
-fn is_already_exists_error(error: &str) -> bool {
-    let normalized = error.to_ascii_lowercase();
-    normalized.contains("already exists")
-        || normalized.contains("file exists")
-        || normalized.contains("os error 17")
-        || normalized.contains("os error 183")
-}
-
 fn should_retry_cloud_storage_open(
     error: &cntryl_midge::MidgeError,
     provider: &cntryl_midge::CloudProviderConfig,
 ) -> bool {
-    let Some(detail) = lease_acquisition_detail(error) else {
-        return false;
+    let shape = if matches!(
+        provider,
+        cntryl_midge::CloudProviderConfig::AwsS3 { .. }
+            | cntryl_midge::CloudProviderConfig::S3Compatible { .. }
+    ) {
+        contention::ProviderShape::S3Compatible
+    } else {
+        contention::ProviderShape::Other
     };
-
-    detail.starts_with("another instance holds the lease (holder:")
-        || is_cloud_lease_precondition_conflict(detail, provider)
-}
-
-fn is_cloud_lease_precondition_conflict(
-    detail: &str,
-    provider: &cntryl_midge::CloudProviderConfig,
-) -> bool {
-    let Some(error) = detail.strip_prefix("cloud lease conditional write failed: ") else {
-        return false;
-    };
-    let normalized = error.to_ascii_lowercase();
-    normalized.contains("precondition failed")
-        || normalized.contains("status 412")
-        || (normalized.contains("status 409")
-            && matches!(
-                provider,
-                cntryl_midge::CloudProviderConfig::AwsS3 { .. }
-                    | cntryl_midge::CloudProviderConfig::S3Compatible { .. }
-            ))
-}
-
-fn storage_open_retry_delay(attempt: u32) -> Duration {
-    let multiplier = 1_u64.checked_shl(attempt).unwrap_or(u64::MAX);
-    let base_delay_ms = duration_millis_u64(STORAGE_OPEN_BASE_BACKOFF)
-        .saturating_mul(multiplier)
-        .min(duration_millis_u64(STORAGE_OPEN_MAX_BACKOFF));
-    let jitter_ms = storage_open_retry_jitter_ms(attempt);
-    Duration::from_millis(base_delay_ms.saturating_add(jitter_ms))
-}
-
-fn storage_open_retry_jitter_ms(attempt: u32) -> u64 {
-    let now_nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .subsec_nanos();
-    let salt = u64::from(now_nanos) ^ u64::from(attempt).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    salt % (STORAGE_OPEN_MAX_JITTER_MS + 1)
+    contention::cloud_is_retryable(error, shape)
 }
 
 async fn open_and_provision(
@@ -572,45 +512,17 @@ async fn open_cloud_with_retry(
     cloud: &CloudStorageConfig,
     shutdown: &mut watch::Receiver<Option<ShutdownSignal>>,
 ) -> BootResult<Option<cntryl_midge::Engine>> {
-    let retry_started_at = Instant::now();
-    let mut retry_attempt = 0;
-
-    loop {
-        if shutdown_requested(shutdown) {
-            return Ok(None);
-        }
-        let attempt = open_and_provision(open_options.clone(), route_families.clone()).await?;
-        if shutdown_requested(shutdown) {
-            shutdown_cancelled_open_attempt(attempt).await?;
-            return Ok(None);
-        }
-        match attempt {
-            OpenAttempt::Ready(store) => return Ok(Some(store)),
-            OpenAttempt::OpenFailed(error)
-                if should_retry_cloud_storage_open(&error, &cloud.provider_config) =>
-            {
-                let delay = storage_open_retry_delay(retry_attempt);
-                let next_attempt = retry_attempt.saturating_add(1);
-                log_cloud_lease_contention(
-                    cloud,
-                    next_attempt,
-                    retry_started_at.elapsed(),
-                    delay,
-                    &error,
-                );
-                retry_attempt = next_attempt;
-                if wait_for_retry_or_shutdown(delay, shutdown).await? {
-                    return Ok(None);
-                }
-            }
-            OpenAttempt::OpenFailed(error) => {
-                return Err(format!("Failed to open cloud-backed Midge: {error}").into())
-            }
-            OpenAttempt::ProvisionFailed { engine, error } => {
-                return Err(shutdown_after_provision_failure(engine, error).await.into());
-            }
-        }
-    }
+    open_with_retry(
+        open_options,
+        route_families,
+        shutdown,
+        |error| should_retry_cloud_storage_open(error, &cloud.provider_config),
+        |attempt, elapsed, delay, error| {
+            log_cloud_lease_contention(cloud, attempt, elapsed, delay, error);
+        },
+        |error| format!("Failed to open cloud-backed Midge: {error}"),
+    )
+    .await
 }
 
 fn duration_millis_u64(duration: Duration) -> u64 {

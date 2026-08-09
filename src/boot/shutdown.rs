@@ -14,6 +14,9 @@ pub(crate) enum ShutdownSignal {
 }
 
 impl ShutdownSignal {
+    const PRIORITY_GRACEFUL: u8 = 1;
+    const PRIORITY_INTERRUPT: u8 = 2;
+    const PRIORITY_FATAL: u8 = 3;
     pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::CtrlC => "ctrl_c",
@@ -32,11 +35,13 @@ impl ShutdownSignal {
         matches!(self, Self::ActorFailure | Self::StorageLeaseFailure)
     }
 
+    /// Escalation order keeps graceful drain lowest, lets Ctrl-C interrupt a
+    /// drain, and preserves fatal actor/storage failures above operator input.
     fn priority(self) -> u8 {
         match self {
-            Self::Sigterm | Self::DrainRequested => 1,
-            Self::CtrlC => 2,
-            Self::ActorFailure | Self::StorageLeaseFailure => 3,
+            Self::Sigterm | Self::DrainRequested => Self::PRIORITY_GRACEFUL,
+            Self::CtrlC => Self::PRIORITY_INTERRUPT,
+            Self::ActorFailure | Self::StorageLeaseFailure => Self::PRIORITY_FATAL,
         }
     }
 }

@@ -116,7 +116,7 @@ fn should_detect_retryable_local_open_error_given_active_writer_contention() {
 
     // Act
     let retry_decisions = retryable_details.map(|detail| {
-        should_retry_local_storage_open(&cntryl_midge::MidgeError::Internal(format!(
+        contention::local_is_retryable(&cntryl_midge::MidgeError::Internal(format!(
             "{MIDGE_LEASE_ACQUISITION_PREFIX}{detail}"
         )))
     });
@@ -213,7 +213,7 @@ fn should_not_retry_local_open_error_given_terminal_acquisition_failure() {
 
     // Act
     let retry_decisions = terminal_messages.map(|message| {
-        should_retry_local_storage_open(&cntryl_midge::MidgeError::Internal(message))
+        contention::local_is_retryable(&cntryl_midge::MidgeError::Internal(message))
     });
 
     // Assert
@@ -277,18 +277,19 @@ async fn should_wait_for_transient_engine_reference_before_storage_shutdown() {
 #[test]
 fn should_bound_storage_retry_delay_given_initial_and_saturated_attempts() {
     // Arrange
-    let minimum_initial_delay = STORAGE_OPEN_BASE_BACKOFF;
+    let minimum_initial_delay = backoff::BASE_BACKOFF;
     let maximum_initial_delay =
-        STORAGE_OPEN_BASE_BACKOFF + Duration::from_millis(STORAGE_OPEN_MAX_JITTER_MS);
-    let minimum_saturated_delay = STORAGE_OPEN_MAX_BACKOFF;
+        backoff::BASE_BACKOFF + Duration::from_millis(backoff::MAX_JITTER_MS);
+    let minimum_saturated_delay = backoff::MAX_BACKOFF;
     let maximum_saturated_delay =
-        STORAGE_OPEN_MAX_BACKOFF + Duration::from_millis(STORAGE_OPEN_MAX_JITTER_MS);
+        backoff::MAX_BACKOFF + Duration::from_millis(backoff::MAX_JITTER_MS);
 
     // Act
-    let initial_delay = storage_open_retry_delay(0);
-    let saturated_delay = storage_open_retry_delay(u32::MAX);
+    let initial_delay = backoff::retry_delay(0);
+    let saturated_delay = backoff::retry_delay(u32::MAX);
 
     // Assert
     assert!((minimum_initial_delay..=maximum_initial_delay).contains(&initial_delay));
     assert!((minimum_saturated_delay..=maximum_saturated_delay).contains(&saturated_delay));
 }
+const MIDGE_LEASE_ACQUISITION_PREFIX: &str = contention::LEASE_ACQUISITION_PREFIX;
