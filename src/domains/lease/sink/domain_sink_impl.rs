@@ -348,31 +348,48 @@ impl LeaseDomainRuntime<'_> {
                 }
 
                 waiter.map(|waiter| {
-                    let state = SinkLeaseState {
-                        owner_id: waiter.owner_id.clone(),
-                        owner_session_id: waiter.session_id,
-                        fencing_token: waiter.queued_token,
-                        expiry: now + Duration::from_secs(waiter.ttl_secs),
-                        acquired_at: Utc::now().to_rfc3339(),
-                        renewals: 0,
-                    };
-                    leases.insert(key.clone(), state.clone());
+                    let state = Self::lease_expiry(now, waiter.ttl_secs).ok().map(|expiry| {
+                        SinkLeaseState {
+                            owner_id: waiter.owner_id.clone(),
+                            owner_session_id: waiter.session_id,
+                            fencing_token: waiter.queued_token,
+                            expiry,
+                            acquired_at: Utc::now().to_rfc3339(),
+                            renewals: 0,
+                        }
+                    });
+                    if let Some(state) = state.as_ref() {
+                        leases.insert(key.clone(), state.clone());
+                    }
                     (waiter, state)
                 })
             }
         };
 
-        if let Some((waiter, state)) = granted_waiter {
-            self.untrack_session_waiter(waiter.session_id, key, waiter.queued_token);
-            self.track_session_lease(waiter.session_id, key);
-            self.upsert_admin_lease(key, &state);
-            self.send_waiter_response(
-                &waiter,
-                &crate::domains::lease::protocol::LeaseResponse::Acquired {
-                    fencing_token: waiter.queued_token,
-                },
-            );
-            return true;
+        match granted_waiter {
+            Some((waiter, Some(state))) => {
+                self.untrack_session_waiter(waiter.session_id, key, waiter.queued_token);
+                self.track_session_lease(waiter.session_id, key);
+                self.upsert_admin_lease(key, &state);
+                self.send_waiter_response(
+                    &waiter,
+                    &crate::domains::lease::protocol::LeaseResponse::Acquired {
+                        fencing_token: waiter.queued_token,
+                    },
+                );
+                return true;
+            }
+            Some((waiter, None)) => {
+                self.untrack_session_waiter(waiter.session_id, key, waiter.queued_token);
+                self.send_waiter_response(
+                    &waiter,
+                    &crate::domains::lease::protocol::LeaseResponse::Error(
+                        "queued ttl_secs exceeds the supported lease duration".to_string(),
+                    ),
+                );
+                return true;
+            }
+            None => {}
         }
 
         expired_waiter_count > 0
@@ -638,10 +655,15 @@ impl LeaseDomainRuntime<'_> {
         } = request;
 
         let now = Instant::now();
-        let ttl = Duration::from_secs(ttl_secs);
+        let expiry = match Self::lease_expiry(now, ttl_secs) {
+            Ok(expiry) => expiry,
+            Err(response) => return response,
+        };
 
         if wait_seconds > LEASE_MAX_WAIT_SECONDS {
-            return LeaseResponse::Timeout;
+            return LeaseResponse::Error(format!(
+                "wait_seconds must not exceed {LEASE_MAX_WAIT_SECONDS}"
+            ));
         }
 
         let prepared_count_changed = self.prepare_acquire_key(&key, now);
@@ -659,7 +681,7 @@ impl LeaseDomainRuntime<'_> {
                         owner_id,
                         owner_session_id,
                         fencing_token: token,
-                        expiry: now + ttl,
+                        expiry,
                         acquired_at: Utc::now().to_rfc3339(),
                         renewals: 0,
                     };
@@ -815,10 +837,13 @@ impl LeaseDomainRuntime<'_> {
         ttl_secs: u64,
     ) -> crate::domains::lease::protocol::LeaseResponse {
         use crate::domains::lease::protocol::LeaseResponse;
-        use std::time::{Duration, Instant};
+        use std::time::Instant;
 
         let now = Instant::now();
-        let ttl = Duration::from_secs(ttl_secs);
+        let expiry = match Self::lease_expiry(now, ttl_secs) {
+            Ok(expiry) => expiry,
+            Err(response) => return response,
+        };
         let mut updated_state = None;
         let mut expired_state = None;
 
@@ -843,7 +868,7 @@ impl LeaseDomainRuntime<'_> {
                         return LeaseResponse::Error("fencing token space exhausted".to_string());
                     };
                     if let Some(state) = leases.get_mut(key) {
-                        state.expiry = now + ttl;
+                        state.expiry = expiry;
                         state.fencing_token = new_token;
                         state.renewals = state.renewals.saturating_add(1);
                         updated_state = Some(state.clone());

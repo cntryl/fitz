@@ -217,6 +217,48 @@ fn should_match_fallback_for_prepared_lease_extend() {
 }
 
 #[test]
+fn should_keep_lease_actor_responsive_after_wire_ttl_rejections() {
+    // Arrange
+    let frames = vec![
+        (
+            crate::dispatch::protocol::lease_codec::msg_type::ACQUIRE,
+            encode_lease_acquire("lease://acme/locks/resource", "owner", u64::MAX),
+        ),
+        (
+            crate::dispatch::protocol::lease_codec::msg_type::ACQUIRE,
+            encode_lease_acquire("lease://acme/locks/resource", "owner", 30),
+        ),
+        (
+            crate::dispatch::protocol::lease_codec::msg_type::RENEW,
+            encode_lease_extend("lease://acme/locks/resource", "owner", 1, u64::MAX),
+        ),
+        (
+            crate::dispatch::protocol::lease_codec::msg_type::QUERY,
+            encode_lease_query("lease://acme/locks/resource"),
+        ),
+    ];
+
+    // Act
+    let responses = lease_response_payloads(false, &frames);
+
+    // Assert
+    assert_eq!(
+        crate::dispatch::protocol::error_codes::decode_error_body(&responses[0])
+            .expect("oversized acquire error")
+            .0,
+        crate::dispatch::protocol::error_codes::lease::ERR_BAD_REQUEST
+    );
+    assert_eq!(responses[1][0], 0);
+    assert_eq!(
+        crate::dispatch::protocol::error_codes::decode_error_body(&responses[2])
+            .expect("oversized extend error")
+            .0,
+        crate::dispatch::protocol::error_codes::lease::ERR_BAD_REQUEST
+    );
+    assert_eq!(responses[3][0], 0);
+}
+
+#[test]
 fn should_match_fallback_for_prepared_lease_release() {
     // Arrange
     let frames = vec![

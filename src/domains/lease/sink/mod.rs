@@ -4,6 +4,7 @@ mod mailbox_sink_impl;
 mod model;
 #[cfg(test)]
 mod test_actor_commands;
+mod validation;
 
 pub use model::LeaseDomainSink;
 

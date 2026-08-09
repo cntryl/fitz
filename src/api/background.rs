@@ -93,6 +93,10 @@ fn start_lease_timeout_loop(domains: Weak<DomainHandles>) {
         return;
     };
     handle.spawn(async move {
+        // This is intentionally a full O(n) sweep every tick. Lease targets
+        // singleton ownership and leader-election workloads with modest live
+        // lease counts; revisit with a bounded/chunked sweep before supporting
+        // high-cardinality lease inventories.
         let mut interval = tokio::time::interval(Duration::from_millis(50));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {

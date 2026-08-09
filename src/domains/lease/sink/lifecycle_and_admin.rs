@@ -134,6 +134,15 @@ impl LeaseDomainSink {
             .actor
             .try_send_high_priority(LeaseDomainCommand::SweepExpiredState)
         {
+            if let Some(metrics) = self.state.core.metrics.as_ref() {
+                metrics.counter_inc(
+                    crate::domains::lease::metrics::METRIC_SWEEP_ENQUEUE_FAILURES_TOTAL,
+                );
+            } else {
+                crate::observability::counter_inc(
+                    crate::domains::lease::metrics::METRIC_SWEEP_ENQUEUE_FAILURES_TOTAL,
+                );
+            }
             tracing::warn!(domain = "lease", error = %error, "Lease sweep enqueue failed");
         }
     }

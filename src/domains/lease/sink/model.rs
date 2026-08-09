@@ -82,6 +82,8 @@ pub(super) struct QueuedAcquireRequest {
 /// releases session-owned state, restart clears ownership and waiters, and
 /// fencing tokens reset with the process.
 pub(super) struct LeaseDomainCore {
+    // All mutation is actor-serialized. Helpers that need multiple state locks
+    // must acquire `pending_acquires` before `leases`; never invert that order.
     pub(super) leases: Mutex<HashMap<crate::domains::lease::protocol::LeaseKey, SinkLeaseState>>,
     pub(super) session_leases:
         Mutex<HashMap<u64, HashSet<crate::domains::lease::protocol::LeaseKey>>>,

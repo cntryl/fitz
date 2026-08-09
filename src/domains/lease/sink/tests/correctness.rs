@@ -16,6 +16,92 @@ fn new_correctness_lease_sink(router: Arc<Router>) -> LeaseDomainSink {
     )
 }
 
+fn lease_acquire_request(ttl_secs: u64, wait_seconds: u32) -> LeaseAcquireRequest {
+    let family = RouteFamily::new(1);
+    LeaseAcquireRequest {
+        key: lease_key(family, "lease://acme/locks/resource"),
+        owner_session_id: 7,
+        owner_id: "owner".to_string(),
+        ttl_secs,
+        wait_seconds,
+        reply_source: RouteAddress::new(family, Route::new("internal://domain/lease")),
+        reply_destination: None,
+        channel: ClientChannel::Lease,
+        route_family: family,
+    }
+}
+
+#[test]
+fn should_reject_oversized_ttl_without_stopping_actor() {
+    // Arrange
+    let sink = new_correctness_lease_sink(Arc::new(Router::new()));
+
+    // Act
+    let acquire_response = sink.acquire_for_tests(lease_acquire_request(u64::MAX, 0));
+    let acquired = sink.acquire_for_tests(lease_acquire_request(30, 0));
+    let LeaseResponse::Acquired { fencing_token } = acquired else {
+        panic!("expected acquired response");
+    };
+    let key = lease_key(RouteFamily::new(1), "lease://acme/locks/resource");
+    let extend_response = sink.extend_for_tests(&key, "owner", fencing_token, u64::MAX);
+
+    // Assert
+    assert!(matches!(acquire_response, LeaseResponse::Error(_)));
+    assert!(matches!(extend_response, LeaseResponse::Error(_)));
+    assert!(sink.is_actor_running());
+    assert_eq!(sink.lease_count(), 1);
+}
+
+#[test]
+fn should_reject_zero_ttl_for_acquire_and_extend() {
+    // Arrange
+    let sink = new_correctness_lease_sink(Arc::new(Router::new()));
+    let acquired = sink.acquire_for_tests(lease_acquire_request(30, 0));
+    let LeaseResponse::Acquired { fencing_token } = acquired else {
+        panic!("expected acquired response");
+    };
+    let key = lease_key(RouteFamily::new(1), "lease://acme/locks/resource");
+
+    // Act
+    let acquire_response = sink.acquire_for_tests(lease_acquire_request(0, 0));
+    let extend_response = sink.extend_for_tests(&key, "owner", fencing_token, 0);
+
+    // Assert
+    assert!(matches!(acquire_response, LeaseResponse::Error(_)));
+    assert!(matches!(extend_response, LeaseResponse::Error(_)));
+    assert!(sink.is_actor_running());
+}
+
+#[test]
+fn should_reject_wait_above_server_cap_as_invalid() {
+    // Arrange
+    let sink = new_correctness_lease_sink(Arc::new(Router::new()));
+
+    // Act
+    let response = sink.acquire_for_tests(lease_acquire_request(30, LEASE_MAX_WAIT_SECONDS + 1));
+
+    // Assert
+    assert!(matches!(response, LeaseResponse::Error(_)));
+    assert_ne!(response, LeaseResponse::Timeout);
+}
+
+#[test]
+fn should_count_sweep_enqueue_failure() {
+    // Arrange
+    let metrics = crate::observability::metrics::MetricsCollector::new();
+    let sink = new_correctness_lease_sink(Arc::new(Router::new())).with_metrics(metrics.clone());
+    sink.stop_actor_for_tests();
+
+    // Act
+    sink.sweep_expired_state();
+
+    // Assert
+    assert_eq!(
+        metrics.counter_get(crate::domains::lease::metrics::METRIC_SWEEP_ENQUEUE_FAILURES_TOTAL),
+        1
+    );
+}
+
 #[test]
 fn should_reject_lease_request_when_source_and_destination_families_differ() {
     // Arrange
