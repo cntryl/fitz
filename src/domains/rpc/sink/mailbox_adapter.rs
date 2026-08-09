@@ -1,3 +1,5 @@
+#[cfg(test)]
+use super::state_model::RPC_MSG_TYPE_RESPONSE;
 use super::state_model::{Envelope, RpcClientRequest, RpcClientResponseBody, RpcDomainRuntime};
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
@@ -103,7 +105,7 @@ impl RpcDomainRuntime<'_> {
             FrameContext::new(
                 meta.session_id,
                 test_protocol_channel_from_client(meta.channel),
-                crate::dispatch::protocol::tlv::MessageType::new(303),
+                crate::dispatch::protocol::tlv::MessageType::new(RPC_MSG_TYPE_RESPONSE),
                 bytes::Bytes::from(response_bytes),
                 meta.route_family,
             )

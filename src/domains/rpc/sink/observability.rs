@@ -114,7 +114,7 @@ impl RpcDomainRuntime<'_> {
                     crate::control::admin::RpcPendingRequest::snapshot(
                         pending.worker_addr.family().as_u64(),
                         &correlation_key.correlation_id,
-                        pending.route.as_str(),
+                        pending.dispatch_info.route.as_str(),
                         &pending.submitted_at_rfc3339(),
                         pending.age_seconds(snapshot_now),
                         Some(pending.worker_session_id.to_string()),

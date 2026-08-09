@@ -3,20 +3,15 @@ use super::{DateTime, Instant, Route, RouteAddress, RpcRegistrationId, RpcWorker
 #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
 #[derive(Debug, Clone)]
 pub(in crate::domains::rpc::sink) struct RpcPendingRequest {
-    pub(in crate::domains::rpc::sink) family: crate::runtime::routing::RouteFamily,
-    pub(in crate::domains::rpc::sink) route: Route,
-    pub(in crate::domains::rpc::sink) caller_session_id: u64,
-    pub(in crate::domains::rpc::sink) caller_inbox_addr: Option<RouteAddress>,
+    pub(in crate::domains::rpc::sink) dispatch_info: RpcPendingDispatchInfo,
     pub(in crate::domains::rpc::sink) worker_addr: RouteAddress,
     pub(in crate::domains::rpc::sink) worker_session_id: u64,
-    pub(in crate::domains::rpc::sink) registration_id: RpcRegistrationId,
     pub(in crate::domains::rpc::sink) next_expected_seq: u64,
     pub(in crate::domains::rpc::sink) submitted_at: DateTime<Utc>,
-    pub(in crate::domains::rpc::sink) submitted_at_instant: Instant,
     pub(in crate::domains::rpc::sink) expires_at: Instant,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(in crate::domains::rpc::sink) struct RpcPendingDispatchInfo {
     pub(in crate::domains::rpc::sink) family: crate::runtime::routing::RouteFamily,
     #[cfg_attr(not(test), allow(dead_code))]
@@ -54,16 +49,18 @@ impl RpcPendingRequest {
         } = init;
 
         Self {
-            family: *worker_addr.family(),
-            route,
-            caller_session_id,
-            caller_inbox_addr: Some(caller_inbox_addr),
+            dispatch_info: RpcPendingDispatchInfo {
+                family: *worker_addr.family(),
+                route,
+                caller_session_id,
+                caller_inbox_addr: Some(caller_inbox_addr),
+                registration_id,
+                submitted_at_instant,
+            },
             worker_addr,
             worker_session_id,
-            registration_id,
             next_expected_seq: 0,
             submitted_at,
-            submitted_at_instant,
             expires_at,
         }
     }
@@ -90,25 +87,11 @@ impl RpcPendingRequest {
     }
 
     pub(in crate::domains::rpc::sink) fn dispatch_info(&self) -> RpcPendingDispatchInfo {
-        RpcPendingDispatchInfo {
-            family: self.family,
-            route: self.route.clone(),
-            caller_session_id: self.caller_session_id,
-            caller_inbox_addr: self.caller_inbox_addr.clone(),
-            registration_id: self.registration_id,
-            submitted_at_instant: self.submitted_at_instant,
-        }
+        self.dispatch_info.clone()
     }
 
     pub(in crate::domains::rpc::sink) fn into_dispatch_info(self) -> RpcPendingDispatchInfo {
-        RpcPendingDispatchInfo {
-            family: self.family,
-            route: self.route,
-            caller_session_id: self.caller_session_id,
-            caller_inbox_addr: self.caller_inbox_addr,
-            registration_id: self.registration_id,
-            submitted_at_instant: self.submitted_at_instant,
-        }
+        self.dispatch_info
     }
 
     #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
@@ -119,7 +102,7 @@ impl RpcPendingRequest {
 
     #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
     pub(in crate::domains::rpc::sink) fn age_seconds(&self, now: Instant) -> u64 {
-        now.saturating_duration_since(self.submitted_at_instant)
+        now.saturating_duration_since(self.dispatch_info.submitted_at_instant)
             .as_secs()
     }
 }
@@ -207,18 +190,19 @@ pub(in crate::domains::rpc::sink) struct RpcQueuedDispatch {
     pub(in crate::domains::rpc::sink) live_request_count: usize,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(usize)]
+pub(in crate::domains::rpc::sink) enum RpcRequestRejection {
+    Duplicate,
+    NoWorkers,
+    GlobalCapacityFull,
+    RouteCapacityFull,
+}
+
 pub(in crate::domains::rpc::sink) enum RpcRequestDispatch {
-    Duplicate {
+    Rejected {
         request: crate::domains::rpc::protocol::RpcRequest,
-    },
-    NoWorkers {
-        request: crate::domains::rpc::protocol::RpcRequest,
-    },
-    GlobalCapacityFull {
-        request: crate::domains::rpc::protocol::RpcRequest,
-    },
-    RouteCapacityFull {
-        request: crate::domains::rpc::protocol::RpcRequest,
+        reason: RpcRequestRejection,
     },
     Queued {
         route: Route,

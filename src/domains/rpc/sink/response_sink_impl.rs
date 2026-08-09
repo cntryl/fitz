@@ -1,14 +1,11 @@
+use super::response_forwarder::RpcResponseForwarder;
 use super::state_model::{
     session_inbox_address, Envelope, Instant, RpcDeliveryOutcome as DeliveryOutcome,
     RpcDomainRuntime, RpcPendingDispatchInfo, RpcPendingErrorDelivery,
-    RpcPendingResponseDisposition, RpcState, RPC_CORRELATION_NOT_FOUND_ERROR,
+    RpcPendingResponseDisposition, RpcResponseState, RpcState, RPC_CORRELATION_NOT_FOUND_ERROR,
     RPC_INVALID_SEQUENCE_ERROR, RPC_WRONG_WORKER_ERROR,
 };
-#[cfg(test)]
-use crate::dispatch::protocol::frame_context::FrameContext;
 use crate::domains::rpc::protocol::RpcResponse;
-#[cfg(not(test))]
-use crate::domains::rpc::{RpcClientForwardedResponse, RpcClientForwardedResponseBody};
 
 struct ResponseStateContext<'a> {
     envelope: &'a Envelope,
@@ -42,7 +39,8 @@ impl RpcDomainRuntime<'_> {
         let state_wait_us = elapsed_micros_optional(state_wait_start);
         let state_hold_start = metrics_enabled.then(Instant::now);
         let pending_route_lookup_start = metrics_enabled.then(Instant::now);
-        let caller_info = state.pending.pending_for_response_in_family(
+        let caller_info = RpcResponseState::pending_for_response(
+            &mut *state,
             meta.route_family,
             &resp.correlation_id,
             meta.session_id,
@@ -92,7 +90,7 @@ impl RpcDomainRuntime<'_> {
             pending_route_lookup_us,
         } = context;
         let state_hold_us = elapsed_micros_optional(state_hold_start);
-        let pending_len = state.live_request_count();
+        let pending_len = RpcResponseState::live_count(&*state);
         drop(state);
 
         self.histogram_observe_us("rpc_pending_route_lookup_us", pending_route_lookup_us);
@@ -145,8 +143,12 @@ impl RpcDomainRuntime<'_> {
         if removed_pending {
             self.release_global_pending(1);
             let completion_latency_us = elapsed_micros_u64(caller_info.submitted_at_instant);
-            state.release_worker_for_dispatch_info(caller_info, Some(completion_latency_us));
-            let live_request_count = state.live_request_count();
+            RpcResponseState::release_dispatch(
+                &mut *state,
+                caller_info,
+                Some(completion_latency_us),
+            );
+            let live_request_count = RpcResponseState::live_count(&*state);
             self.histogram_observe_us("rpc_pending_route_remove_us", pending_route_lookup_us);
             self.histogram_observe_us("rpc_pending_untrack_us", pending_route_lookup_us);
             self.gauge_set("rpc_pending_requests", live_request_count as u64);
@@ -190,39 +192,9 @@ impl RpcDomainRuntime<'_> {
     ) {
         let metrics_enabled = self.metrics.is_some();
         let response_forward_start = metrics_enabled.then(Instant::now);
-        #[cfg(not(test))]
-        let _ = meta;
-
-        if let Some(caller_inbox_addr) = caller_info.caller_inbox_addr.as_ref() {
-            #[cfg(test)]
-            let forward_envelope = {
-                let mut payload_encoder =
-                    crate::dispatch::protocol::payload_codec::PayloadEncoder::with_capacity(256);
-                let encoded_response =
-                    crate::dispatch::protocol::rpc_codec::encode_response_message_into(
-                        resp,
-                        &mut payload_encoder,
-                    );
-                let forward_ctx = FrameContext::new(
-                    caller_info.caller_session_id,
-                    super::mailbox_adapter::test_protocol_channel_from_client(meta.channel),
-                    crate::dispatch::protocol::tlv::MessageType::new(303),
-                    bytes::Bytes::from(encoded_response),
-                    *caller_inbox_addr.family(),
-                );
-                Envelope::new(caller_inbox_addr.clone(), forward_ctx)
-            };
-
-            #[cfg(not(test))]
-            let forward_envelope = Envelope::new(
-                caller_inbox_addr.clone(),
-                RpcClientForwardedResponse::new(
-                    caller_info.caller_session_id,
-                    *caller_inbox_addr.family(),
-                    RpcClientForwardedResponseBody::Response(resp.clone()),
-                ),
-            );
-
+        if let Some(forward_envelope) =
+            RpcResponseForwarder::response_envelope(meta, resp, caller_info)
+        {
             if let Err(error) = self.router.route(forward_envelope) {
                 self.counter_inc("rpc_response_forward_errors_total");
                 tracing::warn!(
@@ -255,9 +227,9 @@ impl RpcDomainRuntime<'_> {
             state_hold_start,
             pending_route_lookup_us,
         } = context;
-        state.release_worker_for_dispatch_info(caller_info, None);
+        RpcResponseState::release_dispatch(&mut *state, caller_info, None);
         self.release_global_pending(1);
-        let live_request_count = state.live_request_count();
+        let live_request_count = RpcResponseState::live_count(&*state);
         let state_hold_us = elapsed_micros_optional(state_hold_start);
         drop(state);
 
@@ -332,7 +304,7 @@ impl RpcDomainRuntime<'_> {
             pending_route_lookup_us,
         } = context;
         let state_hold_us = elapsed_micros_optional(state_hold_start);
-        let live_request_count = state.live_request_count();
+        let live_request_count = RpcResponseState::live_count(&*state);
         drop(state);
 
         self.histogram_observe_us("rpc_pending_route_lookup_us", pending_route_lookup_us);

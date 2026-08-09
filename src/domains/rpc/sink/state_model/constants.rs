@@ -1,5 +1,9 @@
 use super::Duration;
 
+pub(in crate::domains::rpc::sink) const RPC_MSG_TYPE_REQUEST: u16 = 302;
+#[cfg(test)]
+pub(in crate::domains::rpc::sink) const RPC_MSG_TYPE_RESPONSE: u16 = 303;
+
 pub(in crate::domains::rpc::sink) const RPC_BACKPRESSURE_ERROR: &str =
     "RPC backpressure: too many pending requests";
 pub(in crate::domains::rpc::sink) const RPC_NO_WORKERS_ERROR: &str =

@@ -25,7 +25,7 @@ fn request(
     correlation_id: uuid::Uuid,
     timeout: Duration,
 ) -> RpcRequestDispatch {
-    state.dispatch_or_queue_request(
+    state.dispatch_or_queue_request_with_global_count(
         crate::domains::rpc::RpcRequest::new(
             family,
             correlation_id,
@@ -37,6 +37,7 @@ fn request(
         timeout,
         32,
         256,
+        None,
     )
 }
 
@@ -44,6 +45,22 @@ fn remove_pending(state: &mut RpcState, family: RouteFamily, correlation_id: uui
     state
         .remove_pending_request_for_family(family, &correlation_id)
         .expect("pending RPC request");
+}
+
+#[test]
+fn should_select_registration_through_dispatch_state_seam() {
+    // Arrange
+    let family = RouteFamily::new(7);
+    let route = Route::new("rpc://bench/system/orders/create");
+    let mut state = RpcState::new();
+    register(&mut state, family, route.as_str(), 41, 1);
+    let dispatch_state: &mut dyn RpcDispatchState = &mut state;
+
+    // Act
+    let selected = dispatch_state.claim_registration_for_route(family, &route);
+
+    // Assert
+    assert_eq!(selected.map(|worker| worker.session_id), Some(41));
 }
 
 #[test]
@@ -129,19 +146,23 @@ fn should_not_retain_idle_route_when_global_request_capacity_is_full() {
     );
 
     // Act
-    let dispatch = state.dispatch_or_queue_request(
+    let dispatch = state.dispatch_or_queue_request_with_global_count(
         request,
         1,
         session_inbox_address(family, 1),
         Duration::from_secs(30),
         32,
         0,
+        None,
     );
 
     // Assert
     assert!(matches!(
         dispatch,
-        RpcRequestDispatch::GlobalCapacityFull { .. }
+        RpcRequestDispatch::Rejected {
+            reason: super::RpcRequestRejection::GlobalCapacityFull,
+            ..
+        }
     ));
     assert_eq!(state.route_count(), 0);
 }
@@ -515,7 +536,13 @@ fn should_isolate_wildcard_registration_by_route_family() {
     );
 
     // Assert
-    assert!(matches!(dispatch, RpcRequestDispatch::NoWorkers { .. }));
+    assert!(matches!(
+        dispatch,
+        RpcRequestDispatch::Rejected {
+            reason: super::RpcRequestRejection::NoWorkers,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -595,13 +622,13 @@ fn should_aggregate_wildcard_completion_statistics_across_routes() {
     {
         let mut state = sink.core.state.lock();
         let first = state
-            .claim_worker_for_tests(family, &Route::new("rpc://bench/system/orders/create"))
+            .claim_registration_for_tests(family, &Route::new("rpc://bench/system/orders/create"))
             .expect("first wildcard dispatch");
-        state.release_worker_with_latency_for_tests(first.registration_id, 1_000);
+        state.release_registration_with_latency_for_tests(first.registration_id, 1_000);
         let second = state
-            .claim_worker_for_tests(family, &Route::new("rpc://bench/system/invoices/send"))
+            .claim_registration_for_tests(family, &Route::new("rpc://bench/system/invoices/send"))
             .expect("second wildcard dispatch");
-        state.release_worker_with_latency_for_tests(second.registration_id, 3_000);
+        state.release_registration_with_latency_for_tests(second.registration_id, 3_000);
     }
     sink.sync_admin_snapshot();
     let workers = admin.rpc_workers(None);

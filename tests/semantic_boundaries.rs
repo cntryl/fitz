@@ -561,6 +561,75 @@ fn should_document_all_rpc_error_codes_in_client_spec() {
 }
 
 #[test]
+fn should_keep_rpc_design_seams_explicit() {
+    // Arrange
+    let repo_root = repo_root();
+    let rpc = repo_root.join("src/domains/rpc/sink");
+    let constants = read_source_file(&rpc.join("state_model/constants.rs"));
+    let mailbox = read_source_file(&rpc.join("mailbox_sink_impl.rs"));
+    let requests = read_source_file(&rpc.join("state_model/requests.rs"));
+    let route_state = read_source_file(&rpc.join("state_model/route_state.rs"));
+    let state = read_source_file(&rpc.join("state_model/state.rs"));
+    let registration_table = read_source_file(&rpc.join("state_model/registration_table.rs"));
+    let ready_queue = read_source_file(&rpc.join("state_model/ready_queue.rs"));
+    let response_forwarder = read_source_file(&rpc.join("response_forwarder.rs"));
+
+    // Act
+    let violations = [
+        (
+            !constants.contains("RPC_MSG_TYPE_REQUEST"),
+            "request message constant",
+        ),
+        (
+            !constants.contains("RPC_MSG_TYPE_RESPONSE"),
+            "response message constant",
+        ),
+        (
+            !mailbox.contains("deliver_with_priority"),
+            "shared delivery guard",
+        ),
+        (
+            !requests.contains("dispatch_info: RpcPendingDispatchInfo"),
+            "owned pending dispatch view",
+        ),
+        (
+            !route_state.contains("struct RegistrationRotor"),
+            "registration rotor",
+        ),
+        (
+            state.contains("clippy::too_many_lines"),
+            "small dispatch coordinator",
+        ),
+        (
+            state.contains("fn dispatch_or_queue_request(\n"),
+            "test-only dispatch wrapper",
+        ),
+        (
+            !registration_table.contains("struct RegistrationTable"),
+            "registration table",
+        ),
+        (
+            !ready_queue.contains("struct RouteReadyQueue"),
+            "route-ready queue",
+        ),
+        (
+            !state.contains("trait RpcRequestState") || !state.contains("trait RpcResponseState"),
+            "request and response state facades",
+        ),
+        (
+            !response_forwarder.contains("struct RpcResponseForwarder"),
+            "response forwarder",
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(missing, label)| missing.then_some(label))
+    .collect::<Vec<_>>();
+
+    // Assert
+    assert!(violations.is_empty(), "missing RPC seams: {violations:?}");
+}
+
+#[test]
 fn should_document_unified_wildcard_registration_and_exact_lease_semantics() {
     // Arrange
     let root = repo_root().join("docs");

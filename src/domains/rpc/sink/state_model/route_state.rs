@@ -3,9 +3,27 @@ use super::{HashSet, RpcRegistrationId, VecDeque};
 pub(in crate::domains::rpc::sink) struct RpcRouteState {
     pub(in crate::domains::rpc::sink) queued: VecDeque<uuid::Uuid>,
     pub(in crate::domains::rpc::sink) first_seen_sequence: u64,
-    registration_ids: Vec<RpcRegistrationId>,
-    next_registration_index: usize,
+    registrations: RegistrationRotor,
     ready: bool,
+}
+
+struct RegistrationRotor {
+    ids: Vec<RpcRegistrationId>,
+    next_index: usize,
+}
+
+impl RegistrationRotor {
+    fn new(ids: Vec<RpcRegistrationId>) -> Self {
+        Self { ids, next_index: 0 }
+    }
+
+    fn advance_after(&mut self, index: usize) {
+        self.next_index = if self.ids.is_empty() {
+            0
+        } else {
+            (index + 1) % self.ids.len()
+        };
+    }
 }
 
 impl RpcRouteState {
@@ -16,42 +34,37 @@ impl RpcRouteState {
         Self {
             queued: VecDeque::new(),
             first_seen_sequence,
-            registration_ids,
-            next_registration_index: 0,
+            registrations: RegistrationRotor::new(registration_ids),
             ready: false,
         }
     }
 
     pub(in crate::domains::rpc::sink) fn has_registrations(&self) -> bool {
-        !self.registration_ids.is_empty()
+        !self.registrations.ids.is_empty()
     }
 
     pub(in crate::domains::rpc::sink) fn registration_ids(&self) -> &[RpcRegistrationId] {
-        &self.registration_ids
+        &self.registrations.ids
     }
 
     pub(in crate::domains::rpc::sink) fn next_registration_index(&self) -> usize {
-        self.next_registration_index
+        self.registrations.next_index
     }
 
     pub(in crate::domains::rpc::sink) fn advance_registration_cursor(&mut self, index: usize) {
-        self.next_registration_index = if self.registration_ids.is_empty() {
-            0
-        } else {
-            (index + 1) % self.registration_ids.len()
-        };
+        self.registrations.advance_after(index);
     }
 
     pub(in crate::domains::rpc::sink) fn add_registration(
         &mut self,
         registration_id: RpcRegistrationId,
     ) {
-        match self.registration_ids.binary_search(&registration_id) {
+        match self.registrations.ids.binary_search(&registration_id) {
             Ok(_) => {}
             Err(index) => {
-                self.registration_ids.insert(index, registration_id);
-                if index < self.next_registration_index {
-                    self.next_registration_index = self.next_registration_index.saturating_add(1);
+                self.registrations.ids.insert(index, registration_id);
+                if index < self.registrations.next_index {
+                    self.registrations.next_index = self.registrations.next_index.saturating_add(1);
                 }
             }
         }
@@ -61,15 +74,15 @@ impl RpcRouteState {
         &mut self,
         registration_id: RpcRegistrationId,
     ) {
-        let Ok(index) = self.registration_ids.binary_search(&registration_id) else {
+        let Ok(index) = self.registrations.ids.binary_search(&registration_id) else {
             return;
         };
-        self.registration_ids.remove(index);
-        if index < self.next_registration_index {
-            self.next_registration_index = self.next_registration_index.saturating_sub(1);
+        self.registrations.ids.remove(index);
+        if index < self.registrations.next_index {
+            self.registrations.next_index = self.registrations.next_index.saturating_sub(1);
         }
-        if self.next_registration_index >= self.registration_ids.len() {
-            self.next_registration_index = 0;
+        if self.registrations.next_index >= self.registrations.ids.len() {
+            self.registrations.next_index = 0;
         }
     }
 
@@ -78,16 +91,19 @@ impl RpcRouteState {
         registration_ids: &HashSet<RpcRegistrationId>,
     ) {
         let next_registration_id = self
-            .registration_ids
-            .get(self.next_registration_index)
+            .registrations
+            .ids
+            .get(self.registrations.next_index)
             .copied();
-        self.registration_ids
+        self.registrations
+            .ids
             .retain(|registration_id| !registration_ids.contains(registration_id));
-        self.next_registration_index = next_registration_id.map_or(0, |registration_id| {
-            self.registration_ids
+        self.registrations.next_index = next_registration_id.map_or(0, |registration_id| {
+            self.registrations
+                .ids
                 .binary_search(&registration_id)
                 .unwrap_or_else(|index| {
-                    if index == self.registration_ids.len() {
+                    if index == self.registrations.ids.len() {
                         0
                     } else {
                         index
@@ -131,5 +147,22 @@ impl RpcRouteState {
 
     pub(in crate::domains::rpc::sink) fn clear_ready(&mut self) {
         self.ready = false;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RegistrationRotor;
+
+    #[test]
+    fn should_rotate_registrations_independent_of_route_queue_state() {
+        // Arrange
+        let mut rotor = RegistrationRotor::new(vec![11, 22, 33]);
+
+        // Act
+        rotor.advance_after(2);
+
+        // Assert
+        assert_eq!(rotor.next_index, 0);
     }
 }

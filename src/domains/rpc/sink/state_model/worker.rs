@@ -5,6 +5,7 @@ pub(in crate::domains::rpc::sink) type RpcRegistrationId = u64;
 
 #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
 #[derive(Clone)]
+/// A live registration whose credit is bounded by `max_concurrent`.
 pub(in crate::domains::rpc::sink) struct RpcWorker {
     pub(in crate::domains::rpc::sink) registration_id: RpcRegistrationId,
     pub(in crate::domains::rpc::sink) addr: RouteAddress,
@@ -41,6 +42,7 @@ impl RpcWorkerKey {
 }
 
 impl RpcWorker {
+    /// Creates a registration with no in-flight claims and a validated credit limit.
     pub(in crate::domains::rpc::sink) fn new(
         addr: RouteAddress,
         inbox_addr: RouteAddress,
@@ -118,15 +120,18 @@ impl RpcWorker {
         *self.addr.family() == family && self.pattern.matches(route)
     }
 
+    /// Reports whether dispatch may reserve another unit of registration credit.
     pub(in crate::domains::rpc::sink) fn is_available(&self) -> bool {
         self.in_flight < self.max_concurrent
     }
 
+    /// Reserves one dispatch slot; callers must release it on every terminal path.
     pub(in crate::domains::rpc::sink) fn claim_slot(&mut self) {
         debug_assert!(self.is_available());
         self.in_flight = self.in_flight.saturating_add(1);
     }
 
+    /// Returns one dispatch slot without coupling credit accounting to fairness scans.
     pub(in crate::domains::rpc::sink) fn release_slot(&mut self) {
         self.in_flight = self.in_flight.saturating_sub(1);
     }
