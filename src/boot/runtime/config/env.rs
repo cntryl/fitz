@@ -32,41 +32,32 @@ pub(super) fn env_bool(key: &str, default: bool) -> Result<bool, String> {
 }
 
 pub(super) fn drain_grace_seconds_from_env() -> (u64, Option<String>) {
-    let Some(value) = env_non_empty(ENV_DRAIN_GRACE_SECONDS) else {
-        return (DEFAULT_DRAIN_GRACE_SECONDS, None);
-    };
-
-    match value.parse::<u64>() {
-        Ok(0) => (
-            0,
-            Some(format!("{ENV_DRAIN_GRACE_SECONDS} must be greater than 0")),
-        ),
-        Ok(seconds) => (seconds, None),
-        Err(_) => (
-            0,
-            Some(format!(
-                "{ENV_DRAIN_GRACE_SECONDS} must be an unsigned integer second count"
-            )),
-        ),
-    }
+    positive_u64_from_env(
+        ENV_DRAIN_GRACE_SECONDS,
+        DEFAULT_DRAIN_GRACE_SECONDS,
+        "second count",
+    )
 }
 
 pub(super) fn queue_loss_window_ms_from_env() -> (u64, Option<String>) {
-    let Some(value) = env_non_empty(ENV_QUEUE_LOSS_WINDOW_MS) else {
-        return (DEFAULT_QUEUE_LOSS_WINDOW_MS, None);
+    positive_u64_from_env(
+        ENV_QUEUE_LOSS_WINDOW_MS,
+        DEFAULT_QUEUE_LOSS_WINDOW_MS,
+        "millisecond count",
+    )
+}
+
+fn positive_u64_from_env(key: &str, default: u64, unit_noun: &str) -> (u64, Option<String>) {
+    let Some(value) = env_non_empty(key) else {
+        return (default, None);
     };
 
     match value.parse::<u64>() {
-        Ok(0) => (
-            0,
-            Some(format!("{ENV_QUEUE_LOSS_WINDOW_MS} must be greater than 0")),
-        ),
-        Ok(milliseconds) => (milliseconds, None),
+        Ok(0) => (0, Some(format!("{key} must be greater than 0"))),
+        Ok(value) => (value, None),
         Err(_) => (
             0,
-            Some(format!(
-                "{ENV_QUEUE_LOSS_WINDOW_MS} must be an unsigned integer millisecond count"
-            )),
+            Some(format!("{key} must be an unsigned integer {unit_noun}")),
         ),
     }
 }

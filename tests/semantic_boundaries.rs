@@ -969,6 +969,105 @@ fn should_document_unified_wildcard_registration_and_exact_lease_semantics() {
 }
 
 #[test]
+fn should_keep_boot_runtime_design_seams_explicit() {
+    // Arrange
+    let root = repo_root();
+    let boot = read_source_file(&root.join("src/boot/mod.rs"));
+    let storage = read_source_file(&root.join("src/boot/storage.rs"));
+    let config = read_source_file(&root.join("src/boot/runtime/config.rs"));
+    let cloud = read_source_file(&root.join("src/boot/runtime/config/cloud_provider.rs"));
+    let env = read_source_file(&root.join("src/boot/runtime/config/env.rs"));
+    let domains = read_source_file(&root.join("src/boot/domains.rs"));
+    let pool = read_source_file(&root.join("src/runtime/family_actor_pool.rs"));
+    let actor = read_source_file(&root.join("src/runtime/managed_actor.rs"));
+    let shutdown = read_source_file(&root.join("src/boot/shutdown.rs"));
+
+    // Act
+    let required = [
+        (boot.contains("enum BootStage"), "named boot stages"),
+        (boot.contains("fn start_listeners"), "listener stage"),
+        (boot.contains("fn open_storage_stage"), "storage stage"),
+        (boot.contains("fn register_domains_stage"), "domain stage"),
+        (!boot.contains("clippy::too_many_lines"), "boot line lint"),
+        (
+            boot.matches("ShutdownContext {").count() == 2,
+            "shutdown context construction",
+        ),
+        (
+            root.join("src/boot/storage/backoff.rs").is_file(),
+            "storage backoff module",
+        ),
+        (
+            root.join("src/boot/storage/contention.rs").is_file(),
+            "storage contention module",
+        ),
+        (
+            config.contains("struct TransportConfig"),
+            "transport sub-config",
+        ),
+        (
+            config.contains("struct StorageConfig"),
+            "storage sub-config",
+        ),
+        (config.contains("struct DrainConfig"), "drain sub-config"),
+        (
+            storage.contains("fn open_with_retry"),
+            "shared storage retry loop",
+        ),
+        (
+            cloud.contains("fn s3_compatible_provider"),
+            "shared S3-compatible provider constructor",
+        ),
+        (
+            cloud.contains("PROVIDER_DESCRIPTORS"),
+            "provider descriptor table",
+        ),
+        (
+            config.contains("fn cloud_durable_write_options"),
+            "cloud write options mapping",
+        ),
+        (
+            env.contains("fn positive_u64_from_env"),
+            "positive integer environment parser",
+        ),
+        (
+            actor.contains("Unsupervised actors do not fire timers"),
+            "unsupervised timer contract",
+        ),
+        (
+            domains.contains("DomainKind::ALL.len()"),
+            "domain handle consistency regression",
+        ),
+        (
+            pool.contains("struct FamilyActorPoolHealthSnapshot"),
+            "family pool health type",
+        ),
+        (
+            shutdown.contains("PRIORITY_FATAL"),
+            "named shutdown priority",
+        ),
+        (
+            !boot.contains("fn warn_defaulted_fast_queue_policy"),
+            "queue warning ownership",
+        ),
+        (
+            config.contains("fn warn_defaulted_fast_queue_policy"),
+            "queue warning policy",
+        ),
+    ];
+    let missing = required
+        .into_iter()
+        .filter_map(|(present, label)| (!present).then_some(label))
+        .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        missing.is_empty(),
+        "missing boot/runtime seams: {missing:?}"
+    );
+}
+
+#[test]
 fn should_document_route_bearing_schedule_notify_wire_format() {
     // Arrange
     let root = repo_root().join("docs");

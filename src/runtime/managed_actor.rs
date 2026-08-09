@@ -443,6 +443,9 @@ pub struct ManagedActor<M: Send + 'static> {
 
 impl<M: Send + 'static> ManagedActor<M> {
     /// Spawn an actor with a route-registered mailbox and owned worker thread.
+    ///
+    /// Unsupervised actors do not fire timers; use a supervised spawn when the
+    /// actor relies on `Actor::on_timer` callbacks.
     #[must_use]
     pub fn spawn<A>(
         router: Arc<Router>,

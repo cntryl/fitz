@@ -281,6 +281,14 @@ pub struct FamilyActorPoolRuntime<M: Send + 'static> {
     join_handles: parking_lot::Mutex<Vec<thread::JoinHandle<()>>>,
 }
 
+/// Health of a fail-closed family pool, which never attempts actor restarts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FamilyActorPoolHealthSnapshot {
+    pub running: bool,
+    pub panic_count: u64,
+    pub failed_closed: bool,
+}
+
 impl<M: Send + 'static> FamilyActorPoolRuntime<M> {
     /// Start family workers for a pool.
     ///
@@ -407,12 +415,23 @@ impl<M: Send + 'static> FamilyActorPoolRuntime<M> {
     }
 
     #[must_use]
-    pub fn health_snapshot(&self) -> crate::runtime::ManagedActorHealthSnapshot {
-        crate::runtime::ManagedActorHealthSnapshot {
+    pub fn health_snapshot(&self) -> FamilyActorPoolHealthSnapshot {
+        FamilyActorPoolHealthSnapshot {
             running: self.is_running(),
-            restart_count: 0,
             panic_count: self.panic_count.load(Ordering::Relaxed),
-            restart_exhausted: self.failed.load(Ordering::Acquire),
+            failed_closed: self.failed.load(Ordering::Acquire),
+        }
+    }
+
+    pub(crate) fn managed_actor_health_snapshot(
+        &self,
+    ) -> crate::runtime::ManagedActorHealthSnapshot {
+        let health = self.health_snapshot();
+        crate::runtime::ManagedActorHealthSnapshot {
+            running: health.running,
+            restart_count: 0,
+            panic_count: health.panic_count,
+            restart_exhausted: health.failed_closed,
         }
     }
 

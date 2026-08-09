@@ -133,7 +133,7 @@ impl RpcDomainSink {
     pub(crate) fn actor_health_snapshot(&self) -> crate::runtime::ManagedActorHealthSnapshot {
         self.family_runtime.as_ref().map_or_else(
             || self.actor.health_snapshot(),
-            crate::runtime::FamilyActorPoolRuntime::health_snapshot,
+            crate::runtime::FamilyActorPoolRuntime::managed_actor_health_snapshot,
         )
     }
 

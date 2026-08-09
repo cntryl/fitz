@@ -102,6 +102,22 @@ impl QueueWritePolicy {
     }
 }
 
+pub(crate) fn warn_defaulted_fast_queue_policy(config: &BootConfig) {
+    if !config.queue_write_policy_defaulted_fast() {
+        return;
+    }
+
+    // Fast mode accepts a bounded loss window. An implicit choice deserves an
+    // operator warning because it is materially different from durable writes.
+    tracing::warn!(
+        queue_write_policy_env = "FITZ_QUEUE_WRITE_POLICY",
+        queue_loss_window_env = "FITZ_QUEUE_LOSS_WINDOW_MS",
+        loss_window_ms = config.queue_loss_window_ms,
+        loss_window = ?config.queue_fast_flush_interval(),
+        "FITZ_QUEUE_WRITE_POLICY is unset; defaulting Queue to fast best-effort writes"
+    );
+}
+
 /// Source for the resolved queue write policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueueWritePolicySource {
@@ -341,6 +357,119 @@ use validation::{
     validate_public_origin_security,
 };
 
+struct TransportConfig<'a> {
+    boot: &'a BootConfig,
+}
+
+impl<'a> TransportConfig<'a> {
+    fn from_env(boot: &'a BootConfig) -> Self {
+        Self { boot }
+    }
+
+    fn validate(&self, protected_admin_configured: bool) -> BootResult<()> {
+        let config = self.boot;
+        if config.metrics_bind_addr.trim().is_empty() {
+            return Err("FITZ_METRICS_BIND_ADDR must not be empty".into());
+        }
+        if let Some(value) = env_non_empty("FITZ_TCP_ENABLED") {
+            value.parse::<bool>().map_err(|_| {
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "FITZ_TCP_ENABLED must be true or false",
+                )) as Box<dyn std::error::Error>
+            })?;
+        }
+        let public_bind = validate_ingress_security_boundary(
+            config.assume_external_tls,
+            config.local_listener_exposure,
+            &config.bind_addr,
+            config.auth_required || protected_admin_configured,
+        )?;
+        let origins = configured_ws_allowed_origins(
+            &config.ws_allowed_origins,
+            config.ws_allowed_origins_error.as_ref(),
+        )?;
+        validate_local_loopback_edge_origins(config.local_listener_exposure, &origins)?;
+        validate_public_origin_security("FITZ_WS_ALLOWED_ORIGINS", &origins)?;
+        if config.auth_required && public_bind && origins.is_empty() {
+            return Err("FITZ_WS_ALLOWED_ORIGINS is required when authenticated WebSocket listeners bind to a non-loopback address".into());
+        }
+        validate_admin_browser_security(
+            protected_admin_configured,
+            public_bind,
+            config.assume_local_loopback_edge(),
+        )
+    }
+}
+
+struct StorageConfig<'a> {
+    boot: &'a BootConfig,
+}
+
+impl<'a> StorageConfig<'a> {
+    fn from_env(boot: &'a BootConfig) -> Self {
+        Self { boot }
+    }
+
+    fn validate(&self) -> BootResult<()> {
+        let config = self.boot;
+        if let CloudDurabilityMode::Invalid { reason } = &config.cloud_durability {
+            return Err(reason.clone().into());
+        }
+        config
+            .queue_write_policy
+            .validate()
+            .map_err(boxed_config_error)?;
+        if let Some(error) = &config.queue_loss_window_error {
+            return Err(error.clone().into());
+        }
+        if config.queue_loss_window_ms == 0 {
+            return Err(format!("{ENV_QUEUE_LOSS_WINDOW_MS} must be greater than 0").into());
+        }
+        if let Some(error) = &config.kv_idle_transaction_ttl_error {
+            return Err(error.clone().into());
+        }
+        if config.kv_idle_transaction_ttl_seconds == 0 {
+            return Err(
+                format!("{ENV_KV_IDLE_TRANSACTION_TTL_SECS} must be greater than 0").into(),
+            );
+        }
+        config
+            .storage_memtable
+            .validate()
+            .map_err(boxed_config_error)?;
+        config.storage_mode.validate().map_err(boxed_config_error)
+    }
+}
+
+struct DrainConfig<'a> {
+    boot: &'a BootConfig,
+}
+
+impl<'a> DrainConfig<'a> {
+    fn from_env(boot: &'a BootConfig) -> Self {
+        Self { boot }
+    }
+
+    fn validate(&self) -> BootResult<()> {
+        let config = self.boot;
+        if let Some(error) = &config.drain_config_error {
+            return Err(error.clone().into());
+        }
+        if config.drain_grace_seconds == 0 {
+            return Err(format!("{ENV_DRAIN_GRACE_SECONDS} must be greater than 0").into());
+        }
+        if config.drain_close_reason.trim().is_empty() {
+            return Err(format!("{ENV_DRAIN_CLOSE_REASON} must not be empty").into());
+        }
+        Ok(())
+    }
+}
+
+fn boxed_config_error(error: String) -> Box<dyn std::error::Error> {
+    error.into()
+}
+
 /// Boot configuration for the Fitz broker.
 #[derive(Debug, Clone)]
 pub struct BootConfig {
@@ -423,12 +552,7 @@ impl BootConfig {
     pub fn schedule_write_options(&self) -> cntryl_midge::WriteOptions {
         match (&self.storage_mode, &self.cloud_durability) {
             (StorageMode::Memory, _) => cntryl_midge::WriteOptions::best_effort(),
-            (StorageMode::CloudBacked(_), CloudDurabilityMode::Background) => {
-                cntryl_midge::WriteOptions::cloud_async()
-            }
-            (StorageMode::CloudBacked(_), CloudDurabilityMode::Strict) => {
-                cntryl_midge::WriteOptions::cloud_strict()
-            }
+            (StorageMode::CloudBacked(_), durability) => cloud_durable_write_options(durability),
             _ => cntryl_midge::WriteOptions::sync(),
         }
     }
@@ -436,12 +560,7 @@ impl BootConfig {
     #[must_use]
     pub fn request_sync_write_options(&self) -> cntryl_midge::WriteOptions {
         match (&self.storage_mode, &self.cloud_durability) {
-            (StorageMode::CloudBacked(_), CloudDurabilityMode::Background) => {
-                cntryl_midge::WriteOptions::cloud_async()
-            }
-            (StorageMode::CloudBacked(_), CloudDurabilityMode::Strict) => {
-                cntryl_midge::WriteOptions::cloud_strict()
-            }
+            (StorageMode::CloudBacked(_), durability) => cloud_durable_write_options(durability),
             _ => cntryl_midge::WriteOptions::sync(),
         }
     }
@@ -484,6 +603,15 @@ impl BootConfig {
     pub fn queue_write_policy_defaulted_fast(&self) -> bool {
         self.queue_write_policy_source.is_defaulted()
             && matches!(self.queue_write_policy, QueueWritePolicy::Fast)
+    }
+}
+
+fn cloud_durable_write_options(durability: &CloudDurabilityMode) -> cntryl_midge::WriteOptions {
+    match durability {
+        CloudDurabilityMode::Background | CloudDurabilityMode::Invalid { .. } => {
+            cntryl_midge::WriteOptions::cloud_async()
+        }
+        CloudDurabilityMode::Strict => cntryl_midge::WriteOptions::cloud_strict(),
     }
 }
 
@@ -739,80 +867,14 @@ impl BootConfig {
     /// Returns an error when drain, transport, auth, storage, origin-security,
     /// or route-family settings are invalid or incomplete for startup.
     pub fn validate(&self) -> BootResult<()> {
-        if let Some(error) = &self.drain_config_error {
-            return Err(error.clone().into());
-        }
-        if self.drain_grace_seconds == 0 {
-            return Err(format!("{ENV_DRAIN_GRACE_SECONDS} must be greater than 0").into());
-        }
-        if self.drain_close_reason.trim().is_empty() {
-            return Err(format!("{ENV_DRAIN_CLOSE_REASON} must not be empty").into());
-        }
-        if self.metrics_bind_addr.trim().is_empty() {
-            return Err("FITZ_METRICS_BIND_ADDR must not be empty".into());
-        }
-        if let CloudDurabilityMode::Invalid { reason } = &self.cloud_durability {
-            return Err(reason.clone().into());
-        }
-        self.queue_write_policy
-            .validate()
-            .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
-        if let Some(error) = &self.queue_loss_window_error {
-            return Err(error.clone().into());
-        }
-        if self.queue_loss_window_ms == 0 {
-            return Err(format!("{ENV_QUEUE_LOSS_WINDOW_MS} must be greater than 0").into());
-        }
-        if let Some(error) = &self.kv_idle_transaction_ttl_error {
-            return Err(error.clone().into());
-        }
-        if self.kv_idle_transaction_ttl_seconds == 0 {
-            return Err(
-                format!("{ENV_KV_IDLE_TRANSACTION_TTL_SECS} must be greater than 0").into(),
-            );
-        }
-        self.storage_memtable
-            .validate()
-            .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
-        self.storage_mode
-            .validate()
-            .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
-        if let Some(value) = env_non_empty("FITZ_TCP_ENABLED") {
-            value.parse::<bool>().map_err(|_| {
-                Box::new(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "FITZ_TCP_ENABLED must be true or false",
-                )) as Box<dyn std::error::Error>
-            })?;
-        }
+        DrainConfig::from_env(self).validate()?;
+        StorageConfig::from_env(self).validate()?;
+        let protected_admin_configured =
+            crate::api::admin::auth::protected_admin_configured_from_env();
+        TransportConfig::from_env(self).validate(protected_admin_configured)?;
         self.auth_config
             .validate(self.auth_required)
             .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
-        let protected_admin_configured =
-            crate::api::admin::auth::protected_admin_configured_from_env();
-        let public_bind = validate_ingress_security_boundary(
-            self.assume_external_tls,
-            self.local_listener_exposure,
-            &self.bind_addr,
-            self.auth_required || protected_admin_configured,
-        )?;
-        let ws_allowed_origins = configured_ws_allowed_origins(
-            &self.ws_allowed_origins,
-            self.ws_allowed_origins_error.as_ref(),
-        )?;
-        validate_local_loopback_edge_origins(self.local_listener_exposure, &ws_allowed_origins)?;
-        validate_public_origin_security("FITZ_WS_ALLOWED_ORIGINS", &ws_allowed_origins)?;
-        if self.auth_required && public_bind && ws_allowed_origins.is_empty() {
-            return Err(
-                "FITZ_WS_ALLOWED_ORIGINS is required when authenticated WebSocket listeners bind to a non-loopback address"
-                    .into(),
-            );
-        }
-        validate_admin_browser_security(
-            protected_admin_configured,
-            public_bind,
-            self.assume_local_loopback_edge(),
-        )?;
         if self.route_families.is_empty() {
             return Err("FITZ_ROUTE_FAMILIES must contain at least one family".into());
         }

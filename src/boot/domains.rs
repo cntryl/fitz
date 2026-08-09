@@ -494,10 +494,7 @@ pub fn setup(
         .unwrap_or(std::time::Duration::from_secs(30));
 
     let kv_sink = create_kv_sink(store, router, admin_read_model, options, &metrics);
-    DomainKind::Kv
-        .descriptor()
-        .register_sink(router, kv_sink.clone() as Arc<dyn MailboxSink>);
-    tracing::info!("Registered KV domain (handles kv://* across all route families)");
+    register_domain_sink(DomainKind::Kv, router, kv_sink.clone());
 
     let queue_sink = Arc::new(
         QueueDomainSink::try_new_with_storage(
@@ -511,19 +508,13 @@ pub fn setup(
         .with_fast_flush_interval(options.queue_fast_flush_interval)
         .with_metrics(metrics.clone()),
     );
-    DomainKind::Queue
-        .descriptor()
-        .register_sink(router, queue_sink.clone() as Arc<dyn MailboxSink>);
-    tracing::info!("Registered Queue domain (handles queue://* across all route families)");
+    register_domain_sink(DomainKind::Queue, router, queue_sink.clone());
 
     let notice_sink = Arc::new(
         NoticeDomainSink::new(router.clone(), admin_read_model.clone())
             .with_metrics(metrics.clone()),
     );
-    DomainKind::Notice
-        .descriptor()
-        .register_sink(router, notice_sink.clone() as Arc<dyn MailboxSink>);
-    tracing::info!("Registered Notice domain (handles notice://* across all route families)");
+    register_domain_sink(DomainKind::Notice, router, notice_sink.clone());
 
     let stream_sink = create_stream_sink(
         storage.clone(),
@@ -533,45 +524,30 @@ pub fn setup(
         &route_families,
         &metrics,
     )?;
-    DomainKind::Stream
-        .descriptor()
-        .register_sink(router, stream_sink.clone() as Arc<dyn MailboxSink>);
-    tracing::info!("Registered Stream domain (handles stream://* across all route families)");
+    register_domain_sink(DomainKind::Stream, router, stream_sink.clone());
 
     let rpc_sink = Arc::new(
         RpcDomainSink::new_with_families(router.clone(), admin_read_model.clone(), &route_families)
             .with_request_timeout(rpc_request_timeout)
             .with_metrics(metrics.clone()),
     );
-    DomainKind::Rpc
-        .descriptor()
-        .register_sink(router, rpc_sink.clone() as Arc<dyn MailboxSink>);
-    tracing::info!("Registered RPC domain (handles rpc://* across all route families)");
+    register_domain_sink(DomainKind::Rpc, router, rpc_sink.clone());
 
     let lease_sink = Arc::new(
         LeaseDomainSink::new(router.clone(), admin_read_model.clone())
             .with_metrics(metrics.clone()),
     );
-    DomainKind::Lease
-        .descriptor()
-        .register_sink(router, lease_sink.clone() as Arc<dyn MailboxSink>);
-    tracing::info!(
-        "Registered Lease domain (ephemeral, in-memory lease://* across all route families)"
-    );
+    register_domain_sink(DomainKind::Lease, router, lease_sink.clone());
 
     let schedule_sink = Arc::new(
         ScheduleDomainSink::new_with_storage(storage, router.clone(), admin_read_model.clone())
             .with_write_options(options.schedule_write_options)
             .with_metrics(metrics.clone()),
     );
-    DomainKind::Schedule
-        .descriptor()
-        .register_sink(router, schedule_sink.clone() as Arc<dyn MailboxSink>);
+    register_domain_sink(DomainKind::Schedule, router, schedule_sink.clone());
     schedule_sink
         .preload_persisted_families()
         .map_err(|error| format!("schedule preload failed: {error}"))?;
-    tracing::info!("Registered Schedule domain (handles schedule://* across all route families)");
-
     tracing::info!(
         "All {} domain sinks registered with router",
         DomainKind::ALL.len()
@@ -588,6 +564,14 @@ pub fn setup(
     ));
     crate::api::background::start_domain_background_tasks(&handles);
     Ok(handles)
+}
+
+fn register_domain_sink<T>(kind: DomainKind, router: &Arc<Router>, sink: Arc<T>)
+where
+    T: MailboxSink + 'static,
+{
+    kind.descriptor().register_sink(router, sink);
+    tracing::info!(domain = kind.as_str(), "Registered domain sink");
 }
 
 #[cfg(test)]
@@ -791,10 +775,11 @@ mod tests {
         let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
 
         // Act
-        let result = setup(&router, &store, &admin_read_model, &domain_setup_options());
+        let domains = setup(&router, &store, &admin_read_model, &domain_setup_options())
+            .expect("setup domains");
 
         // Assert
-        assert!(result.is_ok());
+        assert_eq!(domains.health_snapshots().len(), DomainKind::ALL.len());
     }
 
     #[test]
