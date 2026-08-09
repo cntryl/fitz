@@ -6,6 +6,7 @@ mod cloud_storage;
 mod storage_local_and_stream;
 
 #[test]
+#[serial]
 fn should_validate_transport_independently_of_invalid_drain() {
     // Arrange
     let mut config = auth_ready_config();
@@ -20,6 +21,7 @@ fn should_validate_transport_independently_of_invalid_drain() {
 }
 
 #[test]
+#[serial]
 fn should_validate_storage_independently_of_invalid_transport() {
     // Arrange
     let mut config = auth_ready_config();
@@ -33,6 +35,7 @@ fn should_validate_storage_independently_of_invalid_transport() {
 }
 
 #[test]
+#[serial]
 fn should_validate_drain_independently_of_invalid_storage() {
     // Arrange
     let mut config = auth_ready_config();
