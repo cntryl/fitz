@@ -786,6 +786,72 @@ fn should_keep_queue_design_seams_explicit() {
 }
 
 #[test]
+fn should_keep_schedule_design_seams_explicit() {
+    // Arrange
+    let schedule = repo_root().join("src/domains/schedule");
+    let actor = read_source_file(&schedule.join("actor/claim_and_ack.rs"));
+    let actor_mod = read_source_file(&schedule.join("actor/mod.rs"));
+    let sink = read_source_file(&schedule.join("sink/domain_sink_impl.rs"));
+    let model = read_source_file(&schedule.join("sink/model.rs"));
+    let store = read_source_file(&schedule.join("store/model.rs"));
+
+    // Act
+    let violations = [
+        (
+            !schedule.join("sink/delivery_strategy.rs").exists(),
+            "delivery strategy",
+        ),
+        (
+            !sink.contains("fn claim_due")
+                || !sink.contains("fn deliver_claims")
+                || !sink.contains("fn acknowledge_delivered"),
+            "due scan stages",
+        ),
+        (
+            !actor.contains("fn pop_due_from_heap")
+                || !actor.contains("fn recompute_next_fires")
+                || !actor.contains("fn persist_claims")
+                || !actor.contains("fn apply_claims_to_state"),
+            "claim stages",
+        ),
+        (
+            !model.contains("enum PendingFireState"),
+            "pending-fire state",
+        ),
+        (
+            !actor_mod.contains("#[cfg(test)]") || !actor_mod.contains("test_actor_harness"),
+            "test-only actor harness",
+        ),
+        (
+            !sink.contains("trait ScheduleObservability"),
+            "observability interface",
+        ),
+        (
+            !store.contains("trait SchedulePersistence"),
+            "persistence interface",
+        ),
+        (schedule.join("events.rs").exists(), "dead schedule events"),
+        (
+            !actor_mod.contains("SCAN_DEDUP_WINDOW") || !model.contains("EXECUTIONS_WINDOW_MS"),
+            "schedule timing constants",
+        ),
+        (
+            !model.contains("sink wrapper") || !model.contains("runtime body"),
+            "sink runtime naming docs",
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(missing, label)| missing.then_some(label))
+    .collect::<Vec<_>>();
+
+    // Assert
+    assert!(
+        violations.is_empty(),
+        "missing Schedule seams: {violations:?}"
+    );
+}
+
+#[test]
 fn should_document_unified_wildcard_registration_and_exact_lease_semantics() {
     // Arrange
     let root = repo_root().join("docs");

@@ -17,7 +17,7 @@
 //! delivery backlog, or provide execution guarantees.
 
 pub mod actor;
-pub mod events;
+mod definition_validation;
 pub mod metrics;
 pub mod protocol;
 pub mod session;

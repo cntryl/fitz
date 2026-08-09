@@ -2,7 +2,7 @@
 use super::model::SystemClock;
 use super::model::{
     epoch_ms_to_instant_with_reference, instant_to_epoch_ms_with_reference,
-    parse_concrete_schedule_route, Clock, CronSchedule, Duration, Instant, Reverse, ScheduleActor,
+    parse_concrete_schedule_route, Clock, Duration, Instant, Reverse, ScheduleActor,
     ScheduleFailure, ScheduleFailureCategory, ScheduleMessage, ScheduleResponse,
 };
 
@@ -102,17 +102,12 @@ impl ScheduleActor {
                 delivery_mode,
                 payload,
             } => {
-                if let Err(error) = parse_concrete_schedule_route(&route) {
-                    return ScheduleResponse::Error(ScheduleFailure::new(
-                        ScheduleFailureCategory::InvalidTarget,
-                        error,
-                    ));
-                }
-                if let Err(error) = CronSchedule::parse(&cron) {
-                    return ScheduleResponse::Error(ScheduleFailure::new(
-                        ScheduleFailureCategory::InvalidCron,
-                        error,
-                    ));
+                if let Some(failure) =
+                    crate::domains::schedule::definition_validation::schedule_definition_failure(
+                        &route, &cron,
+                    )
+                {
+                    return ScheduleResponse::Error(failure);
                 }
                 match self.create_schedule_with_mode(route, cron, delivery_mode, payload) {
                     Ok(_) => ScheduleResponse::Ok,
@@ -120,19 +115,13 @@ impl ScheduleActor {
                 }
             }
             ScheduleMessage::CreateBatch { entries } => {
-                for entry in &entries {
-                    if let Err(error) = parse_concrete_schedule_route(&entry.route) {
-                        return ScheduleResponse::Error(ScheduleFailure::new(
-                            ScheduleFailureCategory::InvalidTarget,
-                            error,
-                        ));
-                    }
-                    if let Err(error) = CronSchedule::parse(&entry.cron) {
-                        return ScheduleResponse::Error(ScheduleFailure::new(
-                            ScheduleFailureCategory::InvalidCron,
-                            error,
-                        ));
-                    }
+                if let Some(failure) = entries.iter().find_map(|entry| {
+                    crate::domains::schedule::definition_validation::schedule_definition_failure(
+                        &entry.route,
+                        &entry.cron,
+                    )
+                }) {
+                    return ScheduleResponse::Error(failure);
                 }
                 match self.create_schedules(entries) {
                     Ok(_) => ScheduleResponse::Ok,

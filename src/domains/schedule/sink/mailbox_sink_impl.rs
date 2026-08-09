@@ -358,7 +358,11 @@ impl ScheduleDomainRuntime<'_> {
     ) -> (crate::domains::schedule::ScheduleResponse, bool) {
         use crate::domains::schedule::{ScheduleFailure, ScheduleResponse};
 
-        if let Some(failure) = Self::schedule_definition_failure(&route, &cron) {
+        if let Some(failure) =
+            crate::domains::schedule::definition_validation::schedule_definition_failure(
+                &route, &cron,
+            )
+        {
             return (ScheduleResponse::Error(failure), false);
         }
 
@@ -377,10 +381,12 @@ impl ScheduleDomainRuntime<'_> {
     ) -> (crate::domains::schedule::ScheduleResponse, bool) {
         use crate::domains::schedule::{ScheduleFailure, ScheduleResponse};
 
-        if let Some(failure) = entries
-            .iter()
-            .find_map(|entry| Self::schedule_definition_failure(&entry.route, &entry.cron))
-        {
+        if let Some(failure) = entries.iter().find_map(|entry| {
+            crate::domains::schedule::definition_validation::schedule_definition_failure(
+                &entry.route,
+                &entry.cron,
+            )
+        }) {
             return (ScheduleResponse::Error(failure), false);
         }
 
@@ -420,25 +426,6 @@ impl ScheduleDomainRuntime<'_> {
                 false,
             ),
         }
-    }
-
-    fn schedule_definition_failure(
-        route: &str,
-        cron: &str,
-    ) -> Option<crate::domains::schedule::ScheduleFailure> {
-        use crate::domains::schedule::{ScheduleFailure, ScheduleFailureCategory};
-
-        if let Err(error) =
-            crate::domains::schedule::protocol::validate_concrete_schedule_route(route)
-        {
-            return Some(ScheduleFailure::new(
-                ScheduleFailureCategory::InvalidTarget,
-                error,
-            ));
-        }
-        crate::domains::schedule::CronSchedule::parse(cron)
-            .err()
-            .map(|error| ScheduleFailure::new(ScheduleFailureCategory::InvalidCron, error))
     }
 
     fn apply_subscribe_message(

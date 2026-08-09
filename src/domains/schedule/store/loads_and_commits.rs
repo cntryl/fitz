@@ -304,6 +304,8 @@ impl ScheduleStore {
     }
 
     #[cfg(not(test))]
+    // Keep the receiver so production and test builds share one call shape; test builds
+    // use the store-local receiver to inject a commit failure deterministically.
     #[allow(clippy::unused_self)]
     pub(in crate::domains::schedule::store) fn commit_or_inject(
         &self,

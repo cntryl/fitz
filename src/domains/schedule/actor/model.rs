@@ -10,9 +10,11 @@ pub(super) use crate::domains::schedule::protocol::{
 };
 pub(super) use crate::domains::schedule::store::{
     PersistedPendingFireClaim, PersistedSchedule, ScheduleAckDefinition, ScheduleFireClaim,
-    ScheduleInsert, SchedulePendingFireClaimAck, ScheduleStore,
+    ScheduleInsert, SchedulePendingFireClaimAck, SchedulePersistence, ScheduleStore,
 };
+#[cfg(test)]
 pub(super) use crate::prelude::Actor;
+#[cfg(test)]
 pub(super) use crate::runtime::actor::Context;
 pub(super) use crate::runtime::routing::RouteFamily;
 pub(super) use bytes::Bytes;
