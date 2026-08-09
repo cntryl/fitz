@@ -66,7 +66,7 @@ fn should_reject_enqueue_when_message_id_space_is_exhausted() {
 }
 
 #[test]
-fn should_reject_receive_when_delivery_attempt_counter_is_exhausted() {
+fn should_dead_letter_message_when_delivery_attempt_counter_is_exhausted() {
     // Arrange
     let store = Arc::new(
         cntryl_midge::Engine::open(
@@ -83,7 +83,11 @@ fn should_reject_receive_when_delivery_attempt_counter_is_exhausted() {
         None,
         crate::utils::idempotency::default_dedup_store(),
     );
-    let message_id = match actor.handle_send(Bytes::from_static(b"blocked"), None) {
+    let message_id = match actor.handle_send(Bytes::from_static(b"exhausted"), None) {
+        QueueResponse::Sent { id } => id,
+        other => panic!("expected send success, found {other:?}"),
+    };
+    let next_message_id = match actor.handle_send(Bytes::from_static(b"next"), None) {
         QueueResponse::Sent { id } => id,
         other => panic!("expected send success, found {other:?}"),
     };
@@ -97,9 +101,62 @@ fn should_reject_receive_when_delivery_attempt_counter_is_exhausted() {
     let response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
 
     // Assert
-    assert!(matches!(response, QueueResponse::Error { .. }));
-    assert_eq!(actor.ready_len(), 1);
-    assert!(actor.inflight.is_empty());
+    let QueueResponse::Received { messages } = response else {
+        panic!("expected next message after diversion");
+    };
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].id, next_message_id);
+    let dead_letters = actor.admin_dead_letters();
+    assert_eq!(dead_letters.len(), 1);
+    assert_eq!(dead_letters[0].message_id, message_id.as_u64());
+    assert_eq!(dead_letters[0].reason, "delivery_attempts_exhausted");
+}
+
+#[test]
+fn should_dead_letter_message_when_inflight_epoch_is_exhausted() {
+    // Arrange
+    let store = Arc::new(
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("open test store"),
+    );
+    let mut actor = QueueActor::new(
+        RouteFamily::new(0),
+        unique_queue_key("inflight-epoch-exhaustion"),
+        store,
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    let message_id = match actor.handle_send(Bytes::from_static(b"exhausted"), None) {
+        QueueResponse::Sent { id } => id,
+        other => panic!("expected send success, found {other:?}"),
+    };
+    let next_message_id = match actor.handle_send(Bytes::from_static(b"next"), None) {
+        QueueResponse::Sent { id } => id,
+        other => panic!("expected send success, found {other:?}"),
+    };
+    actor
+        .records
+        .get_mut(&message_id)
+        .expect("cached queue record")
+        .inflight_epoch = u64::MAX;
+
+    // Act
+    let response = actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1));
+
+    // Assert
+    let QueueResponse::Received { messages } = response else {
+        panic!("expected next message after diversion");
+    };
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].id, next_message_id);
+    let dead_letters = actor.admin_dead_letters();
+    assert_eq!(dead_letters.len(), 1);
+    assert_eq!(dead_letters[0].message_id, message_id.as_u64());
+    assert_eq!(dead_letters[0].reason, "inflight_epoch_exhausted");
 }
 
 #[test]

@@ -150,6 +150,9 @@ impl QueueActor {
     fn dlq_reason_label(reason: DlqReason) -> &'static str {
         match reason {
             DlqReason::MaxAttemptsExceeded => "max_attempts_exceeded",
+            DlqReason::HydrationFailed => "hydration_failed",
+            DlqReason::DeliveryAttemptsExhausted => "delivery_attempts_exhausted",
+            DlqReason::InflightEpochExhausted => "inflight_epoch_exhausted",
         }
     }
 

@@ -518,7 +518,7 @@ fn should_recover_reserved_unacked_message_as_ready_after_restart() {
 }
 
 #[test]
-fn should_keep_message_ready_when_receive_hydration_fails() {
+fn should_dead_letter_unhydratable_head_and_deliver_next_message() {
     // Arrange
     let store = Arc::new(
         cntryl_midge::Engine::open(
@@ -540,6 +540,10 @@ fn should_keep_message_ready_when_receive_hydration_fails() {
         QueueResponse::Sent { id } => id,
         other => panic!("Expected Sent response, found {other:?}"),
     };
+    let next_message_id = match actor.handle_send(Bytes::from("next message"), None) {
+        QueueResponse::Sent { id } => id,
+        other => panic!("Expected Sent response, found {other:?}"),
+    };
     actor.evict_cached_record(message_id);
     actor.evict_cached_body(message_id);
     let mut txn = store
@@ -558,12 +562,19 @@ fn should_keep_message_ready_when_receive_hydration_fails() {
 
     // Assert
     match response {
-        QueueResponse::Received { messages } => assert!(messages.is_empty()),
-        other => panic!("Expected empty Received response, found {other:?}"),
+        QueueResponse::Received { messages } => {
+            assert_eq!(messages.len(), 1);
+            assert_eq!(messages[0].id, next_message_id);
+        }
+        other => panic!("Expected next Received response, found {other:?}"),
     }
-    assert_eq!(actor.ready_len(), 1);
-    assert_eq!(actor.inflight.len(), 0);
-    assert!(actor.ready_contains(message_id));
+    let dead_letters = actor.admin_dead_letters();
+    assert_eq!(dead_letters.len(), 1);
+    assert_eq!(dead_letters[0].message_id, message_id.as_u64());
+    assert_eq!(dead_letters[0].reason, "hydration_failed");
+    assert!(actor
+        .replay_dead_letter(message_id)
+        .expect("replay hydration dead letter"));
 }
 
 #[test]

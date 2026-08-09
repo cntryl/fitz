@@ -29,6 +29,9 @@ impl QueueActor {
         let dlq_reason = match bytes[78] {
             0 => None,
             1 => Some(DlqReason::MaxAttemptsExceeded),
+            2 => Some(DlqReason::HydrationFailed),
+            3 => Some(DlqReason::DeliveryAttemptsExhausted),
+            4 => Some(DlqReason::InflightEpochExhausted),
             other => return Err(format!("Unknown DLQ reason {other}")),
         };
 

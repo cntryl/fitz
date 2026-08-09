@@ -118,6 +118,8 @@ pub const METRIC_QUEUE_RECOVERY_INDEX_INVALID: &str = "fitz_queue_recovery_index
 pub const METRIC_QUEUE_RECOVERY_INDEX_FALLBACKS: &str = "fitz_queue_recovery_index_fallbacks_total";
 pub const METRIC_QUEUE_REDELIVERIES: &str = "fitz_queue_redeliveries_total";
 pub const METRIC_QUEUE_DLQ_TRANSITIONS: &str = "fitz_queue_dlq_transitions_total";
+pub const METRIC_QUEUE_HYDRATION_DLQ_TRANSITIONS: &str =
+    "fitz_queue_hydration_dlq_transitions_total";
 pub const METRIC_QUEUE_COMPLETE_REJECTED: &str = "fitz_queue_complete_rejected_total";
 
 // Queue operation-specific counters and histograms
