@@ -729,7 +729,7 @@ async fn should_cleanup_real_notice_domain_subscription_on_close() {
         .try_recv()
         .expect("notice subscribe response");
     notice_sink.refresh_admin_snapshot_if_dirty();
-    assert_eq!(notice_sink.subscription_count(), 1);
+    assert_eq!(notice_sink.subscription_count(), Ok(1));
     assert_eq!(admin_read_model.notice_subscriptions(None, None).len(), 1);
 
     // Act
@@ -750,7 +750,7 @@ async fn should_cleanup_real_notice_domain_subscription_on_close() {
         .expect("publish after cleanup");
 
     // Assert
-    assert_eq!(notice_sink.subscription_count(), 0);
+    assert_eq!(notice_sink.subscription_count(), Ok(0));
     assert!(admin_read_model.notice_subscriptions(None, None).is_empty());
     assert!(subscriber_mailbox.receiver().try_recv().is_err());
 }

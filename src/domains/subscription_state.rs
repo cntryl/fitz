@@ -5,6 +5,8 @@ use std::collections::{HashMap, HashSet};
 
 /// Per-session wildcard registration cap shared by every wildcard-capable domain.
 pub(crate) const MAX_WILDCARD_REGISTRATIONS_PER_SESSION: usize = 128;
+/// Total Notice registration cap for one ephemeral session.
+pub(crate) const MAX_NOTICE_REGISTRATIONS_PER_SESSION: usize = 1_024;
 
 pub(crate) fn wildcard_registration_limit_reached(
     pattern: &Pattern,
@@ -48,6 +50,12 @@ impl<T: RoutedSubscription> RoutedSubscriptionSet<T> {
 
     pub(crate) fn subscription_count(&self) -> usize {
         self.subscriptions.len()
+    }
+
+    pub(crate) fn subscription_count_for_session(&self, session_id: u64) -> usize {
+        self.session_subscription_ids
+            .get(&session_id)
+            .map_or(0, HashSet::len)
     }
 
     pub(crate) fn wildcard_subscription_count_for_session(&self, session_id: u64) -> usize {

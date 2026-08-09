@@ -101,6 +101,8 @@ pub enum DeliveryError {
     HighLaneFull { capacity: usize, current_len: usize },
     /// Mailbox receiver has been dropped (actor stopped)
     ActorStopped,
+    /// The destination remained alive but did not reply before its deadline.
+    Timeout,
     /// A sink panicked while accepting an envelope.
     SinkPanicked,
 }
@@ -118,7 +120,9 @@ impl DeliveryError {
                 capacity,
                 current_len,
             } => usize_to_f64_saturating(*current_len) / usize_to_f64_saturating(*capacity),
-            DeliveryError::ActorStopped | DeliveryError::SinkPanicked => 1.0,
+            DeliveryError::ActorStopped | DeliveryError::Timeout | DeliveryError::SinkPanicked => {
+                1.0
+            }
         }
     }
 }
@@ -142,6 +146,7 @@ impl std::fmt::Display for DeliveryError {
                 )
             }
             DeliveryError::ActorStopped => write!(f, "Actor has stopped"),
+            DeliveryError::Timeout => write!(f, "Delivery timed out"),
             DeliveryError::SinkPanicked => write!(f, "Sink panicked during delivery"),
         }
     }
@@ -299,7 +304,9 @@ impl Router {
                 DeliveryError::HighLaneFull { .. } => {
                     metrics.counter_inc(obs::METRIC_ROUTER_HIGH_LANE_BACKPRESSURE);
                 }
-                DeliveryError::ActorStopped | DeliveryError::SinkPanicked => {}
+                DeliveryError::ActorStopped
+                | DeliveryError::Timeout
+                | DeliveryError::SinkPanicked => {}
             }
         }
     }
