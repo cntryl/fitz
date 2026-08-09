@@ -14,6 +14,11 @@ pub(super) enum NoticeDomainCommand {
     UnsubscribeAllForSession(u64, crossbeam_channel::Sender<usize>),
     #[cfg(test)]
     PanicForTests,
+    #[cfg(test)]
+    BlockForTests(
+        crossbeam_channel::Sender<()>,
+        crossbeam_channel::Receiver<()>,
+    ),
 }
 
 pub(super) struct NoticeDomainActor {
@@ -63,6 +68,11 @@ impl Actor for NoticeDomainActor {
             #[cfg(test)]
             NoticeDomainCommand::PanicForTests => {
                 panic!("test Notice domain actor panic");
+            }
+            #[cfg(test)]
+            NoticeDomainCommand::BlockForTests(entered, release) => {
+                let _ = entered.send(());
+                let _ = release.recv();
             }
         }
     }

@@ -50,7 +50,7 @@ fn should_retain_other_notice_subscription_given_unsubscribe_on_same_session() {
     ))
     .expect("subscribe retained notice route");
     let _retained_subscribe_response = decode_notice_response(&subscriber_mailbox);
-    assert_eq!(sink.subscription_count(), 2);
+    assert_eq!(sink.subscription_count(), Ok(2));
     drain_mailbox(&subscriber_mailbox);
     drain_mailbox(&publisher_mailbox);
 
@@ -70,7 +70,7 @@ fn should_retain_other_notice_subscription_given_unsubscribe_on_same_session() {
     let unsubscribe_response = decode_notice_response(&subscriber_mailbox);
     assert_eq!(unsubscribe_response.status, 0);
     assert!(unsubscribe_response.subscription_id.is_none());
-    assert_eq!(sink.subscription_count(), 1);
+    assert_eq!(sink.subscription_count(), Ok(1));
 
     sink.deliver(Envelope::from_route(
         publisher_address.clone(),
@@ -174,7 +174,7 @@ fn should_retain_notice_admin_snapshot_entry_given_unsubscribe_of_sibling_patter
 
     // Assert
     assert_eq!(unsubscribe_response.status, 0);
-    assert_eq!(sink.subscription_count(), 1);
+    assert_eq!(sink.subscription_count(), Ok(1));
 
     refresh_notice_admin_snapshot(&sink);
 
@@ -236,7 +236,7 @@ fn should_increment_delivery_drop_counter_given_failing_subscriber_route() {
         crate::observability::metrics().counter_get("fitz_notice_delivery_drops_total"),
         before_drops + 1
     );
-    assert_eq!(sink.subscription_count(), 1);
+    assert_eq!(sink.subscription_count(), Ok(1));
     assert!(subscriber_mailbox.receiver().try_recv().is_err());
 }
 
@@ -306,6 +306,95 @@ fn should_retry_notice_delivery_when_outbound_mailbox_is_temporarily_full() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
+fn should_isolate_unrelated_family_when_notice_subscriber_blocks() {
+    // Arrange
+    let blocked_family = RouteFamily::new(1);
+    let healthy_family = RouteFamily::new(2);
+    let blocked_route = "notice://acme/blocked";
+    let healthy_route = "notice://acme/healthy";
+    let blocked_notice = RouteAddress::new(blocked_family, Route::new(blocked_route));
+    let healthy_notice = RouteAddress::new(healthy_family, Route::new(healthy_route));
+    let blocked_subscriber = RouteAddress::new(blocked_family, Route::new("inbox://session/7"));
+    let healthy_subscriber = RouteAddress::new(healthy_family, Route::new("inbox://session/8"));
+    let router = Arc::new(Router::new());
+    let blocked_mailbox = Arc::new(Mailbox::new(4));
+    let healthy_mailbox = Arc::new(Mailbox::new(4));
+    router.register(blocked_subscriber.clone(), blocked_mailbox.clone());
+    router.register(healthy_subscriber.clone(), healthy_mailbox.clone());
+    let sink = Arc::new(NoticeDomainSink::new(
+        router.clone(),
+        crate::control::admin::read_model::AdminReadModel::new(),
+    ));
+    subscribe_notice_pattern(
+        &sink,
+        &blocked_subscriber,
+        &blocked_notice,
+        7,
+        blocked_route,
+        blocked_family,
+    );
+    assert_eq!(decode_notice_response(&blocked_mailbox).status, 0);
+    subscribe_notice_pattern(
+        &sink,
+        &healthy_subscriber,
+        &healthy_notice,
+        8,
+        healthy_route,
+        healthy_family,
+    );
+    assert_eq!(decode_notice_response(&healthy_mailbox).status, 0);
+    let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);
+    let (release_tx, release_rx) = crossbeam_channel::bounded(1);
+    router.register(
+        blocked_subscriber,
+        Arc::new(BlockingSink {
+            entered: entered_tx,
+            release: release_rx,
+        }),
+    );
+    let blocked_sink = sink.clone();
+    let blocked_publish = std::thread::spawn(move || {
+        blocked_sink.deliver(Envelope::from_route(
+            RouteAddress::new(blocked_family, Route::new("inbox://session/11")),
+            blocked_notice,
+            FrameContext::new(
+                11,
+                ChannelId::Sub,
+                MessageType::new(500),
+                encode_notice_publish(blocked_route, b"blocked"),
+                blocked_family,
+            ),
+        ))
+    });
+    entered_rx.recv().expect("blocked delivery entered");
+
+    // Act
+    let started = Instant::now();
+    let healthy_result = sink.deliver(Envelope::from_route(
+        RouteAddress::new(healthy_family, Route::new("inbox://session/12")),
+        healthy_notice,
+        FrameContext::new(
+            12,
+            ChannelId::Sub,
+            MessageType::new(500),
+            encode_notice_publish(healthy_route, b"healthy"),
+            healthy_family,
+        ),
+    ));
+    let elapsed = started.elapsed();
+    let delivered = healthy_mailbox.receiver().try_recv();
+    release_tx.send(()).expect("release blocked delivery");
+    let blocked_result = blocked_publish.join().expect("join blocked publish");
+
+    // Assert
+    assert!(healthy_result.is_ok());
+    assert!(blocked_result.is_ok());
+    assert!(delivered.is_ok());
+    assert!(elapsed < Duration::from_millis(250), "elapsed: {elapsed:?}");
+}
+
+#[test]
 fn should_reject_wildcard_subscription_when_session_limit_is_exceeded() {
     // Arrange
     let family = RouteFamily::new(1);
@@ -353,12 +442,63 @@ fn should_reject_wildcard_subscription_when_session_limit_is_exceeded() {
     );
     assert_eq!(
         sink.subscription_count(),
-        MAX_WILDCARD_REGISTRATIONS_PER_SESSION
+        Ok(MAX_WILDCARD_REGISTRATIONS_PER_SESSION)
     );
     refresh_notice_admin_snapshot(&sink);
     assert_eq!(
         admin_read_model.notice_subscriptions(None, None).len(),
         MAX_WILDCARD_REGISTRATIONS_PER_SESSION
+    );
+}
+
+#[test]
+fn should_reject_exact_subscription_when_total_session_limit_is_exceeded() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 7;
+    let notice_address = RouteAddress::new(family, Route::new("notice://acme/app/events"));
+    let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let router = Arc::new(Router::new());
+    let subscriber_mailbox = Arc::new(Mailbox::new(MAX_NOTICE_REGISTRATIONS_PER_SESSION + 4));
+    router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+    let sink = NoticeDomainSink::new(
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+
+    for pattern_index in 0..MAX_NOTICE_REGISTRATIONS_PER_SESSION {
+        let pattern = format!("notice://acme/app/{pattern_index}");
+        subscribe_notice_pattern(
+            &sink,
+            &subscriber_address,
+            &notice_address,
+            session_id,
+            &pattern,
+            family,
+        );
+        assert_eq!(decode_notice_response(&subscriber_mailbox).status, 0);
+    }
+
+    // Act
+    subscribe_notice_pattern(
+        &sink,
+        &subscriber_address,
+        &notice_address,
+        session_id,
+        "notice://acme/app/overflow",
+        family,
+    );
+    let overflow_response = decode_notice_response(&subscriber_mailbox);
+
+    // Assert
+    assert_eq!(overflow_response.status, 1);
+    assert_eq!(
+        overflow_response.error.as_deref(),
+        Some("notice subscription limit exceeded (1024 per session)")
+    );
+    assert_eq!(
+        sink.subscription_count(),
+        Ok(MAX_NOTICE_REGISTRATIONS_PER_SESSION)
     );
 }
 
@@ -424,6 +564,6 @@ fn should_return_existing_subscription_id_given_idempotent_wildcard_subscribe_at
     );
     assert_eq!(
         sink.subscription_count(),
-        MAX_WILDCARD_REGISTRATIONS_PER_SESSION
+        Ok(MAX_WILDCARD_REGISTRATIONS_PER_SESSION)
     );
 }

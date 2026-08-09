@@ -537,7 +537,9 @@ impl RpcDomainRuntime<'_> {
                 crate::runtime::RouteError::RouteNotFound(_)
                 | crate::runtime::RouteError::DeliveryFailed(
                     _,
-                    DeliveryError::ActorStopped | DeliveryError::SinkPanicked,
+                    DeliveryError::ActorStopped
+                    | DeliveryError::Timeout
+                    | DeliveryError::SinkPanicked,
                 ),
             ) => self.handle_disconnected_worker_dispatch(envelope, meta, req, worker.session_id),
             Err(crate::runtime::RouteError::DeliveryFailed(

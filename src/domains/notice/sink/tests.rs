@@ -4,6 +4,9 @@ use crate::dispatch::protocol::frame::ChannelId;
 use crate::dispatch::protocol::frame_context::FrameContext;
 use crate::dispatch::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
 use crate::dispatch::protocol::tlv::MessageType;
+use crate::domains::subscription_state::{
+    MAX_NOTICE_REGISTRATIONS_PER_SESSION, MAX_WILDCARD_REGISTRATIONS_PER_SESSION,
+};
 use crate::runtime::mailbox::Mailbox;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use bytes::Bytes;
@@ -56,6 +59,23 @@ impl MailboxSink for FailingSink {
 
 struct RetrySink {
     state: Arc<Mutex<Vec<Result<(), DeliveryError>>>>,
+}
+
+struct BlockingSink {
+    entered: crossbeam_channel::Sender<()>,
+    release: crossbeam_channel::Receiver<()>,
+}
+
+impl MailboxSink for BlockingSink {
+    fn deliver(&self, _envelope: Envelope) -> Result<(), DeliveryError> {
+        let _ = self.entered.send(());
+        let _ = self.release.recv();
+        Ok(())
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
 }
 
 impl MailboxSink for RetrySink {

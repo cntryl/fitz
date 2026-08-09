@@ -40,7 +40,10 @@ fn should_reject_notice_delivery_when_managed_actor_is_stopped() {
     // Assert
     assert!(!sink.is_actor_running());
     assert!(matches!(result, Err(DeliveryError::ActorStopped)));
-    assert_eq!(sink.subscription_count(), 0);
+    assert!(matches!(
+        sink.subscription_count(),
+        Err(DeliveryError::ActorStopped)
+    ));
 }
 
 #[test]
@@ -65,7 +68,7 @@ fn should_route_notice_live_count_queries_through_managed_actor() {
     );
     let subscribe_response = decode_notice_response(&subscriber_mailbox);
     assert_eq!(subscribe_response.status, 0);
-    assert_eq!(sink.subscription_count(), 1);
+    assert_eq!(sink.subscription_count(), Ok(1));
 
     // Act
     sink.stop_actor_for_tests();
@@ -73,7 +76,49 @@ fn should_route_notice_live_count_queries_through_managed_actor() {
 
     // Assert
     assert!(!sink.is_actor_running());
-    assert_eq!(subscription_count, 0);
+    assert!(matches!(
+        subscription_count,
+        Err(DeliveryError::ActorStopped)
+    ));
+}
+
+#[test]
+fn should_report_failed_notice_cleanup_when_managed_actor_is_stopped() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let sink = NoticeDomainSink::new(
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+    sink.stop_actor_for_tests();
+
+    // Act
+    let result = sink.unsubscribe_all_for_session(7);
+
+    // Assert
+    assert!(matches!(result, Err(DeliveryError::ActorStopped)));
+}
+
+#[test]
+fn should_report_timeout_when_notice_actor_is_alive_but_busy() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let sink = NoticeDomainSink::new(
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+    let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);
+    let (release_tx, release_rx) = crossbeam_channel::bounded(1);
+    sink.block_actor_for_tests(entered_tx, release_rx);
+    entered_rx.recv().expect("blocking sink entered");
+
+    // Act
+    let result = sink.subscription_count();
+    release_tx.send(()).expect("release blocking sink");
+
+    // Assert
+    assert!(sink.is_actor_running());
+    assert!(matches!(result, Err(DeliveryError::Timeout)));
 }
 
 #[test]
@@ -327,7 +372,7 @@ fn should_remove_notice_subscriptions_given_session_cleanup() {
     .expect("publish notice event");
 
     // Assert
-    assert_eq!(sink.subscription_count(), 0);
+    assert_eq!(sink.subscription_count(), Ok(0));
     assert!(subscriber_mailbox.receiver().try_recv().is_err());
     assert!(publisher_mailbox.receiver().try_recv().is_err());
     assert_eq!(sink.subscription_family_count(), 0);
@@ -378,10 +423,11 @@ fn should_clear_notice_admin_snapshot_given_session_cleanup_with_mixed_subscript
     assert_notice_admin_routes(&before_routes, &[exact_route, wildcard_route]);
 
     // Act
-    sink.unsubscribe_all_for_session(session_id);
+    sink.unsubscribe_all_for_session(session_id)
+        .expect("notice session cleanup");
 
     // Assert
-    assert_eq!(sink.subscription_count(), 0);
+    assert_eq!(sink.subscription_count(), Ok(0));
     refresh_notice_admin_snapshot(&sink);
     assert!(admin_read_model.notice_subscriptions(None, None).is_empty());
     assert!(admin_read_model.notice_routes(None).is_empty());
@@ -432,7 +478,8 @@ fn should_prune_notice_route_stats_after_last_subscription_is_removed() {
     drain_mailbox(&publisher_mailbox);
 
     // Act
-    sink.unsubscribe_all_for_session(session_id);
+    sink.unsubscribe_all_for_session(session_id)
+        .expect("notice session cleanup");
     refresh_notice_admin_snapshot(&sink);
 
     // Assert

@@ -789,7 +789,9 @@ impl RpcDomainRuntime<'_> {
                 crate::runtime::RouteError::RouteNotFound(_)
                 | crate::runtime::RouteError::DeliveryFailed(
                     _,
-                    DeliveryError::ActorStopped | DeliveryError::SinkPanicked,
+                    DeliveryError::ActorStopped
+                    | DeliveryError::Timeout
+                    | DeliveryError::SinkPanicked,
                 ),
             ) => {
                 self.counter_inc("rpc_request_forward_errors_total");

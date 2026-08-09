@@ -4,13 +4,9 @@
 //! session-scoped, cleaned up on disconnect, and are never replayed or
 //! restored after broker restart.
 
-#[cfg(test)]
-use crate::dispatch::protocol::frame_context::FrameContext;
 use crate::domains::notice::NoticeMetrics;
-use crate::domains::subscription_state::{
-    RoutedSubscriptionSet, MAX_WILDCARD_REGISTRATIONS_PER_SESSION,
-};
-use crate::runtime::{DeliveryError, Envelope, MailboxSink, ManagedActor, RouteError, Router};
+use crate::domains::subscription_state::RoutedSubscriptionSet;
+use crate::runtime::{DeliveryError, Envelope, MailboxSink, ManagedActor, Router};
 use chrono::Utc;
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -19,17 +15,21 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 mod actor_runtime;
+mod delivery_worker;
 mod model;
 #[cfg(test)]
 mod test_channels;
+mod validation;
 
 use actor_runtime::{NoticeDomainActor, NoticeDomainCommand};
+use delivery_worker::{notice_delivery_worker, NoticeDeliveryJob, NOTICE_DELIVERY_HANDOFF_TIMEOUT};
 use model::{
     notice_route_realm, usize_to_u64, NoticeDeliveryTarget, NoticeDeliveryTargets,
     NoticeMatchedRoutePatterns, NoticeRouteStats, NoticeRouteStatsKey, NoticeSubscription,
 };
 #[cfg(test)]
 use test_channels::{test_client_channel_from_protocol, test_protocol_channel_from_client};
+use validation::subscription_limit_error;
 
 /// Live notice pub/sub state for the current broker process.
 ///
@@ -45,6 +45,9 @@ struct NoticeDomainCore {
     admin_snapshot_dirty: AtomicBool,
     metrics: Option<NoticeMetrics>,
     active: AtomicBool,
+    /// One bounded, ordered delivery lane per route family prevents a blocked
+    /// subscriber from stalling unrelated families on the Notice actor.
+    delivery_workers: Mutex<HashMap<u64, crossbeam_channel::Sender<NoticeDeliveryJob>>>,
 }
 
 pub struct NoticeDomainSink {
@@ -66,6 +69,7 @@ impl NoticeDomainSink {
             admin_snapshot_dirty: AtomicBool::new(false),
             metrics: None,
             active: AtomicBool::new(true),
+            delivery_workers: Mutex::new(HashMap::new()),
         });
         let actor = Self::spawn_actor(core.clone());
         Self { core, actor }
@@ -148,6 +152,17 @@ impl NoticeDomainSink {
         self.actor.stop();
     }
 
+    #[cfg(test)]
+    pub(super) fn block_actor_for_tests(
+        &self,
+        entered: crossbeam_channel::Sender<()>,
+        release: crossbeam_channel::Receiver<()>,
+    ) {
+        self.actor
+            .try_send_high_priority(NoticeDomainCommand::BlockForTests(entered, release))
+            .expect("enqueue Notice actor test block");
+    }
+
     pub fn refresh_admin_snapshot_if_dirty(&self) {
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         if let Err(error) = self
@@ -171,20 +186,34 @@ impl NoticeDomainSink {
         }
     }
 
-    pub fn subscription_count(&self) -> usize {
+    /// Return the actor-owned live Notice subscription count.
+    ///
+    /// # Errors
+    ///
+    /// Returns the enqueue failure or `DeliveryError::Timeout` when the live
+    /// actor does not reply before the bounded query deadline.
+    pub fn subscription_count(&self) -> Result<usize, DeliveryError> {
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         if let Err(error) = self
             .actor
             .try_send_high_priority(NoticeDomainCommand::ReadSubscriptionCount(reply_tx))
         {
             tracing::warn!(domain = "notice", error = %error, "Notice subscription-count query enqueue failed");
-            return 0;
+            return Err(error);
         }
 
-        reply_rx.recv_timeout(Duration::from_secs(1)).unwrap_or(0)
+        reply_rx
+            .recv_timeout(Duration::from_secs(1))
+            .map_err(|_| DeliveryError::Timeout)
     }
 
-    pub fn unsubscribe_all_for_session(&self, session_id: u64) -> usize {
+    /// Remove every Notice registration owned by one ephemeral session.
+    ///
+    /// # Errors
+    ///
+    /// Returns the enqueue failure or `DeliveryError::Timeout` when the live
+    /// actor does not reply before the bounded cleanup deadline.
+    pub fn unsubscribe_all_for_session(&self, session_id: u64) -> Result<usize, DeliveryError> {
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         if let Err(error) =
             self.actor
@@ -197,10 +226,12 @@ impl NoticeDomainSink {
                 error = %error,
                 "Notice session cleanup command enqueue failed"
             );
-            return 0;
+            return Err(error);
         }
 
-        reply_rx.recv_timeout(Duration::from_secs(1)).unwrap_or(0)
+        reply_rx
+            .recv_timeout(Duration::from_secs(1))
+            .map_err(|_| DeliveryError::Timeout)
     }
 
     fn deliver_to_actor(
@@ -228,7 +259,7 @@ impl NoticeDomainSink {
 
         reply_rx
             .recv_timeout(Duration::from_secs(1))
-            .unwrap_or(Err(DeliveryError::ActorStopped))
+            .unwrap_or(Err(DeliveryError::Timeout))
     }
 
     fn can_accept_without_reply(envelope: &Envelope) -> bool {
@@ -387,64 +418,24 @@ impl NoticeDomainCore {
         route: &crate::runtime::routing::Route,
         payload: &bytes::Bytes,
     ) {
-        const MAX_RETRIES: usize = 200;
-
-        #[cfg(test)]
-        let notify_payload = crate::dispatch::protocol::notice_codec::encode_notify(
-            target.subscription_id,
-            route,
-            payload.as_ref(),
-        );
-
-        #[cfg(test)]
-        let notify_ctx = FrameContext::new(
-            target.session_id,
-            crate::dispatch::protocol::frame::ChannelId::Sub,
-            crate::dispatch::protocol::tlv::MessageType::new(504),
-            notify_payload.into(),
-            *target.subscriber.family(),
-        );
-
-        #[cfg(not(test))]
-        let notification = crate::domains::notice::NoticeClientNotification::new(
-            target.session_id,
-            *target.subscriber.family(),
-            target.subscription_id,
-            route.clone(),
-            payload.clone(),
-        );
-
-        let subscriber_sink = self.router.resolve_sink(&target.subscriber);
-
-        for attempt in 0..=MAX_RETRIES {
-            #[cfg(test)]
-            let notify_envelope = Envelope::new(target.subscriber.clone(), notify_ctx.clone());
-
-            #[cfg(not(test))]
-            let notify_envelope = Envelope::new(target.subscriber.clone(), notification.clone());
-
-            let delivery_result = if let Some(sink) = subscriber_sink.as_ref() {
-                sink.deliver(notify_envelope)
-                    .map_err(|error| RouteError::DeliveryFailed(target.subscriber.clone(), error))
-            } else {
-                self.router.route(notify_envelope)
-            };
-
-            match delivery_result {
-                Ok(()) => return,
-                Err(RouteError::DeliveryFailed(_, DeliveryError::MailboxFull { .. }))
-                    if attempt < MAX_RETRIES =>
-                {
-                    std::thread::yield_now();
-                }
-                Err(_) => {
-                    crate::observability::counter_inc(
-                        crate::domains::notice::metrics::METRIC_DELIVERY_DROPS_TOTAL,
-                    );
-                    return;
-                }
-            }
+        let family = *target.subscriber.family();
+        let worker = notice_delivery_worker(&self.delivery_workers, &self.router, family);
+        let Some(worker) = worker else {
+            crate::observability::counter_inc(
+                crate::domains::notice::metrics::METRIC_DELIVERY_DROPS_TOTAL,
+            );
+            return;
+        };
+        let (completed_tx, completed_rx) = crossbeam_channel::bounded(1);
+        let job =
+            NoticeDeliveryJob::new(target.clone(), route.clone(), payload.clone(), completed_tx);
+        if worker.try_send(job).is_err() {
+            crate::observability::counter_inc(
+                crate::domains::notice::metrics::METRIC_DELIVERY_DROPS_TOTAL,
+            );
+            return;
         }
+        let _ = completed_rx.recv_timeout(NOTICE_DELIVERY_HANDOFF_TIMEOUT);
     }
 
     fn collect_matching_targets_for_route(
@@ -752,6 +743,10 @@ impl NoticeDomainCore {
         };
 
         let mut families = self.families.lock();
+        let session_subscription_count = families
+            .values()
+            .map(|state| state.subscription_count_for_session(sub_msg.session_id.0))
+            .sum::<usize>();
         let state = families
             .entry(family_id)
             .or_insert_with(RoutedSubscriptionSet::new);
@@ -772,21 +767,10 @@ impl NoticeDomainCore {
                 },
                 false,
             )
-        } else if state.wildcard_registration_limit_reached(sub_msg.session_id.0, &compiled) {
-            tracing::warn!(
-                domain = "notice",
-                session = sub_msg.session_id.0,
-                pattern = sub_msg.pattern.as_str(),
-                limit = MAX_WILDCARD_REGISTRATIONS_PER_SESSION,
-                "Rejected wildcard notice subscription because session limit was exceeded"
-            );
-            crate::observability::counter_inc("fitz_notice_wildcard_limit_rejects_total");
-            (
-                NoticeResponse::Error(format!(
-                    "wildcard subscription limit exceeded ({MAX_WILDCARD_REGISTRATIONS_PER_SESSION} per session)"
-                )),
-                false,
-            )
+        } else if let Some(error) =
+            subscription_limit_error(state, session_subscription_count, sub_msg, &compiled)
+        {
+            (error, false)
         } else {
             let Ok(new_id) =
                 self.next_sub_id
@@ -990,3 +974,5 @@ impl NoticeDomainCore {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+use crate::dispatch::protocol::frame_context::FrameContext;

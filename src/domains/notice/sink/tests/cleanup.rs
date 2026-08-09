@@ -23,7 +23,7 @@ fn should_route_notice_session_cleanup_command_through_managed_actor() {
     );
     let response = decode_notice_response(&client_mailbox);
     assert_eq!(response.status, 0);
-    assert_eq!(sink.subscription_count(), 1);
+    assert_eq!(sink.subscription_count(), Ok(1));
 
     // Act
     sink.stop_actor_for_tests();
@@ -32,6 +32,6 @@ fn should_route_notice_session_cleanup_command_through_managed_actor() {
 
     // Assert
     assert!(!sink.is_actor_running());
-    assert_eq!(removed, 0);
-    assert_eq!(subscription_count, 0);
+    assert_eq!(removed, Err(DeliveryError::ActorStopped));
+    assert_eq!(subscription_count, Err(DeliveryError::ActorStopped));
 }
