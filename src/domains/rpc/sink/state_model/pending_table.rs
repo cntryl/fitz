@@ -55,9 +55,9 @@ impl RpcPendingTable {
             correlation_id,
         };
         let expires_at = pending.expires_at;
-        let route = pending.route.clone();
+        let route = pending.dispatch_info.route.clone();
         if let Some(replaced) = self.pending.insert(key, pending) {
-            self.decrement_route_count(family, &replaced.route);
+            self.decrement_route_count(family, &replaced.dispatch_info.route);
         }
         *self.route_counts.entry((family, route)).or_default() += 1;
         self.expirations
@@ -168,7 +168,7 @@ impl RpcPendingTable {
         key: &RpcCorrelationKey,
     ) -> Option<RpcPendingRequest> {
         let pending = self.pending.remove(key)?;
-        self.decrement_route_count(key.family, &pending.route);
+        self.decrement_route_count(key.family, &pending.dispatch_info.route);
         Some(pending)
     }
 
@@ -198,19 +198,21 @@ impl RpcPendingTable {
             let pending = self
                 .remove(key)
                 .expect("collected worker-owned pending request");
-            if pending.caller_session_id != session_id {
-                if let Some(caller_inbox_addr) = pending.caller_inbox_addr {
+            if pending.dispatch_info.caller_session_id != session_id {
+                if let Some(caller_inbox_addr) = pending.dispatch_info.caller_inbox_addr {
                     disconnect_deliveries.push(RpcPendingErrorDelivery {
                         correlation_id: key.correlation_id,
-                        caller_session_id: pending.caller_session_id,
+                        caller_session_id: pending.dispatch_info.caller_session_id,
                         caller_inbox_addr,
                     });
                 }
             }
         }
         for pending in self.pending.values_mut() {
-            if pending.caller_session_id == session_id && pending.caller_inbox_addr.is_some() {
-                pending.caller_inbox_addr = None;
+            if pending.dispatch_info.caller_session_id == session_id
+                && pending.dispatch_info.caller_inbox_addr.is_some()
+            {
+                pending.dispatch_info.caller_inbox_addr = None;
                 detached_callers += 1;
             }
         }
@@ -233,7 +235,7 @@ impl RpcPendingTable {
             .iter()
             .filter_map(|(key, pending)| {
                 registration_ids
-                    .contains(&pending.registration_id)
+                    .contains(&pending.dispatch_info.registration_id)
                     .then_some(*key)
             })
             .collect();
@@ -241,10 +243,10 @@ impl RpcPendingTable {
             let pending = self
                 .remove(key)
                 .expect("collected registration-owned pending request");
-            if let Some(caller_inbox_addr) = pending.caller_inbox_addr {
+            if let Some(caller_inbox_addr) = pending.dispatch_info.caller_inbox_addr {
                 disconnect_deliveries.push(RpcPendingErrorDelivery {
                     correlation_id: key.correlation_id,
-                    caller_session_id: pending.caller_session_id,
+                    caller_session_id: pending.dispatch_info.caller_session_id,
                     caller_inbox_addr,
                 });
             }

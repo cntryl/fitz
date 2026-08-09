@@ -1,3 +1,4 @@
+use super::response_forwarder::RpcResponseForwarder;
 use super::state_model::{
     rpc_admin_snapshot_due, rpc_timeout_sweep_interval, Arc, AtomicBool, DeliveryError, Duration,
     Envelope, Instant, Ordering, Route, RouteAddress, RpcDomainActor, RpcDomainCommand,
@@ -6,13 +7,11 @@ use super::state_model::{
     RpcWorkerDispatch, RPC_BACKPRESSURE_ERROR, RPC_TIMEOUT_ERROR, RPC_WORKER_NOT_FOUND_ERROR,
 };
 #[cfg(test)]
-use super::state_model::{RpcQueuedRequest, RpcWorker};
+use super::state_model::{RpcQueuedRequest, RpcWorker, RPC_MSG_TYPE_REQUEST};
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
 #[cfg(not(test))]
-use crate::domains::rpc::{
-    RpcClientForwardedResponse, RpcClientForwardedResponseBody, RpcWorkerRequestDelivery,
-};
+use crate::domains::rpc::RpcWorkerRequestDelivery;
 use crate::runtime::routing::RouteFamily;
 
 impl RpcDomainActor {
@@ -40,6 +39,36 @@ impl RpcDomainSink {
         }
     }
 
+    fn control_targets(&self) -> Vec<Option<RouteFamily>> {
+        self.family_families.as_ref().map_or_else(
+            || vec![None],
+            |families| families.iter().copied().map(Some).collect(),
+        )
+    }
+
+    fn primary_control_target(&self) -> Option<RouteFamily> {
+        self.family_families
+            .as_ref()
+            .and_then(|families| families.first().copied())
+    }
+
+    fn try_send_control(
+        &self,
+        family: Option<RouteFamily>,
+        command: RpcDomainCommand,
+    ) -> Result<(), String> {
+        if let Some(runtime) = self.family_runtime.as_ref() {
+            let family = family.ok_or_else(|| "RPC family target is missing".to_string())?;
+            runtime
+                .try_enqueue(family, crate::runtime::FamilyActorLane::Control, command)
+                .map_err(|error| error.to_string())
+        } else {
+            self.actor
+                .try_send_high_priority(command)
+                .map_err(|error| error.to_string())
+        }
+    }
+
     pub fn stop(&self) {
         self.active.store(false, Ordering::Relaxed);
         if let Some(runtime) = self.family_runtime.as_ref() {
@@ -57,75 +86,39 @@ impl RpcDomainSink {
     }
 
     pub(crate) fn expire_timed_out_requests(&self) {
-        if let (Some(runtime), Some(families)) =
-            (self.family_runtime.as_ref(), self.family_families.as_ref())
-        {
-            for family in families.iter().copied() {
-                if let Err(error) = runtime.try_enqueue(
-                    family,
-                    crate::runtime::FamilyActorLane::Control,
-                    RpcDomainCommand::ExpireTimedOutRequestsAt(Instant::now(), None),
-                ) {
-                    tracing::warn!(
-                        domain = "rpc",
-                        family = family.id(),
-                        error = %error,
-                        "RPC timeout sweep enqueue failed"
-                    );
-                }
+        for family in self.control_targets() {
+            if let Err(error) = self.try_send_control(
+                family,
+                RpcDomainCommand::ExpireTimedOutRequestsAt(Instant::now(), None),
+            ) {
+                tracing::warn!(
+                    domain = "rpc",
+                    family = family.map(|target| target.id()),
+                    error = %error,
+                    "RPC timeout sweep enqueue failed"
+                );
             }
-            return;
-        }
-
-        if let Err(error) =
-            self.actor
-                .try_send_high_priority(RpcDomainCommand::ExpireTimedOutRequestsAt(
-                    Instant::now(),
-                    None,
-                ))
-        {
-            tracing::warn!(domain = "rpc", error = %error, "RPC timeout sweep enqueue failed");
         }
     }
 
     #[cfg(test)]
     pub(super) fn expire_timed_out_requests_at(&self, now: Instant) {
-        if let (Some(runtime), Some(families)) =
-            (self.family_runtime.as_ref(), self.family_families.as_ref())
-        {
-            for family in families.iter().copied() {
-                let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
-                if let Err(error) = runtime.try_enqueue(
-                    family,
-                    crate::runtime::FamilyActorLane::Control,
-                    RpcDomainCommand::ExpireTimedOutRequestsAt(now, Some(reply_tx)),
-                ) {
-                    tracing::warn!(
-                        domain = "rpc",
-                        family = family.id(),
-                        error = %error,
-                        "RPC timeout sweep enqueue failed"
-                    );
-                    continue;
-                }
-                let _ = reply_rx.recv_timeout(Duration::from_secs(1));
+        for family in self.control_targets() {
+            let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+            if let Err(error) = self.try_send_control(
+                family,
+                RpcDomainCommand::ExpireTimedOutRequestsAt(now, Some(reply_tx)),
+            ) {
+                tracing::warn!(
+                    domain = "rpc",
+                    family = family.map(|target| target.id()),
+                    error = %error,
+                    "RPC timeout sweep enqueue failed"
+                );
+                continue;
             }
-            return;
+            let _ = reply_rx.recv_timeout(Duration::from_secs(1));
         }
-
-        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
-        if let Err(error) =
-            self.actor
-                .try_send_high_priority(RpcDomainCommand::ExpireTimedOutRequestsAt(
-                    now,
-                    Some(reply_tx),
-                ))
-        {
-            tracing::warn!(domain = "rpc", error = %error, "RPC timeout sweep enqueue failed");
-            return;
-        }
-
-        let _ = reply_rx.recv_timeout(Duration::from_secs(1));
     }
 
     #[cfg(test)]
@@ -146,22 +139,10 @@ impl RpcDomainSink {
 
     #[cfg(test)]
     pub(crate) fn panic_actor_for_tests(&self) {
-        if let (Some(runtime), Some(family)) = (
-            self.family_runtime.as_ref(),
-            self.family_families
-                .as_ref()
-                .and_then(|families| families.first()),
-        ) {
-            let _ = runtime.try_enqueue(
-                *family,
-                crate::runtime::FamilyActorLane::Control,
-                RpcDomainCommand::PanicForTests,
-            );
-            return;
-        }
-        let _ = self
-            .actor
-            .try_send_high_priority(RpcDomainCommand::PanicForTests);
+        let _ = self.try_send_control(
+            self.primary_control_target(),
+            RpcDomainCommand::PanicForTests,
+        );
     }
 
     #[cfg(test)]
@@ -181,7 +162,7 @@ impl RpcDomainSink {
         pending: RpcPendingRequest,
     ) {
         self.core.state.lock().pending.track_pending_for_family(
-            pending.family,
+            pending.dispatch_info.family,
             correlation_id,
             pending,
         );
@@ -228,74 +209,37 @@ impl RpcDomainSink {
     }
 
     fn live_counts(&self) -> RpcLiveCounts {
-        if let (Some(runtime), Some(families)) =
-            (self.family_runtime.as_ref(), self.family_families.as_ref())
-        {
-            let mut total = RpcLiveCounts::default();
-            for family in families.iter().copied() {
-                let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
-                if let Err(error) = runtime.try_enqueue(
-                    family,
-                    crate::runtime::FamilyActorLane::Control,
-                    RpcDomainCommand::ReadLiveCounts(reply_tx),
-                ) {
-                    tracing::warn!(
-                        domain = "rpc",
-                        family = family.id(),
-                        error = %error,
-                        "RPC live-count query enqueue failed"
-                    );
-                    continue;
-                }
-                if let Ok(counts) = reply_rx.recv_timeout(Duration::from_secs(1)) {
-                    total.workers = total.workers.saturating_add(counts.workers);
-                    total.pending_requests = total
-                        .pending_requests
-                        .saturating_add(counts.pending_requests);
-                }
+        let mut total = RpcLiveCounts::default();
+        for family in self.control_targets() {
+            let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+            if let Err(error) =
+                self.try_send_control(family, RpcDomainCommand::ReadLiveCounts(reply_tx))
+            {
+                tracing::warn!(
+                    domain = "rpc",
+                    family = family.map(|target| target.id()),
+                    error = %error,
+                    "RPC live-count query enqueue failed"
+                );
+                continue;
             }
-            return total;
+            if let Ok(counts) = reply_rx.recv_timeout(Duration::from_secs(1)) {
+                total.workers = total.workers.saturating_add(counts.workers);
+                total.pending_requests = total
+                    .pending_requests
+                    .saturating_add(counts.pending_requests);
+            }
         }
-
-        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
-        if let Err(error) = self
-            .actor
-            .try_send_high_priority(RpcDomainCommand::ReadLiveCounts(reply_tx))
-        {
-            tracing::warn!(domain = "rpc", error = %error, "RPC live-count query enqueue failed");
-            return RpcLiveCounts::default();
-        }
-
-        reply_rx
-            .recv_timeout(Duration::from_secs(1))
-            .unwrap_or_default()
+        total
     }
 
     #[cfg(test)]
     pub(super) fn sync_admin_snapshot(&self) {
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
-        if let (Some(runtime), Some(family)) = (
-            self.family_runtime.as_ref(),
-            self.family_families
-                .as_ref()
-                .and_then(|families| families.first()),
+        if let Err(error) = self.try_send_control(
+            self.primary_control_target(),
+            RpcDomainCommand::SyncAdminSnapshot(Some(reply_tx)),
         ) {
-            if let Err(error) = runtime.try_enqueue(
-                *family,
-                crate::runtime::FamilyActorLane::Control,
-                RpcDomainCommand::SyncAdminSnapshot(Some(reply_tx)),
-            ) {
-                tracing::warn!(domain = "rpc", error = %error, "RPC admin snapshot enqueue failed");
-                return;
-            }
-            let _ = reply_rx.recv_timeout(Duration::from_secs(1));
-            return;
-        }
-
-        if let Err(error) = self
-            .actor
-            .try_send_high_priority(RpcDomainCommand::SyncAdminSnapshot(Some(reply_tx)))
-        {
             tracing::warn!(domain = "rpc", error = %error, "RPC admin snapshot enqueue failed");
             return;
         }
@@ -304,26 +248,10 @@ impl RpcDomainSink {
     }
 
     pub fn refresh_admin_snapshot_if_dirty(&self) {
-        if let (Some(runtime), Some(family)) = (
-            self.family_runtime.as_ref(),
-            self.family_families
-                .as_ref()
-                .and_then(|families| families.first()),
+        if let Err(error) = self.try_send_control(
+            self.primary_control_target(),
+            RpcDomainCommand::RefreshAdminSnapshotIfDirty(None),
         ) {
-            if let Err(error) = runtime.try_enqueue(
-                *family,
-                crate::runtime::FamilyActorLane::Control,
-                RpcDomainCommand::RefreshAdminSnapshotIfDirty(None),
-            ) {
-                tracing::warn!(domain = "rpc", error = %error, "RPC admin snapshot refresh enqueue failed");
-            }
-            return;
-        }
-
-        if let Err(error) = self
-            .actor
-            .try_send_high_priority(RpcDomainCommand::RefreshAdminSnapshotIfDirty(None))
-        {
             tracing::warn!(domain = "rpc", error = %error, "RPC admin snapshot refresh enqueue failed");
         }
     }
@@ -648,53 +576,8 @@ impl RpcDomainRuntime<'_> {
 
         for delivery in error_deliveries {
             let correlation_id = delivery.correlation_id;
-
-            #[cfg(test)]
-            let response_envelope = {
-                let mut error_body_encoder =
-                    crate::dispatch::protocol::payload_codec::PayloadEncoder::with_capacity(96);
-                let mut response_encoder =
-                    crate::dispatch::protocol::payload_codec::PayloadEncoder::with_capacity(128);
-                let error_body = crate::dispatch::protocol::rpc_codec::encode_error_body_into(
-                    error_code,
-                    error_message,
-                    &mut error_body_encoder,
-                );
-                let error_response = crate::domains::rpc::protocol::RpcResponse::single(
-                    correlation_id,
-                    bytes::Bytes::from(error_body),
-                );
-                let encoded_response =
-                    crate::dispatch::protocol::rpc_codec::encode_response_message_into(
-                        &error_response,
-                        &mut response_encoder,
-                    );
-                let response_ctx = FrameContext::new(
-                    delivery.caller_session_id,
-                    crate::dispatch::protocol::frame::ChannelId::Rpc,
-                    crate::dispatch::protocol::tlv::MessageType::new(303),
-                    bytes::Bytes::from(encoded_response),
-                    *delivery.caller_inbox_addr.family(),
-                );
-                Envelope::new(delivery.caller_inbox_addr, response_ctx)
-            };
-
-            #[cfg(not(test))]
-            let response_envelope = {
-                let route_family = *delivery.caller_inbox_addr.family();
-                Envelope::new(
-                    delivery.caller_inbox_addr,
-                    RpcClientForwardedResponse::new(
-                        delivery.caller_session_id,
-                        route_family,
-                        RpcClientForwardedResponseBody::TerminalError {
-                            correlation_id,
-                            code: error_code,
-                            message: error_message,
-                        },
-                    ),
-                )
-            };
+            let response_envelope =
+                RpcResponseForwarder::terminal_error_envelope(delivery, error_code, error_message);
 
             if let Err(error) = self.router.route(response_envelope) {
                 self.counter_inc(dropped_counter);
@@ -744,7 +627,7 @@ impl RpcDomainRuntime<'_> {
             let request_ctx = FrameContext::new(
                 worker.session_id,
                 crate::dispatch::protocol::frame::ChannelId::Rpc,
-                crate::dispatch::protocol::tlv::MessageType::new(302),
+                crate::dispatch::protocol::tlv::MessageType::new(RPC_MSG_TYPE_REQUEST),
                 bytes::Bytes::from(request_bytes),
                 *worker.addr.family(),
             );
@@ -808,11 +691,11 @@ impl RpcDomainRuntime<'_> {
                     *dispatch.worker.addr.family(),
                     &dispatch.request.correlation_id,
                 ) {
-                    if let Some(caller_inbox_addr) = pending.caller_inbox_addr {
+                    if let Some(caller_inbox_addr) = pending.dispatch_info.caller_inbox_addr {
                         self.forward_pending_error_deliveries(
                             vec![RpcPendingErrorDelivery {
                                 correlation_id: dispatch.request.correlation_id,
-                                caller_session_id: pending.caller_session_id,
+                                caller_session_id: pending.dispatch_info.caller_session_id,
                                 caller_inbox_addr,
                             }],
                             crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,

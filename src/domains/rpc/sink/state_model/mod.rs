@@ -26,6 +26,8 @@ pub(super) struct RpcCorrelationKey {
 mod constants;
 mod expiration;
 mod pending_table;
+mod ready_queue;
+mod registration_table;
 mod requests;
 mod route_state;
 mod sink;
@@ -33,19 +35,23 @@ mod snapshot;
 mod state;
 mod worker;
 
+#[cfg(test)]
+pub(super) use constants::RPC_MSG_TYPE_RESPONSE;
 pub(super) use constants::{
     RPC_ADMIN_SNAPSHOT_INTERVAL_US, RPC_BACKPRESSURE_ERROR, RPC_CORRELATION_NOT_FOUND_ERROR,
     RPC_DEFAULT_REQUEST_TIMEOUT, RPC_DEFAULT_ROUTE_PENDING_CAPACITY,
     RPC_DUPLICATE_CORRELATION_ERROR, RPC_INVALID_SEQUENCE_ERROR, RPC_MAX_PENDING_REQUESTS,
-    RPC_MAX_TIMEOUT_SWEEP_INTERVAL, RPC_MIN_TIMEOUT_SWEEP_INTERVAL, RPC_NO_WORKERS_ERROR,
-    RPC_TIMEOUT_ERROR, RPC_WORKER_NOT_FOUND_ERROR, RPC_WRONG_WORKER_ERROR,
+    RPC_MAX_TIMEOUT_SWEEP_INTERVAL, RPC_MIN_TIMEOUT_SWEEP_INTERVAL, RPC_MSG_TYPE_REQUEST,
+    RPC_NO_WORKERS_ERROR, RPC_TIMEOUT_ERROR, RPC_WORKER_NOT_FOUND_ERROR, RPC_WRONG_WORKER_ERROR,
 };
 pub(super) use expiration::{rpc_timeout_sweep_interval, ExpiringPendingRequest};
 pub(super) use pending_table::{RpcPendingResponseDisposition, RpcPendingTable};
+pub(super) use ready_queue::RouteReadyQueue;
+pub(super) use registration_table::RegistrationTable;
 pub(super) use requests::{
     RpcPendingCleanupResult, RpcPendingDispatchInfo, RpcPendingErrorDelivery, RpcPendingRequest,
     RpcPendingRequestInit, RpcPendingTimeoutResult, RpcQueuedDispatch, RpcQueuedRequest,
-    RpcRequestDispatch, RpcSessionCleanupResult, RpcWorkerCleanupResult,
+    RpcRequestDispatch, RpcRequestRejection, RpcSessionCleanupResult, RpcWorkerCleanupResult,
 };
 pub(super) use route_state::RpcRouteState;
 pub use sink::RpcDomainSink;
@@ -53,5 +59,7 @@ pub(super) use sink::{
     RpcDomainActor, RpcDomainCommand, RpcDomainCore, RpcDomainRuntime, RpcLiveCounts,
 };
 pub(super) use snapshot::rpc_admin_snapshot_due;
-pub(super) use state::{RpcState, RpcWorkerRegistration};
+#[cfg(test)]
+pub(super) use state::RpcDispatchState;
+pub(super) use state::{RpcRequestState, RpcResponseState, RpcState, RpcWorkerRegistration};
 pub(super) use worker::{RpcRegistrationId, RpcWorker, RpcWorkerDispatch, RpcWorkerKey};

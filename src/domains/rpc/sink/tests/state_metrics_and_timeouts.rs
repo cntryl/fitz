@@ -39,7 +39,7 @@ fn should_allow_same_rpc_correlation_in_separate_route_families() {
     state.register_worker(test_rpc_worker(family_two, &route, 22));
 
     // Act
-    let first = state.dispatch_or_queue_request(
+    let first = state.dispatch_or_queue_request_with_global_count(
         crate::domains::rpc::protocol::RpcRequest::new(
             family_one,
             correlation_id,
@@ -51,8 +51,9 @@ fn should_allow_same_rpc_correlation_in_separate_route_families() {
         Duration::from_secs(30),
         8,
         32,
+        None,
     );
-    let second = state.dispatch_or_queue_request(
+    let second = state.dispatch_or_queue_request_with_global_count(
         crate::domains::rpc::protocol::RpcRequest::new(
             family_two,
             correlation_id,
@@ -64,6 +65,7 @@ fn should_allow_same_rpc_correlation_in_separate_route_families() {
         Duration::from_secs(30),
         8,
         32,
+        None,
     );
 
     // Assert
@@ -80,7 +82,7 @@ fn should_release_worker_credit_after_caller_disconnects() {
     let correlation_id = uuid::Uuid::new_v4();
     let mut state = RpcState::new();
     state.register_worker(test_rpc_worker(family, &route, 11));
-    let dispatch = state.dispatch_or_queue_request(
+    let dispatch = state.dispatch_or_queue_request_with_global_count(
         crate::domains::rpc::protocol::RpcRequest::new(
             family,
             correlation_id,
@@ -92,6 +94,7 @@ fn should_release_worker_credit_after_caller_disconnects() {
         Duration::from_secs(30),
         8,
         32,
+        None,
     );
     assert!(matches!(dispatch, RpcRequestDispatch::Immediate { .. }));
     state.pending.cleanup_session(101);
@@ -109,9 +112,9 @@ fn should_release_worker_credit_after_caller_disconnects() {
 
     // Assert
     let worker = state
-        .claim_worker_for_tests(family, &route)
+        .claim_registration_for_tests(family, &route)
         .expect("released worker credit");
-    state.release_worker_for_tests(worker.registration_id);
+    state.release_registration_for_tests(worker.registration_id);
 }
 
 pub(super) fn assert_rpc_terminal_code_error(
@@ -383,10 +386,10 @@ pub(super) fn should_claim_workers_in_registration_order_given_rpc_registration_
 
     // Act
     let first = state
-        .claim_worker_for_tests(family, &route)
+        .claim_registration_for_tests(family, &route)
         .map(|worker| worker.session_id);
     let second = state
-        .claim_worker_for_tests(family, &route)
+        .claim_registration_for_tests(family, &route)
         .map(|worker| worker.session_id);
 
     // Assert
@@ -415,13 +418,13 @@ pub(super) fn should_share_worker_credit_from_registration_state() {
 
     // Act
     let first = state
-        .claim_worker_for_tests(family, &route)
+        .claim_registration_for_tests(family, &route)
         .map(|worker| worker.session_id);
     let second = state
-        .claim_worker_for_tests(family, &route)
+        .claim_registration_for_tests(family, &route)
         .map(|worker| worker.session_id);
     let third = state
-        .claim_worker_for_tests(family, &route)
+        .claim_registration_for_tests(family, &route)
         .map(|worker| worker.session_id);
 
     // Assert
@@ -441,11 +444,11 @@ pub(super) fn should_rotate_one_credit_workers_after_release_given_registration_
 
     // Act
     let first = state
-        .claim_worker_for_tests(family, &route)
+        .claim_registration_for_tests(family, &route)
         .expect("first worker");
-    state.release_worker_for_tests(first.registration_id);
+    state.release_registration_for_tests(first.registration_id);
     let second = state
-        .claim_worker_for_tests(family, &route)
+        .claim_registration_for_tests(family, &route)
         .expect("second worker");
 
     // Assert
@@ -474,14 +477,14 @@ pub(super) fn should_restore_multi_credit_worker_after_release_given_registratio
 
     // Act
     let first = state
-        .claim_worker_for_tests(family, &route)
+        .claim_registration_for_tests(family, &route)
         .expect("first credit");
     let second = state
-        .claim_worker_for_tests(family, &route)
+        .claim_registration_for_tests(family, &route)
         .expect("second credit");
-    state.release_worker_for_tests(second.registration_id);
+    state.release_registration_for_tests(second.registration_id);
     let third = state
-        .claim_worker_for_tests(family, &route)
+        .claim_registration_for_tests(family, &route)
         .expect("restored credit");
 
     // Assert

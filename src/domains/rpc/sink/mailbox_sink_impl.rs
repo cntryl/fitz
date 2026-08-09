@@ -1,31 +1,63 @@
 use super::state_model::{
     session_inbox_address, DeliveryError, Envelope, Instant, MailboxSink, Ordering,
     RpcClientRequest, RpcClientResponseBody, RpcDeliveryOutcome as DeliveryOutcome, RpcDomainActor,
-    RpcDomainCommand, RpcDomainRuntime, RpcDomainSink, RpcWorker, RPC_BACKPRESSURE_ERROR,
-    RPC_DUPLICATE_CORRELATION_ERROR, RPC_MAX_PENDING_REQUESTS, RPC_NO_WORKERS_ERROR,
-    RPC_WORKER_NOT_FOUND_ERROR,
+    RpcDomainCommand, RpcDomainRuntime, RpcDomainSink, RpcRequestRejection, RpcRequestState,
+    RpcWorker, RPC_BACKPRESSURE_ERROR, RPC_DUPLICATE_CORRELATION_ERROR, RPC_MAX_PENDING_REQUESTS,
+    RPC_MSG_TYPE_REQUEST, RPC_NO_WORKERS_ERROR, RPC_WORKER_NOT_FOUND_ERROR,
 };
 use crate::domains::rpc::protocol::{RpcMessage, RpcRequest};
 use crate::runtime::{Actor, Context};
 
+struct RejectionSpec {
+    metric: &'static str,
+    error_code: u16,
+    message: &'static str,
+    reason: &'static str,
+}
+
+const REJECTION_SPECS: [RejectionSpec; 4] = [
+    RejectionSpec {
+        metric: "rpc_requests_rejected_duplicate_correlation_total",
+        error_code: crate::dispatch::protocol::error_codes::rpc::ERR_RPC_DUPLICATE_CORRELATION,
+        message: RPC_DUPLICATE_CORRELATION_ERROR,
+        reason: "duplicate live correlation",
+    },
+    RejectionSpec {
+        metric: "rpc_requests_rejected_no_worker_total",
+        error_code: crate::dispatch::protocol::error_codes::rpc::ERR_ROUTE_NOT_REGISTERED,
+        message: RPC_NO_WORKERS_ERROR,
+        reason: "no matching worker registration",
+    },
+    RejectionSpec {
+        metric: "rpc_requests_rejected_backpressure_total",
+        error_code: crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
+        message: RPC_BACKPRESSURE_ERROR,
+        reason: "global pending capacity",
+    },
+    RejectionSpec {
+        metric: "rpc_requests_rejected_backpressure_total",
+        error_code: crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
+        message: RPC_BACKPRESSURE_ERROR,
+        reason: "route pending capacity",
+    },
+];
+
 impl MailboxSink for RpcDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        if !self.actor.is_running()
-            || self
-                .family_runtime
-                .as_ref()
-                .is_some_and(|runtime| !runtime.is_running())
-        {
-            return Err(DeliveryError::ActorStopped);
-        }
-        if self.family_runtime.is_some() {
-            self.deliver_to_family(envelope, false)
-        } else {
-            self.deliver_to_actor(envelope, false)
-        }
+        self.deliver_with_priority(envelope, false)
     }
 
     fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver_with_priority(envelope, true)
+    }
+}
+
+impl RpcDomainSink {
+    fn deliver_with_priority(
+        &self,
+        envelope: Envelope,
+        high_priority: bool,
+    ) -> Result<(), DeliveryError> {
         if !self.actor.is_running()
             || self
                 .family_runtime
@@ -35,9 +67,9 @@ impl MailboxSink for RpcDomainSink {
             return Err(DeliveryError::ActorStopped);
         }
         if self.family_runtime.is_some() {
-            self.deliver_to_family(envelope, true)
+            self.deliver_to_family(envelope, high_priority)
         } else {
-            self.deliver_to_actor(envelope, true)
+            self.deliver_to_actor(envelope, high_priority)
         }
     }
 }
@@ -246,12 +278,15 @@ impl RpcDomainRuntime<'_> {
         {
             let mut state = self.state.lock();
             if matches!(
-                state.register_worker(RpcWorker::new(
-                    worker_addr.clone(),
-                    worker_inbox_addr,
-                    meta.session_id,
-                    max_concurrent,
-                )),
+                RpcRequestState::register(
+                    &mut *state,
+                    RpcWorker::new(
+                        worker_addr.clone(),
+                        worker_inbox_addr,
+                        meta.session_id,
+                        max_concurrent,
+                    )
+                ),
                 super::state_model::RpcWorkerRegistration::WildcardLimit
             ) {
                 return (
@@ -321,7 +356,8 @@ impl RpcDomainRuntime<'_> {
         let mut state = self.state.lock();
         let state_wait_us = state_wait_start.map_or(0, Self::elapsed_micros_u64);
         let state_hold_start = metrics_enabled.then(Instant::now);
-        let dispatch = state.dispatch_or_queue_request_with_global_count(
+        let dispatch = RpcRequestState::dispatch_or_queue(
+            &mut *state,
             req,
             meta.session_id,
             caller_inbox_addr,
@@ -337,17 +373,8 @@ impl RpcDomainRuntime<'_> {
         self.observe_request_state_metrics(0, state_wait_us, state_hold_us, 0);
 
         match dispatch {
-            super::state_model::RpcRequestDispatch::Duplicate { request } => {
-                self.reject_duplicate_request(envelope, meta, request)
-            }
-            super::state_model::RpcRequestDispatch::NoWorkers { request } => {
-                self.reject_missing_worker_route(envelope, meta, request)
-            }
-            super::state_model::RpcRequestDispatch::GlobalCapacityFull { request } => {
-                self.reject_pending_capacity(envelope, meta, request)
-            }
-            super::state_model::RpcRequestDispatch::RouteCapacityFull { request } => {
-                self.reject_route_capacity(envelope, meta, request)
+            super::state_model::RpcRequestDispatch::Rejected { request, reason } => {
+                self.reject_with_spec(envelope, meta, &request, reason)
             }
             super::state_model::RpcRequestDispatch::Queued {
                 route,
@@ -383,92 +410,23 @@ impl RpcDomainRuntime<'_> {
         self.histogram_observe_us("rpc_worker_selection_us", worker_selection_us);
     }
 
-    #[allow(clippy::needless_pass_by_value)]
-    fn reject_duplicate_request(
+    fn reject_with_spec(
         &self,
         envelope: &Envelope,
         meta: &crate::runtime::ClientFrameMeta,
-        req: RpcRequest,
+        req: &RpcRequest,
+        reason: RpcRequestRejection,
     ) -> DeliveryOutcome {
-        self.counter_inc("rpc_requests_rejected_duplicate_correlation_total");
+        let spec = &REJECTION_SPECS[reason as usize];
+        self.counter_inc(spec.metric);
         tracing::warn!(
             domain = "rpc",
             correlation_id = %req.correlation_id,
             route = req.route.as_str(),
-            "Rejected request due to duplicate live correlation"
+            reason = spec.reason,
+            "Rejected RPC request"
         );
-        self.reject_request_with_terminal_error(
-            envelope,
-            *meta,
-            &req,
-            crate::dispatch::protocol::error_codes::rpc::ERR_RPC_DUPLICATE_CORRELATION,
-            RPC_DUPLICATE_CORRELATION_ERROR,
-        )
-    }
-
-    #[allow(clippy::needless_pass_by_value)]
-    fn reject_missing_worker_route(
-        &self,
-        envelope: &Envelope,
-        meta: &crate::runtime::ClientFrameMeta,
-        req: RpcRequest,
-    ) -> DeliveryOutcome {
-        self.counter_inc("rpc_requests_rejected_no_worker_total");
-        self.reject_request_with_terminal_error(
-            envelope,
-            *meta,
-            &req,
-            crate::dispatch::protocol::error_codes::rpc::ERR_ROUTE_NOT_REGISTERED,
-            RPC_NO_WORKERS_ERROR,
-        )
-    }
-
-    #[allow(clippy::needless_pass_by_value)]
-    fn reject_pending_capacity(
-        &self,
-        envelope: &Envelope,
-        meta: &crate::runtime::ClientFrameMeta,
-        req: RpcRequest,
-    ) -> DeliveryOutcome {
-        self.counter_inc("rpc_requests_rejected_backpressure_total");
-        tracing::warn!(
-            domain = "rpc",
-            correlation_id = %req.correlation_id,
-            route = req.route.as_str(),
-            pending_requests = RPC_MAX_PENDING_REQUESTS,
-            "Rejected request due to RPC pending capacity"
-        );
-        self.reject_request_with_terminal_error(
-            envelope,
-            *meta,
-            &req,
-            crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
-            RPC_BACKPRESSURE_ERROR,
-        )
-    }
-
-    #[allow(clippy::needless_pass_by_value)]
-    fn reject_route_capacity(
-        &self,
-        envelope: &Envelope,
-        meta: &crate::runtime::ClientFrameMeta,
-        req: RpcRequest,
-    ) -> DeliveryOutcome {
-        self.counter_inc("rpc_requests_rejected_backpressure_total");
-        tracing::warn!(
-            domain = "rpc",
-            correlation_id = %req.correlation_id,
-            route = req.route.as_str(),
-            route_pending_capacity = self.route_pending_capacity,
-            "Rejected request because the route-local RPC queue is full"
-        );
-        self.reject_request_with_terminal_error(
-            envelope,
-            *meta,
-            &req,
-            crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
-            RPC_BACKPRESSURE_ERROR,
-        )
+        self.reject_request_with_terminal_error(envelope, *meta, req, spec.error_code, spec.message)
     }
 
     fn accept_queued_request(
@@ -705,7 +663,7 @@ impl RpcDomainRuntime<'_> {
                         "RPC message parse failed",
                     ),
                 };
-                if meta.message_type == 302 {
+                if meta.message_type == RPC_MSG_TYPE_REQUEST {
                     if let Ok(correlation_id) =
                         crate::dispatch::protocol::rpc_codec::extract_request_correlation_id(
                             raw_payload,
