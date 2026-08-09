@@ -374,7 +374,11 @@ impl LeaseClientNotification {
 /// Lease operation responses
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LeaseResponse {
-    /// Lease successfully acquired
+    /// Lease successfully acquired.
+    ///
+    /// Fencing tokens are monotonic across this broker process, not scoped to
+    /// one lease key. Tokens from different lease identities are opaque and
+    /// must never be ordered or compared with each other.
     Acquired { fencing_token: u64 },
 
     /// Lease already held by this owner (idempotent acquire)
@@ -405,7 +409,8 @@ pub enum LeaseResponse {
     /// The client should back off and retry later.
     QueueFull { pending_count: usize },
 
-    /// Lease successfully extended
+    /// Lease successfully extended. The returned token has the same
+    /// per-process, cross-key non-comparability contract as `Acquired`.
     Extended { fencing_token: u64 },
 
     /// Lease successfully released

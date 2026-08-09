@@ -9,6 +9,7 @@ pub const METRIC_ACTIVE_GAUGE: &str = "fitz_lease_active_gauge";
 pub const METRIC_WAITERS_GAUGE: &str = "fitz_lease_waiters_gauge";
 pub const METRIC_RESPONSE_DROPS_TOTAL: &str = "fitz_lease_response_drops_total";
 pub const METRIC_NOTIFY_DROPS_TOTAL: &str = "fitz_lease_notify_drops_total";
+pub const METRIC_SWEEP_ENQUEUE_FAILURES_TOTAL: &str = "fitz_lease_sweep_enqueue_failed_total";
 
 #[derive(Clone)]
 pub struct LeaseMetrics {
