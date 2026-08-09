@@ -17,11 +17,11 @@ pub type SubscriberId = usize;
 /// Added `match_into(&mut SmallVec)` API for a hot-path, allocation-free write into a
 /// caller-provided buffer (benchable in isolation).
 #[derive(Debug, Clone, Default)]
-pub struct Matcher {
+pub struct BenchMatchStub {
     subs: Vec<(u16, Vec<SubscriberId>)>,
 }
 
-impl Matcher {
+impl BenchMatchStub {
     #[must_use]
     pub fn new() -> Self {
         Self { subs: Vec::new() }
@@ -72,11 +72,11 @@ impl Matcher {
 /// Minimal fan-out stub: records deliveries as a simple counter and stores an optional
 /// record of (`SubscriberId`, `payload_len`) for verification.
 #[derive(Debug, Default)]
-pub struct Fanout {
+pub struct BenchFanout {
     deliveries: usize,
 }
 
-impl Fanout {
+impl BenchFanout {
     #[must_use]
     pub fn new() -> Self {
         Self { deliveries: 0 }
@@ -104,20 +104,20 @@ impl Fanout {
     }
 }
 
-/// Thin `NotificationDomain` that composes a `Matcher` and a `Fanout` and wires the
+/// Thin `BenchNotificationDomain` that composes a `BenchMatchStub` and a `BenchFanout` and wires the
 /// match -> fanout flow. This is intentionally small to make domain boundaries explicit.
 #[derive(Debug, Default)]
-pub struct NotificationDomain {
-    matcher: Matcher,
-    fanout: Fanout,
+pub struct BenchNotificationDomain {
+    matcher: BenchMatchStub,
+    fanout: BenchFanout,
 }
 
-impl NotificationDomain {
+impl BenchNotificationDomain {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            matcher: Matcher::new(),
-            fanout: Fanout::new(),
+            matcher: BenchMatchStub::new(),
+            fanout: BenchFanout::new(),
         }
     }
 
@@ -142,7 +142,7 @@ impl NotificationDomain {
     }
 
     #[must_use]
-    pub fn matcher(&self) -> &Matcher {
+    pub fn matcher(&self) -> &BenchMatchStub {
         &self.matcher
     }
 }
@@ -155,7 +155,7 @@ mod tests {
     #[test]
     fn should_match_into_smallvec_zero_copy() {
         // Arrange
-        let mut m = Matcher::new();
+        let mut m = BenchMatchStub::new();
         m.register(42, 1);
         m.register(42, 2);
         let payload = b"hello";
@@ -174,7 +174,7 @@ mod tests {
     #[test]
     fn should_dispatch_to_fanout_on_match() {
         // Arrange
-        let mut d = NotificationDomain::new();
+        let mut d = BenchNotificationDomain::new();
         d.register(10, 3);
         d.register(10, 4);
 
@@ -189,7 +189,7 @@ mod tests {
     #[test]
     fn should_return_zero_when_no_subscribers() {
         // Arrange
-        let mut d = NotificationDomain::new();
+        let mut d = BenchNotificationDomain::new();
 
         // Act
         let n = d.handle(MessageType::new(99), b"x");

@@ -16,6 +16,8 @@ use std::time::{Duration, Instant};
 
 mod actor_runtime;
 mod delivery_worker;
+mod domain_sink_impl;
+mod mailbox_sink_impl;
 mod model;
 #[cfg(test)]
 mod test_channels;
@@ -52,7 +54,9 @@ struct NoticeDomainCore {
     active: AtomicBool,
     /// One bounded, ordered delivery lane per route family prevents a blocked
     /// subscriber from stalling unrelated families on the Notice actor.
-    delivery_workers: Mutex<HashMap<u64, crossbeam_channel::Sender<NoticeDeliveryJob>>>,
+    delivery_workers: Mutex<
+        HashMap<crate::runtime::routing::RouteFamily, crossbeam_channel::Sender<NoticeDeliveryJob>>,
+    >,
 }
 
 pub struct NoticeDomainSink {
@@ -314,10 +318,7 @@ impl NoticeDomainCore {
                         &created_at,
                     ));
                     let subscribers = routes
-                        .entry((
-                            route_family.as_u64(),
-                            Arc::clone(&subscription.pattern_route),
-                        ))
+                        .entry((*route_family, Arc::clone(&subscription.pattern_route)))
                         .or_insert(0);
                     *subscribers = subscribers.saturating_add(1);
                 }
@@ -344,7 +345,7 @@ impl NoticeDomainCore {
                             (stats.publishes_total(), stats.publishes_per_minute(now))
                         });
                     let mut entry = crate::control::admin::NoticeRouteInfo::snapshot(
-                        route_family,
+                        route_family.as_u64(),
                         route.to_string(),
                         subscribers,
                     );
@@ -378,10 +379,6 @@ impl NoticeDomainCore {
         }
     }
 
-    fn notice_response_is_failure(response: &crate::domains::notice::NoticeResponse) -> bool {
-        matches!(response, crate::domains::notice::NoticeResponse::Error(_))
-    }
-
     pub(super) fn refresh_admin_snapshot_if_dirty(&self) {
         if self.admin_snapshot_dirty.swap(false, Ordering::AcqRel) {
             self.sync_admin_snapshot();
@@ -410,11 +407,9 @@ impl NoticeDomainCore {
 
         let now = Instant::now();
         let mut route_stats = self.route_stats.lock();
-        let family = route_family.as_u64();
-
         for route in routes {
             route_stats
-                .entry((family, Arc::clone(route)))
+                .entry((route_family, Arc::clone(route)))
                 .or_insert_with(NoticeRouteStats::new)
                 .record_publish(now);
         }
@@ -521,462 +516,6 @@ impl NoticeDomainCore {
             .values()
             .map(RoutedSubscriptionSet::subscription_count)
             .sum()
-    }
-}
-
-impl MailboxSink for NoticeDomainSink {
-    fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        self.deliver_to_actor(envelope, false)
-    }
-
-    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        self.deliver_to_actor(envelope, true)
-    }
-}
-
-impl NoticeDomainCore {
-    fn deliver_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {
-        if self.handle_cleanup_envelope(envelope) {
-            return Ok(());
-        }
-        self.ensure_active()?;
-
-        if self.handle_domain_publish_envelope(envelope) {
-            return Ok(());
-        }
-
-        Self::log_delivery(envelope);
-
-        let Some(request) = Self::extract_request(envelope)? else {
-            return Ok(());
-        };
-        let meta = request.meta;
-        let request_started = self.record_request_start();
-
-        if !Self::valid_request_envelope(envelope, meta) {
-            let response = Self::error_response("route family mismatch");
-            let response_meta = Self::response_meta_for_source(envelope, meta);
-            self.route_notice_response(envelope, response_meta, &response, request_started);
-            return Ok(());
-        }
-
-        Self::log_parse_start(meta);
-
-        let Some(notice_msg) =
-            self.parse_notice_message(envelope, meta, request.message, request_started)
-        else {
-            return Ok(());
-        };
-
-        if !Self::valid_notice_message(envelope, meta, &notice_msg) {
-            let response = Self::error_response("route family mismatch");
-            let response_meta = Self::response_meta_for_source(envelope, meta);
-            self.route_notice_response(envelope, response_meta, &response, request_started);
-            return Ok(());
-        }
-
-        let (response_opt, should_sync_admin_snapshot) = self.dispatch_notice_message(notice_msg);
-        if should_sync_admin_snapshot {
-            self.mark_admin_snapshot_dirty();
-        }
-
-        if let Some(response) = response_opt {
-            self.route_notice_response(envelope, meta, &response, request_started);
-        } else if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
-            metrics.record_success(started_at);
-        }
-
-        Ok(())
-    }
-
-    fn handle_cleanup_envelope(&self, envelope: &Envelope) -> bool {
-        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            self.unsubscribe_all_for_session(cleanup.session_id);
-            return true;
-        }
-
-        false
-    }
-
-    fn ensure_active(&self) -> Result<(), DeliveryError> {
-        if !self.active.load(Ordering::Relaxed) {
-            return Err(DeliveryError::ActorStopped);
-        }
-
-        Ok(())
-    }
-
-    fn handle_domain_publish_envelope(&self, envelope: &Envelope) -> bool {
-        if let Some(event) = envelope.payload::<crate::runtime::DomainPublishEvent>() {
-            if *envelope.destination().family() != event.family_id {
-                self.counter_add("fitz_notice_publish_family_mismatch_total", 1);
-                return true;
-            }
-            self.handle_domain_publish(event);
-            return true;
-        }
-
-        false
-    }
-
-    fn log_delivery(envelope: &Envelope) {
-        tracing::debug!(
-            domain = "notice",
-            destination = %envelope.destination(),
-            source = ?envelope.source(),
-            "Notice domain sink: received envelope"
-        );
-    }
-
-    fn extract_request(
-        envelope: &Envelope,
-    ) -> Result<Option<crate::domains::notice::NoticeClientRequest>, DeliveryError> {
-        if let Some(request) = Self::request_from_envelope(envelope) {
-            Ok(Some(request))
-        } else {
-            tracing::warn!(
-                domain = "notice",
-                "Envelope payload was not NoticeClientRequest"
-            );
-            Err(DeliveryError::ActorStopped)
-        }
-    }
-
-    fn record_request_start(&self) -> Option<Instant> {
-        self.metrics
-            .as_ref()
-            .map(NoticeMetrics::record_request_start)
-    }
-
-    fn log_parse_start(meta: crate::runtime::ClientFrameMeta) {
-        tracing::debug!(
-            domain = "notice",
-            session = meta.session_id,
-            msg_type = meta.message_type,
-            "Notice: parsing request"
-        );
-    }
-
-    fn parse_notice_message(
-        &self,
-        envelope: &Envelope,
-        meta: crate::runtime::ClientFrameMeta,
-        message: Result<crate::domains::notice::protocol::NotificationMessage, String>,
-        request_started: Option<Instant>,
-    ) -> Option<crate::domains::notice::protocol::NotificationMessage> {
-        match message {
-            Ok(message) => Some(message),
-            Err(error) => {
-                tracing::warn!(domain = "notice", error = %error, "Failed to parse notice message");
-                let response = Self::error_response(&error);
-                let response_meta = Self::response_meta_for_source(envelope, meta);
-                self.route_notice_response(envelope, response_meta, &response, request_started);
-                None
-            }
-        }
-    }
-
-    fn dispatch_notice_message(
-        &self,
-        notice_msg: crate::domains::notice::protocol::NotificationMessage,
-    ) -> (Option<crate::domains::notice::NoticeResponse>, bool) {
-        use crate::domains::notice::protocol::NotificationMessage;
-        use crate::domains::notice::NoticeResponse;
-
-        match notice_msg {
-            NotificationMessage::Publish(pub_msg) => {
-                self.publish_route_payload(pub_msg.family_id, &pub_msg.route, &pub_msg.payload);
-                (None, false)
-            }
-            NotificationMessage::Subscribe(sub_msg) => self.handle_subscribe_message(&sub_msg),
-            NotificationMessage::Unsubscribe(unsub_msg) => {
-                let family_id = unsub_msg.family_id;
-                let mut families = self.families.lock();
-                let removed = if let Some(state) = families.get_mut(&family_id) {
-                    let removed = state.remove_subscription_for_session(
-                        unsub_msg.family_id,
-                        unsub_msg.session_id.0,
-                        unsub_msg.subscription_id,
-                    );
-                    if state.is_empty() {
-                        families.remove(&family_id);
-                    }
-                    removed
-                } else {
-                    false
-                };
-                if removed {
-                    self.counter_add("fitz_notice_unsubscribes_total", 1);
-                }
-                (Some(NoticeResponse::Ok), removed)
-            }
-            NotificationMessage::UnsubscribeAll(unsub_all) => {
-                let session_id = unsub_all.session_id.0;
-                let removed = self.unsubscribe_all_for_session(session_id);
-                tracing::debug!(
-                    domain = "notice",
-                    session = session_id,
-                    "All subscriptions removed for session"
-                );
-                (Some(NoticeResponse::Ok), removed > 0)
-            }
-            NotificationMessage::Deliver(_) => (Some(NoticeResponse::Ok), false),
-        }
-    }
-
-    fn handle_subscribe_message(
-        &self,
-        sub_msg: &crate::domains::notice::protocol::SubscribeMessage,
-    ) -> (Option<crate::domains::notice::NoticeResponse>, bool) {
-        use crate::domains::notice::NoticeResponse;
-
-        let family_id = sub_msg.family_id;
-        {
-            let families = self.families.lock();
-            if let Some(id) = families.get(&family_id).and_then(|state| {
-                state.find_existing_id(sub_msg.session_id.0, sub_msg.pattern.as_str())
-            }) {
-                tracing::debug!(
-                    domain = "notice",
-                    session = sub_msg.session_id.0,
-                    subscription_id = id,
-                    pattern = sub_msg.pattern.as_str(),
-                    "Notice subscription already exists (idempotent)"
-                );
-                return (
-                    Some(NoticeResponse::SubscribeOk {
-                        subscription_id: id,
-                    }),
-                    false,
-                );
-            }
-        }
-        let compiled = match crate::runtime::DomainKind::Notice
-            .descriptor()
-            .compile_registration_pattern(sub_msg.pattern.as_str())
-        {
-            Ok(compiled) => compiled,
-            Err(error) => {
-                tracing::warn!(
-                    domain = "notice",
-                    session = sub_msg.session_id.0,
-                    "Rejected invalid subscription pattern"
-                );
-                return (Some(NoticeResponse::Error(error)), false);
-            }
-        };
-
-        let mut families = self.families.lock();
-        let session_subscription_count = families
-            .values()
-            .map(|state| state.subscription_count_for_session(sub_msg.session_id.0))
-            .sum::<usize>();
-        let state = families
-            .entry(family_id)
-            .or_insert_with(RoutedSubscriptionSet::new);
-
-        let (response, state_changed) = if let Some(error) =
-            subscription_limit_error(state, session_subscription_count, sub_msg, &compiled)
-        {
-            (error, false)
-        } else {
-            let Ok(new_id) =
-                self.next_sub_id
-                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-                        current.checked_add(1)
-                    })
-            else {
-                let state_empty = state.is_empty();
-                if state_empty {
-                    families.remove(&family_id);
-                }
-                return (
-                    Some(NoticeResponse::Error(
-                        "subscription ID space exhausted".to_string(),
-                    )),
-                    false,
-                );
-            };
-            state.insert(
-                sub_msg.family_id,
-                NoticeSubscription {
-                    pattern: compiled,
-                    pattern_route: Arc::from(sub_msg.pattern.as_str()),
-                    session_id: sub_msg.session_id.0,
-                    subscription_id: new_id,
-                    subscriber: sub_msg.subscriber.clone(),
-                },
-            );
-
-            tracing::debug!(
-                domain = "notice",
-                session = sub_msg.session_id.0,
-                subscription_id = new_id,
-                pattern = sub_msg.pattern.as_str(),
-                "Notice subscription added"
-            );
-            (
-                NoticeResponse::SubscribeOk {
-                    subscription_id: new_id,
-                },
-                true,
-            )
-        };
-
-        (Some(response), state_changed)
-    }
-
-    fn valid_request_envelope(envelope: &Envelope, meta: crate::runtime::ClientFrameMeta) -> bool {
-        meta.route_family == *envelope.destination().family()
-            && envelope
-                .source()
-                .is_none_or(|source| *source.family() == meta.route_family)
-    }
-
-    fn valid_notice_message(
-        envelope: &Envelope,
-        meta: crate::runtime::ClientFrameMeta,
-        message: &crate::domains::notice::protocol::NotificationMessage,
-    ) -> bool {
-        use crate::domains::notice::protocol::NotificationMessage;
-
-        match message {
-            NotificationMessage::Publish(publish) => publish.family_id == meta.route_family,
-            NotificationMessage::Subscribe(subscribe) => {
-                subscribe.family_id == meta.route_family
-                    && subscribe.session_id.0 == meta.session_id
-                    && *subscribe.subscriber.family() == subscribe.family_id
-                    && envelope
-                        .source()
-                        .is_none_or(|source| source == &subscribe.subscriber)
-            }
-            NotificationMessage::Unsubscribe(unsubscribe) => {
-                unsubscribe.family_id == meta.route_family
-                    && unsubscribe.session_id.0 == meta.session_id
-            }
-            NotificationMessage::UnsubscribeAll(unsubscribe_all) => {
-                unsubscribe_all.session_id.0 == meta.session_id
-                    && *unsubscribe_all.subscriber.family() == meta.route_family
-                    && envelope
-                        .source()
-                        .is_none_or(|source| source == &unsubscribe_all.subscriber)
-            }
-            NotificationMessage::Deliver(_) => false,
-        }
-    }
-
-    fn error_response(reason: &str) -> crate::domains::notice::NoticeResponse {
-        crate::domains::notice::NoticeResponse::Error(reason.to_string())
-    }
-
-    fn response_meta_for_source(
-        envelope: &Envelope,
-        meta: crate::runtime::ClientFrameMeta,
-    ) -> crate::runtime::ClientFrameMeta {
-        envelope.source().map_or(meta, |source| {
-            let mut response_meta = meta;
-            response_meta.route_family = *source.family();
-            response_meta
-        })
-    }
-
-    fn route_notice_response(
-        &self,
-        envelope: &Envelope,
-        meta: crate::runtime::ClientFrameMeta,
-        response: &crate::domains::notice::NoticeResponse,
-        request_started: Option<Instant>,
-    ) {
-        #[cfg(test)]
-        let response_ctx = {
-            let mut payload_encoder =
-                crate::dispatch::protocol::payload_codec::PayloadEncoder::with_capacity(256);
-            let response_bytes = crate::dispatch::protocol::notice_codec::encode_response_into(
-                response,
-                &mut payload_encoder,
-            );
-            FrameContext::new(
-                meta.session_id,
-                test_protocol_channel_from_client(meta.channel),
-                crate::dispatch::protocol::tlv::MessageType::new(meta.message_type),
-                bytes::Bytes::from(response_bytes),
-                meta.route_family,
-            )
-        };
-
-        #[cfg(not(test))]
-        let response_ctx =
-            crate::domains::notice::NoticeClientResponse::new(meta, response.clone());
-
-        if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
-            if let Err(error) = self.router.route(response_envelope) {
-                if let Some(metrics) = self.metrics.as_ref() {
-                    metrics.record_response_drop();
-                } else {
-                    crate::observability::counter_inc(
-                        crate::domains::notice::metrics::METRIC_RESPONSE_DROPS_TOTAL,
-                    );
-                }
-                tracing::warn!(
-                    domain = "notice",
-                    session_id = meta.session_id,
-                    route_family = meta.route_family.as_u64(),
-                    error = %error,
-                    "Dropped best-effort Notice response"
-                );
-            }
-        }
-
-        if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
-            if Self::notice_response_is_failure(response) {
-                metrics.record_failure(started_at);
-            } else {
-                metrics.record_success(started_at);
-            }
-        }
-    }
-
-    fn request_from_envelope(
-        envelope: &Envelope,
-    ) -> Option<crate::domains::notice::NoticeClientRequest> {
-        if let Some(request) = envelope.payload::<crate::domains::notice::NoticeClientRequest>() {
-            return Some(request.clone());
-        }
-
-        #[cfg(test)]
-        {
-            let frame_ctx = envelope.payload::<FrameContext>()?.clone();
-            let subscriber = envelope.source().cloned().unwrap_or_else(|| {
-                crate::runtime::routing::RouteAddress::new(
-                    *envelope.destination().family(),
-                    crate::runtime::routing::Route::new(format!(
-                        "inbox://session/{}",
-                        frame_ctx.session_id
-                    )),
-                )
-            });
-            let meta = crate::runtime::ClientFrameMeta::new(
-                frame_ctx.session_id,
-                test_client_channel_from_protocol(frame_ctx.channel_id),
-                frame_ctx.msg_type.as_u16(),
-                frame_ctx.route_family,
-            );
-            let parsed = crate::dispatch::protocol::notice_codec::parse_request(
-                &frame_ctx,
-                &frame_ctx.payload,
-                *envelope.destination().family(),
-                crate::session::SessionId(frame_ctx.session_id),
-                subscriber,
-            );
-            Some(crate::domains::notice::NoticeClientRequest::new(
-                meta, parsed,
-            ))
-        }
-
-        #[cfg(not(test))]
-        {
-            None
-        }
     }
 }
 

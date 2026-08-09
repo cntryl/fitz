@@ -325,12 +325,12 @@ fn should_keep_notice_backpressure_and_duplicate_paths_bounded() {
         .join("domains")
         .join("notice")
         .join("sink");
-    let sink = read_source_file(&repo_root.join("src/domains/notice/sink.rs"));
+    let domain_sink = read_source_file(&notice_sink_dir.join("domain_sink_impl.rs"));
     let delivery_worker = read_source_file(&notice_sink_dir.join("delivery_worker.rs"));
 
     // Act
-    let duplicate_check = sink.find("state.find_existing_id");
-    let pattern_compile = sink.find(".compile_registration_pattern");
+    let duplicate_check = domain_sink.find("self.try_reuse_existing(sub_msg)");
+    let pattern_compile = domain_sink.find("Self::compile_pattern(sub_msg)");
     let has_deadline_retry = delivery_worker.contains("NOTICE_MAILBOX_RETRY_TIMEOUT")
         && delivery_worker.contains("Instant::now() < deadline");
     let has_fixed_retry_loop = delivery_worker.contains("MAX_RETRIES");

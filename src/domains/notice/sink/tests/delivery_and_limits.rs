@@ -1,4 +1,34 @@
 use super::*;
+use crate::domains::notice::sink::delivery_worker::deliver_with_retry;
+
+#[test]
+fn should_retry_delivery_policy_with_payload_independent_envelope_builder() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let subscriber = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let router = Router::new();
+    let retry_state = Arc::new(Mutex::new(vec![
+        Err(DeliveryError::MailboxFull {
+            capacity: 1,
+            current_len: 1,
+        }),
+        Ok(()),
+    ]));
+    router.register(
+        subscriber.clone(),
+        Arc::new(RetrySink {
+            state: retry_state.clone(),
+        }),
+    );
+
+    // Act
+    deliver_with_retry(&router, &subscriber, || {
+        Envelope::new(subscriber.clone(), ())
+    });
+
+    // Assert
+    assert!(retry_state.lock().is_empty());
+}
 
 #[test]
 #[allow(clippy::too_many_lines)]

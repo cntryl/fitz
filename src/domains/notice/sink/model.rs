@@ -6,8 +6,9 @@ use std::time::{Duration, Instant};
 
 pub(super) type NoticeDeliveryTargets = SmallVec<[NoticeDeliveryTarget; 8]>;
 pub(super) type NoticeMatchedRoutePatterns = SmallVec<[Arc<str>; 8]>;
-pub(super) type NoticeRouteStatsKey = (u64, Arc<str>);
+pub(super) type NoticeRouteStatsKey = (crate::runtime::routing::RouteFamily, Arc<str>);
 
+/// Delivery-only projection of `NoticeSubscription`; matching state stays in the index.
 #[derive(Clone)]
 pub(super) struct NoticeDeliveryTarget {
     pub(super) session_id: u64,
