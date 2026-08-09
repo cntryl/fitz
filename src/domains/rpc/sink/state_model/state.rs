@@ -38,7 +38,7 @@ pub(in crate::domains::rpc::sink) trait RpcDispatchState {
 }
 
 pub(in crate::domains::rpc::sink) trait RpcRequestState {
-    fn register(&mut self, worker: RpcWorker) -> RpcWorkerRegistration;
+    fn register(&mut self, registration: RpcWorker) -> RpcWorkerRegistration;
 
     #[allow(clippy::too_many_arguments)]
     fn dispatch_or_queue(
@@ -79,8 +79,8 @@ impl RpcDispatchState for RpcState {
 }
 
 impl RpcRequestState for RpcState {
-    fn register(&mut self, worker: RpcWorker) -> RpcWorkerRegistration {
-        self.register_worker(worker)
+    fn register(&mut self, registration: RpcWorker) -> RpcWorkerRegistration {
+        self.register_registration(registration)
     }
 
     fn dispatch_or_queue(
@@ -128,7 +128,7 @@ impl RpcResponseState for RpcState {
     }
 
     fn release_dispatch(&mut self, pending: &RpcPendingDispatchInfo, latency_us: Option<u64>) {
-        self.release_worker_for_dispatch_info(pending, latency_us);
+        self.release_registration_for_dispatch_info(pending, latency_us);
     }
 }
 
@@ -145,29 +145,29 @@ impl RpcState {
         }
     }
 
-    pub(in crate::domains::rpc::sink) fn register_worker(
+    pub(in crate::domains::rpc::sink) fn register_registration(
         &mut self,
-        worker: RpcWorker,
+        registration: RpcWorker,
     ) -> RpcWorkerRegistration {
-        let key = RpcWorkerKey::from_parts(&worker.addr, worker.session_id);
+        let key = RpcWorkerKey::from_parts(&registration.addr, registration.session_id);
         if self.registrations.contains_worker(&key) {
             return RpcWorkerRegistration::Existing;
         }
 
-        if let Some(violation) = self.registration_policy_violation(&worker) {
+        if let Some(violation) = self.registration_policy_violation(&registration) {
             return violation;
         }
 
-        let family = *worker.addr.family();
+        let family = *registration.addr.family();
         let matching_routes = self
             .routes
             .keys()
             .filter(|(route_family, route)| {
-                *route_family == family && worker.matches(family, route)
+                *route_family == family && registration.matches(family, route)
             })
             .cloned()
             .collect::<Vec<_>>();
-        let registration_id = self.registrations.insert(key, worker);
+        let registration_id = self.registrations.insert(key, registration);
         for route_key in matching_routes {
             if let Some(route_state) = self.routes.get_mut(&route_key) {
                 route_state.add_registration(registration_id);
@@ -177,15 +177,18 @@ impl RpcState {
         RpcWorkerRegistration::Registered
     }
 
-    fn registration_policy_violation(&self, worker: &RpcWorker) -> Option<RpcWorkerRegistration> {
+    fn registration_policy_violation(
+        &self,
+        registration: &RpcWorker,
+    ) -> Option<RpcWorkerRegistration> {
         let session_wildcard_count = self
             .registrations
             .values()
-            .filter(|existing| existing.session_id == worker.session_id)
+            .filter(|existing| existing.session_id == registration.session_id)
             .filter(|existing| existing.is_wildcard())
             .count();
         if crate::domains::subscription_state::wildcard_registration_limit_reached(
-            worker.pattern(),
+            registration.pattern(),
             session_wildcard_count,
         ) {
             return Some(RpcWorkerRegistration::WildcardLimit);
@@ -233,6 +236,7 @@ impl RpcState {
         self.available_registration(family, route).is_some()
     }
 
+    /// Selects the next available registration using the route's rotation cursor.
     fn available_registration(
         &self,
         family: RouteFamily,
@@ -255,6 +259,7 @@ impl RpcState {
         })
     }
 
+    /// Claims one registration credit and advances fairness only after selection.
     fn claim_registration(
         &mut self,
         family: RouteFamily,
@@ -436,12 +441,12 @@ impl RpcState {
         }
     }
 
-    pub(in crate::domains::rpc::sink) fn unregister_worker(
+    pub(in crate::domains::rpc::sink) fn unregister_registration(
         &mut self,
-        worker_addr: &RouteAddress,
+        registration_addr: &RouteAddress,
         session_id: u64,
     ) -> RpcWorkerCleanupResult {
-        let key = RpcWorkerKey::from_parts(worker_addr, session_id);
+        let key = RpcWorkerKey::from_parts(registration_addr, session_id);
         let Some((registration_id, registration)) = self.registrations.remove_by_key(&key) else {
             return RpcWorkerCleanupResult {
                 pending_len: self.live_request_count(),
@@ -498,6 +503,7 @@ impl RpcState {
             })
     }
 
+    /// Reserves one unit of global pending capacity without oversubscribing the shared limit.
     fn reserve_global_capacity(
         global_pending_count: Option<&std::sync::atomic::AtomicUsize>,
         local_live_request_count: usize,
@@ -545,6 +551,7 @@ impl RpcState {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// Coordinates duplicate, capacity, fairness, and tracking policy for one request.
     pub(in crate::domains::rpc::sink) fn dispatch_or_queue_request_with_global_count(
         &mut self,
         request: crate::domains::rpc::protocol::RpcRequest,
@@ -762,7 +769,7 @@ impl RpcState {
         Some((pending, self.live_request_count()))
     }
 
-    pub(in crate::domains::rpc::sink) fn release_worker_for_pending(
+    pub(in crate::domains::rpc::sink) fn release_registration_for_pending(
         &mut self,
         pending: &RpcPendingRequest,
         latency_us: Option<u64>,
@@ -773,7 +780,7 @@ impl RpcState {
         self.prune_route_if_unused(pending.dispatch_info.family, &pending.dispatch_info.route);
     }
 
-    pub(in crate::domains::rpc::sink) fn release_worker_for_dispatch_info(
+    pub(in crate::domains::rpc::sink) fn release_registration_for_dispatch_info(
         &mut self,
         pending: &RpcPendingDispatchInfo,
         latency_us: Option<u64>,
@@ -829,7 +836,7 @@ impl RpcState {
                 .pending
                 .remove(&expiring.key)
                 .expect("tracked pending request");
-            self.release_worker_for_pending(&pending, None);
+            self.release_registration_for_pending(&pending, None);
             removed_pending = removed_pending.saturating_add(1);
             if let Some(caller_inbox_addr) = pending.dispatch_info.caller_inbox_addr {
                 timeout_deliveries.push(RpcPendingErrorDelivery {

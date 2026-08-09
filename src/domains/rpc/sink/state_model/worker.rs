@@ -3,6 +3,34 @@ use crate::runtime::matcher::Pattern;
 
 pub(in crate::domains::rpc::sink) type RpcRegistrationId = u64;
 
+#[derive(Clone)]
+struct RegistrationCredit {
+    in_flight: usize,
+    max_concurrent: usize,
+}
+
+impl RegistrationCredit {
+    fn new(max_concurrent: usize) -> Self {
+        Self {
+            in_flight: 0,
+            max_concurrent,
+        }
+    }
+
+    fn is_available(&self) -> bool {
+        self.in_flight < self.max_concurrent
+    }
+
+    fn claim(&mut self) {
+        debug_assert!(self.is_available());
+        self.in_flight = self.in_flight.saturating_add(1);
+    }
+
+    fn release(&mut self) {
+        self.in_flight = self.in_flight.saturating_sub(1);
+    }
+}
+
 #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
 #[derive(Clone)]
 /// A live registration whose credit is bounded by `max_concurrent`.
@@ -15,8 +43,7 @@ pub(in crate::domains::rpc::sink) struct RpcWorker {
     pub(in crate::domains::rpc::sink) requests_handled: u64,
     pub(in crate::domains::rpc::sink) total_latency_us: u64,
     pattern: Pattern,
-    in_flight: usize,
-    pub(in crate::domains::rpc::sink) max_concurrent: usize,
+    credit: RegistrationCredit,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -63,8 +90,7 @@ impl RpcWorker {
             requests_handled: 0,
             total_latency_us: 0,
             pattern,
-            in_flight: 0,
-            max_concurrent,
+            credit: RegistrationCredit::new(max_concurrent),
         }
     }
 
@@ -91,8 +117,7 @@ impl RpcWorker {
             requests_handled,
             total_latency_us,
             pattern,
-            in_flight: 0,
-            max_concurrent: 1,
+            credit: RegistrationCredit::new(1),
         }
     }
 
@@ -122,18 +147,17 @@ impl RpcWorker {
 
     /// Reports whether dispatch may reserve another unit of registration credit.
     pub(in crate::domains::rpc::sink) fn is_available(&self) -> bool {
-        self.in_flight < self.max_concurrent
+        self.credit.is_available()
     }
 
     /// Reserves one dispatch slot; callers must release it on every terminal path.
     pub(in crate::domains::rpc::sink) fn claim_slot(&mut self) {
-        debug_assert!(self.is_available());
-        self.in_flight = self.in_flight.saturating_add(1);
+        self.credit.claim();
     }
 
     /// Returns one dispatch slot without coupling credit accounting to fairness scans.
     pub(in crate::domains::rpc::sink) fn release_slot(&mut self) {
-        self.in_flight = self.in_flight.saturating_sub(1);
+        self.credit.release();
     }
 
     pub(in crate::domains::rpc::sink) fn record_completion(&mut self, latency_us: u64) {
@@ -170,6 +194,22 @@ impl RpcWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn should_account_registration_credit_independent_of_worker_metadata() {
+        // Arrange
+        let mut credit = RegistrationCredit::new(2);
+
+        // Act
+        credit.claim();
+        credit.claim();
+        let exhausted = !credit.is_available();
+        credit.release();
+
+        // Assert
+        assert!(exhausted);
+        assert!(credit.is_available());
+    }
 
     #[test]
     #[should_panic(expected = "RPC worker max_concurrent must be in 1..=1024")]

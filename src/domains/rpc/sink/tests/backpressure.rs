@@ -26,7 +26,7 @@ fn exercise_detached_caller_queued_dispatch_backpressure(error: DeliveryError) {
         worker_inbox.clone(),
         Arc::new(BackpressuredWorkerSink { error }) as Arc<dyn MailboxSink>,
     );
-    sink.register_worker_for_tests(RpcWorker::with_stats(
+    sink.register_registration_for_tests(RpcWorker::with_stats(
         RouteAddress::new(family, route.clone()),
         worker_inbox,
         42,
@@ -91,7 +91,7 @@ fn should_return_to_family_drain_loop_after_queued_dispatch_backpressure() {
             },
         }) as Arc<dyn MailboxSink>,
     );
-    sink.register_worker_for_tests(RpcWorker::with_stats(
+    sink.register_registration_for_tests(RpcWorker::with_stats(
         RouteAddress::new(family, route.clone()),
         worker_inbox,
         42,

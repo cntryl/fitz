@@ -14,8 +14,8 @@ fn should_keep_rpc_worker_state_isolated_by_route_family() {
     let family_one = RouteFamily::new(1);
     let family_two = RouteFamily::new(2);
     let mut state = RpcState::new();
-    state.register_worker(test_rpc_worker(family_one, &route, 11));
-    state.register_worker(test_rpc_worker(family_two, &route, 22));
+    state.register_registration(test_rpc_worker(family_one, &route, 11));
+    state.register_registration(test_rpc_worker(family_two, &route, 22));
 
     // Act
     let family_one_workers = state.registration_count_for_family(family_one);
@@ -35,8 +35,8 @@ fn should_allow_same_rpc_correlation_in_separate_route_families() {
     let family_one = RouteFamily::new(1);
     let family_two = RouteFamily::new(2);
     let mut state = RpcState::new();
-    state.register_worker(test_rpc_worker(family_one, &route, 11));
-    state.register_worker(test_rpc_worker(family_two, &route, 22));
+    state.register_registration(test_rpc_worker(family_one, &route, 11));
+    state.register_registration(test_rpc_worker(family_two, &route, 22));
 
     // Act
     let first = state.dispatch_or_queue_request_with_global_count(
@@ -81,7 +81,7 @@ fn should_release_worker_credit_after_caller_disconnects() {
     let family = RouteFamily::new(1);
     let correlation_id = uuid::Uuid::new_v4();
     let mut state = RpcState::new();
-    state.register_worker(test_rpc_worker(family, &route, 11));
+    state.register_registration(test_rpc_worker(family, &route, 11));
     let dispatch = state.dispatch_or_queue_request_with_global_count(
         crate::domains::rpc::protocol::RpcRequest::new(
             family,
@@ -105,7 +105,7 @@ fn should_release_worker_credit_after_caller_disconnects() {
             .pending
             .pending_for_response_in_family(family, &correlation_id, 11, 0, true);
     if let RpcPendingResponseDisposition::Forward { pending, .. } = response {
-        state.release_worker_for_dispatch_info(&pending, None);
+        state.release_registration_for_dispatch_info(&pending, None);
     } else {
         panic!("caller cleanup must retain the worker-owned pending request");
     }
@@ -234,6 +234,20 @@ pub(super) fn should_create_rpc_domain_sink() {
 }
 
 #[test]
+pub(super) fn should_report_rpc_sink_inactive_immediately_after_stop() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = RpcDomainSink::new(router, admin_read_model);
+
+    // Act
+    sink.stop();
+
+    // Assert
+    assert!(!sink.is_active());
+}
+
+#[test]
 pub(super) fn should_reject_rpc_delivery_when_managed_actor_is_stopped() {
     // Arrange
     let router = Arc::new(Router::new());
@@ -263,7 +277,7 @@ pub(super) fn should_route_rpc_live_count_queries_through_managed_actor() {
     let family = RouteFamily::new(1);
     let route = Route::new("rpc://prod/system/resource/op");
     let correlation_id = uuid::Uuid::new_v4();
-    sink.register_worker_for_tests(test_rpc_worker(family, &route, 42));
+    sink.register_registration_for_tests(test_rpc_worker(family, &route, 42));
     sink.track_pending_request_for_tests(
         correlation_id,
         test_pending_request(
@@ -295,7 +309,7 @@ pub(super) fn should_route_rpc_session_cleanup_helper_through_managed_actor() {
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
     let sink = RpcDomainSink::new(router, admin_read_model).with_metrics(metrics.clone());
     let route = Route::new("rpc://prod/system/resource/cleanup");
-    sink.register_worker_for_tests(test_rpc_worker(family, &route, 42));
+    sink.register_registration_for_tests(test_rpc_worker(family, &route, 42));
     sink.track_pending_request_for_tests(
         uuid::Uuid::new_v4(),
         test_pending_request(
@@ -333,7 +347,7 @@ pub(super) fn should_route_rpc_worker_unsubscribe_helper_through_managed_actor()
     let sink = RpcDomainSink::new(router, admin_read_model).with_metrics(metrics.clone());
     let route = Route::new("rpc://prod/system/resource/unsubscribe");
     let worker_addr = RouteAddress::new(family, route.clone());
-    sink.register_worker_for_tests(test_rpc_worker(family, &route, 42));
+    sink.register_registration_for_tests(test_rpc_worker(family, &route, 42));
     sink.track_pending_request_for_tests(
         uuid::Uuid::new_v4(),
         test_pending_request(
@@ -381,8 +395,8 @@ pub(super) fn should_claim_workers_in_registration_order_given_rpc_registration_
     let family = RouteFamily::new(1);
     let route = Route::new("rpc://bench/system/resource/operation");
     let mut state = RpcState::new();
-    state.register_worker(test_rpc_worker(family, &route, 10));
-    state.register_worker(test_rpc_worker(family, &route, 11));
+    state.register_registration(test_rpc_worker(family, &route, 10));
+    state.register_registration(test_rpc_worker(family, &route, 11));
 
     // Act
     let first = state
@@ -403,13 +417,13 @@ pub(super) fn should_share_worker_credit_from_registration_state() {
     let family = RouteFamily::new(1);
     let route = Route::new("rpc://bench/system/resource/operation");
     let mut state = RpcState::new();
-    state.register_worker(RpcWorker::new(
+    state.register_registration(RpcWorker::new(
         RouteAddress::new(family, route.clone()),
         session_inbox_address(family, 10),
         10,
         2,
     ));
-    state.register_worker(RpcWorker::new(
+    state.register_registration(RpcWorker::new(
         RouteAddress::new(family, route.clone()),
         session_inbox_address(family, 11),
         11,
@@ -439,8 +453,8 @@ pub(super) fn should_rotate_one_credit_workers_after_release_given_registration_
     let family = RouteFamily::new(1);
     let route = Route::new("rpc://bench/system/resource/operation");
     let mut state = RpcState::new();
-    state.register_worker(test_rpc_worker(family, &route, 10));
-    state.register_worker(test_rpc_worker(family, &route, 11));
+    state.register_registration(test_rpc_worker(family, &route, 10));
+    state.register_registration(test_rpc_worker(family, &route, 11));
 
     // Act
     let first = state
@@ -462,13 +476,13 @@ pub(super) fn should_restore_multi_credit_worker_after_release_given_registratio
     let family = RouteFamily::new(1);
     let route = Route::new("rpc://bench/system/resource/operation");
     let mut state = RpcState::new();
-    state.register_worker(RpcWorker::new(
+    state.register_registration(RpcWorker::new(
         RouteAddress::new(family, route.clone()),
         session_inbox_address(family, 10),
         10,
         2,
     ));
-    state.register_worker(RpcWorker::new(
+    state.register_registration(RpcWorker::new(
         RouteAddress::new(family, route.clone()),
         session_inbox_address(family, 11),
         11,
@@ -500,7 +514,7 @@ pub(super) fn should_reuse_route_state_given_equivalent_rpc_route_keys() {
     let route = Route::new("rpc://bench/system/resource/operation");
     let duplicate_route = Route::new("rpc://bench/system/resource/operation");
     let mut state = RpcState::new();
-    state.register_worker(test_rpc_worker(family, &route, 10));
+    state.register_registration(test_rpc_worker(family, &route, 10));
     state.ensure_route_state(&route);
 
     // Act
@@ -521,8 +535,8 @@ pub(super) fn should_ignore_duplicate_worker_registration_given_same_session_and
     let worker = test_rpc_worker(family, &route, 10);
 
     // Act
-    state.register_worker(worker.clone());
-    state.register_worker(worker);
+    state.register_registration(worker.clone());
+    state.register_registration(worker);
 
     // Assert
     assert_eq!(state.registration_count(), 1);
@@ -562,7 +576,7 @@ pub(super) fn should_snapshot_live_pending_request_details_given_rpc_admin_snaps
     let route = Route::new("rpc://prod/api/users/get");
     let correlation_id = uuid::Uuid::new_v4();
 
-    sink.register_worker_for_tests(test_rpc_worker(family, &route, 42));
+    sink.register_registration_for_tests(test_rpc_worker(family, &route, 42));
     sink.track_pending_request_for_tests(
         correlation_id,
         RpcPendingRequest::new(RpcPendingRequestInit {
@@ -639,7 +653,7 @@ pub(super) fn should_snapshot_live_worker_metrics_after_terminal_response_given_
         }) as Arc<dyn MailboxSink>,
     );
 
-    sink.register_worker_for_tests(RpcWorker::with_stats(
+    sink.register_registration_for_tests(RpcWorker::with_stats(
         request_addr.clone(),
         worker_inbox_addr.clone(),
         42,
@@ -710,8 +724,8 @@ pub(super) fn should_accumulate_cleanup_counters_given_rpc_session_cleanup() {
     let external_route_a = Route::new("rpc://bench/external/resource/operation-a");
     let external_route_b = Route::new("rpc://bench/external/resource/operation-b");
 
-    sink.register_worker_for_tests(test_rpc_worker(family, &worker_route_a, 42));
-    sink.register_worker_for_tests(test_rpc_worker(family, &worker_route_b, 42));
+    sink.register_registration_for_tests(test_rpc_worker(family, &worker_route_a, 42));
+    sink.register_registration_for_tests(test_rpc_worker(family, &worker_route_b, 42));
     sink.track_pending_request_for_tests(
         uuid::Uuid::new_v4(),
         test_pending_request(
@@ -779,8 +793,8 @@ pub(super) fn should_accumulate_pending_removed_counter_given_rpc_worker_unsubsc
     let retained_route = Route::new("rpc://bench/system/resource/other");
     let removed_addr = RouteAddress::new(family, removed_route.clone());
 
-    sink.register_worker_for_tests(test_rpc_worker(family, &removed_route, 42));
-    sink.register_worker_for_tests(test_rpc_worker(family, &retained_route, 42));
+    sink.register_registration_for_tests(test_rpc_worker(family, &removed_route, 42));
+    sink.register_registration_for_tests(test_rpc_worker(family, &retained_route, 42));
     let (removed_registration_id, retained_registration_id) = {
         let state = sink.core.state.lock();
         (

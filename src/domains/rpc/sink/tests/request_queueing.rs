@@ -34,7 +34,7 @@ fn should_reject_duplicate_live_correlation_given_rpc_sink() {
             frames: worker_frames.clone(),
         }) as Arc<dyn MailboxSink>,
     );
-    sink.register_worker_for_tests(RpcWorker::with_stats(
+    sink.register_registration_for_tests(RpcWorker::with_stats(
         request_addr.clone(),
         worker_source,
         42,
@@ -142,7 +142,7 @@ fn should_queue_request_when_worker_is_busy_given_rpc_sink() {
             frames: worker_frames.clone(),
         }) as Arc<dyn MailboxSink>,
     );
-    sink.register_worker_for_tests(test_rpc_worker(family, &request_route, 42));
+    sink.register_registration_for_tests(test_rpc_worker(family, &request_route, 42));
     let caller_one_request = crate::domains::rpc::protocol::RpcRequest::new(
         family,
         uuid::Uuid::new_v4(),
@@ -245,7 +245,7 @@ fn should_dispatch_queued_request_after_terminal_response_given_rpc_sink() {
             frames: worker_frames.clone(),
         }) as Arc<dyn MailboxSink>,
     );
-    sink.register_worker_for_tests(test_rpc_worker(family, &request_route, 42));
+    sink.register_registration_for_tests(test_rpc_worker(family, &request_route, 42));
     let caller_one_request = crate::domains::rpc::protocol::RpcRequest::new(
         family,
         uuid::Uuid::new_v4(),
@@ -383,7 +383,7 @@ fn should_reject_request_when_route_queue_capacity_reached_given_rpc_sink() {
             frames: worker_frames.clone(),
         }) as Arc<dyn MailboxSink>,
     );
-    sink.register_worker_for_tests(test_rpc_worker(family, &request_route, 42));
+    sink.register_registration_for_tests(test_rpc_worker(family, &request_route, 42));
     let caller_one_payload = {
         let mut encoder = crate::dispatch::protocol::payload_codec::PayloadEncoder::new();
         bytes::Bytes::from(crate::dispatch::protocol::rpc_codec::encode_request_into(
@@ -489,7 +489,7 @@ fn should_snapshot_queued_request_without_worker_session_id_given_rpc_admin_snap
     let family = RouteFamily::new(1);
     let route = Route::new("rpc://prod/api/users/get");
     let correlation_id = uuid::Uuid::new_v4();
-    sink.register_worker_for_tests(test_rpc_worker(family, &route, 42));
+    sink.register_registration_for_tests(test_rpc_worker(family, &route, 42));
     sink.queue_request_for_tests(
         correlation_id,
         RpcQueuedRequest::from_request(
@@ -531,7 +531,7 @@ fn should_reject_request_when_worker_disconnects_before_dispatch_given_missing_w
         frames: reply_frames.clone(),
     });
     router.register(request_source.clone(), reply_sink as Arc<dyn MailboxSink>);
-    sink.register_worker_for_tests(test_rpc_worker(family, &request_route, 42));
+    sink.register_registration_for_tests(test_rpc_worker(family, &request_route, 42));
     let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
     let (request_msg_type, request_payload) =
         crate::benchkit::extract_single_tlv_field(&request_frame);
@@ -595,7 +595,7 @@ fn should_forward_response_to_original_request_source_given_noncanonical_inbox_r
     });
     router.register(request_source.clone(), reply_sink as Arc<dyn MailboxSink>);
     router.register(worker_source.clone(), worker_sink as Arc<dyn MailboxSink>);
-    sink.register_worker_for_tests(RpcWorker::with_stats(
+    sink.register_registration_for_tests(RpcWorker::with_stats(
         request_addr.clone(),
         worker_source.clone(),
         42,
@@ -667,7 +667,7 @@ fn should_detach_caller_pending_given_rpc_session_cleanup() {
     let caller_inbox_addr = session_inbox_address(family, 7);
     let mut state = RpcState::new();
     let route = Route::new("rpc://bench/system/resource/operation");
-    state.register_worker(test_rpc_worker(family, &route, 42));
+    state.register_registration(test_rpc_worker(family, &route, 42));
     let detached_correlation_id = uuid::Uuid::new_v4();
     state.pending.track_pending(
         detached_correlation_id,
@@ -718,7 +718,7 @@ fn should_remove_queued_request_given_rpc_session_cleanup() {
     let mut state = RpcState::new();
     let route = Route::new("rpc://bench/system/resource/operation");
     let queued_correlation_id = uuid::Uuid::new_v4();
-    state.register_worker(test_rpc_worker(family, &route, 42));
+    state.register_registration(test_rpc_worker(family, &route, 42));
     state.queue_request(
         queued_correlation_id,
         RpcQueuedRequest::from_request(
@@ -753,7 +753,7 @@ fn should_remove_worker_entries_given_rpc_session_cleanup() {
     let family = RouteFamily::new(1);
     let mut state = RpcState::new();
     let route = Route::new("rpc://bench/system/resource/operation");
-    state.register_worker(test_rpc_worker(family, &route, 42));
+    state.register_registration(test_rpc_worker(family, &route, 42));
 
     // Act
     let worker_cleanup = state.cleanup_session(42);

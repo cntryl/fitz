@@ -151,8 +151,8 @@ impl RpcDomainSink {
     }
 
     #[cfg(test)]
-    pub(super) fn register_worker_for_tests(&self, worker: RpcWorker) {
-        self.core.state.lock().register_worker(worker);
+    pub(super) fn register_registration_for_tests(&self, registration: RpcWorker) {
+        self.core.state.lock().register_registration(registration);
     }
 
     #[cfg(test)]
@@ -527,7 +527,7 @@ impl RpcDomainRuntime<'_> {
     ) -> RpcWorkerCleanupResult {
         let cleanup_result = {
             let mut state = self.state.lock();
-            state.unregister_worker(worker_addr, session_id)
+            state.unregister_registration(worker_addr, session_id)
         };
 
         self.gauge_set("rpc_pending_requests", cleanup_result.pending_len as u64);

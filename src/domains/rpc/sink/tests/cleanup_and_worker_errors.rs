@@ -12,8 +12,8 @@ fn should_remove_only_matching_pending_given_worker_unsubscribe() {
     let removed_correlation_id = uuid::Uuid::new_v4();
     let retained_correlation_id = uuid::Uuid::new_v4();
 
-    state.register_worker(test_rpc_worker(family, &removed_route, 42));
-    state.register_worker(test_rpc_worker(family, &retained_route, 42));
+    state.register_registration(test_rpc_worker(family, &removed_route, 42));
+    state.register_registration(test_rpc_worker(family, &retained_route, 42));
     let removed_registration_id = state
         .registration_id_for(&removed_worker_addr, 42)
         .expect("removed registration id");
@@ -44,7 +44,7 @@ fn should_remove_only_matching_pending_given_worker_unsubscribe() {
     );
 
     // Act
-    let cleanup = state.unregister_worker(&removed_worker_addr, 42);
+    let cleanup = state.unregister_registration(&removed_worker_addr, 42);
 
     // Assert
     assert_eq!(cleanup.removed_workers, 1);
@@ -96,7 +96,7 @@ fn should_forward_worker_disconnect_error_given_rpc_unsubscribe() {
     });
     router.register(request_source.clone(), reply_sink as Arc<dyn MailboxSink>);
     router.register(worker_source.clone(), worker_sink as Arc<dyn MailboxSink>);
-    sink.register_worker_for_tests(RpcWorker::with_stats(
+    sink.register_registration_for_tests(RpcWorker::with_stats(
         request_addr.clone(),
         worker_source.clone(),
         42,
@@ -191,7 +191,7 @@ fn should_retain_other_worker_route_given_rpc_unsubscribe_on_same_session() {
     });
     router.register(request_source.clone(), reply_sink as Arc<dyn MailboxSink>);
     router.register(worker_source.clone(), worker_sink as Arc<dyn MailboxSink>);
-    sink.register_worker_for_tests(RpcWorker::with_stats(
+    sink.register_registration_for_tests(RpcWorker::with_stats(
         removed_addr.clone(),
         worker_source.clone(),
         42,
@@ -199,7 +199,7 @@ fn should_retain_other_worker_route_given_rpc_unsubscribe_on_same_session() {
         0,
         0,
     ));
-    sink.register_worker_for_tests(RpcWorker::with_stats(
+    sink.register_registration_for_tests(RpcWorker::with_stats(
         retained_addr.clone(),
         worker_source.clone(),
         42,
@@ -312,7 +312,7 @@ fn should_forward_worker_disconnect_error_given_rpc_session_cleanup() {
     });
     router.register(request_source.clone(), reply_sink as Arc<dyn MailboxSink>);
     router.register(worker_source.clone(), worker_sink as Arc<dyn MailboxSink>);
-    sink.register_worker_for_tests(test_rpc_worker(family, &request_route, 42));
+    sink.register_registration_for_tests(test_rpc_worker(family, &request_route, 42));
     let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
     let (request_msg_type, request_payload) =
         crate::benchkit::extract_single_tlv_field(&request_frame);
@@ -388,7 +388,7 @@ fn should_reject_worker_response_when_correlation_missing_given_rpc_sink() {
     });
     router.register(request_source.clone(), reply_sink as Arc<dyn MailboxSink>);
     router.register(worker_source.clone(), worker_sink as Arc<dyn MailboxSink>);
-    sink.register_worker_for_tests(RpcWorker::with_stats(
+    sink.register_registration_for_tests(RpcWorker::with_stats(
         request_addr.clone(),
         worker_source.clone(),
         42,
@@ -487,7 +487,7 @@ fn should_reject_worker_response_from_non_owner_session_given_rpc_sink() {
             frames: non_owner_worker_frames.clone(),
         }) as Arc<dyn MailboxSink>,
     );
-    sink.register_worker_for_tests(RpcWorker::with_stats(
+    sink.register_registration_for_tests(RpcWorker::with_stats(
         request_addr.clone(),
         owner_worker_source.clone(),
         42,
@@ -495,7 +495,7 @@ fn should_reject_worker_response_from_non_owner_session_given_rpc_sink() {
         0,
         0,
     ));
-    sink.register_worker_for_tests(RpcWorker::with_stats(
+    sink.register_registration_for_tests(RpcWorker::with_stats(
         request_addr.clone(),
         non_owner_worker_source.clone(),
         43,
@@ -599,7 +599,7 @@ fn should_drop_late_worker_response_after_requester_cleanup_without_forward_erro
     });
     router.register(request_source.clone(), reply_sink as Arc<dyn MailboxSink>);
     router.register(worker_source.clone(), worker_sink as Arc<dyn MailboxSink>);
-    sink.register_worker_for_tests(RpcWorker::with_stats(
+    sink.register_registration_for_tests(RpcWorker::with_stats(
         request_addr.clone(),
         worker_source.clone(),
         42,

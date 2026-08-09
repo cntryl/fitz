@@ -118,7 +118,7 @@ fn should_reject_out_of_order_worker_response_given_rpc_sink() {
     });
     router.register(request_source.clone(), reply_sink as Arc<dyn MailboxSink>);
     router.register(worker_source.clone(), worker_sink as Arc<dyn MailboxSink>);
-    sink.register_worker_for_tests(test_rpc_worker(family, &request_route, 42));
+    sink.register_registration_for_tests(test_rpc_worker(family, &request_route, 42));
     let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
     let (request_msg_type, request_payload) =
         crate::benchkit::extract_single_tlv_field(&request_frame);
@@ -220,7 +220,7 @@ fn should_reject_duplicate_worker_response_chunk_given_rpc_sink() {
     });
     router.register(request_source.clone(), reply_sink as Arc<dyn MailboxSink>);
     router.register(worker_source.clone(), worker_sink as Arc<dyn MailboxSink>);
-    sink.register_worker_for_tests(test_rpc_worker(family, &request_route, 42));
+    sink.register_registration_for_tests(test_rpc_worker(family, &request_route, 42));
     let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
     let (request_msg_type, request_payload) =
         crate::benchkit::extract_single_tlv_field(&request_frame);
