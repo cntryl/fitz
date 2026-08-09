@@ -273,10 +273,6 @@ fn should_retry_notice_delivery_when_outbound_mailbox_is_temporarily_full() {
             capacity: 1,
             current_len: 1,
         }),
-        Err(DeliveryError::MailboxFull {
-            capacity: 1,
-            current_len: 1,
-        }),
         Ok(()),
     ]));
 

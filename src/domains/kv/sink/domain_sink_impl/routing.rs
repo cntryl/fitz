@@ -200,12 +200,7 @@ impl KvDomainRuntime<'_> {
     }
 
     pub(in crate::domains::kv::sink) fn active_transaction_count(&self) -> usize {
-        self.core
-            .actors
-            .lock()
-            .values()
-            .map(crate::domains::kv::KvActor::transaction_count)
-            .sum()
+        self.core.projection.active_transaction_count()
     }
 
     pub(in crate::domains::kv::sink) fn apply_write_options(

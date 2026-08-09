@@ -57,7 +57,7 @@ impl KvResourceLockKey {
 
 pub(super) struct KvDomainCore {
     pub(super) store: Arc<cntryl_midge::Engine>,
-    pub(super) actors: Arc<Mutex<HashMap<u64, crate::domains::kv::KvActor>>>,
+    pub(super) actors: Arc<Mutex<HashMap<u64, Arc<Mutex<crate::domains::kv::KvActor>>>>>,
     pub(super) watch_actors: Mutex<HashMap<u64, crate::domains::kv::watch::KvWatchActor>>,
     pub(super) router: Arc<Router>,
     pub(super) projection: crate::domains::kv::projection::KvAdminProjection<KvResourceLockKey>,
