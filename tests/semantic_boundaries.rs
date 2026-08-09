@@ -353,6 +353,23 @@ fn should_keep_notice_backpressure_and_duplicate_paths_bounded() {
 }
 
 #[test]
+fn should_compile_lease_bench_commands_only_for_tests_or_benchkit() {
+    // Arrange
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let model = read_source_file(&repo_root.join("src/domains/lease/sink/model.rs"));
+    let lifecycle = read_source_file(
+        &repo_root.join("src/domains/lease/sink/lifecycle_and_admin/lifecycle.rs"),
+    );
+
+    // Act
+    let gate = "#[cfg(any(test, feature = \"benchkit\"))]";
+
+    // Assert
+    assert!(model.matches(gate).count() >= 2);
+    assert!(lifecycle.matches(gate).count() >= 2);
+}
+
+#[test]
 fn should_keep_shadow_lease_actor_removed_from_default_surface() {
     // Arrange
     let repo_root = repo_root();

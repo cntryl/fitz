@@ -122,10 +122,12 @@ pub(super) enum LeaseDomainCommand {
     ReadLiveCounts(crossbeam_channel::Sender<LeaseLiveCounts>),
     ReadWaiters(crossbeam_channel::Sender<Vec<crate::control::admin::LeaseWaiterInfo>>),
     SweepExpiredState,
+    #[cfg(any(test, feature = "benchkit"))]
     ApplyAcquireForBench(
         LeaseAcquireRequest,
         crossbeam_channel::Sender<crate::domains::lease::protocol::LeaseResponse>,
     ),
+    #[cfg(any(test, feature = "benchkit"))]
     ApplyReleaseForBench(
         crate::domains::lease::protocol::LeaseKey,
         String,

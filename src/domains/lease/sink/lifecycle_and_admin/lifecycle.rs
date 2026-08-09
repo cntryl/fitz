@@ -1,7 +1,9 @@
+#[cfg(any(test, feature = "benchkit"))]
+use super::super::model::LeaseAcquireRequest;
 use super::super::model::{
-    Arc, AtomicBool, AtomicU64, HashMap, LeaseAcquireRequest, LeaseDomainActor, LeaseDomainCommand,
-    LeaseDomainCore, LeaseDomainRuntime, LeaseDomainSink, LeaseDomainState, LeaseLiveCounts,
-    LeaseMetrics, Mutex, Ordering, LEASE_ACTOR_REPLY_TIMEOUT,
+    Arc, AtomicBool, AtomicU64, HashMap, LeaseDomainActor, LeaseDomainCommand, LeaseDomainCore,
+    LeaseDomainRuntime, LeaseDomainSink, LeaseDomainState, LeaseLiveCounts, LeaseMetrics, Mutex,
+    Ordering, LEASE_ACTOR_REPLY_TIMEOUT,
 };
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::runtime::Router;
@@ -186,6 +188,7 @@ impl LeaseDomainSink {
     }
 
     #[must_use]
+    #[cfg(any(test, feature = "benchkit"))]
     pub(crate) fn acquire_for_bench(
         &self,
         key: &crate::domains::lease::protocol::LeaseKey,
@@ -225,6 +228,7 @@ impl LeaseDomainSink {
     }
 
     #[must_use]
+    #[cfg(any(test, feature = "benchkit"))]
     pub(crate) fn release_for_bench(
         &self,
         key: &crate::domains::lease::protocol::LeaseKey,

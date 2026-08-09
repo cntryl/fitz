@@ -23,6 +23,8 @@ pedantic = "deny"
 # Feature flag to skip admin snapshot syncing in RPC domain for benchmarking
 # Helps identify if snapshot overhead is the dominant bottleneck in scaling collapse
 bench-no-snapshot = []
+# Compile benchmark-only library adapters that intentionally bypass transport.
+benchkit = []
 
 [profile.release]
 lto = true
@@ -199,6 +201,7 @@ path = "benches/tier3_system_kv.rs"
 name = "tier3_system_lease"
 harness = false
 path = "benches/tier3_system_lease.rs"
+required-features = ["benchkit"]
 
 [[bench]]
 name = "tier3_system_notice"
@@ -240,16 +243,19 @@ path = "benches/tier4_kv_contention.rs"
 name = "tier4_lease_gate"
 harness = false
 path = "benches/tier4_lease_gate.rs"
+required-features = ["benchkit"]
 
 [[bench]]
 name = "tier4_lease_ladder"
 harness = false
 path = "benches/tier4_lease_ladder.rs"
+required-features = ["benchkit"]
 
 [[bench]]
 name = "tier4_lease_contention"
 harness = false
 path = "benches/tier4_lease_contention.rs"
+required-features = ["benchkit"]
 
 [[bench]]
 name = "tier4_notice_publish"
