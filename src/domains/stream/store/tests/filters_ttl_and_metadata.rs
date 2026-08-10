@@ -114,7 +114,7 @@ fn compacted_resource_records(db: &cntryl_midge::Engine) -> Vec<CompactResourceP
 }
 
 #[test]
-fn should_preserve_absolute_expiration_before_and_after_compaction() {
+fn should_preserve_absolute_expiration_before_plus_after_compaction() {
     // Arrange
     let db = create_test_engine_with_cfs(vec![1]);
     let clock = Arc::new(TestStreamClock::new(1_000));

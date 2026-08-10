@@ -457,7 +457,7 @@ fn should_isolate_stream_resource_rollups_by_family() {
 }
 
 #[test]
-fn should_aggregate_notice_resource_counters_and_exclude_invalid_routes() {
+fn should_aggregate_notice_resource_counters_plus_exclude_invalid_routes() {
     // Arrange
     let runtime = snapshot_runtime();
     runtime

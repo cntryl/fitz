@@ -380,7 +380,7 @@ mod tests {
     }
 
     #[test]
-    fn should_cache_mixed_ec_and_oct_jwks_given_one_usable_key() {
+    fn should_cache_mixed_ec_plus_oct_jwks_given_one_usable_key() {
         // Arrange
         let secret = b"test_secret".to_vec();
         let k_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&secret);

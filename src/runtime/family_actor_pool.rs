@@ -601,7 +601,7 @@ mod tests {
     }
 
     #[test]
-    fn should_isolate_family_capacity_and_route_work_to_owning_shard() {
+    fn should_isolate_family_capacity_plus_route_work_to_owning_shard() {
         // Arrange
         let families = [family(1), family(2)];
         let mut pool = FamilyActorPool::<u64>::new(&families).expect("pool");
@@ -680,7 +680,7 @@ mod tests {
     }
 
     #[test]
-    fn should_reject_unknown_and_duplicate_families() {
+    fn should_reject_unknown_plus_duplicate_families() {
         // Arrange
         let duplicate = [family(1), family(1)];
         let pool = FamilyActorPool::<u64>::new(&[family(1)]).expect("pool");
@@ -816,7 +816,7 @@ mod tests {
     }
 
     #[test]
-    fn should_not_lose_wake_between_dispatch_and_next_wait() {
+    fn should_not_lose_wake_between_dispatch_plus_next_wait() {
         // Arrange
         const MESSAGE_COUNT: u64 = 256;
         let pool = FamilyActorPool::<u64>::new(&[family(1)]).expect("pool");

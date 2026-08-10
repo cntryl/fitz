@@ -53,7 +53,7 @@ fn should_reject_oversized_ttl_without_stopping_actor() {
 }
 
 #[test]
-fn should_reject_zero_ttl_for_acquire_and_extend() {
+fn should_reject_zero_ttl_for_acquire_plus_extend() {
     // Arrange
     let sink = new_correctness_lease_sink(Arc::new(Router::new()));
     let acquired = sink.acquire_for_tests(lease_acquire_request(30, 0));

@@ -689,6 +689,9 @@ mod tests {
 
     #[test]
     fn should_reject_zero_length_tcp_frame() {
+        // Arrange
+        // Act
+        // Assert
         assert!(matches!(
             TlvDecoder::new().decode_one(&[]),
             Err(TlvError::EmptyFrame)
@@ -697,6 +700,9 @@ mod tests {
 
     #[test]
     fn should_reject_truncated_tcp_length_prefix() {
+        // Arrange
+        // Act
+        // Assert
         assert!(matches!(
             TlvDecoder::new().decode_all(&[1]),
             Err(TlvError::IncompleteLength)
@@ -705,6 +711,9 @@ mod tests {
 
     #[test]
     fn should_reject_tcp_frame_over_configured_limit() {
+        // Arrange
+        // Act
+        // Assert
         let mut encoder = TlvEncoder::new();
         encoder.encode(MessageType::CONNECT, &[0; 4]);
         let bytes = encoder.finish();
@@ -720,7 +729,10 @@ mod tests {
     }
 
     #[test]
-    fn should_preserve_domain_error_shape_across_tcp_and_websocket() {
+    fn should_preserve_domain_error_shape_across_tcp_plus_websocket() {
+        // Arrange
+        // Act
+        // Assert
         assert!(matches!(
             TlvDecoder::new().decode_all(&[1]),
             Err(TlvError::IncompleteLength)

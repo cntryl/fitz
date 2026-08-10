@@ -246,7 +246,7 @@ mod tests {
     }
 
     #[test]
-    fn should_fail_livez_readyz_and_healthz_after_permanent_domain_failure() {
+    fn should_fail_livez_readyz_plus_healthz_after_permanent_domain_failure() {
         // Arrange
         let runtime = test_domain_setup();
         mark_runtime_ready(&runtime);

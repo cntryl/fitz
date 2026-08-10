@@ -190,7 +190,7 @@ fn should_reject_noncanonical_stream_read_selectors() {
 }
 
 #[test]
-fn should_accept_realm_and_global_filtered_stream_read_selectors() {
+fn should_accept_realm_plus_global_filtered_stream_read_selectors() {
     // Arrange
     let context = setup_test_context();
     let selectors = [
@@ -200,8 +200,9 @@ fn should_accept_realm_and_global_filtered_stream_read_selectors() {
         "stream://*/*/orders",
     ];
 
-    // Act & Assert
+    // Act
     for selector in selectors {
+        // Assert
         let frame = build_stream_read(selector, 0);
         let (msg_type, payload) = extract_single_tlv_field(&frame);
         let response = request(&context, selector, msg_type, payload);

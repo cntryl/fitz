@@ -107,7 +107,7 @@ fn should_count_bytes_examined_for_non_compactable_group() {
 }
 
 #[test]
-fn should_count_and_requeue_over_budget_maintenance_group() {
+fn should_count_plus_requeue_over_budget_maintenance_group() {
     // Arrange
     let db = create_test_engine_with_cfs(vec![1]);
     let store = StreamStore::new(db.clone());

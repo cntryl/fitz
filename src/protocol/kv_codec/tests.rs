@@ -167,7 +167,10 @@ proptest::proptest! {
         message_type in msg_type::BEGIN..=msg_type::SCAN,
         payload in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..512),
     ) {
+        // Arrange
+        // Act
         let _ = parse_request(message_type, RouteFamily::new(1), &payload);
+        // Assert
     }
 }
 
@@ -334,6 +337,9 @@ fn should_encode_subscribe_ok_response() {
 
 #[test]
 fn should_encode_read_only_write_with_canonical_error_code() {
+    // Arrange
+    // Act
+    // Assert
     let response = KvResponse::Error {
         error: KvError::BackendError("Cannot write in ReadOnly transaction".to_string()),
     };

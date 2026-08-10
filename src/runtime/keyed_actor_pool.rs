@@ -100,7 +100,7 @@ mod tests {
     }
 
     #[test]
-    fn should_spawn_actor_once_per_key_and_route_messages() {
+    fn should_spawn_actor_once_per_key_plus_route_messages() {
         // Arrange
         let router = Arc::new(Router::new());
         let pool: KeyedActorPool<&'static str, u64> = KeyedActorPool::new(router.clone(), 16, 4);

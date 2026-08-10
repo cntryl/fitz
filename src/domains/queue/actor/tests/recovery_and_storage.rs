@@ -518,7 +518,7 @@ fn should_recover_reserved_unacked_message_as_ready_after_restart() {
 }
 
 #[test]
-fn should_dead_letter_unhydratable_head_and_deliver_next_message() {
+fn should_dead_letter_unhydratable_head_plus_deliver_next_message() {
     // Arrange
     let store = Arc::new(
         cntryl_midge::Engine::open(

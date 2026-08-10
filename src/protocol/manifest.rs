@@ -467,6 +467,9 @@ mod tests {
 
     #[test]
     fn should_have_unique_manifest_message_ids() {
+        // Arrange
+        // Act
+        // Assert
         let mut ids = std::collections::BTreeSet::new();
         for entry in MESSAGE_MANIFEST {
             assert!(ids.insert(entry.message_id));
@@ -474,7 +477,7 @@ mod tests {
     }
 
     #[test]
-    fn should_reject_server_only_and_reserved_ids() {
+    fn should_reject_server_only_plus_reserved_ids() {
         assert!(client_entry(MessageType::new(504)).is_err());
         assert!(client_entry(MessageType::new(505)).is_err());
         assert!(client_entry(MessageType::new(999)).is_err());
@@ -482,6 +485,9 @@ mod tests {
 
     #[test]
     fn should_reject_every_unassigned_id_in_the_protocol_manifest_range() {
+        // Arrange
+        // Act
+        // Assert
         for message_id in 100..=799 {
             let message_type = MessageType::new(message_id);
             if entry(message_type).is_none() {
@@ -492,7 +498,10 @@ mod tests {
     }
 
     #[test]
-    fn should_keep_manifest_entries_domain_and_decoder_aligned() {
+    fn should_keep_manifest_entries_domain_plus_decoder_aligned() {
+        // Arrange
+        // Act
+        // Assert
         for manifest_entry in MESSAGE_MANIFEST {
             let expected_decoder = match manifest_entry.domain {
                 "control" => ManifestDecoder::Control,
@@ -517,6 +526,9 @@ mod tests {
 
     #[test]
     fn should_reject_unknown_message_id_given_known_domain_range() {
+        // Arrange
+        // Act
+        // Assert
         assert!(entry(MessageType::new(799)).is_none());
         assert_eq!(
             client_entry(MessageType::new(799)),
@@ -526,6 +538,9 @@ mod tests {
 
     #[test]
     fn should_reject_route_given_scheme_domain_mismatch() {
+        // Arrange
+        // Act
+        // Assert
         let queue_write = MESSAGE_MANIFEST
             .iter()
             .find(|entry| entry.message_id == 200)
@@ -536,6 +551,9 @@ mod tests {
 
     #[test]
     fn should_not_infer_realm_from_route_family() {
+        // Arrange
+        // Act
+        // Assert
         let address = RouteAddress::new(RouteFamily::new(41), Route::new("kv://orders/area/key"));
         assert_eq!(address.family().id(), 41);
         assert_eq!(address.route().as_str(), "kv://orders/area/key");
@@ -544,6 +562,9 @@ mod tests {
 
     #[test]
     fn should_not_infer_route_family_from_realm() {
+        // Arrange
+        // Act
+        // Assert
         let first = RouteAddress::new(RouteFamily::new(1), Route::new("kv://same/area/key"));
         let second = RouteAddress::new(RouteFamily::new(2), Route::new("kv://same/area/key"));
         assert_ne!(first, second);
@@ -559,6 +580,9 @@ mod tests {
 
     #[test]
     fn should_reject_second_connect_given_authenticated_session() {
+        // Arrange
+        // Act
+        // Assert
         let connects: Vec<_> = MESSAGE_MANIFEST
             .iter()
             .filter(|entry| {
@@ -570,6 +594,9 @@ mod tests {
 
     #[test]
     fn should_reject_non_connect_frame_before_authentication() {
+        // Arrange
+        // Act
+        // Assert
         let first_domain_message = MESSAGE_MANIFEST
             .iter()
             .find(|entry| {

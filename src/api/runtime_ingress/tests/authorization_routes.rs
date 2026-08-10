@@ -234,7 +234,7 @@ fn should_authorize_wildcard_read_selectors_as_pattern_coverage() {
 }
 
 #[test]
-fn should_authorize_concrete_queue_reserve_and_stream_read_as_single_routes() {
+fn should_authorize_concrete_queue_reserve_plus_stream_read_as_single_routes() {
     // Arrange
     let queue_payload = encode_queue_reserve("queue://acme/cats/orders", 30, 2);
     let stream_frame = crate::benchkit::build_stream_read("stream://acme/cats/orders", 0);

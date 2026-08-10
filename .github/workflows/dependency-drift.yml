@@ -26,20 +26,31 @@ jobs:
             const dependencies = [
               { name: "cntryl-lexkey", owner: "cntryl", repo: "lexkey-rs" },
               { name: "cntryl-midge", owner: "cntryl", repo: "midge" },
+              { name: "cntryl-stress", owner: "cntryl", repo: "stress" },
             ];
             const stale = [];
 
             for (const dependency of dependencies) {
               const escaped = dependency.name.replaceAll("-", "\\-");
-              const match = cargo.match(
-                new RegExp(`^${escaped}\\s*=.*\\brev\\s*=\\s*"([^"]+)"`, "m"),
+              const declaration = cargo.match(
+                new RegExp(`^${escaped}\\s*=.*$`, "m"),
               );
-              if (!match) {
-                core.setFailed(`Could not find a rev pin for ${dependency.name}`);
+              if (!declaration?.[0].includes('branch = "main"')) {
+                core.setFailed(`${dependency.name} must track branch = "main"`);
                 return;
               }
 
-              const pinned = match[1];
+              const lock = fs.readFileSync("Cargo.lock", "utf8");
+              const packageBlock = lock.match(
+                new RegExp(`\\[\\[package\\]\\]\\nname = "${escaped}"[\\s\\S]*?(?=\\n\\[\\[package\\]\\]|$)`),
+              );
+              const source = packageBlock?.[0].match(/source = ".*\\?branch=main#([0-9a-f]+)"/);
+              if (!source) {
+                core.setFailed(`Could not find a main-branch lock for ${dependency.name}`);
+                return;
+              }
+
+              const pinned = source[1];
               const repository = await github.rest.repos.get({
                 owner: dependency.owner,
                 repo: dependency.repo,
@@ -66,7 +77,7 @@ jobs:
             }
 
             const body = [
-              "The weekly dependency check found stale git revision pins:",
+              "The weekly dependency check found stale Git branch locks:",
               "",
               ...stale,
               "",

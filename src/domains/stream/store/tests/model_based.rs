@@ -112,7 +112,7 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(24))]
 
     #[test]
-    fn should_match_reference_model_through_reopen_expiration_and_compaction(
+    fn should_match_reference_model_through_reopen_expiration_plus_compaction(
         operations in prop::collection::vec((0_u8..7, any::<u8>()), 1..40),
     ) {
         // Arrange

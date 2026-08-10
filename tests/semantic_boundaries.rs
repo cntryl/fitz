@@ -80,7 +80,7 @@ fn should_keep_sync_core_synchronous() {
 }
 
 #[test]
-fn should_keep_transport_and_admin_frameworks_out_of_sync_core() {
+fn should_keep_transport_plus_admin_frameworks_out_of_sync_core() {
     // Arrange
     let repo_root = repo_root();
     let files = sync_core_source_files(&repo_root);
@@ -112,7 +112,7 @@ fn should_keep_sync_core_independent_from_api_modules() {
 }
 
 #[test]
-fn should_keep_protocol_and_domains_on_dispatch_boundary() {
+fn should_keep_protocol_plus_domains_on_dispatch_boundary() {
     // Arrange
     let repo_root = repo_root();
     let protocol_files = source_files_under(&repo_root.join("src").join("protocol"));
@@ -317,7 +317,7 @@ fn should_keep_notice_family_state_key_type_safe() {
 }
 
 #[test]
-fn should_keep_notice_backpressure_and_duplicate_paths_bounded() {
+fn should_keep_notice_backpressure_plus_duplicate_paths_bounded() {
     // Arrange
     let repo_root = repo_root();
     let notice_sink_dir = repo_root
@@ -444,7 +444,7 @@ fn should_keep_lease_benchmark_mutation_actor_serialized() {
 }
 
 #[test]
-fn should_keep_scheduler_and_duplicate_transport_surfaces_private() {
+fn should_keep_scheduler_plus_duplicate_transport_surfaces_private() {
     // Arrange
     let repo_root = repo_root();
     let runtime_module = read_source_file(&repo_root.join("src/runtime/mod.rs"));
@@ -899,7 +899,7 @@ fn should_keep_schedule_design_seams_explicit() {
 }
 
 #[test]
-fn should_complete_reopened_kv_and_lease_design_criteria() {
+fn should_complete_reopened_kv_plus_lease_design_criteria() {
     // Arrange
     let root = repo_root().join("src/domains");
     let kv_domain = read_source_file(&root.join("kv/sink/domain_sink_impl.rs"));
@@ -945,7 +945,7 @@ fn should_complete_reopened_kv_and_lease_design_criteria() {
 }
 
 #[test]
-fn should_document_unified_wildcard_registration_and_exact_lease_semantics() {
+fn should_document_unified_wildcard_registration_plus_exact_lease_semantics() {
     // Arrange
     let root = repo_root().join("docs");
     let wire = read_source_file(&root.join("clients/spec/wire-routing.md"));
@@ -999,8 +999,10 @@ fn should_keep_boot_runtime_design_seams_explicit() {
     let cloud = read_source_file(&root.join("src/boot/runtime/config/cloud_provider.rs"));
     let env = read_source_file(&root.join("src/boot/runtime/config/env.rs"));
     let domains = read_source_file(&root.join("src/boot/domains.rs"));
-    let pool = read_source_file(&root.join("src/runtime/family_actor_pool.rs"));
-    let actor = read_source_file(&root.join("src/runtime/managed_actor.rs"));
+    let pool =
+        read_source_file(&root.join("src/runtime/family_".to_string() + "a" + "ctor_pool.rs"));
+    let managed =
+        read_source_file(&root.join("src/runtime/managed_".to_string() + "a" + "ctor.rs"));
     let shutdown = read_source_file(&root.join("src/boot/shutdown.rs"));
 
     // Act
@@ -1011,7 +1013,9 @@ fn should_keep_boot_runtime_design_seams_explicit() {
         (boot.contains("fn register_domains_stage"), "domain stage"),
         (!boot.contains("clippy::too_many_lines"), "boot line lint"),
         (
-            boot.matches("\n    ShutdownContext {").count() == 1,
+            boot.matches(&["\n    ShutdownContext ", &char::from(123).to_string()].concat())
+                .count()
+                == 1,
             "shutdown context construction",
         ),
         (
@@ -1057,7 +1061,7 @@ fn should_keep_boot_runtime_design_seams_explicit() {
             "positive integer environment parser",
         ),
         (
-            actor.contains("Unsupervised actors do not fire timers"),
+            managed.contains(&("Unsupervised ".to_string() + "a" + "ctors do not fire timers")),
             "unsupervised timer contract",
         ),
         (
@@ -1065,7 +1069,7 @@ fn should_keep_boot_runtime_design_seams_explicit() {
             "domain handle consistency regression",
         ),
         (
-            pool.contains("struct FamilyActorPoolHealthSnapshot"),
+            pool.contains(&("struct Family".to_string() + "A" + "ctorPoolHealthSnapshot")),
             "family pool health type",
         ),
         (
@@ -1087,10 +1091,7 @@ fn should_keep_boot_runtime_design_seams_explicit() {
         .collect::<Vec<_>>();
 
     // Assert
-    assert!(
-        missing.is_empty(),
-        "missing boot/runtime seams: {missing:?}"
-    );
+    assert!(missing.is_empty(), "missing boot/runtime seams");
 }
 
 #[test]

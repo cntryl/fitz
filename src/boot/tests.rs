@@ -96,7 +96,7 @@ async fn should_preempt_planned_drain_grace_given_fatal_actor_failure() {
 }
 
 #[test]
-fn should_withdraw_readiness_and_request_shutdown_given_storage_lease_failure() {
+fn should_withdraw_readiness_plus_request_shutdown_given_storage_lease_failure() {
     // Arrange
     let runtime = Runtime::new(Arc::new(crate::runtime::Router::new()));
     runtime.mark_storage_ready();

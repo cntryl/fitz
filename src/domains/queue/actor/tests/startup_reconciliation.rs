@@ -154,7 +154,7 @@ fn should_reconcile_orphan_queue_body_with_background_cloud_recovery() {
 }
 
 #[test]
-fn should_reject_partial_queue_rows_for_buffered_and_strict_policies() {
+fn should_reject_partial_queue_rows_for_buffered_plus_strict_policies() {
     // Arrange
     let policies = [
         cntryl_midge::WriteOptions::buffered(),

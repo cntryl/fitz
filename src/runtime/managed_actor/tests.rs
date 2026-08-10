@@ -216,7 +216,7 @@ fn should_join_managed_actor_worker_when_dropped() {
 }
 
 #[test]
-fn should_restart_supervised_actor_after_one_panic_and_accept_next_message() {
+fn should_restart_supervised_actor_after_one_panic_plus_accept_next_message() {
     // Arrange
     let router = Arc::new(Router::new());
     let (stopped_tx, _stopped_rx) = crossbeam_channel::bounded(8);
@@ -254,7 +254,7 @@ fn should_restart_supervised_actor_after_one_panic_and_accept_next_message() {
 }
 
 #[test]
-fn should_exhaust_supervised_restart_budget_and_report_permanent_failure() {
+fn should_exhaust_supervised_restart_budget_plus_report_permanent_failure() {
     // Arrange
     let router = Arc::new(Router::new());
     let (stopped_tx, _stopped_rx) = crossbeam_channel::bounded(8);

@@ -160,7 +160,7 @@ async fn open_local_disk_with_retry(
         open_options,
         config.route_families.clone(),
         shutdown,
-        contention::local_is_retryable,
+        contention::is_retryable,
         |attempt, elapsed, delay, error| {
             log_local_lease_contention(db_path, attempt, elapsed, delay, error);
         },
@@ -210,22 +210,6 @@ where
             }
         }
     }
-}
-
-fn should_retry_cloud_storage_open(
-    error: &cntryl_midge::MidgeError,
-    provider: &cntryl_midge::CloudProviderConfig,
-) -> bool {
-    let shape = if matches!(
-        provider,
-        cntryl_midge::CloudProviderConfig::AwsS3 { .. }
-            | cntryl_midge::CloudProviderConfig::S3Compatible { .. }
-    ) {
-        contention::ProviderShape::S3Compatible
-    } else {
-        contention::ProviderShape::Other
-    };
-    contention::cloud_is_retryable(error, shape)
 }
 
 async fn open_and_provision(
@@ -485,8 +469,10 @@ async fn init_cloud(
     let open_options = build_midge_open_options(
         cntryl_midge::OpenOptions::cloud(
             cloud.local_cache_path.clone(),
-            cloud.provider_config.clone(),
-            cloud.prefix.clone().unwrap_or_default(),
+            cntryl_midge::CloudStorageLocation::new(
+                cloud.provider_config.clone(),
+                cloud.prefix.clone().unwrap_or_default(),
+            ),
         ),
         config,
     )?;
@@ -516,7 +502,7 @@ async fn open_cloud_with_retry(
         open_options,
         route_families,
         shutdown,
-        |error| should_retry_cloud_storage_open(error, &cloud.provider_config),
+        contention::is_retryable,
         |attempt, elapsed, delay, error| {
             log_cloud_lease_contention(cloud, attempt, elapsed, delay, error);
         },

@@ -15,7 +15,7 @@ fn register_watermark_notice_sink(
 }
 
 #[test]
-fn should_advance_and_persist_area_and_realm_watermarks_after_commit() {
+fn should_advance_plus_persist_area_plus_realm_watermarks_after_commit() {
     // Arrange
     let context = setup_test_context();
     let area_notice = register_watermark_notice_sink(&context, "stream://bench/events/*/watermark");

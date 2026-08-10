@@ -103,6 +103,9 @@ fn decode_concrete_reserve_response(frame: &FrameContext) -> Vec<Vec<u8>> {
 
 #[test]
 fn should_wake_fifo_long_poll_reserve_when_matching_message_is_enqueued() {
+    // Arrange
+    // Act
+    // Assert
     let family = RouteFamily::new(1);
     let route = "queue://acme/jobs/email";
     let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
@@ -656,7 +659,7 @@ fn should_inventory_only_authoritative_non_empty_queue_rows() {
 }
 
 #[test]
-fn should_mark_fast_flush_and_admin_dirty_when_wildcard_poll_only_expires_work() {
+fn should_mark_fast_flush_plus_admin_dirty_when_wildcard_poll_only_expires_work() {
     // Arrange
     let family = RouteFamily::new(1);
     let key = crate::domains::queue::QueueKey {

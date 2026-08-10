@@ -121,7 +121,8 @@ fn should_order_resource_fragment_generations_after_their_logical_offset() {
     let generation_one = encode_compact_resource_fragment_key("realm", "area", "resource", 42, 1);
     let next_offset = encode_compact_resource_fragment_key("realm", "area", "resource", 43, 0);
 
-    // Act / Assert
+    // Act
+    // Assert
     assert!(generation_zero < generation_one);
     assert!(generation_one < next_offset);
     assert_eq!(decode_resource_offset_from_key(&generation_one), Ok(42));

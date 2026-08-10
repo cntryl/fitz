@@ -106,7 +106,7 @@ fn should_hold_global_watermark_at_gap_then_advance_across_resolved_suffix() {
 }
 
 #[test]
-fn should_reuse_unresolved_global_range_and_clear_completion_suffix_after_retry() {
+fn should_reuse_unresolved_global_range_plus_clear_completion_suffix_after_retry() {
     // Arrange
     let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
     let failed_events = single_event(b"failed");
@@ -313,7 +313,7 @@ fn should_reject_data_transaction_after_direct_writer_epoch_advance() {
 }
 
 #[test]
-fn should_fence_and_skip_abandoned_reservation_during_restart_recovery() {
+fn should_fence_plus_skip_abandoned_reservation_during_restart_recovery() {
     // Arrange
     let engine = create_test_engine_with_cfs(vec![1]);
     let first_store = StreamStore::new(engine.clone());

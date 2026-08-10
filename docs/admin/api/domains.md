@@ -475,7 +475,7 @@ These values are point-in-time in-memory counts for the running broker process a
 }
 ```
 ### Schedule Domain
-Schedule definitions are durable and are preloaded into per-family Schedule actors during broker boot. Admin schedule views therefore reflect persisted definitions before any schedule-domain traffic reaches that family. Schedule notifications and subscriptions remain live session-scoped delivery only, and `last_run` / `executions_total` are still non-authoritative placeholders in this round.
+Schedule definitions and pending fire claims are durable and authoritative. Definitions are preloaded into per-family Schedule actors during broker boot, so admin schedule views reflect persisted state before schedule-domain traffic reaches that family. `last_run` is the latest acknowledged live handoff timestamp, and `executions_total` counts acknowledged live handoffs. These fields do not imply consumer acknowledgement, retry or execution guarantees, or a historical event log. Subscriptions and consumer delivery remain live session-scoped behavior.
 
 Schedule delivery metrics cover two different boundaries. A notification handoff is accepted when
 the in-process router accepts it; this is not a consumer acknowledgement or durable-delivery proof.

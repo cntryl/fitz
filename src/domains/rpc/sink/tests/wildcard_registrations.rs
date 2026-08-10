@@ -335,7 +335,7 @@ fn should_wake_queued_route_when_new_registration_adds_credit() {
 }
 
 #[test]
-fn should_keep_exact_and_wildcard_registration_credit_independent() {
+fn should_keep_exact_plus_wildcard_registration_credit_independent() {
     // Arrange
     let family = RouteFamily::new(1);
     let route = "rpc://bench/system/orders/create";
@@ -413,7 +413,7 @@ fn should_retain_original_credit_on_duplicate_registration() {
 }
 
 #[test]
-fn should_remove_only_owning_overlap_registration_and_pending_call() {
+fn should_remove_only_owning_overlap_registration_plus_pending_call() {
     // Arrange
     let family = RouteFamily::new(1);
     let route = "rpc://bench/system/orders/create";

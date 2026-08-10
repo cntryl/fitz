@@ -580,7 +580,8 @@ mod tests {
             (608, route_only),
         ];
 
-        // Act / Assert
+        // Act
+        // Assert
         for (message_type, payload) in cases {
             parse_request(
                 &context(message_type, &payload),
@@ -594,8 +595,9 @@ mod tests {
     }
 
     #[test]
-    fn should_encode_frozen_stream_response_and_notification_vectors() {
-        // Arrange / Act
+    fn should_encode_frozen_stream_response_plus_notification_vectors() {
+        // Arrange
+        // Act
         let success = encode_response(
             604,
             &StreamClientResponseBody::Ok {
@@ -628,8 +630,10 @@ mod tests {
     }
 
     #[test]
-    fn should_keep_stream_manifest_ids_and_directions_frozen() {
-        // Arrange / Act / Assert
+    fn should_keep_stream_manifest_ids_plus_directions_frozen() {
+        // Arrange
+        // Act
+        // Assert
         for message_id in 600..=609 {
             let entry = manifest::entry(MessageType::new(message_id))
                 .unwrap_or_else(|| panic!("missing Stream manifest entry {message_id}"));

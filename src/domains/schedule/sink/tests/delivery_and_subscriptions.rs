@@ -315,7 +315,7 @@ fn should_retain_other_schedule_subscription_given_unsubscribe_on_same_session()
 }
 
 #[test]
-fn should_deliver_schedule_notify_for_overlapping_exact_and_wildcard_registrations() {
+fn should_deliver_schedule_notify_for_overlapping_exact_plus_wildcard_registrations() {
     // Arrange
     let fixture = create_unsubscribe_fixture();
     let wildcard_route = "schedule://acme/jobs/**";

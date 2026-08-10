@@ -210,6 +210,9 @@ mod tests {
 
     #[test]
     fn should_classify_resource_shape() {
+        // Arrange
+        // Act
+        // Assert
         assert_eq!(
             classify_stream_route_shape("stream://bench/events/orders"),
             Ok(StreamRouteShape::Resource {
@@ -222,6 +225,9 @@ mod tests {
 
     #[test]
     fn should_classify_area_shape() {
+        // Arrange
+        // Act
+        // Assert
         assert_eq!(
             classify_stream_route_shape("stream://bench/events/*"),
             Ok(StreamRouteShape::Area {
@@ -238,7 +244,7 @@ mod tests {
     }
 
     #[test]
-    fn should_reject_empty_segments_and_doubled_slashes() {
+    fn should_reject_empty_segments_plus_doubled_slashes() {
         assert!(classify_stream_route_shape("stream://bench//orders").is_err());
         assert!(classify_stream_route_shape("stream://bench/events/").is_err());
         assert!(classify_stream_route_shape("stream:///events/orders").is_err());
@@ -246,6 +252,9 @@ mod tests {
 
     #[test]
     fn should_classify_realm_shape() {
+        // Arrange
+        // Act
+        // Assert
         assert_eq!(
             classify_stream_route_shape("stream://bench/*/*"),
             Ok(StreamRouteShape::Realm { realm: "bench" })
@@ -254,6 +263,9 @@ mod tests {
 
     #[test]
     fn should_classify_global_shape() {
+        // Arrange
+        // Act
+        // Assert
         assert_eq!(
             classify_stream_route_shape("stream://**"),
             Ok(StreamRouteShape::Global)
@@ -266,6 +278,9 @@ mod tests {
 
     #[test]
     fn should_classify_realm_filter_resource_shape() {
+        // Arrange
+        // Act
+        // Assert
         assert_eq!(
             classify_stream_route_shape("stream://bench/*/orders"),
             Ok(StreamRouteShape::RealmFilterResource {
@@ -277,6 +292,9 @@ mod tests {
 
     #[test]
     fn should_classify_realm_shape_via_double_star_alias() {
+        // Arrange
+        // Act
+        // Assert
         assert_eq!(
             classify_stream_route_shape("stream://bench/**"),
             Ok(StreamRouteShape::Realm { realm: "bench" })
@@ -285,6 +303,9 @@ mod tests {
 
     #[test]
     fn should_classify_global_filter_shapes() {
+        // Arrange
+        // Act
+        // Assert
         assert_eq!(
             classify_stream_route_shape("stream://*/events/orders"),
             Ok(StreamRouteShape::GlobalFilterAreaResource {
@@ -309,6 +330,9 @@ mod tests {
     /// independent of the full actor/commit pipeline.
     #[test]
     fn should_match_new_shapes_through_shared_subscription_matcher() {
+        // Arrange
+        // Act
+        // Assert
         use crate::runtime::matcher::{compile_registration_pattern, PatternDepth};
 
         let cases: &[(&str, &str, bool)] = &[
@@ -362,7 +386,10 @@ mod tests {
     }
 
     #[test]
-    fn should_reject_partial_and_noncanonical_shapes() {
+    fn should_reject_partial_plus_noncanonical_shapes() {
+        // Arrange
+        // Act
+        // Assert
         let selectors = [
             "stream://bench/**/*",
             "stream://bench/events/**",

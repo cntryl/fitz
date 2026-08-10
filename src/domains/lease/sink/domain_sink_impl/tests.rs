@@ -13,7 +13,7 @@ fn state(owner_id: &str, fencing_token: u64, expiry: Instant) -> SinkLeaseState 
 }
 
 #[test]
-fn should_classify_expired_lease_before_owner_and_token_checks() {
+fn should_classify_expired_lease_before_owner_plus_token_checks() {
     // Arrange
     let now = Instant::now();
     let lease = state("another-owner", 11, now);

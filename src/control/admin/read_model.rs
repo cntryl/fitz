@@ -362,7 +362,13 @@ impl AdminReadModel {
         if let Some(existing) = schedules.get_mut(&identity) {
             // Fast path for idempotent create/upsert calls: avoid rewriting
             // the admin model when durable schedule identity is unchanged.
-            if existing.cron == schedule.cron && existing.enabled == schedule.enabled {
+            if existing.cron == schedule.cron
+                && existing.delivery_mode == schedule.delivery_mode
+                && existing.next_run == schedule.next_run
+                && existing.last_run == schedule.last_run
+                && existing.executions_total == schedule.executions_total
+                && existing.enabled == schedule.enabled
+            {
                 return;
             }
             *existing = schedule;
@@ -491,7 +497,7 @@ mod tests {
     }
 
     #[test]
-    fn should_preserve_single_schedule_given_idempotent_upsert_schedule_fields() {
+    fn should_refresh_schedule_metadata_given_repeated_upsert_schedule_fields() {
         // Arrange
         let read_model = AdminReadModel::default();
         read_model.upsert_schedule_fields(
@@ -517,7 +523,7 @@ mod tests {
 
         // Assert
         assert_eq!(schedules.len(), 1);
-        assert_eq!(schedules[0].next_run, first_schedule.next_run);
+        assert_ne!(schedules[0].next_run, first_schedule.next_run);
     }
 
     #[test]
@@ -555,6 +561,43 @@ mod tests {
         assert!(schedules[0].enabled);
         assert!(schedules[0].last_run.is_none());
         assert_eq!(schedules[0].executions_total, 0);
+    }
+
+    #[test]
+    fn should_apply_schedule_metadata_given_same_definition() {
+        // Arrange
+        let read_model = AdminReadModel::default();
+        let mut schedule = ScheduleInfo::enabled_snapshot(
+            1,
+            "acme".to_string(),
+            "billing".to_string(),
+            "invoices".to_string(),
+            "send".to_string(),
+            "0 * * * *".to_string(),
+            "2026-03-31T00:00:00Z",
+        );
+        read_model.upsert_schedule(schedule.clone());
+        schedule.delivery_mode = crate::domains::schedule::ScheduleDeliveryMode::Single;
+        schedule.next_run = "2026-04-01T00:00:00Z".to_string();
+        schedule.last_run = Some("2026-03-30T23:00:00Z".to_string());
+        schedule.executions_total = 3;
+
+        // Act
+        read_model.upsert_schedule(schedule);
+        let schedules = read_model.schedules(None);
+
+        // Assert
+        assert_eq!(schedules.len(), 1);
+        assert_eq!(
+            schedules[0].delivery_mode,
+            crate::domains::schedule::ScheduleDeliveryMode::Single
+        );
+        assert_eq!(schedules[0].next_run, "2026-04-01T00:00:00Z");
+        assert_eq!(
+            schedules[0].last_run.as_deref(),
+            Some("2026-03-30T23:00:00Z")
+        );
+        assert_eq!(schedules[0].executions_total, 3);
     }
 
     #[test]

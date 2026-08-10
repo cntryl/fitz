@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn should_route_domain_frame_before_late_event_handler_and_preserve_original_payload() {
+fn should_route_domain_frame_before_late_event_handler_plus_preserve_original_payload() {
     #[derive(Clone)]
     struct TrackingMailbox {
         delivered: Arc<std::sync::atomic::AtomicBool>,

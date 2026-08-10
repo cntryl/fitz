@@ -152,7 +152,7 @@ fn stored_payload_occurrences(db: &cntryl_midge::Engine, family: u32, payload: &
 }
 
 #[test]
-fn should_store_inline_payload_twice_and_large_payload_once() {
+fn should_store_inline_payload_twice_plus_large_payload_once() {
     // Arrange
     let db = create_test_engine_with_cfs(vec![1, 2]);
     let store = StreamStore::new(db.clone());
@@ -461,7 +461,7 @@ fn should_keep_read_snapshot_stable_across_atomic_compaction() {
 }
 
 #[test]
-fn should_assign_global_offsets_across_realms_and_isolate_route_families() {
+fn should_assign_global_offsets_across_realms_plus_isolate_route_families() {
     // Arrange
     let store = StreamStore::new(create_test_engine_with_cfs(vec![1, 2]));
     let first_events = single_event(b"first");

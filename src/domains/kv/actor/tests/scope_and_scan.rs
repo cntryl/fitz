@@ -189,7 +189,7 @@ fn should_keep_transaction_active_when_rollback_scope_mismatches() {
 }
 
 #[test]
-fn should_apply_forward_and_reverse_scan_boundaries() {
+fn should_apply_forward_plus_reverse_scan_boundaries() {
     // Arrange
     let mut actor = test_actor();
     let scope = KvResourceScope::new(RouteFamily::new(1), "realm", "area", "table");

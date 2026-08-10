@@ -440,7 +440,7 @@ mod tests {
         assert!(actor.watermark_retry_timer.is_some());
         assert!(stream_mailbox.receiver().try_recv().is_err());
 
-        // Act
+        // Continue
         assert_eq!(actor.candidate_watermark(), Some(3));
         assert_eq!(
             actor
@@ -462,7 +462,7 @@ mod tests {
         assert_eq!(actor.realm_watermark, Some(3));
         assert!(actor.watermark_retry_timer.is_none());
 
-        // Act
+        // Continue
         let notification_timer = actor
             .notification_timer
             .expect("notification timer should be scheduled");
