@@ -826,7 +826,7 @@ Only `0` and `1` are valid durability values. Other values are rejected.
 
 #### Usage Example
 
-**Recommended User-Facing API (see [Recommended Client API Design](overview.md#recommended-client-api-design)):**
+**Recommended User-Facing API (see [Recommended Client API Design](overview.md)):**
 
 ```python
 # Connect with JWT
