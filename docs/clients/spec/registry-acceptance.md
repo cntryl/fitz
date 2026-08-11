@@ -325,6 +325,6 @@ No version negotiation in current protocol. If new verbs are added:
 ## References
 
 - Fitz repository: https://github.com/cntryl/fitz
-- Domain specifications: See [Canonical operation reference](operations.md#domain-operations-reference-canonical-standard)
+- Domain specifications: See [Canonical operation reference](operations.md)
 - Codec implementations: See Fitz `src/protocol/` directory
 - Integration tests: See Fitz `tests/` directory
