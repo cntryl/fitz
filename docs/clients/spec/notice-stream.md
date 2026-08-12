@@ -606,6 +606,36 @@ READ and SUBSCRIBE accept the same finite selector matrix:
 
 **Cursor:** `ReadCursor` is response metadata that advances with every committed offset the broker considers during replay, including filtered markers. It is not a durable broker-side resume token.
 
+#### Client replay and follow contract
+
+The versioned machine-readable client contract is
+[`stream-read-conformance.json`](./stream-read-conformance.json). Clients MUST
+validate selector classification and replay progress against that fixture.
+
+A high-level read API requires an explicit starting offset and mode. `replay`
+issues READ until the first `has_more=false` response, yields that terminal
+batch, and completes. `follow` establishes SUBSCRIBE before its initial READ,
+drains through `has_more=false`, then waits for a commit or reconnect wake.
+Subscribing first prevents a lost commit between catch-up and subscription.
+
+Every successful page is observable as one batch, including filtered-only
+pages and empty pages whose cursor advances. A batch contains all tagged items,
+the event-only record view, the requested offset, the next durable client
+offset derived from the selector's cursor axis, and `caughtUp`. A client MUST
+NOT fabricate an offset when the applicable cursor axis is absent; it retains
+the requested offset.
+
+Continuation fingerprint and captured watermark fields are protocol-private.
+Clients carry them automatically between global READ pages and do not expose
+them as application resume tokens. Two consecutive `has_more=true` responses
+with the same applicable cursor position are a non-retryable stalled read even
+if private continuation values rotate. This permits one empty continuation page
+while bounding a malformed broker loop.
+
+Cancellation, iterator return, reconnect failure, decode failure, and other
+terminal failures release a live subscription. Explicit unsubscribe operations
+surface broker errors; automatic iterator disposal is best effort.
+
 #### LAST Request
 
 ```

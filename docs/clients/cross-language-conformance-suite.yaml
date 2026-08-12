@@ -236,6 +236,19 @@ scenarios:
       - "cursor advances monotonically through filtered offsets"
 
   - id: "CS-017"
+    title: "global filtered multi-page replay"
+    priority: "P1"
+    setup:
+      transport: ["websocket", "tcp"]
+      auth_mode: ["anonymous", "valid_jwt"]
+    expected:
+      - "stream://** filtered replay spans multiple pages across at least two realms"
+      - "filtered-only pages remain observable"
+      - "records retain concrete routes and global offsets"
+      - "next offset advances on the global cursor axis"
+      - "replay yields the caught-up page and then completes"
+
+  - id: "CS-018"
     title: "bounded concurrency under burst load"
     priority: "P1"
     setup:

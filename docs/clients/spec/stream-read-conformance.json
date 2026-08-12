@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "fixture": "fitz.stream-read-conformance",
+  "version": 1,
+  "offsetSemantics": {
+    "resource": "lastResourceOffset + 1",
+    "area": "lastAreaOffset + 1",
+    "realm": "lastRealmOffset + 1",
+    "global": "lastGlobalOffset + 1",
+    "missingApplicableAxis": "retain fromOffset",
+    "filteredMarkersAdvance": true,
+    "emptyAdvancingPagesVisible": true
+  },
+  "selectors": [
+    { "selector": "stream://realm/area/resource", "axis": "resource", "canonical": "stream://realm/area/resource" },
+    { "selector": "stream://realm/area/*", "axis": "area", "canonical": "stream://realm/area/*" },
+    { "selector": "stream://realm/*/resource", "axis": "realm", "canonical": "stream://realm/*/resource" },
+    { "selector": "stream://realm/*/*", "axis": "realm", "canonical": "stream://realm/*/*" },
+    { "selector": "stream://realm/**", "axis": "realm", "canonical": "stream://realm/*/*" },
+    { "selector": "stream://*/area/resource", "axis": "global", "canonical": "stream://*/area/resource" },
+    { "selector": "stream://*/area/*", "axis": "global", "canonical": "stream://*/area/*" },
+    { "selector": "stream://*/*/resource", "axis": "global", "canonical": "stream://*/*/resource" },
+    { "selector": "stream://*/*/*", "axis": "global", "canonical": "stream://*/*/*" },
+    { "selector": "stream://**", "axis": "global", "canonical": "stream://*/*/*" }
+  ],
+  "invalidSelectors": [
+    "stream://realm/area",
+    "stream://realm/area/resource/extra",
+    "stream://realm/**/resource",
+    "stream://realm/a*ea/resource",
+    "stream:///area/resource",
+    "notice://realm/area/resource"
+  ],
+  "deliveryItems": [
+    { "tag": 0, "name": "event", "advances": true, "isRecord": true },
+    { "tag": 1, "name": "filteredOffset", "advances": true, "isRecord": false },
+    { "tag": 2, "name": "filteredRange", "advances": true, "isRecord": false }
+  ],
+  "progressInvariants": {
+    "yieldEverySuccessfulPage": true,
+    "caughtUp": "hasMore == false",
+    "replayCompletesAfterFirstCaughtUpBatch": true,
+    "followSubscribesBeforeInitialRead": true,
+    "privateContinuationFields": ["cursorFingerprint", "capturedWatermark"],
+    "stallBound": {
+      "consecutiveHasMorePagesWithoutLogicalProgress": 2,
+      "continuationRotationDoesNotCountAsProgress": true,
+      "retryable": false
+    },
+    "releaseSubscriptionOn": ["abort", "return", "reconnectFailure", "decodeFailure", "readFailure"]
+  }
+}
