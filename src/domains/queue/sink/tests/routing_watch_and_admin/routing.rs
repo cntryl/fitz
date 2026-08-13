@@ -41,7 +41,7 @@ pub(super) fn should_create_fast_queue_sink_with_explicit_background_cloud_recov
 
     // Act
     let result = QueueDomainSink::try_new(
-        store,
+        Arc::clone(&store),
         Arc::new(Router::new()),
         crate::control::admin::read_model::AdminReadModel::new(),
         cntryl_midge::WriteOptions::best_effort(),
@@ -51,6 +51,8 @@ pub(super) fn should_create_fast_queue_sink_with_explicit_background_cloud_recov
 
     // Assert
     assert!(result.is_ok());
+    drop(result);
+    crate::testkit::midge::shutdown_test_engine(store);
 }
 
 #[test]

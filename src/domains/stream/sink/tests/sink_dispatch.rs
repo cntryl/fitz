@@ -569,7 +569,7 @@ fn should_create_stream_sink_with_background_cloud_policy_through_public_api() {
 
     // Act
     let result = StreamDomainSink::new_with_layout(
-        store,
+        Arc::clone(&store),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
         StreamStorageLayout::PromotionFrontier,
@@ -580,6 +580,8 @@ fn should_create_stream_sink_with_background_cloud_policy_through_public_api() {
     if let Err(error) = result {
         panic!("cloud Stream sink creation failed: {error}");
     }
+    drop(result);
+    crate::testkit::midge::shutdown_test_engine(store);
 }
 
 #[test]
@@ -604,7 +606,7 @@ fn should_configure_strict_cloud_writes_before_stream_initialization() {
 
     // Act
     let result = StreamDomainSink::new_with_layout(
-        store,
+        Arc::clone(&store),
         Arc::new(Router::new()),
         crate::control::admin::read_model::AdminReadModel::new(),
         StreamStorageLayout::PromotionFrontier,
@@ -613,6 +615,8 @@ fn should_configure_strict_cloud_writes_before_stream_initialization() {
 
     // Assert
     assert!(result.is_ok());
+    drop(result);
+    crate::testkit::midge::shutdown_test_engine(store);
 }
 
 #[test]

@@ -151,6 +151,7 @@ fn should_reconcile_orphan_queue_body_with_background_cloud_recovery() {
     );
     assert!(read_queue_validation_row(store.as_ref(), &body_suffix).is_none());
     assert!(read_queue_validation_row(store.as_ref(), &ready_index_suffix).is_none());
+    crate::testkit::midge::shutdown_test_engine(store);
 }
 
 #[test]

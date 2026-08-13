@@ -94,32 +94,31 @@ pub(super) fn build_cloud_provider_config(
             DEFAULT_SQRZL_EMULATOR_ACCESS_KEY,
             DEFAULT_SQRZL_EMULATOR_SECRET_KEY,
         )),
-        "sqrzl-azure" => Ok(cntryl_midge::CloudProviderConfig::AzureBlob {
-            account: DEFAULT_SQRZL_EMULATOR_ACCESS_KEY.to_string(),
-            container: env_non_empty("FITZ_STORAGE_CONTAINER")
+        "sqrzl-azure" => cntryl_midge::CloudProviderConfig::azure_blob_shared_key(
+            DEFAULT_SQRZL_EMULATOR_ACCESS_KEY,
+            env_non_empty("FITZ_STORAGE_CONTAINER")
                 .unwrap_or_else(|| DEFAULT_SQRZL_EMULATOR_BUCKET.to_string()),
-            endpoint: Some(
+            DEFAULT_SQRZL_EMULATOR_SECRET_KEY,
+        )
+        .with_endpoint(
+            env_non_empty("FITZ_STORAGE_ENDPOINT")
+                .unwrap_or_else(|| DEFAULT_SQRZL_EMULATOR_ENDPOINT.to_string()),
+        )
+        .map_err(|error| error.to_string()),
+        "sqrzl-gcs" => cntryl_midge::CloudProviderConfig::gcs_hmac(
+            env_non_empty("FITZ_STORAGE_BUCKET")
+                .unwrap_or_else(|| DEFAULT_SQRZL_EMULATOR_BUCKET.to_string()),
+            DEFAULT_SQRZL_EMULATOR_ACCESS_KEY,
+            DEFAULT_SQRZL_EMULATOR_SECRET_KEY,
+        )
+        .with_gcs_project_id("sqrzl")
+        .and_then(|provider| {
+            provider.with_endpoint(
                 env_non_empty("FITZ_STORAGE_ENDPOINT")
                     .unwrap_or_else(|| DEFAULT_SQRZL_EMULATOR_ENDPOINT.to_string()),
-            ),
-            credential: cntryl_midge::AzureCredentialSource::shared_key(
-                DEFAULT_SQRZL_EMULATOR_SECRET_KEY,
-            ),
-        }),
-        "sqrzl-gcs" => Ok(cntryl_midge::CloudProviderConfig::Gcs {
-            bucket: env_non_empty("FITZ_STORAGE_BUCKET")
-                .unwrap_or_else(|| DEFAULT_SQRZL_EMULATOR_BUCKET.to_string()),
-            project_id: "sqrzl".to_string(),
-            endpoint: Some(
-                env_non_empty("FITZ_STORAGE_ENDPOINT")
-                    .unwrap_or_else(|| DEFAULT_SQRZL_EMULATOR_ENDPOINT.to_string()),
-            ),
-            api: cntryl_midge::GcsApiStyle::Xml,
-            credential: cntryl_midge::GcsCredentialSource::hmac_key(
-                DEFAULT_SQRZL_EMULATOR_ACCESS_KEY,
-                DEFAULT_SQRZL_EMULATOR_SECRET_KEY,
-            ),
-        }),
+            )
+        })
+        .map_err(|error| error.to_string()),
         "aws-s3" => Ok(cntryl_midge::CloudProviderConfig::aws_s3(
             required_namespace(provider)?,
             required_region()?,
@@ -169,13 +168,14 @@ fn s3_compatible_provider(
     endpoint: String,
     path_style: bool,
 ) -> cntryl_midge::CloudProviderConfig {
-    cntryl_midge::CloudProviderConfig::S3Compatible {
+    cntryl_midge::S3CompatibleConfig::new(
         bucket,
         region,
         endpoint,
-        path_style,
-        credentials: cntryl_midge::S3CredentialSource::environment(),
-    }
+        cntryl_midge::S3CredentialSource::environment(),
+    )
+    .with_path_style(path_style)
+    .into()
 }
 
 fn build_azure_blob_provider(

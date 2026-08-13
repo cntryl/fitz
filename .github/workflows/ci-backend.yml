@@ -35,7 +35,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Install cntryl-tools
-        run: cargo install --locked --git https://github.com/cntryl/tools --rev b2a06b1a635de752803f5860339fc3cecbc19742 cntryl-tools
+        run: cargo install --locked --git https://github.com/cntryl/tools --rev 0cb0d0c8be5951753580a6f8a527f3e47d293466 cntryl-tools
 
       - name: Validate repository policy
         run: |

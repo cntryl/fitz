@@ -400,7 +400,7 @@ fn exercise_cloud_burst(
     value: &[u8],
     wait_time: Duration,
 ) -> cntryl_midge::RuntimeMetricsSnapshot {
-    let engine = cntryl_midge::Engine::open(engine_opts).expect("open cloud-simulated engine");
+    let mut engine = cntryl_midge::Engine::open(engine_opts).expect("open cloud-simulated engine");
     let cf = engine.get_column_family("default").expect("default cf");
 
     for index in 0..write_count {
@@ -415,7 +415,11 @@ fn exercise_cloud_burst(
     }
 
     std::thread::sleep(wait_time);
-    engine.get_runtime_metrics().expect("runtime metrics")
+    let metrics = engine.get_runtime_metrics().expect("runtime metrics");
+    engine
+        .shutdown(Duration::from_secs(2))
+        .expect("shutdown cloud-simulated engine");
+    metrics
 }
 
 async fn recover_marker_from_sqrzl(
@@ -462,7 +466,9 @@ async fn recover_marker_from_sqrzl(
     let reopened_cf = reopened
         .get_column_family("tenant_default")
         .expect("tenant_default cf after reopen");
-    Ok(read_marker(reopened.as_ref(), reopened_cf.id(), b"marker"))
+    let marker = read_marker(reopened.as_ref(), reopened_cf.id(), b"marker");
+    shutdown_store(reopened);
+    Ok(marker)
 }
 
 fn should_skip_sqrzl_test(error: &str) -> bool {
@@ -511,15 +517,18 @@ async fn ensure_sqrzl_namespace(
     provider: &cntryl_midge::CloudProviderConfig,
 ) -> Result<(), String> {
     match provider {
-        cntryl_midge::CloudProviderConfig::AwsS3 { .. } => Ok(()),
-        cntryl_midge::CloudProviderConfig::S3Compatible { bucket, .. } => {
-            ensure_sqrzl_s3_bucket(bucket).await
+        cntryl_midge::CloudProviderConfig::AwsS3(_) => Ok(()),
+        cntryl_midge::CloudProviderConfig::S3Compatible(config) => {
+            ensure_sqrzl_s3_bucket(config.bucket()).await
         }
-        cntryl_midge::CloudProviderConfig::Gcs { bucket, .. } => {
-            ensure_sqrzl_gcs_bucket(bucket).await
+        cntryl_midge::CloudProviderConfig::Gcs(config) => {
+            ensure_sqrzl_gcs_bucket(config.bucket()).await
         }
-        cntryl_midge::CloudProviderConfig::AzureBlob { container, .. } => {
-            ensure_sqrzl_azure_container(container).await
+        cntryl_midge::CloudProviderConfig::AzureBlob(config) => {
+            ensure_sqrzl_azure_container(config.container()).await
+        }
+        cntryl_midge::CloudProviderConfig::OciObjectStorage(config) => {
+            ensure_sqrzl_s3_bucket(config.bucket()).await
         }
     }
 }
@@ -822,25 +831,20 @@ fn sqrzl_s3_provider(bucket: &str) -> cntryl_midge::CloudProviderConfig {
 }
 
 fn sqrzl_azure_provider(container: &str) -> cntryl_midge::CloudProviderConfig {
-    cntryl_midge::CloudProviderConfig::AzureBlob {
-        account: sqrzl_access_key().to_string(),
-        container: container.to_string(),
-        endpoint: Some(sqrzl_endpoint().to_string()),
-        credential: cntryl_midge::AzureCredentialSource::shared_key(sqrzl_secret_key()),
-    }
+    cntryl_midge::CloudProviderConfig::azure_blob_shared_key(
+        sqrzl_access_key(),
+        container,
+        sqrzl_secret_key(),
+    )
+    .with_endpoint(sqrzl_endpoint())
+    .expect("Azure Blob supports endpoint overrides")
 }
 
 fn sqrzl_gcs_provider(bucket: &str) -> cntryl_midge::CloudProviderConfig {
-    cntryl_midge::CloudProviderConfig::Gcs {
-        bucket: bucket.to_string(),
-        project_id: "sqrzl".to_string(),
-        endpoint: Some(sqrzl_endpoint().to_string()),
-        api: cntryl_midge::GcsApiStyle::Xml,
-        credential: cntryl_midge::GcsCredentialSource::hmac_key(
-            sqrzl_access_key(),
-            sqrzl_secret_key(),
-        ),
-    }
+    cntryl_midge::CloudProviderConfig::gcs_hmac(bucket, sqrzl_access_key(), sqrzl_secret_key())
+        .with_gcs_project_id("sqrzl")
+        .and_then(|provider| provider.with_endpoint(sqrzl_endpoint()))
+        .expect("GCS supports project and endpoint overrides")
 }
 
 fn sqrzl_endpoint() -> &'static str {

@@ -99,7 +99,7 @@ pub(super) fn should_commit_stream_and_watermarks_with_background_cloud_write_op
         .create_column_family("tenant_default")
         .expect("create route-family column family");
     let store = StreamStore::with_storage_layout(
-        crate::storage::FitzStorageEngine::new(engine),
+        crate::storage::FitzStorageEngine::new(Arc::clone(&engine)),
         StreamStorageLayout::PromotionFrontier,
     )
     .with_write_options(
@@ -132,6 +132,8 @@ pub(super) fn should_commit_stream_and_watermarks_with_background_cloud_write_op
         realm_watermark.is_ok(),
         "cloud realm-watermark commit failed: {realm_watermark:?}"
     );
+    drop(store);
+    crate::testkit::midge::shutdown_test_engine(engine);
 }
 
 #[test]

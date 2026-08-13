@@ -185,14 +185,10 @@ pub(crate) fn measure_operations_best_effort(
 ) {
     let mut latencies = Vec::new();
     let mut failures = 0_u64;
-    let mut first_failure = None;
     let attempted = ctx.measure_batch(measurement, 1, || match run_iteration() {
         Ok(latency) => latencies.push(latency),
-        Err(error) => {
+        Err(_) => {
             failures = failures.saturating_add(1);
-            if first_failure.is_none() {
-                first_failure = Some(error);
-            }
         }
     });
 
@@ -203,19 +199,8 @@ pub(crate) fn measure_operations_best_effort(
         "best-effort attempts must equal completed and failed operations"
     );
     let _ = ctx.correctness().attempted(attempted).completed(completed);
-    ctx.metadata("attempted_operations", attempted);
-
     ctx.metadata("measurement_kind", "best_effort_diagnostic");
-    if failures == 0 {
-        ctx.metadata("measurement_status", "complete");
-    } else {
-        ctx.metadata("measurement_status", "degraded");
-        ctx.metadata("measurement_failures", failures);
-        ctx.metadata(
-            "first_measurement_failure",
-            first_failure.as_deref().unwrap_or("unknown"),
-        );
-    }
+    ctx.metadata("measurement_status", "best_effort");
     for latency in latencies {
         ctx.record_latency(latency);
     }

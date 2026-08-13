@@ -646,6 +646,10 @@ mod tests {
         if let Err(error) = result {
             panic!("cloud domain bootstrap failed: {error}");
         }
+        router.clear();
+        drop(result);
+        drop(router);
+        crate::testkit::midge::shutdown_test_engine(store);
     }
 
     fn encode_kv_begin(route: &str) -> Bytes {

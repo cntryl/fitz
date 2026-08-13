@@ -41,6 +41,24 @@ use cntryl_midge::{Engine, OpenOptions};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
+
+/// Shut down an exclusively owned test engine before its storage directory is removed.
+///
+/// # Panics
+///
+/// Panics if another owner still holds the engine or Midge cannot shut it down cleanly.
+pub fn shutdown_test_engine(engine: Arc<Engine>) {
+    let mut engine = Arc::try_unwrap(engine).unwrap_or_else(|engine| {
+        panic!(
+            "Midge test shutdown blocked by {} engine references",
+            Arc::strong_count(&engine)
+        );
+    });
+    engine
+        .shutdown(Duration::from_secs(2))
+        .expect("shutdown Midge test engine");
+}
 
 /// Create a test Midge engine with support for multiple column families.
 ///
