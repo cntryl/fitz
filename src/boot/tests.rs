@@ -3,12 +3,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const BOOT_CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
 
-#[test]
-fn should_define_boot_module() {
-    // Placeholder: Module structure is well-defined and
-    // submodules are unit-testable in isolation
-}
-
 #[tokio::test]
 async fn should_translate_runtime_drain_into_planned_shutdown() {
     // Arrange

@@ -1,4 +1,4 @@
-import { VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
+import DataTable, { type DataTableColumn } from "./data-table";
 import { RefreshCwIcon, Trash2Icon } from "@askrjs/lucide";
 import { Button } from "@askrjs/themes/components";
 import type { DeadLetterMessage } from "@/features/queue/queue-models";
@@ -20,11 +20,11 @@ export default function QueueDeadLetterTable({
   pendingMessageId = null,
 }: QueueDeadLetterTableProps) {
   const hasActions = Boolean(onReplay || onPurge);
-  const columns: readonly VirtualTableColumn<DeadLetterMessage>[] = [
+  const columns: readonly DataTableColumn<DeadLetterMessage>[] = [
     {
       id: "message",
       header: "Message",
-      width: hasActions ? "10%" : "14%",
+      width: hasActions ? "12%" : "16%",
       cellComponent: ({ row }) => (
         <span class="domain-table-cell-truncate" title={String(row.messageId)}>
           {row.messageId}
@@ -32,35 +32,15 @@ export default function QueueDeadLetterTable({
       ),
     },
     {
-      id: "context",
-      header: "Context",
-      width: hasActions ? "18%" : "24%",
-      cellComponent: ({ row }) => {
-        const context = `${row.realm} / ${row.area} / ${row.resource}`;
-
-        return (
-          <span class="domain-table-cell-truncate" title={context}>
-            {context}
-          </span>
-        );
-      },
-    },
-    {
-      id: "family",
-      header: "Family",
-      width: hasActions ? "7%" : "10%",
-      cellComponent: ({ row }) => <span>{row.family}</span>,
-    },
-    {
       id: "attempts",
       header: "Attempts",
-      width: hasActions ? "7%" : "10%",
+      width: hasActions ? "12%" : "14%",
       cellComponent: ({ row }) => <span>{row.attempts}</span>,
     },
     {
       id: "dead-lettered",
       header: "Dead-lettered",
-      width: hasActions ? "15%" : "18%",
+      width: hasActions ? "20%" : "24%",
       cellComponent: ({ row }) => (
         <span class="domain-table-cell-truncate" title={formatTimestamp(row.deadLetteredAt)}>
           {formatTimestamp(row.deadLetteredAt)}
@@ -70,7 +50,7 @@ export default function QueueDeadLetterTable({
     {
       id: "reason",
       header: "Reason",
-      width: hasActions ? "19%" : "24%",
+      width: hasActions ? "30%" : "46%",
       cellComponent: ({ row }) => (
         <span class="queue-dead-letter-reason" title={row.reason}>
           {row.reason}
@@ -82,7 +62,7 @@ export default function QueueDeadLetterTable({
           {
             id: "actions",
             header: "Actions",
-            width: "24%",
+            width: "26%",
             cellComponent: ({ row }) => (
               <div class="queue-action-cell">
                 {onReplay ? (
@@ -115,23 +95,17 @@ export default function QueueDeadLetterTable({
                 ) : null}
               </div>
             ),
-          } satisfies VirtualTableColumn<DeadLetterMessage>,
+          } satisfies DataTableColumn<DeadLetterMessage>,
         ]
       : []),
   ];
-  const tableHeight = Math.min(480, Math.max(144, 44 + messages.length * 52));
-
   return (
-    <VirtualTable<DeadLetterMessage>
-      aria-label="Dead-letter queue messages"
-      class="queue-resource-virtual-table"
+    <DataTable<DeadLetterMessage>
+      ariaLabel="Dead-letter queue messages"
+      class="queue-resource-data-table"
       columns={columns}
       getKey={(message) => message.messageId}
-      headerHeight={44}
-      overscan={8}
-      rowHeight={52}
       rows={messages}
-      style={{ height: `${tableHeight}px` }}
     />
   );
 }

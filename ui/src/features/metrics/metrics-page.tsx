@@ -1,7 +1,7 @@
 import { For, Show } from "@askrjs/askr/control";
 import { currentRoute, updateRouteQuery } from "@askrjs/askr/router";
-import { Input, VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
-import { Button, Stack, Text } from "@askrjs/themes/components";
+import { Input } from "@askrjs/ui";
+import { Button, Text, Block } from "@askrjs/themes/components";
 import {
   Card,
   CardContent,
@@ -13,6 +13,7 @@ import {
   CollapsibleTrigger,
 } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
+import DataTable, { type DataTableColumn } from "@/components/shared/data-table";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import {
@@ -511,7 +512,7 @@ export default function MetricsPage() {
     0,
   );
   const shortcutCards = data ? buildSummaryShortcuts(data.families) : [];
-  const sampleColumns: readonly VirtualTableColumn<MetricsSampleRow>[] = [
+  const sampleColumns: readonly DataTableColumn<MetricsSampleRow>[] = [
     {
       id: "metric",
       header: "Metric",
@@ -557,8 +558,6 @@ export default function MetricsPage() {
       ),
     },
   ];
-  const sampleTableHeight = Math.min(560, Math.max(176, 44 + sampleRows.length * 48));
-
   const detailSummary = data
     ? filterValue.length === 0
       ? `${formatNumber(data.families.length)} families / ${formatNumber(sampleCount)} samples in the current snapshot.`
@@ -590,7 +589,7 @@ export default function MetricsPage() {
 
   return (
     <DomainPageFrame>
-      <Stack gap="3">
+      <Block direction="column" gap="sm">
         <DomainHeader
           eyebrow="Metrics inspection"
           title="Metrics explorer"
@@ -621,7 +620,7 @@ export default function MetricsPage() {
 
         <Show when={data}>
           {(data) => (
-            <Stack gap="3">
+            <Block direction="column" gap="sm">
               <section class="domain-section">
                 <div class="domain-section-header">
                   <div>
@@ -730,16 +729,12 @@ export default function MetricsPage() {
                       }
                     />
                   ) : (
-                    <VirtualTable<MetricsSampleRow>
-                      aria-label="Metric samples"
-                      class="metrics-sample-virtual-table"
+                    <DataTable<MetricsSampleRow>
+                      ariaLabel="Metric samples"
+                      class="metrics-sample-data-table"
                       columns={sampleColumns}
                       getKey={(row) => `${row.family}:${row.labels}:${row.value}`}
-                      headerHeight={44}
-                      overscan={12}
-                      rowHeight={48}
                       rows={sampleRows}
-                      style={{ height: `${sampleTableHeight}px` }}
                     />
                   )}
                 </CardContent>
@@ -763,10 +758,10 @@ export default function MetricsPage() {
                   </CollapsibleContent>
                 </Collapsible>
               </section>
-            </Stack>
+            </Block>
           )}
         </Show>
-      </Stack>
+      </Block>
     </DomainPageFrame>
   );
 }

@@ -443,10 +443,9 @@ describe("admin page smoke tests", () => {
 
     expect(root.textContent).toContain("Refreshing");
     expect(root.textContent).toContain("Queue inventory");
-    expect(root.textContent).toContain("Resource inventory");
-    expect(root.textContent).toContain("queue://default/ops/primary");
+    expect(root.textContent).toContain("Realms");
     expect(root.textContent).not.toContain("messages are visible");
     expect(root.textContent).not.toContain("Activity alone does not establish pressure");
-    expect(root.querySelector('a[href="/admin/1/queue/default/ops/primary"]')).toBeTruthy();
+    expect(root.querySelector('a[href="/admin/1/queue/default"]')).toBeTruthy();
   });
 });

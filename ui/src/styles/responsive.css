@@ -1,6 +1,6 @@
 @media (max-width: 47.999rem) {
   :where([data-slot="navbar"][data-collapse-at] [data-slot="navbar-content"]) {
-    gap: var(--fitz-control-gap);
+    gap: var(--ak-space-2, 0.5rem);
     padding: var(--ak-space-sm, 0.625rem);
     max-block-size: calc(
       100dvh - var(--ak-layout-navbar-height) - var(--ak-space-sm) - env(safe-area-inset-bottom)
@@ -9,28 +9,19 @@
   }
 
   :where([data-slot="navbar"][data-collapse-at] [data-slot="navbar-toggle"]) {
-    gap: var(--fitz-control-gap);
+    gap: var(--ak-space-2, 0.5rem);
   }
 
   :where(
     [data-slot="navbar"][data-collapse-at] [data-slot="navbar-content"] [data-slot="nav-group-body"]
   ) {
-    gap: var(--fitz-control-gap);
+    gap: var(--ak-space-2, 0.5rem);
   }
 
   .domain-header,
-  .domain-section-header,
-  .dashboard-status-summary {
+  .domain-section-header {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .domain-header-actions {
-    align-items: flex-start;
-  }
-
-  .domain-header-actions > button {
-    align-self: start;
   }
 
   .domain-header h1 {
@@ -38,7 +29,7 @@
   }
 
   .domain-section-header h2 {
-    font-size: var(--fitz-section-title-size);
+    font-size: var(--ak-font-size-md, 1rem);
   }
 
   .overview-status-band,

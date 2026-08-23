@@ -21,22 +21,25 @@
     "gen:adapters": "askr generate ../public/openapi.yml -o ./src/adapters/generated"
   },
   "dependencies": {
-    "@askrjs/askr": "^0.0.91",
-    "@askrjs/fetch": "0.0.5",
-    "@askrjs/lucide": "0.0.9",
-    "@askrjs/themes": "0.0.25",
-    "@askrjs/ui": "^0.0.27"
+    "@askrjs/askr": "^0.2.2",
+    "@askrjs/fetch": "0.2.0",
+    "@askrjs/lucide": "0.2.0",
+    "@askrjs/themes": "^0.2.3",
+    "@askrjs/ui": "^0.2.2"
   },
   "devDependencies": {
-    "@askrjs/cli": "0.0.23",
-    "@askrjs/vite": "0.0.13",
+    "@askrjs/cli": "0.2.1",
+    "@askrjs/vite": "0.2.0",
     "@playwright/test": "^1.62.1",
     "@types/node": "^26.2.0",
     "autoprefixer": "^10.5.4",
     "jsdom": "^30.0.1",
     "postcss": "^8.5.26",
     "typescript": "^7.0.2",
-    "vite-plus": "^0.2.8"
+    "vite-plus": "^0.2.9"
+  },
+  "overrides": {
+    "@vitest/browser-playwright": "4.1.10"
   },
   "packageManager": "npm@12.0.2"
 }

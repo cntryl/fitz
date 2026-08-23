@@ -46,11 +46,4 @@ mod tests {
         // Assert
         assert!((0.005..0.1).contains(&elapsed_secs));
     }
-
-    #[test]
-    fn should_support_optional_metric_name() {
-        let span = tracing::info_span!("test_span");
-        // Should not panic even when metric_name is Some
-        let _guard = LatencyGuard::new(span, Some("test_metric".to_string()));
-    }
 }

@@ -1,7 +1,6 @@
 import { For, Show } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
-import { Button } from "@askrjs/themes/components";
-import { Inline, Stack } from "@askrjs/themes/components";
+import { Button, Block } from "@askrjs/themes/components";
 import {
   Badge,
   Card,
@@ -10,7 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@askrjs/themes/components";
-import { VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
+import DataTable, { type DataTableColumn } from "@/components/shared/data-table";
 import type { DiagnosticHotspot, SuggestedQuery } from "@/adapters";
 import {
   QueryCompactEmptyState,
@@ -88,10 +87,6 @@ function badgeVariantForTone(tone: DiagnosticsTone) {
 
 function fixedRate(value: number) {
   return `${value.toFixed(2)} / sec`;
-}
-
-function diagnosticTableHeight(rowCount: number, rowHeight = 48) {
-  return `${Math.min(620, Math.max(140, 44 + rowCount * rowHeight))}px`;
 }
 
 function buildInfrastructureRows(
@@ -356,12 +351,16 @@ export default function DiagnosticsConsole({
   const hotspots = hotspotsFrom(system, topology);
   const suggestedQueries = suggestedQueriesFrom(system, topology);
   const familyRows = metricFamilyRows(metrics);
-  const infrastructureColumns: readonly VirtualTableColumn<InfrastructureRow>[] = [
+  const infrastructureColumns: readonly DataTableColumn<InfrastructureRow>[] = [
     {
       id: "signal",
       header: "Signal",
       width: "22%",
-      cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.signal}</span>,
+      cellComponent: ({ row }) => (
+        <span class="domain-table-cell-truncate" title={row.signal}>
+          {row.signal}
+        </span>
+      ),
     },
     {
       id: "value",
@@ -390,7 +389,7 @@ export default function DiagnosticsConsole({
       ),
     },
   ];
-  const domainColumns: readonly VirtualTableColumn<DomainInternalRow>[] = [
+  const domainColumns: readonly DataTableColumn<DomainInternalRow>[] = [
     {
       id: "domain",
       header: "Domain",
@@ -428,7 +427,7 @@ export default function DiagnosticsConsole({
       ),
     },
   ];
-  const hotspotColumns: readonly VirtualTableColumn<DiagnosticHotspot>[] = [
+  const hotspotColumns: readonly DataTableColumn<DiagnosticHotspot>[] = [
     {
       id: "scope",
       header: "Route",
@@ -442,7 +441,9 @@ export default function DiagnosticsConsole({
             {label}
           </Link>
         ) : (
-          <span class="domain-table-cell-truncate">{label}</span>
+          <span class="domain-table-cell-truncate" title={label}>
+            {label}
+          </span>
         );
       },
     },
@@ -478,7 +479,7 @@ export default function DiagnosticsConsole({
       ),
     },
   ];
-  const suggestedColumns: readonly VirtualTableColumn<SuggestedQuery>[] = [
+  const suggestedColumns: readonly DataTableColumn<SuggestedQuery>[] = [
     {
       id: "priority",
       header: "Priority",
@@ -521,7 +522,7 @@ export default function DiagnosticsConsole({
       ),
     },
   ];
-  const metricColumns: readonly VirtualTableColumn<MetricFamilyRow>[] = [
+  const metricColumns: readonly DataTableColumn<MetricFamilyRow>[] = [
     {
       id: "name",
       header: "Family",
@@ -560,19 +561,19 @@ export default function DiagnosticsConsole({
   ];
 
   return (
-    <Stack gap="3">
+    <Block direction="column" gap="sm">
       <Card padding="sm" variant="default">
         <CardHeader>
-          <Inline justify="between" align="start" gap="3" wrap="wrap">
-            <Stack gap="1">
+          <Block direction="row" justify="between" align="start" gap="sm" wrap={true}>
+            <Block direction="column" gap="xs">
               <CardTitle titleAs="h2">Diagnostics console</CardTitle>
               <CardDescription>
                 Infrastructure internals for {operatorLabel}: topology pressure, suggested follow-up
                 queries, metrics families, and exposed diagnostics.
               </CardDescription>
-            </Stack>
+            </Block>
             <Badge variant={badgeVariantForTone(incidentTone)}>{incident.severity}</Badge>
-          </Inline>
+          </Block>
         </CardHeader>
         <CardContent>
           <div class="diagnostics-summary-grid">
@@ -604,16 +605,12 @@ export default function DiagnosticsConsole({
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <VirtualTable<InfrastructureRow>
-            aria-label="Infrastructure diagnostic signals"
-            class="diagnostics-virtual-table"
+          <DataTable<InfrastructureRow>
+            ariaLabel="Infrastructure diagnostic signals"
+            class="diagnostics-data-table"
             columns={infrastructureColumns}
             getKey={(row) => row.signal}
-            headerHeight={44}
-            overscan={3}
-            rowHeight={48}
             rows={infrastructureRows}
-            style={{ height: diagnosticTableHeight(infrastructureRows.length) }}
           />
         </CardContent>
       </Card>
@@ -627,16 +624,12 @@ export default function DiagnosticsConsole({
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <VirtualTable<DomainInternalRow>
-            aria-label="Domain internal diagnostic counters"
-            class="diagnostics-virtual-table"
+          <DataTable<DomainInternalRow>
+            ariaLabel="Domain internal diagnostic counters"
+            class="diagnostics-data-table"
             columns={domainColumns}
             getKey={(row) => row.domain}
-            headerHeight={44}
-            overscan={4}
-            rowHeight={48}
             rows={domainRows}
-            style={{ height: diagnosticTableHeight(domainRows.length) }}
           />
         </CardContent>
       </Card>
@@ -653,12 +646,12 @@ export default function DiagnosticsConsole({
           <For each={capabilityRows} by={(row) => row.capability}>
             {(row) => (
               <div class="diagnostics-contract-card">
-                <Inline justify="between" align="start" gap="2">
+                <Block direction="row" justify="between" align="start" gap="xs">
                   <strong>{row.capability}</strong>
                   <Badge variant={row.status === "Existing API" ? "success" : "outline"}>
                     {row.status}
                   </Badge>
-                </Inline>
+                </Block>
                 <p class="domain-muted">{row.owner}</p>
                 <p>{row.why}</p>
               </div>
@@ -689,16 +682,12 @@ export default function DiagnosticsConsole({
             <Show
               when={hotspots.length === 0}
               fallback={
-                <VirtualTable<DiagnosticHotspot>
-                  aria-label="Diagnostic hotspots"
-                  class="diagnostics-virtual-table"
+                <DataTable<DiagnosticHotspot>
+                  ariaLabel="Diagnostic hotspots"
+                  class="diagnostics-data-table"
                   columns={hotspotColumns}
                   getKey={hotspotKey}
-                  headerHeight={44}
-                  overscan={4}
-                  rowHeight={48}
                   rows={hotspots}
-                  style={{ height: diagnosticTableHeight(hotspots.length) }}
                 />
               }
             >
@@ -723,16 +712,12 @@ export default function DiagnosticsConsole({
           <Show
             when={suggestedQueries.length === 0}
             fallback={
-              <VirtualTable<SuggestedQuery>
-                aria-label="Suggested diagnostic queries"
-                class="diagnostics-virtual-table"
+              <DataTable<SuggestedQuery>
+                ariaLabel="Suggested diagnostic queries"
+                class="diagnostics-data-table"
                 columns={suggestedColumns}
                 getKey={suggestedQueryKey}
-                headerHeight={44}
-                overscan={4}
-                rowHeight={48}
                 rows={suggestedQueries}
-                style={{ height: diagnosticTableHeight(suggestedQueries.length) }}
               />
             }
           >
@@ -746,18 +731,18 @@ export default function DiagnosticsConsole({
 
       <Card padding="sm" variant="default">
         <CardHeader>
-          <Inline justify="between" align="start" gap="3" wrap="wrap">
-            <Stack gap="1">
+          <Block direction="row" justify="between" align="start" gap="sm" wrap={true}>
+            <Block direction="column" gap="xs">
               <CardTitle titleAs="h2">Metric families</CardTitle>
               <CardDescription>
                 Structured metric families for storage-adjacent, routing, pressure, and failure
                 diagnostics.
               </CardDescription>
-            </Stack>
+            </Block>
             <Button asChild size="sm" variant="outline">
               <Link href={adminChildHref("metrics")}>Open metrics explorer</Link>
             </Button>
-          </Inline>
+          </Block>
         </CardHeader>
         <CardContent>
           <Show when={metricsLoading}>
@@ -774,16 +759,12 @@ export default function DiagnosticsConsole({
             <Show
               when={familyRows.length === 0}
               fallback={
-                <VirtualTable<MetricFamilyRow>
-                  aria-label="Diagnostic metric families"
-                  class="diagnostics-virtual-table"
+                <DataTable<MetricFamilyRow>
+                  ariaLabel="Diagnostic metric families"
+                  class="diagnostics-data-table"
                   columns={metricColumns}
                   getKey={(row) => row.name}
-                  headerHeight={44}
-                  overscan={8}
-                  rowHeight={48}
                   rows={familyRows}
-                  style={{ height: diagnosticTableHeight(familyRows.length) }}
                 />
               }
             >
@@ -795,6 +776,6 @@ export default function DiagnosticsConsole({
           </Show>
         </CardContent>
       </Card>
-    </Stack>
+    </Block>
   );
 }

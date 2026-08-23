@@ -1,5 +1,5 @@
 import { task } from "@askrjs/askr/resources";
-import { Block, Main, Stack } from "@askrjs/themes/components";
+import { Block, Main } from "@askrjs/themes/components";
 import OperatorBreadcrumbs from "./operator-breadcrumbs";
 
 export interface DomainPageFrameProps {
@@ -51,16 +51,19 @@ export default function DomainPageFrame({ children }: DomainPageFrameProps) {
     <Main
       id="main-content"
       class="domain-page-frame route-transition-surface"
+      direction="column"
       paddingY="xl"
       tabIndex={-1}
     >
-      <Stack gap="3">
+      <Block direction="column" gap="sm">
         <OperatorBreadcrumbs />
 
-        <Block class="page-frame-main">
-          <Stack gap="3">{children}</Stack>
+        <Block class="page-frame-main" direction="column">
+          <Block direction="column" gap="sm">
+            {children}
+          </Block>
         </Block>
-      </Stack>
+      </Block>
     </Main>
   );
 }

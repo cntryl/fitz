@@ -2,7 +2,7 @@ import { state } from "@askrjs/askr";
 import { Show } from "@askrjs/askr/control";
 import { currentRoute, onRouteChange, updateRouteQuery } from "@askrjs/askr/router";
 import { Input, Label } from "@askrjs/ui";
-import { Button, Inline, Stack } from "@askrjs/themes/components";
+import { Button, Block } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import { QueryErrorState, QueryLoadingState } from "@/components/shared/query-state";
@@ -94,7 +94,7 @@ export default function DiagnosticsPage() {
 
   return (
     <DomainPageFrame>
-      <Stack gap="3">
+      <Block direction="column" gap="sm">
         <DomainHeader
           eyebrow="Infrastructure internals"
           title="Diagnostics"
@@ -140,7 +140,7 @@ export default function DiagnosticsPage() {
             </div>
           </div>
           <form role="search" onSubmit={submitSearch}>
-            <Inline align="end" gap="2" wrap="wrap">
+            <Block direction="row" align="end" gap="xs" wrap={true}>
               <div class="auth-field">
                 <Label for="diagnostics-query">Search</Label>
                 <Input
@@ -160,7 +160,7 @@ export default function DiagnosticsPage() {
                   Clear search
                 </Button>
               </Show>
-            </Inline>
+            </Block>
           </form>
         </section>
 
@@ -188,7 +188,7 @@ export default function DiagnosticsPage() {
 
         <Show when={data}>
           {(data) => (
-            <Stack gap="3">
+            <Block direction="column" gap="sm">
               <DiagnosticsConsole
                 metrics={metrics.data}
                 metricsError={metrics.error}
@@ -201,10 +201,10 @@ export default function DiagnosticsPage() {
                 topologyError={topology.error}
                 topologyLoading={topology.loading && !topology.data}
               />
-            </Stack>
+            </Block>
           )}
         </Show>
-      </Stack>
+      </Block>
     </DomainPageFrame>
   );
 }

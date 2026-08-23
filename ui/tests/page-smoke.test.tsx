@@ -53,19 +53,19 @@ describe("admin page smoke tests", () => {
           routePath: "/queue",
         },
         {
-          assertText: "Queue inventory",
+          assertText: "Queue realm",
           module: () => import("@/pages/app/queue"),
           path: "/queue/default",
           routePath: "/queue/{realm}",
         },
         {
-          assertText: "Queue inventory",
+          assertText: "Queue area",
           module: () => import("@/pages/app/queue"),
           path: "/queue/default/ops",
           routePath: "/queue/{realm}/{area}",
         },
         {
-          assertText: "Queue resource inspection",
+          assertText: "primary",
           module: () => import("@/pages/app/queue-resource"),
           path: "/admin/1/queue/default/ops/primary",
           routePath: "/admin/{family}/queue/{realm}/{area}/{resource}",
@@ -77,13 +77,13 @@ describe("admin page smoke tests", () => {
           routePath: "/kv",
         },
         {
-          assertText: "KV tables",
+          assertText: "KV realm",
           module: () => import("@/pages/app/kv"),
           path: "/kv/default",
           routePath: "/kv/{realm}",
         },
         {
-          assertText: "KV tables",
+          assertText: "KV area",
           module: () => import("@/pages/app/kv"),
           path: "/kv/default/ops",
           routePath: "/kv/{realm}/{area}",
@@ -101,13 +101,13 @@ describe("admin page smoke tests", () => {
           routePath: "/lease",
         },
         {
-          assertText: "Lease inventory",
+          assertText: "Lease realm",
           module: () => import("@/pages/app/lease"),
           path: "/lease/default",
           routePath: "/lease/{realm}",
         },
         {
-          assertText: "Lease inventory",
+          assertText: "Lease area",
           module: () => import("@/pages/app/lease"),
           path: "/lease/default/ops",
           routePath: "/lease/{realm}/{area}",
@@ -125,13 +125,13 @@ describe("admin page smoke tests", () => {
           routePath: "/notice",
         },
         {
-          assertText: "Notice inventory",
+          assertText: "Notice realm",
           module: () => import("@/pages/app/notice"),
           path: "/notice/default",
           routePath: "/notice/{realm}",
         },
         {
-          assertText: "Notice inventory",
+          assertText: "Notice area",
           module: () => import("@/pages/app/notice"),
           path: "/notice/default/ops",
           routePath: "/notice/{realm}/{area}",
@@ -204,16 +204,17 @@ describe("admin page smoke tests", () => {
 
         expect(root.querySelectorAll("main#main-content")).toHaveLength(1);
         expect(text).toContain(page.assertText);
-        expect(text).toContain("Resource inventory");
-        expect(text).toContain("Route");
-        expect(text).toContain(`${page.path.slice(1)}://default/ops/primary`);
+        expect(text).toContain("Realms");
+        expect(text).toContain("Areas");
+        expect(text).toContain("Resources");
         for (const statLabel of page.statLabels) {
           expect(text).toContain(statLabel);
         }
         expect(text).toContain("Refresh");
         expect(text).toMatch(/Live|Healthy|Quiet|Pressure|Attention/);
-        expect(root.querySelector('[data-slot="virtual-table"]')).toBeTruthy();
-        expect(root.querySelector(`a[href="${page.resourceHref}"]`)).toBeTruthy();
+        expect(root.querySelector('[data-slot="table"]')).toBeTruthy();
+        expect(root.querySelector(`a[href="/admin/1${page.path}/default"]`)).toBeTruthy();
+        expect(root.querySelector(`a[href="${page.resourceHref}"]`)).toBeNull();
 
         cleanupApp(root);
         document.body.innerHTML = "";
@@ -222,7 +223,7 @@ describe("admin page smoke tests", () => {
     PAGE_SMOKE_TIMEOUT_MS,
   );
   it(
-    "renders the flat inventory for domain overview, realm, and area routes",
+    "renders progressive realm, area, and resource inventories",
     async () => {
       for (const page of domainOverviews) {
         const { default: Component } = await page.module();
@@ -237,16 +238,22 @@ describe("admin page smoke tests", () => {
           const root = await mountRoute(routeVariant.path, routeVariant.routePath, Component);
           const text = root.textContent ?? "";
 
-          expect(text).toContain(page.assertText);
-          expect(text).toContain("Resource inventory");
-          expect(text).toContain("Route");
-          expect(text).toContain(`${page.path.slice(1)}://default/ops/primary`);
           if (routeVariant.path === page.path) {
+            expect(text).toContain(page.assertText);
+            expect(text).toContain("Realms");
+            expect(root.querySelector(`a[href="/admin/1${page.path}/default"]`)).toBeTruthy();
             for (const statLabel of page.statLabels) {
               expect(text).toContain(statLabel);
             }
+          } else if (routeVariant.path.endsWith("/default")) {
+            expect(text).toContain("Areas");
+            expect(root.querySelector(`a[href="/admin/1${page.path}/default/ops"]`)).toBeTruthy();
+          } else {
+            expect(text).toContain("Resource inventory");
+            expect(text).toContain("Route");
+            expect(text).toContain(`${page.path.slice(1)}://default/ops/primary`);
+            expect(root.querySelector(`a[href="${page.resourceHref}"]`)).toBeTruthy();
           }
-          expect(root.querySelector(`a[href="${page.resourceHref}"]`)).toBeTruthy();
 
           cleanupApp(root);
           document.body.innerHTML = "";
@@ -277,9 +284,9 @@ describe("admin page smoke tests", () => {
 
     mocks.queryStates.inventory = queryState.fresh(inventory, queryOptions());
     const noticeRealmRoot = await mountRoute("/notice/default", "/notice/{realm}", NoticePage);
-    expect(noticeRealmRoot.textContent).toContain("Notice inventory");
-    expect(noticeRealmRoot.textContent).toContain("Resource inventory");
-    expect(noticeRealmRoot.textContent).toContain("notice://default/ops/primary");
+    expect(noticeRealmRoot.textContent).toContain("Notice realm");
+    expect(noticeRealmRoot.textContent).toContain("Areas");
+    expect(noticeRealmRoot.querySelector('a[href="/admin/1/notice/default/ops"]')).toBeTruthy();
     cleanupApp(noticeRealmRoot);
     document.body.innerHTML = "";
 
@@ -288,7 +295,7 @@ describe("admin page smoke tests", () => {
       "/notice/{realm}/{area}",
       NoticePage,
     );
-    expect(noticeAreaRoot.textContent).toContain("Notice inventory");
+    expect(noticeAreaRoot.textContent).toContain("Notice area");
     expect(noticeAreaRoot.textContent).toContain("Resource inventory");
     expect(noticeAreaRoot.textContent).toContain("notice://default/ops/primary");
     cleanupApp(noticeAreaRoot);

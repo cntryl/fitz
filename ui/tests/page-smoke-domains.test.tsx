@@ -62,18 +62,17 @@ describe("admin page smoke tests", () => {
     const text = root.textContent ?? "";
 
     expect(text).toContain("Lease inventory");
-    expect(text).toContain("Resource inventory");
-    expect(text).toContain("lease://default/ops/primary");
+    expect(text).toContain("Realms");
     expect(text).toContain("1h");
     expect(text).toContain("Pressure");
     expect(text).not.toContain("acquire timeout");
     expect(text).not.toContain("Historical totals do not identify a current incident");
     expect(text).not.toContain("Broker-local owners");
-    expect(root.querySelector('a[href="/admin/1/lease/default/ops/primary"]')).toBeTruthy();
+    expect(root.querySelector('a[href="/admin/1/lease/default"]')).toBeTruthy();
   });
   it("renders kv tables with inventory stats and explorer links", async () => {
     const { default: KvPage } = await import("@/pages/app/kv");
-    const root = await mountRoute("/kv", "/kv", KvPage);
+    const root = await mountRoute("/kv/default/ops", "/kv/{realm}/{area}", KvPage);
     const text = root.textContent ?? "";
     const labels = ["Route", "Records", "Storage", "Txns", "Read p95 ms", "Write p95 ms"];
 
@@ -84,7 +83,7 @@ describe("admin page smoke tests", () => {
       cursor = index;
     }
 
-    expect(text).toContain("KV tables");
+    expect(text).toContain("KV area");
     expect(text).toContain("kv://default/ops/primary");
     expect(text).toContain("300");
     expect(text).toContain("16.0 KiB");
@@ -117,10 +116,9 @@ describe("admin page smoke tests", () => {
     );
 
     const { default: KvPage } = await import("@/pages/app/kv");
-    const root = await mountRoute("/kv", "/kv", KvPage);
-    const headers = Array.from(
-      root.querySelectorAll("[data-slot='virtual-table-header-cell']"),
-      (header) => header.textContent?.trim(),
+    const root = await mountRoute("/kv/default/ops", "/kv/{realm}/{area}", KvPage);
+    const headers = Array.from(root.querySelectorAll("[data-slot='table-header-cell']"), (header) =>
+      header.textContent?.trim(),
     );
 
     expect(headers).toEqual(["Route"]);
@@ -292,10 +290,12 @@ describe("admin page smoke tests", () => {
       "/admin/{family}/lease/{realm}/{area}/{resource}",
       LeaseResourcePage,
     );
-    const initialRemaining = root
-      .querySelector("tbody tr")
-      ?.querySelectorAll("td")[5]
+    const ownershipCard = root.querySelector(".lease-ownership-card");
+    const initialRemaining = ownershipCard
+      ?.querySelector("[data-field='remaining-ttl']")
       ?.textContent?.trim();
+    expect(ownershipCard).toBeTruthy();
+    expect(root.querySelector('table[aria-label="Lease ownership rows"]')).toBeNull();
     expect(initialRemaining).toBeTruthy();
     expect(root.textContent).not.toContain("not crash-safe continuity");
   });
@@ -321,14 +321,13 @@ describe("admin page smoke tests", () => {
     const text = root.textContent ?? "";
 
     expect(text).toContain("Notice inventory");
-    expect(text).toContain("Resource inventory");
-    expect(text).toContain("notice://default/ops/primary");
+    expect(text).toContain("Realms");
     expect(text).toContain("Live");
     expect(text).not.toContain("2 delivery drop");
     expect(text).not.toContain("1 wildcard reject");
     expect(text).not.toContain("Historical totals do not identify a current fanout incident");
     expect(text).not.toContain("Communication flow");
-    expect(root.querySelector('a[href="/admin/1/notice/default/ops/primary"]')).toBeTruthy();
+    expect(root.querySelector('a[href="/admin/1/notice/default"]')).toBeTruthy();
   });
   it("renders Notice resource publish rates without an unavailable latency column", async () => {
     const { default: NoticePage } = await import("@/pages/app/notice");
@@ -339,10 +338,15 @@ describe("admin page smoke tests", () => {
     );
     const text = root.textContent ?? "";
 
-    expect(text).toContain("Notice operations");
+    expect(root.querySelector(".domain-header-title-row > span:first-child")?.textContent).toBe(
+      "primary",
+    );
     expect(text).toContain("Publishes / min");
     expect(text).not.toContain("Latency");
     expect(text).not.toContain("--/N/A");
+    const operations = root.querySelector('ul[aria-label="Notice operations"]');
+    expect(operations?.querySelectorAll('[data-slot="item"]')).toHaveLength(1);
+    expect(root.querySelector("#notice-resource-operations [data-slot='table']")).toBeNull();
   });
   it("renders notice operation metrics and delivery evidence", async () => {
     const { default: NoticeOperationPage } = await import("@/pages/app/notice-operation");
@@ -363,7 +367,9 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("does not report a reset scope");
     expect(text).toContain("session-1");
     expect(text).toContain("session-2");
-    expect(root.querySelector(".notice-operation-table-wrap [data-slot='table']")).toBeTruthy();
+    const deliveries = root.querySelector('ul[aria-label="Delivery evidence"]');
+    expect(deliveries?.querySelectorAll('[data-slot="item"]')).toHaveLength(2);
+    expect(root.querySelector("#notice-delivery-evidence [data-slot='table']")).toBeNull();
   });
   it("renders schedule health in the inventory header", async () => {
     mocks.queryStates.schedule = queryState.fresh(
@@ -390,22 +396,21 @@ describe("admin page smoke tests", () => {
     const text = root.textContent ?? "";
 
     expect(text).toContain("Schedule inventory");
-    expect(text).toContain("Resource inventory");
-    expect(text).toContain("schedule://default/ops/primary");
+    expect(text).toContain("Realms");
     expect(text).toContain("Pressure");
     expect(text).not.toContain("Schedule does not imply durable downstream delivery.");
     expect(text).not.toContain(
       "Cumulative failures describe process history, not a current incident.",
     );
     expect(text).not.toContain("Schedule realms");
-    expect(root.querySelector('a[href="/admin/1/schedule/default/ops/primary"]')).toBeTruthy();
+    expect(root.querySelector('a[href="/admin/1/schedule/default"]')).toBeTruthy();
   });
   it("renders schedule hierarchy routes and resource drill-down pages", async () => {
     const { default: SchedulePage } = await import("@/pages/app/schedule");
     const realmRoot = await mountRoute("/schedule/default", "/schedule/{realm}", SchedulePage);
-    expect(realmRoot.textContent).toContain("Schedule inventory");
-    expect(realmRoot.textContent).toContain("Resource inventory");
-    expect(realmRoot.textContent).toContain("schedule://default/ops/primary");
+    expect(realmRoot.textContent).toContain("Schedule realm");
+    expect(realmRoot.textContent).toContain("Areas");
+    expect(realmRoot.querySelector('a[href="/admin/1/schedule/default/ops"]')).toBeTruthy();
     cleanupApp(realmRoot);
     document.body.innerHTML = "";
 
@@ -414,7 +419,7 @@ describe("admin page smoke tests", () => {
       "/schedule/{realm}/{area}",
       SchedulePage,
     );
-    expect(areaRoot.textContent).toContain("Schedule inventory");
+    expect(areaRoot.textContent).toContain("Schedule area");
     expect(areaRoot.textContent).toContain("Resource inventory");
     expect(areaRoot.textContent).toContain("schedule://default/ops/primary");
     cleanupApp(areaRoot);
@@ -428,7 +433,9 @@ describe("admin page smoke tests", () => {
     );
     const text = resourceRoot.textContent ?? "";
 
-    expect(text).toContain("Schedule resource inspection");
+    expect(
+      resourceRoot.querySelector(".domain-header-title-row > span:first-child")?.textContent,
+    ).toBe("primary");
     expect(text).toContain("Handoff evidence");
     expect(text).toContain("Scheduled run");
     expect(text).not.toContain("Next run");
@@ -439,6 +446,16 @@ describe("admin page smoke tests", () => {
     expect(text).not.toContain("Is anyone listening?");
     expect(text).not.toContain("No live listeners visible");
     expect(text).not.toContain("Back to schedule area");
+    const acknowledged = resourceRoot.querySelector(
+      'ul[aria-label="Acknowledged handoff observations"]',
+    );
+    const pending = resourceRoot.querySelector('ul[aria-label="Pending and missed handoffs"]');
+    expect(acknowledged?.querySelectorAll('[data-slot="item"]')).toHaveLength(1);
+    expect(pending?.querySelectorAll('[data-slot="item"]')).toHaveLength(1);
+    expect(
+      resourceRoot.querySelector("#schedule-acknowledged-handoffs [data-slot='table']"),
+    ).toBeNull();
+    expect(resourceRoot.querySelector("#schedule-pending-handoffs [data-slot='table']")).toBeNull();
   });
 
   it("describes future, overdue, missing, and invalid schedule timestamps truthfully", async () => {
@@ -477,15 +494,14 @@ describe("admin page smoke tests", () => {
     const text = root.textContent ?? "";
 
     expect(text).toContain("Stream inventory");
-    expect(text).toContain("Resource inventory");
-    expect(text).toContain("stream://default/ops/primary");
+    expect(text).toContain("Realms");
     expect(text).not.toContain("100+ behind");
     expect(text).toContain("Attention");
     expect(text).toContain("Committed events");
     expect(text).not.toContain("4,200 committed event");
     expect(text).not.toContain("live subscriptions");
     expect(text).not.toContain("Stream metrics");
-    expect(root.querySelector('a[href="/admin/1/stream/default/ops/primary"]')).toBeTruthy();
+    expect(root.querySelector('a[href="/admin/1/stream/default"]')).toBeTruthy();
   });
   it("does not label unavailable detail queries as live", async () => {
     const cases = [
@@ -551,13 +567,12 @@ describe("admin page smoke tests", () => {
 
     let root = await mountRoute("/stream/default", "/stream/{realm}", StreamPage);
     let text = root.textContent ?? "";
-    expect(text).toContain("Stream inventory");
-    expect(text).toContain("Resource inventory");
-    expect(text).toContain("stream://default/ops/primary");
+    expect(text).toContain("Stream realm");
+    expect(text).toContain("Areas");
 
     root = await mountRoute("/stream/default/ops", "/stream/{realm}/{area}", StreamPage);
     text = root.textContent ?? "";
-    expect(text).toContain("Stream inventory");
+    expect(text).toContain("Stream area");
     expect(text).toContain("Resource inventory");
     expect(text).toContain("stream://default/ops/primary");
 
@@ -569,9 +584,16 @@ describe("admin page smoke tests", () => {
     text = root.textContent ?? "";
     expect(text).toContain("Stream resource");
     expect(text).toContain("From offset");
-    expect(text).toContain("Stream resource metrics");
-    expect(text).toContain("stream://default/ops/events");
+    expect(text).toContain("Committed metadata");
+    expect(text).not.toContain("stream://default/ops/events");
     expect(text).toContain('{"ok":true}');
+    const recordsTable = root.querySelector('table[aria-label="Stream records"]');
+    expect(recordsTable).toBeTruthy();
+    expect(
+      Array.from(recordsTable?.querySelectorAll('[data-slot="table-header-cell"]') ?? []).map(
+        (header) => header.textContent?.trim(),
+      ),
+    ).toEqual(["Offset", "Created", "Body", "Action"]);
   });
   it("renders rpc health in the inventory header", async () => {
     mocks.queryStates.rpc = queryState.fresh(
@@ -594,14 +616,13 @@ describe("admin page smoke tests", () => {
     const text = root.textContent ?? "";
 
     expect(text).toContain("RPC inventory");
-    expect(text).toContain("Resource inventory");
-    expect(text).toContain("rpc://default/ops/primary");
+    expect(text).toContain("Realms");
     expect(text).toContain("Pressure");
     expect(text).not.toContain("not covered by a registered worker");
     expect(text).not.toContain("Pending work is in-memory");
     expect(text).not.toContain("pending requests");
     expect(text).not.toContain("Communication flow");
-    expect(root.querySelector('a[href="/admin/1/rpc/default/ops/primary"]')).toBeTruthy();
+    expect(root.querySelector('a[href="/admin/1/rpc/default"]')).toBeTruthy();
   });
   it("renders RPC hierarchy routes and operation pages", async () => {
     const { default: RpcPage } = await import("@/pages/app/rpc");
@@ -610,13 +631,12 @@ describe("admin page smoke tests", () => {
 
     let root = await mountRoute("/rpc/default", "/rpc/{realm}", RpcPage);
     let text = root.textContent ?? "";
-    expect(text).toContain("RPC inventory");
-    expect(text).toContain("Resource inventory");
-    expect(text).toContain("rpc://default/ops/primary");
+    expect(text).toContain("RPC realm");
+    expect(text).toContain("Areas");
 
     root = await mountRoute("/rpc/default/ops", "/rpc/{realm}/{area}", RpcPage);
     text = root.textContent ?? "";
-    expect(text).toContain("RPC inventory");
+    expect(text).toContain("RPC area");
     expect(text).toContain("Resource inventory");
     expect(text).toContain("rpc://default/ops/primary");
 
@@ -632,6 +652,9 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("Requests handled");
     expect(text).toContain("in-memory pending request evidence");
     expect(text).toContain("GetStatus");
+    const operations = root.querySelector('ul[aria-label="RPC operations"]');
+    expect(operations?.querySelectorAll('[data-slot="item"]')).toHaveLength(1);
+    expect(root.querySelector("#rpc-resource-operations [data-slot='table']")).toBeNull();
 
     root = await mountRoute(
       "/admin/1/rpc/default/ops/primary/GetStatus",
@@ -647,6 +670,9 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("Worker Registered");
     expect(text).toContain("Observed handled total");
     expect(text).toContain("does not report a reset window");
+    const calls = root.querySelector('ul[aria-label="Live call evidence"]');
+    expect(calls?.querySelectorAll('[data-slot="item"]')).toHaveLength(1);
+    expect(root.querySelector("#rpc-live-call-evidence [data-slot='table']")).toBeNull();
   });
   it("renders the status-first dashboard sections", async () => {
     const { default: Home } = await import("@/pages/app/home");

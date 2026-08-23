@@ -1,8 +1,8 @@
 import { Show } from "@askrjs/askr/control";
-import { Stack } from "@askrjs/themes/components";
+import { Block } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
-import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
+import DomainSummaryStrip from "@/components/shared/domain-summary-strip";
 import { QueryErrorState, QueryLoadingState } from "@/components/shared/query-state";
 import SessionTable from "@/components/shared/session-table";
 import { createActiveSessionsQuery } from "@/features/session/session-query";
@@ -110,7 +110,7 @@ export default function SessionsPage() {
 
   return (
     <DomainPageFrame>
-      <Stack gap="3">
+      <Block direction="column" gap="sm">
         <DomainHeader
           eyebrow="Connection health"
           title="Active sessions"
@@ -145,39 +145,25 @@ export default function SessionsPage() {
 
         <Show when={data}>
           {(data) => (
-            <Stack gap="3">
-              <DomainMetricTable
+            <Block direction="column" gap="sm">
+              <DomainSummaryStrip
                 title="Session summary"
-                description="Current live sessions, route-family coverage, transport mix, and reported idle duration."
-                metrics={[
-                  {
-                    label: "Sessions",
-                    value: data.sessions.length,
-                    caption: "Current live sessions",
-                  },
-                  {
-                    label: "Route families",
-                    value: routeFamilies,
-                    caption: "Resolved families",
-                  },
-                  {
-                    label: "Transports",
-                    value: transportKinds,
-                    caption: "Distinct transport types",
-                  },
+                items={[
+                  { label: "Sessions", value: data.sessions.length },
+                  { label: "Route families", value: routeFamilies },
+                  { label: "Transports", value: transportKinds },
                   {
                     label: "Longest idle",
                     value: longestIdle === null ? "Unknown" : `${formatNumber(longestIdle)}s`,
-                    caption: sessions.length > 0 ? "Maximum reported duration" : "No live sessions",
                   },
                 ]}
               />
 
               <SessionTable sessions={data.sessions} />
-            </Stack>
+            </Block>
           )}
         </Show>
-      </Stack>
+      </Block>
     </DomainPageFrame>
   );
 }

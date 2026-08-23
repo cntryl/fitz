@@ -279,7 +279,7 @@ describe("shared UI polish contracts", () => {
     expect(onSearchChange).toHaveBeenCalledWith("");
   });
 
-  it("sizes sparse resource inventories to their content minimum", async () => {
+  it("renders sparse resource inventories as standard tables", async () => {
     const root = await mount(() => (
       <PureDomainResourceInventoryTable
         domain="notice"
@@ -293,9 +293,7 @@ describe("shared UI polish contracts", () => {
       />
     ));
 
-    expect(root.querySelector(".domain-resource-virtual-table")?.getAttribute("style")).toContain(
-      "140px",
-    );
+    expect(root.querySelector(".domain-resource-data-table [data-slot='table']")).toBeTruthy();
   });
 
   it("scopes resource inventory rows to the route hierarchy", () => {
@@ -693,8 +691,8 @@ describe("shared UI polish contracts", () => {
     expect(root.textContent).toContain("Route");
     expect(root.textContent).toContain("Records");
     expect(root.textContent).toContain("kv://default/ops/primary");
-    expect(root.querySelector('[data-slot="virtual-table"]')).toBeTruthy();
-    expect(root.querySelector(".domain-resource-virtual-table")).toBeTruthy();
+    expect(root.querySelector('[data-slot="table"]')).toBeTruthy();
+    expect(root.querySelector(".domain-resource-data-table")).toBeTruthy();
     expect(root.querySelector(".domain-resource-metric")?.getAttribute("data-font")).toBe("mono");
     expect(root.querySelector(".domain-resource-metric")?.getAttribute("data-numeric")).toBe(
       "tabular",
@@ -736,7 +734,7 @@ describe("shared UI polish contracts", () => {
     expect(root.querySelector('button[aria-label="Sort by Ready, descending"]')).toBeTruthy();
   });
 
-  it("uses AskR table, virtual table, and card styling without app-local table chrome", async () => {
+  it("uses AskR table and card styling without app-local table chrome", async () => {
     const root = await mount(() => (
       <main>
         <DomainMetricTable
@@ -771,13 +769,11 @@ describe("shared UI polish contracts", () => {
     ));
 
     const tables = root.querySelectorAll('[data-slot="table"]');
-    const virtualTables = root.querySelectorAll('[data-slot="virtual-table"]');
     const cards = root.querySelectorAll('[data-slot="card"]');
 
-    expect(tables).toHaveLength(1);
-    expect(virtualTables).toHaveLength(1);
+    expect(tables).toHaveLength(2);
     expect(cards).toHaveLength(2);
-    expect(root.querySelectorAll(".domain-table-wrap")).toHaveLength(1);
+    expect(root.querySelectorAll(".domain-table-wrap")).toHaveLength(2);
     expect(root.querySelector(".domain-table")).toBeNull();
     expect(root.querySelector(".domain-metric-card")).toBeNull();
     expect(root.querySelector(".domain-metric-value")?.getAttribute("data-font")).toBe("mono");

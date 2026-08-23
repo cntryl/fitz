@@ -123,11 +123,35 @@ where
     let frame = build_schedule_create("schedule://test/jobs/preserve/run", "*/5 * * * *", payload);
 
     // Act
-    let response = client.send_and_receive(&frame, 2000).await.expect("send");
+    let create_response = client.send_and_receive(&frame, 2000).await.expect("send");
+    let list_response = client
+        .send_and_receive(&build_schedule_list(), 2000)
+        .await
+        .expect("list schedules");
 
     // Assert
-    let (_msg_type, status, _data) = parse_schedule_response(&response);
-    assert_eq!(status, 0, "Should preserve schedule payload");
+    let (_msg_type, create_status, _data) = parse_schedule_response(&create_response);
+    assert_eq!(create_status, 0, "Expected success for create schedule");
+
+    let (_msg_type, list_status, list_payload) = parse_schedule_response(&list_response);
+    assert_eq!(list_status, 0, "Expected success for schedule list");
+
+    // Decode the ListDefs entry and confirm the exact payload bytes round-tripped
+    // over the wire, not just that the create call reported success.
+    let mut dec = PayloadDecoder::new(&list_payload[1..]);
+    let _total_count = dec.get_u64().expect("total count");
+    let has_entry = dec.get_u8().expect("has_entry flag");
+    assert_eq!(has_entry, 1, "expected the created schedule in the list");
+    let route = dec.get_string().expect("route");
+    assert_eq!(route, "schedule://test/jobs/preserve/run");
+    let _cron = dec.get_string().expect("cron");
+    let _delivery_mode = dec.get_u8().expect("delivery mode");
+    let stored_payload = dec.get_bytes().expect("payload");
+    assert_eq!(
+        stored_payload.as_ref(),
+        payload,
+        "schedule payload must round-trip byte-for-byte over the wire"
+    );
 }
 
 // Generic test helper for multiple schedule creation

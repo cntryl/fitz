@@ -2,15 +2,8 @@ import { currentRoute } from "@askrjs/askr/router";
 import { state } from "@askrjs/askr";
 import { For, Show } from "@askrjs/askr/control";
 import { task } from "@askrjs/askr/resources";
-import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  Stack,
-} from "@askrjs/themes/components";
+import { Block, Card, CardContent, CardTitle } from "@askrjs/themes/components";
+import DomainDataSection from "@/components/shared/domain-data-section";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
@@ -61,61 +54,64 @@ function formatOwner(row: LeaseOwnershipSearchRow) {
   return row.ownerSessionId ?? row.ownerId ?? "--";
 }
 
-function LeaseResourceRowsTable(props: { rows: LeaseOwnershipSearchRow[]; now: () => number }) {
+function LeaseOwnershipCards(props: { rows: LeaseOwnershipSearchRow[]; now: () => number }) {
   const totalWaiters = props.rows.reduce((sum, row) => sum + row.pendingWaiters, 0);
 
   return (
-    <Card padding="sm" variant="default">
-      <CardHeader>
-        <CardTitle titleAs="h2">Lease ownership rows</CardTitle>
-        <CardDescription>
-          Owner/session, queued token, waiters, age, remaining TTL, and expiry for this scope.
-          {` ${props.rows.length} row${props.rows.length === 1 ? "" : "s"}, ${totalWaiters} waiter${
-            totalWaiters === 1 ? "" : "s"
-          }.`}
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <p class="domain-scroll-hint">Scroll the table horizontally on narrow screens.</p>
-        <div class="domain-table-wrap lease-resource-table-wrap">
-          <Table>
-            <TableHead>
-              <TableRow>
-                <TableHeaderCell>Owner / session</TableHeaderCell>
-                <TableHeaderCell>State</TableHeaderCell>
-                <TableHeaderCell>Queued token</TableHeaderCell>
-                <TableHeaderCell>Waiters</TableHeaderCell>
-                <TableHeaderCell>Age</TableHeaderCell>
-                <TableHeaderCell>Remaining TTL</TableHeaderCell>
-                <TableHeaderCell>Expiry</TableHeaderCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              <For
-                each={props.rows}
-                by={(row) =>
-                  `${row.ownerSessionId}-${row.ownerId ?? "none"}-${row.queuedToken ?? "none"}-${row.area}-${row.realm}-${row.resource}-${row.state}`
-                }
-              >
-                {(row) => (
-                  <TableRow>
-                    <TableCell>{formatOwner(row)}</TableCell>
-                    <TableCell>{row.state}</TableCell>
-                    <TableCell>{row.queuedToken ?? "--"}</TableCell>
-                    <TableCell>{formatNumber(row.pendingWaiters)}</TableCell>
-                    <TableCell>
-                      {row.ageSeconds === null ? "--" : formatDurationSeconds(row.ageSeconds)}
-                    </TableCell>
-                    <TableCell>{() => formatRemaining(row.expiresAt, props.now())}</TableCell>
-                    <TableCell>{row.expiresAt ? formatTimestamp(row.expiresAt) : "--"}</TableCell>
-                  </TableRow>
-                )}
-              </For>
-            </TableBody>
-          </Table>
-        </div>
-      </CardContent>
-    </Card>
+    <DomainDataSection
+      id="lease-ownership-rows"
+      title="Ownership details"
+      description={`${props.rows.length} ownership observation${props.rows.length === 1 ? "" : "s"} and ${totalWaiters} queued waiter${totalWaiters === 1 ? "" : "s"} in this scope.`}
+    >
+      <Block className="lease-ownership-list" direction="column" gap="sm">
+        <For
+          each={props.rows}
+          by={(row) =>
+            `${row.ownerSessionId}-${row.ownerId ?? "none"}-${row.queuedToken ?? "none"}-${row.area}-${row.realm}-${row.resource}-${row.state}`
+          }
+        >
+          {(row) => (
+            <Card class="lease-ownership-card" padding="sm" variant="default">
+              <CardContent>
+                <Block direction="column" gap="sm">
+                  <CardTitle titleAs="h3">{formatOwner(row)}</CardTitle>
+                  <dl class="lease-ownership-details">
+                    <div>
+                      <dt>State</dt>
+                      <dd>{row.state}</dd>
+                    </div>
+                    <div>
+                      <dt>Queued token</dt>
+                      <dd>{row.queuedToken ?? "--"}</dd>
+                    </div>
+                    <div>
+                      <dt>Waiters</dt>
+                      <dd>{formatNumber(row.pendingWaiters)}</dd>
+                    </div>
+                    <div>
+                      <dt>Age</dt>
+                      <dd>
+                        {row.ageSeconds === null ? "--" : formatDurationSeconds(row.ageSeconds)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Remaining TTL</dt>
+                      <dd class="lease-remaining-ttl" data-field="remaining-ttl">
+                        {() => formatRemaining(row.expiresAt, props.now())}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Expiry</dt>
+                      <dd>{row.expiresAt ? formatTimestamp(row.expiresAt) : "--"}</dd>
+                    </div>
+                  </dl>
+                </Block>
+              </CardContent>
+            </Card>
+          )}
+        </For>
+      </Block>
+    </DomainDataSection>
   );
 }
 
@@ -156,7 +152,7 @@ export default function LeaseResourcePage() {
   return (
     <Show when={hasScope}>
       <DomainPageFrame>
-        <Stack gap="3">
+        <Block direction="column" gap="sm">
           <DomainHeader
             eyebrow="Lease ownership"
             title={resource ?? ""}
@@ -193,7 +189,7 @@ export default function LeaseResourcePage() {
           </Show>
 
           <Show when={rowsData && rows.length > 0}>
-            <LeaseResourceRowsTable rows={rows} now={leaseClockNow} />
+            <LeaseOwnershipCards rows={rows} now={leaseClockNow} />
           </Show>
 
           <Show when={rowsData && rows.length === 0}>
@@ -203,7 +199,7 @@ export default function LeaseResourcePage() {
           <Show when={rowsQuery.refreshing}>
             <QueryRefreshingState description="Refreshing lease ownership rows..." />
           </Show>
-        </Stack>
+        </Block>
       </DomainPageFrame>
     </Show>
   );

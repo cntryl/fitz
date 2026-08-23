@@ -1,7 +1,7 @@
 import { state } from "@askrjs/askr";
+import { Block } from "@askrjs/themes/components";
 import { Show } from "@askrjs/askr/control";
 import { currentRoute } from "@askrjs/askr/router";
-import { Stack } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
@@ -89,10 +89,10 @@ export default function QueueResourcePage() {
 
   return (
     <DomainPageFrame>
-      <Stack gap="3">
+      <Block direction="column" gap="sm">
         <DomainHeader
           eyebrow="Queue resource"
-          title={data ? "Queue resource inspection" : "Queue resource inspection"}
+          title={resourceRef.resource}
           description={
             data
               ? `Current durable backlog, live reservations, dead-letter actions, and broker-observed transitions for ${scopeLabel}.`
@@ -101,7 +101,7 @@ export default function QueueResourcePage() {
           primaryAction={{
             busy: resourceQuery.refreshing,
             disabled: resourceQuery.refreshing,
-            label: "Refresh resource",
+            label: "Refresh queue",
             onPress: () => resourceQuery.refresh(),
           }}
           status={headerStatus}
@@ -147,7 +147,7 @@ export default function QueueResourcePage() {
 
         <Show when={data}>
           {(data) => (
-            <Stack gap="3">
+            <Block direction="column" gap="sm">
               <QueueResourceCurrentValuesPanel detail={data.detail} />
               <QueueResourceDeadLettersPanel
                 messages={data.deadLetters}
@@ -173,10 +173,10 @@ export default function QueueResourcePage() {
                 onRunAction={(kind, message) => void runDeadLetterAction(kind, message)}
                 scopeLabel={scopeLabel}
               />
-            </Stack>
+            </Block>
           )}
         </Show>
-      </Stack>
+      </Block>
     </DomainPageFrame>
   );
 }

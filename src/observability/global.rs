@@ -373,13 +373,3 @@ fn init_observability_with_options(
 
     Ok(metrics_collector)
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn should_initialize_observability_once() {
-        // Note: This test assumes the global is not yet initialized
-        // In practice, you'd want to use a test harness that resets globals
-        // between test runs.
-    }
-}

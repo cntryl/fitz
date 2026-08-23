@@ -1,20 +1,22 @@
 import { state } from "@askrjs/askr";
 import { Show } from "@askrjs/askr/control";
 import { currentRoute, Link, navigate } from "@askrjs/askr/router";
-import { Form, Input, Label, VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
+import { Form, Input, Label } from "@askrjs/ui";
 import {
   Button,
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  Inline,
-  Stack,
+  Block,
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemTitle,
+  Text,
 } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import CopyTextButton from "@/components/shared/copy-text-button";
-import DomainMetricTable from "@/components/shared/domain-metric-table";
+import DataTable, { type DataTableColumn } from "@/components/shared/data-table";
+import DomainDataSection from "@/components/shared/domain-data-section";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
 import { queryFreshness, queryHeaderStatus } from "@/components/shared/query-header-status";
@@ -130,16 +132,7 @@ export default function KvResourcePage() {
   );
   const valueQuery = concreteFamily !== null && lookup ? valueQueryCell : null;
   const valueResult = valueQuery?.data;
-  const exactLookupMetrics =
-    valueResult?.found && valueResult.value
-      ? [
-          { label: "Key", value: bytePreview(valueResult.key) },
-          { label: "Key bytes", value: valueResult.key.lenBytes },
-          { label: "Value", value: bytePreview(valueResult.value) },
-          { label: "Value bytes", value: valueResult.value.lenBytes },
-        ]
-      : [];
-  const rowColumns: readonly VirtualTableColumn<KvCommittedPair>[] = [
+  const rowColumns: readonly DataTableColumn<KvCommittedPair>[] = [
     {
       id: "key-bytes",
       header: "Key bytes",
@@ -165,7 +158,7 @@ export default function KvResourcePage() {
     {
       id: "value-preview",
       header: "Value preview",
-      width: "28%",
+      width: "36%",
       cellComponent: ({ row }) => (
         <span class="domain-table-cell-truncate" title={row.value.base64}>
           {bytePreview(row.value)} ({bytePreviewKind(row.value)})
@@ -174,13 +167,10 @@ export default function KvResourcePage() {
     },
     {
       id: "actions",
-      header: "Copy",
-      width: "22%",
+      header: "Action",
+      width: "14%",
       cellComponent: ({ row }) => (
-        <Inline gap="1" wrap="nowrap">
-          <CopyTextButton label="Copy key" text={bytePreview(row.key)} />
-          <CopyTextButton label="Copy value" text={bytePreview(row.value)} />
-        </Inline>
+        <CopyTextButton label="Copy value" text={bytePreview(row.value)} />
       ),
     },
   ];
@@ -223,7 +213,7 @@ export default function KvResourcePage() {
 
   return (
     <DomainPageFrame>
-      <Stack gap="3">
+      <Block direction="column" gap="sm">
         <DomainHeader
           eyebrow="KV resource"
           title={scope.resource}
@@ -247,18 +237,21 @@ export default function KvResourcePage() {
           }
         />
 
-        <Card padding="sm" variant="default">
-          <CardHeader>
-            <CardTitle titleAs="h2">Exact key lookup</CardTitle>
-            <CardDescription>
-              Read the current committed value for one UTF-8 or base64-encoded key.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
+        <DomainDataSection
+          id="kv-exact-key-lookup"
+          title="Exact key lookup"
+          description="Read the current committed value for one UTF-8 or base64-encoded key."
+        >
+          <Block borderTop borderBottom paddingY="sm">
             <Form onSubmit={lookUpKey}>
-              <Stack gap="3">
-                <Inline align="end" gap="3" wrap="wrap">
-                  <Stack gap="1">
+              <Block direction="column" gap="sm">
+                <Block
+                  direction={{ base: "column", sm: "row" }}
+                  align={{ base: "stretch", sm: "end" }}
+                  gap="sm"
+                  wrap={true}
+                >
+                  <Block direction="column" gap="xs" width={{ base: "full", sm: "auto" }}>
                     <Label for="kv-exact-key">Key</Label>
                     <Input
                       id="kv-exact-key"
@@ -268,7 +261,7 @@ export default function KvResourcePage() {
                         setLookupKeyDraft((event.target as HTMLInputElement).value)
                       }
                     />
-                  </Stack>
+                  </Block>
                   <div class="kv-encoding-controls" role="group" aria-label="Key encoding">
                     <Button
                       type="button"
@@ -290,11 +283,11 @@ export default function KvResourcePage() {
                   <Button type="submit" disabled={concreteFamily === null}>
                     Look up key
                   </Button>
-                </Inline>
-              </Stack>
+                </Block>
+              </Block>
             </Form>
-          </CardContent>
-        </Card>
+          </Block>
+        </DomainDataSection>
 
         <Show when={valueQuery?.loading}>
           <QueryLoadingState description="Looking up the committed KV value..." />
@@ -313,34 +306,70 @@ export default function KvResourcePage() {
           />
         </Show>
         <Show when={valueResult?.found && valueResult.value}>
-          <Stack gap="2">
-            <DomainMetricTable
-              title="Exact key result"
-              description={`Current committed value for the submitted ${lookup?.keyEncoding ?? "UTF-8"} key.`}
-              metrics={exactLookupMetrics}
-            />
-            <Inline gap="2" wrap="wrap">
-              <CopyTextButton
-                label="Copy exact key"
-                text={valueResult ? bytePreview(valueResult.key) : ""}
-              />
-              <CopyTextButton
-                label="Copy exact value"
-                text={valueResult?.value ? bytePreview(valueResult.value) : ""}
-              />
-            </Inline>
-          </Stack>
+          <DomainDataSection
+            id="kv-exact-key-result"
+            title="Exact key result"
+            description={`Current committed value for the submitted ${lookup?.keyEncoding ?? "UTF-8"} key.`}
+          >
+            <ItemGroup role="list" aria-label="Exact key result">
+              <Item role="listitem" variant="outline">
+                <ItemContent>
+                  <ItemTitle>Key</ItemTitle>
+                  <ItemDescription>
+                    <Text as="span" font="mono" wrap="anywhere">
+                      {valueResult ? bytePreview(valueResult.key) : ""}
+                    </Text>
+                  </ItemDescription>
+                  <ItemDescription>
+                    {valueResult ? formatNumber(valueResult.key.lenBytes) : "0"} bytes ·{" "}
+                    {valueResult ? bytePreviewKind(valueResult.key) : "utf8"}
+                  </ItemDescription>
+                </ItemContent>
+                <ItemActions>
+                  <CopyTextButton
+                    label="Copy exact key"
+                    text={valueResult ? bytePreview(valueResult.key) : ""}
+                  />
+                </ItemActions>
+              </Item>
+              <Item role="listitem" variant="outline">
+                <ItemContent>
+                  <ItemTitle>Value</ItemTitle>
+                  <ItemDescription>
+                    <Text as="span" font="mono" wrap="anywhere">
+                      {valueResult?.value ? bytePreview(valueResult.value) : ""}
+                    </Text>
+                  </ItemDescription>
+                  <ItemDescription>
+                    {valueResult?.value ? formatNumber(valueResult.value.lenBytes) : "0"} bytes ·{" "}
+                    {valueResult?.value ? bytePreviewKind(valueResult.value) : "utf8"}
+                  </ItemDescription>
+                </ItemContent>
+                <ItemActions>
+                  <CopyTextButton
+                    label="Copy exact value"
+                    text={valueResult?.value ? bytePreview(valueResult.value) : ""}
+                  />
+                </ItemActions>
+              </Item>
+            </ItemGroup>
+          </DomainDataSection>
         </Show>
 
-        <Card padding="sm" variant="default">
-          <CardHeader>
-            <CardTitle titleAs="h2">Row filters</CardTitle>
-            <CardDescription>Filter committed rows by key prefix and page size.</CardDescription>
-          </CardHeader>
-          <CardContent>
+        <DomainDataSection
+          id="kv-row-filters"
+          title="Row filters"
+          description="Filter committed rows by key prefix and page size."
+        >
+          <Block borderTop borderBottom paddingY="sm">
             <Form onSubmit={applyFilters}>
-              <Inline align="end" gap="3" wrap="wrap">
-                <Stack gap="1">
+              <Block
+                direction={{ base: "column", sm: "row" }}
+                align={{ base: "stretch", sm: "end" }}
+                gap="sm"
+                wrap={true}
+              >
+                <Block direction="column" gap="xs" width={{ base: "full", sm: "auto" }}>
                   <Label for="kv-starts-with">Key starts with</Label>
                   <Input
                     id="kv-starts-with"
@@ -349,8 +378,8 @@ export default function KvResourcePage() {
                       setStartsWithDraft((event.target as HTMLInputElement).value)
                     }
                   />
-                </Stack>
-                <Stack gap="1">
+                </Block>
+                <Block direction="column" gap="xs" width={{ base: "full", sm: "auto" }}>
                   <Label for="kv-limit">Limit</Label>
                   <Input
                     id="kv-limit"
@@ -361,12 +390,12 @@ export default function KvResourcePage() {
                       setLimitDraft((event.target as HTMLInputElement).value)
                     }
                   />
-                </Stack>
+                </Block>
                 <Button type="submit">Apply filters</Button>
-              </Inline>
+              </Block>
             </Form>
-          </CardContent>
-        </Card>
+          </Block>
+        </DomainDataSection>
 
         <Show when={concreteFamily === null}>
           <QueryEmptyState description="Select a concrete Route Family to browse committed KV rows." />
@@ -393,30 +422,27 @@ export default function KvResourcePage() {
         </Show>
 
         <Show when={rows.length > 0}>
-          <Card padding="sm" variant="default">
-            <CardHeader>
-              <CardTitle titleAs="h2">Current authoritative KV rows</CardTitle>
-              <CardDescription>
-                Committed rows returned by the selected scope and filters.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <VirtualTable<KvCommittedPair>
-                aria-label="Committed KV rows"
-                class="domain-resource-virtual-table"
+          <DomainDataSection
+            id="kv-committed-rows"
+            title="Current authoritative KV rows"
+            description="Committed rows returned by the selected scope and filters."
+          >
+            <Block direction="column" gap="xs">
+              <p class="domain-inventory-scroll-hint">
+                Scroll horizontally to inspect every row field and action.
+              </p>
+              <DataTable<KvCommittedPair>
+                ariaLabel="Committed KV rows"
+                class="domain-resource-data-table"
                 columns={rowColumns}
                 getKey={(row) => row.key.base64}
-                headerHeight={44}
-                overscan={6}
-                rowHeight={52}
                 rows={rows}
-                style={{ height: `${Math.min(420, Math.max(144, 44 + rows.length * 52))}px` }}
               />
-            </CardContent>
-          </Card>
+            </Block>
+          </DomainDataSection>
         </Show>
 
-        <Inline gap="2" wrap="wrap">
+        <Block direction="row" gap="xs" wrap={true}>
           <Show when={cursor !== null}>
             <Link class="page-action-link" href={rowsHref(scope, { limit, startsWith })}>
               First page
@@ -447,8 +473,8 @@ export default function KvResourcePage() {
               </Link>
             </Button>
           </Show>
-        </Inline>
-      </Stack>
+        </Block>
+      </Block>
     </DomainPageFrame>
   );
 }

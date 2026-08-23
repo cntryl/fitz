@@ -52,15 +52,20 @@ export default function DomainRealmTable({
                           <Link
                             class="domain-link-cell"
                             href={domainScopeHref(domain, { realm: realm.realm })}
+                            title={realm.realm}
                           >
                             {realm.realm}
                           </Link>
                         ) : (
-                          <span class="domain-table-cell-truncate">{realm.realm}</span>
+                          <span class="domain-table-cell-truncate" title={realm.realm}>
+                            {realm.realm}
+                          </span>
                         )}
                       </TableCell>
                       <TableCell>
-                        <span class="domain-table-cell-truncate">{realm.note ?? "Active"}</span>
+                        <span class="domain-table-cell-truncate" title={realm.note ?? "Active"}>
+                          {realm.note ?? "Active"}
+                        </span>
                       </TableCell>
                     </TableRow>
                   )}

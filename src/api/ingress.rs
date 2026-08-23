@@ -174,26 +174,36 @@ mod tests {
 
     #[test]
     fn should_display_ingress_errors() {
-        // Arrange
-        let errors = vec![
+        // Arrange / Act / Assert: each variant's Display impl must actually
+        // surface its structured data, not just a static label — this is
+        // what operators and clients see in logs/error responses.
+        let frame_too_large = format!(
+            "{}",
             IngressError::FrameTooLarge {
                 size: 2048,
                 max: 1024,
-            },
-            IngressError::TooManyConnections,
-            IngressError::BackpressureFull,
-            IngressError::SessionNotFound(123),
-            IngressError::InvalidFrame("missing length prefix".to_string()),
-            IngressError::TransportError("connection reset".to_string()),
-        ];
+            }
+        );
+        assert!(frame_too_large.contains("2048"));
+        assert!(frame_too_large.contains("1024"));
+        assert!(format!("{}", IngressError::SessionNotFound(123)).contains("123"));
+        assert!(format!(
+            "{}",
+            IngressError::InvalidFrame("missing length prefix".to_string())
+        )
+        .contains("missing length prefix"));
+        assert!(format!(
+            "{}",
+            IngressError::TransportError("connection reset".to_string())
+        )
+        .contains("connection reset"));
 
-        // Act
-        let mut outputs: Vec<String> = Vec::new();
-        for error in errors {
-            outputs.push(format!("{error}"));
-        }
-
-        // Assert
-        assert_eq!(outputs.len(), 6);
+        // Variants with no embedded data should still format to something
+        // non-empty and distinct from one another.
+        let too_many = format!("{}", IngressError::TooManyConnections);
+        let backpressure = format!("{}", IngressError::BackpressureFull);
+        assert!(!too_many.is_empty());
+        assert!(!backpressure.is_empty());
+        assert_ne!(too_many, backpressure);
     }
 }

@@ -745,11 +745,6 @@ mod tests {
     }
 
     #[test]
-    fn should_define_domain_setup() {
-        // Placeholder: Domain setup structure is well-defined
-    }
-
-    #[test]
     fn should_create_domain_sinks() {
         // Arrange
         let kv_sink = DomainSink::new("kv");

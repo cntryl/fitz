@@ -1,9 +1,10 @@
 import { state } from "@askrjs/askr";
 import { Link, currentRoute, navigate, updateRouteQuery } from "@askrjs/askr/router";
 import { ArrowDownIcon, ArrowUpDownIcon, ArrowUpIcon, SearchIcon, XIcon } from "@askrjs/lucide";
-import { Input, VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
+import { Input } from "@askrjs/ui";
 import { Button, Text } from "@askrjs/themes/components";
-import { QueryEmptyState } from "./query-state";
+import DataTable, { type DataTableColumn } from "./data-table";
+import { QueryCompactEmptyState } from "./query-state";
 import type { ResourceInventoryResource } from "@/features/resource/resource-models";
 import { formatNumber } from "@/shared/format";
 import { domainScopeHref, formatFitzRoute, type DomainSegment } from "@/shared/navigation/domains";
@@ -120,10 +121,6 @@ export function DomainResourceMetricText(props: { children: unknown; title?: str
       {props.children}
     </Text>
   );
-}
-
-function tableHeight(rowCount: number) {
-  return `${Math.min(620, Math.max(140, 44 + rowCount * 48))}px`;
 }
 
 function shouldIgnoreRowClick(event: MouseEvent) {
@@ -259,11 +256,11 @@ export function PureDomainResourceInventoryTable({
     );
   }
 
-  const columns: readonly VirtualTableColumn<DomainResourceInventoryRow>[] = [
+  const columns: readonly DataTableColumn<DomainResourceInventoryRow>[] = [
     {
       id: "route",
       header: "Route",
-      width: hasMetrics ? "34%" : "100%",
+      width: hasMetrics ? "28%" : "100%",
       cellComponent: ({ row }) => {
         const route = formatFitzRoute(domain, row);
 
@@ -274,18 +271,16 @@ export function PureDomainResourceInventoryTable({
         );
       },
     },
-    ...metricColumns.map(
-      (column): VirtualTableColumn<DomainResourceInventoryRow> => ({
-        id: column.id,
-        header: sortHeader(column),
-        width: column.width,
-        cellComponent: ({ row }) => (
-          <DomainResourceMetricText title={column.title?.(row)}>
-            {column.cell(row)}
-          </DomainResourceMetricText>
-        ),
-      }),
-    ),
+    ...metricColumns.map((column): DataTableColumn<DomainResourceInventoryRow> => ({
+      id: column.id,
+      header: sortHeader(column),
+      width: column.width,
+      cellComponent: ({ row }) => (
+        <DomainResourceMetricText title={column.title?.(row)}>
+          {column.cell(row)}
+        </DomainResourceMetricText>
+      ),
+    })),
   ];
 
   return (
@@ -333,31 +328,27 @@ export function PureDomainResourceInventoryTable({
       </div>
 
       {allRows.length === 0 ? (
-        <QueryEmptyState description={emptyDescription} />
+        <QueryCompactEmptyState description={emptyDescription} />
       ) : rows.length === 0 ? (
-        <QueryEmptyState description="No resource routes match the current search. Clear filters to show all routes." />
+        <QueryCompactEmptyState description="No resource routes match the current search. Clear filters to show all routes." />
       ) : (
         <>
           {hasMetrics ? (
             <p class="domain-inventory-scroll-hint">Scroll horizontally to view every metric.</p>
           ) : null}
-          <VirtualTable<DomainResourceInventoryRow>
+          <DataTable<DomainResourceInventoryRow>
             id={`${domain}-inventory-table`}
-            aria-label={title}
-            class="domain-resource-virtual-table"
-            data-has-metrics={hasMetrics ? "true" : "false"}
+            ariaLabel={title}
+            class="domain-resource-data-table"
+            dataHasMetrics={hasMetrics}
             columns={columns}
             getKey={(row) => `${row.realm}:${row.area}:${row.resource}:${row.operation ?? ""}`}
-            headerHeight={44}
             onRowClick={(row, _rowIndex, _rowKey, event) => {
               if (!shouldIgnoreRowClick(event)) {
                 onRowOpen(row);
               }
             }}
-            overscan={8}
-            rowHeight={48}
             rows={rows}
-            style={{ height: tableHeight(rows.length) }}
           />
         </>
       )}

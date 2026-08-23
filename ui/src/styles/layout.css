@@ -1,5 +1,5 @@
 .domain-page-frame {
-  padding-block-start: var(--fitz-page-padding-block);
+  padding-block-start: var(--ak-space-3, 0.75rem);
 }
 
 .page-frame-main {

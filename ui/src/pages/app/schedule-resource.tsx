@@ -1,22 +1,26 @@
 import { For, Show } from "@askrjs/askr/control";
 import { currentRoute } from "@askrjs/askr/router";
-import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  Stack,
+  Badge,
+  Block,
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemFooter,
+  ItemGroup,
+  ItemTitle,
+  Text,
 } from "@askrjs/themes/components";
 import type { ScheduleExecutionObservation, ScheduleMissedObservation } from "@/adapters";
+import DomainDataSection from "@/components/shared/domain-data-section";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
 import { queryFreshness, queryHeaderStatus } from "@/components/shared/query-header-status";
 import {
-  QueryEmptyState,
+  QueryCompactEmptyState,
   QueryErrorState,
   QueryLoadingState,
   QueryRefreshingState,
@@ -24,8 +28,8 @@ import {
 import { createScheduleResourceQuery } from "@/features/schedule/schedule-query";
 import type { ScheduleResourceView } from "@/features/schedule/schedule-models";
 import {
-  formatDurationSeconds,
   formatCount,
+  formatDurationSeconds,
   formatNumber,
   formatRelativeTime,
   formatTimestamp,
@@ -44,6 +48,15 @@ function decodeParam(value: string | undefined) {
 
 function formatMaybeTimestamp(value?: string | null) {
   return value ? formatTimestamp(value) : "--";
+}
+
+function formatObservationStatus(value: string) {
+  const label = value.replace(/_/g, " ").trim();
+  return label.length > 0 ? `${label.charAt(0).toUpperCase()}${label.slice(1)}` : "Unknown";
+}
+
+function formatDeliveryMode(value?: string | null) {
+  return value ? `${formatObservationStatus(value)} delivery` : "Delivery mode unknown";
 }
 
 export function formatScheduleTiming(value?: string | null, reference = Date.now()) {
@@ -103,64 +116,67 @@ function scheduleTimingMetric(value?: string | null) {
   };
 }
 
-function ScheduleCard(props: { children: unknown; description?: string; title: string }) {
-  return (
-    <Card padding="sm" variant="default">
-      <CardHeader>
-        <CardTitle titleAs="h2">{props.title}</CardTitle>
-        {props.description ? <CardDescription>{props.description}</CardDescription> : null}
-      </CardHeader>
-      <CardContent>{props.children}</CardContent>
-    </Card>
-  );
-}
-
 function ExecutionRows(props: { rows: ScheduleExecutionObservation[] }) {
   return (
     <Show
       when={props.rows.length > 0}
       fallback={
-        <QueryEmptyState description="No schedule-owned handoff observations matched this resource." />
+        <QueryCompactEmptyState
+          title="No acknowledged handoffs"
+          description="No schedule-owned handoff observations matched this resource."
+        />
       }
     >
-      <div>
-        <p class="domain-scroll-hint">Scroll the table horizontally on narrow screens.</p>
-        <div class="domain-table-wrap schedule-observation-table-wrap">
-          <Table>
-            <TableHead>
-              <TableRow>
-                <TableHeaderCell>Route</TableHeaderCell>
-                <TableHeaderCell>Status</TableHeaderCell>
-                <TableHeaderCell>Mode</TableHeaderCell>
-                <TableHeaderCell>Scheduled time</TableHeaderCell>
-                <TableHeaderCell>Last handoff</TableHeaderCell>
-                <TableHeaderCell>Handoff count</TableHeaderCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              <For each={props.rows} by={(row) => `${row.operation}:${row.next_run}`}>
-                {(row) => (
-                  <TableRow>
-                    <TableCell>
-                      <span
-                        class="domain-table-cell-truncate"
-                        title={formatFitzRoute("schedule", row)}
-                      >
-                        {formatFitzRoute("schedule", row)}
-                      </span>
-                    </TableCell>
-                    <TableCell>{row.status}</TableCell>
-                    <TableCell>{row.delivery_mode}</TableCell>
-                    <TableCell>{formatMaybeTimestamp(row.next_run)}</TableCell>
-                    <TableCell>{formatMaybeTimestamp(row.last_run)}</TableCell>
-                    <TableCell>{formatNumber(row.executions_total)}</TableCell>
-                  </TableRow>
-                )}
-              </For>
-            </TableBody>
-          </Table>
-        </div>
-      </div>
+      <ItemGroup
+        as="ul"
+        class="domain-divided-list schedule-evidence-list schedule-execution-list"
+        aria-label="Acknowledged handoff observations"
+      >
+        <For each={props.rows} by={(row) => `${row.route_family}:${row.operation}:${row.next_run}`}>
+          {(row) => (
+            <Item as="li" class="schedule-evidence-item" size="sm">
+              <ItemContent>
+                <ItemTitle>
+                  <Text as="strong" font="mono" weight="semibold" wrap="anywhere">
+                    {formatFitzRoute("schedule", row)}
+                  </Text>
+                </ItemTitle>
+                <ItemDescription>
+                  Route Family {formatNumber(row.route_family)} ·{" "}
+                  {formatDeliveryMode(row.delivery_mode)}
+                </ItemDescription>
+                <ItemFooter class="schedule-evidence-metadata">
+                  <dl>
+                    <div>
+                      <dt>Scheduled time</dt>
+                      <dd>
+                        <time dateTime={row.next_run}>{formatMaybeTimestamp(row.next_run)}</time>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Last handoff</dt>
+                      <dd>
+                        {row.last_run ? (
+                          <time dateTime={row.last_run}>{formatMaybeTimestamp(row.last_run)}</time>
+                        ) : (
+                          "--"
+                        )}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Handoff count</dt>
+                      <dd>{formatNumber(row.executions_total)}</dd>
+                    </div>
+                  </dl>
+                </ItemFooter>
+              </ItemContent>
+              <ItemActions>
+                <Badge variant="outline">{formatObservationStatus(row.status)}</Badge>
+              </ItemActions>
+            </Item>
+          )}
+        </For>
+      </ItemGroup>
     </Show>
   );
 }
@@ -170,47 +186,58 @@ function MissedRows(props: { rows: ScheduleMissedObservation[] }) {
     <Show
       when={props.rows.length > 0}
       fallback={
-        <QueryEmptyState description="No pending or missed schedule handoff claims matched this resource." />
+        <QueryCompactEmptyState
+          title="No pending handoffs"
+          description="No pending or missed schedule handoff claims matched this resource."
+        />
       }
     >
-      <div>
-        <p class="domain-scroll-hint">Scroll the table horizontally on narrow screens.</p>
-        <div class="domain-table-wrap">
-          <Table>
-            <TableHead>
-              <TableRow>
-                <TableHeaderCell>Route</TableHeaderCell>
-                <TableHeaderCell>Status</TableHeaderCell>
-                <TableHeaderCell>Mode</TableHeaderCell>
-                <TableHeaderCell>Fire at</TableHeaderCell>
-                <TableHeaderCell>Claimed at</TableHeaderCell>
-                <TableHeaderCell>Age</TableHeaderCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              <For each={props.rows} by={(row) => `${row.operation}:${row.fire_ms}`}>
-                {(row) => (
-                  <TableRow>
-                    <TableCell>
-                      <span
-                        class="domain-table-cell-truncate"
-                        title={formatFitzRoute("schedule", row)}
-                      >
-                        {formatFitzRoute("schedule", row)}
-                      </span>
-                    </TableCell>
-                    <TableCell>{row.status}</TableCell>
-                    <TableCell>{row.delivery_mode}</TableCell>
-                    <TableCell>{formatTimestamp(row.fire_at)}</TableCell>
-                    <TableCell>{formatTimestamp(row.claimed_at)}</TableCell>
-                    <TableCell>{formatDurationSeconds(row.age_seconds)}</TableCell>
-                  </TableRow>
-                )}
-              </For>
-            </TableBody>
-          </Table>
-        </div>
-      </div>
+      <ItemGroup
+        as="ul"
+        class="domain-divided-list schedule-evidence-list schedule-pending-list"
+        aria-label="Pending and missed handoffs"
+      >
+        <For each={props.rows} by={(row) => `${row.route_family}:${row.operation}:${row.fire_ms}`}>
+          {(row) => (
+            <Item as="li" class="schedule-evidence-item" size="sm">
+              <ItemContent>
+                <ItemTitle>
+                  <Text as="strong" font="mono" weight="semibold" wrap="anywhere">
+                    {formatFitzRoute("schedule", row)}
+                  </Text>
+                </ItemTitle>
+                <ItemDescription>
+                  Route Family {formatNumber(row.route_family)} ·{" "}
+                  {formatDeliveryMode(row.delivery_mode)}
+                </ItemDescription>
+                <ItemFooter class="schedule-evidence-metadata">
+                  <dl>
+                    <div>
+                      <dt>Fire at</dt>
+                      <dd>
+                        <time dateTime={row.fire_at}>{formatTimestamp(row.fire_at)}</time>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Claimed at</dt>
+                      <dd>
+                        <time dateTime={row.claimed_at}>{formatTimestamp(row.claimed_at)}</time>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Age</dt>
+                      <dd>{formatDurationSeconds(row.age_seconds)}</dd>
+                    </div>
+                  </dl>
+                </ItemFooter>
+              </ItemContent>
+              <ItemActions>
+                <Badge variant="warning">{formatObservationStatus(row.status)}</Badge>
+              </ItemActions>
+            </Item>
+          )}
+        </For>
+      </ItemGroup>
     </Show>
   );
 }
@@ -228,15 +255,15 @@ export default function ScheduleResourcePage() {
   const timingMetric = data ? scheduleTimingMetric(data.detail.next_run) : null;
   return (
     <DomainPageFrame>
-      <Stack gap="3">
+      <Block direction="column" gap="sm">
         <DomainHeader
           eyebrow="Schedule resource"
-          title="Schedule resource inspection"
+          title={ref.resource}
           description={`Durable timing intent and schedule-owned handoff evidence for ${scopeLabel}.`}
           primaryAction={{
             busy: query.refreshing,
             disabled: query.refreshing,
-            label: "Refresh resource",
+            label: "Refresh schedule",
             onPress: () => query.refresh(),
           }}
           status={queryHeaderStatus(
@@ -275,7 +302,7 @@ export default function ScheduleResourcePage() {
 
         <Show when={data}>
           {(current) => (
-            <Stack gap="3">
+            <Block direction="column" gap="sm">
               <Show when={query.refreshing}>
                 <QueryRefreshingState description="Refreshing schedule resource..." />
               </Show>
@@ -298,19 +325,33 @@ export default function ScheduleResourcePage() {
                 ]}
               />
 
-              <ScheduleCard
+              <DomainDataSection
+                id="schedule-acknowledged-handoffs"
                 title="Acknowledged handoff observations"
                 description="Schedule-owned handoff evidence, not durable downstream execution history."
+                actions={
+                  <Badge variant="outline">
+                    {formatCount(current.executionObservations.observations.length, "observation")}
+                  </Badge>
+                }
               >
                 <ExecutionRows rows={current.executionObservations.observations} />
-              </ScheduleCard>
+              </DomainDataSection>
 
-              <ScheduleCard
+              <DomainDataSection
+                id="schedule-pending-handoffs"
                 title="Pending and missed handoffs"
                 description="Persisted pending schedule fire claims that have not been acknowledged."
+                actions={
+                  <Badge
+                    variant={current.missedHandoffs.observations.length > 0 ? "warning" : "success"}
+                  >
+                    {formatCount(current.missedHandoffs.observations.length, "claim")}
+                  </Badge>
+                }
               >
                 <MissedRows rows={current.missedHandoffs.observations} />
-              </ScheduleCard>
+              </DomainDataSection>
 
               <DomainMetricTable
                 title="Diagnostics"
@@ -324,10 +365,10 @@ export default function ScheduleResourcePage() {
                   { label: "Contention", value: current.detail.diagnostics.contention_count },
                 ]}
               />
-            </Stack>
+            </Block>
           )}
         </Show>
-      </Stack>
+      </Block>
     </DomainPageFrame>
   );
 }

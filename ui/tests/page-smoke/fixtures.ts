@@ -797,19 +797,19 @@ export function leaseResourceRowsFixture(expiresOffsetSeconds = 120) {
 
 export const scheduleHierarchyRoutes = [
   {
-    assertText: "Schedule inventory",
+    assertText: "Schedule realm",
     path: "/schedule/default",
     routePath: "/schedule/{realm}",
     module: () => import("@/pages/app/schedule"),
   },
   {
-    assertText: "Schedule inventory",
+    assertText: "Schedule area",
     path: "/schedule/default/ops",
     routePath: "/schedule/{realm}/{area}",
     module: () => import("@/pages/app/schedule"),
   },
   {
-    assertText: "Schedule resource inspection",
+    assertText: "primary",
     path: "/admin/1/schedule/default/ops/primary",
     routePath: "/admin/{family}/schedule/{realm}/{area}/{resource}",
     module: () => import("@/pages/app/schedule-resource"),
@@ -818,7 +818,7 @@ export const scheduleHierarchyRoutes = [
 
 export const noticeHierarchyRoutes = [
   {
-    assertText: "Notice operations",
+    assertText: "primary",
     domain: "notice",
     path: "/admin/1/notice/default/ops/primary",
     routePath: "/admin/{family}/notice/{realm}/{area}/{resource}",

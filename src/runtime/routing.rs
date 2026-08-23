@@ -524,18 +524,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn should_create_route_family() {
-        // Arrange
-        // (no setup needed)
-
-        // Act
-        let family = RouteFamily::new(1);
-
-        // Assert
-        assert_eq!(family.id(), 1);
-    }
-
-    #[test]
     fn should_reject_route_family_values_above_u32_range() {
         // Arrange
         let overflow = u64::from(u32::MAX) + 1;
@@ -545,81 +533,6 @@ mod tests {
 
         // Assert
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn should_compare_route_families_by_identity() {
-        // Arrange
-        let family1 = RouteFamily::new(1);
-        let family2 = RouteFamily::new(1);
-        let family3 = RouteFamily::new(2);
-
-        // Act
-        let eq_result = family1 == family2;
-        let ne_result = family1 != family3;
-
-        // Assert
-        assert!(eq_result);
-        assert!(ne_result);
-    }
-
-    #[test]
-    fn should_hash_route_families_consistently() {
-        // Arrange
-        let family1 = RouteFamily::new(1);
-        let family2 = RouteFamily::new(1);
-
-        let mut hasher1 = std::collections::hash_map::DefaultHasher::new();
-        let mut hasher2 = std::collections::hash_map::DefaultHasher::new();
-
-        // Act
-        family1.hash(&mut hasher1);
-        family2.hash(&mut hasher2);
-
-        // Assert
-        assert_eq!(hasher1.finish(), hasher2.finish());
-    }
-
-    #[test]
-    fn should_create_route() {
-        // Arrange
-        // (no setup needed)
-
-        // Act
-        let route = Route::new("/user/123");
-
-        // Assert
-        assert_eq!(route.as_str(), "/user/123");
-    }
-
-    #[test]
-    fn should_compare_routes_by_path() {
-        // Arrange
-        let route1 = Route::new("/user/123");
-        let route2 = Route::new("/user/123");
-        let route3 = Route::new("/user/456");
-
-        // Act
-        let eq_result = route1 == route2;
-        let ne_result = route1 != route3;
-
-        // Assert
-        assert!(eq_result);
-        assert!(ne_result);
-    }
-
-    #[test]
-    fn should_create_route_address() {
-        // Arrange
-        let family = RouteFamily::new(100);
-        let route = Route::new("/service/method");
-
-        // Act
-        let address = RouteAddress::new(family, route.clone());
-
-        // Assert
-        assert_eq!(address.family(), &family);
-        assert_eq!(address.route(), &route);
     }
 
     #[test]

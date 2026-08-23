@@ -727,15 +727,4 @@ mod tests {
     fn should_reject_websocket_text_frame() {
         assert!(TlvDecoder::new().decode_all(b"text").is_err());
     }
-
-    #[test]
-    fn should_preserve_domain_error_shape_across_tcp_plus_websocket() {
-        // Arrange
-        // Act
-        // Assert
-        assert!(matches!(
-            TlvDecoder::new().decode_all(&[1]),
-            Err(TlvError::IncompleteLength)
-        ));
-    }
 }

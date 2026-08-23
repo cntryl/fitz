@@ -304,31 +304,33 @@ mod tests {
 
     #[test]
     fn should_encode_length_prefix() {
-        // Arrange
-        let data = [1, 2, 3, 4, 5];
-        let len = u32::try_from(data.len()).expect("test frame length fits in u32");
+        // Arrange: a real length-prefixed frame buffer as `frame_len` expects
+        // to receive it off the wire (4-byte big-endian length + payload).
+        let data = [1u8, 2, 3, 4, 5];
+        let mut buffer = BytesMut::new();
+        buffer.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        buffer.extend_from_slice(&data);
 
         // Act
-        let len_bytes = len.to_be_bytes();
-        let reconstructed =
-            usize::try_from(u32::from_be_bytes(len_bytes)).expect("u32 length fits in usize");
+        let decoded_len = frame_len(&buffer);
 
         // Assert
-        assert_eq!(reconstructed, 5);
+        assert_eq!(decoded_len, 5);
     }
 
     #[test]
     fn should_handle_large_frames() {
         // Arrange
-        let large_len: i32 = 1024 * 1024; // 1 MB
+        let large_len: u32 = 1024 * 1024; // 1 MB
+        let mut buffer = BytesMut::new();
+        buffer.extend_from_slice(&large_len.to_be_bytes());
+        buffer.extend_from_slice(&[0u8; 4]); // frame_len only reads the prefix
 
         // Act
-        let len_bytes = large_len.cast_unsigned().to_be_bytes();
-        let reconstructed =
-            usize::try_from(u32::from_be_bytes(len_bytes)).expect("u32 length fits in usize");
+        let decoded_len = frame_len(&buffer);
 
         // Assert
-        assert_eq!(reconstructed, 1024 * 1024);
+        assert_eq!(decoded_len, 1024 * 1024);
     }
 
     #[tokio::test]
