@@ -308,7 +308,8 @@ mod tests {
         // to receive it off the wire (4-byte big-endian length + payload).
         let data = [1u8, 2, 3, 4, 5];
         let mut buffer = BytesMut::new();
-        buffer.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        let encoded_len = u32::try_from(data.len()).expect("test frame length should fit in u32");
+        buffer.extend_from_slice(&encoded_len.to_be_bytes());
         buffer.extend_from_slice(&data);
 
         // Act

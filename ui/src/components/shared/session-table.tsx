@@ -46,6 +46,8 @@ export default function SessionTable({ sessions }: SessionTableProps) {
     />
   );
 
+  const visibleSessions = sessions.slice(0, 500);
+
   return (
     <Show when={sessions.length > 0} fallback={emptyState}>
       <section class="session-list-section" aria-labelledby="live-sessions-title">
@@ -54,7 +56,7 @@ export default function SessionTable({ sessions }: SessionTableProps) {
           <p>Each item is one live broker or admin connection and the context reported for it.</p>
         </header>
         <ul class="session-list" aria-label="Live sessions">
-          <For each={sessions} by={(session) => session.key}>
+          <For each={visibleSessions} by={(session) => session.key}>
             {(session) => (
               <li class="session-list-item">
                 <div class="session-list-heading">
@@ -66,7 +68,6 @@ export default function SessionTable({ sessions }: SessionTableProps) {
                   </span>
                   <span class="session-list-badge">{session.transport ?? "Unknown"}</span>
                 </div>
-
                 <p class="session-list-description">
                   <span>{reportedText(session.subject)}</span>
                   <span aria-hidden="true">·</span>
@@ -74,7 +75,6 @@ export default function SessionTable({ sessions }: SessionTableProps) {
                     {reportedText(session.identityClaim)}: {reportedText(session.identityValue)}
                   </span>
                 </p>
-
                 <dl class="session-list-metadata">
                   <div>
                     <dt>Remote</dt>
@@ -97,6 +97,12 @@ export default function SessionTable({ sessions }: SessionTableProps) {
             )}
           </For>
         </ul>
+        <Show when={sessions.length > visibleSessions.length}>
+          <p class="domain-table-limit-notice" role="status">
+            Showing the first {visibleSessions.length} of {sessions.length} sessions. Narrow the
+            active scope to inspect later sessions.
+          </p>
+        </Show>
       </section>
     </Show>
   );

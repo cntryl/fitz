@@ -126,7 +126,6 @@ fn should_find_leap_day_after_non_leap_century_year() {
     );
 }
 
-
 #[test]
 fn should_parse_concrete_schedule_route_given_valid_route() {
     // Arrange

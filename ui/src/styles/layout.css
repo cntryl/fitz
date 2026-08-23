@@ -3,6 +3,8 @@
 }
 
 .page-frame-main {
+  display: flex;
+  flex-direction: column;
   inline-size: 100%;
   max-inline-size: 100%;
   min-width: 0;

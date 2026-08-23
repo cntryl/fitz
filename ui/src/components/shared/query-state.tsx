@@ -109,7 +109,7 @@ export function QueryCompactEmptyState({
   title = "Nothing to show",
 }: QueryStateProps) {
   return (
-    <Block className={className} direction="column" gap="xs" paddingY="sm" borderTop borderBottom>
+    <Block className={`query-compact-layout ${className}`} paddingY="sm" borderTop borderBottom>
       <Text as="strong" weight="semibold">
         {title}
       </Text>

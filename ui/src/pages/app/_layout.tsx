@@ -316,7 +316,7 @@ export default function Layout({ children }: { children?: unknown }) {
 
   return (
     <OperatorScope value={operator}>
-      <Block class="operator-context-root" minHeight="screen" direction="column">
+      <Block class="operator-context-root" minHeight="screen">
         <a class="skip-link" href="#main-content">
           Skip to main content
         </a>

@@ -26,7 +26,7 @@ export default function DomainDataSection({
       gap="sm"
       paddingY="0"
     >
-      <Block as="header" className="domain-section-header" direction="row">
+      <Block as="header" className="domain-section-header">
         <Block direction="column" gap="xs">
           <h2 id={id}>{title}</h2>
           {description ? (

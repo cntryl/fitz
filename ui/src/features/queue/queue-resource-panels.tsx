@@ -1,4 +1,4 @@
-import { For } from "@askrjs/askr/control";
+import { For, Show } from "@askrjs/askr/control";
 import {
   Badge,
   Block,
@@ -208,12 +208,15 @@ export function QueueResourceTimelinePanel({ timeline }: { timeline: QueueResour
         </Badge>
       }
     >
-      {timeline.events.length === 0 ? (
-        <QueryCompactEmptyState
-          title={timeline.derived ? "Derived timeline" : "Live timeline"}
-          description="No recent transitions are visible for this resource. Use current metrics for context."
-        />
-      ) : (
+      <Show
+        when={timeline.events.length > 0}
+        fallback={
+          <QueryCompactEmptyState
+            title={timeline.derived ? "Derived timeline" : "Live timeline"}
+            description="No recent transitions are visible for this resource. Use current metrics for context."
+          />
+        }
+      >
         <ItemGroup
           as="ul"
           class="domain-divided-list queue-timeline-list"
@@ -228,7 +231,7 @@ export function QueueResourceTimelinePanel({ timeline }: { timeline: QueueResour
             {(event) => <QueueTimelineItem event={event} />}
           </For>
         </ItemGroup>
-      )}
+      </Show>
     </DomainDataSection>
   );
 }

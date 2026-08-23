@@ -55,7 +55,32 @@ export default function DomainScopeInventoryTable({
               </TableRow>
             </TableHead>
             <TableBody>
-              {showingAreas ? (
+              <Show
+                when={showingAreas}
+                fallback={
+                  <For each={realms as DomainResourceInventoryRealm[]} by={(item) => item.realm}>
+                    {(item) => {
+                      const href = domainScopeHref(domain, { realm: item.realm });
+
+                      return (
+                        <TableRow>
+                          <TableCell>
+                            <a class="domain-link-cell" href={href}>
+                              {item.realm}
+                            </a>
+                          </TableCell>
+                          <TableCell>{formatNumber(item.areas.length)}</TableCell>
+                          <TableCell>
+                            {formatNumber(
+                              item.areas.reduce((total, area) => total + resourceCount(area), 0),
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    }}
+                  </For>
+                }
+              >
                 <For each={areas as DomainResourceInventoryArea[]} by={(area) => area.area}>
                   {(area) => {
                     const href = domainScopeHref(domain, { realm, area: area.area });
@@ -72,29 +97,7 @@ export default function DomainScopeInventoryTable({
                     );
                   }}
                 </For>
-              ) : (
-                <For each={realms as DomainResourceInventoryRealm[]} by={(item) => item.realm}>
-                  {(item) => {
-                    const href = domainScopeHref(domain, { realm: item.realm });
-
-                    return (
-                      <TableRow>
-                        <TableCell>
-                          <a class="domain-link-cell" href={href}>
-                            {item.realm}
-                          </a>
-                        </TableCell>
-                        <TableCell>{formatNumber(item.areas.length)}</TableCell>
-                        <TableCell>
-                          {formatNumber(
-                            item.areas.reduce((total, area) => total + resourceCount(area), 0),
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  }}
-                </For>
-              )}
+              </Show>
             </TableBody>
           </Table>
         </div>

@@ -49,7 +49,7 @@ export default function DomainSummaryStrip({
       aria-labelledby={titleId}
     >
       {title || description ? (
-        <Block as="header" direction="column" gap="xs" className="domain-summary-header">
+        <Block as="header" className="domain-summary-header">
           {title ? <h2 id={titleId}>{title}</h2> : null}
           {description ? (
             <Text tone="muted" size="sm">
@@ -58,7 +58,7 @@ export default function DomainSummaryStrip({
           ) : null}
         </Block>
       ) : null}
-      <Block className="domain-summary-items" direction="row" gap="sm" wrap>
+      <Block className="domain-summary-items">
         <For each={items as DomainSummaryItem[]} by={(item) => item.label}>
           {(item) => (
             <Card class="domain-summary-item" padding="sm" variant="default">

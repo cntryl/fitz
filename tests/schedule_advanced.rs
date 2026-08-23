@@ -263,7 +263,10 @@ fn should_find_next_fire_for_business_hours_schedule() {
     assert_eq!(resolved.day(), 6);
     assert_eq!(resolved.hour(), 9);
     let weekday = resolved.weekday().number_from_monday(); // 1=Mon .. 5=Fri
-    assert!((1..=5).contains(&weekday), "expected a weekday, got {weekday}");
+    assert!(
+        (1..=5).contains(&weekday),
+        "expected a weekday, got {weekday}"
+    );
 }
 
 // ========== Edge Case Tests ==========

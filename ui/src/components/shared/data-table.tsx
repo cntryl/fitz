@@ -1,4 +1,4 @@
-import { For } from "@askrjs/askr/control";
+import { For, Show } from "@askrjs/askr/control";
 import type { JSXElement } from "@askrjs/askr/foundations/structures";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
 
@@ -28,10 +28,6 @@ export interface DataTableProps<Row> {
   rows: readonly Row[];
 }
 
-function columnWidth(width: number | string | undefined) {
-  return typeof width === "number" ? `${width}px` : width;
-}
-
 export default function DataTable<Row>({
   ariaLabel,
   class: className,
@@ -42,6 +38,8 @@ export default function DataTable<Row>({
   onRowClick,
   rows,
 }: DataTableProps<Row>) {
+  const visibleRows = rows.slice(0, 500);
+
   return (
     <div
       class={`domain-table-wrap${className ? ` ${className}` : ""}`}
@@ -50,7 +48,13 @@ export default function DataTable<Row>({
       <Table id={id} aria-label={ariaLabel}>
         <colgroup>
           <For each={columns} by={(column) => column.id}>
-            {(column) => <col style={{ width: columnWidth(column.width) }} />}
+            {(column) => (
+              <col
+                style={{
+                  width: typeof column.width === "number" ? `${column.width}px` : column.width,
+                }}
+              />
+            )}
           </For>
         </colgroup>
         <TableHead>
@@ -63,7 +67,7 @@ export default function DataTable<Row>({
           </TableRow>
         </TableHead>
         <TableBody>
-          <For each={rows as Row[]} by={(row, index) => String(getKey(row, index))}>
+          <For each={visibleRows as Row[]} by={(row, index) => String(getKey(row, index))}>
             {(row, rowIndex) => {
               const index = rowIndex();
               const rowKey = String(getKey(row, index));
@@ -93,6 +97,12 @@ export default function DataTable<Row>({
           </For>
         </TableBody>
       </Table>
+      <Show when={rows.length > visibleRows.length}>
+        <p class="domain-table-limit-notice" role="status">
+          Showing the first {visibleRows.length} of {rows.length} rows. Refine the current scope or
+          filter to inspect later rows.
+        </p>
+      </Show>
     </div>
   );
 }

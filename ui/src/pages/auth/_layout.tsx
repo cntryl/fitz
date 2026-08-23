@@ -9,7 +9,7 @@ export default function Layout({ children }: { children?: unknown }) {
       background="canvas"
       tabIndex={-1}
     >
-      <Block class="auth-panel" width="full" gap="lg">
+      <Block class="auth-panel" width="full">
         {children}
       </Block>
     </Block>

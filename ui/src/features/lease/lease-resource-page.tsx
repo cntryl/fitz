@@ -63,7 +63,7 @@ function LeaseOwnershipCards(props: { rows: LeaseOwnershipSearchRow[]; now: () =
       title="Ownership details"
       description={`${props.rows.length} ownership observation${props.rows.length === 1 ? "" : "s"} and ${totalWaiters} queued waiter${totalWaiters === 1 ? "" : "s"} in this scope.`}
     >
-      <Block className="lease-ownership-list" direction="column" gap="sm">
+      <Block className="lease-ownership-list">
         <For
           each={props.rows}
           by={(row) =>

@@ -58,7 +58,7 @@ export default function DomainPageFrame({ children }: DomainPageFrameProps) {
       <Block direction="column" gap="sm">
         <OperatorBreadcrumbs />
 
-        <Block class="page-frame-main" direction="column">
+        <Block class="page-frame-main">
           <Block direction="column" gap="sm">
             {children}
           </Block>

@@ -206,6 +206,28 @@
   line-height: var(--ak-line-height-tight);
 }
 
+.domain-summary-header,
+.query-compact-layout,
+.lease-ownership-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.domain-summary-header,
+.query-compact-layout {
+  gap: var(--ak-space-1, 0.25rem);
+}
+
+.lease-ownership-list {
+  gap: var(--ak-space-3, 0.75rem);
+}
+
+.domain-summary-items {
+  display: flex;
+  flex-flow: row wrap;
+  gap: var(--ak-space-3, 0.75rem);
+}
+
 .domain-summary-item {
   flex: 1 1 13rem;
   gap: var(--ak-space-3, 0.75rem);

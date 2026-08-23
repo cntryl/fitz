@@ -9,6 +9,9 @@
 }
 
 .auth-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ak-space-4, 1rem);
   inline-size: 100%;
   max-inline-size: 24rem;
 }
