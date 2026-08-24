@@ -262,6 +262,24 @@ fn should_reject_invalid_kv_idle_transaction_ttl() {
 }
 
 #[test]
+#[serial]
+fn should_reject_invalid_schedule_preload_timeout() {
+    with_storage_env(&[(ENV_SCHEDULE_PRELOAD_TIMEOUT_SECS, "0")], || {
+        // Arrange
+
+        // Act
+        let result = BootConfig::new().validate();
+
+        // Assert
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("FITZ_SCHEDULE_PRELOAD_TIMEOUT_SECS must be greater than 0"));
+    });
+}
+
+#[test]
 fn should_keep_non_cloud_sync_write_options_local() {
     // Arrange
     let config = BootConfig::with_local_storage("/data/fitz");

@@ -211,6 +211,7 @@ fn register_domains_stage(
         rpc_request_timeout: None,
         stream_storage_layout: config.stream_storage_layout,
         kv_idle_transaction_ttl: Duration::from_secs(config.kv_idle_transaction_ttl_seconds),
+        schedule_preload_timeout: config.schedule_preload_timeout(),
     };
     match domains::setup(router, store, &runtime.admin_read_model(), &options) {
         Ok(handles) => BootStage::Continue(handles),

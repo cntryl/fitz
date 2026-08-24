@@ -47,6 +47,7 @@ pub(super) fn with_auth_env<T>(values: &[(&str, &str)], test: impl FnOnce() -> T
         ENV_QUEUE_WRITE_POLICY,
         ENV_QUEUE_LOSS_WINDOW_MS,
         ENV_KV_IDLE_TRANSACTION_TTL_SECS,
+        ENV_SCHEDULE_PRELOAD_TIMEOUT_SECS,
         ENV_DRAIN_GRACE_SECONDS,
         ENV_DRAIN_CLOSE_REASON,
     ];
@@ -97,6 +98,7 @@ pub(super) fn with_storage_env<T>(values: &[(&str, &str)], test: impl FnOnce() -
         ENV_QUEUE_WRITE_POLICY,
         ENV_QUEUE_LOSS_WINDOW_MS,
         ENV_KV_IDLE_TRANSACTION_TTL_SECS,
+        ENV_SCHEDULE_PRELOAD_TIMEOUT_SECS,
         "AWS_REGION",
         "AWS_DEFAULT_REGION",
         "AZURE_STORAGE_ACCOUNT_NAME",
@@ -174,6 +176,10 @@ pub(super) fn should_create_default_boot_config() {
     );
     assert!(config.queue_write_policy_defaulted_fast());
     assert_eq!(config.queue_loss_window_ms, DEFAULT_QUEUE_LOSS_WINDOW_MS);
+    assert_eq!(
+        config.schedule_preload_timeout(),
+        crate::domains::schedule::sink::DEFAULT_SCHEDULE_PRELOAD_TIMEOUT
+    );
     assert!(config.queue_write_options().is_best_effort());
     assert_eq!(config.drain_grace_seconds, DEFAULT_DRAIN_GRACE_SECONDS);
     assert_eq!(config.drain_close_reason, DEFAULT_DRAIN_CLOSE_REASON);
@@ -273,6 +279,27 @@ pub(super) fn should_read_drain_config_from_environment() {
             // Assert
             assert_eq!(config.drain_grace_seconds, 45);
             assert_eq!(config.drain_close_reason, "planned deploy");
+            assert!(config.validate().is_ok());
+        },
+    );
+}
+
+#[test]
+#[serial]
+pub(super) fn should_read_schedule_preload_timeout_from_environment() {
+    with_auth_env(
+        &[
+            ("FITZ_AUTH_REQUIRED", "false"),
+            (ENV_SCHEDULE_PRELOAD_TIMEOUT_SECS, "75"),
+        ],
+        || {
+            // Arrange
+
+            // Act
+            let config = BootConfig::default();
+
+            // Assert
+            assert_eq!(config.schedule_preload_timeout(), Duration::from_secs(75));
             assert!(config.validate().is_ok());
         },
     );

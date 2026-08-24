@@ -10,6 +10,8 @@ use crate::dispatch::protocol::frame_context::FrameContext;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 
 type PendingAckRetryMap = HashMap<crate::runtime::routing::RouteFamily, Vec<PendingFireKey>>;
+pub(crate) const DEFAULT_SCHEDULE_PRELOAD_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(120);
 type LivePublishCandidate = (
     crate::runtime::routing::RouteFamily,
     u64,
@@ -201,6 +203,20 @@ impl ScheduleDomainSink {
     /// Returns an error when listing column families or preloading a persisted
     /// schedule actor fails.
     pub fn preload_persisted_families(&self) -> Result<(), String> {
+        self.preload_persisted_families_with_timeout(DEFAULT_SCHEDULE_PRELOAD_TIMEOUT)
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error when the actor cannot be reached, preload fails, or the
+    /// actor does not reply before `timeout`.
+    pub(crate) fn preload_persisted_families_with_timeout(
+        &self,
+        timeout: std::time::Duration,
+    ) -> Result<(), String> {
+        let started_at = std::time::Instant::now();
+        let timeout_ms = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX);
+        tracing::info!(domain = "schedule", timeout_ms, "Schedule preload started");
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         if let Err(error) = self
             .actor
@@ -209,9 +225,33 @@ impl ScheduleDomainSink {
             return Err(format!("schedule preload enqueue failed: {error}"));
         }
 
-        reply_rx
-            .recv()
-            .map_err(|error| format!("schedule preload reply failed: {error}"))?
+        match reply_rx.recv_timeout(timeout) {
+            Ok(result) => {
+                result?;
+                tracing::info!(
+                    domain = "schedule",
+                    elapsed_ms =
+                        u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    "Schedule preload completed"
+                );
+                Ok(())
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                tracing::error!(
+                    domain = "schedule",
+                    timeout_ms,
+                    elapsed_ms =
+                        u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    "Schedule preload timed out"
+                );
+                Err(format!(
+                    "schedule preload reply timed out after {timeout_ms}ms"
+                ))
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                Err("schedule preload reply failed: actor reply channel disconnected".to_string())
+            }
+        }
     }
 
     pub(crate) fn is_active(&self) -> bool {
@@ -407,13 +447,24 @@ impl ScheduleDomainRuntime<'_> {
     /// Returns an error when listing column families or preloading a persisted
     /// schedule actor fails.
     pub(super) fn preload_persisted_families(&self) -> Result<(), String> {
+        let started_at = std::time::Instant::now();
         let column_families = self
             .core
             .store
             .list_column_families()
             .map_err(|e| format!("list schedule column families failed: {e}"))?;
+        let persisted_family_count = column_families
+            .iter()
+            .filter(|column_family| column_family.id() != 0)
+            .count();
+        tracing::info!(
+            domain = "schedule",
+            persisted_family_count,
+            "Schedule preload discovered persisted families"
+        );
 
         let mut actors = self.core.actors.lock();
+        let mut preloaded_family_count = 0_usize;
         for column_family in column_families {
             if column_family.id() == 0 {
                 continue;
@@ -430,6 +481,14 @@ impl ScheduleDomainRuntime<'_> {
                 self.core.write_options,
             )?;
             actors.insert(family, actor);
+            preloaded_family_count = preloaded_family_count.saturating_add(1);
+            tracing::debug!(
+                domain = "schedule",
+                route_family = family.id(),
+                preloaded_family_count,
+                persisted_family_count,
+                "Schedule persisted family preloaded"
+            );
         }
 
         // Seed the rolling-window acknowledgement counter from persisted
@@ -449,6 +508,13 @@ impl ScheduleDomainRuntime<'_> {
         drop(actors);
 
         self.schedule_admin_snapshot(true);
+        tracing::info!(
+            domain = "schedule",
+            preloaded_family_count,
+            persisted_family_count,
+            elapsed_ms = u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX),
+            "Schedule actor projection preload completed"
+        );
         Ok(())
     }
 
