@@ -1,6 +1,100 @@
 use super::*;
 
 #[test]
+fn should_map_inventory_write_options_to_matching_local_or_cloud_class() {
+    // Arrange
+    let local_options = [
+        cntryl_midge::WriteOptions::sync(),
+        cntryl_midge::WriteOptions::buffered(),
+        cntryl_midge::WriteOptions::best_effort(),
+    ];
+    let cloud_options = [
+        cntryl_midge::WriteOptions::cloud_async(),
+        cntryl_midge::WriteOptions::cloud_strict(),
+    ];
+
+    // Act
+    let local_inventory_options = local_options.map(KvActor::inventory_write_options);
+    let cloud_inventory_options = cloud_options.map(KvActor::inventory_write_options);
+
+    // Assert
+    assert_eq!(
+        local_inventory_options,
+        [cntryl_midge::WriteOptions::buffered(); 3]
+    );
+    assert_eq!(
+        cloud_inventory_options,
+        [cntryl_midge::WriteOptions::cloud_async(); 2]
+    );
+}
+
+#[test]
+fn should_persist_inventory_estimate_after_commit_in_cloud_mode() {
+    // Arrange: a cloud-backed engine only accepts cloud_async()/cloud_strict()
+    // commits; sync()/buffered() are rejected as local-only.
+    let tempdir = tempfile::TempDir::new().expect("create cloud simulation directory");
+    let store = Arc::new(
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::cloud_simulated(
+                tempdir.path(),
+                "fitz-kv-inventory-test",
+                "background",
+            )
+            .build()
+            .expect("build cloud-simulated options"),
+        )
+        .expect("open cloud-simulated engine"),
+    );
+    store
+        .create_column_family("cf_1")
+        .expect("create route-family column family");
+    let mut actor = KvActor::new(store.clone());
+    let scope = KvResourceScope::new(RouteFamily::new(1), "test", "kv", "cloud-shared");
+
+    let KvResponse::BeginOk { tx_id } = actor.handle(KvMessage::Begin {
+        scope: scope.clone(),
+        mode: TxMode::ReadWrite,
+        write_options: cntryl_midge::WriteOptions::cloud_async(),
+    }) else {
+        panic!("transaction should begin");
+    };
+    assert!(matches!(
+        actor.handle(KvMessage::Insert {
+            tx_id,
+            scope: scope.clone(),
+            key: Bytes::from_static(b"key"),
+            value: Bytes::from_static(b"value"),
+        }),
+        KvResponse::InsertOk
+    ));
+
+    // Act
+    let commit = actor.handle(KvMessage::Commit {
+        tx_id,
+        scope: scope.clone(),
+    });
+
+    // Assert: the primary write always succeeds regardless of the inventory
+    // bug, so the real assertion is that the inventory estimate is actually
+    // persisted afterward.
+    assert!(matches!(commit, KvResponse::CommitOk));
+    let inventory_key = KvActor::inventory_metadata_key(&scope.realm, &scope.area, &scope.resource);
+    let read_tx = store
+        .begin_tx(1, cntryl_midge::TransactionMode::ReadOnly)
+        .expect("begin inventory read transaction");
+    let stored = read_tx
+        .get(&inventory_key)
+        .expect("read inventory metadata");
+    let estimate = KvActor::decode_inventory_estimate(
+        stored
+            .as_deref()
+            .expect("inventory estimate should be persisted even in cloud mode"),
+    )
+    .expect("decode persisted inventory estimate");
+    assert_eq!(estimate.estimated_record_count, 1);
+}
+
+#[test]
 fn should_commit_disjoint_writes_without_inventory_conflict() {
     // Arrange
     let mut actor = test_actor();

@@ -425,6 +425,86 @@ fn should_reserve_concrete_items_given_wildcards_in_unknown_queue_segments() {
 }
 
 #[test]
+fn should_stop_wildcard_reserve_after_wire_budget_exhaustion() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let keys = ["a", "b", "c"].map(|resource| crate::domains::queue::QueueKey {
+        family,
+        realm: "acme".to_string(),
+        area: "jobs".to_string(),
+        resource: resource.to_string(),
+    });
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let mut first = crate::domains::queue::QueueActor::new(
+        family,
+        keys[0].clone(),
+        store.clone(),
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    let first_route = crate::domains::queue::sink::QueueDomainCore::queue_ready_route(&keys[0]);
+    let first_body_bytes = crate::domains::queue::protocol::MAX_QUEUE_RESPONSE_PAYLOAD_BYTES
+        - crate::domains::queue::protocol::RECEIVED_RESPONSE_HEADER_BYTES
+        - crate::domains::queue::protocol::RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES
+        - crate::domains::queue::protocol::ROUTED_MESSAGE_WIRE_OVERHEAD_BYTES
+        - first_route.as_str().len()
+        - 1;
+    first.handle_send(Bytes::from(vec![0x5a; first_body_bytes]), None);
+    let mut blocked = crate::domains::queue::QueueActor::new(
+        family,
+        keys[1].clone(),
+        store.clone(),
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    blocked.handle_send(Bytes::from_static(b"blocked"), None);
+    let clock = DlqSeedClock::new();
+    let mut untouched = crate::domains::queue::QueueActor::with_clock(
+        family,
+        keys[2].clone(),
+        store.clone(),
+        Box::new(clock.clone()),
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    untouched.handle_send(Bytes::from_static(b"due"), Some(1));
+    let sink = new_queue_domain_sink(
+        store,
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+        cntryl_midge::WriteOptions::buffered(),
+    );
+    for (key, actor) in keys.iter().cloned().zip([first, blocked, untouched]) {
+        sink.install_actor_for_tests(key, actor);
+    }
+    assert_eq!(
+        queue_snapshot(&sink, family, "queue://acme/jobs/c").messages_delayed,
+        1
+    );
+    sink.stop_actor_for_tests();
+    clock.advance(Duration::from_secs(2));
+
+    // Act
+    let response = sink.core.handle_wildcard_receive_for_tests(
+        family,
+        &crate::runtime::matcher::Pattern::new("queue://acme/jobs/*"),
+        8,
+        30,
+        Some(3),
+    );
+
+    // Assert
+    let crate::domains::queue::QueueResponse::ReceivedRouted { messages } = response else {
+        panic!("expected routed queue response");
+    };
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].route, first_route);
+    let untouched_snapshot = queue_snapshot(&sink, family, "queue://acme/jobs/c");
+    assert_eq!(untouched_snapshot.messages_delayed, 1);
+    assert_eq!(untouched_snapshot.messages_ready, 0);
+}
+
+#[test]
 fn should_surface_startup_inventory_failure_to_wildcard_reserve() {
     // Arrange
     let family = RouteFamily::new(1);

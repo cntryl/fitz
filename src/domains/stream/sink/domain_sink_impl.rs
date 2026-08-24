@@ -665,7 +665,10 @@ impl StreamDomainSink {
             "live-count query",
             StreamDomainCommand::ReadLiveCounts,
         )
-        .unwrap_or_default()
+        .unwrap_or_else(|error| {
+            tracing::warn!(domain = "stream", error, "Stream live-count query failed");
+            StreamLiveCounts::default()
+        })
     }
 
     fn dispatch_family_command<T>(

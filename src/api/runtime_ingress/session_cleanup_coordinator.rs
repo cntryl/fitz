@@ -7,6 +7,15 @@ use std::time::Duration;
 
 const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(10);
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(1);
+/// Give up on a cleanup ticket after this many failed attempts instead of
+/// retrying forever. A domain actor that has permanently failed (see
+/// `ManagedActor`'s fail-closed supervision) can never accept a cleanup
+/// command again, so retrying indefinitely would leave the pending-cleanup
+/// gauge and oldest-age metric growing without bound instead of surfacing a
+/// terminal failure an operator can act on. With the exponential backoff
+/// above (10ms doubling to a 1s cap), this bounds the worst case at
+/// roughly 10+20+40+80+160+320+640+1000 ≈ 2.3s of retrying before giving up.
+const MAX_CLEANUP_ATTEMPTS: u32 = 8;
 
 pub(super) struct SessionCleanupCoordinator<'a> {
     ingress: &'a RuntimeIngress,
@@ -195,9 +204,25 @@ async fn run_cleanup_worker(
                         crate::observability::counter_inc(obs::METRIC_SESSION_CLEANUP_SUCCESSES);
                         made_progress = true;
                     } else if let Some(mut current) = pending.get_mut(&session_id) {
-                        current.pending_domains = failed_domains;
-                        current.attempts = ticket.attempts.saturating_add(1);
-                        crate::observability::counter_inc(obs::METRIC_SESSION_CLEANUP_RETRIES);
+                        let attempts = ticket.attempts.saturating_add(1);
+                        if attempts >= MAX_CLEANUP_ATTEMPTS {
+                            drop(current);
+                            pending.remove(&session_id);
+                            crate::observability::counter_inc(
+                                obs::METRIC_SESSION_CLEANUP_PERMANENT_FAILURES,
+                            );
+                            tracing::error!(
+                                session_id = session_id,
+                                attempts,
+                                pending_domains = ?failed_domains,
+                                "Ingress: session cleanup permanently failed after exhausting \
+                                 retries"
+                            );
+                        } else {
+                            current.pending_domains = failed_domains;
+                            current.attempts = attempts;
+                            crate::observability::counter_inc(obs::METRIC_SESSION_CLEANUP_RETRIES);
+                        }
                     }
                 }
                 update_cleanup_gauges(&pending);

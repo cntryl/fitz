@@ -14,7 +14,7 @@ fn receive_with_route_wire_budget(
     batch_size: usize,
     response_bytes_remaining: &mut usize,
     route: &crate::runtime::routing::Route,
-) -> crate::domains::queue::QueueResponse {
+) -> (crate::domains::queue::QueueResponse, bool) {
     let message_wire_overhead_bytes = RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES
         .saturating_add(ROUTED_MESSAGE_WIRE_OVERHEAD_BYTES)
         .saturating_add(route.as_str().len());
@@ -35,6 +35,18 @@ fn empty_wildcard_receive_outcome() -> OperationOutcome {
         ready_notifications: Vec::new(),
         mark_admin_snapshot_dirty: false,
     }
+}
+
+fn route_reserved_messages(
+    route: crate::runtime::routing::Route,
+    messages: Vec<crate::domains::queue::ReservedMessage>,
+) -> impl Iterator<Item = crate::domains::queue::RoutedReservedMessage> {
+    messages.into_iter().map(
+        move |message| crate::domains::queue::RoutedReservedMessage {
+            route: route.clone(),
+            message,
+        },
+    )
 }
 
 impl QueueDomainCore {
@@ -128,12 +140,12 @@ impl QueueDomainCore {
                     break;
                 }
             };
-            let response = {
+            let (response, wire_budget_exhausted) = {
                 let mut actor = actor_handle.lock();
                 let counts_before = actor.live_counts();
                 state_changed |= actor.process_due_work();
                 let remaining = limit - routed.len();
-                let response = receive_with_route_wire_budget(
+                let (response, wire_budget_exhausted) = receive_with_route_wire_budget(
                     &mut actor,
                     session_id,
                     inflight_seconds,
@@ -149,16 +161,14 @@ impl QueueDomainCore {
                 if let Some(notification) = self.record_ready_state(key, counts) {
                     notifications.push((key.clone(), notification));
                 }
-                response
+                (response, wire_budget_exhausted)
             };
             match response {
                 crate::domains::queue::QueueResponse::Received { messages } => {
-                    routed.extend(messages.into_iter().map(|message| {
-                        crate::domains::queue::RoutedReservedMessage {
-                            route: route.clone(),
-                            message,
-                        }
-                    }));
+                    routed.extend(route_reserved_messages(route.clone(), messages));
+                    if wire_budget_exhausted {
+                        break;
+                    }
                 }
                 error if routed.is_empty() => {
                     return OperationOutcome {
@@ -184,5 +194,18 @@ impl QueueDomainCore {
             response: crate::domains::queue::QueueResponse::ReceivedRouted { messages: routed },
             ready_notifications: notifications,
         }
+    }
+
+    #[cfg(test)]
+    pub(in crate::domains::queue::sink) fn handle_wildcard_receive_for_tests(
+        &self,
+        family_id: RouteFamily,
+        pattern: &crate::runtime::matcher::Pattern,
+        session_id: u64,
+        inflight_seconds: u64,
+        batch_size: Option<usize>,
+    ) -> crate::domains::queue::QueueResponse {
+        self.handle_wildcard_receive(family_id, pattern, session_id, inflight_seconds, batch_size)
+            .response
     }
 }

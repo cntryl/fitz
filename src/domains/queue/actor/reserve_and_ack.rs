@@ -58,6 +58,7 @@ impl QueueActor {
             &mut response_bytes_remaining,
             0,
         )
+        .0
     }
 
     pub(crate) fn handle_receive_for_session_with_wire_budget(
@@ -67,11 +68,11 @@ impl QueueActor {
         batch_size: Option<usize>,
         response_bytes_remaining: &mut usize,
         message_wire_overhead_bytes: usize,
-    ) -> QueueResponse {
+    ) -> (QueueResponse, bool) {
         self.handle_receive_internal(
             Some(session_id),
             inflight_seconds,
-            batch_size,
+            batch_size.unwrap_or(1),
             response_bytes_remaining,
             message_wire_overhead_bytes,
         )
@@ -81,17 +82,16 @@ impl QueueActor {
         &mut self,
         owner_session_id: Option<u64>,
         inflight_seconds: u64,
-        batch_size: Option<usize>,
+        batch_size: usize,
         response_bytes_remaining: &mut usize,
         message_wire_overhead_bytes: usize,
-    ) -> QueueResponse {
-        let batch_size = batch_size.unwrap_or(1);
+    ) -> (QueueResponse, bool) {
         let now = self.clock.now_instant();
         let now_epoch_ms = self.clock.now_epoch_ms();
         let (expires_at, expires_at_epoch_ms) =
             match Self::inflight_expiration(now, now_epoch_ms, inflight_seconds) {
                 Ok(expiration) => expiration,
-                Err(response) => return response,
+                Err(response) => return (response, false),
             };
 
         let mut messages = Vec::with_capacity(self.ready.len().min(batch_size));
@@ -145,7 +145,9 @@ impl QueueActor {
             ) {
                 ReserveWireBudgetDecision::Reserve(bytes) => bytes,
                 ReserveWireBudgetDecision::Skip => continue,
-                ReserveWireBudgetDecision::Stop => break,
+                ReserveWireBudgetDecision::Stop => {
+                    return (QueueResponse::Received { messages }, true);
+                }
             };
 
             let Some(id) = self.pop_ready() else {
@@ -198,7 +200,7 @@ impl QueueActor {
             });
         }
 
-        QueueResponse::Received { messages }
+        (QueueResponse::Received { messages }, false)
     }
 
     fn reserve_wire_budget_decision(

@@ -684,6 +684,59 @@ async fn should_retry_pending_session_cleanup_without_later_traffic() {
 }
 
 #[tokio::test]
+async fn should_give_up_and_stop_retrying_session_cleanup_that_can_never_succeed() {
+    // Arrange: never register Queue's sink, so its cleanup can never
+    // succeed. Without a give-up threshold, the retry worker would keep
+    // this ticket pending forever (capped-but-endless exponential backoff),
+    // so the pending gauge would never return to zero for a genuinely dead
+    // domain actor.
+    let collector = crate::observability::metrics();
+    let router = Arc::new(crate::runtime::Router::new());
+    let admin_read_model = AdminReadModel::new();
+    let ingress = make_cleanup_ingress(router.clone(), admin_read_model);
+    let session_id = 90;
+    let mut session = make_session_info(session_id, TransportKind::Tcp);
+    session.route_family = RouteFamily::new(90);
+
+    for domain in DispatchDomain::SESSION_CLEANUP_ORDER {
+        if domain == DispatchDomain::Queue {
+            continue;
+        }
+        let sink = Arc::new(CleanupTrackingSink::default());
+        router.register_domain_pattern(domain.as_str(), sink);
+    }
+
+    ingress.on_open(session).await.unwrap();
+    ingress.on_close(session_id, CloseReason::ClientClose).await;
+    assert!(ingress.pending_session_cleanups.contains_key(&session_id));
+    let permanent_failures_before =
+        collector.counter_get(obs::METRIC_SESSION_CLEANUP_PERMANENT_FAILURES);
+
+    // Act: Queue's sink is intentionally never registered, so this ticket
+    // can never succeed - the worker must eventually give up.
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while ingress.pending_session_cleanups.contains_key(&session_id) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("cleanup worker should give up instead of retrying forever");
+
+    // Assert
+    assert!(!ingress.pending_session_cleanups.contains_key(&session_id));
+    assert!(
+        collector.counter_get(obs::METRIC_SESSION_CLEANUP_PERMANENT_FAILURES)
+            > permanent_failures_before,
+        "expected a permanent-failure metric increment"
+    );
+    assert_eq!(
+        collector.gauge_get(obs::METRIC_SESSION_CLEANUP_PENDING),
+        0,
+        "pending gauge should return to zero after giving up"
+    );
+}
+
+#[tokio::test]
 async fn should_cleanup_real_notice_domain_subscription_on_close() {
     // Arrange
     let family = RouteFamily::new(91);

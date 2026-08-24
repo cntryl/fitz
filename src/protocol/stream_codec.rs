@@ -18,6 +18,7 @@ use crate::session::SessionId;
 
 const ERR_STREAM_FILTER_UNSUPPORTED_VERSION: &str = "ERR_STREAM_FILTER_UNSUPPORTED_VERSION";
 const ERR_STREAM_FILTER_INVALID_PAYLOAD: &str = "ERR_STREAM_FILTER_INVALID_PAYLOAD";
+const ERR_READ_RESPONSE_TOO_LARGE: &str = "ERR_READ_RESPONSE_TOO_LARGE";
 
 fn u64_to_usize_saturating(value: u64) -> usize {
     usize::try_from(value).unwrap_or(usize::MAX)
@@ -216,6 +217,9 @@ fn stream_error_code_for_message(message: &str) -> u16 {
     }
     if message.contains(ERR_STREAM_FILTER_INVALID_PAYLOAD) {
         return stream::ERR_STREAM_FILTER_INVALID_PAYLOAD;
+    }
+    if message.contains(ERR_READ_RESPONSE_TOO_LARGE) {
+        return stream::ERR_READ_RESPONSE_TOO_LARGE;
     }
 
     match message {
@@ -541,6 +545,27 @@ mod tests {
         assert_eq!(
             &read[1..5],
             &u32::from(crate::protocol::error_codes::stream::ERR_SESSION_NOT_FOUND).to_be_bytes()
+        );
+    }
+
+    #[test]
+    fn should_encode_read_response_too_large_error_with_its_own_code() {
+        // Arrange: store-layer read paths raise this when a single record's
+        // wire-encoded size alone exceeds the maximum response frame size.
+        let response = StreamClientResponseBody::Error(
+            "ERR_READ_RESPONSE_TOO_LARGE: record at offset 0 is 70000 bytes, exceeding the \
+             65535-byte read response limit"
+                .to_string(),
+        );
+
+        // Act
+        let read = encode_response(604, &response);
+
+        // Assert
+        assert_eq!(
+            &read[1..5],
+            &u32::from(crate::protocol::error_codes::stream::ERR_READ_RESPONSE_TOO_LARGE)
+                .to_be_bytes()
         );
     }
 

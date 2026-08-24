@@ -11,10 +11,6 @@ pub(super) fn page_slot_offset(page_start: u64, slot: usize) -> u64 {
     page_start.saturating_add(usize_to_u64_saturating(slot))
 }
 
-pub(super) fn record_payload_bytes(body: &Bytes, metadata: Option<&Bytes>) -> usize {
-    body.len().saturating_add(metadata.map_or(0, Bytes::len))
-}
-
 pub(super) fn begin_read_tx(
     store: &StreamStore,
     family: u64,

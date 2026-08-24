@@ -430,7 +430,10 @@ impl QueueDomainSink {
 
         reply_rx
             .recv_timeout(QUEUE_ACTOR_REPLY_TIMEOUT)
-            .unwrap_or_default()
+            .unwrap_or_else(|error| {
+                tracing::warn!(domain = "queue", error = %error, "Queue live-count query reply failed");
+                QueueLiveCounts::default()
+            })
     }
 
     pub fn counts(&self) -> QueueCounts {

@@ -760,6 +760,7 @@ class StreamSession:
 - 2010 = ERR_INVALID_SUBSCRIPTION_PATTERN
 - 2011 = ERR_SUBSCRIPTION_LIMIT
 - 2012 = ERR_BACKEND_ERROR
+- 2013 = ERR_READ_RESPONSE_TOO_LARGE (a single record's wire-encoded size alone exceeds the maximum broker response frame size and can never be returned by any READ call at that offset; this is distinct from `max_bytes` pagination, which stops a page early instead of failing)
 
 #### Acceptance Tests
 

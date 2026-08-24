@@ -284,6 +284,7 @@ Error codes follow the format `XXYY` where:
 | 2010 | ERR_INVALID_SUBSCRIPTION_PATTERN | Subscription pattern syntax invalid | No |
 | 2011 | ERR_SUBSCRIPTION_LIMIT | Session exceeded 128 wildcard Stream registrations | No |
 | 2012 | ERR_BACKEND_ERROR | Stream storage backend error | Yes (with backoff) |
+| 2013 | ERR_READ_RESPONSE_TOO_LARGE | A single record's wire-encoded size alone exceeds the maximum response frame size and can never be returned by any READ | No |
 
 ### Notice Domain (3000-3999)
 

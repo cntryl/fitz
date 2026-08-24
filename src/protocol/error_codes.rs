@@ -83,6 +83,9 @@ pub mod stream {
     pub const ERR_INVALID_SUBSCRIPTION_PATTERN: u16 = 2010;
     pub const ERR_SUBSCRIPTION_LIMIT: u16 = 2011;
     pub const ERR_BACKEND_ERROR: u16 = 2012;
+    /// A single record's wire-encoded size alone exceeds the maximum size of
+    /// one broker response frame, so it cannot be returned by any read call.
+    pub const ERR_READ_RESPONSE_TOO_LARGE: u16 = 2013;
 }
 
 /// Notice domain error codes (per `CLIENT_SPEC` Notice Domain section)

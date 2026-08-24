@@ -246,6 +246,7 @@ impl KvActor {
                 let inventory_scope = active.scope.clone();
                 let inventory_column_family = active.column_family;
                 let inventory_delta = std::mem::take(&mut active.inventory_delta);
+                let inventory_write_options = Self::inventory_write_options(active.write_options);
                 // Use write options provided by user at transaction begin
                 match active.tx.commit(active.write_options) {
                     Ok(()) => {
@@ -254,6 +255,7 @@ impl KvActor {
                             inventory_column_family,
                             &inventory_scope,
                             &inventory_delta,
+                            inventory_write_options,
                         ) {
                             tracing::warn!(?error, "KV inventory estimate update failed");
                         }
@@ -748,11 +750,31 @@ impl KvActor {
         })
     }
 
+    /// Map the durability class of a just-committed transaction to write
+    /// options safe for the derived, best-effort inventory-estimate commit.
+    ///
+    /// Inventory updates always want throughput-first durability, but must
+    /// stay in the same local/cloud storage class as the primary commit:
+    /// Midge rejects `sync()`/`buffered()` outright when the engine is
+    /// cloud-backed (see `effective_wal_durability_policy` in
+    /// `cntryl_midge`), so hardcoding `buffered()` here would fail on every
+    /// mutating commit once storage is cloud-backed.
+    fn inventory_write_options(
+        committed: cntryl_midge::WriteOptions,
+    ) -> cntryl_midge::WriteOptions {
+        if committed.is_cloud_async() || committed.is_cloud_strict() {
+            cntryl_midge::WriteOptions::cloud_async()
+        } else {
+            cntryl_midge::WriteOptions::buffered()
+        }
+    }
+
     fn apply_inventory_delta(
         store: &MidgeEngine,
         column_family: ColumnFamilyId,
         scope: &KvResourceScope,
         inventory_delta: &KvInventoryDelta,
+        write_options: cntryl_midge::WriteOptions,
     ) -> Result<(), KvError> {
         if inventory_delta.is_empty() {
             return Ok(());
@@ -808,8 +830,7 @@ impl KvActor {
 
         tx.put(key, Self::encode_inventory_estimate(estimate), None)
             .map_err(Self::map_midge_error)?;
-        tx.commit(cntryl_midge::WriteOptions::buffered())
-            .map_err(Self::map_midge_error)
+        tx.commit(write_options).map_err(Self::map_midge_error)
     }
 }
 

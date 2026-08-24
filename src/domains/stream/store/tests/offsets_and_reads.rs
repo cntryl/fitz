@@ -883,3 +883,115 @@ fn should_page_filtered_realm_read_through_filtered_items() {
     assert_eq!(second_records[0].realm_offset, Some(2));
     assert!(!second_cursor.has_more);
 }
+
+#[test]
+fn should_bound_resource_read_response_to_wire_frame_limit_when_max_bytes_omitted() {
+    // Arrange: every response is framed as a single u16-length-prefixed TLV
+    // value on the wire (see `encode_single_tlv_frame`), so a read response
+    // built past `MAX_STREAM_RESPONSE_PAYLOAD_BYTES` can never actually be
+    // sent. A client omitting `max_bytes` (legal per the wire spec) must
+    // still get a response the broker can encode, not an unbounded one.
+    let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+    let record_body_len = 2_000usize;
+    let record_count = 60usize; // 60 * 2_000 = 120_000 bytes, well over u16::MAX (65_535)
+    let events: Vec<EventPayload> = (0..record_count)
+        .map(|_| EventPayload {
+            body: Bytes::from(vec![b'a'; record_body_len]),
+            metadata: None,
+            discriminator: None,
+        })
+        .collect();
+    store
+        .commit_records(CommitRecordsParams {
+            family: 1,
+            realm: "test",
+            area: "events",
+            resource: "oversized-batch",
+            expected_resource_next_offset: 0,
+            events: &events,
+            ingest_metadata: None,
+            mode: StreamWriteMode::Buffered,
+        })
+        .expect("seed oversized resource batch");
+
+    // Act: request every record in one page, with no client-supplied max_bytes.
+    let (items, cursor) = store
+        .read_resource(&ReadResourceParams {
+            family: 1,
+            realm: "test",
+            area: "events",
+            resource: "oversized-batch",
+            from_offset: 0,
+            limit: record_count as u64,
+            max_bytes: None,
+        })
+        .expect("read oversized resource batch");
+
+    // Assert: the response must be bounded well under the batch's true size
+    // (120_000 bytes) and under the wire ceiling, and must report has_more
+    // instead of silently truncating.
+    let returned_bytes: usize = event_records(items.clone())
+        .iter()
+        .map(|record| record.body.len())
+        .sum();
+    assert!(
+        returned_bytes <= MAX_STREAM_RESPONSE_PAYLOAD_BYTES,
+        "response body bytes {returned_bytes} exceeded the wire frame ceiling \
+         {MAX_STREAM_RESPONSE_PAYLOAD_BYTES}"
+    );
+    assert!(
+        items.len() < record_count,
+        "expected the response to stop before including every record"
+    );
+    assert!(cursor.has_more, "cursor should signal more records remain");
+}
+
+#[test]
+fn should_reject_read_when_lone_record_alone_exceeds_wire_frame_limit() {
+    // Arrange: `MAX_EVENT_SIZE` (1 MB) permits writing a single event larger
+    // than the wire's 65_535-byte response ceiling. The read accumulator
+    // always includes at least one item so pagination can make forward
+    // progress (see the `should_return_first_oversized_global_record_to_advance_cursor`
+    // sibling test in global_recovery_and_filters), but that means a record
+    // this large can never be read back through this path without exceeding
+    // the frame limit — it must be rejected explicitly instead of built into
+    // an unencodable response.
+    let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+    let oversized_body_len = MAX_STREAM_RESPONSE_PAYLOAD_BYTES + 1_000;
+    let events = vec![EventPayload {
+        body: Bytes::from(vec![b'a'; oversized_body_len]),
+        metadata: None,
+        discriminator: None,
+    }];
+    store
+        .commit_records(CommitRecordsParams {
+            family: 1,
+            realm: "test",
+            area: "events",
+            resource: "lone-oversized",
+            expected_resource_next_offset: 0,
+            events: &events,
+            ingest_metadata: None,
+            mode: StreamWriteMode::Buffered,
+        })
+        .expect("seed lone oversized record");
+
+    // Act
+    let result = store.read_resource(&ReadResourceParams {
+        family: 1,
+        realm: "test",
+        area: "events",
+        resource: "lone-oversized",
+        from_offset: 0,
+        limit: 10,
+        max_bytes: None,
+    });
+
+    // Assert: an explicit, classifiable error - never a response that would
+    // panic the TLV encoder.
+    let error = result.expect_err("read of an unencodable lone record must fail explicitly");
+    assert!(
+        error.contains("ERR_READ_RESPONSE_TOO_LARGE"),
+        "unexpected error: {error}"
+    );
+}

@@ -64,6 +64,115 @@ type ResourceMetaStateHandle = Arc<Mutex<ResourceMetaState>>;
 
 const ERR_SESSION_ROUTE_FAMILY_MISMATCH: &str = "ERR_SESSION_ROUTE_FAMILY_MISMATCH";
 
+/// Hard ceiling on the bytes a single stream read response may accumulate.
+///
+/// Every domain response is framed on the wire as one length-prefixed TLV
+/// value with a `u16` length (see `encode_single_tlv_frame` in
+/// `api/outbound.rs`), so a response assembled past this size can never be
+/// sent — it panics at encode time instead. Clients may optionally request a
+/// smaller `max_bytes`, but the ceiling applies unconditionally, since
+/// `max_bytes` is optional on the wire and commonly omitted.
+pub(crate) const MAX_STREAM_RESPONSE_PAYLOAD_BYTES: usize = u16::MAX as usize;
+
+/// Conservative upper bound on the fixed (non-route, non-body, non-metadata)
+/// per-item wire overhead added by `encode_stream_read_item`/
+/// `encode_stream_record`: the item-type tag, offset fields and their
+/// optional-value flags (worst case, all present, including the extended
+/// `global_offset`), the route/body/metadata length prefixes, and
+/// `created_at`. Deliberately generous rather than hand-matching the
+/// encoder field for field, so this stays safe even if the encoder's field
+/// set changes. Route bytes are counted separately (via
+/// `stream_record_wire_bytes`'s `route_len`) since they vary per record and
+/// commonly dominate a small record's true cost.
+const STREAM_ITEM_FIXED_WIRE_OVERHEAD_BYTES: usize = 64;
+
+/// Conservative upper bound on everything wrapping the read items in the
+/// final wire frame: the response envelope (success flag, optional
+/// `session_id`, data length prefix - see `encode_response_into`) plus the
+/// item count and cursor fields (`encode_stream_read_data`,
+/// `encode_stream_cursor`). Reserved once per response so the *fully*
+/// encoded frame, not just the summed item bytes, stays within
+/// `MAX_STREAM_RESPONSE_PAYLOAD_BYTES`.
+const STREAM_RESPONSE_ENVELOPE_OVERHEAD_BYTES: usize = 128;
+
+/// The largest a read response's summed item bytes may be while still
+/// guaranteeing the fully encoded wire frame fits `u16::MAX`.
+fn stream_response_byte_ceiling() -> usize {
+    MAX_STREAM_RESPONSE_PAYLOAD_BYTES.saturating_sub(STREAM_RESPONSE_ENVELOPE_OVERHEAD_BYTES)
+}
+
+/// Resolve a client-requested `max_bytes` against the hard wire ceiling.
+pub(super) fn bounded_max_bytes(max_bytes: Option<usize>) -> usize {
+    let ceiling = stream_response_byte_ceiling();
+    max_bytes.map_or(ceiling, |requested| requested.min(ceiling))
+}
+
+/// Conservative worst-case wire bytes for one record, counted once
+/// regardless of whether it is ultimately encoded as an `Event` or a
+/// `Filtered` item (`Filtered` is always cheaper, so charging the `Event`
+/// cost for both is safe). `route_len` is the record's actual encoded route
+/// length in bytes.
+pub(super) fn stream_record_wire_bytes(
+    route_len: usize,
+    body_len: usize,
+    metadata_len: usize,
+) -> usize {
+    STREAM_ITEM_FIXED_WIRE_OVERHEAD_BYTES
+        .saturating_add(route_len)
+        .saturating_add(body_len)
+        .saturating_add(metadata_len)
+}
+
+/// Byte length of `stream://{realm}/{area}/{resource}` without allocating.
+pub(super) fn stream_route_len(realm: &str, area: &str, resource: &str) -> usize {
+    "stream://".len() + realm.len() + 1 + area.len() + 1 + resource.len()
+}
+
+pub(super) enum WireBudgetDecision {
+    /// The record fits; include it and continue.
+    Include,
+    /// The response is full; stop before this record and paginate.
+    Stop,
+}
+
+/// Charge one record's wire bytes against a read response's running budget.
+///
+/// Shared by every posting-based read loop (realm-resource, global,
+/// global-posting) so the "stop once full, but always make progress with a
+/// lone oversized-for-`max_bytes` record" policy - and the hard-ceiling
+/// rejection for a record that can never fit *any* response - lives in one
+/// place instead of being copy-pasted per loop.
+///
+/// # Errors
+///
+/// Returns `Err` when `record_bytes` alone exceeds
+/// `stream_response_byte_ceiling()`, meaning no response could ever encode
+/// this record even alone.
+pub(super) fn charge_wire_budget(
+    offset: u64,
+    record_bytes: usize,
+    bytes_read: usize,
+    byte_limit: usize,
+) -> Result<WireBudgetDecision, String> {
+    if bytes_read.saturating_add(record_bytes) > byte_limit {
+        if bytes_read > 0 {
+            return Ok(WireBudgetDecision::Stop);
+        }
+        // A tight client-requested `max_bytes` still forces this lone
+        // record through so pagination makes progress, as long as it fits
+        // in a wire frame at all. Only a record that itself exceeds the
+        // hard wire ceiling is rejected outright.
+        if record_bytes > stream_response_byte_ceiling() {
+            return Err(format!(
+                "ERR_READ_RESPONSE_TOO_LARGE: record at offset {offset} is {record_bytes} \
+                 bytes, exceeding the {}-byte read response limit",
+                stream_response_byte_ceiling()
+            ));
+        }
+    }
+    Ok(WireBudgetDecision::Include)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum StreamStoreError {
     SessionNotFound,
@@ -431,13 +540,6 @@ struct ReadPageState<'a> {
     has_more: &'a mut bool,
 }
 
-fn resource_page_record_bytes(page_record: &CompactResourcePageRecord) -> usize {
-    page_record
-        .body
-        .len()
-        .saturating_add(page_record.metadata.as_ref().map_or(0, Bytes::len))
-}
-
 fn update_resource_cursor(
     state: &mut ReadCursorState,
     resource_offset: u64,
@@ -448,13 +550,6 @@ fn update_resource_cursor(
     state.last_realm_offset = Some(page_record.realm_offset);
 }
 
-fn area_page_record_bytes(page_record: &CompactAreaPageRecord) -> usize {
-    page_record
-        .body
-        .len()
-        .saturating_add(page_record.metadata.as_ref().map_or(0, Bytes::len))
-}
-
 fn update_area_cursor(
     state: &mut ReadCursorState,
     area_offset: u64,
@@ -463,13 +558,6 @@ fn update_area_cursor(
     state.last_resource_offset = page_record.resource_offset;
     state.last_area_offset = Some(area_offset);
     state.last_realm_offset = None;
-}
-
-fn realm_page_record_bytes(page_record: &CompactRealmPageRecord) -> usize {
-    page_record
-        .body
-        .len()
-        .saturating_add(page_record.metadata.as_ref().map_or(0, Bytes::len))
 }
 
 fn update_realm_cursor(
@@ -682,38 +770,43 @@ where
             }
         }
 
+        if state.items.len() == state.limit {
+            *state.has_more = true;
+            return Ok(true);
+        }
+
         let discriminator = if state.filter.is_some() {
             load_discriminator(offset, &record)?
         } else {
             None
         };
 
-        if !StreamStore::record_matches_filter(state.filter, discriminator.as_deref()) {
-            if state.items.len() == state.limit {
+        // Charged once per record regardless of whether it ends up an Event
+        // or a Filtered item on the wire (`record_bytes` is the Event-item
+        // wire cost; `Filtered` is always cheaper, so this charge is safe -
+        // if a little conservative - for that branch too).
+        let item_bytes = record_bytes(&record);
+        match charge_wire_budget(
+            offset,
+            item_bytes,
+            *state.total_bytes,
+            state.max_bytes_limit,
+        )? {
+            WireBudgetDecision::Stop => {
                 *state.has_more = true;
                 return Ok(true);
             }
-
-            update_cursor(state.cursor, offset, &record);
-            state.items.push(filtered_item(offset, &record));
-            continue;
-        }
-
-        if state.items.len() == state.limit {
-            *state.has_more = true;
-            return Ok(true);
-        }
-
-        let record_bytes = record_bytes(&record);
-        let next_total_bytes = state.total_bytes.saturating_add(record_bytes);
-        if next_total_bytes > state.max_bytes_limit && !state.items.is_empty() {
-            *state.has_more = true;
-            return Ok(true);
+            WireBudgetDecision::Include => {}
         }
 
         update_cursor(state.cursor, offset, &record);
-        *state.total_bytes = next_total_bytes;
-        state.items.push(event_item(offset, record));
+        *state.total_bytes = state.total_bytes.saturating_add(item_bytes);
+        let item = if StreamStore::record_matches_filter(state.filter, discriminator.as_deref()) {
+            event_item(offset, record)
+        } else {
+            filtered_item(offset, &record)
+        };
+        state.items.push(item);
     }
 
     Ok(stop_scan)

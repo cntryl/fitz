@@ -82,6 +82,12 @@ pub const METRIC_SESSIONS_CLOSED: &str = "fitz_sessions_closed_total";
 pub const METRIC_SESSION_CLEANUP_FAILURES: &str = "fitz_session_cleanup_failures_total";
 pub const METRIC_SESSION_CLEANUP_RETRIES: &str = "fitz_session_cleanup_retries_total";
 pub const METRIC_SESSION_CLEANUP_SUCCESSES: &str = "fitz_session_cleanup_successes_total";
+/// A cleanup ticket exhausted its retry budget and was dropped instead of
+/// being retried forever. Distinct from `METRIC_SESSION_CLEANUP_FAILURES`,
+/// which counts every individual failed attempt (including ones that go on
+/// to succeed on retry).
+pub const METRIC_SESSION_CLEANUP_PERMANENT_FAILURES: &str =
+    "fitz_session_cleanup_permanent_failures_total";
 
 pub const METRIC_FRAMES_RECEIVED: &str = "fitz_frames_received_total";
 pub const METRIC_FRAMES_SENT: &str = "fitz_frames_sent_total";

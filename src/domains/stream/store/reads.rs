@@ -1,16 +1,17 @@
 use super::read_support::{
     begin_read_tx, bounded_fragment_rows, bounded_posting_rows, broad_scope_fragment_rows,
-    hydrate_realm_locator, load_global_locator_record, record_payload_bytes, resolve_blob_payload,
+    hydrate_realm_locator, load_global_locator_record, resolve_blob_payload,
     validate_fragment_range, GlobalFragmentCache,
 };
 use super::{
-    decode_realm_offset_from_key, encode_compact_global_page_key,
-    encode_compressed_compact_realm_page_key, encode_global_area_posting_key,
-    encode_global_area_resource_posting_key, encode_global_resource_posting_key,
-    encode_realm_resource_posting_key, read_limit_to_usize, record_is_expired, Bytes,
-    CompactGlobalPageValue, CompressedCompactRealmPageValue, PostingPageValue,
-    ReadGlobalPostingParams, ReadRealmPostingParams, StreamFilterSet, StreamFilteredReason,
-    StreamReadItem, StreamRecord, StreamStore, GLOBAL_PAGE_RECORD_LIMIT,
+    bounded_max_bytes, charge_wire_budget, decode_realm_offset_from_key,
+    encode_compact_global_page_key, encode_compressed_compact_realm_page_key,
+    encode_global_area_posting_key, encode_global_area_resource_posting_key,
+    encode_global_resource_posting_key, encode_realm_resource_posting_key, read_limit_to_usize,
+    record_is_expired, stream_record_wire_bytes, stream_route_len, Bytes, CompactGlobalPageValue,
+    CompressedCompactRealmPageValue, PostingPageValue, ReadGlobalPostingParams,
+    ReadRealmPostingParams, StreamFilterSet, StreamFilteredReason, StreamReadItem, StreamRecord,
+    StreamStore, WireBudgetDecision, GLOBAL_PAGE_RECORD_LIMIT,
 };
 use crate::domains::stream::protocol::ReadCursor;
 
@@ -166,7 +167,7 @@ impl StreamStore {
         let (rows, fragments_exhausted) =
             bounded_posting_rows(&txn, start_key, prefix, "realm-resource")?;
         let item_limit = read_limit_to_usize(limit);
-        let byte_limit = max_bytes.unwrap_or(usize::MAX);
+        let byte_limit = bounded_max_bytes(max_bytes);
         let mut items = Vec::with_capacity(item_limit.min(1_000));
         let mut bytes_read = 0usize;
         let mut last_examined = from_offset;
@@ -210,8 +211,25 @@ impl StreamStore {
                     &txn,
                     &crate::domains::stream::storage::encode_realm_discriminator_key(realm, offset),
                 )?;
+                // Charged once per record regardless of whether it ends up
+                // an Event or a Filtered item (Filtered is always cheaper,
+                // so this charge is safe - if a little conservative - for
+                // that branch too).
+                let record_bytes = stream_record_wire_bytes(
+                    route.as_str().len(),
+                    record.body.len(),
+                    record.metadata.as_ref().map_or(0, Bytes::len),
+                );
+                match charge_wire_budget(offset, record_bytes, bytes_read, byte_limit)? {
+                    WireBudgetDecision::Stop => {
+                        has_more = true;
+                        break 'pages;
+                    }
+                    WireBudgetDecision::Include => {}
+                }
+                last_examined = offset;
+                bytes_read = bytes_read.saturating_add(record_bytes);
                 if !Self::record_matches_filter(filter, discriminator.as_deref()) {
-                    last_examined = offset;
                     items.push(StreamReadItem::Filtered {
                         route,
                         offset,
@@ -219,13 +237,6 @@ impl StreamStore {
                     });
                     continue;
                 }
-                let record_bytes = record_payload_bytes(&record.body, record.metadata.as_ref());
-                if bytes_read.saturating_add(record_bytes) > byte_limit && !items.is_empty() {
-                    has_more = true;
-                    break 'pages;
-                }
-                last_examined = offset;
-                bytes_read = bytes_read.saturating_add(record_bytes);
                 items.push(StreamReadItem::Event(StreamRecord {
                     route,
                     resource_offset: record.resource_offset,
@@ -281,7 +292,7 @@ impl StreamStore {
         let txn = begin_read_tx(self, family, "global posting")?;
         let (rows, fragments_exhausted) = bounded_posting_rows(&txn, start_key, prefix, "global")?;
         let item_limit = read_limit_to_usize(limit);
-        let byte_limit = max_bytes.unwrap_or(usize::MAX);
+        let byte_limit = bounded_max_bytes(max_bytes);
         let mut items = Vec::with_capacity(item_limit.min(1_000));
         let mut bytes_read = 0usize;
         let mut last_examined = from_offset;
@@ -320,8 +331,21 @@ impl StreamStore {
                     &txn,
                     &super::encode_global_discriminator_key(offset),
                 )?;
+                let record_bytes = stream_record_wire_bytes(
+                    route.as_str().len(),
+                    record.body.len(),
+                    record.metadata.as_ref().map_or(0, Bytes::len),
+                );
+                match charge_wire_budget(offset, record_bytes, bytes_read, byte_limit)? {
+                    WireBudgetDecision::Stop => {
+                        has_more = true;
+                        break 'pages;
+                    }
+                    WireBudgetDecision::Include => {}
+                }
+                last_examined = offset;
+                bytes_read = bytes_read.saturating_add(record_bytes);
                 if !Self::record_matches_filter(filter, discriminator.as_deref()) {
-                    last_examined = offset;
                     items.push(StreamReadItem::Filtered {
                         route,
                         offset,
@@ -329,13 +353,6 @@ impl StreamStore {
                     });
                     continue;
                 }
-                let record_bytes = record_payload_bytes(&record.body, record.metadata.as_ref());
-                if bytes_read.saturating_add(record_bytes) > byte_limit && !items.is_empty() {
-                    has_more = true;
-                    break 'pages;
-                }
-                last_examined = offset;
-                bytes_read = bytes_read.saturating_add(record_bytes);
                 items.push(StreamReadItem::Event(StreamRecord {
                     route,
                     resource_offset: record.resource_offset,
@@ -388,7 +405,7 @@ impl StreamStore {
             broad_scope_fragment_rows(from_offset, limit),
         )?;
         let item_limit = read_limit_to_usize(limit);
-        let byte_limit = max_bytes.unwrap_or(usize::MAX);
+        let byte_limit = bounded_max_bytes(max_bytes);
         let mut items = Vec::with_capacity(item_limit.min(1_000));
         let mut bytes_read = 0usize;
         let mut last_examined = from_offset;
@@ -417,10 +434,6 @@ impl StreamStore {
                     continue;
                 }
                 resolve_blob_payload(&txn, &mut record.body, &mut record.metadata)?;
-                let record_bytes = record
-                    .body
-                    .len()
-                    .saturating_add(record.metadata.as_ref().map_or(0, Bytes::len));
                 if items.len() >= item_limit {
                     has_more = true;
                     break 'pages;
@@ -429,12 +442,25 @@ impl StreamStore {
                     "stream://{}/{}/{}",
                     record.realm, record.area, record.resource
                 ));
+                let record_bytes = stream_record_wire_bytes(
+                    stream_route_len(&record.realm, &record.area, &record.resource),
+                    record.body.len(),
+                    record.metadata.as_ref().map_or(0, Bytes::len),
+                );
                 let discriminator = Self::load_optional_discriminator(
                     &txn,
                     &super::encode_global_discriminator_key(offset),
                 )?;
+                match charge_wire_budget(offset, record_bytes, bytes_read, byte_limit)? {
+                    WireBudgetDecision::Stop => {
+                        has_more = true;
+                        break 'pages;
+                    }
+                    WireBudgetDecision::Include => {}
+                }
+                last_examined = offset;
+                bytes_read = bytes_read.saturating_add(record_bytes);
                 if !Self::record_matches_filter(filter, discriminator.as_deref()) {
-                    last_examined = offset;
                     items.push(StreamReadItem::Filtered {
                         route,
                         offset,
@@ -442,12 +468,6 @@ impl StreamStore {
                     });
                     continue;
                 }
-                if bytes_read.saturating_add(record_bytes) > byte_limit && !items.is_empty() {
-                    has_more = true;
-                    break 'pages;
-                }
-                last_examined = offset;
-                bytes_read = bytes_read.saturating_add(record_bytes);
                 items.push(StreamReadItem::Event(StreamRecord {
                     route,
                     resource_offset: record.resource_offset,

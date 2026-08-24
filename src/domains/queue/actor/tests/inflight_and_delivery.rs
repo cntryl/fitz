@@ -160,7 +160,7 @@ fn should_bound_reserve_batch_to_tlv_payload_capacity() {
     let mut response_bytes_remaining =
         crate::domains::queue::protocol::MAX_QUEUE_RESPONSE_PAYLOAD_BYTES
             - crate::domains::queue::protocol::RECEIVED_RESPONSE_HEADER_BYTES;
-    let response = actor.handle_receive_for_session_with_wire_budget(
+    let (response, wire_budget_exhausted) = actor.handle_receive_for_session_with_wire_budget(
         TEST_SESSION_ID,
         30,
         Some(100),
@@ -178,6 +178,7 @@ fn should_bound_reserve_batch_to_tlv_payload_capacity() {
     assert_eq!(actor.ready_len(), 38);
     assert_eq!(actor.inflight.len(), 62);
     assert!(actor.admin_dead_letters().is_empty());
+    assert!(wire_budget_exhausted);
 }
 
 #[test]
@@ -210,7 +211,7 @@ fn should_dead_letter_oversized_head_and_reserve_following_message() {
 
     // Act
     let mut response_bytes_remaining = response_budget;
-    let response = actor.handle_receive_for_session_with_wire_budget(
+    let (response, _) = actor.handle_receive_for_session_with_wire_budget(
         TEST_SESSION_ID,
         30,
         Some(1),
