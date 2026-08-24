@@ -165,6 +165,7 @@ impl QueueDomainSink {
             projection: QueueAdminProjection::new(admin_read_model),
             metrics: None,
             active: AtomicBool::new(true),
+            runtime_sweep_pending: AtomicBool::new(false),
             next_idle_sweep_at: Mutex::new(Instant::now()),
             next_dedup_sweep_at: Mutex::new(Instant::now()),
             dirty_fast_flush_families: Mutex::new(HashSet::new()),
@@ -436,13 +437,33 @@ impl QueueDomainSink {
     }
 
     pub(crate) fn sweep_runtime_state(&self) {
-        self.sweep_runtime_state_at(Instant::now());
+        self.request_runtime_sweep_at(Instant::now());
     }
 
+    #[cfg(test)]
     pub(super) fn sweep_runtime_state_at(&self, now: Instant) {
         self.send_unit_actor_command("sweep_runtime_state", |reply| {
-            QueueDomainCommand::SweepRuntimeStateAt(now, reply)
+            QueueDomainCommand::SweepRuntimeStateAt(now, Some(reply))
         });
+    }
+
+    pub(super) fn request_runtime_sweep_at(&self, now: Instant) -> bool {
+        if self.core.runtime_sweep_pending.swap(true, Ordering::AcqRel) {
+            return false;
+        }
+
+        if let Err(error) = self
+            .actor
+            .try_send_high_priority(QueueDomainCommand::SweepRuntimeStateAt(now, None))
+        {
+            self.core
+                .runtime_sweep_pending
+                .store(false, Ordering::Release);
+            tracing::warn!(domain = "queue", operation = "sweep_runtime_state", error = %error, "Queue actor command enqueue failed");
+            return false;
+        }
+
+        true
     }
 
     /// Replays a dead-lettered message back into its queue.

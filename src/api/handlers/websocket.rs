@@ -431,7 +431,11 @@ where
     use futures_util::StreamExt;
     use hyper_tungstenite::tungstenite::Message;
     loop {
-        let next_message = if context.session.info().authenticated {
+        let next_message = if context
+            .ingress
+            .get_session_info(context.session_id)
+            .is_some_and(|session| session.authenticated)
+        {
             ws_receiver.next().await
         } else {
             let remaining = context

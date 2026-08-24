@@ -780,6 +780,65 @@ fn should_route_queue_live_counts_through_managed_actor() {
 }
 
 #[test]
+fn should_bound_concrete_reserve_response_before_messages_become_inflight() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let queue_route = "queue://acme/jobs/wire-capacity";
+    let sender_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let worker_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+    let sender_mailbox = Arc::new(Mailbox::new(2));
+    let worker_mailbox = Arc::new(Mailbox::new(2));
+    let router = Arc::new(Router::new());
+    router.register(sender_address.clone(), sender_mailbox.clone());
+    router.register(worker_address.clone(), worker_mailbox.clone());
+    let sink = new_queue_domain_sink(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+        cntryl_midge::WriteOptions::buffered(),
+    );
+    let body = vec![0x5a; 1024];
+    for _ in 0..100 {
+        sink.deliver(Envelope::from_route(
+            sender_address.clone(),
+            queue_address.clone(),
+            FrameContext::new(
+                7,
+                ChannelId::Pub,
+                MessageType::new(200),
+                encode_queue_send(queue_route, &body),
+                family,
+            ),
+        ))
+        .expect("enqueue queue message");
+        let _response = receive_queue_frame(&sender_mailbox, "enqueue response");
+    }
+
+    // Act
+    sink.deliver(Envelope::from_route(
+        worker_address,
+        queue_address,
+        FrameContext::new(
+            8,
+            ChannelId::Pub,
+            MessageType::new(202),
+            encode_queue_reserve(queue_route, 30, 100),
+            family,
+        ),
+    ))
+    .expect("reserve queue batch");
+    let response = receive_queue_frame(&worker_mailbox, "reserve response");
+
+    // Assert
+    assert!(u16::try_from(response.payload.len()).is_ok());
+    assert_eq!(decode_concrete_reserve_response(&response).len(), 62);
+    let snapshot = queue_snapshot(&sink, family, queue_route);
+    assert_eq!(snapshot.messages_ready, 38);
+    assert_eq!(snapshot.messages_inflight, 62);
+}
+
+#[test]
 fn should_route_queue_cleanup_through_managed_actor() {
     // Arrange
     let family = RouteFamily::new(1);
@@ -888,6 +947,27 @@ fn should_route_queue_runtime_sweep_through_managed_actor() {
     // Assert
     assert!(!sink.is_actor_running());
     assert!(sink.dirty_fast_flush_contains_family_for_tests(1));
+}
+
+#[test]
+fn should_coalesce_queue_runtime_sweeps_while_actor_is_busy() {
+    // Arrange
+    let sink = new_queue_domain_sink(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+        cntryl_midge::WriteOptions::best_effort(),
+    );
+    let pending_reserves = sink.core.pending_reserves.lock();
+
+    // Act
+    let first_enqueued = sink.request_runtime_sweep_at(Instant::now());
+    let second_enqueued = sink.request_runtime_sweep_at(Instant::now());
+
+    // Assert
+    assert!(first_enqueued);
+    assert!(!second_enqueued);
+    drop(pending_reserves);
 }
 
 #[test]

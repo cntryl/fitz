@@ -44,6 +44,11 @@ pub use super::core::{MessageId, QueueKey, ReservedMessage, RoutedReservedMessag
 /// Maximum number of messages a client may reserve in one request.
 pub const MAX_RESERVE_BATCH_SIZE: usize = 1024;
 
+pub(crate) const MAX_QUEUE_RESPONSE_PAYLOAD_BYTES: usize = u16::MAX as usize;
+pub(crate) const RECEIVED_RESPONSE_HEADER_BYTES: usize = 1 + 4;
+pub(crate) const RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES: usize = 8 + 8 + 4;
+pub(crate) const ROUTED_MESSAGE_WIRE_OVERHEAD_BYTES: usize = 4;
+
 /// Queue domain messages
 ///
 /// All queue operations are asynchronous and return responses via

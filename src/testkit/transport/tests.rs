@@ -124,6 +124,47 @@ async fn should_cleanup_all_session_state_given_abrupt_websocket_disconnect() {
     }
 }
 
+#[tokio::test(start_paused = true)]
+async fn should_keep_authenticated_websocket_open_beyond_connect_deadline() {
+    // Arrange
+    let server = TestServer::start().await.expect("start test server");
+    let mut websocket = server.connect_ws().await.expect("connect websocket client");
+    let connect_frame = build_connect_frame("test-realm", &generate_test_jwt("test-realm"));
+    websocket
+        .send_frame(&connect_frame)
+        .await
+        .expect("send CONNECT frame");
+    server
+        .wait_for_authenticated_sessions(1)
+        .await
+        .expect("wait for authenticated session");
+    tokio::time::advance(
+        crate::api::ingress::CONNECT_DEADLINE + std::time::Duration::from_millis(1),
+    )
+    .await;
+    let route = "kv://test-realm/app/connect-deadline";
+    let mut payload = Vec::new();
+    payload.extend_from_slice(
+        &u32::try_from(route.len())
+            .expect("route length fits u32")
+            .to_be_bytes(),
+    );
+    payload.extend_from_slice(route.as_bytes());
+    payload.push(1);
+    payload.push(0);
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(100, &payload);
+
+    // Act
+    let response = websocket.request(&builder.build(), 2_000).await;
+
+    // Assert
+    assert!(
+        response.is_ok(),
+        "authenticated websocket closed after CONNECT: {response:?}"
+    );
+}
+
 #[tokio::test]
 async fn should_accept_websocket_upgrade_given_allowed_origin() {
     // Arrange

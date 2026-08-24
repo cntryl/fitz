@@ -134,6 +134,52 @@ fn should_reserve_multiple_messages_in_batch() {
 }
 
 #[test]
+fn should_bound_reserve_batch_to_tlv_payload_capacity() {
+    // Arrange
+    let store = Arc::new(
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
+    );
+    let queue_key = unique_queue_key("jobs-reserve-wire-capacity");
+    let mut actor = QueueActor::new(
+        RouteFamily::new(0),
+        queue_key,
+        store,
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    for _ in 0..100 {
+        actor.handle_send(Bytes::from(vec![0x5a; 1024]), None);
+    }
+
+    // Act
+    let mut response_bytes_remaining =
+        crate::domains::queue::protocol::MAX_QUEUE_RESPONSE_PAYLOAD_BYTES
+            - crate::domains::queue::protocol::RECEIVED_RESPONSE_HEADER_BYTES;
+    let response = actor.handle_receive_for_session_with_wire_budget(
+        TEST_SESSION_ID,
+        30,
+        Some(100),
+        &mut response_bytes_remaining,
+        crate::domains::queue::protocol::RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES,
+    );
+    let payload = crate::dispatch::protocol::queue_codec::encode_response(202, &response);
+
+    // Assert
+    assert!(u16::try_from(payload.len()).is_ok());
+    let QueueResponse::Received { messages } = response else {
+        panic!("Expected Received response");
+    };
+    assert_eq!(messages.len(), 62);
+    assert_eq!(actor.ready_len(), 38);
+    assert_eq!(actor.inflight.len(), 62);
+}
+
+#[test]
 fn should_ack_multiple_messages_in_batch() {
     // Arrange
     let store = Arc::new(

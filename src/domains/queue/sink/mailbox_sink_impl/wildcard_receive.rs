@@ -2,6 +2,41 @@ use super::{OperationOutcome, QueueDomainCore};
 use crate::runtime::routing::RouteFamily;
 use std::sync::atomic::Ordering;
 
+use crate::domains::queue::protocol::{
+    MAX_QUEUE_RESPONSE_PAYLOAD_BYTES, RECEIVED_RESPONSE_HEADER_BYTES,
+    RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES, ROUTED_MESSAGE_WIRE_OVERHEAD_BYTES,
+};
+
+fn receive_with_route_wire_budget(
+    actor: &mut crate::domains::queue::QueueActor,
+    session_id: u64,
+    inflight_seconds: u64,
+    batch_size: usize,
+    response_bytes_remaining: &mut usize,
+    route: &crate::runtime::routing::Route,
+) -> crate::domains::queue::QueueResponse {
+    let message_wire_overhead_bytes = RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES
+        .saturating_add(ROUTED_MESSAGE_WIRE_OVERHEAD_BYTES)
+        .saturating_add(route.as_str().len());
+    actor.handle_receive_for_session_with_wire_budget(
+        session_id,
+        inflight_seconds,
+        Some(batch_size),
+        response_bytes_remaining,
+        message_wire_overhead_bytes,
+    )
+}
+
+fn empty_wildcard_receive_outcome() -> OperationOutcome {
+    OperationOutcome {
+        response: crate::domains::queue::QueueResponse::ReceivedRouted {
+            messages: Vec::new(),
+        },
+        ready_notifications: Vec::new(),
+        mark_admin_snapshot_dirty: false,
+    }
+}
+
 impl QueueDomainCore {
     const MAX_WILDCARD_RESERVE_MATCHES: usize = 4096;
 
@@ -53,13 +88,7 @@ impl QueueDomainCore {
         let keys = self.matching_queue_keys(family_id, pattern);
         let limit = batch_size.unwrap_or(1);
         if keys.is_empty() || limit == 0 {
-            return OperationOutcome {
-                response: crate::domains::queue::QueueResponse::ReceivedRouted {
-                    messages: Vec::new(),
-                },
-                ready_notifications: Vec::new(),
-                mark_admin_snapshot_dirty: false,
-            };
+            return empty_wildcard_receive_outcome();
         }
 
         let start = usize::try_from(
@@ -71,6 +100,8 @@ impl QueueDomainCore {
         let mut routed = Vec::with_capacity(limit);
         let mut notifications = Vec::new();
         let mut state_changed = false;
+        let mut response_bytes_remaining =
+            MAX_QUEUE_RESPONSE_PAYLOAD_BYTES - RECEIVED_RESPONSE_HEADER_BYTES;
 
         for offset in 0..keys.len() {
             if routed.len() == limit {
@@ -101,8 +132,14 @@ impl QueueDomainCore {
                 let mut actor = actor_handle.lock();
                 state_changed |= actor.process_due_work();
                 let remaining = limit - routed.len();
-                let response =
-                    actor.handle_receive_for_session(session_id, inflight_seconds, Some(remaining));
+                let response = receive_with_route_wire_budget(
+                    &mut actor,
+                    session_id,
+                    inflight_seconds,
+                    remaining,
+                    &mut response_bytes_remaining,
+                    &route,
+                );
                 let counts = actor.live_counts();
                 if counts.total() > 0 {
                     self.known_queue_keys.lock().insert(key.clone());

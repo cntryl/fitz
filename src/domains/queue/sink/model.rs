@@ -97,6 +97,7 @@ pub(super) struct QueueDomainCore {
     pub(super) projection: QueueAdminProjection,
     pub(super) metrics: Option<QueueMetrics>,
     pub(super) active: AtomicBool,
+    pub(super) runtime_sweep_pending: AtomicBool,
     pub(super) next_idle_sweep_at: Mutex<Instant>,
     pub(super) next_dedup_sweep_at: Mutex<Instant>,
     pub(super) dirty_fast_flush_families: Mutex<HashSet<u32>>,
@@ -112,7 +113,7 @@ pub(super) enum QueueDomainCommand {
     RefreshAdminSnapshotIfDirty(crossbeam_channel::Sender<()>),
     ReadLiveCounts(crossbeam_channel::Sender<QueueLiveCounts>),
     CleanupSession(u64, crossbeam_channel::Sender<()>),
-    SweepRuntimeStateAt(Instant, crossbeam_channel::Sender<()>),
+    SweepRuntimeStateAt(Instant, Option<crossbeam_channel::Sender<()>>),
     ReplayDeadLetter(
         QueueKey,
         MessageId,

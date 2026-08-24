@@ -7,6 +7,10 @@ use super::model::{
 };
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
+use crate::domains::queue::protocol::{
+    MAX_QUEUE_RESPONSE_PAYLOAD_BYTES, RECEIVED_RESPONSE_HEADER_BYTES,
+    RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES,
+};
 use crate::runtime::routing::RouteFamily;
 use crate::runtime::{Actor, Context};
 
@@ -90,7 +94,13 @@ impl Actor for QueueDomainActor {
             }
             QueueDomainCommand::SweepRuntimeStateAt(now, reply) => {
                 runtime.sweep_runtime_state_at(now);
-                let _ = reply.send(());
+                if let Some(reply) = reply {
+                    let _ = reply.send(());
+                } else {
+                    runtime
+                        .runtime_sweep_pending
+                        .store(false, Ordering::Release);
+                }
             }
             QueueDomainCommand::ReplayDeadLetter(key, id, reply) => {
                 let _ = reply.send(runtime.replay_dead_letter(&key, id));
@@ -689,7 +699,15 @@ impl QueueDomainCore {
         if let Ok(key) = Self::queue_key_for_route(family_id, route) {
             return self
                 .with_actor_for_operation(&key, request_context, |actor| {
-                    actor.handle_receive_for_session(session_id, inflight_seconds, batch_size)
+                    let mut response_bytes_remaining =
+                        MAX_QUEUE_RESPONSE_PAYLOAD_BYTES - RECEIVED_RESPONSE_HEADER_BYTES;
+                    actor.handle_receive_for_session_with_wire_budget(
+                        session_id,
+                        inflight_seconds,
+                        batch_size,
+                        &mut response_bytes_remaining,
+                        RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES,
+                    )
                 })
                 .map(|(response, notification)| OperationOutcome {
                     response,

@@ -43,7 +43,31 @@ impl QueueActor {
         inflight_seconds: u64,
         batch_size: Option<usize>,
     ) -> QueueResponse {
-        self.handle_receive_internal(Some(session_id), inflight_seconds, batch_size)
+        let mut response_bytes_remaining = usize::MAX;
+        self.handle_receive_for_session_with_wire_budget(
+            session_id,
+            inflight_seconds,
+            batch_size,
+            &mut response_bytes_remaining,
+            0,
+        )
+    }
+
+    pub(crate) fn handle_receive_for_session_with_wire_budget(
+        &mut self,
+        session_id: u64,
+        inflight_seconds: u64,
+        batch_size: Option<usize>,
+        response_bytes_remaining: &mut usize,
+        message_wire_overhead_bytes: usize,
+    ) -> QueueResponse {
+        self.handle_receive_internal(
+            Some(session_id),
+            inflight_seconds,
+            batch_size,
+            response_bytes_remaining,
+            message_wire_overhead_bytes,
+        )
     }
 
     fn handle_receive_internal(
@@ -51,6 +75,8 @@ impl QueueActor {
         owner_session_id: Option<u64>,
         inflight_seconds: u64,
         batch_size: Option<usize>,
+        response_bytes_remaining: &mut usize,
+        message_wire_overhead_bytes: usize,
     ) -> QueueResponse {
         let batch_size = batch_size.unwrap_or(1);
         let now = self.clock.now_instant();
@@ -103,9 +129,15 @@ impl QueueActor {
                 break;
             };
 
+            let message_wire_bytes = message_wire_overhead_bytes.saturating_add(body.len());
+            if message_wire_bytes > *response_bytes_remaining {
+                break;
+            }
+
             let Some(id) = self.pop_ready() else {
                 break;
             };
+            *response_bytes_remaining -= message_wire_bytes;
             self.evict_cached_body(id);
 
             // Generate inflight token
