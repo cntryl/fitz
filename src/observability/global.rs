@@ -78,14 +78,12 @@ pub fn gauge_dec(name: &str) {
 /// collecting attribution data.
 pub fn hot_path_metrics_enabled() -> bool {
     *HOT_PATH_METRICS_ENABLED.get_or_init(|| {
-        std::env::var("FITZ_HOT_PATH_METRICS")
-            .ok()
-            .is_some_and(|value| {
-                matches!(
-                    value.trim().to_ascii_lowercase().as_str(),
-                    "1" | "true" | "yes" | "on"
-                )
-            })
+        std::env::var("FITZ_HOT_PATH_METRICS").is_ok_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
     })
 }
 

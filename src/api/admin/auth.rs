@@ -465,8 +465,7 @@ impl AdminAuth {
             AdminRouteFamilyAccess::Explicit(values) => values.iter().all(|value| {
                 value
                     .parse::<u32>()
-                    .ok()
-                    .is_some_and(|family| provisioned.contains(&family))
+                    .is_ok_and(|family| provisioned.contains(&family))
             }),
         }
     }
