@@ -12,6 +12,11 @@ use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 type PendingAckRetryMap = HashMap<crate::runtime::routing::RouteFamily, Vec<PendingFireKey>>;
 pub(crate) const DEFAULT_SCHEDULE_PRELOAD_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(120);
+
+fn duration_millis(duration: std::time::Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
 type LivePublishCandidate = (
     crate::runtime::routing::RouteFamily,
     u64,
@@ -215,7 +220,7 @@ impl ScheduleDomainSink {
         timeout: std::time::Duration,
     ) -> Result<(), String> {
         let started_at = std::time::Instant::now();
-        let timeout_ms = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX);
+        let timeout_ms = duration_millis(timeout);
         tracing::info!(domain = "schedule", timeout_ms, "Schedule preload started");
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         if let Err(error) = self
@@ -230,8 +235,7 @@ impl ScheduleDomainSink {
                 result?;
                 tracing::info!(
                     domain = "schedule",
-                    elapsed_ms =
-                        u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    elapsed_ms = duration_millis(started_at.elapsed()),
                     "Schedule preload completed"
                 );
                 Ok(())
@@ -240,8 +244,7 @@ impl ScheduleDomainSink {
                 tracing::error!(
                     domain = "schedule",
                     timeout_ms,
-                    elapsed_ms =
-                        u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    elapsed_ms = duration_millis(started_at.elapsed()),
                     "Schedule preload timed out"
                 );
                 Err(format!(
@@ -512,7 +515,7 @@ impl ScheduleDomainRuntime<'_> {
             domain = "schedule",
             preloaded_family_count,
             persisted_family_count,
-            elapsed_ms = u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX),
+            elapsed_ms = duration_millis(started_at.elapsed()),
             "Schedule actor projection preload completed"
         );
         Ok(())
