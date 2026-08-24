@@ -60,6 +60,11 @@ impl Actor for ScheduleDomainActor {
             ScheduleDomainCommand::PanicForTests => {
                 panic!("test Schedule domain actor panic");
             }
+            #[cfg(test)]
+            ScheduleDomainCommand::BlockForTests(entered, release) => {
+                let _ = entered.send(());
+                let _ = release.recv();
+            }
         }
     }
 }

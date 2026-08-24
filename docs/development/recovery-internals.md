@@ -18,6 +18,11 @@ Recovery behavior is designed to preserve committed durability state and reject 
 
 `/targetz` is intentionally weaker than data-plane readiness. It can return `200` once the HTTP listener is usable and the process is not draining, even while storage or domain preload is still pending. It is only for a separate orchestration path; a customer-facing ALB target group must use `/healthz`. WebSocket upgrades and TCP sessions still reject data-plane traffic until the strict readiness gate passes.
 
+Schedule preload waits for the actor-owned preload result rather than applying
+an aggregate one-second reply deadline. Backend operations retain their own
+deadlines, and actor failure disconnects the reply channel so boot still fails
+closed instead of waiting indefinitely on a dead actor.
+
 Live session state is never recovered during startup. Notice subscriptions, Stream live subscriptions and append sessions, KV open transactions, Queue inflight ownership tokens, RPC worker registrations and pending calls, Lease ownership, and Schedule subscriptions are rebuilt only by reconnecting clients when their domain contract permits it.
 
 ## Persistent Domain Partial-State Policy

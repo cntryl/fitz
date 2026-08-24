@@ -185,6 +185,17 @@ impl ScheduleDomainSink {
         self.actor.stop();
     }
 
+    #[cfg(test)]
+    pub(super) fn block_actor_for_tests(
+        &self,
+        entered: crossbeam_channel::Sender<()>,
+        release: crossbeam_channel::Receiver<()>,
+    ) {
+        self.actor
+            .try_send_high_priority(ScheduleDomainCommand::BlockForTests(entered, release))
+            .expect("enqueue Schedule actor test block");
+    }
+
     /// # Errors
     ///
     /// Returns an error when listing column families or preloading a persisted
@@ -199,7 +210,7 @@ impl ScheduleDomainSink {
         }
 
         reply_rx
-            .recv_timeout(std::time::Duration::from_secs(1))
+            .recv()
             .map_err(|error| format!("schedule preload reply failed: {error}"))?
     }
 
