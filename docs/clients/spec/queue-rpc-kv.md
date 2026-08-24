@@ -73,6 +73,14 @@ contains a whole-segment wildcard, decode `concrete_route` before each item and
 use that route for EXTEND and COMPLETE. Wildcard reservation supports `*` and
 `**` as complete segments, including unknown realm, area, or resource segments.
 
+The broker bounds each RESERVE response to one TLV value. If a queued message
+cannot fit in an otherwise empty response using the requested concrete or
+wildcard item encoding, the broker moves it to dead-letter state with reason
+`reserve_response_too_large` under the configured Queue write policy and
+continues reserving later work. A message that fits an empty response but not
+the remaining bytes of a partial
+batch stays ready for the next RESERVE response.
+
 #### EXTEND Request
 
 ```

@@ -14,6 +14,13 @@ enum AckAuthorizationError {
     Expired,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReserveWireBudgetDecision {
+    Reserve(usize),
+    Skip,
+    Stop,
+}
+
 fn validate_ack_authorization(
     inflight: &Inflight,
     token: u64,
@@ -129,10 +136,17 @@ impl QueueActor {
                 break;
             };
 
-            let message_wire_bytes = message_wire_overhead_bytes.saturating_add(body.len());
-            if message_wire_bytes > *response_bytes_remaining {
-                break;
-            }
+            let message_wire_bytes = match self.reserve_wire_budget_decision(
+                id,
+                body.len(),
+                message_wire_overhead_bytes,
+                *response_bytes_remaining,
+                now_epoch_ms,
+            ) {
+                ReserveWireBudgetDecision::Reserve(bytes) => bytes,
+                ReserveWireBudgetDecision::Skip => continue,
+                ReserveWireBudgetDecision::Stop => break,
+            };
 
             let Some(id) = self.pop_ready() else {
                 break;
@@ -140,10 +154,8 @@ impl QueueActor {
             *response_bytes_remaining -= message_wire_bytes;
             self.evict_cached_body(id);
 
-            // Generate inflight token
             let token = Self::generate_token();
 
-            // Create inflight entry
             self.inflight.insert(
                 id,
                 Inflight {
@@ -186,13 +198,30 @@ impl QueueActor {
             });
         }
 
-        // If no messages were reserved, return an empty response (avoid NotFound).
-        // Clients expect an empty slice when the queue is empty rather than an error.
-        if messages.is_empty() {
-            return QueueResponse::Received { messages };
-        }
-
         QueueResponse::Received { messages }
+    }
+
+    fn reserve_wire_budget_decision(
+        &mut self,
+        id: MessageId,
+        body_bytes: usize,
+        message_wire_overhead_bytes: usize,
+        response_bytes_remaining: usize,
+        now_epoch_ms: u64,
+    ) -> ReserveWireBudgetDecision {
+        let message_wire_bytes = message_wire_overhead_bytes.saturating_add(body_bytes);
+        if message_wire_bytes <= response_bytes_remaining {
+            return ReserveWireBudgetDecision::Reserve(message_wire_bytes);
+        }
+        let empty_response_message_budget =
+            crate::domains::queue::protocol::MAX_QUEUE_RESPONSE_PAYLOAD_BYTES
+                - crate::domains::queue::protocol::RECEIVED_RESPONSE_HEADER_BYTES;
+        if message_wire_bytes > empty_response_message_budget
+            && self.divert_ready_or_log(id, DlqReason::ReserveResponseTooLarge, now_epoch_ms)
+        {
+            return ReserveWireBudgetDecision::Skip;
+        }
+        ReserveWireBudgetDecision::Stop
     }
 
     fn divert_ready_or_log(

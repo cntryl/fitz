@@ -16,6 +16,14 @@ use crate::runtime::{Actor, Context};
 
 type ReadyNotificationEvent = (crate::domains::queue::QueueKey, QueueReadyNotification);
 
+struct RuntimeSweepPendingReset<'a>(&'a std::sync::atomic::AtomicBool);
+
+impl Drop for RuntimeSweepPendingReset<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 mod pending_reserves;
 mod runtime_adapter;
 mod wildcard_receive;
@@ -92,15 +100,13 @@ impl Actor for QueueDomainActor {
                 runtime.cleanup_session(session_id);
                 let _ = reply.send(());
             }
-            QueueDomainCommand::SweepRuntimeStateAt(now, reply) => {
+            QueueDomainCommand::SweepRuntimeStateAt(now, Some(reply)) => {
                 runtime.sweep_runtime_state_at(now);
-                if let Some(reply) = reply {
-                    let _ = reply.send(());
-                } else {
-                    runtime
-                        .runtime_sweep_pending
-                        .store(false, Ordering::Release);
-                }
+                let _ = reply.send(());
+            }
+            QueueDomainCommand::SweepRuntimeStateAt(now, None) => {
+                let _pending_reset = RuntimeSweepPendingReset(&runtime.runtime_sweep_pending);
+                runtime.sweep_runtime_state_at(now);
             }
             QueueDomainCommand::ReplayDeadLetter(key, id, reply) => {
                 let _ = reply.send(runtime.replay_dead_letter(&key, id));

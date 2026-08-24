@@ -343,6 +343,13 @@ impl QueueDomainCore {
     }
 
     pub(in crate::domains::queue::sink) fn sweep_runtime_state_at(&self, now: Instant) {
+        #[cfg(test)]
+        if self
+            .panic_next_runtime_sweep
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
+        {
+            panic!("test Queue runtime sweep panic");
+        }
         self.expire_pending_reserves_at(now);
         self.sweep_idle_actors_at(now);
         self.maybe_cleanup_dedup_at(now);

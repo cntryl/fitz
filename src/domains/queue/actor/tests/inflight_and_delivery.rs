@@ -177,6 +177,58 @@ fn should_bound_reserve_batch_to_tlv_payload_capacity() {
     assert_eq!(messages.len(), 62);
     assert_eq!(actor.ready_len(), 38);
     assert_eq!(actor.inflight.len(), 62);
+    assert!(actor.admin_dead_letters().is_empty());
+}
+
+#[test]
+fn should_dead_letter_oversized_head_and_reserve_following_message() {
+    // Arrange
+    let store = Arc::new(
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
+    );
+    let queue_key = unique_queue_key("jobs-reserve-oversized-head");
+    let mut actor = QueueActor::new(
+        RouteFamily::new(0),
+        queue_key,
+        store,
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    let response_budget = crate::domains::queue::protocol::MAX_QUEUE_RESPONSE_PAYLOAD_BYTES
+        - crate::domains::queue::protocol::RECEIVED_RESPONSE_HEADER_BYTES;
+    let message_overhead = crate::domains::queue::protocol::RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES;
+    actor.handle_send(
+        Bytes::from(vec![0x5a; response_budget - message_overhead + 1]),
+        None,
+    );
+    actor.handle_send(Bytes::from_static(b"deliverable"), None);
+
+    // Act
+    let mut response_bytes_remaining = response_budget;
+    let response = actor.handle_receive_for_session_with_wire_budget(
+        TEST_SESSION_ID,
+        30,
+        Some(1),
+        &mut response_bytes_remaining,
+        message_overhead,
+    );
+
+    // Assert
+    let QueueResponse::Received { messages } = response else {
+        panic!("Expected Received response");
+    };
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].body, Bytes::from_static(b"deliverable"));
+    assert_eq!(actor.ready_len(), 0);
+    assert_eq!(actor.inflight.len(), 1);
+    let dead_letters = actor.admin_dead_letters();
+    assert_eq!(dead_letters.len(), 1);
+    assert_eq!(dead_letters[0].reason, "reserve_response_too_large");
 }
 
 #[test]

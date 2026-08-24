@@ -971,6 +971,29 @@ fn should_coalesce_queue_runtime_sweeps_while_actor_is_busy() {
 }
 
 #[test]
+fn should_clear_runtime_sweep_pending_when_sweep_panics() {
+    // Arrange
+    let sink = new_queue_domain_sink(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+        cntryl_midge::WriteOptions::best_effort(),
+    );
+    sink.panic_next_runtime_sweep_for_tests();
+
+    // Act
+    assert!(sink.request_runtime_sweep_at(Instant::now()));
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while sink.actor_health_snapshot().running && Instant::now() < deadline {
+        std::thread::yield_now();
+    }
+
+    // Assert
+    assert!(!sink.actor_health_snapshot().running);
+    assert!(!sink.runtime_sweep_pending_for_tests());
+}
+
+#[test]
 fn should_route_queue_dead_letter_replay_through_managed_actor() {
     // Arrange
     let family = RouteFamily::new(1);

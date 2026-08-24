@@ -163,6 +163,7 @@ enum DlqReason {
     HydrationFailed = 2,
     DeliveryAttemptsExhausted = 3,
     InflightEpochExhausted = 4,
+    ReserveResponseTooLarge = 5,
 }
 
 #[derive(Clone, Copy)]
@@ -182,6 +183,7 @@ impl DlqReason {
             Self::HydrationFailed => "hydration_failed",
             Self::DeliveryAttemptsExhausted => "delivery_attempts_exhausted",
             Self::InflightEpochExhausted => "inflight_epoch_exhausted",
+            Self::ReserveResponseTooLarge => "reserve_response_too_large",
         }
     }
 
@@ -192,6 +194,7 @@ impl DlqReason {
             2 => Ok(Some(Self::HydrationFailed)),
             3 => Ok(Some(Self::DeliveryAttemptsExhausted)),
             4 => Ok(Some(Self::InflightEpochExhausted)),
+            5 => Ok(Some(Self::ReserveResponseTooLarge)),
             other => Err(format!("Unknown DLQ reason {other}")),
         }
     }

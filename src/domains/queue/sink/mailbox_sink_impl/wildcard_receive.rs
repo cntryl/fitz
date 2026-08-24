@@ -130,6 +130,7 @@ impl QueueDomainCore {
             };
             let response = {
                 let mut actor = actor_handle.lock();
+                let counts_before = actor.live_counts();
                 state_changed |= actor.process_due_work();
                 let remaining = limit - routed.len();
                 let response = receive_with_route_wire_budget(
@@ -141,6 +142,7 @@ impl QueueDomainCore {
                     &route,
                 );
                 let counts = actor.live_counts();
+                state_changed |= counts != counts_before;
                 if counts.total() > 0 {
                     self.known_queue_keys.lock().insert(key.clone());
                 }

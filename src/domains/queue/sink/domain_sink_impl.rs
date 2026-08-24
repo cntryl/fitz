@@ -166,6 +166,8 @@ impl QueueDomainSink {
             metrics: None,
             active: AtomicBool::new(true),
             runtime_sweep_pending: AtomicBool::new(false),
+            #[cfg(test)]
+            panic_next_runtime_sweep: AtomicBool::new(false),
             next_idle_sweep_at: Mutex::new(Instant::now()),
             next_dedup_sweep_at: Mutex::new(Instant::now()),
             dirty_fast_flush_families: Mutex::new(HashSet::new()),
@@ -358,6 +360,18 @@ impl QueueDomainSink {
     #[cfg(test)]
     pub(super) fn set_next_dedup_sweep_at_for_tests(&self, now: Instant) {
         *self.core.next_dedup_sweep_at.lock() = now;
+    }
+
+    #[cfg(test)]
+    pub(super) fn panic_next_runtime_sweep_for_tests(&self) {
+        self.core
+            .panic_next_runtime_sweep
+            .store(true, Ordering::Release);
+    }
+
+    #[cfg(test)]
+    pub(super) fn runtime_sweep_pending_for_tests(&self) -> bool {
+        self.core.runtime_sweep_pending.load(Ordering::Acquire)
     }
 
     fn send_unit_actor_command(

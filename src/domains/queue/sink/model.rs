@@ -98,6 +98,8 @@ pub(super) struct QueueDomainCore {
     pub(super) metrics: Option<QueueMetrics>,
     pub(super) active: AtomicBool,
     pub(super) runtime_sweep_pending: AtomicBool,
+    #[cfg(test)]
+    pub(super) panic_next_runtime_sweep: AtomicBool,
     pub(super) next_idle_sweep_at: Mutex<Instant>,
     pub(super) next_dedup_sweep_at: Mutex<Instant>,
     pub(super) dirty_fast_flush_families: Mutex<HashSet<u32>>,
