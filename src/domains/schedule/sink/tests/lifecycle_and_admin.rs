@@ -195,6 +195,59 @@ fn should_route_schedule_preload_through_actor_command() {
 }
 
 #[test]
+fn should_wait_for_schedule_preload_reply_beyond_one_second() {
+    // Arrange
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = ScheduleDomainSink::new(store, router, admin_read_model);
+    let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);
+    let (release_tx, release_rx) = crossbeam_channel::bounded(1);
+    sink.block_actor_for_tests(entered_tx, release_rx);
+    entered_rx.recv().expect("Schedule actor should block");
+
+    // Act
+    let preload_result = std::thread::scope(|scope| {
+        let preload = scope.spawn(|| sink.preload_persisted_families());
+        std::thread::sleep(Duration::from_millis(1_100));
+        release_tx.send(()).expect("release Schedule actor");
+        preload.join().expect("join schedule preload")
+    });
+
+    // Assert
+    assert!(preload_result.is_ok());
+}
+
+#[test]
+fn should_timeout_schedule_preload_when_actor_does_not_reply_before_deadline() {
+    // Arrange
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = ScheduleDomainSink::new(store, router, admin_read_model);
+    let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);
+    let (release_tx, release_rx) = crossbeam_channel::bounded(1);
+    sink.block_actor_for_tests(entered_tx, release_rx);
+    entered_rx.recv().expect("Schedule actor should block");
+
+    // Act
+    let preload_result = std::thread::scope(|scope| {
+        let release = scope.spawn(|| {
+            std::thread::sleep(Duration::from_millis(100));
+            release_tx.send(()).expect("release Schedule actor");
+        });
+        let result = sink.preload_persisted_families_with_timeout(Duration::from_millis(20));
+        release.join().expect("join Schedule actor release");
+        result
+    });
+
+    // Assert
+    assert!(preload_result
+        .expect_err("Schedule preload should time out")
+        .contains("timed out"));
+}
+
+#[test]
 fn should_route_schedule_admin_refresh_through_actor_command() {
     // Arrange
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);

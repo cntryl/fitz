@@ -1,7 +1,7 @@
 use super::{
     DEFAULT_DRAIN_CLOSE_REASON, DEFAULT_DRAIN_GRACE_SECONDS, DEFAULT_KV_IDLE_TRANSACTION_TTL_SECS,
     DEFAULT_QUEUE_LOSS_WINDOW_MS, ENV_DRAIN_CLOSE_REASON, ENV_DRAIN_GRACE_SECONDS,
-    ENV_KV_IDLE_TRANSACTION_TTL_SECS, ENV_QUEUE_LOSS_WINDOW_MS,
+    ENV_KV_IDLE_TRANSACTION_TTL_SECS, ENV_QUEUE_LOSS_WINDOW_MS, ENV_SCHEDULE_PRELOAD_TIMEOUT_SECS,
 };
 
 pub(super) fn env_non_empty(key: &str) -> Option<String> {
@@ -82,6 +82,14 @@ pub(super) fn kv_idle_transaction_ttl_seconds_from_env() -> (u64, Option<String>
             )),
         ),
     }
+}
+
+pub(super) fn schedule_preload_timeout_seconds_from_env() -> (u64, Option<String>) {
+    positive_u64_from_env(
+        ENV_SCHEDULE_PRELOAD_TIMEOUT_SECS,
+        crate::domains::schedule::sink::DEFAULT_SCHEDULE_PRELOAD_TIMEOUT.as_secs(),
+        "second count",
+    )
 }
 
 pub(super) fn drain_close_reason_from_env() -> String {

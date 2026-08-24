@@ -166,6 +166,8 @@ impl Runtime {
                 rpc_request_timeout: None,
                 stream_storage_layout: crate::domains::stream::StreamStorageLayout::default(),
                 kv_idle_transaction_ttl: Duration::from_mins(5),
+                schedule_preload_timeout:
+                    crate::domains::schedule::sink::DEFAULT_SCHEDULE_PRELOAD_TIMEOUT,
             },
         )
         .expect("setup domains");

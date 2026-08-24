@@ -451,7 +451,9 @@ impl PostingPageValue {
             return Err("decode posting page value: invalid offset payload".to_string());
         }
         let entries = bytes[6..]
-            .chunks_exact(24)
+            .as_chunks::<24>()
+            .0
+            .iter()
             .map(|chunk| {
                 let mut offset = [0u8; 8];
                 let mut parent = [0u8; 8];

@@ -421,6 +421,7 @@ pub struct DomainSetupOptions {
     pub rpc_request_timeout: Option<std::time::Duration>,
     pub stream_storage_layout: crate::domains::stream::StreamStorageLayout,
     pub kv_idle_transaction_ttl: std::time::Duration,
+    pub schedule_preload_timeout: std::time::Duration,
 }
 
 fn provisioned_route_families(options: &DomainSetupOptions) -> Vec<RouteFamily> {
@@ -546,7 +547,7 @@ pub fn setup(
     );
     register_domain_sink(DomainKind::Schedule, router, schedule_sink.clone());
     schedule_sink
-        .preload_persisted_families()
+        .preload_persisted_families_with_timeout(options.schedule_preload_timeout)
         .map_err(|error| format!("schedule preload failed: {error}"))?;
     tracing::info!(
         "All {} domain sinks registered with router",
@@ -595,6 +596,8 @@ mod tests {
             rpc_request_timeout: None,
             stream_storage_layout: crate::domains::stream::StreamStorageLayout::default(),
             kv_idle_transaction_ttl: std::time::Duration::from_mins(5),
+            schedule_preload_timeout:
+                crate::domains::schedule::sink::DEFAULT_SCHEDULE_PRELOAD_TIMEOUT,
         }
     }
 
@@ -611,6 +614,8 @@ mod tests {
             rpc_request_timeout: None,
             stream_storage_layout: crate::domains::stream::StreamStorageLayout::default(),
             kv_idle_transaction_ttl: std::time::Duration::from_mins(5),
+            schedule_preload_timeout:
+                crate::domains::schedule::sink::DEFAULT_SCHEDULE_PRELOAD_TIMEOUT,
         }
     }
 

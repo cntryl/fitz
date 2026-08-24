@@ -18,6 +18,14 @@ Recovery behavior is designed to preserve committed durability state and reject 
 
 `/targetz` is intentionally weaker than data-plane readiness. It can return `200` once the HTTP listener is usable and the process is not draining, even while storage or domain preload is still pending. It is only for a separate orchestration path; a customer-facing ALB target group must use `/healthz`. WebSocket upgrades and TCP sessions still reject data-plane traffic until the strict readiness gate passes.
 
+Schedule preload waits for the actor-owned preload result within the
+`FITZ_SCHEDULE_PRELOAD_TIMEOUT_SECS` startup watchdog. The default 120-second
+deadline replaces the former one-second actor reply deadline while preserving a
+bounded, diagnosable startup failure. Preload logs its configured deadline,
+discovered family count, per-family progress at debug level, elapsed completion
+time, and timeout. Actor failure also disconnects the reply channel so boot
+fails closed before the watchdog expires.
+
 Live session state is never recovered during startup. Notice subscriptions, Stream live subscriptions and append sessions, KV open transactions, Queue inflight ownership tokens, RPC worker registrations and pending calls, Lease ownership, and Schedule subscriptions are rebuilt only by reconnecting clients when their domain contract permits it.
 
 ## Persistent Domain Partial-State Policy

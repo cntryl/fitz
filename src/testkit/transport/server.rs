@@ -368,6 +368,9 @@ impl TestServer {
             queue_loss_window_error: None,
             kv_idle_transaction_ttl_seconds: 300,
             kv_idle_transaction_ttl_error: None,
+            schedule_preload_timeout_seconds:
+                crate::domains::schedule::sink::DEFAULT_SCHEDULE_PRELOAD_TIMEOUT.as_secs(),
+            schedule_preload_timeout_error: None,
             assume_external_tls: false,
             local_listener_exposure: crate::boot::runtime::LocalListenerExposure::Direct,
             ws_allowed_origins,
@@ -407,6 +410,7 @@ impl TestServer {
                 kv_idle_transaction_ttl: std::time::Duration::from_secs(
                     boot_config.kv_idle_transaction_ttl_seconds,
                 ),
+                schedule_preload_timeout: boot_config.schedule_preload_timeout(),
             },
         )?;
         runtime.attach_domains(domains);

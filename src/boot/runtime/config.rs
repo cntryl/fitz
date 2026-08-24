@@ -15,6 +15,7 @@ const ENV_STORAGE_MEMTABLE_BYTES: &str = "FITZ_STORAGE_MEMTABLE_BYTES";
 const ENV_QUEUE_WRITE_POLICY: &str = "FITZ_QUEUE_WRITE_POLICY";
 const ENV_QUEUE_LOSS_WINDOW_MS: &str = "FITZ_QUEUE_LOSS_WINDOW_MS";
 const ENV_KV_IDLE_TRANSACTION_TTL_SECS: &str = "FITZ_KV_IDLE_TRANSACTION_TTL_SECS";
+const ENV_SCHEDULE_PRELOAD_TIMEOUT_SECS: &str = "FITZ_SCHEDULE_PRELOAD_TIMEOUT_SECS";
 const ENV_DRAIN_GRACE_SECONDS: &str = "FITZ_DRAIN_GRACE_SECONDS";
 const ENV_DRAIN_CLOSE_REASON: &str = "FITZ_DRAIN_CLOSE_REASON";
 const DEFAULT_QUEUE_LOSS_WINDOW_MS: u64 = 100;
@@ -327,6 +328,7 @@ mod env;
 use env::{
     drain_close_reason_from_env, drain_grace_seconds_from_env, env_non_empty,
     kv_idle_transaction_ttl_seconds_from_env, queue_loss_window_ms_from_env, required_env,
+    schedule_preload_timeout_seconds_from_env,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -434,6 +436,14 @@ impl<'a> StorageConfig<'a> {
                 format!("{ENV_KV_IDLE_TRANSACTION_TTL_SECS} must be greater than 0").into(),
             );
         }
+        if let Some(error) = &config.schedule_preload_timeout_error {
+            return Err(error.clone().into());
+        }
+        if config.schedule_preload_timeout_seconds == 0 {
+            return Err(
+                format!("{ENV_SCHEDULE_PRELOAD_TIMEOUT_SECS} must be greater than 0").into(),
+            );
+        }
         config
             .storage_memtable
             .validate()
@@ -519,6 +529,9 @@ pub struct BootConfig {
     /// Maximum inactivity before an open KV transaction is force-rolled back.
     pub kv_idle_transaction_ttl_seconds: u64,
     pub(crate) kv_idle_transaction_ttl_error: Option<String>,
+    /// Maximum wait for required Schedule preload during broker startup.
+    pub schedule_preload_timeout_seconds: u64,
+    pub(crate) schedule_preload_timeout_error: Option<String>,
     /// Whether an external TLS terminator is explicitly protecting public listeners.
     pub assume_external_tls: bool,
     pub(crate) local_listener_exposure: LocalListenerExposure,
@@ -600,6 +613,11 @@ impl BootConfig {
     }
 
     #[must_use]
+    pub fn schedule_preload_timeout(&self) -> Duration {
+        Duration::from_secs(self.schedule_preload_timeout_seconds)
+    }
+
+    #[must_use]
     pub fn queue_write_policy_defaulted_fast(&self) -> bool {
         self.queue_write_policy_source.is_defaulted()
             && matches!(self.queue_write_policy, QueueWritePolicy::Fast)
@@ -656,6 +674,8 @@ impl Default for BootConfig {
         let (queue_loss_window_ms, queue_loss_window_error) = queue_loss_window_ms_from_env();
         let (kv_idle_transaction_ttl_seconds, kv_idle_transaction_ttl_error) =
             kv_idle_transaction_ttl_seconds_from_env();
+        let (schedule_preload_timeout_seconds, schedule_preload_timeout_error) =
+            schedule_preload_timeout_seconds_from_env();
         let (queue_write_policy, queue_write_policy_source) =
             QueueWritePolicy::from_env_with_source();
         let drain_close_reason = drain_close_reason_from_env();
@@ -690,6 +710,8 @@ impl Default for BootConfig {
             queue_loss_window_error,
             kv_idle_transaction_ttl_seconds,
             kv_idle_transaction_ttl_error,
+            schedule_preload_timeout_seconds,
+            schedule_preload_timeout_error,
             assume_external_tls,
             local_listener_exposure,
             ws_allowed_origins,
@@ -797,6 +819,13 @@ impl BootConfig {
     pub fn with_drain_grace_seconds(mut self, seconds: u64) -> Self {
         self.drain_grace_seconds = seconds;
         self.drain_config_error = None;
+        self
+    }
+
+    #[must_use]
+    pub fn with_schedule_preload_timeout_seconds(mut self, seconds: u64) -> Self {
+        self.schedule_preload_timeout_seconds = seconds;
+        self.schedule_preload_timeout_error = None;
         self
     }
 
