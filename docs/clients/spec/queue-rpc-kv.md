@@ -674,6 +674,7 @@ Response (error):
 [u8]      has_limit (0 or 1)
 [u32 BE]  limit (if present)
 [u8]      reverse (0 or 1)
+[u8]      start_exclusive (0 or 1, optional; absent means 0)
 Response (success):
   [u8]     0 (status: success)
   [u32 BE] item_count
@@ -817,6 +818,13 @@ Only `0` and `1` are valid durability values. Other values are rejected.
 
 ##### SCAN Semantics
 
+**`start_exclusive` flag:**
+
+- `start_exclusive=0` (default, and the value assumed when the byte is absent):
+  `start_key` is inclusive, as described below
+- `start_exclusive=1`: the scan begins strictly after `start_key` in the
+  selected direction. Required for continuation; see the pagination rules below
+
 **`reverse` flag:**
 
 - `reverse=0` (forward): Scan keys in ascending lexicographic order
@@ -828,9 +836,38 @@ Only `0` and `1` are valid durability values. Other values are rejected.
     the lower side unbounded
 - Equal bounds, or bounds inverted for the selected direction, return an empty
   successful result
-- `limit` applies regardless of direction. `has_more=1` means at least one
-  additional matching key exists beyond the returned page; an omitted limit is
-  unlimited and returns `has_more=0`
+- `limit` applies regardless of direction and bounds a page from above. The
+  broker bounds every page by two further limits: at most 1024 items, and at
+  most what fits in one response frame (a scan response is carried as a single
+  TLV value with a `u16` length, so a page of large values reaches the byte
+  bound well before the item cap). A page ends at whichever limit is reached
+  first.
+- **An omitted `limit` therefore does not mean unlimited.** It means "as much as
+  fits in one page". A scan of 300 keys with 1 KiB values returns a partial page
+  with `has_more=1` even though no limit was supplied.
+- `has_more=1` means at least one additional matching key exists beyond the
+  returned page. Clients MUST honour it whether or not they supplied a `limit`;
+  treating an omitted limit as complete silently leaves data unread.
+- To continue, re-issue the scan with `start_key` set to the last key returned
+  by the previous page, `start_exclusive=1`, and the same `reverse` value and
+  opposite bound. Repeat until `has_more=0`.
+- `start_exclusive` is a trailing optional byte on the SCAN request, defaulting
+  to `0` when absent. Resuming with an inclusive `start_key` does not
+  terminate: a page bounded by the byte budget can hold a single pair, and the
+  next request then returns that same pair forever, so later keys are never
+  reached.
+
+**Mixed-version behaviour.** The byte is additive and older brokers reject
+trailing data, so clients MUST NOT send it unless the broker advertises support.
+Clients that cannot yet encode it can still paginate **forward** with no wire
+change: re-issue with `start_key` set to the last returned key followed by a
+single `0x00` byte, which is that key's immediate successor and therefore an
+exclusive resume. **Reverse** continuation has no such equivalent - the
+symmetric operation is a byte-string predecessor, which is not expressible - so
+a client that cannot send `start_exclusive` must not paginate reverse scans
+across a byte-bounded page. Until a client ships the byte, keep reverse scans
+within a single page by supplying a `limit` small enough that the page is not
+byte-bounded.
 
 #### Usage Example
 

@@ -613,8 +613,18 @@ Response (error):
 
 **Semantics:**
 - Omitting the payload defaults to `offset=0, limit=100`
-- `limit=0` means "all remaining entries from offset"
-- LIST is scoped to the current route family and returns a single response payload, not a multi-frame stream
+- `limit=0` requests all remaining entries from `offset`, but the response is
+  still one TLV value bounded by the wire frame limit and MAY return fewer
+  entries than exist, regardless of what `limit` requested. There is no
+  `has_more` flag on this response: detect truncation by comparing the
+  returned entry count to `total_count`. If `offset + entries_returned <
+  total_count`, more entries remain; continue by re-issuing LIST with
+  `offset += entries_returned` (same `limit`) until the count is exhausted.
+  Every entry sits at a stable index for the duration of an unchanging
+  definition set, so this offset advance is safe.
+- LIST is scoped to the current route family and each call returns exactly one
+  response payload (never a multi-frame stream), but that payload may be a
+  partial page per the truncation rule above
 
 #### Broker Extensions
 

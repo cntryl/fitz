@@ -132,6 +132,13 @@ pub(super) fn parse_scan(route_family: RouteFamily, payload: &[u8]) -> Result<Kv
     let end = read_optional_bytes(&mut decoder)?;
     let limit = read_optional_limit(&mut decoder)?;
     let reverse = read_bool(&mut decoder, "SCAN reverse")?;
+    // Trailing and optional: clients predating exclusive resume send nothing
+    // here and keep the inclusive behaviour.
+    let start_exclusive = if decoder.is_complete() {
+        false
+    } else {
+        read_bool(&mut decoder, "SCAN start_exclusive")?
+    };
     ensure_complete(&decoder, "SCAN")?;
     Ok(KvMessage::Scan {
         tx_id,
@@ -141,6 +148,7 @@ pub(super) fn parse_scan(route_family: RouteFamily, payload: &[u8]) -> Result<Kv
             end,
             limit,
             reverse,
+            start_exclusive,
         },
     })
 }

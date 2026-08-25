@@ -51,6 +51,7 @@ pub mod actor;
 pub mod metrics;
 pub mod projection;
 pub mod protocol;
+pub(crate) mod scan_wire_budget;
 pub mod session;
 pub mod sink;
 pub mod watch;

@@ -47,9 +47,23 @@ pub fn realm_domain_prefix(realm: &str, domain: &str) -> Vec<u8> {
     encoder.into_vec()
 }
 
+/// Exclusive upper bound covering every key that begins with `prefix`.
+///
+/// Uses lexkey's `prefix_successor` rather than `encode_range_upper`. The
+/// latter yields `prefix || 0xff`, which lexkey documents as correct only when
+/// the bytes following the prefix are themselves lexkey-encoded - UTF-8 strings
+/// and fixed-width numbers can never reach `0xff`. Several callers append raw,
+/// unencoded client bytes instead, and a key beginning with `0xff` then sorts
+/// past that bound: the write succeeds and the key becomes invisible to every
+/// scan of its own resource.
+///
+/// `prefix_successor` returns `None` only for an empty or all-`0xff` prefix.
+/// Every prefix built here ends with a separator, so that cannot occur; the
+/// fallback keeps the old bound rather than silently scanning unbounded.
 #[must_use]
 pub fn prefix_range_end(prefix: &[u8]) -> Vec<u8> {
-    LexKey::encode_range_upper(prefix, None).as_bytes().to_vec()
+    LexKey::prefix_successor(prefix)
+        .unwrap_or_else(|| LexKey::encode_range_upper(prefix, None).as_bytes().to_vec())
 }
 
 #[must_use]
@@ -192,6 +206,24 @@ mod tests {
         // Assert
         assert!(range_end.as_slice() > prefix.as_slice());
         assert!(b"acme\0kv\0users\0x".as_slice() < range_end.as_slice());
+        // The bound must cover EVERY suffix, not just printable ones. Callers
+        // append raw client bytes, so a suffix may begin with 0xff - the byte
+        // lexkey uses as its range end marker. Only testing ordinary suffixes
+        // is how a whole class of keys became invisible to scans.
+        for suffix in [
+            [0x00u8].as_slice(),
+            [0x7f].as_slice(),
+            [0xfe, 0xfe].as_slice(),
+            [0xff].as_slice(),
+            [0xff, 0xff, 0xff].as_slice(),
+        ] {
+            let mut key = prefix.to_vec();
+            key.extend_from_slice(suffix);
+            assert!(
+                key.as_slice() < range_end.as_slice(),
+                "suffix {suffix:?} sorts outside its own prefix range"
+            );
+        }
     }
 
     #[test]

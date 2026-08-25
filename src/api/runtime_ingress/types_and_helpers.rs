@@ -46,7 +46,13 @@ pub(super) fn dispatch_session_cleanup_for_domains(
             crate::runtime::routing::RouteAddress::new(route_family, domain.cleanup_route());
         let cleanup_envelope = crate::runtime::Envelope::new(cleanup_addr, cleanup.clone());
 
-        if let Err(error) = router.route(cleanup_envelope) {
+        // Control-plane work: a busy Queue actor can hold up to 16,384
+        // client messages ahead of anything on the normal lane, and the
+        // ingress coordinator gives up on a cleanup ticket after 2.3s. Cleanup
+        // must therefore ride the bounded control lane so it is never hidden
+        // behind normal-lane pressure (see architecture.md's Actor Mailbox
+        // section).
+        if let Err(error) = router.route_high_priority(cleanup_envelope) {
             warn!(
                 session_id = session_id,
                 route_family = route_family.id(),

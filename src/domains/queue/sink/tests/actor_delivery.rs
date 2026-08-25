@@ -1147,3 +1147,218 @@ fn should_route_queue_dead_letter_purge_through_managed_actor() {
     assert_eq!(dead_letters, 1);
     assert!(sink.actors_are_empty_for_tests());
 }
+
+#[test]
+fn should_reject_surplus_queue_load_instead_of_accepting_then_timing_out() {
+    // Arrange
+    // Queue is the only domain that commits storage synchronously per request
+    // inside a single-threaded actor while a caller blocks on the reply. Work
+    // admitted beyond what the deadline can serve becomes an indeterminate
+    // outcome the client dare not retry; refusing it keeps it retryable.
+    use crate::domains::queue::sink::model::{queue_admission_window, try_admit_queue_delivery};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let inflight = Arc::new(AtomicUsize::new(0));
+    let window = queue_admission_window(super::super::model::assumed_service_us());
+
+    // Act
+    let held = (0..window)
+        .map(|_| try_admit_queue_delivery(&inflight, window).expect("slot within the limit"))
+        .collect::<Vec<_>>();
+    let refused = try_admit_queue_delivery(&inflight, window);
+
+    // Assert
+    assert!(
+        matches!(refused, Err(DeliveryError::MailboxFull { .. })),
+        "surplus must be refused as never-enqueued, got {refused:?}"
+    );
+    assert_eq!(inflight.load(Ordering::Acquire), window);
+
+    // Slots are released when the COMMAND is finished with, not when a caller
+    // stops waiting: a `recv_timeout` cancels nothing, so recycling on caller
+    // timeout would admit fresh work on top of still-pending mutations.
+    drop(held);
+    assert_eq!(inflight.load(Ordering::Acquire), 0);
+    assert!(try_admit_queue_delivery(&inflight, window).is_ok());
+}
+
+#[test]
+fn should_hold_queue_admission_limit_under_concurrent_callers() {
+    // Arrange
+    // Sampling a depth and then enqueueing is check-then-act: concurrent
+    // callers can all observe room before any of them commits, and collectively
+    // blow past the limit in exactly the burst the limit exists to bound. The
+    // reservation must therefore be a single atomic step.
+    use crate::domains::queue::sink::model::{queue_admission_window, try_admit_queue_delivery};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let inflight = Arc::new(AtomicUsize::new(0));
+    let window = queue_admission_window(super::super::model::assumed_service_us());
+    let admitted = Arc::new(AtomicUsize::new(0));
+    let barrier = Arc::new(std::sync::Barrier::new(32));
+
+    // Act
+    let handles = (0..32)
+        .map(|_| {
+            let inflight = inflight.clone();
+            let admitted = admitted.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                // Each thread tries for more slots than the limit allows, and
+                // holds every one it wins for the duration.
+                let mut held = Vec::new();
+                for _ in 0..8 {
+                    if let Ok(slot) = try_admit_queue_delivery(&inflight, window) {
+                        admitted.fetch_add(1, Ordering::AcqRel);
+                        held.push(slot);
+                    }
+                }
+                // Keep them until every thread has finished competing.
+                barrier.wait();
+                drop(held);
+            })
+        })
+        .collect::<Vec<_>>();
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    // Assert
+    assert_eq!(
+        admitted.load(Ordering::Acquire),
+        window,
+        "32 concurrent callers must not collectively exceed the admission limit"
+    );
+    assert_eq!(
+        inflight.load(Ordering::Acquire),
+        0,
+        "every slot must be released"
+    );
+}
+
+#[test]
+fn should_hold_queue_admission_while_a_timed_out_command_is_still_pending() {
+    // Arrange
+    // A caller that gives up on `recv_timeout` has cancelled nothing: its
+    // `Deliver` command stays queued and the actor will still run
+    // `deliver_envelope`. If the slot were tied to the caller, a sustained
+    // burst would recycle slots while accepted mutations were still pending
+    // and pile indeterminate work up to the full mailbox depth.
+    use crate::domains::queue::sink::model::{try_admit_queue_delivery, QueueAdmissionSlot};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let inflight = Arc::new(AtomicUsize::new(0));
+    let slot = try_admit_queue_delivery(&inflight, 1).expect("slot");
+
+    // Act
+    // Hand the slot to the queued command and let the caller's scope end,
+    // exactly as a timed-out delivery does.
+    let queued: Option<QueueAdmissionSlot> = Some(slot);
+    let caller_gave_up = inflight.load(Ordering::Acquire);
+
+    // Assert
+    assert_eq!(
+        caller_gave_up, 1,
+        "the slot must still be held while the command is queued"
+    );
+    drop(queued);
+    assert_eq!(
+        inflight.load(Ordering::Acquire),
+        0,
+        "the slot must be released when the command is finished with"
+    );
+}
+
+#[test]
+fn should_size_queue_admission_to_the_reply_deadline() {
+    // Arrange
+    // A fixed window cannot bound the deadline. Queued concurrency adds no
+    // throughput - the actor serves commands one at a time - so admitting N
+    // requests commits the tail caller to N x service_time. At 20ms per
+    // synchronous commit a 64-deep window needs 1.28s, past
+    // QUEUE_ACTOR_REPLY_TIMEOUT, so the tail times out with an indeterminate
+    // outcome and its command still executes: exactly what the gate exists to
+    // prevent. The window must therefore follow observed service time.
+    use crate::domains::queue::sink::model::{queue_admission_window, QUEUE_ADMISSION_MAX_WINDOW};
+
+    // Act
+    let slow = queue_admission_window(20_000);
+    let quick = queue_admission_window(1_000);
+    let pathological = queue_admission_window(5_000_000);
+
+    // Assert
+    let deadline_us =
+        u64::try_from(crate::domains::queue::sink::model::QUEUE_ACTOR_REPLY_TIMEOUT.as_micros())
+            .expect("deadline fits u64");
+    assert!(
+        u64::try_from(slow).unwrap() * 20_000 <= deadline_us,
+        "a {slow}-deep window at 20ms each overruns the {deadline_us}us deadline"
+    );
+    assert!(
+        slow < QUEUE_ADMISSION_MAX_WINDOW,
+        "slow service must shrink the window below the cap"
+    );
+    assert!(quick > slow, "faster service should admit more");
+    assert!(quick <= QUEUE_ADMISSION_MAX_WINDOW);
+    assert_eq!(
+        pathological, 1,
+        "service slower than the whole deadline still admits the active operation"
+    );
+}
+
+#[test]
+fn should_report_a_stopped_actor_rather_than_admission_backpressure() {
+    // Arrange
+    // A worker that fails closed leaves its mailbox, and every admitted slot,
+    // alive for the sink's lifetime. Admission would then keep answering
+    // MailboxFull - a retryable code - so clients would retry a dead domain
+    // forever instead of seeing a terminal failure.
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = new_queue_domain_sink(
+        store,
+        Arc::new(Router::new()),
+        admin_read_model,
+        cntryl_midge::WriteOptions::buffered(),
+    );
+    let window = crate::domains::queue::sink::model::queue_admission_window(
+        sink.core
+            .delivery_service_us
+            .load(std::sync::atomic::Ordering::Relaxed),
+    );
+    let held = (0..window)
+        .map(|_| {
+            crate::domains::queue::sink::model::try_admit_queue_delivery(
+                &sink.inflight_client_deliveries,
+                window,
+            )
+            .expect("slot")
+        })
+        .collect::<Vec<_>>();
+
+    // Act
+    sink.stop_actor_for_tests();
+    let refused = sink.deliver(Envelope::new(
+        RouteAddress::new(RouteFamily::new(1), Route::new("queue://acme/jobs/dead")),
+        crate::runtime::SessionCleanup { session_id: 1 },
+    ));
+    let client_refused = sink.deliver(Envelope::new(
+        RouteAddress::new(RouteFamily::new(1), Route::new("queue://acme/jobs/dead")),
+        crate::dispatch::protocol::frame_context::FrameContext::new(
+            1,
+            crate::dispatch::protocol::frame::ChannelId::Pub,
+            crate::dispatch::protocol::tlv::MessageType::new(401),
+            bytes::Bytes::new(),
+            RouteFamily::new(1),
+        ),
+    ));
+
+    // Assert
+    assert!(
+        matches!(client_refused, Err(DeliveryError::ActorStopped)),
+        "a dead actor must be terminal, not retryable, got {client_refused:?}"
+    );
+    let _ = refused;
+    drop(held);
+}

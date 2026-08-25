@@ -280,6 +280,7 @@ fn should_scan_empty_table_returns_empty_result() {
             end: None,
             limit: None,
             reverse: false,
+            start_exclusive: false,
         },
     });
 

@@ -26,9 +26,16 @@ fn elapsed_micros_optional(start: Option<Instant>) -> u64 {
 
 /// Delivery attempts for one response chunk before the RPC is ended.
 ///
-/// A caller whose outbound channel is briefly full should slow a stream, not
-/// kill it; a caller that never drains must not pin the request forever.
-pub(in crate::domains::rpc::sink) const MAX_RESPONSE_DELIVERY_ATTEMPTS: u32 = 3;
+/// RPC RESPONSE has no acknowledgement from the broker back to the worker, so
+/// a worker can never learn that a chunk failed to reach the caller and
+/// cannot resend it - every supported SDK simply advances to the next chunk,
+/// or closes after the terminal one. A retry budget greater than one attempt
+/// therefore waits for a resend that will never come: a nonterminal chunk's
+/// "retry" silently becomes an invalid-sequence error on the NEXT chunk the
+/// worker sends, and a terminal chunk's "retry" just sits pending until the
+/// caller's own timeout. The broker must end the RPC on the first failed
+/// forward instead.
+pub(in crate::domains::rpc::sink) const MAX_RESPONSE_DELIVERY_ATTEMPTS: u32 = 1;
 
 impl RpcDomainRuntime<'_> {
     pub(super) fn handle_response_message(
@@ -207,10 +214,11 @@ impl RpcDomainRuntime<'_> {
 
     /// Handle a chunk the caller could not receive.
     ///
-    /// The cursor has not moved, so the worker may resend the same chunk once
-    /// the caller drains - backpressure rather than failure. Only after the
-    /// retry budget is spent does the RPC end, because an unbounded wait would
-    /// pin the request forever against a caller that never recovers.
+    /// Ends the RPC immediately: RPC RESPONSE has no ACK, so the worker that
+    /// sent this chunk has no way to learn delivery failed and will never
+    /// resend it. Waiting would only delay a failure the caller is going to
+    /// see either way, while leaving the worker producing into a stream that
+    /// no longer has a live listener.
     fn handle_undeliverable_response(
         &self,
         envelope: &Envelope,

@@ -8,4 +8,5 @@ heartbeat,pass,pass,pass,pass,pass,"WebSocket ping-pong watchdog; TCP keepalive;
 observability,pass,pass,pass,pass,pass,"shared lifecycle vocabulary; request error state and subscription telemetry"
 error_ergonomics,pass,pass,pass,pass,pass,"language-native typed errors or sentinels with wrapping support"
 documentation_truth,pass,pass,pass,pass,pass,"default public APIs in examples; breaking migration notes"
+exclusive_scan_resume,todo,todo,todo,todo,todo,"encode trailing start_exclusive byte on SCAN; paginate a byte-bounded scan to completion in both directions; forward-only fallback documented"
 reviewed_head,8c88483e948e466c289c658479087a83e845d214,4453e808c3e4b0e2ec2213fd4b515db0fd60dc60,fe877bbeac4843591b5a0115c8e4a04743febcce,bfba39ead69795448ee20985b1281543467ffad8,82de7f605d836cfcd55ace1f7a36398ad2ad3cc8,"immutable SDK inputs; hosted CI verified by exact commit"

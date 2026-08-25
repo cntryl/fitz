@@ -487,10 +487,31 @@ impl SessionOutboundSink {
             &payload,
         )?;
         Self::observe_encode_latency(encode_start);
-        self.send_encoded_frame(notification.session_id, &bytes)
+        // Best-effort: this is delivered synchronously from the Queue domain
+        // actor thread, serially per watcher, BEFORE that actor replies to the
+        // client whose write just committed. The default budget can block up
+        // to ~177ms per saturated consumer; a handful of saturated watchers
+        // would alone exceed the actor's reply deadline for a request that
+        // already succeeded. A missed ready-notification is not data loss -
+        // the watcher's own next poll or RESERVE observes current state - so
+        // this gives up in microseconds rather than blocking the actor.
+        self.send_encoded_frame_with_budget(
+            notification.session_id,
+            &bytes,
+            OUTBOUND_BEST_EFFORT_RETRIES,
+        )
     }
 
     fn send_encoded_frame(&self, session_id: u64, bytes: &Bytes) -> Result<(), DeliveryError> {
+        self.send_encoded_frame_with_budget(session_id, bytes, MAX_OUTBOUND_SEND_RETRIES)
+    }
+
+    fn send_encoded_frame_with_budget(
+        &self,
+        session_id: u64,
+        bytes: &Bytes,
+        max_retries: usize,
+    ) -> Result<(), DeliveryError> {
         let metrics_enabled = obs::hot_path_metrics_enabled();
 
         trace!(
@@ -529,7 +550,7 @@ impl SessionOutboundSink {
                         );
                     }
                     attempt += 1;
-                    if attempt >= MAX_OUTBOUND_SEND_RETRIES {
+                    if attempt >= max_retries {
                         warn!(
                             session_id = session_id,
                             capacity = capacity,
@@ -541,6 +562,8 @@ impl SessionOutboundSink {
                             current_len: capacity,
                         });
                     }
+                    // A best-effort budget never leaves the yield-only range,
+                    // so it can never reach the sleeping tail of the backoff.
                     match outbound_retry_backoff(attempt) {
                         Some(delay) => std::thread::sleep(delay),
                         None => std::thread::yield_now(),
@@ -560,6 +583,11 @@ impl SessionOutboundSink {
 
 /// Attempts before a frame that still cannot be queued is given up on.
 const MAX_OUTBOUND_SEND_RETRIES: usize = 100;
+/// Attempts for a best-effort delivery made synchronously from a domain
+/// actor thread with its own reply deadline (e.g. Queue ready-notifications).
+/// Bounded to the yield-only range so this can never sleep - see
+/// `outbound_retry_backoff`.
+const OUTBOUND_BEST_EFFORT_RETRIES: usize = OUTBOUND_YIELD_ATTEMPTS;
 /// Attempts served by a cheap yield before real waiting begins.
 const OUTBOUND_YIELD_ATTEMPTS: usize = 8;
 /// Ceiling on any single wait between send attempts.
@@ -652,6 +680,51 @@ mod tests {
         // Assert
         assert_eq!(result, Ok(()));
         assert_eq!(frame.as_ref(), &[101, 0, 2, b'o', b'k']);
+    }
+
+    #[tokio::test]
+    async fn should_give_up_quickly_on_a_saturated_queue_watcher() {
+        // Arrange
+        // Queue delivers ready-notifications to every watcher SERIALLY, on the
+        // actor thread, before it replies to the client whose SEND just
+        // committed - see `mailbox_sink_impl.rs`'s notify loop ahead of
+        // `route_queue_response`. The default retry budget blocks up to ~177ms
+        // per saturated consumer (8 yields then escalating sleeps to 100
+        // attempts); six saturated watchers alone would exceed
+        // QUEUE_ACTOR_REPLY_TIMEOUT (1s) even though the write already
+        // succeeded. A best-effort notification must give up fast instead.
+        let (tx, _rx) = mpsc::channel(1);
+        // Fill the channel so every attempt is met with Full. `_rx` is kept
+        // alive (never read) so the channel stays Full rather than Closed.
+        tx.try_send(Bytes::from_static(b"occupied"))
+            .expect("prime the channel to capacity");
+        let sink = SessionOutboundSink::new(tx);
+        let notification = crate::domains::queue::QueueClientNotification::new(
+            1,
+            RouteFamily::new(1),
+            7,
+            Route::new("queue://acme/jobs/watched"),
+            crate::domains::queue::QueueNotification {
+                ready_messages: 1,
+                delayed_messages: 0,
+                inflight_messages: 0,
+            },
+        );
+
+        // Act
+        let started = Instant::now();
+        let result = sink.deliver(Envelope::new(
+            RouteAddress::new(RouteFamily::new(1), Route::new("inbox://session/1")),
+            notification,
+        ));
+        let elapsed = started.elapsed();
+
+        // Assert
+        assert!(result.is_err(), "a permanently full channel must fail");
+        assert!(
+            elapsed < Duration::from_millis(20),
+            "best-effort notification delivery took {elapsed:?}, blocking the queue              actor thread far past what six saturated watchers can afford"
+        );
     }
 
     #[tokio::test]

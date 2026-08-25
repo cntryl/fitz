@@ -495,6 +495,73 @@ pub(super) fn should_call_event_handler() {
     assert_eq!(event_count.load(Ordering::SeqCst), 3);
 }
 
+/// Distinguishes which mailbox lane a delivery arrived on.
+#[derive(Default)]
+pub(super) struct LaneTrackingSink {
+    normal_lane_sessions: Mutex<Vec<u64>>,
+    high_priority_sessions: Mutex<Vec<u64>>,
+}
+
+impl MailboxSink for LaneTrackingSink {
+    fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        let cleanup = envelope
+            .payload::<crate::runtime::SessionCleanup>()
+            .expect("cleanup payload");
+        self.normal_lane_sessions
+            .lock()
+            .unwrap()
+            .push(cleanup.session_id);
+        Ok(())
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        let cleanup = envelope
+            .payload::<crate::runtime::SessionCleanup>()
+            .expect("cleanup payload");
+        self.high_priority_sessions
+            .lock()
+            .unwrap()
+            .push(cleanup.session_id);
+        Ok(())
+    }
+}
+
+#[test]
+pub(super) fn should_dispatch_session_cleanup_on_the_control_lane() {
+    // Arrange
+    // Cleanup is control-plane work (architecture.md: "A separate bounded
+    // control lane prevents control work from being hidden behind normal-lane
+    // pressure"). A busy Queue actor can hold 16,384 client messages ahead of
+    // anything on the normal lane; a cleanup command enqueued there can sit
+    // long past the coordinator's 2.3s give-up window, leaving a disconnected
+    // session's watches and reservations alive and inviting a duplicate
+    // cleanup ticket for the same session.
+    let router = crate::runtime::Router::new();
+    let route_family = crate::runtime::routing::RouteFamily::new(11);
+    let session_id = 77;
+    let sink = Arc::new(LaneTrackingSink::default());
+    router.register_domain_pattern(DispatchDomain::Queue.as_str(), sink.clone());
+
+    // Act
+    let _ = dispatch_session_cleanup_for_domains(
+        &router,
+        route_family,
+        session_id,
+        &[DispatchDomain::Queue],
+    );
+
+    // Assert
+    assert_eq!(
+        sink.high_priority_sessions.lock().unwrap().as_slice(),
+        &[session_id],
+        "session cleanup must be delivered on the control lane, not the normal one"
+    );
+    assert!(
+        sink.normal_lane_sessions.lock().unwrap().is_empty(),
+        "session cleanup must not compete with client traffic on the normal lane"
+    );
+}
+
 #[test]
 pub(super) fn should_dispatch_session_cleanup_to_all_registered_domains() {
     // Arrange

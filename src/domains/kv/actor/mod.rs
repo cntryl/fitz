@@ -495,7 +495,16 @@ impl KvActor {
 
     fn build_scan_query(prefix: &[u8], query: &ScanQuery) -> Option<(cntryl_midge::Query, usize)> {
         let (start_key, end_key) = Self::scan_bounds(prefix, query)?;
-        let effective_limit = query.limit.unwrap_or(MAX_SCAN_ITEMS).min(MAX_SCAN_ITEMS);
+        // An explicit `limit=0` is a legal wire encoding but a meaningless
+        // request: taken literally it returns zero items with `has_more=1`
+        // and no key to resume from, so the client can never make progress
+        // no matter how many times it retries. Fold it into "no limit
+        // supplied", which already means "as much as fits".
+        let effective_limit = query
+            .limit
+            .filter(|&limit| limit > 0)
+            .unwrap_or(MAX_SCAN_ITEMS)
+            .min(MAX_SCAN_ITEMS);
         let mut midge_query = cntryl_midge::Query::new()
             .prefix(Bytes::copy_from_slice(prefix))
             .start_key(Bytes::from(start_key))
@@ -507,12 +516,36 @@ impl KvActor {
         Some((midge_query, effective_limit))
     }
 
+    /// A short, frame-safe rendering of a key for an error message.
+    fn truncated_key_for_error(key: &[u8]) -> String {
+        /// Bytes of the key echoed back. Small enough that the message can
+        /// never approach the response frame limit, even after lossy UTF-8
+        /// conversion triples the width of invalid bytes.
+        const MAX_ECHOED_KEY_BYTES: usize = 64;
+
+        let head = &key[..key.len().min(MAX_ECHOED_KEY_BYTES)];
+        let rendered = String::from_utf8_lossy(head);
+        if key.len() > MAX_ECHOED_KEY_BYTES {
+            format!("{rendered}...")
+        } else {
+            rendered.into_owned()
+        }
+    }
+
     fn collect_scan_items(
         iterator: cntryl_midge::ScanIterator<'_>,
         prefix: &[u8],
         effective_limit: usize,
     ) -> KvResponse {
-        let mut items = Vec::new();
+        // The item cap alone does not bound the response: it is carried as one
+        // TLV value with a u16 length, so a page of individually-legal pairs
+        // can still be unencodable. Charge each pair against the wire budget
+        // and stop early, reporting `has_more` so the client continues.
+        let ceiling = crate::domains::kv::scan_wire_budget::kv_scan_response_byte_ceiling();
+        let mut items: Vec<KvPair> = Vec::new();
+        let mut used = 0usize;
+        let mut has_more = false;
+        let mut last_item_unresumable = false;
         for entry in iterator {
             let (key, value) = match entry {
                 Ok(row) => row,
@@ -525,13 +558,71 @@ impl KvActor {
             let Some(user_key) = Self::strip_scoped_prefix(prefix, &key) else {
                 continue;
             };
+            // A large key is valid as the terminal row because the client never
+            // needs to echo it in another request. Only the next matching row
+            // proves that the page needs a continuation boundary and makes the
+            // previously returned key unusable.
+            if last_item_unresumable {
+                let boundary = &items
+                    .last()
+                    .expect("an unresumable boundary must belong to the last item")
+                    .key;
+                return KvResponse::Error {
+                    error: KvError::InvalidRequest(format!(
+                        "scan key {} ({} bytes) cannot become a continuation start_key without \
+                         itself exceeding the request wire limit",
+                        Self::truncated_key_for_error(boundary),
+                        boundary.len()
+                    )),
+                };
+            }
+            if items.len() >= effective_limit {
+                has_more = true;
+                break;
+            }
+            let cost = crate::domains::kv::scan_wire_budget::kv_scan_item_wire_bytes(
+                user_key.len(),
+                value.len(),
+            );
+            let unresumable = user_key.len()
+                > crate::domains::kv::scan_wire_budget::kv_scan_continuation_max_key_bytes();
+            if used.saturating_add(cost) > ceiling {
+                if items.is_empty() {
+                    // No page could ever carry this pair. Say so rather than
+                    // emitting a response that cannot be framed and is dropped
+                    // on the way out; a direct GET still returns it.
+                    //
+                    // The key is truncated deliberately: it can itself approach
+                    // the frame limit, and lossy UTF-8 conversion expands every
+                    // invalid byte threefold - so embedding it whole would
+                    // recreate the very unencodable response this branch
+                    // exists to prevent.
+                    //
+                    // `InvalidRequest`, not `BackendError`: this is permanent
+                    // for the pair as stored, not a transient backend fault -
+                    // retrying the identical scan can never succeed. Using the
+                    // generic backend-error code here would additionally risk
+                    // a client heuristic treating it as retryable, spinning
+                    // forever on a request that can never make progress.
+                    return KvResponse::Error {
+                        error: KvError::InvalidRequest(format!(
+                            "scan pair {} ({} byte key) is {cost} wire bytes, exceeding the \
+                             {ceiling}-byte limit a scan response can return",
+                            Self::truncated_key_for_error(&user_key),
+                            user_key.len()
+                        )),
+                    };
+                }
+                has_more = true;
+                break;
+            }
+            used = used.saturating_add(cost);
             items.push(KvPair {
                 key: Bytes::from(user_key),
                 value,
             });
+            last_item_unresumable = unresumable;
         }
-        let has_more = items.len() > effective_limit;
-        items.truncate(effective_limit);
         KvResponse::ScanResult { items, has_more }
     }
 
@@ -649,13 +740,30 @@ impl KvActor {
             );
             let upper = query.start.as_ref().map_or_else(
                 || Self::prefix_range_end(prefix),
-                |key| Self::immediate_successor(Self::encode_scoped_key(prefix, key)),
+                |key| {
+                    let scoped = Self::encode_scoped_key(prefix, key);
+                    // Descending: the upper bound is exclusive, so an inclusive
+                    // `start` needs its successor while an exclusive one is
+                    // already the right bound.
+                    if query.start_exclusive {
+                        scoped
+                    } else {
+                        Self::immediate_successor(scoped)
+                    }
+                },
             );
             Some((lower, upper))
         } else {
             let lower = query.start.as_ref().map_or_else(
                 || prefix.to_vec(),
-                |key| Self::encode_scoped_key(prefix, key),
+                |key| {
+                    let scoped = Self::encode_scoped_key(prefix, key);
+                    if query.start_exclusive {
+                        Self::immediate_successor(scoped)
+                    } else {
+                        scoped
+                    }
+                },
             );
             let upper = query.end.as_ref().map_or_else(
                 || Self::prefix_range_end(prefix),

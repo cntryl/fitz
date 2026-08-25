@@ -245,6 +245,15 @@ pub struct ScanQuery {
     pub limit: Option<usize>,
     /// Reverse scan order
     pub reverse: bool,
+    /// Treat `start` as exclusive rather than inclusive.
+    ///
+    /// Continuation needs this. A page bounded by the response byte budget can
+    /// hold a single pair, and resuming from an inclusive `start` then returns
+    /// that same pair forever - the scan never advances and later keys are
+    /// unreachable. Resuming exclusively guarantees progress in both
+    /// directions. Absent on the wire from older clients, where it defaults to
+    /// `false` and the inclusive behaviour is unchanged.
+    pub start_exclusive: bool,
 }
 
 /// KV operation response

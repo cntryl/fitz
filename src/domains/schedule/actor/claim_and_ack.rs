@@ -43,10 +43,18 @@ impl ScheduleActor {
     /// entries stored before that check existed. Forcing one into a page would
     /// produce a response that cannot be framed and is silently dropped, so it
     /// surfaces as an explicit, classifiable error naming the route instead.
+    ///
+    /// `continuation_reserve` charges each entry as if it might end up being
+    /// the last one on the page, so a caller whose page format re-encodes
+    /// that boundary entry's route a second time (e.g. `list_entries_v2`'s
+    /// continuation cursor, which duplicates `family_prefix + route`) does
+    /// not silently exceed the ceiling it already budgeted against. Callers
+    /// with no such duplication pass a reserve of zero.
     fn bounded_page_len(
         entries: &[Arc<ScheduleListEntry>],
         start: usize,
         take: usize,
+        continuation_reserve: impl Fn(&ScheduleListEntry) -> usize,
     ) -> Result<usize, String> {
         let ceiling =
             crate::domains::schedule::list_wire_budget::schedule_list_response_byte_ceiling();
@@ -54,7 +62,8 @@ impl ScheduleActor {
         let mut fitted = 0usize;
         for entry in entries.iter().skip(start).take(take) {
             let cost =
-                crate::domains::schedule::list_wire_budget::schedule_list_entry_wire_bytes(entry);
+                crate::domains::schedule::list_wire_budget::schedule_list_entry_wire_bytes(entry)
+                    .saturating_add(continuation_reserve(entry));
             if cost > ceiling {
                 if fitted > 0 {
                     // End the page here; the next page starts at the offending
@@ -102,10 +111,17 @@ impl ScheduleActor {
             .map_or(0, |index| index.saturating_add(1));
         let start = start.min(ordered.len());
         let requested = start.saturating_add(take).min(ordered.len()) - start;
+        // Reserve room for the continuation field, which re-encodes
+        // `family_prefix + route` for whichever entry ends up last on the
+        // page - on top of that route already being counted once inside the
+        // entry itself.
+        let family_prefix_len = family_prefix.len();
         let fitted = if requested == 0 {
             0
         } else {
-            Self::bounded_page_len(&ordered, start, requested)?
+            Self::bounded_page_len(&ordered, start, requested, |entry| {
+                family_prefix_len.saturating_add(entry.route.len())
+            })?
         };
         let end = start.saturating_add(fitted);
         let entries = Arc::new(ordered[start..end].to_vec());
@@ -139,7 +155,7 @@ impl ScheduleActor {
         // the response - only the wire budget can. Clients detect the short
         // page by comparing entry count against `total_count` and continue
         // from `offset`, which the V1 contract already supports.
-        let take = Self::bounded_page_len(&self.list_entries, start, requested)?;
+        let take = Self::bounded_page_len(&self.list_entries, start, requested, |_| 0)?;
 
         if start == 0 && take == self.list_entries.len() {
             if let Some(cache) = &self.list_cache {

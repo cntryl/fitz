@@ -1,4 +1,3 @@
-use super::super::response_sink_impl::MAX_RESPONSE_DELIVERY_ATTEMPTS;
 use super::*;
 
 #[test]
@@ -481,11 +480,12 @@ fn should_terminate_stream_when_a_response_chunk_cannot_be_delivered() {
     };
 
     // Act
-    // The worker keeps resending chunk 0 while the caller stays saturated,
-    // then tries to move on.
-    for _ in 0..MAX_RESPONSE_DELIVERY_ATTEMPTS {
-        deliver_chunk(0, b"chunk-zero", false).expect("deliver chunk 0");
-    }
+    // RPC RESPONSE has no ACK: a real worker never learns a chunk failed to
+    // reach the caller, so it cannot resend it - it just moves on to the next
+    // chunk (or closes, for a single-chunk response). The broker must
+    // therefore terminate on the FIRST undeliverable chunk rather than wait
+    // for a resend that will never come.
+    deliver_chunk(0, b"chunk-zero", false).expect("deliver chunk 0");
     deliver_chunk(1, b"chunk-one", false).expect("deliver chunk 1");
 
     // Assert
@@ -537,65 +537,60 @@ fn should_terminate_stream_when_a_response_chunk_cannot_be_delivered() {
 }
 
 #[test]
-fn should_retry_a_transiently_undeliverable_chunk_without_ending_the_stream() {
+fn should_terminate_immediately_on_the_first_undeliverable_terminal_chunk() {
     // Arrange
-    // A momentarily full outbound channel is backpressure, not corruption.
-    // The chunk must stay retryable at the same sequence: the broker must not
-    // advance past it, and must not tear down a stream that can still succeed
-    // once the caller drains.
+    // RPC RESPONSE has no ACK. A terminal (stream_end) chunk that cannot be
+    // forwarded must not wait around for a resend that never arrives - every
+    // supported SDK considers the call finished once it has sent the last
+    // chunk, so a request stuck waiting for a nonexistent retry would sit
+    // pending until the caller-side timeout instead of failing promptly.
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
     let sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model));
     let family = RouteFamily::new(1);
-    let request_route = Route::new("rpc://bench/system/resource/retry");
+    let request_route = Route::new("rpc://bench/system/resource/terminal-undeliverable");
     let request_source = session_inbox_address(family, 1);
     let worker_source = session_inbox_address(family, 42);
     let reply_frames = Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
     router.register(
         request_source.clone(),
         Arc::new(BackpressuredThenCapturingSink {
-            failures_remaining: parking_lot::Mutex::new(1),
+            // Never drains: nothing ever resends, so this must never succeed.
+            failures_remaining: parking_lot::Mutex::new(usize::MAX),
             frames: reply_frames.clone(),
         }) as Arc<dyn MailboxSink>,
     );
+    let worker_frames = Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
     router.register(
         worker_source.clone(),
         Arc::new(CaptureRpcFrameSink {
-            frames: Arc::new(parking_lot::Mutex::new(Vec::new())),
+            frames: worker_frames.clone(),
         }) as Arc<dyn MailboxSink>,
     );
     sink.register_registration_for_tests(test_rpc_worker(family, &request_route, 42));
     let request = deliver_test_rpc_request(&sink, family, &request_route, request_source);
 
     // Act
-    // Chunk 0 hits the full channel, then the worker resends the same chunk.
-    deliver_test_rpc_chunk(&sink, &request, family, &worker_source, 0, false)
-        .expect("deliver chunk 0");
-    deliver_test_rpc_chunk(&sink, &request, family, &worker_source, 0, false)
-        .expect("resend chunk 0");
-    deliver_test_rpc_chunk(&sink, &request, family, &worker_source, 1, true)
-        .expect("deliver chunk 1");
+    // A single terminal chunk, exactly as a real worker sends one and then
+    // considers the call done - no resend follows.
+    deliver_test_rpc_chunk(&sink, &request, family, &worker_source, 0, true)
+        .expect("deliver terminal chunk");
 
     // Assert
-    let frames = reply_frames.lock();
-    let forwarded = frames
-        .iter()
-        .map(parse_forwarded_rpc_response)
-        .collect::<Vec<_>>();
-    let sequences = forwarded
-        .iter()
-        .filter(|response| response.correlation_id == request.correlation_id)
-        .map(|response| response.seq)
-        .collect::<Vec<_>>();
     assert_eq!(
-        sequences,
-        vec![0, 1],
-        "the retried chunk must be delivered at its own sequence, then the stream continues"
+        sink.pending_request_count(),
+        0,
+        "an undeliverable terminal chunk must not stay pending waiting for a resend"
     );
+    let worker_frames = worker_frames.lock();
+    let worker_cancels = worker_frames
+        .iter()
+        .filter(|frame| frame.msg_type.as_u16() == 303)
+        .map(parse_forwarded_rpc_response)
+        .filter(|response| response.correlation_id == request.correlation_id && response.stream_end)
+        .count();
     assert!(
-        forwarded
-            .iter()
-            .any(|response| response.seq == 1 && response.stream_end),
-        "the stream must still complete normally: {forwarded:?}"
+        worker_cancels >= 1,
+        "the worker must be told the request ended, got {worker_frames:?}"
     );
 }

@@ -568,10 +568,22 @@ impl Router {
     pub(crate) fn route_high_priority(&self, envelope: Envelope) -> Result<(), RouteError> {
         let dest = envelope.destination().clone();
 
+        // Mirror `route()`'s exact-then-domain-pattern fallback. Every
+        // production domain sink registers via `register_domain_pattern`
+        // (see `domain_manifest.rs`), never an exact address, so an
+        // exact-only lookup here would make `route_high_priority` unusable
+        // for reaching a real domain sink - which is exactly the class of
+        // control-plane traffic (e.g. session cleanup dispatch) this method
+        // exists for.
+        let route_str = dest.route().as_str();
+        let extracted_domain = extract_domain(route_str);
+        let fallback_domain = extracted_domain.unwrap_or("");
+        let domain = extracted_domain.unwrap_or("unknown");
         let sink = self
-            .registry
-            .get(&dest)
-            .ok_or_else(|| RouteError::RouteNotFound(dest.clone()))?;
+            .resolve_sink_for_route(&dest, fallback_domain)
+            .ok_or_else(|| {
+                Self::route_not_found(&dest, domain, MissingRouteKind::ExactOrDomainPattern)
+            })?;
 
         match Self::catch_sink_panic(|| sink.deliver_high_priority(envelope)) {
             Ok(()) => Ok(()),

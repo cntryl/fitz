@@ -504,6 +504,7 @@ pub(super) fn should_scan_key_range() {
             end: Some(Bytes::from("key04")),
             limit: None,
             reverse: false,
+            start_exclusive: false,
         },
     });
 
@@ -890,6 +891,7 @@ pub(super) fn should_scan_with_limit() {
             end: None,
             limit: Some(3),
             reverse: false,
+            start_exclusive: false,
         },
     });
 
@@ -940,6 +942,7 @@ pub(super) fn should_scan_reverse() {
             end: None,
             limit: None,
             reverse: true,
+            start_exclusive: false,
         },
     });
 

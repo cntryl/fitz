@@ -149,6 +149,9 @@ impl QueueDomainSink {
         inventory_error: Option<String>,
     ) -> Self {
         let core = Arc::new(QueueDomainCore {
+            delivery_service_us: Arc::new(std::sync::atomic::AtomicU64::new(
+                super::model::assumed_service_us(),
+            )),
             store,
             queue_write_options,
             dedup_store,
@@ -175,7 +178,11 @@ impl QueueDomainSink {
             next_fast_flush_at: Mutex::new(Instant::now()),
         });
         let actor = Self::spawn_actor(core.clone());
-        Self { core, actor }
+        Self {
+            core,
+            actor,
+            inflight_client_deliveries: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        }
     }
 
     fn spawn_actor(core: Arc<QueueDomainCore>) -> crate::runtime::ManagedActor<QueueDomainCommand> {

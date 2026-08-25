@@ -610,3 +610,52 @@ fn should_not_evict_idle_queue_actor_with_live_inflight() {
         "actors with live inflight entries must stay warm until the inflight entry is gone"
     );
 }
+
+#[test]
+fn should_admit_session_cleanup_even_when_client_admission_is_exhausted() {
+    // Arrange
+    // Disconnect cleanup arrives through `router.route`, so it lands on the
+    // same normal-lane `deliver` as client traffic. If the admission gate can
+    // refuse it, a stalled queue starves cleanup for the whole retry window and
+    // the ticket is abandoned - leaving that session's inflight reservations
+    // and watches held with no queued command left to release them. Cleanup is
+    // control-plane work and must not be rationed by client load.
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = new_queue_domain_sink(
+        store,
+        Arc::new(Router::new()),
+        admin_read_model,
+        cntryl_midge::WriteOptions::buffered(),
+    );
+    let family = RouteFamily::new(1);
+
+    // Hold every admission slot, as a stalled actor under load would.
+    let window = crate::domains::queue::sink::model::queue_admission_window(
+        sink.core
+            .delivery_service_us
+            .load(std::sync::atomic::Ordering::Relaxed),
+    );
+    let held = (0..window)
+        .map(|_| {
+            crate::domains::queue::sink::model::try_admit_queue_delivery(
+                &sink.inflight_client_deliveries,
+                window,
+            )
+            .expect("slot")
+        })
+        .collect::<Vec<_>>();
+
+    // Act
+    let cleanup = sink.deliver(Envelope::new(
+        RouteAddress::new(family, Route::new("queue://cleanup-under-pressure")),
+        crate::runtime::SessionCleanup { session_id: 4_242 },
+    ));
+
+    // Assert
+    assert!(
+        cleanup.is_ok(),
+        "session cleanup must not be refused by client admission, got {cleanup:?}"
+    );
+    drop(held);
+}

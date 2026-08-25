@@ -117,6 +117,30 @@ fn should_route_to_domain_pattern_across_families() {
 }
 
 #[test]
+fn should_route_high_priority_to_domain_pattern_across_families() {
+    // Arrange
+    // Every domain sink in production registers via `register_domain_pattern`
+    // (see `domain_manifest.rs`), never an exact address. Control-plane
+    // callers such as session cleanup dispatch use `route_high_priority` to
+    // reach that sink and must not require an exact registration that
+    // production never creates.
+    let router = Router::new();
+    let sink = Arc::new(MockSink::new());
+    router.register_domain_pattern("queue", sink.clone());
+
+    // Act
+    let address = test_address(7, "queue://cleanup");
+    let result = router.route_high_priority(Envelope::new(address, "cleanup"));
+
+    // Assert
+    assert!(
+        result.is_ok(),
+        "expected domain-pattern fallback, got {result:?}"
+    );
+    assert_eq!(sink.delivered.lock().len(), 1);
+}
+
+#[test]
 fn should_prefer_exact_match_over_domain_pattern() {
     // Arrange
     let router = Router::new();

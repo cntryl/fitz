@@ -1478,3 +1478,136 @@ fn format_violation_report(violations: &[String]) -> String {
         violations.join("\n")
     }
 }
+
+#[test]
+fn should_document_every_defined_protocol_error_code() {
+    // Arrange
+    // An error code is only useful if a client can classify it. A code added
+    // without a spec entry is invisible to SDKs, which is how a new schedule
+    // code shipped undocumented and how a retryable code stayed unemitted for
+    // months. This is a pure set comparison, so it costs nothing to keep.
+    let repo_root = repo_root();
+    let source = read_source_file(&repo_root.join("src/protocol/error_codes.rs"));
+    let docs = collect_client_doc_text(&repo_root);
+
+    // Act
+    let defined = defined_error_codes(&source);
+    assert!(
+        defined.len() > 50,
+        "parsed only {} error codes; the scan is not reading the module and would \
+         pass vacuously",
+        defined.len()
+    );
+    let undocumented = defined
+        .into_iter()
+        .filter(|(code, _)| !documents_error_code(&docs, *code))
+        .map(|(code, name)| format!("{code} = {name}"))
+        .collect::<Vec<_>>();
+
+    // Assert
+    let report = format_violation_report(&undocumented);
+    assert!(
+        report.is_empty(),
+        "every protocol error code must appear in docs/clients:\n{report}"
+    );
+}
+
+/// Whether the docs mention `code` as a standalone number.
+///
+/// A plain substring test reports a false positive whenever the digits appear
+/// inside a larger number, a year, or an example payload - so `1014` would look
+/// documented because `21014` exists somewhere. Requiring non-digit boundaries
+/// on both sides makes the guard actually detect a missing entry.
+fn documents_error_code(docs: &str, code: u16) -> bool {
+    let needle = code.to_string();
+    docs.match_indices(&needle).any(|(index, _)| {
+        let before_is_digit = docs[..index]
+            .chars()
+            .next_back()
+            .is_some_and(|character| character.is_ascii_digit());
+        let after_is_digit = docs[index + needle.len()..]
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_digit());
+        !before_is_digit && !after_is_digit
+    })
+}
+
+/// Every `pub const ERR_*: u16 = N;` defined in the protocol error module.
+fn defined_error_codes(source: &str) -> Vec<(u16, String)> {
+    source
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            let rest = line.strip_prefix("pub const ")?;
+            let (name, rest) = rest.split_once(": u16 = ")?;
+            if !name.starts_with("ERR_") {
+                return None;
+            }
+            let value = rest.trim_end_matches(';').split(';').next()?.trim();
+            value
+                .parse::<u16>()
+                .ok()
+                .map(|code| (code, name.to_string()))
+        })
+        .collect()
+}
+
+fn collect_client_doc_text(repo_root: &Path) -> String {
+    let mut text = String::new();
+    let mut stack = vec![repo_root.join("docs/clients")];
+    while let Some(directory) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "md") {
+                text.push_str(&read_source_file(&path));
+                text.push('\n');
+            }
+        }
+    }
+    text
+}
+
+#[test]
+fn should_centralize_lexkey_prefix_range_bounds() {
+    // Arrange
+    // lexkey offers two upper bounds and they are not interchangeable.
+    // `encode_range_upper`/`prefix_end` yield `prefix || 0xff`, correct only
+    // when what follows the prefix is itself lexkey-encoded - UTF-8 strings and
+    // fixed-width numbers can never reach 0xff. Callers that append raw client
+    // bytes need `prefix_successor`, or keys beginning with 0xff sort outside
+    // their own range and become invisible to scans while writes still succeed.
+    //
+    // `storage_key::prefix_range_end` makes that choice once. Anywhere else
+    // reaching for the raw APIs re-opens the decision per call site, which is
+    // how the KV scan bug happened.
+    let repo_root = repo_root();
+    let allowed = repo_root.join("src/utils/storage_key.rs");
+    let raw_bound_apis = ["encode_range_upper", "prefix_end(", "range_upper_vec"];
+
+    // Act
+    let violations = source_files_under(&repo_root.join("src"))
+        .into_iter()
+        .filter(|path| *path != allowed)
+        .filter_map(|path| {
+            let contents = read_source_file(&path);
+            let used = raw_bound_apis.iter().find(|api| contents.contains(**api))?;
+            Some(format!(
+                "{} calls {used}; use storage_key::prefix_range_end instead",
+                relative_display_path(&repo_root, &path)
+            ))
+        })
+        .collect::<Vec<_>>();
+
+    // Assert
+    let report = format_violation_report(&violations);
+    assert!(
+        report.is_empty(),
+        "lexkey prefix range bounds must be chosen in one place:\n{report}"
+    );
+}
