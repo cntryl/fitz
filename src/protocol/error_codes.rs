@@ -68,6 +68,12 @@ pub mod kv {
     pub const ERR_UNAUTHORIZED: u16 = 1011; // AC-KV-010: Permission denied for KV operation
     pub const ERR_INVALID_SUBSCRIPTION_PATTERN: u16 = 1012;
     pub const ERR_SUBSCRIPTION_LIMIT: u16 = 1013;
+    /// The domain mailbox was full, so the request was never accepted.
+    ///
+    /// Retryable: nothing was enqueued and nothing applied, so re-sending after
+    /// a backoff is safe. Distinct from `ERR_BACKEND_ERROR`, which is fatal and
+    /// says nothing about whether the request took effect.
+    pub const ERR_BUSY: u16 = 1014;
 }
 
 /// Stream domain error codes (per `CLIENT_SPEC` Stream Domain section)
@@ -86,6 +92,12 @@ pub mod stream {
     /// A single record's wire-encoded size alone exceeds the maximum size of
     /// one broker response frame, so it cannot be returned by any read call.
     pub const ERR_READ_RESPONSE_TOO_LARGE: u16 = 2013;
+    /// The domain mailbox was full, so the request was never accepted.
+    ///
+    /// Retryable: nothing was enqueued and nothing applied, so re-sending after
+    /// a backoff is safe. Distinct from `ERR_BACKEND_ERROR`, which is fatal and
+    /// says nothing about whether the request took effect.
+    pub const ERR_BUSY: u16 = 2014;
 }
 
 /// Notice domain error codes (per `CLIENT_SPEC` Notice Domain section)
@@ -96,6 +108,12 @@ pub mod notice {
     pub const ERR_TRANSPORT_CLOSED: u16 = 3004;
     pub const ERR_BACKEND_ERROR: u16 = 3005;
     pub const ERR_UNAUTHORIZED: u16 = 3009; // AC-NOTICE-009: Permission denied for notice operation
+    /// The domain mailbox was full, so the request was never accepted.
+    ///
+    /// Retryable: nothing was enqueued and nothing applied, so re-sending after
+    /// a backoff is safe. Distinct from `ERR_BACKEND_ERROR`, which is fatal and
+    /// says nothing about whether the request took effect.
+    pub const ERR_BUSY: u16 = 3006;
 }
 
 /// Queue domain error codes (per `CLIENT_SPEC` Queue Domain section)

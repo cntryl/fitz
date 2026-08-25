@@ -882,6 +882,9 @@ still maintains live session-scoped transaction state keyed by `tx_id`.
 - 1011 = ERR_UNAUTHORIZED
 - 1012 = ERR_INVALID_SUBSCRIPTION_PATTERN
 - 1013 = ERR_SUBSCRIPTION_LIMIT
+- 1014 = ERR_BUSY (retryable)
+
+`ERR_BUSY` means the domain mailbox was full and the request was never accepted. Nothing applied, so re-sending after a backoff is safe; this is distinct from `ERR_BACKEND_ERROR`, which is fatal and says nothing about whether the request took effect.
 
 #### Acceptance Tests
 

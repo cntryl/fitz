@@ -601,6 +601,18 @@ fn should_allow_stream_followup_after_begin_without_global_stream_write_permissi
     assert_eq!(ingress.session_count(), 1);
 }
 
+struct BackpressureCapturingInbox;
+
+impl MailboxSink for BackpressureCapturingInbox {
+    fn deliver(&self, _envelope: Envelope) -> Result<(), DeliveryError> {
+        Ok(())
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
 #[test]
 fn should_surface_router_backpressure_in_ingress_decision() {
     // Arrange
@@ -609,6 +621,14 @@ fn should_surface_router_backpressure_in_ingress_decision() {
 
     let router = Arc::new(crate::runtime::Router::new());
     router.register_domain_pattern("kv", Arc::new(BackpressuredSink));
+    // A live session has an inbox; the rejection frame is written to it.
+    router.register(
+        crate::runtime::routing::RouteAddress::new(
+            RouteFamily::new(1),
+            crate::runtime::routing::Route::new("inbox://session/90"),
+        ),
+        Arc::new(BackpressureCapturingInbox) as Arc<dyn MailboxSink>,
+    );
 
     let ingress = RuntimeIngress::new(false).with_router(router);
     let session = make_session_info(90, TransportKind::Tcp);
@@ -630,7 +650,10 @@ fn should_surface_router_backpressure_in_ingress_decision() {
             .await;
 
         // Assert
-        assert_eq!(decision, IngressDecision::Backpressure);
+        // The command was never enqueued, so the frame is rejected and the
+        // session kept; closing would strip the client of the one signal that
+        // makes a retry safe.
+        assert_eq!(decision, IngressDecision::Accept);
         assert!(
             metrics.counter_get(obs::METRIC_ROUTER_BACKPRESSURE) > backpressure_before,
             "expected router backpressure metric to increase"

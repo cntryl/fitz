@@ -483,7 +483,7 @@ elif response.type == "Fenced":
 - 5004 = ERR_LEASE_NOT_FOUND (route never acquired)
 - 5005 = ERR_INVALID_TOKEN (lease token invalid or wrong)
 - 5006 = ERR_TIMEOUT (pending acquire timed out)
-- 5007 = ERR_QUEUE_FULL (too many pending waiters)
+- 5007 = ERR_QUEUE_FULL (retryable; too many pending waiters, or the lease mailbox was full and the request was never accepted)
 - 5008 = ERR_BAD_REQUEST (malformed Lease operation request)
 - 5009 = ERR_UNAUTHORIZED
 - 5010 = ERR_INVALID_SUBSCRIPTION_ROUTE

@@ -360,6 +360,9 @@ CLIENT → SERVER (second unsubscribe, last handler removed):
 - 3003 = ERR_SUBSCRIPTION_LIMIT
 - 3004 = ERR_TRANSPORT_CLOSED
 - 3005 = ERR_BACKEND_ERROR
+- 3006 = ERR_BUSY (retryable)
+
+`ERR_BUSY` means the domain mailbox was full and the request was never accepted. Nothing applied, so re-sending after a backoff is safe; this is distinct from `ERR_BACKEND_ERROR`, which is fatal and says nothing about whether the request took effect.
 - 3009 = ERR_UNAUTHORIZED
 
 #### Acceptance Tests
@@ -768,6 +771,9 @@ non-`READ` message as an error code.
 - 2011 = ERR_SUBSCRIPTION_LIMIT
 - 2012 = ERR_BACKEND_ERROR
 - 2013 = ERR_READ_RESPONSE_TOO_LARGE (a single record's wire-encoded size alone exceeds the maximum broker response frame size and can never be returned by any READ call at that offset; this is distinct from `max_bytes` pagination, which stops a page early instead of failing)
+- 2014 = ERR_BUSY (retryable)
+
+`ERR_BUSY` means the domain mailbox was full and the request was never accepted. Nothing applied, so re-sending after a backoff is safe; this is distinct from `ERR_BACKEND_ERROR`, which is fatal and says nothing about whether the request took effect.
 
 #### Acceptance Tests
 

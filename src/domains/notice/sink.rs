@@ -438,7 +438,9 @@ impl NoticeDomainCore {
             );
             return;
         }
-        let _ = completed_rx.recv_timeout(NOTICE_DELIVERY_HANDOFF_TIMEOUT);
+        model::record_delivery_handoff_outcome(
+            completed_rx.recv_timeout(NOTICE_DELIVERY_HANDOFF_TIMEOUT),
+        );
     }
 
     fn collect_matching_targets_for_route(

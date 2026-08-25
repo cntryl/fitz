@@ -100,7 +100,7 @@ The acceptance criteria in `client-acceptance-criteria.md` are the normative sou
 
 **REQ-PROTO-011 (T1)** The client MUST correctly handle all error code ranges and map each code to the right domain (AC-ERROR-002). Error code `XXYY` where `XX` identifies the domain and `YY` the specific error MUST NOT be confused across domains.
 
-**REQ-PROTO-012 (T1)** The client MUST correctly categorize retryable vs. fatal error codes per the table in `client-acceptance-criteria.md` (AC-ERROR-003). Retryable codes: 1004, 4005, 5001, 6001, 6002, 6003, 6004, 7010. All Unauthorized codes and non-retryable codes MUST be treated as fatal (no retry). Schedule 7010 retries remain subject to the operation's normal replay-safety rules.
+**REQ-PROTO-012 (T1)** The client MUST correctly categorize retryable vs. fatal error codes per the table in `client-acceptance-criteria.md` (AC-ERROR-003). Retryable codes: 1004, 1014, 2014, 3006, 4005, 5001, 5007, 6001, 6002, 6003, 6004, 7010. All Unauthorized codes and non-retryable codes MUST be treated as fatal (no retry). Schedule 7010 retries remain subject to the operation's normal replay-safety rules.
 
 **REQ-PROTO-013 (T1)** Frame size MUST be respected. Default server limit is 1 MB (configurable). Clients SHOULD expose this as a configurable option. Individual TLV values MUST NOT exceed 65535 bytes regardless of frame size setting.
 
@@ -291,7 +291,7 @@ Reconnect rebuild behavior is domain-specific:
 
 **REQ-ERR-005 (T1)** Domain error codes MUST be exported as named constants (e.g., `ErrKvKeyExists`, `ErrLeaseHeld`, `ErrRpcRouteNotRegistered`) so callers can write `errors.Is(err, fitz.ErrKvKeyExists)` without hard-coding integers.
 
-**REQ-ERR-006 (T1)** Retryable errors (codes 1004, 4005, 5001, 6001, 6002, 6003, 6004) MUST be distinguishable from fatal errors via a type assertion or helper (`fitz.IsRetryable(err) bool`). Callers MUST NOT be required to know the numeric ranges.
+**REQ-ERR-006 (T1)** Retryable errors (codes 1004, 1014, 2014, 3006, 4005, 5001, 5007, 6001, 6002, 6003, 6004, 7010) MUST be distinguishable from fatal errors via a type assertion or helper (`fitz.IsRetryable(err) bool`). Callers MUST NOT be required to know the numeric ranges.
 
 **REQ-ERR-007 (T1)** Server error messages MUST be included in the `Error()` string. `fmt.Errorf("kv get: %w", err)` wrapping MUST preserve the code through the chain.
 
