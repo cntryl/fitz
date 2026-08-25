@@ -107,11 +107,8 @@ pub(super) fn bounded_max_bytes(max_bytes: Option<usize>) -> usize {
     max_bytes.map_or(ceiling, |requested| requested.min(ceiling))
 }
 
-/// Conservative worst-case wire bytes for one record, counted once
-/// regardless of whether it is ultimately encoded as an `Event` or a
-/// `Filtered` item (`Filtered` is always cheaper, so charging the `Event`
-/// cost for both is safe). `route_len` is the record's actual encoded route
-/// length in bytes.
+/// Conservative worst-case wire bytes for one record encoded as an `Event`
+/// item. `route_len` is the record's actual encoded route length in bytes.
 pub(super) fn stream_record_wire_bytes(
     route_len: usize,
     body_len: usize,
@@ -121,6 +118,31 @@ pub(super) fn stream_record_wire_bytes(
         .saturating_add(route_len)
         .saturating_add(body_len)
         .saturating_add(metadata_len)
+}
+
+/// Conservative worst-case wire bytes for one record encoded as a `Filtered`
+/// marker: the route plus the same generous fixed overhead, with no body or
+/// metadata. Charging a filter-excluded record its (far larger) `Event` cost
+/// would let a body the client never receives stop - or reject - the read.
+pub(super) fn stream_filtered_marker_wire_bytes(route_len: usize) -> usize {
+    stream_record_wire_bytes(route_len, 0, 0)
+}
+
+/// Wire bytes for the item this record will actually become: the full `Event`
+/// encoding when it passes the read filter, a cheap `Filtered` marker when it
+/// does not. Charging a filter-excluded record its `Event` cost would let a
+/// body the client never receives stop - or fail - the page.
+pub(super) fn stream_read_item_wire_bytes(
+    matches_filter: bool,
+    route_len: usize,
+    body_len: usize,
+    metadata_len: usize,
+) -> usize {
+    if matches_filter {
+        stream_record_wire_bytes(route_len, body_len, metadata_len)
+    } else {
+        stream_filtered_marker_wire_bytes(route_len)
+    }
 }
 
 /// Byte length of `stream://{realm}/{area}/{resource}` without allocating.
@@ -135,36 +157,45 @@ pub(super) enum WireBudgetDecision {
     Stop,
 }
 
-/// Charge one record's wire bytes against a read response's running budget.
+/// Charge one item's wire bytes against a read response's running budget.
 ///
 /// Shared by every posting-based read loop (realm-resource, global,
 /// global-posting) so the "stop once full, but always make progress with a
 /// lone oversized-for-`max_bytes` record" policy - and the hard-ceiling
-/// rejection for a record that can never fit *any* response - lives in one
+/// handling for a record that can never fit *any* response - lives in one
 /// place instead of being copy-pasted per loop.
+///
+/// `item_bytes` must be the cost of the item the caller will actually push:
+/// `stream_record_wire_bytes` for an `Event`, `stream_filtered_marker_wire_bytes`
+/// for a `Filtered` marker. Charging a filter-excluded record its full `Event`
+/// cost would fail a read that only ever needed to send a cheap marker.
 ///
 /// # Errors
 ///
-/// Returns `Err` when `record_bytes` alone exceeds
+/// Returns `Err` when `item_bytes` alone exceeds
 /// `stream_response_byte_ceiling()`, meaning no response could ever encode
-/// this record even alone.
+/// this item even alone. Stream guarantees exact replay of committed history
+/// (see `docs/development/domain-boundaries-spec.md`), so an event the client
+/// asked for that cannot be sent must surface as an explicit, classifiable
+/// error naming its offset - never as a marker that silently drops the
+/// committed body from a rebuilt aggregate.
 pub(super) fn charge_wire_budget(
     offset: u64,
-    record_bytes: usize,
+    item_bytes: usize,
     bytes_read: usize,
     byte_limit: usize,
 ) -> Result<WireBudgetDecision, String> {
-    if bytes_read.saturating_add(record_bytes) > byte_limit {
+    if bytes_read.saturating_add(item_bytes) > byte_limit {
         if bytes_read > 0 {
             return Ok(WireBudgetDecision::Stop);
         }
-        // A tight client-requested `max_bytes` still forces this lone
-        // record through so pagination makes progress, as long as it fits
-        // in a wire frame at all. Only a record that itself exceeds the
-        // hard wire ceiling is rejected outright.
-        if record_bytes > stream_response_byte_ceiling() {
+        // A tight client-requested `max_bytes` still forces this lone item
+        // through so pagination makes progress, as long as it fits in a wire
+        // frame at all. Only an item that itself exceeds the hard wire
+        // ceiling is rejected outright.
+        if item_bytes > stream_response_byte_ceiling() {
             return Err(format!(
-                "ERR_READ_RESPONSE_TOO_LARGE: record at offset {offset} is {record_bytes} \
+                "ERR_READ_RESPONSE_TOO_LARGE: record at offset {offset} is {item_bytes} \
                  bytes, exceeding the {}-byte read response limit",
                 stream_response_byte_ceiling()
             ));
@@ -751,7 +782,9 @@ fn collect_filtered_read_page_items<
 where
     I: IntoIterator<Item = (u64, R)>,
     FLoadDiscriminator: FnMut(u64, &R) -> Result<Option<String>, String>,
-    FRecordBytes: FnMut(&R) -> usize,
+    // Returns the wire cost of the item this record becomes, given whether
+    // it passed the read filter.
+    FRecordBytes: FnMut(&R, bool) -> usize,
     FUpdateCursor: FnMut(&mut ReadCursorState, u64, &R),
     FFilteredItem: FnMut(u64, &R) -> StreamReadItem,
     FEventItem: FnMut(u64, R) -> StreamReadItem,
@@ -781,11 +814,14 @@ where
             None
         };
 
-        // Charged once per record regardless of whether it ends up an Event
-        // or a Filtered item on the wire (`record_bytes` is the Event-item
-        // wire cost; `Filtered` is always cheaper, so this charge is safe -
-        // if a little conservative - for that branch too).
-        let item_bytes = record_bytes(&record);
+        // Charge the cost of the item this record will actually become: a
+        // filter-excluded record is only ever a cheap `Filtered` marker, so
+        // charging it the full `Event` cost would let a body the client never
+        // receives stop the page - or, past the wire ceiling, fail a read
+        // that had nothing oversized to deliver in the first place.
+        let matches_filter =
+            StreamStore::record_matches_filter(state.filter, discriminator.as_deref());
+        let item_bytes = record_bytes(&record, matches_filter);
         match charge_wire_budget(
             offset,
             item_bytes,
@@ -801,7 +837,7 @@ where
 
         update_cursor(state.cursor, offset, &record);
         *state.total_bytes = state.total_bytes.saturating_add(item_bytes);
-        let item = if StreamStore::record_matches_filter(state.filter, discriminator.as_deref()) {
+        let item = if matches_filter {
             event_item(offset, record)
         } else {
             filtered_item(offset, &record)

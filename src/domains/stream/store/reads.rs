@@ -8,10 +8,10 @@ use super::{
     encode_compact_global_page_key, encode_compressed_compact_realm_page_key,
     encode_global_area_posting_key, encode_global_area_resource_posting_key,
     encode_global_resource_posting_key, encode_realm_resource_posting_key, read_limit_to_usize,
-    record_is_expired, stream_record_wire_bytes, stream_route_len, Bytes, CompactGlobalPageValue,
-    CompressedCompactRealmPageValue, PostingPageValue, ReadGlobalPostingParams,
-    ReadRealmPostingParams, StreamFilterSet, StreamFilteredReason, StreamReadItem, StreamRecord,
-    StreamStore, WireBudgetDecision, GLOBAL_PAGE_RECORD_LIMIT,
+    record_is_expired, stream_read_item_wire_bytes, stream_route_len, Bytes,
+    CompactGlobalPageValue, CompressedCompactRealmPageValue, PostingPageValue,
+    ReadGlobalPostingParams, ReadRealmPostingParams, StreamFilterSet, StreamFilteredReason,
+    StreamReadItem, StreamRecord, StreamStore, WireBudgetDecision, GLOBAL_PAGE_RECORD_LIMIT,
 };
 use crate::domains::stream::protocol::ReadCursor;
 
@@ -211,11 +211,12 @@ impl StreamStore {
                     &txn,
                     &crate::domains::stream::storage::encode_realm_discriminator_key(realm, offset),
                 )?;
-                // Charged once per record regardless of whether it ends up
-                // an Event or a Filtered item (Filtered is always cheaper,
-                // so this charge is safe - if a little conservative - for
-                // that branch too).
-                let record_bytes = stream_record_wire_bytes(
+                // Charge the cost of the item this record actually becomes:
+                // a filter-excluded record is only ever a cheap `Filtered`
+                // marker, never its full Event encoding.
+                let matches_filter = Self::record_matches_filter(filter, discriminator.as_deref());
+                let record_bytes = stream_read_item_wire_bytes(
+                    matches_filter,
                     route.as_str().len(),
                     record.body.len(),
                     record.metadata.as_ref().map_or(0, Bytes::len),
@@ -229,7 +230,7 @@ impl StreamStore {
                 }
                 last_examined = offset;
                 bytes_read = bytes_read.saturating_add(record_bytes);
-                if !Self::record_matches_filter(filter, discriminator.as_deref()) {
+                if !matches_filter {
                     items.push(StreamReadItem::Filtered {
                         route,
                         offset,
@@ -331,7 +332,9 @@ impl StreamStore {
                     &txn,
                     &super::encode_global_discriminator_key(offset),
                 )?;
-                let record_bytes = stream_record_wire_bytes(
+                let matches_filter = Self::record_matches_filter(filter, discriminator.as_deref());
+                let record_bytes = stream_read_item_wire_bytes(
+                    matches_filter,
                     route.as_str().len(),
                     record.body.len(),
                     record.metadata.as_ref().map_or(0, Bytes::len),
@@ -345,7 +348,7 @@ impl StreamStore {
                 }
                 last_examined = offset;
                 bytes_read = bytes_read.saturating_add(record_bytes);
-                if !Self::record_matches_filter(filter, discriminator.as_deref()) {
+                if !matches_filter {
                     items.push(StreamReadItem::Filtered {
                         route,
                         offset,
@@ -442,15 +445,17 @@ impl StreamStore {
                     "stream://{}/{}/{}",
                     record.realm, record.area, record.resource
                 ));
-                let record_bytes = stream_record_wire_bytes(
-                    stream_route_len(&record.realm, &record.area, &record.resource),
-                    record.body.len(),
-                    record.metadata.as_ref().map_or(0, Bytes::len),
-                );
                 let discriminator = Self::load_optional_discriminator(
                     &txn,
                     &super::encode_global_discriminator_key(offset),
                 )?;
+                let matches_filter = Self::record_matches_filter(filter, discriminator.as_deref());
+                let record_bytes = stream_read_item_wire_bytes(
+                    matches_filter,
+                    stream_route_len(&record.realm, &record.area, &record.resource),
+                    record.body.len(),
+                    record.metadata.as_ref().map_or(0, Bytes::len),
+                );
                 match charge_wire_budget(offset, record_bytes, bytes_read, byte_limit)? {
                     WireBudgetDecision::Stop => {
                         has_more = true;
@@ -460,7 +465,7 @@ impl StreamStore {
                 }
                 last_examined = offset;
                 bytes_read = bytes_read.saturating_add(record_bytes);
-                if !Self::record_matches_filter(filter, discriminator.as_deref()) {
+                if !matches_filter {
                     items.push(StreamReadItem::Filtered {
                         route,
                         offset,

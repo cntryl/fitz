@@ -349,4 +349,7 @@ pub struct RuntimeIngress {
     pub(super) auth_claims_config: crate::auth::AuthClaimsConfig,
     /// Broker-local route-family resolver for verified identity claims.
     pub(super) route_family_resolver: crate::auth::RouteFamilyResolverConfig,
+    /// Bounds ERROR-level diagnostics emitted for unauthenticated CONNECTs.
+    pub(super) connect_diagnostics_budget:
+        Arc<super::session_authenticator::ConnectDiagnosticsBudget>,
 }

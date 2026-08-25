@@ -1072,3 +1072,75 @@ fn should_allow_unlimited_retries_when_max_attempts_is_none() {
         _ => panic!("Expected Received response"),
     }
 }
+
+#[test]
+fn should_not_dead_letter_message_that_only_a_wildcard_reserve_cannot_carry() {
+    // Arrange
+    // A body that fits a concrete reserve response exactly, but not
+    // once the wildcard routing envelope and route string are added.
+    let store = Arc::new(
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
+    );
+    let queue_key = unique_queue_key("jobs-reserve-wildcard-overhead");
+    let mut actor = QueueActor::new(
+        RouteFamily::new(0),
+        queue_key,
+        store,
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    let response_budget = crate::domains::queue::protocol::MAX_QUEUE_RESPONSE_PAYLOAD_BYTES
+        - crate::domains::queue::protocol::RECEIVED_RESPONSE_HEADER_BYTES;
+    let concrete_overhead = crate::domains::queue::protocol::RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES;
+    let route = "queue://acme/jobs/wildcard-overhead";
+    let wildcard_overhead = concrete_overhead
+        + crate::domains::queue::protocol::ROUTED_MESSAGE_WIRE_OVERHEAD_BYTES
+        + route.len();
+    actor.handle_send(
+        Bytes::from(vec![0x5a; response_budget - concrete_overhead]),
+        None,
+    );
+
+    // Act
+    // Reserve through the wildcard wire shape.
+    let mut response_bytes_remaining = response_budget;
+    let (response, _) = actor.handle_receive_for_session_with_wire_budget(
+        TEST_SESSION_ID,
+        30,
+        Some(1),
+        &mut response_bytes_remaining,
+        wildcard_overhead,
+    );
+
+    // Assert
+    // The wildcard caller gets nothing, but the message stays ready
+    // for a concrete reserve rather than being permanently dead-lettered.
+    let QueueResponse::Received { messages } = response else {
+        panic!("Expected Received response");
+    };
+    assert!(messages.is_empty());
+    assert!(
+        actor.admin_dead_letters().is_empty(),
+        "message deliverable by a concrete reserve must not be dead-lettered"
+    );
+    assert_eq!(actor.ready_len(), 1);
+
+    // And a concrete reserve still delivers it.
+    let mut concrete_bytes_remaining = response_budget;
+    let (concrete_response, _) = actor.handle_receive_for_session_with_wire_budget(
+        TEST_SESSION_ID,
+        30,
+        Some(1),
+        &mut concrete_bytes_remaining,
+        concrete_overhead,
+    );
+    let QueueResponse::Received { messages } = concrete_response else {
+        panic!("Expected Received response");
+    };
+    assert_eq!(messages.len(), 1);
+}

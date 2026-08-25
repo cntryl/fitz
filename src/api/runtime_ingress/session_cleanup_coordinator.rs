@@ -7,15 +7,20 @@ use std::time::Duration;
 
 const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(10);
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(1);
-/// Give up on a cleanup ticket after this many failed attempts instead of
+/// Give up on a cleanup ticket once it has been pending this long instead of
 /// retrying forever. A domain actor that has permanently failed (see
 /// `ManagedActor`'s fail-closed supervision) can never accept a cleanup
 /// command again, so retrying indefinitely would leave the pending-cleanup
 /// gauge and oldest-age metric growing without bound instead of surfacing a
-/// terminal failure an operator can act on. With the exponential backoff
-/// above (10ms doubling to a 1s cap), this bounds the worst case at
-/// roughly 10+20+40+80+160+320+640+1000 ≈ 2.3s of retrying before giving up.
-const MAX_CLEANUP_ATTEMPTS: u32 = 8;
+/// terminal failure an operator can act on.
+///
+/// This is measured per ticket against its own age, not as an attempt count.
+/// The backoff above is worker-global and is reset to its 10ms floor whenever
+/// any *other* ticket in the batch succeeds, so under normal session churn an
+/// attempt counter does not track elapsed time at all - eight attempts can
+/// burn in under 100ms, abandoning the subscriptions and inflight leases of a
+/// session whose actor was merely busy.
+const MAX_CLEANUP_RETRY_WINDOW: Duration = Duration::from_millis(2_300);
 
 pub(super) struct SessionCleanupCoordinator<'a> {
     ingress: &'a RuntimeIngress,
@@ -205,7 +210,7 @@ async fn run_cleanup_worker(
                         made_progress = true;
                     } else if let Some(mut current) = pending.get_mut(&session_id) {
                         let attempts = ticket.attempts.saturating_add(1);
-                        if attempts >= MAX_CLEANUP_ATTEMPTS {
+                        if ticket.created_at.elapsed() >= MAX_CLEANUP_RETRY_WINDOW {
                             drop(current);
                             pending.remove(&session_id);
                             crate::observability::counter_inc(
@@ -214,9 +219,10 @@ async fn run_cleanup_worker(
                             tracing::error!(
                                 session_id = session_id,
                                 attempts,
+                                pending_ms = ticket.created_at.elapsed().as_millis(),
                                 pending_domains = ?failed_domains,
                                 "Ingress: session cleanup permanently failed after exhausting \
-                                 retries"
+                                 its retry window"
                             );
                         } else {
                             current.pending_domains = failed_domains;

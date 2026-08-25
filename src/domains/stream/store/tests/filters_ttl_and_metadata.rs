@@ -924,3 +924,62 @@ fn should_return_error_given_malformed_compact_realm_page_when_reading_realm() {
     let error = result.expect_err("malformed compact realm page should fail read");
     assert!(error.contains("ERR_INVALID_COMPACT_REALM_PAGE"));
 }
+
+#[test]
+fn should_emit_filtered_marker_for_oversized_record_excluded_by_filter() {
+    // Arrange
+    // An event too large to encode as an Event item, but whose
+    // discriminator excludes it from the filter - so it would only ever be
+    // sent as a cheap `Filtered` marker, never as an Event.
+    let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+    let events = vec![
+        EventPayload {
+            body: Bytes::from(vec![b'a'; MAX_STREAM_RESPONSE_PAYLOAD_BYTES + 1_000]),
+            metadata: None,
+            discriminator: Some(StreamDiscriminator::from("beta.created")),
+        },
+        EventPayload {
+            body: Bytes::from_static(b"alpha"),
+            metadata: None,
+            discriminator: Some(StreamDiscriminator::from("alpha.created")),
+        },
+    ];
+    store
+        .commit_records(CommitRecordsParams {
+            family: 1,
+            realm: "test",
+            area: "events",
+            resource: "oversized-filtered",
+            expected_resource_next_offset: 0,
+            events: &events,
+            ingest_metadata: None,
+            mode: StreamWriteMode::Buffered,
+        })
+        .expect("commit oversized filtered record");
+    let filter = StreamFilterSet {
+        clauses: vec![StreamFilterClause::StartsWith("alpha".to_string())],
+    };
+
+    // Act
+    let (items, _cursor) = store
+        .read_resource_with_filter(
+            &ReadResourceParams {
+                family: 1,
+                realm: "test",
+                area: "events",
+                resource: "oversized-filtered",
+                from_offset: 0,
+                limit: 10,
+                max_bytes: None,
+            },
+            Some(&filter),
+        )
+        .expect("filter-excluded oversized record must not fail the read");
+
+    // Assert
+    // The oversized record costs only a Filtered marker, so the read
+    // succeeds and the matching record after it is still delivered.
+    let records = event_records(items);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].body, Bytes::from_static(b"alpha"));
+}

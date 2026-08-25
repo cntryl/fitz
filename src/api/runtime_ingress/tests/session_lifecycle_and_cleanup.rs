@@ -920,3 +920,113 @@ async fn should_cleanup_real_queue_inflight_on_close() {
 
     assert_queue_cleanup_admin_state(&admin_read_model, next_worker_session_id);
 }
+
+/// Fails cleanup forever for one session, and fails every other session
+/// exactly once before succeeding - so the retry worker keeps observing
+/// progress on other tickets while the stuck one never advances.
+struct StickySessionFailureSink {
+    stuck_session_id: u64,
+    seen_once: Mutex<std::collections::HashSet<u64>>,
+}
+
+impl StickySessionFailureSink {
+    fn new(stuck_session_id: u64) -> Self {
+        Self {
+            stuck_session_id,
+            seen_once: Mutex::new(std::collections::HashSet::new()),
+        }
+    }
+}
+
+impl MailboxSink for StickySessionFailureSink {
+    fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        let cleanup = envelope
+            .payload::<crate::runtime::SessionCleanup>()
+            .expect("cleanup payload");
+        if cleanup.session_id == self.stuck_session_id {
+            // A merely busy actor, not a dead one.
+            return Err(DeliveryError::Timeout);
+        }
+        if self.seen_once.lock().unwrap().insert(cleanup.session_id) {
+            return Err(DeliveryError::Timeout);
+        }
+        Ok(())
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
+#[tokio::test]
+async fn should_retry_stuck_cleanup_for_full_window_while_other_tickets_progress() {
+    // Arrange
+    // The give-up threshold is documented as ~2.3s of retrying,
+    // derived from an exponential backoff. That backoff is worker-global and
+    // is reset to its 10ms floor whenever *any other* ticket succeeds, so
+    // under normal session churn a stuck ticket must not be abandoned in a
+    // small fraction of the intended window.
+    let router = Arc::new(crate::runtime::Router::new());
+    let admin_read_model = AdminReadModel::new();
+    let ingress = Arc::new(make_cleanup_ingress(router.clone(), admin_read_model));
+    let stuck_session_id = 9_100;
+
+    for domain in DispatchDomain::SESSION_CLEANUP_ORDER {
+        if domain == DispatchDomain::Queue {
+            continue;
+        }
+        router.register_domain_pattern(domain.as_str(), Arc::new(CleanupTrackingSink::default()));
+    }
+    router.register_domain_pattern(
+        DispatchDomain::Queue.as_str(),
+        Arc::new(StickySessionFailureSink::new(stuck_session_id)),
+    );
+
+    let mut stuck = make_session_info(stuck_session_id, TransportKind::Tcp);
+    stuck.route_family = RouteFamily::new(91);
+    ingress.on_open(stuck).await.unwrap();
+    ingress
+        .on_close(stuck_session_id, CloseReason::ClientClose)
+        .await;
+    assert!(ingress
+        .pending_session_cleanups
+        .contains_key(&stuck_session_id));
+
+    // Act
+    // Keep other tickets flowing through the worker so `made_progress`
+    // resets the shared backoff on essentially every pass.
+    let churn_ingress = ingress.clone();
+    let churn = tokio::spawn(async move {
+        for index in 0..300_u64 {
+            let session_id = 9_200 + index;
+            let mut session = make_session_info(session_id, TransportKind::Tcp);
+            session.route_family = RouteFamily::new(91);
+            churn_ingress.on_open(session).await.unwrap();
+            churn_ingress
+                .on_close(session_id, CloseReason::ClientClose)
+                .await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    });
+
+    let started = std::time::Instant::now();
+    tokio::time::timeout(Duration::from_secs(15), async {
+        while ingress
+            .pending_session_cleanups
+            .contains_key(&stuck_session_id)
+        {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("stuck cleanup ticket should eventually be given up on");
+    let elapsed = started.elapsed();
+    churn.abort();
+
+    // Assert
+    assert!(
+        elapsed >= Duration::from_secs(1),
+        "stuck ticket abandoned after only {elapsed:?}; concurrent progress on other \
+         tickets must not collapse its retry window"
+    );
+}

@@ -218,7 +218,17 @@ impl QueueActor {
         let empty_response_message_budget =
             crate::domains::queue::protocol::MAX_QUEUE_RESPONSE_PAYLOAD_BYTES
                 - crate::domains::queue::protocol::RECEIVED_RESPONSE_HEADER_BYTES;
-        if message_wire_bytes > empty_response_message_budget
+        // Dead-lettering is permanent, so it must only fire when *no* reserve
+        // shape could ever carry this body. A wildcard reserve pays extra
+        // per-message overhead (routing envelope + route string) that a
+        // concrete reserve does not, so judging by this caller's overhead
+        // would discard messages a concrete `RESERVE` delivers fine. Charge
+        // the smallest possible shape instead, and let a wildcard caller that
+        // cannot fit the message simply `Stop` and leave it ready.
+        let smallest_possible_message_wire_bytes =
+            crate::domains::queue::protocol::RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES
+                .saturating_add(body_bytes);
+        if smallest_possible_message_wire_bytes > empty_response_message_budget
             && self.divert_ready_or_log(id, DlqReason::ReserveResponseTooLarge, now_epoch_ms)
         {
             return ReserveWireBudgetDecision::Skip;

@@ -954,8 +954,13 @@ fn should_reject_read_when_lone_record_alone_exceeds_wire_frame_limit() {
     // progress (see the `should_return_first_oversized_global_record_to_advance_cursor`
     // sibling test in global_recovery_and_filters), but that means a record
     // this large can never be read back through this path without exceeding
-    // the frame limit — it must be rejected explicitly instead of built into
+    // the frame limit - it must be rejected explicitly instead of built into
     // an unencodable response.
+    //
+    // Stream guarantees exact replay of committed history, so this must stay
+    // a loud, classifiable failure naming the offending offset. Emitting a
+    // filtered marker and advancing instead would silently drop a committed
+    // event from any aggregate the client rebuilds from this stream.
     let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
     let oversized_body_len = MAX_STREAM_RESPONSE_PAYLOAD_BYTES + 1_000;
     let events = vec![EventPayload {
@@ -988,7 +993,7 @@ fn should_reject_read_when_lone_record_alone_exceeds_wire_frame_limit() {
     });
 
     // Assert: an explicit, classifiable error - never a response that would
-    // panic the TLV encoder.
+    // panic the TLV encoder, and never a silent skip.
     let error = result.expect_err("read of an unencodable lone record must fail explicitly");
     assert!(
         error.contains("ERR_READ_RESPONSE_TOO_LARGE"),

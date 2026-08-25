@@ -7,7 +7,7 @@ use super::{
     bounded_max_bytes, collect_filtered_read_page_items, decode_area_offset_from_key,
     decode_realm_offset_from_key, decode_resource_offset_from_key, encode_compact_area_page_key,
     encode_compact_resource_page_key, encode_compressed_compact_realm_page_key,
-    read_limit_to_usize, record_is_expired, stream_record_wire_bytes, stream_route_len,
+    read_limit_to_usize, record_is_expired, stream_read_item_wire_bytes, stream_route_len,
     update_area_cursor, update_realm_cursor, update_resource_cursor, Bytes, CompactAreaPageValue,
     CompactResourcePageValue, CompressedCompactRealmPageValue, ReadAreaParams, ReadCursorState,
     ReadPageState, ReadResourceParams, StreamFilterSet, StreamFilteredReason, StreamReadItem,
@@ -147,8 +147,9 @@ impl StreamStore {
                         ),
                     )
                 },
-                |page_record| {
-                    stream_record_wire_bytes(
+                |page_record, matches_filter| {
+                    stream_read_item_wire_bytes(
+                        matches_filter,
                         route.as_str().len(),
                         page_record.body.len(),
                         page_record.metadata.as_ref().map_or(0, Bytes::len),
@@ -314,8 +315,9 @@ impl StreamStore {
                         ),
                     )
                 },
-                |page_record| {
-                    stream_record_wire_bytes(
+                |page_record, matches_filter| {
+                    stream_read_item_wire_bytes(
+                        matches_filter,
                         stream_route_len(params.realm, params.area, &page_record.resource),
                         page_record.body.len(),
                         page_record.metadata.as_ref().map_or(0, Bytes::len),
@@ -472,8 +474,9 @@ impl StreamStore {
                         ),
                     )
                 },
-                |page_record| {
-                    stream_record_wire_bytes(
+                |page_record, matches_filter| {
+                    stream_read_item_wire_bytes(
+                        matches_filter,
                         stream_route_len(realm, &page_record.area, &page_record.resource),
                         page_record.body.len(),
                         page_record.metadata.as_ref().map_or(0, Bytes::len),
