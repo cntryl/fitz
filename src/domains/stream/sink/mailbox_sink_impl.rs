@@ -13,8 +13,6 @@ use crate::domains::stream::store::StreamStoreError;
 use crate::runtime::routing::RouteAddress;
 use crate::runtime::{Actor, Context};
 
-mod reply_wait;
-
 impl MailboxSink for StreamDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
         if !self.actor.is_running()
@@ -146,7 +144,7 @@ impl StreamDomainSink {
 
         reply_rx
             .recv_timeout(std::time::Duration::from_secs(1))
-            .unwrap_or_else(|error| Err(reply_wait::map_reply_wait_error(error)))
+            .unwrap_or_else(|error| Err(crate::runtime::reply_wait::map_reply_wait_error(error)))
     }
 }
 

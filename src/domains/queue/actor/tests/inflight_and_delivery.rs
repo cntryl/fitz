@@ -203,7 +203,9 @@ fn should_dead_letter_oversized_head_and_reserve_following_message() {
     let response_budget = crate::domains::queue::protocol::MAX_QUEUE_RESPONSE_PAYLOAD_BYTES
         - crate::domains::queue::protocol::RECEIVED_RESPONSE_HEADER_BYTES;
     let message_overhead = crate::domains::queue::protocol::RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES;
-    actor.handle_send(
+    // Stands in for a record written before the SEND limit existed; the
+    // reserve-time dead-letter path still has to cope with those.
+    actor.handle_send_unvalidated_for_tests(
         Bytes::from(vec![0x5a; response_budget - message_overhead + 1]),
         None,
     );
@@ -1101,7 +1103,9 @@ fn should_not_dead_letter_message_that_only_a_wildcard_reserve_cannot_carry() {
     let wildcard_overhead = concrete_overhead
         + crate::domains::queue::protocol::ROUTED_MESSAGE_WIRE_OVERHEAD_BYTES
         + route.len();
-    actor.handle_send(
+    // Above the new SEND limit (which uses the wildcard shape), so seed it as
+    // a record written before that limit existed.
+    actor.handle_send_unvalidated_for_tests(
         Bytes::from(vec![0x5a; response_budget - concrete_overhead]),
         None,
     );
@@ -1143,4 +1147,72 @@ fn should_not_dead_letter_message_that_only_a_wildcard_reserve_cannot_carry() {
         panic!("Expected Received response");
     };
     assert_eq!(messages.len(), 1);
+}
+
+#[test]
+fn should_reject_send_of_body_that_no_reserve_shape_could_return() {
+    // Arrange
+    // The inbound SEND ceiling and the outbound RESERVE ceiling are the same
+    // 65_535-byte payload limit, but the response spends part of it on a
+    // header and a per-message envelope. A body accepted on write above that
+    // budget can never be handed back, so it must be refused at SEND rather
+    // than accepted and dead-lettered later, after the producer was told it
+    // was stored.
+    let store = Arc::new(
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
+    );
+    let queue_key = unique_queue_key("jobs-send-oversized");
+    let route_len = format!(
+        "queue://{}/{}/{}",
+        queue_key.realm, queue_key.area, queue_key.resource
+    )
+    .len();
+    let mut actor = QueueActor::new(
+        RouteFamily::new(0),
+        queue_key,
+        store,
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    // The strictest shape is a wildcard reserve: header, message envelope,
+    // routing envelope, and the route string.
+    let max_deliverable_body = crate::domains::queue::protocol::MAX_QUEUE_RESPONSE_PAYLOAD_BYTES
+        - crate::domains::queue::protocol::RECEIVED_RESPONSE_HEADER_BYTES
+        - crate::domains::queue::protocol::RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES
+        - crate::domains::queue::protocol::ROUTED_MESSAGE_WIRE_OVERHEAD_BYTES
+        - route_len;
+
+    // Act
+    let accepted = actor.handle_send(Bytes::from(vec![0x5a; max_deliverable_body]), None);
+    let rejected = actor.handle_send(Bytes::from(vec![0x5a; max_deliverable_body + 1]), None);
+    let rejected_batch =
+        actor.handle_send_batch(&[(Bytes::from(vec![0x5a; max_deliverable_body + 1]), None)]);
+
+    // Assert
+    assert!(
+        matches!(accepted, QueueResponse::Sent { .. }),
+        "a body at the deliverable limit must still be accepted, got {accepted:?}"
+    );
+    let QueueResponse::Error { message } = rejected else {
+        panic!("expected an oversized SEND to be refused, got {rejected:?}");
+    };
+    assert!(
+        message.contains("ERR_MESSAGE_TOO_LARGE"),
+        "unexpected error: {message}"
+    );
+    assert!(
+        matches!(rejected_batch, QueueResponse::Error { .. }),
+        "a batch carrying an oversized body must be refused too, got {rejected_batch:?}"
+    );
+    assert_eq!(
+        actor.ready_len(),
+        1,
+        "the rejected bodies must not be stored"
+    );
+    assert!(actor.admin_dead_letters().is_empty());
 }

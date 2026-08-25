@@ -69,6 +69,12 @@ Upgrade every Schedule client decoder before routing traffic to the new broker.
 Rollback requires restoring the prior broker and prior client codec together;
 mixed versions cannot safely decode 705 frames.
 
+Schedule backend unavailability and saturation now use the dedicated
+`ERR_BACKEND_ERROR` (`7010`) wire code. Upgrade clients to preserve and classify
+that code as transient, subject to operation replay safety. Do not map these
+failures to `ERR_PARSE_ERROR` (`7004`), which incorrectly tells callers that
+their cron or payload is malformed.
+
 ### Subscription registration contract
 
 KV, Queue, Notice, Stream, RPC, and Schedule now share strict whole-segment

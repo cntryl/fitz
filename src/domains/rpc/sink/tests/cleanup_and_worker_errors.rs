@@ -705,13 +705,17 @@ fn should_remove_pending_request_on_stream_end_given_rpc_pending_table() {
     match result {
         RpcPendingResponseDisposition::Forward {
             pending: tracked,
-            removed_pending,
+            stream_end,
         } => {
             assert_eq!(tracked.caller_session_id, 42);
             assert_eq!(tracked.caller_inbox_addr, Some(caller_inbox_addr));
             assert_eq!(&tracked.route, worker_addr.route());
             assert_eq!(tracked.registration_id, 0);
-            assert!(removed_pending);
+            assert!(stream_end);
+            // The request is only dropped once the terminal chunk has
+            // actually reached the caller.
+            assert_eq!(pending.len(), 1);
+            assert!(pending.commit_response_delivery(RouteFamily::new(1), &correlation_id, true));
             assert_eq!(pending.len(), 0);
         }
         other => panic!("expected terminal response handling, found {other:?}"),

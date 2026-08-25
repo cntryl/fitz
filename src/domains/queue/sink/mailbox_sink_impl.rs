@@ -25,7 +25,6 @@ impl Drop for RuntimeSweepPendingReset<'_> {
 }
 
 mod pending_reserves;
-mod reply_wait;
 mod runtime_adapter;
 mod wildcard_receive;
 
@@ -140,7 +139,7 @@ impl QueueDomainSink {
 
         reply_rx
             .recv_timeout(QUEUE_ACTOR_REPLY_TIMEOUT)
-            .unwrap_or_else(|error| Err(reply_wait::map_reply_wait_error(error)))
+            .unwrap_or_else(|error| Err(crate::runtime::reply_wait::map_reply_wait_error(error)))
     }
 }
 
@@ -206,6 +205,8 @@ impl QueueDomainCore {
     }
 
     fn handle_cleanup_envelope(&self, envelope: &Envelope) -> bool {
+        // `QueueDomainCore::cleanup_session` runs inline rather than through an
+        // actor command, so there is no reply deadline to surface here.
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
             self.cleanup_session(cleanup.session_id);
             return true;

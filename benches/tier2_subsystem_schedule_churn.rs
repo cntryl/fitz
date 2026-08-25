@@ -76,7 +76,7 @@ fn delete_then_full_list_shared_cache(ctx: &mut StressContext, name: &str, count
     let mut total = Duration::ZERO;
 
     for _ in 0..DELETE_CHURN_OPERATION_COUNT {
-        let (cached, cached_total) = actor.list_entries(0, 0);
+        let (cached, cached_total) = actor.list_entries(0, 0).expect("list entries");
         assert_eq!(
             cached_total, count_u64,
             "delete churn setup should restore route"
@@ -88,7 +88,7 @@ fn delete_then_full_list_shared_cache(ctx: &mut StressContext, name: &str, count
             route: route.clone(),
         });
         assert!(matches!(response, ScheduleResponse::Ok));
-        let (entries, total_count) = actor.list_entries(0, 0);
+        let (entries, total_count) = actor.list_entries(0, 0).expect("list entries");
         total += started.elapsed();
         assert_eq!(
             total_count,
@@ -130,7 +130,7 @@ fn upsert_then_full_list_shared_cache(ctx: &mut StressContext, name: &str, count
     ];
     let mut actor = create_test_actor();
     populate_actor(&mut actor, &routes, &crons, &payloads, count);
-    let (cached, _) = actor.list_entries(0, 0);
+    let (cached, _) = actor.list_entries(0, 0).expect("list entries");
     black_box(cached.len());
 
     tier2_stress::measure_once(ctx, name, UPSERT_CHURN_OPERATION_COUNT, || {
@@ -144,7 +144,7 @@ fn upsert_then_full_list_shared_cache(ctx: &mut StressContext, name: &str, count
             });
             replacement_index = (replacement_index + 1) % replacement_crons.len();
             assert!(matches!(response, ScheduleResponse::Ok));
-            let (entries, total_count) = actor.list_entries(0, 0);
+            let (entries, total_count) = actor.list_entries(0, 0).expect("list entries");
             black_box((entries.len(), total_count));
         }
     });

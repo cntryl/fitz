@@ -105,6 +105,13 @@ pub enum DeliveryError {
     Timeout,
     /// A sink panicked while accepting an envelope.
     SinkPanicked,
+    /// The response could not be framed for the wire.
+    ///
+    /// Permanent for this payload, and deliberately not saturation: a TLV
+    /// value carries a `u16` length, so an oversized response can never be
+    /// sent no matter how long the transport is given. Retrying it wastes
+    /// work; the fix is always to paginate at the source.
+    InvalidPayload { len: usize, max: usize },
 }
 
 impl DeliveryError {
@@ -123,6 +130,10 @@ impl DeliveryError {
             DeliveryError::ActorStopped | DeliveryError::Timeout | DeliveryError::SinkPanicked => {
                 1.0
             }
+            // Not a saturation signal - the destination has room; the payload
+            // is simply unframable. Reporting 1.0 here would drive backoff
+            // against a condition that waiting cannot fix.
+            DeliveryError::InvalidPayload { .. } => 0.0,
         }
     }
 }
@@ -148,6 +159,9 @@ impl std::fmt::Display for DeliveryError {
             DeliveryError::ActorStopped => write!(f, "Actor has stopped"),
             DeliveryError::Timeout => write!(f, "Delivery timed out"),
             DeliveryError::SinkPanicked => write!(f, "Sink panicked during delivery"),
+            DeliveryError::InvalidPayload { len, max } => {
+                write!(f, "Response payload {len} bytes exceeds wire limit {max}")
+            }
         }
     }
 }
@@ -306,7 +320,8 @@ impl Router {
                 }
                 DeliveryError::ActorStopped
                 | DeliveryError::Timeout
-                | DeliveryError::SinkPanicked => {}
+                | DeliveryError::SinkPanicked
+                | DeliveryError::InvalidPayload { .. } => {}
             }
         }
     }

@@ -9,6 +9,14 @@ use super::{
     ScoredHotspot,
 };
 
+/// Explanation for RPC entries labelled `DataLossRisk`.
+///
+/// RPC holds no durable state: a lost response is in-flight work dropped
+/// under transport backpressure. Saying "durability gap" here sends an
+/// operator hunting for storage corruption that cannot exist.
+pub(super) const RPC_RESPONSE_LOSS_HINT: &str =
+    "Ephemeral RPC response loss caused by transport backpressure; no durable state is affected";
+
 fn i64_from_u64(value: u64) -> i64 {
     i64::try_from(value).unwrap_or(i64::MAX)
 }
@@ -463,6 +471,14 @@ pub(crate) fn analyze_rpc(
                 DiagnosticSeverity::High,
                 Some("correlation mismatch".to_string()),
             )
+        } else if transport_pressure > 0 {
+            // The backlog is not the problem; the path to the client is.
+            (
+                DiagnosisLabel::TransportBackpressure,
+                DiagnosticTrend::Growing,
+                DiagnosticSeverity::High,
+                Some("transport backpressure".to_string()),
+            )
         } else if pending_count > worker_count
             && (age_seconds.unwrap_or(0) >= 30 || pending_count >= worker_count.saturating_mul(2))
         {
@@ -509,16 +525,18 @@ pub(crate) fn analyze_rpc(
                 None,
             )
         };
-        let failure_count = if matches!(label, DiagnosisLabel::DataLossRisk) {
-            if late_response_pressure > 0 {
-                late_response_pressure
-            } else if correlation_pressure > 0 {
-                correlation_pressure
-            } else {
-                0
+        let failure_count = match label {
+            DiagnosisLabel::DataLossRisk => {
+                if late_response_pressure > 0 {
+                    late_response_pressure
+                } else {
+                    correlation_pressure
+                }
             }
-        } else {
-            0
+            // Shed work is failed work: counting it as zero is what let a
+            // saturated broker report success totals with no failures.
+            DiagnosisLabel::TransportBackpressure => transport_pressure,
+            _ => 0,
         };
         let mut hints = vec![];
         if pending_count > 0 {
@@ -547,6 +565,9 @@ pub(crate) fn analyze_rpc(
         }
         if late_response_pressure > 0 {
             hints.push(format!("{late_response_pressure} late response drop(s)"));
+        }
+        if matches!(label, DiagnosisLabel::DataLossRisk) {
+            hints.push(RPC_RESPONSE_LOSS_HINT.to_string());
         }
         if transport_pressure > 0 {
             hints.push(format!(
@@ -619,18 +640,16 @@ pub(crate) fn analyze_rpc(
             let label = if late_response_pressure > 0 || correlation_pressure > 0 {
                 DiagnosisLabel::DataLossRisk
             } else {
-                DiagnosisLabel::Throughput
+                // Not throughput: nothing is flowing slowly, work is being
+                // shed because the transport cannot carry it.
+                DiagnosisLabel::TransportBackpressure
             };
             let trend = if late_response_pressure > 0 || correlation_pressure > 0 {
                 DiagnosticTrend::Stalled
             } else {
                 DiagnosticTrend::Growing
             };
-            let severity = if late_response_pressure > 0 || correlation_pressure > 0 {
-                DiagnosticSeverity::High
-            } else {
-                DiagnosticSeverity::Medium
-            };
+            let severity = DiagnosticSeverity::High;
             let mut hints = vec![];
             if request_timeouts_total > 0 {
                 hints.push(format!("{request_timeouts_total} request timeout(s)"));
@@ -694,7 +713,11 @@ pub(crate) fn analyze_rpc(
                                 .unwrap_or(0),
                         ),
                         recent_transition_count: data_loss_pressure,
-                        failure_count: data_loss_pressure,
+                        failure_count: if data_loss_pressure > 0 {
+                            data_loss_pressure
+                        } else {
+                            transport_pressure
+                        },
                         contention_count: correlation_pressure,
                         waiter_count: pending.len(),
                         explanation_hints: hints,

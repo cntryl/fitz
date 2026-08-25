@@ -978,10 +978,19 @@ fn should_route_queue_cleanup_through_managed_actor() {
 
     // Act
     sink.stop_actor_for_tests();
-    sink.cleanup_session(worker_session_id);
+    let cleanup_result = sink.cleanup_session(worker_session_id);
     let snapshot = queue_snapshot(&sink, family, queue_route);
 
     // Assert
+    // The command cannot run against a stopped actor, and the caller is now
+    // told so rather than being handed a silent success.
+    assert!(
+        matches!(
+            cleanup_result,
+            Err(crate::runtime::DeliveryError::ActorStopped)
+        ),
+        "expected a reported failure, got {cleanup_result:?}"
+    );
     assert!(!sink.is_actor_running());
     assert_eq!(snapshot.messages_inflight, 1);
     assert_eq!(snapshot.messages_ready, 0);

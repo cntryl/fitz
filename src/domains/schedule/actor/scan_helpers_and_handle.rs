@@ -140,20 +140,27 @@ impl ScheduleActor {
                     Err(e) => ScheduleResponse::Error(ScheduleFailure::parse(e)),
                 }
             }
-            ScheduleMessage::List { offset, limit } => {
-                let (entries, total_count) = self.list_entries(offset, limit);
-                ScheduleResponse::ListDefs {
+            ScheduleMessage::List { offset, limit } => match self.list_entries(offset, limit) {
+                Ok((entries, total_count)) => ScheduleResponse::ListDefs {
                     entries,
                     total_count,
-                }
-            }
+                },
+                Err(error) => ScheduleResponse::Error(ScheduleFailure::new(
+                    ScheduleFailureCategory::InvalidTarget,
+                    error,
+                )),
+            },
             ScheduleMessage::ListV2 { cursor, limit } => {
-                let (entries, has_more, continuation) =
-                    self.list_entries_v2(cursor.as_deref(), limit);
-                ScheduleResponse::ListPage {
-                    entries,
-                    has_more,
-                    continuation,
+                match self.list_entries_v2(cursor.as_deref(), limit) {
+                    Ok((entries, has_more, continuation)) => ScheduleResponse::ListPage {
+                        entries,
+                        has_more,
+                        continuation,
+                    },
+                    Err(error) => ScheduleResponse::Error(ScheduleFailure::new(
+                        ScheduleFailureCategory::InvalidTarget,
+                        error,
+                    )),
                 }
             }
             ScheduleMessage::Subscribe { .. }

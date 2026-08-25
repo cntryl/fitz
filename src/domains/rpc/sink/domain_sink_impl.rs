@@ -674,7 +674,8 @@ impl RpcDomainRuntime<'_> {
                     _,
                     DeliveryError::ActorStopped
                     | DeliveryError::Timeout
-                    | DeliveryError::SinkPanicked,
+                    | DeliveryError::SinkPanicked
+                    | DeliveryError::InvalidPayload { .. },
                 ),
             ) => {
                 self.counter_inc("rpc_request_forward_errors_total");
@@ -686,7 +687,7 @@ impl RpcDomainRuntime<'_> {
                 DeliveryError::MailboxFull { .. } | DeliveryError::HighLaneFull { .. },
             )) => {
                 self.counter_inc("rpc_request_forward_errors_total");
-                self.counter_inc("rpc_backpressure_rejects_total");
+                self.counter_inc(super::mailbox_sink_impl::RPC_BACKPRESSURE_REJECTS_METRIC);
                 if let Some((pending, pending_len)) = self.remove_pending_request_for_family(
                     *dispatch.registration.addr.family(),
                     &dispatch.request.correlation_id,

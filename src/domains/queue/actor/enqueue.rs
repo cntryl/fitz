@@ -21,8 +21,49 @@ struct BatchSendPlan {
 }
 
 impl QueueActor {
+    /// Refuse a body that no RESERVE shape could ever return.
+    ///
+    /// Accepting it would tell the producer the message is stored and then
+    /// dead-letter it at reserve time, turning a rejectable write into a loss
+    /// the consumer discovers instead.
+    fn validate_deliverable_body(&self, body_len: usize) -> Result<(), String> {
+        let route_len = "queue://".len()
+            + self.queue_key.realm.len()
+            + 1
+            + self.queue_key.area.len()
+            + 1
+            + self.queue_key.resource.len();
+        let limit = crate::domains::queue::protocol::max_deliverable_body_bytes(route_len);
+        if body_len > limit {
+            return Err(format!(
+                "ERR_MESSAGE_TOO_LARGE: body is {body_len} bytes, exceeding the {limit}-byte \
+                 limit a reserve response can return for this queue"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Enqueue without the deliverable-body check, to stand in for records
+    /// written before that limit existed. The reserve-time dead-letter path
+    /// still has to handle those, so it still needs coverage.
+    #[cfg(test)]
+    pub(crate) fn handle_send_unvalidated_for_tests(
+        &mut self,
+        body: Bytes,
+        delay_seconds: Option<u64>,
+    ) -> QueueResponse {
+        self.send_inner(body, delay_seconds)
+    }
+
     /// Handle send operation
     pub fn handle_send(&mut self, body: Bytes, delay_seconds: Option<u64>) -> QueueResponse {
+        if let Err(message) = self.validate_deliverable_body(body.len()) {
+            return QueueResponse::Error { message };
+        }
+        self.send_inner(body, delay_seconds)
+    }
+
+    fn send_inner(&mut self, body: Bytes, delay_seconds: Option<u64>) -> QueueResponse {
         if !self.has_message_id_capacity(1) {
             return QueueResponse::Error {
                 message: "queue message id space exhausted".to_string(),
@@ -132,6 +173,13 @@ impl QueueActor {
     pub fn handle_send_batch(&mut self, items: &[(Bytes, Option<u64>)]) -> QueueResponse {
         if items.is_empty() {
             return QueueResponse::SentBatch { ids: vec![] };
+        }
+        // Validate the whole batch first: a partially-applied batch would
+        // leave the producer unable to tell which items were stored.
+        for (body, _) in items {
+            if let Err(message) = self.validate_deliverable_body(body.len()) {
+                return QueueResponse::Error { message };
+            }
         }
         if !self.has_message_id_capacity(Self::usize_to_u64(items.len())) {
             return QueueResponse::Error {

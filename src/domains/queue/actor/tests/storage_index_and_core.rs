@@ -609,11 +609,13 @@ pub(super) fn should_bound_hot_body_cache_total_bytes() {
     );
 
     // Act
+    // Bodies this large predate the SEND deliverable-body limit, so seed them
+    // unvalidated: the cache byte accounting still has to bound them.
     let body_size = QueueActor::BODY_CACHE_LIMIT_BYTES / 4 + 1;
     for i in 0..5 {
         let byte = u8::try_from(i).expect("body byte should fit in u8");
         let body = Bytes::from(vec![byte; body_size]);
-        let response = actor.handle_send(body, None);
+        let response = actor.handle_send_unvalidated_for_tests(body, None);
         assert!(matches!(response, QueueResponse::Sent { .. }));
     }
 

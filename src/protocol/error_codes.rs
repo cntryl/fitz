@@ -154,4 +154,8 @@ pub mod schedule {
     pub const ERR_SUBSCRIPTION_LIMIT: u16 = 7007;
     pub const ERR_INVALID_DELIVERY_MODE: u16 = 7008;
     pub const ERR_UNAUTHORIZED: u16 = 7009; // AC-SCHEDULE-008: Permission denied for schedule operation
+                                            // Schedule had no generic backend/saturation code; every other domain has
+                                            // one. Without it a busy schedule actor had to borrow a code that means
+                                            // something else (e.g. "invalid cron"), which misdirects the client.
+    pub const ERR_BACKEND_ERROR: u16 = 7010;
 }

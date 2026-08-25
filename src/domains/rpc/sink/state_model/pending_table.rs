@@ -18,7 +18,7 @@ pub(in crate::domains::rpc::sink) enum RpcPendingResponseDisposition {
     },
     Forward {
         pending: RpcPendingDispatchInfo,
-        removed_pending: bool,
+        stream_end: bool,
     },
     InvalidSequence {
         pending: RpcPendingDispatchInfo,
@@ -115,19 +115,20 @@ impl RpcPendingTable {
             };
         }
 
+        // Deliberately does not advance the sequence or drop the request here.
+        // Delivery can still fail, and a stream whose cursor moved past a
+        // chunk the caller never received presents later chunks as
+        // contiguous. `commit_response_delivery` runs once the chunk is
+        // actually handed over.
         if stream_end {
-            let pending = self
-                .remove(&key)
-                .expect("RPC pending request checked above")
-                .into_dispatch_info();
             return RpcPendingResponseDisposition::Forward {
-                pending,
-                removed_pending: true,
+                pending: pending.dispatch_info(),
+                stream_end: true,
             };
         }
 
         let tracked = pending.dispatch_info();
-        let Some(next_expected_seq) = pending.next_expected_seq.checked_add(1) else {
+        if pending.next_expected_seq.checked_add(1).is_none() {
             let pending = self
                 .remove(&key)
                 .expect("RPC pending request checked above")
@@ -136,12 +137,56 @@ impl RpcPendingTable {
                 pending,
                 expected_seq,
             };
-        };
-        pending.next_expected_seq = next_expected_seq;
+        }
         RpcPendingResponseDisposition::Forward {
             pending: tracked,
-            removed_pending: false,
+            stream_end: false,
         }
+    }
+
+    /// Advance past a chunk the caller has actually received.
+    ///
+    /// Returns `false` when the request is already gone. A `stream_end` chunk
+    /// completes the request and drops it.
+    pub(in crate::domains::rpc::sink) fn commit_response_delivery(
+        &mut self,
+        family: RouteFamily,
+        correlation_id: &uuid::Uuid,
+        stream_end: bool,
+    ) -> bool {
+        let key = RpcCorrelationKey {
+            family,
+            correlation_id: *correlation_id,
+        };
+        if stream_end {
+            return self.remove(&key).is_some();
+        }
+        let Some(pending) = self.pending.get_mut(&key) else {
+            return false;
+        };
+        pending.next_expected_seq = pending.next_expected_seq.saturating_add(1);
+        pending.delivery_retries = 0;
+        true
+    }
+
+    /// Record that a chunk could not be handed to the caller, returning how
+    /// many consecutive delivery failures this request has now seen.
+    ///
+    /// The sequence stays put, so the worker may resend the same chunk.
+    pub(in crate::domains::rpc::sink) fn record_delivery_failure(
+        &mut self,
+        family: RouteFamily,
+        correlation_id: &uuid::Uuid,
+    ) -> u32 {
+        let key = RpcCorrelationKey {
+            family,
+            correlation_id: *correlation_id,
+        };
+        let Some(pending) = self.pending.get_mut(&key) else {
+            return u32::MAX;
+        };
+        pending.delivery_retries = pending.delivery_retries.saturating_add(1);
+        pending.delivery_retries
     }
 
     pub(in crate::domains::rpc::sink) fn contains_correlation_in_family(

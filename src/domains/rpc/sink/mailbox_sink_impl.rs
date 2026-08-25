@@ -42,6 +42,10 @@ const REJECTION_SPECS: [RejectionSpec; 4] = [
     },
 ];
 
+/// Aggregate name the admin `backpressure_rejects_total` field reads.
+pub(in crate::domains::rpc::sink) const RPC_BACKPRESSURE_REJECTS_METRIC: &str =
+    "rpc_backpressure_rejects_total";
+
 impl MailboxSink for RpcDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
         self.deliver_with_priority(envelope, false)
@@ -180,9 +184,11 @@ impl RpcDomainSink {
         };
         enqueue_result?;
 
+        // Reporting a busy actor as a stopped one costs the caller its session:
+        // ingress treats `ActorStopped` as fatal but `Timeout` as retryable.
         reply_rx
-            .recv_timeout(std::time::Duration::from_secs(1))
-            .unwrap_or(Err(DeliveryError::ActorStopped))
+            .recv_timeout(super::state_model::RPC_ACTOR_REPLY_TIMEOUT)
+            .unwrap_or_else(|error| Err(crate::runtime::reply_wait::map_reply_wait_error(error)))
     }
 }
 
@@ -423,6 +429,12 @@ impl RpcDomainRuntime<'_> {
     ) -> DeliveryOutcome {
         let spec = &REJECTION_SPECS[reason as usize];
         self.counter_inc(spec.metric);
+        // The admin surface reads one aggregate name. Without this, admission
+        // control rejections were invisible in `backpressure_rejects_total`
+        // even though they are exactly what it is meant to report.
+        if spec.error_code == crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE {
+            self.counter_inc(RPC_BACKPRESSURE_REJECTS_METRIC);
+        }
         tracing::warn!(
             domain = "rpc",
             correlation_id = %req.correlation_id,
@@ -494,7 +506,8 @@ impl RpcDomainRuntime<'_> {
                     _,
                     DeliveryError::ActorStopped
                     | DeliveryError::Timeout
-                    | DeliveryError::SinkPanicked,
+                    | DeliveryError::SinkPanicked
+                    | DeliveryError::InvalidPayload { .. },
                 ),
             ) => self.handle_disconnected_worker_dispatch(envelope, meta, req, worker.session_id),
             Err(crate::runtime::RouteError::DeliveryFailed(
@@ -547,6 +560,9 @@ impl RpcDomainRuntime<'_> {
         req: RpcRequest,
     ) -> DeliveryOutcome {
         self.counter_inc("rpc_request_forward_errors_total");
+        // Inline dispatch backpressure counts toward the same aggregate as the
+        // deferred path; previously only the deferred path was visible.
+        self.counter_inc(RPC_BACKPRESSURE_REJECTS_METRIC);
         let pending_len = self
             .remove_pending_request_for_family(meta.route_family, &req.correlation_id)
             .map(|(_, pending_len)| pending_len)

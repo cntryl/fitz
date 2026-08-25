@@ -137,6 +137,7 @@ Clients **MUST** interpret error codes using this mapping.
 - `1001` (Transaction Not Found) → Fatal, do NOT retry
 - `6001` (ERR_RPC_TIMEOUT; worker accepted but did not reply before timeout) → Retryable with backoff
 - `6004` (ERR_ROUTE_NOT_REGISTERED; no workers registered for route) → Retryable with backoff
+- `7010` (Schedule ERR_BACKEND_ERROR; backend unavailable or saturated) → Retryable with backoff when the operation is safe to replay
 - `1011` (KV Unauthorized) → Fatal, do NOT retry
 - `2009` (Stream Unauthorized) → Fatal, do NOT retry
 - `4009` (Queue Unauthorized) → Fatal, do NOT retry
@@ -358,6 +359,7 @@ Error codes follow the format `XXYY` where:
 | 7007 | ERR_SUBSCRIPTION_LIMIT | Session exceeded 128 wildcard Schedule registrations | No |
 | 7008 | ERR_INVALID_DELIVERY_MODE | Delivery mode is not broadcast (0) or single (1) | No |
 | 7009 | ERR_UNAUTHORIZED | Permission denied for schedule operation | No |
+| 7010 | ERR_BACKEND_ERROR | Schedule backend unavailable or saturated; not a cron or payload parse failure | Yes, when the operation is safe to replay |
 
 ### Error Handling Guidelines
 

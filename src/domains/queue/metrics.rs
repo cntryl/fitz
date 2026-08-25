@@ -8,6 +8,12 @@ pub const METRIC_LATENCY_MS: &str = "fitz_queue_latency_ms";
 pub const METRIC_READY_GAUGE: &str = "fitz_queue_ready_gauge";
 pub const METRIC_DELAYED_GAUGE: &str = "fitz_queue_delayed_gauge";
 pub const METRIC_INFLIGHT_GAUGE: &str = "fitz_queue_inflight_gauge";
+/// Responses the actor produced but the transport could not deliver.
+///
+/// Success was previously recorded when the actor answered, before the
+/// response was routed - so a response that never reached the client still
+/// counted as a success and nothing counted the loss.
+pub const METRIC_RESPONSE_ROUTE_FAILURES_TOTAL: &str = "fitz_queue_response_route_failures_total";
 pub const METRIC_NOTIFY_DROPS_TOTAL: &str = "fitz_queue_notify_drops_total";
 
 // Operation-specific counters

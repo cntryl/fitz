@@ -3,7 +3,7 @@ use super::state_model::{
     session_inbox_address, Envelope, Instant, RpcDeliveryOutcome as DeliveryOutcome,
     RpcDomainRuntime, RpcPendingDispatchInfo, RpcPendingErrorDelivery,
     RpcPendingResponseDisposition, RpcResponseState, RpcState, RPC_CORRELATION_NOT_FOUND_ERROR,
-    RPC_INVALID_SEQUENCE_ERROR, RPC_WRONG_WORKER_ERROR,
+    RPC_INVALID_SEQUENCE_ERROR, RPC_RESPONSE_UNDELIVERABLE_ERROR, RPC_WRONG_WORKER_ERROR,
 };
 use crate::domains::rpc::protocol::RpcResponse;
 
@@ -23,6 +23,12 @@ fn elapsed_micros_u64(start: Instant) -> u64 {
 fn elapsed_micros_optional(start: Option<Instant>) -> u64 {
     start.map_or(0, elapsed_micros_u64)
 }
+
+/// Delivery attempts for one response chunk before the RPC is ended.
+///
+/// A caller whose outbound channel is briefly full should slow a stream, not
+/// kill it; a caller that never drains must not pin the request forever.
+pub(in crate::domains::rpc::sink) const MAX_RESPONSE_DELIVERY_ATTEMPTS: u32 = 3;
 
 impl RpcDomainRuntime<'_> {
     pub(super) fn handle_response_message(
@@ -63,8 +69,8 @@ impl RpcDomainRuntime<'_> {
             } => self.handle_wrong_response_worker(context, resp, owner_worker_session_id),
             RpcPendingResponseDisposition::Forward {
                 pending: caller_info,
-                removed_pending,
-            } => self.handle_forwarded_response(context, resp, &caller_info, removed_pending),
+                stream_end,
+            } => self.handle_forwarded_response(context, resp, &caller_info, stream_end),
             RpcPendingResponseDisposition::InvalidSequence {
                 pending: caller_info,
                 expected_seq,
@@ -129,32 +135,16 @@ impl RpcDomainRuntime<'_> {
         context: ResponseStateContext<'_>,
         resp: &RpcResponse,
         caller_info: &RpcPendingDispatchInfo,
-        removed_pending: bool,
+        stream_end: bool,
     ) -> DeliveryOutcome {
         let ResponseStateContext {
-            envelope: _,
+            envelope,
             meta,
-            mut state,
+            state,
             state_wait_us,
             state_hold_start,
             pending_route_lookup_us,
         } = context;
-        let mut state_changed = false;
-        if removed_pending {
-            self.release_global_pending(1);
-            let completion_latency_us = elapsed_micros_u64(caller_info.submitted_at_instant);
-            RpcResponseState::release_dispatch(
-                &mut *state,
-                caller_info,
-                Some(completion_latency_us),
-            );
-            let live_request_count = RpcResponseState::live_count(&*state);
-            self.histogram_observe_us("rpc_pending_route_remove_us", pending_route_lookup_us);
-            self.histogram_observe_us("rpc_pending_untrack_us", pending_route_lookup_us);
-            self.gauge_set("rpc_pending_requests", live_request_count as u64);
-            state_changed = true;
-        }
-
         let state_hold_us = elapsed_micros_optional(state_hold_start);
         drop(state);
 
@@ -162,12 +152,43 @@ impl RpcDomainRuntime<'_> {
         self.histogram_observe_us("rpc_response_state_wait_us", state_wait_us);
         self.histogram_observe_us("rpc_response_state_hold_us", state_hold_us);
 
-        self.forward_response_to_requester(meta, resp, caller_info);
+        // Forward before touching the request's cursor. A stream whose cursor
+        // moved past a chunk the caller never received would present every
+        // later chunk as contiguous.
+        if !self.forward_response_to_requester(meta, resp, caller_info) {
+            return self.handle_undeliverable_response(envelope, meta, resp, caller_info);
+        }
+
+        let mut state = self.core.state.lock();
+        let completed = RpcResponseState::commit_response_delivery(
+            &mut *state,
+            meta.route_family,
+            &resp.correlation_id,
+            stream_end,
+        );
+        let mut state_changed = false;
+        if stream_end && completed {
+            let completion_latency_us = elapsed_micros_u64(caller_info.submitted_at_instant);
+            RpcResponseState::release_dispatch(
+                &mut *state,
+                caller_info,
+                Some(completion_latency_us),
+            );
+            let live_request_count = RpcResponseState::live_count(&*state);
+            drop(state);
+            self.release_global_pending(1);
+            self.histogram_observe_us("rpc_pending_route_remove_us", pending_route_lookup_us);
+            self.histogram_observe_us("rpc_pending_untrack_us", pending_route_lookup_us);
+            self.gauge_set("rpc_pending_requests", live_request_count as u64);
+            state_changed = true;
+        } else {
+            drop(state);
+        }
 
         tracing::debug!(
             domain = "rpc",
             correlation_id = %resp.correlation_id,
-            stream_end = resp.stream_end,
+            stream_end,
             "Response forwarded to requester"
         );
 
@@ -184,15 +205,60 @@ impl RpcDomainRuntime<'_> {
         (None, state_changed.then_some(false), false)
     }
 
+    /// Handle a chunk the caller could not receive.
+    ///
+    /// The cursor has not moved, so the worker may resend the same chunk once
+    /// the caller drains - backpressure rather than failure. Only after the
+    /// retry budget is spent does the RPC end, because an unbounded wait would
+    /// pin the request forever against a caller that never recovers.
+    fn handle_undeliverable_response(
+        &self,
+        envelope: &Envelope,
+        meta: &crate::runtime::ClientFrameMeta,
+        resp: &RpcResponse,
+        caller_info: &RpcPendingDispatchInfo,
+    ) -> DeliveryOutcome {
+        let failures = {
+            let mut state = self.core.state.lock();
+            RpcResponseState::record_delivery_failure(
+                &mut *state,
+                meta.route_family,
+                &resp.correlation_id,
+            )
+        };
+        self.counter_inc("rpc_response_delivery_retries_total");
+        if failures < MAX_RESPONSE_DELIVERY_ATTEMPTS {
+            tracing::debug!(
+                domain = "rpc",
+                correlation_id = %resp.correlation_id,
+                seq = resp.seq,
+                failures,
+                "Caller outbound saturated; chunk stays retryable at its sequence"
+            );
+            return (None, None, false);
+        }
+
+        let worker_inbox_addr = envelope.source().cloned().unwrap_or_else(|| {
+            session_inbox_address(*envelope.destination().family(), meta.session_id)
+        });
+        self.terminate_undeliverable_stream(meta, resp, caller_info, worker_inbox_addr);
+        (None, Some(false), true)
+    }
+
+    /// Forward one response chunk, reporting whether the caller received it.
+    ///
+    /// The boolean matters: a chunk the caller never got leaves a hole in the
+    /// stream, and every later chunk would arrive looking contiguous. Callers
+    /// of this method must end the RPC rather than continue past a `false`.
     fn forward_response_to_requester(
         &self,
         meta: &crate::runtime::ClientFrameMeta,
         resp: &RpcResponse,
         caller_info: &RpcPendingDispatchInfo,
-    ) {
+    ) -> bool {
         let metrics_enabled = self.metrics.is_some();
         let response_forward_start = metrics_enabled.then(Instant::now);
-        if let Some(forward_envelope) =
+        let delivered = if let Some(forward_envelope) =
             RpcResponseForwarder::response_envelope(meta, resp, caller_info)
         {
             if let Err(error) = self.router.route(forward_envelope) {
@@ -200,16 +266,98 @@ impl RpcDomainRuntime<'_> {
                 tracing::warn!(
                     domain = "rpc",
                     correlation_id = %resp.correlation_id,
+                    seq = resp.seq,
                     error = ?error,
                     "Failed to forward response to requester"
                 );
+                false
+            } else {
+                true
             }
         } else {
             self.counter_inc("rpc_responses_dropped_closed_caller_total");
-        }
+            false
+        };
         if let Some(response_forward_start) = response_forward_start {
             self.histogram_observe_elapsed_us("rpc_response_forward_us", response_forward_start);
         }
+        delivered
+    }
+
+    /// End an RPC whose response chunk could not reach the caller.
+    ///
+    /// Backpressure may reject or terminate an RPC, but it must never drop a
+    /// chunk and keep forwarding later ones. Both sides are told: the caller
+    /// so it sees a terminated stream instead of a sequence gap, and the
+    /// worker so it stops producing into a stream that no longer exists.
+    fn terminate_undeliverable_stream(
+        &self,
+        meta: &crate::runtime::ClientFrameMeta,
+        resp: &RpcResponse,
+        caller_info: &RpcPendingDispatchInfo,
+        worker_inbox_addr: crate::runtime::routing::RouteAddress,
+    ) {
+        {
+            let mut state = self.core.state.lock();
+            if RpcResponseState::abandon_pending(
+                &mut *state,
+                meta.route_family,
+                &resp.correlation_id,
+            )
+            .is_none()
+            {
+                // Another path already ended this request.
+                return;
+            }
+            RpcResponseState::release_dispatch(&mut *state, caller_info, None);
+            let live_request_count = RpcResponseState::live_count(&*state);
+            self.gauge_set("rpc_pending_requests", live_request_count as u64);
+        }
+        self.release_global_pending(1);
+        self.counter_inc("rpc_streams_terminated_undeliverable_total");
+        self.counter_inc("rpc_cleanup_pending_removed_total");
+        self.schedule_admin_snapshot(false);
+        self.dispatch_queued_requests_for_family(
+            caller_info
+                .caller_inbox_addr
+                .as_ref()
+                .map_or(caller_info.family, |addr| *addr.family()),
+        );
+
+        if let Some(caller_inbox_addr) = caller_info.caller_inbox_addr.clone() {
+            self.forward_pending_error_deliveries(
+                vec![RpcPendingErrorDelivery {
+                    correlation_id: resp.correlation_id,
+                    caller_session_id: caller_info.caller_session_id,
+                    caller_inbox_addr,
+                }],
+                crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
+                RPC_RESPONSE_UNDELIVERABLE_ERROR,
+                "rpc_undeliverable_stream_errors_forwarded_total",
+                "rpc_undeliverable_stream_errors_dropped_total",
+            );
+        } else {
+            self.counter_inc("rpc_undeliverable_stream_errors_dropped_total");
+        }
+
+        self.forward_pending_error_deliveries(
+            vec![RpcPendingErrorDelivery {
+                correlation_id: resp.correlation_id,
+                caller_session_id: meta.session_id,
+                caller_inbox_addr: worker_inbox_addr,
+            }],
+            crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
+            RPC_RESPONSE_UNDELIVERABLE_ERROR,
+            "rpc_worker_stream_cancels_forwarded_total",
+            "rpc_worker_stream_cancels_dropped_total",
+        );
+
+        tracing::warn!(
+            domain = "rpc",
+            correlation_id = %resp.correlation_id,
+            seq = resp.seq,
+            "Terminated RPC stream: response chunk could not be delivered to the caller"
+        );
     }
 
     fn handle_invalid_response_sequence(

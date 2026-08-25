@@ -246,3 +246,114 @@ fn should_surface_sustained_domain_mailbox_backpressure_for_each_domain() {
         );
     }
 }
+
+struct CapturingInboxSink {
+    frames: Arc<Mutex<Vec<FrameContext>>>,
+}
+
+impl MailboxSink for CapturingInboxSink {
+    fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        let frame = envelope
+            .payload::<FrameContext>()
+            .expect("client frame payload")
+            .clone();
+        self.frames.lock().unwrap().push(frame);
+        Ok(())
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
+struct AlwaysTimingOutSink;
+
+impl MailboxSink for AlwaysTimingOutSink {
+    fn deliver(&self, _envelope: Envelope) -> Result<(), DeliveryError> {
+        Err(DeliveryError::Timeout)
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
+#[test]
+fn should_not_close_session_when_a_domain_command_times_out() {
+    // Arrange
+    // A domain actor that is merely slow must not cost the client its whole
+    // connection. The WebSocket is multiplexed, so closing it destroys every
+    // other domain's in-flight work on that session too - which is how one
+    // saturated Queue took down unrelated KV, Stream and Schedule traffic.
+    //
+    // The frame is answered with an indeterminate-outcome code, never a
+    // "queue full"/backpressure code: the command was already enqueued and may
+    // still execute, so telling the client it was rejected would invite a
+    // duplicate.
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
+    for (index, case) in domain_ingress_cases().into_iter().enumerate() {
+        let router = Arc::new(crate::runtime::Router::new());
+        router.register_domain_pattern(case.domain, Arc::new(AlwaysTimingOutSink));
+        let session_id = 7_000 + u64::try_from(index).unwrap();
+        // A real session has an inbox; the retryable error frame is written to
+        // it instead of the session being torn down.
+        let client_frames = Arc::new(Mutex::new(Vec::<FrameContext>::new()));
+        router.register(
+            crate::runtime::routing::RouteAddress::new(
+                RouteFamily::new(1),
+                crate::runtime::routing::Route::new(format!("inbox://session/{session_id}")),
+            ),
+            Arc::new(CapturingInboxSink {
+                frames: client_frames.clone(),
+            }) as Arc<dyn MailboxSink>,
+        );
+        let ingress = RuntimeIngress::new(false).with_router(router);
+        let session = make_session_info(session_id, TransportKind::Tcp);
+
+        // Act
+        let decision = rt.block_on(async {
+            ingress.on_open(session).await.unwrap();
+            ingress
+                .on_frame(
+                    session_id,
+                    case.channel_id,
+                    crate::protocol::tlv::MessageType::new(case.msg_type),
+                    case.payload,
+                )
+                .await
+        });
+
+        // Assert
+        assert!(
+            !matches!(decision, IngressDecision::Close(_)),
+            "a slow {} actor must not close the session, got {decision:?}",
+            case.domain
+        );
+        let frames = client_frames.lock().unwrap();
+        assert_eq!(
+            frames.len(),
+            1,
+            "{} should answer the one frame with an error, got {frames:?}",
+            case.domain
+        );
+        // Error body: [u8 flag][u32 code][string message].
+        let body = &frames[0].payload;
+        assert_eq!(body[0], 1, "{} should send an error body", case.domain);
+        let code = u32::from_be_bytes([body[1], body[2], body[3], body[4]]);
+        // A timed-out command was already enqueued and may still run. Reporting
+        // a backpressure/"full" code would tell the client it was rejected and
+        // invite a retry that duplicates the side effect; only queue ACK is
+        // deduplicated.
+        let retryable_rejection_codes = [
+            u32::from(crate::protocol::error_codes::queue::ERR_QUEUE_FULL),
+            u32::from(crate::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE),
+            u32::from(crate::protocol::error_codes::lease::ERR_QUEUE_FULL),
+        ];
+        assert!(
+            !retryable_rejection_codes.contains(&code),
+            "{} answered a timeout with rejection code {code}, which invites a duplicate",
+            case.domain
+        );
+    }
+}

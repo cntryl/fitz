@@ -109,6 +109,11 @@ pub const METRIC_INGRESS_DOMAIN_BACKPRESSURE_ACCEPTED: &str =
     "fitz_ingress_domain_backpressure_accepted_total";
 pub const METRIC_INGRESS_DOMAIN_BACKPRESSURE_EXHAUSTED: &str =
     "fitz_ingress_domain_backpressure_exhausted_total";
+/// Domain commands answered with a retryable error because the actor did not
+/// reply in time. Previously these closed the whole session, so they were
+/// only visible as disconnects.
+pub const METRIC_INGRESS_DOMAIN_DISPATCH_TIMEOUTS: &str =
+    "fitz_ingress_domain_dispatch_timeouts_total";
 
 pub const METRIC_AUTH_FAILURES: &str = "fitz_auth_failures_total";
 pub const METRIC_PERMISSION_DENIALS: &str = "fitz_permission_denials_total";

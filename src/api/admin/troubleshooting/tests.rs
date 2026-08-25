@@ -693,3 +693,61 @@ fn should_summarize_incident_given_broker_hotspot() {
         "inspect /api/v1/all/metrics"
     );
 }
+
+#[test]
+fn should_report_rpc_response_loss_as_ephemeral_not_durable() {
+    // Arrange
+    // RPC holds no durable state: a lost response is in-flight work dropped
+    // under transport backpressure. Calling it a "durability gap" and warning
+    // about "durable-state loss" sends an operator hunting for storage
+    // corruption that cannot exist.
+    let label = DiagnosisLabel::DataLossRisk;
+
+    // Act
+    let hints = crate::api::admin::troubleshooting::model::canonical_explanation_hints(
+        label,
+        vec![super::analysis_queue_rpc::RPC_RESPONSE_LOSS_HINT.to_string()],
+    );
+
+    // Assert
+    let joined = hints.join(" | ");
+    assert!(
+        hints
+            .iter()
+            .any(|hint| hint.contains("Ephemeral RPC response loss")),
+        "expected an ephemeral RPC explanation, got {joined}"
+    );
+    assert!(
+        !joined.contains("durable-state loss"),
+        "must not claim durable-state loss for an ephemeral domain: {joined}"
+    );
+}
+
+#[test]
+fn should_classify_rpc_transport_backpressure() {
+    // Arrange
+    // request_timeouts_total + backpressure_rejects_total was computed as
+    // `transport_pressure` and then used only in a hint string, so a broker
+    // shedding load under transport saturation still reported healthy with a
+    // zero failure count.
+    let now = Utc::now();
+
+    // Act
+    let analysis = analyze_rpc(&[], &[], 4, 7, 0, 0, 0, 0, now);
+    let hotspot = analysis.hotspots.first().expect("rpc hotspot");
+
+    // Assert
+    assert_eq!(
+        hotspot.hotspot.snapshot.diagnosis_label(),
+        DiagnosisLabel::TransportBackpressure,
+        "transport pressure must drive the diagnosis, not just a hint"
+    );
+    assert_eq!(
+        hotspot.hotspot.snapshot.failure_count, 11,
+        "timeouts and backpressure rejections must both be counted"
+    );
+    assert_ne!(
+        hotspot.hotspot.snapshot.severity,
+        DiagnosticSeverity::Informational
+    );
+}

@@ -307,27 +307,35 @@ impl ScheduleDomainRuntime<'_> {
             }
             ScheduleMessage::Cancel { route } => Self::apply_cancel_message(actor, &route),
             ScheduleMessage::List { offset, limit } => {
-                let (entries, total_count) = actor.list_entries(offset, limit);
-
-                (
-                    ScheduleResponse::ListDefs {
+                let response = match actor.list_entries(offset, limit) {
+                    Ok((entries, total_count)) => ScheduleResponse::ListDefs {
                         entries,
                         total_count,
                     },
-                    false,
-                )
+                    Err(error) => {
+                        ScheduleResponse::Error(crate::domains::schedule::ScheduleFailure::new(
+                            crate::domains::schedule::ScheduleFailureCategory::InvalidTarget,
+                            error,
+                        ))
+                    }
+                };
+                (response, false)
             }
             ScheduleMessage::ListV2 { cursor, limit } => {
-                let (entries, has_more, continuation) =
-                    actor.list_entries_v2(cursor.as_deref(), limit);
-                (
-                    ScheduleResponse::ListPage {
+                let response = match actor.list_entries_v2(cursor.as_deref(), limit) {
+                    Ok((entries, has_more, continuation)) => ScheduleResponse::ListPage {
                         entries,
                         has_more,
                         continuation,
                     },
-                    false,
-                )
+                    Err(error) => {
+                        ScheduleResponse::Error(crate::domains::schedule::ScheduleFailure::new(
+                            crate::domains::schedule::ScheduleFailureCategory::InvalidTarget,
+                            error,
+                        ))
+                    }
+                };
+                (response, false)
             }
             ScheduleMessage::Subscribe {
                 family_id,

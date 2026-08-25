@@ -100,7 +100,7 @@ The acceptance criteria in `client-acceptance-criteria.md` are the normative sou
 
 **REQ-PROTO-011 (T1)** The client MUST correctly handle all error code ranges and map each code to the right domain (AC-ERROR-002). Error code `XXYY` where `XX` identifies the domain and `YY` the specific error MUST NOT be confused across domains.
 
-**REQ-PROTO-012 (T1)** The client MUST correctly categorize retryable vs. fatal error codes per the table in `client-acceptance-criteria.md` (AC-ERROR-003). Retryable codes: 1004, 4005, 5001, 6001, 6002, 6003, 6004. All Unauthorized codes and non-retryable codes MUST be treated as fatal (no retry).
+**REQ-PROTO-012 (T1)** The client MUST correctly categorize retryable vs. fatal error codes per the table in `client-acceptance-criteria.md` (AC-ERROR-003). Retryable codes: 1004, 4005, 5001, 6001, 6002, 6003, 6004, 7010. All Unauthorized codes and non-retryable codes MUST be treated as fatal (no retry). Schedule 7010 retries remain subject to the operation's normal replay-safety rules.
 
 **REQ-PROTO-013 (T1)** Frame size MUST be respected. Default server limit is 1 MB (configurable). Clients SHOULD expose this as a configurable option. Individual TLV values MUST NOT exceed 65535 bytes regardless of frame size setting.
 
@@ -281,7 +281,7 @@ Reconnect rebuild behavior is domain-specific:
 
 **REQ-ERR-001 (T0)** Every server error response (status byte = 1) MUST be surfaced to the caller as a non-nil error. Silent discard of server errors is a critical defect.
 
-**REQ-ERR-002 (T0)** Every error MUST carry the numeric error code and the human-readable message from the server response payload.
+**REQ-ERR-002 (T0)** Every coded error MUST carry the numeric error code and the human-readable message from the server response payload. Stream `READ` uses a coded error envelope; other Stream operations use their protocol-defined plain message envelope and MUST NOT be decoded as if a numeric code were present.
 
 **REQ-ERR-003 (T0)** `context.Context` cancellation and deadline expiry MUST be correctly propagated: if the calling context is cancelled before a response arrives, the operation MUST return `ctx.Err()` (or a wrapping error), and the pending response MUST be cleaned up.
 

@@ -749,6 +749,13 @@ class StreamSession:
 
 #### Error Codes (2xxx)
 
+Stream uses operation-specific error envelopes. `READ` errors are
+`[status=1][u32 error_code][string message]` and preserve the numeric 2xxx
+code. Every other Stream operation uses the plain
+`[status=1][string message]` envelope. Clients must select the decoder from the
+request message type; they must not consume the first four bytes of a
+non-`READ` message as an error code.
+
 - 2001 = ERR_CONCURRENCY_CONFLICT (expected_offset mismatch)
 - 2002 = ERR_SESSION_ALREADY_ACTIVE
 - 2003 = ERR_SESSION_NOT_FOUND

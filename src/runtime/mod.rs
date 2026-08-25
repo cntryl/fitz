@@ -33,6 +33,7 @@ pub mod keyed_actor_pool;
 pub mod mailbox;
 pub mod managed_actor;
 pub mod matcher;
+pub mod reply_wait;
 pub mod router;
 pub mod routing;
 /// Actor-spawning fixture used only by unit tests; production uses family

@@ -33,6 +33,11 @@ impl ScheduleActor {
         now: Instant,
     ) -> Result<bool, String> {
         let route_parts = parse_concrete_schedule_route(&route)?;
+        crate::domains::schedule::list_wire_budget::validate_listable_definition(
+            &route,
+            &cron,
+            payload.len(),
+        )?;
         let (
             previous_next_fire_ms,
             previous_list_index,
@@ -183,6 +188,11 @@ impl ScheduleActor {
                     entry.route
                 ));
             }
+            crate::domains::schedule::list_wire_budget::validate_listable_definition(
+                &entry.route,
+                &entry.cron,
+                entry.payload.len(),
+            )?;
 
             let (
                 previous_fire_ms,

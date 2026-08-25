@@ -823,7 +823,11 @@ impl ScheduleDomainRuntime<'_> {
             return false;
         }
 
-        let cursor = state.round_robin_cursors.get(route).copied().unwrap_or(0);
+        let cursor = state
+            .round_robin_cursors
+            .get(route)
+            .copied()
+            .unwrap_or_else(|| super::delivery_strategy::initial_round_robin_cursor(route));
         let strategy =
             DeliveryStrategy::select_recipients(delivery_mode, &subscription_ids, cursor);
         let mut any_accepted = false;

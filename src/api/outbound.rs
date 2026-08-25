@@ -6,7 +6,7 @@ use crate::runtime::router::MailboxSink;
 use crate::runtime::EncodedClientFrame;
 
 use bytes::{BufMut, Bytes, BytesMut};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tracing::{debug, trace, warn};
 
@@ -147,7 +147,7 @@ impl SessionOutboundSink {
             "Outbound sink: encoding TLV response for session"
         );
         let encode_start = Self::encode_latency_start();
-        let bytes = encode_single_tlv_frame(ctx.msg_type, &ctx.payload);
+        let bytes = encode_single_tlv_frame(ctx.msg_type, &ctx.payload)?;
         Self::observe_encode_latency(encode_start);
         self.send_encoded_frame(ctx.session_id, &bytes)
     }
@@ -167,7 +167,7 @@ impl SessionOutboundSink {
         let bytes = encode_single_tlv_frame(
             crate::protocol::tlv::MessageType::new(frame.meta.message_type),
             &frame.payload,
-        );
+        )?;
         Self::observe_encode_latency(encode_start);
         self.send_encoded_frame(frame.meta.session_id, &bytes)
     }
@@ -248,7 +248,7 @@ impl SessionOutboundSink {
         let bytes = encode_single_tlv_frame(
             crate::protocol::tlv::MessageType::new(response.meta.message_type),
             &payload,
-        );
+        )?;
         Self::observe_encode_latency(encode_start);
         self.send_encoded_frame(response.meta.session_id, &bytes)
     }
@@ -271,7 +271,7 @@ impl SessionOutboundSink {
         let bytes = encode_single_tlv_frame(
             crate::protocol::tlv::MessageType::new(crate::protocol::kv::msg_type::NOTIFY),
             &payload,
-        );
+        )?;
         Self::observe_encode_latency(encode_start);
         self.send_encoded_frame(notification.session_id, &bytes)
     }
@@ -291,7 +291,7 @@ impl SessionOutboundSink {
         let bytes = encode_single_tlv_frame(
             crate::protocol::tlv::MessageType::new(response.meta.message_type),
             &payload,
-        );
+        )?;
         Self::observe_encode_latency(encode_start);
         self.send_encoded_frame(response.meta.session_id, &bytes)
     }
@@ -314,7 +314,7 @@ impl SessionOutboundSink {
         let bytes = encode_single_tlv_frame(
             crate::protocol::tlv::MessageType::new(crate::protocol::lease_codec::msg_type::NOTIFY),
             &payload,
-        );
+        )?;
         Self::observe_encode_latency(encode_start);
         self.send_encoded_frame(notification.session_id, &bytes)
     }
@@ -334,7 +334,7 @@ impl SessionOutboundSink {
         let bytes = encode_single_tlv_frame(
             crate::protocol::tlv::MessageType::new(response.meta.message_type),
             &payload,
-        );
+        )?;
         Self::observe_encode_latency(encode_start);
         self.send_encoded_frame(response.meta.session_id, &bytes)
     }
@@ -354,7 +354,7 @@ impl SessionOutboundSink {
             &notification.route,
             &notification.payload,
         );
-        let bytes = encode_single_tlv_frame(crate::protocol::tlv::MessageType::new(504), &payload);
+        let bytes = encode_single_tlv_frame(crate::protocol::tlv::MessageType::new(504), &payload)?;
         Self::observe_encode_latency(encode_start);
         self.send_encoded_frame(notification.session_id, &bytes)
     }
@@ -377,7 +377,7 @@ impl SessionOutboundSink {
         let bytes = encode_single_tlv_frame(
             crate::protocol::tlv::MessageType::new(response.meta.message_type),
             &payload,
-        );
+        )?;
         Self::observe_encode_latency(encode_start);
         self.send_encoded_frame(response.meta.session_id, &bytes)
     }
@@ -396,7 +396,7 @@ impl SessionOutboundSink {
             &notification.route,
             &notification.payload,
         );
-        let bytes = encode_single_tlv_frame(crate::protocol::tlv::MessageType::new(705), &payload);
+        let bytes = encode_single_tlv_frame(crate::protocol::tlv::MessageType::new(705), &payload)?;
         Self::observe_encode_latency(encode_start);
         self.send_encoded_frame(notification.session_id, &bytes)
     }
@@ -419,7 +419,7 @@ impl SessionOutboundSink {
         let bytes = encode_single_tlv_frame(
             crate::protocol::tlv::MessageType::new(response.meta.message_type),
             &payload,
-        );
+        )?;
         Self::observe_encode_latency(encode_start);
         self.send_encoded_frame(response.meta.session_id, &bytes)
     }
@@ -439,7 +439,7 @@ impl SessionOutboundSink {
             &notification.route,
             &notification.payload,
         );
-        let bytes = encode_single_tlv_frame(crate::protocol::tlv::MessageType::new(609), &payload);
+        let bytes = encode_single_tlv_frame(crate::protocol::tlv::MessageType::new(609), &payload)?;
         Self::observe_encode_latency(encode_start);
         self.send_encoded_frame(notification.session_id, &bytes)
     }
@@ -462,7 +462,7 @@ impl SessionOutboundSink {
         let bytes = encode_single_tlv_frame(
             crate::protocol::tlv::MessageType::new(response.meta.message_type),
             &payload,
-        );
+        )?;
         Self::observe_encode_latency(encode_start);
         self.send_encoded_frame(response.meta.session_id, &bytes)
     }
@@ -485,13 +485,12 @@ impl SessionOutboundSink {
         let bytes = encode_single_tlv_frame(
             crate::protocol::tlv::MessageType::new(crate::protocol::queue_codec::msg_type::NOTIFY),
             &payload,
-        );
+        )?;
         Self::observe_encode_latency(encode_start);
         self.send_encoded_frame(notification.session_id, &bytes)
     }
 
     fn send_encoded_frame(&self, session_id: u64, bytes: &Bytes) -> Result<(), DeliveryError> {
-        const MAX_OUTBOUND_SEND_RETRIES: usize = 100;
         let metrics_enabled = obs::hot_path_metrics_enabled();
 
         trace!(
@@ -534,6 +533,7 @@ impl SessionOutboundSink {
                         warn!(
                             session_id = session_id,
                             capacity = capacity,
+                            attempts = attempt,
                             "Outbound sink: transport channel full"
                         );
                         return Err(DeliveryError::MailboxFull {
@@ -541,7 +541,10 @@ impl SessionOutboundSink {
                             current_len: capacity,
                         });
                     }
-                    std::thread::yield_now();
+                    match outbound_retry_backoff(attempt) {
+                        Some(delay) => std::thread::sleep(delay),
+                        None => std::thread::yield_now(),
+                    }
                 }
                 Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
                     warn!(
@@ -555,13 +558,49 @@ impl SessionOutboundSink {
     }
 }
 
-fn encode_single_tlv_frame(msg_type: crate::protocol::tlv::MessageType, payload: &[u8]) -> Bytes {
-    assert!(
-        u16::try_from(payload.len()).is_ok(),
-        "TLV value too large: {} bytes (max {})",
-        payload.len(),
-        u16::MAX
-    );
+/// Attempts before a frame that still cannot be queued is given up on.
+const MAX_OUTBOUND_SEND_RETRIES: usize = 100;
+/// Attempts served by a cheap yield before real waiting begins.
+const OUTBOUND_YIELD_ATTEMPTS: usize = 8;
+/// Ceiling on any single wait between send attempts.
+const OUTBOUND_MAX_RETRY_BACKOFF: Duration = Duration::from_millis(2);
+
+/// How long to wait before outbound send attempt `attempt`.
+///
+/// `None` means yield instead of sleeping. The first few attempts stay on a
+/// yield because a transport channel that is momentarily full usually drains
+/// within a scheduling quantum. Past that, spinning is not waiting: a hundred
+/// `yield_now` calls elapse in microseconds, so a frame would be abandoned
+/// before a briefly-saturated consumer could possibly catch up. The remaining
+/// attempts escalate to a bounded sleep so a real burst gets real time.
+fn outbound_retry_backoff(attempt: usize) -> Option<Duration> {
+    if attempt < OUTBOUND_YIELD_ATTEMPTS {
+        return None;
+    }
+    let step = attempt - OUTBOUND_YIELD_ATTEMPTS;
+    let micros = 100_u64.saturating_mul(1_u64 << step.min(5));
+    Some(Duration::from_micros(micros).min(OUTBOUND_MAX_RETRY_BACKOFF))
+}
+
+/// Frame one TLV value for the wire.
+///
+/// # Errors
+///
+/// Returns `DeliveryError::InvalidPayload` when the payload exceeds the `u16`
+/// length a TLV value can carry. This used to be an assertion, which turned
+/// any aggregate-overflow bug in any domain - a schedule listing, a large read
+/// page - into a broker panic. Framing must fail the one delivery, never the
+/// process; the real fix always lives at the source, which must paginate.
+fn encode_single_tlv_frame(
+    msg_type: crate::protocol::tlv::MessageType,
+    payload: &[u8],
+) -> Result<Bytes, DeliveryError> {
+    if u16::try_from(payload.len()).is_err() {
+        return Err(DeliveryError::InvalidPayload {
+            len: payload.len(),
+            max: usize::from(u16::MAX),
+        });
+    }
 
     let header_len = msg_type.encoded_type_len() + 2;
     let mut out = BytesMut::with_capacity(header_len + payload.len());
@@ -576,7 +615,7 @@ fn encode_single_tlv_frame(msg_type: crate::protocol::tlv::MessageType, payload:
     let payload_len = u16::try_from(payload.len()).unwrap_or(u16::MAX);
     out.extend_from_slice(&payload_len.to_be_bytes());
     out.extend_from_slice(payload);
-    out.freeze()
+    Ok(out.freeze())
 }
 
 #[cfg(test)]
@@ -669,5 +708,63 @@ mod tests {
         assert_eq!(result, Ok(()));
         let occupied = handle.join().expect("thread joined");
         assert_eq!(occupied, Bytes::from_static(b"occupied"));
+    }
+
+    #[test]
+    fn should_wait_meaningfully_before_giving_up_on_a_full_outbound_channel() {
+        // Arrange
+        // Spinning on `yield_now` for every attempt takes microseconds, so a
+        // frame is abandoned long before a briefly-saturated consumer has any
+        // chance to drain. The schedule must yield for the first few attempts
+        // (the genuinely transient case) and then wait in escalating steps.
+        let schedule = (0..MAX_OUTBOUND_SEND_RETRIES)
+            .map(outbound_retry_backoff)
+            .collect::<Vec<_>>();
+
+        // Act
+        let total_wait: Duration = schedule.iter().flatten().copied().sum();
+        let yielded_attempts = schedule.iter().filter(|delay| delay.is_none()).count();
+
+        // Assert
+        assert!(
+            yielded_attempts >= 4,
+            "the first attempts should stay on a cheap yield, got {yielded_attempts}"
+        );
+        assert!(
+            total_wait >= Duration::from_millis(50),
+            "a frame must not be dropped after only {total_wait:?} of waiting"
+        );
+        assert!(
+            total_wait <= Duration::from_millis(500),
+            "the wait must stay bounded, got {total_wait:?}"
+        );
+        assert!(
+            schedule.windows(2).all(|pair| {
+                pair[0].unwrap_or(Duration::ZERO) <= pair[1].unwrap_or(Duration::ZERO)
+            }),
+            "the backoff must be monotonically non-decreasing"
+        );
+    }
+
+    #[test]
+    fn should_reject_oversized_tlv_frame_instead_of_panicking() {
+        // Arrange
+        // A TLV value carries a u16 length. Asserting on that turns any
+        // aggregate-overflow bug in any domain into a broker panic; the
+        // schedule LIST response reached 270KB this way. Framing must fail the
+        // one delivery, not the process.
+        let payload = vec![0x5a; usize::from(u16::MAX) + 1];
+
+        // Act
+        let result = encode_single_tlv_frame(crate::protocol::tlv::MessageType::new(701), &payload);
+
+        // Assert
+        let Err(error) = result else {
+            panic!("oversized payload must not be framed");
+        };
+        assert!(
+            matches!(error, DeliveryError::InvalidPayload { .. }),
+            "unexpected error: {error:?}"
+        );
     }
 }

@@ -378,16 +378,23 @@ impl QueueDomainSink {
         &self,
         operation: &'static str,
         build_command: impl FnOnce(crossbeam_channel::Sender<()>) -> QueueDomainCommand,
-    ) {
+    ) -> Result<(), crate::runtime::DeliveryError> {
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         if let Err(error) = self.actor.try_send_high_priority(build_command(reply_tx)) {
             tracing::warn!(domain = "queue", operation, error = %error, "Queue actor command enqueue failed");
-            return;
+            return Err(error);
         }
 
-        if let Err(error) = reply_rx.recv_timeout(QUEUE_ACTOR_REPLY_TIMEOUT) {
-            tracing::warn!(domain = "queue", operation, error = %error, "Queue actor command reply failed");
-        }
+        // Returning the outcome rather than swallowing it: callers previously
+        // could not tell a completed command from one that timed out, so a
+        // silently dropped session cleanup looked identical to a successful
+        // one.
+        reply_rx
+            .recv_timeout(QUEUE_ACTOR_REPLY_TIMEOUT)
+            .map_err(|error| {
+                tracing::warn!(domain = "queue", operation, error = %error, "Queue actor command reply failed");
+                crate::runtime::reply_wait::map_reply_wait_error(error)
+            })
     }
 
     fn send_bool_actor_command(
@@ -412,7 +419,9 @@ impl QueueDomainSink {
     }
 
     pub fn refresh_admin_snapshot_if_dirty(&self) {
-        self.send_unit_actor_command(
+        // Best effort: the snapshot refreshes again on the next tick, so a
+        // missed one is not worth surfacing.
+        let _ = self.send_unit_actor_command(
             "refresh_admin_snapshot_if_dirty",
             QueueDomainCommand::RefreshAdminSnapshotIfDirty,
         );
@@ -447,10 +456,20 @@ impl QueueDomainSink {
         }
     }
 
-    pub fn cleanup_session(&self, session_id: u64) {
+    /// Run session cleanup on the actor, reporting whether it completed.
+    ///
+    /// The outcome must reach the caller: swallowing it made a cleanup that
+    /// never ran indistinguishable from one that succeeded, so the ingress
+    /// retry-ticket machinery never saw a queue cleanup failure at all.
+    ///
+    /// # Errors
+    ///
+    /// Returns the delivery failure when the command could not be enqueued, or
+    /// when the actor did not reply before its deadline.
+    pub fn cleanup_session(&self, session_id: u64) -> Result<(), crate::runtime::DeliveryError> {
         self.send_unit_actor_command("cleanup_session", |reply| {
             QueueDomainCommand::CleanupSession(session_id, reply)
-        });
+        })
     }
 
     pub(crate) fn sweep_runtime_state(&self) {
@@ -459,7 +478,7 @@ impl QueueDomainSink {
 
     #[cfg(test)]
     pub(super) fn sweep_runtime_state_at(&self, now: Instant) {
-        self.send_unit_actor_command("sweep_runtime_state", |reply| {
+        let _ = self.send_unit_actor_command("sweep_runtime_state", |reply| {
             QueueDomainCommand::SweepRuntimeStateAt(now, Some(reply))
         });
     }

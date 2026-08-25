@@ -18,6 +18,7 @@
 
 pub mod actor;
 mod definition_validation;
+pub(crate) mod list_wire_budget;
 pub mod metrics;
 pub mod protocol;
 pub mod session;

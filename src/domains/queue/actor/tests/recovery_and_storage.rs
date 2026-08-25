@@ -161,7 +161,7 @@ fn should_hydrate_oversized_body_from_store_without_caching() {
 
     // Act
     let oversized = Bytes::from(vec![b'x'; QueueActor::BODY_CACHE_LIMIT_BYTES + 1]);
-    let response = actor.handle_send(oversized.clone(), None);
+    let response = actor.handle_send_unvalidated_for_tests(oversized.clone(), None);
     assert!(matches!(response, QueueResponse::Sent { .. }));
 
     match actor.handle_receive_for_session(TEST_SESSION_ID, 30, Some(1)) {

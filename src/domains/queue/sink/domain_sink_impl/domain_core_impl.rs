@@ -30,6 +30,14 @@ impl QueueDomainCore {
         )
     }
 
+    /// Count a response the actor produced but the transport could not carry.
+    fn record_response_route_failure(&self) {
+        if let Some(metrics) = self.metrics.as_ref() {
+            metrics
+                .counter_inc(crate::domains::queue::metrics::METRIC_RESPONSE_ROUTE_FAILURES_TOTAL);
+        }
+    }
+
     pub(in crate::domains::queue::sink) fn route_queue_response(
         &self,
         request_envelope: &Envelope,
@@ -51,6 +59,7 @@ impl QueueDomainCore {
             );
             if let Some(response_envelope) = request_envelope.try_reply_to(response_ctx) {
                 if let Err(error) = self.router.route(response_envelope) {
+                    self.record_response_route_failure();
                     tracing::warn!(
                         domain = "queue",
                         session = meta.session_id,
@@ -66,6 +75,7 @@ impl QueueDomainCore {
             let response = crate::domains::queue::QueueClientResponse::new(meta, response.clone());
             if let Some(response_envelope) = request_envelope.try_reply_to(response) {
                 if let Err(error) = self.router.route(response_envelope) {
+                    self.record_response_route_failure();
                     tracing::warn!(
                         domain = "queue",
                         session = meta.session_id,
