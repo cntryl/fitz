@@ -765,12 +765,20 @@ or wildcard Schedule patterns via `SCHEDULE_SUBSCRIBE` and receiving
 - 7007 = ERR_SUBSCRIPTION_LIMIT
 - 7008 = ERR_INVALID_DELIVERY_MODE
 - 7010 = ERR_BACKEND_ERROR
+- 7011 = ERR_TIMEOUT
 
 `ERR_BACKEND_ERROR` reports transient broker backend unavailability or
 saturation. It is distinct from `ERR_PARSE_ERROR`: clients must not tell callers
 that their cron or payload is malformed when the broker could not service an
 otherwise valid request. Clients may classify 7010 as retryable, subject to the
 operation's normal replay-safety rules.
+
+`ERR_TIMEOUT` reports that the broker accepted the command but did not finish it
+before its deadline. The outcome is unknown: the command may still apply. It is
+deliberately NOT retryable, because 7010 means the request was declined and is
+safe to re-send, whereas re-sending after 7011 can apply the same create or
+cancel twice. A client that knows its operation is idempotent may still retry
+deliberately; an automatic `IsRetryable` retry must not.
 
 #### Acceptance Tests
 

@@ -158,4 +158,9 @@ pub mod schedule {
                                             // one. Without it a busy schedule actor had to borrow a code that means
                                             // something else (e.g. "invalid cron"), which misdirects the client.
     pub const ERR_BACKEND_ERROR: u16 = 7010;
+    // Distinct from 7010 on purpose. 7010 is classified retryable: it reports a
+    // request the broker declined to service, so re-sending it is safe. A
+    // deadline expiry is not that - the command was already accepted and may
+    // still apply - so it needs a code clients will not auto-retry.
+    pub const ERR_TIMEOUT: u16 = 7011;
 }

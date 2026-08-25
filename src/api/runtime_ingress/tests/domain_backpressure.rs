@@ -266,6 +266,10 @@ impl MailboxSink for CapturingInboxSink {
     }
 }
 
+/// `REQ-PROTO-012`'s retryable set. A timeout must never answer with one of
+/// these: they tell a compliant client the request was never accepted.
+const DOCUMENTED_RETRYABLE_CODES: [u32; 8] = [1004, 4005, 5001, 6001, 6002, 6003, 6004, 7010];
+
 struct AlwaysTimingOutSink;
 
 impl MailboxSink for AlwaysTimingOutSink {
@@ -341,18 +345,16 @@ fn should_not_close_session_when_a_domain_command_times_out() {
         let body = &frames[0].payload;
         assert_eq!(body[0], 1, "{} should send an error body", case.domain);
         let code = u32::from_be_bytes([body[1], body[2], body[3], body[4]]);
-        // A timed-out command was already enqueued and may still run. Reporting
-        // a backpressure/"full" code would tell the client it was rejected and
-        // invite a retry that duplicates the side effect; only queue ACK is
+        // A timed-out command was already enqueued and may still run, so the
+        // code must not be one `REQ-PROTO-012` classifies as retryable. Those
+        // tell a compliant SDK the request was never accepted, and its
+        // `IsRetryable` helper (REQ-ERR-006) erases any prose caveat - so the
+        // client re-sends and duplicates the side effect. Only queue ACK is
         // deduplicated.
-        let retryable_rejection_codes = [
-            u32::from(crate::protocol::error_codes::queue::ERR_QUEUE_FULL),
-            u32::from(crate::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE),
-            u32::from(crate::protocol::error_codes::lease::ERR_QUEUE_FULL),
-        ];
         assert!(
-            !retryable_rejection_codes.contains(&code),
-            "{} answered a timeout with rejection code {code}, which invites a duplicate",
+            !DOCUMENTED_RETRYABLE_CODES.contains(&code),
+            "{} answered a timeout with retryable code {code}; a compliant client \
+             would re-send a command that may already have applied",
             case.domain
         );
     }

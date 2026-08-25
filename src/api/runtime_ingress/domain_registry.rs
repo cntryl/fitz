@@ -22,8 +22,11 @@ pub(crate) struct IngressDomainDescriptor {
     /// ACK is deduplicated, so an automatic retry of a SEND would enqueue the
     /// message twice.
     ///
-    /// Domains with an explicit timeout code use it; the rest use their
-    /// generic backend code, which does not invite a blind retry.
+    /// Every value here must sit outside `REQ-PROTO-012`'s retryable set
+    /// (1004, 4005, 5001, 6001, 6002, 6003, 6004, 7010). Those codes tell a
+    /// compliant SDK the request was never accepted, which is the opposite of
+    /// what a deadline expiry means. Notably RPC uses its backend code rather
+    /// than `ERR_RPC_TIMEOUT`, which is documented retryable.
     pub(super) indeterminate_error_code: u16,
     extract_auth_route: AuthRouteExtractor,
     build_request_envelope: RequestEnvelopeBuilder,
@@ -145,7 +148,7 @@ static INGRESS_DOMAIN_DESCRIPTORS: [IngressDomainDescriptor; 7] = [
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Rpc.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::rpc::ERR_UNAUTHORIZED,
-        indeterminate_error_code: crate::protocol::error_codes::rpc::ERR_RPC_TIMEOUT,
+        indeterminate_error_code: crate::protocol::error_codes::rpc::ERR_BACKEND_ERROR,
         extract_auth_route: crate::protocol::rpc_codec::extract_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
     },
@@ -159,7 +162,7 @@ static INGRESS_DOMAIN_DESCRIPTORS: [IngressDomainDescriptor; 7] = [
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Schedule.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::schedule::ERR_UNAUTHORIZED,
-        indeterminate_error_code: crate::protocol::error_codes::schedule::ERR_BACKEND_ERROR,
+        indeterminate_error_code: crate::protocol::error_codes::schedule::ERR_TIMEOUT,
         extract_auth_route: crate::protocol::schedule_codec::extract_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
     },
