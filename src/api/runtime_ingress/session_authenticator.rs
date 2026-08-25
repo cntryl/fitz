@@ -14,6 +14,38 @@ impl RuntimeIngress {
 }
 
 impl SessionAuthenticator<'_> {
+    fn log_connect_failure(&self, session_id: u64, compact: &str, stage: &str, error: &str) {
+        const MAX_LOGGED_ERROR_CHARS: usize = 512;
+
+        let diagnostics =
+            crate::auth::jwt_failure_diagnostics(compact, &self.ingress.auth_claims_config);
+        let mut error_characters = error.chars();
+        let mut bounded_error = error_characters
+            .by_ref()
+            .take(MAX_LOGGED_ERROR_CHARS)
+            .collect::<String>();
+        if error_characters.next().is_some() {
+            bounded_error.push_str("...");
+        }
+
+        error!(
+            session_id,
+            stage,
+            error = ?bounded_error,
+            jwt_fingerprint = %diagnostics.token_fingerprint,
+            jwt_algorithm = ?diagnostics.algorithm,
+            jwt_key_id = ?diagnostics.key_id,
+            jwt_payload_status = %diagnostics.payload_status,
+            jwt_issuer = ?diagnostics.issuer,
+            jwt_audience = ?diagnostics.audience,
+            jwt_exp = ?diagnostics.expires_at,
+            jwt_nbf = ?diagnostics.not_before,
+            jwt_expected_permission_sources = ?diagnostics.expected_permission_sources,
+            jwt_presented_permission_sources = ?diagnostics.presented_permission_sources,
+            "Ingress: CONNECT authentication failed"
+        );
+    }
+
     pub(super) async fn authenticate_frame(
         &self,
         session_id: u64,
@@ -137,10 +169,11 @@ impl SessionAuthenticator<'_> {
                     match self.resolve_authenticated_route_family(&verified.raw_claims) {
                         Ok(route_family) => route_family,
                         Err(error) => {
-                            error!(
-                                session_id = session_id,
-                                error = %error,
-                                "Ingress: CONNECT failed (route family resolution)"
+                            self.log_connect_failure(
+                                session_id,
+                                &compact,
+                                "route_family_resolution",
+                                &error,
                             );
                             return Err(IngressDecision::Close(format!("connect failed: {error}")));
                         }
@@ -148,11 +181,7 @@ impl SessionAuthenticator<'_> {
                 Ok((verified.permissions, verified.claims, route_family))
             }
             Err(error) => {
-                error!(
-                    session_id = session_id,
-                    error = %error,
-                    "Ingress: CONNECT failed (verification)"
-                );
+                self.log_connect_failure(session_id, &compact, "jwt_verification", &error);
                 Err(IngressDecision::Close(format!("connect failed: {error}")))
             }
         }

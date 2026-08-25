@@ -37,6 +37,15 @@ Configuration constraints:
 - Do not use `FITZ_JWT_HMAC_SECRET` outside testing or local prototyping.
 - Issue short-lived tokens and reconnect with a fresh token on expiry.
 
+When Fitz rejects a runtime JWT, the CONNECT failure log includes bounded
+diagnostics for the algorithm, key ID, issuer, audience, time bounds, configured
+permission-source names, and values found in those permission sources. The log
+uses a short SHA-256 token fingerprint for correlation. It never includes the
+compact JWT or signature. The added diagnostic fields exclude the subject,
+identity values, and unrelated claims. Treat the reported header and payload
+fields as untrusted troubleshooting input; they are decoded only after the
+normal verification path has rejected the token.
+
 ## Admin and Browser Perimeter
 
 Set at least these environment values:

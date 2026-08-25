@@ -16,6 +16,7 @@
 //! **Domains answer:** "Are you allowed to do this?"
 
 mod claims;
+mod diagnostics;
 mod errors;
 mod jwks;
 mod realm;
@@ -26,6 +27,7 @@ pub use claims::{
     DEFAULT_ROLE_CLAIM, DEFAULT_ROUTE_FAMILY_CLAIM, ENV_AUTH_CUSTOM_CLAIM, ENV_AUTH_ROLE_CLAIM,
     ENV_ROUTE_FAMILY_CLAIM, ENV_ROUTE_FAMILY_MAP,
 };
+pub use diagnostics::{jwt_failure_diagnostics, JwtClaimDiagnostics, JwtFailureDiagnostics};
 pub use errors::AuthError;
 pub use jwks::{
     cache_jwks_from_json, cache_jwks_from_json_with_ttl, derive_jwks_url_from_issuer,
