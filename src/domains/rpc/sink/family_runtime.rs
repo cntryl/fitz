@@ -32,6 +32,9 @@ impl RpcDomainSink {
     ) -> Self {
         let core = Arc::new(RpcDomainCore {
             state: Mutex::new(RpcState::new()),
+            cleaned_up_sessions: Mutex::new(super::cleanup::CleanedUpSessions::new(
+                crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
+            )),
             router,
             admin_read_model,
             request_timeout: RPC_DEFAULT_REQUEST_TIMEOUT,
@@ -151,6 +154,9 @@ impl RpcDomainSink {
     fn family_core_for(shared: &Arc<RpcDomainCore>, family: RouteFamily) -> Arc<RpcDomainCore> {
         let family_core = Arc::new(RpcDomainCore {
             state: Mutex::new(RpcState::new()),
+            cleaned_up_sessions: Mutex::new(super::cleanup::CleanedUpSessions::new(
+                crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
+            )),
             router: shared.router.clone(),
             admin_read_model: shared.admin_read_model.clone(),
             request_timeout: shared.request_timeout,

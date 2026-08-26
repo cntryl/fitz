@@ -1,3 +1,4 @@
+mod cleanup;
 mod domain_sink_impl;
 mod family_runtime;
 mod mailbox_adapter;

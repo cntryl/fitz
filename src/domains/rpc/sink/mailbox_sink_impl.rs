@@ -213,6 +213,21 @@ impl RpcDomainRuntime<'_> {
             return Ok(());
         }
 
+        // This request was already queued (on the normal lane) before this
+        // session's disconnect cleanup ran (on the high-priority lane) and
+        // jumped ahead of it. Reject rather than silently recreating a worker
+        // registration or pending request for a session that is already gone
+        // and will never be cleaned up again.
+        if self.is_cleaned_up_session(meta.session_id) {
+            let response_meta = Self::response_meta_for_source(envelope, meta);
+            self.route_rpc_client_response(
+                envelope,
+                response_meta,
+                &RpcClientResponseBody::Error("session already closed".to_string()),
+            );
+            return Ok(());
+        }
+
         Self::log_parse_start(meta);
 
         let Some(rpc_msg) = self.parse_request_message(
@@ -596,16 +611,6 @@ impl RpcDomainRuntime<'_> {
 
     fn elapsed_micros_u64(start: Instant) -> u64 {
         start.elapsed().as_micros().try_into().unwrap_or(u64::MAX)
-    }
-
-    fn handle_cleanup_envelope(&self, envelope: &Envelope) -> bool {
-        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            let cleanup_result = self.apply_session_cleanup(cleanup.session_id);
-            self.forward_worker_disconnect_errors(cleanup_result.disconnect_deliveries);
-            return true;
-        }
-
-        false
     }
 
     fn ensure_active(&self) -> Result<(), DeliveryError> {

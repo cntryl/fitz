@@ -1,13 +1,15 @@
-use super::response_forwarder::RpcResponseForwarder;
 use super::state_model::{
     rpc_admin_snapshot_due, rpc_timeout_sweep_interval, Arc, AtomicBool, DeliveryError, Duration,
     Envelope, Instant, Ordering, Route, RouteAddress, RpcDomainActor, RpcDomainCommand,
     RpcDomainCore, RpcDomainRuntime, RpcDomainSink, RpcLiveCounts, RpcPendingErrorDelivery,
-    RpcPendingRequest, RpcQueuedDispatch, RpcSessionCleanupResult, RpcWorkerCleanupResult,
-    RpcWorkerDispatch, RPC_BACKPRESSURE_ERROR, RPC_TIMEOUT_ERROR, RPC_WORKER_NOT_FOUND_ERROR,
+    RpcPendingRequest, RpcQueuedDispatch, RpcWorkerDispatch, RPC_BACKPRESSURE_ERROR,
+    RPC_TIMEOUT_ERROR,
 };
 #[cfg(test)]
-use super::state_model::{RpcQueuedRequest, RpcWorker, RPC_MSG_TYPE_REQUEST};
+use super::state_model::{
+    RpcQueuedRequest, RpcSessionCleanupResult, RpcWorker, RpcWorkerCleanupResult,
+    RPC_MSG_TYPE_REQUEST,
+};
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
 #[cfg(not(test))]
@@ -471,140 +473,6 @@ impl RpcDomainRuntime<'_> {
             self.release_global_pending(1);
         }
         removed
-    }
-
-    pub(super) fn apply_session_cleanup(&self, session_id: u64) -> RpcSessionCleanupResult {
-        let cleanup_result = {
-            let mut state = self.state.lock();
-            state.cleanup_session(session_id)
-        };
-
-        self.gauge_set("rpc_pending_requests", cleanup_result.pending_len as u64);
-        self.release_global_pending(cleanup_result.removed_pending);
-        if cleanup_result.removed_registrations > 0 {
-            self.counter_add(
-                "rpc_cleanup_workers_removed_total",
-                cleanup_result.removed_registrations as u64,
-            );
-        }
-        if cleanup_result.detached_callers > 0 {
-            self.counter_add(
-                "rpc_cleanup_callers_detached_total",
-                cleanup_result.detached_callers as u64,
-            );
-        }
-        if cleanup_result.removed_pending > 0 {
-            self.counter_add(
-                "rpc_cleanup_pending_removed_total",
-                cleanup_result.removed_pending as u64,
-            );
-        }
-        if cleanup_result.removed_registrations > 0
-            || cleanup_result.detached_callers > 0
-            || cleanup_result.removed_pending > 0
-        {
-            self.schedule_admin_snapshot(false);
-        }
-        self.refresh_metrics_gauges();
-
-        tracing::debug!(
-            domain = "rpc",
-            session_id,
-            removed_workers = cleanup_result.removed_registrations,
-            detached_callers = cleanup_result.detached_callers,
-            removed_pending = cleanup_result.removed_pending,
-            pending_len = cleanup_result.pending_len,
-            "RPC session cleanup applied"
-        );
-
-        cleanup_result
-    }
-
-    pub(super) fn apply_worker_unsubscribe(
-        &self,
-        worker_addr: &RouteAddress,
-        session_id: u64,
-    ) -> RpcWorkerCleanupResult {
-        let cleanup_result = {
-            let mut state = self.state.lock();
-            state.unregister_registration(worker_addr, session_id)
-        };
-
-        self.gauge_set("rpc_pending_requests", cleanup_result.pending_len as u64);
-        self.release_global_pending(cleanup_result.removed_pending);
-        if cleanup_result.removed_registrations > 0 {
-            self.counter_add(
-                "rpc_cleanup_workers_removed_total",
-                cleanup_result.removed_registrations as u64,
-            );
-        }
-        if cleanup_result.removed_pending > 0 {
-            self.counter_add(
-                "rpc_cleanup_pending_removed_total",
-                cleanup_result.removed_pending as u64,
-            );
-        }
-        if cleanup_result.removed_registrations > 0 || cleanup_result.removed_pending > 0 {
-            self.schedule_admin_snapshot(false);
-        }
-        self.refresh_metrics_gauges();
-
-        tracing::debug!(
-            domain = "rpc",
-            worker = worker_addr.route().as_str(),
-            session_id,
-            removed_workers = cleanup_result.removed_registrations,
-            removed_pending = cleanup_result.removed_pending,
-            pending_len = cleanup_result.pending_len,
-            "RPC worker cleanup applied"
-        );
-
-        cleanup_result
-    }
-
-    pub(super) fn forward_pending_error_deliveries(
-        &self,
-        error_deliveries: Vec<RpcPendingErrorDelivery>,
-        error_code: u16,
-        error_message: &'static str,
-        forwarded_counter: &str,
-        dropped_counter: &str,
-    ) {
-        if error_deliveries.is_empty() {
-            return;
-        }
-
-        for delivery in error_deliveries {
-            let correlation_id = delivery.correlation_id;
-            let response_envelope =
-                RpcResponseForwarder::terminal_error_envelope(delivery, error_code, error_message);
-
-            if let Err(error) = self.router.route(response_envelope) {
-                self.counter_inc(dropped_counter);
-                tracing::warn!(
-                    domain = "rpc",
-                    correlation_id = %correlation_id,
-                    error_code,
-                    error = ?error,
-                    "Failed to forward RPC terminal error to requester"
-                );
-            } else {
-                self.counter_inc(forwarded_counter);
-            }
-        }
-    }
-
-    pub(super) fn forward_worker_disconnect_errors(
-        &self,
-        disconnect_deliveries: Vec<RpcPendingErrorDelivery>,
-    ) {
-        self.forward_pending_error_deliveries(
-            disconnect_deliveries,
-            crate::dispatch::protocol::error_codes::rpc::ERR_WORKER_NOT_FOUND,
-            RPC_WORKER_NOT_FOUND_ERROR,
-            "rpc_worker_disconnect_errors_forwarded_total",
-            "rpc_worker_disconnect_errors_dropped_total",
-        );
     }
 
     pub(super) fn pending_request_count(&self) -> usize {

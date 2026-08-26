@@ -2,11 +2,17 @@ use super::{
     Arc, AtomicBool, AtomicU64, AtomicUsize, BTreeMap, DeliveryError, Duration, Envelope,
     FamilyActorPoolRuntime, Instant, ManagedActor, Mutex, Router, RpcState, Weak,
 };
+use super::super::cleanup::CleanedUpSessions;
 #[cfg(test)]
 use super::{RouteAddress, RpcSessionCleanupResult, RpcWorkerCleanupResult};
 
 pub(in crate::domains::rpc::sink) struct RpcDomainCore {
     pub(in crate::domains::rpc::sink) state: Mutex<RpcState>,
+    /// Sessions disconnect cleanup has already run for in this family core;
+    /// guards against a stale queued request recreating state. See
+    /// `sink/cleanup.rs`. Local per family core, like `state` - a session
+    /// cleaned up in one family does not need to be rejected in another.
+    pub(in crate::domains::rpc::sink) cleaned_up_sessions: Mutex<CleanedUpSessions>,
     pub(in crate::domains::rpc::sink) router: Arc<Router>,
     #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
     pub(in crate::domains::rpc::sink) admin_read_model:
