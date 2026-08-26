@@ -1,44 +1,14 @@
+//! Lease acquire/extend/release/query business logic: authorization,
+//! ownership mutation, and FIFO waiter queuing.
+
 use super::model::{
     Duration, Instant, LeaseAcquireRequest, LeaseDomainRuntime, Ordering, PendingAcquire,
     QueuedAcquireRequest, SinkLeaseState, Utc, LEASE_MAX_QUEUE_DEPTH, LEASE_MAX_WAIT_SECONDS,
 };
-use crate::domains::subscription_state::RoutedSubscriptionSet;
-
-mod expiry;
-mod routing;
-mod waiter_tracking;
 
 enum AcquireDecision {
     Respond(crate::domains::lease::protocol::LeaseResponse),
     Queue(QueuedAcquireRequest),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum WaiterProgress {
-    Unchanged,
-    Expired,
-    Consumed,
-}
-
-#[derive(Clone, Copy)]
-enum DeliveryDropKind {
-    Response,
-    Notification,
-}
-
-impl WaiterProgress {
-    const fn changed(self) -> bool {
-        !matches!(self, Self::Unchanged)
-    }
-}
-
-impl DeliveryDropKind {
-    const fn label(self) -> &'static str {
-        match self {
-            Self::Response => "response",
-            Self::Notification => "notification",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,9 +47,6 @@ fn authorize_owned_lease(
     }
 }
 
-#[cfg(test)]
-mod tests;
-
 impl LeaseDomainRuntime<'_> {
     fn apply_lease_effects(
         &self,
@@ -100,74 +67,6 @@ impl LeaseDomainRuntime<'_> {
             let _ = self.advance_waiter_queue(key, now);
             self.refresh_metrics_gauges();
         }
-    }
-
-    /// Drops session waiters before ownership and grants released keys in FIFO order.
-    pub fn cleanup_session(&self, session_id: u64) {
-        let now = Instant::now();
-        let tracked_keys = self
-            .core
-            .session_leases
-            .lock()
-            .remove(&session_id)
-            .map(|keys| keys.into_iter().collect::<Vec<_>>())
-            .unwrap_or_default();
-        let removed_waiters = self.remove_session_waiters(session_id);
-
-        let mut removed_keys = Vec::with_capacity(tracked_keys.len());
-        if !tracked_keys.is_empty() {
-            let mut leases = self.core.leases.lock();
-            for key in tracked_keys {
-                if leases.remove(&key).is_some() {
-                    removed_keys.push(key);
-                }
-            }
-        }
-
-        let removed_subscriptions = self.unsubscribe_all(session_id);
-        for key in &removed_keys {
-            self.remove_admin_lease(key);
-            self.notify_lease_change(key);
-        }
-        for key in &removed_keys {
-            let _ = self.advance_waiter_queue(key, now);
-        }
-
-        tracing::debug!(
-            domain = "lease",
-            session = session_id,
-            count_removed = removed_keys.len(),
-            waiters_removed = removed_waiters,
-            subscriptions_removed = removed_subscriptions,
-            "Lease: released all leases for disconnected session"
-        );
-        self.refresh_metrics_gauges();
-    }
-
-    pub fn lease_count(&self) -> usize {
-        self.core.leases.lock().len()
-    }
-
-    pub fn subscription_count(&self) -> usize {
-        let families = self.core.families.lock();
-        families
-            .values()
-            .map(RoutedSubscriptionSet::subscription_count)
-            .sum()
-    }
-
-    pub(super) fn unsubscribe_all(&self, session_id: u64) -> usize {
-        let mut families = self.core.families.lock();
-        let mut removed = 0;
-        for (family_id, state) in families.iter_mut() {
-            removed += state.remove_session(
-                crate::runtime::routing::RouteFamily::try_from(*family_id)
-                    .expect("lease family IDs originate from RouteFamily"),
-                session_id,
-            );
-        }
-        families.retain(|_, state| !state.is_empty());
-        removed
     }
 
     pub(super) fn next_fencing_token(&self) -> Option<u64> {
@@ -490,19 +389,4 @@ impl LeaseDomainRuntime<'_> {
 }
 
 #[cfg(test)]
-fn test_protocol_channel_from_client(
-    channel: crate::runtime::ClientChannel,
-) -> crate::dispatch::protocol::frame::ChannelId {
-    match channel {
-        crate::runtime::ClientChannel::Control => {
-            crate::dispatch::protocol::frame::ChannelId::Control
-        }
-        crate::runtime::ClientChannel::Pub => crate::dispatch::protocol::frame::ChannelId::Pub,
-        crate::runtime::ClientChannel::Sub => crate::dispatch::protocol::frame::ChannelId::Sub,
-        crate::runtime::ClientChannel::Rpc => crate::dispatch::protocol::frame::ChannelId::Rpc,
-        crate::runtime::ClientChannel::Lease => crate::dispatch::protocol::frame::ChannelId::Lease,
-        crate::runtime::ClientChannel::Internal => {
-            crate::dispatch::protocol::frame::ChannelId::Internal
-        }
-    }
-}
+mod tests;

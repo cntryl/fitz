@@ -1,6 +1,8 @@
+//! Public `LeaseDomainSink` API and actor lifecycle management.
+
 #[cfg(any(test, feature = "benchkit"))]
-use super::super::model::LeaseAcquireRequest;
-use super::super::model::{
+use super::model::LeaseAcquireRequest;
+use super::model::{
     Arc, AtomicBool, AtomicU64, HashMap, LeaseDomainActor, LeaseDomainCommand, LeaseDomainCore,
     LeaseDomainRuntime, LeaseDomainSink, LeaseDomainState, LeaseLiveCounts, LeaseMetrics, Mutex,
     Ordering, LEASE_ACTOR_REPLY_TIMEOUT,
@@ -19,6 +21,9 @@ impl LeaseDomainState {
                 session_leases: Mutex::new(HashMap::new()),
                 pending_acquires: Mutex::new(HashMap::new()),
                 session_waiters: Mutex::new(HashMap::new()),
+                cleaned_up_sessions: Mutex::new(super::cleanup::CleanedUpSessions::new(
+                    crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
+                )),
                 next_token: AtomicU64::new(1),
                 router,
                 families: Mutex::new(HashMap::new()),

@@ -1,6 +1,21 @@
-use super::super::model::{Instant, LeaseDomainRuntime, PendingAcquire, SinkLeaseState, Utc};
-use super::WaiterProgress;
+//! TTL expiry: reaping timed-out waiters and expired leases, and advancing
+//! each key's FIFO wait queue once it becomes free.
+
+use super::model::{Instant, LeaseDomainRuntime, PendingAcquire, SinkLeaseState, Utc};
 use std::collections::VecDeque;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum WaiterProgress {
+    Unchanged,
+    Expired,
+    Consumed,
+}
+
+impl WaiterProgress {
+    pub(super) const fn changed(self) -> bool {
+        !matches!(self, Self::Unchanged)
+    }
+}
 
 fn drain_expired_waiters(
     queue: &mut VecDeque<PendingAcquire>,
@@ -19,45 +34,6 @@ fn drain_expired_waiters(
 }
 
 impl LeaseDomainRuntime<'_> {
-    /// Removes every queued waiter owned by the session before empty queues are dropped.
-    pub(in crate::domains::lease::sink) fn remove_session_waiters(&self, session_id: u64) -> usize {
-        let waiter_refs = self
-            .core
-            .session_waiters
-            .lock()
-            .remove(&session_id)
-            .map(|waiters| waiters.into_iter().collect::<Vec<_>>())
-            .unwrap_or_default();
-
-        if waiter_refs.is_empty() {
-            return 0;
-        }
-
-        let mut removed = 0;
-        let mut pending_acquires = self.core.pending_acquires.lock();
-        let mut empty_keys = Vec::new();
-        for waiter_ref in waiter_refs {
-            if let Some(queue) = pending_acquires.get_mut(&waiter_ref.key) {
-                if let Some(index) = queue
-                    .iter()
-                    .position(|waiter| waiter.queued_token == waiter_ref.queued_token)
-                {
-                    queue.remove(index);
-                    removed += 1;
-                }
-                if queue.is_empty() {
-                    empty_keys.push(waiter_ref.key.clone());
-                }
-            }
-        }
-
-        for key in empty_keys {
-            pending_acquires.remove(&key);
-        }
-
-        removed
-    }
-
     pub(in crate::domains::lease::sink) fn expire_timed_out_waiters_for_key(
         &self,
         key: &crate::domains::lease::protocol::LeaseKey,

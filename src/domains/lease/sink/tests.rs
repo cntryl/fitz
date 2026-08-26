@@ -398,6 +398,49 @@ fn should_clear_session_state_given_session_cleanup() {
 }
 
 #[test]
+fn should_reject_stale_acquire_after_disconnect_cleanup_marks_session() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 9;
+    let lease_route = "lease://acme/locks/resource";
+    let lease_address = RouteAddress::new(family, Route::new(lease_route));
+    let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/9"));
+    let router = Arc::new(Router::new());
+    let subscriber_mailbox = Arc::new(Mailbox::new(8));
+    router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = LeaseDomainSink::new(router, admin_read_model);
+
+    // Act: cleanup for this session runs and completes before the stale
+    // acquire below is processed - equivalent to what the high-priority
+    // mailbox lane guarantees a real disconnect races against a queued
+    // normal-lane request.
+    sink.deliver(Envelope::new(
+        RouteAddress::new(family, Route::new("lease://cleanup")),
+        crate::runtime::SessionCleanup { session_id },
+    ))
+    .expect("cleanup session");
+
+    sink.deliver(Envelope::from_route(
+        subscriber_address,
+        lease_address,
+        FrameContext::new(
+            session_id,
+            ChannelId::Sub,
+            MessageType::new(400),
+            encode_lease_acquire(lease_route, "", 30),
+            family,
+        ),
+    ))
+    .expect("deliver stale acquire");
+    let _ack = receive_envelope(&subscriber_mailbox, "stale acquire response envelope");
+
+    // Assert: the stale acquire from the now-cleaned-up session is rejected
+    // instead of resurrecting a lease for it.
+    assert_eq!(sink.lease_count(), 0);
+}
+
+#[test]
 fn should_preserve_other_session_leases_given_session_cleanup() {
     // Arrange
     let family = RouteFamily::new(1);

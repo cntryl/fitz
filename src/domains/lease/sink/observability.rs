@@ -1,7 +1,51 @@
-use super::super::model::{Instant, LeaseDomainRuntime, LeaseLiveCounts, SinkLeaseState, Utc};
+//! Admin read-model projection and metrics glue.
+
+use super::model::{Instant, LeaseDomainRuntime, LeaseLiveCounts, SinkLeaseState, Utc};
 use std::collections::VecDeque;
 
+#[derive(Clone, Copy)]
+pub(super) enum DeliveryDropKind {
+    Response,
+    Notification,
+}
+
+impl DeliveryDropKind {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Response => "response",
+            Self::Notification => "notification",
+        }
+    }
+}
+
 impl LeaseDomainRuntime<'_> {
+    pub(super) fn record_dropped_delivery(
+        &self,
+        kind: DeliveryDropKind,
+        session_id: u64,
+        route_family: crate::runtime::routing::RouteFamily,
+        error: &impl std::fmt::Display,
+    ) {
+        match (self.core.metrics.as_ref(), kind) {
+            (Some(metrics), DeliveryDropKind::Response) => metrics.record_response_drop(),
+            (Some(metrics), DeliveryDropKind::Notification) => metrics.record_notify_drop(),
+            (None, DeliveryDropKind::Response) => crate::observability::counter_inc(
+                crate::domains::lease::metrics::METRIC_RESPONSE_DROPS_TOTAL,
+            ),
+            (None, DeliveryDropKind::Notification) => crate::observability::counter_inc(
+                crate::domains::lease::metrics::METRIC_NOTIFY_DROPS_TOTAL,
+            ),
+        }
+        tracing::warn!(
+            domain = "lease",
+            delivery_kind = kind.label(),
+            session_id,
+            route_family = route_family.as_u64(),
+            error = %error,
+            "Dropped best-effort Lease delivery"
+        );
+    }
+
     #[cfg(test)]
     pub(in crate::domains::lease::sink) fn session_inbox_address(
         route_family: crate::runtime::routing::RouteFamily,
@@ -156,5 +200,17 @@ impl LeaseDomainRuntime<'_> {
                 | crate::domains::lease::protocol::LeaseResponse::Error(_)
                 | crate::domains::lease::protocol::LeaseResponse::InvalidSubscriptionRoute(_)
         )
+    }
+
+    pub(super) fn lease_count(&self) -> usize {
+        self.core.leases.lock().len()
+    }
+
+    pub(super) fn subscription_count(&self) -> usize {
+        let families = self.core.families.lock();
+        families
+            .values()
+            .map(crate::domains::subscription_state::RoutedSubscriptionSet::subscription_count)
+            .sum()
     }
 }

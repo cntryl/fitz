@@ -1,13 +1,12 @@
-use super::model::{
-    DeliveryError, Envelope, LeaseAcquireRequest, LeaseDomainActor, LeaseDomainCommand,
-    LeaseDomainRuntime, LeaseDomainSink, LeaseSubscription, MailboxSink, Ordering,
-    RoutedSubscriptionSet,
-};
+//! Envelope ingress: validate an inbound envelope, parse it into a Lease
+//! request, and dispatch to the subscriptions/acquire/response layers.
+
+use super::model::{DeliveryError, LeaseAcquireRequest, LeaseDomainRuntime, Ordering};
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
-use crate::runtime::{Actor, Context};
+use crate::runtime::Envelope;
 
-enum LeaseRequestView<'a> {
+pub(super) enum LeaseRequestView<'a> {
     Borrowed(&'a crate::domains::lease::LeaseClientRequest),
     #[cfg(test)]
     Owned(crate::domains::lease::LeaseClientRequest),
@@ -27,91 +26,6 @@ impl LeaseRequestView<'_> {
             Self::Borrowed(request) => &request.frame,
             #[cfg(test)]
             Self::Owned(request) => &request.frame,
-        }
-    }
-}
-
-impl MailboxSink for LeaseDomainSink {
-    fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        self.actor.try_send(LeaseDomainCommand::Deliver(envelope))
-    }
-
-    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        self.actor
-            .try_send_high_priority(LeaseDomainCommand::Deliver(envelope))
-    }
-}
-
-impl Actor for LeaseDomainActor {
-    type Message = LeaseDomainCommand;
-
-    fn receive(&mut self, msg: Self::Message, _ctx: &mut Context<Self>) {
-        let runtime = self.state.runtime();
-        match msg {
-            LeaseDomainCommand::Deliver(envelope) => {
-                if let Err(error) = runtime.deliver_envelope(&envelope) {
-                    tracing::warn!(domain = "lease", error = %error, "Lease actor delivery failed");
-                }
-            }
-            LeaseDomainCommand::CleanupSession(session_id) => {
-                runtime.cleanup_session(session_id);
-            }
-            LeaseDomainCommand::ReadLiveCounts(reply) => {
-                let _ = reply.send(runtime.live_counts());
-            }
-            LeaseDomainCommand::ReadWaiters(reply) => {
-                let _ = reply.send(runtime.admin_waiters());
-            }
-            LeaseDomainCommand::SweepExpiredState => {
-                runtime.sweep_expired_state();
-            }
-            #[cfg(any(test, feature = "benchkit"))]
-            LeaseDomainCommand::ApplyAcquireForBench(request, reply) => {
-                let _ = reply.send(runtime.handle_acquire(request));
-            }
-            #[cfg(any(test, feature = "benchkit"))]
-            LeaseDomainCommand::ApplyReleaseForBench(key, owner_id, fencing_token, reply) => {
-                let _ = reply.send(runtime.handle_release(&key, owner_id.as_str(), fencing_token));
-            }
-            #[cfg(test)]
-            LeaseDomainCommand::ApplyAcquireForTests(request, reply) => {
-                let _ = reply.send(runtime.handle_acquire(request));
-            }
-            #[cfg(test)]
-            LeaseDomainCommand::ApplyExtendForTests(
-                key,
-                owner_id,
-                fencing_token,
-                ttl_secs,
-                reply,
-            ) => {
-                let _ = reply.send(runtime.handle_extend(
-                    &key,
-                    owner_id.as_str(),
-                    fencing_token,
-                    ttl_secs,
-                ));
-            }
-            #[cfg(test)]
-            LeaseDomainCommand::ExpireLeaseForTests(key, reply) => {
-                let expired = if let Some(lease) = runtime.core.leases.lock().get_mut(&key) {
-                    lease.expiry = std::time::Instant::now()
-                        .checked_sub(std::time::Duration::from_millis(1))
-                        .expect("past instant");
-                    true
-                } else {
-                    false
-                };
-                let _ = reply.send(expired);
-            }
-            #[cfg(test)]
-            LeaseDomainCommand::ReadPendingWaiterCountForTests(key, reply) => {
-                let _ = reply.send(runtime.pending_waiter_count(&key));
-            }
-            #[cfg(test)]
-            LeaseDomainCommand::PanicForTests => {
-                panic!("test Lease domain actor panic");
-            }
         }
     }
 }
@@ -155,6 +69,18 @@ impl LeaseDomainRuntime<'_> {
             return Ok(());
         }
 
+        // This request was already queued (on the normal lane) before this
+        // session's disconnect cleanup ran (on the high-priority lane) and
+        // jumped ahead of it. Reject rather than silently recreating a
+        // lease, waiter, or subscription for a session that is already gone
+        // and will never be cleaned up again.
+        if self.is_cleaned_up_session(meta.session_id) {
+            let response = Self::error_response("session already closed");
+            let response_meta = Self::response_meta_for_source(envelope, meta);
+            self.route_lease_response(envelope, response_meta, &response, request_started);
+            return Ok(());
+        }
+
         let Some(parsed_frame) =
             self.parse_request_frame(envelope, meta, request.frame(), request_started)
         else {
@@ -180,6 +106,11 @@ impl LeaseDomainRuntime<'_> {
     ) {
         let meta = request.meta;
         let request_started = self.record_request_start();
+        if self.is_cleaned_up_session(meta.session_id) {
+            let response = Self::error_response("session already closed");
+            self.route_lease_response(envelope, meta, &response, request_started);
+            return;
+        }
         let Some(operation) =
             self.parse_prepared_request_frame(envelope, meta, &request.frame, request_started)
         else {
@@ -193,15 +124,6 @@ impl LeaseDomainRuntime<'_> {
             return;
         }
         self.handle_prepared_operation_frame(envelope, meta, request_started, operation);
-    }
-
-    fn handle_cleanup_envelope(&self, envelope: &Envelope) -> bool {
-        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            self.cleanup_session(cleanup.session_id);
-            return true;
-        }
-
-        false
     }
 
     fn ensure_active(&self) -> Result<(), DeliveryError> {
@@ -305,142 +227,6 @@ impl LeaseDomainRuntime<'_> {
                 None
             }
         }
-    }
-
-    fn handle_subscription_frame(
-        &self,
-        envelope: &Envelope,
-        meta: crate::runtime::ClientFrameMeta,
-        request_started: Option<std::time::Instant>,
-        sub_msg: &crate::domains::lease::protocol::LeaseSubscriptionMessage,
-    ) {
-        use crate::domains::lease::protocol::LeaseSubscriptionMessage;
-
-        let response = match sub_msg {
-            LeaseSubscriptionMessage::Subscribe {
-                family_id,
-                route,
-                session_id,
-                subscriber,
-            } => self.handle_lease_subscribe(
-                envelope,
-                meta,
-                *family_id,
-                route,
-                *session_id,
-                subscriber,
-            ),
-            LeaseSubscriptionMessage::Unsubscribe {
-                family_id,
-                route,
-                session_id,
-                subscriber,
-            } => self.handle_lease_unsubscribe(
-                envelope,
-                meta,
-                *family_id,
-                route,
-                *session_id,
-                subscriber,
-            ),
-        };
-
-        self.refresh_metrics_gauges();
-        self.route_lease_response(envelope, meta, &response, request_started);
-    }
-
-    fn handle_lease_subscribe(
-        &self,
-        envelope: &Envelope,
-        meta: crate::runtime::ClientFrameMeta,
-        family_id: crate::runtime::routing::RouteFamily,
-        route: &crate::runtime::routing::Route,
-        session_id: u64,
-        subscriber: &crate::runtime::routing::RouteAddress,
-    ) -> crate::domains::lease::protocol::LeaseResponse {
-        use crate::domains::lease::protocol::LeaseResponse;
-
-        if Self::valid_subscription_request(envelope, meta, family_id, session_id, subscriber) {
-            let compiled = match Self::compile_exact_lease_subscription_route(route) {
-                Ok(compiled) => compiled,
-                Err(response) => return response,
-            };
-            let mut families = self.core.families.lock();
-            let state = families
-                .entry(family_id.as_u64())
-                .or_insert_with(RoutedSubscriptionSet::new);
-            if let Some(subscription_id) = state.find_existing_id(session_id, route.as_str()) {
-                return LeaseResponse::SubscribeOk { subscription_id };
-            }
-            if let Ok(subscription_id) = self.core.next_sub_id.fetch_update(
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-                |current| current.checked_add(1),
-            ) {
-                state.insert(
-                    family_id,
-                    LeaseSubscription {
-                        route: compiled,
-                        session_id,
-                        route_address: subscriber.clone(),
-                        subscription_id,
-                    },
-                );
-                LeaseResponse::SubscribeOk { subscription_id }
-            } else {
-                if state.is_empty() {
-                    families.remove(&family_id.as_u64());
-                }
-                LeaseResponse::Error("subscription ID space exhausted".to_string())
-            }
-        } else {
-            LeaseResponse::Error("route family mismatch".to_string())
-        }
-    }
-
-    fn handle_lease_unsubscribe(
-        &self,
-        envelope: &Envelope,
-        meta: crate::runtime::ClientFrameMeta,
-        family_id: crate::runtime::routing::RouteFamily,
-        route: &crate::runtime::routing::Route,
-        session_id: u64,
-        subscriber: &crate::runtime::routing::RouteAddress,
-    ) -> crate::domains::lease::protocol::LeaseResponse {
-        use crate::domains::lease::protocol::LeaseResponse;
-
-        if Self::valid_subscription_request(envelope, meta, family_id, session_id, subscriber) {
-            if let Err(response) = Self::compile_exact_lease_subscription_route(route) {
-                return response;
-            }
-            let mut families = self.core.families.lock();
-            let remove_family = if let Some(state) = families.get_mut(&family_id.as_u64()) {
-                state.remove_session_pattern(family_id, session_id, route.as_str());
-                state.is_empty()
-            } else {
-                false
-            };
-            if remove_family {
-                families.remove(&family_id.as_u64());
-            }
-            LeaseResponse::UnsubscribeOk
-        } else {
-            LeaseResponse::Error("route family mismatch".to_string())
-        }
-    }
-
-    fn compile_exact_lease_subscription_route(
-        route: &crate::runtime::routing::Route,
-    ) -> Result<crate::runtime::matcher::Pattern, crate::domains::lease::protocol::LeaseResponse>
-    {
-        use crate::domains::lease::protocol::LeaseResponse;
-
-        // The exact-only rule lives on the Lease descriptor so ingress and
-        // this sink reject the same patterns.
-        crate::runtime::DomainKind::Lease
-            .descriptor()
-            .compile_registration_pattern(route.as_str())
-            .map_err(LeaseResponse::InvalidSubscriptionRoute)
     }
 
     fn handle_actor_operation_frame(
@@ -683,19 +469,6 @@ impl LeaseDomainRuntime<'_> {
         crate::domains::lease::protocol::LeaseResponse::Error(reason.to_string())
     }
 
-    fn valid_subscription_request(
-        envelope: &Envelope,
-        meta: crate::runtime::ClientFrameMeta,
-        family_id: crate::runtime::routing::RouteFamily,
-        session_id: u64,
-        subscriber: &crate::runtime::routing::RouteAddress,
-    ) -> bool {
-        family_id == meta.route_family
-            && *subscriber.family() == family_id
-            && session_id == meta.session_id
-            && envelope.source().is_none_or(|source| source == subscriber)
-    }
-
     fn valid_lease_message(
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
@@ -742,6 +515,24 @@ fn test_client_channel_from_protocol(
         crate::dispatch::protocol::frame::ChannelId::Lease => crate::runtime::ClientChannel::Lease,
         crate::dispatch::protocol::frame::ChannelId::Internal => {
             crate::runtime::ClientChannel::Internal
+        }
+    }
+}
+
+#[cfg(test)]
+pub(super) fn test_protocol_channel_from_client(
+    channel: crate::runtime::ClientChannel,
+) -> crate::dispatch::protocol::frame::ChannelId {
+    match channel {
+        crate::runtime::ClientChannel::Control => {
+            crate::dispatch::protocol::frame::ChannelId::Control
+        }
+        crate::runtime::ClientChannel::Pub => crate::dispatch::protocol::frame::ChannelId::Pub,
+        crate::runtime::ClientChannel::Sub => crate::dispatch::protocol::frame::ChannelId::Sub,
+        crate::runtime::ClientChannel::Rpc => crate::dispatch::protocol::frame::ChannelId::Rpc,
+        crate::runtime::ClientChannel::Lease => crate::dispatch::protocol::frame::ChannelId::Lease,
+        crate::runtime::ClientChannel::Internal => {
+            crate::dispatch::protocol::frame::ChannelId::Internal
         }
     }
 }

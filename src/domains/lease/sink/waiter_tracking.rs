@@ -1,4 +1,7 @@
-use super::super::model::{LeaseDomainRuntime, PendingAcquireRef};
+//! Per-session index of owned leases and queued waiters, used by cleanup and
+//! by acquire/expiry bookkeeping to keep both directions in sync.
+
+use super::model::{LeaseDomainRuntime, PendingAcquireRef};
 
 impl LeaseDomainRuntime<'_> {
     pub(super) fn track_session_lease(
