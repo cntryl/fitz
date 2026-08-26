@@ -153,7 +153,7 @@ pub(super) struct ScheduleDomainCore {
         Mutex<HashMap<crate::runtime::routing::RouteFamily, ScheduleSubscriptionSet>>,
     /// Sessions disconnect cleanup has already run for; guards against a
     /// stale queued request recreating a subscription. See `cleanup.rs`.
-    pub(super) cleaned_up_sessions: Mutex<super::cleanup::CleanedUpSessions>,
+    pub(super) cleaned_up_sessions: Mutex<crate::runtime::CleanedUpSessions>,
     pub(super) next_sub_id: AtomicU64,
     pub(super) router: Arc<Router>,
     #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]

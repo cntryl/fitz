@@ -32,7 +32,7 @@ impl RpcDomainSink {
     ) -> Self {
         let core = Arc::new(RpcDomainCore {
             state: Mutex::new(RpcState::new()),
-            cleaned_up_sessions: Mutex::new(super::cleanup::CleanedUpSessions::new(
+            cleaned_up_sessions: Mutex::new(crate::runtime::CleanedUpSessions::new(
                 crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
             )),
             router,
@@ -154,7 +154,7 @@ impl RpcDomainSink {
     fn family_core_for(shared: &Arc<RpcDomainCore>, family: RouteFamily) -> Arc<RpcDomainCore> {
         let family_core = Arc::new(RpcDomainCore {
             state: Mutex::new(RpcState::new()),
-            cleaned_up_sessions: Mutex::new(super::cleanup::CleanedUpSessions::new(
+            cleaned_up_sessions: Mutex::new(crate::runtime::CleanedUpSessions::new(
                 crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
             )),
             router: shared.router.clone(),

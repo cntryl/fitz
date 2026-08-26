@@ -7,9 +7,9 @@
 // intentionally discards that state on disconnect, and broker restart clears
 // it wholesale instead of attempting transaction recovery.
 
-use super::cleanup::CleanedUpSessions;
 use super::commands::KvDomainCommand;
 use super::locks::{KvResourceLockKey, KvResourceLockOwner};
+use crate::runtime::CleanedUpSessions;
 use crate::runtime::{ManagedActor, Router};
 use parking_lot::Mutex;
 use std::collections::HashMap;

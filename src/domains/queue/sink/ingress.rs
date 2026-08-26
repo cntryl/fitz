@@ -4,7 +4,7 @@
 #[cfg(test)]
 use super::model::FrameContext;
 use super::model::{
-    DeliveryError, Duration, Envelope, Instant, Ordering, PendingQueueReserve, QueueClientFrame,
+    DeliveryError, Duration, Envelope, Instant, PendingQueueReserve, QueueClientFrame,
     QueueClientRequest, QueueDomainCore,
 };
 use crate::runtime::routing::RouteFamily;
@@ -103,19 +103,14 @@ impl QueueDomainCore {
     }
 
     fn ensure_active(&self) -> Result<(), DeliveryError> {
-        if !self.active.load(Ordering::Relaxed) {
-            return Err(DeliveryError::ActorStopped);
-        }
-
-        Ok(())
+        crate::runtime::ingress_support::ensure_actor_active(&self.active)
     }
 
     fn log_delivery(envelope: &Envelope) {
-        tracing::debug!(
-            domain = "queue",
-            destination = %envelope.destination(),
-            source = ?envelope.source(),
-            "Queue domain sink: received envelope"
+        crate::runtime::ingress_support::log_envelope_received(
+            "queue",
+            "Queue domain sink: received envelope",
+            envelope,
         );
     }
 

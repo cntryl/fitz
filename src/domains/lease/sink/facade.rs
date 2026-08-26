@@ -21,7 +21,7 @@ impl LeaseDomainState {
                 session_leases: Mutex::new(HashMap::new()),
                 pending_acquires: Mutex::new(HashMap::new()),
                 session_waiters: Mutex::new(HashMap::new()),
-                cleaned_up_sessions: Mutex::new(super::cleanup::CleanedUpSessions::new(
+                cleaned_up_sessions: Mutex::new(crate::runtime::CleanedUpSessions::new(
                     crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
                 )),
                 next_token: AtomicU64::new(1),

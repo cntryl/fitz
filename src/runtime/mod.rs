@@ -22,6 +22,7 @@
 
 pub mod actor;
 pub mod cf_validation;
+pub mod cleanup_guard;
 pub mod client_frame;
 pub mod clock;
 pub mod context;
@@ -29,6 +30,7 @@ pub mod domain_event;
 pub mod domain_manifest;
 pub mod envelope;
 pub mod family_actor_pool;
+pub(crate) mod ingress_support;
 pub mod keyed_actor_pool;
 pub(crate) mod keyed_family_executor;
 pub mod mailbox;
@@ -46,6 +48,7 @@ pub mod supervision;
 
 // Re-export commonly used types
 pub use actor::{Actor, ActorError, ActorId, ActorRef, ActorState, Context, SendError};
+pub use cleanup_guard::CleanedUpSessions;
 pub use client_frame::{ClientChannel, ClientFrameMeta, EncodedClientFrame};
 pub use clock::{
     epoch_ms_to_instant_with_reference, instant_to_epoch_ms_with_reference, Clock, SystemClock,

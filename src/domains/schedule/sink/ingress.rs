@@ -94,11 +94,7 @@ impl ScheduleDomainRuntime<'_> {
     }
 
     fn ensure_active(&self) -> Result<(), DeliveryError> {
-        if !self.active.load(Ordering::Relaxed) {
-            return Err(DeliveryError::ActorStopped);
-        }
-
-        Ok(())
+        crate::runtime::ingress_support::ensure_actor_active(self.active)
     }
 
     fn handle_domain_publish_envelope(&self, envelope: &Envelope) -> bool {
@@ -117,11 +113,10 @@ impl ScheduleDomainRuntime<'_> {
     }
 
     fn log_delivery(envelope: &Envelope) {
-        tracing::debug!(
-            domain = "schedule",
-            destination = %envelope.destination(),
-            source = ?envelope.source(),
-            "Schedule domain sink: received envelope"
+        crate::runtime::ingress_support::log_envelope_received(
+            "schedule",
+            "Schedule domain sink: received envelope",
+            envelope,
         );
     }
 
@@ -350,24 +345,6 @@ fn test_client_channel_from_protocol(
         crate::dispatch::protocol::frame::ChannelId::Lease => crate::runtime::ClientChannel::Lease,
         crate::dispatch::protocol::frame::ChannelId::Internal => {
             crate::runtime::ClientChannel::Internal
-        }
-    }
-}
-
-#[cfg(test)]
-pub(super) fn test_protocol_channel_from_client(
-    channel: crate::runtime::ClientChannel,
-) -> crate::dispatch::protocol::frame::ChannelId {
-    match channel {
-        crate::runtime::ClientChannel::Control => {
-            crate::dispatch::protocol::frame::ChannelId::Control
-        }
-        crate::runtime::ClientChannel::Pub => crate::dispatch::protocol::frame::ChannelId::Pub,
-        crate::runtime::ClientChannel::Sub => crate::dispatch::protocol::frame::ChannelId::Sub,
-        crate::runtime::ClientChannel::Rpc => crate::dispatch::protocol::frame::ChannelId::Rpc,
-        crate::runtime::ClientChannel::Lease => crate::dispatch::protocol::frame::ChannelId::Lease,
-        crate::runtime::ClientChannel::Internal => {
-            crate::dispatch::protocol::frame::ChannelId::Internal
         }
     }
 }

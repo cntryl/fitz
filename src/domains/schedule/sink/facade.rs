@@ -21,7 +21,7 @@ impl ScheduleDomainState {
                 store,
                 actors: Mutex::new(HashMap::new()),
                 sub_families: Mutex::new(HashMap::new()),
-                cleaned_up_sessions: Mutex::new(super::cleanup::CleanedUpSessions::new(
+                cleaned_up_sessions: Mutex::new(crate::runtime::CleanedUpSessions::new(
                     crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
                 )),
                 next_sub_id: AtomicU64::new(1),

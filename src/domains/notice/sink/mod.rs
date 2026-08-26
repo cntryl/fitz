@@ -36,7 +36,7 @@ use state::NoticeDomainCore;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 #[cfg(test)]
-use test_channels::{test_client_channel_from_protocol, test_protocol_channel_from_client};
+use test_channels::test_client_channel_from_protocol;
 use validation::subscription_limit_error;
 
 pub use state::NoticeDomainSink;

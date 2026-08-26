@@ -2,48 +2,6 @@
 
 use super::state::KvDomainRuntime;
 use crate::runtime::Envelope;
-use std::collections::{HashSet, VecDeque};
-
-/// Bounded record of sessions `cleanup_session` has already run for.
-///
-/// Cleanup uses the high-priority mailbox lane, so it can pass an older normal
-/// request from the same session. Remembering the cleaned session makes that
-/// stale request fail instead of recreating an actor, transaction, lock, watch,
-/// or admin projection for a disconnected session.
-///
-/// The operation dispatch path also re-checks this guard before it can create
-/// session state.
-pub(super) struct CleanedUpSessions {
-    order: VecDeque<u64>,
-    seen: HashSet<u64>,
-    capacity: usize,
-}
-
-impl CleanedUpSessions {
-    #[must_use]
-    pub(super) fn new(capacity: usize) -> Self {
-        Self {
-            order: VecDeque::new(),
-            seen: HashSet::new(),
-            capacity: capacity.max(1),
-        }
-    }
-
-    pub(super) fn mark(&mut self, session_id: u64) {
-        if self.seen.insert(session_id) {
-            self.order.push_back(session_id);
-            if self.order.len() > self.capacity {
-                if let Some(oldest) = self.order.pop_front() {
-                    self.seen.remove(&oldest);
-                }
-            }
-        }
-    }
-
-    pub(super) fn contains(&self, session_id: u64) -> bool {
-        self.seen.contains(&session_id)
-    }
-}
 
 impl KvDomainRuntime<'_> {
     pub(super) fn handle_cleanup_envelope(&self, envelope: &Envelope) -> bool {

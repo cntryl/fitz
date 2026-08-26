@@ -1,10 +1,10 @@
-use super::super::cleanup::CleanedUpSessions;
 use super::{
     Arc, AtomicBool, AtomicU64, AtomicUsize, BTreeMap, DeliveryError, Duration, Envelope,
     FamilyActorPoolRuntime, Instant, ManagedActor, Mutex, Router, RpcState, Weak,
 };
 #[cfg(test)]
 use super::{RouteAddress, RpcSessionCleanupResult, RpcWorkerCleanupResult};
+use crate::runtime::CleanedUpSessions;
 
 pub(in crate::domains::rpc::sink) struct RpcDomainCore {
     pub(in crate::domains::rpc::sink) state: Mutex<RpcState>,

@@ -2,7 +2,7 @@
 //! message, and dispatch to the registration/delivery/response layers.
 
 use super::state_model::{
-    DeliveryError, Envelope, Instant, Ordering, RpcClientRequest, RpcClientResponseBody,
+    DeliveryError, Envelope, Instant, RpcClientRequest, RpcClientResponseBody,
     RpcDeliveryOutcome as DeliveryOutcome, RpcDomainRuntime, RPC_MSG_TYPE_REQUEST,
 };
 use crate::domains::rpc::protocol::RpcMessage;
@@ -101,19 +101,14 @@ impl RpcDomainRuntime<'_> {
     }
 
     fn ensure_active(&self) -> Result<(), DeliveryError> {
-        if !self.active.load(Ordering::Relaxed) {
-            return Err(DeliveryError::ActorStopped);
-        }
-
-        Ok(())
+        crate::runtime::ingress_support::ensure_actor_active(self.active)
     }
 
     fn log_delivery(envelope: &Envelope) {
-        tracing::debug!(
-            domain = "rpc",
-            destination = %envelope.destination(),
-            source = ?envelope.source(),
-            "RPC domain sink: received envelope"
+        crate::runtime::ingress_support::log_envelope_received(
+            "rpc",
+            "RPC domain sink: received envelope",
+            envelope,
         );
     }
 

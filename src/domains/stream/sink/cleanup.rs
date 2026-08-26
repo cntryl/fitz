@@ -26,7 +26,7 @@ impl StreamDomainCore {
     }
 
     pub(in crate::domains::stream::sink) fn cleanup_session(&self, session_id: u64) {
-        self.cleaned_up_sessions.lock().insert(session_id);
+        self.cleaned_up_sessions.lock().mark(session_id);
         self.unsubscribe_all(session_id);
 
         let actors = self

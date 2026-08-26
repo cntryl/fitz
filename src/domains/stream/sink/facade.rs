@@ -122,7 +122,9 @@ impl StreamDomainSink {
             store,
             actors: Mutex::new(HashMap::new()),
             session_owners: Mutex::new(HashMap::new()),
-            cleaned_up_sessions: Mutex::new(CleanedUpSessions::new()),
+            cleaned_up_sessions: Mutex::new(CleanedUpSessions::new(
+                crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
+            )),
             subscriptions: SubscriptionRegistry::new(Arc::new(AtomicU64::new(1))),
             next_session_id: Arc::new(AtomicU64::new(1)),
             cursor_integrity_key: Arc::new(cursor_integrity_key),
@@ -269,7 +271,9 @@ impl StreamDomainSink {
             stream_store: shared.stream_store.clone(),
             actors: Mutex::new(HashMap::new()),
             session_owners: Mutex::new(HashMap::new()),
-            cleaned_up_sessions: Mutex::new(CleanedUpSessions::new()),
+            cleaned_up_sessions: Mutex::new(CleanedUpSessions::new(
+                crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
+            )),
             subscriptions: SubscriptionRegistry::new(shared.subscriptions.next_id.clone()),
             next_session_id: shared.next_session_id.clone(),
             cursor_integrity_key: shared.cursor_integrity_key.clone(),

@@ -23,7 +23,7 @@ impl LeaseDomainRuntime<'_> {
                 );
             FrameContext::new(
                 waiter.owner_session_id,
-                super::ingress::test_protocol_channel_from_client(waiter.channel),
+                crate::protocol::test_support::channel_id_from_client(waiter.channel),
                 crate::dispatch::protocol::tlv::MessageType::new(
                     crate::dispatch::protocol::lease_codec::msg_type::ACQUIRE,
                 ),
@@ -71,7 +71,7 @@ impl LeaseDomainRuntime<'_> {
                 crate::dispatch::protocol::lease_codec::encode_domain_response(response);
             FrameContext::new(
                 meta.session_id,
-                super::ingress::test_protocol_channel_from_client(meta.channel),
+                crate::protocol::test_support::channel_id_from_client(meta.channel),
                 crate::dispatch::protocol::tlv::MessageType::new(meta.message_type),
                 bytes::Bytes::from(response_bytes),
                 meta.route_family,

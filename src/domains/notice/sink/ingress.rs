@@ -5,7 +5,6 @@
 use super::{test_client_channel_from_protocol, FrameContext};
 use super::{Envelope, NoticeDomainCore, NoticeMetrics};
 use crate::runtime::DeliveryError;
-use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 impl NoticeDomainCore {
@@ -70,11 +69,7 @@ impl NoticeDomainCore {
     }
 
     fn ensure_active(&self) -> Result<(), DeliveryError> {
-        if !self.active.load(Ordering::Relaxed) {
-            return Err(DeliveryError::ActorStopped);
-        }
-
-        Ok(())
+        crate::runtime::ingress_support::ensure_actor_active(&self.active)
     }
 
     fn handle_domain_publish_envelope(&self, envelope: &Envelope) -> bool {
@@ -91,11 +86,10 @@ impl NoticeDomainCore {
     }
 
     fn log_delivery(envelope: &Envelope) {
-        tracing::debug!(
-            domain = "notice",
-            destination = %envelope.destination(),
-            source = ?envelope.source(),
-            "Notice domain sink: received envelope"
+        crate::runtime::ingress_support::log_envelope_received(
+            "notice",
+            "Notice domain sink: received envelope",
+            envelope,
         );
     }
 

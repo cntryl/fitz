@@ -8,10 +8,10 @@ pub(super) use crate::domains::stream::{
 pub(super) use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 pub(super) use crate::runtime::routing::{route_triplet, Route, RouteAddress, RouteFamily};
 pub(super) use crate::runtime::{
-    DeliveryError, Envelope, KeyedActorPool, MailboxSink, ManagedActor, Router,
+    CleanedUpSessions, DeliveryError, Envelope, KeyedActorPool, MailboxSink, ManagedActor, Router,
 };
 pub(super) use parking_lot::Mutex;
-pub(super) use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+pub(super) use std::collections::{BTreeMap, BTreeSet, HashMap};
 pub(super) use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 pub(super) use std::sync::{Arc, Weak};
 pub(super) use std::time::{Duration, Instant};
@@ -331,36 +331,6 @@ impl SubscriptionRegistry {
 pub(super) struct AdminSnapshotState {
     pub(super) read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
     pub(super) dirty: Arc<AtomicBool>,
-}
-
-pub(super) struct CleanedUpSessions {
-    ids: HashSet<u64>,
-    order: std::collections::VecDeque<u64>,
-}
-
-impl CleanedUpSessions {
-    pub(super) fn new() -> Self {
-        Self {
-            ids: HashSet::new(),
-            order: std::collections::VecDeque::new(),
-        }
-    }
-
-    pub(super) fn contains(&self, session_id: u64) -> bool {
-        self.ids.contains(&session_id)
-    }
-
-    pub(super) fn insert(&mut self, session_id: u64) {
-        if !self.ids.insert(session_id) {
-            return;
-        }
-        self.order.push_back(session_id);
-        while self.order.len() > crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY {
-            if let Some(expired) = self.order.pop_front() {
-                self.ids.remove(&expired);
-            }
-        }
-    }
 }
 
 impl AdminSnapshotState {

@@ -5,10 +5,10 @@
 //! restored after broker restart.
 
 use super::{
-    cleanup::CleanedUpSessions, NoticeDeliveryJob, NoticeDomainCommand, NoticeMetrics,
-    NoticeRouteStats, NoticeRouteStatsKey, NoticeSubscription, RoutedSubscriptionSet,
+    NoticeDeliveryJob, NoticeDomainCommand, NoticeMetrics, NoticeRouteStats, NoticeRouteStatsKey,
+    NoticeSubscription, RoutedSubscriptionSet,
 };
-use crate::runtime::{ManagedActor, Router};
+use crate::runtime::{CleanedUpSessions, ManagedActor, Router};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64};

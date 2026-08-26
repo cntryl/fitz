@@ -23,7 +23,7 @@ impl NoticeDomainSink {
             metrics: None,
             active: std::sync::atomic::AtomicBool::new(true),
             delivery_workers: parking_lot::Mutex::new(std::collections::HashMap::new()),
-            cleaned_up_sessions: parking_lot::Mutex::new(super::cleanup::CleanedUpSessions::new(
+            cleaned_up_sessions: parking_lot::Mutex::new(crate::runtime::CleanedUpSessions::new(
                 crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
             )),
         });

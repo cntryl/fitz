@@ -25,7 +25,7 @@ impl KvDomainState {
                 actors: Arc::new(Mutex::new(HashMap::new())),
                 resource_locks: Mutex::new(HashMap::new()),
                 watch_registries: Mutex::new(HashMap::new()),
-                cleaned_up_sessions: Mutex::new(super::cleanup::CleanedUpSessions::new(
+                cleaned_up_sessions: Mutex::new(crate::runtime::CleanedUpSessions::new(
                     crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
                 )),
                 router,

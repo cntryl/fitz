@@ -1,7 +1,7 @@
 //! Response encoding and best-effort routing back to the requester.
 
 #[cfg(test)]
-use super::{test_protocol_channel_from_client, FrameContext};
+use super::FrameContext;
 use super::{Envelope, Instant, NoticeDomainCore};
 
 impl NoticeDomainCore {
@@ -49,7 +49,7 @@ impl NoticeDomainCore {
             );
             FrameContext::new(
                 meta.session_id,
-                test_protocol_channel_from_client(meta.channel),
+                crate::protocol::test_support::channel_id_from_client(meta.channel),
                 crate::dispatch::protocol::tlv::MessageType::new(meta.message_type),
                 bytes::Bytes::from(response_bytes),
                 meta.route_family,
