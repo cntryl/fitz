@@ -22,12 +22,21 @@ jobs:
     timeout-minutes: 20
     env:
       RUST_LOG: "off"
+      # This workspace links ~24 separate integration-test binaries against a
+      # heavy dependency tree (tokio, hyper, rustls, opentelemetry,
+      # aws-lc-sys, ...) -- lld is meaningfully faster than the default bfd
+      # linker for that many large links, with no behavior change. Scoped to
+      # CI only; local dev toolchains are untouched.
+      RUSTFLAGS: "-C link-arg=-fuse-ld=lld"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
       - name: Update Rust toolchain
         run: rustup update stable
+
+      - name: Install lld linker
+        run: sudo apt-get update && sudo apt-get install -y lld
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
