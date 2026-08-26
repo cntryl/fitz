@@ -280,6 +280,13 @@ pub struct FamilyActorShard<M> {
 /// constructed with, which cannot happen under correct routing; that remains
 /// a pool-fatal condition since it indicates a routing/config bug rather than
 /// a per-family runtime fault.
+///
+/// A single family's failure never flips pool-wide health (`is_running`),
+/// but once *every* provisioned family has failed closed the pool has zero
+/// remaining capacity -- that is an honest aggregate fact about the pool,
+/// not a blast-radius cascade from any one family, so it does flip
+/// `is_running` to `false` (see
+/// `should_fail_pool_closed_after_every_family_panics`).
 pub struct FamilyActorPoolRuntime<M: Send + 'static> {
     ingress: FamilyActorIngress<M>,
     active: Arc<AtomicBool>,
@@ -323,11 +330,14 @@ impl<M: Send + 'static> FamilyActorPoolRuntime<M> {
     /// Like [`Self::spawn`], but increments `family_failed_metric` once per
     /// route family whose handler panics and fails closed.
     ///
-    /// A per-family failure deliberately does not flip domain-wide
+    /// A single family's failure deliberately does not flip domain-wide
     /// health/liveness (that would reintroduce the very blast-radius bug this
-    /// isolation exists to prevent), so this counter is the only
-    /// operator-visible signal for a permanently degraded family/realm —
-    /// without it, such a failure is observable only via a log line.
+    /// isolation exists to prevent) -- until every provisioned family has
+    /// failed, in which case the pool legitimately has no remaining capacity
+    /// and `is_running` does flip. Short of full exhaustion, this counter is
+    /// the only operator-visible signal for a permanently degraded
+    /// family/realm — without it, such a failure is observable only via a
+    /// log line.
     #[must_use]
     pub fn spawn_with_family_failed_metric<S, F, H>(
         pool: FamilyActorPool<M>,
@@ -454,9 +464,20 @@ impl<M: Send + 'static> FamilyActorPoolRuntime<M> {
                             family = work.family.id(),
                             "family actor failed closed for this family after handler panic"
                         );
-                        // Do not break and do not touch the pool-wide flags:
+                        // Do not break and do not touch `running`/`active` here:
                         // sibling families on this shard, and every other
-                        // shard, must keep making progress.
+                        // shard, must keep making progress. `failed` is the
+                        // one exception -- if every provisioned family is now
+                        // failed closed, the pool has zero remaining capacity,
+                        // which is an honest pool-wide health fact (not a
+                        // blast-radius cascade from this one family), so
+                        // flip it to surface that aggregate exhaustion.
+                        if worker_family_failed
+                            .values()
+                            .all(|flag| flag.load(Ordering::Acquire))
+                        {
+                            worker_failed.store(true, Ordering::Release);
+                        }
                     }
                 }
                 worker_running.store(false, Ordering::Release);
@@ -497,6 +518,10 @@ impl<M: Send + 'static> FamilyActorPoolRuntime<M> {
         self.ingress.try_enqueue(family, lane, message)
     }
 
+    /// Pool-wide liveness. A single family's handler panic never flips this
+    /// (see the type-level docs) -- only an explicit [`Self::fail_closed`]
+    /// call, [`Self::stop`], or every provisioned family having failed
+    /// closed does.
     #[must_use]
     pub fn is_running(&self) -> bool {
         self.active.load(Ordering::Acquire)
@@ -517,6 +542,17 @@ impl<M: Send + 'static> FamilyActorPoolRuntime<M> {
                 .family_failed
                 .get(&family.id())
                 .is_some_and(|flag| flag.load(Ordering::Acquire))
+    }
+
+    /// Count of provisioned families whose handler has panicked and failed
+    /// closed. Mirrors `keyed_family_executor.rs`'s method of the same name.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn failed_family_count(&self) -> usize {
+        self.family_failed
+            .values()
+            .filter(|flag| flag.load(Ordering::Acquire))
+            .count()
     }
 
     #[must_use]
@@ -1087,5 +1123,81 @@ mod tests {
             Err(FamilyActorEnqueueError::ActorStopped)
         );
         assert_eq!(runtime.health_snapshot().panic_count, 1);
+    }
+
+    #[test]
+    fn should_keep_pool_running_given_one_of_several_families_panics() {
+        // Arrange: multiple provisioned families so a single panic must be
+        // isolation, not exhaustion.
+        let families = [family(1), family(2), family(3)];
+        let pool = FamilyActorPool::<u64>::new(&families).expect("pool");
+        let active = Arc::new(AtomicBool::new(true));
+        let (started_tx, started_rx) = bounded(1);
+        let runtime = FamilyActorPoolRuntime::spawn(
+            pool,
+            active,
+            |_| (),
+            move |(), target_family, _lane, _message: u64| {
+                if target_family == family(1) {
+                    started_tx.send(()).expect("panic observer");
+                    panic!("injected handler panic");
+                }
+            },
+        );
+
+        // Act
+        runtime
+            .try_enqueue(family(1), FamilyActorLane::Normal, 1)
+            .expect("panic command enqueue");
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("handler started");
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while runtime.is_family_running(family(1)) && std::time::Instant::now() < deadline {
+            thread::yield_now();
+        }
+
+        // Assert: a single family's panic isolates that family only -- pool
+        // health/liveness and restart-exhaustion must both stay unaffected.
+        assert!(!runtime.is_family_running(family(1)));
+        assert!(runtime.is_running());
+        assert_eq!(runtime.failed_family_count(), 1);
+        let health = runtime.managed_actor_health_snapshot();
+        assert!(health.running);
+        assert!(!health.restart_exhausted);
+    }
+
+    #[test]
+    fn should_fail_pool_closed_after_every_family_panics() {
+        // Arrange
+        let families = [family(1), family(2), family(3)];
+        let pool = FamilyActorPool::<u64>::new(&families).expect("pool");
+        let active = Arc::new(AtomicBool::new(true));
+        let runtime = FamilyActorPoolRuntime::spawn(
+            pool,
+            active,
+            |_| (),
+            |(), _family, _lane, _message: u64| {
+                panic!("injected handler panic");
+            },
+        );
+
+        // Act: panic every provisioned family.
+        for target in families {
+            let _ = runtime.try_enqueue(target, FamilyActorLane::Normal, 1);
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while runtime.is_running() && std::time::Instant::now() < deadline {
+            thread::yield_now();
+        }
+
+        // Assert: full exhaustion is an honest pool-wide fact, unlike a
+        // single family's failure, so `running`/`restart_exhausted` must
+        // both flip.
+        assert!(!runtime.is_running());
+        assert_eq!(runtime.failed_family_count(), families.len());
+        let health = runtime.managed_actor_health_snapshot();
+        assert!(!health.running);
+        assert!(health.restart_exhausted);
     }
 }

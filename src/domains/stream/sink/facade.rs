@@ -489,11 +489,14 @@ impl StreamDomainSink {
             },
             |runtime| {
                 let failed_family_count = runtime.failed_family_count();
+                let running = runtime.is_running();
                 crate::runtime::ManagedActorHealthSnapshot {
-                    running: runtime.is_running(),
+                    running,
                     restart_count: 0,
                     panic_count: u64::try_from(failed_family_count).unwrap_or(u64::MAX),
-                    restart_exhausted: failed_family_count > 0,
+                    // Same "every family failed" threshold `running` uses --
+                    // a single failed family must not report exhaustion.
+                    restart_exhausted: !running,
                 }
             },
         )
@@ -506,9 +509,24 @@ impl StreamDomainSink {
             .fail_next_promotion_frontier_commit_for_tests();
     }
 
+    /// Panic every provisioned family's handler (or the single actor in
+    /// non-sharded mode). Used by `panic_all_domain_actors_for_tests` to
+    /// drive the pool to full exhaustion; a single family's panic must never
+    /// be conflated with domain-wide health, so covering every family here
+    /// is required to actually observe pool-wide fail-closed behavior.
     #[cfg(test)]
     pub(crate) fn panic_actor_for_tests(&self) {
-        let _ = self.dispatch_family_control(None, StreamDomainCommand::PanicForTests);
+        match self.family_families.as_deref() {
+            Some(families) => {
+                for family in families {
+                    let _ = self
+                        .dispatch_family_control(Some(*family), StreamDomainCommand::PanicForTests);
+                }
+            }
+            None => {
+                let _ = self.dispatch_family_control(None, StreamDomainCommand::PanicForTests);
+            }
+        }
     }
 
     #[cfg(test)]

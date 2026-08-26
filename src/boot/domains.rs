@@ -853,7 +853,23 @@ mod tests {
         // Assert
         assert_eq!(snapshots.len(), DomainKind::ALL.len());
         assert!(snapshots.iter().all(|snapshot| !snapshot.actor_running));
-        assert!(snapshots.iter().all(|snapshot| snapshot.panic_count == 1));
+        // Non-sharded domains (kv/queue/notice/lease/schedule) panic exactly
+        // one actor. Family-sharded domains (rpc/stream) are provisioned
+        // with 7 route families here (`domain_setup_options`) and must be
+        // panicked on *every* family to reach full exhaustion -- see
+        // `panic_actor_for_tests` on `RpcDomainSink`/`StreamDomainSink` --
+        // so their panic_count legitimately lands at 7, not 1.
+        for snapshot in &snapshots {
+            let expected_panic_count = match snapshot.domain {
+                "rpc" | "stream" => 7,
+                _ => 1,
+            };
+            assert_eq!(
+                snapshot.panic_count, expected_panic_count,
+                "unexpected panic_count for domain {}",
+                snapshot.domain
+            );
+        }
         assert!(snapshots.iter().all(|snapshot| snapshot.restart_exhausted));
         assert_eq!(domains.kv_active_transaction_count(), 0);
         assert_eq!(domains.queue_ready_message_count(), 0);
