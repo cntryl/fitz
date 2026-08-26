@@ -47,18 +47,17 @@ jobs:
           cntryl-tools validate-benchmarks --config .cntryl/repository.toml
           cntryl-tools check-module-sizes --config .cntryl/repository.toml
 
-      - name: Cargo build
-        run: cargo build --locked
+      - name: Cargo check
+        run: cargo check --locked
 
       - name: Cargo clippy pedantic
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic
 
-      - name: Cargo test
+      - name: Build tests
+        run: cargo test --no-run --locked --workspace
+
+      - name: Run tests
         env:
-          # Shared CI runners have been observed running the e2e suites roughly
-          # two orders of magnitude slower than a developer machine, tripping
-          # the fixed per-frame deadlines the tests pass. Scale them here rather
-          # than loosening the deadlines for everyone.
           FITZ_TEST_TIMEOUT_MULTIPLIER: "10"
         run: cargo test --locked --workspace
 
