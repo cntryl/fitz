@@ -1109,15 +1109,18 @@ mod tests {
             .recv_timeout(Duration::from_secs(1))
             .expect("handler started");
         let deadline = std::time::Instant::now() + Duration::from_secs(1);
-        while runtime.is_family_running(family(1)) && std::time::Instant::now() < deadline {
+        while runtime.is_running() && std::time::Instant::now() < deadline {
             thread::yield_now();
         }
 
-        // Assert: this single family is fail-closed, but -- unlike the old
-        // pool-wide behavior -- the pool itself stays up, since a lone
-        // panicking family must not be conflated with the whole pool dying.
+        // Assert: this pool has exactly one provisioned family, so that
+        // family failing closed *is* full exhaustion -- the pool-wide
+        // `is_running()` correctly follows suit here, same as it would for
+        // any non-sharded domain's single actor. (A multi-family pool keeps
+        // `is_running()` true after one sibling's panic --
+        // see `should_keep_pool_running_given_one_of_several_families_panics`.)
         assert!(!runtime.is_family_running(family(1)));
-        assert!(runtime.is_running());
+        assert!(!runtime.is_running());
         assert_eq!(
             runtime.try_enqueue(family(1), FamilyActorLane::Normal, 2),
             Err(FamilyActorEnqueueError::ActorStopped)
