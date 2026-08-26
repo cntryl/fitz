@@ -7,7 +7,8 @@ use std::sync::Arc;
 
 use super::protocol::{
     IngestMetadata, StreamDiscriminator, StreamFilterSet, StreamFilteredReason, StreamReadItem,
-    StreamRecord, StreamWriteMode,
+    StreamRecord, StreamWriteMode, STREAM_READ_ITEM_FIXED_WIRE_OVERHEAD_BYTES,
+    STREAM_READ_RESPONSE_ENVELOPE_OVERHEAD_BYTES,
 };
 use super::storage::{
     decode_area_offset_from_key, decode_realm_offset_from_key, decode_resource_offset_from_key,
@@ -74,31 +75,10 @@ const ERR_SESSION_ROUTE_FAMILY_MISMATCH: &str = "ERR_SESSION_ROUTE_FAMILY_MISMAT
 /// `max_bytes` is optional on the wire and commonly omitted.
 pub(crate) const MAX_STREAM_RESPONSE_PAYLOAD_BYTES: usize = u16::MAX as usize;
 
-/// Conservative upper bound on the fixed (non-route, non-body, non-metadata)
-/// per-item wire overhead added by `encode_stream_read_item`/
-/// `encode_stream_record`: the item-type tag, offset fields and their
-/// optional-value flags (worst case, all present, including the extended
-/// `global_offset`), the route/body/metadata length prefixes, and
-/// `created_at`. Deliberately generous rather than hand-matching the
-/// encoder field for field, so this stays safe even if the encoder's field
-/// set changes. Route bytes are counted separately (via
-/// `stream_record_wire_bytes`'s `route_len`) since they vary per record and
-/// commonly dominate a small record's true cost.
-const STREAM_ITEM_FIXED_WIRE_OVERHEAD_BYTES: usize = 64;
-
-/// Conservative upper bound on everything wrapping the read items in the
-/// final wire frame: the response envelope (success flag, optional
-/// `session_id`, data length prefix - see `encode_response_into`) plus the
-/// item count and cursor fields (`encode_stream_read_data`,
-/// `encode_stream_cursor`). Reserved once per response so the *fully*
-/// encoded frame, not just the summed item bytes, stays within
-/// `MAX_STREAM_RESPONSE_PAYLOAD_BYTES`.
-const STREAM_RESPONSE_ENVELOPE_OVERHEAD_BYTES: usize = 128;
-
 /// The largest a read response's summed item bytes may be while still
 /// guaranteeing the fully encoded wire frame fits `u16::MAX`.
 fn stream_response_byte_ceiling() -> usize {
-    MAX_STREAM_RESPONSE_PAYLOAD_BYTES.saturating_sub(STREAM_RESPONSE_ENVELOPE_OVERHEAD_BYTES)
+    MAX_STREAM_RESPONSE_PAYLOAD_BYTES.saturating_sub(STREAM_READ_RESPONSE_ENVELOPE_OVERHEAD_BYTES)
 }
 
 /// Resolve a client-requested `max_bytes` against the hard wire ceiling.
@@ -114,7 +94,7 @@ pub(super) fn stream_record_wire_bytes(
     body_len: usize,
     metadata_len: usize,
 ) -> usize {
-    STREAM_ITEM_FIXED_WIRE_OVERHEAD_BYTES
+    STREAM_READ_ITEM_FIXED_WIRE_OVERHEAD_BYTES
         .saturating_add(route_len)
         .saturating_add(body_len)
         .saturating_add(metadata_len)

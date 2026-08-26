@@ -948,14 +948,10 @@ fn should_bound_resource_read_response_to_wire_frame_limit_when_max_bytes_omitte
 
 #[test]
 fn should_reject_read_when_lone_record_alone_exceeds_wire_frame_limit() {
-    // Arrange: `MAX_EVENT_SIZE` (1 MB) permits writing a single event larger
-    // than the wire's 65_535-byte response ceiling. The read accumulator
-    // always includes at least one item so pagination can make forward
-    // progress (see the `should_return_first_oversized_global_record_to_advance_cursor`
-    // sibling test in global_recovery_and_filters), but that means a record
-    // this large can never be read back through this path without exceeding
-    // the frame limit - it must be rejected explicitly instead of built into
-    // an unencodable response.
+    // Arrange: recovery, migration, or a direct low-level store write may
+    // expose a legacy record larger than today's append limit. The read
+    // accumulator must reject it explicitly instead of building an
+    // unencodable response.
     //
     // Stream guarantees exact replay of committed history, so this must stay
     // a loud, classifiable failure naming the offending offset. Emitting a
@@ -999,4 +995,87 @@ fn should_reject_read_when_lone_record_alone_exceeds_wire_frame_limit() {
         error.contains("ERR_READ_RESPONSE_TOO_LARGE"),
         "unexpected error: {error}"
     );
+}
+
+#[test]
+fn should_not_claim_coverage_of_an_empty_realm_in_the_posting_cursor() {
+    // Arrange
+    // A caught-up realm-resource posting read reports the visible frontier as
+    // covered so a client can skip realm offsets belonging to other
+    // resources. The realm watermark is inclusive and floors at zero, so an
+    // EMPTY realm is indistinguishable from one holding a single record at
+    // offset 0 - and claiming coverage there makes the client resume at 1 and
+    // miss the realm's very first event forever.
+    let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+    let params = ReadRealmPostingParams {
+        family: 1,
+        realm: "north",
+        resource: "created",
+        from_offset: 0,
+        limit: 64,
+        max_bytes: None,
+    };
+
+    // Act
+    let (items, cursor) = store
+        .read_realm_resource_posting(&params, None)
+        .expect("read the posting of an empty realm");
+
+    // Assert
+    assert!(items.is_empty());
+    assert_eq!(
+        cursor.last_realm_offset, None,
+        "an empty realm covers no offset, so the cursor must not name one"
+    );
+    assert_eq!(cursor.captured_watermark, Some(0));
+}
+
+#[test]
+fn should_report_the_visible_frontier_once_a_realm_posting_is_caught_up() {
+    // Arrange
+    // The companion to the empty-realm case: with records present, a
+    // caught-up read must still advance the cursor to the visible frontier,
+    // including across realm offsets owned by other resources.
+    let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+    for (area, resource, offset) in [
+        ("orders", "created", 0),
+        ("orders", "shipped", 0),
+        ("orders", "created", 1),
+    ] {
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "north",
+                area,
+                resource,
+                expected_resource_next_offset: offset,
+                events: &single_event(b"seed"),
+                ingest_metadata: None,
+                mode: StreamWriteMode::Sync,
+            })
+            .expect("seed realm record");
+    }
+    let params = ReadRealmPostingParams {
+        family: 1,
+        realm: "north",
+        resource: "created",
+        from_offset: 0,
+        limit: 64,
+        max_bytes: None,
+    };
+
+    // Act
+    let (items, cursor) = store
+        .read_realm_resource_posting(&params, None)
+        .expect("read the caught-up realm posting");
+
+    // Assert
+    assert_eq!(event_records(items).len(), 2);
+    assert_eq!(
+        cursor.last_realm_offset,
+        Some(2),
+        "a caught-up read covers the whole visible frontier"
+    );
+    assert_eq!(cursor.captured_watermark, Some(3));
+    assert!(!cursor.has_more);
 }

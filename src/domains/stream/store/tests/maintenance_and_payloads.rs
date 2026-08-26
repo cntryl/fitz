@@ -257,3 +257,61 @@ fn should_roundtrip_every_reserved_blob_marker_prefix_length_with_metadata() {
         );
     }
 }
+
+fn commit_single_event(store: &StreamStore, realm: &str, area: &str, resource: &str, next: u64) {
+    store
+        .commit_records(CommitRecordsParams {
+            family: 1,
+            realm,
+            area,
+            resource,
+            expected_resource_next_offset: next,
+            events: &[EventPayload {
+                body: Bytes::from_static(b"x"),
+                metadata: None,
+                discriminator: None,
+            }],
+            ingest_metadata: None,
+            mode: StreamWriteMode::Buffered,
+        })
+        .expect("commit single event");
+}
+
+#[test]
+fn should_recompact_a_posting_bucket_whose_first_entry_is_not_the_bucket_start() {
+    // Arrange
+    // A posting fragment is keyed by its FIRST ENTRY's offset, not by the
+    // 64-offset bucket start, and a bucket's first posting only lands on a
+    // bucket boundary by coincidence. Writing the compacted replacement under
+    // `bucket_start` therefore makes the replacement disagree with its own
+    // key, and `validate_merged_posting` rejects it the next time the bucket
+    // is merged - wedging maintenance for the whole family, since
+    // `run_maintenance` aborts the slice and requeues the bucket forever.
+    //
+    // The leading commit to a different area pushes the `events` area posting
+    // to start at global offset 1 rather than 0.
+    let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+    commit_single_event(&store, "north", "other", "misc", 0);
+    for offset in 0..9 {
+        commit_single_event(&store, "north", "events", "orders", offset);
+    }
+    store
+        .run_maintenance(1)
+        .expect("compact the posting bucket a first time");
+    for offset in 9..17 {
+        commit_single_event(&store, "north", "events", "orders", offset);
+    }
+
+    // Act
+    let second = store.run_maintenance(1);
+
+    // Assert
+    assert!(
+        second.is_ok(),
+        "re-compacting a posting bucket must not wedge maintenance: {second:?}"
+    );
+    assert!(
+        store.run_maintenance(1).is_ok(),
+        "maintenance must stay healthy across repeated slices"
+    );
+}

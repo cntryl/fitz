@@ -33,16 +33,48 @@ enum PostingScope {
     Global,
 }
 
-fn posting_cursor(scope: PostingScope, offset: u64, watermark: u64, has_more: bool) -> ReadCursor {
+/// `covered_through` is `None` when the page covered no offset at all, which
+/// is distinct from covering offset 0 - the caller must resume where it asked
+/// rather than one past it.
+fn posting_cursor(
+    scope: PostingScope,
+    covered_through: Option<u64>,
+    watermark: u64,
+    has_more: bool,
+) -> ReadCursor {
     ReadCursor {
         last_resource_offset: 0,
         last_area_offset: None,
-        last_realm_offset: (scope == PostingScope::Realm).then_some(offset),
-        last_global_offset: (scope == PostingScope::Global).then_some(offset),
+        last_realm_offset: (scope == PostingScope::Realm)
+            .then_some(covered_through)
+            .flatten(),
+        last_global_offset: (scope == PostingScope::Global)
+            .then_some(covered_through)
+            .flatten(),
         has_more,
         cursor_fingerprint: None,
         captured_watermark: Some(watermark),
     }
+}
+
+fn global_posting_cursor(
+    last_examined: u64,
+    watermark: u64,
+    has_more: bool,
+    fragments_exhausted: bool,
+) -> ReadCursor {
+    let has_more = has_more || fragments_exhausted;
+    let covered_through = if has_more {
+        last_examined
+    } else {
+        last_examined.max(watermark.saturating_sub(1))
+    };
+    posting_cursor(
+        PostingScope::Global,
+        Some(covered_through),
+        watermark,
+        has_more,
+    )
 }
 
 fn realm_posting_record(
@@ -157,7 +189,7 @@ impl StreamStore {
             max_bytes,
         } = *params;
         self.ensure_layout_activation_for_family(family)?;
-        let watermark = self.get_realm_watermark(family, realm)?;
+        let visible_end = self.realm_visible_end(family, realm)?;
         let posting_page_start = from_offset / super::REALM_PAGE_RECORD_LIMIT as u64
             * super::REALM_PAGE_RECORD_LIMIT as u64;
         let start_key = encode_realm_resource_posting_key(realm, resource, posting_page_start);
@@ -170,7 +202,7 @@ impl StreamStore {
         let byte_limit = bounded_max_bytes(max_bytes);
         let mut items = Vec::with_capacity(item_limit.min(1_000));
         let mut bytes_read = 0usize;
-        let mut last_examined = from_offset;
+        let mut covered_through: Option<u64> = None;
         let mut has_more = false;
         let mut examined = 0usize;
         let mut cached_parent = None;
@@ -179,7 +211,7 @@ impl StreamStore {
         'pages: for (_, value) in rows {
             for entry in PostingPageValue::try_decode(&value)?.entries {
                 let offset = entry.offset;
-                if offset < from_offset || offset > watermark {
+                if offset < from_offset || offset >= visible_end {
                     continue;
                 }
                 if items.len() >= item_limit {
@@ -192,7 +224,7 @@ impl StreamStore {
                 }
                 examined += 1;
                 if record_is_expired(entry.expires_at, now_epoch_ms) {
-                    last_examined = offset;
+                    covered_through = Some(offset);
                     continue;
                 }
                 let Some(record) = realm_posting_record(
@@ -203,7 +235,7 @@ impl StreamStore {
                     &mut global_cache,
                 )?
                 else {
-                    last_examined = offset;
+                    covered_through = Some(offset);
                     continue;
                 };
                 let route = realm_posting_route(realm, &record);
@@ -228,7 +260,7 @@ impl StreamStore {
                     }
                     WireBudgetDecision::Include => {}
                 }
-                last_examined = offset;
+                covered_through = Some(offset);
                 bytes_read = bytes_read.saturating_add(record_bytes);
                 if !matches_filter {
                     items.push(StreamReadItem::Filtered {
@@ -253,16 +285,22 @@ impl StreamStore {
         if fragments_exhausted {
             has_more = true;
         } else if !has_more {
-            last_examined = last_examined.max(watermark);
+            // Caught up: claim the whole visible frontier so the caller skips
+            // the realm offsets that belong to other resources instead of
+            // re-requesting them. `checked_sub` is what keeps that claim
+            // honest on an empty realm - there is no offset 0 to have covered
+            // yet, and naming one would make the caller resume at 1 and miss
+            // the realm's first event for good.
+            let frontier = if from_offset < visible_end {
+                visible_end.checked_sub(1)
+            } else {
+                from_offset.checked_sub(1)
+            };
+            covered_through = covered_through.max(frontier);
         }
         Ok((
             items,
-            posting_cursor(
-                PostingScope::Realm,
-                last_examined,
-                watermark.saturating_add(1),
-                has_more,
-            ),
+            posting_cursor(PostingScope::Realm, covered_through, visible_end, has_more),
         ))
     }
 
@@ -368,15 +406,8 @@ impl StreamStore {
                 }));
             }
         }
-        if fragments_exhausted {
-            has_more = true;
-        } else if !has_more {
-            last_examined = last_examined.max(watermark.saturating_sub(1));
-        }
-        Ok((
-            items,
-            posting_cursor(PostingScope::Global, last_examined, watermark, has_more),
-        ))
+        let cursor = global_posting_cursor(last_examined, watermark, has_more, fragments_exhausted);
+        Ok((items, cursor))
     }
 
     /// Reads a family-global snapshot in global-offset order.

@@ -526,8 +526,20 @@ impl StreamStore {
             (deadline > now_epoch_ms)
                 .then(|| deadline.saturating_sub(now_epoch_ms).saturating_add(999) / 1_000)
         });
+        // A fragment's key names the offset of its FIRST record, and only the
+        // positional planes are guaranteed to tile from the bucket start - a
+        // posting holds just the offsets belonging to one area or resource, so
+        // its first entry lands wherever that scope's first commit did (and
+        // moves again when `prune_expired` drops leading entries). Keying the
+        // replacement at `bucket_start` regardless would make it disagree with
+        // its own key, and `validate_merged_posting` would reject the bucket
+        // on the next merge - failing every later slice and requeueing the
+        // bucket forever.
+        let replacement_first_offset = merged
+            .posting_bounds()
+            .map_or(bucket.bucket_start, |(first, _)| first);
         let mut replacement_key = bucket.group_key;
-        replacement_key.extend_from_slice(&bucket.bucket_start.to_be_bytes());
+        replacement_key.extend_from_slice(&replacement_first_offset.to_be_bytes());
         replacement_key.extend_from_slice(&bucket.replacement_generation.to_be_bytes());
         let mut write_txn = self
             .db

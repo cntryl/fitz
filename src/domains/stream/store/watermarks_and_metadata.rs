@@ -277,13 +277,31 @@ impl StreamStore {
             .map_err(|e| format!("midge commit error: {e:?}"))
     }
 
-    /// Get the current realm watermark.
+    /// Get the current realm watermark, as the highest visible realm offset.
     ///
     /// # Errors
     ///
     /// Returns an error if layout activation, storage reads, counter decoding,
     /// or fallback offset scanning fails.
     pub fn get_realm_watermark(&self, family: u64, realm: &str) -> Result<u64, String> {
+        self.realm_visible_end(family, realm)
+            .map(|visible_end| visible_end.saturating_sub(1))
+    }
+
+    /// Returns the *exclusive* realm visibility frontier: the first realm
+    /// offset that is not yet visible, and so `0` for a realm holding nothing.
+    ///
+    /// [`Self::get_realm_watermark`] is the same frontier stated inclusively,
+    /// which cannot express "empty" - it floors at zero, and zero is also a
+    /// real committed offset. Anything that must tell those apart, such as a
+    /// caught-up read cursor deciding how much history it may claim to have
+    /// covered, has to ask in this form.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if layout activation, storage reads, counter decoding,
+    /// or fallback offset scanning fails.
+    pub(crate) fn realm_visible_end(&self, family: u64, realm: &str) -> Result<u64, String> {
         self.ensure_layout_activation_for_family(family)?;
 
         let key = crate::domains::stream::storage::encode_realm_watermark_key(realm);
@@ -296,23 +314,25 @@ impl StreamStore {
                 cntryl_midge::TransactionMode::ReadOnly,
             )
             .map_err(|e| format!("failed to begin tx: {e:?}"))?;
-        let persisted = txn
+        // The advisory row stores an inclusive offset; the counter already
+        // stores the exclusive next offset, and commits it atomically with the
+        // records, which is why it stays the authoritative floor.
+        let persisted_end = txn
             .get(&key)
             .map_err(|e| format!("midge get error: {e:?}"))?
-            .map(|bytes| WatermarkValue::decode(&bytes).map(|value| value.watermark))
-            .transpose()?;
-        let committed = match txn
+            .map(|bytes| {
+                WatermarkValue::decode(&bytes).map(|value| value.watermark.saturating_add(1))
+            })
+            .transpose()?
+            .unwrap_or(0);
+        let committed_end = match txn
             .get(&counter_key)
             .map_err(|e| format!("midge get error: {e:?}"))?
         {
-            Some(bytes) => RealmCounterValue::decode(&bytes)?
-                .next_offset
-                .saturating_sub(1),
-            None => self
-                .scan_next_realm_offset(family, realm)?
-                .saturating_sub(1),
+            Some(bytes) => RealmCounterValue::decode(&bytes)?.next_offset,
+            None => self.scan_next_realm_offset(family, realm)?,
         };
-        Ok(persisted.map_or(committed, |watermark| watermark.max(committed)))
+        Ok(persisted_end.max(committed_end))
     }
 
     /// Advance the current realm watermark.

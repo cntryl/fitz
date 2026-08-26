@@ -801,6 +801,11 @@ fn should_not_regress_global_posting_cursor_when_read_starts_past_watermark() {
 #[test]
 fn should_not_regress_realm_posting_cursor_when_read_starts_past_watermark() {
     // Arrange
+    // This path is sparse - it deliberately steps over the realm offsets
+    // owned by other resources - so an empty page cannot mean "stay put" and
+    // the caller always resumes at `last_realm_offset + 1`. "Covered nothing"
+    // therefore has to encode as one BEHIND the requested offset; naming the
+    // requested offset itself would resume at 31 and skip 30 once it commits.
     let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
     store
         .commit_records(CommitRecordsParams {
@@ -832,7 +837,11 @@ fn should_not_regress_realm_posting_cursor_when_read_starts_past_watermark() {
 
     // Assert
     assert!(items.is_empty());
-    assert_eq!(cursor.last_realm_offset, Some(30));
+    assert_eq!(
+        cursor.last_realm_offset,
+        Some(29),
+        "an uncovered read must resume exactly where it asked, not past it"
+    );
     assert!(!cursor.has_more);
 }
 

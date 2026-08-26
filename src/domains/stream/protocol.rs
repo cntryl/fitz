@@ -32,8 +32,21 @@ pub fn parse_stream_route(route: &Route) -> Result<(String, String, String, Stri
 // CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Maximum size for a single event (body + metadata combined)
-pub const MAX_EVENT_SIZE: usize = 1_048_576; // 1 MB
+/// Conservative fixed envelope/cursor reserve for a Stream READ response.
+pub(crate) const STREAM_READ_RESPONSE_ENVELOPE_OVERHEAD_BYTES: usize = 128;
+
+/// Conservative fixed wire overhead for one event in a Stream READ response.
+pub(crate) const STREAM_READ_ITEM_FIXED_WIRE_OVERHEAD_BYTES: usize = 64;
+
+/// Maximum combined body and metadata size for one event.
+///
+/// Stream READ responses use a `u16` TLV payload. This limit reserves the
+/// conservative response/item overhead plus the maximum valid route length,
+/// so every accepted event can be replayed on every valid Stream route.
+pub const MAX_EVENT_SIZE: usize = (u16::MAX as usize)
+    - STREAM_READ_RESPONSE_ENVELOPE_OVERHEAD_BYTES
+    - STREAM_READ_ITEM_FIXED_WIRE_OVERHEAD_BYTES
+    - crate::utils::route_shape::MAX_ROUTE_BYTES;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CORE DATA TYPES

@@ -115,7 +115,16 @@ impl StreamStore {
             for (slot, mut page_record) in page.records.into_iter().enumerate() {
                 let offset = page_slot_offset(page_start, slot);
                 if record_is_expired(page_record.expires_at, now_epoch_ms) {
-                    update_resource_cursor(&mut cursor, offset, &page_record);
+                    // Only records the caller has not already paged past may
+                    // move the cursor. This pre-pass walks the whole fragment,
+                    // which starts at the enclosing 64-record page boundary, so
+                    // without this an expired record BELOW `from_offset` would
+                    // hand back a resume point behind where the caller already
+                    // was - and an idle stream would replay those events on
+                    // every poll.
+                    if offset >= params.from_offset {
+                        update_resource_cursor(&mut cursor, offset, &page_record);
+                    }
                     continue;
                 }
                 resolve_blob_payload(&txn, &mut page_record.body, &mut page_record.metadata)?;
@@ -278,7 +287,16 @@ impl StreamStore {
             for (slot, mut page_record) in page.records.into_iter().enumerate() {
                 let offset = page_slot_offset(page_start, slot);
                 if record_is_expired(page_record.expires_at, now_epoch_ms) {
-                    update_area_cursor(&mut cursor, offset, &page_record);
+                    // Only records the caller has not already paged past may
+                    // move the cursor. This pre-pass walks the whole fragment,
+                    // which starts at the enclosing 64-record page boundary, so
+                    // without this an expired record BELOW `from_offset` would
+                    // hand back a resume point behind where the caller already
+                    // was - and an idle stream would replay those events on
+                    // every poll.
+                    if offset >= params.from_offset {
+                        update_area_cursor(&mut cursor, offset, &page_record);
+                    }
                     continue;
                 }
                 hydrate_area_locator(
@@ -444,7 +462,16 @@ impl StreamStore {
             for (slot, mut page_record) in page.records.into_iter().enumerate() {
                 let offset = page_slot_offset(page_start, slot);
                 if record_is_expired(page_record.expires_at, now_epoch_ms) {
-                    update_realm_cursor(&mut cursor, offset, &page_record);
+                    // Only records the caller has not already paged past may
+                    // move the cursor. This pre-pass walks the whole fragment,
+                    // which starts at the enclosing 64-record page boundary, so
+                    // without this an expired record BELOW `from_offset` would
+                    // hand back a resume point behind where the caller already
+                    // was - and an idle stream would replay those events on
+                    // every poll.
+                    if offset >= from_offset {
+                        update_realm_cursor(&mut cursor, offset, &page_record);
+                    }
                     continue;
                 }
                 hydrate_realm_locator(&txn, realm, &mut page_record, &mut global_cache)?;

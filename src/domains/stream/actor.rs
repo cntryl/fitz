@@ -156,20 +156,21 @@ impl StreamActor {
             expected_offset
         };
 
-        let event_size = body
+        let payload_bytes = body
             .len()
             .checked_add(metadata.as_ref().map_or(0, Bytes::len))
-            .and_then(|size| {
-                size.checked_add(
-                    discriminator
-                        .as_ref()
-                        .map_or(0, |value| value.as_str().len()),
-                )
-            })
             .ok_or_else(|| "event too large".to_string())?;
-        if event_size > MAX_EVENT_SIZE {
+        if payload_bytes > MAX_EVENT_SIZE {
             return Err("event too large".to_string());
         }
+
+        let event_size = payload_bytes
+            .checked_add(
+                discriminator
+                    .as_ref()
+                    .map_or(0, |value| value.as_str().len()),
+            )
+            .ok_or_else(|| "event too large".to_string())?;
 
         let limits = self.store.batch_limits();
         let next_event_count = session
@@ -530,6 +531,98 @@ mod tests {
             2
         );
         assert!(!actor.has_active_session());
+    }
+
+    #[test]
+    fn should_reject_an_append_larger_than_a_read_response_can_carry() {
+        // Arrange
+        // Every read plane frames one response as a single TLV value with a
+        // `u16` length, so a record whose wire cost exceeds that ceiling can
+        // never be replayed - and because the read accumulator refuses to
+        // build an unencodable response, it permanently blocks pagination at
+        // its own offset on the resource, area, realm, and global planes
+        // alike. Stream guarantees exact replay of committed history, so such
+        // an append must be refused rather than committed and then wedged.
+        let store = Arc::new(StreamStore::new(create_test_engine_with_cfs(vec![1])));
+        let mut actor = StreamActor::new(
+            RouteFamily::new(1),
+            "test".to_string(),
+            "events".to_string(),
+            "orders".to_string(),
+            store,
+        )
+        .expect("create actor");
+        actor
+            .begin_append_session(10, 100, None)
+            .expect("begin append session");
+
+        // Act
+        let rejected = actor.append_to_session_with_discriminator_for_owner(
+            10,
+            100,
+            0,
+            Bytes::from(vec![b'a'; 200_000]),
+            None,
+            None,
+        );
+
+        // Assert
+        let error = rejected.expect_err("an unreadable append must be refused");
+        assert!(
+            error.contains("event too large"),
+            "unexpected error: {error}"
+        );
+        assert!(
+            actor
+                .commit_session_for_owner(10, 100, StreamWriteMode::Buffered)
+                .is_err(),
+            "the refused event must not have been staged for commit"
+        );
+    }
+
+    #[test]
+    fn should_accept_an_append_at_the_published_event_size_limit() {
+        // Arrange
+        // The public limit reserves enough space for the largest valid route,
+        // so an event at that boundary must remain readable here.
+        let store = Arc::new(StreamStore::new(create_test_engine_with_cfs(vec![1])));
+        let realm = "r".repeat(
+            crate::utils::route_shape::MAX_ROUTE_BYTES - "stream://".len() - "/events/orders".len(),
+        );
+        let mut actor = StreamActor::new(
+            RouteFamily::new(1),
+            realm,
+            "events".to_string(),
+            "orders".to_string(),
+            store.clone(),
+        )
+        .expect("create actor");
+        actor
+            .begin_append_session(10, 100, None)
+            .expect("begin append session");
+        let largest_body = MAX_EVENT_SIZE;
+
+        // Act
+        let accepted = actor.append_to_session_with_discriminator_for_owner(
+            10,
+            100,
+            0,
+            Bytes::from(vec![b'a'; largest_body]),
+            None,
+            None,
+        );
+        actor
+            .commit_session_for_owner(10, 100, StreamWriteMode::Buffered)
+            .expect("commit the largest readable event");
+        let read = actor.read(0, 10, None).expect("read it back");
+
+        // Assert
+        assert_eq!(accepted, Ok(0));
+        assert_eq!(
+            read.items.len(),
+            1,
+            "the largest accepted event must read back"
+        );
     }
 
     #[test]

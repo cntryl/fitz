@@ -1,34 +1,4 @@
 use super::*;
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Arc,
-};
-
-struct TestStreamClock {
-    epoch_ms: AtomicU64,
-}
-
-impl TestStreamClock {
-    fn new(epoch_ms: u64) -> Self {
-        Self {
-            epoch_ms: AtomicU64::new(epoch_ms),
-        }
-    }
-
-    fn set(&self, epoch_ms: u64) {
-        self.epoch_ms.store(epoch_ms, Ordering::Release);
-    }
-}
-
-impl crate::runtime::clock::Clock for TestStreamClock {
-    fn now_instant(&self) -> std::time::Instant {
-        std::time::Instant::now()
-    }
-
-    fn now_epoch_ms(&self) -> u64 {
-        self.epoch_ms.load(Ordering::Acquire)
-    }
-}
 
 #[test]
 fn should_compact_zero_ttl_fragments_without_positional_gaps() {
