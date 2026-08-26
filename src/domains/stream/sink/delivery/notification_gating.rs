@@ -1,4 +1,4 @@
-use super::{
+use super::super::model::{
     route_triplet, PendingStreamNotification, ReadyStreamNotification, StreamDomainCore,
     StreamNotificationTarget, StreamVisibilityFrontier,
 };
@@ -209,7 +209,10 @@ impl StreamDomainCore {
         self.drain_visible_pending(family, &mut VisibilityCache::default())
     }
 
-    pub(super) fn remove_pending_notifications_for_session(&self, session_id: u64) {
+    pub(in crate::domains::stream::sink) fn remove_pending_notifications_for_session(
+        &self,
+        session_id: u64,
+    ) {
         self.subscriptions
             .pending
             .lock()

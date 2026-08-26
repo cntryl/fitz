@@ -1,8 +1,7 @@
 pub(super) use crate::dispatch::protocol::payload_codec::PayloadEncoder;
-pub(super) use crate::domains::stream::store::StreamAdminRecord;
 pub(super) use crate::domains::stream::StreamMetrics;
 pub(super) use crate::domains::stream::{
-    ReadResponse, StreamActor, StreamClientFrame, StreamClientRequest, StreamClientResponseBody,
+    StreamActor, StreamClientFrame, StreamClientRequest, StreamClientResponseBody,
     StreamFilteredReason, StreamMetadata, StreamReadItem, StreamRecord, StreamStorageLayout,
     StreamStore,
 };
@@ -16,6 +15,18 @@ pub(super) use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 pub(super) use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 pub(super) use std::sync::{Arc, Weak};
 pub(super) use std::time::{Duration, Instant};
+
+pub(super) fn u64_to_usize_saturating(value: u64) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
+pub(super) fn usize_to_u32_saturating(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+pub(super) fn usize_to_u64_saturating(value: usize) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
 
 pub(super) struct StreamSubscription {
     pub(super) pattern: crate::runtime::matcher::Pattern,

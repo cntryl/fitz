@@ -1,4 +1,4 @@
-use super::{Envelope, Route, RouteFamily, StreamDomainCore};
+use super::super::model::{Envelope, Route, RouteFamily, StreamDomainCore};
 use crate::domains::stream::metrics::METRIC_WATERMARK_COORDINATION_DROPS_TOTAL;
 use crate::domains::stream::sink::model::{StreamAreaScope, StreamRealmScope};
 

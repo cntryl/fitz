@@ -1,4 +1,4 @@
-use super::{
+use super::super::model::{
     usize_to_u32_saturating, usize_to_u64_saturating, PayloadEncoder, StreamClientResponseBody,
     StreamDomainCore, StreamFilteredReason, StreamMetadata, StreamReadItem, StreamRecord,
 };
