@@ -204,6 +204,22 @@ Existing drop-counter names are unchanged, including
 `fitz_notice_delivery_drops_total`, which keeps its `delivery` spelling rather
 than the `notify` spelling used by the other domains.
 
+## Stream Rust API Cleanup
+
+New construction code should call `StreamDomainSink::try_new` and handle
+`StreamSinkInitError`. `StreamDomainSink::new` remains as a compatibility
+wrapper and retains its historical panic-on-initialization behavior.
+
+The client-facing `StreamWriteMode` now contains only `Buffered` and `Sync`.
+Cloud provider acknowledgement remains a broker storage-policy choice for
+`Sync`; callers must replace `StreamWriteMode::CloudStrict` with `Sync` and
+configure cloud-strict write options when constructing the sink.
+
+The unused `StreamEvent`, `parse_stream_route`, and public `StreamMetrics`
+paths were removed. Use protocol `StreamMessage` values, the typed
+three-segment Stream selector grammar, and `StreamDomainSink::with_metrics`,
+respectively.
+
 ## Pre-Upgrade Checklist
 
 1. Back up durability-sensitive state.

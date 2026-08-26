@@ -30,6 +30,12 @@ The design makes these decisions explicitly:
    dimensions.
 6. Global Stream selectors use one real, contiguous, family-global offset
    space. Sorted traversal of independent realms is not global order.
+
+Stream request completion is ordered within one resource, not across
+independent resources. Different resources in the same `RouteFamily` may be
+executed concurrently, so their client responses may arrive in either order.
+Durable resource, area, realm, and family-global offsets plus captured
+watermarks are the only cross-resource ordering authority.
 7. One family-keyed ordering coordinator serializes only exact global-range
    assignment. Area and realm offsets are assigned by the resource data
    transaction and their counters commit atomically with the records. Resource

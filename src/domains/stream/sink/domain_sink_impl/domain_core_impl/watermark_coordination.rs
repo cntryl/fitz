@@ -1,5 +1,6 @@
 use super::{Envelope, Route, RouteFamily, StreamDomainCore};
 use crate::domains::stream::metrics::METRIC_WATERMARK_COORDINATION_DROPS_TOTAL;
+use crate::domains::stream::sink::model::{StreamAreaScope, StreamRealmScope};
 
 struct WatermarkDispatch<'a, K> {
     address: crate::runtime::routing::RouteAddress,
@@ -34,7 +35,10 @@ impl StreamDomainCore {
             let store = self.stream_store.clone();
             let realm_owned = realm.to_string();
             self.watermark_coordinators.realm.ensure_spawned(
-                (family_id.as_u64(), realm.to_string()),
+                StreamRealmScope {
+                    family: family_id,
+                    realm: realm.to_string(),
+                },
                 realm_address.clone(),
                 move || {
                     crate::domains::stream::realm_actor::RealmActor::new(
@@ -58,7 +62,11 @@ impl StreamDomainCore {
             let realm_owned = realm.to_string();
             let area_owned = area.to_string();
             self.watermark_coordinators.area.ensure_spawned(
-                (family_id.as_u64(), realm.to_string(), area.to_string()),
+                StreamAreaScope {
+                    family: family_id,
+                    realm: realm.to_string(),
+                    area: area.to_string(),
+                },
                 area_address.clone(),
                 move || {
                     crate::domains::stream::area_actor::AreaActor::new(

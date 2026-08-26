@@ -9,11 +9,10 @@ pub(super) use crate::domains::stream::{
 pub(super) use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 pub(super) use crate::runtime::routing::{route_triplet, Route, RouteAddress, RouteFamily};
 pub(super) use crate::runtime::{
-    DeliveryError, Envelope, FamilyActorPoolRuntime, KeyedActorPool, MailboxSink, ManagedActor,
-    Router,
+    DeliveryError, Envelope, KeyedActorPool, MailboxSink, ManagedActor, Router,
 };
 pub(super) use parking_lot::Mutex;
-pub(super) use std::collections::{BTreeMap, BTreeSet, HashMap};
+pub(super) use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 pub(super) use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 pub(super) use std::sync::{Arc, Weak};
 pub(super) use std::time::{Duration, Instant};
@@ -104,6 +103,23 @@ pub struct StreamStorageWriteOptions {
     buffered_intent: cntryl_midge::WriteOptions,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamSinkInitError(String);
+
+impl StreamSinkInitError {
+    pub(super) fn new(message: impl Into<String>) -> Self {
+        Self(message.into())
+    }
+}
+
+impl std::fmt::Display for StreamSinkInitError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for StreamSinkInitError {}
+
 impl StreamStorageWriteOptions {
     #[must_use]
     pub fn new(
@@ -187,11 +203,71 @@ impl AdminStreamReadRequestOwned {
 }
 
 #[derive(Debug, Clone, Eq, Hash, PartialEq)]
-pub(super) struct StreamActorKey {
-    pub(super) family_id: u64,
+pub(super) struct StreamResourceScope {
+    pub(super) family: RouteFamily,
     pub(super) realm: String,
     pub(super) area: String,
     pub(super) resource: String,
+}
+
+#[derive(Debug, Clone, Eq, Hash, PartialEq)]
+pub(super) struct StreamAreaScope {
+    pub(super) family: RouteFamily,
+    pub(super) realm: String,
+    pub(super) area: String,
+}
+
+#[derive(Debug, Clone, Eq, Hash, PartialEq)]
+pub(super) struct StreamRealmScope {
+    pub(super) family: RouteFamily,
+    pub(super) realm: String,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(super) enum StreamWorkKey {
+    Resource(StreamResourceScope),
+    Selector(String),
+    SubscriptionSession(u64),
+    Notification(String),
+    UnresolvedSession(u64),
+}
+
+pub(super) struct CommitNotification {
+    pub(super) family: RouteFamily,
+    pub(super) route: Route,
+    pub(super) payload: bytes::Bytes,
+}
+
+pub(super) struct OperationOutcome {
+    pub(super) response: StreamClientResponseBody,
+    pub(super) notification: Option<CommitNotification>,
+    pub(super) admin_dirty: bool,
+}
+
+impl
+    From<(
+        StreamClientResponseBody,
+        Option<(RouteFamily, Route, bytes::Bytes)>,
+        bool,
+    )> for OperationOutcome
+{
+    fn from(
+        (response, notification, admin_dirty): (
+            StreamClientResponseBody,
+            Option<(RouteFamily, Route, bytes::Bytes)>,
+            bool,
+        ),
+    ) -> Self {
+        Self {
+            response,
+            notification: notification.map(|(family, route, payload)| CommitNotification {
+                family,
+                route,
+                payload,
+            }),
+            admin_dirty,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -209,7 +285,7 @@ pub(super) struct StreamAreaSnapshot {
 
 pub(super) const STREAM_OPERATIONS_TOTAL: &str = "fitz_stream_operations_total";
 
-impl StreamActorKey {
+impl StreamResourceScope {
     pub(super) fn resource_route(&self) -> Route {
         Route::new(format!(
             "stream://{}/{}/{}",
@@ -220,7 +296,7 @@ impl StreamActorKey {
 
 #[derive(Clone)]
 pub(super) struct StreamSessionOwner {
-    pub(super) key: StreamActorKey,
+    pub(super) key: StreamResourceScope,
     pub(super) owner_session_id: u64,
     pub(super) actor: Arc<Mutex<StreamActor>>,
 }
@@ -246,6 +322,36 @@ pub(super) struct AdminSnapshotState {
     pub(super) dirty: Arc<AtomicBool>,
 }
 
+pub(super) struct CleanedUpSessions {
+    ids: HashSet<u64>,
+    order: std::collections::VecDeque<u64>,
+}
+
+impl CleanedUpSessions {
+    pub(super) fn new() -> Self {
+        Self {
+            ids: HashSet::new(),
+            order: std::collections::VecDeque::new(),
+        }
+    }
+
+    pub(super) fn contains(&self, session_id: u64) -> bool {
+        self.ids.contains(&session_id)
+    }
+
+    pub(super) fn insert(&mut self, session_id: u64) {
+        if !self.ids.insert(session_id) {
+            return;
+        }
+        self.order.push_back(session_id);
+        while self.order.len() > crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY {
+            if let Some(expired) = self.order.pop_front() {
+                self.ids.remove(&expired);
+            }
+        }
+    }
+}
+
 impl AdminSnapshotState {
     pub(super) fn new(
         read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
@@ -266,20 +372,24 @@ impl AdminSnapshotState {
 pub(super) struct WatermarkCoordinators {
     pub(super) area: Arc<
         KeyedActorPool<
-            (u64, String, String),
+            StreamAreaScope,
             crate::domains::stream::protocol::StreamCoordinationMessage,
         >,
     >,
     pub(super) realm: Arc<
-        KeyedActorPool<(u64, String), crate::domains::stream::protocol::StreamCoordinationMessage>,
+        KeyedActorPool<
+            StreamRealmScope,
+            crate::domains::stream::protocol::StreamCoordinationMessage,
+        >,
     >,
 }
 
 pub(super) struct StreamDomainCore {
     pub(super) store: crate::storage::FitzStorageEngine,
     pub(super) stream_store: Arc<StreamStore>,
-    pub(super) actors: Mutex<HashMap<StreamActorKey, Arc<Mutex<StreamActor>>>>,
+    pub(super) actors: Mutex<HashMap<StreamResourceScope, Arc<Mutex<StreamActor>>>>,
     pub(super) session_owners: Mutex<HashMap<u64, StreamSessionOwner>>,
+    pub(super) cleaned_up_sessions: Mutex<CleanedUpSessions>,
     pub(super) subscriptions: SubscriptionRegistry,
     pub(super) next_session_id: Arc<AtomicU64>,
     pub(super) cursor_integrity_key: Arc<[u8; 32]>,
@@ -328,14 +438,16 @@ pub(super) struct StreamDomainActor {
     pub(super) core: Arc<StreamDomainCore>,
 }
 
-pub(super) struct StreamDomainRuntime<'a> {
-    pub(super) core: &'a StreamDomainCore,
-}
-
 pub struct StreamDomainSink {
     pub(super) core: Arc<StreamDomainCore>,
-    pub(super) actor: ManagedActor<StreamDomainCommand>,
-    pub(super) family_runtime: Option<FamilyActorPoolRuntime<StreamDomainCommand>>,
+    pub(super) actor: Option<ManagedActor<StreamDomainCommand>>,
+    pub(super) family_runtime: Option<
+        crate::runtime::keyed_family_executor::KeyedFamilyExecutor<
+            StreamWorkKey,
+            StreamDomainCommand,
+            Arc<StreamDomainCore>,
+        >,
+    >,
     pub(super) family_families: Option<Vec<RouteFamily>>,
     /// Client requests currently blocked on the (non-family) actor's reply.
     /// Only `deliver_to_actor` admits against this - `deliver_to_family`
@@ -476,12 +588,4 @@ pub(super) fn try_admit_stream_delivery(
             capacity: window,
             current_len: current,
         })
-}
-
-impl std::ops::Deref for StreamDomainRuntime<'_> {
-    type Target = StreamDomainCore;
-
-    fn deref(&self) -> &Self::Target {
-        self.core
-    }
 }

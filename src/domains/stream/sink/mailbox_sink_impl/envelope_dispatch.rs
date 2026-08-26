@@ -51,6 +51,22 @@ impl StreamDomainCore {
             return Ok(());
         };
 
+        let session_mutation = matches!(
+            parsed_frame,
+            StreamClientFrame::Sub(_)
+                | StreamClientFrame::Op(
+                    crate::domains::stream::protocol::StreamMessage::Begin { .. }
+                        | crate::domains::stream::protocol::StreamMessage::Append { .. }
+                        | crate::domains::stream::protocol::StreamMessage::Commit { .. }
+                        | crate::domains::stream::protocol::StreamMessage::Rollback { .. }
+                )
+        );
+        if session_mutation && self.cleaned_up_sessions.lock().contains(meta.session_id) {
+            let response = Self::stream_error_response("session has been cleaned up");
+            self.route_stream_response(envelope, meta, &response, request_started);
+            return Ok(());
+        }
+
         self.record_operation();
 
         match parsed_frame {
@@ -132,7 +148,7 @@ impl StreamDomainCore {
         }
     }
 
-    fn request_from_envelope(envelope: &Envelope) -> Option<StreamClientRequest> {
+    pub(super) fn request_from_envelope(envelope: &Envelope) -> Option<StreamClientRequest> {
         if let Some(request) = envelope.payload::<StreamClientRequest>() {
             return Some(request.clone());
         }

@@ -1,14 +1,14 @@
 use super::model::{
     route_triplet, stream_assumed_service_us, AdminSnapshotState, AdminStreamReadRequest,
-    AdminStreamReadRequestOwned, Arc, AtomicBool, AtomicU64, AtomicUsize, BTreeMap, Envelope,
-    HashMap, Mutex, Ordering, PayloadEncoder, PendingStreamNotification, ReadResponse,
-    ReadyStreamNotification, Route, RouteAddress, RouteFamily, Router, StreamActor, StreamActorKey,
-    StreamAdminReadCommand, StreamAdminRecord, StreamAreaSnapshot, StreamClientResponseBody,
-    StreamDomainActor, StreamDomainCommand, StreamDomainCore, StreamDomainRuntime,
-    StreamDomainSink, StreamFilteredReason, StreamLiveCounts, StreamMetadata, StreamMetrics,
-    StreamNotificationTarget, StreamReadExecution, StreamReadItem, StreamRealmSnapshot,
-    StreamRecord, StreamStorageLayout, StreamStore, StreamVisibilityFrontier, SubscriptionRegistry,
-    WatermarkCoordinators,
+    AdminStreamReadRequestOwned, Arc, AtomicBool, AtomicU64, AtomicUsize, BTreeMap,
+    CleanedUpSessions, Envelope, HashMap, Mutex, Ordering, PayloadEncoder,
+    PendingStreamNotification, ReadResponse, ReadyStreamNotification, Route, RouteAddress,
+    RouteFamily, Router, StreamActor, StreamAdminReadCommand, StreamAdminRecord,
+    StreamAreaSnapshot, StreamClientResponseBody, StreamDomainActor, StreamDomainCommand,
+    StreamDomainCore, StreamDomainSink, StreamFilteredReason, StreamLiveCounts, StreamMetadata,
+    StreamMetrics, StreamNotificationTarget, StreamReadExecution, StreamReadItem,
+    StreamRealmSnapshot, StreamRecord, StreamResourceScope, StreamStorageLayout, StreamStore,
+    StreamVisibilityFrontier, StreamWorkKey, SubscriptionRegistry, WatermarkCoordinators,
 };
 #[cfg(test)]
 use crate::dispatch::protocol::FrameContext;
@@ -41,41 +41,46 @@ impl StreamDomainActor {
     pub(super) fn route_address() -> RouteAddress {
         RouteAddress::new(RouteFamily::new(0), Route::new("internal://domain/stream"))
     }
-
-    pub(super) fn runtime(&self) -> StreamDomainRuntime<'_> {
-        StreamDomainRuntime { core: &self.core }
-    }
 }
 
 impl StreamDomainSink {
+    /// Construct a Stream sink using the default storage layout.
+    ///
+    /// # Errors
+    ///
+    /// Returns an initialization error when storage activation, persisted
+    /// state validation, or cursor-key generation fails.
+    pub fn try_new(
+        store: Arc<cntryl_midge::Engine>,
+        router: Arc<Router>,
+        admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
+        write_options: super::StreamStorageWriteOptions,
+    ) -> Result<Self, super::StreamSinkInitError> {
+        Self::new_with_storage_layout(
+            crate::storage::FitzStorageEngine::new(store),
+            router,
+            admin_read_model,
+            StreamStorageLayout::default(),
+            write_options,
+        )
+        .map_err(super::StreamSinkInitError::new)
+    }
+
+    /// Compatibility constructor retaining the historical panic-on-init
+    /// behavior. New callers should use [`Self::try_new`].
+    ///
+    /// # Panics
+    ///
+    /// Panics when Stream storage initialization or persisted-state
+    /// validation fails.
     pub fn new(
         store: Arc<cntryl_midge::Engine>,
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
         write_options: super::StreamStorageWriteOptions,
     ) -> Self {
-        Self::new_with_storage(
-            crate::storage::FitzStorageEngine::new(store),
-            router,
-            admin_read_model,
-            write_options,
-        )
-    }
-
-    pub(crate) fn new_with_storage(
-        store: crate::storage::FitzStorageEngine,
-        router: Arc<Router>,
-        admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
-        write_options: super::StreamStorageWriteOptions,
-    ) -> Self {
-        Self::new_with_storage_layout(
-            store,
-            router,
-            admin_read_model,
-            StreamStorageLayout::default(),
-            write_options,
-        )
-        .expect("create stream domain sink with default stream layout")
+        Self::try_new(store, router, admin_read_model, write_options)
+            .expect("create stream domain sink with default stream layout")
     }
 
     /// # Errors
@@ -139,6 +144,7 @@ impl StreamDomainSink {
             store,
             actors: Mutex::new(HashMap::new()),
             session_owners: Mutex::new(HashMap::new()),
+            cleaned_up_sessions: Mutex::new(CleanedUpSessions::new()),
             subscriptions: SubscriptionRegistry::new(Arc::new(AtomicU64::new(1))),
             next_session_id: Arc::new(AtomicU64::new(1)),
             cursor_integrity_key: Arc::new(cursor_integrity_key),
@@ -165,8 +171,10 @@ impl StreamDomainSink {
             },
             delivery_service_us: Arc::new(AtomicU64::new(stream_assumed_service_us())),
         });
-        let actor = Self::spawn_actor(core.clone());
         let family_families = provisioned_families.map(<[RouteFamily]>::to_vec);
+        let actor = family_families
+            .is_none()
+            .then(|| Self::spawn_actor(core.clone()));
         let family_runtime = family_families
             .as_deref()
             .map(|families| Self::spawn_family_runtime(&core, families))
@@ -195,65 +203,82 @@ impl StreamDomainSink {
     fn spawn_family_runtime(
         core: &Arc<StreamDomainCore>,
         families: &[RouteFamily],
-    ) -> Result<crate::runtime::FamilyActorPoolRuntime<StreamDomainCommand>, String> {
-        let pool = crate::runtime::FamilyActorPool::new(families)
-            .map_err(|error| format!("create Stream family actor pool: {error}"))?;
-        let active = core.active.clone();
+    ) -> Result<
+        crate::runtime::keyed_family_executor::KeyedFamilyExecutor<
+            StreamWorkKey,
+            StreamDomainCommand,
+            Arc<StreamDomainCore>,
+        >,
+        String,
+    > {
         let core_for_factory = core.clone();
-        Ok(
-            crate::runtime::FamilyActorPoolRuntime::spawn_with_family_failed_metric(
-                pool,
-                active,
-                move |family| Self::family_core_for(&core_for_factory, family),
-                |core, family, _lane, command| match command {
-                    StreamDomainCommand::Deliver(envelope, reply, admission) => {
-                        let result = if *envelope.destination().family() == family {
-                            core.deliver_envelope(&envelope)
-                        } else {
-                            Err(DeliveryError::ActorStopped)
-                        };
-                        let _ = reply.send(result);
-                        // Always None on this path - `deliver_to_family` never
-                        // admits - but drop explicitly for symmetry with the
-                        // non-family actor's release-on-completion.
-                        drop(admission);
+        let core_for_failure = core.clone();
+        crate::runtime::keyed_family_executor::KeyedFamilyExecutor::new(
+            families,
+            crate::runtime::keyed_family_executor::KeyedFamilyExecutor::<
+                StreamWorkKey,
+                StreamDomainCommand,
+                Arc<StreamDomainCore>,
+            >::production_worker_count(),
+            move |family| Self::family_core_for(&core_for_factory, family),
+            |core, family, _lane, _key, command| match command {
+                StreamDomainCommand::Deliver(envelope, reply, admission) => {
+                    let result = if *envelope.destination().family() == family {
+                        core.deliver_envelope(&envelope)
+                    } else {
+                        Err(DeliveryError::ActorStopped)
+                    };
+                    let _ = reply.send(result);
+                    // Always None on this path - `deliver_to_family` never
+                    // admits - but drop explicitly for symmetry with the
+                    // non-family actor's release-on-completion.
+                    drop(admission);
+                }
+                StreamDomainCommand::ReadLiveCounts(reply) => {
+                    let _ = reply.send(core.live_counts());
+                }
+                StreamDomainCommand::ReadResourceRecords(command) => {
+                    let request = command.request.as_borrowed();
+                    let _ = command
+                        .reply
+                        .send(core.admin_read_resource_records(request));
+                }
+                StreamDomainCommand::RefreshAdminSnapshotIfDirty(reply) => {
+                    core.refresh_admin_snapshot_if_dirty();
+                    let _ = reply.send(());
+                }
+                StreamDomainCommand::RunMaintenance {
+                    family: requested_family,
+                    reply,
+                } => {
+                    if requested_family == family.as_u64() {
+                        core.run_maintenance_slice(requested_family);
                     }
-                    StreamDomainCommand::ReadLiveCounts(reply) => {
-                        let _ = reply.send(core.live_counts());
-                    }
-                    StreamDomainCommand::ReadResourceRecords(command) => {
-                        let request = command.request.as_borrowed();
-                        let _ = command
-                            .reply
-                            .send(core.admin_read_resource_records(request));
-                    }
-                    StreamDomainCommand::RefreshAdminSnapshotIfDirty(reply) => {
-                        core.refresh_admin_snapshot_if_dirty();
+                    if let Some(reply) = reply {
                         let _ = reply.send(());
                     }
-                    StreamDomainCommand::RunMaintenance {
-                        family: requested_family,
-                        reply,
-                    } => {
-                        if requested_family == family.as_u64() {
-                            core.run_maintenance_slice(requested_family);
-                        }
-                        if let Some(reply) = reply {
-                            let _ = reply.send(());
-                        }
-                    }
-                    #[cfg(test)]
-                    StreamDomainCommand::SyncAdminSnapshot(reply) => {
-                        core.sync_admin_snapshot();
-                        let _ = reply.send(());
-                    }
-                    #[cfg(test)]
-                    StreamDomainCommand::PanicForTests => {
-                        panic!("test Stream family actor panic");
-                    }
-                },
-                crate::domains::stream::metrics::METRIC_FAMILY_FAILED_CLOSED_TOTAL,
-            ),
+                }
+                #[cfg(test)]
+                StreamDomainCommand::SyncAdminSnapshot(reply) => {
+                    core.sync_admin_snapshot();
+                    let _ = reply.send(());
+                }
+                #[cfg(test)]
+                StreamDomainCommand::PanicForTests => {
+                    panic!("test Stream family actor panic");
+                }
+            },
+            move |_family| {
+                if let Some(metrics) = core_for_failure.metrics.as_ref() {
+                    metrics.counter_inc(
+                        crate::domains::stream::metrics::METRIC_FAMILY_FAILED_CLOSED_TOTAL,
+                    );
+                } else {
+                    crate::observability::counter_inc(
+                        crate::domains::stream::metrics::METRIC_FAMILY_FAILED_CLOSED_TOTAL,
+                    );
+                }
+            },
         )
     }
 
@@ -266,6 +291,7 @@ impl StreamDomainSink {
             stream_store: shared.stream_store.clone(),
             actors: Mutex::new(HashMap::new()),
             session_owners: Mutex::new(HashMap::new()),
+            cleaned_up_sessions: Mutex::new(CleanedUpSessions::new()),
             subscriptions: SubscriptionRegistry::new(shared.subscriptions.next_id.clone()),
             next_session_id: shared.next_session_id.clone(),
             cursor_integrity_key: shared.cursor_integrity_key.clone(),
@@ -295,14 +321,19 @@ impl StreamDomainSink {
 
     fn stop_family_runtime(&mut self) {
         if let Some(runtime) = self.family_runtime.take() {
-            runtime.stop();
+            runtime.join();
         }
     }
 
     fn rebuild_actor(&mut self) {
-        self.actor.stop();
+        if let Some(actor) = self.actor.take() {
+            actor.stop();
+        }
         self.stop_family_runtime();
-        self.actor = Self::spawn_actor(self.core.clone());
+        self.actor = self
+            .family_families
+            .is_none()
+            .then(|| Self::spawn_actor(self.core.clone()));
         self.family_runtime = self
             .family_families
             .as_deref()
@@ -321,7 +352,6 @@ impl StreamDomainSink {
         mut self,
         collector: crate::observability::metrics::MetricsCollector,
     ) -> Self {
-        self.actor.stop();
         self.core_for_builder().metrics = Some(StreamMetrics::new(collector));
         self.core.refresh_metrics_gauges();
         self.rebuild_actor();
@@ -333,7 +363,9 @@ impl StreamDomainSink {
         if let Some(runtime) = self.family_runtime.as_ref() {
             runtime.stop();
         }
-        self.actor.stop();
+        if let Some(actor) = self.actor.as_ref() {
+            actor.stop();
+        }
     }
 
     pub(crate) fn is_active(&self) -> bool {
@@ -369,14 +401,12 @@ impl StreamDomainSink {
                     continue;
                 };
                 runtime
-                    .try_enqueue(
-                        RouteFamily::new(family_id),
-                        crate::runtime::FamilyActorLane::Control,
-                        command,
-                    )
+                    .try_enqueue_control(RouteFamily::new(family_id), command)
                     .map_err(|error| error.to_string())
             } else {
                 self.actor
+                    .as_ref()
+                    .expect("direct Stream mode has a managed actor")
                     .try_send_high_priority(command)
                     .map_err(|error| error.to_string())
             };
@@ -434,11 +464,14 @@ impl StreamDomainSink {
 
     #[cfg(test)]
     pub(super) fn is_actor_running(&self) -> bool {
-        self.actor.is_running()
-            && self
-                .family_runtime
-                .as_ref()
-                .is_none_or(crate::runtime::FamilyActorPoolRuntime::is_running)
+        self.family_runtime.as_ref().map_or_else(
+            || {
+                self.actor
+                    .as_ref()
+                    .is_some_and(crate::runtime::ManagedActor::is_running)
+            },
+            crate::runtime::keyed_family_executor::KeyedFamilyExecutor::is_running,
+        )
     }
 
     #[cfg(test)]
@@ -450,10 +483,12 @@ impl StreamDomainSink {
         };
         if let Some(runtime) = self.family_runtime.as_ref() {
             runtime
-                .try_enqueue(family, crate::runtime::FamilyActorLane::Control, command)
+                .try_enqueue_control(family, command)
                 .expect("enqueue test Stream maintenance command");
         } else {
             self.actor
+                .as_ref()
+                .expect("direct Stream mode has a managed actor")
                 .try_send_high_priority(command)
                 .expect("enqueue test Stream maintenance command");
         }
@@ -464,8 +499,21 @@ impl StreamDomainSink {
 
     pub(crate) fn actor_health_snapshot(&self) -> crate::runtime::ManagedActorHealthSnapshot {
         self.family_runtime.as_ref().map_or_else(
-            || self.actor.health_snapshot(),
-            crate::runtime::FamilyActorPoolRuntime::managed_actor_health_snapshot,
+            || {
+                self.actor
+                    .as_ref()
+                    .expect("direct Stream mode has a managed actor")
+                    .health_snapshot()
+            },
+            |runtime| {
+                let failed_family_count = runtime.failed_family_count();
+                crate::runtime::ManagedActorHealthSnapshot {
+                    running: runtime.is_running(),
+                    restart_count: 0,
+                    panic_count: u64::try_from(failed_family_count).unwrap_or(u64::MAX),
+                    restart_exhausted: failed_family_count > 0,
+                }
+            },
         )
     }
 
@@ -483,7 +531,9 @@ impl StreamDomainSink {
 
     #[cfg(test)]
     pub(super) fn stop_actor_for_tests(&self) {
-        self.actor.stop();
+        if let Some(actor) = self.actor.as_ref() {
+            actor.stop();
+        }
     }
 
     #[cfg(test)]
@@ -715,10 +765,12 @@ impl StreamDomainSink {
                 return Err("route family is not provisioned".to_string());
             }
             runtime
-                .try_enqueue(family, crate::runtime::FamilyActorLane::Control, command)
+                .try_enqueue_control(family, command)
                 .map_err(|error| error.to_string())
         } else {
             self.actor
+                .as_ref()
+                .expect("direct Stream mode has a managed actor")
                 .try_send_high_priority(command)
                 .map_err(|error| error.to_string())
         }

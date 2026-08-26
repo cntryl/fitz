@@ -4,29 +4,8 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
 use crate::dispatch::protocol::payload_codec::{PayloadDecoder, PayloadEncoder};
-use crate::runtime::routing::{route_exact_quad, Route, RouteAddress, RouteFamily};
+use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::runtime::ClientFrameMeta;
-
-/// Parse a stream route into (realm, area, resource, operation).
-///
-/// Expected format: `{scheme}://{realm}/{area}/{resource}/{operation}`
-/// or `/{realm}/{area}/{resource}/{operation}`
-///
-/// # Errors
-///
-/// Returns an error when `route` does not contain exactly four path segments.
-pub fn parse_stream_route(route: &Route) -> Result<(String, String, String, String), String> {
-    route_exact_quad(route.as_str())
-        .map(|parts| {
-            (
-                parts.realm.to_string(),
-                parts.area.to_string(),
-                parts.resource.to_string(),
-                parts.operation.to_string(),
-            )
-        })
-        .ok_or_else(|| "Stream routes require exactly 4 segments".to_string())
-}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -488,8 +467,6 @@ pub enum StreamWriteMode {
     Buffered,
     /// Sync: correctness-first, writes are committed synchronously
     Sync,
-    /// `CloudStrict`: internal broker mode for cloud provider-ack commits
-    CloudStrict,
 }
 
 /// Batch committed notification from `StreamActor` to `AreaActor`
@@ -677,45 +654,6 @@ impl StreamError {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn should_parse_stream_route_with_operation() {
-        // Arrange
-        let route = Route::new("stream://acme/orders/checkout/append");
-
-        // Act
-        let result = parse_stream_route(&route).unwrap();
-
-        // Assert
-        assert_eq!(result.0, "acme");
-        assert_eq!(result.1, "orders");
-        assert_eq!(result.2, "checkout");
-        assert_eq!(result.3, "append");
-    }
-
-    #[test]
-    fn should_reject_stream_route_missing_operation() {
-        // Arrange
-        let route = Route::new("stream://acme/orders/checkout");
-
-        // Act
-        let result = parse_stream_route(&route);
-
-        // Assert
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn should_reject_stream_route_given_extra_segment() {
-        // Arrange
-        let route = Route::new("stream://acme/orders/checkout/append/extra");
-
-        // Act
-        let result = parse_stream_route(&route);
-
-        // Assert
-        assert!(result.is_err());
-    }
 
     #[test]
     fn should_match_discriminator_when_all_clauses_match() {

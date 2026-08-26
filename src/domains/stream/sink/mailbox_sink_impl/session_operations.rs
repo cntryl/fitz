@@ -5,6 +5,7 @@ use super::{
     StreamActor, StreamClientResponseBody, StreamDiscriminator, StreamDomainCore,
     StreamReadExecution, StreamSessionOwner, StreamStoreError,
 };
+use crate::domains::stream::sink::model::OperationOutcome;
 
 impl StreamDomainCore {
     pub(super) fn handle_actor_operation_frame(
@@ -31,7 +32,7 @@ impl StreamDomainCore {
             return;
         }
 
-        let (response, commit_notify, should_refresh_admin_snapshot) = match stream_msg {
+        let outcome: OperationOutcome = (match stream_msg {
             StreamMessage::Begin {
                 family_id,
                 route,
@@ -82,18 +83,23 @@ impl StreamDomainCore {
             StreamMessage::GetMetadata { family_id, route } => {
                 self.handle_metadata_operation(family_id, &route)
             }
-        };
+        })
+        .into();
 
-        if should_refresh_admin_snapshot {
+        if outcome.admin_dirty {
             self.mark_admin_snapshot_dirty();
         }
 
-        if let Some((family_id, route, payload)) = commit_notify {
-            let event = crate::runtime::DomainPublishEvent::new(family_id, route, payload);
+        if let Some(notification) = outcome.notification {
+            let event = crate::runtime::DomainPublishEvent::new(
+                notification.family,
+                notification.route,
+                notification.payload,
+            );
             self.handle_domain_publish(&event);
         }
 
-        self.route_stream_response(envelope, meta, &response, request_started);
+        self.route_stream_response(envelope, meta, &outcome.response, request_started);
     }
 
     fn handle_begin_operation(
@@ -180,8 +186,7 @@ impl StreamDomainCore {
             .lock()
             .get(&stream_session_id)
             .filter(|owner| {
-                owner.owner_session_id == owner_session_id
-                    && owner.key.family_id == family_id.as_u64()
+                owner.owner_session_id == owner_session_id && owner.key.family == family_id
             })
             .cloned()
     }
@@ -196,8 +201,7 @@ impl StreamDomainCore {
             .lock()
             .get(&stream_session_id)
             .filter(|owner| {
-                owner.owner_session_id == owner_session_id
-                    && owner.key.family_id == family_id.as_u64()
+                owner.owner_session_id == owner_session_id && owner.key.family == family_id
             })
             .map(|owner| owner.actor.clone())
     }
@@ -283,8 +287,7 @@ impl StreamDomainCore {
                 self.session_owners.lock().remove(&session_id);
                 self.counter_inc("fitz_stream_append_sessions_ended_total");
                 self.notify_area_batch_committed(
-                    RouteFamily::try_from(owner.key.family_id)
-                        .expect("stream family IDs originate from RouteFamily"),
+                    owner.key.family,
                     &owner.key.realm,
                     &owner.key.area,
                     &crate::domains::stream::protocol::BatchCommitted {
@@ -302,12 +305,7 @@ impl StreamDomainCore {
                         session_id: None,
                         data: vec![],
                     },
-                    Some((
-                        RouteFamily::try_from(owner.key.family_id)
-                            .expect("stream family IDs originate from RouteFamily"),
-                        owner.key.resource_route(),
-                        payload,
-                    )),
+                    Some((owner.key.family, owner.key.resource_route(), payload)),
                     true,
                 )
             }

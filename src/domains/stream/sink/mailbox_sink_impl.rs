@@ -3,8 +3,8 @@ use super::model::{
     Instant, MailboxSink, Mutex, Ordering, PayloadEncoder, Route, RouteFamily,
     RoutedSubscriptionSet, StreamActor, StreamClientFrame, StreamClientRequest,
     StreamClientResponseBody, StreamDomainActor, StreamDomainCommand, StreamDomainCore,
-    StreamDomainRuntime, StreamDomainSink, StreamReadExecution, StreamSessionOwner,
-    StreamSubscription, STREAM_ACTOR_REPLY_TIMEOUT, STREAM_OPERATIONS_TOTAL,
+    StreamDomainSink, StreamReadExecution, StreamSessionOwner, StreamSubscription, StreamWorkKey,
+    STREAM_ACTOR_REPLY_TIMEOUT, STREAM_OPERATIONS_TOTAL,
 };
 #[cfg(test)]
 use crate::dispatch::protocol::FrameContext;
@@ -24,7 +24,12 @@ impl MailboxSink for StreamDomainSink {
         // (`FamilyActorPoolRuntime::is_family_running`) -- a panic scoped to
         // one route family must not reject delivery to every other family
         // sharing this pool.
-        if !self.actor.is_running() {
+        if self.family_runtime.is_none()
+            && !self
+                .actor
+                .as_ref()
+                .is_some_and(crate::runtime::ManagedActor::is_running)
+        {
             return Err(DeliveryError::ActorStopped);
         }
 
@@ -48,11 +53,10 @@ impl Actor for StreamDomainActor {
     type Message = StreamDomainCommand;
 
     fn receive(&mut self, msg: Self::Message, _ctx: &mut Context<Self>) {
-        let runtime = self.runtime();
         match msg {
             StreamDomainCommand::Deliver(envelope, reply, admission) => {
                 let started_at = Instant::now();
-                let outcome = runtime.deliver_envelope(&envelope);
+                let outcome = self.core.deliver_envelope(&envelope);
                 record_stream_service_sample(&self.core.delivery_service_us, started_at);
                 let _ = reply.send(outcome);
                 // Explicit: the slot is released here, once the work is
@@ -60,27 +64,27 @@ impl Actor for StreamDomainActor {
                 drop(admission);
             }
             StreamDomainCommand::ReadLiveCounts(reply) => {
-                let _ = reply.send(runtime.live_counts());
+                let _ = reply.send(self.core.live_counts());
             }
             StreamDomainCommand::ReadResourceRecords(command) => {
                 let request = command.request.as_borrowed();
                 let _ = command
                     .reply
-                    .send(runtime.admin_read_resource_records(request));
+                    .send(self.core.admin_read_resource_records(request));
             }
             StreamDomainCommand::RefreshAdminSnapshotIfDirty(reply) => {
-                runtime.refresh_admin_snapshot_if_dirty();
+                self.core.refresh_admin_snapshot_if_dirty();
                 let _ = reply.send(());
             }
             StreamDomainCommand::RunMaintenance { family, reply } => {
-                runtime.run_maintenance_slice(family);
+                self.core.run_maintenance_slice(family);
                 if let Some(reply) = reply {
                     let _ = reply.send(());
                 }
             }
             #[cfg(test)]
             StreamDomainCommand::SyncAdminSnapshot(reply) => {
-                runtime.sync_admin_snapshot();
+                self.core.sync_admin_snapshot();
                 let _ = reply.send(());
             }
             #[cfg(test)]
@@ -102,16 +106,20 @@ impl StreamDomainSink {
         };
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         let family = *envelope.destination().family();
+        if !runtime.is_family_running(family) {
+            return Err(DeliveryError::ActorStopped);
+        }
         // Never blocks its caller, so it never needs an admission slot.
+        let key = self.work_key_for_envelope(&envelope);
         let command = StreamDomainCommand::Deliver(envelope, reply_tx, None);
-        let lane = if high_priority {
-            crate::runtime::FamilyActorLane::Control
+        if high_priority {
+            runtime.try_enqueue_control(family, command)
+        } else if let Some(key) = key {
+            runtime.try_enqueue(family, key, command)
         } else {
-            crate::runtime::FamilyActorLane::Normal
-        };
-        runtime
-            .try_enqueue(family, lane, command)
-            .map_err(Self::family_enqueue_error)?;
+            runtime.try_enqueue_control(family, command)
+        }
+        .map_err(Self::family_enqueue_error)?;
 
         // Family delivery is called synchronously by the async transport edge.
         // The actor routes client responses through the router, so waiting for
@@ -120,6 +128,73 @@ impl StreamDomainSink {
         // still owns the command and treats the reply as best effort.
         drop(reply_rx);
         Ok(())
+    }
+
+    fn work_key_for_envelope(&self, envelope: &Envelope) -> Option<StreamWorkKey> {
+        if envelope
+            .payload::<crate::runtime::SessionCleanup>()
+            .is_some()
+        {
+            return None;
+        }
+        if let Some(event) = envelope.payload::<crate::runtime::DomainPublishEvent>() {
+            return Some(StreamWorkKey::Notification(event.route.as_str().to_owned()));
+        }
+        let request = StreamDomainCore::request_from_envelope(envelope)?;
+        let session_id = request.meta.session_id;
+        match request.frame {
+            Err(_) => Some(StreamWorkKey::UnresolvedSession(session_id)),
+            Ok(StreamClientFrame::Sub(message)) => match message {
+                crate::domains::stream::protocol::StreamSubscriptionMessage::Subscribe {
+                    session_id,
+                    ..
+                }
+                | crate::domains::stream::protocol::StreamSubscriptionMessage::Unsubscribe {
+                    session_id,
+                    ..
+                } => Some(StreamWorkKey::SubscriptionSession(session_id)),
+            },
+            Ok(StreamClientFrame::Op(message)) => {
+                use crate::domains::stream::protocol::StreamMessage;
+                match message {
+                    StreamMessage::Begin {
+                        family_id, route, ..
+                    } => StreamDomainCore::actor_key_for_route(family_id, &route)
+                        .ok()
+                        .map(StreamWorkKey::Resource),
+                    StreamMessage::Read {
+                        family_id, route, ..
+                    }
+                    | StreamMessage::Last { family_id, route }
+                    | StreamMessage::GetMetadata { family_id, route } => {
+                        Some(Self::selector_work_key(family_id, &route))
+                    }
+                    StreamMessage::Append { session_id, .. }
+                    | StreamMessage::Commit { session_id, .. }
+                    | StreamMessage::Rollback { session_id } => self
+                        .core
+                        .session_owners
+                        .lock()
+                        .get(&session_id)
+                        .map_or_else(
+                            || Some(StreamWorkKey::UnresolvedSession(session_id)),
+                            |owner| Some(StreamWorkKey::Resource(owner.key.clone())),
+                        ),
+                }
+            }
+        }
+    }
+
+    fn selector_work_key(family: RouteFamily, route: &Route) -> StreamWorkKey {
+        match crate::domains::stream::route_grammar::classify_stream_route_shape(route.as_str()) {
+            Ok(crate::domains::stream::route_grammar::StreamRouteShape::Resource { .. }) => {
+                StreamDomainCore::actor_key_for_route(family, route).map_or_else(
+                    |_| StreamWorkKey::Selector(route.as_str().to_owned()),
+                    StreamWorkKey::Resource,
+                )
+            }
+            Ok(_) | Err(_) => StreamWorkKey::Selector(route.as_str().to_owned()),
+        }
     }
 
     fn family_enqueue_error(error: crate::runtime::FamilyActorEnqueueError) -> DeliveryError {
@@ -155,16 +230,24 @@ impl StreamDomainSink {
             Some(admit_stream_client_delivery(
                 &self.inflight_client_deliveries,
                 &self.core.delivery_service_us,
-                self.actor.is_running(),
+                self.actor
+                    .as_ref()
+                    .is_some_and(crate::runtime::ManagedActor::is_running),
             )?)
         };
 
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         let command = StreamDomainCommand::Deliver(envelope, reply_tx, admission);
         let enqueue_result = if high_priority {
-            self.actor.try_send_high_priority(command)
+            self.actor
+                .as_ref()
+                .expect("direct Stream mode has a managed actor")
+                .try_send_high_priority(command)
         } else {
-            self.actor.try_send(command)
+            self.actor
+                .as_ref()
+                .expect("direct Stream mode has a managed actor")
+                .try_send(command)
         };
         enqueue_result?;
 
@@ -174,8 +257,35 @@ impl StreamDomainSink {
     }
 }
 
-impl StreamDomainRuntime<'_> {
-    pub(super) fn deliver_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {
-        self.core.deliver_envelope(envelope)
+#[cfg(test)]
+mod work_key_tests {
+    use super::*;
+
+    #[test]
+    fn should_share_resource_key_between_exact_selectors_and_writes() {
+        // Arrange
+        let family = RouteFamily::new(7);
+        let route = Route::new("stream://acme/orders/42");
+        let write_key = StreamDomainCore::actor_key_for_route(family, &route)
+            .map(StreamWorkKey::Resource)
+            .unwrap();
+
+        // Act
+        let read_key = StreamDomainSink::selector_work_key(family, &route);
+
+        // Assert
+        assert_eq!(read_key, write_key);
+    }
+
+    #[test]
+    fn should_keep_broad_selectors_on_selector_keys() {
+        // Arrange
+        let route = Route::new("stream://acme/orders/*");
+
+        // Act
+        let key = StreamDomainSink::selector_work_key(RouteFamily::new(7), &route);
+
+        // Assert
+        assert_eq!(key, StreamWorkKey::Selector(route.as_str().to_owned()));
     }
 }

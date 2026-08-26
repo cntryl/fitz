@@ -30,6 +30,7 @@ pub mod domain_manifest;
 pub mod envelope;
 pub mod family_actor_pool;
 pub mod keyed_actor_pool;
+pub(crate) mod keyed_family_executor;
 pub mod mailbox;
 pub mod managed_actor;
 pub mod matcher;

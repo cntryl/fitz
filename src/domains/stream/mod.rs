@@ -39,8 +39,7 @@
 
 pub mod actor;
 pub mod constants;
-pub mod events;
-pub mod metrics;
+pub(crate) mod metrics;
 pub mod protocol;
 pub(crate) mod route_grammar;
 pub mod sink;
@@ -55,7 +54,7 @@ pub use constants::{
     INTERNAL_AREA_SEGMENT, INTERNAL_REALM_SEGMENT, MAX_POSTING_ENTRIES_EXAMINED,
     MAX_POSTING_FRAGMENTS_FETCHED, MAX_READ_ITEMS, MAX_WATERMARK_COORDINATORS, NOTICE_DEBOUNCE_MS,
 };
-pub use metrics::StreamMetrics;
+pub(crate) use metrics::StreamMetrics;
 pub use protocol::{
     AppendResponse, GetMetadataResponse, ReadResponse, StreamClientFrame, StreamClientNotification,
     StreamClientRequest, StreamClientResponse, StreamClientResponseBody, StreamDiscriminator,

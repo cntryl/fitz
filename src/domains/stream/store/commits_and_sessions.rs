@@ -270,7 +270,7 @@ impl StreamStore {
 
         let sequencing_guard = self.resource_sequence_guard(family, realm, area, resource);
         // Known scaling limit: strict compact-page ordering keeps this guard
-        // across the storage commit (and therefore fsync in Sync/CloudStrict).
+        // across the storage commit (and therefore fsync in Sync mode).
         // Revisit with group commit if per-resource throughput becomes limiting.
         let _sequencing_lock = sequencing_guard.lock();
 
