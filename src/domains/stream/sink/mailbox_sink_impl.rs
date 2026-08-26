@@ -1,9 +1,10 @@
 use super::model::{
-    Arc, DeliveryError, Envelope, MailboxSink, Mutex, Ordering, PayloadEncoder, Route, RouteFamily,
+    admit_stream_client_delivery, record_stream_service_sample, Arc, DeliveryError, Envelope,
+    Instant, MailboxSink, Mutex, Ordering, PayloadEncoder, Route, RouteFamily,
     RoutedSubscriptionSet, StreamActor, StreamClientFrame, StreamClientRequest,
     StreamClientResponseBody, StreamDomainActor, StreamDomainCommand, StreamDomainCore,
     StreamDomainRuntime, StreamDomainSink, StreamReadExecution, StreamSessionOwner,
-    StreamSubscription, STREAM_OPERATIONS_TOTAL,
+    StreamSubscription, STREAM_ACTOR_REPLY_TIMEOUT, STREAM_OPERATIONS_TOTAL,
 };
 #[cfg(test)]
 use crate::dispatch::protocol::FrameContext;
@@ -46,8 +47,14 @@ impl Actor for StreamDomainActor {
     fn receive(&mut self, msg: Self::Message, _ctx: &mut Context<Self>) {
         let runtime = self.runtime();
         match msg {
-            StreamDomainCommand::Deliver(envelope, reply) => {
-                let _ = reply.send(runtime.deliver_envelope(&envelope));
+            StreamDomainCommand::Deliver(envelope, reply, admission) => {
+                let started_at = Instant::now();
+                let outcome = runtime.deliver_envelope(&envelope);
+                record_stream_service_sample(&self.core.delivery_service_us, started_at);
+                let _ = reply.send(outcome);
+                // Explicit: the slot is released here, once the work is
+                // actually done, and not when the caller gave up waiting.
+                drop(admission);
             }
             StreamDomainCommand::ReadLiveCounts(reply) => {
                 let _ = reply.send(runtime.live_counts());
@@ -92,7 +99,8 @@ impl StreamDomainSink {
         };
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         let family = *envelope.destination().family();
-        let command = StreamDomainCommand::Deliver(envelope, reply_tx);
+        // Never blocks its caller, so it never needs an admission slot.
+        let command = StreamDomainCommand::Deliver(envelope, reply_tx, None);
         let lane = if high_priority {
             crate::runtime::FamilyActorLane::Control
         } else {
@@ -133,8 +141,23 @@ impl StreamDomainSink {
         envelope: Envelope,
         high_priority: bool,
     ) -> Result<(), DeliveryError> {
+        // Refuse surplus client work before enqueue; never ration control-plane work.
+        let is_control_plane = high_priority
+            || envelope
+                .payload::<crate::runtime::SessionCleanup>()
+                .is_some();
+        let admission = if is_control_plane {
+            None
+        } else {
+            Some(admit_stream_client_delivery(
+                &self.inflight_client_deliveries,
+                &self.core.delivery_service_us,
+                self.actor.is_running(),
+            )?)
+        };
+
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
-        let command = StreamDomainCommand::Deliver(envelope, reply_tx);
+        let command = StreamDomainCommand::Deliver(envelope, reply_tx, admission);
         let enqueue_result = if high_priority {
             self.actor.try_send_high_priority(command)
         } else {
@@ -143,7 +166,7 @@ impl StreamDomainSink {
         enqueue_result?;
 
         reply_rx
-            .recv_timeout(std::time::Duration::from_secs(1))
+            .recv_timeout(STREAM_ACTOR_REPLY_TIMEOUT)
             .unwrap_or_else(|error| Err(crate::runtime::reply_wait::map_reply_wait_error(error)))
     }
 }

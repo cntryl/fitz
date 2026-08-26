@@ -656,6 +656,13 @@ fn should_keep_oversized_scan_pair_error_inside_one_wire_frame() {
     // can approach the frame limit on its own, and lossy UTF-8 conversion
     // widens every invalid byte to three, so echoing it whole would recreate
     // the failure this branch exists to prevent.
+    //
+    // The scan must fail loudly here rather than silently omit the pair: a
+    // skipped entry would make SCAN report success while permanently missing
+    // an in-range, authoritative value - and if it were the last entry,
+    // `has_more` would read false too, leaving the client no way to detect
+    // the gap. An explicit, retried-forever-safe error is the honest
+    // response; only a direct GET can still return this particular value.
     let mut actor = test_actor();
     let scope = KvResourceScope::new(RouteFamily::new(1), "test", "kv", "oversized-pair");
     let tx_id = begin_with_scope(&mut actor, scope.clone());

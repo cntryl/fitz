@@ -101,6 +101,18 @@ impl QueueActor {
                 break;
             };
 
+            // Skip hydration (real storage I/O) when this message's fixed
+            // per-response overhead alone already exceeds what's left of the
+            // wire budget: no body size, however small, changes that outcome.
+            // This only short-circuits once a prior message has already been
+            // reserved this call - an untouched budget failing here instead
+            // means the message may be fundamentally too large for any
+            // response, which the divert check below can only decide once
+            // it knows the body size.
+            if !messages.is_empty() && message_wire_overhead_bytes > *response_bytes_remaining {
+                return (QueueResponse::Received { messages }, true);
+            }
+
             let (body, attempts) = match self.hydrate_record_for_receive(id) {
                 Ok(record) => record,
                 Err(e) => {
@@ -177,18 +189,7 @@ impl QueueActor {
                 Some(now_epoch_ms),
             );
 
-            // Schedule expiration timer
-            self.timers.push(Reverse(InflightExpiry {
-                id,
-                inflight_epoch,
-                expires_at,
-                expires_at_ms: expires_at_epoch_ms,
-            }));
-
-            // Update deadline cache if this expiration is sooner
-            if expires_at < self.next_expiration_deadline {
-                self.next_expiration_deadline = expires_at;
-            }
+            self.schedule_inflight_expiration(id, inflight_epoch, expires_at, expires_at_epoch_ms);
 
             // Build response message
             messages.push(ReservedMessage {
@@ -201,6 +202,24 @@ impl QueueActor {
         }
 
         (QueueResponse::Received { messages }, false)
+    }
+
+    fn schedule_inflight_expiration(
+        &mut self,
+        id: MessageId,
+        inflight_epoch: u64,
+        expires_at: Instant,
+        expires_at_epoch_ms: u64,
+    ) {
+        self.timers.push(Reverse(InflightExpiry {
+            id,
+            inflight_epoch,
+            expires_at,
+            expires_at_ms: expires_at_epoch_ms,
+        }));
+        if expires_at < self.next_expiration_deadline {
+            self.next_expiration_deadline = expires_at;
+        }
     }
 
     fn reserve_wire_budget_decision(

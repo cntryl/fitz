@@ -14,8 +14,9 @@ pub(super) use crate::runtime::{
 };
 pub(super) use parking_lot::Mutex;
 pub(super) use std::collections::{BTreeMap, BTreeSet, HashMap};
-pub(super) use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+pub(super) use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 pub(super) use std::sync::{Arc, Weak};
+pub(super) use std::time::{Duration, Instant};
 
 pub(super) struct StreamSubscription {
     pub(super) pattern: crate::runtime::matcher::Pattern,
@@ -291,12 +292,17 @@ pub(super) struct StreamDomainCore {
     /// Mutable delivery state itself remains owned by each family core.
     pub(super) family_cores: Arc<Mutex<BTreeMap<u64, Weak<StreamDomainCore>>>>,
     pub(super) watermark_coordinators: WatermarkCoordinators,
+    /// Measured non-family-actor delivery service time, written by the actor
+    /// and read by admission to size its window. Unused by family cores -
+    /// `deliver_to_family` never blocks its caller and so never admits.
+    pub(super) delivery_service_us: StreamServiceEstimateUs,
 }
 
 pub(super) enum StreamDomainCommand {
     Deliver(
         Envelope,
         crossbeam_channel::Sender<Result<(), DeliveryError>>,
+        Option<StreamAdmissionSlot>,
     ),
     ReadLiveCounts(crossbeam_channel::Sender<StreamLiveCounts>),
     ReadResourceRecords(StreamAdminReadCommand),
@@ -331,6 +337,145 @@ pub struct StreamDomainSink {
     pub(super) actor: ManagedActor<StreamDomainCommand>,
     pub(super) family_runtime: Option<FamilyActorPoolRuntime<StreamDomainCommand>>,
     pub(super) family_families: Option<Vec<RouteFamily>>,
+    /// Client requests currently blocked on the (non-family) actor's reply.
+    /// Only `deliver_to_actor` admits against this - `deliver_to_family`
+    /// never blocks its caller, so it needs no admission window.
+    pub(super) inflight_client_deliveries: Arc<AtomicUsize>,
+}
+
+pub(super) type StreamServiceEstimateUs = Arc<AtomicU64>;
+
+/// How long `deliver_to_actor` waits for the (non-family) actor's reply.
+pub(super) const STREAM_ACTOR_REPLY_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// Hard ceiling on concurrent client requests blocked on the actor, whatever
+/// the measured service time suggests.
+pub(super) const STREAM_ADMISSION_MAX_WINDOW: usize = 64;
+
+/// Fraction of the reply deadline the admitted backlog may consume, leaving
+/// headroom for the delivery itself and a slower-than-average request.
+const STREAM_ADMISSION_BUDGET_NUMERATOR: u32 = 4;
+const STREAM_ADMISSION_BUDGET_DENOMINATOR: u32 = 5;
+
+/// Assumed per-delivery service time until the actor has measured one.
+const STREAM_ADMISSION_ASSUMED_SERVICE_US: u64 = 5_000;
+
+/// How many client requests may be blocked on the (non-family) Stream actor.
+///
+/// See `queue_admission_window` (`domains::queue::sink::model`) for the full
+/// rationale: a fixed window cannot bound the caller's reply deadline, since
+/// the actor serves deliveries one at a time and admitting `n` requests
+/// commits the tail caller to `n x service_time`. Sizing the window from
+/// observed service time keeps the admitted backlog inside the deadline as
+/// the actor gets slower, and never drops below 1 so the active operation is
+/// always admitted.
+pub(super) fn stream_admission_window(service_us: u64) -> usize {
+    let deadline_us = u64::try_from(STREAM_ACTOR_REPLY_TIMEOUT.as_micros()).unwrap_or(u64::MAX);
+    let budget_us = deadline_us.saturating_mul(u64::from(STREAM_ADMISSION_BUDGET_NUMERATOR))
+        / u64::from(STREAM_ADMISSION_BUDGET_DENOMINATOR);
+    let service_us = service_us.max(1);
+    let window = usize::try_from(budget_us / service_us).unwrap_or(STREAM_ADMISSION_MAX_WINDOW);
+    window.clamp(1, STREAM_ADMISSION_MAX_WINDOW)
+}
+
+/// Blend a fresh delivery duration into the running service estimate.
+pub(super) fn blend_stream_service_estimate(previous_us: u64, observed_us: u64) -> u64 {
+    if previous_us == 0 {
+        return observed_us.max(1);
+    }
+    ((previous_us * 3) + observed_us.max(1)) / 4
+}
+
+/// Admit one client delivery, sizing the window from measured service time and
+/// preferring terminal actor failure over a retryable rejection.
+///
+/// # Errors
+///
+/// `MailboxFull` when the live actor already has as much blocked-caller work
+/// as its deadline can serve, or `ActorStopped` when the actor has terminated.
+pub(super) fn admit_stream_client_delivery(
+    inflight: &Arc<AtomicUsize>,
+    service: &StreamServiceEstimateUs,
+    actor_running: bool,
+) -> Result<StreamAdmissionSlot, DeliveryError> {
+    let window = stream_admission_window(service.load(Ordering::Relaxed));
+    try_admit_stream_delivery(inflight, window)
+        .map_err(|error| classify_stream_admission_failure(error, actor_running))
+}
+
+/// Fold one observed delivery duration into the shared estimate.
+pub(super) fn record_stream_service_sample(
+    estimate: &StreamServiceEstimateUs,
+    started_at: Instant,
+) {
+    let observed_us = u64::try_from(started_at.elapsed().as_micros()).unwrap_or(u64::MAX);
+    let previous = estimate.load(Ordering::Relaxed);
+    estimate.store(
+        blend_stream_service_estimate(previous, observed_us),
+        Ordering::Relaxed,
+    );
+}
+
+/// A full window means "retry later" only while the actor is alive - a worker
+/// that fails closed leaves every admitted slot alive for the sink's
+/// lifetime, so admission would keep answering `MailboxFull` forever.
+pub(super) fn classify_stream_admission_failure(
+    error: DeliveryError,
+    actor_running: bool,
+) -> DeliveryError {
+    if actor_running {
+        error
+    } else {
+        DeliveryError::ActorStopped
+    }
+}
+
+/// Starting value for the service estimate before anything is measured.
+pub(super) const fn stream_assumed_service_us() -> u64 {
+    STREAM_ADMISSION_ASSUMED_SERVICE_US
+}
+
+/// Holds an admission slot until the queued command is finished with.
+///
+/// The slot travels with the command rather than with the blocked caller: a
+/// caller that gives up on `recv_timeout` has not cancelled anything, so
+/// releasing on caller timeout would recycle slots while the work they
+/// admitted is still pending. Dropping with the command covers completion,
+/// actor death, and mailbox teardown alike.
+#[derive(Debug)]
+pub(super) struct StreamAdmissionSlot {
+    inflight: Arc<AtomicUsize>,
+}
+
+impl Drop for StreamAdmissionSlot {
+    fn drop(&mut self) {
+        self.inflight.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// Reserve an in-flight slot, or refuse the request.
+///
+/// # Errors
+///
+/// Returns `MailboxFull` when the actor already has as many blocked callers as
+/// its deadline can serve - deliberately the same error an actually-full
+/// mailbox produces, so nothing was enqueued and ingress answers with a
+/// retryable code.
+pub(super) fn try_admit_stream_delivery(
+    inflight: &Arc<AtomicUsize>,
+    window: usize,
+) -> Result<StreamAdmissionSlot, DeliveryError> {
+    inflight
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            (current < window).then_some(current + 1)
+        })
+        .map(|_| StreamAdmissionSlot {
+            inflight: Arc::clone(inflight),
+        })
+        .map_err(|current| DeliveryError::MailboxFull {
+            capacity: window,
+            current_len: current,
+        })
 }
 
 impl std::ops::Deref for StreamDomainRuntime<'_> {

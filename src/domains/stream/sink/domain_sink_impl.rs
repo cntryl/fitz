@@ -1,13 +1,14 @@
 use super::model::{
-    route_triplet, AdminSnapshotState, AdminStreamReadRequest, AdminStreamReadRequestOwned, Arc,
-    AtomicBool, AtomicU64, BTreeMap, Envelope, HashMap, Mutex, Ordering, PayloadEncoder,
-    PendingStreamNotification, ReadResponse, ReadyStreamNotification, Route, RouteAddress,
-    RouteFamily, Router, StreamActor, StreamActorKey, StreamAdminReadCommand, StreamAdminRecord,
-    StreamAreaSnapshot, StreamClientResponseBody, StreamDomainActor, StreamDomainCommand,
-    StreamDomainCore, StreamDomainRuntime, StreamDomainSink, StreamFilteredReason,
-    StreamLiveCounts, StreamMetadata, StreamMetrics, StreamNotificationTarget, StreamReadExecution,
-    StreamReadItem, StreamRealmSnapshot, StreamRecord, StreamStorageLayout, StreamStore,
-    StreamVisibilityFrontier, SubscriptionRegistry, WatermarkCoordinators,
+    route_triplet, stream_assumed_service_us, AdminSnapshotState, AdminStreamReadRequest,
+    AdminStreamReadRequestOwned, Arc, AtomicBool, AtomicU64, AtomicUsize, BTreeMap, Envelope,
+    HashMap, Mutex, Ordering, PayloadEncoder, PendingStreamNotification, ReadResponse,
+    ReadyStreamNotification, Route, RouteAddress, RouteFamily, Router, StreamActor, StreamActorKey,
+    StreamAdminReadCommand, StreamAdminRecord, StreamAreaSnapshot, StreamClientResponseBody,
+    StreamDomainActor, StreamDomainCommand, StreamDomainCore, StreamDomainRuntime,
+    StreamDomainSink, StreamFilteredReason, StreamLiveCounts, StreamMetadata, StreamMetrics,
+    StreamNotificationTarget, StreamReadExecution, StreamReadItem, StreamRealmSnapshot,
+    StreamRecord, StreamStorageLayout, StreamStore, StreamVisibilityFrontier, SubscriptionRegistry,
+    WatermarkCoordinators,
 };
 #[cfg(test)]
 use crate::dispatch::protocol::FrameContext;
@@ -162,6 +163,7 @@ impl StreamDomainSink {
                     crate::domains::stream::MAX_WATERMARK_COORDINATORS,
                 )),
             },
+            delivery_service_us: Arc::new(AtomicU64::new(stream_assumed_service_us())),
         });
         let actor = Self::spawn_actor(core.clone());
         let family_families = provisioned_families.map(<[RouteFamily]>::to_vec);
@@ -174,6 +176,7 @@ impl StreamDomainSink {
             actor,
             family_runtime,
             family_families,
+            inflight_client_deliveries: Arc::new(AtomicUsize::new(0)),
         })
     }
 
@@ -202,13 +205,17 @@ impl StreamDomainSink {
             active,
             move |family| Self::family_core_for(&core_for_factory, family),
             |core, family, _lane, command| match command {
-                StreamDomainCommand::Deliver(envelope, reply) => {
+                StreamDomainCommand::Deliver(envelope, reply, admission) => {
                     let result = if *envelope.destination().family() == family {
                         core.deliver_envelope(&envelope)
                     } else {
                         Err(DeliveryError::ActorStopped)
                     };
                     let _ = reply.send(result);
+                    // Always None on this path - `deliver_to_family` never
+                    // admits - but drop explicitly for symmetry with the
+                    // non-family actor's release-on-completion.
+                    drop(admission);
                 }
                 StreamDomainCommand::ReadLiveCounts(reply) => {
                     let _ = reply.send(core.live_counts());
@@ -272,6 +279,9 @@ impl StreamDomainSink {
                 area: shared.watermark_coordinators.area.clone(),
                 realm: shared.watermark_coordinators.realm.clone(),
             },
+            // Unused by family cores: `deliver_to_family` never blocks its
+            // caller and so never admits against this estimate.
+            delivery_service_us: Arc::new(AtomicU64::new(stream_assumed_service_us())),
         });
         shared
             .family_cores

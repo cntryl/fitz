@@ -473,6 +473,7 @@ impl QueueDomainSink {
     ///
     /// Returns the delivery failure when the command could not be enqueued, or
     /// when the actor did not reply before its deadline.
+    #[must_use = "a dropped cleanup failure is indistinguishable from a cleanup that succeeded"]
     pub fn cleanup_session(&self, session_id: u64) -> Result<(), crate::runtime::DeliveryError> {
         self.send_unit_actor_command("cleanup_session", |reply| {
             QueueDomainCommand::CleanupSession(session_id, reply)

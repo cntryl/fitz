@@ -588,9 +588,17 @@ impl KvActor {
                 > crate::domains::kv::scan_wire_budget::kv_scan_continuation_max_key_bytes();
             if used.saturating_add(cost) > ceiling {
                 if items.is_empty() {
-                    // No page could ever carry this pair. Say so rather than
-                    // emitting a response that cannot be framed and is dropped
-                    // on the way out; a direct GET still returns it.
+                    // No page could ever carry this pair. Skipping it would
+                    // make SCAN report success while permanently omitting an
+                    // in-range, authoritative entry - and if it were the last
+                    // entry, `has_more` would read false too, leaving the
+                    // client with no way to even detect the gap. That is
+                    // worse than failing: KV must represent current
+                    // authoritative state, and a silently incomplete "success"
+                    // response violates that. Say so explicitly instead,
+                    // rather than emitting a response that cannot be framed
+                    // and is dropped on the way out; a direct GET still
+                    // returns the value.
                     //
                     // The key is truncated deliberately: it can itself approach
                     // the frame limit, and lossy UTF-8 conversion expands every

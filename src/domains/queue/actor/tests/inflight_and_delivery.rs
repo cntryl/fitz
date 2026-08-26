@@ -1216,3 +1216,87 @@ fn should_reject_send_of_body_that_no_reserve_shape_could_return() {
     );
     assert!(actor.admin_dead_letters().is_empty());
 }
+
+#[test]
+fn should_skip_hydration_when_wire_budget_is_already_exhausted() {
+    // Arrange
+    // Once the response's wire budget is exhausted by an earlier message,
+    // the next ready candidate's fixed per-response overhead alone already
+    // guarantees it cannot fit. Hydrating it anyway would pay real storage
+    // I/O only to immediately discard the result. Prove this doesn't happen
+    // by deleting the second message's header out from under the actor: if
+    // hydration were attempted, it would hit "disappeared from storage" and
+    // divert the message instead of simply leaving it ready for next time.
+    let store = Arc::new(
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
+    );
+    let queue_key = unique_queue_key("jobs-skip-hydration-on-exhausted-budget");
+    let mut actor = QueueActor::new(
+        RouteFamily::new(0),
+        queue_key.clone(),
+        store.clone(),
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    let message_overhead = crate::domains::queue::protocol::RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES;
+    // A tiny explicit budget stands in for "an earlier message this call
+    // already consumed most of the response": just enough room for the
+    // first (1-byte) message, leaving less than `message_overhead` behind -
+    // too little for the second message to fit no matter its body size.
+    let initial_budget = message_overhead + 3;
+    actor.handle_send(Bytes::from_static(b"x"), None);
+    let second_id = match actor.handle_send(Bytes::from_static(b"never hydrated"), None) {
+        QueueResponse::Sent { id } => id,
+        other => panic!("Expected Sent response, found {other:?}"),
+    };
+
+    // Force the second message out of every in-memory cache and delete its
+    // header from storage, so any hydration attempt on it fails loudly.
+    actor.evict_cached_record(second_id);
+    actor.evict_cached_body(second_id);
+    let mut txn = store
+        .begin_tx(
+            queue_key.family.id(),
+            cntryl_midge::TransactionMode::ReadWrite,
+        )
+        .expect("begin write tx");
+    txn.delete(QueueActor::header_key(&queue_key, second_id))
+        .expect("delete second message's header");
+    txn.commit(cntryl_midge::WriteOptions::buffered())
+        .expect("commit second message header delete");
+
+    // Act
+    let mut response_bytes_remaining = initial_budget;
+    let (response, wire_budget_exhausted) = actor.handle_receive_for_session_with_wire_budget(
+        TEST_SESSION_ID,
+        30,
+        Some(2),
+        &mut response_bytes_remaining,
+        message_overhead,
+    );
+
+    // Assert
+    let QueueResponse::Received { messages } = response else {
+        panic!("Expected Received response");
+    };
+    assert_eq!(
+        messages.len(),
+        1,
+        "only the first message fits the exhausted budget"
+    );
+    assert!(wire_budget_exhausted);
+    assert_eq!(
+        actor.ready_len(),
+        1,
+        "the second message must remain ready, untouched by a failed hydration"
+    );
+    assert!(
+        actor.admin_dead_letters().is_empty(),
+        "the second message must not be diverted - it was never hydrated to find out its header is gone"
+    );
+}

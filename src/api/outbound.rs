@@ -502,8 +502,16 @@ impl SessionOutboundSink {
         )
     }
 
+    // Every `deliver_*` caller of this reaches `SessionOutboundSink::deliver`
+    // synchronously from whatever domain actor thread produced the response -
+    // that thread is shared by every session routed to the same actor/key.
+    // A budget that can sleep (previously up to ~177ms across 100 attempts)
+    // lets one session's saturated outbound channel stall every other
+    // session queued behind it on that actor. Use the same yield-only budget
+    // already required for the Queue ready-notification path below, for the
+    // same reason: give up in microseconds rather than block the actor.
     fn send_encoded_frame(&self, session_id: u64, bytes: &Bytes) -> Result<(), DeliveryError> {
-        self.send_encoded_frame_with_budget(session_id, bytes, MAX_OUTBOUND_SEND_RETRIES)
+        self.send_encoded_frame_with_budget(session_id, bytes, OUTBOUND_BEST_EFFORT_RETRIES)
     }
 
     fn send_encoded_frame_with_budget(
@@ -581,7 +589,10 @@ impl SessionOutboundSink {
     }
 }
 
-/// Attempts before a frame that still cannot be queued is given up on.
+/// Sample size used only to exercise `outbound_retry_backoff`'s general
+/// escalation shape in tests; no live caller requests this many attempts
+/// since every `deliver_*` path now uses the yield-only best-effort budget.
+#[cfg(test)]
 const MAX_OUTBOUND_SEND_RETRIES: usize = 100;
 /// Attempts for a best-effort delivery made synchronously from a domain
 /// actor thread with its own reply deadline (e.g. Queue ready-notifications).

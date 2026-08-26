@@ -332,6 +332,15 @@ impl RpcDomainRuntime<'_> {
                 .map_or(caller_info.family, |addr| *addr.family()),
         );
 
+        // This path is only reached after the worker has already produced at
+        // least one response chunk, so the call may have partially executed.
+        // `ERR_RPC_BACKPRESSURE` is documented and spec-classified (REQ-PROTO-012)
+        // as safe to retry - it means "never accepted" - which is not true
+        // here. Use the domain's indeterminate/backend-error code instead,
+        // matching the `indeterminate_error_code` convention used elsewhere
+        // for "outcome unknown, do not blindly retry" so a client cannot
+        // safely re-invoke a non-idempotent call whose side effects may have
+        // already run.
         if let Some(caller_inbox_addr) = caller_info.caller_inbox_addr.clone() {
             self.forward_pending_error_deliveries(
                 vec![RpcPendingErrorDelivery {
@@ -339,7 +348,7 @@ impl RpcDomainRuntime<'_> {
                     caller_session_id: caller_info.caller_session_id,
                     caller_inbox_addr,
                 }],
-                crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
+                crate::dispatch::protocol::error_codes::rpc::ERR_BACKEND_ERROR,
                 RPC_RESPONSE_UNDELIVERABLE_ERROR,
                 "rpc_undeliverable_stream_errors_forwarded_total",
                 "rpc_undeliverable_stream_errors_dropped_total",
@@ -354,7 +363,7 @@ impl RpcDomainRuntime<'_> {
                 caller_session_id: meta.session_id,
                 caller_inbox_addr: worker_inbox_addr,
             }],
-            crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
+            crate::dispatch::protocol::error_codes::rpc::ERR_BACKEND_ERROR,
             RPC_RESPONSE_UNDELIVERABLE_ERROR,
             "rpc_worker_stream_cancels_forwarded_total",
             "rpc_worker_stream_cancels_dropped_total",
