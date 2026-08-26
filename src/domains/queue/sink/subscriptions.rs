@@ -1,13 +1,8 @@
 //! Watch/unwatch subscription handling for queue domain frames.
-//!
-//! Split out of `mailbox_sink_impl.rs` to keep that file under the
-//! repo's per-file line budget - this block is a cohesive unit (one
-//! dispatcher plus the two operations it dispatches to, plus their shared
-//! validation helper) with no dependency on the rest of the file besides
-//! `QueueDomainCore` itself and `QueueOpKind::InflightExpired`.
 
-use super::{
-    Envelope, Instant, QueueDomainCore, QueueOpKind, QueueSubscription, QueueSubscriptionMessage,
+use super::delivery::QueueOpKind;
+use super::model::{
+    Envelope, Instant, QueueDomainCore, QueueSubscription, QueueSubscriptionMessage,
     RoutedSubscriptionSet,
 };
 use crate::runtime::routing::RouteFamily;

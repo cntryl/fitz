@@ -1,6 +1,5 @@
-use super::{
-    Instant, OperationOutcome, PendingQueueReserve, QueueDomainCore, QueueOpKind, VecDeque,
-};
+use super::{Instant, OperationOutcome, QueueDomainCore, QueueOpKind};
+use crate::domains::queue::sink::model::{PendingQueueReserve, VecDeque};
 use crate::runtime::routing::RouteFamily;
 
 impl QueueDomainCore {

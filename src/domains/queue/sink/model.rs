@@ -93,8 +93,8 @@ pub(super) struct QueueDomainCore {
     pub(super) families: Mutex<HashMap<u64, RoutedSubscriptionSet<QueueSubscription>>>,
     /// Sessions disconnect cleanup has already run for; guards against a
     /// stale queued request recreating a subscription or pending reserve.
-    /// See `cleanup_guard.rs`.
-    pub(super) cleaned_up_sessions: Mutex<super::cleanup_guard::CleanedUpSessions>,
+    /// See `cleanup.rs`.
+    pub(super) cleaned_up_sessions: Mutex<super::cleanup::CleanedUpSessions>,
     pub(super) next_sub_id: AtomicU64,
     pub(super) ready_states: Mutex<HashMap<crate::domains::queue::QueueKey, bool>>,
     /// FIFO long-poll RESERVE requests waiting for a matching ready message.

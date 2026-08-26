@@ -1,16 +1,12 @@
 use super::model::{
-    AtomicBool, AtomicU64, Duration, Envelope, HashMap, HashSet, Instant, Mutex, Ordering,
+    AtomicBool, AtomicU64, Duration, HashMap, HashSet, Instant, Mutex, Ordering,
     QueueAdminProjection, QueueDomainActor, QueueDomainCommand, QueueDomainCore,
-    QueueDomainRuntime, QueueDomainSink, QueueLiveCounts, QueueMetrics, QueueNotification,
-    QueueProjectionEntry, QueueProjectionState, QueueReadyNotification, Router, WarmQueueActor,
-    QUEUE_ACTOR_IDLE_TTL, QUEUE_ACTOR_REPLY_TIMEOUT, QUEUE_DEDUP_SWEEP_INTERVAL,
-    QUEUE_IDLE_SWEEP_BATCH_SIZE, QUEUE_IDLE_SWEEP_INTERVAL,
+    QueueDomainRuntime, QueueDomainSink, QueueLiveCounts, QueueMetrics, Router,
+    QUEUE_ACTOR_REPLY_TIMEOUT,
 };
 #[cfg(test)]
-use crate::dispatch::protocol::frame_context::FrameContext;
+use super::model::{WarmQueueActor, QUEUE_ACTOR_IDLE_TTL};
 use std::{collections::VecDeque, sync::Arc};
-
-mod domain_core_impl;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct QueueCounts {
@@ -160,7 +156,7 @@ impl QueueDomainSink {
             inventory_error: Mutex::new(inventory_error),
             wildcard_reserve_sequence: AtomicU64::new(0),
             families: Mutex::new(HashMap::new()),
-            cleaned_up_sessions: Mutex::new(super::cleanup_guard::CleanedUpSessions::new(
+            cleaned_up_sessions: Mutex::new(super::cleanup::CleanedUpSessions::new(
                 crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
             )),
             next_sub_id: AtomicU64::new(1),
