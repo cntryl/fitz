@@ -11,6 +11,10 @@ pub(super) use std::time::Instant;
 pub(super) const SCHEDULE_ADMIN_SNAPSHOT_INTERVAL_US: u64 = 250_000;
 pub(super) const EXECUTIONS_WINDOW_MS: u64 = 60_000;
 
+pub(super) fn duration_millis(duration: std::time::Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
 pub(super) fn now_epoch_ms() -> u64 {
     u64::try_from(
         std::time::SystemTime::now()
@@ -146,6 +150,9 @@ pub(super) struct ScheduleDomainCore {
         HashMap<crate::runtime::routing::RouteFamily, crate::domains::schedule::ScheduleActor>,
     >,
     pub(super) sub_families: Mutex<HashMap<u64, ScheduleSubscriptionSet>>,
+    /// Sessions disconnect cleanup has already run for; guards against a
+    /// stale queued request recreating a subscription. See `cleanup.rs`.
+    pub(super) cleaned_up_sessions: Mutex<super::cleanup::CleanedUpSessions>,
     pub(super) next_sub_id: AtomicU64,
     pub(super) router: Arc<Router>,
     #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]

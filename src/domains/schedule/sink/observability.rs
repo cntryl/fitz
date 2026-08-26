@@ -1,18 +1,20 @@
-use super::super::model::{
-    now_epoch_ms, schedule_admin_snapshot_due, Ordering, ScheduleDomainRuntime, ScheduleLiveCounts,
-    EXECUTIONS_WINDOW_MS,
-};
+//! Admin read-model projection and metrics glue: when and how live Schedule
+//! state is mirrored into the admin snapshot and metric gauges.
+//!
+//! Projection failure must never affect domain correctness.
+
+use super::model::{now_epoch_ms, schedule_admin_snapshot_due, Ordering, ScheduleDomainRuntime, ScheduleLiveCounts, EXECUTIONS_WINDOW_MS};
 
 impl ScheduleDomainRuntime<'_> {
-    pub fn subscription_count(&self) -> usize {
+    pub(super) fn subscription_count(&self) -> usize {
         let families = self.core.sub_families.lock();
         families
             .values()
-            .map(super::super::model::ScheduleSubscriptionSet::subscription_count)
+            .map(super::model::ScheduleSubscriptionSet::subscription_count)
             .sum()
     }
 
-    pub fn schedule_count(&self) -> usize {
+    pub(super) fn schedule_count(&self) -> usize {
         let actors = self.core.actors.lock();
         actors
             .values()
@@ -20,7 +22,7 @@ impl ScheduleDomainRuntime<'_> {
             .sum()
     }
 
-    pub fn pending_fire_count(&self) -> usize {
+    pub(super) fn pending_fire_count(&self) -> usize {
         let actors = self.core.actors.lock();
         actors
             .values()
@@ -29,7 +31,7 @@ impl ScheduleDomainRuntime<'_> {
     }
 
     /// Legacy metric name: counts acknowledged live handoffs over the last minute.
-    pub fn executions_per_minute(&self) -> f64 {
+    pub(super) fn executions_per_minute(&self) -> f64 {
         let now_ms = now_epoch_ms();
         let cutoff = now_ms.saturating_sub(EXECUTIONS_WINDOW_MS);
         let mut deque = self.core.recent_acknowledgement_ms.lock();
@@ -39,15 +41,15 @@ impl ScheduleDomainRuntime<'_> {
         f64::from(u32::try_from(deque.len()).unwrap_or(u32::MAX))
     }
 
-    pub fn notify_failure_count(&self) -> u64 {
+    pub(super) fn notify_failure_count(&self) -> u64 {
         self.core.live_publish_failures.load(Ordering::Relaxed)
     }
 
-    pub fn ack_failure_count(&self) -> u64 {
+    pub(super) fn ack_failure_count(&self) -> u64 {
         self.core.ack_failures.load(Ordering::Relaxed)
     }
 
-    pub fn pending_ack_retry_count(&self) -> usize {
+    pub(super) fn pending_ack_retry_count(&self) -> usize {
         let pending_ack_retries = self.core.pending_ack_retries.lock();
         pending_ack_retries
             .values()
@@ -55,7 +57,7 @@ impl ScheduleDomainRuntime<'_> {
             .sum()
     }
 
-    pub fn admin_pending_claims(
+    pub(super) fn admin_pending_claims(
         &self,
         route_family: crate::runtime::routing::RouteFamily,
     ) -> Vec<crate::control::admin::SchedulePendingClaimInfo> {
@@ -66,7 +68,7 @@ impl ScheduleDomainRuntime<'_> {
             .unwrap_or_default()
     }
 
-    pub fn oldest_pending_claim_age_seconds(&self) -> u64 {
+    pub(super) fn oldest_pending_claim_age_seconds(&self) -> u64 {
         let now_ms = now_epoch_ms();
         let actors = self.core.actors.lock();
         actors
@@ -76,7 +78,7 @@ impl ScheduleDomainRuntime<'_> {
             .unwrap_or(0)
     }
 
-    pub fn overdue_normalization_count(&self) -> u64 {
+    pub(super) fn overdue_normalization_count(&self) -> u64 {
         let actors = self.core.actors.lock();
         actors
             .values()
@@ -84,7 +86,7 @@ impl ScheduleDomainRuntime<'_> {
             .sum()
     }
 
-    pub(in crate::domains::schedule::sink) fn live_counts(&self) -> ScheduleLiveCounts {
+    pub(super) fn live_counts(&self) -> ScheduleLiveCounts {
         ScheduleLiveCounts {
             subscriptions: self.subscription_count(),
             schedules: self.schedule_count(),
@@ -120,7 +122,7 @@ impl ScheduleDomainRuntime<'_> {
         }
     }
 
-    pub(in crate::domains::schedule::sink) fn schedule_response_is_failure(
+    pub(super) fn schedule_response_is_failure(
         response: &crate::domains::schedule::ScheduleResponse,
     ) -> bool {
         matches!(
@@ -129,7 +131,7 @@ impl ScheduleDomainRuntime<'_> {
         )
     }
 
-    pub(in crate::domains::schedule::sink) fn schedule_admin_snapshot(&self, force: bool) {
+    pub(super) fn schedule_admin_snapshot(&self, force: bool) {
         self.core.snapshot_dirty.store(true, Ordering::Relaxed);
         self.maybe_sync_admin_snapshot(force);
     }
@@ -176,12 +178,12 @@ impl ScheduleDomainRuntime<'_> {
         self.core.snapshot_syncing.store(false, Ordering::Release);
     }
 
-    pub(crate) fn refresh_admin_snapshot_if_dirty(&self) {
+    pub(super) fn refresh_admin_snapshot_if_dirty(&self) {
         self.maybe_sync_admin_snapshot(true);
     }
 
     #[doc(hidden)]
-    pub fn bench_publish_event(&self, event: &crate::runtime::DomainPublishEvent) {
+    pub(super) fn bench_publish_event(&self, event: &crate::runtime::DomainPublishEvent) {
         self.handle_domain_publish(event);
     }
 }
