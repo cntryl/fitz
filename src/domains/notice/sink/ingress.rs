@@ -9,6 +9,21 @@ use std::time::Instant;
 
 impl NoticeDomainCore {
     pub(super) fn deliver_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {
+        self.deliver_envelope_with_cleanup_check(envelope, true)
+    }
+
+    pub(super) fn deliver_accepted_envelope(
+        &self,
+        envelope: &Envelope,
+    ) -> Result<(), DeliveryError> {
+        self.deliver_envelope_with_cleanup_check(envelope, false)
+    }
+
+    fn deliver_envelope_with_cleanup_check(
+        &self,
+        envelope: &Envelope,
+        reject_cleaned_up_session: bool,
+    ) -> Result<(), DeliveryError> {
         if self.handle_cleanup_envelope(envelope) {
             return Ok(());
         }
@@ -36,7 +51,7 @@ impl NoticeDomainCore {
         // jumped ahead of it. Reject rather than silently recreating a
         // subscription for a session that is already gone and will never be
         // cleaned up again.
-        if self.is_cleaned_up_session(meta.session_id) {
+        if reject_cleaned_up_session && self.is_cleaned_up_session(meta.session_id) {
             self.reject_with(envelope, meta, "session already closed", request_started);
             return Ok(());
         }

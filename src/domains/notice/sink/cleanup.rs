@@ -6,11 +6,23 @@
 //! silently recreating a subscription for a session that is already gone and
 //! will never be cleaned up again.
 
-use super::{model::usize_to_u64, Envelope, NoticeDomainCore};
+use super::{model::usize_to_u64, DeliveryError, Envelope, NoticeDomainCore};
 
 impl NoticeDomainCore {
     pub(super) fn is_cleaned_up_session(&self, session_id: u64) -> bool {
         self.cleaned_up_sessions.lock().contains(session_id)
+    }
+
+    pub(super) fn enqueue_if_session_open(
+        &self,
+        session_id: u64,
+        enqueue: impl FnOnce() -> Result<(), DeliveryError>,
+    ) -> Result<(), DeliveryError> {
+        let cleaned_up_sessions = self.cleaned_up_sessions.lock();
+        if cleaned_up_sessions.contains(session_id) {
+            return Err(DeliveryError::ActorStopped);
+        }
+        enqueue()
     }
 
     pub(super) fn handle_cleanup_envelope(&self, envelope: &Envelope) -> bool {

@@ -57,7 +57,7 @@ impl Actor for NoticeDomainActor {
                 // to report to - but a failure here must still be countable,
                 // otherwise an accepted publish that never delivered looks
                 // identical to one that did.
-                if let Err(error) = runtime.deliver_envelope(&envelope) {
+                if let Err(error) = runtime.deliver_accepted_envelope(&envelope) {
                     crate::observability::counter_inc(
                         crate::domains::notice::metrics::METRIC_ACCEPTED_DELIVERY_FAILURES_TOTAL,
                     );
@@ -94,6 +94,10 @@ impl Actor for NoticeDomainActor {
 impl NoticeDomainRuntime<'_> {
     fn deliver_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {
         self.core.deliver_envelope(envelope)
+    }
+
+    fn deliver_accepted_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {
+        self.core.deliver_accepted_envelope(envelope)
     }
 
     fn subscription_count(&self) -> usize {
