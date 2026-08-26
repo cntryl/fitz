@@ -91,3 +91,71 @@ fn should_accept_notice_publish_without_waiting_for_subscriber_delivery() {
         assert!(accepted_before_delivery_release);
     });
 }
+
+#[test]
+fn should_deliver_accepted_publish_after_disconnect_cleanup_overtakes_it() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let notice_route = "notice://acme/app/events";
+    let notice_address = RouteAddress::new(family, Route::new("notice://acme/inbound"));
+    let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let publisher_address = RouteAddress::new(family, Route::new("inbox://session/11"));
+    let router = Arc::new(Router::new());
+    let subscriber_mailbox = Arc::new(Mailbox::new(8));
+    router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = NoticeDomainSink::new(router, admin_read_model);
+    subscribe_notice_pattern(
+        &sink,
+        &subscriber_address,
+        &notice_address,
+        7,
+        notice_route,
+        family,
+    );
+    let _ = decode_notice_response(&subscriber_mailbox);
+    let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);
+    let (release_tx, release_rx) = crossbeam_channel::bounded(1);
+    sink.block_actor_for_tests(entered_tx, release_rx);
+    entered_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("Notice actor should block");
+    let request = crate::domains::notice::NoticeClientRequest::new(
+        crate::runtime::ClientFrameMeta::new(11, crate::runtime::ClientChannel::Pub, 500, family),
+        Ok(
+            crate::domains::notice::protocol::NotificationMessage::Publish(
+                crate::domains::notice::protocol::PublishMessage::new(
+                    family,
+                    Route::new(notice_route),
+                    Bytes::from_static(b"hello"),
+                ),
+            ),
+        ),
+    );
+
+    // Act
+    sink.deliver(Envelope::from_route(
+        publisher_address,
+        notice_address,
+        request,
+    ))
+    .expect("accept notice publish");
+    let cleanup = sink
+        .actor
+        .try_send_high_priority(NoticeDomainCommand::Deliver(
+            Envelope::new(
+                RouteAddress::new(family, Route::new("notice://cleanup")),
+                crate::runtime::SessionCleanup { session_id: 11 },
+            ),
+            crossbeam_channel::bounded(1).0,
+        ));
+    cleanup.expect("enqueue publisher cleanup");
+    release_tx.send(()).expect("release Notice actor");
+
+    // Assert
+    let notification = subscriber_mailbox
+        .receiver()
+        .recv_timeout(Duration::from_secs(1))
+        .expect("accepted publish should reach subscriber");
+    assert!(notification.into_payload::<FrameContext>().is_some());
+}

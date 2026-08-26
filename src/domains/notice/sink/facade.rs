@@ -196,11 +196,20 @@ impl NoticeDomainSink {
         high_priority: bool,
     ) -> Result<(), DeliveryError> {
         if Self::can_accept_without_reply(&envelope) {
+            let session_id = envelope
+                .payload::<crate::domains::notice::NoticeClientRequest>()
+                .map(|request| request.meta.session_id);
             let command = NoticeDomainCommand::DeliverAccepted(envelope);
-            return if high_priority {
-                self.actor.try_send_high_priority(command)
-            } else {
-                self.actor.try_send(command)
+            let enqueue = || {
+                if high_priority {
+                    self.actor.try_send_high_priority(command)
+                } else {
+                    self.actor.try_send(command)
+                }
+            };
+            return match session_id {
+                Some(session_id) => self.core.enqueue_if_session_open(session_id, enqueue),
+                None => enqueue(),
             };
         }
 
