@@ -694,7 +694,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_give_up_quickly_on_a_saturated_queue_watcher() {
+    async fn should_bound_saturated_queue_watcher_delivery_without_sleeping() {
         // Arrange
         // Queue delivers ready-notifications to every watcher SERIALLY, on the
         // actor thread, before it replies to the client whose SEND just
@@ -723,18 +723,19 @@ mod tests {
         );
 
         // Act
-        let started = Instant::now();
         let result = sink.deliver(Envelope::new(
             RouteAddress::new(RouteFamily::new(1), Route::new("inbox://session/1")),
             notification,
         ));
-        let elapsed = started.elapsed();
+        let retry_schedule = (1..OUTBOUND_BEST_EFFORT_RETRIES)
+            .map(outbound_retry_backoff)
+            .collect::<Vec<_>>();
 
         // Assert
         assert!(result.is_err(), "a permanently full channel must fail");
         assert!(
-            elapsed < Duration::from_millis(20),
-            "best-effort notification delivery took {elapsed:?}, blocking the queue              actor thread far past what six saturated watchers can afford"
+            retry_schedule.iter().all(Option::is_none),
+            "best-effort delivery must never enter the sleeping backoff path: {retry_schedule:?}"
         );
     }
 
