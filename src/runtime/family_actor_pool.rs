@@ -1011,9 +1011,10 @@ mod tests {
             active,
             |_| (),
             move |(), target_family, _lane, message: u64| {
-                if target_family == panicking {
-                    panic!("injected handler panic for a same-shard family");
-                }
+                assert!(
+                    target_family != panicking,
+                    "injected handler panic for a same-shard family"
+                );
                 if target_family == sibling {
                     observed_tx.send(message).expect("sibling observer");
                 }
