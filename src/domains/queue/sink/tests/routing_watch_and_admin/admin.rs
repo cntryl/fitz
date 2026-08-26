@@ -77,7 +77,7 @@ pub(super) fn should_delay_ready_notification_until_delayed_message_is_promoted(
 
     // Act
     std::thread::sleep(Duration::from_millis(1_100));
-    harness.sink.sweep_runtime_state();
+    harness.sink.sweep_runtime_state_at(Instant::now());
     let (delivered_subscription_id, delivered_route, ready, delayed, inflight) =
         harness.next_watch_notification();
 

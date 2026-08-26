@@ -45,7 +45,13 @@ where
     /// A no-op if an actor for `key` already exists, even if that actor has
     /// since failed closed after a panic — callers observe delivery failure
     /// through the normal `Router::route` error path, matching every other
-    /// fail-closed actor in the runtime.
+    /// fail-closed actor in the runtime. This key's own dead entry is never
+    /// replaced or restarted.
+    ///
+    /// `max_actors` bounds *live* actors, not ever-created ones: a dead entry
+    /// left behind by some other key's past panic does not count against the
+    /// cap, since a transient fault confined to one key must not permanently
+    /// consume shared capacity that unrelated keys need to ever get a slot.
     pub fn ensure_spawned<A, F>(&self, key: K, address: RouteAddress, actor_factory: F) -> bool
     where
         A: Actor<Message = M>,
@@ -59,7 +65,8 @@ where
         if actors.contains_key(&key) {
             return true;
         }
-        if self.max_actors == 0 || actors.len() >= self.max_actors {
+        let live_count = actors.values().filter(|actor| actor.is_running()).count();
+        if self.max_actors == 0 || live_count >= self.max_actors {
             return false;
         }
         actors.entry(key).or_insert_with(|| {
@@ -130,6 +137,61 @@ mod tests {
 
         // Assert
         assert_eq!(count.load(Ordering::SeqCst), 12);
+    }
+
+    #[test]
+    fn should_reclaim_capacity_from_dead_actors_for_an_unrelated_key() {
+        // Arrange: a pool capped at 2 live actors. Two distinct keys each
+        // get an actor that panics immediately on any message, mirroring a
+        // production key (e.g. a Stream realm/area watermark coordinator,
+        // see `src/domains/stream/sink/domain_sink_impl.rs`) whose handler
+        // fails once and is left fail-closed forever.
+        struct PanicActor;
+        impl Actor for PanicActor {
+            type Message = u64;
+            fn receive(&mut self, _msg: u64, _ctx: &mut Context<Self>) {
+                panic!("injected handler panic");
+            }
+        }
+
+        let router = Arc::new(Router::new());
+        let pool: KeyedActorPool<u64, u64> = KeyedActorPool::new(router.clone(), 16, 2);
+
+        for key in 0..2u64 {
+            let address = RouteAddress::new(
+                RouteFamily::new(1),
+                Route::new(format!("stream://bench/area/{key}")),
+            );
+            assert!(pool.ensure_spawned(key, address.clone(), || PanicActor));
+            router
+                .route(Envelope::new(address, 1_u64))
+                .expect("route to spawned actor");
+        }
+
+        // Wait for both to actually fail closed (panic is async).
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while pool.actors.read().values().any(ManagedActor::is_running)
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::yield_now();
+        }
+        assert!(
+            pool.actors.read().values().all(|actor| !actor.is_running()),
+            "both keys should have failed closed"
+        );
+
+        // Act: a brand-new, unrelated key has never failed and has nothing
+        // to do with the two dead entries above.
+        let fresh_address =
+            RouteAddress::new(RouteFamily::new(1), Route::new("stream://bench/area/2"));
+        let spawned = pool.ensure_spawned(2u64, fresh_address, || PanicActor);
+
+        // Assert: capacity exhausted purely by historical, unrelated panics
+        // must not permanently block a key that never failed.
+        assert!(
+            spawned,
+            "an unrelated key must still get a slot after other keys' actors failed closed"
+        );
     }
 
     #[test]

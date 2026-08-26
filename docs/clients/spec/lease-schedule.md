@@ -483,7 +483,7 @@ elif response.type == "Fenced":
 - 5004 = ERR_LEASE_NOT_FOUND (route never acquired)
 - 5005 = ERR_INVALID_TOKEN (lease token invalid or wrong)
 - 5006 = ERR_TIMEOUT (pending acquire timed out)
-- 5007 = ERR_QUEUE_FULL (too many pending waiters)
+- 5007 = ERR_QUEUE_FULL (retryable; too many pending waiters, or the lease mailbox was full and the request was never accepted)
 - 5008 = ERR_BAD_REQUEST (malformed Lease operation request)
 - 5009 = ERR_UNAUTHORIZED
 - 5010 = ERR_INVALID_SUBSCRIPTION_ROUTE
@@ -613,8 +613,18 @@ Response (error):
 
 **Semantics:**
 - Omitting the payload defaults to `offset=0, limit=100`
-- `limit=0` means "all remaining entries from offset"
-- LIST is scoped to the current route family and returns a single response payload, not a multi-frame stream
+- `limit=0` requests all remaining entries from `offset`, but the response is
+  still one TLV value bounded by the wire frame limit and MAY return fewer
+  entries than exist, regardless of what `limit` requested. There is no
+  `has_more` flag on this response: detect truncation by comparing the
+  returned entry count to `total_count`. If `offset + entries_returned <
+  total_count`, more entries remain; continue by re-issuing LIST with
+  `offset += entries_returned` (same `limit`) until the count is exhausted.
+  Every entry sits at a stable index for the duration of an unchanging
+  definition set, so this offset advance is safe.
+- LIST is scoped to the current route family and each call returns exactly one
+  response payload (never a multi-frame stream), but that payload may be a
+  partial page per the truncation rule above
 
 #### Broker Extensions
 
@@ -764,6 +774,21 @@ or wildcard Schedule patterns via `SCHEDULE_SUBSCRIBE` and receiving
 - 7006 = ERR_INVALID_SUBSCRIPTION_PATTERN
 - 7007 = ERR_SUBSCRIPTION_LIMIT
 - 7008 = ERR_INVALID_DELIVERY_MODE
+- 7010 = ERR_BACKEND_ERROR
+- 7011 = ERR_TIMEOUT
+
+`ERR_BACKEND_ERROR` reports transient broker backend unavailability or
+saturation. It is distinct from `ERR_PARSE_ERROR`: clients must not tell callers
+that their cron or payload is malformed when the broker could not service an
+otherwise valid request. Clients may classify 7010 as retryable, subject to the
+operation's normal replay-safety rules.
+
+`ERR_TIMEOUT` reports that the broker accepted the command but did not finish it
+before its deadline. The outcome is unknown: the command may still apply. It is
+deliberately NOT retryable, because 7010 means the request was declined and is
+safe to re-send, whereas re-sending after 7011 can apply the same create or
+cancel twice. A client that knows its operation is idempotent may still retry
+deliberately; an automatic `IsRetryable` retry must not.
 
 #### Acceptance Tests
 

@@ -53,7 +53,20 @@ impl Actor for NoticeDomainActor {
                 let _ = reply.send(runtime.deliver_envelope(&envelope));
             }
             NoticeDomainCommand::DeliverAccepted(envelope) => {
-                let _ = runtime.deliver_envelope(&envelope);
+                // The publish was already acknowledged, so there is nobody left
+                // to report to - but a failure here must still be countable,
+                // otherwise an accepted publish that never delivered looks
+                // identical to one that did.
+                if let Err(error) = runtime.deliver_envelope(&envelope) {
+                    crate::observability::counter_inc(
+                        crate::domains::notice::metrics::METRIC_ACCEPTED_DELIVERY_FAILURES_TOTAL,
+                    );
+                    tracing::warn!(
+                        domain = "notice",
+                        error = ?error,
+                        "Accepted notice delivery failed after acknowledgement"
+                    );
+                }
             }
             NoticeDomainCommand::ReadSubscriptionCount(reply) => {
                 let _ = reply.send(runtime.subscription_count());

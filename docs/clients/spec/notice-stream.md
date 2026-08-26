@@ -360,6 +360,9 @@ CLIENT → SERVER (second unsubscribe, last handler removed):
 - 3003 = ERR_SUBSCRIPTION_LIMIT
 - 3004 = ERR_TRANSPORT_CLOSED
 - 3005 = ERR_BACKEND_ERROR
+- 3006 = ERR_BUSY (retryable)
+
+`ERR_BUSY` means the domain mailbox was full and the request was never accepted. Nothing applied, so re-sending after a backoff is safe; this is distinct from `ERR_BACKEND_ERROR`, which is fatal and says nothing about whether the request took effect.
 - 3009 = ERR_UNAUTHORIZED
 
 #### Acceptance Tests
@@ -449,6 +452,13 @@ Response (status=1):
 **expected_offset (OCC):** Clients MUST send `expected_offset` on every APPEND. It is the client's view of the stream's next write offset for that route (0 for a new stream). Servers MUST enforce it: if `expected_offset` does not match the server's next offset for that route, the server MUST reject the append with status=1 and an error message (e.g. containing "conflict"). This provides optimistic concurrency control; clients that receive a conflict should re-read the stream and retry with the correct offset.
 
 **Optional discriminator:** Clients MAY include an immutable discriminator string on APPEND. The broker stores it as a replay sidecar and uses it only for filtered reads. Clients that do not need filtered replay SHOULD omit it.
+
+**Event size:** `body_len + metadata_len` MUST NOT exceed 61,247 bytes. This
+limit reserves enough room in the `u16`-length READ response TLV for the
+largest valid 4,096-byte route and the encoded record/response overhead, so
+every accepted event can be replayed. The discriminator does not count toward
+this event-payload limit, but it still counts toward the configured append
+batch and ingress-frame limits.
 
 **Design Note:** The `data` field in Stream responses carries broker-defined metadata (e.g., current watermark, stream info). Clients MUST parse past it (read `data_len` bytes) but SHOULD NOT interpret its contents unless broker documentation specifies a schema.
 
@@ -749,6 +759,13 @@ class StreamSession:
 
 #### Error Codes (2xxx)
 
+Stream uses operation-specific error envelopes. `READ` errors are
+`[status=1][u32 error_code][string message]` and preserve the numeric 2xxx
+code. Every other Stream operation uses the plain
+`[status=1][string message]` envelope. Clients must select the decoder from the
+request message type; they must not consume the first four bytes of a
+non-`READ` message as an error code.
+
 - 2001 = ERR_CONCURRENCY_CONFLICT (expected_offset mismatch)
 - 2002 = ERR_SESSION_ALREADY_ACTIVE
 - 2003 = ERR_SESSION_NOT_FOUND
@@ -760,6 +777,10 @@ class StreamSession:
 - 2010 = ERR_INVALID_SUBSCRIPTION_PATTERN
 - 2011 = ERR_SUBSCRIPTION_LIMIT
 - 2012 = ERR_BACKEND_ERROR
+- 2013 = ERR_READ_RESPONSE_TOO_LARGE (a single record's wire-encoded size alone exceeds the maximum broker response frame size and can never be returned by any READ call at that offset; this is distinct from `max_bytes` pagination, which stops a page early instead of failing)
+- 2014 = ERR_BUSY (retryable)
+
+`ERR_BUSY` means the domain mailbox was full and the request was never accepted. Nothing applied, so re-sending after a backoff is safe; this is distinct from `ERR_BACKEND_ERROR`, which is fatal and says nothing about whether the request took effect.
 
 #### Acceptance Tests
 

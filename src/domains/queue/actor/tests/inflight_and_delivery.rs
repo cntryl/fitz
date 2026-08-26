@@ -134,6 +134,107 @@ fn should_reserve_multiple_messages_in_batch() {
 }
 
 #[test]
+fn should_bound_reserve_batch_to_tlv_payload_capacity() {
+    // Arrange
+    let store = Arc::new(
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
+    );
+    let queue_key = unique_queue_key("jobs-reserve-wire-capacity");
+    let mut actor = QueueActor::new(
+        RouteFamily::new(0),
+        queue_key,
+        store,
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    for _ in 0..100 {
+        actor.handle_send(Bytes::from(vec![0x5a; 1024]), None);
+    }
+
+    // Act
+    let mut response_bytes_remaining =
+        crate::domains::queue::protocol::MAX_QUEUE_RESPONSE_PAYLOAD_BYTES
+            - crate::domains::queue::protocol::RECEIVED_RESPONSE_HEADER_BYTES;
+    let (response, wire_budget_exhausted) = actor.handle_receive_for_session_with_wire_budget(
+        TEST_SESSION_ID,
+        30,
+        Some(100),
+        &mut response_bytes_remaining,
+        crate::domains::queue::protocol::RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES,
+    );
+    let payload = crate::dispatch::protocol::queue_codec::encode_response(202, &response);
+
+    // Assert
+    assert!(u16::try_from(payload.len()).is_ok());
+    let QueueResponse::Received { messages } = response else {
+        panic!("Expected Received response");
+    };
+    assert_eq!(messages.len(), 62);
+    assert_eq!(actor.ready_len(), 38);
+    assert_eq!(actor.inflight.len(), 62);
+    assert!(actor.admin_dead_letters().is_empty());
+    assert!(wire_budget_exhausted);
+}
+
+#[test]
+fn should_dead_letter_oversized_head_and_reserve_following_message() {
+    // Arrange
+    let store = Arc::new(
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
+    );
+    let queue_key = unique_queue_key("jobs-reserve-oversized-head");
+    let mut actor = QueueActor::new(
+        RouteFamily::new(0),
+        queue_key,
+        store,
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    let response_budget = crate::domains::queue::protocol::MAX_QUEUE_RESPONSE_PAYLOAD_BYTES
+        - crate::domains::queue::protocol::RECEIVED_RESPONSE_HEADER_BYTES;
+    let message_overhead = crate::domains::queue::protocol::RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES;
+    // Stands in for a record written before the SEND limit existed; the
+    // reserve-time dead-letter path still has to cope with those.
+    actor.handle_send_unvalidated_for_tests(
+        Bytes::from(vec![0x5a; response_budget - message_overhead + 1]),
+        None,
+    );
+    actor.handle_send(Bytes::from_static(b"deliverable"), None);
+
+    // Act
+    let mut response_bytes_remaining = response_budget;
+    let (response, _) = actor.handle_receive_for_session_with_wire_budget(
+        TEST_SESSION_ID,
+        30,
+        Some(1),
+        &mut response_bytes_remaining,
+        message_overhead,
+    );
+
+    // Assert
+    let QueueResponse::Received { messages } = response else {
+        panic!("Expected Received response");
+    };
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].body, Bytes::from_static(b"deliverable"));
+    assert_eq!(actor.ready_len(), 0);
+    assert_eq!(actor.inflight.len(), 1);
+    let dead_letters = actor.admin_dead_letters();
+    assert_eq!(dead_letters.len(), 1);
+    assert_eq!(dead_letters[0].reason, "reserve_response_too_large");
+}
+
+#[test]
 fn should_ack_multiple_messages_in_batch() {
     // Arrange
     let store = Arc::new(
@@ -972,4 +1073,230 @@ fn should_allow_unlimited_retries_when_max_attempts_is_none() {
         }
         _ => panic!("Expected Received response"),
     }
+}
+
+#[test]
+fn should_not_dead_letter_message_that_only_a_wildcard_reserve_cannot_carry() {
+    // Arrange
+    // A body that fits a concrete reserve response exactly, but not
+    // once the wildcard routing envelope and route string are added.
+    let store = Arc::new(
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
+    );
+    let queue_key = unique_queue_key("jobs-reserve-wildcard-overhead");
+    let mut actor = QueueActor::new(
+        RouteFamily::new(0),
+        queue_key,
+        store,
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    let response_budget = crate::domains::queue::protocol::MAX_QUEUE_RESPONSE_PAYLOAD_BYTES
+        - crate::domains::queue::protocol::RECEIVED_RESPONSE_HEADER_BYTES;
+    let concrete_overhead = crate::domains::queue::protocol::RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES;
+    let route = "queue://acme/jobs/wildcard-overhead";
+    let wildcard_overhead = concrete_overhead
+        + crate::domains::queue::protocol::ROUTED_MESSAGE_WIRE_OVERHEAD_BYTES
+        + route.len();
+    // Above the new SEND limit (which uses the wildcard shape), so seed it as
+    // a record written before that limit existed.
+    actor.handle_send_unvalidated_for_tests(
+        Bytes::from(vec![0x5a; response_budget - concrete_overhead]),
+        None,
+    );
+
+    // Act
+    // Reserve through the wildcard wire shape.
+    let mut response_bytes_remaining = response_budget;
+    let (response, _) = actor.handle_receive_for_session_with_wire_budget(
+        TEST_SESSION_ID,
+        30,
+        Some(1),
+        &mut response_bytes_remaining,
+        wildcard_overhead,
+    );
+
+    // Assert
+    // The wildcard caller gets nothing, but the message stays ready
+    // for a concrete reserve rather than being permanently dead-lettered.
+    let QueueResponse::Received { messages } = response else {
+        panic!("Expected Received response");
+    };
+    assert!(messages.is_empty());
+    assert!(
+        actor.admin_dead_letters().is_empty(),
+        "message deliverable by a concrete reserve must not be dead-lettered"
+    );
+    assert_eq!(actor.ready_len(), 1);
+
+    // And a concrete reserve still delivers it.
+    let mut concrete_bytes_remaining = response_budget;
+    let (concrete_response, _) = actor.handle_receive_for_session_with_wire_budget(
+        TEST_SESSION_ID,
+        30,
+        Some(1),
+        &mut concrete_bytes_remaining,
+        concrete_overhead,
+    );
+    let QueueResponse::Received { messages } = concrete_response else {
+        panic!("Expected Received response");
+    };
+    assert_eq!(messages.len(), 1);
+}
+
+#[test]
+fn should_reject_send_of_body_that_no_reserve_shape_could_return() {
+    // Arrange
+    // The inbound SEND ceiling and the outbound RESERVE ceiling are the same
+    // 65_535-byte payload limit, but the response spends part of it on a
+    // header and a per-message envelope. A body accepted on write above that
+    // budget can never be handed back, so it must be refused at SEND rather
+    // than accepted and dead-lettered later, after the producer was told it
+    // was stored.
+    let store = Arc::new(
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
+    );
+    let queue_key = unique_queue_key("jobs-send-oversized");
+    let route_len = format!(
+        "queue://{}/{}/{}",
+        queue_key.realm, queue_key.area, queue_key.resource
+    )
+    .len();
+    let mut actor = QueueActor::new(
+        RouteFamily::new(0),
+        queue_key,
+        store,
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    // The strictest shape is a wildcard reserve: header, message envelope,
+    // routing envelope, and the route string.
+    let max_deliverable_body = crate::domains::queue::protocol::MAX_QUEUE_RESPONSE_PAYLOAD_BYTES
+        - crate::domains::queue::protocol::RECEIVED_RESPONSE_HEADER_BYTES
+        - crate::domains::queue::protocol::RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES
+        - crate::domains::queue::protocol::ROUTED_MESSAGE_WIRE_OVERHEAD_BYTES
+        - route_len;
+
+    // Act
+    let accepted = actor.handle_send(Bytes::from(vec![0x5a; max_deliverable_body]), None);
+    let rejected = actor.handle_send(Bytes::from(vec![0x5a; max_deliverable_body + 1]), None);
+    let rejected_batch =
+        actor.handle_send_batch(&[(Bytes::from(vec![0x5a; max_deliverable_body + 1]), None)]);
+
+    // Assert
+    assert!(
+        matches!(accepted, QueueResponse::Sent { .. }),
+        "a body at the deliverable limit must still be accepted, got {accepted:?}"
+    );
+    let QueueResponse::Error { message } = rejected else {
+        panic!("expected an oversized SEND to be refused, got {rejected:?}");
+    };
+    assert!(
+        message.contains("ERR_MESSAGE_TOO_LARGE"),
+        "unexpected error: {message}"
+    );
+    assert!(
+        matches!(rejected_batch, QueueResponse::Error { .. }),
+        "a batch carrying an oversized body must be refused too, got {rejected_batch:?}"
+    );
+    assert_eq!(
+        actor.ready_len(),
+        1,
+        "the rejected bodies must not be stored"
+    );
+    assert!(actor.admin_dead_letters().is_empty());
+}
+
+#[test]
+fn should_skip_hydration_when_wire_budget_is_already_exhausted() {
+    // Arrange
+    // Once the response's wire budget is exhausted by an earlier message,
+    // the next ready candidate's fixed per-response overhead alone already
+    // guarantees it cannot fit. Hydrating it anyway would pay real storage
+    // I/O only to immediately discard the result. Prove this doesn't happen
+    // by deleting the second message's header out from under the actor: if
+    // hydration were attempted, it would hit "disappeared from storage" and
+    // divert the message instead of simply leaving it ready for next time.
+    let store = Arc::new(
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::in_memory()
+                .build()
+                .expect("build in-memory test options"),
+        )
+        .expect("Failed to open Midge"),
+    );
+    let queue_key = unique_queue_key("jobs-skip-hydration-on-exhausted-budget");
+    let mut actor = QueueActor::new(
+        RouteFamily::new(0),
+        queue_key.clone(),
+        store.clone(),
+        None,
+        crate::utils::idempotency::default_dedup_store(),
+    );
+    let message_overhead = crate::domains::queue::protocol::RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES;
+    // A tiny explicit budget stands in for "an earlier message this call
+    // already consumed most of the response": just enough room for the
+    // first (1-byte) message, leaving less than `message_overhead` behind -
+    // too little for the second message to fit no matter its body size.
+    let initial_budget = message_overhead + 3;
+    actor.handle_send(Bytes::from_static(b"x"), None);
+    let second_id = match actor.handle_send(Bytes::from_static(b"never hydrated"), None) {
+        QueueResponse::Sent { id } => id,
+        other => panic!("Expected Sent response, found {other:?}"),
+    };
+
+    // Force the second message out of every in-memory cache and delete its
+    // header from storage, so any hydration attempt on it fails loudly.
+    actor.evict_cached_record(second_id);
+    actor.evict_cached_body(second_id);
+    let mut txn = store
+        .begin_tx(
+            queue_key.family.id(),
+            cntryl_midge::TransactionMode::ReadWrite,
+        )
+        .expect("begin write tx");
+    txn.delete(QueueActor::header_key(&queue_key, second_id))
+        .expect("delete second message's header");
+    txn.commit(cntryl_midge::WriteOptions::buffered())
+        .expect("commit second message header delete");
+
+    // Act
+    let mut response_bytes_remaining = initial_budget;
+    let (response, wire_budget_exhausted) = actor.handle_receive_for_session_with_wire_budget(
+        TEST_SESSION_ID,
+        30,
+        Some(2),
+        &mut response_bytes_remaining,
+        message_overhead,
+    );
+
+    // Assert
+    let QueueResponse::Received { messages } = response else {
+        panic!("Expected Received response");
+    };
+    assert_eq!(
+        messages.len(),
+        1,
+        "only the first message fits the exhausted budget"
+    );
+    assert!(wire_budget_exhausted);
+    assert_eq!(
+        actor.ready_len(),
+        1,
+        "the second message must remain ready, untouched by a failed hydration"
+    );
+    assert!(
+        actor.admin_dead_letters().is_empty(),
+        "the second message must not be diverted - it was never hydrated to find out its header is gone"
+    );
 }

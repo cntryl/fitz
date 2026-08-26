@@ -23,6 +23,8 @@ pub mod queue_codec;
 pub mod rpc_codec;
 pub mod schedule_codec;
 pub mod stream_codec;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod tlv;
 
 pub use error_codes::{

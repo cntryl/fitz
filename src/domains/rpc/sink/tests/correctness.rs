@@ -92,3 +92,53 @@ fn should_reject_rpc_worker_registration_when_worker_family_differs_from_request
     assert_eq!(message, "route family mismatch");
     assert_eq!(sink.worker_count(), 0);
 }
+
+#[test]
+fn should_reject_stale_worker_registration_after_disconnect_cleanup_marks_session() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 9;
+    let source = session_inbox_address(family, session_id);
+    let destination = RouteAddress::new(family, Route::new("rpc://inbound"));
+    let mailbox = Arc::new(Mailbox::new(8));
+    let router = Arc::new(Router::new());
+    router.register(source.clone(), mailbox.clone());
+    let sink = new_correctness_rpc_sink(router);
+    let worker_addr = RouteAddress::new(family, Route::new("rpc://acme/system/resource/operation"));
+    let register_request = crate::domains::rpc::RpcClientRequest::new(
+        crate::runtime::ClientFrameMeta::new(
+            session_id,
+            crate::runtime::ClientChannel::Rpc,
+            300,
+            family,
+        ),
+        Ok(crate::domains::rpc::RpcMessage::RegisterWorker {
+            worker_addr: worker_addr.clone(),
+            max_concurrent: 1,
+        }),
+    );
+
+    // Act: run disconnect cleanup for this session before the stale
+    // RegisterWorker below is processed, equivalent to what the
+    // high-priority mailbox lane guarantees a real disconnect races against
+    // a queued normal-lane request.
+    sink.deliver(Envelope::new(
+        RouteAddress::new(family, Route::new("rpc://cleanup")),
+        crate::runtime::SessionCleanup { session_id },
+    ))
+    .expect("deliver session cleanup");
+    assert_eq!(sink.worker_count(), 0);
+
+    sink.deliver(Envelope::from_route(source, destination, register_request))
+        .expect("deliver stale worker registration");
+
+    // Assert: the stale registration from the now-cleaned-up session is
+    // rejected instead of resurrecting a worker registration for it.
+    let (code, message) = receive_rpc_error(&mailbox, "stale registration rejection response");
+    assert_eq!(
+        code,
+        crate::dispatch::protocol::error_codes::rpc::ERR_BACKEND_ERROR
+    );
+    assert_eq!(message, "session already closed");
+    assert_eq!(sink.worker_count(), 0);
+}

@@ -24,6 +24,7 @@ impl RuntimeIngress {
             auth_config: None,
             auth_claims_config: crate::auth::AuthClaimsConfig::default(),
             route_family_resolver: crate::auth::RouteFamilyResolverConfig::default(),
+            connect_diagnostics_budget: Arc::default(),
         }
     }
 

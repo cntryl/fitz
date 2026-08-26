@@ -27,7 +27,7 @@ impl RpcResponseForwarder {
             );
             let context = FrameContext::new(
                 caller.caller_session_id,
-                super::mailbox_adapter::test_protocol_channel_from_client(meta.channel),
+                crate::protocol::test_support::channel_id_from_client(meta.channel),
                 crate::dispatch::protocol::tlv::MessageType::new(RPC_MSG_TYPE_RESPONSE),
                 bytes::Bytes::from(response_bytes),
                 *caller_inbox_addr.family(),

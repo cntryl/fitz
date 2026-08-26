@@ -299,8 +299,11 @@ impl TestServer {
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
 
         // Initialize observability (metrics + tracing) once for tests
-        // Safe to call multiple times - will only initialize once
-        let _ = crate::observability::try_init_observability();
+        // Safe to call multiple times - will only initialize once. Quiets
+        // known-noisy dependency logs (e.g. cntryl_midge's routine
+        // per-engine "primary lease acquired" WARN) that are expected on
+        // every ephemeral test engine and otherwise flood test/CI output.
+        let _ = crate::observability::global::try_init_test_observability();
 
         if auth_required {
             init_test_runtime_jwks_cache();

@@ -218,6 +218,60 @@ fn should_cleanup_queue_inflight_for_disconnected_session() {
 }
 
 #[test]
+fn should_reject_stale_reserve_after_disconnect_cleanup_marks_session() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 9;
+    let queue_route = "queue://acme/jobs/emails";
+    let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+    let worker_address = RouteAddress::new(family, Route::new("inbox://session/9"));
+    let worker_mailbox = Arc::new(Mailbox::new(8));
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let router = Arc::new(Router::new());
+    router.register(worker_address.clone(), worker_mailbox.clone());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = new_queue_domain_sink(
+        store,
+        router,
+        admin_read_model,
+        cntryl_midge::WriteOptions::buffered(),
+    );
+
+    // Act: cleanup for this session runs and completes before the stale
+    // reserve below is processed - equivalent to what the control-plane
+    // mailbox lane guarantees a real disconnect races against a queued
+    // normal-lane request.
+    sink.deliver(Envelope::new(
+        RouteAddress::new(family, Route::new("queue://cleanup")),
+        crate::runtime::SessionCleanup { session_id },
+    ))
+    .expect("cleanup queue session");
+
+    deliver_reserve(
+        &sink,
+        worker_address,
+        queue_address,
+        session_id,
+        queue_route,
+        family,
+    );
+
+    // Assert: the stale reserve from the now-cleaned-up session is rejected
+    // instead of being accepted as a pending long-poll reserve for it.
+    let response_envelope = worker_mailbox
+        .receiver()
+        .try_recv()
+        .expect("stale reserve response");
+    let frame = response_envelope
+        .into_payload::<FrameContext>()
+        .expect("queue response frame");
+    let (_code, message) =
+        crate::dispatch::protocol::error_codes::decode_error_body(frame.payload.as_ref())
+            .expect("bad request error body");
+    assert_eq!(message, "session already closed");
+}
+
+#[test]
 fn should_reject_queue_inflight_followups_from_non_owner_session() {
     // Arrange
     let family = RouteFamily::new(1);
@@ -609,4 +663,53 @@ fn should_not_evict_idle_queue_actor_with_live_inflight() {
         1,
         "actors with live inflight entries must stay warm until the inflight entry is gone"
     );
+}
+
+#[test]
+fn should_admit_session_cleanup_even_when_client_admission_is_exhausted() {
+    // Arrange
+    // Disconnect cleanup arrives through `router.route`, so it lands on the
+    // same normal-lane `deliver` as client traffic. If the admission gate can
+    // refuse it, a stalled queue starves cleanup for the whole retry window and
+    // the ticket is abandoned - leaving that session's inflight reservations
+    // and watches held with no queued command left to release them. Cleanup is
+    // control-plane work and must not be rationed by client load.
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = new_queue_domain_sink(
+        store,
+        Arc::new(Router::new()),
+        admin_read_model,
+        cntryl_midge::WriteOptions::buffered(),
+    );
+    let family = RouteFamily::new(1);
+
+    // Hold every admission slot, as a stalled actor under load would.
+    let window = crate::domains::queue::sink::model::queue_admission_window(
+        sink.core
+            .delivery_service_us
+            .load(std::sync::atomic::Ordering::Relaxed),
+    );
+    let held = (0..window)
+        .map(|_| {
+            crate::domains::queue::sink::model::try_admit_queue_delivery(
+                &sink.inflight_client_deliveries,
+                window,
+            )
+            .expect("slot")
+        })
+        .collect::<Vec<_>>();
+
+    // Act
+    let cleanup = sink.deliver(Envelope::new(
+        RouteAddress::new(family, Route::new("queue://cleanup-under-pressure")),
+        crate::runtime::SessionCleanup { session_id: 4_242 },
+    ));
+
+    // Assert
+    assert!(
+        cleanup.is_ok(),
+        "session cleanup must not be refused by client admission, got {cleanup:?}"
+    );
+    drop(held);
 }

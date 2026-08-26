@@ -85,6 +85,68 @@ fn should_reject_schedule_subscription_when_identity_does_not_match_request() {
 }
 
 #[test]
+fn should_reject_stale_subscribe_after_disconnect_cleanup_marks_session() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 9;
+    let route = "schedule://acme/jobs/nightly/run";
+    let source = RouteAddress::new(family, Route::new("inbox://session/9"));
+    let destination = RouteAddress::new(family, Route::new(route));
+    let mailbox = Arc::new(Mailbox::new(8));
+    let router = Arc::new(Router::new());
+    router.register(source.clone(), mailbox.clone());
+    let sink = new_correctness_schedule_sink(router);
+    let subscribe = || {
+        crate::domains::schedule::ScheduleClientRequest::new(
+            crate::runtime::ClientFrameMeta::new(
+                session_id,
+                crate::runtime::ClientChannel::Sub,
+                703,
+                family,
+            ),
+            Ok(crate::domains::schedule::ScheduleMessage::Subscribe {
+                family_id: family,
+                route: Route::new(route),
+                session_id,
+                subscriber: source.clone(),
+            }),
+        )
+    };
+    sink.deliver(Envelope::from_route(
+        source.clone(),
+        destination.clone(),
+        subscribe(),
+    ))
+    .expect("subscribe before disconnect");
+    let _subscribe_ack = receive_envelope(&mailbox, "subscribe ack envelope");
+    wait_for_subscription_count(&sink, 1);
+
+    // Act: cleanup for this session runs and completes before the stale
+    // subscribe below is processed - equivalent to what the high-priority
+    // mailbox lane guarantees a real disconnect races against a queued
+    // normal-lane request.
+    sink.deliver(Envelope::new(
+        RouteAddress::new(family, Route::new("schedule://cleanup")),
+        crate::runtime::SessionCleanup { session_id },
+    ))
+    .expect("cleanup session");
+    wait_for_subscription_count(&sink, 0);
+
+    sink.deliver(Envelope::from_route(
+        source.clone(),
+        destination,
+        subscribe(),
+    ))
+    .expect("deliver stale subscribe");
+
+    // Assert: the stale subscribe from the now-cleaned-up session is
+    // rejected instead of resurrecting a subscription for it.
+    let error = schedule_error_message(&mailbox, "stale subscribe rejection response");
+    assert_eq!(error, "session already closed");
+    assert_eq!(sink.subscription_count(), 0);
+}
+
+#[test]
 fn should_reject_schedule_subscription_when_decoded_family_differs_from_request() {
     // Arrange
     let family = RouteFamily::new(1);

@@ -45,6 +45,13 @@ pub enum DiagnosisLabel {
     DeadLetterPressure,
     WorkerStarvation,
     DataLossRisk,
+    /// The domain is shedding work because the transport cannot carry it.
+    ///
+    /// Distinct from `BacklogGrowth`: the backlog is not the problem, the
+    /// path to the client is. Timeouts and backpressure rejections were
+    /// previously computed and then discarded into a hint string, so this
+    /// condition reported as healthy.
+    TransportBackpressure,
 }
 
 impl DiagnosisLabel {
@@ -58,6 +65,7 @@ impl DiagnosisLabel {
             Self::DeadLetterPressure => "dead_letter_pressure",
             Self::WorkerStarvation => "worker_starvation",
             Self::DataLossRisk => "data_loss_risk",
+            Self::TransportBackpressure => "transport_backpressure",
         }
     }
 
@@ -71,6 +79,7 @@ impl DiagnosisLabel {
             Self::DeadLetterPressure => "dead-letter pressure",
             Self::WorkerStarvation => "worker starvation",
             Self::DataLossRisk => "data-loss risk",
+            Self::TransportBackpressure => "transport backpressure",
         }
     }
 
@@ -83,7 +92,10 @@ impl DiagnosisLabel {
             Self::StaleHandoff => "A durable handoff is overdue",
             Self::DeadLetterPressure => "Dead letters are accumulating",
             Self::WorkerStarvation => "Work is waiting for workers or owners",
-            Self::DataLossRisk => "The control plane sees a durability gap",
+            Self::DataLossRisk => "The control plane sees accepted work that was never delivered",
+            Self::TransportBackpressure => {
+                "Requests are being shed because the client transport is saturated"
+            }
         }
     }
 
@@ -98,7 +110,14 @@ impl DiagnosisLabel {
             Self::StaleHandoff => Some("Durable ownership or schedule state with live lateness"),
             Self::DeadLetterPressure => Some("Durable failure state plus live retry pressure"),
             Self::WorkerStarvation => Some("Mostly live capacity pressure"),
-            Self::DataLossRisk => Some("Potential durable-state loss; treat this as critical"),
+            // Deliberately does not assert *durable* loss: this label is also
+            // raised for ephemeral domains such as RPC, where the loss is
+            // in-flight work rather than stored state. Each analysis adds the
+            // domain-accurate detail (see `RPC_RESPONSE_LOSS_HINT`).
+            Self::DataLossRisk => Some("Accepted work was lost; treat this as critical"),
+            Self::TransportBackpressure => {
+                Some("Live delivery pressure; durable state is not implicated")
+            }
         }
     }
 
@@ -112,6 +131,7 @@ impl DiagnosisLabel {
             "dead_letter_pressure" => Self::DeadLetterPressure,
             "worker_starvation" => Self::WorkerStarvation,
             "data_loss_risk" => Self::DataLossRisk,
+            "transport_backpressure" => Self::TransportBackpressure,
             _ => return None,
         })
     }
@@ -461,7 +481,9 @@ fn primary_signal_for_stage(
             signals.contention_signal() || signals.age_signal(),
             2,
         ),
-        DiagnosisLabel::DeadLetterPressure | DiagnosisLabel::DataLossRisk => {
+        DiagnosisLabel::DeadLetterPressure
+        | DiagnosisLabel::DataLossRisk
+        | DiagnosisLabel::TransportBackpressure => {
             ("failure_signal_present", signals.failure_signal(), 2)
         }
         DiagnosisLabel::StaleHandoff => (

@@ -846,3 +846,87 @@ fn should_support_okta_custom_permissions_shape() {
     );
     assert_eq!(route_family, 5);
 }
+
+fn claims_from(payload: &serde_json::Value) -> crate::auth::RawClaims {
+    let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string());
+    parse_jwt_noverify(&format!("{}.{}.{}", "{}", b64, "sig")).expect("parse jwt")
+}
+
+#[test]
+fn should_cascade_past_an_empty_permissions_claim_to_the_configured_claim() {
+    // Arrange
+    // Auth0 emits `permissions: []` whenever RBAC is enabled but no permissions
+    // are assigned for that API, even when the real grants live in a configured
+    // custom claim. Treating the empty array as a found source strands the
+    // token with zero rights and never consults the configured claim.
+    let claims = claims_from(&serde_json::json!({
+        "iss": "https://idp.example/",
+        "aud": "fitz-broker",
+        "sub": "user:42",
+        "exp": 9_999_999_999_u64,
+        "tid": "acme-prod",
+        "permissions": [],
+        "fitz://permissions": ["queue://prod/jobs/**#write"]
+    }));
+
+    // Act
+    let perms = claims
+        .normalized_permissions(None, Some("fitz://permissions"), DEFAULT_ROLE_CLAIM)
+        .expect("configured claim should be used");
+
+    // Assert
+    assert_eq!(perms.len(), 1);
+    assert_eq!(perms[0].raw, "queue://prod/jobs/**#write");
+}
+
+#[test]
+fn should_cascade_past_an_empty_custom_claim_to_top_level_permissions() {
+    // Arrange
+    // The custom claim sits above `permissions`, so an empty one short-circuits
+    // the whole cascade including sources that do carry grants.
+    let claims = claims_from(&serde_json::json!({
+        "iss": "https://idp.example/",
+        "aud": "fitz-broker",
+        "sub": "user:42",
+        "exp": 9_999_999_999_u64,
+        "tid": "acme-prod",
+        "https://acme.example/fitz": { "permissions": [] },
+        "permissions": ["stream://prod/events/**#read"]
+    }));
+
+    // Act
+    let perms = claims
+        .normalized_permissions(Some("https://acme.example/fitz"), None, DEFAULT_ROLE_CLAIM)
+        .expect("top-level permissions should be used");
+
+    // Assert
+    assert_eq!(perms.len(), 1);
+    assert_eq!(perms[0].raw, "stream://prod/events/**#read");
+}
+
+#[test]
+fn should_reject_a_token_whose_every_permission_source_is_empty() {
+    // Arrange
+    // Cascading past empties must not end in a session that authenticated but
+    // can do nothing; with no source carrying grants the CONNECT is refused.
+    let claims = claims_from(&serde_json::json!({
+        "iss": "https://idp.example/",
+        "aud": "fitz-broker",
+        "sub": "user:42",
+        "exp": 9_999_999_999_u64,
+        "tid": "acme-prod",
+        "permissions": [],
+        "roles": [],
+        "scope": ""
+    }));
+
+    // Act
+    let result = claims.normalized_permissions(None, None, DEFAULT_ROLE_CLAIM);
+
+    // Assert
+    let error = result.expect_err("an all-empty token must not authenticate");
+    assert!(
+        error.contains("no permission source found"),
+        "unexpected error: {error}"
+    );
+}

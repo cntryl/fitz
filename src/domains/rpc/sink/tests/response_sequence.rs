@@ -33,22 +33,24 @@ fn should_retain_pending_request_before_stream_end_given_rpc_pending_table() {
     match result {
         RpcPendingResponseDisposition::Forward {
             pending: tracked,
-            removed_pending,
+            stream_end,
         } => {
             assert_eq!(tracked.caller_session_id, 84);
             assert_eq!(tracked.caller_inbox_addr, Some(caller_inbox_addr));
             assert_eq!(&tracked.route, worker_addr.route());
             assert_eq!(tracked.registration_id, 0);
-            assert!(!removed_pending);
+            assert!(!stream_end);
             assert_eq!(pending.len(), 1);
-            assert_eq!(
-                pending.pending[&RpcCorrelationKey {
-                    family: RouteFamily::new(1),
-                    correlation_id,
-                }]
-                    .next_expected_seq,
-                1
-            );
+            let seq_key = RpcCorrelationKey {
+                family: RouteFamily::new(1),
+                correlation_id,
+            };
+            // The lookup does not move the cursor: delivery can still fail,
+            // and advancing first is what lets a dropped chunk pass as
+            // contiguous.
+            assert_eq!(pending.pending[&seq_key].next_expected_seq, 0);
+            assert!(pending.commit_response_delivery(RouteFamily::new(1), &correlation_id, false));
+            assert_eq!(pending.pending[&seq_key].next_expected_seq, 1);
         }
         other => panic!("expected non-terminal response handling, found {other:?}"),
     }
@@ -319,5 +321,276 @@ fn should_reject_duplicate_worker_response_chunk_given_rpc_sink() {
         worker_error.body.as_ref(),
         crate::dispatch::protocol::error_codes::rpc::ERR_RPC_INVALID_SEQUENCE,
         RPC_INVALID_SEQUENCE_ERROR,
+    );
+}
+
+/// Fails the first N deliveries with backpressure, then captures the rest.
+struct BackpressuredThenCapturingSink {
+    failures_remaining: parking_lot::Mutex<usize>,
+    frames: Arc<parking_lot::Mutex<Vec<FrameContext>>>,
+}
+
+impl MailboxSink for BackpressuredThenCapturingSink {
+    fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        {
+            let mut remaining = self.failures_remaining.lock();
+            if *remaining > 0 {
+                *remaining -= 1;
+                return Err(DeliveryError::MailboxFull {
+                    capacity: 1_000,
+                    current_len: 1_000,
+                });
+            }
+        }
+        let frame = envelope
+            .payload::<FrameContext>()
+            .expect("rpc frame payload")
+            .clone();
+        self.frames.lock().push(frame);
+        Ok(())
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
+/// Deliver one worker response chunk for `request`.
+fn deliver_test_rpc_chunk(
+    sink: &Arc<RpcDomainSink>,
+    request: &crate::domains::rpc::protocol::RpcRequest,
+    family: RouteFamily,
+    worker_source: &RouteAddress,
+    seq: u64,
+    stream_end: bool,
+) -> Result<(), DeliveryError> {
+    let payload = crate::dispatch::protocol::rpc_codec::encode_response_message(
+        &crate::domains::rpc::protocol::RpcResponse::chunk(
+            request.correlation_id,
+            seq,
+            bytes::Bytes::from(format!("chunk-{seq}")),
+            stream_end,
+        ),
+    );
+    sink.deliver(Envelope::from_route(
+        worker_source.clone(),
+        RouteAddress::new(family, request.route.clone()),
+        FrameContext::new(
+            42,
+            crate::dispatch::protocol::frame::ChannelId::Rpc,
+            crate::dispatch::protocol::tlv::MessageType::new(303),
+            bytes::Bytes::from(payload),
+            family,
+        ),
+    ))
+}
+
+/// Build a well-formed RPC request, deliver it, and hand back the parsed form.
+fn deliver_test_rpc_request(
+    sink: &Arc<RpcDomainSink>,
+    family: RouteFamily,
+    request_route: &Route,
+    request_source: RouteAddress,
+) -> crate::domains::rpc::protocol::RpcRequest {
+    let request_frame = crate::benchkit::build_rpc_request(request_route.as_str(), b"ping");
+    let (request_msg_type, request_payload) =
+        crate::benchkit::extract_single_tlv_field(&request_frame);
+    let request_ctx = FrameContext::new(
+        1,
+        crate::dispatch::protocol::frame::ChannelId::Rpc,
+        crate::dispatch::protocol::tlv::MessageType::new(request_msg_type),
+        request_payload.clone(),
+        family,
+    );
+    let request = match crate::dispatch::protocol::rpc_codec::parse_request(
+        &request_ctx,
+        &request_payload,
+        family,
+    )
+    .expect("parse rpc request")
+    {
+        crate::domains::rpc::protocol::RpcMessage::Request(request) => request,
+        other => panic!("expected rpc request, found {other:?}"),
+    };
+    sink.deliver(Envelope::from_route(
+        request_source,
+        RouteAddress::new(family, request_route.clone()),
+        request_ctx,
+    ))
+    .expect("deliver request");
+    request
+}
+
+#[test]
+fn should_terminate_stream_when_a_response_chunk_cannot_be_delivered() {
+    // Arrange
+    // A full outbound channel makes the caller's inbox reject one chunk. The
+    // broker may reject or terminate the RPC under backpressure, but it must
+    // never drop a chunk and keep forwarding later ones - that hands the
+    // caller a silently corrupted stream with a sequence gap.
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let metrics = crate::observability::metrics::MetricsCollector::new();
+    let sink = Arc::new(
+        RpcDomainSink::new(router.clone(), admin_read_model).with_metrics(metrics.clone()),
+    );
+    let family = RouteFamily::new(1);
+    let request_route = Route::new("rpc://bench/system/resource/stream");
+    let request_addr = RouteAddress::new(family, request_route.clone());
+    let request_source = session_inbox_address(family, 1);
+    let worker_source = session_inbox_address(family, 42);
+    let reply_frames = Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
+    router.register(
+        request_source.clone(),
+        Arc::new(BackpressuredThenCapturingSink {
+            failures_remaining: parking_lot::Mutex::new(1),
+            frames: reply_frames.clone(),
+        }) as Arc<dyn MailboxSink>,
+    );
+    let worker_frames = Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
+    router.register(
+        worker_source.clone(),
+        Arc::new(CaptureRpcFrameSink {
+            frames: worker_frames.clone(),
+        }) as Arc<dyn MailboxSink>,
+    );
+    sink.register_registration_for_tests(test_rpc_worker(family, &request_route, 42));
+    let request = deliver_test_rpc_request(&sink, family, &request_route, request_source);
+
+    let deliver_chunk = |seq: u64, body: &'static [u8], stream_end: bool| {
+        let payload = crate::dispatch::protocol::rpc_codec::encode_response_message(
+            &crate::domains::rpc::protocol::RpcResponse::chunk(
+                request.correlation_id,
+                seq,
+                bytes::Bytes::from_static(body),
+                stream_end,
+            ),
+        );
+        sink.deliver(Envelope::from_route(
+            worker_source.clone(),
+            request_addr.clone(),
+            FrameContext::new(
+                42,
+                crate::dispatch::protocol::frame::ChannelId::Rpc,
+                crate::dispatch::protocol::tlv::MessageType::new(303),
+                bytes::Bytes::from(payload),
+                family,
+            ),
+        ))
+    };
+
+    // Act
+    // RPC RESPONSE has no ACK: a real worker never learns a chunk failed to
+    // reach the caller, so it cannot resend it - it just moves on to the next
+    // chunk (or closes, for a single-chunk response). The broker must
+    // therefore terminate on the FIRST undeliverable chunk rather than wait
+    // for a resend that will never come.
+    deliver_chunk(0, b"chunk-zero", false).expect("deliver chunk 0");
+    deliver_chunk(1, b"chunk-one", false).expect("deliver chunk 1");
+
+    // Assert
+    assert_eq!(
+        sink.pending_request_count(),
+        0,
+        "an undeliverable chunk must terminate the RPC, not leave the stream live"
+    );
+    let frames = reply_frames.lock();
+    let forwarded = frames
+        .iter()
+        .map(parse_forwarded_rpc_response)
+        .collect::<Vec<_>>();
+    assert!(
+        !forwarded
+            .iter()
+            .any(|response| response.seq == 1 && !response.stream_end),
+        "chunk 1 must not be forwarded as a normal chunk after chunk 0 was dropped: {forwarded:?}"
+    );
+    assert!(
+        forwarded.iter().any(|response| response.stream_end),
+        "the caller must be told the stream terminated, got {forwarded:?}"
+    );
+
+    // The worker must also be cancelled, or it keeps producing into a stream
+    // that no longer exists - the amplification that turned two corrupted
+    // streams into tens of thousands of late dropped responses.
+    let worker_frames = worker_frames.lock();
+    let worker_cancels = worker_frames
+        .iter()
+        .filter(|frame| frame.msg_type.as_u16() == 303)
+        .map(parse_forwarded_rpc_response)
+        .filter(|response| response.correlation_id == request.correlation_id && response.stream_end)
+        .count();
+    assert!(
+        worker_cancels >= 1,
+        "the worker must be told to stop producing, got {worker_frames:?}"
+    );
+
+    // Health must not read green through a corrupted stream.
+    assert!(
+        metrics.counter_get(crate::domains::rpc::metrics::METRIC_FAILURE_TOTAL) >= 1,
+        "a terminated stream must be counted as a failure, not silent success"
+    );
+    assert!(
+        metrics.counter_get("rpc_response_delivery_retries_total") >= 1,
+        "the failed delivery attempt must be observable"
+    );
+}
+
+#[test]
+fn should_terminate_immediately_on_the_first_undeliverable_terminal_chunk() {
+    // Arrange
+    // RPC RESPONSE has no ACK. A terminal (stream_end) chunk that cannot be
+    // forwarded must not wait around for a resend that never arrives - every
+    // supported SDK considers the call finished once it has sent the last
+    // chunk, so a request stuck waiting for a nonexistent retry would sit
+    // pending until the caller-side timeout instead of failing promptly.
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model));
+    let family = RouteFamily::new(1);
+    let request_route = Route::new("rpc://bench/system/resource/terminal-undeliverable");
+    let request_source = session_inbox_address(family, 1);
+    let worker_source = session_inbox_address(family, 42);
+    let reply_frames = Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
+    router.register(
+        request_source.clone(),
+        Arc::new(BackpressuredThenCapturingSink {
+            // Never drains: nothing ever resends, so this must never succeed.
+            failures_remaining: parking_lot::Mutex::new(usize::MAX),
+            frames: reply_frames.clone(),
+        }) as Arc<dyn MailboxSink>,
+    );
+    let worker_frames = Arc::new(parking_lot::Mutex::new(Vec::<FrameContext>::new()));
+    router.register(
+        worker_source.clone(),
+        Arc::new(CaptureRpcFrameSink {
+            frames: worker_frames.clone(),
+        }) as Arc<dyn MailboxSink>,
+    );
+    sink.register_registration_for_tests(test_rpc_worker(family, &request_route, 42));
+    let request = deliver_test_rpc_request(&sink, family, &request_route, request_source);
+
+    // Act
+    // A single terminal chunk, exactly as a real worker sends one and then
+    // considers the call done - no resend follows.
+    deliver_test_rpc_chunk(&sink, &request, family, &worker_source, 0, true)
+        .expect("deliver terminal chunk");
+
+    // Assert
+    assert_eq!(
+        sink.pending_request_count(),
+        0,
+        "an undeliverable terminal chunk must not stay pending waiting for a resend"
+    );
+    let worker_frames = worker_frames.lock();
+    let worker_cancels = worker_frames
+        .iter()
+        .filter(|frame| frame.msg_type.as_u16() == 303)
+        .map(parse_forwarded_rpc_response)
+        .filter(|response| response.correlation_id == request.correlation_id && response.stream_end)
+        .count();
+    assert!(
+        worker_cancels >= 1,
+        "the worker must be told the request ended, got {worker_frames:?}"
     );
 }

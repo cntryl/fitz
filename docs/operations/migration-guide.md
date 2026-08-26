@@ -69,6 +69,12 @@ Upgrade every Schedule client decoder before routing traffic to the new broker.
 Rollback requires restoring the prior broker and prior client codec together;
 mixed versions cannot safely decode 705 frames.
 
+Schedule backend unavailability and saturation now use the dedicated
+`ERR_BACKEND_ERROR` (`7010`) wire code. Upgrade clients to preserve and classify
+that code as transient, subject to operation replay safety. Do not map these
+failures to `ERR_PARSE_ERROR` (`7004`), which incorrectly tells callers that
+their cron or payload is malformed.
+
 ### Subscription registration contract
 
 KV, Queue, Notice, Stream, RPC, and Schedule now share strict whole-segment
@@ -149,6 +155,20 @@ mismatch counter.
 actor already gets its own processing thread, so the argument had no effect;
 call `Scheduler::new()`.
 
+## Removed KV Authorization And Metrics Facades
+
+The public `fitz::domains::kv::SessionActor` authorization helper has been
+removed. Send KV frames through runtime ingress, which authorizes BEGIN against
+the exact `kv://{realm}/{area}/{resource}` route and keeps subsequent
+transaction operations session-owned. Direct state-machine tests may continue
+to use `fitz::domains::kv::KvActor`, but application authorization must not be
+reimplemented around it.
+
+The public `fitz::domains::kv::KvMetrics` path has also been removed. Configure
+KV metrics through `KvDomainSink::with_metrics` before registering the sink with
+the router. The consuming configuration method rebuilds the sink's private
+actor and returns the configured sink.
+
 ## Breaking: Single-Generation Storage Formats
 
 **This upgrade cannot read any store written by an earlier broker.** Every
@@ -183,6 +203,22 @@ error responses, with no log or counter. Dashboards can now alert on:
 Existing drop-counter names are unchanged, including
 `fitz_notice_delivery_drops_total`, which keeps its `delivery` spelling rather
 than the `notify` spelling used by the other domains.
+
+## Stream Rust API Cleanup
+
+New construction code should call `StreamDomainSink::try_new` and handle
+`StreamSinkInitError`. `StreamDomainSink::new` remains as a compatibility
+wrapper and retains its historical panic-on-initialization behavior.
+
+The client-facing `StreamWriteMode` now contains only `Buffered` and `Sync`.
+Cloud provider acknowledgement remains a broker storage-policy choice for
+`Sync`; callers must replace `StreamWriteMode::CloudStrict` with `Sync` and
+configure cloud-strict write options when constructing the sink.
+
+The unused `StreamEvent`, `parse_stream_route`, and public `StreamMetrics`
+paths were removed. Use protocol `StreamMessage` values, the typed
+three-segment Stream selector grammar, and `StreamDomainSink::with_metrics`,
+respectively.
 
 ## Pre-Upgrade Checklist
 

@@ -683,6 +683,30 @@ async fn should_authorize_kv_begin_by_mode_while_keeping_tx_ops_session_owned_at
         .await;
     let put_dispatch = receive_frame(&domain_mailbox, "kv put dispatch");
 
+    let commit_frame = crate::benchkit::build_kv_commit(7, route);
+    let (_, commit_payload) = crate::benchkit::extract_single_tlv_field(&commit_frame);
+    let commit_decision = ingress
+        .on_frame(
+            session_id,
+            ChannelId::Pub,
+            MessageType::new(101),
+            commit_payload,
+        )
+        .await;
+    let commit_dispatch = receive_frame(&domain_mailbox, "kv commit dispatch");
+
+    let rollback_frame = crate::benchkit::build_kv_rollback(7, route);
+    let (_, rollback_payload) = crate::benchkit::extract_single_tlv_field(&rollback_frame);
+    let rollback_decision = ingress
+        .on_frame(
+            session_id,
+            ChannelId::Pub,
+            MessageType::new(102),
+            rollback_payload,
+        )
+        .await;
+    let rollback_dispatch = receive_frame(&domain_mailbox, "kv rollback dispatch");
+
     // Assert
     assert_eq!(read_only_decision, IngressDecision::Accept);
     assert_eq!(read_only_frame.msg_type, MessageType::new(100));
@@ -693,6 +717,73 @@ async fn should_authorize_kv_begin_by_mode_while_keeping_tx_ops_session_owned_at
     );
     assert_eq!(put_decision, IngressDecision::Accept);
     assert_eq!(put_dispatch.msg_type, MessageType::new(104));
+    assert_eq!(commit_decision, IngressDecision::Accept);
+    assert_eq!(commit_dispatch.msg_type, MessageType::new(101));
+    assert_eq!(rollback_decision, IngressDecision::Accept);
+    assert_eq!(rollback_dispatch.msg_type, MessageType::new(102));
+}
+
+#[tokio::test]
+async fn should_require_exact_kv_realm_area_and_resource_at_ingress() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 622;
+    let exact_route = "kv://acme/app/users";
+    let router = Arc::new(crate::runtime::Router::new());
+    let domain_mailbox = Arc::new(Mailbox::new(8));
+    let inbox_mailbox = Arc::new(Mailbox::new(8));
+    router.register_domain_pattern("kv", domain_mailbox.clone());
+    router.register(
+        RouteAddress::new(family, Route::new("inbox://session/622")),
+        inbox_mailbox.clone(),
+    );
+    let ingress = runtime_ingress_with_jwks_auth().with_router(router);
+    let session = make_authenticated_session_info(
+        session_id,
+        TransportKind::Tcp,
+        family,
+        &["kv://acme/app/users#write"],
+    );
+    ingress.on_open(session).await.unwrap();
+
+    // Act
+    let exact_begin = crate::benchkit::build_kv_begin(exact_route, 1, 0);
+    let (_, exact_payload) = crate::benchkit::extract_single_tlv_field(&exact_begin);
+    let exact_decision = ingress
+        .on_frame(
+            session_id,
+            ChannelId::Pub,
+            MessageType::new(100),
+            exact_payload,
+        )
+        .await;
+    let exact_dispatch = receive_frame(&domain_mailbox, "exact KV begin dispatch");
+
+    let mismatched_routes = [
+        "kv://other/app/users",
+        "kv://acme/other/users",
+        "kv://acme/app/other",
+    ];
+    let mut denial_codes = Vec::new();
+    for route in mismatched_routes {
+        let begin = crate::benchkit::build_kv_begin(route, 1, 0);
+        let (_, payload) = crate::benchkit::extract_single_tlv_field(&begin);
+        let decision = ingress
+            .on_frame(session_id, ChannelId::Pub, MessageType::new(100), payload)
+            .await;
+        assert_eq!(decision, IngressDecision::Accept);
+        let denial = receive_frame(&inbox_mailbox, "mismatched KV begin denial");
+        denial_codes.push(decode_domain_error_code(denial.payload.as_ref()));
+    }
+
+    // Assert
+    assert_eq!(exact_decision, IngressDecision::Accept);
+    assert_eq!(exact_dispatch.msg_type, MessageType::new(100));
+    assert_eq!(
+        denial_codes,
+        vec![crate::protocol::error_codes::kv::ERR_UNAUTHORIZED; 3]
+    );
+    assert!(domain_mailbox.receiver().try_recv().is_err());
 }
 
 #[tokio::test]

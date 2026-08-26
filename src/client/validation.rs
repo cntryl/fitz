@@ -281,7 +281,7 @@ pub struct SizeLimits {
     /// Maximum value size (default 100 MB)
     pub max_value_size: NonZeroUsize,
 
-    /// Maximum event size for streams (default 50 MB)
+    /// Maximum event body size for streams (defaults to the broker contract)
     pub max_event_size: NonZeroUsize,
 }
 
@@ -365,7 +365,8 @@ impl Default for SizeLimits {
         Self {
             max_key_size: NonZeroUsize::new(1024 * 1024).unwrap(), // 1 MB
             max_value_size: NonZeroUsize::new(100 * 1024 * 1024).unwrap(), // 100 MB
-            max_event_size: NonZeroUsize::new(50 * 1024 * 1024).unwrap(), // 50 MB
+            max_event_size: NonZeroUsize::new(crate::domains::stream::protocol::MAX_EVENT_SIZE)
+                .unwrap(),
         }
     }
 }
@@ -528,6 +529,14 @@ impl Default for IntegrityChecker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn should_default_event_limit_to_the_stream_contract() {
+        assert_eq!(
+            SizeLimits::default().max_event_size.get(),
+            crate::domains::stream::protocol::MAX_EVENT_SIZE
+        );
+    }
 
     #[test]
     fn should_accept_empty_key_value_pairs() {

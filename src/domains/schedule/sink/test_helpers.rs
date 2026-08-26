@@ -61,7 +61,7 @@ impl ScheduleDomainSink {
 
     pub(super) fn insert_subscriptions_for_tests(
         &self,
-        family_id: u64,
+        family_id: crate::runtime::routing::RouteFamily,
         subscriptions: ScheduleSubscriptionSet,
     ) {
         self.state

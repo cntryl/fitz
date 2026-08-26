@@ -44,6 +44,32 @@ pub use super::core::{MessageId, QueueKey, ReservedMessage, RoutedReservedMessag
 /// Maximum number of messages a client may reserve in one request.
 pub const MAX_RESERVE_BATCH_SIZE: usize = 1024;
 
+pub(crate) const MAX_QUEUE_RESPONSE_PAYLOAD_BYTES: usize = u16::MAX as usize;
+pub(crate) const RECEIVED_RESPONSE_HEADER_BYTES: usize = 1 + 4;
+pub(crate) const RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES: usize = 8 + 8 + 4;
+pub(crate) const ROUTED_MESSAGE_WIRE_OVERHEAD_BYTES: usize = 4;
+
+/// Largest message body that every RESERVE shape can still return for a queue
+/// reached by `route_len` bytes of route.
+///
+/// The inbound SEND ceiling and the outbound RESERVE ceiling are the same
+/// payload limit, but the response spends part of it on a header, a
+/// per-message envelope, and - for a wildcard reserve - a routing envelope
+/// plus the route string. A body accepted above this budget can never be
+/// handed back, so it is refused at SEND instead of being accepted and
+/// dead-lettered later, after the producer was told it was stored.
+///
+/// The strictest (wildcard) shape is used so that whether a message is
+/// deliverable never depends on which reserve form a consumer happens to use.
+#[must_use]
+pub(crate) fn max_deliverable_body_bytes(route_len: usize) -> usize {
+    MAX_QUEUE_RESPONSE_PAYLOAD_BYTES
+        .saturating_sub(RECEIVED_RESPONSE_HEADER_BYTES)
+        .saturating_sub(RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES)
+        .saturating_sub(ROUTED_MESSAGE_WIRE_OVERHEAD_BYTES)
+        .saturating_sub(route_len)
+}
+
 /// Queue domain messages
 ///
 /// All queue operations are asynchronous and return responses via

@@ -120,6 +120,7 @@ KvClient
 7000-7999: Schedule
   7002: Invalid cron → Retryable: No
   7009: Unauthorized → Retryable: No
+  7010: Backend unavailable or saturated → Retryable: Yes when replay-safe
 
 See the client-acceptance-criteria.md appendix for the complete error code reference.
 ```

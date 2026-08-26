@@ -117,6 +117,20 @@ impl DomainFrameDispatcher<'_> {
         .unauthorized_error_code
     }
 
+    fn backpressure_error_code(domain: DispatchDomain) -> u16 {
+        crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::descriptor_for_domain(
+            domain,
+        )
+        .backpressure_error_code
+    }
+
+    fn indeterminate_error_code(domain: DispatchDomain) -> u16 {
+        crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::descriptor_for_domain(
+            domain,
+        )
+        .indeterminate_error_code
+    }
+
     fn encode_domain_error_body(code: u16, message: &str) -> Bytes {
         let body = crate::protocol::error_codes::encode_error_body(code, message);
         Bytes::from(body)
@@ -136,7 +150,7 @@ impl DomainFrameDispatcher<'_> {
                 warn!(
                     session_id = session_id,
                     domain = domain.as_str(),
-                    "Ingress: unauthorized response backpressure"
+                    "Ingress: domain error response backpressure"
                 );
                 IngressDecision::Backpressure
             }
@@ -145,9 +159,9 @@ impl DomainFrameDispatcher<'_> {
                     session_id = session_id,
                     domain = domain.as_str(),
                     error = %error,
-                    "Ingress: unauthorized response delivery failed"
+                    "Ingress: domain error response delivery failed"
                 );
-                IngressDecision::Close(format!("unauthorized response delivery failed: {error}"))
+                IngressDecision::Close(format!("domain error response delivery failed: {error}"))
             }
         }
     }
@@ -218,40 +232,79 @@ impl DomainFrameDispatcher<'_> {
         dispatch: &DomainDispatchRequest<'_>,
         request_payload: &[u8],
     ) -> Result<(), IngressDecision> {
+        self.send_domain_error_response(
+            dispatch,
+            request_payload,
+            Self::unauthorized_error_code(dispatch.domain),
+            crate::protocol::error_codes::rpc::ERR_UNAUTHORIZED,
+            "unauthorized: permission denied",
+        )
+    }
+
+    /// Answer one frame with a domain error, leaving the session intact.
+    fn send_domain_error_response(
+        &self,
+        dispatch: &DomainDispatchRequest<'_>,
+        request_payload: &[u8],
+        domain_code: u16,
+        rpc_submit_code: u16,
+        message: &'static str,
+    ) -> Result<(), IngressDecision> {
         if dispatch.domain == DispatchDomain::Rpc && dispatch.msg_type.as_u16() == 302 {
             return self.send_rpc_submit_error_response(
                 dispatch,
                 request_payload,
-                crate::protocol::error_codes::rpc::ERR_UNAUTHORIZED,
-                "unauthorized: permission denied",
+                rpc_submit_code,
+                message,
             );
         }
 
-        let payload = Self::encode_domain_error_body(
-            Self::unauthorized_error_code(dispatch.domain),
-            "unauthorized: permission denied",
-        );
-        let response_ctx = crate::protocol::frame_context::FrameContext::new(
+        self.send_domain_error_frame(
             dispatch.session_id,
             dispatch.channel_id,
             dispatch.msg_type,
-            payload,
             dispatch.route_family,
+            dispatch.domain,
+            dispatch.router,
+            domain_code,
+            message,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn send_domain_error_frame(
+        &self,
+        session_id: u64,
+        channel_id: crate::protocol::frame::ChannelId,
+        msg_type: crate::protocol::tlv::MessageType,
+        route_family: crate::runtime::routing::RouteFamily,
+        domain: DispatchDomain,
+        router: &crate::runtime::Router,
+        domain_code: u16,
+        message: &'static str,
+    ) -> Result<(), IngressDecision> {
+        let payload = Self::encode_domain_error_body(domain_code, message);
+        let response_ctx = crate::protocol::frame_context::FrameContext::new(
+            session_id,
+            channel_id,
+            msg_type,
+            payload,
+            route_family,
         );
         let source = crate::runtime::routing::RouteAddress::new(
-            dispatch.route_family,
-            dispatch.domain.inbound_route().clone(),
+            route_family,
+            domain.inbound_route().clone(),
         );
         let destination = crate::runtime::routing::RouteAddress::new(
-            dispatch.route_family,
-            self.cached_session_inbox_route(dispatch.session_id),
+            route_family,
+            self.cached_session_inbox_route(session_id),
         );
         let envelope =
             crate::runtime::envelope::Envelope::from_route(source, destination, response_ctx);
 
-        dispatch.router.route(envelope).map_err(|error| {
-            Self::route_error_response_delivery_failure(dispatch.session_id, dispatch.domain, error)
-        })
+        router
+            .route(envelope)
+            .map_err(|error| Self::route_error_response_delivery_failure(session_id, domain, error))
     }
 
     fn derive_auth_route_for_frame(
@@ -346,6 +399,18 @@ impl DomainFrameDispatcher<'_> {
         )
     }
 
+    /// Whether the destination was alive but did not answer before its
+    /// deadline - meaning the command was accepted and may still run.
+    fn domain_dispatch_timed_out(error: &crate::runtime::router::RouteError) -> bool {
+        matches!(
+            error,
+            crate::runtime::router::RouteError::DeliveryFailed(
+                _,
+                crate::runtime::router::DeliveryError::Timeout,
+            )
+        )
+    }
+
     fn record_backpressure_retry() {
         obs::counter_inc(obs::METRIC_INGRESS_DOMAIN_BACKPRESSURE_RETRIES);
     }
@@ -370,6 +435,152 @@ impl DomainFrameDispatcher<'_> {
         );
     }
 
+    /// Answer a frame whose domain could not reply in time.
+    ///
+    /// The actor is alive but did not answer. That is the client's problem for
+    /// this one request, not grounds to destroy a multiplexed session along
+    /// with every other domain's in-flight work on it.
+    ///
+    /// The command was already enqueued and may still execute, so this reports
+    /// an indeterminate outcome rather than a retryable rejection. Closing the
+    /// session would not make this at-most-once either - the command keeps
+    /// running and the client reconnects and retries with the same uncertainty
+    /// - it would only add collateral damage.
+    #[allow(clippy::too_many_arguments)]
+    fn answer_indeterminate_dispatch(
+        &self,
+        session_id: u64,
+        channel_id: crate::protocol::frame::ChannelId,
+        msg_type: crate::protocol::tlv::MessageType,
+        route_family: crate::runtime::routing::RouteFamily,
+        domain: DispatchDomain,
+        router: &crate::runtime::Router,
+        error: &crate::runtime::router::RouteError,
+    ) -> IngressDecision {
+        obs::counter_inc(obs::METRIC_INGRESS_DOMAIN_DISPATCH_TIMEOUTS);
+        warn!(
+            session_id = session_id,
+            domain = domain.as_str(),
+            error = %error,
+            "Ingress: domain dispatch timed out; answering with a retryable error"
+        );
+        self.send_domain_error_frame(
+            session_id,
+            channel_id,
+            msg_type,
+            route_family,
+            domain,
+            router,
+            Self::indeterminate_error_code(domain),
+            "domain timeout: request outcome unknown, do not blindly retry",
+        )
+        .map_or_else(|decision| decision, |()| IngressDecision::Accept)
+    }
+
+    /// Reject a frame whose domain mailbox stayed full past the retry budget.
+    ///
+    /// The command was never enqueued, which makes this the one failure a
+    /// client can safely re-send. Answering with a rejection frame preserves
+    /// that: returning `IngressDecision::Backpressure` instead closes the
+    /// connection at the transport, which turns a clean retryable rejection
+    /// into an unknown outcome the caller dare not retry.
+    #[allow(clippy::too_many_arguments)]
+    fn answer_exhausted_backpressure(
+        &self,
+        session_id: u64,
+        channel_id: crate::protocol::frame::ChannelId,
+        msg_type: crate::protocol::tlv::MessageType,
+        route_family: crate::runtime::routing::RouteFamily,
+        domain: DispatchDomain,
+        router: &crate::runtime::Router,
+        retries: u64,
+        backpressure_started_at: Instant,
+    ) -> IngressDecision {
+        Self::record_backpressure_exhausted(backpressure_started_at);
+        warn!(
+            session_id = session_id,
+            domain = domain.as_str(),
+            retries = retries,
+            waited_us = Self::elapsed_micros_u64(backpressure_started_at),
+            "Ingress: domain dispatch backpressure"
+        );
+        self.send_domain_error_frame(
+            session_id,
+            channel_id,
+            msg_type,
+            route_family,
+            domain,
+            router,
+            Self::backpressure_error_code(domain),
+            "domain at capacity: request was not accepted, retry with backoff",
+        )
+        .map_or_else(|decision| decision, |()| IngressDecision::Accept)
+    }
+
+    /// Answer a frame whose domain could not be reached at all.
+    ///
+    /// A dead actor, a panicked sink, an unroutable domain or a response that
+    /// cannot be framed are all failures of THIS request. None is a client
+    /// protocol violation, so none justifies destroying a multiplexed session
+    /// and every other domain's in-flight work on it. Reported with a
+    /// non-retryable code, since the command may have partially applied (the
+    /// actor died holding it) or can never succeed.
+    #[allow(clippy::too_many_arguments)]
+    fn answer_unavailable_dispatch(
+        &self,
+        session_id: u64,
+        channel_id: crate::protocol::frame::ChannelId,
+        msg_type: crate::protocol::tlv::MessageType,
+        route_family: crate::runtime::routing::RouteFamily,
+        domain: DispatchDomain,
+        router: &crate::runtime::Router,
+        error: &crate::runtime::router::RouteError,
+    ) -> IngressDecision {
+        error!(
+            session_id = session_id,
+            domain = domain.as_str(),
+            error = %error,
+            "Ingress: router.route failed for domain dispatch"
+        );
+        self.send_domain_error_frame(
+            session_id,
+            channel_id,
+            msg_type,
+            route_family,
+            domain,
+            router,
+            Self::indeterminate_error_code(domain),
+            "domain unavailable: request could not be completed",
+        )
+        .map_or_else(|decision| decision, |()| IngressDecision::Accept)
+    }
+
+    /// Resolve the destination, reply source, and descriptor for one dispatch.
+    fn dispatch_addressing(
+        &self,
+        session_id: u64,
+        route_family: crate::runtime::routing::RouteFamily,
+        domain: DispatchDomain,
+    ) -> (
+        crate::runtime::routing::RouteAddress,
+        crate::runtime::routing::RouteAddress,
+        &'static crate::api::runtime_ingress::domain_registry::IngressDomainDescriptor,
+    ) {
+        let addr = crate::runtime::routing::RouteAddress::new(
+            route_family,
+            domain.inbound_route().clone(),
+        );
+        let source = crate::runtime::routing::RouteAddress::new(
+            route_family,
+            self.cached_session_inbox_route(session_id),
+        );
+        let descriptor =
+            crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::descriptor_for_domain(
+                domain,
+            );
+        (addr, source, descriptor)
+    }
+
     async fn dispatch_domain_frame(
         &self,
         dispatch: DomainDispatchRequest<'_>,
@@ -384,17 +595,8 @@ impl DomainFrameDispatcher<'_> {
             msg_type,
             payload,
         } = dispatch;
-        let route = domain.inbound_route().clone();
-        let addr = crate::runtime::routing::RouteAddress::new(route_family, route);
+        let (addr, source, descriptor) = self.dispatch_addressing(session_id, route_family, domain);
         let dispatch_payload = payload.into_dispatch_bytes();
-        let source = crate::runtime::routing::RouteAddress::new(
-            route_family,
-            self.cached_session_inbox_route(session_id),
-        );
-        let descriptor =
-            crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::descriptor_for_domain(
-                domain,
-            );
 
         let backpressure_started_at = Instant::now();
         let mut retries = 0_u64;
@@ -444,26 +646,38 @@ impl DomainFrameDispatcher<'_> {
                     policy.wait_before_retry().await;
                 }
                 Err(error) if Self::domain_dispatch_backpressured(&error) => {
-                    Self::record_backpressure_exhausted(backpressure_started_at);
-                    warn!(
-                        session_id = session_id,
-                        domain = domain.as_str(),
-                        retries = retries,
-                        waited_us = Self::elapsed_micros_u64(backpressure_started_at),
-                        "Ingress: domain dispatch backpressure"
-                    );
-                    return Err(IngressDecision::Backpressure);
+                    return Err(self.answer_exhausted_backpressure(
+                        session_id,
+                        channel_id,
+                        msg_type,
+                        route_family,
+                        domain,
+                        router,
+                        retries,
+                        backpressure_started_at,
+                    ));
+                }
+                Err(error) if Self::domain_dispatch_timed_out(&error) => {
+                    return Err(self.answer_indeterminate_dispatch(
+                        session_id,
+                        channel_id,
+                        msg_type,
+                        route_family,
+                        domain,
+                        router,
+                        &error,
+                    ));
                 }
                 Err(error) => {
-                    error!(
-                        session_id = session_id,
-                        domain = domain.as_str(),
-                        error = %error,
-                        "Ingress: router.route failed for domain dispatch"
-                    );
-                    return Err(IngressDecision::Close(format!(
-                        "route delivery failed: {error}"
-                    )));
+                    return Err(self.answer_unavailable_dispatch(
+                        session_id,
+                        channel_id,
+                        msg_type,
+                        route_family,
+                        domain,
+                        router,
+                        &error,
+                    ));
                 }
             }
         }

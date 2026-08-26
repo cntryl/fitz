@@ -8,6 +8,12 @@ pub const METRIC_LATENCY_MS: &str = "fitz_rpc_latency_ms";
 pub const METRIC_WORKERS_GAUGE: &str = "fitz_rpc_workers_gauge";
 pub const METRIC_PENDING_GAUGE: &str = "fitz_rpc_pending_gauge";
 pub const METRIC_RESPONSE_DROPS_TOTAL: &str = "fitz_rpc_response_drops_total";
+/// Incremented once per route family whose handler panics and fails closed.
+/// Non-fatal and scoped to that family only (see
+/// `FamilyActorPoolRuntime::is_family_running`) — this is the only
+/// operator-visible signal for a permanently degraded realm, since a
+/// per-family failure deliberately does not flip domain-wide health/liveness.
+pub const METRIC_FAMILY_FAILED_CLOSED_TOTAL: &str = "fitz_rpc_family_failed_closed_total";
 
 #[derive(Clone)]
 pub struct RpcMetrics {

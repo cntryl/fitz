@@ -883,3 +883,199 @@ fn should_page_filtered_realm_read_through_filtered_items() {
     assert_eq!(second_records[0].realm_offset, Some(2));
     assert!(!second_cursor.has_more);
 }
+
+#[test]
+fn should_bound_resource_read_response_to_wire_frame_limit_when_max_bytes_omitted() {
+    // Arrange: every response is framed as a single u16-length-prefixed TLV
+    // value on the wire (see `encode_single_tlv_frame`), so a read response
+    // built past `MAX_STREAM_RESPONSE_PAYLOAD_BYTES` can never actually be
+    // sent. A client omitting `max_bytes` (legal per the wire spec) must
+    // still get a response the broker can encode, not an unbounded one.
+    let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+    let record_body_len = 2_000usize;
+    let record_count = 60usize; // 60 * 2_000 = 120_000 bytes, well over u16::MAX (65_535)
+    let events: Vec<EventPayload> = (0..record_count)
+        .map(|_| EventPayload {
+            body: Bytes::from(vec![b'a'; record_body_len]),
+            metadata: None,
+            discriminator: None,
+        })
+        .collect();
+    store
+        .commit_records(CommitRecordsParams {
+            family: 1,
+            realm: "test",
+            area: "events",
+            resource: "oversized-batch",
+            expected_resource_next_offset: 0,
+            events: &events,
+            ingest_metadata: None,
+            mode: StreamWriteMode::Buffered,
+        })
+        .expect("seed oversized resource batch");
+
+    // Act: request every record in one page, with no client-supplied max_bytes.
+    let (items, cursor) = store
+        .read_resource(&ReadResourceParams {
+            family: 1,
+            realm: "test",
+            area: "events",
+            resource: "oversized-batch",
+            from_offset: 0,
+            limit: record_count as u64,
+            max_bytes: None,
+        })
+        .expect("read oversized resource batch");
+
+    // Assert: the response must be bounded well under the batch's true size
+    // (120_000 bytes) and under the wire ceiling, and must report has_more
+    // instead of silently truncating.
+    let returned_bytes: usize = event_records(items.clone())
+        .iter()
+        .map(|record| record.body.len())
+        .sum();
+    assert!(
+        returned_bytes <= MAX_STREAM_RESPONSE_PAYLOAD_BYTES,
+        "response body bytes {returned_bytes} exceeded the wire frame ceiling \
+         {MAX_STREAM_RESPONSE_PAYLOAD_BYTES}"
+    );
+    assert!(
+        items.len() < record_count,
+        "expected the response to stop before including every record"
+    );
+    assert!(cursor.has_more, "cursor should signal more records remain");
+}
+
+#[test]
+fn should_reject_read_when_lone_record_alone_exceeds_wire_frame_limit() {
+    // Arrange: recovery, migration, or a direct low-level store write may
+    // expose a legacy record larger than today's append limit. The read
+    // accumulator must reject it explicitly instead of building an
+    // unencodable response.
+    //
+    // Stream guarantees exact replay of committed history, so this must stay
+    // a loud, classifiable failure naming the offending offset. Emitting a
+    // filtered marker and advancing instead would silently drop a committed
+    // event from any aggregate the client rebuilds from this stream.
+    let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+    let oversized_body_len = MAX_STREAM_RESPONSE_PAYLOAD_BYTES + 1_000;
+    let events = vec![EventPayload {
+        body: Bytes::from(vec![b'a'; oversized_body_len]),
+        metadata: None,
+        discriminator: None,
+    }];
+    store
+        .commit_records(CommitRecordsParams {
+            family: 1,
+            realm: "test",
+            area: "events",
+            resource: "lone-oversized",
+            expected_resource_next_offset: 0,
+            events: &events,
+            ingest_metadata: None,
+            mode: StreamWriteMode::Buffered,
+        })
+        .expect("seed lone oversized record");
+
+    // Act
+    let result = store.read_resource(&ReadResourceParams {
+        family: 1,
+        realm: "test",
+        area: "events",
+        resource: "lone-oversized",
+        from_offset: 0,
+        limit: 10,
+        max_bytes: None,
+    });
+
+    // Assert: an explicit, classifiable error - never a response that would
+    // panic the TLV encoder, and never a silent skip.
+    let error = result.expect_err("read of an unencodable lone record must fail explicitly");
+    assert!(
+        error.contains("ERR_READ_RESPONSE_TOO_LARGE"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn should_not_claim_coverage_of_an_empty_realm_in_the_posting_cursor() {
+    // Arrange
+    // A caught-up realm-resource posting read reports the visible frontier as
+    // covered so a client can skip realm offsets belonging to other
+    // resources. The realm watermark is inclusive and floors at zero, so an
+    // EMPTY realm is indistinguishable from one holding a single record at
+    // offset 0 - and claiming coverage there makes the client resume at 1 and
+    // miss the realm's very first event forever.
+    let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+    let params = ReadRealmPostingParams {
+        family: 1,
+        realm: "north",
+        resource: "created",
+        from_offset: 0,
+        limit: 64,
+        max_bytes: None,
+    };
+
+    // Act
+    let (items, cursor) = store
+        .read_realm_resource_posting(&params, None)
+        .expect("read the posting of an empty realm");
+
+    // Assert
+    assert!(items.is_empty());
+    assert_eq!(
+        cursor.last_realm_offset, None,
+        "an empty realm covers no offset, so the cursor must not name one"
+    );
+    assert_eq!(cursor.captured_watermark, Some(0));
+}
+
+#[test]
+fn should_report_the_visible_frontier_once_a_realm_posting_is_caught_up() {
+    // Arrange
+    // The companion to the empty-realm case: with records present, a
+    // caught-up read must still advance the cursor to the visible frontier,
+    // including across realm offsets owned by other resources.
+    let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
+    for (area, resource, offset) in [
+        ("orders", "created", 0),
+        ("orders", "shipped", 0),
+        ("orders", "created", 1),
+    ] {
+        store
+            .commit_records(CommitRecordsParams {
+                family: 1,
+                realm: "north",
+                area,
+                resource,
+                expected_resource_next_offset: offset,
+                events: &single_event(b"seed"),
+                ingest_metadata: None,
+                mode: StreamWriteMode::Sync,
+            })
+            .expect("seed realm record");
+    }
+    let params = ReadRealmPostingParams {
+        family: 1,
+        realm: "north",
+        resource: "created",
+        from_offset: 0,
+        limit: 64,
+        max_bytes: None,
+    };
+
+    // Act
+    let (items, cursor) = store
+        .read_realm_resource_posting(&params, None)
+        .expect("read the caught-up realm posting");
+
+    // Assert
+    assert_eq!(event_records(items).len(), 2);
+    assert_eq!(
+        cursor.last_realm_offset,
+        Some(2),
+        "a caught-up read covers the whole visible frontier"
+    );
+    assert_eq!(cursor.captured_watermark, Some(3));
+    assert!(!cursor.has_more);
+}

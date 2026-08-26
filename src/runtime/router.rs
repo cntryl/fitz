@@ -105,6 +105,13 @@ pub enum DeliveryError {
     Timeout,
     /// A sink panicked while accepting an envelope.
     SinkPanicked,
+    /// The response could not be framed for the wire.
+    ///
+    /// Permanent for this payload, and deliberately not saturation: a TLV
+    /// value carries a `u16` length, so an oversized response can never be
+    /// sent no matter how long the transport is given. Retrying it wastes
+    /// work; the fix is always to paginate at the source.
+    InvalidPayload { len: usize, max: usize },
 }
 
 impl DeliveryError {
@@ -123,6 +130,10 @@ impl DeliveryError {
             DeliveryError::ActorStopped | DeliveryError::Timeout | DeliveryError::SinkPanicked => {
                 1.0
             }
+            // Not a saturation signal - the destination has room; the payload
+            // is simply unframable. Reporting 1.0 here would drive backoff
+            // against a condition that waiting cannot fix.
+            DeliveryError::InvalidPayload { .. } => 0.0,
         }
     }
 }
@@ -148,6 +159,9 @@ impl std::fmt::Display for DeliveryError {
             DeliveryError::ActorStopped => write!(f, "Actor has stopped"),
             DeliveryError::Timeout => write!(f, "Delivery timed out"),
             DeliveryError::SinkPanicked => write!(f, "Sink panicked during delivery"),
+            DeliveryError::InvalidPayload { len, max } => {
+                write!(f, "Response payload {len} bytes exceeds wire limit {max}")
+            }
         }
     }
 }
@@ -306,7 +320,8 @@ impl Router {
                 }
                 DeliveryError::ActorStopped
                 | DeliveryError::Timeout
-                | DeliveryError::SinkPanicked => {}
+                | DeliveryError::SinkPanicked
+                | DeliveryError::InvalidPayload { .. } => {}
             }
         }
     }
@@ -553,10 +568,22 @@ impl Router {
     pub(crate) fn route_high_priority(&self, envelope: Envelope) -> Result<(), RouteError> {
         let dest = envelope.destination().clone();
 
+        // Mirror `route()`'s exact-then-domain-pattern fallback. Every
+        // production domain sink registers via `register_domain_pattern`
+        // (see `domain_manifest.rs`), never an exact address, so an
+        // exact-only lookup here would make `route_high_priority` unusable
+        // for reaching a real domain sink - which is exactly the class of
+        // control-plane traffic (e.g. session cleanup dispatch) this method
+        // exists for.
+        let route_str = dest.route().as_str();
+        let extracted_domain = extract_domain(route_str);
+        let fallback_domain = extracted_domain.unwrap_or("");
+        let domain = extracted_domain.unwrap_or("unknown");
         let sink = self
-            .registry
-            .get(&dest)
-            .ok_or_else(|| RouteError::RouteNotFound(dest.clone()))?;
+            .resolve_sink_for_route(&dest, fallback_domain)
+            .ok_or_else(|| {
+                Self::route_not_found(&dest, domain, MissingRouteKind::ExactOrDomainPattern)
+            })?;
 
         match Self::catch_sink_panic(|| sink.deliver_high_priority(envelope)) {
             Ok(()) => Ok(()),

@@ -408,6 +408,14 @@ fn log_cloud_lease_contention(
     }
 }
 
+/// Enclosing deadline for one synchronous Midge runtime response.
+///
+/// Midge floors this at `storage_io_timeout + 30s`, so a provider callback can
+/// exhaust its own budget before this expires. It is deliberately far longer
+/// than any fitz domain deadline: the broker gives up on a request quickly and
+/// tells the client to retry, while storage keeps working.
+const STORAGE_RUNTIME_RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
+
 fn build_midge_open_options(
     open_options: cntryl_midge::OpenOptionsBuilder,
     config: &BootConfig,
@@ -433,6 +441,13 @@ fn build_midge_open_options(
         }
         None => open_options,
     };
+
+    // Set the storage-side deadline explicitly rather than inheriting the
+    // default, so the relationship between the two budgets is visible in code.
+    // Fitz's own domain actor-reply deadlines are far shorter and will always
+    // fire first; that is only safe because a domain timeout is answered with
+    // a retryable error frame instead of closing the session.
+    let open_options = open_options.runtime_response_timeout(STORAGE_RUNTIME_RESPONSE_TIMEOUT);
 
     open_options
         .build()

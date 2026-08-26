@@ -152,6 +152,19 @@ pub(crate) fn try_init_observability_with_defaults(
     init_observability_with_defaults(default_log_level, default_otel_enabled)
 }
 
+/// Like [`try_init_observability`], but quiets known-noisy dependency logs
+/// that are routine on every ephemeral test engine (see
+/// [`TEST_QUIET_DEPENDENCY_DIRECTIVES`]). Used by the test harness only --
+/// the production boot path keeps seeing every dependency `WARN`.
+pub(crate) fn try_init_test_observability(
+) -> Result<Arc<MetricsCollector>, Box<dyn std::error::Error>> {
+    if let Some(existing) = METRICS_COLLECTOR.get() {
+        return Ok(existing.clone());
+    }
+
+    init_observability_with_options(None, None, false, true)
+}
+
 pub(crate) fn try_init_bench_observability(
 ) -> Result<Arc<MetricsCollector>, Box<dyn std::error::Error>> {
     // Benchmarks should emit only stress output unless explicitly opted into logs.
@@ -159,26 +172,44 @@ pub(crate) fn try_init_bench_observability(
         return Ok(existing.clone());
     }
 
-    init_observability_with_options(Some("off"), Some(false), true)
+    init_observability_with_options(Some("off"), Some(false), true, false)
 }
 
-fn default_env_filter(log_level: &str) -> EnvFilter {
+/// Dependency directives layered on top of the default `warn` catch-all when
+/// `quiet_test_dependencies` is set. `cntryl_midge` logs its routine
+/// "primary lease acquired" storage-engine startup at `WARN`, which is
+/// expected on every single ephemeral test engine and floods test/CI output
+/// with nothing actionable -- quiet it to `error` for tests only. This never
+/// applies to the production boot path (`init_observability`), so an actual
+/// production storage warning still surfaces.
+const TEST_QUIET_DEPENDENCY_DIRECTIVES: &str = "cntryl_midge=error";
+
+fn default_env_filter(log_level: &str, quiet_test_dependencies: bool) -> EnvFilter {
     if log_level == "off" {
         EnvFilter::new("off")
+    } else if quiet_test_dependencies {
+        EnvFilter::new(format!(
+            "fitz={log_level},{TEST_QUIET_DEPENDENCY_DIRECTIVES},warn"
+        ))
     } else {
         EnvFilter::new(format!("fitz={log_level},warn"))
     }
 }
 
-fn resolve_env_filter(ignore_env_overrides: bool, log_level: &str) -> EnvFilter {
+fn resolve_env_filter(
+    ignore_env_overrides: bool,
+    log_level: &str,
+    quiet_test_dependencies: bool,
+) -> EnvFilter {
     if ignore_env_overrides {
-        return default_env_filter(log_level);
+        return default_env_filter(log_level, quiet_test_dependencies);
     }
 
     if std::env::var("RUST_LOG").is_ok() {
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| default_env_filter(log_level))
+        EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| default_env_filter(log_level, quiet_test_dependencies))
     } else {
-        default_env_filter(log_level)
+        default_env_filter(log_level, quiet_test_dependencies)
     }
 }
 
@@ -217,13 +248,14 @@ fn init_observability_with_defaults(
     default_log_level: Option<&str>,
     default_otel_enabled: Option<bool>,
 ) -> Result<Arc<MetricsCollector>, Box<dyn std::error::Error>> {
-    init_observability_with_options(default_log_level, default_otel_enabled, false)
+    init_observability_with_options(default_log_level, default_otel_enabled, false, false)
 }
 
 fn init_observability_with_options(
     default_log_level: Option<&str>,
     default_otel_enabled: Option<bool>,
     ignore_env_overrides: bool,
+    quiet_test_dependencies: bool,
 ) -> Result<Arc<MetricsCollector>, Box<dyn std::error::Error>> {
     // Detect logging format
     let log_format = std::env::var("FITZ_LOG_FORMAT")
@@ -241,7 +273,7 @@ fn init_observability_with_options(
     .to_lowercase();
 
     // Build env filter (RUST_LOG takes precedence)
-    let env_filter = resolve_env_filter(ignore_env_overrides, &log_level);
+    let env_filter = resolve_env_filter(ignore_env_overrides, &log_level, quiet_test_dependencies);
 
     // Derive service identity and environment metadata
     let (service_instance_id, deployment_environment) = service_identity();

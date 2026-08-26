@@ -7,6 +7,8 @@ pub(in crate::domains::rpc::sink) struct RpcPendingRequest {
     pub(in crate::domains::rpc::sink) worker_addr: RouteAddress,
     pub(in crate::domains::rpc::sink) worker_session_id: u64,
     pub(in crate::domains::rpc::sink) next_expected_seq: u64,
+    /// Consecutive failures delivering the current chunk to the caller.
+    pub(in crate::domains::rpc::sink) delivery_retries: u32,
     pub(in crate::domains::rpc::sink) submitted_at: DateTime<Utc>,
     pub(in crate::domains::rpc::sink) expires_at: Instant,
 }
@@ -60,6 +62,7 @@ impl RpcPendingRequest {
             worker_addr: registration_addr,
             worker_session_id: registration_session_id,
             next_expected_seq: 0,
+            delivery_retries: 0,
             submitted_at,
             expires_at,
         }

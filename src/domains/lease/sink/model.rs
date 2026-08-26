@@ -91,6 +91,10 @@ pub(super) struct LeaseDomainCore {
     pub(super) pending_acquires:
         Mutex<HashMap<crate::domains::lease::protocol::LeaseKey, VecDeque<PendingAcquire>>>,
     pub(super) session_waiters: Mutex<HashMap<u64, HashSet<PendingAcquireRef>>>,
+    /// Sessions disconnect cleanup has already run for; guards against a
+    /// stale queued request recreating a lease/waiter/subscription. See
+    /// `cleanup.rs`.
+    pub(super) cleaned_up_sessions: Mutex<crate::runtime::CleanedUpSessions>,
     /// Process-local fencing token counter; resets on broker restart.
     pub(super) next_token: AtomicU64,
     pub(super) router: Arc<Router>,

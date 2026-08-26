@@ -4,11 +4,11 @@ use super::read_support::{
     GlobalFragmentCache,
 };
 use super::{
-    area_page_record_bytes, collect_filtered_read_page_items, decode_area_offset_from_key,
+    bounded_max_bytes, collect_filtered_read_page_items, decode_area_offset_from_key,
     decode_realm_offset_from_key, decode_resource_offset_from_key, encode_compact_area_page_key,
     encode_compact_resource_page_key, encode_compressed_compact_realm_page_key,
-    read_limit_to_usize, realm_page_record_bytes, record_is_expired, resource_page_record_bytes,
-    update_area_cursor, update_realm_cursor, update_resource_cursor, CompactAreaPageValue,
+    read_limit_to_usize, record_is_expired, stream_read_item_wire_bytes, stream_route_len,
+    update_area_cursor, update_realm_cursor, update_resource_cursor, Bytes, CompactAreaPageValue,
     CompactResourcePageValue, CompressedCompactRealmPageValue, ReadAreaParams, ReadCursorState,
     ReadPageState, ReadResourceParams, StreamFilterSet, StreamFilteredReason, StreamReadItem,
     StreamRecord, StreamStore,
@@ -89,7 +89,7 @@ impl StreamStore {
             last_realm_offset: None,
             last_global_offset: None,
         };
-        let max_bytes_limit = params.max_bytes.unwrap_or(usize::MAX);
+        let max_bytes_limit = bounded_max_bytes(params.max_bytes);
         let mut has_more = false;
         let mut previous_fragment_end = None;
         let now_epoch_ms = self.now_epoch_ms();
@@ -115,7 +115,16 @@ impl StreamStore {
             for (slot, mut page_record) in page.records.into_iter().enumerate() {
                 let offset = page_slot_offset(page_start, slot);
                 if record_is_expired(page_record.expires_at, now_epoch_ms) {
-                    update_resource_cursor(&mut cursor, offset, &page_record);
+                    // Only records the caller has not already paged past may
+                    // move the cursor. This pre-pass walks the whole fragment,
+                    // which starts at the enclosing 64-record page boundary, so
+                    // without this an expired record BELOW `from_offset` would
+                    // hand back a resume point behind where the caller already
+                    // was - and an idle stream would replay those events on
+                    // every poll.
+                    if offset >= params.from_offset {
+                        update_resource_cursor(&mut cursor, offset, &page_record);
+                    }
                     continue;
                 }
                 resolve_blob_payload(&txn, &mut page_record.body, &mut page_record.metadata)?;
@@ -147,7 +156,14 @@ impl StreamStore {
                         ),
                     )
                 },
-                resource_page_record_bytes,
+                |page_record, matches_filter| {
+                    stream_read_item_wire_bytes(
+                        matches_filter,
+                        route.as_str().len(),
+                        page_record.body.len(),
+                        page_record.metadata.as_ref().map_or(0, Bytes::len),
+                    )
+                },
                 update_resource_cursor,
                 |offset, _page_record| StreamReadItem::Filtered {
                     route: route.clone(),
@@ -250,7 +266,7 @@ impl StreamStore {
             last_realm_offset: None,
             last_global_offset: None,
         };
-        let max_bytes_limit = params.max_bytes.unwrap_or(usize::MAX);
+        let max_bytes_limit = bounded_max_bytes(params.max_bytes);
         let mut has_more = false;
         let mut previous_fragment_end = None;
         let mut global_cache = GlobalFragmentCache::new();
@@ -271,7 +287,16 @@ impl StreamStore {
             for (slot, mut page_record) in page.records.into_iter().enumerate() {
                 let offset = page_slot_offset(page_start, slot);
                 if record_is_expired(page_record.expires_at, now_epoch_ms) {
-                    update_area_cursor(&mut cursor, offset, &page_record);
+                    // Only records the caller has not already paged past may
+                    // move the cursor. This pre-pass walks the whole fragment,
+                    // which starts at the enclosing 64-record page boundary, so
+                    // without this an expired record BELOW `from_offset` would
+                    // hand back a resume point behind where the caller already
+                    // was - and an idle stream would replay those events on
+                    // every poll.
+                    if offset >= params.from_offset {
+                        update_area_cursor(&mut cursor, offset, &page_record);
+                    }
                     continue;
                 }
                 hydrate_area_locator(
@@ -308,7 +333,14 @@ impl StreamStore {
                         ),
                     )
                 },
-                area_page_record_bytes,
+                |page_record, matches_filter| {
+                    stream_read_item_wire_bytes(
+                        matches_filter,
+                        stream_route_len(params.realm, params.area, &page_record.resource),
+                        page_record.body.len(),
+                        page_record.metadata.as_ref().map_or(0, Bytes::len),
+                    )
+                },
                 update_area_cursor,
                 |offset, page_record| StreamReadItem::Filtered {
                     route: stream_route(params.realm, params.area, &page_record.resource),
@@ -409,7 +441,7 @@ impl StreamStore {
             last_realm_offset: Some(from_offset),
             last_global_offset: None,
         };
-        let max_bytes_limit = max_bytes.unwrap_or(usize::MAX);
+        let max_bytes_limit = bounded_max_bytes(max_bytes);
         let mut has_more = false;
         let mut previous_fragment_end = None;
         let mut global_cache = GlobalFragmentCache::new();
@@ -430,7 +462,16 @@ impl StreamStore {
             for (slot, mut page_record) in page.records.into_iter().enumerate() {
                 let offset = page_slot_offset(page_start, slot);
                 if record_is_expired(page_record.expires_at, now_epoch_ms) {
-                    update_realm_cursor(&mut cursor, offset, &page_record);
+                    // Only records the caller has not already paged past may
+                    // move the cursor. This pre-pass walks the whole fragment,
+                    // which starts at the enclosing 64-record page boundary, so
+                    // without this an expired record BELOW `from_offset` would
+                    // hand back a resume point behind where the caller already
+                    // was - and an idle stream would replay those events on
+                    // every poll.
+                    if offset >= from_offset {
+                        update_realm_cursor(&mut cursor, offset, &page_record);
+                    }
                     continue;
                 }
                 hydrate_realm_locator(&txn, realm, &mut page_record, &mut global_cache)?;
@@ -460,7 +501,14 @@ impl StreamStore {
                         ),
                     )
                 },
-                realm_page_record_bytes,
+                |page_record, matches_filter| {
+                    stream_read_item_wire_bytes(
+                        matches_filter,
+                        stream_route_len(realm, &page_record.area, &page_record.resource),
+                        page_record.body.len(),
+                        page_record.metadata.as_ref().map_or(0, Bytes::len),
+                    )
+                },
                 update_realm_cursor,
                 |offset, page_record| StreamReadItem::Filtered {
                     route: crate::runtime::routing::Route::new(format!(

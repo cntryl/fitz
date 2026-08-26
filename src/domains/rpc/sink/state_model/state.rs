@@ -66,6 +66,29 @@ pub(in crate::domains::rpc::sink) trait RpcResponseState {
     fn live_count(&self) -> usize;
 
     fn release_dispatch(&mut self, pending: &RpcPendingDispatchInfo, latency_us: Option<u64>);
+
+    /// Advance past a chunk the caller has actually received; a `stream_end`
+    /// chunk completes and drops the request.
+    fn commit_response_delivery(
+        &mut self,
+        family: RouteFamily,
+        correlation_id: &uuid::Uuid,
+        stream_end: bool,
+    ) -> bool;
+
+    /// Record a failed delivery attempt, returning the consecutive count.
+    fn record_delivery_failure(&mut self, family: RouteFamily, correlation_id: &uuid::Uuid) -> u32;
+
+    /// Drop a live pending request without delivering anything further on it.
+    ///
+    /// Used when a response chunk could not be handed to the caller: the
+    /// stream has a hole, so it must end rather than continue with later
+    /// chunks that would silently present as contiguous.
+    fn abandon_pending(
+        &mut self,
+        family: RouteFamily,
+        correlation_id: &uuid::Uuid,
+    ) -> Option<RpcPendingDispatchInfo>;
 }
 
 impl RpcDispatchState for RpcState {
@@ -129,6 +152,33 @@ impl RpcResponseState for RpcState {
 
     fn release_dispatch(&mut self, pending: &RpcPendingDispatchInfo, latency_us: Option<u64>) {
         self.release_registration_for_dispatch_info(pending, latency_us);
+    }
+
+    fn commit_response_delivery(
+        &mut self,
+        family: RouteFamily,
+        correlation_id: &uuid::Uuid,
+        stream_end: bool,
+    ) -> bool {
+        self.pending
+            .commit_response_delivery(family, correlation_id, stream_end)
+    }
+
+    fn record_delivery_failure(&mut self, family: RouteFamily, correlation_id: &uuid::Uuid) -> u32 {
+        self.pending.record_delivery_failure(family, correlation_id)
+    }
+
+    fn abandon_pending(
+        &mut self,
+        family: RouteFamily,
+        correlation_id: &uuid::Uuid,
+    ) -> Option<RpcPendingDispatchInfo> {
+        self.pending
+            .remove(&super::RpcCorrelationKey {
+                family,
+                correlation_id: *correlation_id,
+            })
+            .map(super::RpcPendingRequest::into_dispatch_info)
     }
 }
 

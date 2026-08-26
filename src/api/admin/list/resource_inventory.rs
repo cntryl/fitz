@@ -634,19 +634,20 @@ pub fn kv_prefix_scan_for_resource(
         prefix,
         limit,
     ) {
-        Ok((items, has_more)) => Ok(crate::api::admin::json_response(KvPrefixScanResponse {
+        Ok(result) => Ok(crate::api::admin::json_response(KvPrefixScanResponse {
             route_family: family,
             realm: path.realm.to_string(),
             area: path.area.to_string(),
             resource: path.resource.to_string(),
             prefix: kv_byte_value(prefix),
             limit,
-            has_more,
-            items: items
+            has_more: result.has_more,
+            items: result
+                .items
                 .into_iter()
-                .map(|(key, value)| KvCommittedPair {
-                    key: kv_byte_value(&key),
-                    value: kv_byte_value(&value),
+                .map(|item| KvCommittedPair {
+                    key: kv_byte_value(&item.key),
+                    value: kv_byte_value(&item.value),
                 })
                 .collect(),
         })),
@@ -682,26 +683,26 @@ pub fn kv_rows_for_resource(
         cursor,
         limit,
     }) {
-        Ok((items, next_cursor, has_more)) => {
-            Ok(crate::api::admin::json_response(KvRowsResponse {
-                route_family: family,
-                realm: path.realm.to_string(),
-                area: path.area.to_string(),
-                resource: path.resource.to_string(),
-                starts_with: kv_byte_value(starts_with),
-                limit,
-                next_cursor: next_cursor
-                    .map(|cursor| base64::engine::general_purpose::STANDARD.encode(cursor)),
-                has_more,
-                items: items
-                    .into_iter()
-                    .map(|(key, value)| KvCommittedPair {
-                        key: kv_byte_value(&key),
-                        value: kv_byte_value(&value),
-                    })
-                    .collect(),
-            }))
-        }
+        Ok(result) => Ok(crate::api::admin::json_response(KvRowsResponse {
+            route_family: family,
+            realm: path.realm.to_string(),
+            area: path.area.to_string(),
+            resource: path.resource.to_string(),
+            starts_with: kv_byte_value(starts_with),
+            limit,
+            next_cursor: result
+                .next_cursor
+                .map(|cursor| base64::engine::general_purpose::STANDARD.encode(cursor)),
+            has_more: result.has_more,
+            items: result
+                .items
+                .into_iter()
+                .map(|item| KvCommittedPair {
+                    key: kv_byte_value(&item.key),
+                    value: kv_byte_value(&item.value),
+                })
+                .collect(),
+        })),
         Err(error) => Ok(kv_storage_error_response(&error)),
     }
 }

@@ -889,3 +889,87 @@ fn should_encode_exact_resource_metadata_payload_given_empty_stream() {
     assert_eq!(metadata.area_watermark, 0);
     assert_eq!(metadata.realm_watermark, 0);
 }
+
+#[test]
+fn should_reject_surplus_stream_load_instead_of_accepting_then_timing_out() {
+    // Arrange
+    // `deliver_to_actor` blocks its caller's thread on the actor's reply with
+    // no bound on how many callers can pile up concurrently unless admission
+    // refuses surplus load up front. Work admitted beyond what the deadline
+    // can serve would otherwise become an indeterminate outcome.
+    use crate::domains::stream::sink::model::{stream_admission_window, try_admit_stream_delivery};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let inflight = Arc::new(AtomicUsize::new(0));
+    let window = stream_admission_window(super::super::model::stream_assumed_service_us());
+
+    // Act
+    let held = (0..window)
+        .map(|_| try_admit_stream_delivery(&inflight, window).expect("slot within the limit"))
+        .collect::<Vec<_>>();
+    let refused = try_admit_stream_delivery(&inflight, window);
+
+    // Assert
+    assert!(
+        matches!(refused, Err(DeliveryError::MailboxFull { .. })),
+        "surplus must be refused as never-enqueued, got {refused:?}"
+    );
+    assert_eq!(inflight.load(Ordering::Acquire), window);
+
+    // Slots are released when the COMMAND is finished with, not when a caller
+    // stops waiting: a `recv_timeout` cancels nothing, so recycling on caller
+    // timeout would admit fresh work on top of still-pending mutations.
+    drop(held);
+    assert_eq!(inflight.load(Ordering::Acquire), 0);
+    assert!(try_admit_stream_delivery(&inflight, window).is_ok());
+}
+
+#[test]
+fn should_refuse_stream_client_delivery_once_admission_window_is_exhausted() {
+    // Arrange
+    // End-to-end through `StreamDomainSink::deliver`: holding every admission
+    // slot must make a plain (non-control-plane) delivery fail fast with
+    // `MailboxFull` rather than blocking on the actor's 1s reply wait.
+    let context = setup_test_context();
+    let window = crate::domains::stream::sink::model::stream_admission_window(
+        context
+            .sink
+            .core
+            .delivery_service_us
+            .load(std::sync::atomic::Ordering::Relaxed),
+    );
+    let held = (0..window)
+        .map(|_| {
+            crate::domains::stream::sink::model::try_admit_stream_delivery(
+                &context.sink.inflight_client_deliveries,
+                window,
+            )
+            .expect("slot")
+        })
+        .collect::<Vec<_>>();
+
+    // Act
+    let result = context.sink.deliver(Envelope::new(
+        RouteAddress::new(
+            context.family,
+            Route::new("stream://admission-under-pressure"),
+        ),
+        Bytes::from_static(b"probe"),
+    ));
+
+    // Assert
+    assert!(
+        matches!(result, Err(DeliveryError::MailboxFull { .. })),
+        "surplus client load must be refused as never-enqueued, got {result:?}"
+    );
+
+    // Slots release once held commands finish, restoring normal admission.
+    drop(held);
+    assert_eq!(
+        context
+            .sink
+            .inflight_client_deliveries
+            .load(std::sync::atomic::Ordering::Acquire),
+        0
+    );
+}

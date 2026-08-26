@@ -110,7 +110,6 @@ fn direct_write_dimensions(
         write_mode: match write_mode {
             StreamWriteMode::Buffered => "buffered",
             StreamWriteMode::Sync => "sync",
-            StreamWriteMode::CloudStrict => "cloud_strict",
         },
         write_operation: "begin_append_commit",
         payload_size,

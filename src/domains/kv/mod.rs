@@ -47,18 +47,21 @@
 //! - Default column family (CF=0) is FORBIDDEN
 //! - All KV persistence MUST specify explicit CF via `RouteFamily`
 
-pub mod actor;
-pub mod metrics;
-pub mod projection;
-pub mod protocol;
-pub mod session;
+mod actor;
+mod admin_projection;
+mod inventory;
+pub(crate) mod metrics;
+mod protocol;
+mod scan_wire_budget;
 pub mod sink;
-pub mod watch;
+mod watch_registry;
 
 pub use actor::KvActor;
-pub use metrics::KvMetrics;
 pub use protocol::{
     KvClientFrame, KvClientNotification, KvClientRequest, KvClientResponse, KvError, KvMessage,
     KvNotification, KvPair, KvResourceScope, KvResponse, KvSubscriptionMessage, ScanQuery, TxMode,
 };
-pub use session::SessionActor;
+pub use sink::{
+    AdminKvCommittedPair, AdminKvPrefixScanResult, AdminKvRowsRequest, AdminKvRowsResult,
+    KvDomainSink,
+};

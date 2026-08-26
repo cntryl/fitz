@@ -6,9 +6,14 @@ impl RawClaims {
     /// Normalize permissions from claims using the prioritized sources:
     /// 1) configured namespaced custom claim
     /// 2) top-level permissions array (Auth0 RBAC)
-    /// 3) configured role claim array
-    /// 4) scp (space-delimited or array)
-    /// 5) scope (space-delimited string)
+    /// 3) configured permissions claim override
+    /// 4) configured role claim array
+    /// 5) scp (space-delimited or array)
+    /// 6) scope (space-delimited string)
+    ///
+    /// A source that is present but supplies no permission values is skipped
+    /// and the cascade continues, so an empty claim cannot mask a populated
+    /// one further down.
     ///
     /// # Errors
     ///
@@ -20,42 +25,73 @@ impl RawClaims {
         permissions_claim_override: Option<&str>,
         role_claim: &str,
     ) -> Result<Vec<Permission>, String> {
+        // A source that is present but carries no permission values is not a
+        // source. Auth0 emits `permissions: []` whenever RBAC is enabled with
+        // no permissions assigned for that API, even when the real grants live
+        // in a configured claim - so treating "present" as "found" stranded
+        // those tokens and reported the wrong claim as the cause. Each tier
+        // below yields `None` when it supplies nothing, and the cascade
+        // continues; if every tier is empty the chain still ends in
+        // "no permission source found", which refuses the CONNECT.
         if let Some(claim_name) = custom_claim {
             if let Some(perms) = self.custom_claim_permissions(claim_name)? {
-                return parse_permission_values(claim_name, perms, false, "permission");
+                if let Some(parsed) =
+                    parse_optional_permission_values(claim_name, perms, false, "permission")?
+                {
+                    return Ok(parsed);
+                }
             }
         }
 
         if let Some(permissions) = &self.permissions {
-            return parse_permission_values(
+            if let Some(parsed) = parse_optional_permission_values(
                 "permissions",
                 permissions.clone(),
                 false,
                 "permission",
-            );
+            )? {
+                return Ok(parsed);
+            }
         }
 
         if let Some(claim_name) = permissions_claim_override {
             if let Some(perms) = self.string_array_claim(claim_name, "permission")? {
-                return parse_permission_values(claim_name, perms, false, "permission");
+                if let Some(parsed) =
+                    parse_optional_permission_values(claim_name, perms, false, "permission")?
+                {
+                    return Ok(parsed);
+                }
             }
         }
 
         if let Some(roles) = self.string_array_claim(role_claim, "role")? {
-            return parse_permission_values(role_claim, roles, false, "role");
+            if let Some(parsed) =
+                parse_optional_permission_values(role_claim, roles, false, "role")?
+            {
+                return Ok(parsed);
+            }
         }
 
         if let Some(scp) = &self.scp {
-            return parse_permission_values("scp", scope_claim_values(scp), true, "scope string");
+            if let Some(parsed) = parse_optional_permission_values(
+                "scp",
+                scope_claim_values(scp),
+                true,
+                "scope string",
+            )? {
+                return Ok(parsed);
+            }
         }
 
         if let Some(scope) = &self.scope {
-            return parse_permission_values(
+            if let Some(parsed) = parse_optional_permission_values(
                 "scope",
                 scope.split_whitespace().map(ToOwned::to_owned).collect(),
                 true,
                 "scope string",
-            );
+            )? {
+                return Ok(parsed);
+            }
         }
 
         Err("no permission source found".to_string())
@@ -97,6 +133,24 @@ impl RawClaims {
 
         Ok(Some(out))
     }
+}
+
+/// Parse one candidate source, returning `None` when it supplies no permission
+/// values at all.
+///
+/// Malformed values still error: skipping those would let a typo silently
+/// downgrade a token to whatever the next source happens to grant. Only a
+/// source that says nothing is passed over.
+fn parse_optional_permission_values(
+    source: &str,
+    values: Vec<String>,
+    allow_resource_prefix: bool,
+    error_kind: &str,
+) -> Result<Option<Vec<Permission>>, String> {
+    if values.iter().all(|value| value.trim().is_empty()) {
+        return Ok(None);
+    }
+    parse_permission_values(source, values, allow_resource_prefix, error_kind).map(Some)
 }
 
 fn parse_permission_values(

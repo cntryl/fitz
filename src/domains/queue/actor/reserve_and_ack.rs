@@ -14,6 +14,13 @@ enum AckAuthorizationError {
     Expired,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReserveWireBudgetDecision {
+    Reserve(usize),
+    Skip,
+    Stop,
+}
+
 fn validate_ack_authorization(
     inflight: &Inflight,
     token: u64,
@@ -43,22 +50,48 @@ impl QueueActor {
         inflight_seconds: u64,
         batch_size: Option<usize>,
     ) -> QueueResponse {
-        self.handle_receive_internal(Some(session_id), inflight_seconds, batch_size)
+        let mut response_bytes_remaining = usize::MAX;
+        self.handle_receive_for_session_with_wire_budget(
+            session_id,
+            inflight_seconds,
+            batch_size,
+            &mut response_bytes_remaining,
+            0,
+        )
+        .0
+    }
+
+    pub(crate) fn handle_receive_for_session_with_wire_budget(
+        &mut self,
+        session_id: u64,
+        inflight_seconds: u64,
+        batch_size: Option<usize>,
+        response_bytes_remaining: &mut usize,
+        message_wire_overhead_bytes: usize,
+    ) -> (QueueResponse, bool) {
+        self.handle_receive_internal(
+            Some(session_id),
+            inflight_seconds,
+            batch_size.unwrap_or(1),
+            response_bytes_remaining,
+            message_wire_overhead_bytes,
+        )
     }
 
     fn handle_receive_internal(
         &mut self,
         owner_session_id: Option<u64>,
         inflight_seconds: u64,
-        batch_size: Option<usize>,
-    ) -> QueueResponse {
-        let batch_size = batch_size.unwrap_or(1);
+        batch_size: usize,
+        response_bytes_remaining: &mut usize,
+        message_wire_overhead_bytes: usize,
+    ) -> (QueueResponse, bool) {
         let now = self.clock.now_instant();
         let now_epoch_ms = self.clock.now_epoch_ms();
         let (expires_at, expires_at_epoch_ms) =
             match Self::inflight_expiration(now, now_epoch_ms, inflight_seconds) {
                 Ok(expiration) => expiration,
-                Err(response) => return response,
+                Err(response) => return (response, false),
             };
 
         let mut messages = Vec::with_capacity(self.ready.len().min(batch_size));
@@ -67,6 +100,18 @@ impl QueueActor {
             let Some(id) = self.ready.front().map(|entry| entry.id) else {
                 break;
             };
+
+            // Skip hydration (real storage I/O) when this message's fixed
+            // per-response overhead alone already exceeds what's left of the
+            // wire budget: no body size, however small, changes that outcome.
+            // This only short-circuits once a prior message has already been
+            // reserved this call - an untouched budget failing here instead
+            // means the message may be fundamentally too large for any
+            // response, which the divert check below can only decide once
+            // it knows the body size.
+            if !messages.is_empty() && message_wire_overhead_bytes > *response_bytes_remaining {
+                return (QueueResponse::Received { messages }, true);
+            }
 
             let (body, attempts) = match self.hydrate_record_for_receive(id) {
                 Ok(record) => record,
@@ -103,15 +148,28 @@ impl QueueActor {
                 break;
             };
 
+            let message_wire_bytes = match self.reserve_wire_budget_decision(
+                id,
+                body.len(),
+                message_wire_overhead_bytes,
+                *response_bytes_remaining,
+                now_epoch_ms,
+            ) {
+                ReserveWireBudgetDecision::Reserve(bytes) => bytes,
+                ReserveWireBudgetDecision::Skip => continue,
+                ReserveWireBudgetDecision::Stop => {
+                    return (QueueResponse::Received { messages }, true);
+                }
+            };
+
             let Some(id) = self.pop_ready() else {
                 break;
             };
+            *response_bytes_remaining -= message_wire_bytes;
             self.evict_cached_body(id);
 
-            // Generate inflight token
             let token = Self::generate_token();
 
-            // Create inflight entry
             self.inflight.insert(
                 id,
                 Inflight {
@@ -131,18 +189,7 @@ impl QueueActor {
                 Some(now_epoch_ms),
             );
 
-            // Schedule expiration timer
-            self.timers.push(Reverse(InflightExpiry {
-                id,
-                inflight_epoch,
-                expires_at,
-                expires_at_ms: expires_at_epoch_ms,
-            }));
-
-            // Update deadline cache if this expiration is sooner
-            if expires_at < self.next_expiration_deadline {
-                self.next_expiration_deadline = expires_at;
-            }
+            self.schedule_inflight_expiration(id, inflight_epoch, expires_at, expires_at_epoch_ms);
 
             // Build response message
             messages.push(ReservedMessage {
@@ -154,13 +201,58 @@ impl QueueActor {
             });
         }
 
-        // If no messages were reserved, return an empty response (avoid NotFound).
-        // Clients expect an empty slice when the queue is empty rather than an error.
-        if messages.is_empty() {
-            return QueueResponse::Received { messages };
-        }
+        (QueueResponse::Received { messages }, false)
+    }
 
-        QueueResponse::Received { messages }
+    fn schedule_inflight_expiration(
+        &mut self,
+        id: MessageId,
+        inflight_epoch: u64,
+        expires_at: Instant,
+        expires_at_epoch_ms: u64,
+    ) {
+        self.timers.push(Reverse(InflightExpiry {
+            id,
+            inflight_epoch,
+            expires_at,
+            expires_at_ms: expires_at_epoch_ms,
+        }));
+        if expires_at < self.next_expiration_deadline {
+            self.next_expiration_deadline = expires_at;
+        }
+    }
+
+    fn reserve_wire_budget_decision(
+        &mut self,
+        id: MessageId,
+        body_bytes: usize,
+        message_wire_overhead_bytes: usize,
+        response_bytes_remaining: usize,
+        now_epoch_ms: u64,
+    ) -> ReserveWireBudgetDecision {
+        let message_wire_bytes = message_wire_overhead_bytes.saturating_add(body_bytes);
+        if message_wire_bytes <= response_bytes_remaining {
+            return ReserveWireBudgetDecision::Reserve(message_wire_bytes);
+        }
+        let empty_response_message_budget =
+            crate::domains::queue::protocol::MAX_QUEUE_RESPONSE_PAYLOAD_BYTES
+                - crate::domains::queue::protocol::RECEIVED_RESPONSE_HEADER_BYTES;
+        // Dead-lettering is permanent, so it must only fire when *no* reserve
+        // shape could ever carry this body. A wildcard reserve pays extra
+        // per-message overhead (routing envelope + route string) that a
+        // concrete reserve does not, so judging by this caller's overhead
+        // would discard messages a concrete `RESERVE` delivers fine. Charge
+        // the smallest possible shape instead, and let a wildcard caller that
+        // cannot fit the message simply `Stop` and leave it ready.
+        let smallest_possible_message_wire_bytes =
+            crate::domains::queue::protocol::RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES
+                .saturating_add(body_bytes);
+        if smallest_possible_message_wire_bytes > empty_response_message_budget
+            && self.divert_ready_or_log(id, DlqReason::ReserveResponseTooLarge, now_epoch_ms)
+        {
+            return ReserveWireBudgetDecision::Skip;
+        }
+        ReserveWireBudgetDecision::Stop
     }
 
     fn divert_ready_or_log(

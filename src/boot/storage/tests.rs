@@ -284,6 +284,26 @@ fn should_skip_sqrzl_test_for_transport_errors() {
 }
 
 #[test]
+fn should_skip_sqrzl_test_for_missing_content_length() {
+    // Arrange: local mock GCS servers can reject a PUT without an explicit
+    // Content-Length header, which is a mock-server quirk unrelated to the
+    // recovery behavior under test.
+    let error = "prepare Sqrzl namespace failed: GCS setup request PUT /fitz-sqrzl-gcs failed \
+        with status 411 Length Required: <?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+        <Error><Code>MissingContentLength</Code>\
+        <Message>Content-Length is required unless Transfer-Encoding is chunked.</Message></Error>";
+
+    // Act
+    let should_skip = should_skip_sqrzl_test(error);
+
+    // Assert
+    assert!(
+        should_skip,
+        "expected a mock-server 411 Length Required response to be skippable"
+    );
+}
+
+#[test]
 fn should_reject_cloud_storage_without_bucket() {
     // Arrange
     let config = BootConfig::default().with_storage_mode(StorageMode::CloudBacked(Box::new(
@@ -481,6 +501,7 @@ fn should_skip_sqrzl_test(error: &str) -> bool {
         || lower.contains("dns")
         || lower.contains("signaturedoesnotmatch")
         || lower.contains("status 403")
+        || lower.contains("status 411")
         || lower.contains("status 500")
         || lower.contains("lease acquisition i/o error")
 }

@@ -495,6 +495,73 @@ pub(super) fn should_call_event_handler() {
     assert_eq!(event_count.load(Ordering::SeqCst), 3);
 }
 
+/// Distinguishes which mailbox lane a delivery arrived on.
+#[derive(Default)]
+pub(super) struct LaneTrackingSink {
+    normal_lane_sessions: Mutex<Vec<u64>>,
+    high_priority_sessions: Mutex<Vec<u64>>,
+}
+
+impl MailboxSink for LaneTrackingSink {
+    fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        let cleanup = envelope
+            .payload::<crate::runtime::SessionCleanup>()
+            .expect("cleanup payload");
+        self.normal_lane_sessions
+            .lock()
+            .unwrap()
+            .push(cleanup.session_id);
+        Ok(())
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        let cleanup = envelope
+            .payload::<crate::runtime::SessionCleanup>()
+            .expect("cleanup payload");
+        self.high_priority_sessions
+            .lock()
+            .unwrap()
+            .push(cleanup.session_id);
+        Ok(())
+    }
+}
+
+#[test]
+pub(super) fn should_dispatch_session_cleanup_on_the_control_lane() {
+    // Arrange
+    // Cleanup is control-plane work (architecture.md: "A separate bounded
+    // control lane prevents control work from being hidden behind normal-lane
+    // pressure"). A busy Queue actor can hold 16,384 client messages ahead of
+    // anything on the normal lane; a cleanup command enqueued there can sit
+    // long past the coordinator's 2.3s give-up window, leaving a disconnected
+    // session's watches and reservations alive and inviting a duplicate
+    // cleanup ticket for the same session.
+    let router = crate::runtime::Router::new();
+    let route_family = crate::runtime::routing::RouteFamily::new(11);
+    let session_id = 77;
+    let sink = Arc::new(LaneTrackingSink::default());
+    router.register_domain_pattern(DispatchDomain::Queue.as_str(), sink.clone());
+
+    // Act
+    let _ = dispatch_session_cleanup_for_domains(
+        &router,
+        route_family,
+        session_id,
+        &[DispatchDomain::Queue],
+    );
+
+    // Assert
+    assert_eq!(
+        sink.high_priority_sessions.lock().unwrap().as_slice(),
+        &[session_id],
+        "session cleanup must be delivered on the control lane, not the normal one"
+    );
+    assert!(
+        sink.normal_lane_sessions.lock().unwrap().is_empty(),
+        "session cleanup must not compete with client traffic on the normal lane"
+    );
+}
+
 #[test]
 pub(super) fn should_dispatch_session_cleanup_to_all_registered_domains() {
     // Arrange
@@ -684,6 +751,59 @@ async fn should_retry_pending_session_cleanup_without_later_traffic() {
 }
 
 #[tokio::test]
+async fn should_give_up_and_stop_retrying_session_cleanup_that_can_never_succeed() {
+    // Arrange: never register Queue's sink, so its cleanup can never
+    // succeed. Without a give-up threshold, the retry worker would keep
+    // this ticket pending forever (capped-but-endless exponential backoff),
+    // so the pending gauge would never return to zero for a genuinely dead
+    // domain actor.
+    let collector = crate::observability::metrics();
+    let router = Arc::new(crate::runtime::Router::new());
+    let admin_read_model = AdminReadModel::new();
+    let ingress = make_cleanup_ingress(router.clone(), admin_read_model);
+    let session_id = 90;
+    let mut session = make_session_info(session_id, TransportKind::Tcp);
+    session.route_family = RouteFamily::new(90);
+
+    for domain in DispatchDomain::SESSION_CLEANUP_ORDER {
+        if domain == DispatchDomain::Queue {
+            continue;
+        }
+        let sink = Arc::new(CleanupTrackingSink::default());
+        router.register_domain_pattern(domain.as_str(), sink);
+    }
+
+    ingress.on_open(session).await.unwrap();
+    ingress.on_close(session_id, CloseReason::ClientClose).await;
+    assert!(ingress.pending_session_cleanups.contains_key(&session_id));
+    let permanent_failures_before =
+        collector.counter_get(obs::METRIC_SESSION_CLEANUP_PERMANENT_FAILURES);
+
+    // Act: Queue's sink is intentionally never registered, so this ticket
+    // can never succeed - the worker must eventually give up.
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while ingress.pending_session_cleanups.contains_key(&session_id) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("cleanup worker should give up instead of retrying forever");
+
+    // Assert
+    assert!(!ingress.pending_session_cleanups.contains_key(&session_id));
+    assert!(
+        collector.counter_get(obs::METRIC_SESSION_CLEANUP_PERMANENT_FAILURES)
+            > permanent_failures_before,
+        "expected a permanent-failure metric increment"
+    );
+    assert_eq!(
+        collector.gauge_get(obs::METRIC_SESSION_CLEANUP_PENDING),
+        0,
+        "pending gauge should return to zero after giving up"
+    );
+}
+
+#[tokio::test]
 async fn should_cleanup_real_notice_domain_subscription_on_close() {
     // Arrange
     let family = RouteFamily::new(91);
@@ -866,4 +986,114 @@ async fn should_cleanup_real_queue_inflight_on_close() {
     );
 
     assert_queue_cleanup_admin_state(&admin_read_model, next_worker_session_id);
+}
+
+/// Fails cleanup forever for one session, and fails every other session
+/// exactly once before succeeding - so the retry worker keeps observing
+/// progress on other tickets while the stuck one never advances.
+struct StickySessionFailureSink {
+    stuck_session_id: u64,
+    seen_once: Mutex<std::collections::HashSet<u64>>,
+}
+
+impl StickySessionFailureSink {
+    fn new(stuck_session_id: u64) -> Self {
+        Self {
+            stuck_session_id,
+            seen_once: Mutex::new(std::collections::HashSet::new()),
+        }
+    }
+}
+
+impl MailboxSink for StickySessionFailureSink {
+    fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        let cleanup = envelope
+            .payload::<crate::runtime::SessionCleanup>()
+            .expect("cleanup payload");
+        if cleanup.session_id == self.stuck_session_id {
+            // A merely busy actor, not a dead one.
+            return Err(DeliveryError::Timeout);
+        }
+        if self.seen_once.lock().unwrap().insert(cleanup.session_id) {
+            return Err(DeliveryError::Timeout);
+        }
+        Ok(())
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
+#[tokio::test]
+async fn should_retry_stuck_cleanup_for_full_window_while_other_tickets_progress() {
+    // Arrange
+    // The give-up threshold is documented as ~2.3s of retrying,
+    // derived from an exponential backoff. That backoff is worker-global and
+    // is reset to its 10ms floor whenever *any other* ticket succeeds, so
+    // under normal session churn a stuck ticket must not be abandoned in a
+    // small fraction of the intended window.
+    let router = Arc::new(crate::runtime::Router::new());
+    let admin_read_model = AdminReadModel::new();
+    let ingress = Arc::new(make_cleanup_ingress(router.clone(), admin_read_model));
+    let stuck_session_id = 9_100;
+
+    for domain in DispatchDomain::SESSION_CLEANUP_ORDER {
+        if domain == DispatchDomain::Queue {
+            continue;
+        }
+        router.register_domain_pattern(domain.as_str(), Arc::new(CleanupTrackingSink::default()));
+    }
+    router.register_domain_pattern(
+        DispatchDomain::Queue.as_str(),
+        Arc::new(StickySessionFailureSink::new(stuck_session_id)),
+    );
+
+    let mut stuck = make_session_info(stuck_session_id, TransportKind::Tcp);
+    stuck.route_family = RouteFamily::new(91);
+    ingress.on_open(stuck).await.unwrap();
+    ingress
+        .on_close(stuck_session_id, CloseReason::ClientClose)
+        .await;
+    assert!(ingress
+        .pending_session_cleanups
+        .contains_key(&stuck_session_id));
+
+    // Act
+    // Keep other tickets flowing through the worker so `made_progress`
+    // resets the shared backoff on essentially every pass.
+    let churn_ingress = ingress.clone();
+    let churn = tokio::spawn(async move {
+        for index in 0..300_u64 {
+            let session_id = 9_200 + index;
+            let mut session = make_session_info(session_id, TransportKind::Tcp);
+            session.route_family = RouteFamily::new(91);
+            churn_ingress.on_open(session).await.unwrap();
+            churn_ingress
+                .on_close(session_id, CloseReason::ClientClose)
+                .await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    });
+
+    let started = std::time::Instant::now();
+    tokio::time::timeout(Duration::from_secs(15), async {
+        while ingress
+            .pending_session_cleanups
+            .contains_key(&stuck_session_id)
+        {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("stuck cleanup ticket should eventually be given up on");
+    let elapsed = started.elapsed();
+    churn.abort();
+
+    // Assert
+    assert!(
+        elapsed >= Duration::from_secs(1),
+        "stuck ticket abandoned after only {elapsed:?}; concurrent progress on other \
+         tickets must not collapse its retry window"
+    );
 }

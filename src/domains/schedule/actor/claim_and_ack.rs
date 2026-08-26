@@ -22,12 +22,82 @@ fn acknowledge_claim_batch<P: SchedulePersistence>(
     persistence.acknowledge_claims(family_id, claims, write_options)
 }
 
+/// One page of schedule definitions: entries, whether more remain, and the
+/// continuation cursor.
+pub(crate) type ScheduleListPage = (Arc<Vec<Arc<ScheduleListEntry>>>, bool, Option<String>);
+
+/// One page of schedule definitions plus the total definition count.
+pub(crate) type ScheduleListDefs = (Arc<Vec<Arc<ScheduleListEntry>>>, u64);
+
 impl ScheduleActor {
+    /// Longest run of entries starting at `start` that still fits one wire
+    /// frame, always at least one so a page makes forward progress.
+    ///
+    /// Every entry may be individually small and legal while the aggregate is
+    /// unencodable; without this the response is built, handed to the outbound
+    /// sink, and fails the TLV length assertion.
+    /// # Errors
+    ///
+    /// Returns the offending route when a single entry exceeds the ceiling on
+    /// its own. Creation now refuses such definitions, so this only covers
+    /// entries stored before that check existed. Forcing one into a page would
+    /// produce a response that cannot be framed and is silently dropped, so it
+    /// surfaces as an explicit, classifiable error naming the route instead.
+    ///
+    /// `continuation_reserve` charges each entry as if it might end up being
+    /// the last one on the page, so a caller whose page format re-encodes
+    /// that boundary entry's route a second time (e.g. `list_entries_v2`'s
+    /// continuation cursor, which duplicates `family_prefix + route`) does
+    /// not silently exceed the ceiling it already budgeted against. Callers
+    /// with no such duplication pass a reserve of zero.
+    fn bounded_page_len(
+        entries: &[Arc<ScheduleListEntry>],
+        start: usize,
+        take: usize,
+        continuation_reserve: impl Fn(&ScheduleListEntry) -> usize,
+    ) -> Result<usize, String> {
+        let ceiling =
+            crate::domains::schedule::list_wire_budget::schedule_list_response_byte_ceiling();
+        let mut used = 0usize;
+        let mut fitted = 0usize;
+        for entry in entries.iter().skip(start).take(take) {
+            let cost =
+                crate::domains::schedule::list_wire_budget::schedule_list_entry_wire_bytes(entry)
+                    .saturating_add(continuation_reserve(entry));
+            if cost > ceiling {
+                if fitted > 0 {
+                    // End the page here; the next page starts at the offending
+                    // entry and reports it.
+                    break;
+                }
+                return Err(format!(
+                    "schedule {} is {cost} wire bytes, exceeding the {ceiling}-byte limit a \
+                     list response can return",
+                    entry.route
+                ));
+            }
+            let next = used.saturating_add(cost);
+            if next > ceiling && fitted > 0 {
+                break;
+            }
+            used = next;
+            fitted = fitted.saturating_add(1);
+            if used > ceiling {
+                break;
+            }
+        }
+        Ok(fitted.max(1).min(take))
+    }
+
+    /// # Errors
+    ///
+    /// Returns the offending route when a stored definition is too large to
+    /// appear in any list response.
     pub fn list_entries_v2(
         &mut self,
         cursor: Option<&str>,
         limit: u64,
-    ) -> (Arc<Vec<Arc<ScheduleListEntry>>>, bool, Option<String>) {
+    ) -> Result<ScheduleListPage, String> {
         const MAX_LIMIT: usize = 1_000;
         let take = usize::try_from(limit)
             .unwrap_or(MAX_LIMIT)
@@ -39,48 +109,67 @@ impl ScheduleActor {
             .and_then(|value| value.strip_prefix(&family_prefix))
             .and_then(|value| ordered.iter().position(|entry| entry.route == value))
             .map_or(0, |index| index.saturating_add(1));
-        let end = start.saturating_add(take).min(ordered.len());
-        let entries = Arc::new(ordered[start.min(ordered.len())..end].to_vec());
+        let start = start.min(ordered.len());
+        let requested = start.saturating_add(take).min(ordered.len()) - start;
+        // Reserve room for the continuation field, which re-encodes
+        // `family_prefix + route` for whichever entry ends up last on the
+        // page - on top of that route already being counted once inside the
+        // entry itself.
+        let family_prefix_len = family_prefix.len();
+        let fitted = if requested == 0 {
+            0
+        } else {
+            Self::bounded_page_len(&ordered, start, requested, |entry| {
+                family_prefix_len.saturating_add(entry.route.len())
+            })?
+        };
+        let end = start.saturating_add(fitted);
+        let entries = Arc::new(ordered[start..end].to_vec());
         let has_more = end < ordered.len();
         let continuation = has_more.then(|| format!("{family_prefix}{}", ordered[end - 1].route));
-        (entries, has_more, continuation)
+        Ok((entries, has_more, continuation))
     }
 
     fn u64_to_usize_saturating(value: u64) -> usize {
         usize::try_from(value).unwrap_or(usize::MAX)
     }
 
-    pub fn list_entries(
-        &mut self,
-        offset: u64,
-        limit: u64,
-    ) -> (Arc<Vec<Arc<ScheduleListEntry>>>, u64) {
+    /// # Errors
+    ///
+    /// Returns the offending route when a stored definition is too large to
+    /// appear in any list response.
+    pub fn list_entries(&mut self, offset: u64, limit: u64) -> Result<ScheduleListDefs, String> {
         let total_count = self.schedules.len() as u64;
         let start = Self::u64_to_usize_saturating(offset);
         if start >= self.list_entries.len() {
-            return (Arc::new(Vec::new()), total_count);
+            return Ok((Arc::new(Vec::new()), total_count));
         }
 
         let remaining = self.list_entries.len() - start;
-        let take = if limit == 0 {
+        let requested = if limit == 0 {
             remaining
         } else {
             remaining.min(Self::u64_to_usize_saturating(limit))
         };
+        // `limit = 0` means "all remaining", so the caller's count cannot bound
+        // the response - only the wire budget can. Clients detect the short
+        // page by comparing entry count against `total_count` and continue
+        // from `offset`, which the V1 contract already supports.
+        let take = Self::bounded_page_len(&self.list_entries, start, requested, |_| 0)?;
 
         if start == 0 && take == self.list_entries.len() {
             if let Some(cache) = &self.list_cache {
-                return (cache.clone(), total_count);
+                return Ok((cache.clone(), total_count));
             }
             let cache = Arc::new(self.list_entries.clone());
             self.list_cache = Some(cache.clone());
-            return (cache, total_count);
+            return Ok((cache, total_count));
         }
 
-        (
+        Ok((
             Arc::new(self.list_entries[start..start + take].to_vec()),
             total_count,
-        )
+        ))
     }
 
     fn store_claims_for<'a>(

@@ -304,7 +304,7 @@ fn should_route_schedule_live_stats_through_actor_command() {
             subscriber: RouteAddress::new(family, Route::new("inbox://session/7")),
         },
     );
-    sink.insert_subscriptions_for_tests(family.as_u64(), subscriptions);
+    sink.insert_subscriptions_for_tests(family, subscriptions);
     sink.push_recent_acknowledgement_for_tests(now_epoch_ms());
     sink.set_live_publish_failures_for_tests(2);
     sink.set_ack_failures_for_tests(3);

@@ -13,6 +13,30 @@ pub(crate) use crate::dispatch::DomainEnvelopeBuildRequest;
 pub(crate) struct IngressDomainDescriptor {
     pub(super) manifest: &'static crate::runtime::DomainDescriptor,
     pub(super) unauthorized_error_code: u16,
+    /// Code returned when the domain did not answer before its deadline.
+    ///
+    /// Deliberately NOT a backpressure/"queue full" code. Those mean the
+    /// request was rejected without being accepted, so a client may safely
+    /// retry. A deadline expiry means the opposite: the command was already
+    /// enqueued and may still execute, so the outcome is unknown. Only queue
+    /// ACK is deduplicated, so an automatic retry of a SEND would enqueue the
+    /// message twice.
+    ///
+    /// Every value here must sit outside `REQ-PROTO-012`'s retryable set
+    /// (1004, 4005, 5001, 6001, 6002, 6003, 6004, 7010). Those codes tell a
+    /// compliant SDK the request was never accepted, which is the opposite of
+    /// what a deadline expiry means. Notably RPC uses its backend code rather
+    /// than `ERR_RPC_TIMEOUT`, which is documented retryable.
+    pub(super) indeterminate_error_code: u16,
+    /// Code returned when the domain mailbox stayed full and the command was
+    /// never enqueued.
+    ///
+    /// The opposite of `indeterminate_error_code`: nothing was accepted, so the
+    /// client may safely re-send. Every value here must be inside
+    /// `REQ-PROTO-012`'s retryable set, or a compliant client gives up on a
+    /// request it could have retried - the response message says "retry with
+    /// backoff", and a fatal code contradicts it.
+    pub(super) backpressure_error_code: u16,
     extract_auth_route: AuthRouteExtractor,
     build_request_envelope: RequestEnvelopeBuilder,
 }
@@ -105,42 +129,56 @@ static INGRESS_DOMAIN_DESCRIPTORS: [IngressDomainDescriptor; 7] = [
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Kv.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::kv::ERR_UNAUTHORIZED,
+        backpressure_error_code: crate::protocol::error_codes::kv::ERR_BUSY,
+        indeterminate_error_code: crate::protocol::error_codes::kv::ERR_BACKEND_ERROR,
         extract_auth_route: crate::protocol::kv_codec::extract_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
     },
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Queue.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::queue::ERR_UNAUTHORIZED,
+        backpressure_error_code: crate::protocol::error_codes::queue::ERR_QUEUE_FULL,
+        indeterminate_error_code: crate::protocol::error_codes::queue::ERR_BACKEND_ERROR,
         extract_auth_route: crate::protocol::queue_codec::extract_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
     },
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Notice.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::notice::ERR_UNAUTHORIZED,
+        backpressure_error_code: crate::protocol::error_codes::notice::ERR_BUSY,
+        indeterminate_error_code: crate::protocol::error_codes::notice::ERR_BACKEND_ERROR,
         extract_auth_route: crate::protocol::notice_codec::extract_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
     },
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Stream.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::stream::ERR_UNAUTHORIZED,
+        backpressure_error_code: crate::protocol::error_codes::stream::ERR_BUSY,
+        indeterminate_error_code: crate::protocol::error_codes::stream::ERR_BACKEND_ERROR,
         extract_auth_route: crate::protocol::stream_codec::extract_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
     },
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Rpc.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::rpc::ERR_UNAUTHORIZED,
+        backpressure_error_code: crate::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
+        indeterminate_error_code: crate::protocol::error_codes::rpc::ERR_BACKEND_ERROR,
         extract_auth_route: crate::protocol::rpc_codec::extract_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
     },
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Lease.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::lease::ERR_UNAUTHORIZED,
+        backpressure_error_code: crate::protocol::error_codes::lease::ERR_QUEUE_FULL,
+        indeterminate_error_code: crate::protocol::error_codes::lease::ERR_TIMEOUT,
         extract_auth_route: crate::protocol::lease_codec::extract_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
     },
     IngressDomainDescriptor {
         manifest: crate::runtime::DomainKind::Schedule.descriptor(),
         unauthorized_error_code: crate::protocol::error_codes::schedule::ERR_UNAUTHORIZED,
+        backpressure_error_code: crate::protocol::error_codes::schedule::ERR_BACKEND_ERROR,
+        indeterminate_error_code: crate::protocol::error_codes::schedule::ERR_TIMEOUT,
         extract_auth_route: crate::protocol::schedule_codec::extract_auth_route,
         build_request_envelope: crate::dispatch::build_request_envelope,
     },

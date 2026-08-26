@@ -454,11 +454,11 @@ fn should_invalidate_shared_full_list_cache_given_schedule_delete() {
             Bytes::from_static(b"second"),
         )
         .expect("create second schedule");
-    let (cached, _) = actor.list_entries(0, 0);
+    let (cached, _) = actor.list_entries(0, 0).expect("list entries");
 
     // Act
     actor.delete_schedule(first_route).expect("delete schedule");
-    let (refreshed, total_count) = actor.list_entries(0, 0);
+    let (refreshed, total_count) = actor.list_entries(0, 0).expect("list entries");
 
     // Assert
     assert_eq!(cached.len(), 2);
@@ -937,5 +937,208 @@ fn should_not_remove_schedule_given_cancel_persistence_failure() {
     assert!(
         actor.list_entries.iter().any(|e| e.route == route),
         "list index must still contain the route on cancel persist failure"
+    );
+}
+
+#[test]
+fn should_page_a_byte_bounded_list_to_completion_via_offset() {
+    // Arrange
+    // `limit=0` means "all remaining", but the response is still bounded by
+    // the wire frame and can therefore return fewer entries than exist. The
+    // wire format carries no `has_more` flag for canonical LIST, only
+    // `total_count` - so a client must detect truncation by comparing the
+    // returned entry count to `total_count` and continue with
+    // `offset += entries.len()`. This proves that procedure actually
+    // recovers every entry rather than stopping at the first partial page.
+    let mut actor = make_actor();
+    let payload = Bytes::from(vec![b'p'; 1024]);
+    let total = 300;
+    for index in 0..total {
+        actor
+            .create_schedule(
+                format!("schedule://acme/jobs/list-page-{index:04}/run"),
+                "* * * * *".to_string(),
+                payload.clone(),
+            )
+            .expect("create schedule");
+    }
+
+    // Act
+    let mut seen = std::collections::HashSet::new();
+    let mut offset = 0u64;
+    let mut pages = 0;
+    loop {
+        let (entries, total_count) = actor.list_entries(offset, 0).expect("list entries");
+        pages += 1;
+        assert!(pages < 50, "pagination must converge");
+        assert!(!entries.is_empty(), "each page must make forward progress");
+        for entry in entries.iter() {
+            seen.insert(entry.route.clone());
+        }
+        offset += u64::try_from(entries.len()).unwrap();
+        if offset >= total_count {
+            break;
+        }
+    }
+
+    // Assert
+    assert!(pages > 1, "1 KiB payloads must not fit in a single page");
+    assert_eq!(
+        seen.len(),
+        total,
+        "offset continuation must recover every entry"
+    );
+}
+
+#[test]
+fn should_bound_list_response_to_one_wire_frame() {
+    // Arrange
+    // A schedule LIST response is encoded into a single TLV value, whose
+    // length prefix is a u16. `limit = 0` means "all remaining", so a few
+    // hundred ordinary schedules with 1 KiB payloads produce a response far
+    // past 65_535 bytes - which panicked the outbound sink rather than
+    // paginating. Every entry here is individually small and legal; only the
+    // aggregate is oversized.
+    let mut actor = make_actor();
+    let payload = Bytes::from(vec![b'p'; 1024]);
+    for index in 0..250 {
+        actor
+            .create_schedule(
+                format!("schedule://acme/jobs/bulk-{index:04}/run"),
+                "* * * * *".to_string(),
+                payload.clone(),
+            )
+            .expect("create schedule");
+    }
+
+    // Act
+    let (entries, total_count) = actor.list_entries(0, 0).expect("list entries");
+    let payload_bytes = crate::dispatch::protocol::schedule_codec::encode_response(
+        701,
+        &crate::domains::schedule::ScheduleResponse::ListDefs {
+            entries: entries.clone(),
+            total_count,
+        },
+    );
+
+    // Assert
+    assert_eq!(total_count, 250, "every schedule must still be counted");
+    assert!(
+        u16::try_from(payload_bytes.len()).is_ok(),
+        "list response is {} bytes, past the {}-byte TLV value limit",
+        payload_bytes.len(),
+        u16::MAX
+    );
+    assert!(
+        !entries.is_empty(),
+        "the page must still make forward progress"
+    );
+    assert!(
+        entries.len() < 250,
+        "an oversized listing must be truncated into a page, not returned whole"
+    );
+}
+
+#[test]
+fn should_keep_list_v2_continuation_inside_one_wire_frame() {
+    // Arrange
+    // ListPage's continuation cursor duplicates the last returned route as a
+    // separate wire field (`family_prefix + route`), on top of that same
+    // route already being encoded once inside the entry itself. A page filled
+    // right up to the byte ceiling using only the entry's own cost therefore
+    // produces a response the continuation field pushes past u16::MAX - a
+    // legal definition can silently become unencodable purely because of
+    // where the page boundary happened to land.
+    let mut actor = make_actor();
+    // A payload sized so entries divide the ceiling with a small remainder,
+    // guaranteeing the last admitted entry sits close enough to the edge that
+    // only the (missing) continuation reserve decides whether it still fits.
+    // A long resource name so the duplicated continuation route (family
+    // prefix + this same route) meaningfully exceeds the fixed envelope
+    // margin - a short route would fit inside that margin's slack and the
+    // bug would not reproduce.
+    let long_resource = "x".repeat(400);
+    let route_for = |index: usize| format!("schedule://acme/jobs/{long_resource}-{index:04}/run");
+    let listable_ceiling =
+        crate::domains::schedule::list_wire_budget::schedule_list_response_byte_ceiling();
+    let probe_route = route_for(0);
+    let entry_fixed = crate::domains::schedule::list_wire_budget::schedule_list_entry_wire_bytes(
+        &crate::domains::schedule::ScheduleListEntry {
+            route: probe_route.clone(),
+            cron: "* * * * *".to_string(),
+            delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
+            payload: Bytes::new(),
+        },
+    );
+    let entries_per_page = 4;
+    let payload_len = (listable_ceiling / entries_per_page).saturating_sub(entry_fixed);
+    let payload = Bytes::from(vec![b'p'; payload_len]);
+    for index in 0..(entries_per_page * 2) {
+        actor
+            .create_schedule(route_for(index), "* * * * *".to_string(), payload.clone())
+            .expect("create schedule");
+    }
+
+    // Act
+    let (entries, has_more, continuation) = actor
+        .list_entries_v2(None, u64::try_from(entries_per_page * 2).unwrap())
+        .expect("list entries v2");
+
+    // Assert
+    let response_bytes = crate::dispatch::protocol::schedule_codec::encode_response(
+        720,
+        &crate::domains::schedule::ScheduleResponse::ListPage {
+            entries: entries.clone(),
+            has_more,
+            continuation,
+        },
+    );
+    assert!(
+        u16::try_from(response_bytes.len()).is_ok(),
+        "list_v2 page is {} bytes, past the {}-byte TLV value limit",
+        response_bytes.len(),
+        u16::MAX
+    );
+}
+
+#[test]
+fn should_reject_schedule_whose_definition_could_never_be_listed() {
+    // Arrange
+    // A CREATE arrives as one TLV value, so a payload can be ~140 bytes larger
+    // than a LIST entry for the same route can encode. Accepting one leaves a
+    // definition that is stored but permanently unlistable: the page cannot be
+    // framed, so the response is dropped rather than answered.
+    let mut actor = make_actor();
+    let route = "schedule://acme/jobs/unlistable/run";
+    let cron = "* * * * *";
+    let listable_ceiling =
+        crate::domains::schedule::list_wire_budget::schedule_list_response_byte_ceiling();
+    let probe = crate::domains::schedule::ScheduleListEntry {
+        route: route.to_string(),
+        cron: cron.to_string(),
+        delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
+        payload: Bytes::new(),
+    };
+    let entry_overhead =
+        crate::domains::schedule::list_wire_budget::schedule_list_entry_wire_bytes(&probe);
+    let largest_listable = listable_ceiling - entry_overhead;
+
+    // Act
+    let accepted = actor.create_schedule(
+        route.to_string(),
+        cron.to_string(),
+        Bytes::from(vec![b'p'; largest_listable]),
+    );
+    let rejected = actor.create_schedule(
+        "schedule://acme/jobs/unlistable-two/run".to_string(),
+        cron.to_string(),
+        Bytes::from(vec![b'p'; largest_listable + 1]),
+    );
+
+    // Assert
+    assert!(accepted.is_ok(), "a listable definition must be accepted");
+    assert!(
+        rejected.is_err(),
+        "a definition that could never be listed must be refused at create"
     );
 }

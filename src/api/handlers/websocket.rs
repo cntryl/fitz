@@ -51,6 +51,13 @@ fn bounded_websocket_config(max_frame_size: usize) -> WebSocketConfig {
         .max_frame_size(Some(max_frame_size))
 }
 
+fn cache_websocket_authentication(authenticated: &mut bool, lookup: impl FnOnce() -> bool) -> bool {
+    if !*authenticated {
+        *authenticated = lookup();
+    }
+    *authenticated
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_websocket(
     req: Request,
@@ -430,8 +437,15 @@ where
 {
     use futures_util::StreamExt;
     use hyper_tungstenite::tungstenite::Message;
+    let mut authenticated = false;
     loop {
-        let next_message = if context.session.info().authenticated {
+        let authentication_complete = cache_websocket_authentication(&mut authenticated, || {
+            context
+                .ingress
+                .get_session_info(context.session_id)
+                .is_some_and(|session| session.authenticated)
+        });
+        let next_message = if authentication_complete {
             ws_receiver.next().await
         } else {
             let remaining = context
@@ -546,8 +560,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        bounded_websocket_config, is_normal_websocket_disconnect, send_websocket_batch,
-        websocket_close_reason, websocket_origin_allowed, websocket_session_frame_error_reason,
+        bounded_websocket_config, cache_websocket_authentication, is_normal_websocket_disconnect,
+        send_websocket_batch, websocket_close_reason, websocket_origin_allowed,
+        websocket_session_frame_error_reason,
     };
     use crate::protocol::frame::ChannelId;
     use crate::session::{CloseReason, SessionError};
@@ -556,6 +571,24 @@ mod tests {
     use hyper_tungstenite::tungstenite::error::ProtocolError;
     use hyper_tungstenite::tungstenite::Error as WsError;
     use hyper_tungstenite::tungstenite::Message;
+
+    #[test]
+    fn should_stop_authentication_lookups_after_websocket_authenticates() {
+        // Arrange
+        let lookups = std::cell::Cell::new(0);
+        let mut authenticated = false;
+
+        // Act
+        for _ in 0..2 {
+            assert!(cache_websocket_authentication(&mut authenticated, || {
+                lookups.set(lookups.get() + 1);
+                true
+            }));
+        }
+
+        // Assert
+        assert_eq!(lookups.get(), 1);
+    }
 
     #[test]
     fn should_treat_websocket_backpressure_as_terminal_session_error() {
