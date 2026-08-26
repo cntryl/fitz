@@ -179,6 +179,29 @@ impl AdminReadModel {
         collect_slice_matches(&transactions, |item| matches_realm(realm, &item.realm))
     }
 
+    pub(crate) fn kv_transaction_count(&self) -> usize {
+        self.kv_transactions.read().len()
+    }
+
+    pub(crate) fn kv_transaction_count_for_resource(
+        &self,
+        route_family: u64,
+        realm: &str,
+        area: &str,
+        resource: &str,
+    ) -> usize {
+        self.kv_transactions
+            .read()
+            .iter()
+            .filter(|transaction| {
+                transaction.route_family == route_family
+                    && transaction.realm == realm
+                    && transaction.area == area
+                    && transaction.resource == resource
+            })
+            .count()
+    }
+
     pub fn replace_streams(&self, streams: Vec<StreamInfo>) {
         *self.streams.write() = streams;
     }
@@ -791,6 +814,31 @@ mod tests {
         // Assert
         assert_eq!(transactions.len(), 1);
         assert_eq!(transactions[0].resource, "orders");
+    }
+
+    #[test]
+    fn should_count_kv_transactions_without_materializing_snapshots() {
+        // Arrange
+        let read_model = AdminReadModel::default();
+        for (tx_id, resource) in [(41, "users"), (42, "users"), (43, "orders")] {
+            read_model.upsert_kv_transaction(KvTransaction::snapshot(
+                1,
+                tx_id,
+                7,
+                "acme",
+                "app",
+                resource,
+                "2026-03-31T00:00:00Z",
+            ));
+        }
+
+        // Act
+        let total = read_model.kv_transaction_count();
+        let users = read_model.kv_transaction_count_for_resource(1, "acme", "app", "users");
+
+        // Assert
+        assert_eq!(total, 3);
+        assert_eq!(users, 2);
     }
 
     #[test]

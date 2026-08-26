@@ -155,6 +155,20 @@ mismatch counter.
 actor already gets its own processing thread, so the argument had no effect;
 call `Scheduler::new()`.
 
+## Removed KV Authorization And Metrics Facades
+
+The public `fitz::domains::kv::SessionActor` authorization helper has been
+removed. Send KV frames through runtime ingress, which authorizes BEGIN against
+the exact `kv://{realm}/{area}/{resource}` route and keeps subsequent
+transaction operations session-owned. Direct state-machine tests may continue
+to use `fitz::domains::kv::KvActor`, but application authorization must not be
+reimplemented around it.
+
+The public `fitz::domains::kv::KvMetrics` path has also been removed. Configure
+KV metrics through `KvDomainSink::with_metrics` before registering the sink with
+the router. The consuming configuration method rebuilds the sink's private
+actor and returns the configured sink.
+
 ## Breaking: Single-Generation Storage Formats
 
 **This upgrade cannot read any store written by an earlier broker.** Every

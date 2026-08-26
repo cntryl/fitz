@@ -1,3 +1,5 @@
+//! Borrowed classification of Midge failures into KV protocol errors.
+
 use super::KvActor;
 use crate::domains::kv::KvError;
 
@@ -9,9 +11,8 @@ impl KvActor {
     /// and a permanent fault, so anything storage states explicitly must be
     /// honoured explicitly - otherwise a bounded storage timeout is reported
     /// to the client as a permanent backend failure.
-    #[allow(clippy::needless_pass_by_value)]
-    pub(super) fn map_midge_error(error: cntryl_midge::MidgeError) -> KvError {
-        match &error {
+    pub(super) fn map_midge_error(error: &cntryl_midge::MidgeError) -> KvError {
+        match error {
             cntryl_midge::MidgeError::Timeout(_) | cntryl_midge::MidgeError::Busy(_) => {
                 KvError::BackendUnavailable(error.to_string())
             }

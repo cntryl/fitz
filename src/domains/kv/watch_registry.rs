@@ -1,16 +1,18 @@
+//! Per-family ephemeral KV watch subscription state.
+
 use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 use crate::runtime::matcher::Pattern;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-pub struct KvWatchActor {
+pub(crate) struct KvWatchRegistry {
     family_id: RouteFamily,
     subscriptions: RoutedSubscriptionSet<KvWatchSubscription>,
     next_sub_id: AtomicU64,
 }
 
 #[derive(Clone)]
-pub struct KvWatchTarget {
+pub(crate) struct KvWatchTarget {
     pub session_id: u64,
     pub subscription_id: u64,
     pub subscriber: RouteAddress,
@@ -37,9 +39,9 @@ impl RoutedSubscription for KvWatchSubscription {
     }
 }
 
-impl KvWatchActor {
+impl KvWatchRegistry {
     #[must_use]
-    pub fn new(family_id: RouteFamily) -> Self {
+    pub(crate) fn new(family_id: RouteFamily) -> Self {
         Self {
             family_id,
             subscriptions: RoutedSubscriptionSet::new(),
@@ -51,7 +53,7 @@ impl KvWatchActor {
     ///
     /// Returns `KvError::SubscriptionLimit` when a new wildcard registration
     /// would exceed the per-session wildcard quota.
-    pub fn subscribe(
+    pub(crate) fn subscribe(
         &mut self,
         session_id: u64,
         pattern: Pattern,
@@ -88,28 +90,28 @@ impl KvWatchActor {
         Ok(subscription_id)
     }
 
-    pub fn unsubscribe(&mut self, session_id: u64, pattern: &str) -> usize {
+    pub(crate) fn unsubscribe(&mut self, session_id: u64, pattern: &str) -> usize {
         self.subscriptions
             .remove_session_pattern(self.family_id, session_id, pattern)
     }
 
-    pub fn remove_session(&mut self, session_id: u64) -> usize {
+    pub(crate) fn remove_session(&mut self, session_id: u64) -> usize {
         self.subscriptions
             .remove_session(self.family_id, session_id)
     }
 
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.subscriptions.is_empty()
     }
 
     #[must_use]
-    pub fn subscription_count(&self) -> usize {
+    pub(crate) fn subscription_count(&self) -> usize {
         self.subscriptions.subscription_count()
     }
 
     #[must_use]
-    pub fn matching_targets(&self, route: &Route) -> Vec<KvWatchTarget> {
+    pub(crate) fn matching_targets(&self, route: &Route) -> Vec<KvWatchTarget> {
         let mut targets =
             Vec::with_capacity(self.subscriptions.matching_capacity_hint(route.as_str()));
         self.subscriptions.for_each_matching_route(
@@ -128,27 +130,5 @@ impl KvWatchActor {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn should_remove_watch_session_subscriptions_on_cleanup() {
-        // Arrange
-        let family = RouteFamily::new(1);
-        let mut actor = KvWatchActor::new(family);
-        let route = RouteAddress::new(family, Route::new("inbox://session/7"));
-        actor
-            .subscribe(7, Pattern::new("kv://acme/app/users"), route.clone())
-            .expect("subscribe users");
-        actor
-            .subscribe(7, Pattern::new("kv://acme/app/orders"), route)
-            .expect("subscribe orders");
-
-        // Act
-        let removed = actor.remove_session(7);
-
-        // Assert
-        assert_eq!(removed, 2);
-        assert!(actor.is_empty());
-    }
-}
+#[path = "tests/watch_registry.rs"]
+mod tests;

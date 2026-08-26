@@ -20,12 +20,11 @@ mod subscription_frames;
 
 impl MailboxSink for StreamDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        if !self.actor.is_running()
-            || self
-                .family_runtime
-                .as_ref()
-                .is_some_and(|runtime| !runtime.is_running())
-        {
+        // Family liveness is gated per-family inside `try_enqueue` below
+        // (`FamilyActorPoolRuntime::is_family_running`) -- a panic scoped to
+        // one route family must not reject delivery to every other family
+        // sharing this pool.
+        if !self.actor.is_running() {
             return Err(DeliveryError::ActorStopped);
         }
 

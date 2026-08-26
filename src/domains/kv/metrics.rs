@@ -1,3 +1,5 @@
+//! KV request, outcome, latency, and live-state metric collection.
+
 use crate::observability::metrics::{DomainMetricSet, MetricsCollector};
 use std::time::Instant;
 
@@ -10,13 +12,13 @@ pub const METRIC_SUBSCRIPTIONS_GAUGE: &str = "fitz_kv_subscriptions_gauge";
 pub const METRIC_NOTIFY_DROPS_TOTAL: &str = "fitz_kv_notify_drops_total";
 
 #[derive(Clone)]
-pub struct KvMetrics {
+pub(crate) struct KvMetrics {
     metrics: DomainMetricSet,
 }
 
 impl KvMetrics {
     #[must_use]
-    pub fn new(collector: MetricsCollector) -> Self {
+    pub(crate) fn new(collector: MetricsCollector) -> Self {
         Self {
             metrics: DomainMetricSet::new(
                 collector,
@@ -29,27 +31,27 @@ impl KvMetrics {
     }
 
     #[must_use]
-    pub fn record_request_start(&self) -> Instant {
+    pub(crate) fn record_request_start(&self) -> Instant {
         self.metrics.record_request_start()
     }
 
-    pub fn record_success(&self, started_at: Instant) {
+    pub(crate) fn record_success(&self, started_at: Instant) {
         self.metrics.record_success(started_at);
     }
 
-    pub fn record_failure(&self, started_at: Instant) {
+    pub(crate) fn record_failure(&self, started_at: Instant) {
         self.metrics.record_failure(started_at);
     }
 
-    pub fn counter_inc(&self, name: &str) {
+    pub(crate) fn counter_inc(&self, name: &str) {
         self.metrics.counter_inc(name);
     }
 
-    pub fn set_active_transactions(&self, count: usize) {
+    pub(crate) fn set_active_transactions(&self, count: usize) {
         self.metrics.gauge_set(METRIC_ACTIVE_GAUGE, count as u64);
     }
 
-    pub fn set_subscription_count(&self, count: usize) {
+    pub(crate) fn set_subscription_count(&self, count: usize) {
         self.metrics
             .gauge_set(METRIC_SUBSCRIPTIONS_GAUGE, count as u64);
     }

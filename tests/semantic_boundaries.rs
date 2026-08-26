@@ -288,6 +288,39 @@ fn should_keep_shadow_notice_surface_removed() {
 }
 
 #[test]
+fn should_keep_shadow_kv_session_surface_removed() {
+    // Arrange
+    let repo_root = repo_root();
+    let kv_dir = repo_root.join("src").join("domains").join("kv");
+    let kv_mod = read_source_file(&kv_dir.join("mod.rs"));
+    let forbidden_exports = [
+        "\npub mod session;",
+        "\npub(crate) mod session;",
+        "\npub use session::SessionActor;",
+        "\npub use metrics::KvMetrics;",
+    ];
+
+    // Act
+    let mut violations = forbidden_exports
+        .iter()
+        .filter(|forbidden| kv_mod.contains(**forbidden))
+        .map(|forbidden| format!("src/domains/kv/mod.rs exposes `{}`", forbidden.trim()))
+        .collect::<Vec<_>>();
+    for relative in ["src/domains/kv/session.rs", "tests/kv_basics.rs"] {
+        if repo_root.join(relative).exists() {
+            violations.push(format!("{relative} retains the shadow KV session surface"));
+        }
+    }
+    let report = format_violation_report(&violations);
+
+    // Assert
+    assert!(
+        report.is_empty(),
+        "shadow KV SessionActor and public metrics facade must stay absent:\n{report}"
+    );
+}
+
+#[test]
 fn should_keep_notice_family_state_key_type_safe() {
     // Arrange
     let repo_root = repo_root();
@@ -902,23 +935,26 @@ fn should_keep_schedule_design_seams_explicit() {
 fn should_complete_reopened_kv_plus_lease_design_criteria() {
     // Arrange
     let root = repo_root().join("src/domains");
-    let kv_domain = read_source_file(&root.join("kv/sink/domain_sink_impl.rs"));
-    let kv_mailbox = read_source_file(&root.join("kv/sink/mailbox_sink_impl.rs"));
+    let kv_admin = read_source_file(&root.join("kv/sink/admin/inventory.rs"));
+    let kv_operations = read_source_file(&root.join("kv/sink/operations.rs"));
+    let kv_transactions = read_source_file(&root.join("kv/sink/transactions.rs"));
     let lease_expiry = read_source_file(&root.join("lease/sink/domain_sink_impl/expiry.rs"));
     let lease_mailbox = read_source_file(&root.join("lease/sink/mailbox_sink_impl.rs"));
 
     // Act
     let violations = [
         (
-            !kv_domain.contains("use crate::domains::kv::KvActor;")
-                || kv_domain.contains("crate::domains::kv::KvActor::"),
+            !kv_admin.contains("use crate::domains::kv::KvActor;")
+                || kv_admin.contains("crate::domains::kv::KvActor::"),
             "KV domain actor import cleanup",
         ),
         (
-            !kv_mailbox.contains("use crate::domains::kv::{KvActor, KvError, KvResponse};")
-                || ["KvActor", "KvError", "KvResponse"]
+            !kv_operations.contains("use crate::domains::kv::KvActor;")
+                || kv_operations.contains("crate::domains::kv::KvActor::")
+                || !kv_transactions.contains("use crate::domains::kv::{KvError, KvResponse};")
+                || ["KvError", "KvResponse"]
                     .iter()
-                    .any(|name| kv_mailbox.contains(&format!("crate::domains::kv::{name}"))),
+                    .any(|name| kv_transactions.contains(&format!("crate::domains::kv::{name}"))),
             "KV mailbox imports cleanup",
         ),
         (

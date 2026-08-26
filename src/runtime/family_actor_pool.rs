@@ -270,14 +270,23 @@ pub struct FamilyActorShard<M> {
 ///
 /// The pool itself only owns bounded channels. This wrapper owns one worker
 /// thread per shard and creates one state value per provisioned family on that
-/// worker. A handler panic fails the pool closed and drops the message that
-/// triggered it; callers observe `ActorStopped` through the bounded edge.
+/// worker. A handler panic fails *that family* closed and drops the message
+/// that triggered it; callers observe `ActorStopped` through the bounded edge
+/// for that family only. Route families are a hard isolation boundary
+/// (`RouteFamily`, `docs/development/domain-boundaries-spec.md`), so a panic
+/// scoped to one family must never make the pool unusable for the others it
+/// multiplexes (see `should_keep_sibling_family_running_after_a_family_actor_panics`).
+/// The one exception is a shard receiving work for a family it was never
+/// constructed with, which cannot happen under correct routing; that remains
+/// a pool-fatal condition since it indicates a routing/config bug rather than
+/// a per-family runtime fault.
 pub struct FamilyActorPoolRuntime<M: Send + 'static> {
     ingress: FamilyActorIngress<M>,
     active: Arc<AtomicBool>,
     running: Arc<AtomicBool>,
     failed: Arc<AtomicBool>,
     panic_count: Arc<AtomicU64>,
+    family_failed: Arc<HashMap<u32, AtomicBool>>,
     join_handles: parking_lot::Mutex<Vec<thread::JoinHandle<()>>>,
 }
 
@@ -298,10 +307,55 @@ impl<M: Send + 'static> FamilyActorPoolRuntime<M> {
     /// retaining a small, synchronous dispatch surface.
     #[must_use]
     pub fn spawn<S, F, H>(
+        pool: FamilyActorPool<M>,
+        active: Arc<AtomicBool>,
+        state_factory: F,
+        handler: H,
+    ) -> Self
+    where
+        S: Send + 'static,
+        F: Fn(RouteFamily) -> S + Send + Sync + 'static,
+        H: Fn(&mut S, RouteFamily, FamilyActorLane, M) + Send + Sync + 'static,
+    {
+        Self::spawn_inner(pool, active, state_factory, handler, None)
+    }
+
+    /// Like [`Self::spawn`], but increments `family_failed_metric` once per
+    /// route family whose handler panics and fails closed.
+    ///
+    /// A per-family failure deliberately does not flip domain-wide
+    /// health/liveness (that would reintroduce the very blast-radius bug this
+    /// isolation exists to prevent), so this counter is the only
+    /// operator-visible signal for a permanently degraded family/realm —
+    /// without it, such a failure is observable only via a log line.
+    #[must_use]
+    pub fn spawn_with_family_failed_metric<S, F, H>(
+        pool: FamilyActorPool<M>,
+        active: Arc<AtomicBool>,
+        state_factory: F,
+        handler: H,
+        family_failed_metric: &'static str,
+    ) -> Self
+    where
+        S: Send + 'static,
+        F: Fn(RouteFamily) -> S + Send + Sync + 'static,
+        H: Fn(&mut S, RouteFamily, FamilyActorLane, M) + Send + Sync + 'static,
+    {
+        Self::spawn_inner(
+            pool,
+            active,
+            state_factory,
+            handler,
+            Some(family_failed_metric),
+        )
+    }
+
+    fn spawn_inner<S, F, H>(
         mut pool: FamilyActorPool<M>,
         active: Arc<AtomicBool>,
         state_factory: F,
         handler: H,
+        family_failed_metric: Option<&'static str>,
     ) -> Self
     where
         S: Send + 'static,
@@ -312,6 +366,13 @@ impl<M: Send + 'static> FamilyActorPoolRuntime<M> {
         let running = Arc::new(AtomicBool::new(true));
         let failed = Arc::new(AtomicBool::new(false));
         let panic_count = Arc::new(AtomicU64::new(0));
+        let family_failed: Arc<HashMap<u32, AtomicBool>> = Arc::new(
+            ingress
+                .families()
+                .into_iter()
+                .map(|family| (family.id(), AtomicBool::new(false)))
+                .collect(),
+        );
         let state_factory = Arc::new(state_factory);
         let handler = Arc::new(handler);
         let mut join_handles = Vec::with_capacity(pool.shard_count());
@@ -329,6 +390,8 @@ impl<M: Send + 'static> FamilyActorPoolRuntime<M> {
             let worker_running = running.clone();
             let worker_failed = failed.clone();
             let worker_panic_count = panic_count.clone();
+            let worker_family_failed = family_failed.clone();
+            let worker_family_failed_metric = family_failed_metric;
             let worker_handler = handler.clone();
             let worker_ingress = ingress.clone();
             join_handles.push(thread::spawn(move || {
@@ -343,6 +406,10 @@ impl<M: Send + 'static> FamilyActorPoolRuntime<M> {
                     };
 
                     let Some(state) = family_states.get_mut(&work.family.id()) else {
+                        // Work for a family this shard was never constructed
+                        // with is a routing/config bug, not a per-family
+                        // runtime fault -- it should never happen under
+                        // correct routing, so it stays pool-fatal.
                         worker_panic_count.fetch_add(1, Ordering::Relaxed);
                         worker_failed.store(true, Ordering::Release);
                         worker_active.store(false, Ordering::Release);
@@ -354,20 +421,42 @@ impl<M: Send + 'static> FamilyActorPoolRuntime<M> {
                         break;
                     };
 
+                    if worker_family_failed
+                        .get(&work.family.id())
+                        .is_some_and(|flag| flag.load(Ordering::Acquire))
+                    {
+                        // This family already failed closed after an earlier
+                        // handler panic. Drop the message without invoking
+                        // the handler again -- the reply sender embedded in
+                        // `work.message` is dropped here, which callers
+                        // observe as `ActorStopped` via `reply_wait`, not a
+                        // hang. Sibling families keep being drained below.
+                        tracing::warn!(
+                            family = work.family.id(),
+                            "dropping work for a family that already failed closed"
+                        );
+                        continue;
+                    }
+
                     if std::panic::catch_unwind(AssertUnwindSafe(|| {
                         worker_handler(state, work.family, work.lane, work.message);
                     }))
                     .is_err()
                     {
                         worker_panic_count.fetch_add(1, Ordering::Relaxed);
-                        worker_failed.store(true, Ordering::Release);
-                        worker_active.store(false, Ordering::Release);
-                        worker_ingress.wake_all();
+                        if let Some(flag) = worker_family_failed.get(&work.family.id()) {
+                            flag.store(true, Ordering::Release);
+                        }
+                        if let Some(metric) = worker_family_failed_metric {
+                            crate::observability::counter_inc(metric);
+                        }
                         tracing::error!(
                             family = work.family.id(),
-                            "family actor failed closed after handler panic"
+                            "family actor failed closed for this family after handler panic"
                         );
-                        break;
+                        // Do not break and do not touch the pool-wide flags:
+                        // sibling families on this shard, and every other
+                        // shard, must keep making progress.
                     }
                 }
                 worker_running.store(false, Ordering::Release);
@@ -380,6 +469,7 @@ impl<M: Send + 'static> FamilyActorPoolRuntime<M> {
             running,
             failed,
             panic_count,
+            family_failed,
             join_handles: parking_lot::Mutex::new(join_handles),
         }
     }
@@ -401,7 +491,7 @@ impl<M: Send + 'static> FamilyActorPoolRuntime<M> {
         lane: FamilyActorLane,
         message: M,
     ) -> Result<(), FamilyActorEnqueueError> {
-        if !self.is_running() {
+        if !self.is_family_running(family) {
             return Err(FamilyActorEnqueueError::ActorStopped);
         }
         self.ingress.try_enqueue(family, lane, message)
@@ -412,6 +502,21 @@ impl<M: Send + 'static> FamilyActorPoolRuntime<M> {
         self.active.load(Ordering::Acquire)
             && self.running.load(Ordering::Acquire)
             && !self.failed.load(Ordering::Acquire)
+    }
+
+    /// Whether `family` is still accepting work.
+    ///
+    /// This is `false` for a family whose handler has panicked (fail-closed
+    /// for that family only) or when the whole pool has stopped/failed. An
+    /// unprovisioned family is not tracked here; `try_enqueue` rejects it
+    /// separately as `UnknownFamily` via the ingress family lookup.
+    #[must_use]
+    pub fn is_family_running(&self, family: RouteFamily) -> bool {
+        self.is_running()
+            && !self
+                .family_failed
+                .get(&family.id())
+                .is_some_and(|flag| flag.load(Ordering::Acquire))
     }
 
     #[must_use]
@@ -865,6 +970,85 @@ mod tests {
     }
 
     #[test]
+    fn should_keep_sibling_family_running_after_a_family_actor_panics() {
+        // Arrange: enough families that at least two are forced onto the
+        // *same* shard thread by pigeonhole (shard count is capped at
+        // available parallelism, `should_cap_shards_at_provisioned_family_count`).
+        // This proves in-shard isolation -- that the shard's drain loop
+        // `continue`s past a panicking family rather than starving or
+        // breaking for its thread-mates -- not just cross-shard isolation,
+        // which two families alone could pass trivially on any multi-core
+        // host. This mirrors production, where one
+        // `RpcDomainSink`/`StreamDomainSink` multiplexes every provisioned
+        // realm/route family onto one `FamilyActorPoolRuntime`
+        // (see `src/boot/domains.rs`).
+        let shard_count = shard_count_for_family_count(usize::MAX);
+        let family_count = shard_count + 1;
+        let families = (1..=family_count)
+            .map(|id| family(u32::try_from(id).expect("test family fits")))
+            .collect::<Vec<_>>();
+        let (panicking, sibling) = families
+            .iter()
+            .copied()
+            .enumerate()
+            .find_map(|(index, candidate)| {
+                families[index + 1..]
+                    .iter()
+                    .copied()
+                    .find(|&other| {
+                        family_shard_affinity(candidate, shard_count)
+                            == family_shard_affinity(other, shard_count)
+                    })
+                    .map(|other| (candidate, other))
+            })
+            .expect("pigeonhole guarantees a same-shard pair");
+
+        let pool = FamilyActorPool::<u64>::new(&families).expect("pool");
+        let active = Arc::new(AtomicBool::new(true));
+        let (observed_tx, observed_rx) = bounded::<u64>(4);
+        let runtime = FamilyActorPoolRuntime::spawn(
+            pool,
+            active,
+            |_| (),
+            move |(), target_family, _lane, message: u64| {
+                if target_family == panicking {
+                    panic!("injected handler panic for a same-shard family");
+                }
+                if target_family == sibling {
+                    observed_tx.send(message).expect("sibling observer");
+                }
+            },
+        );
+
+        // Act: trigger the panic and wait for that family to fail closed.
+        runtime
+            .try_enqueue(panicking, FamilyActorLane::Normal, 1)
+            .expect("panicking family enqueue");
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while runtime
+            .try_enqueue(panicking, FamilyActorLane::Normal, 99)
+            .is_ok()
+            && std::time::Instant::now() < deadline
+        {
+            thread::yield_now();
+        }
+
+        // Assert: a family sharing the same shard thread as the panicking
+        // one must keep accepting and processing work. A fault confined to
+        // one route family/realm must not make the domain unusable for
+        // every other family multiplexed onto the same worker thread.
+        runtime
+            .try_enqueue(sibling, FamilyActorLane::Normal, 42)
+            .expect("a same-shard sibling family must keep accepting work after a panic");
+        assert_eq!(
+            observed_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("a same-shard sibling family must keep making progress after a panic"),
+            42
+        );
+    }
+
+    #[test]
     fn should_reject_new_work_given_failed_family_actor() {
         // Arrange
         let pool = FamilyActorPool::<u64>::new(&[family(1)]).expect("pool");
@@ -888,12 +1072,15 @@ mod tests {
             .recv_timeout(Duration::from_secs(1))
             .expect("handler started");
         let deadline = std::time::Instant::now() + Duration::from_secs(1);
-        while runtime.is_running() && std::time::Instant::now() < deadline {
+        while runtime.is_family_running(family(1)) && std::time::Instant::now() < deadline {
             thread::yield_now();
         }
 
-        // Assert
-        assert!(!runtime.is_running());
+        // Assert: this single family is fail-closed, but -- unlike the old
+        // pool-wide behavior -- the pool itself stays up, since a lone
+        // panicking family must not be conflated with the whole pool dying.
+        assert!(!runtime.is_family_running(family(1)));
+        assert!(runtime.is_running());
         assert_eq!(
             runtime.try_enqueue(family(1), FamilyActorLane::Normal, 2),
             Err(FamilyActorEnqueueError::ActorStopped)

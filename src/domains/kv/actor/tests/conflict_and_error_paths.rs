@@ -503,7 +503,7 @@ fn should_classify_storage_timeout_as_backend_unavailable() {
     );
 
     // Act
-    let classification = KvActor::map_midge_error(error);
+    let classification = KvActor::map_midge_error(&error);
 
     // Assert
     assert!(

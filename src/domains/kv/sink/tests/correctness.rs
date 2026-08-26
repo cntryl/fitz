@@ -251,7 +251,7 @@ fn should_reject_invalid_admin_inventory_route_family_without_panicking() {
     let sink = new_correctness_sink(Arc::new(Router::new()));
 
     // Act
-    let result = sink.state.runtime().admin_inventory_for_family(u64::MAX);
+    let result = sink.admin_inventory_for_family_for_tests(u64::MAX);
 
     // Assert
     assert_eq!(
@@ -388,5 +388,5 @@ fn should_reject_kv_subscription_before_allocating_family_state() {
         decode_error_code(&response.payload),
         error_codes::kv::ERR_INVALID_SUBSCRIPTION_PATTERN
     );
-    assert!(sink.watch_actors_are_empty_for_tests());
+    assert!(sink.watch_registries_are_empty_for_tests());
 }

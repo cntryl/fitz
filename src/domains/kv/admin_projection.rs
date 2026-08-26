@@ -1,7 +1,10 @@
+//! Live KV transaction and latency projection for the admin read model.
+
 use crate::control::admin::read_model::AdminReadModel;
 use crate::control::admin::{KvLatencySnapshot, KvTransaction};
 use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
+#[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -35,6 +38,8 @@ impl KvRollingLatency {
         let mut samples = self.samples.iter().copied().collect::<Vec<_>>();
         samples.sort_by(f64::total_cmp);
         let sum = samples.iter().sum::<f64>();
+        // Nearest-rank p95 is one-based: ceil(n * 0.95), converted back to a
+        // zero-based index after saturating arithmetic keeps small samples safe.
         let p95_index = samples
             .len()
             .saturating_mul(95)
@@ -60,26 +65,31 @@ struct KvResourceLatency {
 /// Applies live transaction changes incrementally and can rebuild the complete
 /// admin read model snapshot when reconciliation is requested.
 /// Projection failure must never affect domain correctness.
-pub struct KvAdminProjection {
+pub(crate) struct KvAdminProjection {
     read_model: Arc<AdminReadModel>,
+    #[cfg(test)]
     dirty: AtomicBool,
     latencies: Mutex<HashMap<KvResourceLockKey, KvResourceLatency>>,
 }
 
 impl KvAdminProjection {
-    pub fn new(read_model: Arc<AdminReadModel>) -> Self {
+    #[must_use]
+    pub(crate) fn new(read_model: Arc<AdminReadModel>) -> Self {
         Self {
             read_model,
+            #[cfg(test)]
             dirty: AtomicBool::new(false),
             latencies: Mutex::new(HashMap::new()),
         }
     }
 
-    pub fn mark_dirty(&self) {
+    #[cfg(test)]
+    pub(crate) fn mark_dirty(&self) {
         self.dirty.store(true, Ordering::Relaxed);
     }
 
-    pub fn refresh_if_dirty<F>(&self, build_transactions: F)
+    #[cfg(test)]
+    pub(crate) fn refresh_if_dirty<F>(&self, build_transactions: F)
     where
         F: FnOnce() -> Vec<KvTransaction>,
     {
@@ -89,24 +99,24 @@ impl KvAdminProjection {
         }
     }
 
-    pub fn upsert_transaction(&self, transaction: KvTransaction) {
+    pub(crate) fn upsert_transaction(&self, transaction: KvTransaction) {
         self.read_model.upsert_kv_transaction(transaction);
     }
 
-    pub fn remove_transaction(&self, session_id: u64, tx_id: u64) {
+    pub(crate) fn remove_transaction(&self, session_id: u64, tx_id: u64) {
         self.read_model.remove_kv_transaction(session_id, tx_id);
     }
 
-    pub fn remove_session_transactions(&self, session_id: u64) {
+    pub(crate) fn remove_session_transactions(&self, session_id: u64) {
         self.read_model
             .remove_kv_transactions_for_session(session_id);
     }
 
-    pub fn active_transaction_count(&self) -> usize {
-        self.read_model.kv_transactions(None).len()
+    pub(crate) fn active_transaction_count(&self) -> usize {
+        self.read_model.kv_transaction_count()
     }
 
-    pub fn active_transactions_for_resource(
+    pub(crate) fn active_transactions_for_resource(
         &self,
         family_id: u64,
         realm: &str,
@@ -114,15 +124,7 @@ impl KvAdminProjection {
         resource: &str,
     ) -> usize {
         self.read_model
-            .kv_transactions(None)
-            .into_iter()
-            .filter(|transaction| {
-                transaction.route_family == family_id
-                    && transaction.realm == realm
-                    && transaction.area == area
-                    && transaction.resource == resource
-            })
-            .count()
+            .kv_transaction_count_for_resource(family_id, realm, area, resource)
     }
 
     pub(crate) fn record_read_latency(&self, key: &KvResourceLockKey, latency_ms: f64) {
@@ -156,47 +158,5 @@ impl KvAdminProjection {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn should_refresh_projection_when_marked_dirty() {
-        // Arrange
-        let read_model = AdminReadModel::new();
-        let projection = KvAdminProjection::new(read_model.clone());
-        projection.mark_dirty();
-
-        // Act
-        projection.refresh_if_dirty(|| {
-            vec![KvTransaction::snapshot(
-                1,
-                41,
-                7,
-                "acme",
-                "app",
-                "users",
-                "2026-07-01T00:00:00Z",
-            )]
-        });
-
-        // Assert
-        assert_eq!(read_model.kv_transactions(None).len(), 1);
-    }
-
-    #[test]
-    fn should_record_projection_latency_by_operation_kind() {
-        // Arrange
-        let read_model = AdminReadModel::new();
-        let projection = KvAdminProjection::new(read_model);
-        let key = KvResourceLockKey::new(1, "acme", "app", "users");
-
-        // Act
-        projection.record_write_latency(&key, 5.0);
-        projection.record_read_latency(&key, 3.0);
-        let (reads, writes) = projection.latency_snapshots(&key);
-
-        // Assert
-        assert!((reads.avg_ms - 3.0).abs() < f64::EPSILON);
-        assert!((writes.avg_ms - 5.0).abs() < f64::EPSILON);
-    }
-}
+#[path = "tests/admin_projection.rs"]
+mod tests;

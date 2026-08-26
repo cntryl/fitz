@@ -83,66 +83,69 @@ impl RpcDomainSink {
         let pool = crate::runtime::FamilyActorPool::new(families)
             .map_err(|error| format!("create RPC family actor pool: {error}"))?;
         let core_for_factory = core.clone();
-        Ok(crate::runtime::FamilyActorPoolRuntime::spawn(
-            pool,
-            active.clone(),
-            move |family| Self::family_core_for(&core_for_factory, family),
-            move |core, family, _lane, command| {
-                let runtime = RpcDomainRuntime {
-                    core,
-                    active: active.as_ref(),
-                };
-                match command {
-                    RpcDomainCommand::Deliver(envelope, reply) => {
-                        let result = if *envelope.destination().family() == family {
-                            runtime.deliver_envelope(&envelope)
-                        } else {
-                            Err(DeliveryError::ActorStopped)
-                        };
-                        let _ = reply.send(result);
-                    }
-                    RpcDomainCommand::ExpireTimedOutRequestsAt(now, reply) => {
-                        runtime.expire_timed_out_requests_at(now);
-                        if let Some(reply) = reply {
-                            let _ = reply.send(());
+        Ok(
+            crate::runtime::FamilyActorPoolRuntime::spawn_with_family_failed_metric(
+                pool,
+                active.clone(),
+                move |family| Self::family_core_for(&core_for_factory, family),
+                move |core, family, _lane, command| {
+                    let runtime = RpcDomainRuntime {
+                        core,
+                        active: active.as_ref(),
+                    };
+                    match command {
+                        RpcDomainCommand::Deliver(envelope, reply) => {
+                            let result = if *envelope.destination().family() == family {
+                                runtime.deliver_envelope(&envelope)
+                            } else {
+                                Err(DeliveryError::ActorStopped)
+                            };
+                            let _ = reply.send(result);
+                        }
+                        RpcDomainCommand::ExpireTimedOutRequestsAt(now, reply) => {
+                            runtime.expire_timed_out_requests_at(now);
+                            if let Some(reply) = reply {
+                                let _ = reply.send(());
+                            }
+                        }
+                        RpcDomainCommand::ReadLiveCounts(reply) => {
+                            let _ = reply.send(runtime.live_counts());
+                        }
+                        #[cfg(test)]
+                        RpcDomainCommand::SyncAdminSnapshot(reply) => {
+                            runtime.sync_admin_snapshot();
+                            if let Some(reply) = reply {
+                                let _ = reply.send(());
+                            }
+                        }
+                        RpcDomainCommand::RefreshAdminSnapshotIfDirty(reply) => {
+                            runtime.refresh_admin_snapshot_if_dirty();
+                            if let Some(reply) = reply {
+                                let _ = reply.send(());
+                            }
+                        }
+                        #[cfg(test)]
+                        RpcDomainCommand::ApplySessionCleanupForTests(session_id, reply) => {
+                            let _ = reply.send(runtime.apply_session_cleanup(session_id));
+                        }
+                        #[cfg(test)]
+                        RpcDomainCommand::ApplyWorkerUnsubscribeForTests(
+                            worker_addr,
+                            session_id,
+                            reply,
+                        ) => {
+                            let _ = reply
+                                .send(runtime.apply_worker_unsubscribe(&worker_addr, session_id));
+                        }
+                        #[cfg(test)]
+                        RpcDomainCommand::PanicForTests => {
+                            panic!("test RPC family actor panic");
                         }
                     }
-                    RpcDomainCommand::ReadLiveCounts(reply) => {
-                        let _ = reply.send(runtime.live_counts());
-                    }
-                    #[cfg(test)]
-                    RpcDomainCommand::SyncAdminSnapshot(reply) => {
-                        runtime.sync_admin_snapshot();
-                        if let Some(reply) = reply {
-                            let _ = reply.send(());
-                        }
-                    }
-                    RpcDomainCommand::RefreshAdminSnapshotIfDirty(reply) => {
-                        runtime.refresh_admin_snapshot_if_dirty();
-                        if let Some(reply) = reply {
-                            let _ = reply.send(());
-                        }
-                    }
-                    #[cfg(test)]
-                    RpcDomainCommand::ApplySessionCleanupForTests(session_id, reply) => {
-                        let _ = reply.send(runtime.apply_session_cleanup(session_id));
-                    }
-                    #[cfg(test)]
-                    RpcDomainCommand::ApplyWorkerUnsubscribeForTests(
-                        worker_addr,
-                        session_id,
-                        reply,
-                    ) => {
-                        let _ =
-                            reply.send(runtime.apply_worker_unsubscribe(&worker_addr, session_id));
-                    }
-                    #[cfg(test)]
-                    RpcDomainCommand::PanicForTests => {
-                        panic!("test RPC family actor panic");
-                    }
-                }
-            },
-        ))
+                },
+                crate::domains::rpc::metrics::METRIC_FAMILY_FAILED_CLOSED_TOTAL,
+            ),
+        )
     }
 
     fn family_core_for(shared: &Arc<RpcDomainCore>, family: RouteFamily) -> Arc<RpcDomainCore> {

@@ -200,58 +200,61 @@ impl StreamDomainSink {
             .map_err(|error| format!("create Stream family actor pool: {error}"))?;
         let active = core.active.clone();
         let core_for_factory = core.clone();
-        Ok(crate::runtime::FamilyActorPoolRuntime::spawn(
-            pool,
-            active,
-            move |family| Self::family_core_for(&core_for_factory, family),
-            |core, family, _lane, command| match command {
-                StreamDomainCommand::Deliver(envelope, reply, admission) => {
-                    let result = if *envelope.destination().family() == family {
-                        core.deliver_envelope(&envelope)
-                    } else {
-                        Err(DeliveryError::ActorStopped)
-                    };
-                    let _ = reply.send(result);
-                    // Always None on this path - `deliver_to_family` never
-                    // admits - but drop explicitly for symmetry with the
-                    // non-family actor's release-on-completion.
-                    drop(admission);
-                }
-                StreamDomainCommand::ReadLiveCounts(reply) => {
-                    let _ = reply.send(core.live_counts());
-                }
-                StreamDomainCommand::ReadResourceRecords(command) => {
-                    let request = command.request.as_borrowed();
-                    let _ = command
-                        .reply
-                        .send(core.admin_read_resource_records(request));
-                }
-                StreamDomainCommand::RefreshAdminSnapshotIfDirty(reply) => {
-                    core.refresh_admin_snapshot_if_dirty();
-                    let _ = reply.send(());
-                }
-                StreamDomainCommand::RunMaintenance {
-                    family: requested_family,
-                    reply,
-                } => {
-                    if requested_family == family.as_u64() {
-                        core.run_maintenance_slice(requested_family);
+        Ok(
+            crate::runtime::FamilyActorPoolRuntime::spawn_with_family_failed_metric(
+                pool,
+                active,
+                move |family| Self::family_core_for(&core_for_factory, family),
+                |core, family, _lane, command| match command {
+                    StreamDomainCommand::Deliver(envelope, reply, admission) => {
+                        let result = if *envelope.destination().family() == family {
+                            core.deliver_envelope(&envelope)
+                        } else {
+                            Err(DeliveryError::ActorStopped)
+                        };
+                        let _ = reply.send(result);
+                        // Always None on this path - `deliver_to_family` never
+                        // admits - but drop explicitly for symmetry with the
+                        // non-family actor's release-on-completion.
+                        drop(admission);
                     }
-                    if let Some(reply) = reply {
+                    StreamDomainCommand::ReadLiveCounts(reply) => {
+                        let _ = reply.send(core.live_counts());
+                    }
+                    StreamDomainCommand::ReadResourceRecords(command) => {
+                        let request = command.request.as_borrowed();
+                        let _ = command
+                            .reply
+                            .send(core.admin_read_resource_records(request));
+                    }
+                    StreamDomainCommand::RefreshAdminSnapshotIfDirty(reply) => {
+                        core.refresh_admin_snapshot_if_dirty();
                         let _ = reply.send(());
                     }
-                }
-                #[cfg(test)]
-                StreamDomainCommand::SyncAdminSnapshot(reply) => {
-                    core.sync_admin_snapshot();
-                    let _ = reply.send(());
-                }
-                #[cfg(test)]
-                StreamDomainCommand::PanicForTests => {
-                    panic!("test Stream family actor panic");
-                }
-            },
-        ))
+                    StreamDomainCommand::RunMaintenance {
+                        family: requested_family,
+                        reply,
+                    } => {
+                        if requested_family == family.as_u64() {
+                            core.run_maintenance_slice(requested_family);
+                        }
+                        if let Some(reply) = reply {
+                            let _ = reply.send(());
+                        }
+                    }
+                    #[cfg(test)]
+                    StreamDomainCommand::SyncAdminSnapshot(reply) => {
+                        core.sync_admin_snapshot();
+                        let _ = reply.send(());
+                    }
+                    #[cfg(test)]
+                    StreamDomainCommand::PanicForTests => {
+                        panic!("test Stream family actor panic");
+                    }
+                },
+                crate::domains::stream::metrics::METRIC_FAMILY_FAILED_CLOSED_TOTAL,
+            ),
+        )
     }
 
     fn family_core_for(
