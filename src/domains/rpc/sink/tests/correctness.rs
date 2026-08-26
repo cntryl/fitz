@@ -106,7 +106,12 @@ fn should_reject_stale_worker_registration_after_disconnect_cleanup_marks_sessio
     let sink = new_correctness_rpc_sink(router);
     let worker_addr = RouteAddress::new(family, Route::new("rpc://acme/system/resource/operation"));
     let register_request = crate::domains::rpc::RpcClientRequest::new(
-        crate::runtime::ClientFrameMeta::new(session_id, crate::runtime::ClientChannel::Rpc, 300, family),
+        crate::runtime::ClientFrameMeta::new(
+            session_id,
+            crate::runtime::ClientChannel::Rpc,
+            300,
+            family,
+        ),
         Ok(crate::domains::rpc::RpcMessage::RegisterWorker {
             worker_addr: worker_addr.clone(),
             max_concurrent: 1,

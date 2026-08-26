@@ -3,7 +3,10 @@
 //!
 //! Projection failure must never affect domain correctness.
 
-use super::model::{now_epoch_ms, schedule_admin_snapshot_due, Ordering, ScheduleDomainRuntime, ScheduleLiveCounts, EXECUTIONS_WINDOW_MS};
+use super::model::{
+    now_epoch_ms, schedule_admin_snapshot_due, Ordering, ScheduleDomainRuntime, ScheduleLiveCounts,
+    EXECUTIONS_WINDOW_MS,
+};
 
 impl ScheduleDomainRuntime<'_> {
     pub(super) fn subscription_count(&self) -> usize {

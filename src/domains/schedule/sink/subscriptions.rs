@@ -1,7 +1,9 @@
 //! Subscribe/unsubscribe message handling: mutation of the live subscription
 //! index in response to a client request.
 
-use super::model::{Ordering, ScheduleDomainRuntime, ScheduleSubscription, ScheduleSubscriptionSet};
+use super::model::{
+    Ordering, ScheduleDomainRuntime, ScheduleSubscription, ScheduleSubscriptionSet,
+};
 
 impl ScheduleDomainRuntime<'_> {
     pub(super) fn apply_subscribe_message(

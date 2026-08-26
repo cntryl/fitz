@@ -6,8 +6,7 @@ use super::state_model::{
 };
 #[cfg(test)]
 use super::state_model::{
-    RpcPendingRequest, RpcQueuedRequest, RpcSessionCleanupResult, RpcWorker,
-    RpcWorkerCleanupResult,
+    RpcPendingRequest, RpcQueuedRequest, RpcSessionCleanupResult, RpcWorker, RpcWorkerCleanupResult,
 };
 use crate::runtime::routing::RouteFamily;
 

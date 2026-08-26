@@ -29,15 +29,15 @@ mod validation;
 use actor_runtime::{NoticeDomainActor, NoticeDomainCommand};
 use delivery_worker::{notice_delivery_worker, NoticeDeliveryJob, NOTICE_DELIVERY_HANDOFF_TIMEOUT};
 use model::{
-    notice_route_realm, NoticeDeliveryTarget, NoticeDeliveryTargets,
-    NoticeMatchedRoutePatterns, NoticeRouteStats, NoticeRouteStatsKey, NoticeSubscription,
+    notice_route_realm, NoticeDeliveryTarget, NoticeDeliveryTargets, NoticeMatchedRoutePatterns,
+    NoticeRouteStats, NoticeRouteStatsKey, NoticeSubscription,
 };
 use state::NoticeDomainCore;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 #[cfg(test)]
 use test_channels::{test_client_channel_from_protocol, test_protocol_channel_from_client};
 use validation::subscription_limit_error;
-use std::sync::Arc;
-use std::sync::atomic::Ordering;
 
 pub use state::NoticeDomainSink;
 

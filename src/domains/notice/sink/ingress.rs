@@ -1,9 +1,9 @@
 //! Envelope ingress: validate an inbound envelope, parse it into a Notice
 //! request, and dispatch to the subscription/publish/response layers.
 
-use super::{Envelope, NoticeDomainCore, NoticeMetrics};
 #[cfg(test)]
 use super::{test_client_channel_from_protocol, FrameContext};
+use super::{Envelope, NoticeDomainCore, NoticeMetrics};
 use crate::runtime::DeliveryError;
 use std::sync::atomic::Ordering;
 use std::time::Instant;

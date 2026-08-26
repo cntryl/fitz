@@ -4,6 +4,8 @@
 //! (accept/queue/reject), forwarding to a worker, and draining the
 //! route-local queue once a worker becomes available again.
 
+#[cfg(test)]
+use super::state_model::RPC_MSG_TYPE_REQUEST;
 use super::state_model::{
     session_inbox_address, DeliveryError, Envelope, Instant, RpcDeliveryOutcome as DeliveryOutcome,
     RpcDomainRuntime, RpcPendingErrorDelivery, RpcPendingRequest, RpcQueuedDispatch,
@@ -12,12 +14,10 @@ use super::state_model::{
     RPC_WORKER_NOT_FOUND_ERROR,
 };
 #[cfg(test)]
-use super::state_model::RPC_MSG_TYPE_REQUEST;
-#[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
+use crate::domains::rpc::protocol::RpcRequest;
 #[cfg(not(test))]
 use crate::domains::rpc::RpcWorkerRequestDelivery;
-use crate::domains::rpc::protocol::RpcRequest;
 
 struct RejectionSpec {
     metric: &'static str,

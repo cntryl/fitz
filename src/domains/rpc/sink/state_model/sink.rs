@@ -1,8 +1,8 @@
+use super::super::cleanup::CleanedUpSessions;
 use super::{
     Arc, AtomicBool, AtomicU64, AtomicUsize, BTreeMap, DeliveryError, Duration, Envelope,
     FamilyActorPoolRuntime, Instant, ManagedActor, Mutex, Router, RpcState, Weak,
 };
-use super::super::cleanup::CleanedUpSessions;
 #[cfg(test)]
 use super::{RouteAddress, RpcSessionCleanupResult, RpcWorkerCleanupResult};
 

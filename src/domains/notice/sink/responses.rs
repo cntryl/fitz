@@ -1,8 +1,8 @@
 //! Response encoding and best-effort routing back to the requester.
 
-use super::{Envelope, Instant, NoticeDomainCore};
 #[cfg(test)]
 use super::{test_protocol_channel_from_client, FrameContext};
+use super::{Envelope, Instant, NoticeDomainCore};
 
 impl NoticeDomainCore {
     pub(super) fn reject_with(
@@ -88,4 +88,3 @@ impl NoticeDomainCore {
         }
     }
 }
-

@@ -49,11 +49,11 @@ impl ScheduleDomainSink {
     /// This crosses the mailbox (high-priority lane); the work itself happens
     /// in `ScheduleDomainRuntime::unsubscribe_all`.
     pub fn unsubscribe_all(&self, session_id: u64) {
-        if let Err(error) = self
-            .actor
-            .try_send_high_priority(super::model::ScheduleDomainCommand::CleanupSession(
-                session_id,
-            ))
+        if let Err(error) =
+            self.actor
+                .try_send_high_priority(super::model::ScheduleDomainCommand::CleanupSession(
+                    session_id,
+                ))
         {
             tracing::warn!(domain = "schedule", error = %error, "Schedule cleanup enqueue failed");
         }
@@ -69,7 +69,10 @@ impl ScheduleDomainRuntime<'_> {
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
             // Mark first so an older normal-lane request that cleanup jumped
             // over cannot recreate a subscription for this session below.
-            self.core.cleaned_up_sessions.lock().mark(cleanup.session_id);
+            self.core
+                .cleaned_up_sessions
+                .lock()
+                .mark(cleanup.session_id);
             self.unsubscribe_all(cleanup.session_id);
             return true;
         }

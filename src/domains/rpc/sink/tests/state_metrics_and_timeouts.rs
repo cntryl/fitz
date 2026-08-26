@@ -389,7 +389,10 @@ pub(super) fn should_keep_rpc_sink_files_below_size_limit() {
         ("mailbox_adapter.rs", include_str!("../mailbox_adapter.rs")),
         ("observability.rs", include_str!("../observability.rs")),
         ("registration.rs", include_str!("../registration.rs")),
-        ("response_forwarder.rs", include_str!("../response_forwarder.rs")),
+        (
+            "response_forwarder.rs",
+            include_str!("../response_forwarder.rs"),
+        ),
         ("responses.rs", include_str!("../responses.rs")),
     ];
 

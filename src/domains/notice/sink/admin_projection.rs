@@ -33,7 +33,10 @@ impl NoticeDomainCore {
                         &created_at,
                     ));
                     let subscribers = routes
-                        .entry((*route_family, std::sync::Arc::clone(&subscription.pattern_route)))
+                        .entry((
+                            *route_family,
+                            std::sync::Arc::clone(&subscription.pattern_route),
+                        ))
                         .or_insert(0);
                     *subscribers = subscribers.saturating_add(1);
                 }
