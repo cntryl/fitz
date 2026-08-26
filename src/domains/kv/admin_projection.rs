@@ -62,8 +62,8 @@ struct KvResourceLatency {
 
 /// Admin projection for the KV domain.
 ///
-/// Applies live transaction changes incrementally and can rebuild the complete
-/// admin read model snapshot when reconciliation is requested.
+/// Applies live transaction changes incrementally and keeps admin state
+/// synchronized in production by replaying runtime updates.
 /// Projection failure must never affect domain correctness.
 pub(crate) struct KvAdminProjection {
     read_model: Arc<AdminReadModel>,

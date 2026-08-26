@@ -5,6 +5,7 @@ use crate::domains::kv::{KvActor, KvMessage};
 use parking_lot::Mutex;
 use std::sync::Arc;
 
+/// Identifies the in-memory write lock owner for a single resource scope.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct KvResourceLockKey {
     pub(super) family_id: u64,
@@ -37,8 +38,11 @@ impl KvResourceLockKey {
 
 #[derive(Clone, Copy)]
 pub(super) struct KvResourceLockOwner {
+    /// Session that owns the active write transaction lock.
     pub(super) session_id: u64,
+    /// Active transaction id that currently holds the lock.
     pub(super) tx_id: u64,
+    /// Last request activity used for idle lock expiry.
     pub(super) last_activity: std::time::Instant,
 }
 
@@ -132,7 +136,10 @@ impl KvDomainRuntime<'_> {
             .map(|owner| owner.session_id)
     }
 
-    pub(super) fn session_holds_resource_write_lock(
+    /// Returns true if this session currently holds the write lock for the resource.
+    ///
+    /// The lock table tracks write transactions only.
+    pub(super) fn session_holds_resource_lock(
         &self,
         session_id: u64,
         resource_key: &KvResourceLockKey,

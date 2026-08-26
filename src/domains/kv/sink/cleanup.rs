@@ -10,6 +10,9 @@ use std::collections::{HashSet, VecDeque};
 /// request from the same session. Remembering the cleaned session makes that
 /// stale request fail instead of recreating an actor, transaction, lock, watch,
 /// or admin projection for a disconnected session.
+///
+/// The operation dispatch path also re-checks this guard before it can create
+/// session state.
 pub(super) struct CleanedUpSessions {
     order: VecDeque<u64>,
     seen: HashSet<u64>,

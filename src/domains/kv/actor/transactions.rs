@@ -89,7 +89,12 @@ impl KvActor {
                     &inventory_delta,
                     inventory_write_options,
                 ) {
-                    tracing::warn!(?error, "KV inventory estimate update failed");
+                    tracing::warn!(
+                        ?error,
+                        scope = %inventory_scope.realm,
+                        resource = %inventory_scope.resource,
+                        "KV inventory estimate update failed after successful data commit; returning CommitOk for data path while estimates may drift"
+                    );
                 }
                 KvResponse::CommitOk
             }

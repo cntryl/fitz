@@ -37,6 +37,8 @@ impl KvActor {
     pub(super) fn inventory_write_options(
         committed: cntryl_midge::WriteOptions,
     ) -> cntryl_midge::WriteOptions {
+        // Inventory estimates are best-effort admin bookkeeping, so we avoid
+        // imposing stronger durability than required for user data writes.
         if committed.is_cloud_async() || committed.is_cloud_strict() {
             cntryl_midge::WriteOptions::cloud_async()
         } else {

@@ -6,11 +6,9 @@ use crate::domains::kv::KvError;
 impl KvActor {
     /// Map a Midge error to the KV domain contract.
     ///
-    /// Typed variants are matched before falling back to message text. Text
-    /// classification cannot see the difference between transient saturation
-    /// and a permanent fault, so anything storage states explicitly must be
-    /// honoured explicitly - otherwise a bounded storage timeout is reported
-    /// to the client as a permanent backend failure.
+    /// Only a small set of `MidgeError` variants are mapped as typed errors.
+    /// The remaining variants use best-effort message classification so older
+    /// or less-structured storage failures remain compatible.
     pub(super) fn map_midge_error(error: &cntryl_midge::MidgeError) -> KvError {
         match error {
             cntryl_midge::MidgeError::Timeout(_) | cntryl_midge::MidgeError::Busy(_) => {

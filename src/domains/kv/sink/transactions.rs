@@ -22,6 +22,11 @@ impl KvDomainRuntime<'_> {
             self.route_kv_response(envelope, meta, &response, request_started)?;
             return Ok(());
         }
+        if self.is_cleaned_up_session(meta.session_id) {
+            let response = Self::error_response("session already closed");
+            self.route_kv_response(envelope, meta, &response, request_started)?;
+            return Ok(());
+        }
 
         let kv_message = self.apply_write_options(kv_message);
         let session_id = meta.session_id;
@@ -106,7 +111,7 @@ impl KvDomainRuntime<'_> {
         lock_key: &KvResourceLockKey,
         kv_message: crate::domains::kv::KvMessage,
     ) -> KvOperationOutcome {
-        let held_by_same_session = self.session_holds_resource_write_lock(session_id, lock_key);
+        let held_by_same_session = self.session_holds_resource_lock(session_id, lock_key);
         if self
             .conflicting_session_for_resource(session_id, lock_key)
             .is_some()
