@@ -513,11 +513,18 @@ mod tests {
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
 
-        // Act
-        executor.try_enqueue(RouteFamily::new(1), 2, 2).unwrap();
+        // Act: enqueue the control message *before* the sibling-key normal
+        // message. With 2 shards and only key 1 active, a free shard is
+        // otherwise entitled to grab a ready sibling key immediately --
+        // dispatch only skips a family once control is non-empty and a key
+        // is still active (see `take_work`). Enqueuing normal-then-control
+        // leaves a real window where control is still empty when the free
+        // shard looks for work, so it can race ahead: an actual production
+        // race, not a bug, but not what this test means to exercise.
         executor
             .try_enqueue_control(RouteFamily::new(1), 3)
             .unwrap();
+        executor.try_enqueue(RouteFamily::new(1), 2, 2).unwrap();
         release_tx.send(()).unwrap();
         for _ in 0..3 {
             done_rx.recv_timeout(Duration::from_secs(1)).unwrap();
