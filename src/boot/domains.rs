@@ -15,7 +15,7 @@ use crate::domains::lease::sink::LeaseDomainSink;
 use crate::domains::notice::sink::NoticeDomainSink;
 use crate::domains::queue::sink::QueueDomainSink;
 use crate::domains::rpc::sink::RpcDomainSink;
-use crate::domains::schedule::sink::{ScheduleDomainSink, ScheduleObservability};
+use crate::domains::schedule::sink::ScheduleDomainSink;
 use crate::domains::stream::sink::StreamDomainSink;
 
 /// Generic domain sink: Forwards envelopes to domain actors.
@@ -358,39 +358,39 @@ impl DomainHandles {
     }
 
     pub(crate) fn schedule_count(&self) -> usize {
-        ScheduleObservability::schedule_count(self.schedule.as_ref())
+        self.schedule.schedule_count()
     }
 
     pub(crate) fn schedule_executions_per_minute(&self) -> f64 {
-        ScheduleObservability::executions_per_minute(self.schedule.as_ref())
+        self.schedule.executions_per_minute()
     }
 
     pub(crate) fn schedule_subscription_count(&self) -> usize {
-        ScheduleObservability::subscription_count(self.schedule.as_ref())
+        self.schedule.subscription_count()
     }
 
     pub(crate) fn schedule_pending_fire_count(&self) -> usize {
-        ScheduleObservability::pending_fire_count(self.schedule.as_ref())
+        self.schedule.pending_fire_count()
     }
 
     pub(crate) fn schedule_pending_ack_retry_count(&self) -> usize {
-        ScheduleObservability::pending_ack_retry_count(self.schedule.as_ref())
+        self.schedule.pending_ack_retry_count()
     }
 
     pub(crate) fn schedule_oldest_pending_claim_age_seconds(&self) -> u64 {
-        ScheduleObservability::oldest_pending_claim_age_seconds(self.schedule.as_ref())
+        self.schedule.oldest_pending_claim_age_seconds()
     }
 
     pub(crate) fn schedule_notify_failure_count(&self) -> u64 {
-        ScheduleObservability::notify_failure_count(self.schedule.as_ref())
+        self.schedule.notify_failure_count()
     }
 
     pub(crate) fn schedule_ack_failure_count(&self) -> u64 {
-        ScheduleObservability::ack_failure_count(self.schedule.as_ref())
+        self.schedule.ack_failure_count()
     }
 
     pub(crate) fn schedule_overdue_normalization_count(&self) -> u64 {
-        ScheduleObservability::overdue_normalization_count(self.schedule.as_ref())
+        self.schedule.overdue_normalization_count()
     }
 
     pub(crate) fn schedule_admin_pending_claims(

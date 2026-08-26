@@ -10,19 +10,6 @@ use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 pub(crate) const DEFAULT_SCHEDULE_PRELOAD_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(120);
 
-/// Narrow read-only surface used by metrics and administration code.
-pub trait ScheduleObservability {
-    fn subscription_count(&self) -> usize;
-    fn schedule_count(&self) -> usize;
-    fn pending_fire_count(&self) -> usize;
-    fn executions_per_minute(&self) -> f64;
-    fn notify_failure_count(&self) -> u64;
-    fn ack_failure_count(&self) -> u64;
-    fn pending_ack_retry_count(&self) -> usize;
-    fn oldest_pending_claim_age_seconds(&self) -> u64;
-    fn overdue_normalization_count(&self) -> u64;
-}
-
 impl ScheduleDomainState {
     fn new_with_storage(
         store: crate::storage::FitzStorageEngine,
@@ -339,81 +326,41 @@ impl ScheduleDomainSink {
     }
 }
 
-impl ScheduleObservability for ScheduleDomainSink {
-    fn subscription_count(&self) -> usize {
+/// Narrow read-only surface used by metrics and administration code.
+impl ScheduleDomainSink {
+    pub fn subscription_count(&self) -> usize {
         self.live_counts().subscriptions
     }
 
-    fn schedule_count(&self) -> usize {
+    pub fn schedule_count(&self) -> usize {
         self.live_counts().schedules
     }
 
-    fn pending_fire_count(&self) -> usize {
+    pub fn pending_fire_count(&self) -> usize {
         self.live_counts().pending_fires
     }
 
-    fn executions_per_minute(&self) -> f64 {
+    pub fn executions_per_minute(&self) -> f64 {
         self.live_counts().executions_per_minute
     }
 
-    fn notify_failure_count(&self) -> u64 {
+    pub fn notify_failure_count(&self) -> u64 {
         self.live_counts().notify_failures
     }
 
-    fn ack_failure_count(&self) -> u64 {
+    pub fn ack_failure_count(&self) -> u64 {
         self.live_counts().ack_failures
     }
 
-    fn pending_ack_retry_count(&self) -> usize {
+    pub fn pending_ack_retry_count(&self) -> usize {
         self.live_counts().pending_ack_retries
     }
 
-    fn oldest_pending_claim_age_seconds(&self) -> u64 {
+    pub fn oldest_pending_claim_age_seconds(&self) -> u64 {
         self.live_counts().oldest_pending_claim_age_seconds
     }
 
-    fn overdue_normalization_count(&self) -> u64 {
-        self.live_counts().overdue_normalizations
-    }
-}
-
-// Inherent duplicates of the trait above so callers don't need
-// `use ScheduleObservability` for the common case; kept as pre-existing
-// behavior, not something this split changed.
-impl ScheduleDomainSink {
-    pub fn subscription_count(&self) -> usize {
-        ScheduleObservability::subscription_count(self)
-    }
-
-    pub fn schedule_count(&self) -> usize {
-        ScheduleObservability::schedule_count(self)
-    }
-
-    pub fn pending_fire_count(&self) -> usize {
-        ScheduleObservability::pending_fire_count(self)
-    }
-
-    pub fn executions_per_minute(&self) -> f64 {
-        ScheduleObservability::executions_per_minute(self)
-    }
-
-    pub fn notify_failure_count(&self) -> u64 {
-        ScheduleObservability::notify_failure_count(self)
-    }
-
-    pub fn ack_failure_count(&self) -> u64 {
-        ScheduleObservability::ack_failure_count(self)
-    }
-
-    pub fn pending_ack_retry_count(&self) -> usize {
-        ScheduleObservability::pending_ack_retry_count(self)
-    }
-
-    pub fn oldest_pending_claim_age_seconds(&self) -> u64 {
-        ScheduleObservability::oldest_pending_claim_age_seconds(self)
-    }
-
     pub fn overdue_normalization_count(&self) -> u64 {
-        ScheduleObservability::overdue_normalization_count(self)
+        self.live_counts().overdue_normalizations
     }
 }
