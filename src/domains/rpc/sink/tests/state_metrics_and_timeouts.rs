@@ -375,18 +375,32 @@ pub(super) fn should_route_rpc_worker_unsubscribe_helper_through_managed_actor()
 }
 
 #[test]
-pub(super) fn should_keep_rpc_mailbox_sink_impl_below_file_size_limit() {
-    // Arrange
-    let line_count = include_str!("../mailbox_sink_impl.rs").lines().count();
+pub(super) fn should_keep_rpc_sink_files_below_size_limit() {
+    // Arrange: one entry per top-level sink/*.rs file. New files must be
+    // added here explicitly rather than falling back to a directory scan, so
+    // an oversized new file fails loudly instead of silently passing.
+    let files: &[(&str, &str)] = &[
+        ("cleanup.rs", include_str!("../cleanup.rs")),
+        ("delivery.rs", include_str!("../delivery.rs")),
+        ("facade.rs", include_str!("../facade.rs")),
+        ("family_runtime.rs", include_str!("../family_runtime.rs")),
+        ("ingress.rs", include_str!("../ingress.rs")),
+        ("mailbox.rs", include_str!("../mailbox.rs")),
+        ("mailbox_adapter.rs", include_str!("../mailbox_adapter.rs")),
+        ("observability.rs", include_str!("../observability.rs")),
+        ("registration.rs", include_str!("../registration.rs")),
+        ("response_forwarder.rs", include_str!("../response_forwarder.rs")),
+        ("responses.rs", include_str!("../responses.rs")),
+    ];
 
-    // Act
-    let within_limit = line_count < 1_000;
-
-    // Assert
-    assert!(
-        within_limit,
-        "rpc mailbox sink impl has {line_count} lines; split before adding behavior"
-    );
+    // Act / Assert
+    for (name, contents) in files {
+        let line_count = contents.lines().count();
+        assert!(
+            line_count < 1_000,
+            "rpc sink/{name} has {line_count} lines; split before adding behavior"
+        );
+    }
 }
 
 #[test]
