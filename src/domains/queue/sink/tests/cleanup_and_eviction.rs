@@ -218,6 +218,60 @@ fn should_cleanup_queue_inflight_for_disconnected_session() {
 }
 
 #[test]
+fn should_reject_stale_reserve_after_disconnect_cleanup_marks_session() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 9;
+    let queue_route = "queue://acme/jobs/emails";
+    let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+    let worker_address = RouteAddress::new(family, Route::new("inbox://session/9"));
+    let worker_mailbox = Arc::new(Mailbox::new(8));
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let router = Arc::new(Router::new());
+    router.register(worker_address.clone(), worker_mailbox.clone());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = new_queue_domain_sink(
+        store,
+        router,
+        admin_read_model,
+        cntryl_midge::WriteOptions::buffered(),
+    );
+
+    // Act: cleanup for this session runs and completes before the stale
+    // reserve below is processed - equivalent to what the control-plane
+    // mailbox lane guarantees a real disconnect races against a queued
+    // normal-lane request.
+    sink.deliver(Envelope::new(
+        RouteAddress::new(family, Route::new("queue://cleanup")),
+        crate::runtime::SessionCleanup { session_id },
+    ))
+    .expect("cleanup queue session");
+
+    deliver_reserve(
+        &sink,
+        worker_address,
+        queue_address,
+        session_id,
+        queue_route,
+        family,
+    );
+
+    // Assert: the stale reserve from the now-cleaned-up session is rejected
+    // instead of being accepted as a pending long-poll reserve for it.
+    let response_envelope = worker_mailbox
+        .receiver()
+        .try_recv()
+        .expect("stale reserve response");
+    let frame = response_envelope
+        .into_payload::<FrameContext>()
+        .expect("queue response frame");
+    let (_code, message) =
+        crate::dispatch::protocol::error_codes::decode_error_body(frame.payload.as_ref())
+            .expect("bad request error body");
+    assert_eq!(message, "session already closed");
+}
+
+#[test]
 fn should_reject_queue_inflight_followups_from_non_owner_session() {
     // Arrange
     let family = RouteFamily::new(1);

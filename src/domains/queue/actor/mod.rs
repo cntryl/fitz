@@ -309,52 +309,6 @@ pub struct Inflight {
     inflight_epoch: u64,
 }
 
-/// Queue operations used by live producers and consumers.
-pub trait QueueDataPlane {}
-
-/// Queue operations used only by administration and runtime management.
-pub trait QueueAdminPlane {
-    fn admin_snapshot(&self) -> QueueAdminSnapshot;
-    fn admin_inflight(&self) -> Vec<QueueInflightSnapshot>;
-    fn admin_dead_letters(&self) -> Vec<QueueDeadLetterSnapshot>;
-    /// Replays a dead letter into the ready queue.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the durable transition cannot be committed.
-    fn replay_dead_letter(&mut self, id: MessageId) -> Result<bool, String>;
-    /// Permanently removes a dead letter.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the durable deletion cannot be committed.
-    fn purge_dead_letter(&mut self, id: MessageId) -> Result<bool, String>;
-}
-
-impl QueueDataPlane for QueueActor {}
-
-impl QueueAdminPlane for QueueActor {
-    fn admin_snapshot(&self) -> QueueAdminSnapshot {
-        QueueActor::admin_snapshot(self)
-    }
-
-    fn admin_inflight(&self) -> Vec<QueueInflightSnapshot> {
-        QueueActor::admin_inflight(self)
-    }
-
-    fn admin_dead_letters(&self) -> Vec<QueueDeadLetterSnapshot> {
-        QueueActor::admin_dead_letters(self)
-    }
-
-    fn replay_dead_letter(&mut self, id: MessageId) -> Result<bool, String> {
-        QueueActor::replay_dead_letter(self, id)
-    }
-
-    fn purge_dead_letter(&mut self, id: MessageId) -> Result<bool, String> {
-        QueueActor::purge_dead_letter(self, id)
-    }
-}
-
 /// Timer event for inflight expiration
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct InflightExpiry {

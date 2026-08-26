@@ -191,6 +191,22 @@ impl QueueDomainCore {
             return Ok(());
         }
 
+        // This request was already queued (on the normal lane) before this
+        // session's disconnect cleanup ran (on the high-priority/control-plane
+        // lane) and jumped ahead of it. Reject rather than silently
+        // recreating a subscription or pending reserve for a session that is
+        // already gone and will never be cleaned up again.
+        if self.is_cleaned_up_session(meta.session_id) {
+            let response = crate::domains::queue::QueueResponse::BadRequest {
+                reason: "session already closed".to_string(),
+            };
+            self.route_queue_response(envelope, meta, &response);
+            if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+                metrics.record_failure(started_at);
+            }
+            return Ok(());
+        }
+
         let Some(parsed_frame) =
             self.parse_request_frame(envelope, meta, request.frame, request_started)
         else {
@@ -221,11 +237,19 @@ impl QueueDomainCore {
         // `QueueDomainCore::cleanup_session` runs inline rather than through an
         // actor command, so there is no reply deadline to surface here.
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
+            // Mark first so an older normal-lane request that cleanup jumped
+            // over cannot recreate a subscription or pending reserve for
+            // this session below.
+            self.cleaned_up_sessions.lock().mark(cleanup.session_id);
             self.cleanup_session(cleanup.session_id);
             return true;
         }
 
         false
+    }
+
+    fn is_cleaned_up_session(&self, session_id: u64) -> bool {
+        self.cleaned_up_sessions.lock().contains(session_id)
     }
 
     fn ensure_active(&self) -> Result<(), DeliveryError> {

@@ -8,7 +8,6 @@ use super::model::{
 };
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
-use crate::domains::queue::actor::QueueAdminPlane;
 use std::{collections::VecDeque, sync::Arc};
 
 mod domain_core_impl;
@@ -161,6 +160,9 @@ impl QueueDomainSink {
             inventory_error: Mutex::new(inventory_error),
             wildcard_reserve_sequence: AtomicU64::new(0),
             families: Mutex::new(HashMap::new()),
+            cleaned_up_sessions: Mutex::new(super::cleanup_guard::CleanedUpSessions::new(
+                crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
+            )),
             next_sub_id: AtomicU64::new(1),
             ready_states: Mutex::new(HashMap::new()),
             pending_reserves: Mutex::new(VecDeque::default()),
@@ -315,7 +317,7 @@ impl QueueDomainSink {
         .expect("queue key");
         let actors = self.core.actors.lock();
         let actor = actors.get(&key).expect("warm queue actor").actor.lock();
-        QueueAdminPlane::admin_snapshot(&*actor)
+        actor.admin_snapshot()
     }
 
     #[cfg(test)]
