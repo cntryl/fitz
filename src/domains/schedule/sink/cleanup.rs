@@ -84,12 +84,7 @@ impl ScheduleDomainRuntime<'_> {
     pub(super) fn unsubscribe_all(&self, session_id: u64) {
         let mut families = self.core.sub_families.lock();
         for (family, state) in families.iter_mut() {
-            state.remove_session(
-                crate::runtime::routing::RouteFamily::new(
-                    u32::try_from(*family).unwrap_or(u32::MAX),
-                ),
-                session_id,
-            );
+            state.remove_session(*family, session_id);
         }
         families.retain(|_, state| !state.is_empty());
         tracing::debug!(

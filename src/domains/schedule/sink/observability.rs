@@ -185,7 +185,6 @@ impl ScheduleDomainRuntime<'_> {
         self.maybe_sync_admin_snapshot(true);
     }
 
-    #[doc(hidden)]
     pub(super) fn bench_publish_event(&self, event: &crate::runtime::DomainPublishEvent) {
         self.handle_domain_publish(event);
     }

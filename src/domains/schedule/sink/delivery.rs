@@ -298,7 +298,7 @@ impl ScheduleDomainRuntime<'_> {
         payload: &bytes::Bytes,
     ) -> bool {
         let mut families = self.core.sub_families.lock();
-        let Some(state) = families.get_mut(&family.as_u64()) else {
+        let Some(state) = families.get_mut(&family) else {
             return false;
         };
         let mut subscription_ids = state.matching_ids(family, route);

@@ -149,7 +149,8 @@ pub(super) struct ScheduleDomainCore {
     pub(super) actors: Mutex<
         HashMap<crate::runtime::routing::RouteFamily, crate::domains::schedule::ScheduleActor>,
     >,
-    pub(super) sub_families: Mutex<HashMap<u64, ScheduleSubscriptionSet>>,
+    pub(super) sub_families:
+        Mutex<HashMap<crate::runtime::routing::RouteFamily, ScheduleSubscriptionSet>>,
     /// Sessions disconnect cleanup has already run for; guards against a
     /// stale queued request recreating a subscription. See `cleanup.rs`.
     pub(super) cleaned_up_sessions: Mutex<super::cleanup::CleanedUpSessions>,

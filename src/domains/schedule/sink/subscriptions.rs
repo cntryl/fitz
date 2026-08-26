@@ -43,10 +43,9 @@ impl ScheduleDomainRuntime<'_> {
             ScheduleFailure, ScheduleFailureCategory, ScheduleResponse,
         };
 
-        let fam_id = family_id.as_u64();
         let mut families = self.core.sub_families.lock();
         let state = families
-            .entry(fam_id)
+            .entry(family_id)
             .or_insert_with(ScheduleSubscriptionSet::new);
 
         let sub_id = if let Some(id) = state.find_existing_id(session_id, route.as_str()) {
@@ -78,7 +77,7 @@ impl ScheduleDomainRuntime<'_> {
             ) else {
                 let state_empty = state.is_empty();
                 if state_empty {
-                    families.remove(&fam_id);
+                    families.remove(&family_id);
                 }
                 return ScheduleResponse::Error(ScheduleFailure::new(
                     ScheduleFailureCategory::SubscriptionLimit,
@@ -130,16 +129,15 @@ impl ScheduleDomainRuntime<'_> {
             ));
         }
 
-        let fam_id = family_id.as_u64();
         let mut families = self.core.sub_families.lock();
-        let remove_family = if let Some(state) = families.get_mut(&fam_id) {
+        let remove_family = if let Some(state) = families.get_mut(&family_id) {
             state.remove_session_route(family_id, session_id, route.as_str());
             state.is_empty()
         } else {
             false
         };
         if remove_family {
-            families.remove(&fam_id);
+            families.remove(&family_id);
         }
         ScheduleResponse::Ok
     }
