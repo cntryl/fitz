@@ -4,7 +4,7 @@
 use super::actor::{Actor, ActorError, ActorMetrics, ActorRef, Context};
 use super::mailbox::Mailbox;
 use crate::observability as obs;
-use crate::runtime::router::Router;
+use crate::runtime::router::{MailboxSink, Router};
 use crate::runtime::routing::RouteAddress;
 use std::any::Any;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -207,8 +207,8 @@ impl Scheduler {
         let metrics = Arc::new(ActorMetrics::new());
 
         // Register mailbox with router
-        self.router
-            .register(address.clone(), Arc::new(mailbox.clone()));
+        let mailbox_sink: Arc<dyn MailboxSink> = Arc::new(mailbox.clone());
+        self.router.register(address.clone(), mailbox_sink.clone());
 
         let receiver = mailbox.receiver().clone();
         let high_receiver = mailbox.high_priority_receiver().clone();
@@ -335,7 +335,7 @@ impl Scheduler {
                 handle_fired_timers(&mut actor, &mut ctx, &address);
             }
 
-            router_clone.unregister(&address);
+            router_clone.unregister_sink(&address, &mailbox_sink);
             actor.stopped();
         });
 

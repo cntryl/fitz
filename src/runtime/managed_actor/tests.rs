@@ -35,6 +35,40 @@ struct CountingStopFactoryRestartActor {
     stopped_count: Arc<std::sync::atomic::AtomicUsize>,
 }
 
+enum ReplacementRaceMessage {
+    Stop,
+    Read(crossbeam_channel::Sender<()>),
+}
+
+struct BlockingStopActor {
+    entered: crossbeam_channel::Sender<()>,
+    release: crossbeam_channel::Receiver<()>,
+}
+
+impl Actor for BlockingStopActor {
+    type Message = ReplacementRaceMessage;
+
+    fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
+        if let ReplacementRaceMessage::Stop = msg {
+            ctx.stop();
+            self.entered.send(()).expect("stop observer");
+            self.release.recv().expect("stop release");
+        }
+    }
+}
+
+struct ReplacementActor;
+
+impl Actor for ReplacementActor {
+    type Message = ReplacementRaceMessage;
+
+    fn receive(&mut self, msg: Self::Message, _ctx: &mut Context<Self>) {
+        if let ReplacementRaceMessage::Read(reply) = msg {
+            reply.send(()).expect("replacement reply");
+        }
+    }
+}
+
 impl Actor for CountingStopFactoryRestartActor {
     type Message = ();
 
@@ -282,6 +316,46 @@ fn should_not_unregister_replacement_route_when_stopped_handle_drops() {
 
     // Assert
     assert_eq!(count, 0);
+}
+
+#[test]
+fn should_not_unregister_replacement_route_when_old_actor_finishes() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let address = test_address();
+    let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);
+    let (release_tx, release_rx) = crossbeam_channel::bounded(1);
+    let first = ManagedActor::spawn(
+        router.clone(),
+        address.clone(),
+        BlockingStopActor {
+            entered: entered_tx,
+            release: release_rx,
+        },
+        8,
+    );
+    first
+        .try_send(ReplacementRaceMessage::Stop)
+        .expect("stop should enqueue");
+    entered_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("old actor should enter stop");
+    let _second = ManagedActor::spawn(router.clone(), address.clone(), ReplacementActor, 8);
+    let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+
+    // Act
+    release_tx.send(()).expect("release old actor");
+    first.stop();
+    let result = router.route(Envelope::new(
+        address,
+        ReplacementRaceMessage::Read(reply_tx),
+    ));
+
+    // Assert
+    assert!(result.is_ok());
+    reply_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("replacement route should remain registered");
 }
 
 #[test]

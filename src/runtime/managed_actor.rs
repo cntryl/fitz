@@ -157,6 +157,11 @@ fn actor_error_from_panic(error: &(dyn Any + Send)) -> ActorError {
     }
 }
 
+fn unregister_mailbox(router: &Router, address: &RouteAddress, mailbox: &Arc<Mailbox>) {
+    let sink: Arc<dyn MailboxSink> = mailbox.clone();
+    router.unregister_sink(address, &sink);
+}
+
 fn notify_actor_error<A: Actor>(
     actor: &mut A,
     actor_error: ActorError,
@@ -288,7 +293,7 @@ fn run_actor<A>(
 
     if start_managed_actor(&mut actor, &mut ctx, address) == ActorStep::Panicked {
         running.store(false, Ordering::SeqCst);
-        router.unregister(address);
+        unregister_mailbox(router, address, mailbox);
         ctx.stop();
         actor.stopped();
         return;
@@ -317,7 +322,7 @@ fn run_actor<A>(
     }
 
     running.store(false, Ordering::SeqCst);
-    router.unregister(address);
+    unregister_mailbox(router, address, mailbox);
     actor.stopped();
 }
 
@@ -384,7 +389,7 @@ where
             runtime.health.record_panic();
             runtime.health.mark_exhausted();
             runtime.running.store(false, Ordering::SeqCst);
-            runtime.router.unregister(runtime.address);
+            unregister_mailbox(runtime.router, runtime.address, runtime.mailbox);
             return;
         }
     };
@@ -401,6 +406,7 @@ where
             &actor_factory,
             runtime.address,
             runtime.router,
+            runtime.mailbox,
             runtime.running,
             runtime.health,
             runtime.strategy,
@@ -409,7 +415,7 @@ where
         )
     {
         runtime.running.store(false, Ordering::SeqCst);
-        runtime.router.unregister(runtime.address);
+        unregister_mailbox(runtime.router, runtime.address, runtime.mailbox);
         stop_actor_once(&mut actor, actor_stopped);
         return;
     }
@@ -422,6 +428,7 @@ where
                 &actor_factory,
                 runtime.address,
                 runtime.router,
+                runtime.mailbox,
                 runtime.running,
                 runtime.health,
                 runtime.strategy,
@@ -460,6 +467,7 @@ where
                 &actor_factory,
                 runtime.address,
                 runtime.router,
+                runtime.mailbox,
                 runtime.running,
                 runtime.health,
                 runtime.strategy,
@@ -472,7 +480,7 @@ where
     }
 
     runtime.running.store(false, Ordering::SeqCst);
-    runtime.router.unregister(runtime.address);
+    unregister_mailbox(runtime.router, runtime.address, runtime.mailbox);
     stop_actor_once(&mut actor, actor_stopped);
 }
 
@@ -483,6 +491,7 @@ fn restart_supervised_actor<A, F>(
     actor_factory: &F,
     address: &RouteAddress,
     router: &Arc<Router>,
+    mailbox: &Arc<Mailbox>,
     running: &Arc<AtomicBool>,
     health: &Arc<ManagedActorHealth>,
     strategy: &SupervisorStrategy,
@@ -499,7 +508,7 @@ where
         SupervisionAction::Restart => {
             let Some(tracker) = tracker else {
                 running.store(false, Ordering::SeqCst);
-                router.unregister(address);
+                unregister_mailbox(router, address, mailbox);
                 ctx.stop();
                 return false;
             };
@@ -508,7 +517,7 @@ where
                 if !tracker.record_restart() {
                     health.mark_exhausted();
                     running.store(false, Ordering::SeqCst);
-                    router.unregister(address);
+                    unregister_mailbox(router, address, mailbox);
                     ctx.stop();
                     tracing::error!(
                         actor = ?address,
@@ -523,7 +532,7 @@ where
                     health.record_panic();
                     health.mark_exhausted();
                     running.store(false, Ordering::SeqCst);
-                    router.unregister(address);
+                    unregister_mailbox(router, address, mailbox);
                     return false;
                 }
                 *actor = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(actor_factory))
@@ -554,7 +563,7 @@ where
         SupervisionAction::Stop | SupervisionAction::Escalate => {
             health.mark_exhausted();
             running.store(false, Ordering::SeqCst);
-            router.unregister(address);
+            unregister_mailbox(router, address, mailbox);
             ctx.stop();
             tracing::error!(
                 actor = ?address,
@@ -796,7 +805,7 @@ impl<M: Send + 'static> ManagedActor<M> {
     pub fn stop(&self) {
         let was_running = self.running.swap(false, Ordering::SeqCst);
         if was_running {
-            self.router.unregister(&self.address);
+            unregister_mailbox(&self.router, &self.address, &self.mailbox);
         }
 
         if let Some(join_handle) = self.join_handle.lock().take() {

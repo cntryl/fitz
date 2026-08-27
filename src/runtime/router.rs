@@ -239,6 +239,11 @@ impl RouteRegistry {
         self.sinks.remove(address);
     }
 
+    fn unregister_sink(&self, address: &RouteAddress, sink: &Arc<dyn MailboxSink>) {
+        self.sinks
+            .remove_if(address, |_, current| Arc::ptr_eq(current, sink));
+    }
+
     fn get(&self, address: &RouteAddress) -> Option<Arc<dyn MailboxSink>> {
         self.sinks.get(address).map(|entry| Arc::clone(&*entry))
     }
@@ -494,6 +499,10 @@ impl Router {
     /// fail with `RouteNotFound` error.
     pub fn unregister(&self, address: &RouteAddress) {
         self.registry.unregister(address);
+    }
+
+    pub(crate) fn unregister_sink(&self, address: &RouteAddress, sink: &Arc<dyn MailboxSink>) {
+        self.registry.unregister_sink(address, sink);
     }
 
     /// Route an envelope to its destination
