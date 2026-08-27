@@ -200,7 +200,7 @@ impl Scheduler {
                 let mut processed_normal = 0;
 
                 // PHASE 1: High-priority messages (capped at MAX_HIGH_PER_TICK)
-                while processed_high < MAX_HIGH_PER_TICK {
+                while ctx.is_running() && processed_high < MAX_HIGH_PER_TICK {
                     // INVARIANT: Time budget check to prevent thread monopolization
                     if u128_to_u64_saturating(tick_start.elapsed().as_millis())
                         >= MAX_TICK_DURATION_MS
@@ -245,7 +245,7 @@ impl Scheduler {
                 // If high lane was idle, use full budget (16), otherwise use 12
                 let normal_budget = normal_message_budget(processed_high);
 
-                while processed_normal < normal_budget {
+                while ctx.is_running() && processed_normal < normal_budget {
                     // INVARIANT: Time budget check to prevent thread monopolization
                     if u128_to_u64_saturating(tick_start.elapsed().as_millis())
                         >= MAX_TICK_DURATION_MS
@@ -424,6 +424,34 @@ mod tests {
         stopped: crossbeam_channel::Sender<()>,
     }
 
+    struct BatchStopActor {
+        count: u32,
+        entered: crossbeam_channel::Sender<()>,
+        release: crossbeam_channel::Receiver<()>,
+        stopped: crossbeam_channel::Sender<u32>,
+    }
+
+    impl Actor for BatchStopActor {
+        type Message = TestMsg;
+
+        fn started(&mut self, _ctx: &mut Context<Self>) {
+            let _ = self.entered.send(());
+            let _ = self.release.recv();
+        }
+
+        fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
+            match msg {
+                TestMsg::Increment => self.count = self.count.saturating_add(1),
+                TestMsg::Stop => ctx.stop(),
+                TestMsg::GetCount(_) => {}
+            }
+        }
+
+        fn stopped(&mut self) {
+            let _ = self.stopped.send(self.count);
+        }
+    }
+
     impl Actor for StopReportingActor {
         type Message = TestMsg;
 
@@ -489,6 +517,39 @@ mod tests {
 
         // Assert
         assert!(send_after_stop.is_err());
+    }
+
+    #[test]
+    fn should_stop_processing_batch_after_actor_stops() {
+        // Arrange
+        let scheduler = Scheduler::new();
+        let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);
+        let (release_tx, release_rx) = crossbeam_channel::bounded(1);
+        let (stopped_tx, stopped_rx) = crossbeam_channel::bounded(1);
+        let actor_ref = scheduler.spawn(
+            BatchStopActor {
+                count: 0,
+                entered: entered_tx,
+                release: release_rx,
+                stopped: stopped_tx,
+            },
+            test_address(1, "test://batch-stop"),
+            8,
+        );
+        entered_rx.recv().expect("actor should start");
+        actor_ref.send(TestMsg::Stop).expect("stop should enqueue");
+        actor_ref
+            .send(TestMsg::Increment)
+            .expect("increment should enqueue behind stop");
+
+        // Act
+        release_tx.send(()).expect("actor should start processing");
+        let count = stopped_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("actor should stop");
+
+        // Assert
+        assert_eq!(count, 0);
     }
 
     #[test]
