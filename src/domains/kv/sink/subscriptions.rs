@@ -15,6 +15,26 @@ impl KvDomainRuntime<'_> {
         request_started: std::time::Instant,
         sub_msg: crate::domains::kv::KvSubscriptionMessage,
     ) -> Result<(), DeliveryError> {
+        let new_subscription = match &sub_msg {
+            crate::domains::kv::KvSubscriptionMessage::Subscribe {
+                family_id,
+                pattern,
+                session_id,
+                ..
+            } => {
+                let exists = self
+                    .core
+                    .watch_registries
+                    .lock()
+                    .get(&family_id.as_u64())
+                    .and_then(|registry| {
+                        registry.existing_subscription_id(*session_id, pattern.as_str())
+                    })
+                    .is_some();
+                (!exists).then_some((*family_id, *session_id))
+            }
+            crate::domains::kv::KvSubscriptionMessage::Unsubscribe { .. } => None,
+        };
         let response = match sub_msg {
             crate::domains::kv::KvSubscriptionMessage::Subscribe {
                 family_id,
@@ -39,7 +59,35 @@ impl KvDomainRuntime<'_> {
         };
 
         self.refresh_metrics_gauges();
-        self.route_kv_response(envelope, meta, &response, request_started)
+        let route_result = self.route_kv_response(envelope, meta, &response, request_started);
+        if route_result.is_err() {
+            if let (KvResponse::SubscribeOk { subscription_id }, Some((family_id, session_id))) =
+                (&response, new_subscription)
+            {
+                self.rollback_undeliverable_subscription(family_id, session_id, *subscription_id);
+            }
+        }
+        route_result
+    }
+
+    fn rollback_undeliverable_subscription(
+        &self,
+        family_id: crate::runtime::routing::RouteFamily,
+        session_id: u64,
+        subscription_id: u64,
+    ) {
+        let mut registries = self.core.watch_registries.lock();
+        let remove_family = registries
+            .get_mut(&family_id.as_u64())
+            .is_some_and(|registry| {
+                registry.remove_subscription_for_session(session_id, subscription_id);
+                registry.is_empty()
+            });
+        if remove_family {
+            registries.remove(&family_id.as_u64());
+        }
+        drop(registries);
+        self.refresh_metrics_gauges();
     }
 
     fn handle_kv_subscribe(
