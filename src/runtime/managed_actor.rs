@@ -174,6 +174,23 @@ fn notify_actor_error<A: Actor>(
     }
 }
 
+fn start_managed_actor<A: Actor>(
+    actor: &mut A,
+    ctx: &mut Context<A>,
+    address: &RouteAddress,
+) -> ActorStep {
+    if let Err(error) =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| actor.started(ctx)))
+    {
+        tracing::error!(actor = ?address, error = ?error, "Managed actor panicked during startup");
+        ctx.metrics().record_panic();
+        notify_actor_error(actor, actor_error_from_panic(error.as_ref()), ctx, address);
+        ActorStep::Panicked
+    } else {
+        ActorStep::Continue
+    }
+}
+
 fn process_envelope<A: Actor>(
     envelope: Envelope,
     actor: &mut A,
@@ -269,7 +286,13 @@ fn run_actor<A>(
     let mut ctx = Context::with_metrics(address.clone(), router.clone(), metrics);
     let mut priority_state = PriorityDrainState::default();
 
-    actor.started(&mut ctx);
+    if start_managed_actor(&mut actor, &mut ctx, address) == ActorStep::Panicked {
+        running.store(false, Ordering::SeqCst);
+        router.unregister(address);
+        ctx.stop();
+        actor.stopped();
+        return;
+    }
 
     while running.load(Ordering::SeqCst) && ctx.is_running() {
         let Some(envelope) = receive_next_envelope(
@@ -343,7 +366,24 @@ where
         Arc::clone(runtime.metrics),
     );
 
-    actor.started(&mut ctx);
+    if start_managed_actor(&mut actor, &mut ctx, runtime.address) == ActorStep::Panicked
+        && !restart_supervised_actor(
+            &mut actor,
+            &mut ctx,
+            &actor_factory,
+            runtime.address,
+            runtime.router,
+            runtime.running,
+            runtime.health,
+            runtime.strategy,
+            tracker.as_mut(),
+        )
+    {
+        runtime.running.store(false, Ordering::SeqCst);
+        runtime.router.unregister(runtime.address);
+        actor.stopped();
+        return;
+    }
 
     while runtime.running.load(Ordering::SeqCst) && ctx.is_running() {
         if handle_fired_timers(&mut actor, &mut ctx, runtime.address) == ActorStep::Panicked {

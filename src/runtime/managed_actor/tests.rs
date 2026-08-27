@@ -16,6 +16,21 @@ struct StopOnTimerActor {
     fired: Vec<crate::runtime::context::TimerId>,
 }
 
+struct PanickingStartedActor {
+    started_entered: crossbeam_channel::Sender<()>,
+}
+
+impl Actor for PanickingStartedActor {
+    type Message = ();
+
+    fn started(&mut self, _ctx: &mut Context<Self>) {
+        let _ = self.started_entered.send(());
+        panic!("started hook panic");
+    }
+
+    fn receive(&mut self, (): (), _ctx: &mut Context<Self>) {}
+}
+
 impl Actor for StopOnTimerActor {
     type Message = ();
 
@@ -394,4 +409,32 @@ fn should_stop_firing_snapshotted_timers_after_actor_stops() {
     assert_eq!(step, ActorStep::Continue);
     assert_eq!(actor.fired.len(), 1);
     assert!(!ctx.is_running());
+}
+
+#[test]
+fn should_fail_closed_when_managed_actor_started_hook_panics() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let (started_entered_tx, started_entered_rx) = crossbeam_channel::bounded(1);
+    let managed = ManagedActor::spawn_fail_closed(
+        router,
+        test_address(),
+        move || PanickingStartedActor {
+            started_entered: started_entered_tx.clone(),
+        },
+        8,
+    );
+
+    // Act
+    started_entered_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("started hook should run");
+    wait_until("managed actor should fail closed", || !managed.is_running());
+    let send_after_panic = managed.try_send(());
+
+    // Assert
+    let health = managed.health_snapshot();
+    assert_eq!(health.panic_count, 1);
+    assert!(health.restart_exhausted);
+    assert!(matches!(send_after_panic, Err(DeliveryError::ActorStopped)));
 }
