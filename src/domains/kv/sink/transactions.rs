@@ -102,7 +102,37 @@ impl KvDomainRuntime<'_> {
             "KV actor returned response"
         );
 
-        self.route_kv_response(envelope, meta, &response, request_started)
+        let route_result = self.route_kv_response(envelope, meta, &response, request_started);
+        if route_result.is_err() {
+            if let KvResponse::BeginOk { tx_id } = response {
+                self.rollback_undeliverable_begin(meta.session_id, meta.route_family, tx_id);
+            }
+        }
+        route_result
+    }
+
+    fn rollback_undeliverable_begin(
+        &self,
+        session_id: u64,
+        route_family: crate::runtime::routing::RouteFamily,
+        tx_id: u64,
+    ) {
+        let Some(key) = self.resource_key_for_tx(session_id, tx_id) else {
+            return;
+        };
+        let scope = crate::domains::kv::KvResourceScope::new(
+            route_family,
+            key.realm,
+            key.area,
+            key.resource,
+        );
+        let outcome = self.handle_rollback_frame(
+            session_id,
+            route_family,
+            tx_id,
+            crate::domains::kv::KvMessage::Rollback { tx_id, scope },
+        );
+        self.apply_admin_transaction_update(outcome.admin_update);
     }
 
     pub(super) fn handle_begin_read_write(
