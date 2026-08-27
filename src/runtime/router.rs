@@ -449,6 +449,18 @@ impl Router {
         self.registry.get(address)
     }
 
+    /// Deliver through a previously resolved exact-route sink while preserving
+    /// the router's panic containment and delivery-failure accounting.
+    #[allow(clippy::unused_self)] // Keeps resolved delivery behind a Router-owned API.
+    pub(crate) fn route_to_resolved_sink(
+        &self,
+        envelope: Envelope,
+        sink: &Arc<dyn MailboxSink>,
+    ) -> Result<(), RouteError> {
+        let destination = envelope.destination().clone();
+        Self::deliver_with_sink(destination, sink, envelope, Self::route_match_started_at())
+    }
+
     /// Register a domain pattern (e.g., "kv", "queue", "notice")
     ///
     /// Domain patterns are used as a fallback when exact `RouteAddress` lookup fails.

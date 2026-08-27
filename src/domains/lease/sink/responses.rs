@@ -87,7 +87,11 @@ impl LeaseDomainRuntime<'_> {
                 .router
                 .resolve_sink(response_envelope.destination());
             if let Some(sink) = response_sink {
-                if let Err(error) = sink.deliver(response_envelope) {
+                if let Err(error) = self
+                    .core
+                    .router
+                    .route_to_resolved_sink(response_envelope, &sink)
+                {
                     self.record_dropped_delivery(
                         super::observability::DeliveryDropKind::Response,
                         meta.session_id,

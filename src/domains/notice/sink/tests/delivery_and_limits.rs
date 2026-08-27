@@ -31,6 +31,25 @@ fn should_retry_delivery_policy_with_payload_independent_envelope_builder() {
 }
 
 #[test]
+fn should_contain_panicking_cached_notice_sink() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let subscriber = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let router = Router::new();
+    router.register(subscriber.clone(), Arc::new(PanickingSink));
+
+    // Act
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        deliver_with_retry(&router, &subscriber, || {
+            Envelope::new(subscriber.clone(), ())
+        });
+    }));
+
+    // Assert
+    assert!(result.is_ok());
+}
+
+#[test]
 #[allow(clippy::too_many_lines)]
 fn should_retain_other_notice_subscription_given_unsubscribe_on_same_session() {
     // Arrange

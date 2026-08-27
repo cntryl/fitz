@@ -97,8 +97,7 @@ pub(super) fn deliver_with_retry(
     loop {
         let envelope = build_envelope();
         let result = if let Some(sink) = subscriber_sink.as_ref() {
-            sink.deliver(envelope)
-                .map_err(|error| RouteError::DeliveryFailed(subscriber.clone(), error))
+            router.route_to_resolved_sink(envelope, sink)
         } else {
             router.route(envelope)
         };
