@@ -75,7 +75,7 @@ impl TcpHandler {
     ///
     /// Returns an error when reading from the socket fails, the peer sends a
     /// frame larger than the configured maximum, the transport channel remains
-    /// backpressured after one retry, or the runtime channel closes.
+    /// backpressured through the configured timeout, or the runtime channel closes.
     pub async fn run(mut self) -> Result<(), String> {
         let mut buffer = BytesMut::with_capacity(4096);
         info!(session_id = self.session_id, "TCP handler run loop started");
@@ -177,22 +177,32 @@ impl TcpHandler {
         crate::observability::counter_inc(obs::METRIC_TCP_BACKPRESSURE);
         warn!(
             session_id = self.session_id,
-            "TCP channel full, backpressure - retrying after timeout"
+            "TCP channel full, waiting for handoff capacity"
         );
-        tokio::time::sleep(self.config.backpressure_timeout).await;
-
-        if let Ok(()) = self.tx.try_send((self.session_id, frame)) {
-            debug!(
-                session_id = self.session_id,
-                "TCP frame forwarded after backpressure retry"
-            );
-            Ok(())
-        } else {
-            error!(
-                session_id = self.session_id,
-                "TCP backpressure exceeded, closing session"
-            );
-            Self::close_with_error("channel full: backpressure exceeded".to_string())
+        match tokio::time::timeout(
+            self.config.backpressure_timeout,
+            self.tx.send((self.session_id, frame)),
+        )
+        .await
+        {
+            Ok(Ok(())) => {
+                debug!(
+                    session_id = self.session_id,
+                    "TCP frame forwarded after backpressure"
+                );
+                Ok(())
+            }
+            Ok(Err(_)) => {
+                error!(session_id = self.session_id, "TCP runtime channel closed");
+                Self::close_with_error("runtime channel closed".to_string())
+            }
+            Err(_) => {
+                error!(
+                    session_id = self.session_id,
+                    "TCP backpressure exceeded, closing session"
+                );
+                Self::close_with_error("channel full: backpressure exceeded".to_string())
+            }
         }
     }
 
@@ -276,6 +286,7 @@ fn frame_len(buffer: &BytesMut) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn should_generate_unique_session_ids() {
@@ -318,5 +329,48 @@ mod tests {
 
         // Assert
         assert_eq!(reconstructed, 1024 * 1024);
+    }
+
+    #[tokio::test]
+    async fn should_resume_tcp_handoff_when_capacity_returns_before_timeout() {
+        // Arrange
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test listener");
+        let address = listener.local_addr().expect("test listener address");
+        let (client, accepted) = tokio::join!(TcpStream::connect(address), listener.accept());
+        let _client = client.expect("connect test client");
+        let (server, _) = accepted.expect("accept test client");
+        let (read_half, _write_half) = server.into_split();
+        let (tx, mut rx) = mpsc::channel(1);
+        tx.try_send((7, Bytes::from_static(b"occupied")))
+            .expect("fill handoff channel");
+        let handler = TcpHandler::new(
+            IngressConfig::default().with_backpressure_timeout(Duration::from_millis(200)),
+            7,
+            tx,
+            read_half,
+        );
+
+        // Act
+        let mut retry =
+            tokio::spawn(async move { handler.retry_send(Bytes::from_static(b"next")).await });
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        let _ = rx.recv().await.expect("drain occupied frame");
+        let resumed = tokio::time::timeout(Duration::from_millis(50), &mut retry).await;
+        if resumed.is_err() {
+            retry.abort();
+            let _ = retry.await;
+        }
+
+        // Assert
+        let retry_result = resumed
+            .expect("handoff should resume promptly")
+            .expect("join retry task");
+        assert_eq!(retry_result, Ok(()));
+        assert_eq!(
+            rx.recv().await.expect("retried frame"),
+            (7, Bytes::from_static(b"next"))
+        );
     }
 }
