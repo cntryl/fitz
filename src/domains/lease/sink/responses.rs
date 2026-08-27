@@ -11,7 +11,7 @@ impl LeaseDomainRuntime<'_> {
         &self,
         waiter: &super::model::PendingAcquire,
         response: &crate::domains::lease::protocol::LeaseResponse,
-    ) {
+    ) -> bool {
         #[cfg(test)]
         let response_ctx = {
             let mut payload_encoder =
@@ -55,7 +55,9 @@ impl LeaseDomainRuntime<'_> {
                 waiter.route_family,
                 &error,
             );
+            return false;
         }
+        true
     }
 
     pub(in crate::domains::lease::sink) fn route_lease_response(

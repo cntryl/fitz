@@ -601,6 +601,65 @@ fn should_promote_waiter_given_extend_observes_expired_lease() {
 }
 
 #[test]
+fn should_not_retain_lease_when_promoted_waiter_cannot_receive_grant() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let key = lease_key(family, "lease://acme/locks/undeliverable-waiter");
+    let lease_address = RouteAddress::new(
+        family,
+        Route::new("lease://acme/locks/undeliverable-waiter"),
+    );
+    let holder_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let waiter_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let router = Arc::new(Router::new());
+    let waiter_mailbox = Arc::new(Mailbox::new(1));
+    router.register(waiter_address.clone(), waiter_mailbox.clone());
+    waiter_mailbox
+        .sender()
+        .try_send(Envelope::new(waiter_address.clone(), 1_u8))
+        .expect("fill waiter mailbox");
+    let sink = LeaseDomainSink::new(
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+    let holder = sink.acquire_for_tests(LeaseAcquireRequest {
+        key: key.clone(),
+        owner_session_id: 7,
+        owner_id: "owner1".to_string(),
+        ttl_secs: 30,
+        wait_seconds: 0,
+        reply_source: lease_address.clone(),
+        reply_destination: Some(holder_address),
+        channel: ClientChannel::Sub,
+        route_family: family,
+    });
+    let LeaseResponse::Acquired { fencing_token } = holder else {
+        panic!("expected holder acquire");
+    };
+    let queued = sink.acquire_for_tests(LeaseAcquireRequest {
+        key: key.clone(),
+        owner_session_id: 8,
+        owner_id: "owner2".to_string(),
+        ttl_secs: 30,
+        wait_seconds: 30,
+        reply_source: lease_address,
+        reply_destination: Some(waiter_address),
+        channel: ClientChannel::Sub,
+        route_family: family,
+    });
+    assert!(matches!(queued, LeaseResponse::Queued { .. }));
+    assert!(sink.expire_lease_for_tests(&key));
+
+    // Act
+    let response = sink.extend_for_tests(&key, "owner1", fencing_token, 30);
+
+    // Assert
+    assert_eq!(response, LeaseResponse::Expired);
+    assert_eq!(sink.lease_count(), 0);
+    assert!(!sink.session_leases_contain_for_tests(8, &key));
+}
+
+#[test]
 fn should_read_admin_waiters_through_actor_command() {
     // Arrange
     let family = RouteFamily::new(1);
