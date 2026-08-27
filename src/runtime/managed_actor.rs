@@ -17,6 +17,12 @@ use std::time::{Duration, Instant};
 
 const MANAGED_ACTOR_POLL_TIMEOUT: Duration = Duration::from_millis(1);
 
+#[derive(Debug, Default)]
+struct PriorityDrainState {
+    consecutive_high: usize,
+    normal_drain_remaining: usize,
+}
+
 fn route_error_to_delivery_error(error: crate::runtime::router::RouteError) -> DeliveryError {
     match error {
         crate::runtime::router::RouteError::RouteNotFound(_) => DeliveryError::ActorStopped,
@@ -54,10 +60,32 @@ fn receive_next_envelope(
     mailbox: &Mailbox,
     normal_receiver: &crossbeam_channel::Receiver<Envelope>,
     high_receiver: &crossbeam_channel::Receiver<Envelope>,
+    priority_state: &mut PriorityDrainState,
 ) -> Option<Envelope> {
+    if priority_state.normal_drain_remaining > 0 {
+        match normal_receiver.try_recv() {
+            Ok(envelope) => {
+                priority_state.normal_drain_remaining -= 1;
+                record_mailbox_observability(mailbox, &envelope);
+                return Some(envelope);
+            }
+            Err(
+                crossbeam_channel::TryRecvError::Empty
+                | crossbeam_channel::TryRecvError::Disconnected,
+            ) => {
+                priority_state.normal_drain_remaining = 0;
+            }
+        }
+    }
+
     crossbeam_channel::select_biased! {
         recv(high_receiver) -> message => match message {
             Ok(envelope) => {
+                priority_state.consecutive_high += 1;
+                if priority_state.consecutive_high >= mailbox.capacity() {
+                    priority_state.normal_drain_remaining = normal_receiver.len();
+                    priority_state.consecutive_high = 0;
+                }
                 record_mailbox_observability(mailbox, &envelope);
                 Some(envelope)
             }
@@ -65,6 +93,7 @@ fn receive_next_envelope(
         },
         recv(normal_receiver) -> message => match message {
             Ok(envelope) => {
+                priority_state.consecutive_high = 0;
                 record_mailbox_observability(mailbox, &envelope);
                 Some(envelope)
             }
@@ -235,12 +264,17 @@ fn run_actor<A>(
     let normal_receiver = mailbox.receiver().clone();
     let high_receiver = mailbox.high_priority_receiver().clone();
     let mut ctx = Context::with_metrics(address.clone(), router.clone(), metrics);
+    let mut priority_state = PriorityDrainState::default();
 
     actor.started(&mut ctx);
 
     while running.load(Ordering::SeqCst) && ctx.is_running() {
-        let Some(envelope) = receive_next_envelope(mailbox, &normal_receiver, &high_receiver)
-        else {
+        let Some(envelope) = receive_next_envelope(
+            mailbox,
+            &normal_receiver,
+            &high_receiver,
+            &mut priority_state,
+        ) else {
             continue;
         };
 
@@ -297,6 +331,7 @@ where
 {
     let normal_receiver = runtime.mailbox.receiver().clone();
     let high_receiver = runtime.mailbox.high_priority_receiver().clone();
+    let mut priority_state = PriorityDrainState::default();
     let mut tracker = restart_tracker_for(runtime.strategy);
     let mut actor = actor_factory();
     let mut ctx = Context::with_metrics(
@@ -325,9 +360,12 @@ where
             continue;
         }
 
-        let Some(envelope) =
-            receive_next_envelope(runtime.mailbox, &normal_receiver, &high_receiver)
-        else {
+        let Some(envelope) = receive_next_envelope(
+            runtime.mailbox,
+            &normal_receiver,
+            &high_receiver,
+            &mut priority_state,
+        ) else {
             continue;
         };
 

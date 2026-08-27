@@ -309,3 +309,55 @@ fn should_keep_unsupervised_actor_stop_on_panic_behavior() {
     // Assert
     assert!(matches!(send_after_panic, Err(DeliveryError::ActorStopped)));
 }
+
+#[test]
+fn should_drain_queued_normal_work_after_one_capacity_of_control_work() {
+    // Arrange
+    let mailbox = Mailbox::new(2);
+    let normal_receiver = mailbox.receiver().clone();
+    let high_receiver = mailbox.high_priority_receiver().clone();
+    let mut priority_state = PriorityDrainState::default();
+    let address = test_address();
+    mailbox
+        .deliver(Envelope::new(address.clone(), 10_u8))
+        .expect("first normal message");
+    mailbox
+        .deliver(Envelope::new(address.clone(), 11_u8))
+        .expect("second normal message");
+    for value in [1_u8, 2] {
+        mailbox
+            .deliver_high_priority(Envelope::new(address.clone(), value))
+            .expect("control message");
+    }
+    let first = receive_next_envelope(
+        &mailbox,
+        &normal_receiver,
+        &high_receiver,
+        &mut priority_state,
+    )
+    .expect("first control message");
+    let second = receive_next_envelope(
+        &mailbox,
+        &normal_receiver,
+        &high_receiver,
+        &mut priority_state,
+    )
+    .expect("second control message");
+    mailbox
+        .deliver_high_priority(Envelope::new(address, 3_u8))
+        .expect("later control message");
+
+    // Act
+    let next = receive_next_envelope(
+        &mailbox,
+        &normal_receiver,
+        &high_receiver,
+        &mut priority_state,
+    )
+    .expect("queued normal message");
+
+    // Assert
+    assert_eq!(first.into_parts::<u8>().1, Some(1));
+    assert_eq!(second.into_parts::<u8>().1, Some(2));
+    assert_eq!(next.into_parts::<u8>().1, Some(10));
+}
