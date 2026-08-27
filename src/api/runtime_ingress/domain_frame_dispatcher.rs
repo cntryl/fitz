@@ -43,6 +43,10 @@ impl RuntimeIngress {
 }
 
 impl DomainFrameDispatcher<'_> {
+    pub(super) fn dispatch_timeout_outcome() -> &'static str {
+        "indeterminate"
+    }
+
     fn elapsed_micros_u64(start: Instant) -> u64 {
         u64::try_from(start.elapsed().as_micros().min(u128::from(u64::MAX))).unwrap_or(u64::MAX)
     }
@@ -462,7 +466,8 @@ impl DomainFrameDispatcher<'_> {
             session_id = session_id,
             domain = domain.as_str(),
             error = %error,
-            "Ingress: domain dispatch timed out; answering with a retryable error"
+            outcome = Self::dispatch_timeout_outcome(),
+            "Ingress: domain dispatch timed out; answering with an indeterminate outcome"
         );
         self.send_domain_error_frame(
             session_id,
