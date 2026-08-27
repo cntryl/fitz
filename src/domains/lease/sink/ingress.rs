@@ -250,9 +250,19 @@ impl LeaseDomainRuntime<'_> {
         }
 
         let scoped_owner_id = Self::scope_operation_owner(meta.session_id, lease_msg);
+        let acquire_key = match lease_msg {
+            crate::domains::lease::protocol::LeaseMessage::Acquire {
+                family_id, route, ..
+            } => crate::domains::lease::protocol::LeaseKey::from_route(*family_id, route),
+            _ => None,
+        };
         let domain_response =
             self.dispatch_actor_operation(envelope, meta, lease_msg, scoped_owner_id.as_deref());
-        self.route_lease_response(envelope, meta, &domain_response, request_started);
+        if !self.route_lease_response(envelope, meta, &domain_response, request_started) {
+            if let Some(key) = acquire_key.as_ref() {
+                self.rollback_undeliverable_acquire(key, meta.session_id, &domain_response);
+            }
+        }
     }
 
     fn scope_operation_owner(
@@ -396,7 +406,13 @@ impl LeaseDomainRuntime<'_> {
                 "Lease prepared operation returned not found"
             );
         }
-        self.route_lease_response(envelope, meta, &domain_response, request_started);
+        let delivered =
+            self.route_lease_response(envelope, meta, &domain_response, request_started);
+        if !delivered {
+            if let PreparedLeaseOperation::Acquire { key, .. } = operation {
+                self.rollback_undeliverable_acquire(key, meta.session_id, &domain_response);
+            }
+        }
     }
 
     fn request_from_envelope(envelope: &Envelope) -> Option<LeaseRequestView<'_>> {

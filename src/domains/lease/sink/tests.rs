@@ -60,6 +60,20 @@ fn encode_lease_acquire(route: &str, owner_id: &str, ttl_secs: u64) -> Bytes {
     Bytes::from(encoder.finish())
 }
 
+fn encode_waiting_lease_acquire(
+    route: &str,
+    owner_id: &str,
+    ttl_secs: u64,
+    wait_seconds: u32,
+) -> Bytes {
+    let mut encoder = PayloadEncoder::new();
+    encoder.put_string(route);
+    encoder.put_string(owner_id);
+    encoder.put_u64(ttl_secs);
+    encoder.put_u32(wait_seconds);
+    Bytes::from(encoder.finish())
+}
+
 fn encode_lease_extend(route: &str, owner_id: &str, fencing_token: u64, ttl_secs: u64) -> Bytes {
     let mut encoder = PayloadEncoder::new();
     encoder.put_string(route);
@@ -487,11 +501,15 @@ fn should_preserve_other_session_leases_given_session_cleanup() {
     let route_a = "lease://acme/locks/resource-a";
     let route_b = "lease://acme/locks/resource-b";
     let router = Arc::new(Router::new());
+    let session_7_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let session_8_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+    router.register(session_7_address.clone(), Arc::new(Mailbox::new(1)));
+    router.register(session_8_address.clone(), Arc::new(Mailbox::new(1)));
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
     let sink = LeaseDomainSink::new(router, admin_read_model.clone());
 
     sink.deliver(Envelope::from_route(
-        RouteAddress::new(family, Route::new("inbox://session/7")),
+        session_7_address,
         RouteAddress::new(family, Route::new(route_a)),
         FrameContext::new(
             7,
@@ -503,7 +521,7 @@ fn should_preserve_other_session_leases_given_session_cleanup() {
     ))
     .expect("session 7 acquire lease");
     sink.deliver(Envelope::from_route(
-        RouteAddress::new(family, Route::new("inbox://session/8")),
+        session_8_address,
         RouteAddress::new(family, Route::new(route_b)),
         FrameContext::new(
             8,
@@ -657,6 +675,99 @@ fn should_not_retain_lease_when_promoted_waiter_cannot_receive_grant() {
     assert_eq!(response, LeaseResponse::Expired);
     assert_eq!(sink.lease_count(), 0);
     assert!(!sink.session_leases_contain_for_tests(8, &key));
+}
+
+#[test]
+fn should_not_retain_direct_lease_when_acquire_response_cannot_be_delivered() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 7;
+    let route = "lease://acme/locks/undeliverable-direct";
+    let client = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let destination = RouteAddress::new(family, Route::new(route));
+    let router = Arc::new(Router::new());
+    let mailbox = Arc::new(Mailbox::new(1));
+    router.register(client.clone(), mailbox.clone());
+    mailbox
+        .sender()
+        .try_send(Envelope::new(client.clone(), 1_u8))
+        .expect("fill client mailbox");
+    let sink = LeaseDomainSink::new(
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+
+    // Act
+    sink.deliver(Envelope::from_route(
+        client,
+        destination,
+        FrameContext::new(
+            session_id,
+            ChannelId::Sub,
+            MessageType::new(400),
+            encode_lease_acquire(route, "", 30),
+            family,
+        ),
+    ))
+    .expect("deliver acquire");
+    std::thread::sleep(Duration::from_millis(50));
+
+    // Assert
+    assert_eq!(sink.lease_count(), 0);
+}
+
+#[test]
+fn should_not_retain_waiter_when_queued_response_cannot_be_delivered() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let route = "lease://acme/locks/undeliverable-queued";
+    let key = lease_key(family, route);
+    let client = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let destination = RouteAddress::new(family, Route::new(route));
+    let router = Arc::new(Router::new());
+    let mailbox = Arc::new(Mailbox::new(1));
+    router.register(client.clone(), mailbox.clone());
+    mailbox
+        .sender()
+        .try_send(Envelope::new(client.clone(), 1_u8))
+        .expect("fill client mailbox");
+    let sink = LeaseDomainSink::new(
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+    assert!(matches!(
+        sink.acquire_for_tests(LeaseAcquireRequest {
+            key: key.clone(),
+            owner_session_id: 7,
+            owner_id: "owner1".to_string(),
+            ttl_secs: 30,
+            wait_seconds: 0,
+            reply_source: destination.clone(),
+            reply_destination: None,
+            channel: ClientChannel::Sub,
+            route_family: family,
+        }),
+        LeaseResponse::Acquired { .. }
+    ));
+
+    // Act
+    sink.deliver(Envelope::from_route(
+        client,
+        destination,
+        FrameContext::new(
+            8,
+            ChannelId::Sub,
+            MessageType::new(400),
+            encode_waiting_lease_acquire(route, "owner2", 30, 30),
+            family,
+        ),
+    ))
+    .expect("deliver waiting acquire");
+    std::thread::sleep(Duration::from_millis(50));
+
+    // Assert
+    assert_eq!(sink.lease_count(), 1);
+    assert_eq!(sink.pending_waiter_count_for_tests(&key), 0);
 }
 
 #[test]

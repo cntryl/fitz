@@ -48,6 +48,64 @@ fn authorize_owned_lease(
 }
 
 impl LeaseDomainRuntime<'_> {
+    pub(super) fn rollback_undeliverable_acquire(
+        &self,
+        key: &crate::domains::lease::protocol::LeaseKey,
+        session_id: u64,
+        response: &crate::domains::lease::protocol::LeaseResponse,
+    ) {
+        use crate::domains::lease::protocol::LeaseResponse;
+
+        match response {
+            LeaseResponse::Acquired { fencing_token } => {
+                let removed = {
+                    let mut leases = self.core.leases.lock();
+                    if leases.get(key).is_some_and(|state| {
+                        state.owner_session_id == session_id
+                            && state.fencing_token == *fencing_token
+                    }) {
+                        leases.remove(key)
+                    } else {
+                        None
+                    }
+                };
+                if removed.is_some() {
+                    self.untrack_session_lease(session_id, key);
+                    self.remove_admin_lease(key);
+                    self.notify_lease_change(key);
+                    let _ = self.advance_waiter_queue(key, Instant::now());
+                    self.refresh_metrics_gauges();
+                }
+            }
+            LeaseResponse::Queued { fencing_token } => {
+                let removed = {
+                    let mut pending = self.core.pending_acquires.lock();
+                    let mut removed = false;
+                    let mut empty = false;
+                    if let Some(waiters) = pending.get_mut(key) {
+                        if let Some(index) = waiters.iter().position(|waiter| {
+                            waiter.owner_session_id == session_id
+                                && waiter.queued_token == *fencing_token
+                        }) {
+                            waiters.remove(index);
+                            removed = true;
+                        }
+                        empty = waiters.is_empty();
+                    }
+                    if empty {
+                        pending.remove(key);
+                    }
+                    removed
+                };
+                if removed {
+                    self.untrack_session_waiter(session_id, key, *fencing_token);
+                    self.refresh_metrics_gauges();
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn apply_lease_effects(
         &self,
         key: &crate::domains::lease::protocol::LeaseKey,

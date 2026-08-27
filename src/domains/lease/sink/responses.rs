@@ -66,7 +66,7 @@ impl LeaseDomainRuntime<'_> {
         meta: crate::runtime::ClientFrameMeta,
         response: &crate::domains::lease::protocol::LeaseResponse,
         request_started: Option<std::time::Instant>,
-    ) {
+    ) -> bool {
         #[cfg(test)]
         let response_ctx = {
             let response_bytes =
@@ -83,6 +83,7 @@ impl LeaseDomainRuntime<'_> {
         #[cfg(not(test))]
         let response_ctx = crate::domains::lease::LeaseClientResponse::new(meta, response.clone());
 
+        let mut delivered = false;
         if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
             let response_sink = self
                 .core
@@ -100,14 +101,19 @@ impl LeaseDomainRuntime<'_> {
                         meta.route_family,
                         &error,
                     );
+                } else {
+                    delivered = true;
                 }
-            } else if let Err(error) = self.core.router.route(response_envelope) {
-                self.record_dropped_delivery(
-                    super::observability::DeliveryDropKind::Response,
-                    meta.session_id,
-                    meta.route_family,
-                    &error,
-                );
+            } else {
+                match self.core.router.route(response_envelope) {
+                    Ok(()) => delivered = true,
+                    Err(error) => self.record_dropped_delivery(
+                        super::observability::DeliveryDropKind::Response,
+                        meta.session_id,
+                        meta.route_family,
+                        &error,
+                    ),
+                }
             }
         }
 
@@ -118,5 +124,6 @@ impl LeaseDomainRuntime<'_> {
                 metrics.record_success(started_at);
             }
         }
+        delivered
     }
 }
