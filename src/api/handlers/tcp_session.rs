@@ -227,10 +227,10 @@ async fn resolve_tcp_run_result(
     tokio::select! {
         res = &mut handler_task => {
             drop(frame_tx);
-            writer_handle.abort();
-            if let Err(e) = tokio::time::timeout(std::time::Duration::from_secs(1), &mut frame_handle).await {
-                tracing::warn!(session_id = session_id, error = %e, "TCP frame task did not terminate in time");
-            }
+            let ((), ()) = tokio::join!(
+                join_tcp_frame_task_or_abort(&mut frame_handle, session_id),
+                abort_and_join_tcp_task(writer_handle, session_id, "writer"),
+            );
             match res {
                 Ok(result) => result,
                 Err(e) => Err(format!("tcp handler task join error: {e}")),
@@ -238,8 +238,10 @@ async fn resolve_tcp_run_result(
         }
         res = &mut frame_handle => {
             drop(frame_tx);
-            handler_task.abort();
-            writer_handle.abort();
+            tokio::join!(
+                abort_and_join_tcp_task(handler_task, session_id, "handler"),
+                abort_and_join_tcp_task(writer_handle, session_id, "writer"),
+            );
             match res {
                 Ok(Ok(())) => Ok(()),
                 Ok(Err(reason)) => {
@@ -257,8 +259,10 @@ async fn resolve_tcp_run_result(
         }
         res = &mut writer_handle => {
             drop(frame_tx);
-            handler_task.abort();
-            frame_handle.abort();
+            tokio::join!(
+                abort_and_join_tcp_task(handler_task, session_id, "handler"),
+                abort_and_join_tcp_task(frame_handle, session_id, "frame"),
+            );
             match res {
                 Ok(Ok(())) => Err("TCP writer stopped".to_string()),
                 Ok(Err(reason)) => Err(reason),
@@ -271,11 +275,38 @@ async fn resolve_tcp_run_result(
             }
         } => {
             drop(frame_tx);
-            handler_task.abort();
-            frame_handle.abort();
-            writer_handle.abort();
+            tokio::join!(
+                abort_and_join_tcp_task(handler_task, session_id, "handler"),
+                abort_and_join_tcp_task(frame_handle, session_id, "frame"),
+                abort_and_join_tcp_task(writer_handle, session_id, "writer"),
+            );
             Err("server shutdown".to_string())
         }
+    }
+}
+
+async fn abort_and_join_tcp_task(
+    handle: tokio::task::JoinHandle<Result<(), String>>,
+    session_id: u64,
+    task: &'static str,
+) {
+    handle.abort();
+    if let Err(error) = handle.await {
+        if !error.is_cancelled() {
+            tracing::warn!(session_id, task, %error, "TCP child task failed while being joined");
+        }
+    }
+}
+
+async fn join_tcp_frame_task_or_abort(
+    handle: &mut tokio::task::JoinHandle<Result<(), String>>,
+    session_id: u64,
+) {
+    if let Err(error) = tokio::time::timeout(std::time::Duration::from_secs(1), &mut *handle).await
+    {
+        tracing::warn!(session_id, %error, "TCP frame task did not terminate in time");
+        handle.abort();
+        let _ = handle.await;
     }
 }
 
@@ -375,13 +406,21 @@ pub(super) async fn handle_tcp_connection(
 
 #[cfg(test)]
 mod tests {
-    use super::{close_tcp_session_on_frame_error, write_tcp_frames};
+    use super::{close_tcp_session_on_frame_error, resolve_tcp_run_result, write_tcp_frames};
     use crate::api::runtime_ingress::{Ingress, IngressDecision};
     use crate::protocol::frame::ChannelId;
     use crate::session::{CloseReason, SessionError, SessionInfo};
     use bytes::Bytes;
     use std::sync::{Arc, Mutex};
     use tokio::io::AsyncReadExt;
+
+    struct DropSignal(Arc<std::sync::atomic::AtomicBool>);
+
+    impl Drop for DropSignal {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::Release);
+        }
+    }
 
     struct RecordingIngress {
         closes: Arc<Mutex<Vec<CloseReason>>>,
@@ -475,5 +514,49 @@ mod tests {
         // Assert
         assert_eq!(frame_count, 3);
         assert_eq!(encoded, b"\0\0\0\x01a\0\0\0\x02bc\0\0\0\x03def");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn should_join_aborted_tcp_child_tasks_before_returning() {
+        // Arrange
+        let handler_dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let writer_dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (handler_started_tx, handler_started_rx) = tokio::sync::oneshot::channel();
+        let (writer_started_tx, writer_started_rx) = tokio::sync::oneshot::channel();
+        let handler_signal = DropSignal(handler_dropped.clone());
+        let writer_signal = DropSignal(writer_dropped.clone());
+        let handler_task = tokio::spawn(async move {
+            let _signal = handler_signal;
+            let _ = handler_started_tx.send(());
+            std::future::pending::<Result<(), String>>().await
+        });
+        let writer_handle = tokio::spawn(async move {
+            let _signal = writer_signal;
+            let _ = writer_started_tx.send(());
+            std::future::pending::<Result<(), String>>().await
+        });
+        handler_started_rx.await.expect("handler task started");
+        writer_started_rx.await.expect("writer task started");
+        let frame_handle = tokio::spawn(async { Ok(()) });
+        let (frame_tx, _frame_rx) = tokio::sync::mpsc::channel(1);
+        let runtime = Arc::new(crate::boot::Runtime::new(Arc::new(
+            crate::runtime::Router::new(),
+        )));
+
+        // Act
+        let result = resolve_tcp_run_result(
+            frame_tx,
+            frame_handle,
+            handler_task,
+            writer_handle,
+            7,
+            runtime,
+        )
+        .await;
+
+        // Assert
+        assert_eq!(result, Ok(()));
+        assert!(handler_dropped.load(std::sync::atomic::Ordering::Acquire));
+        assert!(writer_dropped.load(std::sync::atomic::Ordering::Acquire));
     }
 }
