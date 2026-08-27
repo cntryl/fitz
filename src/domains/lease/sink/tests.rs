@@ -678,6 +678,73 @@ fn should_not_retain_lease_when_promoted_waiter_cannot_receive_grant() {
 }
 
 #[test]
+fn should_promote_next_waiter_when_prior_waiter_cannot_receive_grant() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let route = "lease://acme/locks/undeliverable-first-waiter";
+    let key = lease_key(family, route);
+    let lease_address = RouteAddress::new(family, Route::new(route));
+    let holder_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let first_waiter_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let next_waiter_address = RouteAddress::new(family, Route::new("inbox://session/9"));
+    let router = Arc::new(Router::new());
+    let first_waiter_mailbox = Arc::new(Mailbox::new(1));
+    let next_waiter_mailbox = Arc::new(Mailbox::new(1));
+    router.register(first_waiter_address.clone(), first_waiter_mailbox.clone());
+    router.register(next_waiter_address.clone(), next_waiter_mailbox.clone());
+    first_waiter_mailbox
+        .sender()
+        .try_send(Envelope::new(first_waiter_address.clone(), 1_u8))
+        .expect("fill first waiter mailbox");
+    let sink = LeaseDomainSink::new(
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+    let holder = sink.acquire_for_tests(LeaseAcquireRequest {
+        key: key.clone(),
+        owner_session_id: 7,
+        owner_id: "owner1".to_string(),
+        ttl_secs: 30,
+        wait_seconds: 0,
+        reply_source: lease_address.clone(),
+        reply_destination: Some(holder_address),
+        channel: ClientChannel::Sub,
+        route_family: family,
+    });
+    let LeaseResponse::Acquired { fencing_token } = holder else {
+        panic!("expected holder acquire");
+    };
+    for (session_id, owner_id, destination) in [
+        (8, "owner2", first_waiter_address),
+        (9, "owner3", next_waiter_address),
+    ] {
+        let queued = sink.acquire_for_tests(LeaseAcquireRequest {
+            key: key.clone(),
+            owner_session_id: session_id,
+            owner_id: owner_id.to_string(),
+            ttl_secs: 30,
+            wait_seconds: 30,
+            reply_source: lease_address.clone(),
+            reply_destination: Some(destination),
+            channel: ClientChannel::Sub,
+            route_family: family,
+        });
+        assert!(matches!(queued, LeaseResponse::Queued { .. }));
+    }
+    assert!(sink.expire_lease_for_tests(&key));
+
+    // Act
+    let response = sink.extend_for_tests(&key, "owner1", fencing_token, 30);
+
+    // Assert
+    assert_eq!(response, LeaseResponse::Expired);
+    let grant = receive_envelope(&next_waiter_mailbox, "next waiter acquired response");
+    assert!(grant.payload::<FrameContext>().is_some());
+    assert!(sink.session_leases_contain_for_tests(9, &key));
+    assert_eq!(sink.pending_waiter_count_for_tests(&key), 0);
+}
+
+#[test]
 fn should_not_retain_direct_lease_when_acquire_response_cannot_be_delivered() {
     // Arrange
     let family = RouteFamily::new(1);

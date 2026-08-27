@@ -144,6 +144,11 @@ impl LeaseDomainRuntime<'_> {
                     self.untrack_session_lease(waiter.owner_session_id, key);
                     self.remove_admin_lease(key);
                     self.notify_lease_change(key);
+                    // A disconnected waiter must not hold up the next live
+                    // waiter until the periodic sweep. Queue depth is bounded
+                    // by `LEASE_MAX_QUEUE_DEPTH`, so advancing here remains
+                    // bounded even when several consecutive grants fail.
+                    let _ = self.advance_waiter_queue(key, now);
                 }
                 return WaiterProgress::Consumed;
             }
