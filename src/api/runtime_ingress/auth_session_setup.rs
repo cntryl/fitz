@@ -9,9 +9,10 @@ impl RuntimeIngress {
             .into_iter()
             .map(|session| session.session_id)
             .collect::<Vec<_>>();
-        for session_id in session_ids {
-            self.on_close(session_id, reason.clone()).await;
-        }
+        let closes = session_ids
+            .into_iter()
+            .map(|session_id| self.on_close(session_id, reason.clone()));
+        futures::future::join_all(closes).await;
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
