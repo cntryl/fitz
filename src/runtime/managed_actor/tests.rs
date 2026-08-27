@@ -12,6 +12,21 @@ struct CounterActor {
     stopped: Option<crossbeam_channel::Sender<()>>,
 }
 
+struct StopOnTimerActor {
+    fired: Vec<crate::runtime::context::TimerId>,
+}
+
+impl Actor for StopOnTimerActor {
+    type Message = ();
+
+    fn receive(&mut self, (): (), _ctx: &mut Context<Self>) {}
+
+    fn on_timer(&mut self, timer_id: crate::runtime::context::TimerId, ctx: &mut Context<Self>) {
+        self.fired.push(timer_id);
+        ctx.stop();
+    }
+}
+
 impl CounterActor {
     fn new(stopped: crossbeam_channel::Sender<()>) -> Self {
         Self {
@@ -360,4 +375,23 @@ fn should_drain_queued_normal_work_after_one_capacity_of_control_work() {
     assert_eq!(first.into_parts::<u8>().1, Some(1));
     assert_eq!(second.into_parts::<u8>().1, Some(2));
     assert_eq!(next.into_parts::<u8>().1, Some(10));
+}
+
+#[test]
+fn should_stop_firing_snapshotted_timers_after_actor_stops() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let address = test_address();
+    let mut actor = StopOnTimerActor { fired: Vec::new() };
+    let mut ctx = Context::new(address.clone(), router);
+    ctx.timer_manager().schedule_once(Duration::ZERO);
+    ctx.timer_manager().schedule_once(Duration::ZERO);
+
+    // Act
+    let step = handle_fired_timers(&mut actor, &mut ctx, &address);
+
+    // Assert
+    assert_eq!(step, ActorStep::Continue);
+    assert_eq!(actor.fired.len(), 1);
+    assert!(!ctx.is_running());
 }

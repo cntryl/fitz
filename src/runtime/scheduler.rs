@@ -110,6 +110,9 @@ fn handle_fired_timers<A: Actor>(actor: &mut A, ctx: &mut Context<A>, address: &
         record_worker_busy_time(elapsed);
         ctx.metrics()
             .record_processed(u128_to_u64_saturating(elapsed.as_micros()));
+        if !ctx.is_running() {
+            break;
+        }
     }
 }
 

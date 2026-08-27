@@ -245,6 +245,9 @@ fn handle_fired_timers<A: Actor>(
 
         ctx.metrics()
             .record_processed(u128_to_u64_saturating(started_at.elapsed().as_micros()));
+        if !ctx.is_running() {
+            break;
+        }
     }
 
     ActorStep::Continue
