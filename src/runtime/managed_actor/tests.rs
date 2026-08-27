@@ -29,6 +29,16 @@ struct PanickingStoppedActor {
     stopped_entered: crossbeam_channel::Sender<()>,
 }
 
+struct FactoryRestartActor;
+
+impl Actor for FactoryRestartActor {
+    type Message = ();
+
+    fn receive(&mut self, (): (), _ctx: &mut Context<Self>) {
+        panic!("receive panic");
+    }
+}
+
 impl Actor for PanickingStoppedActor {
     type Message = ();
 
@@ -571,5 +581,43 @@ fn should_fail_closed_when_managed_actor_factory_panics() {
     let health = managed.health_snapshot();
     assert_eq!(health.panic_count, 1);
     assert!(health.restart_exhausted);
+    assert!(matches!(send_after_panic, Err(DeliveryError::ActorStopped)));
+}
+
+#[test]
+fn should_exhaust_restart_budget_when_replacement_factory_panics() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let generation = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (factory_entered_tx, factory_entered_rx) = crossbeam_channel::bounded(1);
+    let managed = ManagedActor::spawn_supervised_with_strategy(
+        router,
+        test_address(),
+        move || {
+            if generation.fetch_add(1, Ordering::SeqCst) > 0 {
+                let _ = factory_entered_tx.send(());
+                panic!("replacement factory panic");
+            }
+            FactoryRestartActor
+        },
+        8,
+        SupervisorStrategy::restart(1, Duration::from_mins(1)),
+    );
+
+    // Act
+    managed.try_send(()).expect("panic message should enqueue");
+    factory_entered_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("replacement factory should run");
+    wait_until("restart budget should exhaust", || {
+        managed.health_snapshot().restart_exhausted
+    });
+    let send_after_panic = managed.try_send(());
+
+    // Assert
+    let health = managed.health_snapshot();
+    assert!(!health.running);
+    assert_eq!(health.panic_count, 2);
+    assert_eq!(health.restart_count, 1);
     assert!(matches!(send_after_panic, Err(DeliveryError::ActorStopped)));
 }

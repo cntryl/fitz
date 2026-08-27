@@ -514,7 +514,16 @@ where
                     router.unregister(address);
                     return false;
                 }
-                *actor = actor_factory();
+                *actor = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(actor_factory))
+                {
+                    Ok(actor) => actor,
+                    Err(error) => {
+                        tracing::error!(actor = ?address, error = ?error, "Managed replacement actor factory panicked");
+                        ctx.metrics().record_panic();
+                        health.record_panic();
+                        continue;
+                    }
+                };
                 *ctx =
                     Context::with_metrics(address.clone(), router.clone(), ctx.metrics().clone());
                 if start_managed_actor(actor, ctx, address) == ActorStep::Continue {
