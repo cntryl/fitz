@@ -18,7 +18,8 @@ impl QueueDomainCore {
         request_envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         response: &crate::domains::queue::QueueResponse,
-    ) {
+    ) -> bool {
+        let delivered;
         #[cfg(test)]
         {
             let response_bytes = crate::dispatch::protocol::queue_codec::encode_response(
@@ -32,7 +33,8 @@ impl QueueDomainCore {
                 bytes::Bytes::from(response_bytes),
                 meta.route_family,
             );
-            if let Some(response_envelope) = request_envelope.try_reply_to(response_ctx) {
+            delivered = if let Some(response_envelope) = request_envelope.try_reply_to(response_ctx)
+            {
                 if let Err(error) = self.router.route(response_envelope) {
                     self.record_response_route_failure();
                     tracing::warn!(
@@ -41,14 +43,19 @@ impl QueueDomainCore {
                         error = ?error,
                         "Failed to route queue response"
                     );
+                    false
+                } else {
+                    true
                 }
-            }
+            } else {
+                false
+            };
         }
 
         #[cfg(not(test))]
         {
             let response = crate::domains::queue::QueueClientResponse::new(meta, response.clone());
-            if let Some(response_envelope) = request_envelope.try_reply_to(response) {
+            delivered = if let Some(response_envelope) = request_envelope.try_reply_to(response) {
                 if let Err(error) = self.router.route(response_envelope) {
                     self.record_response_route_failure();
                     tracing::warn!(
@@ -57,9 +64,15 @@ impl QueueDomainCore {
                         error = ?error,
                         "Failed to route queue response"
                     );
+                    false
+                } else {
+                    true
                 }
-            }
+            } else {
+                false
+            };
         }
+        delivered
     }
 
     pub(super) fn route_queue_recovery_error(

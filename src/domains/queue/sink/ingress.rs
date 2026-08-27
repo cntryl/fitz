@@ -196,6 +196,12 @@ impl QueueDomainCore {
             }
             _ => None,
         };
+        let receive_route = match &queue_msg {
+            crate::domains::queue::protocol::QueueMessage::Receive { route, .. } => {
+                Some(route.clone())
+            }
+            _ => None,
+        };
         let pending_message = queue_msg.clone();
         let Some(outcome) =
             self.dispatch_actor_operation(envelope, meta, request_started, queue_msg)
@@ -248,7 +254,17 @@ impl QueueDomainCore {
             self.route_queue_ready_notification(&key, notification);
         }
 
-        self.route_queue_response(envelope, meta, &outcome.response);
+        let delivered = self.route_queue_response(envelope, meta, &outcome.response);
+        if !delivered {
+            if let Some(route) = receive_route.as_ref() {
+                self.rollback_undeliverable_receive(
+                    meta.route_family,
+                    route,
+                    meta.session_id,
+                    &outcome.response,
+                );
+            }
+        }
         self.record_operation_metrics(request_started, &outcome.response, op_kind);
         if let Some(route) = wake_route.as_ref() {
             self.wake_pending_reserves_for_route(meta.route_family, route, Instant::now());

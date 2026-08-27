@@ -102,6 +102,56 @@ fn decode_concrete_reserve_response(frame: &FrameContext) -> Vec<Vec<u8>> {
 }
 
 #[test]
+fn should_release_reserved_message_when_receive_response_cannot_be_delivered() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let route = "queue://acme/jobs/undeliverable";
+    let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+    let producer_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let consumer_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let producer_mailbox = Arc::new(Mailbox::new(8));
+    let consumer_mailbox = Arc::new(Mailbox::new(1));
+    let router = Arc::new(Router::new());
+    router.register(producer_address.clone(), producer_mailbox.clone());
+    router.register(consumer_address.clone(), consumer_mailbox.clone());
+    let sink = new_queue_domain_sink(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+        cntryl_midge::WriteOptions::buffered(),
+    );
+    sink.deliver(queue_send_envelope(family, route))
+        .expect("seed queue message");
+    let _seed_response = receive_queue_frame(&producer_mailbox, "seed response");
+    consumer_mailbox
+        .sender()
+        .try_send(Envelope::new(consumer_address.clone(), 1_u8))
+        .expect("fill consumer mailbox");
+
+    // Act
+    sink.deliver(Envelope::from_route(
+        consumer_address,
+        queue_address,
+        FrameContext::new(
+            8,
+            ChannelId::Pub,
+            MessageType::new(202),
+            encode_queue_reserve(route, 30, 1),
+            family,
+        ),
+    ))
+    .expect("reserve queue message");
+    sink.deliver(queue_send_envelope(family, route))
+        .expect("enqueue ordering marker");
+    let _marker_response = receive_queue_frame(&producer_mailbox, "marker response");
+    let snapshot = queue_snapshot(&sink, family, route);
+
+    // Assert
+    assert_eq!(snapshot.messages_ready, 2);
+    assert_eq!(snapshot.messages_inflight, 0);
+}
+
+#[test]
 fn should_wake_fifo_long_poll_reserve_when_matching_message_is_enqueued() {
     // Arrange
     // Act
