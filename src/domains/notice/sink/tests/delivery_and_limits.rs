@@ -152,7 +152,7 @@ fn should_retain_other_notice_subscription_given_unsubscribe_on_same_session() {
     // Assert
     let notify_envelope = subscriber_mailbox
         .receiver()
-        .try_recv()
+        .recv_timeout(Duration::from_secs(1))
         .expect("retained notice notify envelope");
     let notify_frame = notify_envelope
         .into_payload::<FrameContext>()
@@ -281,6 +281,13 @@ fn should_increment_delivery_drop_counter_given_failing_subscriber_route() {
     .expect("publish notice event");
 
     // Assert
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while crate::observability::metrics().counter_get("fitz_notice_delivery_drops_total")
+        < before_drops + 1
+        && Instant::now() < deadline
+    {
+        std::thread::yield_now();
+    }
     assert_eq!(
         crate::observability::metrics().counter_get("fitz_notice_delivery_drops_total"),
         before_drops + 1
@@ -432,7 +439,9 @@ fn should_isolate_unrelated_family_when_notice_subscriber_blocks() {
         ),
     ));
     let elapsed = started.elapsed();
-    let delivered = healthy_mailbox.receiver().try_recv();
+    let delivered = healthy_mailbox
+        .receiver()
+        .recv_timeout(Duration::from_secs(1));
     release_tx.send(()).expect("release blocked delivery");
     let blocked_result = blocked_publish.join().expect("join blocked publish");
 

@@ -7,8 +7,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// Maximum time the global Notice actor waits for one family worker.
-pub(super) const NOTICE_DELIVERY_HANDOFF_TIMEOUT: Duration = Duration::from_millis(25);
 /// Maximum retry window after a subscriber reports mailbox backpressure.
 const NOTICE_MAILBOX_RETRY_TIMEOUT: Duration = Duration::from_millis(5);
 const NOTICE_DELIVERY_WORKER_CAPACITY: usize = 64;
@@ -17,21 +15,14 @@ pub(super) struct NoticeDeliveryJob {
     target: NoticeDeliveryTarget,
     route: Route,
     payload: Bytes,
-    completed: crossbeam_channel::Sender<()>,
 }
 
 impl NoticeDeliveryJob {
-    pub(super) fn new(
-        target: NoticeDeliveryTarget,
-        route: Route,
-        payload: Bytes,
-        completed: crossbeam_channel::Sender<()>,
-    ) -> Self {
+    pub(super) fn new(target: NoticeDeliveryTarget, route: Route, payload: Bytes) -> Self {
         Self {
             target,
             route,
             payload,
-            completed,
         }
     }
 }
@@ -47,7 +38,6 @@ pub(super) fn spawn_notice_delivery_worker(
         .spawn(move || {
             while let Ok(job) = receiver.recv() {
                 deliver_notice(&router, &job.target, &job.route, &job.payload);
-                let _ = job.completed.send(());
             }
         })?;
     Ok(sender)

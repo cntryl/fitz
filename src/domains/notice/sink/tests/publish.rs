@@ -93,6 +93,87 @@ fn should_accept_notice_publish_without_waiting_for_subscriber_delivery() {
 }
 
 #[test]
+fn should_keep_notice_actor_responsive_while_delivery_worker_is_blocked() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let notice_route = "notice://acme/app/events";
+    let notice_address = RouteAddress::new(family, Route::new("notice://acme/inbound"));
+    let publisher_address = RouteAddress::new(family, Route::new("inbox://session/11"));
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = NoticeDomainSink::new(router.clone(), admin_read_model);
+    let (entered_tx, entered_rx) = crossbeam_channel::unbounded();
+    let (_release_tx, release_rx) = crossbeam_channel::bounded::<()>(1);
+    for session_id in 1..=4 {
+        let subscriber_address =
+            RouteAddress::new(family, Route::new(format!("inbox://session/{session_id}")));
+        let subscriber_mailbox = Arc::new(Mailbox::new(8));
+        router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+        subscribe_notice_pattern(
+            &sink,
+            &subscriber_address,
+            &notice_address,
+            session_id,
+            notice_route,
+            family,
+        );
+        let _ = decode_notice_response(&subscriber_mailbox);
+        router.register(
+            subscriber_address,
+            Arc::new(BlockingSink {
+                entered: entered_tx.clone(),
+                release: release_rx.clone(),
+            }),
+        );
+    }
+    let publish = || {
+        crate::domains::notice::NoticeClientRequest::new(
+            crate::runtime::ClientFrameMeta::new(
+                11,
+                crate::runtime::ClientChannel::Pub,
+                500,
+                family,
+            ),
+            Ok(
+                crate::domains::notice::protocol::NotificationMessage::Publish(
+                    crate::domains::notice::protocol::PublishMessage::new(
+                        family,
+                        Route::new(notice_route),
+                        Bytes::from_static(b"hello"),
+                    ),
+                ),
+            ),
+        )
+    };
+    sink.deliver(Envelope::from_route(
+        publisher_address.clone(),
+        notice_address.clone(),
+        publish(),
+    ))
+    .expect("accept first notice publish");
+    entered_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("delivery worker should block");
+    let (count_tx, count_rx) = crossbeam_channel::bounded(1);
+
+    // Act
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let _ = count_tx.send(sink.subscription_count());
+        });
+
+        // Assert
+        assert_eq!(
+            count_rx
+                .recv_timeout(Duration::from_millis(10))
+                .expect("Notice actor should remain responsive")
+                .expect("read Notice subscription count"),
+            4
+        );
+    });
+}
+
+#[test]
 fn should_deliver_accepted_publish_after_disconnect_cleanup_overtakes_it() {
     // Arrange
     let family = RouteFamily::new(1);

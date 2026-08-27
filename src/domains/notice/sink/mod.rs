@@ -27,7 +27,7 @@ mod test_channels;
 mod validation;
 
 use actor_runtime::{NoticeDomainActor, NoticeDomainCommand};
-use delivery_worker::{notice_delivery_worker, NoticeDeliveryJob, NOTICE_DELIVERY_HANDOFF_TIMEOUT};
+use delivery_worker::{notice_delivery_worker, NoticeDeliveryJob};
 use model::{
     notice_route_realm, NoticeDeliveryTarget, NoticeDeliveryTargets, NoticeMatchedRoutePatterns,
     NoticeRouteStats, NoticeRouteStatsKey, NoticeSubscription,
