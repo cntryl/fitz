@@ -369,7 +369,18 @@ where
     let high_receiver = runtime.mailbox.high_priority_receiver().clone();
     let mut priority_state = PriorityDrainState::default();
     let mut tracker = restart_tracker_for(runtime.strategy);
-    let mut actor = actor_factory();
+    let mut actor = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(&actor_factory)) {
+        Ok(actor) => actor,
+        Err(error) => {
+            tracing::error!(actor = ?runtime.address, error = ?error, "Managed actor factory panicked");
+            runtime.metrics.record_panic();
+            runtime.health.record_panic();
+            runtime.health.mark_exhausted();
+            runtime.running.store(false, Ordering::SeqCst);
+            runtime.router.unregister(runtime.address);
+            return;
+        }
+    };
     let mut ctx = Context::with_metrics(
         runtime.address.clone(),
         runtime.router.clone(),

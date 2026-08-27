@@ -544,3 +544,32 @@ fn should_fail_closed_when_stopped_hook_panics_during_restart() {
     assert!(health.restart_exhausted);
     assert!(matches!(send_after_panic, Err(DeliveryError::ActorStopped)));
 }
+
+#[test]
+fn should_fail_closed_when_managed_actor_factory_panics() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let (factory_entered_tx, factory_entered_rx) = crossbeam_channel::bounded(1);
+    let managed: ManagedActor<TestManagedMessage> = ManagedActor::spawn_fail_closed(
+        router,
+        test_address(),
+        move || -> CounterActor {
+            let _ = factory_entered_tx.send(());
+            panic!("actor factory panic");
+        },
+        8,
+    );
+
+    // Act
+    factory_entered_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("actor factory should run");
+    wait_until("managed actor should fail closed", || !managed.is_running());
+    let send_after_panic = managed.try_send(TestManagedMessage::Increment);
+
+    // Assert
+    let health = managed.health_snapshot();
+    assert_eq!(health.panic_count, 1);
+    assert!(health.restart_exhausted);
+    assert!(matches!(send_after_panic, Err(DeliveryError::ActorStopped)));
+}
