@@ -672,6 +672,28 @@ async fn should_cleanup_registered_domains_and_remove_session_state_on_close() {
 }
 
 #[tokio::test]
+async fn should_not_retain_closed_session_ids_after_connection_churn() {
+    // Arrange
+    let ingress = RuntimeIngress::new(false);
+
+    // Act
+    for session_id in 1..=100 {
+        ingress
+            .on_open(make_session_info(session_id, TransportKind::WebSocket))
+            .await
+            .expect("open session");
+        ingress.on_close(session_id, CloseReason::ClientClose).await;
+    }
+
+    // Assert
+    assert_eq!(ingress.session_count(), 0);
+    assert!(
+        ingress.closing_sessions.is_empty(),
+        "closed session ids must not accumulate after cleanup"
+    );
+}
+
+#[tokio::test]
 async fn should_record_cleanup_failures_when_on_close_cannot_reach_all_domains() {
     // Arrange
     let collector = crate::observability::metrics();

@@ -15,7 +15,7 @@ impl RuntimeIngress {
             cleanup_wake: Arc::new(tokio::sync::Notify::new()),
             cleanup_worker_started: Arc::new(AtomicBool::new(false)),
             cleanup_shutdown: Arc::new(AtomicBool::new(false)),
-            closed_sessions: Arc::new(DashMap::new()),
+            closing_sessions: Arc::new(DashMap::new()),
             router: None,
             event_handler: None,
             route_families: Arc::new(std::iter::once(1).collect()),

@@ -14,7 +14,7 @@ impl RuntimeIngress {
 impl SessionRegistry<'_> {
     pub(super) fn open_session(&self, session: SessionInfo) -> u64 {
         let session_id = session.session_id;
-        self.ingress.closed_sessions.remove(&session_id);
+        self.ingress.closing_sessions.remove(&session_id);
 
         if let Ok(collector) = std::panic::catch_unwind(crate::observability::metrics) {
             collector.counter_inc(obs::METRIC_SESSIONS_CREATED);

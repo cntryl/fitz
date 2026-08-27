@@ -131,7 +131,11 @@ impl Ingress for RuntimeIngress {
     }
 
     async fn on_close(&self, session_id: u64, reason: CloseReason) {
-        if self.closed_sessions.insert(session_id, ()).is_some() {
+        if self.closing_sessions.insert(session_id, ()).is_some() {
+            return;
+        }
+        if self.session_registry().session(session_id).is_none() {
+            self.closing_sessions.remove(&session_id);
             return;
         }
 
@@ -153,6 +157,7 @@ impl Ingress for RuntimeIngress {
         if let Some(handler) = &self.event_handler {
             handler(SessionEvent::Close(session_id, reason));
         }
+        self.closing_sessions.remove(&session_id);
     }
 }
 
