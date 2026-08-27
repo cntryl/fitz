@@ -32,6 +32,7 @@ impl StreamDomainCore {
             return;
         }
 
+        let is_begin = matches!(&stream_msg, StreamMessage::Begin { .. });
         let outcome: OperationOutcome = (match stream_msg {
             StreamMessage::Begin {
                 family_id,
@@ -90,16 +91,44 @@ impl StreamDomainCore {
             self.mark_admin_snapshot_dirty();
         }
 
-        if let Some(notification) = outcome.notification {
+        if let Some(notification) = outcome.notification.as_ref() {
             let event = crate::runtime::DomainPublishEvent::new(
                 notification.family,
-                notification.route,
-                notification.payload,
+                notification.route.clone(),
+                notification.payload.clone(),
             );
             self.handle_domain_publish(&event);
         }
 
-        self.route_stream_response(envelope, meta, &outcome.response, request_started);
+        self.route_operation_response(envelope, meta, request_started, is_begin, &outcome);
+    }
+
+    fn route_operation_response(
+        &self,
+        envelope: &Envelope,
+        meta: crate::runtime::ClientFrameMeta,
+        request_started: Option<std::time::Instant>,
+        is_begin: bool,
+        outcome: &OperationOutcome,
+    ) {
+        let begin_session = match (&outcome.response, is_begin) {
+            (
+                StreamClientResponseBody::Ok {
+                    session_id: Some(session_id),
+                    ..
+                },
+                true,
+            ) => Some(*session_id),
+            _ => None,
+        };
+        if !self.route_stream_response(envelope, meta, &outcome.response, request_started) {
+            if let Some(session_id) = begin_session {
+                let (_, _, admin_dirty) = self.handle_rollback_operation(meta, session_id);
+                if admin_dirty {
+                    self.mark_admin_snapshot_dirty();
+                }
+            }
+        }
     }
 
     fn handle_begin_operation(

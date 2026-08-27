@@ -109,6 +109,47 @@ fn should_not_retain_subscription_when_subscribe_response_cannot_be_delivered() 
 }
 
 #[test]
+fn should_not_retain_append_session_when_begin_response_cannot_be_delivered() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let route = "stream://bench/events/undeliverable-begin";
+    let source = RouteAddress::new(family, Route::new("inbox://session/1"));
+    let destination = RouteAddress::new(family, Route::new(route));
+    let mailbox = Arc::new(Mailbox::new(1));
+    let router = Arc::new(Router::new());
+    router.register(source.clone(), mailbox.clone());
+    mailbox
+        .sender()
+        .try_send(Envelope::new(source.clone(), 1_u8))
+        .expect("fill response mailbox");
+    let sink = StreamDomainSink::new(
+        crate::benchkit::create_bench_store(),
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+        StreamStorageWriteOptions::local(),
+    );
+    let frame = build_stream_begin(route);
+    let (message_type, payload) = extract_single_tlv_field(&frame);
+
+    // Act
+    sink.deliver(Envelope::from_route(
+        source,
+        destination,
+        FrameContext::new(
+            1,
+            ChannelId::Pub,
+            crate::dispatch::protocol::tlv::MessageType::new(message_type),
+            payload,
+            family,
+        ),
+    ))
+    .expect("deliver stream begin");
+
+    // Assert
+    assert_eq!(sink.append_session_count(), 0);
+}
+
+#[test]
 fn should_fail_closed_given_malformed_stream_commit_notification() {
     // Arrange
     let context = setup_test_context();
