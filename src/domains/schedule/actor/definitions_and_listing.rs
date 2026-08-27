@@ -303,12 +303,18 @@ impl ScheduleActor {
         let Some(existing) = self.schedules.get(route) else {
             return Ok(false);
         };
+        let pending_fire_ms = self
+            .pending_claimed_occurrences
+            .keys()
+            .filter_map(|(fire_ms, pending_route)| (pending_route == route).then_some(*fire_ms))
+            .collect::<Vec<_>>();
 
         if let Err(error) = self.store.delete_current_with_realm(
             self.family.as_u64(),
             &parsed_route.realm,
             route,
             existing.next_fire_ms,
+            &pending_fire_ms,
             self.write_options,
         ) {
             crate::observability::counter_inc(METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL);
@@ -316,6 +322,8 @@ impl ScheduleActor {
         }
 
         if let Some(removed_def) = self.schedules.remove(route) {
+            self.pending_claimed_occurrences
+                .retain(|(_, pending_route), _| pending_route != route);
             self.remove_list_entry(removed_def.list_index);
             self.compact_ready_heap_if_needed();
             return Ok(true);

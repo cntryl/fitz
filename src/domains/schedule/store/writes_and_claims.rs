@@ -235,7 +235,14 @@ impl ScheduleStore {
         write_options: WriteOptions,
     ) -> Result<(), String> {
         let parsed = parse_concrete_schedule_route(route)?;
-        self.delete_current_with_realm(cf_id, &parsed.realm, route, next_fire_ms, write_options)
+        self.delete_current_with_realm(
+            cf_id,
+            &parsed.realm,
+            route,
+            next_fire_ms,
+            &[],
+            write_options,
+        )
     }
 
     pub(crate) fn delete_current_with_realm(
@@ -244,6 +251,7 @@ impl ScheduleStore {
         realm: &str,
         route: &str,
         next_fire_ms: u64,
+        pending_fire_ms: &[u64],
         write_options: WriteOptions,
     ) -> Result<(), String> {
         let cf_id_u32 = Self::u64_to_u32_saturating(cf_id)?;
@@ -271,6 +279,15 @@ impl ScheduleStore {
             DUE_PREFIX,
         ))
         .map_err(|e| format!("delete schedule due index failed: {e:?}"))?;
+        for fire_ms in pending_fire_ms {
+            txn.delete(Self::encode_prefixed_timed_route_key_from_realm(
+                realm,
+                *fire_ms,
+                route,
+                PENDING_FIRE_PREFIX,
+            ))
+            .map_err(|e| format!("delete schedule pending fire failed: {e:?}"))?;
+        }
 
         self.commit_or_inject(txn, write_options)
     }

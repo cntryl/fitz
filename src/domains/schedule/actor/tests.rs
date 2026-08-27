@@ -586,6 +586,39 @@ fn should_not_fire_future_occurrence_given_cancel_after_due_scan() {
 }
 
 #[test]
+fn should_delete_pending_occurrence_given_cancel_after_due_claim() {
+    // Arrange
+    let mut actor = make_actor();
+    let route = "schedule://acme/jobs/cancel-pending/run";
+    actor
+        .create_schedule(
+            route.to_string(),
+            "* * * * *".to_string(),
+            Bytes::from_static(b"payload"),
+        )
+        .expect("create schedule");
+    actor.bench_prepare_scan(1);
+    let scan_at = Instant::now();
+    actor.last_scan_time = scan_at
+        .checked_sub(actor.scan_dedup_window + Duration::from_millis(1))
+        .expect("scan time");
+    let claimed = actor.collect_due_occurrences_for_publish_at(scan_at);
+    assert_eq!(claimed.len(), 1);
+    assert_eq!(actor.pending_fire_count(), 1);
+
+    // Act
+    actor.delete_schedule(route).expect("cancel schedule");
+
+    // Assert
+    assert_eq!(actor.pending_fire_count(), 0);
+    assert!(actor
+        .store
+        .load_pending_fire_claims(actor.family.as_u64())
+        .expect("load pending claims")
+        .is_empty());
+}
+
+#[test]
 fn should_not_fire_original_due_occurrence_given_batch_reschedule_before_due_scan() {
     // Arrange
     let mut actor = make_actor();
