@@ -247,6 +247,11 @@ impl StreamDomainSink {
                 StreamDomainCommand::PanicForTests => {
                     panic!("test Stream family actor panic");
                 }
+                #[cfg(test)]
+                StreamDomainCommand::BlockForTests(entered, release) => {
+                    let _ = entered.send(());
+                    let _ = release.recv();
+                }
             },
             move |_family| {
                 if let Some(metrics) = core_for_failure.metrics.as_ref() {
@@ -534,6 +539,20 @@ impl StreamDomainSink {
         if let Some(actor) = self.actor.as_ref() {
             actor.stop();
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn block_family_actor_for_tests(
+        &self,
+        family: RouteFamily,
+        entered: crossbeam_channel::Sender<()>,
+        release: crossbeam_channel::Receiver<()>,
+    ) {
+        self.dispatch_family_control(
+            Some(family),
+            StreamDomainCommand::BlockForTests(entered, release),
+        )
+        .expect("enqueue Stream family actor test block");
     }
 
     #[cfg(test)]

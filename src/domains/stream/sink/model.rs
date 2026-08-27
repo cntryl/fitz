@@ -406,6 +406,11 @@ pub(super) enum StreamDomainCommand {
     SyncAdminSnapshot(crossbeam_channel::Sender<()>),
     #[cfg(test)]
     PanicForTests,
+    #[cfg(test)]
+    BlockForTests(
+        crossbeam_channel::Sender<()>,
+        crossbeam_channel::Receiver<()>,
+    ),
 }
 
 #[derive(Default)]
