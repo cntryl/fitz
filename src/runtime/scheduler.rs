@@ -106,6 +106,22 @@ fn notify_actor_error<A: Actor>(
     }
 }
 
+fn start_actor<A: Actor>(actor: &mut A, ctx: &mut Context<A>, address: &RouteAddress) {
+    if let Err(error) =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| actor.started(ctx)))
+    {
+        tracing::error!(actor = ?address, error = ?error, "Actor panicked during startup");
+        ctx.metrics().record_panic();
+        notify_actor_error(
+            actor,
+            ActorError::Panic(format!("startup panic: {error:?}")),
+            ctx,
+            address,
+        );
+        ctx.stop();
+    }
+}
+
 fn handle_fired_timers<A: Actor>(actor: &mut A, ctx: &mut Context<A>, address: &RouteAddress) {
     let fired_timers = ctx.timer_manager().fired_timers();
     for timer_id in fired_timers {
@@ -204,8 +220,7 @@ impl Scheduler {
             let mut ctx =
                 Context::with_metrics(address.clone(), router_clone.clone(), metrics_clone);
 
-            // Call started hook
-            actor.started(&mut ctx);
+            start_actor(&mut actor, &mut ctx, &address);
 
             // Process messages with two-phase priority lanes
             while ctx.is_running() {
@@ -452,6 +467,21 @@ mod tests {
         error_entered: crossbeam_channel::Sender<()>,
     }
 
+    struct PanickingStartedActor {
+        started_entered: crossbeam_channel::Sender<()>,
+    }
+
+    impl Actor for PanickingStartedActor {
+        type Message = ();
+
+        fn started(&mut self, _ctx: &mut Context<Self>) {
+            let _ = self.started_entered.send(());
+            panic!("started hook panic");
+        }
+
+        fn receive(&mut self, (): (), _ctx: &mut Context<Self>) {}
+    }
+
     impl Actor for PanickingErrorActor {
         type Message = ();
 
@@ -604,6 +634,41 @@ mod tests {
         error_entered_rx
             .recv_timeout(Duration::from_secs(1))
             .expect("error hook should run");
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let send_after_panic = loop {
+            let result = actor_ref.send(());
+            if matches!(result, Err(crate::runtime::SendError::RouteNotFound { .. }))
+                || Instant::now() >= deadline
+            {
+                break result;
+            }
+            std::thread::yield_now();
+        };
+
+        // Assert
+        assert!(matches!(
+            send_after_panic,
+            Err(crate::runtime::SendError::RouteNotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn should_unregister_actor_when_started_hook_panics() {
+        // Arrange
+        let scheduler = Scheduler::new();
+        let (started_entered_tx, started_entered_rx) = crossbeam_channel::bounded(1);
+        let actor_ref = scheduler.spawn(
+            PanickingStartedActor {
+                started_entered: started_entered_tx,
+            },
+            test_address(1, "test://panicking-started-hook"),
+            8,
+        );
+        started_entered_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("started hook should run");
+
+        // Act
         let deadline = Instant::now() + Duration::from_secs(1);
         let send_after_panic = loop {
             let result = actor_ref.send(());
