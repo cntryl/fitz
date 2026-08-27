@@ -283,12 +283,22 @@ async fn finish_websocket_writer(
     if writer_already_joined {
         return;
     }
-    if let Err(error) = tokio::time::timeout(Duration::from_secs(1), writer_handle).await {
+    if let Err(error) = tokio::time::timeout(Duration::from_secs(1), &mut *writer_handle).await {
         tracing::warn!(
             session_id,
             error = %error,
-            "WS writer task did not terminate in time"
+            "WS writer task did not terminate in time; aborting"
         );
+        writer_handle.abort();
+        if let Err(join_error) = writer_handle.await {
+            if !join_error.is_cancelled() {
+                tracing::warn!(
+                    session_id,
+                    error = %join_error,
+                    "WS writer task failed while being joined"
+                );
+            }
+        }
     }
 }
 
@@ -596,6 +606,16 @@ mod tests {
     use hyper_tungstenite::tungstenite::error::ProtocolError;
     use hyper_tungstenite::tungstenite::Error as WsError;
     use hyper_tungstenite::tungstenite::Message;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    struct DropSignal(Arc<AtomicBool>);
+
+    impl Drop for DropSignal {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
 
     #[test]
     fn should_ignore_stale_websocket_frame_after_session_shutdown() {
@@ -624,6 +644,27 @@ mod tests {
 
         // Assert
         assert!(cleanup.is_ok(), "cleanup panicked: {cleanup:?}");
+    }
+
+    #[tokio::test]
+    async fn should_abort_and_join_websocket_writer_after_cleanup_timeout() {
+        // Arrange
+        let dropped = Arc::new(AtomicBool::new(false));
+        let signal = DropSignal(dropped.clone());
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let mut writer_handle = tokio::spawn(async move {
+            let _signal = signal;
+            let _ = started_tx.send(());
+            std::future::pending::<Result<(), String>>().await
+        });
+        started_rx.await.expect("writer task started");
+
+        // Act
+        finish_websocket_writer(&mut writer_handle, false, 7).await;
+
+        // Assert
+        assert!(dropped.load(Ordering::Acquire));
+        assert!(writer_handle.is_finished());
     }
 
     #[test]
