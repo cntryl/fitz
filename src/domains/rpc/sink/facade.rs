@@ -151,6 +151,20 @@ impl RpcDomainSink {
     }
 
     #[cfg(test)]
+    pub(super) fn block_family_actor_for_tests(
+        &self,
+        family: RouteFamily,
+        entered: crossbeam_channel::Sender<()>,
+        release: crossbeam_channel::Receiver<()>,
+    ) {
+        self.try_send_control(
+            Some(family),
+            RpcDomainCommand::BlockForTests(entered, release),
+        )
+        .expect("enqueue RPC family actor test block");
+    }
+
+    #[cfg(test)]
     pub(super) fn register_registration_for_tests(&self, registration: RpcWorker) {
         self.core.state.lock().register_registration(registration);
     }

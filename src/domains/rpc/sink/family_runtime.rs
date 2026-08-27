@@ -144,6 +144,11 @@ impl RpcDomainSink {
                         RpcDomainCommand::PanicForTests => {
                             panic!("test RPC family actor panic");
                         }
+                        #[cfg(test)]
+                        RpcDomainCommand::BlockForTests(entered, release) => {
+                            let _ = entered.send(());
+                            let _ = release.recv();
+                        }
                     }
                 },
                 crate::domains::rpc::metrics::METRIC_FAMILY_FAILED_CLOSED_TOTAL,

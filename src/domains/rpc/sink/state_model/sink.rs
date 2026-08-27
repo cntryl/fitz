@@ -55,6 +55,11 @@ pub(in crate::domains::rpc::sink) enum RpcDomainCommand {
     ),
     #[cfg(test)]
     PanicForTests,
+    #[cfg(test)]
+    BlockForTests(
+        crossbeam_channel::Sender<()>,
+        crossbeam_channel::Receiver<()>,
+    ),
 }
 
 #[derive(Default)]
