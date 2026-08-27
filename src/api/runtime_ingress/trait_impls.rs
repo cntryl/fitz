@@ -4,6 +4,17 @@ use super::{
 };
 use crate::session::SessionInfo;
 
+struct ClosingSessionGuard<'a> {
+    sessions: &'a dashmap::DashMap<u64, ()>,
+    session_id: u64,
+}
+
+impl Drop for ClosingSessionGuard<'_> {
+    fn drop(&mut self) {
+        self.sessions.remove(&self.session_id);
+    }
+}
+
 impl Default for RuntimeIngress {
     fn default() -> Self {
         Self::new(true) // Default: auth required
@@ -134,8 +145,11 @@ impl Ingress for RuntimeIngress {
         if self.closing_sessions.insert(session_id, ()).is_some() {
             return;
         }
+        let _closing_guard = ClosingSessionGuard {
+            sessions: &self.closing_sessions,
+            session_id,
+        };
         if self.session_registry().session(session_id).is_none() {
-            self.closing_sessions.remove(&session_id);
             return;
         }
 
@@ -157,7 +171,6 @@ impl Ingress for RuntimeIngress {
         if let Some(handler) = &self.event_handler {
             handler(SessionEvent::Close(session_id, reason));
         }
-        self.closing_sessions.remove(&session_id);
     }
 }
 

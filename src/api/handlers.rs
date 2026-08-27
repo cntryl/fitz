@@ -123,6 +123,7 @@ pub(super) struct SessionCloseFinalizer {
     router: Arc<crate::runtime::Router>,
     session_id: u64,
     routes: std::sync::Mutex<Vec<crate::runtime::routing::RouteAddress>>,
+    finish_lock: tokio::sync::Mutex<()>,
     finished: AtomicBool,
 }
 
@@ -138,6 +139,7 @@ impl SessionCloseFinalizer {
             router,
             session_id,
             routes: std::sync::Mutex::new(vec![initial_route]),
+            finish_lock: tokio::sync::Mutex::new(()),
             finished: AtomicBool::new(false),
         }
     }
@@ -151,11 +153,8 @@ impl SessionCloseFinalizer {
     }
 
     pub(super) async fn finish(&self, reason: crate::session::CloseReason) {
-        if self
-            .finished
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
+        let _finish_guard = self.finish_lock.lock().await;
+        if self.finished.load(Ordering::Acquire) {
             return;
         }
 
@@ -168,6 +167,7 @@ impl SessionCloseFinalizer {
             self.router.unregister(&route);
         }
         self.ingress.on_close(self.session_id, reason).await;
+        self.finished.store(true, Ordering::Release);
     }
 }
 
@@ -227,6 +227,95 @@ fn record_connection_closed() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct BlockingCleanupSink {
+        entered: crossbeam_channel::Sender<()>,
+        release: crossbeam_channel::Receiver<()>,
+        block_once: AtomicBool,
+    }
+
+    impl crate::runtime::MailboxSink for BlockingCleanupSink {
+        fn deliver(
+            &self,
+            _envelope: crate::runtime::Envelope,
+        ) -> Result<(), crate::runtime::DeliveryError> {
+            if self.block_once.swap(false, Ordering::AcqRel) {
+                let _ = self.entered.send(());
+                let _ = self.release.recv();
+            }
+            Ok(())
+        }
+
+        fn deliver_high_priority(
+            &self,
+            envelope: crate::runtime::Envelope,
+        ) -> Result<(), crate::runtime::DeliveryError> {
+            self.deliver(envelope)
+        }
+    }
+
+    #[tokio::test]
+    async fn should_retry_session_finalization_after_cancellation() {
+        // Arrange
+        let router = Arc::new(crate::runtime::Router::new());
+        let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);
+        let (release_tx, release_rx) = crossbeam_channel::bounded(1);
+        let blocking_sink = Arc::new(BlockingCleanupSink {
+            entered: entered_tx,
+            release: release_rx,
+            block_once: AtomicBool::new(true),
+        });
+        for domain in crate::runtime::DomainRegistry::cleanup_order() {
+            router.register_domain_pattern(domain.as_str(), blocking_sink.clone());
+        }
+        let ingress = Arc::new(
+            crate::api::runtime_ingress::RuntimeIngress::new(false).with_router(router.clone()),
+        );
+        let session_id = 7;
+        ingress
+            .on_open(crate::session::SessionInfo {
+                session_id,
+                transport_kind: crate::session::TransportKind::WebSocket,
+                peer_addr: None,
+                metadata: Arc::new(crate::session::SessionMetadata::new()),
+                permissions_snapshot: crate::session::SessionPermissions::empty(),
+                claims: None,
+                authenticated: false,
+                route_family: crate::runtime::routing::RouteFamily::new(0),
+            })
+            .await
+            .expect("open session");
+        let finalizer = Arc::new(SessionCloseFinalizer::new(
+            ingress.clone(),
+            router,
+            session_id,
+            crate::runtime::routing::session_inbox_address(
+                crate::runtime::routing::RouteFamily::new(0),
+                session_id,
+            ),
+        ));
+
+        // Act
+        let interrupted_finalizer = finalizer.clone();
+        let interrupted = tokio::spawn(async move {
+            interrupted_finalizer
+                .finish(crate::session::CloseReason::ClientClose)
+                .await;
+        });
+        tokio::task::spawn_blocking(move || entered_rx.recv_timeout(Duration::from_secs(1)))
+            .await
+            .expect("join cleanup entry wait")
+            .expect("cleanup entered blocking sink");
+        interrupted.abort();
+        release_tx.send(()).expect("release cleanup sink");
+        let _ = interrupted.await;
+        finalizer
+            .finish(crate::session::CloseReason::ClientClose)
+            .await;
+
+        // Assert
+        assert_eq!(ingress.session_count(), 0);
+    }
 
     #[tokio::test]
     async fn should_finalize_connection_counter_and_permit_exactly_once() {
