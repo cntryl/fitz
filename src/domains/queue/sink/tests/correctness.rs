@@ -129,6 +129,42 @@ fn should_reject_queue_watch_when_subscription_identity_does_not_match_request()
 }
 
 #[test]
+fn should_not_retain_queue_watch_when_response_cannot_be_delivered() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let source = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let destination = RouteAddress::new(family, Route::new("queue://inbound"));
+    let mailbox = Arc::new(Mailbox::new(1));
+    let router = Arc::new(Router::new());
+    router.register(source.clone(), mailbox.clone());
+    mailbox
+        .deliver(Envelope::new(destination.clone(), bytes::Bytes::new()))
+        .expect("fill response mailbox");
+    let sink = new_queue_domain_sink(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+        cntryl_midge::WriteOptions::best_effort(),
+    );
+    let request = QueueClientRequest::new(
+        ClientFrameMeta::new(7, ClientChannel::Sub, 207, family),
+        Ok(QueueClientFrame::Sub(QueueSubscriptionMessage::Watch {
+            family_id: family,
+            pattern: Route::new("queue://acme/jobs/*"),
+            session_id: 7,
+            subscriber: source.clone(),
+        })),
+    );
+
+    // Act
+    sink.deliver(Envelope::from_route(source, destination, request))
+        .expect("deliver queue watch");
+
+    // Assert
+    assert!(sink.watch_families_are_empty_for_tests());
+}
+
+#[test]
 fn should_reject_queue_watch_given_empty_pattern() {
     // Arrange
     let family = RouteFamily::new(1);

@@ -52,23 +52,48 @@ impl QueueDomainCore {
             ),
         };
 
-        self.route_queue_response(envelope, meta, &response);
+        let delivered = self.route_queue_response(envelope, meta, &response);
+        if !delivered && state_changed {
+            if let Some((family_id, _, session_id, subscription_id, _)) =
+                initial_watch_snapshot.as_ref()
+            {
+                self.rollback_undeliverable_watch(*family_id, *session_id, *subscription_id);
+            }
+        }
         if state_changed {
             self.mark_admin_snapshot_dirty();
         }
-        if let Some((family_id, pattern, session_id, subscription_id, subscriber)) =
-            initial_watch_snapshot
-        {
-            self.emit_current_ready_notifications_for_watch(
-                family_id,
-                &pattern,
-                session_id,
-                subscription_id,
-                &subscriber,
-            );
+        if delivered {
+            if let Some((family_id, pattern, session_id, subscription_id, subscriber)) =
+                initial_watch_snapshot
+            {
+                self.emit_current_ready_notifications_for_watch(
+                    family_id,
+                    &pattern,
+                    session_id,
+                    subscription_id,
+                    &subscriber,
+                );
+            }
         }
 
         self.record_operation_metrics(request_started, &response, QueueOpKind::InflightExpired);
+    }
+
+    fn rollback_undeliverable_watch(
+        &self,
+        family_id: RouteFamily,
+        session_id: u64,
+        subscription_id: u64,
+    ) {
+        let mut families = self.families.lock();
+        let remove_family = families.get_mut(&family_id.as_u64()).is_some_and(|state| {
+            state.remove_subscription_for_session(family_id, session_id, subscription_id);
+            state.is_empty()
+        });
+        if remove_family {
+            families.remove(&family_id.as_u64());
+        }
     }
 
     fn handle_watch_subscription(
