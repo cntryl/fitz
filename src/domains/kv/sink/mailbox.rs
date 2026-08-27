@@ -6,10 +6,16 @@ use crate::runtime::{Actor, Context, DeliveryError, Envelope, MailboxSink};
 
 impl MailboxSink for KvDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
+            return self.cleanup_session(cleanup.session_id);
+        }
         self.actor.try_send(KvDomainCommand::Deliver(envelope))
     }
 
     fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
+            return self.cleanup_session(cleanup.session_id);
+        }
         self.actor
             .try_send_high_priority(KvDomainCommand::Deliver(envelope))
     }
@@ -48,6 +54,11 @@ impl Actor for KvDomainMailboxActor {
             #[cfg(test)]
             KvDomainCommand::PanicForTests => {
                 panic!("test KV domain actor panic");
+            }
+            #[cfg(test)]
+            KvDomainCommand::BlockForTests(entered, release) => {
+                let _ = entered.send(());
+                let _ = release.recv();
             }
         }
     }
