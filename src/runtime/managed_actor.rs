@@ -472,29 +472,34 @@ where
                 return false;
             };
 
-            if !tracker.record_restart() {
-                health.mark_exhausted();
-                running.store(false, Ordering::SeqCst);
-                router.unregister(address);
-                ctx.stop();
-                tracing::error!(
-                    actor = ?address,
-                    "Managed actor restart budget exhausted"
-                );
-                return false;
-            }
+            loop {
+                if !tracker.record_restart() {
+                    health.mark_exhausted();
+                    running.store(false, Ordering::SeqCst);
+                    router.unregister(address);
+                    ctx.stop();
+                    tracing::error!(
+                        actor = ?address,
+                        "Managed actor restart budget exhausted"
+                    );
+                    return false;
+                }
 
-            health.record_restart();
-            stop_current_actor(actor, ctx);
-            *actor = actor_factory();
-            *ctx = Context::with_metrics(address.clone(), router.clone(), ctx.metrics().clone());
-            actor.started(ctx);
-            tracing::warn!(
-                actor = ?address,
-                restart_count = health.restart_count.load(Ordering::Relaxed),
-                "Managed actor restarted after panic"
-            );
-            true
+                health.record_restart();
+                stop_current_actor(actor, ctx);
+                *actor = actor_factory();
+                *ctx =
+                    Context::with_metrics(address.clone(), router.clone(), ctx.metrics().clone());
+                if start_managed_actor(actor, ctx, address) == ActorStep::Continue {
+                    tracing::warn!(
+                        actor = ?address,
+                        restart_count = health.restart_count.load(Ordering::Relaxed),
+                        "Managed actor restarted after panic"
+                    );
+                    return true;
+                }
+                health.record_panic();
+            }
         }
         SupervisionAction::Resume => true,
         SupervisionAction::Stop | SupervisionAction::Escalate => {
