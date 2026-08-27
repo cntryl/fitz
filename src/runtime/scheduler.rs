@@ -89,6 +89,23 @@ fn normal_message_budget(processed_high: usize) -> usize {
     }
 }
 
+fn notify_actor_error<A: Actor>(
+    actor: &mut A,
+    error: ActorError,
+    ctx: &mut Context<A>,
+    address: &RouteAddress,
+) {
+    if let Err(error_hook_panic) =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| actor.on_error(error, ctx)))
+    {
+        tracing::error!(
+            actor = ?address,
+            error = ?error_hook_panic,
+            "Actor panicked while handling actor error"
+        );
+    }
+}
+
 fn handle_fired_timers<A: Actor>(actor: &mut A, ctx: &mut Context<A>, address: &RouteAddress) {
     let fired_timers = ctx.timer_manager().fired_timers();
     for timer_id in fired_timers {
@@ -101,7 +118,7 @@ fn handle_fired_timers<A: Actor>(actor: &mut A, ctx: &mut Context<A>, address: &
 
             ctx.metrics().record_panic();
             let actor_error = ActorError::Panic(format!("timer panic: {error:?}"));
-            actor.on_error(actor_error, ctx);
+            notify_actor_error(actor, actor_error, ctx, address);
             ctx.stop();
             break;
         }
@@ -361,7 +378,7 @@ fn process_envelope<A: Actor>(
             "Actor received message with mismatched type"
         );
 
-        actor.on_error(error, ctx);
+        notify_actor_error(actor, error, ctx, address);
         return;
     };
 
@@ -384,7 +401,7 @@ fn process_envelope<A: Actor>(
         let error = ActorError::Panic(format!("{e:?}"));
 
         // Call error handler but actor is now stopped
-        actor.on_error(error, ctx);
+        notify_actor_error(actor, error, ctx, address);
 
         // CRITICAL: Stop actor immediately. No further message processing.
         ctx.stop();
@@ -429,6 +446,23 @@ mod tests {
         entered: crossbeam_channel::Sender<()>,
         release: crossbeam_channel::Receiver<()>,
         stopped: crossbeam_channel::Sender<u32>,
+    }
+
+    struct PanickingErrorActor {
+        error_entered: crossbeam_channel::Sender<()>,
+    }
+
+    impl Actor for PanickingErrorActor {
+        type Message = ();
+
+        fn receive(&mut self, (): (), _ctx: &mut Context<Self>) {
+            panic!("receive panic");
+        }
+
+        fn on_error(&mut self, _error: ActorError, _ctx: &mut Context<Self>) {
+            let _ = self.error_entered.send(());
+            panic!("error hook panic");
+        }
     }
 
     impl Actor for BatchStopActor {
@@ -550,6 +584,42 @@ mod tests {
 
         // Assert
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn should_unregister_actor_when_error_hook_panics() {
+        // Arrange
+        let scheduler = Scheduler::new();
+        let (error_entered_tx, error_entered_rx) = crossbeam_channel::bounded(1);
+        let actor_ref = scheduler.spawn(
+            PanickingErrorActor {
+                error_entered: error_entered_tx,
+            },
+            test_address(1, "test://panicking-error-hook"),
+            8,
+        );
+
+        // Act
+        actor_ref.send(()).expect("panic message should enqueue");
+        error_entered_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("error hook should run");
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let send_after_panic = loop {
+            let result = actor_ref.send(());
+            if matches!(result, Err(crate::runtime::SendError::RouteNotFound { .. }))
+                || Instant::now() >= deadline
+            {
+                break result;
+            }
+            std::thread::yield_now();
+        };
+
+        // Assert
+        assert!(matches!(
+            send_after_panic,
+            Err(crate::runtime::SendError::RouteNotFound { .. })
+        ));
     }
 
     #[test]
