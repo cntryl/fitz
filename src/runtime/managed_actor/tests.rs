@@ -748,3 +748,27 @@ fn should_invoke_stopped_once_when_replacement_factory_panics() {
     // Assert
     assert_eq!(stopped_count.load(Ordering::SeqCst), 1);
 }
+
+#[test]
+fn should_unregister_route_when_managed_actor_worker_spawn_fails() {
+    // Arrange
+    let router = Router::new();
+    let address = test_address();
+    let mailbox = Arc::new(Mailbox::new(1));
+    router.register(address.clone(), mailbox.clone());
+
+    // Act
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        spawn_worker_or_unregister(
+            &router,
+            &address,
+            &mailbox,
+            |_| Err(std::io::Error::other("injected spawn failure")),
+            || {},
+        );
+    }));
+
+    // Assert
+    assert!(result.is_err());
+    assert!(router.resolve_sink(&address).is_none());
+}

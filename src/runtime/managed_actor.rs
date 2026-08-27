@@ -162,6 +162,23 @@ fn unregister_mailbox(router: &Router, address: &RouteAddress, mailbox: &Arc<Mai
     router.unregister_sink(address, &sink);
 }
 
+fn spawn_worker_or_unregister<Spawn, Task>(
+    router: &Router,
+    address: &RouteAddress,
+    mailbox: &Arc<Mailbox>,
+    spawn: Spawn,
+    task: Task,
+) -> thread::JoinHandle<()>
+where
+    Spawn: FnOnce(Task) -> std::io::Result<thread::JoinHandle<()>>,
+    Task: FnOnce() + Send + 'static,
+{
+    spawn(task).unwrap_or_else(|error| {
+        unregister_mailbox(router, address, mailbox);
+        panic!("spawn managed actor worker: {error}");
+    })
+}
+
 fn notify_actor_error<A: Actor>(
     actor: &mut A,
     actor_error: ActorError,
@@ -613,16 +630,22 @@ impl<M: Send + 'static> ManagedActor<M> {
             let worker_router = router.clone();
             let worker_mailbox = mailbox.clone();
             let worker_running = running.clone();
-            thread::spawn(move || {
-                run_actor(
-                    actor,
-                    &worker_address,
-                    &worker_router,
-                    &worker_mailbox,
-                    &worker_running,
-                    metrics,
-                );
-            })
+            spawn_worker_or_unregister(
+                &router,
+                &address,
+                &mailbox,
+                |task| thread::Builder::new().spawn(task),
+                move || {
+                    run_actor(
+                        actor,
+                        &worker_address,
+                        &worker_router,
+                        &worker_mailbox,
+                        &worker_running,
+                        metrics,
+                    );
+                },
+            )
         };
 
         Self {
@@ -712,20 +735,26 @@ impl<M: Send + 'static> ManagedActor<M> {
             let worker_mailbox = mailbox.clone();
             let worker_running = running.clone();
             let worker_health = health.clone();
-            thread::spawn(move || {
-                run_supervised_actor(
-                    actor_factory,
-                    SupervisedActorRuntime {
-                        address: &worker_address,
-                        router: &worker_router,
-                        mailbox: &worker_mailbox,
-                        running: &worker_running,
-                        metrics: &metrics,
-                        health: &worker_health,
-                        strategy: &strategy,
-                    },
-                );
-            })
+            spawn_worker_or_unregister(
+                &router,
+                &address,
+                &mailbox,
+                |task| thread::Builder::new().spawn(task),
+                move || {
+                    run_supervised_actor(
+                        actor_factory,
+                        SupervisedActorRuntime {
+                            address: &worker_address,
+                            router: &worker_router,
+                            mailbox: &worker_mailbox,
+                            running: &worker_running,
+                            metrics: &metrics,
+                            health: &worker_health,
+                            strategy: &strategy,
+                        },
+                    );
+                },
+            )
         };
 
         Self {
