@@ -205,7 +205,7 @@ pub(super) struct ScheduleLiveCounts {
 
 pub(super) enum ScheduleDomainCommand {
     Deliver(Envelope),
-    CleanupSession(u64),
+    CleanupSession(u64, crossbeam_channel::Sender<()>),
     ReadLiveCounts(crossbeam_channel::Sender<ScheduleLiveCounts>),
     ReadPendingClaims(
         crate::runtime::routing::RouteFamily,
