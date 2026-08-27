@@ -185,6 +185,66 @@ fn should_reject_lease_subscription_before_allocating_family_state() {
 }
 
 #[test]
+fn should_not_retain_lease_subscription_when_response_cannot_be_delivered() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let source = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let destination = RouteAddress::new(family, Route::new("lease://inbound"));
+    let mailbox = Arc::new(Mailbox::new(1));
+    let router = Arc::new(Router::new());
+    router.register(source.clone(), mailbox.clone());
+    mailbox
+        .deliver(Envelope::new(destination.clone(), Bytes::new()))
+        .expect("fill response mailbox");
+    let sink = new_correctness_lease_sink(router);
+    let request = crate::domains::lease::LeaseClientRequest::new(
+        crate::runtime::ClientFrameMeta::new(
+            7,
+            ClientChannel::Sub,
+            crate::dispatch::protocol::lease_codec::msg_type::SUBSCRIBE,
+            family,
+        ),
+        Ok(crate::domains::lease::LeaseClientFrame::Sub(
+            crate::domains::lease::LeaseSubscriptionMessage::Subscribe {
+                family_id: family,
+                route: Route::new("lease://acme/locks/resource"),
+                session_id: 7,
+                subscriber: source.clone(),
+            },
+        )),
+    );
+
+    // Act
+    sink.deliver(Envelope::from_route(source, destination, request))
+        .expect("deliver lease subscription");
+    std::thread::sleep(Duration::from_millis(50));
+    let _filler = receive_envelope(&mailbox, "filled response mailbox");
+    let query_source = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let query_destination = RouteAddress::new(family, Route::new("lease://inbound"));
+    let query = crate::domains::lease::LeaseClientRequest::new(
+        crate::runtime::ClientFrameMeta::new(
+            7,
+            ClientChannel::Lease,
+            crate::dispatch::protocol::lease_codec::msg_type::QUERY,
+            family,
+        ),
+        Ok(crate::domains::lease::LeaseClientFrame::Op(
+            crate::domains::lease::LeaseMessage::Query {
+                family_id: family,
+                route: Route::new("lease://acme/locks/resource"),
+            },
+        )),
+    );
+    sink.deliver(Envelope::from_route(query_source, query_destination, query))
+        .expect("deliver ordering query");
+    let _query_response = receive_envelope(&mailbox, "ordering query response");
+
+    // Assert
+    assert_eq!(sink.subscription_count(), 0);
+    assert!(sink.watch_families_are_empty_for_tests());
+}
+
+#[test]
 fn should_reject_lease_operation_when_decoded_family_differs_from_request() {
     // Arrange
     let family = RouteFamily::new(1);
