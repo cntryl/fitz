@@ -348,6 +348,12 @@ fn stop_current_actor<A: Actor>(
     }
 }
 
+fn stop_actor_once<A: Actor>(actor: &mut A, actor_stopped: bool) {
+    if !actor_stopped {
+        actor.stopped();
+    }
+}
+
 #[derive(Clone, Copy)]
 struct SupervisedActorRuntime<'a> {
     address: &'a RouteAddress,
@@ -369,6 +375,7 @@ where
     let high_receiver = runtime.mailbox.high_priority_receiver().clone();
     let mut priority_state = PriorityDrainState::default();
     let mut tracker = restart_tracker_for(runtime.strategy);
+    let mut actor_stopped = false;
     let mut actor = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(&actor_factory)) {
         Ok(actor) => actor,
         Err(error) => {
@@ -398,11 +405,12 @@ where
             runtime.health,
             runtime.strategy,
             tracker.as_mut(),
+            &mut actor_stopped,
         )
     {
         runtime.running.store(false, Ordering::SeqCst);
         runtime.router.unregister(runtime.address);
-        actor.stopped();
+        stop_actor_once(&mut actor, actor_stopped);
         return;
     }
 
@@ -418,6 +426,7 @@ where
                 runtime.health,
                 runtime.strategy,
                 tracker.as_mut(),
+                &mut actor_stopped,
             ) {
                 break;
             }
@@ -455,6 +464,7 @@ where
                 runtime.health,
                 runtime.strategy,
                 tracker.as_mut(),
+                &mut actor_stopped,
             )
         {
             break;
@@ -463,7 +473,7 @@ where
 
     runtime.running.store(false, Ordering::SeqCst);
     runtime.router.unregister(runtime.address);
-    actor.stopped();
+    stop_actor_once(&mut actor, actor_stopped);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -477,6 +487,7 @@ fn restart_supervised_actor<A, F>(
     health: &Arc<ManagedActorHealth>,
     strategy: &SupervisorStrategy,
     tracker: Option<&mut RestartTracker>,
+    actor_stopped: &mut bool,
 ) -> bool
 where
     A: Actor,
@@ -507,6 +518,7 @@ where
                 }
 
                 health.record_restart();
+                *actor_stopped = true;
                 if stop_current_actor(actor, ctx, address) == ActorStep::Panicked {
                     health.record_panic();
                     health.mark_exhausted();
@@ -524,6 +536,7 @@ where
                         continue;
                     }
                 };
+                *actor_stopped = false;
                 *ctx =
                     Context::with_metrics(address.clone(), router.clone(), ctx.metrics().clone());
                 if start_managed_actor(actor, ctx, address) == ActorStep::Continue {
