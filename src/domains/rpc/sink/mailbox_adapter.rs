@@ -46,7 +46,7 @@ impl RpcDomainRuntime<'_> {
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         response: &RpcClientResponseBody,
-    ) {
+    ) -> bool {
         #[cfg(test)]
         let response_ctx = {
             let mut payload_encoder =
@@ -70,7 +70,11 @@ impl RpcDomainRuntime<'_> {
         if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
             if let Err(error) = self.router.route(response_envelope) {
                 Self::record_response_drop(meta.session_id, "response", &error);
+                return false;
             }
+            true
+        } else {
+            false
         }
     }
 

@@ -42,7 +42,6 @@ impl RpcDomainRuntime<'_> {
                 );
             }
         }
-        self.dispatch_queued_requests_for_family(*worker_addr.family());
         tracing::debug!(
             domain = "rpc",
             worker = worker_addr.route().as_str(),

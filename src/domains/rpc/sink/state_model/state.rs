@@ -227,6 +227,15 @@ impl RpcState {
         RpcWorkerRegistration::Registered
     }
 
+    pub(in crate::domains::rpc::sink) fn contains_registration(
+        &self,
+        worker_addr: &RouteAddress,
+        session_id: u64,
+    ) -> bool {
+        let key = RpcWorkerKey::from_parts(worker_addr, session_id);
+        self.registrations.contains_registration(&key)
+    }
+
     fn registration_policy_violation(
         &self,
         registration: &RpcWorker,
