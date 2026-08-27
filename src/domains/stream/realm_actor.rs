@@ -54,6 +54,9 @@ pub struct RealmActor {
     /// Pending realm watermark publish event (debounced)
     pending_publish: Option<DomainPublishEvent>,
 
+    /// Consecutive transient routing retries for the current notification.
+    notification_retry_attempts: u8,
+
     /// Retry timer for failed realm watermark persistence attempts
     watermark_retry_timer: Option<crate::runtime::context::TimerId>,
 }
@@ -84,6 +87,7 @@ impl RealmActor {
             committed_ranges: BTreeMap::new(),
             notification_timer: None,
             pending_publish: None,
+            notification_retry_attempts: 0,
             watermark_retry_timer: None,
         }
     }
@@ -204,6 +208,7 @@ impl RealmActor {
             route,
             Bytes::from(payload_json.to_string()),
         ));
+        self.notification_retry_attempts = 0;
         if self.notification_timer.is_none() {
             let timer_id = ctx
                 .timer_manager()
@@ -221,6 +226,33 @@ impl RealmActor {
             .timer_manager()
             .schedule_once(std::time::Duration::from_millis(WATERMARK_PERSIST_RETRY_MS));
         self.watermark_retry_timer = Some(timer_id);
+    }
+
+    fn publish_pending_notification(&mut self, ctx: &mut Context<Self>) {
+        let Some(event) = self.pending_publish.take() else {
+            return;
+        };
+        if let Err(error) = ctx.publish_event(event.clone()) {
+            tracing::warn!(
+                domain = "stream",
+                route_family = self.family_id.id(),
+                realm = self.realm.as_str(),
+                error = %error,
+                "Stream realm watermark notification delivery failed"
+            );
+            self.pending_publish = Some(event);
+            if matches!(error, crate::runtime::SendError::MailboxFull { .. })
+                && self.notification_retry_attempts < 8
+            {
+                self.notification_retry_attempts += 1;
+                self.notification_timer = Some(
+                    ctx.timer_manager()
+                        .schedule_once(std::time::Duration::from_millis(NOTICE_DEBOUNCE_MS)),
+                );
+            }
+        } else {
+            self.notification_retry_attempts = 0;
+        }
     }
 
     /// Get current realm watermark (for testing)
@@ -262,10 +294,8 @@ impl Actor for RealmActor {
         }
 
         if self.notification_timer.is_some() && Some(timer_id) == self.notification_timer {
-            if let Some(event) = self.pending_publish.take() {
-                let _ = ctx.publish_event(event);
-            }
             self.notification_timer = None;
+            self.publish_pending_notification(ctx);
         }
     }
 }
@@ -480,5 +510,29 @@ mod tests {
             published_event.route.as_str(),
             "stream://realm1/*/*/watermark"
         );
+    }
+
+    #[test]
+    fn should_retain_realm_watermark_publish_when_router_is_backpressured() {
+        // Arrange
+        let (mut actor, mut ctx, stream_mailbox) = make_test_actor_with_stream_mailbox();
+        for index in 0..stream_mailbox.capacity() {
+            stream_mailbox
+                .sender()
+                .try_send(crate::runtime::Envelope::new(
+                    RouteAddress::new(RouteFamily::new(0), Route::new("stream://filled")),
+                    index,
+                ))
+                .expect("fill Stream mailbox");
+        }
+        actor.handle_batch_committed(0, 3, &mut ctx);
+        let timer = actor.notification_timer.expect("realm notification timer");
+
+        // Act
+        actor.on_timer(timer, &mut ctx);
+
+        // Assert
+        assert!(actor.pending_publish.is_some());
+        assert!(actor.notification_timer.is_some());
     }
 }
