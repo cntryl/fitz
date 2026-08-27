@@ -184,7 +184,8 @@ impl Scheduler {
 
         // Spawn actor execution thread
         thread::spawn(move || {
-            let mut ctx = Context::with_metrics(address.clone(), router_clone, metrics_clone);
+            let mut ctx =
+                Context::with_metrics(address.clone(), router_clone.clone(), metrics_clone);
 
             // Call started hook
             actor.started(&mut ctx);
@@ -302,7 +303,7 @@ impl Scheduler {
                 handle_fired_timers(&mut actor, &mut ctx, &address);
             }
 
-            // Call stopped hook
+            router_clone.unregister(&address);
             actor.stopped();
         });
 
@@ -419,6 +420,24 @@ mod tests {
         count: u32,
     }
 
+    struct StopReportingActor {
+        stopped: crossbeam_channel::Sender<()>,
+    }
+
+    impl Actor for StopReportingActor {
+        type Message = TestMsg;
+
+        fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
+            if matches!(msg, TestMsg::Stop) {
+                ctx.stop();
+            }
+        }
+
+        fn stopped(&mut self) {
+            let _ = self.stopped.send(());
+        }
+    }
+
     impl Actor for CounterActor {
         type Message = TestMsg;
 
@@ -446,6 +465,30 @@ mod tests {
 
         // Assert
         assert!(!scheduler.is_running());
+    }
+
+    #[test]
+    fn should_unregister_actor_route_after_actor_stops() {
+        // Arrange
+        let scheduler = Scheduler::new();
+        let (stopped_tx, stopped_rx) = crossbeam_channel::bounded(1);
+        let actor_ref = scheduler.spawn(
+            StopReportingActor {
+                stopped: stopped_tx,
+            },
+            test_address(1, "test://stopping"),
+            8,
+        );
+
+        // Act
+        actor_ref.send(TestMsg::Stop).expect("stop should enqueue");
+        stopped_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("actor should stop");
+        let send_after_stop = actor_ref.send(TestMsg::Increment);
+
+        // Assert
+        assert!(send_after_stop.is_err());
     }
 
     #[test]
