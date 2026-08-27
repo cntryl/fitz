@@ -127,13 +127,30 @@ impl LeaseDomainSink {
         self.actor.stop();
     }
 
-    pub fn cleanup_session(&self, session_id: u64) {
-        if let Err(error) = self
-            .actor
-            .try_send_high_priority(LeaseDomainCommand::CleanupSession(session_id))
-        {
-            tracing::warn!(domain = "lease", error = %error, "Lease cleanup enqueue failed");
-        }
+    #[cfg(test)]
+    pub(in crate::domains::lease::sink) fn block_actor_for_tests(
+        &self,
+        entered: crossbeam_channel::Sender<()>,
+        release: crossbeam_channel::Receiver<()>,
+    ) {
+        self.actor
+            .try_send_high_priority(LeaseDomainCommand::BlockForTests(entered, release))
+            .expect("enqueue Lease actor test block");
+    }
+
+    /// Remove every ephemeral Lease state entry owned by a disconnected session.
+    ///
+    /// # Errors
+    ///
+    /// Returns the actor enqueue failure or a bounded reply-wait failure when
+    /// cleanup execution cannot be confirmed.
+    pub fn cleanup_session(&self, session_id: u64) -> Result<(), crate::runtime::DeliveryError> {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        self.actor
+            .try_send_high_priority(LeaseDomainCommand::CleanupSession(session_id, reply_tx))?;
+        reply_rx
+            .recv_timeout(LEASE_ACTOR_REPLY_TIMEOUT)
+            .map_err(crate::runtime::reply_wait::map_reply_wait_error)
     }
 
     pub(crate) fn sweep_expired_state(&self) {

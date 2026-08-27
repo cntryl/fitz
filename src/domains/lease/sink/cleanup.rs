@@ -15,13 +15,6 @@ impl LeaseDomainRuntime<'_> {
 
     pub(super) fn handle_cleanup_envelope(&self, envelope: &crate::runtime::Envelope) -> bool {
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            // Mark first so an older normal-lane request that cleanup jumped
-            // over cannot recreate a lease, waiter, or subscription for this
-            // session below.
-            self.core
-                .cleaned_up_sessions
-                .lock()
-                .mark(cleanup.session_id);
             self.cleanup_session(cleanup.session_id);
             return true;
         }
@@ -31,6 +24,9 @@ impl LeaseDomainRuntime<'_> {
 
     /// Drops session waiters before ownership and grants released keys in FIFO order.
     pub fn cleanup_session(&self, session_id: u64) {
+        // Mark first so an older normal-lane request that cleanup jumped over
+        // cannot recreate a lease, waiter, or subscription for this session.
+        self.core.cleaned_up_sessions.lock().mark(session_id);
         let now = Instant::now();
         let tracked_keys = self
             .core

@@ -122,7 +122,7 @@ pub(super) struct LeaseLiveCounts {
 
 pub(super) enum LeaseDomainCommand {
     Deliver(Envelope),
-    CleanupSession(u64),
+    CleanupSession(u64, crossbeam_channel::Sender<()>),
     ReadLiveCounts(crossbeam_channel::Sender<LeaseLiveCounts>),
     ReadWaiters(crossbeam_channel::Sender<Vec<crate::control::admin::LeaseWaiterInfo>>),
     SweepExpiredState,
@@ -163,6 +163,11 @@ pub(super) enum LeaseDomainCommand {
     ),
     #[cfg(test)]
     PanicForTests,
+    #[cfg(test)]
+    BlockForTests(
+        crossbeam_channel::Sender<()>,
+        crossbeam_channel::Receiver<()>,
+    ),
 }
 
 pub(super) struct LeaseDomainActor {

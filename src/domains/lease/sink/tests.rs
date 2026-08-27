@@ -1,4 +1,44 @@
 use super::*;
+
+#[test]
+fn should_confirm_lease_session_cleanup_before_reporting_delivery() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let sink = LeaseDomainSink::new(
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+    let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);
+    let (release_tx, release_rx) = crossbeam_channel::bounded(1);
+    sink.block_actor_for_tests(entered_tx, release_rx);
+    entered_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("Lease actor should block");
+    let (result_tx, result_rx) = crossbeam_channel::bounded(1);
+
+    // Act
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let result = sink.deliver_high_priority(Envelope::new(
+                RouteAddress::new(family, Route::new("lease://cleanup")),
+                crate::runtime::SessionCleanup { session_id: 7 },
+            ));
+            let _ = result_tx.send(result);
+        });
+        let early_result = result_rx.recv_timeout(Duration::from_millis(50));
+        let returned_early = early_result.is_ok();
+        release_tx.send(()).expect("release Lease actor");
+        let final_result = early_result.unwrap_or_else(|_| {
+            result_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("Lease cleanup result")
+        });
+
+        // Assert
+        assert!(!returned_early, "cleanup returned before it executed");
+        assert_eq!(final_result, Ok(()));
+    });
+}
 use crate::dispatch::protocol::frame::ChannelId;
 use crate::dispatch::protocol::frame_context::FrameContext;
 use crate::dispatch::protocol::payload_codec::PayloadEncoder;
@@ -478,7 +518,7 @@ fn should_preserve_other_session_leases_given_session_cleanup() {
     wait_for_admin_lease_count(&admin_read_model, 2);
 
     // Act
-    sink.cleanup_session(7);
+    sink.cleanup_session(7).expect("cleanup Lease session");
     wait_for_lease_count(&sink, 1);
     wait_for_admin_lease_count(&admin_read_model, 1);
     let leases = admin_read_model.leases(None);
