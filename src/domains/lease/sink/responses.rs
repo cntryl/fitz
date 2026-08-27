@@ -84,7 +84,7 @@ impl LeaseDomainRuntime<'_> {
         let response_ctx = crate::domains::lease::LeaseClientResponse::new(meta, response.clone());
 
         let mut delivered = false;
-        if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
+        if let Some(response_envelope) = envelope.try_reply_to(response_ctx.clone()) {
             let response_sink = self
                 .core
                 .router
@@ -95,12 +95,32 @@ impl LeaseDomainRuntime<'_> {
                     .router
                     .route_to_resolved_sink(response_envelope, &sink)
                 {
-                    self.record_dropped_delivery(
-                        super::observability::DeliveryDropKind::Response,
-                        meta.session_id,
-                        meta.route_family,
-                        &error,
-                    );
+                    if matches!(
+                        error,
+                        crate::runtime::RouteError::DeliveryFailed(
+                            _,
+                            crate::runtime::DeliveryError::ActorStopped
+                        )
+                    ) {
+                        if let Some(retry) = envelope.try_reply_to(response_ctx) {
+                            match self.core.router.route(retry) {
+                                Ok(()) => delivered = true,
+                                Err(retry_error) => self.record_dropped_delivery(
+                                    super::observability::DeliveryDropKind::Response,
+                                    meta.session_id,
+                                    meta.route_family,
+                                    &retry_error,
+                                ),
+                            }
+                        }
+                    } else {
+                        self.record_dropped_delivery(
+                            super::observability::DeliveryDropKind::Response,
+                            meta.session_id,
+                            meta.route_family,
+                            &error,
+                        );
+                    }
                 } else {
                     delivered = true;
                 }

@@ -218,6 +218,71 @@ fn lease_response_payloads(prepared: bool, frames: &[(u16, Bytes)]) -> Vec<Bytes
     responses
 }
 
+struct StoppingResponseSink {
+    entered: crossbeam_channel::Sender<()>,
+    release: crossbeam_channel::Receiver<()>,
+}
+
+impl crate::runtime::MailboxSink for StoppingResponseSink {
+    fn deliver(&self, _envelope: Envelope) -> Result<(), crate::runtime::DeliveryError> {
+        self.entered.send(()).expect("record stale delivery");
+        self.release.recv().expect("release stale delivery");
+        Err(crate::runtime::DeliveryError::ActorStopped)
+    }
+
+    fn deliver_high_priority(
+        &self,
+        envelope: Envelope,
+    ) -> Result<(), crate::runtime::DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
+#[test]
+fn should_reresolve_reply_route_when_resolved_lease_sink_stops() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let reply_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let lease_address = RouteAddress::new(family, Route::new("lease://acme/locks/resource"));
+    let router = Arc::new(Router::new());
+    let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);
+    let (release_tx, release_rx) = crossbeam_channel::bounded(1);
+    router.register(
+        reply_address.clone(),
+        Arc::new(StoppingResponseSink {
+            entered: entered_tx,
+            release: release_rx,
+        }),
+    );
+    let replacement = Arc::new(Mailbox::new(1));
+    let sink = LeaseDomainSink::new(
+        router.clone(),
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+    let request = Envelope::from_route(
+        reply_address.clone(),
+        lease_address,
+        FrameContext::new(
+            7,
+            ChannelId::Lease,
+            MessageType::new(crate::dispatch::protocol::lease_codec::msg_type::ACQUIRE),
+            encode_lease_acquire("lease://acme/locks/resource", "owner", 30),
+            family,
+        ),
+    );
+
+    // Act
+    sink.deliver(request).expect("deliver lease request");
+    entered_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("stale sink entered");
+    router.register(reply_address, replacement.clone());
+    release_tx.send(()).expect("release stale sink");
+
+    // Assert
+    receive_envelope(&replacement, "replacement lease response");
+}
+
 #[test]
 fn should_create_lease_domain_sink() {
     // Arrange
