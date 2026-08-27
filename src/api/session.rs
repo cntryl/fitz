@@ -6,6 +6,13 @@ use bytes::Bytes;
 use std::time::Instant;
 use tracing::{trace, warn};
 
+pub(super) fn is_stale_session_frame_error(error: &SessionError) -> bool {
+    matches!(
+        error,
+        SessionError::IngressClose(reason) if reason.starts_with("unknown session:")
+    )
+}
+
 /// Decode all complete TLV messages in a transport frame and hand them to ingress.
 ///
 /// # Errors

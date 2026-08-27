@@ -14,14 +14,6 @@ const WRITE_BUF_INIT_CAPACITY: usize = 512;
 const MAX_WRITE_BATCH_BYTES: usize = 64 * 1024;
 const MAX_WRITE_BATCH_FRAMES: usize = 64;
 
-fn should_ignore_unknown_session_error(error: &crate::session::SessionError) -> bool {
-    matches!(
-        error,
-        crate::session::SessionError::IngressClose(reason)
-            if reason.starts_with("unknown session:")
-    )
-}
-
 #[cfg(test)]
 async fn close_tcp_session_on_frame_error(
     ingress: &dyn Ingress,
@@ -171,7 +163,7 @@ fn spawn_tcp_frame_task(
             )
             .await
             {
-                if should_ignore_unknown_session_error(&error) {
+                if crate::api::session::is_stale_session_frame_error(&error) {
                     tracing::debug!(
                         session_id = context.session_id,
                         error = %error,
@@ -383,9 +375,7 @@ pub(super) async fn handle_tcp_connection(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        close_tcp_session_on_frame_error, should_ignore_unknown_session_error, write_tcp_frames,
-    };
+    use super::{close_tcp_session_on_frame_error, write_tcp_frames};
     use crate::api::runtime_ingress::{Ingress, IngressDecision};
     use crate::protocol::frame::ChannelId;
     use crate::session::{CloseReason, SessionError, SessionInfo};
@@ -450,7 +440,7 @@ mod tests {
         let error = SessionError::IngressClose("unknown session: 42".to_string());
 
         // Act
-        let result = should_ignore_unknown_session_error(&error);
+        let result = crate::api::session::is_stale_session_frame_error(&error);
 
         // Assert
         assert!(result);

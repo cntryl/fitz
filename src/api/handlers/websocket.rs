@@ -514,6 +514,14 @@ where
                 )
                 .await
                 {
+                    if crate::api::session::is_stale_session_frame_error(&error) {
+                        tracing::debug!(
+                            session_id = context.session_id,
+                            error = %error,
+                            "WS frame processing encountered a stale frame for an already-closed session"
+                        );
+                        break Ok(());
+                    }
                     let reason = websocket_session_frame_error_reason(&error);
                     tracing::error!(session_id = context.session_id, error = %reason, "WS session frame processing error");
                     break Err(reason);
@@ -588,6 +596,18 @@ mod tests {
     use hyper_tungstenite::tungstenite::error::ProtocolError;
     use hyper_tungstenite::tungstenite::Error as WsError;
     use hyper_tungstenite::tungstenite::Message;
+
+    #[test]
+    fn should_ignore_stale_websocket_frame_after_session_shutdown() {
+        // Arrange
+        let error = SessionError::IngressClose("unknown session: 42".to_string());
+
+        // Act
+        let result = crate::api::session::is_stale_session_frame_error(&error);
+
+        // Assert
+        assert!(result);
+    }
 
     #[tokio::test]
     async fn should_not_poll_websocket_writer_after_it_won_the_session_race() {
