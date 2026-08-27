@@ -190,7 +190,7 @@ impl StreamDomainCore {
         meta: crate::runtime::ClientFrameMeta,
         response: &StreamClientResponseBody,
         request_started: Option<std::time::Instant>,
-    ) {
+    ) -> bool {
         #[cfg(test)]
         let response_ctx = {
             let mut payload_encoder =
@@ -213,7 +213,7 @@ impl StreamDomainCore {
         let response_ctx =
             crate::domains::stream::StreamClientResponse::new(meta, response.clone());
 
-        if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
+        let delivered = if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
             if let Err(error) = self.router.route(response_envelope) {
                 if let Some(metrics) = self.metrics.as_ref() {
                     metrics.record_response_drop();
@@ -229,8 +229,13 @@ impl StreamDomainCore {
                     error = %error,
                     "Dropped best-effort Stream response"
                 );
+                false
+            } else {
+                true
             }
-        }
+        } else {
+            false
+        };
 
         if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
             if Self::stream_response_is_failure(response) {
@@ -239,6 +244,7 @@ impl StreamDomainCore {
                 metrics.record_success(started_at);
             }
         }
+        delivered
     }
 }
 
