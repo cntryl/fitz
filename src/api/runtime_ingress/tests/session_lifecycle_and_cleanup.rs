@@ -702,7 +702,7 @@ async fn should_cleanup_registered_domains_and_remove_session_state_on_close() {
 }
 
 #[tokio::test]
-async fn should_close_active_sessions_concurrently() {
+async fn should_close_active_sessions_concurrently_and_reject_late_opens() {
     // Arrange
     let router = Arc::new(crate::runtime::Router::new());
     let (entered_tx, entered_rx) = crossbeam_channel::bounded(2);
@@ -740,6 +740,9 @@ async fn should_close_active_sessions_concurrently() {
         [first, second]
     })
     .await;
+    let late_open = ingress
+        .on_open(make_session_info(103, TransportKind::WebSocket))
+        .await;
     release_tx.send(()).expect("release first cleanup");
     release_tx.send(()).expect("release second cleanup");
     let mut entered = first.expect("join cleanup entry wait");
@@ -748,6 +751,7 @@ async fn should_close_active_sessions_concurrently() {
     // Assert
     entered.sort_unstable();
     assert_eq!(entered, [101, 102]);
+    assert_eq!(late_open, Err("broker is shutting down".to_string()));
     assert_eq!(ingress.session_count(), 0);
 }
 

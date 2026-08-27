@@ -8,6 +8,7 @@ impl RuntimeIngress {
     #[must_use]
     pub fn new(auth_required: bool) -> Self {
         Self {
+            accepting_sessions: Arc::new(AtomicBool::new(true)),
             sessions: Arc::new(DashMap::new()),
             session_actors: Arc::new(DashMap::new()),
             session_inbox_routes: Arc::new(DashMap::new()),

@@ -323,6 +323,8 @@ pub enum SessionEvent {
 /// frame events to event handlers. It's designed to be embedded in
 /// a runtime dispatcher or session manager.
 pub struct RuntimeIngress {
+    /// Admission barrier closed before shutdown snapshots active sessions.
+    pub(super) accepting_sessions: Arc<AtomicBool>,
     pub(super) sessions: Arc<DashMap<u64, SessionInfo>>,
     /// Per-session `SessionActor` instances for authorization checks
     pub(super) session_actors: Arc<DashMap<u64, crate::session::actor::SessionActor>>,

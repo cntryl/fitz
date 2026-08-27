@@ -1,8 +1,10 @@
 use super::{CloseReason, DispatchDomain, Ingress, RuntimeIngress};
 use std::borrow::Cow;
+use std::sync::atomic::Ordering;
 
 impl RuntimeIngress {
     pub async fn close_all_sessions(&self, reason: CloseReason) {
+        self.accepting_sessions.store(false, Ordering::Release);
         let session_ids = self
             .session_registry()
             .active_sessions()

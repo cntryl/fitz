@@ -3,6 +3,7 @@ use super::{
     DomainDispatchPayload, Ingress, IngressDecision, RuntimeIngress, SessionEvent, SessionFrame,
 };
 use crate::session::SessionInfo;
+use std::sync::atomic::Ordering;
 
 struct ClosingSessionGuard<'a> {
     sessions: &'a dashmap::DashMap<u64, ()>,
@@ -24,7 +25,21 @@ impl Default for RuntimeIngress {
 #[async_trait::async_trait]
 impl Ingress for RuntimeIngress {
     async fn on_open(&self, session: SessionInfo) -> Result<u64, String> {
-        Ok(self.session_registry().open_session(session))
+        if !self.accepting_sessions.load(Ordering::Acquire) {
+            return Err("broker is shutting down".to_string());
+        }
+
+        let session_id = self.session_registry().open_session(session);
+        if !self.accepting_sessions.load(Ordering::Acquire) {
+            self.on_close(
+                session_id,
+                CloseReason::ServerClose("broker is shutting down".to_string()),
+            )
+            .await;
+            return Err("broker is shutting down".to_string());
+        }
+
+        Ok(session_id)
     }
 
     async fn on_frame(
