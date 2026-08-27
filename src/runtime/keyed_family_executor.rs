@@ -311,8 +311,11 @@ fn worker_loop<K, M, S, Handler, Failure>(
             state.active_keys.clear();
             state.control_active = false;
             drop(scheduler);
-            if first_failure {
-                family_failed(family);
+            if first_failure && catch_unwind(AssertUnwindSafe(|| family_failed(family))).is_err() {
+                tracing::error!(
+                    family = family.id(),
+                    "Keyed family failure callback panicked"
+                );
             }
             shared.ready.notify_all();
             continue;
@@ -583,6 +586,38 @@ mod tests {
             executor.try_enqueue(RouteFamily::new(1), 1, 3),
             Err(FamilyActorEnqueueError::ActorStopped)
         );
+        executor.join();
+    }
+
+    #[test]
+    fn should_keep_sibling_progressing_when_failure_callback_panics() {
+        // Arrange
+        let (failure_tx, failure_rx) = crossbeam_channel::bounded(1);
+        let (done_tx, done_rx) = crossbeam_channel::bounded(1);
+        let executor = KeyedFamilyExecutor::new(
+            &[RouteFamily::new(1), RouteFamily::new(2)],
+            1,
+            |_| (),
+            move |(), family, _, _, message| {
+                assert_ne!(family, RouteFamily::new(1), "injected handler panic");
+                done_tx.send(message).unwrap();
+            },
+            move |_| {
+                failure_tx.send(()).unwrap();
+                panic!("injected failure callback panic");
+            },
+        )
+        .unwrap();
+
+        // Act
+        executor.try_enqueue(RouteFamily::new(1), 1, 1).unwrap();
+        failure_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        executor.try_enqueue(RouteFamily::new(2), 1, 2).unwrap();
+
+        // Assert
+        assert_eq!(done_rx.recv_timeout(Duration::from_secs(1)).unwrap(), 2);
+        assert!(!executor.is_family_running(RouteFamily::new(1)));
+        assert!(executor.is_family_running(RouteFamily::new(2)));
         executor.join();
     }
 
