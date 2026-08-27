@@ -25,6 +25,23 @@ struct PanickingRestartActor {
     restart_started: crossbeam_channel::Sender<()>,
 }
 
+struct PanickingStoppedActor {
+    stopped_entered: crossbeam_channel::Sender<()>,
+}
+
+impl Actor for PanickingStoppedActor {
+    type Message = ();
+
+    fn receive(&mut self, (): (), _ctx: &mut Context<Self>) {
+        panic!("receive panic");
+    }
+
+    fn stopped(&mut self) {
+        let _ = self.stopped_entered.send(());
+        panic!("stopped hook panic");
+    }
+}
+
 impl Actor for PanickingRestartActor {
     type Message = ();
 
@@ -495,4 +512,35 @@ fn should_exhaust_restart_budget_when_replacement_started_hook_panics() {
         send_after_exhaustion,
         Err(DeliveryError::ActorStopped)
     ));
+}
+
+#[test]
+fn should_fail_closed_when_stopped_hook_panics_during_restart() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let (stopped_entered_tx, stopped_entered_rx) = crossbeam_channel::bounded(1);
+    let managed = ManagedActor::spawn_supervised_with_strategy(
+        router,
+        test_address(),
+        move || PanickingStoppedActor {
+            stopped_entered: stopped_entered_tx.clone(),
+        },
+        8,
+        SupervisorStrategy::restart(1, Duration::from_mins(1)),
+    );
+
+    // Act
+    managed.try_send(()).expect("panic message should enqueue");
+    stopped_entered_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("stopped hook should run");
+    wait_until("managed actor should fail closed", || !managed.is_running());
+    let send_after_panic = managed.try_send(());
+
+    // Assert
+    let health = managed.health_snapshot();
+    assert_eq!(health.panic_count, 2);
+    assert_eq!(health.restart_count, 1);
+    assert!(health.restart_exhausted);
+    assert!(matches!(send_after_panic, Err(DeliveryError::ActorStopped)));
 }

@@ -333,9 +333,19 @@ fn restart_tracker_for(strategy: &SupervisorStrategy) -> Option<RestartTracker> 
     }
 }
 
-fn stop_current_actor<A: Actor>(actor: &mut A, ctx: &mut Context<A>) {
+fn stop_current_actor<A: Actor>(
+    actor: &mut A,
+    ctx: &mut Context<A>,
+    address: &RouteAddress,
+) -> ActorStep {
     ctx.stop();
-    actor.stopped();
+    if let Err(error) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| actor.stopped())) {
+        tracing::error!(actor = ?address, error = ?error, "Managed actor panicked during shutdown");
+        ctx.metrics().record_panic();
+        ActorStep::Panicked
+    } else {
+        ActorStep::Continue
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -486,7 +496,13 @@ where
                 }
 
                 health.record_restart();
-                stop_current_actor(actor, ctx);
+                if stop_current_actor(actor, ctx, address) == ActorStep::Panicked {
+                    health.record_panic();
+                    health.mark_exhausted();
+                    running.store(false, Ordering::SeqCst);
+                    router.unregister(address);
+                    return false;
+                }
                 *actor = actor_factory();
                 *ctx =
                     Context::with_metrics(address.clone(), router.clone(), ctx.metrics().clone());
