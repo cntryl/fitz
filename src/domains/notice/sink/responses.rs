@@ -38,7 +38,7 @@ impl NoticeDomainCore {
         meta: crate::runtime::ClientFrameMeta,
         response: &crate::domains::notice::NoticeResponse,
         request_started: Option<Instant>,
-    ) {
+    ) -> bool {
         #[cfg(test)]
         let response_ctx = {
             let mut payload_encoder =
@@ -60,7 +60,7 @@ impl NoticeDomainCore {
         let response_ctx =
             crate::domains::notice::NoticeClientResponse::new(meta, response.clone());
 
-        if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
+        let delivered = if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
             if let Err(error) = self.router.route(response_envelope) {
                 if let Some(metrics) = self.metrics.as_ref() {
                     metrics.record_response_drop();
@@ -76,8 +76,13 @@ impl NoticeDomainCore {
                     error = %error,
                     "Dropped best-effort Notice response"
                 );
+                false
+            } else {
+                true
             }
-        }
+        } else {
+            false
+        };
 
         if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
             if response.is_failure() {
@@ -86,5 +91,6 @@ impl NoticeDomainCore {
                 metrics.record_success(started_at);
             }
         }
+        delivered
     }
 }

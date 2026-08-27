@@ -75,7 +75,15 @@ impl NoticeDomainCore {
         }
 
         if let Some(response) = response_opt {
-            self.route_notice_response(envelope, meta, &response, request_started);
+            if !self.route_notice_response(envelope, meta, &response, request_started)
+                && should_sync_admin_snapshot
+            {
+                self.rollback_undeliverable_subscribe(
+                    meta.route_family,
+                    meta.session_id,
+                    &response,
+                );
+            }
         } else if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
             metrics.record_success(started_at);
         }

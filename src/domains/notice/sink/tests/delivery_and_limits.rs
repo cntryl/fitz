@@ -31,6 +31,40 @@ fn should_retry_delivery_policy_with_payload_independent_envelope_builder() {
 }
 
 #[test]
+fn should_not_retain_subscription_when_subscribe_response_cannot_be_delivered() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 7;
+    let pattern = "notice://acme/app/undeliverable";
+    let notice_address = RouteAddress::new(family, Route::new(pattern));
+    let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let router = Arc::new(Router::new());
+    let subscriber_mailbox = Arc::new(Mailbox::new(1));
+    router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+    subscriber_mailbox
+        .sender()
+        .try_send(Envelope::new(subscriber_address.clone(), 1_u8))
+        .expect("fill subscriber mailbox");
+    let sink = NoticeDomainSink::new(
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+
+    // Act
+    subscribe_notice_pattern(
+        &sink,
+        &subscriber_address,
+        &notice_address,
+        session_id,
+        pattern,
+        family,
+    );
+
+    // Assert
+    assert_eq!(sink.subscription_count(), Ok(0));
+}
+
+#[test]
 fn should_contain_panicking_cached_notice_sink() {
     // Arrange
     let family = RouteFamily::new(1);
