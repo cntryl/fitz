@@ -756,6 +756,73 @@ async fn should_close_active_sessions_concurrently_and_reject_late_opens() {
 }
 
 #[tokio::test]
+async fn should_bound_concurrent_session_closes_during_shutdown() {
+    // Arrange
+    const SESSION_COUNT: usize = 40;
+    const CLOSE_CONCURRENCY: usize = 32;
+    let router = Arc::new(crate::runtime::Router::new());
+    let (entered_tx, entered_rx) = crossbeam_channel::bounded(SESSION_COUNT);
+    let (release_tx, release_rx) = crossbeam_channel::bounded(SESSION_COUNT);
+    let sink = Arc::new(BlockingSessionCleanupSink {
+        entered: entered_tx,
+        release: release_rx,
+        blocked_sessions: Mutex::new(std::collections::HashSet::new()),
+    });
+    for domain in DispatchDomain::SESSION_CLEANUP_ORDER {
+        router.register_domain_pattern(domain.as_str(), sink.clone());
+    }
+    let ingress = Arc::new(make_cleanup_ingress(router, AdminReadModel::new()));
+    for session_id in 1..=SESSION_COUNT {
+        ingress
+            .on_open(make_session_info(
+                u64::try_from(session_id).expect("test session id fits u64"),
+                TransportKind::Tcp,
+            ))
+            .await
+            .expect("open session");
+    }
+
+    // Act
+    let closing_ingress = ingress.clone();
+    let close = tokio::spawn(async move {
+        closing_ingress
+            .close_all_sessions(CloseReason::ServerClose("test shutdown".to_string()))
+            .await;
+    });
+    let observation = tokio::task::spawn_blocking(move || {
+        let mut entered = 0usize;
+        while entered < CLOSE_CONCURRENCY {
+            entered_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("bounded cleanup should start");
+            entered += 1;
+        }
+        let overflow = entered_rx.recv_timeout(Duration::from_millis(100));
+        if overflow.is_ok() {
+            entered += 1;
+        }
+        for _ in 0..entered {
+            release_tx.send(()).expect("release initial cleanup");
+        }
+        while entered < SESSION_COUNT {
+            entered_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("remaining cleanup should start");
+            entered += 1;
+            release_tx.send(()).expect("release remaining cleanup");
+        }
+        overflow
+    })
+    .await
+    .expect("join cleanup concurrency observation");
+    close.await.expect("join session close");
+
+    // Assert
+    assert!(observation.is_err(), "more than 32 cleanups ran at once");
+    assert_eq!(ingress.session_count(), 0);
+}
+
+#[tokio::test]
 async fn should_not_retain_closed_session_ids_after_connection_churn() {
     // Arrange
     let ingress = RuntimeIngress::new(false);
