@@ -31,6 +31,75 @@ fn should_retry_delivery_policy_with_payload_independent_envelope_builder() {
 }
 
 #[test]
+fn should_reresolve_subscriber_route_before_notice_retry() {
+    struct BlockingRetrySink {
+        attempts: Arc<std::sync::atomic::AtomicUsize>,
+        entered: crossbeam_channel::Sender<()>,
+        release: crossbeam_channel::Receiver<()>,
+    }
+
+    impl MailboxSink for BlockingRetrySink {
+        fn deliver(&self, _envelope: Envelope) -> Result<(), DeliveryError> {
+            let attempt = self
+                .attempts
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if attempt == 0 {
+                self.entered.send(()).expect("retry observer");
+                self.release.recv().expect("retry release");
+                return Err(DeliveryError::MailboxFull {
+                    capacity: 1,
+                    current_len: 1,
+                });
+            }
+            Ok(())
+        }
+
+        fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+            self.deliver(envelope)
+        }
+    }
+
+    // Arrange
+    let family = RouteFamily::new(1);
+    let subscriber = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let router = Arc::new(Router::new());
+    let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);
+    let (release_tx, release_rx) = crossbeam_channel::bounded(1);
+    router.register(
+        subscriber.clone(),
+        Arc::new(BlockingRetrySink {
+            attempts: attempts.clone(),
+            entered: entered_tx,
+            release: release_rx,
+        }),
+    );
+    let delivery_router = router.clone();
+    let delivery_subscriber = subscriber.clone();
+    let delivery = std::thread::spawn(move || {
+        deliver_with_retry(&delivery_router, &delivery_subscriber, || {
+            Envelope::new(delivery_subscriber.clone(), ())
+        });
+    });
+    entered_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("first attempt should block");
+    let replacement = Arc::new(Mailbox::new(1));
+    router.register(subscriber, replacement.clone());
+
+    // Act
+    release_tx.send(()).expect("release first attempt");
+    delivery.join().expect("join notice retry");
+
+    // Assert
+    assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 1);
+    replacement
+        .receiver()
+        .recv_timeout(Duration::from_secs(1))
+        .expect("replacement subscriber should receive retry");
+}
+
+#[test]
 fn should_not_retain_subscription_when_subscribe_response_cannot_be_delivered() {
     // Arrange
     let family = RouteFamily::new(1);

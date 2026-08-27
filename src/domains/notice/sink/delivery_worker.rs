@@ -82,10 +82,10 @@ pub(super) fn deliver_with_retry(
     build_envelope: impl Fn() -> Envelope,
 ) {
     let deadline = Instant::now() + NOTICE_MAILBOX_RETRY_TIMEOUT;
-    let subscriber_sink = router.resolve_sink(subscriber);
 
     loop {
         let envelope = build_envelope();
+        let subscriber_sink = router.resolve_sink(subscriber);
         let result = if let Some(sink) = subscriber_sink.as_ref() {
             router.route_to_resolved_sink(envelope, sink)
         } else {
