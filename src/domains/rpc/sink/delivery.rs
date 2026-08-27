@@ -221,10 +221,13 @@ impl RpcDomainRuntime<'_> {
                     DeliveryError::ActorStopped
                     | DeliveryError::Timeout
                     | DeliveryError::SinkPanicked
-                    | DeliveryError::InvalidPayload { .. }
-                    | DeliveryError::UnsupportedPayload,
+                    | DeliveryError::InvalidPayload { .. },
                 ),
             ) => self.handle_disconnected_worker_dispatch(envelope, meta, req, worker.session_id),
+            Err(crate::runtime::RouteError::DeliveryFailed(
+                _,
+                DeliveryError::UnsupportedPayload,
+            )) => self.handle_worker_contract_dispatch_failure(envelope, meta, req),
             Err(crate::runtime::RouteError::DeliveryFailed(
                 _,
                 DeliveryError::MailboxFull { .. } | DeliveryError::HighLaneFull { .. },
@@ -295,6 +298,34 @@ impl RpcDomainRuntime<'_> {
             &req,
             crate::dispatch::protocol::error_codes::rpc::ERR_RPC_BACKPRESSURE,
             RPC_BACKPRESSURE_ERROR,
+        )
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn handle_worker_contract_dispatch_failure(
+        &self,
+        envelope: &Envelope,
+        meta: &crate::runtime::ClientFrameMeta,
+        req: RpcRequest,
+    ) -> DeliveryOutcome {
+        self.counter_inc("rpc_request_forward_errors_total");
+        let pending_len = self
+            .remove_pending_request_for_family(meta.route_family, &req.correlation_id)
+            .map(|(_, pending_len)| pending_len)
+            .unwrap_or_default();
+        tracing::error!(
+            domain = "rpc",
+            correlation_id = %req.correlation_id,
+            route = req.route.as_str(),
+            pending_len,
+            "Worker dispatch payload was unsupported by the outbound sink"
+        );
+        self.reject_request_with_terminal_error(
+            envelope,
+            *meta,
+            &req,
+            crate::dispatch::protocol::error_codes::rpc::ERR_BACKEND_ERROR,
+            "worker dispatch contract failure",
         )
     }
 
@@ -378,13 +409,39 @@ impl RpcDomainRuntime<'_> {
                     DeliveryError::ActorStopped
                     | DeliveryError::Timeout
                     | DeliveryError::SinkPanicked
-                    | DeliveryError::InvalidPayload { .. }
-                    | DeliveryError::UnsupportedPayload,
+                    | DeliveryError::InvalidPayload { .. },
                 ),
             ) => {
                 self.counter_inc("rpc_request_forward_errors_total");
                 let cleanup_result = self.apply_session_cleanup(dispatch.registration.session_id);
                 self.forward_worker_disconnect_errors(cleanup_result.disconnect_deliveries);
+            }
+            Err(crate::runtime::RouteError::DeliveryFailed(
+                _,
+                DeliveryError::UnsupportedPayload,
+            )) => {
+                self.counter_inc("rpc_request_forward_errors_total");
+                if let Some((pending, _)) = self.remove_pending_request_for_family(
+                    *dispatch.registration.addr.family(),
+                    &dispatch.request.correlation_id,
+                ) {
+                    if let Some(caller_inbox_addr) = pending.dispatch_info.caller_inbox_addr {
+                        self.forward_pending_error_deliveries(
+                            vec![RpcPendingErrorDelivery {
+                                correlation_id: dispatch.request.correlation_id,
+                                caller_session_id: pending.dispatch_info.caller_session_id,
+                                caller_inbox_addr,
+                            }],
+                            crate::dispatch::protocol::error_codes::rpc::ERR_BACKEND_ERROR,
+                            "worker dispatch contract failure",
+                            "rpc_backend_errors_forwarded_total",
+                            "rpc_backend_errors_dropped_total",
+                        );
+                    } else {
+                        self.counter_inc("rpc_backend_errors_dropped_total");
+                        self.counter_inc("rpc_responses_dropped_closed_caller_total");
+                    }
+                }
             }
             Err(crate::runtime::RouteError::DeliveryFailed(
                 _,
