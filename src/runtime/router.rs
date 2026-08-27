@@ -112,6 +112,8 @@ pub enum DeliveryError {
     /// sent no matter how long the transport is given. Retrying it wastes
     /// work; the fix is always to paginate at the source.
     InvalidPayload { len: usize, max: usize },
+    /// The destination sink does not support the envelope's payload type.
+    UnsupportedPayload,
 }
 
 impl DeliveryError {
@@ -133,7 +135,7 @@ impl DeliveryError {
             // Not a saturation signal - the destination has room; the payload
             // is simply unframable. Reporting 1.0 here would drive backoff
             // against a condition that waiting cannot fix.
-            DeliveryError::InvalidPayload { .. } => 0.0,
+            DeliveryError::InvalidPayload { .. } | DeliveryError::UnsupportedPayload => 0.0,
         }
     }
 }
@@ -162,6 +164,7 @@ impl std::fmt::Display for DeliveryError {
             DeliveryError::InvalidPayload { len, max } => {
                 write!(f, "Response payload {len} bytes exceeds wire limit {max}")
             }
+            DeliveryError::UnsupportedPayload => write!(f, "Unsupported envelope payload type"),
         }
     }
 }
@@ -321,7 +324,8 @@ impl Router {
                 DeliveryError::ActorStopped
                 | DeliveryError::Timeout
                 | DeliveryError::SinkPanicked
-                | DeliveryError::InvalidPayload { .. } => {}
+                | DeliveryError::InvalidPayload { .. }
+                | DeliveryError::UnsupportedPayload => {}
             }
         }
     }

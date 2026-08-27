@@ -28,9 +28,9 @@ fn delivery_error_to_send_error(target: RouteAddress, error: &DeliveryError) -> 
             occupancy: usize_to_f64_saturating(*current_len) / usize_to_f64_saturating(*capacity),
         },
         DeliveryError::ActorStopped | DeliveryError::Timeout => SendError::ActorStopped { target },
-        DeliveryError::SinkPanicked | DeliveryError::InvalidPayload { .. } => {
-            SendError::SinkPanicked { target }
-        }
+        DeliveryError::SinkPanicked
+        | DeliveryError::InvalidPayload { .. }
+        | DeliveryError::UnsupportedPayload => SendError::SinkPanicked { target },
     }
 }
 

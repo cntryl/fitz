@@ -221,7 +221,8 @@ impl RpcDomainRuntime<'_> {
                     DeliveryError::ActorStopped
                     | DeliveryError::Timeout
                     | DeliveryError::SinkPanicked
-                    | DeliveryError::InvalidPayload { .. },
+                    | DeliveryError::InvalidPayload { .. }
+                    | DeliveryError::UnsupportedPayload,
                 ),
             ) => self.handle_disconnected_worker_dispatch(envelope, meta, req, worker.session_id),
             Err(crate::runtime::RouteError::DeliveryFailed(
@@ -377,7 +378,8 @@ impl RpcDomainRuntime<'_> {
                     DeliveryError::ActorStopped
                     | DeliveryError::Timeout
                     | DeliveryError::SinkPanicked
-                    | DeliveryError::InvalidPayload { .. },
+                    | DeliveryError::InvalidPayload { .. }
+                    | DeliveryError::UnsupportedPayload,
                 ),
             ) => {
                 self.counter_inc("rpc_request_forward_errors_total");
