@@ -144,6 +144,10 @@ impl RpcDomainSink {
         }
     }
 
+    pub(crate) fn panic_family_actor_for_failpoint(&self, family: RouteFamily) {
+        let _ = self.try_send_control(Some(family), RpcDomainCommand::PanicForFailpoint);
+    }
+
     #[cfg(test)]
     pub(super) fn stop_actor_for_tests(&self) {
         self.actor.stop();

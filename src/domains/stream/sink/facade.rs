@@ -534,6 +534,10 @@ impl StreamDomainSink {
         }
     }
 
+    pub(crate) fn panic_family_actor_for_failpoint(&self, family: RouteFamily) {
+        let _ = self.dispatch_family_control(Some(family), StreamDomainCommand::PanicForFailpoint);
+    }
+
     #[cfg(test)]
     pub(super) fn stop_actor_for_tests(&self) {
         if let Some(actor) = self.actor.as_ref() {

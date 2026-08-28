@@ -185,6 +185,14 @@ impl DomainHandles {
         self.rpc.panic_actor_for_failpoint();
     }
 
+    pub(crate) fn panic_stream_family_actor_for_failpoint(&self, family: RouteFamily) {
+        self.stream.panic_family_actor_for_failpoint(family);
+    }
+
+    pub(crate) fn panic_rpc_family_actor_for_failpoint(&self, family: RouteFamily) {
+        self.rpc.panic_family_actor_for_failpoint(family);
+    }
+
     pub(crate) fn queue_is_active(&self) -> bool {
         self.queue.is_active()
     }

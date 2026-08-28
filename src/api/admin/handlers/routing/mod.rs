@@ -16,7 +16,7 @@ use super::collections_and_details::{
 use super::{error_response, json_response, not_found};
 use crate::api::http::Response;
 use crate::boot::Runtime;
-use hyper::Method;
+use hyper::{Method, StatusCode};
 use serde::Serialize;
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -94,6 +94,29 @@ where
 {
     let path = req.uri().path().to_string();
     let method = req.method().clone();
+
+    if method == Method::POST {
+        if let Some((domain, family)) = parse_family_actor_failpoint_path(&path) {
+            if !actor_failpoints_enabled(std::env::var("FITZ_DESTROYER_FAILPOINTS").ok().as_deref())
+            {
+                return Ok(not_found());
+            }
+            let family = match family {
+                Ok(family) => family,
+                Err(message) => return Ok(error_response(StatusCode::BAD_REQUEST, message)),
+            };
+            match domain {
+                "stream" => runtime.panic_stream_family_actor_for_failpoint(family),
+                "rpc" => runtime.panic_rpc_family_actor_for_failpoint(family),
+                _ => unreachable!("parser only returns supported family domains"),
+            }
+            return Ok(json_response(serde_json::json!({
+                "injected": true,
+                "domain": domain,
+                "routeFamily": family.id()
+            })));
+        }
+    }
 
     match (method, path.as_str()) {
         (Method::GET, "/livez") => Ok(probes::handle_liveness(runtime.as_ref())),
@@ -384,6 +407,27 @@ fn actor_failpoints_enabled(value: Option<&str>) -> bool {
     value == Some("enabled")
 }
 
+fn parse_family_actor_failpoint_path(
+    path: &str,
+) -> Option<(
+    &str,
+    Result<crate::runtime::routing::RouteFamily, &'static str>,
+)> {
+    let suffix = path.strip_prefix("/destroyer/failpoints/")?;
+    let (domain, family) = suffix.split_once("-family-")?;
+    if !matches!(domain, "stream" | "rpc") || !family.ends_with("-actor-panic") {
+        return None;
+    }
+    let family = family.strip_suffix("-actor-panic").unwrap_or_default();
+    let parsed = family
+        .parse::<u32>()
+        .ok()
+        .filter(|value| *value > 0)
+        .map(crate::runtime::routing::RouteFamily::new)
+        .ok_or("route family must be a positive u32");
+    Some((domain, parsed))
+}
+
 #[cfg(test)]
 mod failpoint_tests {
     use super::*;
@@ -396,5 +440,26 @@ mod failpoint_tests {
         assert!(actor_failpoints_enabled(Some("enabled")));
         assert!(!actor_failpoints_enabled(None));
         assert!(!actor_failpoints_enabled(Some("true")));
+    }
+
+    #[test]
+    fn should_parse_targeted_family_actor_failpoint_paths() {
+        // Arrange
+        let stream_path = "/destroyer/failpoints/stream-family-1-actor-panic";
+        let rpc_path = "/destroyer/failpoints/rpc-family-9-actor-panic";
+
+        // Act
+        let stream = parse_family_actor_failpoint_path(stream_path);
+        let rpc = parse_family_actor_failpoint_path(rpc_path);
+
+        // Assert
+        assert_eq!(
+            stream.map(|(domain, family)| (domain, family.map(|value| value.id()))),
+            Some(("stream", Ok(1)))
+        );
+        assert_eq!(
+            rpc.map(|(domain, family)| (domain, family.map(|value| value.id()))),
+            Some(("rpc", Ok(9)))
+        );
     }
 }

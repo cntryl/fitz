@@ -4,6 +4,7 @@ use super::{
 };
 use crate::api::runtime_ingress::RuntimeIngress;
 use crate::boot::domains::DomainHandles;
+use crate::runtime::routing::RouteFamily;
 use crate::runtime::Router;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -232,6 +233,18 @@ impl Runtime {
     pub(crate) fn panic_rpc_actor_for_failpoint(&self) {
         if let Some(domains) = self.domains.read().as_ref() {
             domains.panic_rpc_actor_for_failpoint();
+        }
+    }
+
+    pub(crate) fn panic_stream_family_actor_for_failpoint(&self, family: RouteFamily) {
+        if let Some(domains) = self.domains.read().as_ref() {
+            domains.panic_stream_family_actor_for_failpoint(family);
+        }
+    }
+
+    pub(crate) fn panic_rpc_family_actor_for_failpoint(&self, family: RouteFamily) {
+        if let Some(domains) = self.domains.read().as_ref() {
+            domains.panic_rpc_family_actor_for_failpoint(family);
         }
     }
 
