@@ -25,8 +25,7 @@ pub(super) enum KvDomainCommand {
         crate::domains::kv::KvMessage,
         crossbeam_channel::Sender<crate::domains::kv::KvMessage>,
     ),
-    #[cfg(test)]
-    PanicForTests,
+    PanicForFailpoint,
     #[cfg(test)]
     BlockForTests(
         crossbeam_channel::Sender<()>,

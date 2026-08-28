@@ -149,7 +149,7 @@ impl DomainHandles {
 
     #[cfg(test)]
     pub(crate) fn panic_all_domain_actors_for_tests(&self) {
-        self.kv.panic_actor_for_tests();
+        self.kv.panic_actor_for_failpoint();
         self.queue.panic_actor_for_failpoint();
         self.notice.panic_actor_for_failpoint();
         self.stream.panic_actor_for_tests();
@@ -164,6 +164,10 @@ impl DomainHandles {
 
     pub(crate) fn panic_queue_actor_for_failpoint(&self) {
         self.queue.panic_actor_for_failpoint();
+    }
+
+    pub(crate) fn panic_kv_actor_for_failpoint(&self) {
+        self.kv.panic_actor_for_failpoint();
     }
 
     pub(crate) fn queue_is_active(&self) -> bool {
@@ -925,7 +929,7 @@ mod tests {
         assert_eq!(warmup_response.payload.first(), Some(&0));
 
         // Act
-        domains.kv.panic_actor_for_tests();
+        domains.kv.panic_actor_for_failpoint();
         wait_for_named_domain_failure(&domains, "kv");
         let result = router.route(Envelope::from_route(
             recovery_inbox,

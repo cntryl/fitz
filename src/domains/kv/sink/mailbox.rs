@@ -51,9 +51,8 @@ impl Actor for KvDomainMailboxActor {
             KvDomainCommand::ApplyWriteOptions(message, reply) => {
                 let _ = reply.send(self.state.runtime().apply_write_options(message));
             }
-            #[cfg(test)]
-            KvDomainCommand::PanicForTests => {
-                panic!("test KV domain actor panic");
+            KvDomainCommand::PanicForFailpoint => {
+                panic!("injected KV domain actor panic");
             }
             #[cfg(test)]
             KvDomainCommand::BlockForTests(entered, release) => {
