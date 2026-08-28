@@ -248,11 +248,10 @@ impl QueueDomainSink {
         *self.core.inventory_error.lock() = Some(error.into());
     }
 
-    #[cfg(test)]
-    pub(crate) fn panic_actor_for_tests(&self) {
+    pub(crate) fn panic_actor_for_failpoint(&self) {
         let _ = self
             .actor
-            .try_send_high_priority(QueueDomainCommand::PanicForTests);
+            .try_send_high_priority(QueueDomainCommand::PanicForFailpoint);
     }
 
     #[cfg(test)]
