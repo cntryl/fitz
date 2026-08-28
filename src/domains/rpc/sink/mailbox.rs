@@ -75,9 +75,8 @@ impl Actor for RpcDomainActor {
             RpcDomainCommand::ApplyWorkerUnsubscribeForTests(worker_addr, session_id, reply) => {
                 let _ = reply.send(runtime.apply_worker_unsubscribe(&worker_addr, session_id));
             }
-            #[cfg(test)]
-            RpcDomainCommand::PanicForTests => {
-                panic!("test RPC domain actor panic");
+            RpcDomainCommand::PanicForFailpoint => {
+                panic!("injected RPC domain actor panic");
             }
             #[cfg(test)]
             RpcDomainCommand::BlockForTests(entered, release) => {

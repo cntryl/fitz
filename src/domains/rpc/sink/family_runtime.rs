@@ -140,9 +140,8 @@ impl RpcDomainSink {
                             let _ = reply
                                 .send(runtime.apply_worker_unsubscribe(&worker_addr, session_id));
                         }
-                        #[cfg(test)]
-                        RpcDomainCommand::PanicForTests => {
-                            panic!("test RPC family actor panic");
+                        RpcDomainCommand::PanicForFailpoint => {
+                            panic!("injected RPC family actor panic");
                         }
                         #[cfg(test)]
                         RpcDomainCommand::BlockForTests(entered, release) => {

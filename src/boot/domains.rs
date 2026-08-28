@@ -153,7 +153,7 @@ impl DomainHandles {
         self.queue.panic_actor_for_failpoint();
         self.notice.panic_actor_for_failpoint();
         self.stream.panic_actor_for_failpoint();
-        self.rpc.panic_actor_for_tests();
+        self.rpc.panic_actor_for_failpoint();
         self.lease.panic_actor_for_failpoint();
         self.schedule.panic_actor_for_failpoint();
     }
@@ -180,6 +180,10 @@ impl DomainHandles {
 
     pub(crate) fn panic_stream_actor_for_failpoint(&self) {
         self.stream.panic_actor_for_failpoint();
+    }
+
+    pub(crate) fn panic_rpc_actor_for_failpoint(&self) {
+        self.rpc.panic_actor_for_failpoint();
     }
 
     pub(crate) fn queue_is_active(&self) -> bool {

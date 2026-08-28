@@ -225,6 +225,12 @@ impl Runtime {
         }
     }
 
+    pub(crate) fn panic_rpc_actor_for_failpoint(&self) {
+        if let Some(domains) = self.domains.read().as_ref() {
+            domains.panic_rpc_actor_for_failpoint();
+        }
+    }
+
     #[must_use]
     pub fn detach_domains(&self) -> Option<Arc<DomainHandles>> {
         self.domains.write().take()

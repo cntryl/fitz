@@ -162,6 +162,16 @@ where
                 serde_json::json!({ "injected": true, "domain": "stream" }),
             ))
         }
+        (Method::POST, "/destroyer/failpoints/rpc-actor-panic") => {
+            if !actor_failpoints_enabled(std::env::var("FITZ_DESTROYER_FAILPOINTS").ok().as_deref())
+            {
+                return Ok(not_found());
+            }
+            runtime.panic_rpc_actor_for_failpoint();
+            Ok(json_response(
+                serde_json::json!({ "injected": true, "domain": "rpc" }),
+            ))
+        }
 
         (Method::POST, "/api/v1/session") => handle_login(req, &runtime).await,
         (Method::GET, "/api/v1/session") => handle_current_session(req, &runtime).await,

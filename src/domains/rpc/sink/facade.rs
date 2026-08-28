@@ -134,14 +134,13 @@ impl RpcDomainSink {
     }
 
     /// Panic every provisioned family's handler (or the single actor in
-    /// non-sharded mode). Used by `panic_all_domain_actors_for_tests` to
+    /// non-sharded mode). Used by the opt-in failpoint and tests to
     /// drive the pool to full exhaustion; a single family's panic must never
     /// be conflated with domain-wide health, so covering every family here
     /// is required to actually observe pool-wide fail-closed behavior.
-    #[cfg(test)]
-    pub(crate) fn panic_actor_for_tests(&self) {
+    pub(crate) fn panic_actor_for_failpoint(&self) {
         for family in self.control_targets() {
-            let _ = self.try_send_control(family, RpcDomainCommand::PanicForTests);
+            let _ = self.try_send_control(family, RpcDomainCommand::PanicForFailpoint);
         }
     }
 
