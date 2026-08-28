@@ -199,8 +199,11 @@ impl ScheduleActor {
     }
 
     fn pop_due_from_heap(&mut self, now_ms: u64) -> Vec<(u64, String)> {
-        let mut popped = Vec::new();
-        while let Some(&(Reverse(fire_ms), _)) = self.ready_heap.peek() {
+        let mut popped = Vec::with_capacity(super::MAX_DUE_CLAIMS_PER_SCAN);
+        while popped.len() < super::MAX_DUE_CLAIMS_PER_SCAN {
+            let Some(&(Reverse(fire_ms), _)) = self.ready_heap.peek() else {
+                break;
+            };
             if fire_ms > now_ms {
                 break;
             }

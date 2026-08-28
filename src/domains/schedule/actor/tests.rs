@@ -371,6 +371,43 @@ fn should_report_oldest_pending_claim_age_given_pending_fire() {
 }
 
 #[test]
+fn should_bound_due_claims_per_scan_and_leave_remaining_work_ready() {
+    // Arrange
+    let clock = Arc::new(MockClock::new(epoch_ms(2026, 8, 28, 19, 13, 0)));
+    let mut actor = make_actor_with_clock(clock.clone());
+    for sequence in 0..33 {
+        actor
+            .create_schedule_at(
+                format!("schedule://acme/storm/jobs/job-{sequence:02}"),
+                "* * * * *".to_string(),
+                Bytes::from_static(b"payload"),
+                clock.now_instant(),
+            )
+            .expect("create storm schedule");
+    }
+    actor.bench_prepare_scan(33);
+
+    // Act
+    let first = actor.bench_claim_due_fires();
+    clock.advance(actor.scan_dedup_window + Duration::from_millis(1));
+    let second = actor.bench_claim_due_fires();
+
+    // Assert
+    assert_eq!(first.len(), 32, "one scan must claim a bounded batch");
+    assert_eq!(
+        second.len(),
+        1,
+        "the next scan must claim remaining due work"
+    );
+    let routes: std::collections::HashSet<_> = first
+        .iter()
+        .chain(&second)
+        .map(|claim| claim.route.as_str())
+        .collect();
+    assert_eq!(routes.len(), 33, "every due route must be claimed once");
+}
+
+#[test]
 fn should_compact_ready_heap_given_repeated_schedule_upserts() {
     // Arrange
     let mut actor = make_actor();
