@@ -102,6 +102,16 @@ where
         (Method::GET, "/readyz") => Ok(probes::handle_readiness(runtime.as_ref())),
         (Method::GET, "/startupz") => Ok(probes::handle_startup(runtime.as_ref())),
         (Method::GET, "/health") => Ok(probes::handle_health(runtime.as_ref())),
+        (Method::POST, "/destroyer/failpoints/notice-actor-panic") => {
+            if !actor_failpoints_enabled(std::env::var("FITZ_DESTROYER_FAILPOINTS").ok().as_deref())
+            {
+                return Ok(not_found());
+            }
+            runtime.panic_notice_actor_for_failpoint();
+            Ok(json_response(
+                serde_json::json!({ "injected": true, "domain": "notice" }),
+            ))
+        }
 
         (Method::POST, "/api/v1/session") => handle_login(req, &runtime).await,
         (Method::GET, "/api/v1/session") => handle_current_session(req, &runtime).await,
@@ -298,4 +308,23 @@ fn require_origin_and_ready<B>(
 ) -> Result<(), Box<Response>> {
     require_same_origin(req, runtime)?;
     require_data_plane_ready(runtime)
+}
+
+fn actor_failpoints_enabled(value: Option<&str>) -> bool {
+    value == Some("enabled")
+}
+
+#[cfg(test)]
+mod failpoint_tests {
+    use super::*;
+
+    #[test]
+    fn should_enable_actor_failpoints_only_for_exact_opt_in_value() {
+        // Arrange
+        // Act
+        // Assert
+        assert!(actor_failpoints_enabled(Some("enabled")));
+        assert!(!actor_failpoints_enabled(None));
+        assert!(!actor_failpoints_enabled(Some("true")));
+    }
 }
