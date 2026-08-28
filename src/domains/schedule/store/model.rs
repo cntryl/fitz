@@ -102,6 +102,8 @@ pub struct ScheduleStore {
     pub(super) db: crate::storage::FitzStorageEngine,
     #[cfg(test)]
     pub(super) fail_next_commit: Arc<std::sync::atomic::AtomicBool>,
+    #[cfg(test)]
+    pub(super) stall_next_commit: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Narrow persistence boundary used by schedule claim and acknowledgement policy.

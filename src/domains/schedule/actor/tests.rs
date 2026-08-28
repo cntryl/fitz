@@ -862,6 +862,25 @@ fn should_not_advance_schedule_state_given_persistence_failure() {
 }
 
 #[test]
+fn should_retry_schedule_create_given_runtime_queue_backpressure() {
+    // Arrange
+    let mut actor = make_actor();
+    let route = "schedule://acme/jobs/create-stall/run";
+    actor.store.stall_next_commit_for_tests();
+
+    // Act
+    let result = actor.create_schedule(
+        route.to_string(),
+        "* * * * *".to_string(),
+        Bytes::from_static(b"payload"),
+    );
+
+    // Assert
+    assert_eq!(result, Ok(true));
+    assert!(actor.schedules.contains_key(route));
+}
+
+#[test]
 #[serial]
 fn should_not_update_schedule_given_upsert_persistence_failure() {
     // Arrange

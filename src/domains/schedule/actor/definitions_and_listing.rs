@@ -69,20 +69,33 @@ impl ScheduleActor {
         let next_fire_ms =
             Self::instant_to_ms_at_with_clock(next_fire_time, now, self.clock.as_ref());
 
-        if let Err(error) = self.store.insert(
-            self.family.as_u64(),
-            ScheduleInsert {
-                route: &route,
-                cron: &cron,
-                delivery_mode,
-                payload: &payload,
-                next_fire_ms,
-                previous_fire_ms: previous_next_fire_ms,
-                last_fire_ms: previous_last_fire_ms,
-                executions_total: previous_executions_total,
-            },
-            self.write_options,
-        ) {
+        let mut persistence_result = Ok(Vec::new());
+        for attempt in 0..=3 {
+            persistence_result = self.store.insert(
+                self.family.as_u64(),
+                ScheduleInsert {
+                    route: &route,
+                    cron: &cron,
+                    delivery_mode,
+                    payload: &payload,
+                    next_fire_ms,
+                    previous_fire_ms: previous_next_fire_ms,
+                    last_fire_ms: previous_last_fire_ms,
+                    executions_total: previous_executions_total,
+                },
+                self.write_options,
+            );
+            if !matches!(
+                &persistence_result,
+                Err(error) if error.contains("WriteStall(\"runtime request queue is full\")")
+            ) || attempt == 3
+            {
+                break;
+            }
+            std::thread::yield_now();
+        }
+
+        if let Err(error) = persistence_result {
             if previous_next_fire_ms.is_some() {
                 crate::observability::counter_inc(METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL);
             } else {

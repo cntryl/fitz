@@ -287,6 +287,12 @@ impl ScheduleStore {
     }
 
     #[cfg(test)]
+    pub fn stall_next_commit_for_tests(&self) {
+        self.stall_next_commit
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    #[cfg(test)]
     pub(in crate::domains::schedule::store) fn commit_or_inject(
         &self,
         txn: cntryl_midge::Transaction,
@@ -297,6 +303,12 @@ impl ScheduleStore {
             .swap(false, std::sync::atomic::Ordering::SeqCst)
         {
             return Err("injected schedule store commit failure".to_string());
+        }
+        if self
+            .stall_next_commit
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err("commit failed: WriteStall(\"runtime request queue is full\")".to_string());
         }
 
         txn.commit(write_options)
