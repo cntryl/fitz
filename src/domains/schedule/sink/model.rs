@@ -219,8 +219,7 @@ pub(super) enum ScheduleDomainCommand {
         crossbeam_channel::Sender<()>,
     ),
     ForceDueScanForTests(usize, crossbeam_channel::Sender<()>),
-    #[cfg(test)]
-    PanicForTests,
+    PanicForFailpoint,
     #[cfg(test)]
     BlockForTests(
         crossbeam_channel::Sender<()>,
