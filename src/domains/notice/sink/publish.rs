@@ -9,14 +9,25 @@ use std::sync::Arc;
 use std::time::Instant;
 
 impl NoticeDomainCore {
-    fn fan_out_notice_event(
+    fn enqueue_notice_event(
         &self,
-        targets: &NoticeDeliveryTargets,
+        targets: NoticeDeliveryTargets,
         route: &crate::runtime::routing::Route,
         payload: &bytes::Bytes,
     ) {
-        for target in targets {
-            self.route_notice_notify(target, route, payload);
+        let family = *targets[0].subscriber.family();
+        let worker = notice_delivery_worker(&self.delivery_workers, &self.router, family);
+        let Some(worker) = worker else {
+            crate::observability::counter_inc(
+                crate::domains::notice::metrics::METRIC_DELIVERY_DROPS_TOTAL,
+            );
+            return;
+        };
+        let job = NoticeDeliveryJob::new(targets, route.clone(), payload.clone());
+        if worker.try_send(job).is_err() {
+            crate::observability::counter_inc(
+                crate::domains::notice::metrics::METRIC_DELIVERY_DROPS_TOTAL,
+            );
         }
     }
 
@@ -36,28 +47,6 @@ impl NoticeDomainCore {
                 .entry((route_family, Arc::clone(route)))
                 .or_insert_with(super::NoticeRouteStats::new)
                 .record_publish(now);
-        }
-    }
-
-    fn route_notice_notify(
-        &self,
-        target: &NoticeDeliveryTarget,
-        route: &crate::runtime::routing::Route,
-        payload: &bytes::Bytes,
-    ) {
-        let family = *target.subscriber.family();
-        let worker = notice_delivery_worker(&self.delivery_workers, &self.router, family);
-        let Some(worker) = worker else {
-            crate::observability::counter_inc(
-                crate::domains::notice::metrics::METRIC_DELIVERY_DROPS_TOTAL,
-            );
-            return;
-        };
-        let job = NoticeDeliveryJob::new(target.clone(), route.clone(), payload.clone());
-        if worker.try_send(job).is_err() {
-            crate::observability::counter_inc(
-                crate::domains::notice::metrics::METRIC_DELIVERY_DROPS_TOTAL,
-            );
         }
     }
 
@@ -98,7 +87,7 @@ impl NoticeDomainCore {
             return;
         }
 
-        self.fan_out_notice_event(&targets, route, payload);
+        self.enqueue_notice_event(targets, route, payload);
         self.mark_admin_snapshot_dirty();
     }
 

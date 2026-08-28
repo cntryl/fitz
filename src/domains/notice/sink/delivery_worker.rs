@@ -1,4 +1,4 @@
-use super::model::NoticeDeliveryTarget;
+use super::model::{NoticeDeliveryTarget, NoticeDeliveryTargets};
 use crate::runtime::routing::{Route, RouteFamily};
 use crate::runtime::{DeliveryError, Envelope, RouteError, Router};
 use bytes::Bytes;
@@ -12,15 +12,15 @@ const NOTICE_MAILBOX_RETRY_TIMEOUT: Duration = Duration::from_millis(5);
 const NOTICE_DELIVERY_WORKER_CAPACITY: usize = 64;
 
 pub(super) struct NoticeDeliveryJob {
-    target: NoticeDeliveryTarget,
+    targets: NoticeDeliveryTargets,
     route: Route,
     payload: Bytes,
 }
 
 impl NoticeDeliveryJob {
-    pub(super) fn new(target: NoticeDeliveryTarget, route: Route, payload: Bytes) -> Self {
+    pub(super) fn new(targets: NoticeDeliveryTargets, route: Route, payload: Bytes) -> Self {
         Self {
-            target,
+            targets,
             route,
             payload,
         }
@@ -37,7 +37,9 @@ pub(super) fn spawn_notice_delivery_worker(
         .name(format!("fitz-notice-delivery-{}", family.as_u64()))
         .spawn(move || {
             while let Ok(job) = receiver.recv() {
-                deliver_notice(&router, &job.target, &job.route, &job.payload);
+                for target in &job.targets {
+                    deliver_notice(&router, target, &job.route, &job.payload);
+                }
             }
         })?;
     Ok(sender)

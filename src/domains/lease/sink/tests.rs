@@ -422,7 +422,7 @@ fn should_match_fallback_for_prepared_lease_query() {
 }
 
 #[test]
-fn should_match_fallback_not_found_for_prepared_invalid_lease_route() {
+fn should_reject_prepared_invalid_lease_route() {
     // Arrange
     let frames = vec![(
         crate::dispatch::protocol::lease_codec::msg_type::ACQUIRE,
@@ -430,11 +430,16 @@ fn should_match_fallback_not_found_for_prepared_invalid_lease_route() {
     )];
 
     // Act
-    let fallback = lease_response_payloads(false, &frames);
     let prepared = lease_response_payloads(true, &frames);
 
     // Assert
-    assert_eq!(prepared, fallback);
+    let (code, message) = crate::dispatch::protocol::error_codes::decode_error_body(&prepared[0])
+        .expect("invalid lease route error");
+    assert_eq!(
+        code,
+        crate::dispatch::protocol::error_codes::lease::ERR_BAD_REQUEST
+    );
+    assert_eq!(message, "invalid lease route");
 }
 
 #[test]

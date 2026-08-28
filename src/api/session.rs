@@ -25,9 +25,17 @@ pub async fn process_session_frame(
     ingress: &dyn Ingress,
 ) -> Result<(), SessionError> {
     session.push_frame(&frame);
+    let mut connected_in_frame = false;
 
     while let Some(message) = session.next_message()? {
         let channel = message.channel;
+        if connected_in_frame {
+            session.release_channel(channel);
+            return Err(SessionError::IngressClose(
+                "CONNECT must be sent in a dedicated transport frame".to_string(),
+            ));
+        }
+        let is_connect = message.msg_type == crate::protocol::tlv::MessageType::CONNECT;
         let ingress_start = Instant::now();
         let decision = ingress
             .on_frame(
@@ -51,6 +59,7 @@ pub async fn process_session_frame(
 
         match decision {
             IngressDecision::Accept => {
+                connected_in_frame = is_connect;
                 trace!(
                     session_id = session.info().session_id,
                     "Ingress accepted frame"
@@ -82,6 +91,11 @@ mod tests {
 
     struct BackpressureIngress;
 
+    #[derive(Default)]
+    struct RecordingIngress {
+        message_types: std::sync::Mutex<Vec<MessageType>>,
+    }
+
     #[async_trait::async_trait]
     impl Ingress for BackpressureIngress {
         async fn on_open(&self, _session: SessionInfo) -> Result<u64, String> {
@@ -96,6 +110,26 @@ mod tests {
             _message_payload: Bytes,
         ) -> IngressDecision {
             IngressDecision::Backpressure
+        }
+
+        async fn on_close(&self, _session_id: u64, _reason: CloseReason) {}
+    }
+
+    #[async_trait::async_trait]
+    impl Ingress for RecordingIngress {
+        async fn on_open(&self, _session: SessionInfo) -> Result<u64, String> {
+            Ok(1)
+        }
+
+        async fn on_frame(
+            &self,
+            _session_id: u64,
+            _channel_id: crate::protocol::frame::ChannelId,
+            msg_type: MessageType,
+            _message_payload: Bytes,
+        ) -> IngressDecision {
+            self.message_types.lock().unwrap().push(msg_type);
+            IngressDecision::Accept
         }
 
         async fn on_close(&self, _session_id: u64, _reason: CloseReason) {}
@@ -123,5 +157,34 @@ mod tests {
 
         // Assert
         assert!(matches!(result, Err(SessionError::Backpressure(_))));
+    }
+
+    #[tokio::test]
+    async fn should_reject_messages_pipelined_after_connect() {
+        // Arrange
+        let config = NewSessionConfig::unauthenticated(
+            TransportKind::Tcp,
+            None,
+            SessionPermissions::empty(),
+            SessionMetadata::new(),
+            10,
+            None,
+            crate::runtime::routing::RouteFamily::new(1),
+        );
+        let mut session = Session::new(42, config);
+        let mut encoder = TlvEncoder::new();
+        encoder.encode(MessageType::CONNECT, b"token");
+        encoder.encode(MessageType::new(200), b"mutation");
+        let ingress = RecordingIngress::default();
+
+        // Act
+        let result = process_session_frame(&mut session, encoder.finish(), &ingress).await;
+
+        // Assert
+        assert!(matches!(result, Err(SessionError::IngressClose(_))));
+        assert_eq!(
+            *ingress.message_types.lock().unwrap(),
+            vec![MessageType::CONNECT]
+        );
     }
 }

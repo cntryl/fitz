@@ -27,6 +27,10 @@ impl NoticeDomainCore {
         {
             families.remove(&family_id);
         }
+        drop(families);
+        if removed {
+            self.mark_admin_snapshot_dirty();
+        }
         removed
     }
 

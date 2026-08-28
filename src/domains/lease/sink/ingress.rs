@@ -116,9 +116,7 @@ impl LeaseDomainRuntime<'_> {
         else {
             return;
         };
-        if Self::prepared_operation_family(operation)
-            .is_some_and(|family_id| family_id != meta.route_family)
-        {
+        if Self::prepared_operation_family(operation) != meta.route_family {
             let response = Self::error_response("route family mismatch");
             self.route_lease_response(envelope, meta, &response, request_started);
             return;
@@ -360,9 +358,7 @@ impl LeaseDomainRuntime<'_> {
     ) {
         use crate::domains::lease::protocol::{LeaseResponse, PreparedLeaseOperation};
 
-        if Self::prepared_operation_family(operation)
-            .is_some_and(|family_id| family_id != meta.route_family)
-        {
+        if Self::prepared_operation_family(operation) != meta.route_family {
             let response = Self::error_response("route family mismatch");
             self.route_lease_response(envelope, meta, &response, request_started);
             return;
@@ -397,7 +393,6 @@ impl LeaseDomainRuntime<'_> {
                 fencing_token,
             } => self.handle_release(key, owner_id, *fencing_token),
             PreparedLeaseOperation::Query { key } => self.handle_query(key),
-            PreparedLeaseOperation::NotFound => LeaseResponse::NotFound,
         };
 
         if matches!(domain_response, LeaseResponse::NotFound) {
@@ -500,14 +495,13 @@ impl LeaseDomainRuntime<'_> {
 
     fn prepared_operation_family(
         operation: &crate::domains::lease::protocol::PreparedLeaseOperation,
-    ) -> Option<crate::runtime::routing::RouteFamily> {
+    ) -> crate::runtime::routing::RouteFamily {
         use crate::domains::lease::protocol::PreparedLeaseOperation;
         match operation {
             PreparedLeaseOperation::Acquire { key, .. }
             | PreparedLeaseOperation::Extend { key, .. }
             | PreparedLeaseOperation::Release { key, .. }
-            | PreparedLeaseOperation::Query { key } => Some(key.family),
-            PreparedLeaseOperation::NotFound => None,
+            | PreparedLeaseOperation::Query { key } => key.family,
         }
     }
 }

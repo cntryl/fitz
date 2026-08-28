@@ -131,9 +131,16 @@ fn spawn_tcp_frame_task(
             context.session_id,
         );
 
-        let mut first_frame = true;
+        let mut authenticated = false;
         loop {
-            let next_frame = if first_frame {
+            authenticated = authenticated
+                || context
+                    .ingress
+                    .get_session_info(context.session_id)
+                    .is_some_and(|session| session.authenticated);
+            let next_frame = if authenticated {
+                frame_rx.recv().await
+            } else {
                 let remaining = context
                     .connect_deadline
                     .saturating_duration_since(tokio::time::Instant::now());
@@ -146,14 +153,11 @@ fn spawn_tcp_frame_task(
                         return Err("CONNECT deadline exceeded".to_string());
                     }
                 }
-            } else {
-                frame_rx.recv().await
             };
 
             let Some((_sid, frame)) = next_frame else {
                 break;
             };
-            first_frame = false;
             context.runtime.increment_messages_received();
             context.ingress.record_frame_received(context.session_id);
             if let Err(error) = crate::api::session::process_session_frame(

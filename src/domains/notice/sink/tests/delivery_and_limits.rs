@@ -114,10 +114,10 @@ fn should_not_retain_subscription_when_subscribe_response_cannot_be_delivered() 
         .sender()
         .try_send(Envelope::new(subscriber_address.clone(), 1_u8))
         .expect("fill subscriber mailbox");
-    let sink = NoticeDomainSink::new(
-        router,
-        crate::control::admin::read_model::AdminReadModel::new(),
-    );
+    let metrics = crate::observability::metrics::MetricsCollector::new();
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink =
+        NoticeDomainSink::new(router, admin_read_model.clone()).with_metrics(metrics.clone());
 
     // Act
     subscribe_notice_pattern(
@@ -131,6 +131,12 @@ fn should_not_retain_subscription_when_subscribe_response_cannot_be_delivered() 
 
     // Assert
     assert_eq!(sink.subscription_count(), Ok(0));
+    assert!(admin_read_model.notice_subscriptions(None, None).is_empty());
+    assert!(admin_read_model.notice_routes(None).is_empty());
+    assert_eq!(
+        metrics.gauge_get(crate::domains::notice::metrics::METRIC_SUBSCRIPTIONS_GAUGE),
+        0
+    );
 }
 
 #[test]

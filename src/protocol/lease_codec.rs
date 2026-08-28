@@ -351,7 +351,8 @@ fn parse_prepared_acquire(
     session_id: u64,
 ) -> Result<PreparedLeaseOperation, String> {
     let route = dec.get_string_ref()?;
-    let key = LeaseKey::from_route_str(route_family, route);
+    let key = LeaseKey::from_route_str(route_family, route)
+        .ok_or_else(|| "invalid lease route".to_string())?;
     let owner_id = session_scoped_owner_id(session_id, dec.get_string_ref()?);
     let ttl_secs = dec.get_u64()?;
     let wait_seconds = if dec.is_complete() {
@@ -364,14 +365,11 @@ fn parse_prepared_acquire(
         return Err("Trailing data in message".to_string());
     }
 
-    Ok(match key {
-        Some(key) => PreparedLeaseOperation::Acquire {
-            key,
-            owner_id,
-            ttl_secs,
-            wait_seconds,
-        },
-        None => PreparedLeaseOperation::NotFound,
+    Ok(PreparedLeaseOperation::Acquire {
+        key,
+        owner_id,
+        ttl_secs,
+        wait_seconds,
     })
 }
 
@@ -405,7 +403,8 @@ fn parse_prepared_extend(
     session_id: u64,
 ) -> Result<PreparedLeaseOperation, String> {
     let route = dec.get_string_ref()?;
-    let key = LeaseKey::from_route_str(route_family, route);
+    let key = LeaseKey::from_route_str(route_family, route)
+        .ok_or_else(|| "invalid lease route".to_string())?;
     let owner_id = session_scoped_owner_id(session_id, dec.get_string_ref()?);
     let fencing_token = dec.get_u64()?;
     let ttl_secs = dec.get_u64()?;
@@ -414,14 +413,11 @@ fn parse_prepared_extend(
         return Err("Trailing data in message".to_string());
     }
 
-    Ok(match key {
-        Some(key) => PreparedLeaseOperation::Extend {
-            key,
-            owner_id,
-            fencing_token,
-            ttl_secs,
-        },
-        None => PreparedLeaseOperation::NotFound,
+    Ok(PreparedLeaseOperation::Extend {
+        key,
+        owner_id,
+        fencing_token,
+        ttl_secs,
     })
 }
 
@@ -453,7 +449,8 @@ fn parse_prepared_release(
     session_id: u64,
 ) -> Result<PreparedLeaseOperation, String> {
     let route = dec.get_string_ref()?;
-    let key = LeaseKey::from_route_str(route_family, route);
+    let key = LeaseKey::from_route_str(route_family, route)
+        .ok_or_else(|| "invalid lease route".to_string())?;
     let owner_id = session_scoped_owner_id(session_id, dec.get_string_ref()?);
     let fencing_token = dec.get_u64()?;
 
@@ -461,13 +458,10 @@ fn parse_prepared_release(
         return Err("Trailing data in message".to_string());
     }
 
-    Ok(match key {
-        Some(key) => PreparedLeaseOperation::Release {
-            key,
-            owner_id,
-            fencing_token,
-        },
-        None => PreparedLeaseOperation::NotFound,
+    Ok(PreparedLeaseOperation::Release {
+        key,
+        owner_id,
+        fencing_token,
     })
 }
 
@@ -494,16 +488,14 @@ fn parse_prepared_query(
     route_family: RouteFamily,
 ) -> Result<PreparedLeaseOperation, String> {
     let route = dec.get_string_ref()?;
-    let key = LeaseKey::from_route_str(route_family, route);
+    let key = LeaseKey::from_route_str(route_family, route)
+        .ok_or_else(|| "invalid lease route".to_string())?;
 
     if !dec.is_complete() {
         return Err("Trailing data in message".to_string());
     }
 
-    Ok(match key {
-        Some(key) => PreparedLeaseOperation::Query { key },
-        None => PreparedLeaseOperation::NotFound,
-    })
+    Ok(PreparedLeaseOperation::Query { key })
 }
 
 /// Wire format: `[string route]`
