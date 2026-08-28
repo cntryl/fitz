@@ -152,7 +152,7 @@ impl DomainHandles {
         self.kv.panic_actor_for_failpoint();
         self.queue.panic_actor_for_failpoint();
         self.notice.panic_actor_for_failpoint();
-        self.stream.panic_actor_for_tests();
+        self.stream.panic_actor_for_failpoint();
         self.rpc.panic_actor_for_tests();
         self.lease.panic_actor_for_failpoint();
         self.schedule.panic_actor_for_failpoint();
@@ -176,6 +176,10 @@ impl DomainHandles {
 
     pub(crate) fn panic_schedule_actor_for_failpoint(&self) {
         self.schedule.panic_actor_for_failpoint();
+    }
+
+    pub(crate) fn panic_stream_actor_for_failpoint(&self) {
+        self.stream.panic_actor_for_failpoint();
     }
 
     pub(crate) fn queue_is_active(&self) -> bool {
@@ -877,7 +881,7 @@ mod tests {
         // one actor. Family-sharded domains (rpc/stream) are provisioned
         // with 7 route families here (`domain_setup_options`) and must be
         // panicked on *every* family to reach full exhaustion -- see
-        // `panic_actor_for_tests` on `RpcDomainSink`/`StreamDomainSink` --
+        // the panic failpoints on `RpcDomainSink`/`StreamDomainSink` --
         // so their panic_count legitimately lands at 7, not 1.
         for snapshot in &snapshots {
             let expected_panic_count = match snapshot.domain {

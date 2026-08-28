@@ -46,7 +46,7 @@ fn should_fail_closed_after_stream_actor_panic() {
         crate::control::admin::read_model::AdminReadModel::new(),
         StreamStorageWriteOptions::local(),
     );
-    sink.panic_actor_for_tests();
+    sink.panic_actor_for_failpoint();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
 
     // Act

@@ -87,9 +87,8 @@ impl Actor for StreamDomainActor {
                 self.core.sync_admin_snapshot();
                 let _ = reply.send(());
             }
-            #[cfg(test)]
-            StreamDomainCommand::PanicForTests => {
-                panic!("test Stream domain actor panic");
+            StreamDomainCommand::PanicForFailpoint => {
+                panic!("injected Stream domain actor panic");
             }
             #[cfg(test)]
             StreamDomainCommand::BlockForTests(entered, release) => {
