@@ -147,8 +147,7 @@ impl DomainHandles {
         self.kv.mark_actor_permanently_failed_for_tests();
     }
 
-    #[cfg(test)]
-    pub(crate) fn panic_all_domain_actors_for_tests(&self) {
+    pub(crate) fn panic_all_domain_actors_for_failpoint(&self) {
         self.kv.panic_actor_for_failpoint();
         self.queue.panic_actor_for_failpoint();
         self.notice.panic_actor_for_failpoint();
@@ -874,7 +873,7 @@ mod tests {
             .expect("setup domains");
 
         // Act
-        domains.panic_all_domain_actors_for_tests();
+        domains.panic_all_domain_actors_for_failpoint();
         wait_for_domain_failures(&domains);
         let snapshots = domains.health_snapshots();
 

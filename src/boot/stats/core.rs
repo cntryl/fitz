@@ -184,8 +184,12 @@ impl Runtime {
 
     #[cfg(test)]
     pub fn panic_all_domain_actors_for_tests(&self) {
+        self.panic_all_domain_actors_for_failpoint();
+    }
+
+    pub(crate) fn panic_all_domain_actors_for_failpoint(&self) {
         if let Some(domains) = self.domains.read().as_ref() {
-            domains.panic_all_domain_actors_for_tests();
+            domains.panic_all_domain_actors_for_failpoint();
         }
     }
 
