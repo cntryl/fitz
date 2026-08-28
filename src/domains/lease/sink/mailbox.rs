@@ -88,9 +88,8 @@ impl Actor for LeaseDomainActor {
             LeaseDomainCommand::ReadPendingWaiterCountForTests(key, reply) => {
                 let _ = reply.send(runtime.pending_waiter_count(&key));
             }
-            #[cfg(test)]
-            LeaseDomainCommand::PanicForTests => {
-                panic!("test Lease domain actor panic");
+            LeaseDomainCommand::PanicForFailpoint => {
+                panic!("injected Lease domain actor panic");
             }
             #[cfg(test)]
             LeaseDomainCommand::BlockForTests(entered, release) => {
