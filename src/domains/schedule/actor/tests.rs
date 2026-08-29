@@ -642,12 +642,14 @@ fn should_delete_pending_occurrence_given_cancel_after_due_claim() {
     let claimed = actor.collect_due_occurrences_for_publish_at(scan_at);
     assert_eq!(claimed.len(), 1);
     assert_eq!(actor.pending_fire_count(), 1);
+    assert_eq!(actor.pending_fire_times_for_route(route).len(), 1);
 
     // Act
     actor.delete_schedule(route).expect("cancel schedule");
 
     // Assert
     assert_eq!(actor.pending_fire_count(), 0);
+    assert!(actor.pending_fire_times_for_route(route).is_empty());
     assert!(actor
         .store
         .load_pending_fire_claims(actor.family.as_u64())
@@ -915,6 +917,97 @@ fn should_retry_schedule_create_given_runtime_queue_backpressure() {
     // Assert
     assert_eq!(result, Ok(true));
     assert!(actor.schedules.contains_key(route));
+}
+
+#[test]
+fn should_classify_schedule_write_stall_without_matching_debug_text() {
+    // Arrange
+    let mut attempts = 0;
+
+    // Act
+    let result = retry_persistence(|| {
+        attempts += 1;
+        if attempts == 1 {
+            return Err(SchedulePersistenceError::midge(
+                "commit failed",
+                cntryl_midge::MidgeError::WriteStall("different detail".to_string()),
+            ));
+        }
+        Ok(())
+    });
+
+    // Assert
+    assert_eq!(result, Ok(()));
+    assert_eq!(attempts, 2);
+}
+
+#[test]
+fn should_retry_schedule_delete_given_runtime_queue_backpressure() {
+    // Arrange
+    let mut actor = make_actor();
+    let route = "schedule://acme/jobs/delete-stall/run";
+    actor
+        .create_schedule(
+            route.to_string(),
+            "* * * * *".to_string(),
+            Bytes::from_static(b"payload"),
+        )
+        .expect("create schedule");
+    actor.store.stall_next_commit_for_tests();
+
+    // Act
+    let result = actor.delete_schedule(route);
+
+    // Assert
+    assert_eq!(result, Ok(true));
+    assert!(!actor.schedules.contains_key(route));
+}
+
+#[test]
+fn should_retry_schedule_claim_given_runtime_queue_backpressure() {
+    // Arrange
+    let mut actor = make_actor();
+    let route = "schedule://acme/jobs/claim-stall/run";
+    actor
+        .create_schedule(
+            route.to_string(),
+            "* * * * *".to_string(),
+            Bytes::from_static(b"payload"),
+        )
+        .expect("create schedule");
+    actor.bench_prepare_scan(1);
+    actor.store.stall_next_commit_for_tests();
+
+    // Act
+    let claimed = actor.bench_claim_due_fires();
+
+    // Assert
+    assert_eq!(claimed.len(), 1);
+    assert_eq!(claimed[0].route, route);
+}
+
+#[test]
+fn should_retry_schedule_ack_given_runtime_queue_backpressure() {
+    // Arrange
+    let mut actor = make_actor();
+    let route = "schedule://acme/jobs/ack-stall/run";
+    actor
+        .create_schedule(
+            route.to_string(),
+            "* * * * *".to_string(),
+            Bytes::from_static(b"payload"),
+        )
+        .expect("create schedule");
+    actor.bench_prepare_scan(1);
+    let claimed = actor.bench_claim_due_fires();
+    actor.store.stall_next_commit_for_tests();
+
+    // Act
+    let result = actor.ack_pending_fire_claims(&[(claimed[0].fire_ms, route.to_string())]);
+
+    // Assert
+    assert_eq!(result.map(|(count, _)| count), Ok(1));
+    assert_eq!(actor.pending_fire_count(), 0);
 }
 
 #[test]

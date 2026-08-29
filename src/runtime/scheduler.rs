@@ -2,6 +2,7 @@
 //! Actor scheduling and execution coordination
 
 use super::actor::{Actor, ActorError, ActorMetrics, ActorRef, Context};
+use super::actor_lifecycle::{actor_error_from_panic, notify_actor_error, start_actor};
 use super::mailbox::Mailbox;
 use crate::observability as obs;
 use crate::runtime::router::{MailboxSink, Router};
@@ -89,35 +90,8 @@ fn normal_message_budget(processed_high: usize) -> usize {
     }
 }
 
-fn notify_actor_error<A: Actor>(
-    actor: &mut A,
-    error: ActorError,
-    ctx: &mut Context<A>,
-    address: &RouteAddress,
-) {
-    if let Err(error_hook_panic) =
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| actor.on_error(error, ctx)))
-    {
-        tracing::error!(
-            actor = ?address,
-            error = ?error_hook_panic,
-            "Actor panicked while handling actor error"
-        );
-    }
-}
-
-fn start_actor<A: Actor>(actor: &mut A, ctx: &mut Context<A>, address: &RouteAddress) {
-    if let Err(error) =
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| actor.started(ctx)))
-    {
-        tracing::error!(actor = ?address, error = ?error, "Actor panicked during startup");
-        ctx.metrics().record_panic();
-        notify_actor_error(
-            actor,
-            ActorError::Panic(format!("startup panic: {error:?}")),
-            ctx,
-            address,
-        );
+fn start_scheduled_actor<A: Actor>(actor: &mut A, ctx: &mut Context<A>, address: &RouteAddress) {
+    if !start_actor(actor, ctx, address) {
         ctx.stop();
     }
 }
@@ -133,7 +107,7 @@ fn handle_fired_timers<A: Actor>(actor: &mut A, ctx: &mut Context<A>, address: &
             tracing::error!(actor = ?address, error = ?error, "Actor panicked during timer handling");
 
             ctx.metrics().record_panic();
-            let actor_error = ActorError::Panic(format!("timer panic: {error:?}"));
+            let actor_error = actor_error_from_panic(error.as_ref());
             notify_actor_error(actor, actor_error, ctx, address);
             ctx.stop();
             break;
@@ -220,7 +194,7 @@ impl Scheduler {
             let mut ctx =
                 Context::with_metrics(address.clone(), router_clone.clone(), metrics_clone);
 
-            start_actor(&mut actor, &mut ctx, &address);
+            start_scheduled_actor(&mut actor, &mut ctx, &address);
 
             // Process messages with two-phase priority lanes
             while ctx.is_running() {

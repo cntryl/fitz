@@ -69,9 +69,8 @@ impl ScheduleActor {
         let next_fire_ms =
             Self::instant_to_ms_at_with_clock(next_fire_time, now, self.clock.as_ref());
 
-        let mut persistence_result = Ok(Vec::new());
-        for attempt in 0..=3 {
-            persistence_result = self.store.insert(
+        let persistence_result = super::retry_persistence(|| {
+            self.store.insert(
                 self.family.as_u64(),
                 ScheduleInsert {
                     route: &route,
@@ -84,16 +83,8 @@ impl ScheduleActor {
                     executions_total: previous_executions_total,
                 },
                 self.write_options,
-            );
-            if !matches!(
-                &persistence_result,
-                Err(error) if error.contains("WriteStall(\"runtime request queue is full\")")
-            ) || attempt == 3
-            {
-                break;
-            }
-            std::thread::yield_now();
-        }
+            )
+        });
 
         if let Err(error) = persistence_result {
             if previous_next_fire_ms.is_some() {
@@ -257,10 +248,10 @@ impl ScheduleActor {
 
         let store_items = Self::build_schedule_batch_insert_items(&pending);
 
-        if let Err(error) =
+        if let Err(error) = super::retry_persistence(|| {
             self.store
                 .insert_batch(self.family.as_u64(), &store_items, self.write_options)
-        {
+        }) {
             Self::record_batch_persistence_failures(&pending);
             return Err(error);
         }
@@ -316,27 +307,24 @@ impl ScheduleActor {
         let Some(existing) = self.schedules.get(route) else {
             return Ok(false);
         };
-        let pending_fire_ms = self
-            .pending_claimed_occurrences
-            .keys()
-            .filter_map(|(fire_ms, pending_route)| (pending_route == route).then_some(*fire_ms))
-            .collect::<Vec<_>>();
+        let pending_fire_ms = self.pending_fire_times_for_route(route);
 
-        if let Err(error) = self.store.delete_current_with_realm(
-            self.family.as_u64(),
-            &parsed_route.realm,
-            route,
-            existing.next_fire_ms,
-            &pending_fire_ms,
-            self.write_options,
-        ) {
+        if let Err(error) = super::retry_persistence(|| {
+            self.store.delete_current_with_realm(
+                self.family.as_u64(),
+                &parsed_route.realm,
+                route,
+                existing.next_fire_ms,
+                &pending_fire_ms,
+                self.write_options,
+            )
+        }) {
             crate::observability::counter_inc(METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL);
             return Err(error);
         }
 
         if let Some(removed_def) = self.schedules.remove(route) {
-            self.pending_claimed_occurrences
-                .retain(|(_, pending_route), _| pending_route != route);
+            self.remove_pending_claims_for_route(route);
             self.remove_list_entry(removed_def.list_index);
             self.compact_ready_heap_if_needed();
             return Ok(true);

@@ -338,6 +338,8 @@ pub struct RuntimeIngress {
     pub(super) cleanup_worker_started: Arc<AtomicBool>,
     /// Allows graceful shutdown to stop the worker after tickets drain.
     pub(super) cleanup_shutdown: Arc<AtomicBool>,
+    /// Bounds synchronous domain cleanup waits across independent disconnects.
+    pub(super) cleanup_permits: Arc<tokio::sync::Semaphore>,
     /// Idempotence barrier for session finalizers that are currently running.
     pub(super) closing_sessions: Arc<DashMap<u64, ()>>,
     /// Optional router for dispatching frames to domain sinks

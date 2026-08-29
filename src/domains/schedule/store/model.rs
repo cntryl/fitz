@@ -106,6 +106,55 @@ pub struct ScheduleStore {
     pub(super) stall_next_commit: Arc<std::sync::atomic::AtomicBool>,
 }
 
+#[derive(Debug)]
+pub struct SchedulePersistenceError {
+    operation: &'static str,
+    source: Option<cntryl_midge::MidgeError>,
+    detail: Option<String>,
+}
+
+impl SchedulePersistenceError {
+    pub(crate) const fn midge(operation: &'static str, source: cntryl_midge::MidgeError) -> Self {
+        Self {
+            operation,
+            source: Some(source),
+            detail: None,
+        }
+    }
+
+    #[must_use]
+    pub fn is_write_stall(&self) -> bool {
+        matches!(self.source, Some(cntryl_midge::MidgeError::WriteStall(_)))
+    }
+}
+
+impl std::fmt::Display for SchedulePersistenceError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(source) = &self.source {
+            return write!(formatter, "{}: {source:?}", self.operation);
+        }
+        formatter.write_str(self.detail.as_deref().unwrap_or(self.operation))
+    }
+}
+
+impl std::error::Error for SchedulePersistenceError {}
+
+impl From<String> for SchedulePersistenceError {
+    fn from(detail: String) -> Self {
+        Self {
+            operation: "schedule persistence failed",
+            source: None,
+            detail: Some(detail),
+        }
+    }
+}
+
+impl From<SchedulePersistenceError> for String {
+    fn from(error: SchedulePersistenceError) -> Self {
+        error.to_string()
+    }
+}
+
 /// Narrow persistence boundary used by schedule claim and acknowledgement policy.
 pub trait SchedulePersistence {
     /// # Errors
@@ -116,7 +165,7 @@ pub trait SchedulePersistence {
         family_id: u64,
         claims: &[ScheduleFireClaim<'_>],
         write_options: WriteOptions,
-    ) -> Result<(), String>;
+    ) -> Result<(), SchedulePersistenceError>;
 
     /// # Errors
     ///
@@ -126,7 +175,7 @@ pub trait SchedulePersistence {
         family_id: u64,
         claims: &[SchedulePendingFireClaimAck<'_>],
         write_options: WriteOptions,
-    ) -> Result<(), String>;
+    ) -> Result<(), SchedulePersistenceError>;
 }
 
 impl SchedulePersistence for ScheduleStore {
@@ -135,7 +184,7 @@ impl SchedulePersistence for ScheduleStore {
         family_id: u64,
         claims: &[ScheduleFireClaim<'_>],
         write_options: WriteOptions,
-    ) -> Result<(), String> {
+    ) -> Result<(), SchedulePersistenceError> {
         self.claim_due_batch(family_id, claims, write_options)
     }
 
@@ -144,7 +193,7 @@ impl SchedulePersistence for ScheduleStore {
         family_id: u64,
         claims: &[SchedulePendingFireClaimAck<'_>],
         write_options: WriteOptions,
-    ) -> Result<(), String> {
+    ) -> Result<(), SchedulePersistenceError> {
         self.ack_pending_fire_claims(family_id, claims, write_options)
     }
 }

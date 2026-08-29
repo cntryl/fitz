@@ -128,6 +128,7 @@ impl ScheduleActor {
             scan_dedup_window: super::SCAN_DEDUP_WINDOW,
             ready_heap: BinaryHeap::new(),
             pending_claimed_occurrences: BTreeMap::new(),
+            pending_fire_times_by_route: HashMap::with_capacity_and_hasher(32, FxBuildHasher),
             clock,
             overdue_normalizations: 0,
         };
@@ -328,11 +329,13 @@ impl ScheduleActor {
         }
 
         self.overdue_normalizations = normalization_batch.len() as u64;
-        self.store.insert_batch(
-            self.family.as_u64(),
-            normalization_batch,
-            self.write_options,
-        )?;
+        super::retry_persistence(|| {
+            self.store.insert_batch(
+                self.family.as_u64(),
+                normalization_batch,
+                self.write_options,
+            )
+        })?;
         Ok(())
     }
 
@@ -345,11 +348,9 @@ impl ScheduleActor {
             } else {
                 pending_claimed_occurrence.claimed_at_ms
             };
-            self.pending_claimed_occurrences.insert(
-                (
-                    pending_claimed_occurrence.fire_ms,
-                    pending_claimed_occurrence.route,
-                ),
+            self.insert_pending_claim(
+                pending_claimed_occurrence.fire_ms,
+                pending_claimed_occurrence.route,
                 PendingClaim {
                     payload: pending_claimed_occurrence.payload,
                     delivery_mode: pending_claimed_occurrence.delivery_mode,

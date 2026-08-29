@@ -1,7 +1,7 @@
 use super::model::{
     parse_concrete_schedule_route, BTreeMap, Bytes, PersistedPendingFireClaim, PersistedSchedule,
-    ScheduleStore, WriteOptions, DEFINITION_PREFIX, DUE_INDEX_VALUE, DUE_PREFIX,
-    PENDING_FIRE_PREFIX,
+    SchedulePersistenceError, ScheduleStore, WriteOptions, DEFINITION_PREFIX, DUE_INDEX_VALUE,
+    DUE_PREFIX, PENDING_FIRE_PREFIX,
 };
 
 impl ScheduleStore {
@@ -134,7 +134,7 @@ impl ScheduleStore {
                 .map_err(|e| format!("delete pending fire failed: {e:?}"))?;
         }
 
-        self.commit_or_inject(txn, write_options)
+        Ok(self.commit_or_inject(txn, write_options)?)
     }
 
     pub(in crate::domains::schedule::store) fn u64_to_u32_saturating(
@@ -297,22 +297,25 @@ impl ScheduleStore {
         &self,
         txn: cntryl_midge::Transaction,
         write_options: WriteOptions,
-    ) -> Result<(), String> {
+    ) -> Result<(), SchedulePersistenceError> {
         if self
             .fail_next_commit
             .swap(false, std::sync::atomic::Ordering::SeqCst)
         {
-            return Err("injected schedule store commit failure".to_string());
+            return Err("injected schedule store commit failure".to_string().into());
         }
         if self
             .stall_next_commit
             .swap(false, std::sync::atomic::Ordering::SeqCst)
         {
-            return Err("commit failed: WriteStall(\"runtime request queue is full\")".to_string());
+            return Err(SchedulePersistenceError::midge(
+                "commit failed",
+                cntryl_midge::MidgeError::WriteStall("runtime request queue is full".to_string()),
+            ));
         }
 
         txn.commit(write_options)
-            .map_err(|e| format!("commit failed: {e:?}"))
+            .map_err(|error| SchedulePersistenceError::midge("commit failed", error))
     }
 
     #[cfg(not(test))]
@@ -323,8 +326,8 @@ impl ScheduleStore {
         &self,
         txn: cntryl_midge::Transaction,
         write_options: WriteOptions,
-    ) -> Result<(), String> {
+    ) -> Result<(), SchedulePersistenceError> {
         txn.commit(write_options)
-            .map_err(|e| format!("commit failed: {e:?}"))
+            .map_err(|error| SchedulePersistenceError::midge("commit failed", error))
     }
 }

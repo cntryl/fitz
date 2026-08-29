@@ -22,6 +22,10 @@ const MAX_RETRY_DELAY: Duration = Duration::from_secs(1);
 /// session whose actor was merely busy.
 const MAX_CLEANUP_RETRY_WINDOW: Duration = Duration::from_millis(2_300);
 
+/// Keeps cleanup confirmation waits from exhausting Tokio's blocking pool
+/// during independent disconnect storms.
+pub(super) const SESSION_CLEANUP_CONCURRENCY: usize = 32;
+
 pub(super) struct SessionCleanupCoordinator<'a> {
     ingress: &'a RuntimeIngress,
 }
@@ -124,6 +128,16 @@ impl SessionCleanupCoordinator<'_> {
         route_family: Option<crate::runtime::routing::RouteFamily>,
     ) {
         let (Some(router), Some(route_family)) = (&self.ingress.router, route_family) else {
+            return;
+        };
+
+        let Ok(_permit) = self.ingress.cleanup_permits.clone().acquire_owned().await else {
+            self.record_failure(
+                session_id,
+                route_family,
+                crate::runtime::DomainRegistry::cleanup_order(),
+                true,
+            );
             return;
         };
 

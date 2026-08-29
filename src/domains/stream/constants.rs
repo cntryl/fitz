@@ -6,6 +6,9 @@ pub const NOTICE_DEBOUNCE_MS: u64 = 25;
 /// Retry interval for failed watermark persistence attempts (milliseconds)
 pub const WATERMARK_PERSIST_RETRY_MS: u64 = 25;
 
+/// Maximum exponential shift for watermark notification retries.
+pub(super) const WATERMARK_NOTIFICATION_MAX_RETRY_SHIFT: u32 = 6;
+
 /// Maximum response items accepted from one synchronous Stream read.
 pub const MAX_READ_ITEMS: usize = 10_000;
 

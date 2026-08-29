@@ -255,10 +255,12 @@ fn should_reresolve_reply_route_when_resolved_lease_sink_stops() {
         }),
     );
     let replacement = Arc::new(Mailbox::new(1));
+    let metrics = crate::observability::metrics::MetricsCollector::new();
     let sink = LeaseDomainSink::new(
         router.clone(),
         crate::control::admin::read_model::AdminReadModel::new(),
-    );
+    )
+    .with_metrics(metrics.clone());
     let request = Envelope::from_route(
         reply_address.clone(),
         lease_address,
@@ -281,6 +283,11 @@ fn should_reresolve_reply_route_when_resolved_lease_sink_stops() {
 
     // Assert
     receive_envelope(&replacement, "replacement lease response");
+    assert_eq!(
+        metrics.counter_get(crate::domains::lease::metrics::METRIC_RESPONSE_DROPS_TOTAL),
+        0,
+        "a response accepted after route re-resolution was not dropped"
+    );
 }
 
 #[test]

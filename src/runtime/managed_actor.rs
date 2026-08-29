@@ -3,6 +3,7 @@
 
 use crate::observability as obs;
 use crate::runtime::actor::{Actor, ActorError, ActorMetrics, ActorRef, Context};
+use crate::runtime::actor_lifecycle::{actor_error_from_panic, notify_actor_error, start_actor};
 use crate::runtime::envelope::Envelope;
 use crate::runtime::mailbox::Mailbox;
 use crate::runtime::router::{DeliveryError, MailboxSink, Router};
@@ -147,16 +148,6 @@ impl ManagedActorHealth {
     }
 }
 
-fn actor_error_from_panic(error: &(dyn Any + Send)) -> ActorError {
-    if let Some(message) = error.downcast_ref::<&'static str>() {
-        ActorError::Panic((*message).to_string())
-    } else if let Some(message) = error.downcast_ref::<String>() {
-        ActorError::Panic(message.clone())
-    } else {
-        ActorError::Panic("non-string panic payload".to_string())
-    }
-}
-
 fn unregister_mailbox(router: &Router, address: &RouteAddress, mailbox: &Arc<Mailbox>) {
     let sink: Arc<dyn MailboxSink> = mailbox.clone();
     router.unregister_sink(address, &sink);
@@ -179,37 +170,15 @@ where
     })
 }
 
-fn notify_actor_error<A: Actor>(
-    actor: &mut A,
-    actor_error: ActorError,
-    ctx: &mut Context<A>,
-    address: &RouteAddress,
-) {
-    if let Err(error) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        actor.on_error(actor_error, ctx);
-    })) {
-        tracing::error!(
-            actor = ?address,
-            error = ?error,
-            "Managed actor panicked while handling actor error"
-        );
-    }
-}
-
 fn start_managed_actor<A: Actor>(
     actor: &mut A,
     ctx: &mut Context<A>,
     address: &RouteAddress,
 ) -> ActorStep {
-    if let Err(error) =
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| actor.started(ctx)))
-    {
-        tracing::error!(actor = ?address, error = ?error, "Managed actor panicked during startup");
-        ctx.metrics().record_panic();
-        notify_actor_error(actor, actor_error_from_panic(error.as_ref()), ctx, address);
-        ActorStep::Panicked
-    } else {
+    if start_actor(actor, ctx, address) {
         ActorStep::Continue
+    } else {
+        ActorStep::Panicked
     }
 }
 
@@ -544,13 +513,15 @@ where
                 }
 
                 health.record_restart();
-                *actor_stopped = true;
-                if stop_current_actor(actor, ctx, address) == ActorStep::Panicked {
-                    health.record_panic();
-                    health.mark_exhausted();
-                    running.store(false, Ordering::SeqCst);
-                    unregister_mailbox(router, address, mailbox);
-                    return false;
+                if !*actor_stopped {
+                    *actor_stopped = true;
+                    if stop_current_actor(actor, ctx, address) == ActorStep::Panicked {
+                        health.record_panic();
+                        health.mark_exhausted();
+                        running.store(false, Ordering::SeqCst);
+                        unregister_mailbox(router, address, mailbox);
+                        return false;
+                    }
                 }
                 *actor = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(actor_factory))
                 {

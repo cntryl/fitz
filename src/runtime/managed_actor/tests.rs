@@ -735,7 +735,7 @@ fn should_invoke_stopped_once_when_replacement_factory_panics() {
             }
         },
         8,
-        SupervisorStrategy::restart(1, Duration::from_mins(1)),
+        SupervisorStrategy::restart(2, Duration::from_mins(1)),
     );
 
     // Act

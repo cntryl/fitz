@@ -1,7 +1,7 @@
 use super::model::{
     parse_concrete_schedule_route, ScheduleBatchInsert, ScheduleDefinitionData, ScheduleFireClaim,
-    ScheduleInsert, SchedulePendingFireClaimAck, ScheduleStore, WriteOptions, BODY_PREFIX,
-    DEFINITION_PREFIX, DUE_PREFIX, PENDING_FIRE_PREFIX,
+    ScheduleInsert, SchedulePendingFireClaimAck, SchedulePersistenceError, ScheduleStore,
+    WriteOptions, BODY_PREFIX, DEFINITION_PREFIX, DUE_PREFIX, PENDING_FIRE_PREFIX,
 };
 
 impl ScheduleStore {
@@ -14,7 +14,7 @@ impl ScheduleStore {
         cf_id: u64,
         schedule: ScheduleInsert<'_>,
         write_options: WriteOptions,
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<Vec<u8>, SchedulePersistenceError> {
         let parsed = parse_concrete_schedule_route(schedule.route)?;
         let due_key = Self::encode_prefixed_timed_route_key_from_realm(
             &parsed.realm,
@@ -27,7 +27,7 @@ impl ScheduleStore {
         let mut txn = self
             .db
             .begin_tx(cf_id_u32, cntryl_midge::TransactionMode::ReadWrite)
-            .map_err(|e| format!("begin_tx failed: {e:?}"))?;
+            .map_err(|error| SchedulePersistenceError::midge("begin_tx failed", error))?;
 
         Self::put_schedule_definition(
             &mut txn,
@@ -70,7 +70,7 @@ impl ScheduleStore {
         cf_id: u64,
         items: &[ScheduleBatchInsert],
         write_options: WriteOptions,
-    ) -> Result<(), String> {
+    ) -> Result<(), SchedulePersistenceError> {
         if items.is_empty() {
             return Ok(());
         }
@@ -79,7 +79,7 @@ impl ScheduleStore {
         let mut txn = self
             .db
             .begin_tx(cf_id_u32, cntryl_midge::TransactionMode::ReadWrite)
-            .map_err(|e| format!("begin_tx failed: {e:?}"))?;
+            .map_err(|error| SchedulePersistenceError::midge("begin_tx failed", error))?;
 
         for item in items {
             let parsed = parse_concrete_schedule_route(&item.route)?;
@@ -121,7 +121,7 @@ impl ScheduleStore {
         cf_id: u64,
         items: &[ScheduleFireClaim<'_>],
         write_options: WriteOptions,
-    ) -> Result<(), String> {
+    ) -> Result<(), SchedulePersistenceError> {
         if items.is_empty() {
             return Ok(());
         }
@@ -130,7 +130,7 @@ impl ScheduleStore {
         let mut txn = self
             .db
             .begin_tx(cf_id_u32, cntryl_midge::TransactionMode::ReadWrite)
-            .map_err(|e| format!("begin_tx failed: {e:?}"))?;
+            .map_err(|error| SchedulePersistenceError::midge("begin_tx failed", error))?;
 
         for item in items {
             let parsed = item.route_parts;
@@ -185,7 +185,7 @@ impl ScheduleStore {
         cf_id: u64,
         items: &[SchedulePendingFireClaimAck<'_>],
         write_options: WriteOptions,
-    ) -> Result<(), String> {
+    ) -> Result<(), SchedulePersistenceError> {
         if items.is_empty() {
             return Ok(());
         }
@@ -194,7 +194,7 @@ impl ScheduleStore {
         let mut txn = self
             .db
             .begin_tx(cf_id_u32, cntryl_midge::TransactionMode::ReadWrite)
-            .map_err(|e| format!("begin_tx failed: {e:?}"))?;
+            .map_err(|error| SchedulePersistenceError::midge("begin_tx failed", error))?;
 
         for item in items {
             let parsed = parse_concrete_schedule_route(item.route)?;
@@ -233,7 +233,7 @@ impl ScheduleStore {
         route: &str,
         next_fire_ms: u64,
         write_options: WriteOptions,
-    ) -> Result<(), String> {
+    ) -> Result<(), SchedulePersistenceError> {
         let parsed = parse_concrete_schedule_route(route)?;
         self.delete_current_with_realm(
             cf_id,
@@ -253,12 +253,12 @@ impl ScheduleStore {
         next_fire_ms: u64,
         pending_fire_ms: &[u64],
         write_options: WriteOptions,
-    ) -> Result<(), String> {
+    ) -> Result<(), SchedulePersistenceError> {
         let cf_id_u32 = Self::u64_to_u32_saturating(cf_id)?;
         let mut txn = self
             .db
             .begin_tx(cf_id_u32, cntryl_midge::TransactionMode::ReadWrite)
-            .map_err(|e| format!("begin_tx failed: {e:?}"))?;
+            .map_err(|error| SchedulePersistenceError::midge("begin_tx failed", error))?;
 
         txn.delete(Self::encode_prefixed_route_key_from_realm(
             realm,

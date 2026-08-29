@@ -16,6 +16,9 @@ impl RuntimeIngress {
             cleanup_wake: Arc::new(tokio::sync::Notify::new()),
             cleanup_worker_started: Arc::new(AtomicBool::new(false)),
             cleanup_shutdown: Arc::new(AtomicBool::new(false)),
+            cleanup_permits: Arc::new(tokio::sync::Semaphore::new(
+                super::session_cleanup_coordinator::SESSION_CLEANUP_CONCURRENCY,
+            )),
             closing_sessions: Arc::new(DashMap::new()),
             router: None,
             event_handler: None,
