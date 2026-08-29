@@ -32,7 +32,7 @@ jobs:
           shared-key: "bench"
 
       - name: Build benchmarks
-        run: cargo bench --no-run
+        run: cargo bench --no-run --features benchkit
 
       - name: Benchmark tier 1
         run: cargo bench --bench 'tier1*' --quiet
@@ -41,10 +41,10 @@ jobs:
         run: cargo bench --bench 'tier2*' --quiet
 
       - name: Benchmark tier 3
-        run: cargo bench --bench 'tier3*' --quiet
+        run: cargo bench --bench 'tier3*' --features benchkit --quiet
 
       - name: Benchmark tier 4
-        run: cargo bench --bench 'tier4*' --quiet
+        run: cargo bench --bench 'tier4*' --features benchkit --quiet
 
       - name: Upload stress benchmark artifacts
         if: always()
