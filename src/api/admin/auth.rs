@@ -1,6 +1,6 @@
 use argon2::{
-    password_hash::{PasswordHash, PasswordVerifier, SaltString},
-    Argon2, PasswordHasher,
+    password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier},
+    Argon2,
 };
 use chrono::{Duration, Utc};
 use hyper::StatusCode;
@@ -172,17 +172,10 @@ impl AdminAuth {
 
         let settings = match root_password {
             Some(root_password) => {
-                let password_hash = (|| {
-                    let mut salt_bytes = [0_u8; 16];
-                    getrandom::fill(&mut salt_bytes)
-                        .map_err(|error| format!("Failed to generate password salt: {error}"))?;
-                    let salt = SaltString::encode_b64(&salt_bytes)
-                        .map_err(|error| format!("Failed to encode password salt: {error}"))?;
-                    Argon2::default()
-                        .hash_password(root_password.as_bytes(), &salt)
-                        .map(|hash| hash.to_string())
-                        .map_err(|error| format!("Failed to hash password: {error}"))
-                })();
+                let password_hash = Argon2::default()
+                    .hash_password(root_password.as_bytes())
+                    .map(|hash| hash.to_string())
+                    .map_err(|error| format!("Failed to hash password: {error}"));
                 if let Err(error) = &password_hash {
                     tracing::error!(%error, "Failed to hash the configured Fitz root password");
                 }

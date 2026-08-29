@@ -551,7 +551,7 @@ async fn should_return_rpc_and_lease_domain_stats_given_recorded_metrics() {
 
 #[tokio::test]
 #[serial]
-async fn should_return_rpc_data_loss_risk_given_late_response_drops() {
+async fn should_return_rpc_data_loss_risk_given_missing_pending_responses() {
     // Arrange
     let runtime = test_runtime();
     let metrics = fitz::boot::observability::metrics();
@@ -589,11 +589,14 @@ async fn should_return_rpc_data_loss_risk_given_late_response_drops() {
     assert_eq!(payload["diagnostics"]["current_stage"], "data_loss_risk");
     assert_eq!(
         payload["diagnostics"]["likely_bottleneck"],
-        "late response drop"
+        "missing pending response"
     );
     assert!(payload["diagnostics"]["explanation_hints"]
         .as_array()
         .unwrap()
         .iter()
-        .any(|value| value.as_str().unwrap_or("").contains("late response drop")));
+        .any(|value| value
+            .as_str()
+            .unwrap_or("")
+            .contains("no pending request state")));
 }

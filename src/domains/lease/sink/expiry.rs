@@ -60,7 +60,7 @@ impl LeaseDomainRuntime<'_> {
         for waiter in expired_waiters {
             self.untrack_session_waiter(waiter.owner_session_id, key, waiter.queued_token);
             self.counter_inc("fitz_lease_acquire_timeouts_total");
-            self.send_waiter_response(
+            let _ = self.send_waiter_response(
                 &waiter,
                 &crate::domains::lease::protocol::LeaseResponse::Timeout,
             );
@@ -133,17 +133,28 @@ impl LeaseDomainRuntime<'_> {
                 self.untrack_session_waiter(waiter.owner_session_id, key, waiter.queued_token);
                 self.track_session_lease(waiter.owner_session_id, key);
                 self.upsert_admin_lease(key, &state);
-                self.send_waiter_response(
+                let delivered = self.send_waiter_response(
                     &waiter,
                     &crate::domains::lease::protocol::LeaseResponse::Acquired {
                         fencing_token: waiter.queued_token,
                     },
                 );
+                if !delivered {
+                    self.core.leases.lock().remove(key);
+                    self.untrack_session_lease(waiter.owner_session_id, key);
+                    self.remove_admin_lease(key);
+                    self.notify_lease_change(key);
+                    // A disconnected waiter must not hold up the next live
+                    // waiter until the periodic sweep. Queue depth is bounded
+                    // by `LEASE_MAX_QUEUE_DEPTH`, so advancing here remains
+                    // bounded even when several consecutive grants fail.
+                    let _ = self.advance_waiter_queue(key, now);
+                }
                 return WaiterProgress::Consumed;
             }
             Some((waiter, None)) => {
                 self.untrack_session_waiter(waiter.owner_session_id, key, waiter.queued_token);
-                self.send_waiter_response(
+                let _ = self.send_waiter_response(
                     &waiter,
                     &crate::domains::lease::protocol::LeaseResponse::Error(
                         "queued ttl_secs exceeds the supported lease duration".to_string(),
@@ -191,7 +202,7 @@ impl LeaseDomainRuntime<'_> {
 
         for (key, waiter) in expired_waiters {
             self.untrack_session_waiter(waiter.owner_session_id, &key, waiter.queued_token);
-            self.send_waiter_response(
+            let _ = self.send_waiter_response(
                 &waiter,
                 &crate::domains::lease::protocol::LeaseResponse::Timeout,
             );

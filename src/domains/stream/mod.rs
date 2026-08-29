@@ -48,6 +48,7 @@ pub mod store;
 
 mod area_actor;
 mod realm_actor;
+mod watermark_notification;
 
 pub use actor::StreamActor;
 pub use constants::{

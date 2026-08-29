@@ -243,9 +243,13 @@ impl StreamDomainSink {
                     core.sync_admin_snapshot();
                     let _ = reply.send(());
                 }
+                StreamDomainCommand::PanicForFailpoint => {
+                    panic!("injected Stream family actor panic");
+                }
                 #[cfg(test)]
-                StreamDomainCommand::PanicForTests => {
-                    panic!("test Stream family actor panic");
+                StreamDomainCommand::BlockForTests(entered, release) => {
+                    let _ = entered.send(());
+                    let _ = release.recv();
                 }
             },
             move |_family| {
@@ -510,23 +514,28 @@ impl StreamDomainSink {
     }
 
     /// Panic every provisioned family's handler (or the single actor in
-    /// non-sharded mode). Used by `panic_all_domain_actors_for_tests` to
+    /// non-sharded mode). Used by the opt-in failpoint and tests to
     /// drive the pool to full exhaustion; a single family's panic must never
     /// be conflated with domain-wide health, so covering every family here
     /// is required to actually observe pool-wide fail-closed behavior.
-    #[cfg(test)]
-    pub(crate) fn panic_actor_for_tests(&self) {
+    pub(crate) fn panic_actor_for_failpoint(&self) {
         match self.family_families.as_deref() {
             Some(families) => {
                 for family in families {
-                    let _ = self
-                        .dispatch_family_control(Some(*family), StreamDomainCommand::PanicForTests);
+                    let _ = self.dispatch_family_control(
+                        Some(*family),
+                        StreamDomainCommand::PanicForFailpoint,
+                    );
                 }
             }
             None => {
-                let _ = self.dispatch_family_control(None, StreamDomainCommand::PanicForTests);
+                let _ = self.dispatch_family_control(None, StreamDomainCommand::PanicForFailpoint);
             }
         }
+    }
+
+    pub(crate) fn panic_family_actor_for_failpoint(&self, family: RouteFamily) {
+        let _ = self.dispatch_family_control(Some(family), StreamDomainCommand::PanicForFailpoint);
     }
 
     #[cfg(test)]
@@ -534,6 +543,20 @@ impl StreamDomainSink {
         if let Some(actor) = self.actor.as_ref() {
             actor.stop();
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn block_family_actor_for_tests(
+        &self,
+        family: RouteFamily,
+        entered: crossbeam_channel::Sender<()>,
+        release: crossbeam_channel::Receiver<()>,
+    ) {
+        self.dispatch_family_control(
+            Some(family),
+            StreamDomainCommand::BlockForTests(entered, release),
+        )
+        .expect("enqueue Stream family actor test block");
     }
 
     #[cfg(test)]

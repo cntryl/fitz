@@ -53,8 +53,12 @@ pub(in crate::domains::rpc::sink) enum RpcDomainCommand {
         u64,
         crossbeam_channel::Sender<RpcWorkerCleanupResult>,
     ),
+    PanicForFailpoint,
     #[cfg(test)]
-    PanicForTests,
+    BlockForTests(
+        crossbeam_channel::Sender<()>,
+        crossbeam_channel::Receiver<()>,
+    ),
 }
 
 #[derive(Default)]

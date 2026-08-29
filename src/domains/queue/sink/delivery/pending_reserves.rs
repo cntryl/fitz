@@ -51,7 +51,21 @@ impl QueueDomainCore {
         for (key, notification) in outcome.ready_notifications {
             self.route_queue_ready_notification(&key, notification);
         }
-        self.route_queue_response(&pending.envelope, pending.meta, &outcome.response);
+        let delivered =
+            self.route_queue_response(&pending.envelope, pending.meta, &outcome.response);
+        if !delivered {
+            if let crate::domains::queue::protocol::QueueMessage::Receive {
+                family_id, route, ..
+            } = &pending.message
+            {
+                self.rollback_undeliverable_receive(
+                    *family_id,
+                    route,
+                    pending.meta.session_id,
+                    &outcome.response,
+                );
+            }
+        }
         self.record_operation_metrics(
             pending.request_started,
             &outcome.response,

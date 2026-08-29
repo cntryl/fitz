@@ -406,8 +406,7 @@ pub(crate) fn analyze_rpc(
 
     let mut hotspots = Vec::new();
     let mut last_changed_at: Option<DateTime<Utc>> = None;
-    let late_response_pressure =
-        responses_dropped_closed_caller_total + responses_missing_pending_total;
+    let response_loss_pressure = responses_missing_pending_total;
     let correlation_pressure = duplicate_correlation_rejects_total + wrong_worker_rejects_total;
     let transport_pressure = request_timeouts_total + backpressure_rejects_total;
     let overall_latency_summary = summarize_rpc_worker_latency(workers.iter());
@@ -457,12 +456,12 @@ pub(crate) fn analyze_rpc(
                 DiagnosticSeverity::High,
                 Some("worker starvation".to_string()),
             )
-        } else if late_response_pressure > 0 && pending_count == 0 {
+        } else if response_loss_pressure > 0 && pending_count == 0 {
             (
                 DiagnosisLabel::DataLossRisk,
                 DiagnosticTrend::Stalled,
                 DiagnosticSeverity::High,
-                Some("late response drop".to_string()),
+                Some("missing pending response".to_string()),
             )
         } else if correlation_pressure > 0 && pending_count == 0 {
             (
@@ -527,8 +526,8 @@ pub(crate) fn analyze_rpc(
         };
         let failure_count = match label {
             DiagnosisLabel::DataLossRisk => {
-                if late_response_pressure > 0 {
-                    late_response_pressure
+                if response_loss_pressure > 0 {
+                    response_loss_pressure
                 } else {
                     correlation_pressure
                 }
@@ -563,8 +562,15 @@ pub(crate) fn analyze_rpc(
                 "{wrong_worker_rejects_total} wrong worker rejection(s)"
             ));
         }
-        if late_response_pressure > 0 {
-            hints.push(format!("{late_response_pressure} late response drop(s)"));
+        if responses_dropped_closed_caller_total > 0 {
+            hints.push(format!(
+                "{responses_dropped_closed_caller_total} response(s) arrived after caller closure"
+            ));
+        }
+        if response_loss_pressure > 0 {
+            hints.push(format!(
+                "{response_loss_pressure} response(s) had no pending request state"
+            ));
         }
         if matches!(label, DiagnosisLabel::DataLossRisk) {
             hints.push(RPC_RESPONSE_LOSS_HINT.to_string());
@@ -628,23 +634,23 @@ pub(crate) fn analyze_rpc(
 
     let has_route_hotspots = !hotspots.is_empty();
     if !has_route_hotspots {
-        let data_loss_pressure = late_response_pressure + correlation_pressure;
+        let data_loss_pressure = response_loss_pressure + correlation_pressure;
         if data_loss_pressure > 0 || transport_pressure > 0 {
-            let bottleneck = if late_response_pressure > 0 {
-                "late response drop"
+            let bottleneck = if response_loss_pressure > 0 {
+                "missing pending response"
             } else if correlation_pressure > 0 {
                 "correlation mismatch"
             } else {
                 "rpc backpressure"
             };
-            let label = if late_response_pressure > 0 || correlation_pressure > 0 {
+            let label = if response_loss_pressure > 0 || correlation_pressure > 0 {
                 DiagnosisLabel::DataLossRisk
             } else {
                 // Not throughput: nothing is flowing slowly, work is being
                 // shed because the transport cannot carry it.
                 DiagnosisLabel::TransportBackpressure
             };
-            let trend = if late_response_pressure > 0 || correlation_pressure > 0 {
+            let trend = if response_loss_pressure > 0 || correlation_pressure > 0 {
                 DiagnosticTrend::Stalled
             } else {
                 DiagnosticTrend::Growing
@@ -669,8 +675,15 @@ pub(crate) fn analyze_rpc(
                     "{wrong_worker_rejects_total} wrong worker rejection(s)"
                 ));
             }
-            if late_response_pressure > 0 {
-                hints.push(format!("{late_response_pressure} late response drop(s)"));
+            if responses_dropped_closed_caller_total > 0 {
+                hints.push(format!(
+                    "{responses_dropped_closed_caller_total} response(s) arrived after caller closure"
+                ));
+            }
+            if response_loss_pressure > 0 {
+                hints.push(format!(
+                    "{response_loss_pressure} response(s) had no pending request state"
+                ));
             }
             if correlation_pressure > 0 {
                 hints.push(format!(
@@ -678,7 +691,7 @@ pub(crate) fn analyze_rpc(
                 ));
             }
             hotspots.push(ScoredHotspot {
-                score: score_u64(late_response_pressure) * 12.0
+                score: score_u64(response_loss_pressure) * 12.0
                     + score_u64(correlation_pressure) * 6.0
                     + score_u64(transport_pressure) * 2.0,
                 hotspot: DiagnosticHotspot {

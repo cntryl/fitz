@@ -4,6 +4,7 @@ use super::{
 };
 use crate::api::runtime_ingress::RuntimeIngress;
 use crate::boot::domains::DomainHandles;
+use crate::runtime::routing::RouteFamily;
 use crate::runtime::Router;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -184,8 +185,66 @@ impl Runtime {
 
     #[cfg(test)]
     pub fn panic_all_domain_actors_for_tests(&self) {
+        self.panic_all_domain_actors_for_failpoint();
+    }
+
+    pub(crate) fn panic_all_domain_actors_for_failpoint(&self) {
         if let Some(domains) = self.domains.read().as_ref() {
-            domains.panic_all_domain_actors_for_tests();
+            domains.panic_all_domain_actors_for_failpoint();
+        }
+    }
+
+    pub(crate) fn panic_notice_actor_for_failpoint(&self) {
+        if let Some(domains) = self.domains.read().as_ref() {
+            domains.panic_notice_actor_for_failpoint();
+        }
+    }
+
+    pub(crate) fn panic_queue_actor_for_failpoint(&self) {
+        if let Some(domains) = self.domains.read().as_ref() {
+            domains.panic_queue_actor_for_failpoint();
+        }
+    }
+
+    pub(crate) fn panic_kv_actor_for_failpoint(&self) {
+        if let Some(domains) = self.domains.read().as_ref() {
+            domains.panic_kv_actor_for_failpoint();
+        }
+    }
+
+    pub(crate) fn panic_lease_actor_for_failpoint(&self) {
+        if let Some(domains) = self.domains.read().as_ref() {
+            domains.panic_lease_actor_for_failpoint();
+        }
+    }
+
+    pub(crate) fn panic_schedule_actor_for_failpoint(&self) {
+        if let Some(domains) = self.domains.read().as_ref() {
+            domains.panic_schedule_actor_for_failpoint();
+        }
+    }
+
+    pub(crate) fn panic_stream_actor_for_failpoint(&self) {
+        if let Some(domains) = self.domains.read().as_ref() {
+            domains.panic_stream_actor_for_failpoint();
+        }
+    }
+
+    pub(crate) fn panic_rpc_actor_for_failpoint(&self) {
+        if let Some(domains) = self.domains.read().as_ref() {
+            domains.panic_rpc_actor_for_failpoint();
+        }
+    }
+
+    pub(crate) fn panic_stream_family_actor_for_failpoint(&self, family: RouteFamily) {
+        if let Some(domains) = self.domains.read().as_ref() {
+            domains.panic_stream_family_actor_for_failpoint(family);
+        }
+    }
+
+    pub(crate) fn panic_rpc_family_actor_for_failpoint(&self, family: RouteFamily) {
+        if let Some(domains) = self.domains.read().as_ref() {
+            domains.panic_rpc_family_actor_for_failpoint(family);
         }
     }
 

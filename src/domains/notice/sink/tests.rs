@@ -60,6 +60,18 @@ impl MailboxSink for FailingSink {
     }
 }
 
+struct PanickingSink;
+
+impl MailboxSink for PanickingSink {
+    fn deliver(&self, _envelope: Envelope) -> Result<(), DeliveryError> {
+        panic!("injected sink panic");
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
 struct RetrySink {
     state: Arc<Mutex<Vec<Result<(), DeliveryError>>>>,
 }

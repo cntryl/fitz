@@ -14,6 +14,25 @@ impl LeaseDomainRuntime<'_> {
     ) {
         use crate::domains::lease::protocol::LeaseSubscriptionMessage;
 
+        let new_subscription = match sub_msg {
+            LeaseSubscriptionMessage::Subscribe {
+                family_id,
+                route,
+                session_id,
+                ..
+            } => {
+                let exists = self
+                    .core
+                    .families
+                    .lock()
+                    .get(&family_id.as_u64())
+                    .and_then(|state| state.find_existing_id(*session_id, route.as_str()))
+                    .is_some();
+                (!exists).then_some((*family_id, *session_id))
+            }
+            LeaseSubscriptionMessage::Unsubscribe { .. } => None,
+        };
+
         let response = match sub_msg {
             LeaseSubscriptionMessage::Subscribe {
                 family_id,
@@ -44,7 +63,34 @@ impl LeaseDomainRuntime<'_> {
         };
 
         self.refresh_metrics_gauges();
-        self.route_lease_response(envelope, meta, &response, request_started);
+        let delivered = self.route_lease_response(envelope, meta, &response, request_started);
+        if !delivered {
+            if let (
+                crate::domains::lease::protocol::LeaseResponse::SubscribeOk { subscription_id },
+                Some((family_id, session_id)),
+            ) = (&response, new_subscription)
+            {
+                self.rollback_undeliverable_subscription(family_id, session_id, *subscription_id);
+            }
+        }
+    }
+
+    fn rollback_undeliverable_subscription(
+        &self,
+        family_id: crate::runtime::routing::RouteFamily,
+        session_id: u64,
+        subscription_id: u64,
+    ) {
+        let mut families = self.core.families.lock();
+        let remove_family = families.get_mut(&family_id.as_u64()).is_some_and(|state| {
+            state.remove_subscription_for_session(family_id, session_id, subscription_id);
+            state.is_empty()
+        });
+        if remove_family {
+            families.remove(&family_id.as_u64());
+        }
+        drop(families);
+        self.refresh_metrics_gauges();
     }
 
     fn handle_lease_subscribe(

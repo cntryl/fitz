@@ -6,10 +6,16 @@ use crate::runtime::{DeliveryError, Envelope};
 
 impl MailboxSink for LeaseDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
+            return self.cleanup_session(cleanup.session_id);
+        }
         self.actor.try_send(LeaseDomainCommand::Deliver(envelope))
     }
 
     fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
+            return self.cleanup_session(cleanup.session_id);
+        }
         self.actor
             .try_send_high_priority(LeaseDomainCommand::Deliver(envelope))
     }
@@ -26,8 +32,9 @@ impl Actor for LeaseDomainActor {
                     tracing::warn!(domain = "lease", error = %error, "Lease actor delivery failed");
                 }
             }
-            LeaseDomainCommand::CleanupSession(session_id) => {
+            LeaseDomainCommand::CleanupSession(session_id, reply) => {
                 runtime.cleanup_session(session_id);
+                let _ = reply.send(());
             }
             LeaseDomainCommand::ReadLiveCounts(reply) => {
                 let _ = reply.send(runtime.live_counts());
@@ -81,9 +88,13 @@ impl Actor for LeaseDomainActor {
             LeaseDomainCommand::ReadPendingWaiterCountForTests(key, reply) => {
                 let _ = reply.send(runtime.pending_waiter_count(&key));
             }
+            LeaseDomainCommand::PanicForFailpoint => {
+                panic!("injected Lease domain actor panic");
+            }
             #[cfg(test)]
-            LeaseDomainCommand::PanicForTests => {
-                panic!("test Lease domain actor panic");
+            LeaseDomainCommand::BlockForTests(entered, release) => {
+                let _ = entered.send(());
+                let _ = release.recv();
             }
         }
     }

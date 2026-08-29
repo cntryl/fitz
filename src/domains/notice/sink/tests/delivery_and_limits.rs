@@ -31,6 +31,134 @@ fn should_retry_delivery_policy_with_payload_independent_envelope_builder() {
 }
 
 #[test]
+fn should_reresolve_subscriber_route_before_notice_retry() {
+    struct BlockingRetrySink {
+        attempts: Arc<std::sync::atomic::AtomicUsize>,
+        entered: crossbeam_channel::Sender<()>,
+        release: crossbeam_channel::Receiver<()>,
+    }
+
+    impl MailboxSink for BlockingRetrySink {
+        fn deliver(&self, _envelope: Envelope) -> Result<(), DeliveryError> {
+            let attempt = self
+                .attempts
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if attempt == 0 {
+                self.entered.send(()).expect("retry observer");
+                self.release.recv().expect("retry release");
+                return Err(DeliveryError::MailboxFull {
+                    capacity: 1,
+                    current_len: 1,
+                });
+            }
+            Ok(())
+        }
+
+        fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+            self.deliver(envelope)
+        }
+    }
+
+    // Arrange
+    let family = RouteFamily::new(1);
+    let subscriber = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let router = Arc::new(Router::new());
+    let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);
+    let (release_tx, release_rx) = crossbeam_channel::bounded(1);
+    router.register(
+        subscriber.clone(),
+        Arc::new(BlockingRetrySink {
+            attempts: attempts.clone(),
+            entered: entered_tx,
+            release: release_rx,
+        }),
+    );
+    let delivery_router = router.clone();
+    let delivery_subscriber = subscriber.clone();
+    let delivery = std::thread::spawn(move || {
+        deliver_with_retry(&delivery_router, &delivery_subscriber, || {
+            Envelope::new(delivery_subscriber.clone(), ())
+        });
+    });
+    entered_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("first attempt should block");
+    let replacement = Arc::new(Mailbox::new(1));
+    router.register(subscriber, replacement.clone());
+
+    // Act
+    release_tx.send(()).expect("release first attempt");
+    delivery.join().expect("join notice retry");
+
+    // Assert
+    assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 1);
+    replacement
+        .receiver()
+        .recv_timeout(Duration::from_secs(1))
+        .expect("replacement subscriber should receive retry");
+}
+
+#[test]
+fn should_not_retain_subscription_when_subscribe_response_cannot_be_delivered() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 7;
+    let pattern = "notice://acme/app/undeliverable";
+    let notice_address = RouteAddress::new(family, Route::new(pattern));
+    let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let router = Arc::new(Router::new());
+    let subscriber_mailbox = Arc::new(Mailbox::new(1));
+    router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+    subscriber_mailbox
+        .sender()
+        .try_send(Envelope::new(subscriber_address.clone(), 1_u8))
+        .expect("fill subscriber mailbox");
+    let metrics = crate::observability::metrics::MetricsCollector::new();
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink =
+        NoticeDomainSink::new(router, admin_read_model.clone()).with_metrics(metrics.clone());
+
+    // Act
+    subscribe_notice_pattern(
+        &sink,
+        &subscriber_address,
+        &notice_address,
+        session_id,
+        pattern,
+        family,
+    );
+
+    // Assert
+    assert_eq!(sink.subscription_count(), Ok(0));
+    assert!(admin_read_model.notice_subscriptions(None, None).is_empty());
+    assert!(admin_read_model.notice_routes(None).is_empty());
+    assert_eq!(
+        metrics.gauge_get(crate::domains::notice::metrics::METRIC_SUBSCRIPTIONS_GAUGE),
+        0
+    );
+}
+
+#[test]
+fn should_contain_panicking_cached_notice_sink() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let subscriber = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let router = Router::new();
+    router.register(subscriber.clone(), Arc::new(PanickingSink));
+
+    // Act
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        deliver_with_retry(&router, &subscriber, || {
+            Envelope::new(subscriber.clone(), ())
+        });
+    }));
+
+    // Assert
+    assert!(result.is_ok());
+}
+
+#[test]
 #[allow(clippy::too_many_lines)]
 fn should_retain_other_notice_subscription_given_unsubscribe_on_same_session() {
     // Arrange
@@ -133,7 +261,7 @@ fn should_retain_other_notice_subscription_given_unsubscribe_on_same_session() {
     // Assert
     let notify_envelope = subscriber_mailbox
         .receiver()
-        .try_recv()
+        .recv_timeout(Duration::from_secs(1))
         .expect("retained notice notify envelope");
     let notify_frame = notify_envelope
         .into_payload::<FrameContext>()
@@ -262,6 +390,13 @@ fn should_increment_delivery_drop_counter_given_failing_subscriber_route() {
     .expect("publish notice event");
 
     // Assert
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while crate::observability::metrics().counter_get("fitz_notice_delivery_drops_total")
+        < before_drops + 1
+        && Instant::now() < deadline
+    {
+        std::thread::yield_now();
+    }
     assert_eq!(
         crate::observability::metrics().counter_get("fitz_notice_delivery_drops_total"),
         before_drops + 1
@@ -413,7 +548,9 @@ fn should_isolate_unrelated_family_when_notice_subscriber_blocks() {
         ),
     ));
     let elapsed = started.elapsed();
-    let delivered = healthy_mailbox.receiver().try_recv();
+    let delivered = healthy_mailbox
+        .receiver()
+        .recv_timeout(Duration::from_secs(1));
     release_tx.send(()).expect("release blocked delivery");
     let blocked_result = blocked_publish.join().expect("join blocked publish");
 

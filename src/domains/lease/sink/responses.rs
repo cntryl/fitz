@@ -11,7 +11,7 @@ impl LeaseDomainRuntime<'_> {
         &self,
         waiter: &super::model::PendingAcquire,
         response: &crate::domains::lease::protocol::LeaseResponse,
-    ) {
+    ) -> bool {
         #[cfg(test)]
         let response_ctx = {
             let mut payload_encoder =
@@ -55,7 +55,9 @@ impl LeaseDomainRuntime<'_> {
                 waiter.route_family,
                 &error,
             );
+            return false;
         }
+        true
     }
 
     pub(in crate::domains::lease::sink) fn route_lease_response(
@@ -64,7 +66,7 @@ impl LeaseDomainRuntime<'_> {
         meta: crate::runtime::ClientFrameMeta,
         response: &crate::domains::lease::protocol::LeaseResponse,
         request_started: Option<std::time::Instant>,
-    ) {
+    ) -> bool {
         #[cfg(test)]
         let response_ctx = {
             let response_bytes =
@@ -81,27 +83,57 @@ impl LeaseDomainRuntime<'_> {
         #[cfg(not(test))]
         let response_ctx = crate::domains::lease::LeaseClientResponse::new(meta, response.clone());
 
-        if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
+        let mut delivered = false;
+        if let Some(response_envelope) = envelope.try_reply_to(response_ctx.clone()) {
             let response_sink = self
                 .core
                 .router
                 .resolve_sink(response_envelope.destination());
             if let Some(sink) = response_sink {
-                if let Err(error) = sink.deliver(response_envelope) {
-                    self.record_dropped_delivery(
+                if let Err(error) = self
+                    .core
+                    .router
+                    .route_to_resolved_sink(response_envelope, &sink)
+                {
+                    if matches!(
+                        error,
+                        crate::runtime::RouteError::DeliveryFailed(
+                            _,
+                            crate::runtime::DeliveryError::ActorStopped
+                        )
+                    ) {
+                        if let Some(retry) = envelope.try_reply_to(response_ctx) {
+                            match self.core.router.route(retry) {
+                                Ok(()) => delivered = true,
+                                Err(retry_error) => self.record_dropped_delivery(
+                                    super::observability::DeliveryDropKind::Response,
+                                    meta.session_id,
+                                    meta.route_family,
+                                    &retry_error,
+                                ),
+                            }
+                        }
+                    } else {
+                        self.record_dropped_delivery(
+                            super::observability::DeliveryDropKind::Response,
+                            meta.session_id,
+                            meta.route_family,
+                            &error,
+                        );
+                    }
+                } else {
+                    delivered = true;
+                }
+            } else {
+                match self.core.router.route(response_envelope) {
+                    Ok(()) => delivered = true,
+                    Err(error) => self.record_dropped_delivery(
                         super::observability::DeliveryDropKind::Response,
                         meta.session_id,
                         meta.route_family,
                         &error,
-                    );
+                    ),
                 }
-            } else if let Err(error) = self.core.router.route(response_envelope) {
-                self.record_dropped_delivery(
-                    super::observability::DeliveryDropKind::Response,
-                    meta.session_id,
-                    meta.route_family,
-                    &error,
-                );
             }
         }
 
@@ -112,5 +144,6 @@ impl LeaseDomainRuntime<'_> {
                 metrics.record_success(started_at);
             }
         }
+        delivered
     }
 }

@@ -69,20 +69,24 @@ impl ScheduleActor {
         let next_fire_ms =
             Self::instant_to_ms_at_with_clock(next_fire_time, now, self.clock.as_ref());
 
-        if let Err(error) = self.store.insert(
-            self.family.as_u64(),
-            ScheduleInsert {
-                route: &route,
-                cron: &cron,
-                delivery_mode,
-                payload: &payload,
-                next_fire_ms,
-                previous_fire_ms: previous_next_fire_ms,
-                last_fire_ms: previous_last_fire_ms,
-                executions_total: previous_executions_total,
-            },
-            self.write_options,
-        ) {
+        let persistence_result = super::retry_persistence(|| {
+            self.store.insert(
+                self.family.as_u64(),
+                ScheduleInsert {
+                    route: &route,
+                    cron: &cron,
+                    delivery_mode,
+                    payload: &payload,
+                    next_fire_ms,
+                    previous_fire_ms: previous_next_fire_ms,
+                    last_fire_ms: previous_last_fire_ms,
+                    executions_total: previous_executions_total,
+                },
+                self.write_options,
+            )
+        });
+
+        if let Err(error) = persistence_result {
             if previous_next_fire_ms.is_some() {
                 crate::observability::counter_inc(METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL);
             } else {
@@ -244,10 +248,10 @@ impl ScheduleActor {
 
         let store_items = Self::build_schedule_batch_insert_items(&pending);
 
-        if let Err(error) =
+        if let Err(error) = super::retry_persistence(|| {
             self.store
                 .insert_batch(self.family.as_u64(), &store_items, self.write_options)
-        {
+        }) {
             Self::record_batch_persistence_failures(&pending);
             return Err(error);
         }
@@ -303,19 +307,24 @@ impl ScheduleActor {
         let Some(existing) = self.schedules.get(route) else {
             return Ok(false);
         };
+        let pending_fire_ms = self.pending_fire_times_for_route(route);
 
-        if let Err(error) = self.store.delete_current_with_realm(
-            self.family.as_u64(),
-            &parsed_route.realm,
-            route,
-            existing.next_fire_ms,
-            self.write_options,
-        ) {
+        if let Err(error) = super::retry_persistence(|| {
+            self.store.delete_current_with_realm(
+                self.family.as_u64(),
+                &parsed_route.realm,
+                route,
+                existing.next_fire_ms,
+                &pending_fire_ms,
+                self.write_options,
+            )
+        }) {
             crate::observability::counter_inc(METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL);
             return Err(error);
         }
 
         if let Some(removed_def) = self.schedules.remove(route) {
+            self.remove_pending_claims_for_route(route);
             self.remove_list_entry(removed_def.list_index);
             self.compact_ready_heap_if_needed();
             return Ok(true);

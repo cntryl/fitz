@@ -275,6 +275,33 @@ where
     Ok(())
 }
 
+async fn finish_websocket_writer(
+    writer_handle: &mut tokio::task::JoinHandle<Result<(), String>>,
+    writer_already_joined: bool,
+    session_id: u64,
+) {
+    if writer_already_joined {
+        return;
+    }
+    if let Err(error) = tokio::time::timeout(Duration::from_secs(1), &mut *writer_handle).await {
+        tracing::warn!(
+            session_id,
+            error = %error,
+            "WS writer task did not terminate in time; aborting"
+        );
+        writer_handle.abort();
+        if let Err(join_error) = writer_handle.await {
+            if !join_error.is_cancelled() {
+                tracing::warn!(
+                    session_id,
+                    error = %join_error,
+                    "WS writer task failed while being joined"
+                );
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_lines)]
 async fn run_websocket_session<S>(
     ws_stream: hyper_tungstenite::WebSocketStream<S>,
@@ -356,6 +383,7 @@ where
 
     let mut writer_handle = writer_handle;
     let runtime_for_shutdown = runtime.clone();
+    let mut writer_already_joined = false;
     let result = tokio::select! {
         result = process_websocket_frames(
             &mut ws_receiver,
@@ -378,6 +406,7 @@ where
             result
         }
         writer_result = &mut writer_handle => {
+            writer_already_joined = true;
             match writer_result {
                 Ok(Ok(())) => Err("WebSocket writer stopped".to_string()),
                 Ok(Err(error)) => Err(error),
@@ -400,9 +429,7 @@ where
     drop(sink);
     drop(outbound_tx);
     drop(control_tx);
-    if let Err(e) = tokio::time::timeout(Duration::from_secs(1), writer_handle).await {
-        tracing::warn!(session_id = session_id, error = %e, "WS writer task did not terminate in time");
-    }
+    finish_websocket_writer(&mut writer_handle, writer_already_joined, session_id).await;
 
     connection_lifecycle.finish();
 
@@ -497,6 +524,14 @@ where
                 )
                 .await
                 {
+                    if crate::api::session::is_stale_session_frame_error(&error) {
+                        tracing::debug!(
+                            session_id = context.session_id,
+                            error = %error,
+                            "WS frame processing encountered a stale frame for an already-closed session"
+                        );
+                        break Ok(());
+                    }
                     let reason = websocket_session_frame_error_reason(&error);
                     tracing::error!(session_id = context.session_id, error = %reason, "WS session frame processing error");
                     break Err(reason);
@@ -560,9 +595,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        bounded_websocket_config, cache_websocket_authentication, is_normal_websocket_disconnect,
-        send_websocket_batch, websocket_close_reason, websocket_origin_allowed,
-        websocket_session_frame_error_reason,
+        bounded_websocket_config, cache_websocket_authentication, finish_websocket_writer,
+        is_normal_websocket_disconnect, send_websocket_batch, websocket_close_reason,
+        websocket_origin_allowed, websocket_session_frame_error_reason,
     };
     use crate::protocol::frame::ChannelId;
     use crate::session::{CloseReason, SessionError};
@@ -571,6 +606,66 @@ mod tests {
     use hyper_tungstenite::tungstenite::error::ProtocolError;
     use hyper_tungstenite::tungstenite::Error as WsError;
     use hyper_tungstenite::tungstenite::Message;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    struct DropSignal(Arc<AtomicBool>);
+
+    impl Drop for DropSignal {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+
+    #[test]
+    fn should_ignore_stale_websocket_frame_after_session_shutdown() {
+        // Arrange
+        let error = SessionError::IngressClose("unknown session: 42".to_string());
+
+        // Act
+        let result = crate::api::session::is_stale_session_frame_error(&error);
+
+        // Assert
+        assert!(result);
+    }
+
+    #[tokio::test]
+    async fn should_not_poll_websocket_writer_after_it_won_the_session_race() {
+        // Arrange
+        let mut writer_handle = tokio::spawn(async { Ok(()) });
+        let writer_result = (&mut writer_handle).await;
+        assert!(matches!(writer_result, Ok(Ok(()))));
+
+        // Act
+        let cleanup = tokio::spawn(async move {
+            finish_websocket_writer(&mut writer_handle, true, 7).await;
+        })
+        .await;
+
+        // Assert
+        assert!(cleanup.is_ok(), "cleanup panicked: {cleanup:?}");
+    }
+
+    #[tokio::test]
+    async fn should_abort_and_join_websocket_writer_after_cleanup_timeout() {
+        // Arrange
+        let dropped = Arc::new(AtomicBool::new(false));
+        let signal = DropSignal(dropped.clone());
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let mut writer_handle = tokio::spawn(async move {
+            let _signal = signal;
+            let _ = started_tx.send(());
+            std::future::pending::<Result<(), String>>().await
+        });
+        started_rx.await.expect("writer task started");
+
+        // Act
+        finish_websocket_writer(&mut writer_handle, false, 7).await;
+
+        // Assert
+        assert!(dropped.load(Ordering::Acquire));
+        assert!(writer_handle.is_finished());
+    }
 
     #[test]
     fn should_stop_authentication_lookups_after_websocket_authenticates() {

@@ -8,6 +8,7 @@ impl RuntimeIngress {
     #[must_use]
     pub fn new(auth_required: bool) -> Self {
         Self {
+            accepting_sessions: Arc::new(AtomicBool::new(true)),
             sessions: Arc::new(DashMap::new()),
             session_actors: Arc::new(DashMap::new()),
             session_inbox_routes: Arc::new(DashMap::new()),
@@ -15,7 +16,10 @@ impl RuntimeIngress {
             cleanup_wake: Arc::new(tokio::sync::Notify::new()),
             cleanup_worker_started: Arc::new(AtomicBool::new(false)),
             cleanup_shutdown: Arc::new(AtomicBool::new(false)),
-            closed_sessions: Arc::new(DashMap::new()),
+            cleanup_permits: Arc::new(tokio::sync::Semaphore::new(
+                super::session_cleanup_coordinator::SESSION_CLEANUP_CONCURRENCY,
+            )),
+            closing_sessions: Arc::new(DashMap::new()),
             router: None,
             event_handler: None,
             route_families: Arc::new(std::iter::once(1).collect()),

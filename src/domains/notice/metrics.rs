@@ -9,13 +9,6 @@ pub const METRIC_SUBSCRIPTIONS_GAUGE: &str = "fitz_notice_subscriptions_gauge";
 pub const METRIC_RESPONSE_DROPS_TOTAL: &str = "fitz_notice_response_drops_total";
 // Wire name kept as `delivery` rather than `notify` for dashboard compatibility.
 pub const METRIC_DELIVERY_DROPS_TOTAL: &str = "fitz_notice_delivery_drops_total";
-/// Deliveries handed to a worker that did not confirm within the handoff
-/// window. Distinct from a drop: the worker may still complete the delivery,
-/// so counting these as drops would overstate loss. Previously the timeout was
-/// discarded entirely, leaving the one uncertain outcome invisible while both
-/// certain failures were counted.
-pub const METRIC_DELIVERY_HANDOFF_TIMEOUTS_TOTAL: &str =
-    "fitz_notice_delivery_handoff_timeouts_total";
 /// Accepted deliveries whose envelope failed inside the actor. The client was
 /// already told the publish was accepted, so there is nobody to report to -
 /// but the failure must still be countable.

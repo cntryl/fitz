@@ -1,6 +1,54 @@
 use super::*;
 
 #[test]
+fn should_not_retain_kv_subscription_when_response_cannot_be_delivered() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 7;
+    let route = Route::new("kv://acme/app/undeliverable");
+    let source = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let destination = RouteAddress::new(family, route.clone());
+    let mailbox = Arc::new(Mailbox::new(1));
+    let router = Arc::new(Router::new());
+    router.register(source.clone(), mailbox.clone());
+    mailbox
+        .deliver(Envelope::new(destination.clone(), Bytes::new()))
+        .expect("fill response mailbox");
+    let sink = KvDomainSink::new(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+    let request = Envelope::from_route(source.clone(), destination, Bytes::new());
+    let meta = crate::runtime::ClientFrameMeta::new(
+        session_id,
+        crate::runtime::ClientChannel::Sub,
+        crate::dispatch::protocol::kv::msg_type::SUBSCRIBE,
+        family,
+    );
+
+    // Act
+    let result = sink.state.runtime().handle_subscription_frame(
+        &request,
+        meta,
+        Instant::now(),
+        crate::domains::kv::KvSubscriptionMessage::Subscribe {
+            family_id: family,
+            pattern: route,
+            session_id,
+            subscriber: source,
+        },
+    );
+
+    // Assert
+    assert!(matches!(
+        result,
+        Err(crate::runtime::DeliveryError::MailboxFull { .. })
+    ));
+    assert!(sink.watch_registries_are_empty_for_tests());
+}
+
+#[test]
 fn should_notify_kv_subscriber_given_committed_put() {
     // Arrange
     let family = RouteFamily::new(1);

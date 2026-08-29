@@ -9,7 +9,7 @@ mod tests;
 pub use model::{
     PersistedPendingFireClaim, PersistedSchedule, ScheduleAckDefinition, ScheduleBatchInsert,
     ScheduleFireClaim, ScheduleInsert, SchedulePendingFireClaimAck, SchedulePersistence,
-    ScheduleStore,
+    SchedulePersistenceError, ScheduleStore,
 };
 
 #[cfg(test)]

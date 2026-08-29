@@ -1,7 +1,73 @@
 use super::*;
+use crate::runtime::Mailbox;
 
 struct BackpressuredWorkerSink {
     error: DeliveryError,
+}
+
+#[test]
+fn should_not_evict_worker_given_unsupported_dispatch_payload() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = RpcDomainSink::new(router.clone(), admin_read_model);
+    let family = RouteFamily::new(1);
+    let route = Route::new("rpc://bench/system/resource/unsupported");
+    let caller = session_inbox_address(family, 7);
+    let worker = session_inbox_address(family, 42);
+    let caller_mailbox = Arc::new(Mailbox::new(2));
+    router.register(caller.clone(), caller_mailbox.clone());
+    router.register(
+        worker.clone(),
+        Arc::new(BackpressuredWorkerSink {
+            error: DeliveryError::UnsupportedPayload,
+        }) as Arc<dyn MailboxSink>,
+    );
+    sink.register_registration_for_tests(RpcWorker::with_stats(
+        RouteAddress::new(family, route.clone()),
+        worker,
+        42,
+        "2026-03-14T12:00:00Z",
+        0,
+        0,
+    ));
+    let correlation_id = uuid::Uuid::new_v4();
+    let request = crate::domains::rpc::RpcClientRequest::new(
+        crate::runtime::ClientFrameMeta::new(7, crate::runtime::ClientChannel::Rpc, 302, family),
+        Ok(crate::domains::rpc::RpcMessage::Request(
+            crate::domains::rpc::RpcRequest::new(
+                family,
+                correlation_id,
+                route,
+                bytes::Bytes::from_static(b"request"),
+            ),
+        )),
+    );
+
+    // Act
+    sink.deliver(Envelope::from_route(
+        caller,
+        RouteAddress::new(family, Route::new("rpc://inbound")),
+        request,
+    ))
+    .expect("deliver RPC request");
+    let response = caller_mailbox
+        .receiver()
+        .recv_timeout(Duration::from_secs(1))
+        .expect("caller terminal response")
+        .into_payload::<FrameContext>()
+        .expect("RPC response frame");
+    let response = parse_forwarded_rpc_response(&response);
+    let (code, _) = crate::dispatch::protocol::rpc_codec::decode_error_body(&response.body)
+        .expect("RPC error body");
+
+    // Assert
+    assert_eq!(
+        code,
+        crate::dispatch::protocol::error_codes::rpc::ERR_BACKEND_ERROR
+    );
+    assert_eq!(sink.worker_count(), 1);
+    assert_eq!(sink.pending_request_count(), 0);
 }
 
 impl MailboxSink for BackpressuredWorkerSink {

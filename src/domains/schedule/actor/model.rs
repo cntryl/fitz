@@ -10,7 +10,8 @@ pub(super) use crate::domains::schedule::protocol::{
 };
 pub(super) use crate::domains::schedule::store::{
     PersistedPendingFireClaim, PersistedSchedule, ScheduleAckDefinition, ScheduleFireClaim,
-    ScheduleInsert, SchedulePendingFireClaimAck, SchedulePersistence, ScheduleStore,
+    ScheduleInsert, SchedulePendingFireClaimAck, SchedulePersistence, SchedulePersistenceError,
+    ScheduleStore,
 };
 #[cfg(test)]
 pub(super) use crate::prelude::Actor;
@@ -20,7 +21,7 @@ pub(super) use crate::runtime::routing::RouteFamily;
 pub(super) use bytes::Bytes;
 pub(super) use rustc_hash::FxBuildHasher;
 pub(super) use std::cmp::Reverse;
-pub(super) use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
+pub(super) use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet};
 pub(super) use std::sync::Arc;
 pub(super) use std::time::{Duration, Instant};
 pub(super) use tracing::{info, warn};
@@ -89,6 +90,9 @@ pub struct ScheduleActor {
     /// Durably claimed occurrences awaiting acknowledged handoff into the live
     /// publish path.
     pub(super) pending_claimed_occurrences: BTreeMap<(u64, String), PendingClaim>,
+    /// Route-local fire times for bounded cancellation without scanning every
+    /// pending occurrence in the route family.
+    pub(super) pending_fire_times_by_route: FastMap<String, BTreeSet<u64>>,
     /// Injected wall-clock and monotonic time source.
     pub(super) clock: Arc<dyn Clock>,
     /// Number of schedules normalized forward during the last preload.

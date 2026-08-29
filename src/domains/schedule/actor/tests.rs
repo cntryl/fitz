@@ -371,6 +371,43 @@ fn should_report_oldest_pending_claim_age_given_pending_fire() {
 }
 
 #[test]
+fn should_bound_due_claims_per_scan_and_leave_remaining_work_ready() {
+    // Arrange
+    let clock = Arc::new(MockClock::new(epoch_ms(2026, 8, 28, 19, 13, 0)));
+    let mut actor = make_actor_with_clock(clock.clone());
+    for sequence in 0..33 {
+        actor
+            .create_schedule_at(
+                format!("schedule://acme/storm/jobs/job-{sequence:02}"),
+                "* * * * *".to_string(),
+                Bytes::from_static(b"payload"),
+                clock.now_instant(),
+            )
+            .expect("create storm schedule");
+    }
+    actor.bench_prepare_scan(33);
+
+    // Act
+    let first = actor.bench_claim_due_fires();
+    clock.advance(actor.scan_dedup_window + Duration::from_millis(1));
+    let second = actor.bench_claim_due_fires();
+
+    // Assert
+    assert_eq!(first.len(), 32, "one scan must claim a bounded batch");
+    assert_eq!(
+        second.len(),
+        1,
+        "the next scan must claim remaining due work"
+    );
+    let routes: std::collections::HashSet<_> = first
+        .iter()
+        .chain(&second)
+        .map(|claim| claim.route.as_str())
+        .collect();
+    assert_eq!(routes.len(), 33, "every due route must be claimed once");
+}
+
+#[test]
 fn should_compact_ready_heap_given_repeated_schedule_upserts() {
     // Arrange
     let mut actor = make_actor();
@@ -583,6 +620,41 @@ fn should_not_fire_future_occurrence_given_cancel_after_due_scan() {
         "cancel after the due scan should suppress all future occurrences"
     );
     assert_eq!(actor.schedule_count(), 0);
+}
+
+#[test]
+fn should_delete_pending_occurrence_given_cancel_after_due_claim() {
+    // Arrange
+    let mut actor = make_actor();
+    let route = "schedule://acme/jobs/cancel-pending/run";
+    actor
+        .create_schedule(
+            route.to_string(),
+            "* * * * *".to_string(),
+            Bytes::from_static(b"payload"),
+        )
+        .expect("create schedule");
+    actor.bench_prepare_scan(1);
+    let scan_at = Instant::now();
+    actor.last_scan_time = scan_at
+        .checked_sub(actor.scan_dedup_window + Duration::from_millis(1))
+        .expect("scan time");
+    let claimed = actor.collect_due_occurrences_for_publish_at(scan_at);
+    assert_eq!(claimed.len(), 1);
+    assert_eq!(actor.pending_fire_count(), 1);
+    assert_eq!(actor.pending_fire_times_for_route(route).len(), 1);
+
+    // Act
+    actor.delete_schedule(route).expect("cancel schedule");
+
+    // Assert
+    assert_eq!(actor.pending_fire_count(), 0);
+    assert!(actor.pending_fire_times_for_route(route).is_empty());
+    assert!(actor
+        .store
+        .load_pending_fire_claims(actor.family.as_u64())
+        .expect("load pending claims")
+        .is_empty());
 }
 
 #[test]
@@ -826,6 +898,116 @@ fn should_not_advance_schedule_state_given_persistence_failure() {
         actor.list_entries.iter().all(|e| e.route != route),
         "list index must not contain the route on persist failure"
     );
+}
+
+#[test]
+fn should_retry_schedule_create_given_runtime_queue_backpressure() {
+    // Arrange
+    let mut actor = make_actor();
+    let route = "schedule://acme/jobs/create-stall/run";
+    actor.store.stall_next_commit_for_tests();
+
+    // Act
+    let result = actor.create_schedule(
+        route.to_string(),
+        "* * * * *".to_string(),
+        Bytes::from_static(b"payload"),
+    );
+
+    // Assert
+    assert_eq!(result, Ok(true));
+    assert!(actor.schedules.contains_key(route));
+}
+
+#[test]
+fn should_classify_schedule_write_stall_without_matching_debug_text() {
+    // Arrange
+    let mut attempts = 0;
+
+    // Act
+    let result = retry_persistence(|| {
+        attempts += 1;
+        if attempts == 1 {
+            return Err(SchedulePersistenceError::midge(
+                "commit failed",
+                cntryl_midge::MidgeError::WriteStall("different detail".to_string()),
+            ));
+        }
+        Ok(())
+    });
+
+    // Assert
+    assert_eq!(result, Ok(()));
+    assert_eq!(attempts, 2);
+}
+
+#[test]
+fn should_retry_schedule_delete_given_runtime_queue_backpressure() {
+    // Arrange
+    let mut actor = make_actor();
+    let route = "schedule://acme/jobs/delete-stall/run";
+    actor
+        .create_schedule(
+            route.to_string(),
+            "* * * * *".to_string(),
+            Bytes::from_static(b"payload"),
+        )
+        .expect("create schedule");
+    actor.store.stall_next_commit_for_tests();
+
+    // Act
+    let result = actor.delete_schedule(route);
+
+    // Assert
+    assert_eq!(result, Ok(true));
+    assert!(!actor.schedules.contains_key(route));
+}
+
+#[test]
+fn should_retry_schedule_claim_given_runtime_queue_backpressure() {
+    // Arrange
+    let mut actor = make_actor();
+    let route = "schedule://acme/jobs/claim-stall/run";
+    actor
+        .create_schedule(
+            route.to_string(),
+            "* * * * *".to_string(),
+            Bytes::from_static(b"payload"),
+        )
+        .expect("create schedule");
+    actor.bench_prepare_scan(1);
+    actor.store.stall_next_commit_for_tests();
+
+    // Act
+    let claimed = actor.bench_claim_due_fires();
+
+    // Assert
+    assert_eq!(claimed.len(), 1);
+    assert_eq!(claimed[0].route, route);
+}
+
+#[test]
+fn should_retry_schedule_ack_given_runtime_queue_backpressure() {
+    // Arrange
+    let mut actor = make_actor();
+    let route = "schedule://acme/jobs/ack-stall/run";
+    actor
+        .create_schedule(
+            route.to_string(),
+            "* * * * *".to_string(),
+            Bytes::from_static(b"payload"),
+        )
+        .expect("create schedule");
+    actor.bench_prepare_scan(1);
+    let claimed = actor.bench_claim_due_fires();
+    actor.store.stall_next_commit_for_tests();
+
+    // Act
+    let result = actor.ack_pending_fire_claims(&[(claimed[0].fire_ms, route.to_string())]);
+
+    // Assert
+    assert_eq!(result.map(|(count, _)| count), Ok(1));
+    assert_eq!(actor.pending_fire_count(), 0);
 }
 
 #[test]

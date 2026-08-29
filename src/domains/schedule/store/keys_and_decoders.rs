@@ -20,6 +20,8 @@ impl ScheduleStore {
             db,
             #[cfg(test)]
             fail_next_commit: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            #[cfg(test)]
+            stall_next_commit: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 

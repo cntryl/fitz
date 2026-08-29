@@ -41,6 +41,61 @@ pub(in crate::domains::queue::sink) enum QueueOpKind {
 }
 
 impl QueueDomainCore {
+    pub(super) fn rollback_undeliverable_receive(
+        &self,
+        family_id: RouteFamily,
+        requested_route: &crate::runtime::routing::Route,
+        session_id: u64,
+        response: &crate::domains::queue::QueueResponse,
+    ) {
+        let reservations: Vec<_> = match response {
+            crate::domains::queue::QueueResponse::Received { messages } => messages
+                .iter()
+                .map(|message| (requested_route.clone(), message.id, message.token))
+                .collect(),
+            crate::domains::queue::QueueResponse::ReceivedRouted { messages } => messages
+                .iter()
+                .map(|routed| {
+                    (
+                        routed.route.clone(),
+                        routed.message.id,
+                        routed.message.token,
+                    )
+                })
+                .collect(),
+            _ => return,
+        };
+
+        let mut released = Vec::new();
+        let mut actors = self.actors.lock();
+        for (route, id, token) in reservations {
+            let Ok(key) = Self::queue_key_for_route(family_id, &route) else {
+                continue;
+            };
+            let Some(warm_actor) = actors.get_mut(&key) else {
+                continue;
+            };
+            let mut actor = warm_actor.actor.lock();
+            if actor.release_undelivered_reservation(session_id, id, token) {
+                let notification = self.record_ready_state(&key, actor.live_counts());
+                released.push((key, notification));
+            }
+        }
+        drop(actors);
+
+        if released.is_empty() {
+            return;
+        }
+        self.mark_admin_snapshot_dirty();
+        for (key, notification) in released {
+            if let Some(notification) = notification {
+                self.route_queue_ready_notification(&key, notification);
+            }
+            let route = Self::queue_ready_route(&key);
+            self.wake_pending_reserves_for_route(key.family, &route, Instant::now());
+        }
+    }
+
     pub(super) fn queue_ready_route(
         key: &crate::domains::queue::QueueKey,
     ) -> crate::runtime::routing::Route {

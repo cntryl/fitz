@@ -170,11 +170,10 @@ impl KvDomainSink {
         self.actor.mark_permanently_failed_for_tests();
     }
 
-    #[cfg(test)]
     /// Trigger the mailbox actor's fail-closed panic path.
-    pub(crate) fn panic_actor_for_tests(&self) {
+    pub(crate) fn panic_actor_for_failpoint(&self) {
         let _ = self
             .actor
-            .try_send_high_priority(KvDomainCommand::PanicForTests);
+            .try_send_high_priority(KvDomainCommand::PanicForFailpoint);
     }
 }

@@ -1,5 +1,44 @@
 use super::*;
 
+#[test]
+fn should_not_retain_subscription_when_subscribe_response_cannot_be_delivered() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 7;
+    let route = "schedule://acme/jobs/undeliverable/run";
+    let schedule_address = RouteAddress::new(family, Route::new(route));
+    let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let router = Arc::new(Router::new());
+    let subscriber_mailbox = Arc::new(Mailbox::new(1));
+    router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+    subscriber_mailbox
+        .sender()
+        .try_send(Envelope::new(subscriber_address.clone(), 1_u8))
+        .expect("fill subscriber mailbox");
+    let sink = ScheduleDomainSink::new(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+
+    // Act
+    sink.deliver(Envelope::from_route(
+        subscriber_address,
+        schedule_address,
+        FrameContext::new(
+            session_id,
+            ChannelId::Sub,
+            MessageType::new(703),
+            encode_schedule_subscribe(route),
+            family,
+        ),
+    ))
+    .expect("deliver schedule subscription");
+
+    // Assert
+    assert_eq!(sink.subscription_count(), 0);
+}
+
 struct UnsubscribeFixture {
     family: RouteFamily,
     session_id: u64,

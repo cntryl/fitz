@@ -32,7 +32,7 @@ codegen-units = 1
 
 [dependencies]
 ahash = "0.8"
-argon2 = "0.5"
+argon2 = "0.6"
 async-trait = "0.1"
 base64 = "0.23.1"
 brotli = "8"

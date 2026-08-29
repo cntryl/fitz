@@ -12,6 +12,133 @@ struct CounterActor {
     stopped: Option<crossbeam_channel::Sender<()>>,
 }
 
+struct StopOnTimerActor {
+    fired: Vec<crate::runtime::context::TimerId>,
+}
+
+struct PanickingStartedActor {
+    started_entered: crossbeam_channel::Sender<()>,
+}
+
+struct PanickingRestartActor {
+    generation: usize,
+    restart_started: crossbeam_channel::Sender<()>,
+}
+
+struct PanickingStoppedActor {
+    stopped_entered: crossbeam_channel::Sender<()>,
+}
+
+struct FactoryRestartActor;
+
+struct CountingStopFactoryRestartActor {
+    stopped_count: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+enum ReplacementRaceMessage {
+    Stop,
+    Read(crossbeam_channel::Sender<()>),
+}
+
+struct BlockingStopActor {
+    entered: crossbeam_channel::Sender<()>,
+    release: crossbeam_channel::Receiver<()>,
+}
+
+impl Actor for BlockingStopActor {
+    type Message = ReplacementRaceMessage;
+
+    fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
+        if let ReplacementRaceMessage::Stop = msg {
+            ctx.stop();
+            self.entered.send(()).expect("stop observer");
+            self.release.recv().expect("stop release");
+        }
+    }
+}
+
+struct ReplacementActor;
+
+impl Actor for ReplacementActor {
+    type Message = ReplacementRaceMessage;
+
+    fn receive(&mut self, msg: Self::Message, _ctx: &mut Context<Self>) {
+        if let ReplacementRaceMessage::Read(reply) = msg {
+            reply.send(()).expect("replacement reply");
+        }
+    }
+}
+
+impl Actor for CountingStopFactoryRestartActor {
+    type Message = ();
+
+    fn receive(&mut self, (): (), _ctx: &mut Context<Self>) {
+        panic!("receive panic");
+    }
+
+    fn stopped(&mut self) {
+        self.stopped_count.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+impl Actor for FactoryRestartActor {
+    type Message = ();
+
+    fn receive(&mut self, (): (), _ctx: &mut Context<Self>) {
+        panic!("receive panic");
+    }
+}
+
+impl Actor for PanickingStoppedActor {
+    type Message = ();
+
+    fn receive(&mut self, (): (), _ctx: &mut Context<Self>) {
+        panic!("receive panic");
+    }
+
+    fn stopped(&mut self) {
+        let _ = self.stopped_entered.send(());
+        panic!("stopped hook panic");
+    }
+}
+
+impl Actor for PanickingRestartActor {
+    type Message = ();
+
+    fn started(&mut self, _ctx: &mut Context<Self>) {
+        if self.generation > 0 {
+            let _ = self.restart_started.send(());
+            panic!("replacement started hook panic");
+        }
+    }
+
+    fn receive(&mut self, (): (), _ctx: &mut Context<Self>) {
+        panic!("receive panic");
+    }
+}
+
+impl Actor for PanickingStartedActor {
+    type Message = ();
+
+    fn started(&mut self, _ctx: &mut Context<Self>) {
+        let _ = self.started_entered.send(());
+        panic!("started hook panic");
+    }
+
+    fn receive(&mut self, (): (), _ctx: &mut Context<Self>) {}
+}
+
+impl Actor for StopOnTimerActor {
+    type Message = ();
+
+    fn receive(&mut self, (): (), _ctx: &mut Context<Self>) {}
+
+    fn on_timer(&mut self, timer_id: crate::runtime::context::TimerId, ctx: &mut Context<Self>) {
+        self.fired.push(timer_id);
+        ctx.stop();
+    }
+}
+
 impl CounterActor {
     fn new(stopped: crossbeam_channel::Sender<()>) -> Self {
         Self {
@@ -192,6 +319,46 @@ fn should_not_unregister_replacement_route_when_stopped_handle_drops() {
 }
 
 #[test]
+fn should_not_unregister_replacement_route_when_old_actor_finishes() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let address = test_address();
+    let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);
+    let (release_tx, release_rx) = crossbeam_channel::bounded(1);
+    let first = ManagedActor::spawn(
+        router.clone(),
+        address.clone(),
+        BlockingStopActor {
+            entered: entered_tx,
+            release: release_rx,
+        },
+        8,
+    );
+    first
+        .try_send(ReplacementRaceMessage::Stop)
+        .expect("stop should enqueue");
+    entered_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("old actor should enter stop");
+    let _second = ManagedActor::spawn(router.clone(), address.clone(), ReplacementActor, 8);
+    let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+
+    // Act
+    release_tx.send(()).expect("release old actor");
+    first.stop();
+    let result = router.route(Envelope::new(
+        address,
+        ReplacementRaceMessage::Read(reply_tx),
+    ));
+
+    // Assert
+    assert!(result.is_ok());
+    reply_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("replacement route should remain registered");
+}
+
+#[test]
 fn should_join_managed_actor_worker_when_dropped() {
     // Arrange
     let router = Arc::new(Router::new());
@@ -308,4 +475,300 @@ fn should_keep_unsupervised_actor_stop_on_panic_behavior() {
 
     // Assert
     assert!(matches!(send_after_panic, Err(DeliveryError::ActorStopped)));
+}
+
+#[test]
+fn should_drain_queued_normal_work_after_one_capacity_of_control_work() {
+    // Arrange
+    let mailbox = Mailbox::new(2);
+    let normal_receiver = mailbox.receiver().clone();
+    let high_receiver = mailbox.high_priority_receiver().clone();
+    let mut priority_state = PriorityDrainState::default();
+    let address = test_address();
+    mailbox
+        .deliver(Envelope::new(address.clone(), 10_u8))
+        .expect("first normal message");
+    mailbox
+        .deliver(Envelope::new(address.clone(), 11_u8))
+        .expect("second normal message");
+    for value in [1_u8, 2] {
+        mailbox
+            .deliver_high_priority(Envelope::new(address.clone(), value))
+            .expect("control message");
+    }
+    let first = receive_next_envelope(
+        &mailbox,
+        &normal_receiver,
+        &high_receiver,
+        &mut priority_state,
+    )
+    .expect("first control message");
+    let second = receive_next_envelope(
+        &mailbox,
+        &normal_receiver,
+        &high_receiver,
+        &mut priority_state,
+    )
+    .expect("second control message");
+    mailbox
+        .deliver_high_priority(Envelope::new(address, 3_u8))
+        .expect("later control message");
+
+    // Act
+    let next = receive_next_envelope(
+        &mailbox,
+        &normal_receiver,
+        &high_receiver,
+        &mut priority_state,
+    )
+    .expect("queued normal message");
+
+    // Assert
+    assert_eq!(first.into_parts::<u8>().1, Some(1));
+    assert_eq!(second.into_parts::<u8>().1, Some(2));
+    assert_eq!(next.into_parts::<u8>().1, Some(10));
+}
+
+#[test]
+fn should_stop_firing_snapshotted_timers_after_actor_stops() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let address = test_address();
+    let mut actor = StopOnTimerActor { fired: Vec::new() };
+    let mut ctx = Context::new(address.clone(), router);
+    ctx.timer_manager().schedule_once(Duration::ZERO);
+    ctx.timer_manager().schedule_once(Duration::ZERO);
+
+    // Act
+    let step = handle_fired_timers(&mut actor, &mut ctx, &address);
+
+    // Assert
+    assert_eq!(step, ActorStep::Continue);
+    assert_eq!(actor.fired.len(), 1);
+    assert!(!ctx.is_running());
+}
+
+#[test]
+fn should_fail_closed_when_managed_actor_started_hook_panics() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let (started_entered_tx, started_entered_rx) = crossbeam_channel::bounded(1);
+    let managed = ManagedActor::spawn_fail_closed(
+        router,
+        test_address(),
+        move || PanickingStartedActor {
+            started_entered: started_entered_tx.clone(),
+        },
+        8,
+    );
+
+    // Act
+    started_entered_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("started hook should run");
+    wait_until("managed actor should fail closed", || !managed.is_running());
+    let send_after_panic = managed.try_send(());
+
+    // Assert
+    let health = managed.health_snapshot();
+    assert_eq!(health.panic_count, 1);
+    assert!(health.restart_exhausted);
+    assert!(matches!(send_after_panic, Err(DeliveryError::ActorStopped)));
+}
+
+#[test]
+fn should_exhaust_restart_budget_when_replacement_started_hook_panics() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let generation = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (restart_started_tx, restart_started_rx) = crossbeam_channel::bounded(1);
+    let managed = ManagedActor::spawn_supervised_with_strategy(
+        router,
+        test_address(),
+        move || PanickingRestartActor {
+            generation: generation.fetch_add(1, Ordering::SeqCst),
+            restart_started: restart_started_tx.clone(),
+        },
+        8,
+        SupervisorStrategy::restart(1, Duration::from_mins(1)),
+    );
+
+    // Act
+    managed.try_send(()).expect("panic message should enqueue");
+    restart_started_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("replacement started hook should run");
+    wait_until("restart budget should exhaust", || {
+        managed.health_snapshot().restart_exhausted
+    });
+    let send_after_exhaustion = managed.try_send(());
+
+    // Assert
+    let health = managed.health_snapshot();
+    assert!(!health.running);
+    assert_eq!(health.panic_count, 2);
+    assert_eq!(health.restart_count, 1);
+    assert!(matches!(
+        send_after_exhaustion,
+        Err(DeliveryError::ActorStopped)
+    ));
+}
+
+#[test]
+fn should_fail_closed_when_stopped_hook_panics_during_restart() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let (stopped_entered_tx, stopped_entered_rx) = crossbeam_channel::bounded(1);
+    let managed = ManagedActor::spawn_supervised_with_strategy(
+        router,
+        test_address(),
+        move || PanickingStoppedActor {
+            stopped_entered: stopped_entered_tx.clone(),
+        },
+        8,
+        SupervisorStrategy::restart(1, Duration::from_mins(1)),
+    );
+
+    // Act
+    managed.try_send(()).expect("panic message should enqueue");
+    stopped_entered_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("stopped hook should run");
+    wait_until("managed actor should fail closed", || !managed.is_running());
+    let send_after_panic = managed.try_send(());
+
+    // Assert
+    let health = managed.health_snapshot();
+    assert_eq!(health.panic_count, 2);
+    assert_eq!(health.restart_count, 1);
+    assert!(health.restart_exhausted);
+    assert!(matches!(send_after_panic, Err(DeliveryError::ActorStopped)));
+}
+
+#[test]
+fn should_fail_closed_when_managed_actor_factory_panics() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let (factory_entered_tx, factory_entered_rx) = crossbeam_channel::bounded(1);
+    let managed: ManagedActor<TestManagedMessage> = ManagedActor::spawn_fail_closed(
+        router,
+        test_address(),
+        move || -> CounterActor {
+            let _ = factory_entered_tx.send(());
+            panic!("actor factory panic");
+        },
+        8,
+    );
+
+    // Act
+    factory_entered_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("actor factory should run");
+    wait_until("managed actor should fail closed", || !managed.is_running());
+    let send_after_panic = managed.try_send(TestManagedMessage::Increment);
+
+    // Assert
+    let health = managed.health_snapshot();
+    assert_eq!(health.panic_count, 1);
+    assert!(health.restart_exhausted);
+    assert!(matches!(send_after_panic, Err(DeliveryError::ActorStopped)));
+}
+
+#[test]
+fn should_exhaust_restart_budget_when_replacement_factory_panics() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let generation = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (factory_entered_tx, factory_entered_rx) = crossbeam_channel::bounded(1);
+    let managed = ManagedActor::spawn_supervised_with_strategy(
+        router,
+        test_address(),
+        move || {
+            if generation.fetch_add(1, Ordering::SeqCst) > 0 {
+                let _ = factory_entered_tx.send(());
+                panic!("replacement factory panic");
+            }
+            FactoryRestartActor
+        },
+        8,
+        SupervisorStrategy::restart(1, Duration::from_mins(1)),
+    );
+
+    // Act
+    managed.try_send(()).expect("panic message should enqueue");
+    factory_entered_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("replacement factory should run");
+    wait_until("restart budget should exhaust", || {
+        managed.health_snapshot().restart_exhausted
+    });
+    let send_after_panic = managed.try_send(());
+
+    // Assert
+    let health = managed.health_snapshot();
+    assert!(!health.running);
+    assert_eq!(health.panic_count, 2);
+    assert_eq!(health.restart_count, 1);
+    assert!(matches!(send_after_panic, Err(DeliveryError::ActorStopped)));
+}
+
+#[test]
+fn should_invoke_stopped_once_when_replacement_factory_panics() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let generation = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let stopped_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let managed = ManagedActor::spawn_supervised_with_strategy(
+        router,
+        test_address(),
+        {
+            let stopped_count = stopped_count.clone();
+            move || {
+                assert_eq!(
+                    generation.fetch_add(1, Ordering::SeqCst),
+                    0,
+                    "replacement factory panic"
+                );
+                CountingStopFactoryRestartActor {
+                    stopped_count: stopped_count.clone(),
+                }
+            }
+        },
+        8,
+        SupervisorStrategy::restart(2, Duration::from_mins(1)),
+    );
+
+    // Act
+    managed.try_send(()).expect("panic message should enqueue");
+    wait_until("restart budget should exhaust", || {
+        managed.health_snapshot().restart_exhausted
+    });
+    managed.stop();
+
+    // Assert
+    assert_eq!(stopped_count.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn should_unregister_route_when_managed_actor_worker_spawn_fails() {
+    // Arrange
+    let router = Router::new();
+    let address = test_address();
+    let mailbox = Arc::new(Mailbox::new(1));
+    router.register(address.clone(), mailbox.clone());
+
+    // Act
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        spawn_worker_or_unregister(
+            &router,
+            &address,
+            &mailbox,
+            |_| Err(std::io::Error::other("injected spawn failure")),
+            || {},
+        );
+    }));
+
+    // Assert
+    assert!(result.is_err());
+    assert!(router.resolve_sink(&address).is_none());
 }

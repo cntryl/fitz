@@ -147,15 +147,50 @@ impl DomainHandles {
         self.kv.mark_actor_permanently_failed_for_tests();
     }
 
-    #[cfg(test)]
-    pub(crate) fn panic_all_domain_actors_for_tests(&self) {
-        self.kv.panic_actor_for_tests();
-        self.queue.panic_actor_for_tests();
-        self.notice.panic_actor_for_tests();
-        self.stream.panic_actor_for_tests();
-        self.rpc.panic_actor_for_tests();
-        self.lease.panic_actor_for_tests();
-        self.schedule.panic_actor_for_tests();
+    pub(crate) fn panic_all_domain_actors_for_failpoint(&self) {
+        self.kv.panic_actor_for_failpoint();
+        self.queue.panic_actor_for_failpoint();
+        self.notice.panic_actor_for_failpoint();
+        self.stream.panic_actor_for_failpoint();
+        self.rpc.panic_actor_for_failpoint();
+        self.lease.panic_actor_for_failpoint();
+        self.schedule.panic_actor_for_failpoint();
+    }
+
+    pub(crate) fn panic_notice_actor_for_failpoint(&self) {
+        self.notice.panic_actor_for_failpoint();
+    }
+
+    pub(crate) fn panic_queue_actor_for_failpoint(&self) {
+        self.queue.panic_actor_for_failpoint();
+    }
+
+    pub(crate) fn panic_kv_actor_for_failpoint(&self) {
+        self.kv.panic_actor_for_failpoint();
+    }
+
+    pub(crate) fn panic_lease_actor_for_failpoint(&self) {
+        self.lease.panic_actor_for_failpoint();
+    }
+
+    pub(crate) fn panic_schedule_actor_for_failpoint(&self) {
+        self.schedule.panic_actor_for_failpoint();
+    }
+
+    pub(crate) fn panic_stream_actor_for_failpoint(&self) {
+        self.stream.panic_actor_for_failpoint();
+    }
+
+    pub(crate) fn panic_rpc_actor_for_failpoint(&self) {
+        self.rpc.panic_actor_for_failpoint();
+    }
+
+    pub(crate) fn panic_stream_family_actor_for_failpoint(&self, family: RouteFamily) {
+        self.stream.panic_family_actor_for_failpoint(family);
+    }
+
+    pub(crate) fn panic_rpc_family_actor_for_failpoint(&self, family: RouteFamily) {
+        self.rpc.panic_family_actor_for_failpoint(family);
     }
 
     pub(crate) fn queue_is_active(&self) -> bool {
@@ -846,7 +881,7 @@ mod tests {
             .expect("setup domains");
 
         // Act
-        domains.panic_all_domain_actors_for_tests();
+        domains.panic_all_domain_actors_for_failpoint();
         wait_for_domain_failures(&domains);
         let snapshots = domains.health_snapshots();
 
@@ -857,7 +892,7 @@ mod tests {
         // one actor. Family-sharded domains (rpc/stream) are provisioned
         // with 7 route families here (`domain_setup_options`) and must be
         // panicked on *every* family to reach full exhaustion -- see
-        // `panic_actor_for_tests` on `RpcDomainSink`/`StreamDomainSink` --
+        // the panic failpoints on `RpcDomainSink`/`StreamDomainSink` --
         // so their panic_count legitimately lands at 7, not 1.
         for snapshot in &snapshots {
             let expected_panic_count = match snapshot.domain {
@@ -917,7 +952,7 @@ mod tests {
         assert_eq!(warmup_response.payload.first(), Some(&0));
 
         // Act
-        domains.kv.panic_actor_for_tests();
+        domains.kv.panic_actor_for_failpoint();
         wait_for_named_domain_failure(&domains, "kv");
         let result = router.route(Envelope::from_route(
             recovery_inbox,

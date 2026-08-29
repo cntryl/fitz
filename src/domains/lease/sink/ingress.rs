@@ -116,9 +116,7 @@ impl LeaseDomainRuntime<'_> {
         else {
             return;
         };
-        if Self::prepared_operation_family(operation)
-            .is_some_and(|family_id| family_id != meta.route_family)
-        {
+        if Self::prepared_operation_family(operation) != meta.route_family {
             let response = Self::error_response("route family mismatch");
             self.route_lease_response(envelope, meta, &response, request_started);
             return;
@@ -250,9 +248,19 @@ impl LeaseDomainRuntime<'_> {
         }
 
         let scoped_owner_id = Self::scope_operation_owner(meta.session_id, lease_msg);
+        let acquire_key = match lease_msg {
+            crate::domains::lease::protocol::LeaseMessage::Acquire {
+                family_id, route, ..
+            } => crate::domains::lease::protocol::LeaseKey::from_route(*family_id, route),
+            _ => None,
+        };
         let domain_response =
             self.dispatch_actor_operation(envelope, meta, lease_msg, scoped_owner_id.as_deref());
-        self.route_lease_response(envelope, meta, &domain_response, request_started);
+        if !self.route_lease_response(envelope, meta, &domain_response, request_started) {
+            if let Some(key) = acquire_key.as_ref() {
+                self.rollback_undeliverable_acquire(key, meta.session_id, &domain_response);
+            }
+        }
     }
 
     fn scope_operation_owner(
@@ -350,9 +358,7 @@ impl LeaseDomainRuntime<'_> {
     ) {
         use crate::domains::lease::protocol::{LeaseResponse, PreparedLeaseOperation};
 
-        if Self::prepared_operation_family(operation)
-            .is_some_and(|family_id| family_id != meta.route_family)
-        {
+        if Self::prepared_operation_family(operation) != meta.route_family {
             let response = Self::error_response("route family mismatch");
             self.route_lease_response(envelope, meta, &response, request_started);
             return;
@@ -387,7 +393,6 @@ impl LeaseDomainRuntime<'_> {
                 fencing_token,
             } => self.handle_release(key, owner_id, *fencing_token),
             PreparedLeaseOperation::Query { key } => self.handle_query(key),
-            PreparedLeaseOperation::NotFound => LeaseResponse::NotFound,
         };
 
         if matches!(domain_response, LeaseResponse::NotFound) {
@@ -396,7 +401,13 @@ impl LeaseDomainRuntime<'_> {
                 "Lease prepared operation returned not found"
             );
         }
-        self.route_lease_response(envelope, meta, &domain_response, request_started);
+        let delivered =
+            self.route_lease_response(envelope, meta, &domain_response, request_started);
+        if !delivered {
+            if let PreparedLeaseOperation::Acquire { key, .. } = operation {
+                self.rollback_undeliverable_acquire(key, meta.session_id, &domain_response);
+            }
+        }
     }
 
     fn request_from_envelope(envelope: &Envelope) -> Option<LeaseRequestView<'_>> {
@@ -484,14 +495,13 @@ impl LeaseDomainRuntime<'_> {
 
     fn prepared_operation_family(
         operation: &crate::domains::lease::protocol::PreparedLeaseOperation,
-    ) -> Option<crate::runtime::routing::RouteFamily> {
+    ) -> crate::runtime::routing::RouteFamily {
         use crate::domains::lease::protocol::PreparedLeaseOperation;
         match operation {
             PreparedLeaseOperation::Acquire { key, .. }
             | PreparedLeaseOperation::Extend { key, .. }
             | PreparedLeaseOperation::Release { key, .. }
-            | PreparedLeaseOperation::Query { key } => Some(key.family),
-            PreparedLeaseOperation::NotFound => None,
+            | PreparedLeaseOperation::Query { key } => key.family,
         }
     }
 }

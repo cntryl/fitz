@@ -66,10 +66,19 @@ impl RpcDomainRuntime<'_> {
             return Ok(());
         }
 
+        let registration = match &rpc_msg {
+            RpcMessage::RegisterWorker { worker_addr, .. } => Some((
+                worker_addr.clone(),
+                self.state
+                    .lock()
+                    .contains_registration(worker_addr, meta.session_id),
+            )),
+            _ => None,
+        };
         let (response, snapshot_policy, request_failed) =
             self.handle_rpc_message(envelope, &meta, rpc_msg);
 
-        self.complete_request(
+        let response_delivered = self.complete_request(
             envelope,
             meta,
             response,
@@ -77,6 +86,15 @@ impl RpcDomainRuntime<'_> {
             request_failed,
             request_started,
         );
+        if let Some((worker_addr, _)) = registration.filter(|(_, existed)| !*existed) {
+            if response_delivered && !request_failed {
+                self.dispatch_queued_requests_for_family(*worker_addr.family());
+            } else {
+                let cleanup = self.apply_worker_unsubscribe(&worker_addr, meta.session_id);
+                self.forward_worker_disconnect_errors(cleanup.disconnect_deliveries);
+                self.refresh_metrics_gauges();
+            }
+        }
 
         Ok(())
     }
@@ -240,14 +258,13 @@ impl RpcDomainRuntime<'_> {
         snapshot_policy: Option<bool>,
         request_failed: bool,
         request_started: Option<Instant>,
-    ) {
+    ) -> bool {
         if let Some(force_snapshot) = snapshot_policy {
             self.schedule_admin_snapshot(force_snapshot);
         }
 
-        if let Some(response) = response {
-            self.route_rpc_client_response(envelope, meta, &response);
-        }
+        let response_delivered = response
+            .is_none_or(|response| self.route_rpc_client_response(envelope, meta, &response));
 
         if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
             if request_failed {
@@ -256,5 +273,6 @@ impl RpcDomainRuntime<'_> {
                 metrics.record_success(started_at);
             }
         }
+        response_delivered
     }
 }

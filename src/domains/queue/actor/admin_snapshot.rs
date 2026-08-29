@@ -173,6 +173,30 @@ impl QueueActor {
         released.len()
     }
 
+    /// Return one reservation to ready work only when its session and token
+    /// still identify the exact delivery that could not reach the client.
+    pub fn release_undelivered_reservation(
+        &mut self,
+        session_id: u64,
+        id: MessageId,
+        token: u64,
+    ) -> bool {
+        if !self.inflight.get(&id).is_some_and(|inflight| {
+            inflight.owner_session_id == Some(session_id) && inflight.token == token
+        }) {
+            return false;
+        }
+        self.inflight.remove(&id);
+        if let Some(record) = self.records.get_mut(&id) {
+            record.state = QueueState::Ready;
+            record.visible_at_ms = 0;
+            record.inflight_token = None;
+            record.inflight_expires_at_ms = None;
+        }
+        self.push_ready(id);
+        true
+    }
+
     #[must_use]
     pub fn ready_contains(&self, id: MessageId) -> bool {
         self.ready.iter().any(|entry| entry.id == id)

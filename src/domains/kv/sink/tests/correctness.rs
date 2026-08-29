@@ -9,6 +9,175 @@ fn new_correctness_sink(router: Arc<Router>) -> KvDomainSink {
 }
 
 #[test]
+fn should_treat_a_response_to_a_closed_session_as_an_expected_drop() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let source = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let destination = RouteAddress::new(family, Route::new("kv://inbound"));
+    let sink = new_correctness_sink(Arc::new(Router::new()));
+    let request = Envelope::from_route(
+        source,
+        destination,
+        FrameContext::new(
+            7,
+            ChannelId::Sub,
+            MessageType::new(crate::dispatch::protocol::kv::msg_type::BEGIN),
+            Bytes::new(),
+            family,
+        ),
+    );
+    let meta = crate::runtime::ClientFrameMeta::new(
+        7,
+        crate::runtime::ClientChannel::Sub,
+        crate::dispatch::protocol::kv::msg_type::BEGIN,
+        family,
+    );
+
+    // Act
+    let result = sink.state.runtime().route_kv_response(
+        &request,
+        meta,
+        &crate::domains::kv::KvResponse::Error {
+            error: crate::domains::kv::KvError::BackendError("late response".to_string()),
+        },
+        Instant::now(),
+    );
+
+    // Assert
+    assert_eq!(result, Ok(()));
+}
+
+#[test]
+fn should_preserve_response_mailbox_backpressure_for_an_active_session() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let source = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let destination = RouteAddress::new(family, Route::new("kv://inbound"));
+    let mailbox = Arc::new(Mailbox::new(1));
+    let router = Arc::new(Router::new());
+    router.register(source.clone(), mailbox.clone());
+    mailbox
+        .deliver(Envelope::new(destination.clone(), Bytes::new()))
+        .expect("fill response mailbox");
+    let sink = new_correctness_sink(router);
+    let request = Envelope::from_route(source, destination, Bytes::new());
+    let meta = crate::runtime::ClientFrameMeta::new(
+        7,
+        crate::runtime::ClientChannel::Sub,
+        crate::dispatch::protocol::kv::msg_type::BEGIN,
+        family,
+    );
+
+    // Act
+    let result = sink.state.runtime().route_kv_response(
+        &request,
+        meta,
+        &crate::domains::kv::KvResponse::Error {
+            error: crate::domains::kv::KvError::BackendError("busy".to_string()),
+        },
+        Instant::now(),
+    );
+
+    // Assert
+    assert_eq!(
+        result,
+        Err(crate::runtime::DeliveryError::MailboxFull {
+            capacity: 1,
+            current_len: 1,
+        })
+    );
+}
+
+#[test]
+fn should_roll_back_read_write_begin_when_response_cannot_be_delivered() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 7;
+    let route = "kv://acme/app/users";
+    let source = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let destination = RouteAddress::new(family, Route::new(route));
+    let mailbox = Arc::new(Mailbox::new(1));
+    let router = Arc::new(Router::new());
+    router.register(source.clone(), mailbox.clone());
+    mailbox
+        .deliver(Envelope::new(destination.clone(), Bytes::new()))
+        .expect("fill response mailbox");
+    let sink = new_correctness_sink(router);
+
+    // Act
+    let request = Envelope::from_route(source, destination, Bytes::new());
+    let meta = crate::runtime::ClientFrameMeta::new(
+        session_id,
+        crate::runtime::ClientChannel::Sub,
+        crate::dispatch::protocol::kv::msg_type::BEGIN,
+        family,
+    );
+    let result = sink.state.runtime().handle_actor_operation_frame(
+        &request,
+        meta,
+        Instant::now(),
+        Instant::now(),
+        crate::domains::kv::KvMessage::Begin {
+            scope: KvResourceScope::new(family, "acme", "app", "users"),
+            mode: crate::domains::kv::TxMode::ReadWrite,
+            write_options: cntryl_midge::WriteOptions::buffered(),
+        },
+    );
+
+    // Assert
+    assert!(matches!(
+        result,
+        Err(crate::runtime::DeliveryError::MailboxFull { .. })
+    ));
+    assert!(sink.resource_locks_are_empty_for_tests());
+    assert_eq!(sink.active_transaction_count(), 0);
+}
+
+#[test]
+fn should_roll_back_read_only_begin_when_response_cannot_be_delivered() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 7;
+    let source = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let destination = RouteAddress::new(family, Route::new("kv://acme/app/users"));
+    let mailbox = Arc::new(Mailbox::new(1));
+    let router = Arc::new(Router::new());
+    router.register(source.clone(), mailbox.clone());
+    mailbox
+        .deliver(Envelope::new(destination.clone(), Bytes::new()))
+        .expect("fill response mailbox");
+    let sink = new_correctness_sink(router);
+    let request = Envelope::from_route(source, destination, Bytes::new());
+    let meta = crate::runtime::ClientFrameMeta::new(
+        session_id,
+        crate::runtime::ClientChannel::Sub,
+        crate::dispatch::protocol::kv::msg_type::BEGIN,
+        family,
+    );
+
+    // Act
+    let result = sink.state.runtime().handle_actor_operation_frame(
+        &request,
+        meta,
+        Instant::now(),
+        Instant::now(),
+        crate::domains::kv::KvMessage::Begin {
+            scope: KvResourceScope::new(family, "acme", "app", "users"),
+            mode: crate::domains::kv::TxMode::ReadOnly,
+            write_options: cntryl_midge::WriteOptions::buffered(),
+        },
+    );
+
+    // Assert
+    assert!(matches!(
+        result,
+        Err(crate::runtime::DeliveryError::MailboxFull { .. })
+    ));
+    assert!(sink.resource_locks_are_empty_for_tests());
+    assert_eq!(sink.active_transaction_count(), 0);
+}
+
+#[test]
 fn should_update_kv_admin_transaction_incrementally_given_lifecycle() {
     // Arrange
     let family = RouteFamily::new(1);

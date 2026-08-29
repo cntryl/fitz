@@ -25,6 +25,7 @@ impl NoticeDomainCore {
         reject_cleaned_up_session: bool,
     ) -> Result<(), DeliveryError> {
         if self.handle_cleanup_envelope(envelope) {
+            self.refresh_admin_snapshot_if_dirty();
             return Ok(());
         }
         self.ensure_active()?;
@@ -75,7 +76,16 @@ impl NoticeDomainCore {
         }
 
         if let Some(response) = response_opt {
-            self.route_notice_response(envelope, meta, &response, request_started);
+            if !self.route_notice_response(envelope, meta, &response, request_started)
+                && should_sync_admin_snapshot
+                && self.rollback_undeliverable_subscribe(
+                    meta.route_family,
+                    meta.session_id,
+                    &response,
+                )
+            {
+                self.refresh_admin_snapshot_if_dirty();
+            }
         } else if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
             metrics.record_success(started_at);
         }

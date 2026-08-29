@@ -1,4 +1,4 @@
-use super::model::NoticeDeliveryTarget;
+use super::model::{NoticeDeliveryTarget, NoticeDeliveryTargets};
 use crate::runtime::routing::{Route, RouteFamily};
 use crate::runtime::{DeliveryError, Envelope, RouteError, Router};
 use bytes::Bytes;
@@ -7,31 +7,22 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// Maximum time the global Notice actor waits for one family worker.
-pub(super) const NOTICE_DELIVERY_HANDOFF_TIMEOUT: Duration = Duration::from_millis(25);
 /// Maximum retry window after a subscriber reports mailbox backpressure.
 const NOTICE_MAILBOX_RETRY_TIMEOUT: Duration = Duration::from_millis(5);
 const NOTICE_DELIVERY_WORKER_CAPACITY: usize = 64;
 
 pub(super) struct NoticeDeliveryJob {
-    target: NoticeDeliveryTarget,
+    targets: NoticeDeliveryTargets,
     route: Route,
     payload: Bytes,
-    completed: crossbeam_channel::Sender<()>,
 }
 
 impl NoticeDeliveryJob {
-    pub(super) fn new(
-        target: NoticeDeliveryTarget,
-        route: Route,
-        payload: Bytes,
-        completed: crossbeam_channel::Sender<()>,
-    ) -> Self {
+    pub(super) fn new(targets: NoticeDeliveryTargets, route: Route, payload: Bytes) -> Self {
         Self {
-            target,
+            targets,
             route,
             payload,
-            completed,
         }
     }
 }
@@ -46,8 +37,9 @@ pub(super) fn spawn_notice_delivery_worker(
         .name(format!("fitz-notice-delivery-{}", family.as_u64()))
         .spawn(move || {
             while let Ok(job) = receiver.recv() {
-                deliver_notice(&router, &job.target, &job.route, &job.payload);
-                let _ = job.completed.send(());
+                for target in &job.targets {
+                    deliver_notice(&router, target, &job.route, &job.payload);
+                }
             }
         })?;
     Ok(sender)
@@ -92,13 +84,12 @@ pub(super) fn deliver_with_retry(
     build_envelope: impl Fn() -> Envelope,
 ) {
     let deadline = Instant::now() + NOTICE_MAILBOX_RETRY_TIMEOUT;
-    let subscriber_sink = router.resolve_sink(subscriber);
 
     loop {
         let envelope = build_envelope();
+        let subscriber_sink = router.resolve_sink(subscriber);
         let result = if let Some(sink) = subscriber_sink.as_ref() {
-            sink.deliver(envelope)
-                .map_err(|error| RouteError::DeliveryFailed(subscriber.clone(), error))
+            router.route_to_resolved_sink(envelope, sink)
         } else {
             router.route(envelope)
         };

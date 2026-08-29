@@ -94,6 +94,88 @@ fn should_reject_rpc_worker_registration_when_worker_family_differs_from_request
 }
 
 #[test]
+fn should_not_retain_worker_when_registration_response_cannot_be_delivered() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 42;
+    let source = session_inbox_address(family, session_id);
+    let destination = RouteAddress::new(family, Route::new("rpc://inbound"));
+    let mailbox = Arc::new(Mailbox::new(1));
+    let router = Arc::new(Router::new());
+    router.register(source.clone(), mailbox.clone());
+    mailbox
+        .sender()
+        .try_send(Envelope::new(source.clone(), 1_u8))
+        .expect("fill worker mailbox");
+    let sink = new_correctness_rpc_sink(router);
+    let request = crate::domains::rpc::RpcClientRequest::new(
+        crate::runtime::ClientFrameMeta::new(
+            session_id,
+            crate::runtime::ClientChannel::Rpc,
+            300,
+            family,
+        ),
+        Ok(crate::domains::rpc::RpcMessage::RegisterWorker {
+            worker_addr: RouteAddress::new(
+                family,
+                Route::new("rpc://acme/system/resource/undeliverable"),
+            ),
+            max_concurrent: 1,
+        }),
+    );
+
+    // Act
+    sink.deliver(Envelope::from_route(source, destination, request))
+        .expect("deliver worker registration");
+
+    // Assert
+    assert_eq!(sink.worker_count(), 0);
+}
+
+#[test]
+fn should_retain_existing_worker_when_duplicate_registration_response_cannot_be_delivered() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let session_id = 42;
+    let source = session_inbox_address(family, session_id);
+    let destination = RouteAddress::new(family, Route::new("rpc://inbound"));
+    let worker_addr = RouteAddress::new(family, Route::new("rpc://acme/system/resource/existing"));
+    let mailbox = Arc::new(Mailbox::new(1));
+    let router = Arc::new(Router::new());
+    router.register(source.clone(), mailbox.clone());
+    let sink = new_correctness_rpc_sink(router);
+    sink.register_registration_for_tests(RpcWorker::new(
+        worker_addr.clone(),
+        source.clone(),
+        session_id,
+        1,
+    ));
+    mailbox
+        .sender()
+        .try_send(Envelope::new(source.clone(), 1_u8))
+        .expect("fill worker mailbox");
+    let request = crate::domains::rpc::RpcClientRequest::new(
+        crate::runtime::ClientFrameMeta::new(
+            session_id,
+            crate::runtime::ClientChannel::Rpc,
+            300,
+            family,
+        ),
+        Ok(crate::domains::rpc::RpcMessage::RegisterWorker {
+            worker_addr,
+            max_concurrent: 1,
+        }),
+    );
+
+    // Act
+    sink.deliver(Envelope::from_route(source, destination, request))
+        .expect("deliver duplicate registration");
+
+    // Assert
+    assert_eq!(sink.worker_count(), 1);
+}
+
+#[test]
 fn should_reject_stale_worker_registration_after_disconnect_cleanup_marks_session() {
     // Arrange
     let family = RouteFamily::new(1);

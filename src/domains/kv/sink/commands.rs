@@ -25,8 +25,12 @@ pub(super) enum KvDomainCommand {
         crate::domains::kv::KvMessage,
         crossbeam_channel::Sender<crate::domains::kv::KvMessage>,
     ),
+    PanicForFailpoint,
     #[cfg(test)]
-    PanicForTests,
+    BlockForTests(
+        crossbeam_channel::Sender<()>,
+        crossbeam_channel::Receiver<()>,
+    ),
 }
 
 impl KvDomainSink {
@@ -51,10 +55,29 @@ impl KvDomainSink {
     }
 
     /// Remove all live state owned by a disconnected session.
-    pub fn cleanup_session(&self, session_id: u64) {
-        let _ = self.request_actor("cleanup_session", |reply| {
-            KvDomainCommand::CleanupSession(session_id, reply)
-        });
+    ///
+    /// # Errors
+    ///
+    /// Returns the actor enqueue failure or a bounded reply-wait failure when
+    /// cleanup execution cannot be confirmed.
+    pub fn cleanup_session(&self, session_id: u64) -> Result<(), crate::runtime::DeliveryError> {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        self.actor
+            .try_send_high_priority(KvDomainCommand::CleanupSession(session_id, reply_tx))?;
+        reply_rx
+            .recv_timeout(Duration::from_secs(1))
+            .map_err(crate::runtime::reply_wait::map_reply_wait_error)
+    }
+
+    #[cfg(test)]
+    pub(super) fn block_actor_for_tests(
+        &self,
+        entered: crossbeam_channel::Sender<()>,
+        release: crossbeam_channel::Receiver<()>,
+    ) {
+        self.actor
+            .try_send_high_priority(KvDomainCommand::BlockForTests(entered, release))
+            .expect("enqueue KV actor test block");
     }
 
     /// Return the number of live KV transactions, or zero if the actor does not reply.

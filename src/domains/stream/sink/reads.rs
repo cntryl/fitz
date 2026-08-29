@@ -140,19 +140,20 @@ impl StreamDomainCore {
     fn execute_read_plan(
         &self,
         scope: ReadScope,
+        route_realm: Option<&str>,
+        route_area: Option<&str>,
         route_filter_area: Option<&str>,
         route_filter_resource: Option<&str>,
         request: &StreamReadExecution<'_>,
     ) -> Result<ReadResponse, String> {
-        let parts = route_triplet(request.route.as_str());
         let (items, cursor) = match scope {
             ReadScope::Realm => {
-                let parts = parts.ok_or_else(|| "invalid stream route".to_string())?;
+                let realm = route_realm.ok_or_else(|| "invalid stream route".to_string())?;
                 if let Some(resource) = route_filter_resource {
                     self.stream_store.read_realm_resource_posting(
                         &crate::domains::stream::store::ReadRealmPostingParams {
                             family: request.family_id.as_u64(),
-                            realm: parts.realm,
+                            realm,
                             resource,
                             from_offset: request.from_offset,
                             limit: request.limit,
@@ -163,7 +164,7 @@ impl StreamDomainCore {
                 } else {
                     self.stream_store.read_realm_with_filter(
                         request.family_id.as_u64(),
-                        parts.realm,
+                        realm,
                         request.from_offset,
                         request.limit,
                         request.max_bytes,
@@ -172,12 +173,13 @@ impl StreamDomainCore {
                 }
             }
             ReadScope::Area => {
-                let parts = parts.ok_or_else(|| "invalid stream route".to_string())?;
+                let realm = route_realm.ok_or_else(|| "invalid stream route".to_string())?;
+                let area = route_area.ok_or_else(|| "invalid stream route".to_string())?;
                 self.stream_store.read_area_with_filter(
                     &crate::domains::stream::store::ReadAreaParams {
                         family: request.family_id.as_u64(),
-                        realm: parts.realm,
-                        area: parts.area,
+                        realm,
+                        area,
                         from_offset: request.from_offset,
                         limit: request.limit,
                         max_bytes: request.max_bytes,
@@ -240,20 +242,26 @@ impl StreamDomainCore {
         let shape = crate::domains::stream::route_grammar::classify_stream_route_shape(
             request.route.as_str(),
         )?;
-        let (scope, area_filter, resource_filter) = match &shape {
-            StreamRouteShape::Resource { .. } => (ReadScope::Resource, None, None),
-            StreamRouteShape::Area { .. } => (ReadScope::Area, None, None),
-            StreamRouteShape::Realm { .. } => (ReadScope::Realm, None, None),
-            StreamRouteShape::RealmFilterResource { resource, .. } => {
-                (ReadScope::Realm, None, Some(*resource))
+        let (scope, realm, area, area_filter, resource_filter) = match &shape {
+            StreamRouteShape::Resource { realm, area, .. } => {
+                (ReadScope::Resource, Some(*realm), Some(*area), None, None)
             }
-            StreamRouteShape::Global => (ReadScope::Global, None, None),
-            StreamRouteShape::GlobalFilterArea { area } => (ReadScope::Global, Some(*area), None),
+            StreamRouteShape::Area { realm, area } => {
+                (ReadScope::Area, Some(*realm), Some(*area), None, None)
+            }
+            StreamRouteShape::Realm { realm } => (ReadScope::Realm, Some(*realm), None, None, None),
+            StreamRouteShape::RealmFilterResource { realm, resource } => {
+                (ReadScope::Realm, Some(*realm), None, None, Some(*resource))
+            }
+            StreamRouteShape::Global => (ReadScope::Global, None, None, None, None),
+            StreamRouteShape::GlobalFilterArea { area } => {
+                (ReadScope::Global, None, None, Some(*area), None)
+            }
             StreamRouteShape::GlobalFilterResource { resource } => {
-                (ReadScope::Global, None, Some(*resource))
+                (ReadScope::Global, None, None, None, Some(*resource))
             }
             StreamRouteShape::GlobalFilterAreaResource { area, resource } => {
-                (ReadScope::Global, Some(*area), Some(*resource))
+                (ReadScope::Global, None, None, Some(*area), Some(*resource))
             }
         };
         if scope != ReadScope::Global {
@@ -263,7 +271,8 @@ impl StreamDomainCore {
                         .to_string(),
                 );
             }
-            let response = self.execute_read_plan(scope, area_filter, resource_filter, &request)?;
+            let response =
+                self.execute_read_plan(scope, realm, area, area_filter, resource_filter, &request)?;
             return Ok(Self::encode_stream_read_data(
                 &response.items,
                 &response.cursor,
@@ -305,7 +314,8 @@ impl StreamDomainCore {
                 self.empty_global_read_cursor(&request, selector_fingerprint, captured_watermark);
             return Ok(Self::encode_stream_read_data(&[], &cursor, true));
         }
-        let response = self.execute_read_plan(scope, area_filter, resource_filter, &request)?;
+        let response =
+            self.execute_read_plan(scope, realm, area, area_filter, resource_filter, &request)?;
         let response = self.finalize_read_response(
             &request,
             selector_fingerprint,

@@ -1,17 +1,24 @@
 use super::{CloseReason, DispatchDomain, Ingress, RuntimeIngress};
+use futures_util::StreamExt;
 use std::borrow::Cow;
+use std::sync::atomic::Ordering;
+
+const SESSION_CLOSE_CONCURRENCY: usize = 32;
 
 impl RuntimeIngress {
     pub async fn close_all_sessions(&self, reason: CloseReason) {
+        self.accepting_sessions.store(false, Ordering::Release);
         let session_ids = self
             .session_registry()
             .active_sessions()
             .into_iter()
             .map(|session| session.session_id)
             .collect::<Vec<_>>();
-        for session_id in session_ids {
-            self.on_close(session_id, reason.clone()).await;
-        }
+        futures_util::stream::iter(session_ids)
+            .for_each_concurrent(SESSION_CLOSE_CONCURRENCY, |session_id| {
+                self.on_close(session_id, reason.clone())
+            })
+            .await;
     }
 
     #[cfg_attr(not(test), allow(dead_code))]

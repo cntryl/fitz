@@ -6,6 +6,22 @@ use super::model::{
 };
 
 impl ScheduleDomainRuntime<'_> {
+    pub(super) fn rollback_undeliverable_schedule_subscribe(
+        &self,
+        family_id: crate::runtime::routing::RouteFamily,
+        route: &crate::runtime::routing::Route,
+        session_id: u64,
+    ) {
+        let mut families = self.core.sub_families.lock();
+        let remove_family = families.get_mut(&family_id).is_some_and(|state| {
+            state.remove_session_route(family_id, session_id, route.as_str());
+            state.is_empty()
+        });
+        if remove_family {
+            families.remove(&family_id);
+        }
+    }
+
     pub(super) fn apply_subscribe_message(
         &self,
         family_id: crate::runtime::routing::RouteFamily,

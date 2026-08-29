@@ -2,6 +2,7 @@ use super::model::{
     info, warn, Arc, Bytes, FastMap, FxBuildHasher, HashMap, Instant, PendingClaim,
     PendingScheduleFire, PersistedPendingFireClaim, Reverse, ScheduleAckDefinition, ScheduleActor,
     ScheduleFireClaim, ScheduleListEntry, SchedulePendingFireClaimAck, SchedulePersistence,
+    SchedulePersistenceError,
 };
 
 fn persist_claim_batch<P: SchedulePersistence>(
@@ -9,7 +10,7 @@ fn persist_claim_batch<P: SchedulePersistence>(
     family_id: u64,
     claims: &[ScheduleFireClaim<'_>],
     write_options: cntryl_midge::WriteOptions,
-) -> Result<(), String> {
+) -> Result<(), SchedulePersistenceError> {
     persistence.persist_claims(family_id, claims, write_options)
 }
 
@@ -18,7 +19,7 @@ fn acknowledge_claim_batch<P: SchedulePersistence>(
     family_id: u64,
     claims: &[SchedulePendingFireClaimAck<'_>],
     write_options: cntryl_midge::WriteOptions,
-) -> Result<(), String> {
+) -> Result<(), SchedulePersistenceError> {
     persistence.acknowledge_claims(family_id, claims, write_options)
 }
 
@@ -30,6 +31,59 @@ pub(crate) type ScheduleListPage = (Arc<Vec<Arc<ScheduleListEntry>>>, bool, Opti
 pub(crate) type ScheduleListDefs = (Arc<Vec<Arc<ScheduleListEntry>>>, u64);
 
 impl ScheduleActor {
+    pub(super) fn insert_pending_claim(
+        &mut self,
+        fire_ms: u64,
+        route: String,
+        claim: PendingClaim,
+    ) {
+        self.pending_fire_times_by_route
+            .entry(route.clone())
+            .or_default()
+            .insert(fire_ms);
+        self.pending_claimed_occurrences
+            .insert((fire_ms, route), claim);
+    }
+
+    pub(super) fn pending_fire_times_for_route(&self, route: &str) -> Vec<u64> {
+        self.pending_fire_times_by_route
+            .get(route)
+            .map(|fire_times| fire_times.iter().copied().collect())
+            .unwrap_or_default()
+    }
+
+    pub(super) fn remove_pending_claim(&mut self, fire_ms: u64, route: &str) -> bool {
+        let removed = self
+            .pending_claimed_occurrences
+            .remove(&(fire_ms, route.to_string()))
+            .is_some();
+        if !removed {
+            return false;
+        }
+
+        let remove_route =
+            self.pending_fire_times_by_route
+                .get_mut(route)
+                .is_some_and(|fire_times| {
+                    fire_times.remove(&fire_ms);
+                    fire_times.is_empty()
+                });
+        if remove_route {
+            self.pending_fire_times_by_route.remove(route);
+        }
+        true
+    }
+
+    pub(super) fn remove_pending_claims_for_route(&mut self, route: &str) {
+        let Some(fire_times) = self.pending_fire_times_by_route.remove(route) else {
+            return;
+        };
+        for fire_ms in fire_times {
+            self.pending_claimed_occurrences
+                .remove(&(fire_ms, route.to_string()));
+        }
+    }
+
     /// Longest run of entries starting at `start` that still fits one wire
     /// frame, always at least one so a page makes forward progress.
     ///
@@ -199,8 +253,11 @@ impl ScheduleActor {
     }
 
     fn pop_due_from_heap(&mut self, now_ms: u64) -> Vec<(u64, String)> {
-        let mut popped = Vec::new();
-        while let Some(&(Reverse(fire_ms), _)) = self.ready_heap.peek() {
+        let mut popped = Vec::with_capacity(super::MAX_DUE_CLAIMS_PER_SCAN);
+        while popped.len() < super::MAX_DUE_CLAIMS_PER_SCAN {
+            let Some(&(Reverse(fire_ms), _)) = self.ready_heap.peek() else {
+                break;
+            };
             if fire_ms > now_ms {
                 break;
             }
@@ -250,12 +307,14 @@ impl ScheduleActor {
 
     fn persist_claims(&mut self, claims: &[PendingScheduleFire], claimed_at_ms: u64) -> bool {
         let store_items = self.store_claims_for(claims, claimed_at_ms);
-        if let Err(error) = persist_claim_batch(
-            &self.store,
-            self.family.as_u64(),
-            &store_items,
-            self.write_options,
-        ) {
+        if let Err(error) = super::retry_persistence(|| {
+            persist_claim_batch(
+                &self.store,
+                self.family.as_u64(),
+                &store_items,
+                self.write_options,
+            )
+        }) {
             warn!("Failed to persist schedule reschedule batch: {error}");
             for item in claims {
                 self.ready_heap
@@ -282,20 +341,22 @@ impl ScheduleActor {
             def.next_fire_time = item.next_fire_time;
             def.next_fire_ms = item.next_fire_ms;
             let payload = def.payload.clone();
+            let delivery_mode = def.delivery_mode;
             self.ready_heap
                 .push((Reverse(item.next_fire_ms), item.route.clone()));
-            self.pending_claimed_occurrences.insert(
-                (item.previous_fire_ms, item.route.clone()),
+            self.insert_pending_claim(
+                item.previous_fire_ms,
+                item.route.clone(),
                 PendingClaim {
                     payload: payload.clone(),
-                    delivery_mode: def.delivery_mode,
+                    delivery_mode,
                     claimed_at_ms,
                 },
             );
             claimed.push(PersistedPendingFireClaim {
                 route: item.route,
                 payload,
-                delivery_mode: def.delivery_mode,
+                delivery_mode,
                 claimed_at_ms,
                 fire_ms: item.previous_fire_ms,
             });
@@ -437,20 +498,18 @@ impl ScheduleActor {
             })
             .collect();
 
-        acknowledge_claim_batch(
-            &self.store,
-            self.family.as_u64(),
-            &store_items,
-            self.write_options,
-        )?;
+        super::retry_persistence(|| {
+            acknowledge_claim_batch(
+                &self.store,
+                self.family.as_u64(),
+                &store_items,
+                self.write_options,
+            )
+        })?;
 
         let mut acked = 0;
         for (fire_ms, route) in handed_off_occurrences {
-            if self
-                .pending_claimed_occurrences
-                .remove(&(*fire_ms, route.clone()))
-                .is_some()
-            {
+            if self.remove_pending_claim(*fire_ms, route) {
                 if let Some(schedule) = self.schedules.get_mut(route) {
                     schedule.last_fire_ms = Some(acknowledged_at_ms);
                     schedule.executions_total = schedule.executions_total.saturating_add(1);
@@ -510,8 +569,8 @@ mod tests {
             _family_id: u64,
             _claims: &[ScheduleFireClaim<'_>],
             _write_options: cntryl_midge::WriteOptions,
-        ) -> Result<(), String> {
-            Err("claim failed".to_string())
+        ) -> Result<(), SchedulePersistenceError> {
+            Err("claim failed".to_string().into())
         }
 
         fn acknowledge_claims(
@@ -519,8 +578,8 @@ mod tests {
             _family_id: u64,
             _claims: &[SchedulePendingFireClaimAck<'_>],
             _write_options: cntryl_midge::WriteOptions,
-        ) -> Result<(), String> {
-            Err("ack failed".to_string())
+        ) -> Result<(), SchedulePersistenceError> {
+            Err("ack failed".to_string().into())
         }
     }
 
@@ -539,7 +598,10 @@ mod tests {
         );
 
         // Assert
-        assert_eq!(result, Err("claim failed".to_string()));
+        assert_eq!(
+            result.map_err(|error| error.to_string()),
+            Err("claim failed".to_string())
+        );
     }
 
     #[test]

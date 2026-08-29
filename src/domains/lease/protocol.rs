@@ -9,7 +9,7 @@
 //! - **`Subscribe / Unsubscribe`**: Watch concrete lease routes for change notifications
 //! - **`Tick`**: Runtime-driven expiration (scheduler)
 
-use crate::runtime::routing::{route_triplet, Route, RouteAddress, RouteFamily};
+use crate::runtime::routing::{route_exact_triplet, Route, RouteAddress, RouteFamily};
 use crate::runtime::ClientFrameMeta;
 use bytes::Bytes;
 
@@ -46,7 +46,7 @@ impl LeaseKey {
     /// Returns None if the route doesn't match the expected format.
     #[must_use]
     pub fn from_route_str(family: RouteFamily, route: &str) -> Option<Self> {
-        let parts = route_triplet(route)?;
+        let parts = route_exact_triplet(route)?;
 
         if !parts.realm.is_empty()
             && !parts.area.is_empty()
@@ -143,6 +143,19 @@ mod tests {
     fn should_reject_lease_route_with_too_few_segments() {
         // Arrange
         let route = Route::new("lease://acme/locks");
+        let family = RouteFamily::new(1);
+
+        // Act
+        let key = LeaseKey::from_route(family, &route);
+
+        // Assert
+        assert!(key.is_none());
+    }
+
+    #[test]
+    fn should_reject_lease_route_with_trailing_segment() {
+        // Arrange
+        let route = Route::new("lease://acme/locks/db-migration/trailing");
         let family = RouteFamily::new(1);
 
         // Act
@@ -319,7 +332,6 @@ pub(crate) enum PreparedLeaseOperation {
     Query {
         key: LeaseKey,
     },
-    NotFound,
 }
 
 /// Lease request classified after wire parsing.

@@ -95,6 +95,23 @@ impl KvWatchRegistry {
             .remove_session_pattern(self.family_id, session_id, pattern)
     }
 
+    #[must_use]
+    pub(crate) fn existing_subscription_id(&self, session_id: u64, pattern: &str) -> Option<u64> {
+        self.subscriptions.find_existing_id(session_id, pattern)
+    }
+
+    pub(crate) fn remove_subscription_for_session(
+        &mut self,
+        session_id: u64,
+        subscription_id: u64,
+    ) -> bool {
+        self.subscriptions.remove_subscription_for_session(
+            self.family_id,
+            session_id,
+            subscription_id,
+        )
+    }
+
     pub(crate) fn remove_session(&mut self, session_id: u64) -> usize {
         self.subscriptions
             .remove_session(self.family_id, session_id)

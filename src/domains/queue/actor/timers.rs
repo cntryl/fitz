@@ -52,14 +52,19 @@ impl QueueActor {
     pub fn process_expired_timers(&mut self) -> bool {
         let now = self.clock.now_instant();
         let mut mutated = false;
+        let mut processed = 0;
 
-        while let Some(Reverse(expiry)) = self.timers.peek() {
+        while processed < super::MAX_DUE_ITEMS_PER_PASS {
+            let Some(Reverse(expiry)) = self.timers.peek() else {
+                break;
+            };
             if expiry.expires_at > now {
                 self.next_expiration_deadline = expiry.expires_at;
                 break;
             }
 
             let expiry = self.timers.pop().unwrap().0;
+            processed += 1;
 
             if let Some(inflight) = self.inflight.get(&expiry.id) {
                 if inflight.inflight_epoch != expiry.inflight_epoch {

@@ -96,11 +96,10 @@ impl NoticeDomainSink {
         self.actor.health_snapshot()
     }
 
-    #[cfg(test)]
-    pub(crate) fn panic_actor_for_tests(&self) {
+    pub(crate) fn panic_actor_for_failpoint(&self) {
         let _ = self
             .actor
-            .try_send_high_priority(NoticeDomainCommand::PanicForTests);
+            .try_send_high_priority(NoticeDomainCommand::PanicForFailpoint);
     }
 
     #[cfg(test)]

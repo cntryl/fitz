@@ -87,9 +87,13 @@ impl Actor for StreamDomainActor {
                 self.core.sync_admin_snapshot();
                 let _ = reply.send(());
             }
+            StreamDomainCommand::PanicForFailpoint => {
+                panic!("injected Stream domain actor panic");
+            }
             #[cfg(test)]
-            StreamDomainCommand::PanicForTests => {
-                panic!("test Stream domain actor panic");
+            StreamDomainCommand::BlockForTests(entered, release) => {
+                let _ = entered.send(());
+                let _ = release.recv();
             }
         }
     }
@@ -106,6 +110,9 @@ impl StreamDomainSink {
         };
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         let family = *envelope.destination().family();
+        let confirm_execution = envelope
+            .payload::<crate::runtime::SessionCleanup>()
+            .is_some();
         if !runtime.is_family_running(family) {
             return Err(DeliveryError::ActorStopped);
         }
@@ -121,13 +128,19 @@ impl StreamDomainSink {
         }
         .map_err(Self::family_enqueue_error)?;
 
-        // Family delivery is called synchronously by the async transport edge.
-        // The actor routes client responses through the router, so waiting for
-        // the handler result here would block a Tokio worker. The receiver is
-        // deliberately dropped after the bounded enqueue succeeds; the actor
-        // still owns the command and treats the reply as best effort.
-        drop(reply_rx);
-        Ok(())
+        // Client delivery stays enqueue-only because this synchronous boundary
+        // is called by the async transport edge. Cleanup is control-plane work:
+        // ingress must retain its retry ticket until the mutation executes.
+        if confirm_execution {
+            reply_rx
+                .recv_timeout(STREAM_ACTOR_REPLY_TIMEOUT)
+                .unwrap_or_else(|error| {
+                    Err(crate::runtime::reply_wait::map_reply_wait_error(error))
+                })
+        } else {
+            drop(reply_rx);
+            Ok(())
+        }
     }
 
     fn work_key_for_envelope(&self, envelope: &Envelope) -> Option<StreamWorkKey> {

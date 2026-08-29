@@ -1,4 +1,5 @@
 use super::*;
+use crate::api::runtime_ingress::domain_frame_dispatcher::DomainFrameDispatcher;
 
 struct AlwaysBackpressuredSink;
 
@@ -277,7 +278,7 @@ fn should_not_close_session_when_a_domain_command_times_out() {
         let router = Arc::new(crate::runtime::Router::new());
         router.register_domain_pattern(case.domain, Arc::new(AlwaysTimingOutSink));
         let session_id = 7_000 + u64::try_from(index).unwrap();
-        // A real session has an inbox; the retryable error frame is written to
+        // A real session has an inbox; the indeterminate error frame is written to
         // it instead of the session being torn down.
         let client_frames = Arc::new(Mutex::new(Vec::<FrameContext>::new()));
         router.register(
@@ -335,6 +336,17 @@ fn should_not_close_session_when_a_domain_command_times_out() {
             case.domain
         );
     }
+}
+
+#[test]
+fn should_log_domain_dispatch_timeout_as_indeterminate() {
+    // Arrange
+
+    // Act
+    let outcome = DomainFrameDispatcher::dispatch_timeout_outcome();
+
+    // Assert
+    assert_eq!(outcome, "indeterminate");
 }
 
 #[test]

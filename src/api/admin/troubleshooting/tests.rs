@@ -345,7 +345,7 @@ fn should_classify_rpc_data_loss_risk() {
     );
     assert_eq!(
         hotspot.hotspot.snapshot.likely_bottleneck.as_deref(),
-        Some("late response drop")
+        Some("missing pending response")
     );
     assert_eq!(hotspot.hotspot.snapshot.severity, DiagnosticSeverity::High);
     assert!(hotspot
@@ -353,7 +353,19 @@ fn should_classify_rpc_data_loss_risk() {
         .snapshot
         .explanation_hints
         .iter()
-        .any(|hint| hint.contains("late response drop")));
+        .any(|hint| hint.contains("no pending request state")));
+}
+
+#[test]
+fn should_not_classify_expected_closed_caller_responses_as_data_loss() {
+    // Arrange
+    let now = Utc::now();
+
+    // Act
+    let analysis = analyze_rpc(&[], &[], 0, 0, 0, 0, 3, 0, now);
+
+    // Assert
+    assert!(analysis.hotspots.is_empty());
 }
 
 #[test]

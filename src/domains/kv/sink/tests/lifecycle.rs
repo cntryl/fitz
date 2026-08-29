@@ -1,6 +1,49 @@
 use super::*;
 
 #[test]
+fn should_confirm_kv_session_cleanup_before_reporting_delivery() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let router = Arc::new(Router::new());
+    let sink = KvDomainSink::new(
+        store,
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+    let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);
+    let (release_tx, release_rx) = crossbeam_channel::bounded(1);
+    sink.block_actor_for_tests(entered_tx, release_rx);
+    entered_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("KV actor should block");
+    let (result_tx, result_rx) = crossbeam_channel::bounded(1);
+
+    // Act
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let result = sink.deliver_high_priority(Envelope::new(
+                RouteAddress::new(family, Route::new("kv://cleanup")),
+                crate::runtime::SessionCleanup { session_id: 7 },
+            ));
+            let _ = result_tx.send(result);
+        });
+        let early_result = result_rx.recv_timeout(Duration::from_millis(50));
+        let returned_early = early_result.is_ok();
+        release_tx.send(()).expect("release KV actor");
+        let final_result = early_result.unwrap_or_else(|_| {
+            result_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("KV cleanup result")
+        });
+
+        // Assert
+        assert!(!returned_early, "cleanup returned before it executed");
+        assert_eq!(final_result, Ok(()));
+    });
+}
+
+#[test]
 fn should_reject_queued_begin_after_cleanup_without_recreating_session_state() {
     // Arrange
     let family = RouteFamily::new(1);
@@ -27,7 +70,8 @@ fn should_reject_queued_begin_after_cleanup_without_recreating_session_state() {
     );
 
     // Act
-    sink.cleanup_session(session_id);
+    sink.cleanup_session(session_id)
+        .expect("cleanup KV session");
     sink.deliver(previously_queued_begin)
         .expect("deliver queued BEGIN after cleanup");
     let response = receive_frame(&mailbox, "queued BEGIN rejection");
@@ -202,7 +246,8 @@ fn should_rebuild_kv_admin_transactions_from_actor_state() {
     // Act
     sink.sync_admin_snapshot();
     let before_cleanup = admin_read_model.kv_transactions(None);
-    sink.cleanup_session(session_id);
+    sink.cleanup_session(session_id)
+        .expect("cleanup KV session");
     let after_cleanup = admin_read_model.kv_transactions(None);
 
     // Assert
@@ -245,12 +290,16 @@ fn should_route_kv_cleanup_through_managed_actor() {
 
     // Act
     sink.stop_actor_for_tests();
-    sink.cleanup_session(session_id);
+    let cleanup_result = sink.cleanup_session(session_id);
     sink.sync_admin_snapshot();
     let after_cleanup = admin_read_model.kv_transactions(None);
 
     // Assert
     assert!(!sink.is_actor_running());
+    assert!(matches!(
+        cleanup_result,
+        Err(crate::runtime::DeliveryError::ActorStopped)
+    ));
     assert_eq!(after_cleanup.len(), 1);
 }
 

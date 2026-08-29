@@ -21,6 +21,7 @@
 //! This module is the core of Fitz and must remain pure and deterministic.
 
 pub mod actor;
+mod actor_lifecycle;
 pub mod cf_validation;
 pub mod cleanup_guard;
 pub mod client_frame;

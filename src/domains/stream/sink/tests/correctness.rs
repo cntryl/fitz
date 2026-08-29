@@ -4,7 +4,9 @@ use crate::benchkit::{
     route_frame_to_address, FrameQueueSink,
 };
 use crate::dispatch::protocol::frame::ChannelId;
+use crate::dispatch::protocol::frame_context::FrameContext;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+use crate::runtime::Mailbox;
 use bytes::Bytes;
 
 fn request_from_session_to_address(
@@ -44,7 +46,7 @@ fn should_fail_closed_after_stream_actor_panic() {
         crate::control::admin::read_model::AdminReadModel::new(),
         StreamStorageWriteOptions::local(),
     );
-    sink.panic_actor_for_tests();
+    sink.panic_actor_for_failpoint();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
 
     // Act
@@ -63,6 +65,88 @@ fn should_fail_closed_after_stream_actor_panic() {
     assert_eq!(health.panic_count, 1);
     assert!(health.restart_exhausted);
     assert!(matches!(result, Err(DeliveryError::ActorStopped)));
+}
+
+#[test]
+fn should_not_retain_subscription_when_subscribe_response_cannot_be_delivered() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let route = "stream://bench/events/undeliverable";
+    let source = RouteAddress::new(family, Route::new("inbox://session/1"));
+    let destination = RouteAddress::new(family, Route::new(route));
+    let mailbox = Arc::new(Mailbox::new(1));
+    let router = Arc::new(Router::new());
+    router.register(source.clone(), mailbox.clone());
+    mailbox
+        .sender()
+        .try_send(Envelope::new(source.clone(), 1_u8))
+        .expect("fill subscriber mailbox");
+    let sink = StreamDomainSink::new(
+        crate::benchkit::create_bench_store(),
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+        StreamStorageWriteOptions::local(),
+    );
+    let frame = build_stream_subscribe(route);
+    let (message_type, payload) = extract_single_tlv_field(&frame);
+
+    // Act
+    sink.deliver(Envelope::from_route(
+        source,
+        destination,
+        FrameContext::new(
+            1,
+            ChannelId::Pub,
+            crate::dispatch::protocol::tlv::MessageType::new(message_type),
+            payload,
+            family,
+        ),
+    ))
+    .expect("deliver stream subscription");
+
+    // Assert
+    assert_eq!(sink.subscription_count(), 0);
+}
+
+#[test]
+fn should_not_retain_append_session_when_begin_response_cannot_be_delivered() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let route = "stream://bench/events/undeliverable-begin";
+    let source = RouteAddress::new(family, Route::new("inbox://session/1"));
+    let destination = RouteAddress::new(family, Route::new(route));
+    let mailbox = Arc::new(Mailbox::new(1));
+    let router = Arc::new(Router::new());
+    router.register(source.clone(), mailbox.clone());
+    mailbox
+        .sender()
+        .try_send(Envelope::new(source.clone(), 1_u8))
+        .expect("fill response mailbox");
+    let sink = StreamDomainSink::new(
+        crate::benchkit::create_bench_store(),
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+        StreamStorageWriteOptions::local(),
+    );
+    let frame = build_stream_begin(route);
+    let (message_type, payload) = extract_single_tlv_field(&frame);
+
+    // Act
+    sink.deliver(Envelope::from_route(
+        source,
+        destination,
+        FrameContext::new(
+            1,
+            ChannelId::Pub,
+            crate::dispatch::protocol::tlv::MessageType::new(message_type),
+            payload,
+            family,
+        ),
+    ))
+    .expect("deliver stream begin");
+
+    // Assert
+    assert_eq!(sink.append_session_count(), 0);
 }
 
 #[test]

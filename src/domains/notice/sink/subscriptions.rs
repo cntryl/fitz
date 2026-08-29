@@ -7,6 +7,33 @@ use super::{
 };
 
 impl NoticeDomainCore {
+    pub(super) fn rollback_undeliverable_subscribe(
+        &self,
+        family_id: crate::runtime::routing::RouteFamily,
+        session_id: u64,
+        response: &crate::domains::notice::NoticeResponse,
+    ) -> bool {
+        let crate::domains::notice::NoticeResponse::SubscribeOk { subscription_id } = response
+        else {
+            return false;
+        };
+        let mut families = self.families.lock();
+        let removed = families.get_mut(&family_id).is_some_and(|state| {
+            state.remove_subscription_for_session(family_id, session_id, *subscription_id)
+        });
+        if families
+            .get(&family_id)
+            .is_some_and(RoutedSubscriptionSet::is_empty)
+        {
+            families.remove(&family_id);
+        }
+        drop(families);
+        if removed {
+            self.mark_admin_snapshot_dirty();
+        }
+        removed
+    }
+
     pub(super) fn dispatch_notice_message(
         &self,
         notice_msg: crate::domains::notice::protocol::NotificationMessage,

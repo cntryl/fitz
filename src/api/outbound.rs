@@ -113,7 +113,7 @@ impl MailboxSink for SessionOutboundSink {
             destination = ?envelope.destination(),
             "Outbound sink: envelope payload cannot be encoded for transport"
         );
-        Err(DeliveryError::ActorStopped)
+        Err(DeliveryError::UnsupportedPayload)
     }
 
     fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
@@ -691,6 +691,23 @@ mod tests {
         // Assert
         assert_eq!(result, Ok(()));
         assert_eq!(frame.as_ref(), &[101, 0, 2, b'o', b'k']);
+    }
+
+    #[test]
+    fn should_not_report_unsupported_outbound_payload_as_stopped_actor() {
+        // Arrange
+        let (tx, _rx) = mpsc::channel(1);
+        let sink = SessionOutboundSink::new(tx);
+        let envelope = Envelope::new(
+            RouteAddress::new(RouteFamily::new(1), Route::new("inbox://session/1")),
+            42_u64,
+        );
+
+        // Act
+        let result = sink.deliver(envelope);
+
+        // Assert
+        assert_eq!(result, Err(DeliveryError::UnsupportedPayload));
     }
 
     #[tokio::test]

@@ -74,6 +74,24 @@ impl ScheduleDomainRuntime<'_> {
         let route_addr = envelope.destination();
         let route_family = *route_addr.family();
 
+        let subscribe_rollback = match &schedule_msg {
+            crate::domains::schedule::ScheduleMessage::Subscribe {
+                family_id,
+                route,
+                session_id,
+                ..
+            } => {
+                let existed = self
+                    .core
+                    .sub_families
+                    .lock()
+                    .get(family_id)
+                    .and_then(|state| state.find_existing_id(*session_id, route.as_str()))
+                    .is_some();
+                (!existed).then_some((*family_id, route.clone(), *session_id))
+            }
+            _ => None,
+        };
         let Some((response, schedule_snapshot_dirty)) = self.dispatch_schedule_message(
             envelope,
             meta,
@@ -88,7 +106,17 @@ impl ScheduleDomainRuntime<'_> {
             self.schedule_admin_snapshot(false);
         }
 
-        self.route_schedule_response(envelope, meta, &response, request_started);
+        let delivered = self.route_schedule_response(envelope, meta, &response, request_started);
+        if !delivered
+            && matches!(
+                response,
+                crate::domains::schedule::ScheduleResponse::SubscribeOk { .. }
+            )
+        {
+            if let Some((family_id, route, session_id)) = subscribe_rollback {
+                self.rollback_undeliverable_schedule_subscribe(family_id, &route, session_id);
+            }
+        }
 
         Ok(())
     }

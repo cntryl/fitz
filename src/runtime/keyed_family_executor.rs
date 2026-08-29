@@ -88,6 +88,34 @@ where
         Handler: Fn(&S, RouteFamily, FamilyActorLane, Option<&K>, M) + Send + Sync + 'static,
         Failure: Fn(RouteFamily) + Send + Sync + 'static,
     {
+        Self::new_with_spawner(
+            families,
+            worker_count,
+            state_factory,
+            handler,
+            family_failed,
+            |index, task| {
+                thread::Builder::new()
+                    .name(format!("fitz-keyed-family-{index}"))
+                    .spawn(task)
+            },
+        )
+    }
+
+    fn new_with_spawner<StateFactory, Handler, Failure, Spawn>(
+        families: &[RouteFamily],
+        worker_count: usize,
+        state_factory: StateFactory,
+        handler: Handler,
+        family_failed: Failure,
+        mut spawn: Spawn,
+    ) -> Result<Self, String>
+    where
+        StateFactory: Fn(RouteFamily) -> S,
+        Handler: Fn(&S, RouteFamily, FamilyActorLane, Option<&K>, M) + Send + Sync + 'static,
+        Failure: Fn(RouteFamily) + Send + Sync + 'static,
+        Spawn: FnMut(usize, Box<dyn FnOnce() + Send + 'static>) -> std::io::Result<JoinHandle<()>>,
+    {
         if families.is_empty() {
             return Err("no route families were provisioned".to_owned());
         }
@@ -116,19 +144,32 @@ where
         });
         let handler = Arc::new(handler);
         let family_failed = Arc::new(family_failed);
-        let workers = (0..worker_count.min(32))
-            .map(|index| {
-                let shared = shared.clone();
-                let handler = handler.clone();
-                let family_failed = family_failed.clone();
-                thread::Builder::new()
-                    .name(format!("fitz-keyed-family-{index}"))
-                    .spawn(move || {
-                        worker_loop(&shared, handler.as_ref(), family_failed.as_ref());
-                    })
-                    .map_err(|error| format!("spawn keyed family worker: {error}"))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut workers = Vec::with_capacity(worker_count.min(32));
+        for index in 0..worker_count.min(32) {
+            let worker_shared = shared.clone();
+            let worker_handler = handler.clone();
+            let worker_family_failed = family_failed.clone();
+            match spawn(
+                index,
+                Box::new(move || {
+                    worker_loop(
+                        &worker_shared,
+                        worker_handler.as_ref(),
+                        worker_family_failed.as_ref(),
+                    );
+                }),
+            ) {
+                Ok(worker) => workers.push(worker),
+                Err(error) => {
+                    shared.scheduler.lock().stopped = true;
+                    shared.ready.notify_all();
+                    for worker in workers {
+                        let _ = worker.join();
+                    }
+                    return Err(format!("spawn keyed family worker: {error}"));
+                }
+            }
+        }
         Ok(Self {
             shared,
             workers: Mutex::new(workers),
@@ -311,8 +352,11 @@ fn worker_loop<K, M, S, Handler, Failure>(
             state.active_keys.clear();
             state.control_active = false;
             drop(scheduler);
-            if first_failure {
-                family_failed(family);
+            if first_failure && catch_unwind(AssertUnwindSafe(|| family_failed(family))).is_err() {
+                tracing::error!(
+                    family = family.id(),
+                    "Keyed family failure callback panicked"
+                );
             }
             shared.ready.notify_all();
             continue;
@@ -545,7 +589,7 @@ mod tests {
     #[test]
     fn should_fail_only_panicking_family_and_keep_sibling_progressing() {
         // Arrange
-        let failures = Arc::new(AtomicUsize::new(0));
+        let (failure_tx, failure_rx) = crossbeam_channel::bounded(1);
         let (done_tx, done_rx) = crossbeam_channel::bounded(1);
         let executor = KeyedFamilyExecutor::new(
             &[RouteFamily::new(1), RouteFamily::new(2)],
@@ -555,12 +599,7 @@ mod tests {
                 assert_ne!(family, RouteFamily::new(1), "injected panic");
                 done_tx.send(message).unwrap();
             },
-            {
-                let failures = failures.clone();
-                move |_| {
-                    failures.fetch_add(1, Ordering::SeqCst);
-                }
-            },
+            move |_| failure_tx.send(()).expect("record family failure"),
         )
         .unwrap();
 
@@ -578,11 +617,46 @@ mod tests {
         }
         assert!(!executor.is_family_running(RouteFamily::new(1)));
         assert!(executor.is_family_running(RouteFamily::new(2)));
-        assert_eq!(failures.load(Ordering::SeqCst), 1);
+        failure_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("family failure callback");
+        assert!(failure_rx.try_recv().is_err());
         assert_eq!(
             executor.try_enqueue(RouteFamily::new(1), 1, 3),
             Err(FamilyActorEnqueueError::ActorStopped)
         );
+        executor.join();
+    }
+
+    #[test]
+    fn should_keep_sibling_progressing_when_failure_callback_panics() {
+        // Arrange
+        let (failure_tx, failure_rx) = crossbeam_channel::bounded(1);
+        let (done_tx, done_rx) = crossbeam_channel::bounded(1);
+        let executor = KeyedFamilyExecutor::new(
+            &[RouteFamily::new(1), RouteFamily::new(2)],
+            1,
+            |_| (),
+            move |(), family, _, _, message| {
+                assert_ne!(family, RouteFamily::new(1), "injected handler panic");
+                done_tx.send(message).unwrap();
+            },
+            move |_| {
+                failure_tx.send(()).unwrap();
+                panic!("injected failure callback panic");
+            },
+        )
+        .unwrap();
+
+        // Act
+        executor.try_enqueue(RouteFamily::new(1), 1, 1).unwrap();
+        failure_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        executor.try_enqueue(RouteFamily::new(2), 1, 2).unwrap();
+
+        // Assert
+        assert_eq!(done_rx.recv_timeout(Duration::from_secs(1)).unwrap(), 2);
+        assert!(!executor.is_family_running(RouteFamily::new(1)));
+        assert!(executor.is_family_running(RouteFamily::new(2)));
         executor.join();
     }
 
@@ -694,5 +768,39 @@ mod tests {
             executor.try_enqueue_control(RouteFamily::new(1), ()),
             Err(FamilyActorEnqueueError::ActorStopped)
         );
+    }
+
+    #[test]
+    fn should_join_started_workers_when_later_worker_spawn_fails() {
+        // Arrange
+        let exited = Arc::new(AtomicUsize::new(0));
+        let mut spawn_count = 0;
+
+        // Act
+        let result = KeyedFamilyExecutor::new_with_spawner(
+            &[RouteFamily::new(1)],
+            2,
+            |_| (),
+            |(), _, _, _: Option<&u64>, ()| {},
+            |_| {},
+            {
+                let exited = exited.clone();
+                move |_, task| {
+                    spawn_count += 1;
+                    if spawn_count == 2 {
+                        return Err(std::io::Error::other("injected spawn failure"));
+                    }
+                    let exited = exited.clone();
+                    std::thread::Builder::new().spawn(move || {
+                        task();
+                        exited.fetch_add(1, Ordering::SeqCst);
+                    })
+                }
+            },
+        );
+
+        // Assert
+        assert!(matches!(result, Err(ref error) if error.contains("injected spawn failure")));
+        assert_eq!(exited.load(Ordering::SeqCst), 1);
     }
 }

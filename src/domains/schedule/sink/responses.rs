@@ -11,7 +11,7 @@ impl ScheduleDomainRuntime<'_> {
         meta: crate::runtime::ClientFrameMeta,
         response: &crate::domains::schedule::ScheduleResponse,
         request_started: Option<std::time::Instant>,
-    ) {
+    ) -> bool {
         #[cfg(test)]
         let response_ctx = {
             let mut payload_encoder =
@@ -34,7 +34,7 @@ impl ScheduleDomainRuntime<'_> {
         let response_ctx =
             crate::domains::schedule::ScheduleClientResponse::new(meta, response.clone());
 
-        if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
+        let delivered = if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
             if let Err(error) = self.core.router.route(response_envelope) {
                 if let Some(metrics) = self.core.metrics.as_ref() {
                     metrics.record_response_drop();
@@ -50,8 +50,13 @@ impl ScheduleDomainRuntime<'_> {
                     error = %error,
                     "Dropped best-effort Schedule response"
                 );
+                false
+            } else {
+                true
             }
-        }
+        } else {
+            false
+        };
 
         if let (Some(metrics), Some(started_at)) = (self.core.metrics.as_ref(), request_started) {
             if Self::schedule_response_is_failure(response) {
@@ -60,5 +65,6 @@ impl ScheduleDomainRuntime<'_> {
                 metrics.record_success(started_at);
             }
         }
+        delivered
     }
 }

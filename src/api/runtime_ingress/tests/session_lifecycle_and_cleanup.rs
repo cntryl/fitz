@@ -32,6 +32,36 @@ pub(super) struct CleanupTrackingSink {
     cleanup_sessions: Mutex<Vec<u64>>,
 }
 
+struct BlockingSessionCleanupSink {
+    entered: crossbeam_channel::Sender<u64>,
+    release: crossbeam_channel::Receiver<()>,
+    blocked_sessions: Mutex<std::collections::HashSet<u64>>,
+}
+
+impl MailboxSink for BlockingSessionCleanupSink {
+    fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        let cleanup = envelope
+            .payload::<crate::runtime::SessionCleanup>()
+            .expect("cleanup payload");
+        let should_block = self
+            .blocked_sessions
+            .lock()
+            .expect("lock blocked sessions")
+            .insert(cleanup.session_id);
+        if should_block {
+            self.entered
+                .send(cleanup.session_id)
+                .expect("record entered cleanup");
+            self.release.recv().expect("release session cleanup");
+        }
+        Ok(())
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
 impl CleanupTrackingSink {
     fn recorded_sessions(&self) -> Vec<u64> {
         self.cleanup_sessions.lock().unwrap().clone()
@@ -669,6 +699,149 @@ async fn should_cleanup_registered_domains_and_remove_session_state_on_close() {
     for sink in sinks {
         assert_eq!(sink.recorded_sessions(), vec![session_id]);
     }
+}
+
+#[tokio::test]
+async fn should_close_active_sessions_concurrently_and_reject_late_opens() {
+    // Arrange
+    let router = Arc::new(crate::runtime::Router::new());
+    let (entered_tx, entered_rx) = crossbeam_channel::bounded(2);
+    let (release_tx, release_rx) = crossbeam_channel::bounded(2);
+    let sink = Arc::new(BlockingSessionCleanupSink {
+        entered: entered_tx,
+        release: release_rx,
+        blocked_sessions: Mutex::new(std::collections::HashSet::new()),
+    });
+    for domain in DispatchDomain::SESSION_CLEANUP_ORDER {
+        router.register_domain_pattern(domain.as_str(), sink.clone());
+    }
+    let ingress = Arc::new(make_cleanup_ingress(router, AdminReadModel::new()));
+    for session_id in [101, 102] {
+        ingress
+            .on_open(make_session_info(session_id, TransportKind::WebSocket))
+            .await
+            .expect("open session");
+    }
+
+    // Act
+    let closing_ingress = ingress.clone();
+    let close = tokio::spawn(async move {
+        closing_ingress
+            .close_all_sessions(CloseReason::ServerClose("test shutdown".to_string()))
+            .await;
+    });
+    let first = tokio::task::spawn_blocking(move || {
+        let first = entered_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("first cleanup should start");
+        let second = entered_rx
+            .recv_timeout(Duration::from_millis(100))
+            .expect("second cleanup should start before the first completes");
+        [first, second]
+    })
+    .await;
+    let late_open = ingress
+        .on_open(make_session_info(103, TransportKind::WebSocket))
+        .await;
+    release_tx.send(()).expect("release first cleanup");
+    release_tx.send(()).expect("release second cleanup");
+    let mut entered = first.expect("join cleanup entry wait");
+    close.await.expect("join session close");
+
+    // Assert
+    entered.sort_unstable();
+    assert_eq!(entered, [101, 102]);
+    assert_eq!(late_open, Err("broker is shutting down".to_string()));
+    assert_eq!(ingress.session_count(), 0);
+}
+
+#[tokio::test]
+async fn should_bound_concurrent_session_closes_during_shutdown() {
+    // Arrange
+    const SESSION_COUNT: usize = 40;
+    const CLOSE_CONCURRENCY: usize = 32;
+    let router = Arc::new(crate::runtime::Router::new());
+    let (entered_tx, entered_rx) = crossbeam_channel::bounded(SESSION_COUNT);
+    let (release_tx, release_rx) = crossbeam_channel::bounded(SESSION_COUNT);
+    let sink = Arc::new(BlockingSessionCleanupSink {
+        entered: entered_tx,
+        release: release_rx,
+        blocked_sessions: Mutex::new(std::collections::HashSet::new()),
+    });
+    for domain in DispatchDomain::SESSION_CLEANUP_ORDER {
+        router.register_domain_pattern(domain.as_str(), sink.clone());
+    }
+    let ingress = Arc::new(make_cleanup_ingress(router, AdminReadModel::new()));
+    for session_id in 1..=SESSION_COUNT {
+        ingress
+            .on_open(make_session_info(
+                u64::try_from(session_id).expect("test session id fits u64"),
+                TransportKind::Tcp,
+            ))
+            .await
+            .expect("open session");
+    }
+
+    // Act
+    let closing_ingress = ingress.clone();
+    let close = tokio::spawn(async move {
+        closing_ingress
+            .close_all_sessions(CloseReason::ServerClose("test shutdown".to_string()))
+            .await;
+    });
+    let observation = tokio::task::spawn_blocking(move || {
+        let mut entered = 0usize;
+        while entered < CLOSE_CONCURRENCY {
+            entered_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("bounded cleanup should start");
+            entered += 1;
+        }
+        let overflow = entered_rx.recv_timeout(Duration::from_millis(100));
+        if overflow.is_ok() {
+            entered += 1;
+        }
+        for _ in 0..entered {
+            release_tx.send(()).expect("release initial cleanup");
+        }
+        while entered < SESSION_COUNT {
+            entered_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("remaining cleanup should start");
+            entered += 1;
+            release_tx.send(()).expect("release remaining cleanup");
+        }
+        overflow
+    })
+    .await
+    .expect("join cleanup concurrency observation");
+    close.await.expect("join session close");
+
+    // Assert
+    assert!(observation.is_err(), "more than 32 cleanups ran at once");
+    assert_eq!(ingress.session_count(), 0);
+}
+
+#[tokio::test]
+async fn should_not_retain_closed_session_ids_after_connection_churn() {
+    // Arrange
+    let ingress = RuntimeIngress::new(false);
+
+    // Act
+    for session_id in 1..=100 {
+        ingress
+            .on_open(make_session_info(session_id, TransportKind::WebSocket))
+            .await
+            .expect("open session");
+        ingress.on_close(session_id, CloseReason::ClientClose).await;
+    }
+
+    // Assert
+    assert_eq!(ingress.session_count(), 0);
+    assert!(
+        ingress.closing_sessions.is_empty(),
+        "closed session ids must not accumulate after cleanup"
+    );
 }
 
 #[tokio::test]

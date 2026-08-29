@@ -3,6 +3,7 @@
 
 use crate::observability as obs;
 use crate::runtime::actor::{Actor, ActorError, ActorMetrics, ActorRef, Context};
+use crate::runtime::actor_lifecycle::{actor_error_from_panic, notify_actor_error, start_actor};
 use crate::runtime::envelope::Envelope;
 use crate::runtime::mailbox::Mailbox;
 use crate::runtime::router::{DeliveryError, MailboxSink, Router};
@@ -16,6 +17,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const MANAGED_ACTOR_POLL_TIMEOUT: Duration = Duration::from_millis(1);
+
+#[derive(Debug, Default)]
+struct PriorityDrainState {
+    consecutive_high: usize,
+    normal_drain_remaining: usize,
+}
 
 fn route_error_to_delivery_error(error: crate::runtime::router::RouteError) -> DeliveryError {
     match error {
@@ -54,10 +61,32 @@ fn receive_next_envelope(
     mailbox: &Mailbox,
     normal_receiver: &crossbeam_channel::Receiver<Envelope>,
     high_receiver: &crossbeam_channel::Receiver<Envelope>,
+    priority_state: &mut PriorityDrainState,
 ) -> Option<Envelope> {
+    if priority_state.normal_drain_remaining > 0 {
+        match normal_receiver.try_recv() {
+            Ok(envelope) => {
+                priority_state.normal_drain_remaining -= 1;
+                record_mailbox_observability(mailbox, &envelope);
+                return Some(envelope);
+            }
+            Err(
+                crossbeam_channel::TryRecvError::Empty
+                | crossbeam_channel::TryRecvError::Disconnected,
+            ) => {
+                priority_state.normal_drain_remaining = 0;
+            }
+        }
+    }
+
     crossbeam_channel::select_biased! {
         recv(high_receiver) -> message => match message {
             Ok(envelope) => {
+                priority_state.consecutive_high += 1;
+                if priority_state.consecutive_high >= mailbox.capacity() {
+                    priority_state.normal_drain_remaining = normal_receiver.len();
+                    priority_state.consecutive_high = 0;
+                }
                 record_mailbox_observability(mailbox, &envelope);
                 Some(envelope)
             }
@@ -65,6 +94,7 @@ fn receive_next_envelope(
         },
         recv(normal_receiver) -> message => match message {
             Ok(envelope) => {
+                priority_state.consecutive_high = 0;
                 record_mailbox_observability(mailbox, &envelope);
                 Some(envelope)
             }
@@ -118,30 +148,37 @@ impl ManagedActorHealth {
     }
 }
 
-fn actor_error_from_panic(error: &(dyn Any + Send)) -> ActorError {
-    if let Some(message) = error.downcast_ref::<&'static str>() {
-        ActorError::Panic((*message).to_string())
-    } else if let Some(message) = error.downcast_ref::<String>() {
-        ActorError::Panic(message.clone())
-    } else {
-        ActorError::Panic("non-string panic payload".to_string())
-    }
+fn unregister_mailbox(router: &Router, address: &RouteAddress, mailbox: &Arc<Mailbox>) {
+    let sink: Arc<dyn MailboxSink> = mailbox.clone();
+    router.unregister_sink(address, &sink);
 }
 
-fn notify_actor_error<A: Actor>(
+fn spawn_worker_or_unregister<Spawn, Task>(
+    router: &Router,
+    address: &RouteAddress,
+    mailbox: &Arc<Mailbox>,
+    spawn: Spawn,
+    task: Task,
+) -> thread::JoinHandle<()>
+where
+    Spawn: FnOnce(Task) -> std::io::Result<thread::JoinHandle<()>>,
+    Task: FnOnce() + Send + 'static,
+{
+    spawn(task).unwrap_or_else(|error| {
+        unregister_mailbox(router, address, mailbox);
+        panic!("spawn managed actor worker: {error}");
+    })
+}
+
+fn start_managed_actor<A: Actor>(
     actor: &mut A,
-    actor_error: ActorError,
     ctx: &mut Context<A>,
     address: &RouteAddress,
-) {
-    if let Err(error) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        actor.on_error(actor_error, ctx);
-    })) {
-        tracing::error!(
-            actor = ?address,
-            error = ?error,
-            "Managed actor panicked while handling actor error"
-        );
+) -> ActorStep {
+    if start_actor(actor, ctx, address) {
+        ActorStep::Continue
+    } else {
+        ActorStep::Panicked
     }
 }
 
@@ -216,6 +253,9 @@ fn handle_fired_timers<A: Actor>(
 
         ctx.metrics()
             .record_processed(u128_to_u64_saturating(started_at.elapsed().as_micros()));
+        if !ctx.is_running() {
+            break;
+        }
     }
 
     ActorStep::Continue
@@ -235,12 +275,23 @@ fn run_actor<A>(
     let normal_receiver = mailbox.receiver().clone();
     let high_receiver = mailbox.high_priority_receiver().clone();
     let mut ctx = Context::with_metrics(address.clone(), router.clone(), metrics);
+    let mut priority_state = PriorityDrainState::default();
 
-    actor.started(&mut ctx);
+    if start_managed_actor(&mut actor, &mut ctx, address) == ActorStep::Panicked {
+        running.store(false, Ordering::SeqCst);
+        unregister_mailbox(router, address, mailbox);
+        ctx.stop();
+        actor.stopped();
+        return;
+    }
 
     while running.load(Ordering::SeqCst) && ctx.is_running() {
-        let Some(envelope) = receive_next_envelope(mailbox, &normal_receiver, &high_receiver)
-        else {
+        let Some(envelope) = receive_next_envelope(
+            mailbox,
+            &normal_receiver,
+            &high_receiver,
+            &mut priority_state,
+        ) else {
             continue;
         };
 
@@ -257,7 +308,7 @@ fn run_actor<A>(
     }
 
     running.store(false, Ordering::SeqCst);
-    router.unregister(address);
+    unregister_mailbox(router, address, mailbox);
     actor.stopped();
 }
 
@@ -273,9 +324,25 @@ fn restart_tracker_for(strategy: &SupervisorStrategy) -> Option<RestartTracker> 
     }
 }
 
-fn stop_current_actor<A: Actor>(actor: &mut A, ctx: &mut Context<A>) {
+fn stop_current_actor<A: Actor>(
+    actor: &mut A,
+    ctx: &mut Context<A>,
+    address: &RouteAddress,
+) -> ActorStep {
     ctx.stop();
-    actor.stopped();
+    if let Err(error) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| actor.stopped())) {
+        tracing::error!(actor = ?address, error = ?error, "Managed actor panicked during shutdown");
+        ctx.metrics().record_panic();
+        ActorStep::Panicked
+    } else {
+        ActorStep::Continue
+    }
+}
+
+fn stop_actor_once<A: Actor>(actor: &mut A, actor_stopped: bool) {
+    if !actor_stopped {
+        actor.stopped();
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -297,15 +364,47 @@ where
 {
     let normal_receiver = runtime.mailbox.receiver().clone();
     let high_receiver = runtime.mailbox.high_priority_receiver().clone();
+    let mut priority_state = PriorityDrainState::default();
     let mut tracker = restart_tracker_for(runtime.strategy);
-    let mut actor = actor_factory();
+    let mut actor_stopped = false;
+    let mut actor = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(&actor_factory)) {
+        Ok(actor) => actor,
+        Err(error) => {
+            tracing::error!(actor = ?runtime.address, error = ?error, "Managed actor factory panicked");
+            runtime.metrics.record_panic();
+            runtime.health.record_panic();
+            runtime.health.mark_exhausted();
+            runtime.running.store(false, Ordering::SeqCst);
+            unregister_mailbox(runtime.router, runtime.address, runtime.mailbox);
+            return;
+        }
+    };
     let mut ctx = Context::with_metrics(
         runtime.address.clone(),
         runtime.router.clone(),
         Arc::clone(runtime.metrics),
     );
 
-    actor.started(&mut ctx);
+    if start_managed_actor(&mut actor, &mut ctx, runtime.address) == ActorStep::Panicked
+        && !restart_supervised_actor(
+            &mut actor,
+            &mut ctx,
+            &actor_factory,
+            runtime.address,
+            runtime.router,
+            runtime.mailbox,
+            runtime.running,
+            runtime.health,
+            runtime.strategy,
+            tracker.as_mut(),
+            &mut actor_stopped,
+        )
+    {
+        runtime.running.store(false, Ordering::SeqCst);
+        unregister_mailbox(runtime.router, runtime.address, runtime.mailbox);
+        stop_actor_once(&mut actor, actor_stopped);
+        return;
+    }
 
     while runtime.running.load(Ordering::SeqCst) && ctx.is_running() {
         if handle_fired_timers(&mut actor, &mut ctx, runtime.address) == ActorStep::Panicked {
@@ -315,19 +414,24 @@ where
                 &actor_factory,
                 runtime.address,
                 runtime.router,
+                runtime.mailbox,
                 runtime.running,
                 runtime.health,
                 runtime.strategy,
                 tracker.as_mut(),
+                &mut actor_stopped,
             ) {
                 break;
             }
             continue;
         }
 
-        let Some(envelope) =
-            receive_next_envelope(runtime.mailbox, &normal_receiver, &high_receiver)
-        else {
+        let Some(envelope) = receive_next_envelope(
+            runtime.mailbox,
+            &normal_receiver,
+            &high_receiver,
+            &mut priority_state,
+        ) else {
             continue;
         };
 
@@ -349,10 +453,12 @@ where
                 &actor_factory,
                 runtime.address,
                 runtime.router,
+                runtime.mailbox,
                 runtime.running,
                 runtime.health,
                 runtime.strategy,
                 tracker.as_mut(),
+                &mut actor_stopped,
             )
         {
             break;
@@ -360,8 +466,8 @@ where
     }
 
     runtime.running.store(false, Ordering::SeqCst);
-    runtime.router.unregister(runtime.address);
-    actor.stopped();
+    unregister_mailbox(runtime.router, runtime.address, runtime.mailbox);
+    stop_actor_once(&mut actor, actor_stopped);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -371,10 +477,12 @@ fn restart_supervised_actor<A, F>(
     actor_factory: &F,
     address: &RouteAddress,
     router: &Arc<Router>,
+    mailbox: &Arc<Mailbox>,
     running: &Arc<AtomicBool>,
     health: &Arc<ManagedActorHealth>,
     strategy: &SupervisorStrategy,
     tracker: Option<&mut RestartTracker>,
+    actor_stopped: &mut bool,
 ) -> bool
 where
     A: Actor,
@@ -386,40 +494,64 @@ where
         SupervisionAction::Restart => {
             let Some(tracker) = tracker else {
                 running.store(false, Ordering::SeqCst);
-                router.unregister(address);
+                unregister_mailbox(router, address, mailbox);
                 ctx.stop();
                 return false;
             };
 
-            if !tracker.record_restart() {
-                health.mark_exhausted();
-                running.store(false, Ordering::SeqCst);
-                router.unregister(address);
-                ctx.stop();
-                tracing::error!(
-                    actor = ?address,
-                    "Managed actor restart budget exhausted"
-                );
-                return false;
-            }
+            loop {
+                if !tracker.record_restart() {
+                    health.mark_exhausted();
+                    running.store(false, Ordering::SeqCst);
+                    unregister_mailbox(router, address, mailbox);
+                    ctx.stop();
+                    tracing::error!(
+                        actor = ?address,
+                        "Managed actor restart budget exhausted"
+                    );
+                    return false;
+                }
 
-            health.record_restart();
-            stop_current_actor(actor, ctx);
-            *actor = actor_factory();
-            *ctx = Context::with_metrics(address.clone(), router.clone(), ctx.metrics().clone());
-            actor.started(ctx);
-            tracing::warn!(
-                actor = ?address,
-                restart_count = health.restart_count.load(Ordering::Relaxed),
-                "Managed actor restarted after panic"
-            );
-            true
+                health.record_restart();
+                if !*actor_stopped {
+                    *actor_stopped = true;
+                    if stop_current_actor(actor, ctx, address) == ActorStep::Panicked {
+                        health.record_panic();
+                        health.mark_exhausted();
+                        running.store(false, Ordering::SeqCst);
+                        unregister_mailbox(router, address, mailbox);
+                        return false;
+                    }
+                }
+                *actor = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(actor_factory))
+                {
+                    Ok(actor) => actor,
+                    Err(error) => {
+                        tracing::error!(actor = ?address, error = ?error, "Managed replacement actor factory panicked");
+                        ctx.metrics().record_panic();
+                        health.record_panic();
+                        continue;
+                    }
+                };
+                *actor_stopped = false;
+                *ctx =
+                    Context::with_metrics(address.clone(), router.clone(), ctx.metrics().clone());
+                if start_managed_actor(actor, ctx, address) == ActorStep::Continue {
+                    tracing::warn!(
+                        actor = ?address,
+                        restart_count = health.restart_count.load(Ordering::Relaxed),
+                        "Managed actor restarted after panic"
+                    );
+                    return true;
+                }
+                health.record_panic();
+            }
         }
         SupervisionAction::Resume => true,
         SupervisionAction::Stop | SupervisionAction::Escalate => {
             health.mark_exhausted();
             running.store(false, Ordering::SeqCst);
-            router.unregister(address);
+            unregister_mailbox(router, address, mailbox);
             ctx.stop();
             tracing::error!(
                 actor = ?address,
@@ -469,16 +601,22 @@ impl<M: Send + 'static> ManagedActor<M> {
             let worker_router = router.clone();
             let worker_mailbox = mailbox.clone();
             let worker_running = running.clone();
-            thread::spawn(move || {
-                run_actor(
-                    actor,
-                    &worker_address,
-                    &worker_router,
-                    &worker_mailbox,
-                    &worker_running,
-                    metrics,
-                );
-            })
+            spawn_worker_or_unregister(
+                &router,
+                &address,
+                &mailbox,
+                |task| thread::Builder::new().spawn(task),
+                move || {
+                    run_actor(
+                        actor,
+                        &worker_address,
+                        &worker_router,
+                        &worker_mailbox,
+                        &worker_running,
+                        metrics,
+                    );
+                },
+            )
         };
 
         Self {
@@ -568,20 +706,26 @@ impl<M: Send + 'static> ManagedActor<M> {
             let worker_mailbox = mailbox.clone();
             let worker_running = running.clone();
             let worker_health = health.clone();
-            thread::spawn(move || {
-                run_supervised_actor(
-                    actor_factory,
-                    SupervisedActorRuntime {
-                        address: &worker_address,
-                        router: &worker_router,
-                        mailbox: &worker_mailbox,
-                        running: &worker_running,
-                        metrics: &metrics,
-                        health: &worker_health,
-                        strategy: &strategy,
-                    },
-                );
-            })
+            spawn_worker_or_unregister(
+                &router,
+                &address,
+                &mailbox,
+                |task| thread::Builder::new().spawn(task),
+                move || {
+                    run_supervised_actor(
+                        actor_factory,
+                        SupervisedActorRuntime {
+                            address: &worker_address,
+                            router: &worker_router,
+                            mailbox: &worker_mailbox,
+                            running: &worker_running,
+                            metrics: &metrics,
+                            health: &worker_health,
+                            strategy: &strategy,
+                        },
+                    );
+                },
+            )
         };
 
         Self {
@@ -661,7 +805,7 @@ impl<M: Send + 'static> ManagedActor<M> {
     pub fn stop(&self) {
         let was_running = self.running.swap(false, Ordering::SeqCst);
         if was_running {
-            self.router.unregister(&self.address);
+            unregister_mailbox(&self.router, &self.address, &self.mailbox);
         }
 
         if let Some(join_handle) = self.join_handle.lock().take() {

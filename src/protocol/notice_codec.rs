@@ -140,13 +140,25 @@ fn notice_error_code_for_message(message: &str) -> u16 {
 
     match message {
         "empty pattern" => notice::ERR_INVALID_PATTERN,
-        message if message.contains("subscription pattern") || message.contains("wildcards") => {
+        message
+            if message.starts_with("subscription pattern ")
+                || message.starts_with("invalid subscription pattern:") =>
+        {
             notice::ERR_INVALID_PATTERN
         }
-        message if message.contains("subscription") && message.contains("limit") => {
+        message
+            if message.starts_with("notice subscription limit exceeded")
+                || message.starts_with("wildcard subscription limit exceeded") =>
+        {
             notice::ERR_SUBSCRIPTION_LIMIT
         }
-        message if message.contains("route") => notice::ERR_INVALID_ROUTE,
+        "route family mismatch" => notice::ERR_INVALID_ROUTE,
+        message
+            if message.starts_with("invalid notice publish route:")
+                || message.starts_with("notice publish route ") =>
+        {
+            notice::ERR_INVALID_ROUTE
+        }
         _ => notice::ERR_BACKEND_ERROR,
     }
 }
@@ -306,4 +318,26 @@ fn parse_deliver(dec: &mut PayloadDecoder) -> Result<DeliverMessage, String> {
     }
 
     Ok(DeliverMessage { route, payload })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_not_classify_notice_backend_message_from_incidental_route_word() {
+        // Arrange
+        let response = NoticeResponse::Error("backend route cache unavailable".to_string());
+
+        // Act
+        let encoded = encode_response(&response);
+        let (code, _) = crate::protocol::error_codes::decode_error_body(&encoded)
+            .expect("decode Notice error body");
+
+        // Assert
+        assert_eq!(
+            code,
+            crate::protocol::error_codes::notice::ERR_BACKEND_ERROR
+        );
+    }
 }

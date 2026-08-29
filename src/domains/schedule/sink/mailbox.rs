@@ -8,11 +8,17 @@ use crate::runtime::{Actor, Context};
 
 impl MailboxSink for ScheduleDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
+            return self.cleanup_session(cleanup.session_id);
+        }
         self.actor
             .try_send(ScheduleDomainCommand::Deliver(envelope))
     }
 
     fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
+            return self.cleanup_session(cleanup.session_id);
+        }
         self.actor
             .try_send_high_priority(ScheduleDomainCommand::Deliver(envelope))
     }
@@ -29,8 +35,10 @@ impl Actor for ScheduleDomainActor {
                     tracing::warn!(domain = "schedule", error = %error, "Schedule actor delivery failed");
                 }
             }
-            ScheduleDomainCommand::CleanupSession(session_id) => {
+            ScheduleDomainCommand::CleanupSession(session_id, reply) => {
+                runtime.core.cleaned_up_sessions.lock().mark(session_id);
                 runtime.unsubscribe_all(session_id);
+                let _ = reply.send(());
             }
             ScheduleDomainCommand::ReadLiveCounts(reply) => {
                 let _ = reply.send(runtime.live_counts());
@@ -56,9 +64,8 @@ impl Actor for ScheduleDomainActor {
                 runtime.force_due_scan_for_tests(ready_count);
                 let _ = reply.send(());
             }
-            #[cfg(test)]
-            ScheduleDomainCommand::PanicForTests => {
-                panic!("test Schedule domain actor panic");
+            ScheduleDomainCommand::PanicForFailpoint => {
+                panic!("injected Schedule domain actor panic");
             }
             #[cfg(test)]
             ScheduleDomainCommand::BlockForTests(entered, release) => {

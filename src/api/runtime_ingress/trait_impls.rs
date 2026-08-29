@@ -3,6 +3,18 @@ use super::{
     DomainDispatchPayload, Ingress, IngressDecision, RuntimeIngress, SessionEvent, SessionFrame,
 };
 use crate::session::SessionInfo;
+use std::sync::atomic::Ordering;
+
+struct ClosingSessionGuard<'a> {
+    sessions: &'a dashmap::DashMap<u64, ()>,
+    session_id: u64,
+}
+
+impl Drop for ClosingSessionGuard<'_> {
+    fn drop(&mut self) {
+        self.sessions.remove(&self.session_id);
+    }
+}
 
 impl Default for RuntimeIngress {
     fn default() -> Self {
@@ -13,7 +25,21 @@ impl Default for RuntimeIngress {
 #[async_trait::async_trait]
 impl Ingress for RuntimeIngress {
     async fn on_open(&self, session: SessionInfo) -> Result<u64, String> {
-        Ok(self.session_registry().open_session(session))
+        if !self.accepting_sessions.load(Ordering::Acquire) {
+            return Err("broker is shutting down".to_string());
+        }
+
+        let session_id = self.session_registry().open_session(session);
+        if !self.accepting_sessions.load(Ordering::Acquire) {
+            self.on_close(
+                session_id,
+                CloseReason::ServerClose("broker is shutting down".to_string()),
+            )
+            .await;
+            return Err("broker is shutting down".to_string());
+        }
+
+        Ok(session_id)
     }
 
     async fn on_frame(
@@ -131,7 +157,14 @@ impl Ingress for RuntimeIngress {
     }
 
     async fn on_close(&self, session_id: u64, reason: CloseReason) {
-        if self.closed_sessions.insert(session_id, ()).is_some() {
+        if self.closing_sessions.insert(session_id, ()).is_some() {
+            return;
+        }
+        let _closing_guard = ClosingSessionGuard {
+            sessions: &self.closing_sessions,
+            session_id,
+        };
+        if self.session_registry().session(session_id).is_none() {
             return;
         }
 

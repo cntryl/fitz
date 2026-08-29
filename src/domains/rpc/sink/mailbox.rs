@@ -75,9 +75,13 @@ impl Actor for RpcDomainActor {
             RpcDomainCommand::ApplyWorkerUnsubscribeForTests(worker_addr, session_id, reply) => {
                 let _ = reply.send(runtime.apply_worker_unsubscribe(&worker_addr, session_id));
             }
+            RpcDomainCommand::PanicForFailpoint => {
+                panic!("injected RPC domain actor panic");
+            }
             #[cfg(test)]
-            RpcDomainCommand::PanicForTests => {
-                panic!("test RPC domain actor panic");
+            RpcDomainCommand::BlockForTests(entered, release) => {
+                let _ = entered.send(());
+                let _ = release.recv();
             }
         }
     }
@@ -94,6 +98,9 @@ impl RpcDomainSink {
         };
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         let family = *envelope.destination().family();
+        let confirm_execution = envelope
+            .payload::<crate::runtime::SessionCleanup>()
+            .is_some();
         let command = RpcDomainCommand::Deliver(envelope, reply_tx);
         let lane = if high_priority {
             crate::runtime::FamilyActorLane::Control
@@ -104,11 +111,19 @@ impl RpcDomainSink {
             .try_enqueue(family, lane, command)
             .map_err(Self::family_enqueue_error)?;
 
-        // Family delivery is called synchronously by the async transport edge.
-        // Client responses are routed by the actor itself; waiting here would
-        // block a Tokio worker while the synchronous domain actor runs.
-        drop(reply_rx);
-        Ok(())
+        // Client delivery stays enqueue-only because this synchronous boundary
+        // is called by the async transport edge. Cleanup is control-plane work:
+        // ingress must retain its retry ticket until the mutation executes.
+        if confirm_execution {
+            reply_rx
+                .recv_timeout(super::state_model::RPC_ACTOR_REPLY_TIMEOUT)
+                .unwrap_or_else(|error| {
+                    Err(crate::runtime::reply_wait::map_reply_wait_error(error))
+                })
+        } else {
+            drop(reply_rx);
+            Ok(())
+        }
     }
 
     fn family_enqueue_error(error: crate::runtime::FamilyActorEnqueueError) -> DeliveryError {

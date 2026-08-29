@@ -2,9 +2,10 @@
 //! Actor scheduling and execution coordination
 
 use super::actor::{Actor, ActorError, ActorMetrics, ActorRef, Context};
+use super::actor_lifecycle::{actor_error_from_panic, notify_actor_error, start_actor};
 use super::mailbox::Mailbox;
 use crate::observability as obs;
-use crate::runtime::router::Router;
+use crate::runtime::router::{MailboxSink, Router};
 use crate::runtime::routing::RouteAddress;
 use std::any::Any;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -89,6 +90,12 @@ fn normal_message_budget(processed_high: usize) -> usize {
     }
 }
 
+fn start_scheduled_actor<A: Actor>(actor: &mut A, ctx: &mut Context<A>, address: &RouteAddress) {
+    if !start_actor(actor, ctx, address) {
+        ctx.stop();
+    }
+}
+
 fn handle_fired_timers<A: Actor>(actor: &mut A, ctx: &mut Context<A>, address: &RouteAddress) {
     let fired_timers = ctx.timer_manager().fired_timers();
     for timer_id in fired_timers {
@@ -100,8 +107,8 @@ fn handle_fired_timers<A: Actor>(actor: &mut A, ctx: &mut Context<A>, address: &
             tracing::error!(actor = ?address, error = ?error, "Actor panicked during timer handling");
 
             ctx.metrics().record_panic();
-            let actor_error = ActorError::Panic(format!("timer panic: {error:?}"));
-            actor.on_error(actor_error, ctx);
+            let actor_error = actor_error_from_panic(error.as_ref());
+            notify_actor_error(actor, actor_error, ctx, address);
             ctx.stop();
             break;
         }
@@ -110,6 +117,9 @@ fn handle_fired_timers<A: Actor>(actor: &mut A, ctx: &mut Context<A>, address: &
         record_worker_busy_time(elapsed);
         ctx.metrics()
             .record_processed(u128_to_u64_saturating(elapsed.as_micros()));
+        if !ctx.is_running() {
+            break;
+        }
     }
 }
 
@@ -171,8 +181,8 @@ impl Scheduler {
         let metrics = Arc::new(ActorMetrics::new());
 
         // Register mailbox with router
-        self.router
-            .register(address.clone(), Arc::new(mailbox.clone()));
+        let mailbox_sink: Arc<dyn MailboxSink> = Arc::new(mailbox.clone());
+        self.router.register(address.clone(), mailbox_sink.clone());
 
         let receiver = mailbox.receiver().clone();
         let high_receiver = mailbox.high_priority_receiver().clone();
@@ -181,10 +191,10 @@ impl Scheduler {
 
         // Spawn actor execution thread
         thread::spawn(move || {
-            let mut ctx = Context::with_metrics(address.clone(), router_clone, metrics_clone);
+            let mut ctx =
+                Context::with_metrics(address.clone(), router_clone.clone(), metrics_clone);
 
-            // Call started hook
-            actor.started(&mut ctx);
+            start_scheduled_actor(&mut actor, &mut ctx, &address);
 
             // Process messages with two-phase priority lanes
             while ctx.is_running() {
@@ -196,7 +206,7 @@ impl Scheduler {
                 let mut processed_normal = 0;
 
                 // PHASE 1: High-priority messages (capped at MAX_HIGH_PER_TICK)
-                while processed_high < MAX_HIGH_PER_TICK {
+                while ctx.is_running() && processed_high < MAX_HIGH_PER_TICK {
                     // INVARIANT: Time budget check to prevent thread monopolization
                     if u128_to_u64_saturating(tick_start.elapsed().as_millis())
                         >= MAX_TICK_DURATION_MS
@@ -241,7 +251,7 @@ impl Scheduler {
                 // If high lane was idle, use full budget (16), otherwise use 12
                 let normal_budget = normal_message_budget(processed_high);
 
-                while processed_normal < normal_budget {
+                while ctx.is_running() && processed_normal < normal_budget {
                     // INVARIANT: Time budget check to prevent thread monopolization
                     if u128_to_u64_saturating(tick_start.elapsed().as_millis())
                         >= MAX_TICK_DURATION_MS
@@ -299,7 +309,7 @@ impl Scheduler {
                 handle_fired_timers(&mut actor, &mut ctx, &address);
             }
 
-            // Call stopped hook
+            router_clone.unregister_sink(&address, &mailbox_sink);
             actor.stopped();
         });
 
@@ -357,7 +367,7 @@ fn process_envelope<A: Actor>(
             "Actor received message with mismatched type"
         );
 
-        actor.on_error(error, ctx);
+        notify_actor_error(actor, error, ctx, address);
         return;
     };
 
@@ -380,7 +390,7 @@ fn process_envelope<A: Actor>(
         let error = ActorError::Panic(format!("{e:?}"));
 
         // Call error handler but actor is now stopped
-        actor.on_error(error, ctx);
+        notify_actor_error(actor, error, ctx, address);
 
         // CRITICAL: Stop actor immediately. No further message processing.
         ctx.stop();
@@ -416,6 +426,84 @@ mod tests {
         count: u32,
     }
 
+    struct StopReportingActor {
+        stopped: crossbeam_channel::Sender<()>,
+    }
+
+    struct BatchStopActor {
+        count: u32,
+        entered: crossbeam_channel::Sender<()>,
+        release: crossbeam_channel::Receiver<()>,
+        stopped: crossbeam_channel::Sender<u32>,
+    }
+
+    struct PanickingErrorActor {
+        error_entered: crossbeam_channel::Sender<()>,
+    }
+
+    struct PanickingStartedActor {
+        started_entered: crossbeam_channel::Sender<()>,
+    }
+
+    impl Actor for PanickingStartedActor {
+        type Message = ();
+
+        fn started(&mut self, _ctx: &mut Context<Self>) {
+            let _ = self.started_entered.send(());
+            panic!("started hook panic");
+        }
+
+        fn receive(&mut self, (): (), _ctx: &mut Context<Self>) {}
+    }
+
+    impl Actor for PanickingErrorActor {
+        type Message = ();
+
+        fn receive(&mut self, (): (), _ctx: &mut Context<Self>) {
+            panic!("receive panic");
+        }
+
+        fn on_error(&mut self, _error: ActorError, _ctx: &mut Context<Self>) {
+            let _ = self.error_entered.send(());
+            panic!("error hook panic");
+        }
+    }
+
+    impl Actor for BatchStopActor {
+        type Message = TestMsg;
+
+        fn started(&mut self, _ctx: &mut Context<Self>) {
+            let _ = self.entered.send(());
+            let _ = self.release.recv();
+        }
+
+        fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
+            match msg {
+                TestMsg::Increment => self.count = self.count.saturating_add(1),
+                TestMsg::Stop => ctx.stop(),
+                TestMsg::GetCount(_) => {}
+            }
+        }
+
+        fn stopped(&mut self) {
+            let _ = self.stopped.send(self.count);
+        }
+    }
+
+    impl Actor for StopReportingActor {
+        type Message = TestMsg;
+
+        fn receive(&mut self, msg: Self::Message, ctx: &mut Context<Self>) {
+            if matches!(msg, TestMsg::Stop) {
+                ctx.stop();
+            }
+        }
+
+        fn stopped(&mut self) {
+            let _ = self.stopped.send(());
+        }
+    }
+
     impl Actor for CounterActor {
         type Message = TestMsg;
 
@@ -443,6 +531,134 @@ mod tests {
 
         // Assert
         assert!(!scheduler.is_running());
+    }
+
+    #[test]
+    fn should_unregister_actor_route_after_actor_stops() {
+        // Arrange
+        let scheduler = Scheduler::new();
+        let (stopped_tx, stopped_rx) = crossbeam_channel::bounded(1);
+        let actor_ref = scheduler.spawn(
+            StopReportingActor {
+                stopped: stopped_tx,
+            },
+            test_address(1, "test://stopping"),
+            8,
+        );
+
+        // Act
+        actor_ref.send(TestMsg::Stop).expect("stop should enqueue");
+        stopped_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("actor should stop");
+        let send_after_stop = actor_ref.send(TestMsg::Increment);
+
+        // Assert
+        assert!(send_after_stop.is_err());
+    }
+
+    #[test]
+    fn should_stop_processing_batch_after_actor_stops() {
+        // Arrange
+        let scheduler = Scheduler::new();
+        let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);
+        let (release_tx, release_rx) = crossbeam_channel::bounded(1);
+        let (stopped_tx, stopped_rx) = crossbeam_channel::bounded(1);
+        let actor_ref = scheduler.spawn(
+            BatchStopActor {
+                count: 0,
+                entered: entered_tx,
+                release: release_rx,
+                stopped: stopped_tx,
+            },
+            test_address(1, "test://batch-stop"),
+            8,
+        );
+        entered_rx.recv().expect("actor should start");
+        actor_ref.send(TestMsg::Stop).expect("stop should enqueue");
+        actor_ref
+            .send(TestMsg::Increment)
+            .expect("increment should enqueue behind stop");
+
+        // Act
+        release_tx.send(()).expect("actor should start processing");
+        let count = stopped_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("actor should stop");
+
+        // Assert
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn should_unregister_actor_when_error_hook_panics() {
+        // Arrange
+        let scheduler = Scheduler::new();
+        let (error_entered_tx, error_entered_rx) = crossbeam_channel::bounded(1);
+        let actor_ref = scheduler.spawn(
+            PanickingErrorActor {
+                error_entered: error_entered_tx,
+            },
+            test_address(1, "test://panicking-error-hook"),
+            8,
+        );
+
+        // Act
+        actor_ref.send(()).expect("panic message should enqueue");
+        error_entered_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("error hook should run");
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let send_after_panic = loop {
+            let result = actor_ref.send(());
+            if matches!(result, Err(crate::runtime::SendError::RouteNotFound { .. }))
+                || Instant::now() >= deadline
+            {
+                break result;
+            }
+            std::thread::yield_now();
+        };
+
+        // Assert
+        assert!(matches!(
+            send_after_panic,
+            Err(crate::runtime::SendError::RouteNotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn should_unregister_actor_when_started_hook_panics() {
+        // Arrange
+        let scheduler = Scheduler::new();
+        let (started_entered_tx, started_entered_rx) = crossbeam_channel::bounded(1);
+        let actor_ref = scheduler.spawn(
+            PanickingStartedActor {
+                started_entered: started_entered_tx,
+            },
+            test_address(1, "test://panicking-started-hook"),
+            8,
+        );
+        started_entered_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("started hook should run");
+
+        // Act
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let send_after_panic = loop {
+            let result = actor_ref.send(());
+            if matches!(result, Err(crate::runtime::SendError::RouteNotFound { .. }))
+                || Instant::now() >= deadline
+            {
+                break result;
+            }
+            std::thread::yield_now();
+        };
+
+        // Assert
+        assert!(matches!(
+            send_after_panic,
+            Err(crate::runtime::SendError::RouteNotFound { .. })
+        ));
     }
 
     #[test]

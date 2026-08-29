@@ -55,21 +55,26 @@ impl KvDomainRuntime<'_> {
                 );
                 Ok(())
             }
-            Err(error) => {
+            Err(crate::runtime::RouteError::RouteNotFound(_)) => {
+                self.record_response_metrics(response, request_started);
+                tracing::debug!(
+                    domain = "kv",
+                    session = meta.session_id,
+                    "Dropped KV response after the session route closed"
+                );
+                Ok(())
+            }
+            Err(crate::runtime::RouteError::DeliveryFailed(_, delivery_error)) => {
                 self.record_request_metrics(true, request_started);
                 tracing::warn!(
                     domain = "kv",
                     session = meta.session_id,
-                    error = ?error,
-                    "Failed to route response"
+                    error = %delivery_error,
+                    "Failed to deliver KV response"
                 );
-                // Preserve why delivery failed. Reporting backpressure as a
-                // stopped actor discards the occupancy the caller needs to tell
-                // a transient full mailbox from a dead one.
-                Err(match error {
-                    crate::runtime::RouteError::DeliveryFailed(_, delivery_error) => delivery_error,
-                    crate::runtime::RouteError::RouteNotFound(_) => DeliveryError::ActorStopped,
-                })
+                // Preserve mailbox occupancy so a transient full inbox is not
+                // misreported as a stopped actor.
+                Err(delivery_error)
             }
         }
     }

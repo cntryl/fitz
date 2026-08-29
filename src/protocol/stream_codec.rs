@@ -212,13 +212,13 @@ pub fn encode_response_into(
 fn stream_error_code_for_message(message: &str) -> u16 {
     use crate::protocol::error_codes::stream;
 
-    if message.contains(ERR_STREAM_FILTER_UNSUPPORTED_VERSION) {
+    if message.starts_with(ERR_STREAM_FILTER_UNSUPPORTED_VERSION) {
         return stream::ERR_STREAM_FILTER_UNSUPPORTED_VERSION;
     }
-    if message.contains(ERR_STREAM_FILTER_INVALID_PAYLOAD) {
+    if message.starts_with(ERR_STREAM_FILTER_INVALID_PAYLOAD) {
         return stream::ERR_STREAM_FILTER_INVALID_PAYLOAD;
     }
-    if message.contains(ERR_READ_RESPONSE_TOO_LARGE) {
+    if message.starts_with(ERR_READ_RESPONSE_TOO_LARGE) {
         return stream::ERR_READ_RESPONSE_TOO_LARGE;
     }
 
@@ -228,10 +228,10 @@ fn stream_error_code_for_message(message: &str) -> u16 {
         "concurrency conflict" | "ERR_CONCURRENCY_CONFLICT" => stream::ERR_CONCURRENCY_CONFLICT,
         "resource not found" => stream::ERR_RESOURCE_NOT_FOUND,
         "empty pattern" => stream::ERR_INVALID_SUBSCRIPTION_PATTERN,
-        message if message.contains("read") || message.contains("bound") => {
+        message if message.starts_with("invalid read ") || message.starts_with("read bound ") => {
             stream::ERR_INVALID_READ_BOUND
         }
-        message if message.contains("subscription") && message.contains("pattern") => {
+        message if message.starts_with("subscription pattern ") => {
             stream::ERR_INVALID_SUBSCRIPTION_PATTERN
         }
         _ => stream::ERR_BACKEND_ERROR,
@@ -566,6 +566,24 @@ mod tests {
             &read[1..5],
             &u32::from(crate::protocol::error_codes::stream::ERR_READ_RESPONSE_TOO_LARGE)
                 .to_be_bytes()
+        );
+    }
+
+    #[test]
+    fn should_not_classify_stream_backend_message_from_incidental_read_word() {
+        // Arrange
+        let response =
+            StreamClientResponseBody::Error("backend read replica unavailable".to_string());
+
+        // Act
+        let encoded = encode_response(604, &response);
+        let (code, _) = crate::protocol::error_codes::decode_error_body(&encoded)
+            .expect("decode Stream error body");
+
+        // Assert
+        assert_eq!(
+            code,
+            crate::protocol::error_codes::stream::ERR_BACKEND_ERROR
         );
     }
 

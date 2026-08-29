@@ -13,15 +13,20 @@ impl ScheduleDomainSink {
     ///
     /// This crosses the mailbox (high-priority lane); the work itself happens
     /// in `ScheduleDomainRuntime::unsubscribe_all`.
-    pub fn unsubscribe_all(&self, session_id: u64) {
-        if let Err(error) =
-            self.actor
-                .try_send_high_priority(super::model::ScheduleDomainCommand::CleanupSession(
-                    session_id,
-                ))
-        {
-            tracing::warn!(domain = "schedule", error = %error, "Schedule cleanup enqueue failed");
-        }
+    ///
+    /// # Errors
+    ///
+    /// Returns the actor enqueue failure or a bounded reply-wait failure when
+    /// cleanup execution cannot be confirmed.
+    pub fn cleanup_session(&self, session_id: u64) -> Result<(), crate::runtime::DeliveryError> {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        self.actor
+            .try_send_high_priority(super::model::ScheduleDomainCommand::CleanupSession(
+                session_id, reply_tx,
+            ))?;
+        reply_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .map_err(crate::runtime::reply_wait::map_reply_wait_error)
     }
 }
 

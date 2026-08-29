@@ -16,32 +16,74 @@ impl StreamDomainCore {
     ) {
         use crate::domains::stream::protocol::StreamSubscriptionMessage;
 
-        let response = match sub_msg {
+        let (response, inserted) = match sub_msg {
             StreamSubscriptionMessage::Subscribe {
                 family_id,
                 pattern,
                 session_id,
                 subscriber,
-            } => self.handle_stream_subscribe(
-                envelope, meta, family_id, &pattern, session_id, subscriber,
-            ),
+            } => {
+                let existed = self
+                    .subscriptions
+                    .families
+                    .lock()
+                    .get(&family_id.as_u64())
+                    .and_then(|state| state.find_existing_id(session_id, pattern.as_str()))
+                    .is_some();
+                let response = self.handle_stream_subscribe(
+                    envelope, meta, family_id, &pattern, session_id, subscriber,
+                );
+                (response, !existed)
+            }
             StreamSubscriptionMessage::Unsubscribe {
                 family_id,
                 pattern,
                 session_id,
                 subscriber,
-            } => self.handle_stream_unsubscribe(
-                envelope,
-                meta,
-                family_id,
-                &pattern,
-                session_id,
-                &subscriber,
+            } => (
+                self.handle_stream_unsubscribe(
+                    envelope,
+                    meta,
+                    family_id,
+                    &pattern,
+                    session_id,
+                    &subscriber,
+                ),
+                false,
             ),
         };
 
         self.refresh_metrics_gauges();
-        self.route_stream_response(envelope, meta, &response, request_started);
+        if !self.route_stream_response(envelope, meta, &response, request_started) && inserted {
+            self.rollback_undeliverable_stream_subscribe(
+                meta.route_family,
+                meta.session_id,
+                &response,
+            );
+            self.refresh_metrics_gauges();
+        }
+    }
+
+    fn rollback_undeliverable_stream_subscribe(
+        &self,
+        family_id: crate::runtime::routing::RouteFamily,
+        session_id: u64,
+        response: &StreamClientResponseBody,
+    ) {
+        let StreamClientResponseBody::Ok {
+            session_id: Some(subscription_id),
+            ..
+        } = response
+        else {
+            return;
+        };
+        let mut families = self.subscriptions.families.lock();
+        if let Some(state) = families.get_mut(&family_id.as_u64()) {
+            state.remove_subscription_for_session(family_id, session_id, *subscription_id);
+            if state.is_empty() {
+                families.remove(&family_id.as_u64());
+            }
+        }
     }
 
     fn handle_stream_subscribe(
