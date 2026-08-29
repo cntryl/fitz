@@ -51,6 +51,7 @@ use std::time::{Duration, Instant};
 
 const QUEUE_IDLE_HORIZON: Duration = Duration::from_hours(1);
 const QUEUE_STORAGE_RETRY_BACKOFF: Duration = Duration::from_secs(1);
+const MAX_DUE_ITEMS_PER_PASS: usize = 32;
 pub(super) const QUEUE_ACTOR_REPLY_TIMEOUT: Duration = Duration::from_secs(1);
 
 use bytes::Bytes;

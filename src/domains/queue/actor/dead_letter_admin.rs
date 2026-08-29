@@ -259,8 +259,12 @@ impl QueueActor {
         let now = self.clock.now_instant();
         let was_empty = self.ready_count == 0;
         let mut mutated = false;
+        let mut processed = 0;
 
-        while let Some(Reverse(delayed)) = self.delayed.peek() {
+        while processed < super::MAX_DUE_ITEMS_PER_PASS {
+            let Some(Reverse(delayed)) = self.delayed.peek() else {
+                break;
+            };
             if delayed.visible_at > now {
                 // Found next delayed message deadline, cache it
                 self.next_delayed_deadline = delayed.visible_at;
@@ -269,6 +273,7 @@ impl QueueActor {
 
             // Pop now-visible message
             let delayed = self.delayed.pop().unwrap().0;
+            processed += 1;
 
             if !self.promote_delayed_message(delayed) {
                 self.delayed.push(Reverse(delayed));
