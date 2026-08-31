@@ -185,6 +185,31 @@ impl Pattern {
 
         pattern_language_is_subset(&requested.segments, &self.segments)
     }
+
+    /// Return whether this pattern covers every route matched by `requested`
+    /// that is exactly `depth` segments long.
+    ///
+    /// `covers` proves containment over the unrestricted `*`/`**` language,
+    /// where a bare `**` is a strict superset of any fixed-depth pattern (it
+    /// also matches every other depth) — so for a domain whose concrete
+    /// routes are always exactly `depth` segments (Lease's `CanMatch(3)`,
+    /// e.g.), a grant spelled `lease://*/*/*#read` would never cover a
+    /// requested selector spelled `lease://**`, even though both describe
+    /// the identical set of concrete three-segment Lease routes. This
+    /// restricts the same product-automaton proof `covers` uses to routes of
+    /// exactly `depth` segments, so the two languages are compared over the
+    /// domain's actual concrete-route universe rather than the full
+    /// unbounded wildcard grammar.
+    #[must_use]
+    pub fn covers_at_fixed_depth(&self, requested: &Self, depth: usize) -> bool {
+        match (self.scheme.as_deref(), requested.scheme.as_deref()) {
+            (Some(allowed), Some(requested)) if allowed != requested => return false,
+            (Some(_), None) => return false,
+            _ => {}
+        }
+
+        pattern_language_is_subset_at_depth(&requested.segments, &self.segments, depth)
+    }
 }
 
 fn pattern_language_is_subset(requested: &[PatternSegment], allowed: &[PatternSegment]) -> bool {
@@ -227,6 +252,65 @@ fn pattern_language_is_subset(requested: &[PatternSegment], allowed: &[PatternSe
     }
 
     true
+}
+
+/// Like `pattern_language_is_subset`, but restricted to routes of exactly
+/// `depth` segments: every state reached by consuming fewer than `depth`
+/// symbols is transient (never checked for acceptance), and only states
+/// reached by exactly `depth` symbols are compared. See
+/// `Pattern::covers_at_fixed_depth`.
+fn pattern_language_is_subset_at_depth(
+    requested: &[PatternSegment],
+    allowed: &[PatternSegment],
+    depth: usize,
+) -> bool {
+    if requested.len() >= u128::BITS as usize || allowed.len() >= u128::BITS as usize {
+        return false;
+    }
+
+    let mut symbols = vec![None];
+    for segment in requested.iter().chain(allowed) {
+        if let PatternSegment::Literal(literal) = segment {
+            let symbol = Some(literal.as_str());
+            if !symbols.contains(&symbol) {
+                symbols.push(symbol);
+            }
+        }
+    }
+
+    let mut frontier =
+        HashSet::from([(epsilon_closure(requested, 1), epsilon_closure(allowed, 1))]);
+
+    for _ in 0..depth {
+        let mut next_frontier = HashSet::with_capacity(frontier.len());
+        for (requested_states, allowed_states) in &frontier {
+            for symbol in &symbols {
+                let next_requested = transition(requested, *requested_states, *symbol);
+                if next_requested == 0 {
+                    continue;
+                }
+                next_frontier.insert((
+                    next_requested,
+                    transition(allowed, *allowed_states, *symbol),
+                ));
+                if next_frontier.len() > MAX_PATTERN_COVERAGE_STATES {
+                    return false;
+                }
+            }
+        }
+        if next_frontier.is_empty() {
+            // `requested` cannot reach `depth` symbols at all, so it
+            // matches no route of that length: vacuously covered.
+            return true;
+        }
+        frontier = next_frontier;
+    }
+
+    frontier
+        .into_iter()
+        .all(|(requested_states, allowed_states)| {
+            !accepts(requested_states, requested.len()) || accepts(allowed_states, allowed.len())
+        })
 }
 
 fn epsilon_closure(pattern: &[PatternSegment], mut states: u128) -> u128 {
@@ -384,6 +468,65 @@ mod tests {
 
         // Assert
         assert!(!covers);
+    }
+
+    #[test]
+    fn should_cover_double_star_alias_at_fixed_depth_given_equivalent_literal_star_permission() {
+        // Arrange: `lease://*/*/*` and `lease://**` describe the identical
+        // set of three-segment Lease routes, but unrestricted `covers`
+        // treats `**` as also matching every other depth, so it must fail
+        // here — that's the bug this depth-bounded variant fixes.
+        let permission = Pattern::new("lease://*/*/*");
+        let requested = Pattern::new("lease://**");
+
+        // Act
+        let unbounded_covers = permission.covers(&requested);
+        let depth_bounded_covers = permission.covers_at_fixed_depth(&requested, 3);
+
+        // Assert
+        assert!(
+            !unbounded_covers,
+            "unrestricted covers must still see ** as a strict superset"
+        );
+        assert!(depth_bounded_covers);
+    }
+
+    #[test]
+    fn should_cover_realm_scoped_double_star_alias_at_fixed_depth() {
+        // Arrange
+        let permission = Pattern::new("lease://acme/*/*");
+        let requested = Pattern::new("lease://acme/**");
+
+        // Act / Assert
+        assert!(permission.covers_at_fixed_depth(&requested, 3));
+    }
+
+    #[test]
+    fn should_not_cover_broader_realm_at_fixed_depth() {
+        // Arrange: a grant scoped to "acme" must not cover a selector that
+        // can also match other realms, even when both are bounded to depth
+        // three.
+        let permission = Pattern::new("lease://acme/*/*");
+        let requested = Pattern::new("lease://*/*/*");
+
+        // Act / Assert
+        assert!(!permission.covers_at_fixed_depth(&requested, 3));
+    }
+
+    #[test]
+    fn should_cover_multi_double_star_alias_at_fixed_depth() {
+        // Arrange: `lease://**/x/**` matches every 3-segment route with "x"
+        // in any position; a full `lease://*/*/*#read` grant covers all of
+        // them, but no single literal-or-* 3-segment permission narrower
+        // than that could, since the requested language is itself a union
+        // of three distinct shapes (x first, middle, or last).
+        let full_grant = Pattern::new("lease://*/*/*");
+        let realm_scoped_grant = Pattern::new("lease://acme/*/*");
+        let requested = Pattern::new("lease://**/x/**");
+
+        // Act / Assert
+        assert!(full_grant.covers_at_fixed_depth(&requested, 3));
+        assert!(!realm_scoped_grant.covers_at_fixed_depth(&requested, 3));
     }
 
     #[test]

@@ -18,9 +18,10 @@ the application-visible `realm` with the broker-internal `RouteFamily`.
 The design makes these decisions explicitly:
 
 1. Fitz route wildcards are whole-segment `*` and `**` matchers.
-2. KV, Queue, and Schedule use the generic fixed-depth pattern language.
-   Notice and RPC use the generic flexible-depth language. Lease remains exact
-   only. Stream uses an explicit, typed selector grammar.
+2. KV, Queue, Schedule, and Lease use generic fixed-depth patterns. Notice and
+   RPC use flexible-depth patterns. Stream uses a typed selector grammar. Lease
+   mutations reject wildcards; only `SUBSCRIBE`, `UNSUBSCRIBE`, and `LIST`
+   accept patterns.
 3. Authorization proves that one grant covers the request's complete concrete
    match set. Intersection alone is insufficient.
 4. Stream supports all eight literal-or-`*` selectors over
@@ -173,9 +174,9 @@ Authorization operates on concrete-route languages:
   domain's concrete depth.
 - Deliberate aliases are canonicalized before authorization or compared as the
   same domain-restricted language.
-- Permission patterns and client selectors are related languages but not the
-  same API. A permission may authorize many exact Lease operations even though
-  Lease rejects wildcard subscriptions.
+- Permission patterns and client selectors are related languages, not the same
+  API. Lease observation permissions never grant `ACQUIRE`, `EXTEND`, or
+  `RELEASE`.
 
 Permission strings serialize as `{route_pattern}#{access}`, where access is
 `read`, `write`, or `*`; the suffix is optional and defaults to `*`. The final
@@ -242,7 +243,7 @@ complete.
 | Notice | Flexible non-empty route | N/A | `SUBSCRIBE`, flexible depth | No; live fanout |
 | Stream | `stream://{realm}/{area}/{resource}` | `READ`, typed matrix | `SUBSCRIBE` / `UNSUBSCRIBE`, same matrix | Yes |
 | RPC | Flexible non-empty route | No | Worker `REGISTER` / `UNREGISTER`, flexible depth | No; live request/response |
-| Lease | `lease://{realm}/{area}/{resource}` | No | Exact `SUBSCRIBE` / `UNSUBSCRIBE` only | No; ephemeral coordination |
+| Lease | `lease://{realm}/{area}/{resource}` | `LIST`, generic depth 3 | `SUBSCRIBE` / `UNSUBSCRIBE`, generic depth 3 | No; ephemeral coordination |
 | Schedule | `schedule://{realm}/{area}/{resource}/{operation}` | No route selector for `LIST` | `SUBSCRIBE` / `UNSUBSCRIBE`, generic depth 4 | Durable definitions, live fires |
 
 ## 7. Non-Stream domains
@@ -324,12 +325,14 @@ bounded and cleaned on disconnect.
 | Operation | Route form |
 | --- | --- |
 | `QUERY`, `ACQUIRE`, `EXTEND`, `RELEASE` | Exact depth-3 route |
-| `SUBSCRIBE`, `UNSUBSCRIBE` | Exact depth-3 route only |
+| `SUBSCRIBE`, `UNSUBSCRIBE`, `LIST` | Exact depth-3 route, or the generic depth-3 wildcard grammar |
 
-Wildcard Lease subscriptions remain invalid. The exact route, including
-`RouteFamily`, identifies the lease and its fencing sequence. Queries and
-notifications account for expiration before reporting ownership. Exact watch
-lookup needs no matcher. Timers and wait queues use indexed, bounded state.
+The exact route plus `RouteFamily` identifies ownership and fencing; only exact
+`ACQUIRE`/`EXTEND`/`RELEASE` mutate it. Observation accepts whole-segment
+`*`/`**`: retained subscriptions use the shared indexed matcher, exact LIST is
+a keyed lookup, and wildcard LIST scans only the family's bounded ordered
+range. LIST never constructs an owned handle. Queries, LIST, and notifications
+account for expiration. Timers and wait queues use indexed, bounded state.
 Subscriptions do not make ownership durable across restart or reconnect.
 
 ### 7.6 Schedule
@@ -931,8 +934,9 @@ postings transactionally or retain compact tombstone/range metadata, provided:
 - Notice flexible-depth matching, fanout bounds, slow consumers, and no replay.
 - RPC wildcard/exact selection, overlaps, credit, FIFO/correlation, incremental
   reconciliation, unregistration, timeout, and disconnect cleanup.
-- Lease wildcard rejection, expiration, fencing, exact watches, and restart
-  loss of ephemeral state.
+- Lease wildcard observation (`SUBSCRIBE`/`UNSUBSCRIBE`/`LIST`), exact-only
+  mutation, expiration, fencing, exact watches, and restart loss of ephemeral
+  state.
 - Schedule depth-4 matching, global `LIST` authorization, bounded and stable
   pagination, broadcast, single fairness, and cursor pruning.
 

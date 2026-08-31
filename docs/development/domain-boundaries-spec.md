@@ -281,9 +281,12 @@ Registration authorization covers the complete concrete-route match set. One
 granted permission pattern must contain the requested registration pattern;
 authorizing the literal wildcard-bearing string alone is insufficient.
 
-Lease does not participate in this wildcard contract. Lease SUBSCRIBE and
-UNSUBSCRIBE accept only exact three-segment `lease://realm/area/resource` routes,
-reject every wildcard, and have no wildcard-registration quota.
+Lease participates in this wildcard contract for observation only: `SUBSCRIBE`,
+`UNSUBSCRIBE`, and `LIST` accept the same depth-three grammar and share the
+128-per-session wildcard-registration quota. Observation never changes
+ownership. Lease `ACQUIRE`, `EXTEND`, and `RELEASE` remain exact-route only and
+reject every wildcard, because those are the only operations that grant,
+renew, or release a lease.
 
 ### Notice
 
@@ -399,7 +402,9 @@ RPC does NOT guarantee:
 Lease guarantees:
 
 - one live holder per lease identity in the running broker
-- exact-route live watches; wildcard Lease watches are rejected
+- exact-route live watches, plus patterned `SUBSCRIBE`/`UNSUBSCRIBE`/`LIST`
+  observation over the same depth-three grammar as other wildcard-capable
+  domains; only exact `ACQUIRE`/`EXTEND`/`RELEASE` can change ownership
 - fencing tokens that are monotonic within the local broker lifetime
 - explicit held, waiting, renewed, released, and expired outcomes
 - eventual reacquisition after expiry or release

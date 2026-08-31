@@ -265,7 +265,7 @@ fn route_segments(route: &str) -> std::str::Split<'_, char> {
 /// - Pure identity comparison
 ///
 /// This ensures families are true isolation boundaries.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct RouteFamily {
     id: u32,
 }

@@ -199,6 +199,8 @@ impl LeaseDomainRuntime<'_> {
                 | crate::domains::lease::protocol::LeaseResponse::NotFound
                 | crate::domains::lease::protocol::LeaseResponse::Error(_)
                 | crate::domains::lease::protocol::LeaseResponse::InvalidSubscriptionRoute(_)
+                | crate::domains::lease::protocol::LeaseResponse::InvalidListPattern(_)
+                | crate::domains::lease::protocol::LeaseResponse::InvalidListCursor
         )
     }
 

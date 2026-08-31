@@ -133,6 +133,10 @@ impl LeaseDomainRuntime<'_> {
                 self.untrack_session_waiter(waiter.owner_session_id, key, waiter.queued_token);
                 self.track_session_lease(waiter.owner_session_id, key);
                 self.upsert_admin_lease(key, &state);
+                // A queued waiter just became the live holder: notify fleet
+                // observers before attempting delivery to the waiter itself,
+                // matching the immediate-acquisition notify in acquire.rs.
+                self.notify_lease_change(key);
                 let delivered = self.send_waiter_response(
                     &waiter,
                     &crate::domains::lease::protocol::LeaseResponse::Acquired {
@@ -244,6 +248,7 @@ impl LeaseDomainRuntime<'_> {
             let _ = self.advance_waiter_queue(&key, now);
         }
 
+        self.sweep_idle_list_snapshots();
         self.refresh_metrics_gauges();
     }
 }

@@ -23,9 +23,13 @@ crosses `RouteFamily`; overlaps remain independent and exact registrations have
 no precedence. Notifications include the matching subscription identifier and
 the exact concrete route.
 
-Lease is intentionally different: every Lease operation, SUBSCRIBE, and
-UNSUBSCRIBE requires an exact `lease://realm/area/resource` route. Lease rejects
-all wildcards and has no wildcard quota.
+Lease's exact mutation operations (`ACQUIRE`, `EXTEND`, `RELEASE`) still
+require an exact `lease://realm/area/resource` route; only they can grant,
+renew, or release a lease. Lease's observation operations (`SUBSCRIBE`,
+`UNSUBSCRIBE`, `LIST`) instead accept the same generic fixed-depth pattern
+language as KV, Queue, Stream, and Schedule, and share the same 128-per-session
+wildcard-registration quota — observing a route this way never changes its
+ownership.
 
 ### KV Domain (Key-Value Store)
 
@@ -97,15 +101,18 @@ all wildcards and has no wildcard quota.
 | `Extend` | 401 | C→S | Extend existing lease |
 | `Release` | 402 | C→S | Release lease |
 | `Query` | 403 | C→S | Query lease status |
-| `Subscribe` | 407 | C→S | Watch lease changes |
+| `Subscribe` | 407 | C→S | Watch lease changes (exact or wildcard selector) |
 | `Unsubscribe` | 408 | C→S | Stop watching |
 | `Notify` | 409 | S→C | Deliver lease change event |
+| `List` | 410 | C→S | Read current held-lease inventory matching a selector |
 
 **Constraints:**
 - Token MUST match to extend or release (prevents cross-holder mutations)
 - Expiry is lazy (expires when next operation touches resource)
 - Watches are session-scoped and are removed automatically on disconnect
-- Watches require exact three-segment `lease://` routes and reject every wildcard
+- Watches and `List` accept exact three-segment `lease://` routes or the
+  generic whole-segment `*`/`**` grammar; `Acquire`, `Extend`, and `Release`
+  still reject every wildcard, since only they change ownership
 - `Notify` is a best-effort hint that lease state changed; clients still use `Query` or `Acquire` for authoritative state transitions
 - Disconnect cleanup and broker restart both clear lease ownership; clients MUST reacquire if they still need exclusivity
 - Atomic compare-and-swap via token (no blindupdate)

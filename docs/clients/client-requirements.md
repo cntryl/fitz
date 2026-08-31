@@ -132,13 +132,19 @@ The acceptance criteria in `client-acceptance-criteria.md` are the normative sou
 | Queue | Enqueue, Reserve, Extend, Complete |
 | Notice | Publish, Subscribe, Unsubscribe, UnsubscribeAll |
 | RPC | RegisterWorker, Call |
-| Lease | Acquire, Extend (Renew), Release, Query |
+| Lease | Acquire, Extend (Renew), Release, Query, List |
 | Stream | Begin, Append, Commit, Rollback, Read, Peek, Metadata, Subscribe, Unsubscribe |
 | Schedule | Create, Cancel, List, Subscribe, Unsubscribe |
 
 **REQ-API-003 (T0)** The `Queue.Subscribe` / `Queue.Unsubscribe` operations for queue availability notifications (QUEUE_NOTIFY 209) MUST be exposed.
 
-**REQ-API-004 (T0)** The `Lease.Subscribe` / `Lease.Unsubscribe` operations for lease change notifications (LEASE_NOTIFY 409) MUST be exposed.
+**REQ-API-004 (T0)** The `Lease.Subscribe` / `Lease.Unsubscribe` operations for lease change notifications (LEASE_NOTIFY 409) MUST be exposed, accepting the same exact-or-wildcard selector grammar as `Lease.List` (REQ-API-004B). A partial wildcard segment, wrong scheme, wrong segment count, or empty segment MUST be rejected client-side, before any wire I/O, with a typed local error — never sent to the broker to fail there instead. Adjacent `**` segments (e.g. `lease://acme/**/**`) MUST also be rejected client-side; the shared registration-pattern validator used for the other wildcard-capable domains (KV, Queue, Stream, Schedule, Notice, RPC) MUST encode this rule, not just Lease's own call site, since the broker's compiler rejects it identically for every domain.
+
+**REQ-API-004A (T0)** `Lease.Acquire`/`Extend`/`Release`/`Query` MUST continue to accept only an exact `lease://{realm}/{area}/{resource}` route; observation (Subscribe/Unsubscribe/List) accepting wildcards MUST NOT loosen validation on these four exact-route, ownership-changing operations.
+
+**REQ-API-004B (T0)** The `Lease.List` operation (LEASE_LIST 410) MUST be exposed, returning the current held-lease inventory matching a selector: exact route, the complete literal-or-`*` matrix over the three segments, or a `**` alias, using the same grammar and client-side validation as REQ-API-004. Each returned item MUST expose its exact route, logical `owner_id`, opaque `holder_incarnation` (never a raw session ID), `acquired_at`, remaining TTL, and renewal count. `Lease.List` MUST paginate per REQ-API-008 and MUST validate `limit` and any cursor offset as a non-negative value representable in an unsigned 32-bit integer before encoding it on the wire — silently wrapping or bit-coercing an out-of-range value (e.g. a `-1` limit becoming `4294967295`) is a REQ-API-004B violation, not acceptable input handling.
+
+**REQ-API-004C (T0)** Every public client MUST expose one safe, high-level Lease inventory observer operation that owns the full subscribe-before-list bootstrap: (1) establish the patterned Subscribe and wait for its acknowledgement; (2) begin buffering matching LEASE_NOTIFY invalidations; (3) call `Lease.List` for the same selector; (4) install that result as the local observed view; (5) apply buffered invalidations accumulated during steps 1–4 and relist if the view may have changed. The observer MUST NOT report the view ready until this sequence completes, and callers MUST NOT be required to hand-roll it themselves. Reconnect MUST re-run the full bootstrap (a fresh Subscribe plus a fresh List) rather than resubscribing without refreshing inventory. See `docs/clients/spec/lease-schedule.md` and https://github.com/cntryl/fitz/issues/219 §5 for the wire-level sequencing this depends on and the required periodic-reconciliation and reconnect-recovery behavior; the same language-neutral bootstrap and lifecycle conformance scenarios MUST pass in all five SDKs.
 
 **REQ-API-005 (T0)** The `Schedule.List` operation MUST support pagination (offset, limit) and return a total count alongside the results.
 
@@ -153,7 +159,7 @@ unknown modes. This is a clean wire upgrade with no legacy CREATE encoding.
 
 ### T1 — Iterator and Streaming
 
-**REQ-API-008 (T1)** Operations that return variable-length result sets — KV Scan, Stream Read, Schedule List, and RPC chunked responses — MUST return an iterator (or language-equivalent lazy cursor) rather than a fully-buffered slice. The iterator MUST be closable to release server-side resources.
+**REQ-API-008 (T1)** Operations that return variable-length result sets — KV Scan, Stream Read, Schedule List, Lease List, and RPC chunked responses — MUST return an iterator (or language-equivalent lazy cursor) rather than a fully-buffered slice. The iterator MUST be closable to release server-side resources.
 
 **REQ-API-009 (T1)** The `Queue.Reserve` operation MUST return a typed item object that carries its own `Extend` and `Complete` methods, encapsulating the message ID and fencing token so callers never handle raw tokens directly.
 

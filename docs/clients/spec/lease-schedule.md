@@ -18,9 +18,10 @@
 |  401 | RENEW   | Extend lease expiration by issuing new token |
 |  402 | RELEASE | Relinquish lease, grant to next waiter |
 |  403 | QUERY   | Inspect current holder and waiter count |
-|  407 | SUBSCRIBE | Register a live watch on a lease route |
+|  407 | SUBSCRIBE | Register a live watch on an exact route or a wildcard selector |
 |  408 | UNSUBSCRIBE | Remove a live watch |
 |  409 | NOTIFY | Server-to-client lease change notification |
+|  410 | LIST | Read the current held-lease inventory matching a selector |
 
 #### ACQUIRE Request
 
@@ -35,7 +36,10 @@
 
 **Parameters:**
 - `route`: Lease identity (e.g., `lease://realm/area/leader`)
-- `owner_id`: String identifier for owner (e.g., `"node-1"`)
+- `owner_id`: String identifier for owner (e.g., `"node-1"`), at most 512 bytes.
+  A longer `owner_id` is rejected (status=1, generic error envelope) before
+  any lease state changes; this bound exists so `LIST` can always encode a
+  held lease's `owner_id` well within one wire frame.
 - `ttl_secs`: Server-enforced expiration duration (e.g., `60`)
 - `wait_seconds`: Max time to wait if lease held by other owner
   - `0` (or omitted): Immediate fail if unavailable → response `HeldByOther`
@@ -52,6 +56,7 @@
 **Response (status=1, error):**
 ```
 [u8]     1 (status)
+[u32 BE] error_code
 [u32 BE] error_len
 [bytes]  error_msg
 ```
@@ -81,6 +86,7 @@
 **Response (status=1, error):**
 ```
 [u8]     1 (status)
+[u32 BE] error_code
 [u32 BE] error_len
 [bytes]  error_msg
 ```
@@ -108,6 +114,7 @@
 **Response (status=1, error):**
 ```
 [u8]     1 (status)
+[u32 BE] error_code
 [u32 BE] error_len
 [bytes]  error_msg
 ```
@@ -139,6 +146,7 @@
 **Response (status=1, error):**
 ```
 [u8]     1 (status)
+[u32 BE] error_code
 [u32 BE] error_len
 [bytes]  error_msg
 ```
@@ -151,11 +159,21 @@
 ```
 
 **Design Notes:**
-- Watches are exact-route subscriptions on `lease://{realm}/{area}/{resource}`
-- The route must use the `lease://` scheme and contain exactly three non-empty
-  concrete segments. `*`, `**`, and partial wildcard tokens are rejected with 5010
-- Duplicate subscribe calls for the same `(session, route)` return the existing `subscription_id`
+- `route` accepts an exact `lease://{realm}/{area}/{resource}` route or a
+  selector using the same generic whole-segment `*`/`**` grammar as the other
+  wildcard-capable generic fixed-depth domains (KV, Queue, Schedule): the
+  complete literal-or-`*` matrix over the three segments plus every valid
+  non-adjacent `**` composition capable of matching three segments
+- Partial wildcard tokens (`lock*`), wrong scheme, empty segments, and the
+  wrong segment count are rejected with 5010 before any subscription state
+  is retained; this applies identically to SUBSCRIBE and UNSUBSCRIBE
+- Duplicate subscribe calls for the same `(session, original selector string)` return the existing `subscription_id`
 - Subscriptions are session-scoped and are removed automatically on disconnect
+- A wildcard subscription counts against the shared 128-wildcard-registrations-per-session
+  cap (checked after the duplicate check); exact subscriptions do not
+- Watching a route, exact or via a wildcard selector, is read-only: it never
+  grants, renews, extends, or releases that lease. Only exact `ACQUIRE`,
+  `EXTEND`, and `RELEASE` change ownership
 
 **Response (status=0, success):**
 ```
@@ -172,7 +190,9 @@
 
 **Design Notes:**
 - Unsubscribe is idempotent; removing a missing watch still returns success
-- The same exact-route validation applies; invalid routes return 5010
+- `route` must be the original selector string used to subscribe (exact route
+  or wildcard pattern); the same grammar validation applies and invalid
+  selectors return 5010
 
 **Response (status=0, success):**
 ```
@@ -189,9 +209,101 @@
 ```
 
 **Design Notes:**
-- `NOTIFY` is emitted when a watched lease changes because of release, expiry, or disconnect cleanup
-- The payload is currently empty; the route identifies which lease changed
-- Delivery is best-effort and is never acknowledged or retried
+- `NOTIFY` is an inventory-invalidation hint, not a replayable event or a
+  command. It is emitted once per matching registration (exact or wildcard)
+  whenever the held-lease set changes for the concrete `route`: immediate
+  acquisition of a previously unowned lease, a successful grant to a queued
+  waiter, explicit release, TTL expiry, owner-session disconnect cleanup, or
+  rollback of an acquisition whose response could not be delivered
+- A successful RENEW does **not** emit `NOTIFY` by default — the held set and
+  holder are unchanged, so broadcasting every renewal would be quadratic
+  fanout for no membership change. QUERY and LIST already reflect the new
+  expiry
+- Failed, fenced, or merely-queued ACQUIRE attempts do not emit `NOTIFY`
+- The payload is currently empty; `route` is always the exact concrete lease
+  route, never a pattern, even when delivered to a wildcard registration
+- Delivery is best-effort and is never acknowledged or retried; clients that
+  need current state must reconcile with QUERY or LIST rather than trust
+  `NOTIFY` as a complete or durable log
+
+#### LIST Request
+
+```
+[u32 BE]  pattern_len
+[bytes]   pattern
+[u8]      has_cursor
+[u64 BE]  snapshot_id   (present only when has_cursor = 1)
+[u32 BE]  offset        (present only when has_cursor = 1)
+[u32 BE]  limit         (0 = server default page size)
+```
+
+**Design Notes:**
+- `pattern` accepts the same exact-or-wildcard grammar as SUBSCRIBE. An exact
+  pattern is a zero-or-one-item read, answered directly from the current
+  held-lease table (no scan, no cursor, always a single response)
+- Default page size is 100 items; the server clamps any requested `limit` to
+  at most 500
+- The first call for one scan omits the cursor (`has_cursor = 0`). If the
+  match set exceeds the page size, the response carries a continuation
+  cursor; replay it verbatim (same `pattern`, its `snapshot_id`/`offset`) to
+  fetch the next page. `offset` is the exact position the server issued —
+  presenting a valid `snapshot_id` with any other offset (lower to replay
+  items, higher to skip ahead) fails with error 5011, the same as an unknown
+  cursor
+- A wildcard scan is a true point-in-time snapshot, taken in full on the
+  first call before any page is ever returned: concurrent acquire/release/
+  expiry/renew activity elsewhere cannot add, remove, or change items
+  already captured, so paging never produces duplicates or omissions. A
+  selector matching more candidates than the server can capture in one pass
+  fails outright with a generic error (status=1) asking the caller to narrow
+  the selector, rather than silently doing unbounded work or filling the
+  snapshot across multiple requests (which could no longer promise the same
+  consistency). Unfinished snapshots are also bounded by global and
+  per-session retained-byte budgets; a scan that cannot be admitted fails
+  rather than retaining an unbounded inventory copy
+- A cursor reused with a different `pattern`, a different `RouteFamily`, an
+  unknown or already-exhausted `snapshot_id`, or after a broker restart
+  (snapshot IDs do not survive restart) fails explicitly with error 5011
+  rather than silently restarting or narrowing the read
+- Pending waiters are never included; only currently held, non-expired
+  leases are returned
+- `LIST` results are read-only observations. An item can never be turned
+  into an owned Lease handle — only exact ACQUIRE/EXTEND/RELEASE change
+  ownership
+- Long-running fleet managers should periodically re-`LIST` even while
+  subscribed: `NOTIFY` is a best-effort hint, not a durable or replayable log
+
+**Response (status=0, success):**
+```
+[u8]      0 (status)
+[u32 BE]  item_count
+repeated item_count times:
+  [u32 BE]  route_len
+  [bytes]   route
+  [u32 BE]  owner_id_len
+  [bytes]   owner_id            (logical owner_id the caller passed to ACQUIRE, never a raw session ID)
+  [u64 BE]  holder_incarnation  (opaque; stable for one live session, distinct across sessions/reconnects)
+  [u32 BE]  acquired_at_len
+  [bytes]   acquired_at         (RFC 3339 timestamp)
+  [u64 BE]  expires_in_secs
+  [u32 BE]  renewals
+[u8]      has_next
+[u64 BE]  snapshot_id  (present only when has_next = 1)
+[u32 BE]  offset       (present only when has_next = 1; pass back verbatim as the next request's offset)
+```
+
+**Response (status=1, error):**
+```
+[u8]     1 (status)
+[u32 BE] error_code
+[u32 BE] error_len
+[bytes]  error_msg
+```
+
+Error code 5011 (Invalid List Cursor) covers a cursor that does not match the
+selector, family, or broker lifetime it was issued from; 5012 (Invalid List
+Pattern) covers a pattern that fails the shared grammar on `LIST`. The related
+SUBSCRIBE/UNSUBSCRIBE operations use 5010 for that validation failure.
 
 #### Response Types (Detailed)
 
@@ -206,6 +318,7 @@
 | `Renewed { token }` | Lease TTL extended with new token | Use new token for future renew/release |
 | `Released` | Lease released successfully | Lease available; next waiter (if any) receives async `Acquired` |
 | `Status { owner, token, ttl_secs, pending }` | Lease holder & queue info | Read-only; useful for debugging |
+| `ListPage { items, next_cursor }` | One page of matching held leases | Read-only; call again with `next_cursor` if present, else the scan is complete |
 
 **Error Responses:**
 
@@ -218,6 +331,9 @@
 | `Fenced` | Token mismatch | `fencing_token` doesn't match server | Acquire fresh lease; old lease was released |
 | `Expired` | Lease expired | Query on released lease (no holder) | Lease available; acquire fresh |
 | `NotFound` | Lease doesn't exist | Route never acquired before | New lease; acquire automatically creates |
+| `InvalidSubscriptionRoute` (5010) | Malformed SUBSCRIBE/UNSUBSCRIBE selector | Partial wildcard, wrong scheme, wrong depth, empty segment | Fix the selector; no state was retained |
+| `InvalidListCursor` (5011) | LIST cursor rejected | Cursor's selector/family/snapshot doesn't match this call, or broker restarted | Start a fresh LIST (omit the cursor) |
+| `InvalidListPattern` (5012) | Malformed LIST selector | Partial wildcard, wrong scheme, wrong depth, empty segment | Fix the selector; no inventory was scanned |
 
 #### Queueing Semantics
 
@@ -543,6 +659,7 @@ Response (success=0):
 
 Response (error=1):
   [u8]     1
+  [u32 BE] error_code
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -571,6 +688,7 @@ Response (success=0):
 
 Response (error=1):
   [u8]     1
+  [u32 BE] error_code
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -814,6 +932,7 @@ Response (status=0):
   [u64 BE] subscription_id
 Response (status=1):
   [u8]     1
+  [u32 BE] error_code
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -847,6 +966,7 @@ Response (status=0):
   [u8]     0
 Response (status=1):
   [u8]     1
+  [u32 BE] error_code
   [u32 BE] error_len
   [bytes]  error_msg
 ```

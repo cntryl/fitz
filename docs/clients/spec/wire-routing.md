@@ -851,11 +851,21 @@ it sent.
   | `RENEW` | `{realm}/{area}/{resource}` |
   | `RELEASE` | `{realm}/{area}/{resource}` |
   | `QUERY` | `{realm}/{area}/{resource}` |
-  | `SUBSCRIBE` | `{realm}/{area}/{resource}` |
+  | `SUBSCRIBE` | `{realm}/{area}/{resource}`, or the generic depth-3 `*`/`**` grammar |
   | `UNSUBSCRIBE` | same as `SUBSCRIBE` |
+  | `LIST` | same as `SUBSCRIBE` |
 
-Lease subscription routes are exact. Any wildcard, wrong scheme, empty segment,
-or route with fewer or more than three segments is rejected with 5010.
+`ACQUIRE`, `RENEW`, `RELEASE`, and `QUERY` accept only an exact route: any
+wildcard, wrong scheme, empty segment, or route with fewer or more than three
+segments is rejected. `SUBSCRIBE`, `UNSUBSCRIBE`, and `LIST` additionally
+accept the complete literal-or-`*` matrix over the three segments plus valid
+generic, non-adjacent `**` compositions capable of matching depth three (for
+example `lease://{realm}/**`, `lease://**`, and
+`lease://**/renderers/**`). A partial wildcard token, adjacent `**` segments,
+wrong scheme, empty segment, or pattern incapable of matching three segments
+is rejected with 5010 (5012 for `LIST` specifically). Accepting a wildcard
+here never grants, renews, or releases the matched lease — only the exact-route
+mutation operations change ownership.
 
 ### Notice Domain
 

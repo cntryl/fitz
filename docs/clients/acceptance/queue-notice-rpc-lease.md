@@ -453,17 +453,77 @@ overlapping, or wildcard-realm Queue patterns capable of matching three segments
 - Server returns error code `5009` (Unauthorized)
 - Lease NOT granted
 
-### AC-LEASE-011: Exact-only watch registration
+### AC-LEASE-011: Exact and patterned watch registration
 
-**MUST** keep Lease subscriptions exact
+**MUST** accept exact and wildcard Lease subscriptions over the shared
+depth-three grammar
 **Given:** An authenticated session
-**When:** The client subscribes to `lease://realm/area/resource`
+**When:** The client subscribes to `lease://realm/area/resource` or a
+whole-segment `*`/`**` selector such as `lease://acme/renderers/*`
 **Then:**
 
-- Duplicate subscribe returns the same identifier
-- Unsubscribe is idempotent and disconnect removes the watch
-- Notifications carry the identifier and exact Lease route
-- `*`, `**`, partial wildcards, wrong schemes, empty segments, and missing or extra segments return 5010 for SUBSCRIBE and UNSUBSCRIBE on TCP and WebSocket
-- Lease has no wildcard registration behavior or wildcard quota
+- Duplicate subscribe (same session, same original selector string) returns
+  the same identifier
+- Unsubscribe is idempotent and disconnect removes every watch, exact and
+  wildcard, owned by that session
+- Notifications carry the subscription identifier and the exact concrete
+  Lease route that changed, never the pattern
+- Partial wildcards (`lock*`), wrong schemes, empty segments, and missing or
+  extra segments return 5010 for SUBSCRIBE and UNSUBSCRIBE on TCP and
+  WebSocket; whole-segment `*`/`**` selectors that can match a three-segment
+  route are accepted
+- Wildcard Lease registrations share the 128-per-session wildcard quota with
+  every other wildcard-capable domain; exact registrations do not count
+  against it
+- Observing a route through a wildcard subscription never grants, renews, or
+  releases it — only exact ACQUIRE/EXTEND/RELEASE change ownership
+
+### AC-LEASE-012: Notification coverage of held-lease membership changes
+
+**MUST** notify matching watches whenever the held-lease set changes
+**Given:** A session subscribed to a route or a matching wildcard selector
+**When:** That lease is immediately acquired, granted to a queued waiter,
+released, expires, or its owning session disconnects
+**Then:**
+
+- Exactly one NOTIFY is delivered per matching registration for each such
+  change, carrying the exact concrete route
+- A successful RENEW does **not** emit a NOTIFY by default: the held set and
+  holder did not change, and QUERY/LIST already reflect the new expiry
+- A failed, fenced, or merely queued ACQUIRE does not emit a NOTIFY; only the
+  waiter's own response reflects that outcome
+
+### AC-LEASE-013: Patterned LIST inventory
+
+**MUST** return the current held-lease inventory matching a selector
+**Given:** A session with read permission covering a selector's complete
+match set, and zero or more currently held leases matching it
+**When:** The client sends `List(pattern, cursor=None, limit)`
+**Then:**
+
+- The response is one page of currently held, non-expired leases matching
+  the selector; pending waiters are never included
+- Each item reports its exact route, logical `owner_id`, opaque
+  `holder_incarnation` (never the raw session ID), `acquired_at`,
+  `expires_in_secs`, and `renewals`
+- One live session's `holder_incarnation` is identical across every lease it
+  holds; a different session using the same `owner_id` gets a different
+  `holder_incarnation`, and a reconnect gets a new one
+- A page at or under the default/requested limit returns `next_cursor=None`;
+  a larger match set returns an opaque cursor bound to this selector, family,
+  and broker lifetime
+- Continuing with that cursor and the same selector returns the remaining
+  items exactly once each (no duplicates, no omissions), even if other
+  clients acquire, release, or let leases expire while the scan is in
+  progress
+- Reusing a cursor with a different selector, a different `RouteFamily`, an
+  unknown/evicted snapshot ID, or after a broker restart returns error code
+  `5011` (Invalid List Cursor) rather than silently narrowing or restarting
+  the read
+- A pattern that fails the shared grammar (partial wildcard, wrong scheme,
+  wrong depth, empty segment) returns error code `5012` (Invalid List
+  Pattern) before any inventory is scanned
+- `LIST` items can never be turned into an owned Lease handle; only exact
+  ACQUIRE/EXTEND/RELEASE change ownership
 
 ## Schedule Domain

@@ -105,4 +105,29 @@ impl LeaseDomainSink {
 
         reply_rx.recv_timeout(Duration::from_secs(1)).unwrap_or(0)
     }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn list_for_tests(
+        &self,
+        family_id: crate::runtime::routing::RouteFamily,
+        pattern: crate::runtime::routing::Route,
+        cursor: Option<crate::domains::lease::protocol::LeaseListCursor>,
+        limit: Option<u32>,
+        session_id: u64,
+    ) -> LeaseResponse {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        if self
+            .actor
+            .try_send_high_priority(LeaseDomainCommand::ApplyListForTests(
+                family_id, pattern, cursor, limit, session_id, reply_tx,
+            ))
+            .is_err()
+        {
+            return LeaseResponse::Timeout;
+        }
+
+        reply_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap_or(LeaseResponse::Timeout)
+    }
 }

@@ -282,6 +282,13 @@ pub const MESSAGE_MANIFEST: &[MessageManifestEntry] = &[
     ),
     server(409, "lease", Some("lease"), ManifestDecoder::Lease),
     client(
+        410,
+        "lease",
+        Some("lease"),
+        ManifestAuthorization::RouteRead,
+        ManifestDecoder::Lease,
+    ),
+    client(
         500,
         "notice",
         Some("notice"),

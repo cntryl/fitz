@@ -121,7 +121,11 @@ pub(super) fn is_pattern_authorization_target(
         ) && target.contains('*'))
 }
 
-/// Message types that carry a retained registration pattern.
+/// Message types whose route is a pattern rather than an exact route: a
+/// retained registration (`SUBSCRIBE`/`UNSUBSCRIBE`/`WATCH`/`REGISTER`) or a
+/// one-shot patterned read (Lease `LIST`). Both need the same compile +
+/// containment treatment so authorization cannot accept a selector the sink
+/// would interpret differently (routing-design.md §4).
 ///
 /// This table is message-type routing, not domain policy: the grammar each
 /// pattern must satisfy comes from the domain descriptor.
@@ -131,7 +135,7 @@ fn is_subscription_registration(domain: DispatchDomain, msg_type: u16) -> bool {
         (DispatchDomain::Kv, 109 | 110)
             | (DispatchDomain::Queue, 207 | 208)
             | (DispatchDomain::Stream, 607 | 608)
-            | (DispatchDomain::Lease, 407 | 408)
+            | (DispatchDomain::Lease, 407 | 408 | 410)
             | (DispatchDomain::Schedule, 703 | 704)
             | (DispatchDomain::Notice, 501)
             | (DispatchDomain::Rpc, 300 | 301)
@@ -208,8 +212,9 @@ impl AuthorizationTargets<'_> {
         &self,
         actor_ref: &crate::session::actor::SessionActor,
         access: crate::auth::Access,
-        wildcard_route: &'static str,
+        domain: DispatchDomain,
     ) -> (bool, &str, usize) {
+        let wildcard_route = domain.wildcard_route();
         match self {
             Self::SessionOwned => (actor_ref.authorize_session_owned(), "<session-owned>", 1),
             Self::Single(route) => {
@@ -219,11 +224,22 @@ impl AuthorizationTargets<'_> {
             Self::Registration(route) => {
                 let route = route.as_ref();
                 let pattern = crate::runtime::matcher::Pattern::new(route);
-                (
-                    actor_ref.authorize_registration_pattern(&pattern, access),
-                    route,
-                    1,
-                )
+                // A domain restricted to one concrete depth (Lease's
+                // CanMatch(3), e.g.) must compare grant and requested
+                // selector over that same fixed depth, not the unrestricted
+                // `*`/`**` grammar — otherwise a bare `**` alias reads as a
+                // strict superset of every literal-or-`*` grant at that
+                // depth and a covering grant is wrongly denied
+                // (routing-design.md §4).
+                let authorized = match domain.descriptor().registration_depth {
+                    crate::runtime::matcher::PatternDepth::CanMatch(depth) => {
+                        actor_ref.authorize_registration_pattern_at_depth(&pattern, access, depth)
+                    }
+                    crate::runtime::matcher::PatternDepth::Flexible => {
+                        actor_ref.authorize_registration_pattern(&pattern, access)
+                    }
+                };
+                (authorized, route, 1)
             }
             Self::Multiple(routes) => {
                 let authorized = routes

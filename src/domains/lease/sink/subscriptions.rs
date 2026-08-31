@@ -105,7 +105,7 @@ impl LeaseDomainRuntime<'_> {
         use crate::domains::lease::protocol::LeaseResponse;
 
         if Self::valid_subscription_request(envelope, meta, family_id, session_id, subscriber) {
-            let compiled = match Self::compile_exact_lease_subscription_route(route) {
+            let compiled = match Self::compile_lease_subscription_route(route) {
                 Ok(compiled) => compiled,
                 Err(response) => return response,
             };
@@ -115,6 +115,21 @@ impl LeaseDomainRuntime<'_> {
                 .or_insert_with(RoutedSubscriptionSet::new);
             if let Some(subscription_id) = state.find_existing_id(session_id, route.as_str()) {
                 return LeaseResponse::SubscribeOk { subscription_id };
+            }
+            if state.wildcard_registration_limit_reached(session_id, &compiled) {
+                tracing::warn!(
+                    domain = "lease",
+                    session = session_id,
+                    pattern = route.as_str(),
+                    limit =
+                        crate::domains::subscription_state::MAX_WILDCARD_REGISTRATIONS_PER_SESSION,
+                    "Rejected wildcard lease subscription because session limit was exceeded"
+                );
+                crate::observability::counter_inc("fitz_lease_wildcard_limit_rejects_total");
+                return LeaseResponse::Error(format!(
+                    "wildcard subscription limit exceeded ({} per session)",
+                    crate::domains::subscription_state::MAX_WILDCARD_REGISTRATIONS_PER_SESSION
+                ));
             }
             if let Ok(subscription_id) = self.core.next_sub_id.fetch_update(
                 Ordering::Relaxed,
@@ -154,7 +169,7 @@ impl LeaseDomainRuntime<'_> {
         use crate::domains::lease::protocol::LeaseResponse;
 
         if Self::valid_subscription_request(envelope, meta, family_id, session_id, subscriber) {
-            if let Err(response) = Self::compile_exact_lease_subscription_route(route) {
+            if let Err(response) = Self::compile_lease_subscription_route(route) {
                 return response;
             }
             let mut families = self.core.families.lock();
@@ -173,14 +188,17 @@ impl LeaseDomainRuntime<'_> {
         }
     }
 
-    fn compile_exact_lease_subscription_route(
+    fn compile_lease_subscription_route(
         route: &crate::runtime::routing::Route,
     ) -> Result<crate::runtime::matcher::Pattern, crate::domains::lease::protocol::LeaseResponse>
     {
         use crate::domains::lease::protocol::LeaseResponse;
 
-        // The exact-only rule lives on the Lease descriptor so ingress and
-        // this sink reject the same patterns.
+        // The shared depth-three selector grammar lives on the Lease
+        // descriptor so ingress and this sink accept exactly the same
+        // patterns (routing-design.md §4). Exact `ACQUIRE`/`EXTEND`/`RELEASE`
+        // are unaffected: they parse routes through `LeaseKey`, which still
+        // rejects any wildcard segment.
         crate::runtime::DomainKind::Lease
             .descriptor()
             .compile_registration_pattern(route.as_str())

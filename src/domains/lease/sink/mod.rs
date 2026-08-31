@@ -4,6 +4,7 @@ mod delivery;
 mod expiry;
 mod facade;
 mod ingress;
+mod list;
 mod mailbox;
 mod model;
 mod observability;
