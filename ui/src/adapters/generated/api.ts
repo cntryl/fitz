@@ -425,7 +425,7 @@ export const api = defineApi({
     .security([{"sessionCookie":[]}]),
   listScheduleExecutionObservations: get("/api/v1/{family}/schedule/realms/{realm}/areas/{area}/resources/{resource}/executions")
     .params<ListScheduleExecutionObservationsPath>({ "area": { style: "simple", explode: false }, "family": { style: "simple", explode: false }, "realm": { style: "simple", explode: false }, "resource": { style: "simple", explode: false } })
-    .query<ListScheduleExecutionObservationsQuery>({ "limit": { style: "form", explode: true }, "operation": { style: "form", explode: true } })
+    .query<ListScheduleExecutionObservationsQuery>({ "limit": { style: "form", explode: true }, "offset": { style: "form", explode: true }, "operation": { style: "form", explode: true } })
     .returns(json<ScheduleExecutionObservationList>())
     .errors({ "400": json<Error>(), "401": json<Error>(), "403": json<Error>(), "404": json<Error>(), "503": json<Error>() })
     .security([{"sessionCookie":[]}]),

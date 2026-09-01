@@ -94,7 +94,7 @@ async fn malformed_authenticated_lease_observation(msg_type: u16) -> (IngressDec
                     .expect("Lease response frame")
                     .clone();
             }
-            tokio::task::yield_now().await;
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
         }
     })
     .await

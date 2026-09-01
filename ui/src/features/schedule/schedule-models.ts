@@ -39,12 +39,17 @@ export interface ScheduleAreaInventory {
 export interface ScheduleResourceView {
   detail: import("@/adapters").ScheduleResourceDetail;
   executionObservations: import("@/adapters").ScheduleExecutionObservationList;
+}
+
+export interface ScheduleOperationView {
+  executionObservations: import("@/adapters").ScheduleExecutionObservationList;
   missedHandoffs: import("@/adapters").ScheduleMissedObservationList;
 }
 
 export interface ScheduleExecutionObservationRequest {
   area: string;
   limit?: number;
+  offset?: number;
   operation?: string;
   realm: string;
   resource: string;

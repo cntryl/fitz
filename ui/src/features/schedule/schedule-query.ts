@@ -4,6 +4,7 @@ import type { ScheduleExecutionObservationList, ScheduleMissedObservationList } 
 import type {
   ScheduleAreaInventory,
   ScheduleOverview,
+  ScheduleOperationView,
   ScheduleRealmInventory,
   ScheduleResourceView,
 } from "./schedule-models";
@@ -27,7 +28,7 @@ export function scheduleResourceQueryKey(
   request: {
     area: string;
     limit?: number;
-    operation?: string;
+    offset?: number;
     realm: string;
     resource: string;
   },
@@ -39,7 +40,28 @@ export function scheduleResourceQueryKey(
     request.realm,
     request.area,
     request.resource,
-    request.operation ?? "",
+    String(request.offset ?? 0),
+    String(request.limit ?? 20),
+  );
+}
+
+export function scheduleOperationQueryKey(
+  request: {
+    area: string;
+    limit?: number;
+    operation: string;
+    realm: string;
+    resource: string;
+  },
+  family = currentRouteFamilySegment(),
+) {
+  return scheduleQueries.key(
+    "operation",
+    family,
+    request.realm,
+    request.area,
+    request.resource,
+    request.operation,
     String(request.limit ?? 20),
   );
 }
@@ -48,6 +70,7 @@ export function scheduleExecutionObservationsQueryKey(
   request: {
     area: string;
     limit?: number;
+    offset?: number;
     operation?: string;
     realm: string;
     resource: string;
@@ -61,6 +84,7 @@ export function scheduleExecutionObservationsQueryKey(
     request.area,
     request.resource,
     request.operation ?? "",
+    String(request.offset ?? 0),
     String(request.limit ?? 20),
   );
 }
@@ -109,7 +133,7 @@ interface ScheduleResourceQueryInput {
   area: string;
   family: string;
   limit: number;
-  operation?: string;
+  offset: number;
   realm: string;
   resource: string;
 }
@@ -120,8 +144,27 @@ const scheduleResourceQuery = defineQuery<ScheduleResourceQueryInput, ScheduleRe
     scheduleService.getScheduleResource({ ...request, routeFamily: family }, { signal }),
 });
 
+interface ScheduleOperationQueryInput {
+  area: string;
+  family: string;
+  limit: number;
+  operation: string;
+  realm: string;
+  resource: string;
+}
+
+const scheduleOperationQuery = defineQuery<ScheduleOperationQueryInput, ScheduleOperationView>({
+  key: ({ family, ...request }) => scheduleOperationQueryKey(request, family),
+  fetch: ({ family, signal, ...request }) =>
+    scheduleService.getScheduleOperation({ ...request, routeFamily: family }, { signal }),
+});
+
+interface ScheduleExecutionQueryInput extends ScheduleResourceQueryInput {
+  operation?: string;
+}
+
 const scheduleExecutionQuery = defineQuery<
-  ScheduleResourceQueryInput,
+  ScheduleExecutionQueryInput,
   ScheduleExecutionObservationList
 >({
   key: ({ family, ...request }) => scheduleExecutionObservationsQueryKey(request, family),
@@ -159,14 +202,17 @@ export function createScheduleAreaQuery(realm: string, area: string) {
 export function createScheduleResourceQuery(request: {
   area: string;
   limit?: number;
+  offset?: number;
   realm: string;
   resource: string;
 }) {
   const limit = request.limit ?? 20;
+  const offset = request.offset ?? 0;
   return createQuery(scheduleResourceQuery, {
     ...request,
     family: currentRouteFamilySegment(),
     limit,
+    offset,
   });
 }
 
@@ -178,7 +224,7 @@ export function createScheduleOperationQuery(request: {
   resource: string;
 }) {
   const limit = request.limit ?? 20;
-  return createQuery(scheduleResourceQuery, {
+  return createQuery(scheduleOperationQuery, {
     ...request,
     family: currentRouteFamilySegment(),
     limit,
@@ -188,15 +234,18 @@ export function createScheduleOperationQuery(request: {
 export function createScheduleExecutionObservationsQuery(request: {
   area: string;
   limit?: number;
+  offset?: number;
   operation?: string;
   realm: string;
   resource: string;
 }) {
   const limit = request.limit ?? 20;
+  const offset = request.offset ?? 0;
   return createQuery(scheduleExecutionQuery, {
     ...request,
     family: currentRouteFamilySegment(),
     limit,
+    offset,
   });
 }
 

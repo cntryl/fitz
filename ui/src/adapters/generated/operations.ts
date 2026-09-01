@@ -1092,6 +1092,7 @@ export type ListScheduleExecutionObservationsPath = {
 
 export type ListScheduleExecutionObservationsQuery = {
   "limit"?: number;
+  "offset"?: number;
   "operation"?: string;
 };
 

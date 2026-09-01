@@ -7,6 +7,7 @@ import type {
   ScheduleExecutionObservationRequest,
   ScheduleAreaInventory,
   ScheduleMissedObservationRequest,
+  ScheduleOperationView,
   ScheduleOverview,
   ScheduleRealmInventory,
   ScheduleResourceView,
@@ -40,6 +41,7 @@ async function listExecutionObservations(
         },
         {
           limit: request.limit,
+          offset: request.offset ?? 0,
           ...(request.operation === undefined ? {} : { operation: request.operation }),
         },
         options,
@@ -99,12 +101,12 @@ async function getScheduleResource(
   request: Required<
     Pick<ScheduleExecutionObservationRequest, "area" | "realm" | "resource" | "routeFamily">
   > &
-    Pick<ScheduleExecutionObservationRequest, "limit" | "operation">,
+    Pick<ScheduleExecutionObservationRequest, "limit" | "offset">,
   options: ServiceRequestOptions = {},
 ): Promise<ScheduleResourceView> {
   const family = apiRouteFamilySegment(request.routeFamily);
   const limit = request.limit ?? 20;
-  const [detail, executionObservations, missedHandoffs] = await Promise.all([
+  const [detail, executionObservations] = await Promise.all([
     apiv1.getScheduleResource(
       apiParams(
         { area: request.area, family, realm: request.realm, resource: request.resource },
@@ -116,8 +118,39 @@ async function getScheduleResource(
         { area: request.area, family, realm: request.realm, resource: request.resource },
         {
           limit,
-          ...(request.operation === undefined ? {} : { operation: request.operation }),
+          offset: request.offset ?? 0,
         },
+        options,
+      ),
+    ),
+  ]);
+
+  return {
+    detail: unwrapResponse(detail, "Unable to load schedule resource"),
+    executionObservations: unwrapResponse(
+      executionObservations,
+      "Unable to load schedule handoff observations",
+    ),
+  };
+}
+
+async function getScheduleOperation(
+  request: Required<
+    Pick<
+      ScheduleExecutionObservationRequest,
+      "area" | "operation" | "realm" | "resource" | "routeFamily"
+    >
+  > &
+    Pick<ScheduleExecutionObservationRequest, "limit">,
+  options: ServiceRequestOptions = {},
+): Promise<ScheduleOperationView> {
+  const family = apiRouteFamilySegment(request.routeFamily);
+  const limit = request.limit ?? 20;
+  const [executionObservations, missedHandoffs] = await Promise.all([
+    apiv1.listScheduleExecutionObservations(
+      apiParamsQuery(
+        { area: request.area, family, realm: request.realm, resource: request.resource },
+        { limit, offset: 0, operation: request.operation },
         options,
       ),
     ),
@@ -127,7 +160,7 @@ async function getScheduleResource(
         {
           area: request.area,
           limit,
-          ...(request.operation === undefined ? {} : { operation: request.operation }),
+          operation: request.operation,
           realm: request.realm,
           resource: request.resource,
         },
@@ -137,7 +170,6 @@ async function getScheduleResource(
   ]);
 
   return {
-    detail: unwrapResponse(detail, "Unable to load schedule resource"),
     executionObservations: unwrapResponse(
       executionObservations,
       "Unable to load schedule handoff observations",
@@ -169,6 +201,7 @@ async function searchMissedHandoffs(
 }
 
 export const scheduleService = {
+  getScheduleOperation,
   getScheduleResource,
   getOverview,
   listScheduleAreas,

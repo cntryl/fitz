@@ -463,18 +463,13 @@ describe("admin page smoke tests", () => {
     expect(text).not.toContain("No live listeners visible");
     expect(text).not.toContain("Back to schedule area");
   });
-  it("labels capped schedule observations as partial without inflating schedule count", async () => {
-    const missed = scheduleResource.missedHandoffs.observations[0];
+  it("links to the next schedule operation page when more rows exist", async () => {
     mocks.queryStates.scheduleResource = queryState.fresh(
       {
         ...scheduleResource,
-        missedHandoffs: {
-          ...scheduleResource.missedHandoffs,
-          limit: 100,
-          observations: Array.from({ length: 100 }, (_, index) => ({
-            ...missed,
-            fire_ms: missed.fire_ms + index,
-          })),
+        executionObservations: {
+          ...scheduleResource.executionObservations,
+          has_more: true,
         },
       },
       queryOptions(),
@@ -486,14 +481,38 @@ describe("admin page smoke tests", () => {
       "/admin/{family}/schedule/{realm}/{area}/{resource}",
       ScheduleResourcePage,
     );
-    const text = root.textContent ?? "";
+    expect(
+      root.querySelector('nav[aria-label="Schedule pages"] a[href*="offset=50"]'),
+    ).toBeTruthy();
+  });
 
-    expect(text).toContain("One or more observation lists reached the 100-entry API cap");
-    expect(text).not.toContain("at least 100 schedules");
+  it("surfaces disabled schedules and pending handoffs with warning severity", async () => {
+    mocks.queryStates.scheduleResource = queryState.fresh(
+      {
+        ...scheduleResource,
+        detail: {
+          ...scheduleResource.detail,
+          enabled: false,
+        },
+      },
+      queryOptions(),
+    );
+    const { default: ScheduleResourcePage } = await import("@/pages/app/schedule-resource");
+
+    const root = await mountRoute(
+      "/admin/1/schedule/default/ops/primary",
+      "/admin/{family}/schedule/{realm}/{area}/{resource}",
+      ScheduleResourcePage,
+    );
+    const warningBadges = root.querySelectorAll('[data-slot="badge"][data-variant="warning"]');
+
+    expect(root.textContent).toContain("Disabled");
+    expect(root.textContent).toContain("1 pending handoff");
+    expect(warningBadges.length).toBeGreaterThanOrEqual(2);
   });
 
   it("describes future, overdue, missing, and invalid schedule timestamps truthfully", async () => {
-    const { formatScheduleTiming } = await import("@/pages/app/schedule-operation");
+    const { formatScheduleTiming } = await import("@/features/schedule/schedule-format");
     const reference = Date.parse("2026-07-22T12:00:00Z");
 
     expect(formatScheduleTiming("2026-07-22T13:00:00Z", reference)).toBe("Next run in 1 hour");

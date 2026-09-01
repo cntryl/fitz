@@ -43,13 +43,14 @@ pub use dto_operations::{
     KvTransactionsList, LeaseSearchItem, LeaseSearchResponse, LeaseWaiterInfo,
     NoticeDeliveryObservation, NoticeDeliveryObservationList, NoticeRouteInfo, NoticeRoutesList,
     NoticeSubscription, NoticeSubscriptionsList, RpcCallObservation, RpcCallObservationList,
-    ScheduleExecutionObservation, ScheduleExecutionObservationList, ScheduleLatencyBuckets,
-    ScheduleMissedObservation, ScheduleMissedObservationList, SchedulePendingClaimInfo,
-    StreamAdminRecord, StreamInfo, StreamLagBuckets, StreamLatencyBuckets, StreamRecordsResponse,
-    StreamsList,
+    ScheduleExecutionObservation, ScheduleExecutionObservationList,
+    ScheduleExecutionObservationRequest, ScheduleLatencyBuckets, ScheduleMissedObservation,
+    ScheduleMissedObservationList, SchedulePendingClaimInfo, StreamAdminRecord, StreamInfo,
+    StreamLagBuckets, StreamLatencyBuckets, StreamRecordsResponse, StreamsList,
 };
 pub(crate) use dto_operations::{
-    LeaseSearchRequest, RpcCallObservationRequest, StreamSearchRequest,
+    LeaseSearchRequest, RpcCallObservationRequest, ScheduleMissedObservationRequest,
+    StreamSearchRequest,
 };
 pub use dto_queue_runtime::{
     LeaseInfo, LeasesList, QueueAreaCollection, QueueAreaDetail, QueueAreaEntry, QueueDeadLetter,

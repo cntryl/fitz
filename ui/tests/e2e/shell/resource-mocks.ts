@@ -386,8 +386,21 @@ export async function mockScheduleResourceApis(page: Page, routeScope: ResourceS
     }
 
     if (segments.length === 10 && segments[9] === "executions") {
+      const fixture = scheduleExecutionObservationsFixture(scope);
+      const operation = parsed.searchParams.get("operation");
+      const offset = Number(parsed.searchParams.get("offset") ?? 0);
+      const limit = Number(parsed.searchParams.get("limit") ?? fixture.limit);
+      const observations = operation
+        ? fixture.observations.filter((row) => row.operation === operation)
+        : fixture.observations;
       await route.fulfill({
-        json: scheduleExecutionObservationsFixture(scope),
+        json: {
+          ...fixture,
+          has_more: observations.length > offset + limit,
+          limit,
+          observations: observations.slice(offset, offset + limit),
+          offset,
+        },
       });
       return;
     }

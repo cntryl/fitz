@@ -97,21 +97,16 @@ fn handle_domain_collection_routes(
             };
             Some(list::stream_search(runtime.as_ref(), &request))
         }
-        ["missed"] if scheme == "schedule" => Some(list::schedule_missed_observations(
-            runtime.as_ref(),
-            match require_family_for_search(uri, principal, scope) {
-                Ok(family) => family,
+        ["missed"] if scheme == "schedule" => {
+            let request = match build_schedule_missed_observation_request(uri, principal, scope) {
+                Ok(request) => request,
                 Err(response) => return Some(*response),
-            },
-            list::parse_optional_string_query_param(uri, "realm").as_deref(),
-            list::parse_optional_string_query_param(uri, "area").as_deref(),
-            list::parse_optional_string_query_param(uri, "resource").as_deref(),
-            list::parse_optional_string_query_param(uri, "operation").as_deref(),
-            match parse_admin_record_limit(uri) {
-                Ok(limit) => limit,
-                Err(response) => return Some(*response),
-            },
-        )),
+            };
+            Some(list::schedule_missed_observations(
+                runtime.as_ref(),
+                &request,
+            ))
+        }
         ["search"] if scheme == "lease" => {
             let request = match build_lease_search_request(uri, principal, scope) {
                 Ok(request) => request,
@@ -553,13 +548,9 @@ fn handle_schedule_executions(
     area: &str,
     resource: &str,
 ) -> Response {
-    let family = match require_concrete_route_family(scope, uri, principal) {
-        Ok(family) => family,
+    let request = match build_schedule_execution_observation_request(uri, principal, scope) {
+        Ok(request) => request,
         Err(response) => return *response,
-    };
-    let limit = match list::parse_admin_record_limit(uri) {
-        Ok(limit) => limit,
-        Err(message) => return error_response(StatusCode::BAD_REQUEST, &message),
     };
 
     list::schedule_executions_for_resource(
@@ -569,9 +560,7 @@ fn handle_schedule_executions(
             area,
             resource,
         },
-        family,
-        list::parse_optional_string_query_param(uri, "operation").as_deref(),
-        limit,
+        &request,
     )
 }
 
@@ -831,6 +820,40 @@ fn build_rpc_call_observation_request(
         operation: list::parse_optional_string_query_param(uri, "operation"),
         query: list::parse_optional_string_query_param(uri, "q")
             .or_else(|| list::parse_optional_string_query_param(uri, "correlation_id")),
+        limit: parse_admin_record_limit(uri)?,
+    })
+}
+
+fn build_schedule_execution_observation_request(
+    uri: &hyper::Uri,
+    principal: &AdminPrincipal,
+    scope: AdminFamilyScope,
+) -> Result<list::ScheduleExecutionObservationRequest, HttpError> {
+    let offset = parse_optional_u64_param(uri, "offset")?.unwrap_or_default();
+    Ok(list::ScheduleExecutionObservationRequest {
+        family: require_family_for_search(uri, principal, scope)?,
+        operation: list::parse_optional_string_query_param(uri, "operation"),
+        offset: usize::try_from(offset).map_err(|_| {
+            Box::new(error_response(
+                StatusCode::BAD_REQUEST,
+                "Query parameter 'offset' is too large",
+            ))
+        })?,
+        limit: parse_admin_record_limit(uri)?,
+    })
+}
+
+fn build_schedule_missed_observation_request(
+    uri: &hyper::Uri,
+    principal: &AdminPrincipal,
+    scope: AdminFamilyScope,
+) -> Result<list::ScheduleMissedObservationRequest, HttpError> {
+    Ok(list::ScheduleMissedObservationRequest {
+        family: require_family_for_search(uri, principal, scope)?,
+        realm: list::parse_optional_string_query_param(uri, "realm"),
+        area: list::parse_optional_string_query_param(uri, "area"),
+        resource: list::parse_optional_string_query_param(uri, "resource"),
+        operation: list::parse_optional_string_query_param(uri, "operation"),
         limit: parse_admin_record_limit(uri)?,
     })
 }

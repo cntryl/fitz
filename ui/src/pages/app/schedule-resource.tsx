@@ -3,6 +3,7 @@ import { currentRoute, Link } from "@askrjs/askr/router";
 import {
   Badge,
   Block,
+  Button,
   Item,
   ItemActions,
   ItemContent,
@@ -26,15 +27,14 @@ import {
 import { createScheduleResourceQuery } from "@/features/schedule/schedule-query";
 import type { ScheduleResourceView } from "@/features/schedule/schedule-models";
 import {
-  formatCount,
-  formatDurationSeconds,
-  formatNumber,
-  formatRelativeTime,
-  formatTimestamp,
-} from "@/shared/format";
-import { domainScopeHref, formatFitzRoute } from "@/shared/navigation/domains";
+  decodeScheduleParam,
+  formatScheduleTimestamp,
+  scheduleTimingMetric,
+} from "@/features/schedule/schedule-format";
+import { formatCount, formatNumber } from "@/shared/format";
+import { domainResourceHref, domainScopeHref, formatFitzRoute } from "@/shared/navigation/domains";
 
-const RESOURCE_SCHEDULE_LIMIT = 100;
+const RESOURCE_SCHEDULE_LIMIT = 50;
 
 interface ScheduleOperationRow {
   cron: string | null;
@@ -45,20 +45,6 @@ interface ScheduleOperationRow {
   operation: string;
   pendingHandoffs: number;
   status: string | null;
-}
-
-function decodeParam(value: string | undefined) {
-  if (!value) return "";
-
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-}
-
-function formatMaybeTimestamp(value?: string | null) {
-  return value ? formatTimestamp(value) : "--";
 }
 
 function formatObservationStatus(value?: string | null) {
@@ -72,82 +58,30 @@ function formatDeliveryMode(value?: string | null) {
   return value ? `${formatObservationStatus(value)} delivery` : "Delivery mode unknown";
 }
 
-export function formatScheduleTiming(value?: string | null, reference = Date.now()) {
-  if (!value) return "No next run scheduled";
-
-  const timestamp = new Date(value).getTime();
-  if (Number.isNaN(timestamp)) return value;
-
-  const relative = formatRelativeTime(value, reference);
-  return timestamp >= reference ? `Next run ${relative}` : `Scheduled run was ${relative}`;
+function parseOffset(value: string | null) {
+  const parsed = Number(value ?? 0);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0;
 }
 
-function scheduleTimingMetric(value?: string | null) {
-  if (!value) {
-    return {
-      label: "Next run",
-      value: "No next run scheduled",
-    };
-  }
-
-  const timestamp = new Date(value).getTime();
-  if (Number.isNaN(timestamp)) {
-    return {
-      label: "Scheduled value",
-      value,
-    };
-  }
-
-  return {
-    caption: formatScheduleTiming(value),
-    label: timestamp >= Date.now() ? "Next run" : "Scheduled run",
-    value: formatTimestamp(value),
-  };
+function schedulePageHref(
+  scope: { area: string; realm: string; resource: string },
+  offset: number,
+) {
+  const href = domainResourceHref("schedule", scope);
+  return offset > 0 ? `${href}?offset=${offset}` : href;
 }
 
-function oldestPendingAge(data: ScheduleResourceView) {
-  const oldest = data.missedHandoffs.observations.reduce<number | null>(
-    (max, row) => (max == null ? row.age_seconds : Math.max(max, row.age_seconds)),
-    null,
-  );
-
-  return oldest == null ? "--" : formatDurationSeconds(oldest);
-}
-
-function scheduleOperationRows(data: ScheduleResourceView): ScheduleOperationRow[] {
-  const rows = new Map<string, ScheduleOperationRow>();
-  for (const observation of data.executionObservations.observations) {
-    rows.set(observation.operation, {
-      cron: observation.cron,
-      deliveryMode: observation.delivery_mode,
-      executionsTotal: observation.executions_total,
-      lastRun: observation.last_run,
-      nextRun: observation.next_run,
-      operation: observation.operation,
-      pendingHandoffs: 0,
-      status: observation.status,
-    });
-  }
-
-  for (const missed of data.missedHandoffs.observations) {
-    const current = rows.get(missed.operation);
-    if (current) {
-      current.pendingHandoffs += 1;
-    } else {
-      rows.set(missed.operation, {
-        cron: null,
-        deliveryMode: missed.delivery_mode,
-        executionsTotal: 0,
-        lastRun: null,
-        nextRun: null,
-        operation: missed.operation,
-        pendingHandoffs: 1,
-        status: null,
-      });
-    }
-  }
-
-  return [...rows.values()];
+export function scheduleOperationRows(data: ScheduleResourceView): ScheduleOperationRow[] {
+  return data.executionObservations.observations.map((observation) => ({
+    cron: observation.cron,
+    deliveryMode: observation.delivery_mode,
+    executionsTotal: observation.executions_total,
+    lastRun: observation.last_run,
+    nextRun: observation.next_run,
+    operation: observation.operation,
+    pendingHandoffs: observation.pending_handoffs,
+    status: observation.status,
+  }));
 }
 
 function ScheduleOperationRows(props: {
@@ -197,7 +131,9 @@ function ScheduleOperationRows(props: {
                       {route}
                     </Link>
                   </ItemTitle>
-                  <ItemDescription>{formatDeliveryMode(row.deliveryMode)}</ItemDescription>
+                  <ItemDescription>
+                    {formatDeliveryMode(row.deliveryMode)} · {formatObservationStatus(row.status)}
+                  </ItemDescription>
                   <ItemFooter class="schedule-evidence-metadata">
                     <dl>
                       <div>
@@ -206,11 +142,11 @@ function ScheduleOperationRows(props: {
                       </div>
                       <div>
                         <dt>Next run</dt>
-                        <dd>{formatMaybeTimestamp(row.nextRun)}</dd>
+                        <dd>{formatScheduleTimestamp(row.nextRun)}</dd>
                       </div>
                       <div>
                         <dt>Last handoff</dt>
-                        <dd>{formatMaybeTimestamp(row.lastRun)}</dd>
+                        <dd>{formatScheduleTimestamp(row.lastRun)}</dd>
                       </div>
                       <div>
                         <dt>Pending handoffs</dt>
@@ -224,7 +160,9 @@ function ScheduleOperationRows(props: {
                   </ItemFooter>
                 </ItemContent>
                 <ItemActions>
-                  <Badge variant="outline">{formatObservationStatus(row.status)}</Badge>
+                  <Badge variant={row.pendingHandoffs > 0 ? "warning" : "success"}>
+                    {formatCount(row.pendingHandoffs, "pending handoff")}
+                  </Badge>
                 </ItemActions>
               </Item>
             );
@@ -238,18 +176,20 @@ function ScheduleOperationRows(props: {
 export default function ScheduleResourcePage() {
   const route = currentRoute();
   const ref = {
-    area: decodeParam(route.params.area),
-    realm: decodeParam(route.params.realm),
-    resource: decodeParam(route.params.resource),
+    area: decodeScheduleParam(route.params.area),
+    realm: decodeScheduleParam(route.params.realm),
+    resource: decodeScheduleParam(route.params.resource),
   };
-  const query = createScheduleResourceQuery({ ...ref, limit: RESOURCE_SCHEDULE_LIMIT });
+  const offset = parseOffset(route.query.get("offset"));
+  const query = createScheduleResourceQuery({
+    ...ref,
+    limit: RESOURCE_SCHEDULE_LIMIT,
+    offset,
+  });
   const data = query.data;
   const scopeLabel = `${ref.realm} / ${ref.area} / ${ref.resource}`;
   const rows = data ? scheduleOperationRows(data) : [];
   const pendingHandoffs = rows.reduce((sum, row) => sum + row.pendingHandoffs, 0);
-  const isTruncated =
-    (data?.executionObservations.observations.length ?? 0) >= RESOURCE_SCHEDULE_LIMIT ||
-    (data?.missedHandoffs.observations.length ?? 0) >= RESOURCE_SCHEDULE_LIMIT;
   const timingMetric = data ? scheduleTimingMetric(data.detail.next_run) : null;
 
   return (
@@ -265,16 +205,22 @@ export default function ScheduleResourcePage() {
             label: "Refresh schedule",
             onPress: () => query.refresh(),
           }}
-          status={queryHeaderStatus(query, {
-            loading: "Loading schedules for this resource.",
-            ready: data
-              ? `${formatCount(rows.length, "visible individual schedule")}, ${formatCount(
-                  pendingHandoffs,
-                  "visible pending handoff",
-                )}.`
-              : "",
-            unavailable: "Schedule evidence is unavailable for this resource.",
-          })}
+          status={queryHeaderStatus(
+            query,
+            {
+              loading: "Loading schedules for this resource.",
+              ready: data
+                ? `${formatCount(rows.length, "visible individual schedule")}, ${formatCount(
+                    pendingHandoffs,
+                    "visible pending handoff",
+                  )}.`
+                : "",
+              unavailable: "Schedule evidence is unavailable for this resource.",
+            },
+            data?.detail.enabled === false
+              ? { label: "Disabled", tone: "warning" }
+              : { label: "Enabled", tone: "info" },
+          )}
         />
         <OperatorScopeStrip
           realm={ref.realm}
@@ -316,22 +262,42 @@ export default function ScheduleResourcePage() {
                   },
                   { label: "Visible schedules", value: rows.length },
                   { label: "Visible pending handoffs", value: pendingHandoffs },
-                  { label: "Oldest pending claim age", value: oldestPendingAge(current) },
                 ]}
               />
 
               <DomainDataSection
                 id="schedule-operations"
                 title="Individual schedules"
-                description={
-                  isTruncated
-                    ? `One or more observation lists reached the ${RESOURCE_SCHEDULE_LIMIT}-entry API cap. Schedule rows and pending-handoff counts may be incomplete.`
-                    : "Each row is one visible schedule operation. Select a schedule to inspect its timing and handoff evidence."
+                description={`Showing ${formatCount(rows.length, "schedule")} from offset ${formatNumber(offset)}. Use the page controls to inspect the complete operation inventory.`}
+                actions={
+                  <Badge variant={pendingHandoffs > 0 ? "warning" : "success"}>
+                    {formatCount(pendingHandoffs, "pending handoff")}
+                  </Badge>
                 }
-                actions={<Badge variant="outline">{formatCount(rows.length, "visible row")}</Badge>}
               >
                 <ScheduleOperationRows {...ref} rows={rows} />
               </DomainDataSection>
+
+              <Block as="nav" aria-label="Schedule pages" direction="row" gap="xs" wrap={true}>
+                <Show when={offset > 0}>
+                  <Link class="page-action-link" href={schedulePageHref(ref, 0)}>
+                    First page
+                  </Link>
+                  <Link
+                    class="page-action-link"
+                    href={schedulePageHref(ref, Math.max(0, offset - RESOURCE_SCHEDULE_LIMIT))}
+                  >
+                    Previous page
+                  </Link>
+                </Show>
+                <Show when={current.executionObservations.has_more}>
+                  <Button asChild>
+                    <Link href={schedulePageHref(ref, offset + RESOURCE_SCHEDULE_LIMIT)}>
+                      Next page
+                    </Link>
+                  </Button>
+                </Show>
+              </Block>
 
               <DomainMetricTable
                 title="Diagnostics"

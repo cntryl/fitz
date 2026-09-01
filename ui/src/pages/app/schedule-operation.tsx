@@ -21,55 +21,14 @@ import {
   QueryLoadingState,
   QueryRefreshingState,
 } from "@/components/shared/query-state";
+import {
+  decodeScheduleParam,
+  formatScheduleTimestamp,
+  formatScheduleTiming,
+  scheduleTimingMetric,
+} from "@/features/schedule/schedule-format";
 import { createScheduleOperationQuery } from "@/features/schedule/schedule-query";
-import { formatDurationSeconds, formatRelativeTime, formatTimestamp } from "@/shared/format";
-
-function decodeParam(value: string | undefined) {
-  if (!value) return "";
-
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-}
-
-function formatMaybeTimestamp(value?: string | null) {
-  return value ? formatTimestamp(value) : "--";
-}
-
-export function formatScheduleTiming(value?: string | null, reference = Date.now()) {
-  if (!value) return "No next run scheduled";
-
-  const timestamp = new Date(value).getTime();
-  if (Number.isNaN(timestamp)) return value;
-
-  const relative = formatRelativeTime(value, reference);
-  return timestamp >= reference ? `Next run ${relative}` : `Scheduled run was ${relative}`;
-}
-
-function scheduleTimingMetric(value?: string | null) {
-  if (!value) {
-    return {
-      label: "Next run",
-      value: "No next run scheduled",
-    };
-  }
-
-  const timestamp = new Date(value).getTime();
-  if (Number.isNaN(timestamp)) {
-    return {
-      label: "Scheduled value",
-      value,
-    };
-  }
-
-  return {
-    caption: formatScheduleTiming(value),
-    label: timestamp >= Date.now() ? "Next run" : "Scheduled run",
-    value: formatTimestamp(value),
-  };
-}
+import { formatDurationSeconds, formatTimestamp } from "@/shared/format";
 
 const RESOURCE_SCHEDULE_LIMIT = 100;
 
@@ -115,11 +74,11 @@ function MissedRows(props: { rows: ScheduleMissedObservation[] }) {
 export default function ScheduleOperationPage() {
   const route = currentRoute();
   const ref = {
-    area: decodeParam(route.params.area),
-    realm: decodeParam(route.params.realm),
-    resource: decodeParam(route.params.resource),
+    area: decodeScheduleParam(route.params.area),
+    realm: decodeScheduleParam(route.params.realm),
+    resource: decodeScheduleParam(route.params.resource),
   };
-  const operation = decodeParam(route.params.operation);
+  const operation = decodeScheduleParam(route.params.operation);
   const query = createScheduleOperationQuery({
     ...ref,
     limit: RESOURCE_SCHEDULE_LIMIT,
@@ -197,7 +156,7 @@ export default function ScheduleOperationPage() {
                   value: scheduleRow?.executions_total ?? 0,
                   caption: "Non-authoritative; not downstream execution history",
                 },
-                { label: "Last handoff", value: formatMaybeTimestamp(scheduleRow?.last_run) },
+                { label: "Last handoff", value: formatScheduleTimestamp(scheduleRow?.last_run) },
                 {
                   label: "Pending handoffs",
                   value: missedTruncated ? `${missedRows.length}+` : missedRows.length,
@@ -223,19 +182,6 @@ export default function ScheduleOperationPage() {
                 <MissedRows rows={missedRows} />
               </CardContent>
             </Card>
-
-            <DomainMetricTable
-              title="Resource diagnostics"
-              description="Live broker diagnostics for the resource this schedule belongs to."
-              metrics={[
-                { label: "Severity", value: data?.detail.diagnostics.severity ?? "--" },
-                { label: "Trend", value: data?.detail.diagnostics.trend ?? "--" },
-                { label: "Current stage", value: data?.detail.diagnostics.current_stage ?? "--" },
-                { label: "Failure count", value: data?.detail.diagnostics.failure_count ?? 0 },
-                { label: "Waiters", value: data?.detail.diagnostics.waiter_count ?? 0 },
-                { label: "Contention", value: data?.detail.diagnostics.contention_count ?? 0 },
-              ]}
-            />
           </Stack>
         </Show>
       </Stack>

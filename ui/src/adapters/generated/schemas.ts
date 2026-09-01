@@ -821,6 +821,7 @@ export type ScheduleExecutionObservation = {
   "next_run": string;
   "last_run": string | null;
   "executions_total": number;
+  "pending_handoffs": number;
 };
 
 export type ScheduleExecutionObservationList = {
@@ -828,7 +829,9 @@ export type ScheduleExecutionObservationList = {
   "realm": string;
   "area": string;
   "resource": string;
+  "offset": number;
   "limit": number;
+  "has_more": boolean;
   "observations": Array<ScheduleExecutionObservation>;
 };
 
