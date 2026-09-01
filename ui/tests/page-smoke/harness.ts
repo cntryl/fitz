@@ -127,6 +127,7 @@ vi.mock("@/features/schedule/schedule-query", () => ({
   createScheduleExecutionObservationsQuery: () => mocks.queryStates.scheduleExecutionObservations,
   createScheduleMissedHandoffsQuery: () => mocks.queryStates.scheduleMissedHandoffs,
   createScheduleOverviewQuery: () => mocks.queryStates.schedule,
+  createScheduleOperationQuery: () => mocks.queryStates.scheduleResource,
   createScheduleRealmQuery: () => mocks.queryStates.scheduleRealm,
   createScheduleResourceQuery: () => mocks.queryStates.scheduleResource,
 }));

@@ -809,10 +809,16 @@ export const scheduleHierarchyRoutes = [
     module: () => import("@/pages/app/schedule"),
   },
   {
-    assertText: "primary",
+    assertText: "Individual schedules",
     path: "/admin/1/schedule/default/ops/primary",
     routePath: "/admin/{family}/schedule/{realm}/{area}/{resource}",
     module: () => import("@/pages/app/schedule-resource"),
+  },
+  {
+    assertText: "Schedule timing",
+    path: "/admin/1/schedule/default/ops/primary/handoff",
+    routePath: "/admin/{family}/schedule/{realm}/{area}/{resource}/{operation}",
+    module: () => import("@/pages/app/schedule-operation"),
   },
 ];
 

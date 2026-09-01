@@ -1,5 +1,5 @@
 import { For, Show } from "@askrjs/askr/control";
-import { currentRoute } from "@askrjs/askr/router";
+import { currentRoute, Link } from "@askrjs/askr/router";
 import {
   Badge,
   Block,
@@ -10,9 +10,7 @@ import {
   ItemFooter,
   ItemGroup,
   ItemTitle,
-  Text,
 } from "@askrjs/themes/components";
-import type { ScheduleExecutionObservation, ScheduleMissedObservation } from "@/adapters";
 import DomainDataSection from "@/components/shared/domain-data-section";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
@@ -34,7 +32,20 @@ import {
   formatRelativeTime,
   formatTimestamp,
 } from "@/shared/format";
-import { formatFitzRoute } from "@/shared/navigation/domains";
+import { domainScopeHref, formatFitzRoute } from "@/shared/navigation/domains";
+
+const RESOURCE_SCHEDULE_LIMIT = 100;
+
+interface ScheduleOperationRow {
+  cron: string | null;
+  deliveryMode: string | null;
+  executionsTotal: number;
+  lastRun: string | null;
+  nextRun: string | null;
+  operation: string;
+  pendingHandoffs: number;
+  status: string | null;
+}
 
 function decodeParam(value: string | undefined) {
   if (!value) return "";
@@ -50,7 +61,9 @@ function formatMaybeTimestamp(value?: string | null) {
   return value ? formatTimestamp(value) : "--";
 }
 
-function formatObservationStatus(value: string) {
+function formatObservationStatus(value?: string | null) {
+  if (!value) return "Unknown";
+
   const label = value.replace(/_/g, " ").trim();
   return label.length > 0 ? `${label.charAt(0).toUpperCase()}${label.slice(1)}` : "Unknown";
 }
@@ -67,30 +80,6 @@ export function formatScheduleTiming(value?: string | null, reference = Date.now
 
   const relative = formatRelativeTime(value, reference);
   return timestamp >= reference ? `Next run ${relative}` : `Scheduled run was ${relative}`;
-}
-
-function handoffEvidenceLabel(data: ScheduleResourceView) {
-  const observations = data.executionObservations.observations.length;
-  const pending = data.missedHandoffs.observations.length;
-
-  if (observations > 0) {
-    return `${formatCount(observations, "recent acknowledged handoff observation")}`;
-  }
-
-  if (pending > 0) {
-    return "Pending handoff claim visible";
-  }
-
-  return "No recent handoff observations";
-}
-
-function oldestPendingAge(data: ScheduleResourceView) {
-  const oldest = data.missedHandoffs.observations.reduce<number | null>(
-    (max, row) => (max == null ? row.age_seconds : Math.max(max, row.age_seconds)),
-    null,
-  );
-
-  return oldest == null ? "--" : formatDurationSeconds(oldest);
 }
 
 function scheduleTimingMetric(value?: string | null) {
@@ -116,126 +105,130 @@ function scheduleTimingMetric(value?: string | null) {
   };
 }
 
-function ExecutionRows(props: { rows: ScheduleExecutionObservation[] }) {
-  return (
-    <Show
-      when={props.rows.length > 0}
-      fallback={
-        <QueryCompactEmptyState
-          title="No acknowledged handoffs"
-          description="No schedule-owned handoff observations matched this resource."
-        />
-      }
-    >
-      <ItemGroup
-        as="ul"
-        class="domain-divided-list schedule-evidence-list schedule-execution-list"
-        aria-label="Acknowledged handoff observations"
-      >
-        <For each={props.rows} by={(row) => `${row.route_family}:${row.operation}:${row.next_run}`}>
-          {(row) => (
-            <Item as="li" class="schedule-evidence-item" size="sm">
-              <ItemContent>
-                <ItemTitle>
-                  <Text as="strong" font="mono" weight="semibold" wrap="anywhere">
-                    {formatFitzRoute("schedule", row)}
-                  </Text>
-                </ItemTitle>
-                <ItemDescription>
-                  Route Family {formatNumber(row.route_family)} ·{" "}
-                  {formatDeliveryMode(row.delivery_mode)}
-                </ItemDescription>
-                <ItemFooter class="schedule-evidence-metadata">
-                  <dl>
-                    <div>
-                      <dt>Scheduled time</dt>
-                      <dd>
-                        <time dateTime={row.next_run}>{formatMaybeTimestamp(row.next_run)}</time>
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Last handoff</dt>
-                      <dd>
-                        {row.last_run ? (
-                          <time dateTime={row.last_run}>{formatMaybeTimestamp(row.last_run)}</time>
-                        ) : (
-                          "--"
-                        )}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Handoff count</dt>
-                      <dd>{formatNumber(row.executions_total)}</dd>
-                    </div>
-                  </dl>
-                </ItemFooter>
-              </ItemContent>
-              <ItemActions>
-                <Badge variant="outline">{formatObservationStatus(row.status)}</Badge>
-              </ItemActions>
-            </Item>
-          )}
-        </For>
-      </ItemGroup>
-    </Show>
+function oldestPendingAge(data: ScheduleResourceView) {
+  const oldest = data.missedHandoffs.observations.reduce<number | null>(
+    (max, row) => (max == null ? row.age_seconds : Math.max(max, row.age_seconds)),
+    null,
   );
+
+  return oldest == null ? "--" : formatDurationSeconds(oldest);
 }
 
-function MissedRows(props: { rows: ScheduleMissedObservation[] }) {
+function scheduleOperationRows(data: ScheduleResourceView): ScheduleOperationRow[] {
+  const rows = new Map<string, ScheduleOperationRow>();
+  for (const observation of data.executionObservations.observations) {
+    rows.set(observation.operation, {
+      cron: observation.cron,
+      deliveryMode: observation.delivery_mode,
+      executionsTotal: observation.executions_total,
+      lastRun: observation.last_run,
+      nextRun: observation.next_run,
+      operation: observation.operation,
+      pendingHandoffs: 0,
+      status: observation.status,
+    });
+  }
+
+  for (const missed of data.missedHandoffs.observations) {
+    const current = rows.get(missed.operation);
+    if (current) {
+      current.pendingHandoffs += 1;
+    } else {
+      rows.set(missed.operation, {
+        cron: null,
+        deliveryMode: missed.delivery_mode,
+        executionsTotal: 0,
+        lastRun: null,
+        nextRun: null,
+        operation: missed.operation,
+        pendingHandoffs: 1,
+        status: null,
+      });
+    }
+  }
+
+  return [...rows.values()];
+}
+
+function ScheduleOperationRows(props: {
+  area: string;
+  realm: string;
+  resource: string;
+  rows: ScheduleOperationRow[];
+}) {
   return (
     <Show
       when={props.rows.length > 0}
       fallback={
         <QueryCompactEmptyState
-          title="No pending handoffs"
-          description="No pending or missed schedule handoff claims matched this resource."
+          title="No individual schedules"
+          description="No individual schedules are currently visible for this resource."
         />
       }
     >
       <ItemGroup
         as="ul"
-        class="domain-divided-list schedule-evidence-list schedule-pending-list"
-        aria-label="Pending and missed handoffs"
+        aria-label="Individual schedules"
+        class="domain-divided-list schedule-operation-list"
       >
-        <For each={props.rows} by={(row) => `${row.route_family}:${row.operation}:${row.fire_ms}`}>
-          {(row) => (
-            <Item as="li" class="schedule-evidence-item" size="sm">
-              <ItemContent>
-                <ItemTitle>
-                  <Text as="strong" font="mono" weight="semibold" wrap="anywhere">
-                    {formatFitzRoute("schedule", row)}
-                  </Text>
-                </ItemTitle>
-                <ItemDescription>
-                  Route Family {formatNumber(row.route_family)} ·{" "}
-                  {formatDeliveryMode(row.delivery_mode)}
-                </ItemDescription>
-                <ItemFooter class="schedule-evidence-metadata">
-                  <dl>
-                    <div>
-                      <dt>Fire at</dt>
-                      <dd>
-                        <time dateTime={row.fire_at}>{formatTimestamp(row.fire_at)}</time>
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Claimed at</dt>
-                      <dd>
-                        <time dateTime={row.claimed_at}>{formatTimestamp(row.claimed_at)}</time>
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Age</dt>
-                      <dd>{formatDurationSeconds(row.age_seconds)}</dd>
-                    </div>
-                  </dl>
-                </ItemFooter>
-              </ItemContent>
-              <ItemActions>
-                <Badge variant="warning">{formatObservationStatus(row.status)}</Badge>
-              </ItemActions>
-            </Item>
-          )}
+        <For each={props.rows} by={(row) => row.operation}>
+          {(row) => {
+            const route = formatFitzRoute("schedule", {
+              area: props.area,
+              operation: row.operation,
+              realm: props.realm,
+              resource: props.resource,
+            });
+
+            return (
+              <Item as="li">
+                <ItemContent>
+                  <ItemTitle>
+                    <Link
+                      class="domain-link-cell schedule-operation-link"
+                      href={domainScopeHref("schedule", {
+                        area: props.area,
+                        operation: row.operation,
+                        realm: props.realm,
+                        resource: props.resource,
+                      })}
+                      title={route}
+                    >
+                      {route}
+                    </Link>
+                  </ItemTitle>
+                  <ItemDescription>{formatDeliveryMode(row.deliveryMode)}</ItemDescription>
+                  <ItemFooter class="schedule-evidence-metadata">
+                    <dl>
+                      <div>
+                        <dt>Cron</dt>
+                        <dd>{row.cron ?? "unset"}</dd>
+                      </div>
+                      <div>
+                        <dt>Next run</dt>
+                        <dd>{formatMaybeTimestamp(row.nextRun)}</dd>
+                      </div>
+                      <div>
+                        <dt>Last handoff</dt>
+                        <dd>{formatMaybeTimestamp(row.lastRun)}</dd>
+                      </div>
+                      <div>
+                        <dt>Pending handoffs</dt>
+                        <dd>{formatNumber(row.pendingHandoffs)}</dd>
+                      </div>
+                      <div>
+                        <dt>Handoff count</dt>
+                        <dd>{formatNumber(row.executionsTotal)}</dd>
+                      </div>
+                    </dl>
+                  </ItemFooter>
+                </ItemContent>
+                <ItemActions>
+                  <Badge variant="outline">{formatObservationStatus(row.status)}</Badge>
+                </ItemActions>
+              </Item>
+            );
+          }}
         </For>
       </ItemGroup>
     </Show>
@@ -249,37 +242,39 @@ export default function ScheduleResourcePage() {
     realm: decodeParam(route.params.realm),
     resource: decodeParam(route.params.resource),
   };
-  const query = createScheduleResourceQuery({ ...ref, limit: 20 });
+  const query = createScheduleResourceQuery({ ...ref, limit: RESOURCE_SCHEDULE_LIMIT });
   const data = query.data;
   const scopeLabel = `${ref.realm} / ${ref.area} / ${ref.resource}`;
+  const rows = data ? scheduleOperationRows(data) : [];
+  const pendingHandoffs = rows.reduce((sum, row) => sum + row.pendingHandoffs, 0);
+  const isTruncated =
+    (data?.executionObservations.observations.length ?? 0) >= RESOURCE_SCHEDULE_LIMIT ||
+    (data?.missedHandoffs.observations.length ?? 0) >= RESOURCE_SCHEDULE_LIMIT;
   const timingMetric = data ? scheduleTimingMetric(data.detail.next_run) : null;
+
   return (
     <DomainPageFrame>
       <Block direction="column" gap="sm">
         <DomainHeader
           eyebrow="Schedule resource"
           title={ref.resource}
-          description={`Durable timing intent and schedule-owned handoff evidence for ${scopeLabel}.`}
+          description={`Individual schedules registered for ${scopeLabel}.`}
           primaryAction={{
             busy: query.refreshing,
             disabled: query.refreshing,
             label: "Refresh schedule",
             onPress: () => query.refresh(),
           }}
-          status={queryHeaderStatus(
-            query,
-            {
-              loading: "Loading schedule resource.",
-              ready: data
-                ? `${handoffEvidenceLabel(data)}. ${formatScheduleTiming(data.detail.next_run)}.`
-                : "",
-              unavailable:
-                "Schedule timing and handoff evidence are unavailable for this resource.",
-            },
-            data?.detail.enabled === false
-              ? { label: "Disabled", tone: "warning" }
-              : { label: "Enabled", tone: "info" },
-          )}
+          status={queryHeaderStatus(query, {
+            loading: "Loading schedules for this resource.",
+            ready: data
+              ? `${formatCount(rows.length, "visible individual schedule")}, ${formatCount(
+                  pendingHandoffs,
+                  "visible pending handoff",
+                )}.`
+              : "",
+            unavailable: "Schedule evidence is unavailable for this resource.",
+          })}
         />
         <OperatorScopeStrip
           realm={ref.realm}
@@ -289,7 +284,7 @@ export default function ScheduleResourcePage() {
         />
 
         <Show when={!data && query.loading}>
-          <QueryLoadingState description="Loading schedule resource..." />
+          <QueryLoadingState description="Loading schedules..." />
         </Show>
 
         <Show when={!data && query.error}>
@@ -304,53 +299,38 @@ export default function ScheduleResourcePage() {
           {(current) => (
             <Block direction="column" gap="sm">
               <Show when={query.refreshing}>
-                <QueryRefreshingState description="Refreshing schedule resource..." />
+                <QueryRefreshingState description="Refreshing schedules..." />
               </Show>
 
               <DomainMetricTable
                 title="Schedule timing"
-                description="Persisted timing intent and broker-observed, non-authoritative handoff counters."
+                description="Persisted resource-level timing intent and broker-observed, non-authoritative handoff counters."
                 metrics={[
                   { label: "Enabled", value: current.detail.enabled ? "yes" : "no" },
-                  { label: "Cron", value: current.detail.cron ?? "unset" },
+                  { label: "Cron", value: current.detail.cron ?? "varies by schedule" },
                   timingMetric ?? { label: "Next run", value: "No next run scheduled" },
                   {
                     label: "Broker observation counter",
                     value: current.detail.executions_total,
                     caption: "Non-authoritative; not downstream execution history",
                   },
-                  { label: "Handoff evidence", value: handoffEvidenceLabel(current) },
-                  { label: "Pending handoffs", value: current.missedHandoffs.observations.length },
+                  { label: "Visible schedules", value: rows.length },
+                  { label: "Visible pending handoffs", value: pendingHandoffs },
                   { label: "Oldest pending claim age", value: oldestPendingAge(current) },
                 ]}
               />
 
               <DomainDataSection
-                id="schedule-acknowledged-handoffs"
-                title="Acknowledged handoff observations"
-                description="Schedule-owned handoff evidence, not durable downstream execution history."
-                actions={
-                  <Badge variant="outline">
-                    {formatCount(current.executionObservations.observations.length, "observation")}
-                  </Badge>
+                id="schedule-operations"
+                title="Individual schedules"
+                description={
+                  isTruncated
+                    ? `One or more observation lists reached the ${RESOURCE_SCHEDULE_LIMIT}-entry API cap. Schedule rows and pending-handoff counts may be incomplete.`
+                    : "Each row is one visible schedule operation. Select a schedule to inspect its timing and handoff evidence."
                 }
+                actions={<Badge variant="outline">{formatCount(rows.length, "visible row")}</Badge>}
               >
-                <ExecutionRows rows={current.executionObservations.observations} />
-              </DomainDataSection>
-
-              <DomainDataSection
-                id="schedule-pending-handoffs"
-                title="Pending and missed handoffs"
-                description="Persisted pending schedule fire claims that have not been acknowledged."
-                actions={
-                  <Badge
-                    variant={current.missedHandoffs.observations.length > 0 ? "warning" : "success"}
-                  >
-                    {formatCount(current.missedHandoffs.observations.length, "claim")}
-                  </Badge>
-                }
-              >
-                <MissedRows rows={current.missedHandoffs.observations} />
+                <ScheduleOperationRows {...ref} rows={rows} />
               </DomainDataSection>
 
               <DomainMetricTable

@@ -106,6 +106,7 @@ fn handle_domain_collection_routes(
             list::parse_optional_string_query_param(uri, "realm").as_deref(),
             list::parse_optional_string_query_param(uri, "area").as_deref(),
             list::parse_optional_string_query_param(uri, "resource").as_deref(),
+            list::parse_optional_string_query_param(uri, "operation").as_deref(),
             match parse_admin_record_limit(uri) {
                 Ok(limit) => limit,
                 Err(response) => return Some(*response),
@@ -569,6 +570,7 @@ fn handle_schedule_executions(
             resource,
         },
         family,
+        list::parse_optional_string_query_param(uri, "operation").as_deref(),
         limit,
     )
 }

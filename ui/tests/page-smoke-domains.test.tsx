@@ -13,6 +13,7 @@ import {
   queueInventory,
   rpcOverview,
   scheduleOverview,
+  scheduleResource,
   streamOverview,
   systemOverview,
   topologyOverview,
@@ -431,35 +432,68 @@ describe("admin page smoke tests", () => {
       "/admin/{family}/schedule/{realm}/{area}/{resource}",
       ScheduleResourcePage,
     );
-    const text = resourceRoot.textContent ?? "";
+    const resourceText = resourceRoot.textContent ?? "";
 
     expect(
       resourceRoot.querySelector(".domain-header-title-row > span:first-child")?.textContent,
     ).toBe("primary");
-    expect(text).toContain("Handoff evidence");
+    expect(resourceText).toContain("Individual schedules");
+    expect(resourceText).toContain("schedule://default/ops/primary/handoff");
+    expect(resourceText).toContain("Schedule timing");
+    expect(
+      resourceRoot.querySelector('a[href="/admin/1/schedule/default/ops/primary/handoff"]'),
+    ).toBeTruthy();
+    cleanupApp(resourceRoot);
+    document.body.innerHTML = "";
+
+    const { default: ScheduleOperationPage } = await import("@/pages/app/schedule-operation");
+    const operationRoot = await mountRoute(
+      "/admin/1/schedule/default/ops/primary/handoff",
+      "/admin/{family}/schedule/{realm}/{area}/{resource}/{operation}",
+      ScheduleOperationPage,
+    );
+    const text = operationRoot.textContent ?? "";
+
+    expect(text).toContain("Schedule timing");
     expect(text).toContain("Scheduled run");
     expect(text).not.toContain("Next run");
     expect(text).toContain("Non-authoritative; not downstream execution history");
-    expect(text).toContain("Acknowledged handoff observations");
     expect(text).toContain("Pending and missed handoffs");
-    expect(text).toContain("handoff");
     expect(text).not.toContain("Is anyone listening?");
     expect(text).not.toContain("No live listeners visible");
     expect(text).not.toContain("Back to schedule area");
-    const acknowledged = resourceRoot.querySelector(
-      'ul[aria-label="Acknowledged handoff observations"]',
+  });
+  it("labels capped schedule observations as partial without inflating schedule count", async () => {
+    const missed = scheduleResource.missedHandoffs.observations[0];
+    mocks.queryStates.scheduleResource = queryState.fresh(
+      {
+        ...scheduleResource,
+        missedHandoffs: {
+          ...scheduleResource.missedHandoffs,
+          limit: 100,
+          observations: Array.from({ length: 100 }, (_, index) => ({
+            ...missed,
+            fire_ms: missed.fire_ms + index,
+          })),
+        },
+      },
+      queryOptions(),
     );
-    const pending = resourceRoot.querySelector('ul[aria-label="Pending and missed handoffs"]');
-    expect(acknowledged?.querySelectorAll('[data-slot="item"]')).toHaveLength(1);
-    expect(pending?.querySelectorAll('[data-slot="item"]')).toHaveLength(1);
-    expect(
-      resourceRoot.querySelector("#schedule-acknowledged-handoffs [data-slot='table']"),
-    ).toBeNull();
-    expect(resourceRoot.querySelector("#schedule-pending-handoffs [data-slot='table']")).toBeNull();
+    const { default: ScheduleResourcePage } = await import("@/pages/app/schedule-resource");
+
+    const root = await mountRoute(
+      "/admin/1/schedule/default/ops/primary",
+      "/admin/{family}/schedule/{realm}/{area}/{resource}",
+      ScheduleResourcePage,
+    );
+    const text = root.textContent ?? "";
+
+    expect(text).toContain("One or more observation lists reached the 100-entry API cap");
+    expect(text).not.toContain("at least 100 schedules");
   });
 
   it("describes future, overdue, missing, and invalid schedule timestamps truthfully", async () => {
-    const { formatScheduleTiming } = await import("@/pages/app/schedule-resource");
+    const { formatScheduleTiming } = await import("@/pages/app/schedule-operation");
     const reference = Date.parse("2026-07-22T12:00:00Z");
 
     expect(formatScheduleTiming("2026-07-22T13:00:00Z", reference)).toBe("Next run in 1 hour");

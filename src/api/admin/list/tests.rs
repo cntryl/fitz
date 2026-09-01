@@ -638,6 +638,46 @@ fn should_aggregate_schedule_detail_given_multiple_schedules() {
     assert_eq!(detail.executions_total, 5);
 }
 
+#[tokio::test]
+async fn should_filter_schedule_operation_before_applying_limit() {
+    // Arrange
+    let runtime = snapshot_runtime();
+    runtime.admin_read_model().replace_schedules(
+        ["first", "target"]
+            .map(|operation| ScheduleInfo {
+                route_family: 1,
+                realm: "acme".to_string(),
+                area: "billing".to_string(),
+                resource: "invoices".to_string(),
+                operation: operation.to_string(),
+                cron: "0 * * * *".to_string(),
+                delivery_mode: crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
+                next_run: "2026-09-01T12:00:00Z".to_string(),
+                last_run: None,
+                executions_total: 0,
+                enabled: true,
+            })
+            .to_vec(),
+    );
+    let path = ResourcePath {
+        realm: "acme",
+        area: "billing",
+        resource: "invoices",
+    };
+
+    // Act
+    let response = schedule_executions_for_resource(&runtime, &path, 1, Some("target"), 1);
+    let body = crate::testkit::body::to_bytes(response.into_body())
+        .await
+        .expect("collect schedule response");
+    let list: ScheduleExecutionObservationList =
+        serde_json::from_slice(&body).expect("decode schedule observations");
+
+    // Assert
+    assert_eq!(list.observations.len(), 1);
+    assert_eq!(list.observations[0].operation, "target");
+}
+
 #[test]
 fn should_expose_persisted_schedule_execution_state_given_preloaded_runtime() {
     // Arrange

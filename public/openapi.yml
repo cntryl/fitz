@@ -1965,6 +1965,12 @@ paths:
           required: false
           schema:
             type: string
+        - name: operation
+          in: query
+          required: false
+          description: Restrict pending handoffs to one operation before applying the response limit.
+          schema:
+            type: string
         - name: limit
           in: query
           required: false
@@ -2004,6 +2010,12 @@ paths:
         - $ref: "#/components/parameters/RealmPath"
         - $ref: "#/components/parameters/AreaPath"
         - $ref: "#/components/parameters/ResourcePath"
+        - name: operation
+          in: query
+          required: false
+          description: Restrict observations to one operation before applying the response limit.
+          schema:
+            type: string
         - name: limit
           in: query
           required: false

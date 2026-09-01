@@ -40,6 +40,7 @@ async function listExecutionObservations(
         },
         {
           limit: request.limit,
+          ...(request.operation === undefined ? {} : { operation: request.operation }),
         },
         options,
       ),
@@ -98,7 +99,7 @@ async function getScheduleResource(
   request: Required<
     Pick<ScheduleExecutionObservationRequest, "area" | "realm" | "resource" | "routeFamily">
   > &
-    Pick<ScheduleExecutionObservationRequest, "limit">,
+    Pick<ScheduleExecutionObservationRequest, "limit" | "operation">,
   options: ServiceRequestOptions = {},
 ): Promise<ScheduleResourceView> {
   const family = apiRouteFamilySegment(request.routeFamily);
@@ -113,7 +114,10 @@ async function getScheduleResource(
     apiv1.listScheduleExecutionObservations(
       apiParamsQuery(
         { area: request.area, family, realm: request.realm, resource: request.resource },
-        { limit },
+        {
+          limit,
+          ...(request.operation === undefined ? {} : { operation: request.operation }),
+        },
         options,
       ),
     ),
@@ -123,6 +127,7 @@ async function getScheduleResource(
         {
           area: request.area,
           limit,
+          ...(request.operation === undefined ? {} : { operation: request.operation }),
           realm: request.realm,
           resource: request.resource,
         },
@@ -152,6 +157,7 @@ async function searchMissedHandoffs(
         {
           area: request.area,
           limit: request.limit,
+          ...(request.operation === undefined ? {} : { operation: request.operation }),
           realm: request.realm,
           resource: request.resource,
         },

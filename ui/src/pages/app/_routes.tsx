@@ -22,6 +22,7 @@ const RpcPage = lazy(() => import("./rpc"));
 const RpcOperationPage = lazy(() => import("./rpc-operation"));
 const RpcResourcePage = lazy(() => import("./rpc-resource"));
 const SchedulePage = lazy(() => import("./schedule"));
+const ScheduleOperationPage = lazy(() => import("./schedule-operation"));
 const ScheduleResourcePage = lazy(() => import("./schedule-resource"));
 const SessionsPage = lazy(() => import("./sessions"));
 const StreamPage = lazy(() => import("./stream"));
@@ -53,6 +54,7 @@ const resourcePageBySegment: Record<DomainSegment, RouteHandler> = {
 const operationPageBySegment: Partial<Record<DomainSegment, RouteHandler>> = {
   notice: NoticePage,
   rpc: RpcOperationPage,
+  schedule: ScheduleOperationPage,
 };
 
 function hasRouteScope(segment: DomainSegment, scope: "realm" | "area" | "operation") {

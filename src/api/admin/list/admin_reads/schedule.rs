@@ -15,6 +15,7 @@ pub fn schedule_executions_for_resource(
     runtime: &Runtime,
     path: &ResourcePath<'_>,
     family: u64,
+    operation: Option<&str>,
     limit: usize,
 ) -> Response {
     let observations = runtime
@@ -23,6 +24,7 @@ pub fn schedule_executions_for_resource(
         .filter(|schedule| {
             schedule.route_family == family
                 && path.matches(&schedule.realm, &schedule.area, &schedule.resource)
+                && operation.is_none_or(|expected| schedule.operation == expected)
         })
         .take(limit)
         .map(|schedule| ScheduleExecutionObservation {
@@ -61,6 +63,7 @@ pub(crate) fn schedule_missed_observations(
     realm: Option<&str>,
     area: Option<&str>,
     resource: Option<&str>,
+    operation: Option<&str>,
     limit: usize,
 ) -> Response {
     let now_ms = u64::try_from(
@@ -81,6 +84,7 @@ pub(crate) fn schedule_missed_observations(
             if realm.is_none_or(|value| route.realm == value)
                 && area.is_none_or(|value| route.area == value)
                 && resource.is_none_or(|value| route.resource == value)
+                && operation.is_none_or(|value| route.operation == value)
             {
                 Some(ScheduleMissedObservation {
                     route_family: family,

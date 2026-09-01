@@ -1,5 +1,24 @@
 use super::*;
 
+fn authenticated_actor(permission: &str) -> crate::session::actor::SessionActor {
+    let permission = crate::auth::Permission::parse(permission).unwrap();
+    let snapshot =
+        crate::session::permissions::SessionPermissions::from_permissions(vec![permission.clone()]);
+    let claims = crate::auth::Claims {
+        sub: "test-session".to_string(),
+        identity_claim: Some("test".to_string()),
+        identity_value: Some("test".to_string()),
+        permissions: vec![permission],
+        exp: 9_999_999_999,
+    };
+    let mut actor = crate::session::actor::SessionActor::new(
+        crate::session::session::SessionId(1),
+        snapshot.clone(),
+    );
+    actor.authenticate(claims, snapshot);
+    actor
+}
+
 #[test]
 fn should_derive_canonical_routes_for_scheme_less_domain_payloads() {
     // Arrange
@@ -271,6 +290,35 @@ fn should_authorize_concrete_queue_reserve_plus_stream_read_as_single_routes() {
     assert_eq!(stream.1, Access::Read);
     assert_eq!(queue_route, "queue://acme/cats/orders");
     assert_eq!(stream_route, "stream://acme/cats/orders");
+}
+
+#[test]
+fn should_apply_depth_aware_registration_authorization_to_every_fixed_depth_domain() {
+    // Arrange
+    let cases = [
+        (DispatchDomain::Kv, "kv://*/*/*#read", "kv://**"),
+        (DispatchDomain::Queue, "queue://*/*/*#read", "queue://**"),
+        (DispatchDomain::Stream, "stream://*/*/*#read", "stream://**"),
+        (
+            DispatchDomain::Schedule,
+            "schedule://*/*/*/*#read",
+            "schedule://**",
+        ),
+        (DispatchDomain::Lease, "lease://*/*/*#read", "lease://**"),
+    ];
+
+    // Act
+    let results = cases.map(|(domain, grant, requested)| {
+        let target = AuthorizationTargets::Registration(std::borrow::Cow::Borrowed(requested));
+        let (authorized, _, _) =
+            target.authorize(&authenticated_actor(grant), Access::Read, domain);
+        (domain, authorized)
+    });
+
+    // Assert
+    for (domain, authorized) in results {
+        assert!(authorized, "{domain:?} must use fixed-depth coverage");
+    }
 }
 
 #[test]

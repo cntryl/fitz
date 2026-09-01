@@ -24,7 +24,13 @@ export function scheduleAreaQueryKey(
 }
 
 export function scheduleResourceQueryKey(
-  request: { area: string; limit?: number; realm: string; resource: string },
+  request: {
+    area: string;
+    limit?: number;
+    operation?: string;
+    realm: string;
+    resource: string;
+  },
   family = currentRouteFamilySegment(),
 ) {
   return scheduleQueries.key(
@@ -33,12 +39,19 @@ export function scheduleResourceQueryKey(
     request.realm,
     request.area,
     request.resource,
+    request.operation ?? "",
     String(request.limit ?? 20),
   );
 }
 
 export function scheduleExecutionObservationsQueryKey(
-  request: { area: string; limit?: number; realm: string; resource: string },
+  request: {
+    area: string;
+    limit?: number;
+    operation?: string;
+    realm: string;
+    resource: string;
+  },
   family = currentRouteFamilySegment(),
 ) {
   return scheduleQueries.key(
@@ -47,12 +60,19 @@ export function scheduleExecutionObservationsQueryKey(
     request.realm,
     request.area,
     request.resource,
+    request.operation ?? "",
     String(request.limit ?? 20),
   );
 }
 
 export function scheduleMissedHandoffsQueryKey(
-  request: { area?: string; limit?: number; realm?: string; resource?: string },
+  request: {
+    area?: string;
+    limit?: number;
+    operation?: string;
+    realm?: string;
+    resource?: string;
+  },
   family = currentRouteFamilySegment(),
 ) {
   return scheduleQueries.key(
@@ -61,6 +81,7 @@ export function scheduleMissedHandoffsQueryKey(
     request.realm ?? "",
     request.area ?? "",
     request.resource ?? "",
+    request.operation ?? "",
     String(request.limit ?? 20),
   );
 }
@@ -88,6 +109,7 @@ interface ScheduleResourceQueryInput {
   area: string;
   family: string;
   limit: number;
+  operation?: string;
   realm: string;
   resource: string;
 }
@@ -111,6 +133,7 @@ interface ScheduleMissedQueryInput {
   area?: string;
   family: string;
   limit: number;
+  operation?: string;
   realm?: string;
   resource?: string;
 }
@@ -147,9 +170,25 @@ export function createScheduleResourceQuery(request: {
   });
 }
 
+export function createScheduleOperationQuery(request: {
+  area: string;
+  limit?: number;
+  operation: string;
+  realm: string;
+  resource: string;
+}) {
+  const limit = request.limit ?? 20;
+  return createQuery(scheduleResourceQuery, {
+    ...request,
+    family: currentRouteFamilySegment(),
+    limit,
+  });
+}
+
 export function createScheduleExecutionObservationsQuery(request: {
   area: string;
   limit?: number;
+  operation?: string;
   realm: string;
   resource: string;
 }) {
@@ -164,6 +203,7 @@ export function createScheduleExecutionObservationsQuery(request: {
 export function createScheduleMissedHandoffsQuery(request: {
   area?: string;
   limit?: number;
+  operation?: string;
   realm?: string;
   resource?: string;
 }) {

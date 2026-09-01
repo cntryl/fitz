@@ -377,7 +377,7 @@ export const api = defineApi({
     .security([{"sessionCookie":[]}]),
   searchScheduleMissedHandoffs: get("/api/v1/{family}/schedule/missed")
     .params<SearchScheduleMissedHandoffsPath>({ "family": { style: "simple", explode: false } })
-    .query<SearchScheduleMissedHandoffsQuery>({ "area": { style: "form", explode: true }, "limit": { style: "form", explode: true }, "realm": { style: "form", explode: true }, "resource": { style: "form", explode: true } })
+    .query<SearchScheduleMissedHandoffsQuery>({ "area": { style: "form", explode: true }, "limit": { style: "form", explode: true }, "operation": { style: "form", explode: true }, "realm": { style: "form", explode: true }, "resource": { style: "form", explode: true } })
     .returns(json<ScheduleMissedObservationList>())
     .errors({ "400": json<Error>(), "401": json<Error>(), "403": json<Error>(), "404": json<Error>(), "503": json<Error>() })
     .security([{"sessionCookie":[]}]),
@@ -425,7 +425,7 @@ export const api = defineApi({
     .security([{"sessionCookie":[]}]),
   listScheduleExecutionObservations: get("/api/v1/{family}/schedule/realms/{realm}/areas/{area}/resources/{resource}/executions")
     .params<ListScheduleExecutionObservationsPath>({ "area": { style: "simple", explode: false }, "family": { style: "simple", explode: false }, "realm": { style: "simple", explode: false }, "resource": { style: "simple", explode: false } })
-    .query<ListScheduleExecutionObservationsQuery>({ "limit": { style: "form", explode: true } })
+    .query<ListScheduleExecutionObservationsQuery>({ "limit": { style: "form", explode: true }, "operation": { style: "form", explode: true } })
     .returns(json<ScheduleExecutionObservationList>())
     .errors({ "400": json<Error>(), "401": json<Error>(), "403": json<Error>(), "404": json<Error>(), "503": json<Error>() })
     .security([{"sessionCookie":[]}]),

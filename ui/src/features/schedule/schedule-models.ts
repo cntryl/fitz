@@ -45,6 +45,7 @@ export interface ScheduleResourceView {
 export interface ScheduleExecutionObservationRequest {
   area: string;
   limit?: number;
+  operation?: string;
   realm: string;
   resource: string;
   routeFamily: number | string;
@@ -53,6 +54,7 @@ export interface ScheduleExecutionObservationRequest {
 export interface ScheduleMissedObservationRequest {
   area?: string;
   limit?: number;
+  operation?: string;
   realm?: string;
   resource?: string;
   routeFamily: number | string;
