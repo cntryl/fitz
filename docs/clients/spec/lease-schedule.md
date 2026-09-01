@@ -315,7 +315,7 @@ bare `SUBSCRIBE` and `LIST` themselves:
 2. Buffer/coalesce every matching `LEASE_NOTIFY` invalidation from that point.
 3. Drain one complete `LIST` snapshot for the identical selector.
 4. Install the snapshot and report the view ready only if no invalidation,
-   reconnect, broker-generation change, subscription failure, or delivery
+   reconnect, broker-lifetime change, subscription failure, or delivery
    overflow crossed that LIST pass.
 5. Otherwise discard the candidate and repeat a fresh full LIST while the
    view remains not ready.
