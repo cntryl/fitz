@@ -526,4 +526,40 @@ match set, and zero or more currently held leases matching it
 - `LIST` items can never be turned into an owned Lease handle; only exact
   ACQUIRE/EXTEND/RELEASE change ownership
 
+### AC-LEASE-014: Race-safe inventory observer lifecycle
+
+**MUST** expose the same safe high-level observer behavior in TypeScript, Go,
+.NET, Python, and Rust
+**Given:** A public SDK observer for one valid Lease selector
+**When:** The client bootstraps, receives invalidations, reconnects, encounters
+subscription delivery failure, reconciles periodically, and closes
+**Then:** Each SDK's observer conformance suite covers all of these common
+scenarios:
+
+1. `subscribe-before-list`: no LIST is sent before SUBSCRIBE acknowledgement;
+   a notification before/during LIST makes that candidate ineligible, a fresh
+   complete LIST is installed, and readiness becomes true only afterward.
+2. `steady-state-invalidation`: a notification after readiness schedules a
+   coalesced full LIST and atomically replaces the complete view without
+   constructing an owned Lease handle.
+3. `generation-change`: disconnect/reconnect or broker-lifetime change clears
+   readiness immediately; no LIST result spanning that boundary is installed;
+   a new/restored wire subscription plus a fresh complete LIST is required.
+4. `subscription-failure`: handler overflow, delivery backpressure, or local
+   subscription termination clears readiness and triggers a replacement
+   SUBSCRIBE plus fresh LIST. A transient SUBSCRIBE or bootstrap LIST failure
+   retries with bounded backoff instead of silently degrading to polling-only.
+5. `periodic-backstop`: a positive configurable interval causes a jittered
+   full LIST even without notifications. The documented recommendation is
+   `clamp(shortest expected lease TTL / 2, 5 seconds, 60 seconds)`, with ±20%
+   jitter and a 60-second default.
+6. `bounded-close`: observer update delivery is bounded/coalesced; close is
+   idempotent, cancels recovery/reconciliation, unsubscribes, and leaves no
+   background work that can mutate the installed view.
+
+Tests may use a deterministic scripted transport for race placement and a
+live broker for public-surface acquire/release convergence, but all five SDKs
+MUST exercise the same six behaviors and MUST use both TCP and WebSocket in
+their shared broker conformance matrix.
+
 ## Schedule Domain
