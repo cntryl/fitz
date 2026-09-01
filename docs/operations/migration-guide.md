@@ -84,12 +84,20 @@ must surface the domain-specific validation and limit codes: KV 1012/1013,
 Stream 2010/2011, Notice 3002/3003, Queue 4010/4011, RPC 6012/6013, and Schedule
 7006/7007.
 
-Lease watches are exact-only. Rename Lease client request fields from `pattern`
-to `route` and reject non-concrete `lease://realm/area/resource` input locally
-when convenient; the broker returns 5010 authoritatively. The encoded string
-payload is unchanged. Queue availability notifications now carry the concrete
-three-segment Queue resource route rather than a synthetic `/ready` suffix.
-Update Queue notification routing before upgrading the broker.
+Lease `SUBSCRIBE` and `UNSUBSCRIBE` now accept the shared generic
+three-segment selector grammar, including whole-segment `*` and valid
+non-adjacent `**` forms. Existing exact subscriptions remain wire compatible;
+new wildcard callers must use an updated SDK that applies the same grammar as
+the broker and handles the 128-wildcard-registration session limit. `LIST`
+(message 410) is a clean protocol addition with typed 5011/5012
+cursor/selector failures, and each supported SDK now provides a high-level
+subscribe-before-list inventory observer. Upgrade broker and observer clients
+together before enabling patterned fleet observation. ACQUIRE now rejects an
+`owner_id` longer than 512 bytes so every legal holder can fit in a LIST item.
+
+Queue availability notifications now carry the concrete three-segment Queue
+resource route rather than a synthetic `/ready` suffix. Update Queue
+notification routing before upgrading the broker.
 
 ### Schedule cron day-field compatibility
 
