@@ -84,7 +84,7 @@ Required coverage patterns:
 - KV: transaction scope, commit, rollback, stale transaction rejection, RouteFamily isolation, restart recovery of committed values only.
 - Queue: enqueue, reserve, complete, extend, redelivery, dead-letter handling, write-policy durability, invalid token rejection.
 - RPC: worker registration, request correlation, timeout, backpressure, streaming sequence, cleanup after disconnect or restart.
-- Lease: single live holder, fencing token scope, renew/release token validation, wait ordering, restart loss.
+- Lease: single live holder, fencing token scope, renew/release token validation, wait ordering, restart loss, selector grammar and authorization parity, exact keyed LIST, bounded wildcard snapshot work and retention, byte-bounded pagination, cursor misuse and expiry filtering, wildcard registration quotas and indexed fanout, notification transitions, RouteFamily isolation, and race-safe subscribe-before-list observers across reconnect, overflow, periodic reconciliation, and close on every supported client transport.
 - Schedule: persisted definitions, due-time handling, skip-forward overdue normalization, pending fire claims, live-only subscriptions.
 
 ## Determinism

@@ -305,6 +305,55 @@ selector, family, or broker lifetime it was issued from; 5012 (Invalid List
 Pattern) covers a pattern that fails the shared grammar on `LIST`. The related
 SUBSCRIBE/UNSUBSCRIBE operations use 5010 for that validation failure.
 
+#### High-level Inventory Observer
+
+Every supported SDK exposes one high-level observer over a Lease selector.
+The observer owns the race-sensitive ordering; applications do not compose a
+bare `SUBSCRIBE` and `LIST` themselves:
+
+1. Send `SUBSCRIBE` and wait for its acknowledgement before starting `LIST`.
+2. Buffer/coalesce every matching `LEASE_NOTIFY` invalidation from that point.
+3. Drain one complete `LIST` snapshot for the identical selector.
+4. Install the snapshot and report the view ready only if no invalidation,
+   reconnect, broker-lifetime change, subscription failure, or delivery
+   overflow crossed that LIST pass.
+5. Otherwise discard the candidate and repeat a fresh full LIST while the
+   view remains not ready.
+
+In steady state, notifications schedule coalesced full-LIST reconciliation;
+`QUERY` is insufficient because it cannot rebuild every LIST field. A
+disconnect or broker restart invalidates readiness, and the normal reconnect
+subscription restore counts as the required new wire subscription only when
+it is followed immediately by a fresh complete LIST. Subscription termination
+or delivery overflow removes the old registration and triggers a replacement
+SUBSCRIBE plus fresh LIST. Transient replacement or LIST failures retry with
+bounded exponential backoff and are coalesced so one observer has at most one
+active recovery bootstrap.
+
+Each observer also performs a periodic full LIST as a backstop for lost
+best-effort notifications. The interval is configurable, positive, and
+independently jittered by ±20%. Use:
+
+```text
+base_interval = clamp(shortest expected lease TTL / 2, 5 seconds, 60 seconds)
+```
+
+The 60-second default applies when the application has no workload-specific
+TTL. The TTL/2 term targets two backstop passes during the shortest lease
+lifetime; the five-second floor prevents one observer from scheduling more
+than 0.2 bounded full scans per second; the 60-second ceiling bounds the normal
+missed-notification window. LIST itself separately caps candidates examined,
+returned items, encoded bytes, and retained snapshot state, so this formula
+does not waive the requirement to narrow selectors whose bounded scan is
+rejected.
+
+The installed view remains advisory and may become stale between
+reconciliations. Observer output never contains an ownership capability and
+cannot extend, release, transfer, or assume another session's lease. Observer
+change/update queues must be bounded or coalesced; callers recover current
+state by reading the installed view rather than treating updates as a durable
+event log.
+
 #### Response Types (Detailed)
 
 **Successful Responses:**
