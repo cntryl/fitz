@@ -965,6 +965,7 @@ export type SearchScheduleMissedHandoffsPath = {
 export type SearchScheduleMissedHandoffsQuery = {
   "area"?: string;
   "limit"?: number;
+  "operation"?: string;
   "realm"?: string;
   "resource"?: string;
 };
@@ -1091,6 +1092,8 @@ export type ListScheduleExecutionObservationsPath = {
 
 export type ListScheduleExecutionObservationsQuery = {
   "limit"?: number;
+  "offset"?: number;
+  "operation"?: string;
 };
 
 export type ListScheduleExecutionObservationsResponse200 = ScheduleExecutionObservationList;

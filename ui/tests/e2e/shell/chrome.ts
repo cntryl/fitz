@@ -500,6 +500,16 @@ export const sprint16Routes: RouteScenario[] = [
     title: "primary",
   },
   {
+    path: "/admin/1/schedule/default/ops/primary/handoff",
+    shell: "app",
+    setup: (page) =>
+      mockScheduleResourceApis(
+        page,
+        parseRouteResourceScope("/admin/1/schedule/default/ops/primary"),
+      ),
+    title: "handoff",
+  },
+  {
     path: "/admin/1/stream/default/ops/primary",
     shell: "app",
     setup: (page) =>

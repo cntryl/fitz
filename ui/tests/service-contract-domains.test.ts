@@ -78,6 +78,7 @@ describe("service endpoint contracts", () => {
         { area: "ops", family: "7", realm: "default", resource: "reconcile" },
         {
           limit: 10,
+          offset: 0,
         },
       ),
     );
@@ -118,7 +119,27 @@ describe("service endpoint contracts", () => {
     expect(mocks.apiv1.listScheduleExecutionObservations).toHaveBeenCalledWith(
       paramsQuery(
         { area: "ops", family: "7", realm: "default", resource: "reconcile" },
-        { limit: 10 },
+        { limit: 10, offset: 0 },
+      ),
+    );
+    expect(mocks.apiv1.searchScheduleMissedHandoffs).not.toHaveBeenCalled();
+  });
+  it("loads only operation-scoped observations for schedule operation detail", async () => {
+    const { scheduleService } = await import("@/features/schedule/schedule-service");
+
+    await scheduleService.getScheduleOperation({
+      area: "ops",
+      limit: 10,
+      operation: "handoff",
+      realm: "default",
+      resource: "reconcile",
+      routeFamily: 7,
+    });
+
+    expect(mocks.apiv1.listScheduleExecutionObservations).toHaveBeenCalledWith(
+      paramsQuery(
+        { area: "ops", family: "7", realm: "default", resource: "reconcile" },
+        { limit: 10, offset: 0, operation: "handoff" },
       ),
     );
     expect(mocks.apiv1.searchScheduleMissedHandoffs).toHaveBeenCalledWith(
@@ -127,11 +148,13 @@ describe("service endpoint contracts", () => {
         {
           area: "ops",
           limit: 10,
+          operation: "handoff",
           realm: "default",
           resource: "reconcile",
         },
       ),
     );
+    expect(mocks.apiv1.getScheduleResource).not.toHaveBeenCalled();
   });
   it("loads lease ownership searches through the lease search endpoint", async () => {
     const { leaseService } = await import("@/features/lease/lease-service");

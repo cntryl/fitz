@@ -215,21 +215,16 @@ test("navigates schedule scope drill-down links to resource detail", async ({ pa
   await page.locator('a[href="/admin/1/schedule/default/default/primary"]').click();
   await expect(page).toHaveURL("/admin/1/schedule/default/default/primary");
   await expect(page.getByRole("heading", { level: 1, name: "primary" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Individual schedules" })).toBeVisible();
+  const schedules = page.getByRole("list", { name: "Individual schedules" });
+  await expect(schedules.getByRole("listitem")).toHaveCount(2);
+  await expect(schedules.getByText("1 pending handoff", { exact: true })).toBeVisible();
+
+  await page.locator('a[href="/admin/1/schedule/default/default/primary/handoff"]').click();
+  await expect(page).toHaveURL("/admin/1/schedule/default/default/primary/handoff");
+  await expect(page.getByRole("heading", { level: 1, name: "handoff" })).toBeVisible();
   await expect(page.getByText("Non-authoritative; not downstream execution history")).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "Acknowledged handoff observations" }),
-  ).toBeVisible();
   await expect(page.getByRole("heading", { name: "Pending and missed handoffs" })).toBeVisible();
-  const acknowledged = page.getByRole("list", {
-    name: "Acknowledged handoff observations",
-  });
-  const pending = page.getByRole("list", {
-    name: "Pending and missed handoffs",
-  });
-  await expect(acknowledged.getByRole("listitem")).toHaveCount(1);
-  await expect(pending.getByRole("listitem")).toHaveCount(1);
-  await expect(page.locator("#schedule-acknowledged-handoffs table")).toHaveCount(0);
-  await expect(page.locator("#schedule-pending-handoffs table")).toHaveCount(0);
 });
 
 test("captures kv overview empty state", async ({ page }, testInfo) => {

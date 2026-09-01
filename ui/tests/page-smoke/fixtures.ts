@@ -388,7 +388,9 @@ export const scheduleResource = {
   },
   executionObservations: {
     area: "ops",
+    has_more: false,
     limit: 20,
+    offset: 0,
     observations: [
       {
         area: "ops",
@@ -397,6 +399,7 @@ export const scheduleResource = {
         last_run: "2026-05-21T13:00:00.000Z",
         next_run: "2026-05-21T13:05:00.000Z",
         operation: "handoff",
+        pending_handoffs: 1,
         realm: "default",
         resource: "primary",
         route_family: 7,
@@ -407,6 +410,10 @@ export const scheduleResource = {
     resource: "primary",
     route_family: 7,
   },
+};
+
+export const scheduleOperation = {
+  executionObservations: scheduleResource.executionObservations,
   missedHandoffs: {
     limit: 20,
     observations: [
@@ -809,10 +816,16 @@ export const scheduleHierarchyRoutes = [
     module: () => import("@/pages/app/schedule"),
   },
   {
-    assertText: "primary",
+    assertText: "Individual schedules",
     path: "/admin/1/schedule/default/ops/primary",
     routePath: "/admin/{family}/schedule/{realm}/{area}/{resource}",
     module: () => import("@/pages/app/schedule-resource"),
+  },
+  {
+    assertText: "Schedule timing",
+    path: "/admin/1/schedule/default/ops/primary/handoff",
+    routePath: "/admin/{family}/schedule/{realm}/{area}/{resource}/{operation}",
+    module: () => import("@/pages/app/schedule-operation"),
   },
 ];
 

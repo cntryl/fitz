@@ -63,12 +63,14 @@ import {
   createScheduleAreaQuery,
   createScheduleExecutionObservationsQuery,
   createScheduleMissedHandoffsQuery,
+  createScheduleOperationQuery,
   createScheduleOverviewQuery,
   createScheduleRealmQuery,
   createScheduleResourceQuery,
   scheduleAreaQueryKey,
   scheduleExecutionObservationsQueryKey,
   scheduleMissedHandoffsQueryKey,
+  scheduleOperationQueryKey,
   scheduleRealmQueryKey,
   scheduleResourceQueryKey,
 } from "@/features/schedule/schedule-query";
@@ -262,6 +264,8 @@ describe("Data query layer", () => {
     expect(typeof createScheduleAreaQuery).toBe("function");
     expect(createScheduleResourceQuery).toBeDefined();
     expect(typeof createScheduleResourceQuery).toBe("function");
+    expect(createScheduleOperationQuery).toBeDefined();
+    expect(typeof createScheduleOperationQuery).toBe("function");
     expect(createScheduleExecutionObservationsQuery).toBeDefined();
     expect(typeof createScheduleExecutionObservationsQuery).toBe("function");
     expect(createScheduleMissedHandoffsQuery).toBeDefined();
@@ -307,6 +311,8 @@ describe("Data query layer", () => {
     expect(typeof scheduleService.listScheduleResources).toBe("function");
     expect(scheduleService.getScheduleResource).toBeDefined();
     expect(typeof scheduleService.getScheduleResource).toBe("function");
+    expect(scheduleService.getScheduleOperation).toBeDefined();
+    expect(typeof scheduleService.getScheduleOperation).toBe("function");
     expect(scheduleService.listExecutionObservations).toBeDefined();
     expect(typeof scheduleService.listExecutionObservations).toBe("function");
     expect(scheduleService.searchMissedHandoffs).toBeDefined();
@@ -392,6 +398,9 @@ describe("Data query layer", () => {
     expect(scheduleRealmQueryKey(ref.realm)).toEqual(expect.any(String));
     expect(scheduleAreaQueryKey(ref.realm, ref.area)).toEqual(expect.any(String));
     expect(scheduleResourceQueryKey({ ...ref, limit: 20 })).toEqual(expect.any(String));
+    expect(scheduleOperationQueryKey({ ...ref, limit: 20, operation: "handoff" })).toEqual(
+      expect.any(String),
+    );
     expect(scheduleExecutionObservationsQueryKey({ ...ref, limit: 20 })).toEqual(
       expect.any(String),
     );
@@ -403,6 +412,12 @@ describe("Data query layer", () => {
     );
     expect(scheduleResourceQueryKey({ ...ref, limit: 20 })).not.toBe(
       scheduleResourceQueryKey({ ...ref, limit: 21 }),
+    );
+    expect(scheduleResourceQueryKey({ ...ref, limit: 20 })).not.toBe(
+      scheduleResourceQueryKey({ ...ref, limit: 20, offset: 20 }),
+    );
+    expect(scheduleResourceQueryKey({ ...ref, limit: 20 })).not.toBe(
+      scheduleOperationQueryKey({ ...ref, limit: 20, operation: "handoff" }),
     );
     expect(scheduleExecutionObservationsQueryKey({ ...ref, limit: 20 })).not.toBe(
       scheduleMissedHandoffsQueryKey({ ...ref, limit: 20 }),

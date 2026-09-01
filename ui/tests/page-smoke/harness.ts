@@ -127,6 +127,7 @@ vi.mock("@/features/schedule/schedule-query", () => ({
   createScheduleExecutionObservationsQuery: () => mocks.queryStates.scheduleExecutionObservations,
   createScheduleMissedHandoffsQuery: () => mocks.queryStates.scheduleMissedHandoffs,
   createScheduleOverviewQuery: () => mocks.queryStates.schedule,
+  createScheduleOperationQuery: () => mocks.queryStates.scheduleOperation,
   createScheduleRealmQuery: () => mocks.queryStates.scheduleRealm,
   createScheduleResourceQuery: () => mocks.queryStates.scheduleResource,
 }));
@@ -167,6 +168,7 @@ import {
   rpcRealm,
   rpcResource,
   scheduleArea,
+  scheduleOperation,
   scheduleOverview,
   scheduleRealm,
   scheduleResource,
@@ -256,13 +258,14 @@ export function resetQueries() {
   mocks.queryStates.schedule = queryState.fresh(scheduleOverview, queryOptions());
   mocks.queryStates.scheduleRealm = queryState.fresh(scheduleRealm, queryOptions());
   mocks.queryStates.scheduleArea = queryState.fresh(scheduleArea, queryOptions());
+  mocks.queryStates.scheduleOperation = queryState.fresh(scheduleOperation, queryOptions());
   mocks.queryStates.scheduleResource = queryState.fresh(scheduleResource, queryOptions());
   mocks.queryStates.scheduleExecutionObservations = queryState.fresh(
     scheduleResource.executionObservations,
     queryOptions(),
   );
   mocks.queryStates.scheduleMissedHandoffs = queryState.fresh(
-    scheduleResource.missedHandoffs,
+    scheduleOperation.missedHandoffs,
     queryOptions(),
   );
   mocks.queryStates.stream = queryState.fresh(streamOverview, queryOptions());

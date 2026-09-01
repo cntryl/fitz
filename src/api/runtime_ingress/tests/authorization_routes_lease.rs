@@ -50,11 +50,9 @@ fn should_reject_malformed_lease_selector_at_authorization() {
     assert!(result.is_err(), "partial wildcard segment must be rejected");
 }
 
-#[tokio::test]
-async fn should_return_5012_for_malformed_authenticated_lease_list_selector() {
-    // Arrange
+async fn malformed_authenticated_lease_observation(msg_type: u16) -> (IngressDecision, u16) {
     let family = RouteFamily::new(1);
-    let session_id = 616;
+    let session_id = 600 + u64::from(msg_type);
     let router = Arc::new(crate::runtime::Router::new());
     let lease_sink = Arc::new(crate::domains::lease::sink::LeaseDomainSink::new(
         router.clone(),
@@ -63,45 +61,87 @@ async fn should_return_5012_for_malformed_authenticated_lease_list_selector() {
     let inbox_mailbox = Arc::new(Mailbox::new(8));
     router.register_domain_pattern("lease", lease_sink);
     router.register(
-        RouteAddress::new(family, Route::new("inbox://session/616")),
+        RouteAddress::new(family, Route::new(format!("inbox://session/{session_id}"))),
         inbox_mailbox.clone(),
     );
     let ingress = runtime_ingress_with_jwks_auth().with_router(router);
-    let session = make_authenticated_session_info(
-        session_id,
-        TransportKind::Tcp,
-        family,
-        &["lease://acme/*/*#read"],
-    );
+    let session =
+        make_authenticated_session_info(session_id, TransportKind::Tcp, family, &["lease://**#*"]);
     ingress.on_open(session).await.unwrap();
-    let mut payload = PayloadEncoder::new();
-    payload.put_string("lease://acme/lock*/db");
-    payload.put_u8(0);
-    payload.put_u32(0);
-
-    // Act
+    let malformed = "lease://acme/lock*/db";
+    let payload = if msg_type == 410 {
+        let mut encoder = PayloadEncoder::new();
+        encoder.put_string(malformed);
+        encoder.put_u8(0);
+        encoder.put_u32(0);
+        Bytes::from(encoder.finish())
+    } else {
+        encode_lease_subscribe(malformed)
+    };
     let decision = ingress
         .on_frame(
             session_id,
             ChannelId::Lease,
-            MessageType::new(410),
-            Bytes::from(payload.finish()),
+            MessageType::new(msg_type),
+            payload,
         )
         .await;
-    for _ in 0..1_000 {
-        if !inbox_mailbox.is_empty() {
-            break;
+    let response = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            if let Ok(envelope) = inbox_mailbox.receiver().try_recv() {
+                break envelope
+                    .payload::<FrameContext>()
+                    .expect("Lease response frame")
+                    .clone();
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
         }
-        std::thread::sleep(std::time::Duration::from_millis(1));
-    }
-    let response = receive_frame(&inbox_mailbox, "invalid Lease LIST response");
+    })
+    .await
+    .expect("typed Lease selector error");
+    (
+        decision,
+        decode_domain_error_code(response.payload.as_ref()),
+    )
+}
+
+#[tokio::test]
+async fn should_return_typed_error_for_authenticated_malformed_lease_subscribe() {
+    // Arrange
+    let expected = crate::protocol::error_codes::lease::ERR_INVALID_SUBSCRIPTION_ROUTE;
+
+    // Act
+    let (decision, code) = malformed_authenticated_lease_observation(407).await;
 
     // Assert
     assert_eq!(decision, IngressDecision::Accept);
-    assert_eq!(
-        decode_domain_error_code(response.payload.as_ref()),
-        crate::protocol::error_codes::lease::ERR_INVALID_LIST_PATTERN
-    );
+    assert_eq!(code, expected);
+}
+
+#[tokio::test]
+async fn should_return_typed_error_for_authenticated_malformed_lease_unsubscribe() {
+    // Arrange
+    let expected = crate::protocol::error_codes::lease::ERR_INVALID_SUBSCRIPTION_ROUTE;
+
+    // Act
+    let (decision, code) = malformed_authenticated_lease_observation(408).await;
+
+    // Assert
+    assert_eq!(decision, IngressDecision::Accept);
+    assert_eq!(code, expected);
+}
+
+#[tokio::test]
+async fn should_return_typed_error_for_authenticated_malformed_lease_list() {
+    // Arrange
+    let expected = crate::protocol::error_codes::lease::ERR_INVALID_LIST_PATTERN;
+
+    // Act
+    let (decision, code) = malformed_authenticated_lease_observation(410).await;
+
+    // Assert
+    assert_eq!(decision, IngressDecision::Accept);
+    assert_eq!(code, expected);
 }
 
 #[test]

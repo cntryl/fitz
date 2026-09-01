@@ -300,7 +300,7 @@ export const domainDefinitions = {
     description: "Durable timing intent, timeline review, and handoff health.",
     icon: TimerResetIcon,
     routes: {
-      scopeLevels: ["realm", "area", "resource"],
+      scopeLevels: ["realm", "area", "resource", "operation"],
     },
   },
   queue: {

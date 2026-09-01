@@ -1965,6 +1965,12 @@ paths:
           required: false
           schema:
             type: string
+        - name: operation
+          in: query
+          required: false
+          description: Restrict pending handoffs to one operation before applying the response limit.
+          schema:
+            type: string
         - name: limit
           in: query
           required: false
@@ -2004,6 +2010,21 @@ paths:
         - $ref: "#/components/parameters/RealmPath"
         - $ref: "#/components/parameters/AreaPath"
         - $ref: "#/components/parameters/ResourcePath"
+        - name: operation
+          in: query
+          required: false
+          description: Restrict observations to one operation before applying the response limit.
+          schema:
+            type: string
+        - name: offset
+          in: query
+          required: false
+          description: Zero-based schedule-operation offset applied after resource and operation filtering.
+          schema:
+            type: integer
+            format: int64
+            default: 0
+            minimum: 0
         - name: limit
           in: query
           required: false
@@ -5509,6 +5530,7 @@ components:
           next_run,
           last_run,
           executions_total,
+          pending_handoffs,
         ]
       properties:
         route_family:
@@ -5529,10 +5551,13 @@ components:
         executions_total:
           type: integer
           format: int64
+        pending_handoffs:
+          type: integer
+          description: Current persisted handoff claims awaiting acknowledgement for this schedule operation.
 
     ScheduleExecutionObservationList:
       type: object
-      required: [route_family, realm, area, resource, limit, observations]
+      required: [route_family, realm, area, resource, offset, limit, has_more, observations]
       properties:
         route_family:
           type: integer
@@ -5540,7 +5565,9 @@ components:
         realm: { type: string }
         area: { type: string }
         resource: { type: string }
+        offset: { type: integer }
         limit: { type: integer }
+        has_more: { type: boolean }
         observations:
           type: array
           items:

@@ -20,6 +20,7 @@ import RpcPage from "@/pages/app/rpc";
 import RpcOperationPage from "@/pages/app/rpc-operation";
 import RpcResourcePage from "@/pages/app/rpc-resource";
 import SchedulePage from "@/pages/app/schedule";
+import ScheduleOperationPage from "@/pages/app/schedule-operation";
 import ScheduleResourcePage from "@/pages/app/schedule-resource";
 import SessionsPage from "@/pages/app/sessions";
 import StreamPage from "@/pages/app/stream";
@@ -86,6 +87,8 @@ describe("Admin UI", () => {
     expect(typeof SchedulePage).toBe("function");
     expect(ScheduleResourcePage).toBeDefined();
     expect(typeof ScheduleResourcePage).toBe("function");
+    expect(ScheduleOperationPage).toBeDefined();
+    expect(typeof ScheduleOperationPage).toBe("function");
     expect(SessionsPage).toBeDefined();
     expect(typeof SessionsPage).toBe("function");
     expect(StreamPage).toBeDefined();
@@ -188,6 +191,7 @@ describe("Admin UI", () => {
         "/schedule/{realm}/{area}",
         "/admin/{family}/schedule/{realm}/{area}",
         "/admin/{family}/schedule/{realm}/{area}/{resource}",
+        "/admin/{family}/schedule/{realm}/{area}/{resource}/{operation}",
         "/stream",
         "/admin/{family}/stream",
         "/stream/{realm}",

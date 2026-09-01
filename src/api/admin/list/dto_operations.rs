@@ -92,7 +92,9 @@ pub struct ScheduleExecutionObservationList {
     pub realm: String,
     pub area: String,
     pub resource: String,
+    pub offset: usize,
     pub limit: usize,
+    pub has_more: bool,
     pub observations: Vec<ScheduleExecutionObservation>,
 }
 
@@ -109,6 +111,7 @@ pub struct ScheduleExecutionObservation {
     pub next_run: String,
     pub last_run: Option<String>,
     pub executions_total: u64,
+    pub pending_handoffs: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -230,6 +233,22 @@ pub(crate) struct RpcCallObservationRequest {
     pub resource: Option<String>,
     pub operation: Option<String>,
     pub query: Option<String>,
+    pub limit: usize,
+}
+
+pub struct ScheduleExecutionObservationRequest {
+    pub family: u64,
+    pub operation: Option<String>,
+    pub offset: usize,
+    pub limit: usize,
+}
+
+pub(crate) struct ScheduleMissedObservationRequest {
+    pub family: u64,
+    pub realm: Option<String>,
+    pub area: Option<String>,
+    pub resource: Option<String>,
+    pub operation: Option<String>,
     pub limit: usize,
 }
 
