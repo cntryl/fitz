@@ -3,9 +3,9 @@
 #[cfg(any(test, feature = "benchkit"))]
 use super::model::LeaseAcquireRequest;
 use super::model::{
-    Arc, AtomicBool, AtomicU64, HashMap, LeaseDomainActor, LeaseDomainCommand, LeaseDomainCore,
-    LeaseDomainRuntime, LeaseDomainSink, LeaseDomainState, LeaseLiveCounts, LeaseMetrics, Mutex,
-    Ordering, LEASE_ACTOR_REPLY_TIMEOUT,
+    Arc, AtomicBool, AtomicU64, BTreeMap, HashMap, LeaseDomainActor, LeaseDomainCommand,
+    LeaseDomainCore, LeaseDomainRuntime, LeaseDomainSink, LeaseDomainState, LeaseLiveCounts,
+    LeaseMetrics, Mutex, Ordering, LEASE_ACTOR_REPLY_TIMEOUT,
 };
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::runtime::Router;
@@ -17,7 +17,7 @@ impl LeaseDomainState {
     ) -> Self {
         Self {
             core: LeaseDomainCore {
-                leases: Mutex::new(HashMap::new()),
+                leases: Mutex::new(BTreeMap::new()),
                 session_leases: Mutex::new(HashMap::new()),
                 pending_acquires: Mutex::new(HashMap::new()),
                 session_waiters: Mutex::new(HashMap::new()),
@@ -28,11 +28,37 @@ impl LeaseDomainState {
                 router,
                 families: Mutex::new(HashMap::new()),
                 next_sub_id: AtomicU64::new(1),
+                holder_incarnation_hasher: std::collections::hash_map::RandomState::new(),
+                list_snapshots: Mutex::new(HashMap::new()),
+                // Seeded from OS randomness, not 1: a `LIST` cursor's
+                // snapshot ID must not resolve against an unrelated
+                // snapshot from before a broker restart
+                // (docs/clients/spec/lease-schedule.md's documented 5011
+                // behavior). Snapshot IDs are looked up by exact value in
+                // `core.list_snapshots`, which is itself empty on every
+                // fresh process, so a random per-process starting point
+                // makes a stale pre-restart cursor's ID collide with a
+                // post-restart one only by chance (~1-in-2^64 per
+                // outstanding snapshot), rather than deterministically at
+                // ID 1 every time.
+                next_list_snapshot_id: AtomicU64::new(Self::random_list_snapshot_seed()),
                 admin_read_model,
                 metrics: None,
             },
             active: AtomicBool::new(true),
         }
+    }
+
+    fn random_list_snapshot_seed() -> u64 {
+        let mut bytes = [0u8; 8];
+        // Starting the broker without a lifetime nonce would violate the
+        // cursor contract by making stale pre-restart cursors collide
+        // deterministically. Refuse to start Lease state if the operating
+        // system cannot supply the randomness needed to uphold it.
+        getrandom::fill(&mut bytes).expect("OS randomness required for Lease cursor identity");
+        // Keep the high bit clear so the monotonically increasing suffix
+        // has half the u64 space available before exhaustion.
+        u64::from_ne_bytes(bytes) & (u64::MAX >> 1)
     }
 
     pub(in crate::domains::lease::sink) fn runtime(&self) -> LeaseDomainRuntime<'_> {

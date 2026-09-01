@@ -109,6 +109,23 @@ impl SessionActor {
             .allows_registration_pattern(pattern, access)
     }
 
+    /// Like `authorize_registration_pattern`, but for a domain whose
+    /// concrete routes are always exactly `depth` segments — see
+    /// `SessionPermissions::allows_registration_pattern_at_depth`.
+    #[must_use]
+    pub fn authorize_registration_pattern_at_depth(
+        &self,
+        pattern: &crate::runtime::matcher::Pattern,
+        access: Access,
+        depth: usize,
+    ) -> bool {
+        if self.is_token_expired() {
+            return false;
+        }
+        self.permissions
+            .allows_registration_pattern_at_depth(pattern, access, depth)
+    }
+
     /// Session-owned domain state has already been bound to this session, but
     /// the session token must still be fresh before follow-up operations run.
     #[must_use]
@@ -163,5 +180,38 @@ mod tests {
         // Assert
         assert!(can_write);
         assert!(!can_read);
+    }
+
+    #[test]
+    fn should_authorize_fixed_depth_double_star_alias_against_literal_star_grant() {
+        // Arrange: a grant spelled with three literal `*` segments and a
+        // requested selector spelled with a bare `**` describe the identical
+        // set of three-segment Lease routes. The unrestricted
+        // `authorize_registration_pattern` must still deny this (`**` reads
+        // as a strict superset outside a fixed-depth domain), while the
+        // depth-aware variant Lease's ingress path actually uses must allow
+        // it.
+        let p = Permission::parse("lease://*/*/*#read").unwrap();
+        let perms =
+            crate::session::permissions::SessionPermissions::from_permissions(vec![p.clone()]);
+        let claims = crate::auth::Claims {
+            sub: "user:42".to_string(),
+            identity_claim: Some("tid".to_string()),
+            identity_value: Some("prod".to_string()),
+            permissions: vec![p],
+            exp: 9_999_999_999,
+        };
+        let mut actor = SessionActor::new(crate::session::session::SessionId(1), perms.clone());
+        actor.authenticate(claims, perms);
+        let requested = crate::runtime::matcher::Pattern::new("lease://**");
+
+        // Act
+        let unbounded = actor.authorize_registration_pattern(&requested, Access::Read);
+        let depth_bounded =
+            actor.authorize_registration_pattern_at_depth(&requested, Access::Read, 3);
+
+        // Assert
+        assert!(!unbounded);
+        assert!(depth_bounded);
     }
 }

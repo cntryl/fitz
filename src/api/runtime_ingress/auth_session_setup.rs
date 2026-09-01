@@ -39,9 +39,8 @@ impl RuntimeIngress {
 
         let canonical = match domain {
             DispatchDomain::Kv => Self::canonicalize_triplet_route_str(domain, route, true),
-            DispatchDomain::Queue | DispatchDomain::Lease => {
-                Self::canonicalize_triplet_route_str(domain, route, false)
-            }
+            DispatchDomain::Queue => Self::canonicalize_triplet_route_str(domain, route, false),
+            DispatchDomain::Lease => Self::canonicalize_lease_route_str(route),
             DispatchDomain::Stream => Self::canonicalize_stream_route_str(route),
             DispatchDomain::Rpc | DispatchDomain::Notice | DispatchDomain::Schedule => {
                 Ok(Self::scheme_prefixed_route_str(domain.as_str(), route))
@@ -83,6 +82,50 @@ impl RuntimeIngress {
             scheme_qualified.as_ref(),
         )?;
         Ok(Cow::Owned(format!("stream://{}", shape.canonical())))
+    }
+
+    /// Canonicalize a Lease route for authorization.
+    ///
+    /// Lease carries two route shapes that must NOT canonicalize the same
+    /// way:
+    ///
+    /// - **Concrete routes** (`ACQUIRE`/`EXTEND`/`RELEASE`/`QUERY`) never
+    ///   contain a wildcard segment; they must be exactly three non-empty
+    ///   segments, matching `LeaseKey::from_route_str`'s own exact-only
+    ///   parsing. Routing them through the truncating (non-exact) triplet
+    ///   parser would let an over-long route authorize under a silently
+    ///   shortened identity that the sink then rejects outright.
+    ///
+    /// - **Selectors** (`SUBSCRIBE`/`UNSUBSCRIBE`/`LIST`) accept the shared
+    ///   depth-three `*`/`**` grammar (routing-design.md §4), which lets a
+    ///   selector resolve to fewer than three raw segments (`lease://**`) or
+    ///   more than three when `**` collapses several (`lease://x/**/y/z`).
+    ///   The generic (non-exact) triplet parser requires at least three raw
+    ///   segments to succeed at all and truncates anything past the third,
+    ///   so it would reject the short forms and silently narrow the long
+    ///   ones to a different selector than the one the sink actually
+    ///   matches against — authorizing a pattern the sink never sees.
+    ///   Selectors are therefore scheme-qualified without truncation;
+    ///   `compile_registration_pattern` (called separately by
+    ///   `extract_auth_route_for_domain`) performs the actual shape and
+    ///   depth validation against the same grammar the sink uses, so
+    ///   authorization and the sink cannot accept different pattern
+    ///   languages.
+    ///
+    /// Splitting on the presence of a wildcard (mirroring
+    /// `canonicalize_stream_route_str`) is safe because exact-route Lease
+    /// operations never carry one: the wire parser rejects any `*`/`**`
+    /// segment for `ACQUIRE`/`EXTEND`/`RELEASE`/`QUERY` before this is ever
+    /// reached.
+    fn canonicalize_lease_route_str(route: &str) -> Result<Cow<'_, str>, String> {
+        if route.contains('*') {
+            return Ok(Self::scheme_prefixed_route_str(
+                DispatchDomain::Lease.as_str(),
+                route,
+            ));
+        }
+
+        Self::canonicalize_triplet_route_str(DispatchDomain::Lease, route, true)
     }
 
     fn validate_qualified_domain_scheme(domain: DispatchDomain, route: &str) -> Result<(), String> {

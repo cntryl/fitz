@@ -141,6 +141,25 @@ impl SessionPermissions {
         })
     }
 
+    /// Like `allows_registration_pattern`, but for a domain whose concrete
+    /// routes are always exactly `depth` segments (e.g. Lease's
+    /// `PatternDepth::CanMatch(3)`). Compares both languages over that fixed
+    /// depth rather than the unrestricted `*`/`**` grammar, so an alias like
+    /// `**` and its depth-equivalent literal-or-`*` spelling authorize the
+    /// same way. See `Pattern::covers_at_fixed_depth`.
+    #[must_use]
+    pub fn allows_registration_pattern_at_depth(
+        &self,
+        requested: &crate::runtime::matcher::Pattern,
+        access: Access,
+        depth: usize,
+    ) -> bool {
+        self.compiled.iter().any(|permission| {
+            access_grants(permission.access, access)
+                && permission.pattern.covers_at_fixed_depth(requested, depth)
+        })
+    }
+
     fn from_parts(inner: HashMap<String, String>, compiled: Vec<CompiledPermission>) -> Self {
         Self {
             inner: Arc::new(inner),

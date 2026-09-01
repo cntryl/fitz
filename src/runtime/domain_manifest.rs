@@ -83,9 +83,11 @@ pub struct DomainDescriptor {
     /// match. This is the domain's routing physics, so it lives here rather
     /// than being restated at each ingress and sink call site.
     pub registration_depth: PatternDepth,
-    /// Whether the domain retains wildcard registrations at all. Lease is
-    /// exact by design (architectural-laws.md), so its patterns must stay
-    /// concrete.
+    /// Whether the domain retains wildcard registrations at all. Every
+    /// current domain, including Lease, accepts the shared depth-appropriate
+    /// wildcard grammar for `LIST`/`SUBSCRIBE`/`UNSUBSCRIBE`; exact mutation
+    /// operations (Lease `ACQUIRE`/`EXTEND`/`RELEASE`) still reject wildcards
+    /// regardless of this flag (architectural-laws.md).
     pub wildcard_registrations_allowed: bool,
 }
 
@@ -211,7 +213,7 @@ pub const DOMAIN_DESCRIPTORS: [DomainDescriptor; 7] = [
         cleanup_route: lease_cleanup_route,
         wildcard_route: "lease://**",
         registration_depth: PatternDepth::CanMatch(3),
-        wildcard_registrations_allowed: false,
+        wildcard_registrations_allowed: true,
     },
     DomainDescriptor {
         kind: DomainKind::Schedule,

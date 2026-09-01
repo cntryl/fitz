@@ -223,6 +223,10 @@ impl LeaseDomainRuntime<'_> {
         if let Some(state) = acquired_state.as_ref() {
             self.track_session_lease(owner_session_id, &key);
             self.upsert_admin_lease(&key, state);
+            // A previously unowned lease just gained a holder: fleet
+            // observers watching this route (exact or wildcard) need to see
+            // the new membership, per routing-design.md §7.5.
+            self.notify_lease_change(&key);
         }
 
         if prepared_count_changed

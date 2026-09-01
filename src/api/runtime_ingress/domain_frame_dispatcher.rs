@@ -365,7 +365,7 @@ impl DomainFrameDispatcher<'_> {
         let start = Instant::now();
 
         let (authorized, denied_route, denied_route_count) =
-            targets.authorize(&actor_ref, access, domain.wildcard_route());
+            targets.authorize(&actor_ref, access, domain);
 
         if let Ok(collector) = std::panic::catch_unwind(crate::observability::metrics) {
             let elapsed_us = Self::elapsed_micros_u64(start);
@@ -722,13 +722,23 @@ impl DomainFrameDispatcher<'_> {
                         "RPC request parse failed",
                     );
                 }
-                // No-auth brokers preserve domain-typed registration errors. Auth-required
-                // brokers must never dispatch a frame whose authorization target is invalid.
-                if !self.ingress.auth_required
-                    && is_subscription_registration_message(
-                        dispatch.domain,
-                        dispatch.msg_type.as_u16(),
-                    )
+                // Domain validation owns Lease observation selector errors:
+                // SUBSCRIBE/UNSUBSCRIBE return 5010 and LIST returns 5012,
+                // including on auth-required brokers. Dispatching these
+                // malformed selectors is safe because the Lease sink compiles
+                // and rejects them before retaining subscription state or
+                // inspecting inventory. Other auth-required domains keep the
+                // fail-closed behavior below.
+                let lease_observation_validation = matches!(
+                    (dispatch.domain, dispatch.msg_type.as_u16()),
+                    (DispatchDomain::Lease, 407 | 408 | 410)
+                );
+                if lease_observation_validation
+                    || (!self.ingress.auth_required
+                        && is_subscription_registration_message(
+                            dispatch.domain,
+                            dispatch.msg_type.as_u16(),
+                        ))
                 {
                     return self.dispatch_domain_frame(dispatch).await;
                 }

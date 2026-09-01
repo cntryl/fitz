@@ -142,6 +142,8 @@ pub mod lease {
     pub const ERR_BAD_REQUEST: u16 = 5008;
     pub const ERR_UNAUTHORIZED: u16 = 5009; // AC-LEASE-010: Permission denied for lease operation
     pub const ERR_INVALID_SUBSCRIPTION_ROUTE: u16 = 5010;
+    pub const ERR_INVALID_LIST_CURSOR: u16 = 5011;
+    pub const ERR_INVALID_LIST_PATTERN: u16 = 5012;
 }
 
 /// RPC domain error codes (per `CLIENT_SPEC` RPC Domain section)

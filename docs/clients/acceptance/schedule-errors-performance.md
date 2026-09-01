@@ -326,7 +326,9 @@ Error codes follow the format `XXYY` where:
 | 5007 | ERR_QUEUE_FULL | Lease waiter queue is full | Yes (with backoff) |
 | 5008 | ERR_BAD_REQUEST | Malformed Lease operation request | No |
 | 5009 | ERR_UNAUTHORIZED | Permission denied for lease operation | No |
-| 5010 | ERR_INVALID_SUBSCRIPTION_ROUTE | Lease subscription route is not exact `lease://realm/area/resource` | No |
+| 5010 | ERR_INVALID_SUBSCRIPTION_ROUTE | Lease SUBSCRIBE/UNSUBSCRIBE selector fails the shared exact-or-wildcard grammar | No |
+| 5011 | ERR_INVALID_LIST_CURSOR | LIST cursor does not match the selector, `RouteFamily`, or broker lifetime it was issued from | No |
+| 5012 | ERR_INVALID_LIST_PATTERN | LIST selector fails the shared exact-or-wildcard grammar | No |
 
 ### RPC Domain (6000-6999)
 

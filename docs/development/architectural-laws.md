@@ -200,13 +200,16 @@ Fitz must remain a runtime of narrow, composable primitives:
 - Lease = explicit ownership coordination
 - Schedule = durable timing intent
 
-KV, Queue, Notice, Stream, RPC, and Schedule registration patterns use strict
-whole-segment `*` and `**` syntax. Each domain caps wildcard registrations at
-128 per session while exact registrations remain uncapped by that wildcard
-limit. Duplicates are idempotent and checked before the cap; overlaps stay
-independent, notification routes stay concrete, and matching never crosses a
-`RouteFamily` boundary. Lease is exact by design: Lease watches reject every
-wildcard and require `lease://realm/area/resource`.
+KV, Queue, Notice, Stream, RPC, Lease, and Schedule registration patterns use
+strict whole-segment `*` and `**` syntax. Each domain caps wildcard
+registrations at 128 per session while exact registrations remain uncapped by
+that wildcard limit. Duplicates are idempotent and checked before the cap;
+overlaps stay independent, notification routes stay concrete, and matching
+never crosses a `RouteFamily` boundary. Lease `SUBSCRIBE`, `UNSUBSCRIBE`, and
+`LIST` accept this same depth-three grammar so a fleet can observe ownership
+by pattern; exact `ACQUIRE`, `EXTEND`, and `RELEASE` remain unaffected and
+still require `lease://realm/area/resource` with no wildcard segment,
+because only they change ownership.
 
 RPC concrete-route dispatch state exists only while that route has queued or
 pending calls. Schedule fair cursors exist only while at least one live

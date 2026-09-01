@@ -275,7 +275,7 @@ impl LeaseDomainRuntime<'_> {
             | LeaseMessage::Release { owner_id, .. } => Some(
                 crate::domains::lease::protocol::session_scoped_owner_id(session_id, owner_id),
             ),
-            LeaseMessage::Query { .. } | LeaseMessage::Tick => None,
+            LeaseMessage::Query { .. } | LeaseMessage::List { .. } | LeaseMessage::Tick => None,
         }
     }
 
@@ -292,25 +292,33 @@ impl LeaseDomainRuntime<'_> {
             LeaseMessage::Acquire {
                 family_id,
                 route,
+                owner_id,
                 ttl_secs,
                 wait_seconds,
-                ..
-            } => match LeaseKey::from_route(*family_id, route) {
-                Some(key) => self.handle_acquire(LeaseAcquireRequest {
-                    key,
-                    owner_session_id: meta.session_id,
-                    owner_id: scoped_owner_id
-                        .expect("acquire owner must be scoped before dispatch")
-                        .to_string(),
-                    ttl_secs: *ttl_secs,
-                    wait_seconds: *wait_seconds,
-                    reply_source: envelope.destination().clone(),
-                    reply_destination: envelope.source().cloned(),
-                    channel: meta.channel,
-                    route_family: meta.route_family,
-                }),
-                None => LeaseResponse::NotFound,
-            },
+            } => {
+                if owner_id.len() > crate::domains::lease::protocol::LEASE_MAX_OWNER_ID_BYTES {
+                    return LeaseResponse::Error(format!(
+                        "owner_id exceeds maximum length of {} bytes",
+                        crate::domains::lease::protocol::LEASE_MAX_OWNER_ID_BYTES
+                    ));
+                }
+                match LeaseKey::from_route(*family_id, route) {
+                    Some(key) => self.handle_acquire(LeaseAcquireRequest {
+                        key,
+                        owner_session_id: meta.session_id,
+                        owner_id: scoped_owner_id
+                            .expect("acquire owner must be scoped before dispatch")
+                            .to_string(),
+                        ttl_secs: *ttl_secs,
+                        wait_seconds: *wait_seconds,
+                        reply_source: envelope.destination().clone(),
+                        reply_destination: envelope.source().cloned(),
+                        channel: meta.channel,
+                        route_family: meta.route_family,
+                    }),
+                    None => LeaseResponse::NotFound,
+                }
+            }
             LeaseMessage::Extend {
                 family_id,
                 route,
@@ -345,6 +353,12 @@ impl LeaseDomainRuntime<'_> {
                     None => LeaseResponse::NotFound,
                 }
             }
+            LeaseMessage::List {
+                family_id,
+                pattern,
+                cursor,
+                limit,
+            } => self.handle_list(*family_id, pattern, *cursor, *limit, meta.session_id),
             LeaseMessage::Tick => unreachable!("tick is handled before operation dispatch"),
         }
     }
@@ -370,17 +384,31 @@ impl LeaseDomainRuntime<'_> {
                 owner_id,
                 ttl_secs,
                 wait_seconds,
-            } => self.handle_acquire(LeaseAcquireRequest {
-                key: key.clone(),
-                owner_session_id: meta.session_id,
-                owner_id: owner_id.clone(),
-                ttl_secs: *ttl_secs,
-                wait_seconds: *wait_seconds,
-                reply_source: envelope.destination().clone(),
-                reply_destination: envelope.source().cloned(),
-                channel: meta.channel,
-                route_family: meta.route_family,
-            }),
+            } => {
+                // `owner_id` here is already session-scoped (prefixed
+                // `session:{id}:`); bounding the scoped length is a close
+                // enough proxy for bounding the client-supplied part, since
+                // the prefix overhead is a handful of bytes.
+                let scoped_limit = crate::domains::lease::protocol::LEASE_MAX_OWNER_ID_BYTES + 32;
+                if owner_id.len() > scoped_limit {
+                    LeaseResponse::Error(format!(
+                        "owner_id exceeds maximum length of {} bytes",
+                        crate::domains::lease::protocol::LEASE_MAX_OWNER_ID_BYTES
+                    ))
+                } else {
+                    self.handle_acquire(LeaseAcquireRequest {
+                        key: key.clone(),
+                        owner_session_id: meta.session_id,
+                        owner_id: owner_id.clone(),
+                        ttl_secs: *ttl_secs,
+                        wait_seconds: *wait_seconds,
+                        reply_source: envelope.destination().clone(),
+                        reply_destination: envelope.source().cloned(),
+                        channel: meta.channel,
+                        route_family: meta.route_family,
+                    })
+                }
+            }
             PreparedLeaseOperation::Extend {
                 key,
                 owner_id,
@@ -485,7 +513,8 @@ impl LeaseDomainRuntime<'_> {
             LeaseMessage::Acquire { family_id, .. }
             | LeaseMessage::Extend { family_id, .. }
             | LeaseMessage::Release { family_id, .. }
-            | LeaseMessage::Query { family_id, .. } => *family_id == meta.route_family,
+            | LeaseMessage::Query { family_id, .. }
+            | LeaseMessage::List { family_id, .. } => *family_id == meta.route_family,
             LeaseMessage::Tick => {
                 meta.channel == crate::runtime::ClientChannel::Internal
                     && envelope.source().is_none()

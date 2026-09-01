@@ -171,6 +171,100 @@ pub fn build_lease_unsubscribe(route: &str) -> Vec<u8> {
     builder.build()
 }
 
+/// Build LEASE LIST frame (`msg_type` 410) with no cursor.
+///
+/// Wire format: `[string pattern][u8 has_cursor=0][u32 limit]`
+/// (`limit=0` means "use the server default page size").
+pub fn build_lease_list(pattern: &str, limit: u32) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.put_u32(u32_len(pattern.len()));
+    buf.put_slice(pattern.as_bytes());
+    buf.put_u8(0); // has_cursor
+    buf.put_u32(limit);
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(410, &buf);
+    builder.build()
+}
+
+/// Build LEASE LIST frame (`msg_type` 410) continuing a prior page's cursor.
+///
+/// Wire format: `[string pattern][u8 has_cursor=1][u64 snapshot_id][u32 offset][u32 limit]`
+pub fn build_lease_list_with_cursor(
+    pattern: &str,
+    snapshot_id: u64,
+    offset: u32,
+    limit: u32,
+) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.put_u32(u32_len(pattern.len()));
+    buf.put_slice(pattern.as_bytes());
+    buf.put_u8(1); // has_cursor
+    buf.put_u64(snapshot_id);
+    buf.put_u32(offset);
+    buf.put_u32(limit);
+
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(410, &buf);
+    builder.build()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeaseListItemPayload {
+    pub route: String,
+    pub owner_id: String,
+    pub holder_incarnation: u64,
+    pub acquired_at: String,
+    pub expires_in_secs: u64,
+    pub renewals: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeaseListPagePayload {
+    pub items: Vec<LeaseListItemPayload>,
+    pub next_cursor: Option<(u64, u32)>,
+}
+
+/// Parse a successful LEASE LIST response body (status byte already consumed
+/// by `parse_lease_response`; `data` is the full payload including status).
+pub fn parse_lease_list_page(data: &[u8]) -> Result<LeaseListPagePayload, String> {
+    use fitz::protocol::payload_codec::PayloadDecoder;
+
+    let mut decoder = PayloadDecoder::new(data);
+    let status = decoder.get_u8()?;
+    if status != 0 {
+        return Err("Lease LIST failed".to_string());
+    }
+
+    let item_count = decoder.get_u32()?;
+    let mut items = Vec::with_capacity(item_count as usize);
+    for _ in 0..item_count {
+        items.push(LeaseListItemPayload {
+            route: decoder.get_string()?,
+            owner_id: decoder.get_string()?,
+            holder_incarnation: decoder.get_u64()?,
+            acquired_at: decoder.get_string()?,
+            expires_in_secs: decoder.get_u64()?,
+            renewals: decoder.get_u32()?,
+        });
+    }
+
+    let has_next = decoder.get_u8()? != 0;
+    let next_cursor = if has_next {
+        let snapshot_id = decoder.get_u64()?;
+        let offset = decoder.get_u32()?;
+        Some((snapshot_id, offset))
+    } else {
+        None
+    };
+
+    if !decoder.is_complete() {
+        return Err("Trailing data in lease LIST response".to_string());
+    }
+
+    Ok(LeaseListPagePayload { items, next_cursor })
+}
+
 pub fn extract_lease_subscription_id(data: &[u8]) -> Result<u64, String> {
     if data.len() < 9 {
         return Err("Lease subscribe response too short".to_string());

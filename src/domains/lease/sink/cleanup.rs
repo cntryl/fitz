@@ -48,6 +48,7 @@ impl LeaseDomainRuntime<'_> {
         }
 
         let removed_subscriptions = self.unsubscribe_all(session_id);
+        self.remove_list_snapshots_for_session(session_id);
         for key in &removed_keys {
             self.remove_admin_lease(key);
             self.notify_lease_change(key);

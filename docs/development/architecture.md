@@ -10,6 +10,7 @@
 7. [Boot & Initialization](#boot--initialization)
 8. [Testing & Validation](#testing--validation)
 9. [Performance & Tuning](#performance--tuning)
+10. [Error Handling](error-handling.md)
 ## Overview
 Fitz is a **layered, synchronous-core broker** designed for:
 - **Low-latency domain operations** (KV, queues, live fanout, streams, RPC, leases, scheduling)
@@ -639,15 +640,16 @@ impl NoticeActor {
 }
 ```
 ### Pattern Matching
-KV, Queue, Notice, and Stream subscriptions, RPC worker registrations, and
-Schedule live notification registrations use the shared whole-segment wildcard
-matcher. The expected scheme, non-empty segments, whole-segment `*`/`**` syntax,
-and structured-domain matchable depth are validated before state mutation.
-Each domain permits 128 wildcard registrations per session; exact registrations
-do not count, and duplicate original registration strings are resolved before
-the limit. Matching and overlap handling stay isolated by `RouteFamily`, and
-notifications carry the exact concrete route. Lease watches bypass wildcard
-registration entirely and require an exact three-segment `lease://` route.
+KV, Queue, Notice, Stream, and Lease subscriptions, RPC worker registrations,
+and Schedule live notification registrations use the shared whole-segment
+wildcard matcher. The expected scheme, non-empty segments, whole-segment
+`*`/`**` syntax, and structured-domain matchable depth are validated before
+state mutation. Each domain permits 128 wildcard registrations per session;
+exact registrations do not count, and duplicate original registration strings
+are resolved before the limit. Matching and overlap handling stay isolated by
+`RouteFamily`, and notifications carry the exact concrete route. Lease uses
+this matcher only for read-only `SUBSCRIBE`/`UNSUBSCRIBE`/`LIST` observation;
+`ACQUIRE`/`EXTEND`/`RELEASE` remain exact three-segment operations.
 
 ```rust
 /// Match a route against a pattern.
@@ -967,46 +969,8 @@ pub fn handle(&mut self, msg: DomainMessage) -> DomainResponse {
 | `max_connections` | 10000 | Resource limits |
 | `family_actor_shards` | min(available_parallelism, provisioned families) | Synchronous family-owned actor workers |
 ## Error Handling
-### Transport-Level Errors
-Connection is **closed** on:
-- Frame size exceeded
-- Invalid TLV encoding (unrecoverable)
-- CONNECT missing or invalid
-- Protocol violation
-```rust
-if payload.len() > max_frame_size {
-    // Close connection
-    return Err(Error::FrameTooLarge);
-}
-```
-### Domain-Level Errors
-Errors are **returned** in response payload (per-domain encoding):
-```rust
-pub enum DomainResponse {
-    Ok { /* result */ },
-    Error(String), // Encoded per domain
-}
-```
-**KV example** (error as string):
-```
-Response (error):
-  [u32 BE error_len]
-  [bytes error_msg]
-```
-**Notice example** (error with status byte):
-```
-Response (error):
-  [u8]     1 (error status)
-  [u32 BE] error_len
-  [bytes]  error_msg
-```
-### Idempotency
-- **Idempotent ops** (GET, READ, SCAN): safe to retry
-- **Non-idempotent ops** (PUT, PUBLISH, APPEND): clients must not retry (or must deduplicate)
-Some operations use **correlation IDs** (RPC):
-- Client-generated UUID (16 bytes)
-- Broker uses them to match live in-flight requests to responses
-- They do not create a durable replay, recovery, or broker-side deduplication log
+See [error-handling.md](error-handling.md) for transport closure rules,
+domain response errors, and retry/idempotency guidance.
 ## References
 - Protocol specification: [client-spec.md](../clients/client-spec.md)
 - Transport implementation: `src/api/`

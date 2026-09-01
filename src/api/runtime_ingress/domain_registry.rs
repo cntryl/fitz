@@ -451,6 +451,30 @@ mod tests {
     }
 
     #[test]
+    fn should_reject_prepared_lease_acquire_owner_id_over_wire_safe_limit() {
+        // Arrange
+        let descriptor = IngressDomainRegistry::descriptor_for_domain(DispatchDomain::Lease);
+        let owner_id =
+            "x".repeat(crate::domains::lease::protocol::LEASE_MAX_OWNER_ID_BYTES.saturating_add(1));
+        let payload = lease_acquire_payload("lease://acme/locks/resource", &owner_id);
+
+        // Act
+        let envelope = descriptor.build_request_envelope(lease_build_request(400, payload));
+        let request = envelope
+            .payload::<crate::domains::lease::protocol::PreparedLeaseClientRequest>()
+            .expect("prepared lease request");
+
+        // Assert
+        assert!(
+            request
+                .frame
+                .as_ref()
+                .is_err_and(|message| message.contains("owner_id exceeds maximum length")),
+            "oversized logical owner ID must fail before session scoping"
+        );
+    }
+
+    #[test]
     fn should_keep_lease_subscription_on_public_request_path() {
         // Arrange
         let descriptor = IngressDomainRegistry::descriptor_for_domain(DispatchDomain::Lease);
