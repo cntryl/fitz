@@ -27,8 +27,6 @@ pub mod metrics;
 pub mod protocol;
 pub mod sink;
 
-pub mod bench; // Zero-copy notification primitives for benchmarking
-
 pub use metrics::NoticeMetrics;
 pub use protocol::{
     DeliverMessage, NoticeClientNotification, NoticeClientRequest, NoticeClientResponse,

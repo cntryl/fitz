@@ -19,9 +19,10 @@ export default function CopyTextButton({ label, text }: { label: string; text: s
   return (
     <Button
       type="button"
-      size="sm"
+      size="icon"
       variant="ghost"
       aria-label={copied() ? `${label} copied` : label}
+      title={copied() ? `${label} copied` : label}
       onPress={() => void copyText()}
     >
       {copied() ? (
@@ -29,7 +30,6 @@ export default function CopyTextButton({ label, text }: { label: string; text: s
       ) : (
         <CopyIcon size={14} aria-hidden="true" />
       )}
-      {copied() ? "Copied" : "Copy"}
     </Button>
   );
 }

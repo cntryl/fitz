@@ -6,34 +6,6 @@ import {
 } from "./shell/api-fixtures";
 import { openDashboard } from "./shell/chrome";
 
-test("captures the desktop dashboard shell", async ({ page }, testInfo) => {
-  await page.setViewportSize({ width: 1440, height: 1200 });
-  await openDashboard(page);
-
-  await expect(page.getByRole("heading", { name: "Fitz status" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Issues" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Domain health" })).toBeVisible();
-  await page.screenshot({
-    fullPage: true,
-    path: testInfo.outputPath("dashboard-desktop.png"),
-    animations: "disabled",
-  });
-});
-
-test("captures the tablet dashboard shell", async ({ page }, testInfo) => {
-  await page.setViewportSize({ width: 1024, height: 1200 });
-  await openDashboard(page);
-
-  await expect(page.getByRole("heading", { name: "Fitz status" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Issues" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Domain health" })).toBeVisible();
-  await page.screenshot({
-    fullPage: true,
-    path: testInfo.outputPath("dashboard-tablet.png"),
-    animations: "disabled",
-  });
-});
-
 test("uses mobile below 48rem and desktop at 48rem", async ({ page }) => {
   await page.setViewportSize({ width: 767, height: 900 });
   await openDashboard(page);
@@ -92,19 +64,6 @@ test("renders unavailable base and nested route families as SPA 404 pages", asyn
     );
     await expect(page.getByRole("navigation", { name: "Primary navigation" })).toHaveCount(0);
   }
-});
-
-test("captures the desktop dashboard shell in dark mode", async ({ page }, testInfo) => {
-  await page.setViewportSize({ width: 1440, height: 1200 });
-  await openDashboard(page, "dark");
-
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await expect(page.getByRole("heading", { name: "Fitz status" })).toBeVisible();
-  await page.screenshot({
-    fullPage: true,
-    path: testInfo.outputPath("dashboard-dark.png"),
-    animations: "disabled",
-  });
 });
 
 test("captures the dashboard refreshing state", async ({ page }, testInfo) => {

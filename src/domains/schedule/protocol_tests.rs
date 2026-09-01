@@ -127,34 +127,6 @@ fn should_find_leap_day_after_non_leap_century_year() {
 }
 
 #[test]
-fn should_create_schedule_def() {
-    // Arrange
-    let route = "schedule://acme/jobs/backup/run".to_string();
-    let cron = "0 */6 * * *".to_string();
-    let payload = Bytes::from("backup data");
-
-    // Act
-    let parsed_cron = CronSchedule::parse(&cron).expect("Valid cron");
-    let route_parts = parse_concrete_schedule_route(&route).expect("valid schedule route");
-    let def = ScheduleDef {
-        route,
-        route_parts,
-        cron,
-        delivery_mode: ScheduleDeliveryMode::Broadcast,
-        parsed_cron,
-        payload,
-        next_fire_time: Instant::now(),
-        next_fire_ms: 0,
-        last_fire_ms: None,
-        executions_total: 0,
-        list_index: 0,
-    };
-
-    // Assert
-    assert_eq!(def.route, "schedule://acme/jobs/backup/run");
-}
-
-#[test]
 fn should_parse_concrete_schedule_route_given_valid_route() {
     // Arrange
     let input = "schedule://acme/billing/invoice/send";

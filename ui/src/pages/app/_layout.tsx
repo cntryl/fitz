@@ -316,7 +316,7 @@ export default function Layout({ children }: { children?: unknown }) {
 
   return (
     <OperatorScope value={operator}>
-      <Block class="operator-context-root" minHeight="screen" direction="column">
+      <Block class="operator-context-root" minHeight="screen">
         <a class="skip-link" href="#main-content">
           Skip to main content
         </a>
@@ -364,7 +364,7 @@ export default function Layout({ children }: { children?: unknown }) {
           </Container>
         </Header>
 
-        <Container class="operator-shell-workspace" paddingY="0" grow>
+        <Container class="operator-shell-workspace" direction="column" paddingY="0" grow>
           {hasRouteFamilyScope ? (
             <WorkspaceShell operator={operator}>{children}</WorkspaceShell>
           ) : routeFamilyNotFound ? (

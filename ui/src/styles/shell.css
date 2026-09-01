@@ -20,7 +20,7 @@
   inset-block-start: calc(var(--ak-layout-navbar-height, 3.75rem) + 1px);
   align-self: start;
   block-size: calc(100dvh - var(--ak-layout-navbar-height, 3.75rem) - 1px);
-  background: var(--fitz-page-background);
+  background: var(--ak-color-bg, Canvas);
 }
 
 .operator-sidebar-toggle {
@@ -55,9 +55,10 @@
   margin: 0;
   padding: 0;
   overflow: hidden;
-  border: 1px solid var(--fitz-border-subtle);
+  border: 1px solid
+    var(--ak-color-border-subtle, var(--ak-color-border, var(--ak-color-text, CanvasText)));
   border-radius: var(--ak-radius-3, 0.75rem);
-  background: var(--fitz-surface);
+  background: var(--ak-color-surface, Canvas);
   list-style: none;
 }
 
@@ -68,9 +69,12 @@
 .route-family-list > li + li::before {
   position: absolute;
   inset-block-start: 0;
-  inset-inline: var(--ak-space-4, 1rem) 0;
+  inset-inline: var(--ak-space-4, 1rem);
   block-size: 1px;
-  background: var(--fitz-border-subtle);
+  background: var(
+    --ak-color-border-subtle,
+    var(--ak-color-border, var(--ak-color-text, CanvasText))
+  );
   content: "";
 }
 
@@ -128,15 +132,16 @@
 }
 
 .route-family-list-link:hover {
-  background: var(--fitz-surface-muted);
+  background: var(--ak-color-surface-muted, var(--ak-color-surface, Canvas));
 }
 
 .route-family-list-link:active {
-  background: var(--fitz-surface-soft);
+  background: var(--ak-color-surface-muted, var(--ak-color-surface, Canvas));
 }
 
 .route-family-list-link:focus-visible {
-  outline: 2px solid var(--fitz-focus-ring);
+  outline: 2px solid
+    var(--ak-color-focus-ring, var(--ak-color-accent, var(--ak-color-text, CanvasText)));
   outline-offset: -2px;
 }
 
@@ -152,7 +157,7 @@
 .operator-breadcrumbs [data-slot="breadcrumb-list"] {
   flex-wrap: wrap;
   row-gap: var(--ak-space-1, 0.25rem);
-  font-size: var(--fitz-body-size);
+  font-size: var(--ak-font-size-sm, 0.875rem);
 }
 
 .operator-breadcrumbs [data-slot="breadcrumb-page"],
@@ -199,4 +204,8 @@
   .operator-shell-layout {
     grid-template-columns: 13rem minmax(0, 1fr);
   }
+}
+.operator-context-root {
+  display: flex;
+  flex-direction: column;
 }

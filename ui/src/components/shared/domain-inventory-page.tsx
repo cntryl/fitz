@@ -1,18 +1,29 @@
-import { For, Show } from "@askrjs/askr/control";
+import { Show } from "@askrjs/askr/control";
 import { currentRoute } from "@askrjs/askr/router";
-import { Alert, Button, Card, CardContent, Stack, Text } from "@askrjs/themes/components";
+import { Alert, Button, Block } from "@askrjs/themes/components";
 import DomainHeader from "./domain-header";
 import type { DomainHeaderProps } from "./domain-header";
 import DomainPageFrame from "./domain-page-frame";
 import OperatorScopeStrip from "./operator-scope-strip";
+import DomainSummaryStrip from "./domain-summary-strip";
+import DomainScopeInventoryTable from "./domain-scope-inventory-table";
 import DomainResourceInventoryTable, {
   type DomainResourceInventory,
   type DomainResourceMetricColumn,
 } from "./domain-resource-inventory-table";
 import { QueryErrorState, QueryLoadingState, QueryRefreshingState } from "./query-state";
 import { formatUnknownError } from "@/shared/errors/format";
-import { formatDisplayValue } from "@/shared/format";
-import type { DomainSegment } from "@/shared/navigation/domains";
+import { domainTitleForSegment, type DomainSegment } from "@/shared/navigation/domains";
+
+function decodeRouteParam(value: string | undefined) {
+  if (!value) return undefined;
+
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
 
 export interface DomainInventoryQuery<TInventory extends DomainResourceInventory> {
   data?: TInventory | null;
@@ -73,9 +84,20 @@ export default function DomainInventoryPage<TInventory extends DomainResourceInv
   title,
 }: DomainInventoryPageProps<TInventory>) {
   const route = currentRoute();
+  const realm = decodeRouteParam(route.params.realm);
+  const area = decodeRouteParam(route.params.area);
+  const domainTitle = domainTitleForSegment(domain);
+  const scopedRealm = inventory.data?.realms.find((item) => item.realm === realm);
+  const pageTitle = area ?? realm ?? title;
+  const pageEyebrow = area ? `${domainTitle} area` : realm ? `${domainTitle} realm` : eyebrow;
+  const pageDescription = area
+    ? `Resources in ${realm} / ${area}.`
+    : realm
+      ? `Areas in the ${realm} realm.`
+      : description;
   const onRefresh = () => refreshAll(refreshers ?? [inventory.refresh]);
   const isRefreshing = refreshing ?? inventory.refreshing;
-  const hasScopedInventory = Boolean(route.params.realm || route.params.area);
+  const hasScopedInventory = Boolean(realm || area);
   const freshness = isRefreshing
     ? "Refreshing"
     : !inventory.data && inventory.loading
@@ -92,11 +114,11 @@ export default function DomainInventoryPage<TInventory extends DomainResourceInv
 
   return (
     <DomainPageFrame>
-      <Stack gap="3">
+      <Block direction="column" gap="sm">
         <DomainHeader
-          eyebrow={eyebrow}
-          title={title}
-          description={description}
+          eyebrow={pageEyebrow}
+          title={pageTitle}
+          description={pageDescription}
           primaryAction={{
             busy: isRefreshing,
             disabled: isRefreshing,
@@ -105,7 +127,7 @@ export default function DomainInventoryPage<TInventory extends DomainResourceInv
           }}
           status={status}
         />
-        <OperatorScopeStrip freshness={freshness} />
+        <OperatorScopeStrip realm={realm} area={area} freshness={freshness} />
 
         <Show when={!inventory.data && inventory.loading}>
           <QueryLoadingState description={loadingDescription} />
@@ -116,7 +138,7 @@ export default function DomainInventoryPage<TInventory extends DomainResourceInv
         </Show>
 
         <Show when={inventory.data}>
-          <Stack gap="3">
+          <Block direction="column" gap="sm">
             <Show when={isRefreshing}>
               <QueryRefreshingState description={refreshingDescription} />
             </Show>
@@ -133,46 +155,35 @@ export default function DomainInventoryPage<TInventory extends DomainResourceInv
               />
             </Show>
             <Show when={stats.length > 0 && !hasScopedInventory}>
-              <div class="domain-stat-grid" aria-label={`${title} key stats`}>
-                <For each={stats as DomainInventoryStat[]} by={(stat) => stat.label}>
-                  {(stat) => (
-                    <Card key={stat.label} padding="sm" variant="default">
-                      <CardContent>
-                        <Stack gap="1">
-                          <Text as="span" class="domain-header-kicker">
-                            {stat.label}
-                          </Text>
-                          <Text
-                            as="strong"
-                            class="domain-stat-value"
-                            font="mono"
-                            numeric="tabular"
-                            weight="semibold"
-                          >
-                            {formatDisplayValue(stat.value)}
-                          </Text>
-                          {stat.caption ? (
-                            <Text as="span" class="domain-muted" size="sm">
-                              {stat.caption}
-                            </Text>
-                          ) : null}
-                        </Stack>
-                      </CardContent>
-                    </Card>
-                  )}
-                </For>
-              </div>
+              <DomainSummaryStrip
+                ariaLabel={`${title} key stats`}
+                class="domain-inventory-summary"
+                items={stats}
+              />
             </Show>
-            <DomainResourceInventoryTable
-              domain={domain}
-              emptyDescription={emptyDescription}
-              inventory={inventory.data}
-              metricColumns={metricColumns}
-              title={tableTitle}
-            />
-          </Stack>
+            <Show
+              when={area}
+              fallback={
+                <DomainScopeInventoryTable
+                  domain={domain}
+                  emptyDescription={emptyDescription}
+                  realm={realm}
+                  realms={inventory.data?.realms}
+                  areas={scopedRealm?.areas}
+                />
+              }
+            >
+              <DomainResourceInventoryTable
+                domain={domain}
+                emptyDescription={emptyDescription}
+                inventory={inventory.data}
+                metricColumns={metricColumns}
+                title={tableTitle}
+              />
+            </Show>
+          </Block>
         </Show>
-      </Stack>
+      </Block>
     </DomainPageFrame>
   );
 }

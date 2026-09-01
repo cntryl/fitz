@@ -1,20 +1,23 @@
 import { For, Show } from "@askrjs/askr/control";
 import { currentRoute } from "@askrjs/askr/router";
-import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  Stack,
+  Badge,
+  Block,
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemTitle,
+  Text,
 } from "@askrjs/themes/components";
+import DomainDataSection from "@/components/shared/domain-data-section";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
 import { queryFreshness, queryHeaderStatus } from "@/components/shared/query-header-status";
 import {
-  QueryEmptyState,
+  QueryCompactEmptyState,
   QueryErrorState,
   QueryLoadingState,
   QueryRefreshingState,
@@ -48,24 +51,55 @@ function parseLimit(value: string | null) {
   return Math.max(1, Math.min(200, Math.floor(parsed)));
 }
 
-function NoticeDeliveryTableRows(props: { rows: NoticeDeliveryRows["observations"] }) {
+function NoticeDeliveryList(props: { rows: NoticeDeliveryRows["observations"] }) {
   return (
-    <For
-      each={props.rows}
-      by={(observation) =>
-        `${observation.sessionId ?? "session"}:${observation.subscriptionId ?? "none"}`
-      }
+    <ItemGroup
+      as="ul"
+      aria-label="Delivery evidence"
+      class="domain-divided-list notice-delivery-list"
     >
-      {(observation) => (
-        <TableRow>
-          <TableCell>{observation.status}</TableCell>
-          <TableCell>{observation.sessionId ?? "--"}</TableCell>
-          <TableCell>{formatNumber(observation.notificationsReceived)}</TableCell>
-          <TableCell>{formatNumber(observation.publishesPerMinute)}</TableCell>
-          <TableCell>{formatNumber(observation.publishesTotal)}</TableCell>
-        </TableRow>
-      )}
-    </For>
+      <For
+        each={props.rows}
+        by={(observation) =>
+          `${observation.sessionId ?? "session"}:${observation.subscriptionId ?? "none"}`
+        }
+      >
+        {(observation) => (
+          <Item as="li">
+            <ItemContent>
+              <ItemTitle>
+                <Text as="strong" font="mono" weight="semibold" wrap="anywhere">
+                  {observation.sessionId ?? "--"}
+                </Text>
+              </ItemTitle>
+              <ItemDescription>
+                <Block direction="row" gap="md" wrap>
+                  {observation.subscriptionId == null ? null : (
+                    <Text as="span" font="mono" numeric="tabular" size="sm" tone="muted">
+                      Subscription: {formatNumber(observation.subscriptionId)}
+                    </Text>
+                  )}
+                  <Text as="span" font="mono" numeric="tabular" size="sm" tone="muted">
+                    Notifications observed: {formatNumber(observation.notificationsReceived)}
+                  </Text>
+                  <Text as="span" font="mono" numeric="tabular" size="sm" tone="muted">
+                    Current publishes / min: {formatNumber(observation.publishesPerMinute)}
+                  </Text>
+                  <Text as="span" font="mono" numeric="tabular" size="sm" tone="muted">
+                    Observed publish total: {formatNumber(observation.publishesTotal)}
+                  </Text>
+                </Block>
+              </ItemDescription>
+            </ItemContent>
+            <ItemActions>
+              <Badge aria-label={`Status: ${observation.status}`} variant="outline">
+                {observation.status}
+              </Badge>
+            </ItemActions>
+          </Item>
+        )}
+      </For>
+    </ItemGroup>
   );
 }
 
@@ -95,7 +129,7 @@ export default function NoticeOperationPage(props: {
   const activeSubscribers = countActiveSubscribers(deliveries);
   return (
     <DomainPageFrame>
-      <Stack gap="3">
+      <Block direction="column" gap="sm">
         <DomainHeader
           eyebrow="Notice operation"
           title={query}
@@ -134,49 +168,30 @@ export default function NoticeOperationPage(props: {
 
         <Show when={data}>
           {(data) => (
-            <Stack gap="3">
+            <Block direction="column" gap="sm">
               <Show when={rowsQuery.refreshing}>
                 <QueryRefreshingState description="Refreshing notice operation deliveries..." />
               </Show>
 
-              <Show
-                when={data.observations.length === 0}
-                fallback={
-                  <Card padding="sm" variant="default">
-                    <CardHeader>
-                      <CardTitle titleAs="h2">Delivery evidence</CardTitle>
-                      <CardDescription>
-                        Live subscription observations for this operation route; not delivery
-                        history. The API does not report a reset scope for total counters.
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <div class="domain-table-wrap notice-operation-table-wrap">
-                        <Table>
-                          <TableHead>
-                            <TableRow>
-                              <TableHeaderCell>Status</TableHeaderCell>
-                              <TableHeaderCell>Session</TableHeaderCell>
-                              <TableHeaderCell>Notifications observed</TableHeaderCell>
-                              <TableHeaderCell>Current publishes / min</TableHeaderCell>
-                              <TableHeaderCell>Observed publish total</TableHeaderCell>
-                            </TableRow>
-                          </TableHead>
-                          <TableBody>
-                            <NoticeDeliveryTableRows rows={data.observations} />
-                          </TableBody>
-                        </Table>
-                      </div>
-                    </CardContent>
-                  </Card>
-                }
+              <DomainDataSection
+                id="notice-delivery-evidence"
+                title="Delivery evidence"
+                description="Live subscription observations for this operation route; not delivery history. The API does not report a reset scope for total counters."
               >
-                <QueryEmptyState description="No matching notice deliveries are currently visible." />
-              </Show>
-            </Stack>
+                <Show
+                  when={data.observations.length === 0}
+                  fallback={<NoticeDeliveryList rows={data.observations} />}
+                >
+                  <QueryCompactEmptyState
+                    title="No delivery evidence"
+                    description="No matching notice deliveries are currently visible."
+                  />
+                </Show>
+              </DomainDataSection>
+            </Block>
           )}
         </Show>
-      </Stack>
+      </Block>
     </DomainPageFrame>
   );
 }

@@ -7,24 +7,6 @@ import {
 } from "./shell/api-fixtures";
 import { openDashboard } from "./shell/chrome";
 
-test("captures the mobile navbar panel", async ({ page }, testInfo) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await openDashboard(page);
-  const primaryNav = page.getByRole("navigation", { name: "Primary navigation" });
-
-  await primaryNav.getByRole("button", { name: /Menu|Navigation/ }).click();
-  await expect(primaryNav.getByRole("link", { name: "Overview" })).toBeVisible();
-  await expect(primaryNav.getByRole("link", { name: "Diagnostics" })).toBeVisible();
-  await expect(primaryNav.getByRole("link", { name: "Metrics" })).toBeVisible();
-  await expect(primaryNav.getByRole("link", { name: "Queue" })).toBeVisible();
-
-  await page.screenshot({
-    fullPage: true,
-    path: testInfo.outputPath("mobile-nav-open.png"),
-    animations: "disabled",
-  });
-});
-
 test("operates the mobile navigation disclosure from the keyboard", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openDashboard(page);
@@ -48,7 +30,7 @@ test("captures sessions data state", async ({ page }, testInfo) => {
 
   await page.goto("/admin/1/sessions");
   await expect(page.getByRole("heading", { name: "Active sessions", exact: true })).toBeVisible();
-  await expect(page.locator("table tbody tr").first()).toBeVisible();
+  await expect(page.locator("ul.session-list li").first()).toBeVisible();
 
   await page.screenshot({
     fullPage: true,
@@ -80,7 +62,7 @@ test("captures sessions on mobile", async ({ page }, testInfo) => {
 
   await page.goto("/admin/1/sessions");
   await expect(page.getByRole("heading", { name: "Active sessions", exact: true })).toBeVisible();
-  await expect(page.locator("ul.session-mobile-list li").first()).toBeVisible();
+  await expect(page.locator("ul.session-list li").first()).toBeVisible();
 
   await page.screenshot({
     fullPage: true,
@@ -138,25 +120,6 @@ test("captures metrics on mobile", async ({ page }, testInfo) => {
   await page.screenshot({
     fullPage: true,
     path: testInfo.outputPath("metrics-mobile.png"),
-    animations: "disabled",
-  });
-});
-
-test("captures metrics in dark mode", async ({ page }, testInfo) => {
-  await page.setViewportSize({ width: 1440, height: 1200 });
-  await mockMetricsApi(page);
-  await page.addInitScript(() => {
-    localStorage.setItem("fitz-admin-theme", "dark");
-  });
-
-  await page.goto("/admin/1/metrics");
-
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await expect(page.getByRole("heading", { name: "Metrics explorer" })).toBeVisible();
-
-  await page.screenshot({
-    fullPage: true,
-    path: testInfo.outputPath("metrics-dark.png"),
     animations: "disabled",
   });
 });

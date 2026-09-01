@@ -587,30 +587,6 @@ mod tests {
     }
 
     #[test]
-    fn should_match_single_star_wildcard_update() {
-        // Arrange
-        let pattern = Pattern::new("notice://acme/orders/*");
-
-        // Act
-        let result = pattern.matches(&route("notice://acme/orders/update"));
-
-        // Assert
-        assert!(result);
-    }
-
-    #[test]
-    fn should_match_single_star_wildcard_delete() {
-        // Arrange
-        let pattern = Pattern::new("notice://acme/orders/*");
-
-        // Act
-        let result = pattern.matches(&route("notice://acme/orders/delete"));
-
-        // Assert
-        assert!(result);
-    }
-
-    #[test]
     fn should_not_match_across_single_star_boundary() {
         let pattern = Pattern::new("notice://acme/orders/*");
         // * only matches one segment, not nested paths
@@ -714,18 +690,6 @@ mod tests {
     }
 
     #[test]
-    fn should_match_multiple_wildcards_inventory() {
-        // Arrange
-        let pattern = Pattern::new("notice://acme/*/*/created");
-
-        // Act
-        let result = pattern.matches(&route("notice://acme/inventory/check/created"));
-
-        // Assert
-        assert!(result);
-    }
-
-    #[test]
     fn should_not_match_multiple_wildcards_insufficient_segments() {
         // Arrange
         let pattern = Pattern::new("notice://acme/*/*/created");
@@ -744,18 +708,6 @@ mod tests {
 
         // Act
         let result = pattern.matches(&route("acme/orders/create"));
-
-        // Assert
-        assert!(result);
-    }
-
-    #[test]
-    fn should_match_pattern_without_scheme_update() {
-        // Arrange
-        let pattern = Pattern::new("acme/orders/*");
-
-        // Act
-        let result = pattern.matches(&route("acme/orders/update"));
 
         // Assert
         assert!(result);

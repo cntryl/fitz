@@ -183,9 +183,7 @@ export async function expectNoHorizontalOverflow(page: Page) {
 export async function expectReachableScrollableTables(page: Page) {
   const unreachable = await page.evaluate(() => {
     const surfaces = Array.from(
-      document.querySelectorAll<HTMLElement>(
-        '.domain-table-wrap, [data-slot="virtual-table"], [data-slot="table-container"]',
-      ),
+      document.querySelectorAll<HTMLElement>('.domain-table-wrap, [data-slot="table-container"]'),
     );
 
     return surfaces.filter((surface) => {
@@ -311,13 +309,13 @@ export const sprint16Routes: RouteScenario[] = [
     path: "/admin/1/lease/default",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "Lease inventory",
+    title: "default",
   },
   {
     path: "/admin/1/lease/default/ops",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "Lease inventory",
+    title: "ops",
   },
   {
     path: "/admin/1/notice",
@@ -329,19 +327,19 @@ export const sprint16Routes: RouteScenario[] = [
     path: "/admin/1/notice/default",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "Notice inventory",
+    title: "default",
   },
   {
     path: "/admin/1/notice/default/ops",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "Notice inventory",
+    title: "ops",
   },
   {
     path: "/admin/1/notice/default/ops/primary",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "Notice operations",
+    title: "primary",
   },
   {
     path: "/admin/1/notice/default/ops/primary/GetStatus",
@@ -365,13 +363,13 @@ export const sprint16Routes: RouteScenario[] = [
     path: "/admin/1/schedule/default",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "Schedule inventory",
+    title: "default",
   },
   {
     path: "/admin/1/schedule/default/ops",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "Schedule inventory",
+    title: "ops",
   },
   {
     path: "/admin/1/queue",
@@ -383,13 +381,13 @@ export const sprint16Routes: RouteScenario[] = [
     path: "/admin/1/queue/default",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "Queue inventory",
+    title: "default",
   },
   {
     path: "/admin/1/queue/default/ops",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "Queue inventory",
+    title: "ops",
   },
   {
     path: "/admin/1/stream",
@@ -407,44 +405,44 @@ export const sprint16Routes: RouteScenario[] = [
     path: "/admin/1/kv/default",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "KV tables",
+    title: "default",
   },
   {
     path: "/admin/1/kv/default/ops",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "KV tables",
+    title: "ops",
   },
   {
     path: "/admin/1/rpc/default",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "RPC inventory",
+    title: "default",
   },
   {
     path: "/admin/1/rpc/default/ops",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "RPC inventory",
+    title: "ops",
   },
   {
     path: "/admin/1/stream/default",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "Stream inventory",
+    title: "default",
   },
   {
     path: "/admin/1/stream/default/ops",
     shell: "app",
     setup: (page) => mockDomainOverviewApis(page),
-    title: "Stream inventory",
+    title: "ops",
   },
   {
     path: "/admin/1/queue/default/ops/primary",
     shell: "app",
     setup: (page) =>
       mockQueueResourceApis(page, parseRouteResourceScope("/admin/1/queue/default/ops/primary")),
-    title: "Queue resource inspection",
+    title: "primary",
   },
   {
     path: "/admin/1/kv/default/ops/primary",
@@ -499,7 +497,7 @@ export const sprint16Routes: RouteScenario[] = [
         page,
         parseRouteResourceScope("/admin/1/schedule/default/ops/primary"),
       ),
-    title: "Schedule resource inspection",
+    title: "primary",
   },
   {
     path: "/admin/1/stream/default/ops/primary",

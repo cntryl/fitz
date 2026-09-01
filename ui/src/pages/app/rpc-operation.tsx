@@ -1,21 +1,24 @@
 import { For, Show } from "@askrjs/askr/control";
 import { currentRoute } from "@askrjs/askr/router";
-import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  Stack,
+  Badge,
+  Block,
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemTitle,
+  Text,
 } from "@askrjs/themes/components";
+import DomainDataSection from "@/components/shared/domain-data-section";
 import DomainHeader from "@/components/shared/domain-header";
-import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
+import DomainSummaryStrip from "@/components/shared/domain-summary-strip";
 import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
 import { queryFreshness, queryHeaderStatus } from "@/components/shared/query-header-status";
 import {
-  QueryEmptyState,
+  QueryCompactEmptyState,
   QueryErrorState,
   QueryLoadingState,
   QueryRefreshingState,
@@ -51,22 +54,44 @@ function formatObservationState(value: string) {
     .join(" ");
 }
 
-function RpcCallEvidenceRows(props: { rows: RpcCallObservation[] }) {
+function RpcCallEvidenceList(props: { rows: RpcCallObservation[] }) {
   return (
-    <For
-      each={props.rows}
-      by={(row, index) => row.correlation_id ?? `${row.worker_session_id}:${index}`}
-    >
-      {(row) => (
-        <TableRow>
-          <TableCell>{formatObservationState(row.state)}</TableCell>
-          <TableCell>{row.worker_session_id ?? "--"}</TableCell>
-          <TableCell>{row.correlation_id ?? "--"}</TableCell>
-          <TableCell>{formatNumber(row.requests_handled ?? 0)}</TableCell>
-          <TableCell>{formatLatency(row.average_latency_ms)}</TableCell>
-        </TableRow>
-      )}
-    </For>
+    <ItemGroup as="ul" aria-label="Live call evidence" class="domain-divided-list rpc-call-list">
+      <For
+        each={props.rows}
+        by={(row, index) => row.correlation_id ?? `${row.worker_session_id}:${index}`}
+      >
+        {(row) => (
+          <Item as="li">
+            <ItemContent>
+              <ItemTitle>
+                <Text as="strong" font="mono" weight="semibold" wrap="anywhere">
+                  {row.correlation_id ?? row.worker_session_id ?? "--"}
+                </Text>
+              </ItemTitle>
+              <ItemDescription>
+                <Block direction="row" gap="md" wrap>
+                  <Text as="span" font="mono" size="sm" tone="muted" wrap="anywhere">
+                    Worker: {row.worker_session_id ?? "--"}
+                  </Text>
+                  <Text as="span" font="mono" numeric="tabular" size="sm" tone="muted">
+                    Observed handled total: {formatNumber(row.requests_handled ?? 0)}
+                  </Text>
+                  <Text as="span" font="mono" numeric="tabular" size="sm" tone="muted">
+                    Latency: {formatLatency(row.average_latency_ms)}
+                  </Text>
+                </Block>
+              </ItemDescription>
+            </ItemContent>
+            <ItemActions>
+              <Badge aria-label={`State: ${formatObservationState(row.state)}`} variant="outline">
+                {formatObservationState(row.state)}
+              </Badge>
+            </ItemActions>
+          </Item>
+        )}
+      </For>
+    </ItemGroup>
   );
 }
 
@@ -84,7 +109,7 @@ export default function RpcOperationPage() {
 
   return (
     <DomainPageFrame>
-      <Stack gap="3">
+      <Block direction="column" gap="sm">
         <DomainHeader
           eyebrow="RPC operation"
           title={operation}
@@ -125,14 +150,14 @@ export default function RpcOperationPage() {
         </Show>
         <Show when={detail}>
           {(detail) => (
-            <Stack gap="3">
+            <Block direction="column" gap="sm">
               <Show when={query.refreshing}>
                 <QueryRefreshingState description="Refreshing RPC operation..." />
               </Show>
-              <DomainMetricTable
+              <DomainSummaryStrip
                 title="RPC operation metrics"
                 description="Live worker capacity and pending requests. Latency buckets are current observations; the API does not report a reset window for handled-call counters."
-                metrics={[
+                items={[
                   { label: "Workers", value: detail.workers_registered },
                   { label: "Pending requests", value: detail.requests_pending },
                   {
@@ -145,43 +170,22 @@ export default function RpcOperationPage() {
                   { label: "Latency 100ms+", value: detail.worker_latency_buckets.over_100ms },
                 ]}
               />
-              <Card padding="sm" variant="default">
-                <CardHeader>
-                  <CardTitle titleAs="h2">Live call evidence</CardTitle>
-                  <CardDescription>
-                    Broker-local worker registrations, pending calls, and correlation rows.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <Show
-                    when={rows.length === 0}
-                    fallback={
-                      <div class="domain-table-wrap rpc-operation-table-wrap">
-                        <Table>
-                          <TableHead>
-                            <TableRow>
-                              <TableHeaderCell>State</TableHeaderCell>
-                              <TableHeaderCell>Worker</TableHeaderCell>
-                              <TableHeaderCell>Correlation</TableHeaderCell>
-                              <TableHeaderCell>Observed handled total</TableHeaderCell>
-                              <TableHeaderCell>Latency</TableHeaderCell>
-                            </TableRow>
-                          </TableHead>
-                          <TableBody>
-                            <RpcCallEvidenceRows rows={rows} />
-                          </TableBody>
-                        </Table>
-                      </div>
-                    }
-                  >
-                    <QueryEmptyState description="No live RPC call evidence is currently visible." />
-                  </Show>
-                </CardContent>
-              </Card>
-            </Stack>
+              <DomainDataSection
+                id="rpc-live-call-evidence"
+                title="Live call evidence"
+                description="Broker-local worker registrations, pending calls, and correlation rows."
+              >
+                <Show when={rows.length === 0} fallback={<RpcCallEvidenceList rows={rows} />}>
+                  <QueryCompactEmptyState
+                    title="No live calls"
+                    description="No live RPC call evidence is currently visible."
+                  />
+                </Show>
+              </DomainDataSection>
+            </Block>
           )}
         </Show>
-      </Stack>
+      </Block>
     </DomainPageFrame>
   );
 }

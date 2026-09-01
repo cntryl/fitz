@@ -2,7 +2,7 @@ import { For } from "@askrjs/askr/control";
 import { task } from "@askrjs/askr/resources";
 import { Link } from "@askrjs/askr/router";
 import { NetworkIcon } from "@askrjs/lucide";
-import { Button, Main, PageHeader, Stack } from "@askrjs/themes/components";
+import { Button, Main, PageHeader, Block } from "@askrjs/themes/components";
 import { pathWithRouteFamily } from "@/shared/navigation/domains";
 import { manageRoutePageContext } from "@/components/shared/domain-page-frame";
 import {
@@ -54,10 +54,11 @@ export function RouteFamilyNotFoundPage() {
     <Main
       id="main-content"
       class="domain-page-frame route-transition-surface"
+      direction="column"
       paddingY="xl"
       tabIndex={-1}
     >
-      <Stack gap="4">
+      <Block direction="column" gap="md">
         <PageHeader
           title="Route Family not found"
           description="404 · This Route Family is unavailable to the current session."
@@ -65,7 +66,7 @@ export function RouteFamilyNotFoundPage() {
         <Button asChild variant="outline">
           <Link href="/admin">Back to Route Families</Link>
         </Button>
-      </Stack>
+      </Block>
     </Main>
   );
 }
@@ -79,10 +80,11 @@ export default function RouteFamilySelectorPage() {
     <Main
       id="main-content"
       class="domain-page-frame route-transition-surface"
+      direction="column"
       paddingY="xl"
       tabIndex={-1}
     >
-      <Stack gap="3">
+      <Block direction="column" gap="sm">
         <PageHeader
           title="Select Route Family"
           description="Choose a concrete Route Family before opening the Fitz operator workspace."
@@ -107,7 +109,7 @@ export default function RouteFamilySelectorPage() {
         {operator.routeFamilyState === "ready" ? (
           <RouteFamilyList routeFamilies={operator.routeFamilies} />
         ) : null}
-      </Stack>
+      </Block>
     </Main>
   );
 }

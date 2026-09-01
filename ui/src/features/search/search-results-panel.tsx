@@ -1,7 +1,6 @@
 import { For, Show } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
-import { Button } from "@askrjs/themes/components";
-import { Inline, Stack } from "@askrjs/themes/components";
+import { Button, Block } from "@askrjs/themes/components";
 import {
   Badge,
   Card,
@@ -10,7 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@askrjs/themes/components";
-import { VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
+import DataTable, { type DataTableColumn } from "@/components/shared/data-table";
 import {
   QueryEmptyState,
   QueryErrorState,
@@ -55,19 +54,21 @@ function resultHref(result: AdminSearchResult, selectedRouteFamilyId: string) {
 
 function searchColumns(
   selectedRouteFamilyId: string,
-): readonly VirtualTableColumn<AdminSearchResult>[] {
+): readonly DataTableColumn<AdminSearchResult>[] {
   return [
     {
       id: "result",
       header: "Result",
       width: "28%",
       cellComponent: ({ row }) => (
-        <Stack gap="1">
-          <strong class="domain-table-cell-truncate">{row.title}</strong>
+        <Block direction="column" gap="xs">
+          <strong class="domain-table-cell-truncate" title={row.title}>
+            {row.title}
+          </strong>
           <span class="domain-muted">
             {titleCase(row.domain)} · {titleCase(row.kind)}
           </span>
-        </Stack>
+        </Block>
       ),
     },
     {
@@ -84,7 +85,11 @@ function searchColumns(
       id: "summary",
       header: "Summary",
       width: "28%",
-      cellComponent: ({ row }) => <span class="domain-table-cell-truncate">{row.summary}</span>,
+      cellComponent: ({ row }) => (
+        <span class="domain-table-cell-truncate" title={row.summary}>
+          {row.summary}
+        </span>
+      ),
     },
     {
       id: "health",
@@ -125,20 +130,20 @@ export default function SearchResultsPanel({
   return (
     <Card padding="sm" variant="default">
       <CardHeader>
-        <Inline justify="between" align="start" gap="3" wrap="wrap">
-          <Stack gap="1">
+        <Block direction="row" justify="between" align="start" gap="sm" wrap={true}>
+          <Block direction="column" gap="xs">
             <CardTitle titleAs="h2">Search results</CardTitle>
             <CardDescription>{description}</CardDescription>
-          </Stack>
-          <Inline gap="2" align="center" wrap="wrap">
+          </Block>
+          <Block direction="row" gap="xs" align="center" wrap={true}>
             <Show when={search?.truncated}>
               <Badge variant="warning">Truncated</Badge>
             </Show>
             <Button type="button" variant="outline" size="sm" onPress={onRetry}>
               Refresh
             </Button>
-          </Inline>
-        </Inline>
+          </Block>
+        </Block>
       </CardHeader>
       <CardContent>
         <Show when={loading && !search}>
@@ -154,16 +159,12 @@ export default function SearchResultsPanel({
           />
         </Show>
         <Show when={results.length > 0}>
-          <Stack gap="3">
-            <VirtualTable<AdminSearchResult>
-              aria-label="Admin search results"
+          <Block direction="column" gap="sm">
+            <DataTable<AdminSearchResult>
+              ariaLabel="Admin search results"
               columns={searchColumns(routeFamilyId)}
               rows={results}
               getKey={(row) => row.id}
-              headerHeight={44}
-              overscan={6}
-              rowHeight={56}
-              style={{ height: "360px" }}
             />
             <div class="search-match-strip" aria-label="Matched search fields">
               <For each={results.slice(0, 8)} by={(result) => result.id}>
@@ -175,7 +176,7 @@ export default function SearchResultsPanel({
                 )}
               </For>
             </div>
-          </Stack>
+          </Block>
         </Show>
       </CardContent>
     </Card>

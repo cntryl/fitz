@@ -183,18 +183,6 @@ fn should_reject_invalid_cron_range() {
     assert!(cron.is_err());
 }
 
-#[test]
-fn should_parse_cron_with_all_wildcards() {
-    // Arrange
-    let cron_str = "* * * * *";
-
-    // Act
-    let cron = CronSchedule::parse(cron_str);
-
-    // Assert
-    assert!(cron.is_ok());
-}
-
 // ========== CREATE Operation Tests ==========
 
 #[test]

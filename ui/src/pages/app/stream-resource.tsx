@@ -1,22 +1,15 @@
 import { state } from "@askrjs/askr";
 import { Show } from "@askrjs/askr/control";
 import { currentRoute, Link, navigate } from "@askrjs/askr/router";
-import {
-  Button,
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  Inline,
-  Stack,
-} from "@askrjs/themes/components";
-import { Form, Input, Label, VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
+import { Button, Block } from "@askrjs/themes/components";
+import { Form, Input, Label } from "@askrjs/ui";
 import type { StreamAdminRecord } from "@/adapters";
 import CopyTextButton from "@/components/shared/copy-text-button";
+import DataTable, { type DataTableColumn } from "@/components/shared/data-table";
+import DomainDataSection from "@/components/shared/domain-data-section";
 import DomainHeader from "@/components/shared/domain-header";
-import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
+import DomainSummaryStrip from "@/components/shared/domain-summary-strip";
 import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
 import { queryFreshness, queryHeaderStatus } from "@/components/shared/query-header-status";
 import {
@@ -27,7 +20,7 @@ import {
 } from "@/components/shared/query-state";
 import { createStreamResourceQuery } from "@/features/stream/stream-query";
 import { formatCount, formatNumber, formatTimestampMs } from "@/shared/format";
-import { domainResourceHref, formatFitzRoute } from "@/shared/navigation/domains";
+import { domainResourceHref } from "@/shared/navigation/domains";
 
 const DEFAULT_LIMIT = 50;
 
@@ -66,37 +59,17 @@ function recordsHref(
   return queryString ? `${href}?${queryString}` : href;
 }
 
-const recordColumns: readonly VirtualTableColumn<StreamAdminRecord>[] = [
-  {
-    id: "route",
-    header: "Route",
-    width: "28%",
-    cellComponent: ({ row }) => {
-      const route = formatFitzRoute("stream", row);
-
-      return (
-        <span class="domain-table-cell-truncate" title={route}>
-          {route}
-        </span>
-      );
-    },
-  },
+const recordColumns: readonly DataTableColumn<StreamAdminRecord>[] = [
   {
     id: "offset",
     header: "Offset",
-    width: "9%",
+    width: "12%",
     cellComponent: ({ row }) => <span>{formatNumber(row.resource_offset)}</span>,
-  },
-  {
-    id: "family",
-    header: "Family",
-    width: "8%",
-    cellComponent: ({ row }) => <span>{formatNumber(row.route_family)}</span>,
   },
   {
     id: "created",
     header: "Created",
-    width: "18%",
+    width: "24%",
     cellComponent: ({ row }) => (
       <span class="domain-table-cell-truncate" title={formatTimestampMs(row.created_at_ms)}>
         {formatTimestampMs(row.created_at_ms)}
@@ -106,7 +79,7 @@ const recordColumns: readonly VirtualTableColumn<StreamAdminRecord>[] = [
   {
     id: "body",
     header: "Body",
-    width: "25%",
+    width: "44%",
     cellComponent: ({ row }) => (
       <span class="domain-table-cell-truncate" title={row.body.base64}>
         {row.body.utf8 ?? row.body.base64}
@@ -115,8 +88,8 @@ const recordColumns: readonly VirtualTableColumn<StreamAdminRecord>[] = [
   },
   {
     id: "actions",
-    header: "Copy",
-    width: "12%",
+    header: "Action",
+    width: "20%",
     cellComponent: ({ row }) => (
       <CopyTextButton
         label={`Copy body at offset ${row.resource_offset}`}
@@ -125,10 +98,6 @@ const recordColumns: readonly VirtualTableColumn<StreamAdminRecord>[] = [
     ),
   },
 ];
-
-function recordTableHeight(rowCount: number) {
-  return `${Math.min(432, Math.max(144, 44 + rowCount * 48))}px`;
-}
 
 export default function StreamResourcePage() {
   const route = currentRoute();
@@ -169,7 +138,7 @@ export default function StreamResourcePage() {
 
   return (
     <DomainPageFrame>
-      <Stack gap="3">
+      <Block direction="column" gap="sm">
         <DomainHeader
           eyebrow="Stream resource"
           title={scope.resource}
@@ -189,10 +158,11 @@ export default function StreamResourcePage() {
           freshness={queryFreshness(query)}
         />
         {data ? (
-          <DomainMetricTable
-            title="Stream resource metrics"
+          <DomainSummaryStrip
+            id="stream-committed-metadata"
+            title="Committed metadata"
             description="Durable committed metadata. Append sessions are live and separate from replay history."
-            metrics={[
+            items={[
               {
                 label: "Latest committed offset",
                 value: data.detail.offset,
@@ -216,55 +186,56 @@ export default function StreamResourcePage() {
             ]}
           />
         ) : null}
-        <Card padding="sm" variant="default">
-          <CardHeader>
-            <CardTitle titleAs="h2">Record filters</CardTitle>
-            <CardDescription>
-              Read committed records by from offset, optional discriminator, and limit.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Form onSubmit={applyFilters}>
-              <Inline align="end" gap="3" wrap="wrap">
-                <Stack gap="1">
-                  <Label for="stream-from-offset">From offset</Label>
-                  <Input
-                    id="stream-from-offset"
-                    {...({ min: 0 } as Record<string, unknown>)}
-                    type="number"
-                    value={fromOffsetDraft()}
-                    onInput={(event: Event) =>
-                      setFromOffsetDraft((event.target as HTMLInputElement).value)
-                    }
-                  />
-                </Stack>
-                <Stack gap="1">
-                  <Label for="stream-discriminator">Discriminator</Label>
-                  <Input
-                    id="stream-discriminator"
-                    value={discriminatorDraft()}
-                    onInput={(event: Event) =>
-                      setDiscriminatorDraft((event.target as HTMLInputElement).value)
-                    }
-                  />
-                </Stack>
-                <Stack gap="1">
-                  <Label for="stream-limit">Limit</Label>
-                  <Input
-                    id="stream-limit"
-                    {...({ min: 1 } as Record<string, unknown>)}
-                    type="number"
-                    value={limitDraft()}
-                    onInput={(event: Event) =>
-                      setLimitDraft((event.target as HTMLInputElement).value)
-                    }
-                  />
-                </Stack>
-                <Button type="submit">Apply filters</Button>
-              </Inline>
-            </Form>
-          </CardContent>
-        </Card>
+        <DomainDataSection
+          id="stream-record-filters"
+          title="Record filters"
+          description="Read committed records by from offset, optional discriminator, and limit."
+        >
+          <Form onSubmit={applyFilters}>
+            <Block
+              direction={{ base: "column", sm: "row" }}
+              align={{ base: "stretch", sm: "end" }}
+              gap="sm"
+              wrap={true}
+            >
+              <Block direction="column" gap="xs" width={{ base: "full", sm: "auto" }}>
+                <Label for="stream-from-offset">From offset</Label>
+                <Input
+                  id="stream-from-offset"
+                  {...({ min: 0 } as Record<string, unknown>)}
+                  type="number"
+                  value={fromOffsetDraft()}
+                  onInput={(event: Event) =>
+                    setFromOffsetDraft((event.target as HTMLInputElement).value)
+                  }
+                />
+              </Block>
+              <Block direction="column" gap="xs" width={{ base: "full", sm: "auto" }}>
+                <Label for="stream-discriminator">Discriminator</Label>
+                <Input
+                  id="stream-discriminator"
+                  value={discriminatorDraft()}
+                  onInput={(event: Event) =>
+                    setDiscriminatorDraft((event.target as HTMLInputElement).value)
+                  }
+                />
+              </Block>
+              <Block direction="column" gap="xs" width={{ base: "full", sm: "auto" }}>
+                <Label for="stream-limit">Limit</Label>
+                <Input
+                  id="stream-limit"
+                  {...({ min: 1 } as Record<string, unknown>)}
+                  type="number"
+                  value={limitDraft()}
+                  onInput={(event: Event) =>
+                    setLimitDraft((event.target as HTMLInputElement).value)
+                  }
+                />
+              </Block>
+              <Button type="submit">Apply filters</Button>
+            </Block>
+          </Form>
+        </DomainDataSection>
         <Show when={query.loading}>
           <QueryLoadingState description="Loading committed stream records..." />
         </Show>
@@ -282,29 +253,26 @@ export default function StreamResourcePage() {
           <QueryEmptyState description="No committed stream records matched this offset and discriminator." />
         </Show>
         <Show when={records.length > 0}>
-          <Card padding="sm" variant="default">
-            <CardHeader>
-              <CardTitle titleAs="h2">Committed records</CardTitle>
-              <CardDescription>
-                Durable stream records returned by the current read window.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <VirtualTable<StreamAdminRecord>
-                aria-label="Stream records"
-                class="stream-resource-virtual-table"
+          <DomainDataSection
+            id="stream-committed-records"
+            title="Committed records"
+            description="Durable stream records returned by the current read window."
+          >
+            <Block direction="column" gap="xs">
+              <p class="domain-inventory-scroll-hint">
+                Scroll horizontally to inspect every record field and action.
+              </p>
+              <DataTable<StreamAdminRecord>
+                ariaLabel="Stream records"
+                class="stream-record-table"
                 columns={recordColumns}
-                getKey={(record) => `${record.route_family}:${record.resource_offset}`}
-                headerHeight={44}
-                overscan={8}
-                rowHeight={48}
+                getKey={(record) => record.resource_offset}
                 rows={records}
-                style={{ height: recordTableHeight(records.length) }}
               />
-            </CardContent>
-          </Card>
+            </Block>
+          </DomainDataSection>
         </Show>
-        <Inline gap="2" wrap="wrap">
+        <Block as="nav" aria-label="Record pages" direction="row" gap="xs" wrap={true}>
           <Show when={fromOffset > 0}>
             <Link
               class="page-action-link"
@@ -336,8 +304,8 @@ export default function StreamResourcePage() {
               </Link>
             </Button>
           </Show>
-        </Inline>
-      </Stack>
+        </Block>
+      </Block>
     </DomainPageFrame>
   );
 }

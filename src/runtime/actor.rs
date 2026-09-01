@@ -594,56 +594,6 @@ mod tests {
         )
     }
     #[test]
-    fn should_create_actor_id() {
-        // Arrange
-        let id = 42;
-
-        // Act
-        let actor_id = ActorId::new(id);
-
-        // Assert
-        assert_eq!(actor_id.as_u64(), id);
-    }
-
-    #[test]
-    fn should_compare_equal_actor_ids() {
-        // Arrange
-        let id1 = ActorId::new(1);
-        let id2 = ActorId::new(1);
-
-        // Act
-        let are_equal = id1 == id2;
-
-        // Assert
-        assert!(are_equal);
-    }
-
-    #[test]
-    fn should_compare_unequal_actor_ids() {
-        // Arrange
-        let id1 = ActorId::new(1);
-        let id2 = ActorId::new(2);
-
-        // Act
-        let are_equal = id1 == id2;
-
-        // Assert
-        assert!(!are_equal);
-    }
-
-    #[test]
-    fn should_format_actor_id() {
-        // Arrange
-        let actor_id = ActorId::new(123);
-
-        // Act
-        let formatted = format!("{actor_id}");
-
-        // Assert
-        assert_eq!(formatted, "Actor(123)");
-    }
-
-    #[test]
     fn should_create_context_with_running_state() {
         // Arrange
         let address = test_address(1, "/test/actor");

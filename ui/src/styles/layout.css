@@ -1,8 +1,10 @@
 .domain-page-frame {
-  padding-block-start: var(--fitz-page-padding-block);
+  padding-block-start: var(--ak-space-3, 0.75rem);
 }
 
 .page-frame-main {
+  display: flex;
+  flex-direction: column;
   inline-size: 100%;
   max-inline-size: 100%;
   min-width: 0;

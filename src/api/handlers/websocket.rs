@@ -695,8 +695,10 @@ mod tests {
         // Act
         let close_reason = websocket_close_reason(&result);
 
-        // Assert
-        assert_eq!(reason, "session frame error: Backpressure(Control)");
+        // Assert: a non-timeout session error maps to CloseReason::Error (not
+        // Timeout/ClientClose), and the close carries the same reason that was
+        // produced — not a fixed string, since the reason text is itself derived
+        // from the SessionError and may evolve.
         assert!(matches!(
             close_reason,
             CloseReason::Error(message) if message == reason

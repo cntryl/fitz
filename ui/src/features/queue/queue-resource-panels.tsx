@@ -1,17 +1,18 @@
 import { For, Show } from "@askrjs/askr/control";
-import { VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
 import {
   Badge,
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  Inline,
-  Stack,
+  Block,
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemFooter,
+  ItemGroup,
+  ItemTitle,
+  Text,
 } from "@askrjs/themes/components";
-import DomainMetricTable from "@/components/shared/domain-metric-table";
-import { QueryEmptyState } from "@/components/shared/query-state";
+import DomainDataSection from "@/components/shared/domain-data-section";
+import DomainSummaryStrip from "@/components/shared/domain-summary-strip";
+import { QueryCompactEmptyState } from "@/components/shared/query-state";
 import QueueDeadLetterTable from "@/components/shared/queue-dead-letter-table";
 import QueueInflightTable from "@/components/shared/queue-inflight-table";
 import type { DeadLetterMessage } from "@/features/queue/queue-models";
@@ -21,6 +22,7 @@ import type {
   QueueResourceTimeline,
   QueueResourceTimelineEvent,
 } from "@/features/queue/queue-resource-models";
+import { formatTimestamp } from "@/shared/format";
 import {
   formatRate,
   formatTimelineContext,
@@ -30,10 +32,11 @@ import {
 
 export function QueueResourceCurrentValuesPanel({ detail }: { detail: QueueResourceDetail }) {
   return (
-    <DomainMetricTable
+    <DomainSummaryStrip
+      class="queue-resource-summary"
       title="Current values"
       description="Broker-visible queue counters and live reservations for this scope."
-      metrics={[
+      items={[
         { label: "Ready", value: detail.messagesReady },
         {
           label: "Delayed",
@@ -64,32 +67,30 @@ export function QueueResourceCurrentValuesPanel({ detail }: { detail: QueueResou
 
 export function QueueResourceInflightPanel({ messages }: { messages: QueueInflightMessage[] }) {
   return (
-    <Card variant="raised">
-      <CardHeader>
-        <Inline justify="between" gap="3" align="start" wrap="wrap">
-          <Stack gap="1">
-            <CardTitle titleAs="h2">Inflight</CardTitle>
-            <CardDescription>Live reservations currently owned by queue sessions.</CardDescription>
-          </Stack>
-          <Badge variant="info">
-            {messages.length} {messages.length === 1 ? "entry" : "entries"}
-          </Badge>
-        </Inline>
-      </CardHeader>
-
-      <CardContent>
-        {messages.length === 0 ? (
-          <QueryEmptyState description="No inflight messages are visible for this resource." />
-        ) : (
-          <Stack gap="2">
-            <p class="domain-scroll-hint">
-              Scroll the table horizontally to inspect ownership and expiry details.
-            </p>
-            <QueueInflightTable messages={messages} />
-          </Stack>
-        )}
-      </CardContent>
-    </Card>
+    <DomainDataSection
+      id="queue-inflight"
+      title="Inflight"
+      description="Live reservations currently owned by queue sessions."
+      actions={
+        <Badge variant="info">
+          {messages.length} {messages.length === 1 ? "entry" : "entries"}
+        </Badge>
+      }
+    >
+      {messages.length === 0 ? (
+        <QueryCompactEmptyState
+          title="No inflight messages"
+          description="No inflight messages are visible for this resource."
+        />
+      ) : (
+        <Block direction="column" gap="xs">
+          <Text tone="muted" size="sm">
+            Scroll the table horizontally to inspect ownership and expiry details.
+          </Text>
+          <QueueInflightTable messages={messages} />
+        </Block>
+      )}
+    </DomainDataSection>
   );
 }
 
@@ -107,145 +108,130 @@ export function QueueResourceDeadLettersPanel({
   pendingMessageId: number | null;
 }) {
   return (
-    <Card variant="raised">
-      <CardHeader>
-        <Inline justify="between" gap="3" align="start" wrap="wrap">
-          <Stack gap="1">
-            <CardTitle titleAs="h2">Dead letters</CardTitle>
-            <CardDescription>
-              Durable messages returned by the current dead-letter inspection. This list and the
-              resource-summary counter can have different snapshot times.
-            </CardDescription>
-          </Stack>
-          <Badge variant={messages.length > 0 ? "warning" : "success"}>
-            {messages.length} {messages.length === 1 ? "message" : "messages"} returned
-          </Badge>
-        </Inline>
-      </CardHeader>
-
-      <CardContent>
-        {messages.length === 0 ? (
-          <QueryEmptyState description="No dead-letter messages are visible for this resource. No replay or purge action is needed." />
-        ) : (
-          <Stack gap="2">
-            <p class="domain-scroll-hint">Scroll the table horizontally to reach all actions.</p>
-            <QueueDeadLetterTable
-              messages={messages}
-              onReplay={onReplay}
-              onPurge={onPurge}
-              pendingAction={pendingAction}
-              pendingMessageId={pendingMessageId}
-            />
-          </Stack>
-        )}
-      </CardContent>
-    </Card>
+    <DomainDataSection
+      id="queue-dead-letters"
+      title="Dead letters"
+      description="Durable messages returned by the current dead-letter inspection. This list and the resource-summary counter can have different snapshot times."
+      actions={
+        <Badge variant={messages.length > 0 ? "warning" : "success"}>
+          {messages.length} {messages.length === 1 ? "message" : "messages"} returned
+        </Badge>
+      }
+    >
+      {messages.length === 0 ? (
+        <QueryCompactEmptyState
+          title="No dead letters"
+          description="No dead-letter messages are visible for this resource. No replay or purge action is needed."
+        />
+      ) : (
+        <Block direction="column" gap="xs">
+          <Text tone="muted" size="sm">
+            Scroll the table horizontally to reach all actions.
+          </Text>
+          <QueueDeadLetterTable
+            messages={messages}
+            onReplay={onReplay}
+            onPurge={onPurge}
+            pendingAction={pendingAction}
+            pendingMessageId={pendingMessageId}
+          />
+        </Block>
+      )}
+    </DomainDataSection>
   );
 }
 
-const timelineColumns: readonly VirtualTableColumn<QueueResourceTimelineEvent>[] = [
-  {
-    id: "kind",
-    header: "Kind",
-    width: "14%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate" title={formatTimelineKind(row.kind)}>
-        {formatTimelineKind(row.kind)}
-      </span>
-    ),
-  },
-  {
-    id: "summary",
-    header: "Summary",
-    width: "30%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate" title={row.summary}>
-        {row.summary}
-      </span>
-    ),
-  },
-  {
-    id: "observed",
-    header: "Observed",
-    width: "18%",
-    cellComponent: ({ row }) => (
-      <span class="domain-table-cell-truncate" title={row.observedAt}>
-        {row.observedAt}
-      </span>
-    ),
-  },
-  {
-    id: "age",
-    header: "Age",
-    width: "12%",
-    cellComponent: ({ row }) => (
-      <span>{row.ageSeconds == null ? "Unknown" : humanizeSeconds(row.ageSeconds)}</span>
-    ),
-  },
-  {
-    id: "context",
-    header: "Context",
-    width: "26%",
-    cellComponent: ({ row }) => {
-      const timelineContext = formatTimelineContext(row);
+function timelineKindVariant(kind: QueueResourceTimelineEvent["kind"]) {
+  if (kind === "failure") return "danger" as const;
+  if (kind === "retry") return "warning" as const;
+  return "outline" as const;
+}
 
-      return (
-        <div class="queue-timeline-context">
-          <Show when={timelineContext.length > 0}>
-            <For each={timelineContext.slice(0, 2)} by={(line) => line}>
-              {(line) => <span title={line}>{line}</span>}
-            </For>
-          </Show>
-          <Show when={timelineContext.length === 0}>
-            <span>Context unavailable</span>
-          </Show>
-        </div>
-      );
-    },
-  },
-];
+function QueueTimelineItem({ event }: { event: QueueResourceTimelineEvent }) {
+  const context = formatTimelineContext(event);
+
+  return (
+    <Item as="li" class="queue-timeline-item" size="sm">
+      <ItemContent>
+        <ItemTitle>
+          <Block direction="row" align="center" gap="sm" wrap={true}>
+            <Badge variant={timelineKindVariant(event.kind)}>
+              {formatTimelineKind(event.kind)}
+            </Badge>
+            <Text as="strong" weight="semibold" wrap="anywhere">
+              {event.summary}
+            </Text>
+          </Block>
+        </ItemTitle>
+        <ItemFooter class="queue-timeline-metadata">
+          <For each={context} by={(line) => line}>
+            {(line) => (
+              <Text as="span" tone="muted" size="sm" wrap="anywhere">
+                {line}
+              </Text>
+            )}
+          </For>
+        </ItemFooter>
+      </ItemContent>
+      <ItemActions class="queue-timeline-time">
+        <Block
+          direction={{ base: "row", sm: "column" }}
+          justify={{ base: "between", sm: "start" }}
+          gap="xs"
+          width="full"
+        >
+          <Text as="span" tone="muted" size="sm">
+            <time dateTime={event.observedAt}>{formatTimestamp(event.observedAt)}</time>
+          </Text>
+          <Text as="span" tone="muted" size="sm">
+            {event.ageSeconds == null ? "Age unknown" : `${humanizeSeconds(event.ageSeconds)} ago`}
+          </Text>
+        </Block>
+      </ItemActions>
+    </Item>
+  );
+}
 
 export function QueueResourceTimelinePanel({ timeline }: { timeline: QueueResourceTimeline }) {
   return (
-    <Card variant="raised">
-      <CardHeader>
-        <Inline justify="between" gap="3" align="start" wrap="wrap">
-          <Stack gap="1">
-            <CardTitle titleAs="h2">Timeline</CardTitle>
-            <CardDescription>
-              {timeline.derived
-                ? "Derived transition evidence built from surrounding queue state."
-                : "Broker-observed queue transitions for this resource."}
-            </CardDescription>
-          </Stack>
-          <Badge variant={timeline.derived ? "info" : "success"}>
-            {timeline.derived ? "Derived" : "Live"}
-          </Badge>
-        </Inline>
-      </CardHeader>
-
-      <CardContent>
-        {timeline.events.length === 0 ? (
-          <QueryEmptyState
+    <DomainDataSection
+      id="queue-timeline"
+      title="Timeline"
+      description={
+        timeline.derived
+          ? "Derived transition evidence built from surrounding queue state."
+          : "Broker-observed queue transitions for this resource."
+      }
+      actions={
+        <Badge variant={timeline.derived ? "info" : "success"}>
+          {timeline.derived ? "Derived" : "Live"}
+        </Badge>
+      }
+    >
+      <Show
+        when={timeline.events.length > 0}
+        fallback={
+          <QueryCompactEmptyState
             title={timeline.derived ? "Derived timeline" : "Live timeline"}
             description="No recent transitions are visible for this resource. Use current metrics for context."
           />
-        ) : (
-          <VirtualTable<QueueResourceTimelineEvent>
-            aria-label="Queue resource timeline"
-            class="queue-resource-virtual-table"
-            columns={timelineColumns}
-            getKey={(event) => `${event.observedAt}:${event.summary}`}
-            headerHeight={44}
-            overscan={8}
-            rowHeight={56}
-            rows={timeline.events}
-            style={{
-              height: `${Math.min(456, Math.max(156, 44 + timeline.events.length * 56))}px`,
-            }}
-          />
-        )}
-      </CardContent>
-    </Card>
+        }
+      >
+        <ItemGroup
+          as="ul"
+          class="domain-divided-list queue-timeline-list"
+          aria-label="Queue resource timeline"
+        >
+          <For
+            each={timeline.events}
+            by={(event) =>
+              `${event.observedAt}:${event.kind}:${event.messageId ?? "none"}:${event.summary}`
+            }
+          >
+            {(event) => <QueueTimelineItem event={event} />}
+          </For>
+        </ItemGroup>
+      </Show>
+    </DomainDataSection>
   );
 }

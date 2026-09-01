@@ -1,13 +1,13 @@
 import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogOverlay,
-  DialogPortal,
-  DialogTitle,
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogOverlay,
+  AlertDialogPortal,
+  AlertDialogTitle,
 } from "@askrjs/ui";
-import { Alert, Button, Inline } from "@askrjs/themes/components";
+import { Alert, Button, Block } from "@askrjs/themes/components";
 import type { DeadLetterMessage } from "@/features/queue/queue-models";
 import { formatUnknownError } from "@/shared/errors/format";
 
@@ -55,14 +55,14 @@ export default function QueueDeadLetterDialog({
     : null;
 
   return (
-    <Dialog open={confirmationMessage != null} modal onOpenChange={onOpenChange}>
-      <DialogPortal>
-        <DialogOverlay class="dialog-overlay" />
+    <AlertDialog open={confirmationMessage != null} onOpenChange={onOpenChange}>
+      <AlertDialogPortal>
+        <AlertDialogOverlay />
         {confirmationMessage && copy ? (
-          <DialogContent class="dialog-content" role="alertdialog">
-            <DialogTitle>{copy.title}</DialogTitle>
+          <AlertDialogContent role="alertdialog">
+            <AlertDialogTitle>{copy.title}</AlertDialogTitle>
 
-            <DialogDescription>{copy.description}</DialogDescription>
+            <AlertDialogDescription>{copy.description}</AlertDialogDescription>
 
             {actionError ? (
               <Alert
@@ -72,12 +72,12 @@ export default function QueueDeadLetterDialog({
               />
             ) : null}
 
-            <Inline gap="2" justify="end" wrap="wrap">
-              <DialogClose asChild>
+            <Block direction="row" gap="xs" justify="end" wrap={true}>
+              <AlertDialogCancel asChild>
                 <Button variant="secondary" type="button" disabled={actionPending}>
                   Cancel
                 </Button>
-              </DialogClose>
+              </AlertDialogCancel>
 
               <Button
                 variant={confirmationKind === "purge" ? "destructive" : undefined}
@@ -88,10 +88,10 @@ export default function QueueDeadLetterDialog({
               >
                 {actionPending ? copy.pendingLabel : copy.confirmLabel}
               </Button>
-            </Inline>
-          </DialogContent>
+            </Block>
+          </AlertDialogContent>
         ) : null}
-      </DialogPortal>
-    </Dialog>
+      </AlertDialogPortal>
+    </AlertDialog>
   );
 }

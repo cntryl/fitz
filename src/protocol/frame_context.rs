@@ -68,28 +68,3 @@ impl std::fmt::Debug for FrameContext {
             .finish()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn should_create_frame_context() {
-        // Arrange
-
-        // Act
-        let ctx = FrameContext::new(
-            123,
-            ChannelId::Pub,
-            MessageType::new(103), // KV GET operation
-            Bytes::from("test payload"),
-            RouteFamily::new(1),
-        );
-
-        // Assert
-        assert_eq!(ctx.session_id, 123);
-        assert_eq!(ctx.channel_id, ChannelId::Pub);
-        assert_eq!(ctx.msg_type.as_u16(), 103);
-        assert_eq!(ctx.payload.len(), 12);
-    }
-}

@@ -1,4 +1,4 @@
-import { VirtualTable, type VirtualTableColumn } from "@askrjs/ui";
+import DataTable, { type DataTableColumn } from "./data-table";
 import type { QueueInflightMessage } from "@/features/queue/queue-resource-models";
 import { formatTimestamp } from "@/shared/format";
 
@@ -7,7 +7,7 @@ export interface QueueInflightTableProps {
 }
 
 export default function QueueInflightTable({ messages }: QueueInflightTableProps) {
-  const columns: readonly VirtualTableColumn<QueueInflightMessage>[] = [
+  const columns: readonly DataTableColumn<QueueInflightMessage>[] = [
     {
       id: "message",
       header: "Message",
@@ -19,23 +19,9 @@ export default function QueueInflightTable({ messages }: QueueInflightTableProps
       ),
     },
     {
-      id: "context",
-      header: "Context",
-      width: "22%",
-      cellComponent: ({ row }) => {
-        const context = `${row.realm} / ${row.area} / ${row.resource}`;
-
-        return (
-          <span class="domain-table-cell-truncate" title={context}>
-            {context}
-          </span>
-        );
-      },
-    },
-    {
       id: "token",
       header: "Owner token",
-      width: "17%",
+      width: "24%",
       cellComponent: ({ row }) => (
         <span class="domain-table-cell-truncate" title={row.inflightToken}>
           {row.inflightToken}
@@ -45,7 +31,7 @@ export default function QueueInflightTable({ messages }: QueueInflightTableProps
     {
       id: "session",
       header: "Session",
-      width: "15%",
+      width: "20%",
       cellComponent: ({ row }) => (
         <span class="domain-table-cell-truncate" title={row.sessionId}>
           {row.sessionId}
@@ -53,21 +39,15 @@ export default function QueueInflightTable({ messages }: QueueInflightTableProps
       ),
     },
     {
-      id: "family",
-      header: "Family",
-      width: "7%",
-      cellComponent: ({ row }) => <span>{row.family}</span>,
-    },
-    {
       id: "attempts",
       header: "Attempts",
-      width: "7%",
+      width: "12%",
       cellComponent: ({ row }) => <span>{row.attempts}</span>,
     },
     {
       id: "expires",
       header: "Expires",
-      width: "20%",
+      width: "32%",
       cellComponent: ({ row }) => (
         <span class="domain-table-cell-truncate" title={formatTimestamp(row.expiresAt)}>
           {formatTimestamp(row.expiresAt)}
@@ -75,19 +55,13 @@ export default function QueueInflightTable({ messages }: QueueInflightTableProps
       ),
     },
   ];
-  const tableHeight = Math.min(420, Math.max(144, 44 + messages.length * 48));
-
   return (
-    <VirtualTable<QueueInflightMessage>
-      aria-label="Inflight queue messages"
-      class="queue-resource-virtual-table"
+    <DataTable<QueueInflightMessage>
+      ariaLabel="Inflight queue messages"
+      class="queue-resource-data-table"
       columns={columns}
       getKey={(message) => message.messageId}
-      headerHeight={44}
-      overscan={8}
-      rowHeight={48}
       rows={messages}
-      style={{ height: `${tableHeight}px` }}
     />
   );
 }

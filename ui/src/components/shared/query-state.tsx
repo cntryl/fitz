@@ -1,6 +1,5 @@
-import { EmptyState, Spinner } from "@askrjs/themes/components";
+import { EmptyState, Spinner, Block, Text } from "@askrjs/themes/components";
 import { Badge } from "@askrjs/themes/components";
-import { Stack } from "@askrjs/themes/components";
 import { Button } from "@askrjs/themes/components";
 import { formatUnknownError } from "@/shared/errors/format";
 import { AppApiError } from "@/shared/errors/api";
@@ -28,7 +27,9 @@ function QueryStateCard({
 }) {
   return (
     <div class={className}>
-      <Stack gap="3">{children}</Stack>
+      <Block direction="column" gap="sm">
+        {children}
+      </Block>
     </div>
   );
 }
@@ -41,7 +42,13 @@ export function QueryLoadingState({
   return (
     <div role="status" aria-live="polite" aria-busy="true">
       <QueryStateCard className={className}>
-        <EmptyState title={title} icon={<Spinner label={title} />} description={description} />
+        <EmptyState
+          minHeight="auto"
+          padding="lg"
+          title={title}
+          icon={<Spinner label={title} />}
+          description={description}
+        />
       </QueryStateCard>
     </div>
   );
@@ -61,6 +68,8 @@ export function QueryErrorState({
   return (
     <QueryStateCard className={className}>
       <EmptyState
+        minHeight="auto"
+        padding="lg"
         role="alert"
         title={forbidden ? "Forbidden" : unavailable ? "Service unavailable" : title}
         description={
@@ -89,20 +98,25 @@ export function QueryEmptyState({
 }: QueryStateProps) {
   return (
     <QueryStateCard className={className}>
-      <EmptyState title={title} description={description} />
+      <EmptyState minHeight="auto" padding="lg" title={title} description={description} />
     </QueryStateCard>
   );
 }
 
 export function QueryCompactEmptyState({
-  class: className = "domain-state domain-state-compact",
+  class: className = "domain-state-compact",
   description,
   title = "Nothing to show",
 }: QueryStateProps) {
   return (
-    <QueryStateCard className={className}>
-      <EmptyState title={title} description={description} />
-    </QueryStateCard>
+    <Block className={`query-compact-layout ${className}`} paddingY="sm" borderTop borderBottom>
+      <Text as="strong" weight="semibold">
+        {title}
+      </Text>
+      <Text size="sm" tone="muted">
+        {description}
+      </Text>
+    </Block>
   );
 }
 

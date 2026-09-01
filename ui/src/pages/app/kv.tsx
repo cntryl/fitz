@@ -82,7 +82,7 @@ export default function KvPage() {
     {
       id: "read-latency",
       header: "Read p95 ms",
-      width: "9%",
+      width: "12%",
       cell: (row) => formatLatency(row.readLatencyP95Ms),
       sortValue: (row) => row.readLatencyP95Ms,
       available: inventoryRows.some((row) => row.readLatencyP95Ms !== undefined),
@@ -90,7 +90,7 @@ export default function KvPage() {
     {
       id: "write-latency",
       header: "Write p95 ms",
-      width: "9%",
+      width: "12%",
       cell: (row) => formatLatency(row.writeLatencyP95Ms),
       sortValue: (row) => row.writeLatencyP95Ms,
       available: inventoryRows.some((row) => row.writeLatencyP95Ms !== undefined),

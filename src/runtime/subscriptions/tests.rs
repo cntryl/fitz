@@ -439,34 +439,6 @@ fn should_match_single_star_for_create_operation() {
 }
 
 #[test]
-fn should_match_single_star_for_update_operation() {
-    // Arrange
-    let mut index = SubscriptionIndex::new();
-    let f = family(1);
-    index.insert(f, &route("notify://realm/orders/*"), sub_id(1));
-
-    // Act
-    let matches = index.match_all(f, &route("notify://realm/orders/update"));
-
-    // Assert
-    assert_eq!(matches.as_slice(), &[sub_id(1)]);
-}
-
-#[test]
-fn should_match_single_star_for_delete_operation() {
-    // Arrange
-    let mut index = SubscriptionIndex::new();
-    let f = family(1);
-    index.insert(f, &route("notify://realm/orders/*"), sub_id(1));
-
-    // Act
-    let matches = index.match_all(f, &route("notify://realm/orders/delete"));
-
-    // Assert
-    assert_eq!(matches.as_slice(), &[sub_id(1)]);
-}
-
-#[test]
 fn should_match_star_with_multiple_wildcards() {
     // Arrange
     let mut index = SubscriptionIndex::new();

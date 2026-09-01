@@ -1,14 +1,7 @@
 import { For, Show } from "@askrjs/askr/control";
 import { currentRoute, Link } from "@askrjs/askr/router";
-import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  Stack,
-} from "@askrjs/themes/components";
+import { Block, Item, ItemContent, ItemGroup, ItemTitle } from "@askrjs/themes/components";
+import DomainDataSection from "@/components/shared/domain-data-section";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainInventoryPage from "@/components/shared/domain-inventory-page";
 import type { DomainResourceMetricColumn } from "@/components/shared/domain-resource-inventory-table";
@@ -16,7 +9,7 @@ import DomainPageFrame from "@/components/shared/domain-page-frame";
 import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
 import { queryFreshness, queryHeaderStatus } from "@/components/shared/query-header-status";
 import {
-  QueryEmptyState,
+  QueryCompactEmptyState,
   QueryErrorState,
   QueryLoadingState,
   QueryRefreshingState,
@@ -156,41 +149,57 @@ function NoticeLandingPage() {
   );
 }
 
-function NoticeOperationTableRows(props: { data: NoticeResourceOperationRows }) {
+function NoticeOperationList(props: { data: NoticeResourceOperationRows }) {
   return (
-    <For each={props.data.operations} by={(row) => row.operation}>
-      {(row) => {
-        const route = row.operation.startsWith("notice://")
-          ? row.operation
-          : formatFitzRoute("notice", {
-              area: props.data.area,
-              operation: row.operation,
-              realm: props.data.realm,
-              resource: props.data.resource,
-            });
+    <ItemGroup
+      as="ul"
+      aria-label="Notice operations"
+      class="domain-divided-list notice-operation-list"
+    >
+      <For each={props.data.operations} by={(row) => row.operation}>
+        {(row) => {
+          const route = row.operation.startsWith("notice://")
+            ? row.operation
+            : formatFitzRoute("notice", {
+                area: props.data.area,
+                operation: row.operation,
+                realm: props.data.realm,
+                resource: props.data.resource,
+              });
 
-        return (
-          <TableRow>
-            <TableCell>
-              <Link
-                class="domain-link-cell"
-                href={domainScopeHref("notice", {
-                  area: props.data.area,
-                  realm: props.data.realm,
-                  resource: props.data.resource,
-                  operation: row.operation,
-                })}
-                title={route}
-              >
-                {route}
-              </Link>
-            </TableCell>
-            <TableCell>{formatNumber(row.activeSubscribers)}</TableCell>
-            <TableCell>{formatNumber(row.rollingMessageCount)}</TableCell>
-          </TableRow>
-        );
-      }}
-    </For>
+          return (
+            <Item as="li">
+              <ItemContent>
+                <ItemTitle>
+                  <Link
+                    class="domain-link-cell notice-operation-link"
+                    href={domainScopeHref("notice", {
+                      area: props.data.area,
+                      realm: props.data.realm,
+                      resource: props.data.resource,
+                      operation: row.operation,
+                    })}
+                    title={route}
+                  >
+                    {route}
+                  </Link>
+                </ItemTitle>
+                <dl class="domain-operation-metrics">
+                  <div>
+                    <dt>Active subscribers</dt>
+                    <dd>{formatNumber(row.activeSubscribers)}</dd>
+                  </div>
+                  <div>
+                    <dt>Publishes / min</dt>
+                    <dd>{formatNumber(row.rollingMessageCount)}</dd>
+                  </div>
+                </dl>
+              </ItemContent>
+            </Item>
+          );
+        }}
+      </For>
+    </ItemGroup>
   );
 }
 
@@ -216,10 +225,10 @@ function NoticeResourcePage(props: { realm: string; area: string; resource: stri
 
   return (
     <DomainPageFrame>
-      <Stack gap="3">
+      <Block direction="column" gap="sm">
         <DomainHeader
           eyebrow="Notice resource"
-          title="Notice operations"
+          title={props.resource}
           description={`${props.realm} / ${props.area} / ${props.resource}`}
           primaryAction={{
             busy: rowsQuery.refreshing,
@@ -256,47 +265,29 @@ function NoticeResourcePage(props: { realm: string; area: string; resource: stri
         </Show>
 
         <Show when={data}>
-          <Stack gap="3">
+          <Block direction="column" gap="sm">
             <Show when={rowsQuery.refreshing}>
               <QueryRefreshingState description="Refreshing operation summary..." />
             </Show>
 
-            <Show
-              when={data && data.operations.length === 0}
-              fallback={
-                data ? (
-                  <Card padding="sm" variant="default">
-                    <CardHeader>
-                      <CardTitle titleAs="h2">Notice operations</CardTitle>
-                      <CardDescription>
-                        Live operation routes with active subscribers and route publish rates.
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <div class="domain-table-wrap notice-resource-table-wrap">
-                        <Table>
-                          <TableHead>
-                            <TableRow>
-                              <TableHeaderCell>Route</TableHeaderCell>
-                              <TableHeaderCell>Active subscribers</TableHeaderCell>
-                              <TableHeaderCell>Publishes / min</TableHeaderCell>
-                            </TableRow>
-                          </TableHead>
-                          <TableBody>
-                            <NoticeOperationTableRows data={data} />
-                          </TableBody>
-                        </Table>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ) : null
-              }
+            <DomainDataSection
+              id="notice-resource-operations"
+              title="Notice operations"
+              description="Live operation routes with active subscribers and route publish rates."
             >
-              <QueryEmptyState description="No matching notice operations are currently visible." />
-            </Show>
-          </Stack>
+              <Show
+                when={data && data.operations.length === 0}
+                fallback={data ? <NoticeOperationList data={data} /> : null}
+              >
+                <QueryCompactEmptyState
+                  title="No operations"
+                  description="No matching notice operations are currently visible."
+                />
+              </Show>
+            </DomainDataSection>
+          </Block>
         </Show>
-      </Stack>
+      </Block>
     </DomainPageFrame>
   );
 }

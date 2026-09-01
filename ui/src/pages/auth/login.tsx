@@ -31,7 +31,7 @@ function resolveNextTarget() {
 }
 
 export default function Login() {
-  const [username, setUsername] = state("root");
+  const [username, setUsername] = state("");
   const [password, setPassword] = state("");
 
   task(() => manageRoutePageContext("Sign in"));

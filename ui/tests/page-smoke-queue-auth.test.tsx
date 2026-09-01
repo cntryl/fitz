@@ -7,7 +7,7 @@ import { queueInventory, queueResource } from "./page-smoke/fixtures";
 const mocks = pageSmokeMocks();
 
 describe("admin page smoke tests", () => {
-  it("renders queue resource links for overview, realm, and area routes", async () => {
+  it("renders progressive queue links for overview, realm, and area routes", async () => {
     const { default: QueuePage } = await import("@/pages/app/queue");
     mocks.queryStates.queueInventory = queryState.fresh(
       {
@@ -25,21 +25,17 @@ describe("admin page smoke tests", () => {
 
     let root = await mountRoute("/admin/1/queue", "/admin/{family}/queue", QueuePage);
     expect(root.textContent).toContain("Queue inventory");
-    expect(root.querySelector('a[href="/admin/1/queue/default"]')).toBeNull();
-    expect(
-      root.querySelector('a[href="/admin/1/queue/default/ops/primary"]')?.textContent,
-    ).toContain("queue://default/ops/primary");
-    expect(root.textContent).toContain("queue://globex/support/tickets");
+    expect(root.querySelector('a[href="/admin/1/queue/default"]')).toBeTruthy();
+    expect(root.querySelector('a[href="/admin/1/queue/globex"]')).toBeTruthy();
+    expect(root.querySelector('a[href="/admin/1/queue/default/ops/primary"]')).toBeNull();
 
     cleanupApp(root);
     document.body.innerHTML = "";
 
     root = await mountRoute("/admin/1/queue/default", "/admin/{family}/queue/{realm}", QueuePage);
-    expect(root.textContent).toContain("Queue inventory");
-    expect(root.querySelector('a[href="/admin/1/queue/default/ops"]')).toBeNull();
-    expect(
-      root.querySelector('a[href="/admin/1/queue/default/ops/primary"]')?.textContent,
-    ).toContain("queue://default/ops/primary");
+    expect(root.textContent).toContain("Queue realm");
+    expect(root.querySelector('a[href="/admin/1/queue/default/ops"]')).toBeTruthy();
+    expect(root.querySelector('a[href="/admin/1/queue/default/ops/primary"]')).toBeNull();
     expect(root.textContent).not.toContain("queue://globex/support/tickets");
 
     cleanupApp(root);
@@ -50,7 +46,7 @@ describe("admin page smoke tests", () => {
       "/admin/{family}/queue/{realm}/{area}",
       QueuePage,
     );
-    expect(root.textContent).toContain("Queue inventory");
+    expect(root.textContent).toContain("Queue area");
     expect(
       root.querySelector('a[href="/admin/1/queue/default/ops/primary"]')?.textContent,
     ).toContain("queue://default/ops/primary");
@@ -94,6 +90,10 @@ describe("admin page smoke tests", () => {
     expect(root.textContent).toContain("Key preview");
     expect(root.textContent).toContain("user:1");
     expect(root.textContent).toContain("alice");
+    const committedRows = root.querySelector('[aria-label="Committed KV rows"]');
+    expect(committedRows?.querySelectorAll('button[aria-label="Copy value"]')).toHaveLength(1);
+    expect(committedRows?.querySelector('button[aria-label="Copy key"]')).toBeNull();
+    expect(committedRows?.textContent).not.toContain("Copy value");
     expect(
       root.querySelector('a[href="/admin/1/kv/default/ops/primary?startsWith=user%3A"]')
         ?.textContent,
@@ -128,6 +128,83 @@ describe("admin page smoke tests", () => {
         ?.textContent,
     ).toContain("Previous page");
     expect(root.querySelector('button[aria-label^="Copy body at offset"]')).toBeTruthy();
+    expect(root.textContent).not.toContain("Copy body");
+    const headers = Array.from(
+      root.querySelectorAll('table[aria-label="Stream records"] [data-slot="table-header-cell"]'),
+    ).map((header) => header.textContent?.trim());
+    expect(headers).toEqual(["Offset", "Created", "Body", "Action"]);
+  });
+  it("uses tables for queue message state and a list for timeline evidence", async () => {
+    mocks.queryStates.queueResource = queryState.fresh(
+      {
+        ...queueResource,
+        deadLetters: [
+          {
+            area: "ops",
+            attempts: 2,
+            deadLetteredAt: "2026-05-21T13:05:00Z",
+            family: 1,
+            messageId: 42,
+            realm: "default",
+            reason: "handler failed",
+            resource: "primary",
+          },
+        ],
+        inflight: [
+          {
+            area: "ops",
+            attempts: 1,
+            expiresAt: "2026-05-21T13:06:00Z",
+            family: 1,
+            inflightToken: "token-1",
+            messageId: 41,
+            realm: "default",
+            resource: "primary",
+            sessionId: "session-1",
+          },
+        ],
+        timeline: {
+          ...queueResource.timeline,
+          events: [
+            {
+              ageSeconds: 2,
+              area: "ops",
+              attempts: 1,
+              correlationId: "correlation-1",
+              kind: "transition" as const,
+              messageId: 41,
+              observedAt: "2026-05-21T13:00:00Z",
+              operation: "Peek",
+              ownerSession: "session-1",
+              realm: "default",
+              resource: "primary",
+              summary: "Queue worker activity observed.",
+              workerSession: "worker-1",
+            },
+          ],
+        },
+      },
+      queryOptions(),
+    );
+
+    const { default: QueueResourcePage } = await import("@/pages/app/queue-resource");
+    const root = await mountRoute(
+      "/queue/default/ops/primary",
+      "/queue/{realm}/{area}/{resource}",
+      QueueResourcePage,
+    );
+
+    expect(root.querySelector('table[aria-label="Dead-letter queue messages"]')).toBeTruthy();
+    expect(root.querySelector('table[aria-label="Inflight queue messages"]')).toBeTruthy();
+    const queueHeaders = Array.from(
+      root.querySelectorAll(
+        'table[aria-label="Dead-letter queue messages"] [data-slot="table-header-cell"], table[aria-label="Inflight queue messages"] [data-slot="table-header-cell"]',
+      ),
+    ).map((header) => header.textContent?.trim());
+    expect(queueHeaders).not.toContain("Family");
+    const timeline = root.querySelector('ul[aria-label="Queue resource timeline"]');
+    expect(timeline?.querySelectorAll('[data-slot="item"]')).toHaveLength(1);
+    expect(root.querySelector("#queue-timeline [data-slot='table']")).toBeNull();
   });
   it("opens an accessible queue dead-letter confirmation dialog", async () => {
     const { default: QueueResourcePage } = await import("@/pages/app/queue-resource");

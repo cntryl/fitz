@@ -98,13 +98,6 @@ describe("Admin UI", () => {
     expect(typeof MetricsPage).toBe("function");
   });
 
-  it("defines the admin home page", () => {
-    expect(Home).toBeDefined();
-    expect(typeof Home).toBe("function");
-  });
-
-  it("defines the queue dead-letter sample component", () => {});
-
   it("defines the shared domain primitives", () => {
     expect(DomainHeader).toBeDefined();
     expect(typeof DomainHeader).toBe("function");

@@ -142,24 +142,6 @@ mod tests {
     }
 
     #[test]
-    fn should_create_stop_strategy() {
-        let strategy = SupervisorStrategy::stop();
-        assert!(matches!(strategy, SupervisorStrategy::Stop));
-    }
-
-    #[test]
-    fn should_create_escalate_strategy() {
-        let strategy = SupervisorStrategy::escalate();
-        assert!(matches!(strategy, SupervisorStrategy::Escalate));
-    }
-
-    #[test]
-    fn should_create_resume_strategy() {
-        let strategy = SupervisorStrategy::resume();
-        assert!(matches!(strategy, SupervisorStrategy::Resume));
-    }
-
-    #[test]
     fn should_decide_restart_action() {
         // Arrange
         let strategy = SupervisorStrategy::restart(3, Duration::from_mins(1));

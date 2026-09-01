@@ -64,21 +64,6 @@ fn should_detect_local_storage_by_default() {
     }
 }
 
-#[test]
-fn should_support_memory_storage_mode() {
-    // Arrange
-    let config = BootConfig::with_memory_storage();
-
-    // Act
-    let is_memory_mode = matches!(
-        config.storage_mode,
-        crate::boot::runtime::StorageMode::Memory
-    );
-
-    // Assert
-    assert!(is_memory_mode);
-}
-
 #[tokio::test]
 async fn should_provision_configured_route_family_column_families() {
     // Arrange

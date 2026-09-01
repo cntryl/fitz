@@ -230,74 +230,126 @@ fn should_allow_creating_schedule_with_complex_cron() {
     ));
 }
 
+/// Resolve a `next_fire_time` result computed against a fixed [`MockClock`] back
+/// into a real calendar date/time, so tests can assert the *specific* day the
+/// scheduler landed on rather than just "some time in the future".
+fn resolve_fire_time(clock: &MockClock, next_fire: Instant) -> chrono::DateTime<chrono::Utc> {
+    let next_ms = fitz::runtime::instant_to_epoch_ms_with_reference(
+        next_fire,
+        clock.now_instant(),
+        clock.now_epoch_ms(),
+    );
+    chrono::Utc
+        .timestamp_millis_opt(i64::try_from(next_ms).expect("epoch ms fits in i64"))
+        .single()
+        .expect("valid datetime")
+}
+
 #[test]
 fn should_find_next_fire_for_business_hours_schedule() {
-    // Arrange
+    use chrono::{Datelike, Timelike};
+
+    // Arrange: Monday 2025-01-06 08:00 UTC, before the 9am window opens.
+    let clock = MockClock::new(epoch_ms(2025, 1, 6, 8, 0, 0));
     let cron = CronSchedule::parse("0 9-17 * * 1-5").unwrap(); // 9-5 weekdays
-    let now = std::time::Instant::now();
 
     // Act
-    let next_fire = cron.next_fire_time(now);
+    let next_fire = cron.next_fire_time_with_clock(clock.now_instant(), &clock);
+    let resolved = resolve_fire_time(&clock, next_fire);
 
-    // Assert
-    assert!(next_fire > now);
-    // Should fire within reasonable business hours window
-    let elapsed = next_fire.duration_since(now);
-    assert!(elapsed.as_secs() < 7 * 24 * 3600); // Within a week
+    // Assert: fires the same day at 9am, still within the Mon-Fri window.
+    assert_eq!(resolved.year(), 2025);
+    assert_eq!(resolved.month(), 1);
+    assert_eq!(resolved.day(), 6);
+    assert_eq!(resolved.hour(), 9);
+    let weekday = resolved.weekday().number_from_monday(); // 1=Mon .. 5=Fri
+    assert!(
+        (1..=5).contains(&weekday),
+        "expected a weekday, got {weekday}"
+    );
 }
 
 // ========== Edge Case Tests ==========
 
 #[test]
 fn should_handle_leap_year_february() {
-    // Arrange
+    use chrono::Datelike;
+
+    // Arrange: start from a non-leap year so the schedule must skip forward.
+    let clock = MockClock::new(epoch_ms(2025, 1, 1, 0, 0, 0));
     let cron = CronSchedule::parse("0 0 29 2 *").unwrap(); // Feb 29
 
     // Act
-    let now = std::time::Instant::now();
-    let next_fire = cron.next_fire_time(now);
+    let next_fire = cron.next_fire_time_with_clock(clock.now_instant(), &clock);
+    let resolved = resolve_fire_time(&clock, next_fire);
 
-    // Assert - should be valid and in future
-    assert!(next_fire > now);
+    // Assert: lands on the next actual leap day, not just "later".
+    assert_eq!(resolved.month(), 2);
+    assert_eq!(resolved.day(), 29);
+    assert!(
+        chrono::NaiveDate::from_ymd_opt(resolved.year(), 1, 1).is_some()
+            && chrono::NaiveDate::from_ymd_opt(resolved.year(), 2, 29).is_some(),
+        "resolved year {} must actually be a leap year",
+        resolved.year()
+    );
 }
 
 #[test]
 fn should_handle_month_end_schedule() {
-    // Arrange
+    use chrono::Datelike;
+
+    // Arrange: January has 31 days, so this should fire later in the same month.
+    let clock = MockClock::new(epoch_ms(2025, 1, 1, 0, 0, 0));
     let cron = CronSchedule::parse("0 0 31 * *").unwrap(); // 31st of month
 
     // Act
-    let now = std::time::Instant::now();
-    let next_fire = cron.next_fire_time(now);
+    let next_fire = cron.next_fire_time_with_clock(clock.now_instant(), &clock);
+    let resolved = resolve_fire_time(&clock, next_fire);
 
-    // Assert - should skip months without 31st day
-    assert!(next_fire > now);
+    // Assert: lands specifically on the 31st, skipping any shorter months.
+    assert_eq!(resolved.day(), 31);
+    assert_eq!(resolved.year(), 2025);
+    assert_eq!(resolved.month(), 1);
 }
 
 #[test]
 fn should_handle_weekend_only_schedule() {
-    // Arrange
+    use chrono::{Datelike, Weekday};
+
+    // Arrange: Monday 2025-01-06, so the next weekend is a few days out.
+    let clock = MockClock::new(epoch_ms(2025, 1, 6, 0, 0, 0));
     let cron = CronSchedule::parse("0 0 * * 0,6").unwrap(); // Saturday and Sunday
 
     // Act
-    let now = std::time::Instant::now();
-    let next_fire = cron.next_fire_time(now);
+    let next_fire = cron.next_fire_time_with_clock(clock.now_instant(), &clock);
+    let resolved = resolve_fire_time(&clock, next_fire);
 
-    // Assert - fires only on weekends
-    assert!(next_fire > now);
+    // Assert: actually lands on a Saturday or Sunday, not just "later".
+    assert!(
+        matches!(resolved.weekday(), Weekday::Sat | Weekday::Sun),
+        "expected a weekend day, got {:?}",
+        resolved.weekday()
+    );
+    // The very next weekend from a Monday is that Saturday (5 days later).
+    assert_eq!(resolved.day(), 11);
 }
 
 #[test]
 fn should_handle_year_end_schedule() {
+    use chrono::Datelike;
+
     // Arrange
+    let clock = MockClock::new(epoch_ms(2025, 1, 1, 0, 0, 0));
     let cron = CronSchedule::parse("0 0 31 12 *").unwrap(); // New Year's Eve
 
     // Act
-    let now = std::time::Instant::now();
-    let next_fire = cron.next_fire_time(now);
+    let next_fire = cron.next_fire_time_with_clock(clock.now_instant(), &clock);
+    let resolved = resolve_fire_time(&clock, next_fire);
 
-    // Assert
-    assert!(next_fire > now);
+    // Assert: lands specifically on December 31st of the same year.
+    assert_eq!(resolved.year(), 2025);
+    assert_eq!(resolved.month(), 12);
+    assert_eq!(resolved.day(), 31);
 }
 
 #[test]

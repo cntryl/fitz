@@ -1,8 +1,7 @@
 import { For, Show } from "@askrjs/askr/control";
 import { Link } from "@askrjs/askr/router";
 import { ArrowUpRightIcon, CheckCircle2Icon, CircleAlertIcon } from "@askrjs/lucide";
-import { Stack } from "@askrjs/themes/components";
-import { Alert, Badge } from "@askrjs/themes/components";
+import { Alert, Badge, Block } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
@@ -188,7 +187,7 @@ export default function Home() {
         <QueryErrorState error={session.error} onRetry={() => session.refresh()} />
       </Show>
       <Show when={Boolean(session.data)}>
-        <Stack gap="3">
+        <Block direction="column" gap="sm">
           <DomainHeader
             eyebrow="Operator overview"
             title="Fitz status"
@@ -253,7 +252,7 @@ export default function Home() {
             <DomainHealth overview={overview} />
             <BrokerVitals overview={overview} />
           </Show>
-        </Stack>
+        </Block>
       </Show>
     </DomainPageFrame>
   );
