@@ -37,6 +37,7 @@
 //! 3. **Production parity**: Tests must match production behavior
 //! 4. **Architectural invariant**: Explicit mapping is foundational to Fitz design
 
+use super::scaled_test_timeout;
 use cntryl_midge::{Engine, OpenOptions};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -56,7 +57,7 @@ pub fn shutdown_test_engine(engine: Arc<Engine>) {
         );
     });
     engine
-        .shutdown(Duration::from_secs(2))
+        .shutdown(scaled_test_timeout(Duration::from_secs(2)))
         .expect("shutdown Midge test engine");
 }
 

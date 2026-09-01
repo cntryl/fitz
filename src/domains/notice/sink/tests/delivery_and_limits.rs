@@ -1,5 +1,7 @@
 use super::*;
-use crate::domains::notice::sink::delivery_worker::deliver_with_retry;
+use crate::domains::notice::sink::delivery_worker::{
+    deliver_with_retry, deliver_with_retry_for_test,
+};
 
 #[test]
 fn should_retry_delivery_policy_with_payload_independent_envelope_builder() {
@@ -77,9 +79,12 @@ fn should_reresolve_subscriber_route_before_notice_retry() {
     let delivery_router = router.clone();
     let delivery_subscriber = subscriber.clone();
     let delivery = std::thread::spawn(move || {
-        deliver_with_retry(&delivery_router, &delivery_subscriber, || {
-            Envelope::new(delivery_subscriber.clone(), ())
-        });
+        deliver_with_retry_for_test(
+            &delivery_router,
+            &delivery_subscriber,
+            Duration::from_secs(1),
+            || Envelope::new(delivery_subscriber.clone(), ()),
+        );
     });
     entered_rx
         .recv_timeout(Duration::from_secs(1))

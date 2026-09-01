@@ -664,6 +664,9 @@ mod tests {
     fn should_rotate_ready_keys_fairly() {
         // Arrange
         let seen = Arc::new(Mutex::new(Vec::new()));
+        let first = Arc::new(AtomicBool::new(true));
+        let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);
+        let (release_tx, release_rx) = crossbeam_channel::bounded(1);
         let (done_tx, done_rx) = crossbeam_channel::bounded(4);
         let executor = KeyedFamilyExecutor::new(
             &[RouteFamily::new(1)],
@@ -671,7 +674,12 @@ mod tests {
             |_| (),
             {
                 let seen = seen.clone();
+                let first = first.clone();
                 move |(), _, _, key: Option<&u64>, ()| {
+                    if first.swap(false, Ordering::SeqCst) {
+                        entered_tx.send(()).unwrap();
+                        release_rx.recv().unwrap();
+                    }
                     seen.lock().push(*key.unwrap());
                     done_tx.send(()).unwrap();
                 }
@@ -682,9 +690,11 @@ mod tests {
 
         // Act
         executor.try_enqueue(RouteFamily::new(1), 1, ()).unwrap();
+        entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
         executor.try_enqueue(RouteFamily::new(1), 1, ()).unwrap();
         executor.try_enqueue(RouteFamily::new(1), 1, ()).unwrap();
         executor.try_enqueue(RouteFamily::new(1), 2, ()).unwrap();
+        release_tx.send(()).unwrap();
         for _ in 0..4 {
             done_rx.recv_timeout(Duration::from_secs(1)).unwrap();
         }
