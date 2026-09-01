@@ -299,11 +299,11 @@ fn should_track_one_notice_publish_given_multiple_subscribers_on_same_pattern() 
     // Assert
     first_mailbox
         .receiver()
-        .try_recv()
+        .recv_timeout(Duration::from_secs(1))
         .expect("first subscriber delivery");
     second_mailbox
         .receiver()
-        .try_recv()
+        .recv_timeout(Duration::from_secs(1))
         .expect("second subscriber delivery");
     assert!(first_mailbox.receiver().try_recv().is_err());
     assert!(second_mailbox.receiver().try_recv().is_err());

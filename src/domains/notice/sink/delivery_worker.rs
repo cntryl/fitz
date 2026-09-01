@@ -83,7 +83,31 @@ pub(super) fn deliver_with_retry(
     subscriber: &crate::runtime::routing::RouteAddress,
     build_envelope: impl Fn() -> Envelope,
 ) {
-    let deadline = Instant::now() + NOTICE_MAILBOX_RETRY_TIMEOUT;
+    deliver_with_retry_for(
+        router,
+        subscriber,
+        NOTICE_MAILBOX_RETRY_TIMEOUT,
+        build_envelope,
+    );
+}
+
+#[cfg(test)]
+pub(super) fn deliver_with_retry_for_test(
+    router: &Router,
+    subscriber: &crate::runtime::routing::RouteAddress,
+    timeout: Duration,
+    build_envelope: impl Fn() -> Envelope,
+) {
+    deliver_with_retry_for(router, subscriber, timeout, build_envelope);
+}
+
+fn deliver_with_retry_for(
+    router: &Router,
+    subscriber: &crate::runtime::routing::RouteAddress,
+    timeout: Duration,
+    build_envelope: impl Fn() -> Envelope,
+) {
+    let deadline = Instant::now() + timeout;
 
     loop {
         let envelope = build_envelope();

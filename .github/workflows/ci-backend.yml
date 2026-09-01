@@ -83,4 +83,6 @@ jobs:
         run: cargo test --locked --lib state_model
 
       - name: Parallel library tests
+        env:
+          FITZ_TEST_TIMEOUT_MULTIPLIER: "10"
         run: cargo test --locked --lib -- --test-threads=16

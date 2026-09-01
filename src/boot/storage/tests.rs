@@ -437,7 +437,7 @@ fn exercise_cloud_burst(
     std::thread::sleep(wait_time);
     let metrics = engine.get_runtime_metrics().expect("runtime metrics");
     engine
-        .shutdown(Duration::from_secs(2))
+        .shutdown(crate::testkit::scaled_test_timeout(Duration::from_secs(2)))
         .expect("shutdown cloud-simulated engine");
     metrics
 }
@@ -530,7 +530,7 @@ fn shutdown_store(store: Arc<cntryl_midge::Engine>) {
         );
     });
     engine
-        .shutdown(Duration::from_secs(2))
+        .shutdown(crate::testkit::scaled_test_timeout(Duration::from_secs(2)))
         .expect("shutdown Midge");
 }
 

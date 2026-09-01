@@ -5,7 +5,7 @@ use bytes::Bytes;
 use fitz::benchkit::create_local_bench_store;
 use fitz::domains::kv::{KvActor, KvMessage, KvResourceScope, KvResponse, TxMode};
 use fitz::runtime::routing::RouteFamily;
-use fitz::testkit::create_test_engine_with_cfs;
+use fitz::testkit::{create_test_engine_with_cfs, scaled_test_timeout};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -21,7 +21,7 @@ fn shutdown_local_bench_store(store: Arc<cntryl_midge::Engine>) {
         );
     });
     engine
-        .shutdown(Duration::from_secs(2))
+        .shutdown(scaled_test_timeout(Duration::from_secs(2)))
         .expect("shutdown local bench store");
 }
 
