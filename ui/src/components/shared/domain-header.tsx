@@ -46,7 +46,6 @@ export default function DomainHeader({
       </Text>
       <PageHeader
         class="domain-header-page"
-        direction={{ base: "column", sm: "row" }}
         title={
           <span class="domain-header-title-row">
             <span>{title}</span>

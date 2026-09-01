@@ -62,7 +62,6 @@ export function RouteFamilyNotFoundPage() {
         <PageHeader
           title="Route Family not found"
           description="404 · This Route Family is unavailable to the current session."
-          direction="column"
         />
         <Button asChild variant="outline">
           <Link href="/admin">Back to Route Families</Link>
@@ -89,7 +88,6 @@ export default function RouteFamilySelectorPage() {
         <PageHeader
           title="Select Route Family"
           description="Choose a concrete Route Family before opening the Fitz operator workspace."
-          direction="column"
         />
 
         {operator.routeFamilyState === "loading" ? (

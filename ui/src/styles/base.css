@@ -11,15 +11,6 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Workaround for an @askrjs/themes >=0.2.3 regression: PageHeader's internal
-   [data-slot="page-header-copy"] wrapper (title + description) is a hardcoded
-   Block with no direction prop and no prop pass-through, so it now inherits
-   Block's row initial value instead of stacking title above description.
-   Remove once askr-themes fixes this upstream (askrjs/askr-themes#98). */
-[data-slot="page-header-copy"] {
-  flex-direction: column;
-}
-
 a {
   color: inherit;
 }

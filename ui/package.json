@@ -21,25 +21,34 @@
     "gen:adapters": "askr generate ../public/openapi.yml -o ./src/adapters/generated"
   },
   "dependencies": {
-    "@askrjs/askr": "^0.2.2",
-    "@askrjs/fetch": "0.2.0",
-    "@askrjs/lucide": "0.2.0",
-    "@askrjs/themes": "^0.2.3",
-    "@askrjs/ui": "^0.2.2"
+    "@askrjs/askr": "^0.2.4",
+    "@askrjs/fetch": "0.2.1",
+    "@askrjs/lucide": "0.2.1",
+    "@askrjs/themes": "^0.2.5",
+    "@askrjs/ui": "^0.2.4"
   },
   "devDependencies": {
-    "@askrjs/cli": "0.2.1",
-    "@askrjs/vite": "0.2.0",
+    "@askrjs/cli": "0.2.3",
+    "@askrjs/vite": "0.2.2",
     "@playwright/test": "^1.62.1",
-    "@types/node": "^26.2.0",
+    "@types/node": "^26.4.0",
     "autoprefixer": "^10.5.4",
     "jsdom": "^30.0.1",
     "postcss": "^8.5.26",
     "typescript": "^7.0.2",
+    "vite": "^8.2.2",
     "vite-plus": "^0.2.9"
   },
   "overrides": {
-    "@vitest/browser-playwright": "4.1.10"
+    "@vitest/browser-playwright": "4.1.10",
+    "@xmldom/xmldom": "0.9.12"
   },
-  "packageManager": "npm@12.0.2"
+  "packageManager": "npm@12.0.2",
+  "askr": {
+    "update": {
+      "ignore": [
+        "vite-plus"
+      ]
+    }
+  }
 }
