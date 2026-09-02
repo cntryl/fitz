@@ -23,7 +23,11 @@ const EXACT_ROUTE_16_PUBLISH_REPEAT_COUNT: u64 = 262_144;
 const EXACT_ROUTE_64_PUBLISH_REPEAT_COUNT: u64 = 131_072;
 const DOUBLE_STAR_16_PUBLISH_REPEAT_COUNT: u64 = 131_072;
 const DOUBLE_STAR_64_PUBLISH_REPEAT_COUNT: u64 = 131_072;
-const PUBLISH_CHUNK_SIZE: u64 = 512;
+// Keep each measured batch within the production per-family delivery lane's
+// capacity so this row measures completed fanout rather than intentional
+// fire-and-forget drops under saturation.
+const PUBLISH_CHUNK_SIZE: u64 = 64;
+const DELIVERY_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 struct NoticePublishCase {
     sink: Arc<NoticeDomainSink>,
@@ -48,7 +52,7 @@ impl NoticePublishCase {
         let delivery_count = wait_for_counting_sinks_each_count(
             &self.subscriber_sinks,
             expected_per_subscriber,
-            Duration::from_secs(1),
+            DELIVERY_DRAIN_TIMEOUT,
         );
         assert_eq!(
             delivery_count,
