@@ -176,7 +176,7 @@ fn should_complete_acquire_release_sequence(ctx: &mut StressContext) {
     let (router, family, source, inbox) = setup_lease_sink();
     let lease_routes: Vec<(String, RouteAddress)> = (0..100)
         .map(|i| {
-            let route = format!("lease://realm/area/lock{i}/acquire");
+            let route = format!("lease://realm/area/lock{i}");
             let address = lease_address(family, &route);
             (route, address)
         })
@@ -207,8 +207,8 @@ fn should_complete_dual_route_renew_operations(ctx: &mut StressContext) {
     configure_lease_measurement(ctx);
 
     let (router, family, source, inbox) = setup_lease_sink();
-    let renew_route_a = "lease://realm/area1/lock1/renew";
-    let renew_route_b = "lease://realm/area2/lock2/renew";
+    let renew_route_a = "lease://realm/area1/lock1";
+    let renew_route_b = "lease://realm/area2/lock2";
     let renew_address_a = lease_address(family, renew_route_a);
     let renew_address_b = lease_address(family, renew_route_b);
     let mut token1 = acquire_token(
@@ -258,7 +258,7 @@ fn should_complete_cycling_query_renew_operations(ctx: &mut StressContext) {
     configure_lease_measurement(ctx);
 
     let (router, family, source, inbox) = setup_lease_sink();
-    let route = "lease://realm/area/lock1/mixed";
+    let route = "lease://realm/area/lock1";
     let address = lease_address(family, route);
     let query_payload = build_query_payload(route);
     let mut token = acquire_token(&router, &source, &inbox, route, &address, "client-1");

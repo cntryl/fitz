@@ -2,6 +2,7 @@
 
 use crate::tier4_stream_support::{
     measure_operations, tag_row, LayerKind, ReadScope, RowDimensions, StorageProfile,
+    WIRE_READ_PAGE_LIMIT,
 };
 use bytes::Bytes;
 use cntryl_stress::StressContext;
@@ -424,17 +425,33 @@ pub(crate) fn measure_filtered_locator_read(ctx: &mut StressContext, sparse: boo
     } else {
         "dense_locator_read"
     };
+    ctx.parameter("wire_page_limit", WIRE_READ_PAGE_LIMIT);
+    ctx.parameter("wire_page_count", 512_usize.div_ceil(WIRE_READ_PAGE_LIMIT));
     measure_operations(ctx, measurement, 1, |latencies| {
         let started = Instant::now();
-        let records = fixture
-            .store
-            .read_realm_with_filter(1, &fixture.realm, 0, 512, None, Some(&filter))
-            .expect("read locator density")
-            .0;
-        let event_count = records
-            .iter()
-            .filter(|item| matches!(item, fitz::domains::stream::StreamReadItem::Event(_)))
-            .count();
+        let mut from_offset = 0usize;
+        let mut event_count = 0usize;
+        while from_offset < 512 {
+            let page_limit = WIRE_READ_PAGE_LIMIT.min(512 - from_offset);
+            let records = fixture
+                .store
+                .read_realm_with_filter(
+                    1,
+                    &fixture.realm,
+                    u64::try_from(from_offset).expect("locator offset fits u64"),
+                    u64::try_from(page_limit).expect("locator page limit fits u64"),
+                    None,
+                    Some(&filter),
+                )
+                .expect("read locator density")
+                .0;
+            assert_eq!(records.len(), page_limit);
+            event_count += records
+                .iter()
+                .filter(|item| matches!(item, fitz::domains::stream::StreamReadItem::Event(_)))
+                .count();
+            from_offset += page_limit;
+        }
         assert_eq!(event_count, if sparse { 32 } else { 512 });
         latencies.push(started.elapsed());
     });

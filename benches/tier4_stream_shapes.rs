@@ -22,7 +22,7 @@ use crate::tier4_stream_transport::{
     with_transport_client, with_transport_clients, WriteLifecycleState,
 };
 use cntryl_stress::{stress, StressContext};
-use fitz::domains::stream::protocol::StreamWriteMode;
+use fitz::domains::stream::protocol::{StreamWriteMode, MAX_EVENT_SIZE};
 use std::time::Instant;
 
 fn read_dimensions(
@@ -326,10 +326,10 @@ payload_row!(
     "payload_size_memory_write"
 );
 payload_row!(
-    should_characterize_memory_append_256k,
-    "memory_append_256k",
+    should_characterize_memory_append_max_event,
+    "memory_append_max_event",
     StorageProfile::Memory,
-    256 * 1_024,
+    MAX_EVENT_SIZE,
     StreamWriteMode::Sync,
     "payload_size_memory_write"
 );
@@ -374,10 +374,10 @@ payload_row!(
     "payload_size_sync_write"
 );
 payload_row!(
-    should_characterize_disk_sync_write_256k,
-    "disk_sync_write_256k",
+    should_characterize_disk_sync_write_max_event,
+    "disk_sync_write_max_event",
     StorageProfile::LocalDisk,
-    256 * 1_024,
+    MAX_EVENT_SIZE,
     StreamWriteMode::Sync,
     "payload_size_sync_write"
 );

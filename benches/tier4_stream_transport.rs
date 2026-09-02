@@ -128,10 +128,18 @@ pub(crate) async fn request_success(client: &mut StreamBenchClient, frame: &[u8]
 
 fn stream_error_message(response: &[u8]) -> String {
     let (_message_type, _status, payload) = parse_stream_response(response);
-    fitz::protocol::error_codes::decode_error_body(&payload).map_or_else(
-        |_| "Stream request failed".to_string(),
-        |(_, message)| message,
-    )
+    if let Ok((_, message)) = fitz::protocol::error_codes::decode_error_body(&payload) {
+        return message;
+    }
+
+    let mut decoder = fitz::protocol::payload_codec::PayloadDecoder::new(&payload);
+    if decoder.get_u8() == Ok(1) {
+        return decoder
+            .get_string()
+            .unwrap_or_else(|_| "Stream request failed".to_string());
+    }
+
+    "Stream request failed".to_string()
 }
 
 pub(crate) async fn request_read_count(
@@ -541,12 +549,9 @@ pub(crate) async fn delivery_confirmed_commit(
 }
 
 fn assert_stream_success(response: &[u8]) {
-    let (_message_type, status, payload) = parse_stream_response(response);
+    let (_message_type, status, _payload) = parse_stream_response(response);
     if status != 0 {
-        let message = fitz::protocol::error_codes::decode_error_body(&payload).map_or_else(
-            |error| format!("could not decode Stream error: {error}"),
-            |(_code, message)| message,
-        );
+        let message = stream_error_message(response);
         panic!("Stream request must succeed: {message}");
     }
 }
