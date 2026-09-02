@@ -722,18 +722,18 @@ impl DomainFrameDispatcher<'_> {
                         "RPC request parse failed",
                     );
                 }
-                // Domain validation owns Lease observation selector errors:
-                // SUBSCRIBE/UNSUBSCRIBE return 5010 and LIST returns 5012,
-                // including on auth-required brokers. Dispatching these
-                // malformed selectors is safe because the Lease sink compiles
-                // and rejects them before retaining subscription state or
-                // inspecting inventory. Other auth-required domains keep the
-                // fail-closed behavior below.
-                let lease_observation_validation = matches!(
+                // Domain validation owns malformed Lease request errors:
+                // exact operations return 5008, SUBSCRIBE/UNSUBSCRIBE return
+                // 5010, and LIST returns 5012, including on auth-required
+                // brokers. Dispatching these malformed routes is safe because
+                // the Lease decoder rejects them before ownership, retained
+                // subscription state, or inventory can be touched. Other
+                // auth-required domains keep the fail-closed behavior below.
+                let lease_request_validation = matches!(
                     (dispatch.domain, dispatch.msg_type.as_u16()),
-                    (DispatchDomain::Lease, 407 | 408 | 410)
+                    (DispatchDomain::Lease, 400..=403 | 407 | 408 | 410)
                 );
-                if lease_observation_validation
+                if lease_request_validation
                     || (!self.ingress.auth_required
                         && is_subscription_registration_message(
                             dispatch.domain,

@@ -105,6 +105,88 @@ async fn malformed_authenticated_lease_observation(msg_type: u16) -> (IngressDec
     )
 }
 
+async fn malformed_authenticated_lease_operation(
+    msg_type: u16,
+    payload: Bytes,
+) -> (IngressDecision, u16) {
+    let family = RouteFamily::new(1);
+    let session_id = 700 + u64::from(msg_type);
+    let router = Arc::new(crate::runtime::Router::new());
+    let lease_sink = Arc::new(crate::domains::lease::sink::LeaseDomainSink::new(
+        router.clone(),
+        crate::control::admin::read_model::AdminReadModel::new(),
+    ));
+    let inbox_mailbox = Arc::new(Mailbox::new(8));
+    router.register_domain_pattern("lease", lease_sink);
+    router.register(
+        RouteAddress::new(family, Route::new(format!("inbox://session/{session_id}"))),
+        inbox_mailbox.clone(),
+    );
+    let ingress = runtime_ingress_with_jwks_auth().with_router(router);
+    let session =
+        make_authenticated_session_info(session_id, TransportKind::Tcp, family, &["lease://**#*"]);
+    ingress.on_open(session).await.unwrap();
+
+    let decision = ingress
+        .on_frame(
+            session_id,
+            ChannelId::Lease,
+            MessageType::new(msg_type),
+            payload,
+        )
+        .await;
+    let response = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            if !inbox_mailbox.receiver().is_empty() {
+                break receive_frame(&inbox_mailbox, "typed malformed Lease operation response");
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .expect("typed malformed Lease operation response");
+    (
+        decision,
+        decode_domain_error_code(response.payload.as_ref()),
+    )
+}
+
+#[tokio::test]
+async fn should_return_typed_error_for_authenticated_malformed_lease_operations() {
+    // Arrange
+    let malformed = "lease://acme/locks/resource/extra";
+    let mut renew = PayloadEncoder::new();
+    renew.put_string(malformed);
+    renew.put_string("owner");
+    renew.put_u64(1);
+    renew.put_u64(30);
+    let mut release = PayloadEncoder::new();
+    release.put_string(malformed);
+    release.put_string("owner");
+    release.put_u64(1);
+    let mut query = PayloadEncoder::new();
+    query.put_string(malformed);
+    let requests = [
+        (400, encode_lease_acquire(malformed, "owner", 30)),
+        (401, Bytes::from(renew.finish())),
+        (402, Bytes::from(release.finish())),
+        (403, Bytes::from(query.finish())),
+    ];
+
+    for (msg_type, payload) in requests {
+        // Act
+        let (decision, code) = malformed_authenticated_lease_operation(msg_type, payload).await;
+
+        // Assert
+        assert_eq!(decision, IngressDecision::Accept);
+        assert_eq!(
+            code,
+            crate::protocol::error_codes::lease::ERR_BAD_REQUEST,
+            "message type {msg_type}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn should_return_typed_error_for_authenticated_malformed_lease_subscribe() {
     // Arrange
