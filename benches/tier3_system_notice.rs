@@ -27,6 +27,10 @@ use std::time::Duration;
 const PUBLISHER_SESSION_ID: u64 = 10_000;
 const NOTICE_FANOUT_CONFIRM_BATCH_SIZE: usize = 1_024;
 const NOTICE_HIGH_SUBSCRIBER_BATCH_SIZE: usize = 2_048;
+// Keep each delivery burst within the production per-family lane capacity. The
+// Notice path is intentionally fire-and-forget once that lane is saturated.
+const NOTICE_DELIVERY_BATCH_SIZE: usize = 64;
+const NOTICE_DELIVERY_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn configure_publish_measurement(ctx: &mut StressContext) {
     ctx.parameter("completed_unit", "published_messages");
@@ -107,30 +111,35 @@ fn measure_notice_fanout(ctx: &mut StressContext, name: &str, case: NoticeFanout
     let mut expected_per_subscriber = 0usize;
 
     let iterations = ctx.measure_workload(name, || {
-        for _ in 0..case.publishes_per_iteration {
-            route_frame(
-                router.as_ref(),
-                &publisher_source,
-                case.publish_route,
-                PUBLISHER_SESSION_ID,
-                ChannelId::Pub,
-                msg_type,
-                payload.clone(),
-                family,
-            )
-            .expect("notice publish");
+        let mut remaining = case.publishes_per_iteration;
+        while remaining > 0 {
+            let chunk = remaining.min(NOTICE_DELIVERY_BATCH_SIZE);
+            for _ in 0..chunk {
+                route_frame(
+                    router.as_ref(),
+                    &publisher_source,
+                    case.publish_route,
+                    PUBLISHER_SESSION_ID,
+                    ChannelId::Pub,
+                    msg_type,
+                    payload.clone(),
+                    family,
+                )
+                .expect("notice publish");
+            }
+            expected_per_subscriber += chunk;
+            let delivered = wait_for_counting_sinks_each_count(
+                &subscriber_sinks,
+                expected_per_subscriber,
+                NOTICE_DELIVERY_DRAIN_TIMEOUT,
+            );
+            assert_eq!(
+                delivered,
+                case.subscriber_count * expected_per_subscriber,
+                "notice publish should deliver exactly once per matching subscriber"
+            );
+            remaining -= chunk;
         }
-        expected_per_subscriber += case.publishes_per_iteration;
-        let delivered = wait_for_counting_sinks_each_count(
-            &subscriber_sinks,
-            expected_per_subscriber,
-            Duration::from_secs(1),
-        );
-        assert_eq!(
-            delivered,
-            case.subscriber_count * expected_per_subscriber,
-            "notice publish should deliver exactly once per matching subscriber"
-        );
     });
     let batch_size =
         u64::try_from(case.publishes_per_iteration).expect("notice fanout batch size fits u64");

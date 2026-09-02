@@ -11,13 +11,15 @@ use crate::tier4_stream_direct::{direct_actor, measure_direct_write, seed_direct
 use crate::tier4_stream_support::{
     measure_operations, tag_row, tlv_field, LayerKind, MutableAppendFrame, MutableCommitFrame,
     ReadScope, RowDimensions, StorageProfile, TransportKind, CANONICAL_HISTORY_DEPTH,
-    CANONICAL_PAYLOAD_SIZE, CANONICAL_READ_LIMIT, STREAM_SYNC_COMMIT_MODE,
+    CANONICAL_PAYLOAD_SIZE, CANONICAL_READ_LIMIT, STREAM_SYNC_COMMIT_MODE, WIRE_READ_PAGE_LIMIT,
 };
-use crate::tier4_stream_transport::{measure_exact_replay, measure_write_lifecycle};
+use crate::tier4_stream_transport::{
+    measure_exact_replay, measure_write_lifecycle, read_pages as build_read_pages,
+};
 use bytes::Bytes;
 use cntryl_stress::{stress, StressContext};
 use fitz::benchkit::{
-    build_stream_append, build_stream_begin, build_stream_commit, build_stream_read_with_limit,
+    build_stream_append, build_stream_begin, build_stream_commit,
     count_stream_read_records_from_payload, create_local_bench_stream_sink,
     create_write_heavy_bench_stream_sink, parse_stream_session_id, register_session_queue_sink,
     route_frame,
@@ -80,19 +82,33 @@ fn measure_direct_read(
     let mut fixture = direct_actor(storage, &format!("ladder-direct-read-{}", storage.label()));
     let payload = Bytes::from(vec![0x5A; CANONICAL_PAYLOAD_SIZE]);
     seed_direct_actor(&mut fixture.actor, &payload, CANONICAL_HISTORY_DEPTH);
+    ctx.parameter("wire_page_limit", WIRE_READ_PAGE_LIMIT);
+    ctx.parameter(
+        "wire_page_count",
+        CANONICAL_READ_LIMIT.div_ceil(WIRE_READ_PAGE_LIMIT),
+    );
 
     measure_operations(ctx, measurement, 1, |latencies| {
         let started = Instant::now();
-        let response = fixture
-            .actor
-            .read(0, CANONICAL_READ_LIMIT as u64, None)
-            .expect("direct Stream read");
+        let mut from_offset = 0usize;
+        while from_offset < CANONICAL_READ_LIMIT {
+            let page_limit = WIRE_READ_PAGE_LIMIT.min(CANONICAL_READ_LIMIT - from_offset);
+            let response = fixture
+                .actor
+                .read(
+                    u64::try_from(from_offset).expect("direct Stream offset fits u64"),
+                    u64::try_from(page_limit).expect("direct Stream page limit fits u64"),
+                    None,
+                )
+                .expect("direct Stream read");
+            assert_eq!(
+                response.items.len(),
+                page_limit,
+                "unexpected direct Stream read count"
+            );
+            from_offset += page_limit;
+        }
         latencies.push(started.elapsed());
-        assert_eq!(
-            response.items.len(),
-            CANONICAL_READ_LIMIT,
-            "unexpected direct Stream read count"
-        );
     });
 }
 
@@ -181,15 +197,19 @@ fn measure_encoded_read(
     );
     let payload = vec![0x5A; CANONICAL_PAYLOAD_SIZE];
     seed_encoded(&fixture, &route, &payload);
-    let read_frame = build_stream_read_with_limit(&route, 0, CANONICAL_READ_LIMIT as u64);
+    let pages = build_read_pages(&route, CANONICAL_READ_LIMIT);
+    ctx.parameter("wire_page_limit", WIRE_READ_PAGE_LIMIT);
+    ctx.parameter("wire_page_count", pages.len());
 
     measure_operations(ctx, measurement, 1, |latencies| {
         let started = Instant::now();
-        let response = encoded_request(&fixture, &route, &read_frame);
+        for (read_frame, expected_count) in &pages {
+            let response = encoded_request(&fixture, &route, read_frame);
+            let count = count_stream_read_records_from_payload(&response)
+                .expect("encoded Stream read count");
+            assert_eq!(count, *expected_count);
+        }
         latencies.push(started.elapsed());
-        let count =
-            count_stream_read_records_from_payload(&response).expect("encoded Stream read count");
-        assert_eq!(count, CANONICAL_READ_LIMIT);
     });
 }
 

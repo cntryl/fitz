@@ -27,10 +27,11 @@ optimization decision. Keep setup outside the timed section unless the row name
 explicitly says construction/setup is part of the measured behavior.
 
 For Stream D4, keep direct rows for hot-resource append at empty and 100,000
-prior events, 15/16/17 KiB and 256 KiB payloads, sparse and dense locator reads,
-TTL churn, repeated memtable rotation, and replay before/after compaction. A
-benchmark must fail on overlap, corruption, duplicate, or missing-record errors;
-it must not reset a local fixture to conceal an overlapping append.
+prior events, 15/16/17 KiB and maximum-valid-event payloads, sparse and dense
+locator reads, TTL churn, repeated memtable rotation, and replay before/after
+compaction. A benchmark must fail on overlap, corruption, duplicate, or
+missing-record errors; it must not reset a local fixture to conceal an
+overlapping append.
 
 The D4 shape target records these focused measurements:
 `ttl_churn_commit_and_maintain`, `memtable_rotation_append_4k`,

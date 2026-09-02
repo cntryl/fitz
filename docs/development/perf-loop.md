@@ -29,9 +29,9 @@ Make one focused change, then rerun the same correctness checks and benchmark co
 
 For Stream storage changes, compare three-run medians on the same host. Existing
 regression-gate throughput must remain at least 90% of baseline with p95 at most
-110%; the 256 KiB write row must retain 95% throughput with p95 at most 105%;
-and hot-resource append with 100,000 prior events must remain within 10% of an
-empty resource.
+110%; the maximum-valid-event write row must retain 95% throughput with p95 at
+most 105%; and hot-resource append with 100,000 prior events must remain within
+10% of an empty resource.
 
 ## Selection Rules
 
