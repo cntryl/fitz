@@ -70,7 +70,7 @@ state and the remaining validation work.
 | Surface | Current implementation | Target status |
 | --- | --- | --- |
 | Queue concrete route depth | Rejects trailing segments | Aligned |
-| Lease concrete route depth | Uses the first three segments and tolerates a trailing suffix | Gap: reject trailing segments |
+| Lease concrete route depth | Rejects trailing segments | Aligned |
 | Stream selector classification | All eight literal/`*` kinds and two aliases | Aligned |
 | Resource, area, and realm reads | Dedicated offset spaces and visibility frontiers | Aligned |
 | Global and global-filter reads | Direct family-global pages in assigned commit order | Aligned |

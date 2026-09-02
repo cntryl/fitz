@@ -316,7 +316,7 @@ impl LeaseDomainRuntime<'_> {
                         channel: meta.channel,
                         route_family: meta.route_family,
                     }),
-                    None => LeaseResponse::NotFound,
+                    None => Self::error_response("invalid lease route"),
                 }
             }
             LeaseMessage::Extend {
@@ -332,7 +332,7 @@ impl LeaseDomainRuntime<'_> {
                     *fencing_token,
                     *ttl_secs,
                 ),
-                None => LeaseResponse::NotFound,
+                None => Self::error_response("invalid lease route"),
             },
             LeaseMessage::Release {
                 family_id,
@@ -345,12 +345,12 @@ impl LeaseDomainRuntime<'_> {
                     scoped_owner_id.expect("release owner must be scoped before dispatch"),
                     *fencing_token,
                 ),
-                None => LeaseResponse::NotFound,
+                None => Self::error_response("invalid lease route"),
             },
             LeaseMessage::Query { family_id, route } => {
                 match LeaseKey::from_route(*family_id, route) {
                     Some(key) => self.handle_query(&key),
-                    None => LeaseResponse::NotFound,
+                    None => Self::error_response("invalid lease route"),
                 }
             }
             LeaseMessage::List {
