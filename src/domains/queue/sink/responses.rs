@@ -19,6 +19,14 @@ impl QueueDomainCore {
         meta: crate::runtime::ClientFrameMeta,
         response: &crate::domains::queue::QueueResponse,
     ) -> bool {
+        if request_envelope.source().is_none() || !request_envelope.try_claim_reply() {
+            tracing::debug!(
+                domain = "queue",
+                session = meta.session_id,
+                "Suppressed Queue response after another terminal response won"
+            );
+            return false;
+        }
         let delivered;
         #[cfg(test)]
         {

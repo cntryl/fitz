@@ -217,7 +217,7 @@ impl QueueDomainCore {
             crate::domains::queue::QueueResponse::ReceivedRouted { messages } if messages.is_empty()
         ) {
             if let Some(wait_seconds) = wait_seconds.filter(|seconds| *seconds > 0) {
-                if let Some(source) = envelope.source() {
+                if envelope.source().is_some() {
                     let mut message = pending_message;
                     if let crate::domains::queue::protocol::QueueMessage::Receive {
                         wait_seconds,
@@ -230,11 +230,7 @@ impl QueueDomainCore {
                         .checked_add(Duration::from_secs(wait_seconds))
                         .unwrap_or_else(Instant::now);
                     self.pending_reserves.lock().push_back(PendingQueueReserve {
-                        envelope: Envelope::from_route(
-                            source.clone(),
-                            envelope.destination().clone(),
-                            (),
-                        ),
+                        envelope: envelope.clone_for_deferred_reply(),
                         meta,
                         request_started,
                         message,

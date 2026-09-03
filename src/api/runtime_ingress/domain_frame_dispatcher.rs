@@ -460,8 +460,19 @@ impl DomainFrameDispatcher<'_> {
         domain: DispatchDomain,
         router: &crate::runtime::Router,
         error: &crate::runtime::router::RouteError,
+        reply_claim: &crate::runtime::envelope::ReplyClaim,
     ) -> IngressDecision {
         obs::counter_inc(obs::METRIC_INGRESS_DOMAIN_DISPATCH_TIMEOUTS);
+        if domain == DispatchDomain::Queue && !reply_claim.try_claim() {
+            warn!(
+                session_id = session_id,
+                domain = domain.as_str(),
+                error = %error,
+                outcome = "domain-response-won",
+                "Ingress: domain dispatch timed out after its terminal response was claimed"
+            );
+            return IngressDecision::Accept;
+        }
         warn!(
             session_id = session_id,
             domain = domain.as_str(),
@@ -618,6 +629,7 @@ impl DomainFrameDispatcher<'_> {
                     source: source.clone(),
                     destination: addr.clone(),
                 });
+            let reply_claim = envelope.reply_claim();
 
             debug!(
                 session_id = session_id,
@@ -671,6 +683,7 @@ impl DomainFrameDispatcher<'_> {
                         domain,
                         router,
                         &error,
+                        &reply_claim,
                     ));
                 }
                 Err(error) => {

@@ -32,7 +32,8 @@
 use crate::runtime::routing::RouteAddress;
 use std::any::Any;
 use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 
 /// Envelope metadata without the payload (for zero-copy causation tracking)
@@ -116,6 +117,9 @@ pub struct Envelope {
     /// Mailbox enqueue time, set when the envelope is accepted by a mailbox.
     queued_at: Option<Instant>,
 
+    /// Shared one-shot claim for the terminal response to this request.
+    reply_claim: ReplyClaim,
+
     /// Type-erased message payload (must be Send + Sync)
     payload: Box<dyn Any + Send + Sync>,
 }
@@ -130,6 +134,7 @@ impl Envelope {
             causation: None,
             deadline: None,
             queued_at: None,
+            reply_claim: ReplyClaim::default(),
             payload: Box::new(payload),
         }
     }
@@ -147,6 +152,7 @@ impl Envelope {
             causation: None,
             deadline: None,
             queued_at: None,
+            reply_claim: ReplyClaim::default(),
             payload: Box::new(payload),
         }
     }
@@ -193,6 +199,7 @@ impl Envelope {
             causation: Some(self.id),
             deadline: self.deadline,
             queued_at: None,
+            reply_claim: ReplyClaim::default(),
             payload: Box::new(payload),
         }
     }
@@ -211,8 +218,36 @@ impl Envelope {
             causation: Some(self.id),
             deadline: self.deadline,
             queued_at: None,
+            reply_claim: ReplyClaim::default(),
             payload: Box::new(payload),
         })
+    }
+
+    /// Share this request's one-shot terminal-response claim with its owner.
+    #[inline]
+    pub(crate) fn reply_claim(&self) -> ReplyClaim {
+        self.reply_claim.clone()
+    }
+
+    /// Claim the right to emit this request's terminal response.
+    #[inline]
+    pub(crate) fn try_claim_reply(&self) -> bool {
+        self.reply_claim.try_claim()
+    }
+
+    /// Retain this request's routing and response identity for a deferred reply.
+    #[must_use]
+    pub(crate) fn clone_for_deferred_reply(&self) -> Self {
+        Self {
+            id: self.id,
+            source: self.source.clone(),
+            destination: self.destination.clone(),
+            causation: self.causation,
+            deadline: self.deadline,
+            queued_at: None,
+            reply_claim: self.reply_claim.clone(),
+            payload: Box::new(()),
+        }
     }
 
     /// Get the message ID
@@ -321,6 +356,20 @@ impl Envelope {
     }
 }
 
+/// Coordinates the single terminal response for a request that may outlive
+/// the ingress dispatch deadline.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ReplyClaim(Arc<AtomicBool>);
+
+impl ReplyClaim {
+    #[inline]
+    pub(crate) fn try_claim(&self) -> bool {
+        self.0
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+}
+
 impl fmt::Debug for Envelope {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Envelope")
@@ -330,6 +379,7 @@ impl fmt::Debug for Envelope {
             .field("causation", &self.causation)
             .field("deadline", &self.deadline)
             .field("queued_at", &self.queued_at)
+            .field("reply_claim", &self.reply_claim)
             .field("payload", &"<type-erased>")
             .finish()
     }
@@ -513,5 +563,25 @@ mod tests {
 
         // Assert
         assert_eq!(reply.deadline(), Some(deadline));
+    }
+
+    #[test]
+    fn should_share_one_terminal_reply_claim_with_deferred_context() {
+        // Arrange
+        let original = Envelope::from_route(
+            test_address(1, "/test/source"),
+            test_address(1, "/test/destination"),
+            "request",
+        );
+        let deferred = original.clone_for_deferred_reply();
+        let owner = original.reply_claim();
+
+        // Act
+        let first = deferred.try_claim_reply();
+        let second = owner.try_claim();
+
+        // Assert
+        assert!(first);
+        assert!(!second, "the request may emit only one terminal response");
     }
 }
