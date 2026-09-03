@@ -4,8 +4,17 @@ use std::fmt::Write as _;
 use super::super::rendering::encode_prometheus_label_value;
 
 pub(super) fn append_metrics(output: &mut String, runtime: &Runtime) {
+    let metrics = crate::observability::metrics();
+    append_metrics_with_collector(output, runtime, metrics.as_ref());
+}
+
+pub(super) fn append_metrics_with_collector(
+    output: &mut String,
+    runtime: &Runtime,
+    metrics: &crate::observability::metrics::MetricsCollector,
+) {
     let durable = runtime.stream_durable_metrics_snapshot();
-    append_core_metrics(output, runtime, durable.as_ref());
+    append_core_metrics(output, runtime, durable.as_ref(), metrics);
     append_lag_bucket_metrics(output, runtime, durable.as_ref());
     append_watermark_metrics(output, runtime, durable.as_ref());
 }
@@ -14,8 +23,8 @@ fn append_core_metrics(
     output: &mut String,
     runtime: &Runtime,
     durable: Option<&crate::domains::stream::metrics::StreamDurableMetricsSnapshot>,
+    metrics: &crate::observability::metrics::MetricsCollector,
 ) {
-    let metrics = crate::observability::metrics();
     output.push_str("# HELP fitz_stream_active Active streams\n");
     output.push_str("# TYPE fitz_stream_active gauge\n");
     let _ = writeln!(

@@ -221,7 +221,7 @@ fn should_export_schedule_metrics_given_preloaded_schedule_runtime() {
 #[test]
 fn should_render_stream_metrics_from_cached_observability_state() {
     // Arrange
-    let metrics = crate::observability::metrics();
+    let metrics = crate::observability::metrics::MetricsCollector::new();
     metrics.gauge_set(crate::domains::stream::metrics::METRIC_ACTIVE_GAUGE, 7);
     metrics.gauge_set(
         crate::domains::stream::metrics::METRIC_APPEND_SESSIONS_GAUGE,
@@ -239,7 +239,8 @@ fn should_render_stream_metrics_from_cached_observability_state() {
     ));
 
     // Act
-    let payload = generate_prometheus_metrics(&runtime);
+    let mut payload = String::new();
+    domains::append_stream_metrics_with_collector(&mut payload, &runtime, &metrics);
 
     // Assert
     assert!(payload.contains("fitz_stream_active 7"));
