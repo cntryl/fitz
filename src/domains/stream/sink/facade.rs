@@ -5,8 +5,8 @@ use super::model::{
     AdminStreamReadRequestOwned, Arc, AtomicBool, AtomicU64, AtomicUsize, BTreeMap,
     CleanedUpSessions, HashMap, Mutex, Ordering, Route, RouteFamily, Router,
     StreamAdminReadCommand, StreamDomainActor, StreamDomainCommand, StreamDomainCore,
-    StreamDomainSink, StreamLiveCounts, StreamMetrics, StreamReadItem, StreamStorageLayout,
-    StreamStore, StreamWorkKey, SubscriptionRegistry, WatermarkCoordinators,
+    StreamDomainSink, StreamDurableMetrics, StreamLiveCounts, StreamMetrics, StreamReadItem,
+    StreamStorageLayout, StreamStore, StreamWorkKey, SubscriptionRegistry, WatermarkCoordinators,
 };
 use crate::runtime::routing::RouteAddress;
 use crate::runtime::DeliveryError;
@@ -135,6 +135,7 @@ impl StreamDomainSink {
             ),
             sync_write_mode: crate::domains::stream::protocol::StreamWriteMode::Sync,
             metrics: None,
+            durable_metrics: Arc::new(StreamDurableMetrics::default()),
             active: Arc::new(AtomicBool::new(true)),
             family_cores: Arc::new(Mutex::new(BTreeMap::new())),
             watermark_coordinators: WatermarkCoordinators {
@@ -288,6 +289,7 @@ impl StreamDomainSink {
             ),
             sync_write_mode: shared.sync_write_mode,
             metrics: shared.metrics.clone(),
+            durable_metrics: shared.durable_metrics.clone(),
             active: shared.active.clone(),
             family_cores: shared.family_cores.clone(),
             watermark_coordinators: WatermarkCoordinators {
@@ -681,6 +683,16 @@ impl StreamDomainSink {
             StreamDomainCommand::RefreshAdminSnapshotIfDirty,
             "refresh_if_dirty",
         );
+    }
+
+    pub(crate) fn durable_metrics_snapshot(
+        &self,
+    ) -> crate::domains::stream::metrics::StreamDurableMetricsSnapshot {
+        self.core.durable_metrics.snapshot()
+    }
+
+    pub(crate) fn initialize_admin_snapshot(&self) {
+        self.core.refresh_admin_snapshot_if_dirty();
     }
 
     #[cfg(test)]

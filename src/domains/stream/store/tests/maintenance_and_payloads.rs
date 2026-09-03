@@ -56,14 +56,14 @@ fn should_bound_non_compactable_maintenance_groups_by_buckets_examined() {
 
     // Assert
     assert_eq!(first.buckets_compacted, 0);
-    assert_eq!(attempts_after_first, 8);
+    assert_eq!(attempts_after_first, 1);
     assert!(pending_after_first);
     assert_eq!(second.buckets_compacted, 0);
     assert_eq!(
         metrics.counter_get(crate::domains::stream::metrics::METRIC_MAINTENANCE_ATTEMPTS_TOTAL),
-        9
+        2
     );
-    assert!(!store.has_pending_maintenance(1));
+    assert!(store.has_pending_maintenance(1));
 }
 
 #[test]
@@ -107,7 +107,7 @@ fn should_count_bytes_examined_for_non_compactable_group() {
 }
 
 #[test]
-fn should_count_plus_requeue_over_budget_maintenance_group() {
+fn should_preserve_byte_accounting_across_one_bucket_slices() {
     // Arrange
     let db = create_test_engine_with_cfs(vec![1]);
     let store = StreamStore::new(db.clone());
@@ -142,18 +142,25 @@ fn should_count_plus_requeue_over_budget_maintenance_group() {
     // Act
     let first = store
         .run_maintenance(1)
-        .expect("run byte-bounded maintenance slice");
+        .expect("run first maintenance slice");
     let pending_after_first = store.has_pending_maintenance(1);
-    let second = store
-        .run_maintenance(1)
-        .expect("run requeued maintenance group");
+    let mut remaining = Vec::new();
+    for _ in 0..4 {
+        remaining.push(
+            store
+                .run_maintenance(1)
+                .expect("run remaining maintenance slice"),
+        );
+    }
 
     // Assert
-    assert_eq!(first.buckets_compacted, 4);
-    assert!(first.bytes_examined > 4 * 1024 * 1024);
+    assert_eq!(first.buckets_compacted, 1);
+    assert!(first.bytes_examined > 0);
+    assert!(first.bytes_examined <= 4 * 1024 * 1024);
     assert!(pending_after_first);
-    assert_eq!(second.buckets_compacted, 1);
-    assert!(second.bytes_examined > 0);
+    assert!(remaining
+        .iter()
+        .all(|slice| slice.buckets_compacted == 1 && slice.bytes_examined > 0));
     assert!(!store.has_pending_maintenance(1));
 }
 

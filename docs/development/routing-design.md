@@ -505,7 +505,8 @@ Posting indexes preserve the order of their parent scope:
   contending on a mutable tail page.
 - Background compaction may merge adjacent fragments into larger pages after
   they are below the governing watermark. Readers accept both representations.
-- One synchronous maintenance slice examines at most eight buckets or 4 MiB.
+- One synchronous maintenance slice examines at most one bucket or 4 MiB so
+  strict storage commits yield to client commands between buckets.
   Successful commits enqueue only their touched bucket prefixes. The first
   maintenance slice after restart rebuilds pending work with one lazy family
   scan; later slices consume the queue without rescanning the family history.

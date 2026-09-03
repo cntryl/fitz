@@ -59,7 +59,7 @@ fn should_append_resource_history_with_immutable_fragments() {
 }
 
 #[test]
-fn should_compact_over_fragmented_resource_bucket_in_one_atomic_slice() {
+fn should_compact_over_fragmented_resource_bucket_in_one_atomic_replacement() {
     // Arrange
     let db = create_test_engine_with_cfs(vec![1]);
     let store = StreamStore::new(db.clone());
@@ -79,7 +79,7 @@ fn should_compact_over_fragmented_resource_bucket_in_one_atomic_slice() {
     }
 
     // Act
-    let result = store.run_maintenance(1).expect("run D4 maintenance");
+    let result = drain_maintenance(&store, 1);
     let replay = store
         .read_resource(&ReadResourceParams {
             family: 1,
@@ -125,7 +125,7 @@ fn should_compact_over_fragmented_resource_bucket_in_one_atomic_slice() {
         .expect("collect compacted resource");
 
     // Assert
-    assert!((1..=8).contains(&result.buckets_compacted));
+    assert!(result.buckets_compacted > 0);
     assert!(result.records_compacted >= 9);
     assert_eq!(rows.len(), 1);
     assert_eq!(event_records(replay.0).len(), 9);
@@ -255,7 +255,7 @@ fn should_fail_closed_when_large_payload_blob_is_missing() {
 }
 
 #[test]
-fn should_bound_one_maintenance_slice_to_eight_buckets() {
+fn should_yield_stream_maintenance_after_one_bucket() {
     // Arrange
     let store = StreamStore::new(create_test_engine_with_cfs(vec![1]));
     for resource_index in 0..9 {
@@ -279,15 +279,17 @@ fn should_bound_one_maintenance_slice_to_eight_buckets() {
     let first = store
         .run_maintenance(1)
         .expect("run first maintenance slice");
+    let pending_after_first = store.has_pending_maintenance(1);
     let second = store
         .run_maintenance(1)
         .expect("run second maintenance slice");
 
     // Assert
-    assert_eq!(first.buckets_compacted, 8);
-    assert!(first.records_compacted <= 8 * 64);
+    assert_eq!(first.buckets_compacted, 1);
+    assert!(first.records_compacted <= 64);
     assert!(first.bytes_examined <= 4 * 1024 * 1024);
-    assert!((1..=8).contains(&second.buckets_compacted));
+    assert!(pending_after_first);
+    assert_eq!(second.buckets_compacted, 1);
     assert_eq!(store.maintenance_full_scan_count_for_tests(), 1);
 }
 
@@ -422,7 +424,7 @@ fn should_keep_read_snapshot_stable_across_atomic_compaction() {
         .expect("collect pre-compaction snapshot");
 
     // Act
-    store.run_maintenance(1).expect("compact snapshot bucket");
+    drain_maintenance(&store, 1);
     let held: Vec<_> = snapshot
         .scan(&cntryl_midge::Query::new().prefix(prefix.clone()))
         .expect("rescan held snapshot")

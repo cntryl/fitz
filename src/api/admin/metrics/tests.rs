@@ -219,6 +219,36 @@ fn should_export_schedule_metrics_given_preloaded_schedule_runtime() {
 }
 
 #[test]
+fn should_render_stream_metrics_from_cached_observability_state() {
+    // Arrange
+    let metrics = crate::observability::metrics();
+    metrics.gauge_set(crate::domains::stream::metrics::METRIC_ACTIVE_GAUGE, 7);
+    metrics.gauge_set(
+        crate::domains::stream::metrics::METRIC_APPEND_SESSIONS_GAUGE,
+        5,
+    );
+    metrics.gauge_set(
+        crate::domains::stream::metrics::METRIC_SUBSCRIPTIONS_GAUGE,
+        3,
+    );
+    let read_model = crate::control::admin::read_model::AdminReadModel::new();
+    read_model.replace_stream_events_total(11);
+    let runtime = Arc::new(Runtime::with_admin_read_model(
+        Arc::new(Router::new()),
+        read_model,
+    ));
+
+    // Act
+    let payload = generate_prometheus_metrics(&runtime);
+
+    // Assert
+    assert!(payload.contains("fitz_stream_active 7"));
+    assert!(payload.contains("fitz_stream_append_sessions_active 5"));
+    assert!(payload.contains("fitz_stream_subscriptions_active 3"));
+    assert!(payload.contains("fitz_stream_events_total 11"));
+}
+
+#[test]
 fn should_export_type_metadata_for_every_metric_family() {
     // Arrange
     let metrics = crate::observability::metrics();

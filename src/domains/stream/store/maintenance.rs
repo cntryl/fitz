@@ -7,7 +7,10 @@ use super::{
 use std::collections::BTreeMap;
 
 const FRAGMENT_COMPACTION_THRESHOLD: usize = 8;
-const MAX_BUCKETS_PER_INVOCATION: usize = 8;
+// Maintenance executes on the same synchronous family actor as client Stream
+// commands. Yield after one bucket so a series of strict storage commits cannot
+// monopolize that actor beyond the client liveness budget.
+const MAX_BUCKETS_PER_INVOCATION: usize = 1;
 const MAX_BYTES_PER_INVOCATION: usize = 4 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -579,8 +582,8 @@ impl StreamStore {
     /// Runs one bounded synchronous D4 maintenance slice.
     ///
     /// Maintenance is separate from append so discovery never adds historical
-    /// payload reads to commits. One invocation handles at most eight buckets
-    /// and four MiB across resource, area, realm, global, and posting planes.
+    /// payload reads to commits. One invocation handles at most one bucket and
+    /// four MiB across resource, area, realm, global, and posting planes.
     /// Absolute record expirations remain authoritative after replacement;
     /// Midge reclaims the replacement at the latest contained deadline.
     ///

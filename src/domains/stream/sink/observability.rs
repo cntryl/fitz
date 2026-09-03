@@ -329,6 +329,11 @@ impl StreamDomainCore {
         stream_area_watermarks: Vec<crate::control::admin::StreamAreaWatermarkDetail>,
         committed_events_total: usize,
     ) {
+        self.durable_metrics.observe_snapshot(
+            committed_events_total,
+            &stream_realm_watermarks,
+            &stream_area_watermarks,
+        );
         self.admin_snapshot
             .read_model
             .replace_streams(streams.into_values().collect());

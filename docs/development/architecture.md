@@ -109,6 +109,9 @@ Raw Prometheus is served by the dedicated unauthenticated
 listener returns `404` for `/metrics`. Admin consumers use structured JSON at
 `/api/v1/{family}/metrics`; broker-global samples are available only at
 `/api/v1/all/metrics` with wildcard authority.
+Prometheus rendering reads Stream counts and durable progress from in-process
+metric projections initialized during startup and advanced on committed work; a
+scrape must not scan storage or enqueue admin work onto a domain actor.
 ### Critical Invariant: Ephemeral Sessions
 > **Fitz sessions are ephemeral. The broker never restores session state after disconnect. Clients are responsible for rebuilding all state including subscriptions, transactions, workers, leases, and stream resume position.**
 

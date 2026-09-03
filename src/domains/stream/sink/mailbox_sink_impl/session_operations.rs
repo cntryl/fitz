@@ -315,6 +315,7 @@ impl StreamDomainCore {
             Ok(commit) => {
                 self.session_owners.lock().remove(&session_id);
                 self.counter_inc("fitz_stream_append_sessions_ended_total");
+                self.durable_metrics.record_events(commit.batch_size);
                 self.notify_area_batch_committed(
                     owner.key.family,
                     &owner.key.realm,

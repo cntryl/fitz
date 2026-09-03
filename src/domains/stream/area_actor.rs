@@ -31,6 +31,8 @@ pub struct AreaActor {
     /// Storage layer for watermark persistence
     store: Arc<StreamStore>,
 
+    durable_metrics: Arc<super::metrics::StreamDurableMetrics>,
+
     /// Area watermark (highest contiguous committed offset).
     ///
     /// `None` means no offset has committed yet. Offset 0 is a valid committed
@@ -57,6 +59,7 @@ impl AreaActor {
         realm: String,
         area: String,
         store: Arc<StreamStore>,
+        durable_metrics: Arc<super::metrics::StreamDurableMetrics>,
     ) -> Self {
         let (area_watermark, watermark_initialized) = store
             .get_persisted_area_watermark(family_id.as_u64(), &realm, &area)
@@ -80,6 +83,7 @@ impl AreaActor {
             realm,
             area,
             store,
+            durable_metrics,
             area_watermark,
             watermark_initialized,
             committed_ranges: BTreeMap::new(),
@@ -188,6 +192,12 @@ impl AreaActor {
     fn apply_persisted_watermark(&mut self, current_watermark: u64, ctx: &mut Context<Self>) {
         let previous_watermark = self.area_watermark.unwrap_or(0);
         self.area_watermark = Some(current_watermark);
+        self.durable_metrics.set_area_watermark(
+            self.family_id.as_u64(),
+            &self.realm,
+            &self.area,
+            current_watermark,
+        );
         self.committed_ranges
             .retain(|_, last_offset| *last_offset > current_watermark);
 
@@ -301,7 +311,13 @@ mod tests {
                 .set_watermark(family.as_u64(), "realm1", "area1", watermark)
                 .expect("persist area watermark");
         }
-        let actor = AreaActor::new(family, "realm1".to_string(), "area1".to_string(), store);
+        let actor = AreaActor::new(
+            family,
+            "realm1".to_string(),
+            "area1".to_string(),
+            store,
+            Arc::new(crate::domains::stream::metrics::StreamDurableMetrics::default()),
+        );
         let ctx = Context::new(addr, router);
         (actor, ctx)
     }
@@ -325,7 +341,13 @@ mod tests {
             .expect("Failed to open store"),
         );
         let store = Arc::new(StreamStore::new(db));
-        let actor = AreaActor::new(family, "realm1".to_string(), "area1".to_string(), store);
+        let actor = AreaActor::new(
+            family,
+            "realm1".to_string(),
+            "area1".to_string(),
+            store,
+            Arc::new(crate::domains::stream::metrics::StreamDurableMetrics::default()),
+        );
         let ctx = Context::new(addr, router);
         (actor, ctx, stream_mailbox)
     }
@@ -340,6 +362,10 @@ mod tests {
 
         // Assert
         assert_eq!(actor.watermark(), 3);
+        assert_eq!(
+            actor.durable_metrics.snapshot().area_watermarks[0].watermark,
+            3
+        );
     }
 
     #[test]

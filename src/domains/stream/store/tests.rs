@@ -27,6 +27,26 @@ impl crate::runtime::clock::Clock for TestStreamClock {
     }
 }
 
+fn drain_maintenance(store: &StreamStore, family: u64) -> StreamMaintenanceResult {
+    let mut total = StreamMaintenanceResult::default();
+    for _ in 0..128 {
+        let slice = store
+            .run_maintenance(family)
+            .expect("run bounded Stream maintenance slice");
+        total.buckets_compacted = total
+            .buckets_compacted
+            .saturating_add(slice.buckets_compacted);
+        total.records_compacted = total
+            .records_compacted
+            .saturating_add(slice.records_compacted);
+        total.bytes_examined = total.bytes_examined.saturating_add(slice.bytes_examined);
+        if !store.has_pending_maintenance(family) {
+            return total;
+        }
+    }
+    panic!("Stream maintenance did not drain within the test slice bound");
+}
+
 mod sessions_layout_and_watermarks;
 use sessions_layout_and_watermarks::*;
 mod filters_ttl_and_metadata;

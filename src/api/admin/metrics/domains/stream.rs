@@ -4,15 +4,25 @@ use std::fmt::Write as _;
 use super::super::rendering::encode_prometheus_label_value;
 
 pub(super) fn append_metrics(output: &mut String, runtime: &Runtime) {
-    append_core_metrics(output, runtime);
-    append_lag_bucket_metrics(output, runtime);
-    append_watermark_metrics(output, runtime);
+    let durable = runtime.stream_durable_metrics_snapshot();
+    append_core_metrics(output, runtime, durable.as_ref());
+    append_lag_bucket_metrics(output, runtime, durable.as_ref());
+    append_watermark_metrics(output, runtime, durable.as_ref());
 }
 
-fn append_core_metrics(output: &mut String, runtime: &Runtime) {
+fn append_core_metrics(
+    output: &mut String,
+    runtime: &Runtime,
+    durable: Option<&crate::domains::stream::metrics::StreamDurableMetricsSnapshot>,
+) {
+    let metrics = crate::observability::metrics();
     output.push_str("# HELP fitz_stream_active Active streams\n");
     output.push_str("# TYPE fitz_stream_active gauge\n");
-    let _ = writeln!(output, "fitz_stream_active {}", runtime.stream_active());
+    let _ = writeln!(
+        output,
+        "fitz_stream_active {}",
+        metrics.gauge_get(crate::domains::stream::metrics::METRIC_ACTIVE_GAUGE)
+    );
     output.push('\n');
 
     output.push_str("# HELP fitz_stream_response_drops_total Total Stream responses dropped by this broker process\n# TYPE fitz_stream_response_drops_total counter\n");
@@ -30,7 +40,7 @@ fn append_core_metrics(output: &mut String, runtime: &Runtime) {
     let _ = writeln!(
         output,
         "fitz_stream_append_sessions_active {}",
-        runtime.stream_append_sessions_active()
+        metrics.gauge_get(crate::domains::stream::metrics::METRIC_APPEND_SESSIONS_GAUGE)
     );
     output.push('\n');
 
@@ -39,7 +49,10 @@ fn append_core_metrics(output: &mut String, runtime: &Runtime) {
     let _ = writeln!(
         output,
         "fitz_stream_events_total {}",
-        runtime.stream_events_total()
+        durable.map_or_else(
+            || runtime.admin_read_model().stream_events_total(),
+            |snapshot| snapshot.events_total,
+        )
     );
     output.push('\n');
 
@@ -81,7 +94,7 @@ fn append_core_metrics(output: &mut String, runtime: &Runtime) {
     let _ = writeln!(
         output,
         "fitz_stream_subscriptions_active {}",
-        runtime.stream_subscriptions_active()
+        metrics.gauge_get(crate::domains::stream::metrics::METRIC_SUBSCRIPTIONS_GAUGE)
     );
     output.push('\n');
 
@@ -95,8 +108,15 @@ fn append_core_metrics(output: &mut String, runtime: &Runtime) {
     output.push('\n');
 }
 
-fn append_lag_bucket_metrics(output: &mut String, runtime: &Runtime) {
-    let watermark_lag_buckets = runtime.stream_watermark_lag_buckets();
+fn append_lag_bucket_metrics(
+    output: &mut String,
+    runtime: &Runtime,
+    durable: Option<&crate::domains::stream::metrics::StreamDurableMetricsSnapshot>,
+) {
+    let watermark_lag_buckets = durable.map_or_else(
+        || runtime.stream_watermark_lag_buckets(),
+        crate::domains::stream::metrics::StreamDurableMetricsSnapshot::watermark_lag_buckets,
+    );
     output.push_str("# HELP fitz_stream_watermark_lag_bucket_caught_up Stream family watermarks aligned with the fastest family in their area\n");
     output.push_str("# TYPE fitz_stream_watermark_lag_bucket_caught_up gauge\n");
     let _ = writeln!(
@@ -134,12 +154,53 @@ fn append_lag_bucket_metrics(output: &mut String, runtime: &Runtime) {
     output.push('\n');
 }
 
-fn append_watermark_metrics(output: &mut String, runtime: &Runtime) {
+fn append_watermark_metrics(
+    output: &mut String,
+    runtime: &Runtime,
+    durable: Option<&crate::domains::stream::metrics::StreamDurableMetricsSnapshot>,
+) {
     output.push_str(
         "# HELP fitz_stream_realm_watermark Highest committed realm watermark per Stream route family and realm\n",
     );
     output.push_str("# TYPE fitz_stream_realm_watermark gauge\n");
-    for detail in runtime.stream_list_realm_watermark_details() {
+    if let Some(snapshot) = durable {
+        for metric in &snapshot.realm_watermarks {
+            let _ = writeln!(
+                output,
+                "fitz_stream_realm_watermark{{realm=\"{}\",family=\"{}\"}} {}",
+                encode_prometheus_label_value(&metric.realm),
+                metric.family,
+                metric.watermark
+            );
+        }
+    } else {
+        append_cached_realm_watermarks(output, runtime);
+    }
+    output.push('\n');
+
+    output.push_str(
+        "# HELP fitz_stream_area_watermark Highest committed area watermark per Stream route family, realm, and area\n",
+    );
+    output.push_str("# TYPE fitz_stream_area_watermark gauge\n");
+    if let Some(snapshot) = durable {
+        for metric in &snapshot.area_watermarks {
+            let _ = writeln!(
+                output,
+                "fitz_stream_area_watermark{{realm=\"{}\",area=\"{}\",family=\"{}\"}} {}",
+                encode_prometheus_label_value(&metric.realm),
+                encode_prometheus_label_value(&metric.area),
+                metric.family,
+                metric.watermark
+            );
+        }
+    } else {
+        append_cached_area_watermarks(output, runtime);
+    }
+    output.push('\n');
+}
+
+fn append_cached_realm_watermarks(output: &mut String, runtime: &Runtime) {
+    for detail in runtime.admin_read_model().stream_realm_watermarks() {
         let realm = encode_prometheus_label_value(&detail.realm);
         for watermark in detail.family_watermarks {
             let _ = writeln!(
@@ -149,13 +210,10 @@ fn append_watermark_metrics(output: &mut String, runtime: &Runtime) {
             );
         }
     }
-    output.push('\n');
+}
 
-    output.push_str(
-        "# HELP fitz_stream_area_watermark Highest committed area watermark per Stream route family, realm, and area\n",
-    );
-    output.push_str("# TYPE fitz_stream_area_watermark gauge\n");
-    for detail in runtime.stream_list_area_watermark_details() {
+fn append_cached_area_watermarks(output: &mut String, runtime: &Runtime) {
+    for detail in runtime.admin_read_model().stream_area_watermarks() {
         let realm = encode_prometheus_label_value(&detail.realm);
         let area = encode_prometheus_label_value(&detail.area);
         for watermark in detail.family_watermarks {
@@ -166,5 +224,4 @@ fn append_watermark_metrics(output: &mut String, runtime: &Runtime) {
             );
         }
     }
-    output.push('\n');
 }
