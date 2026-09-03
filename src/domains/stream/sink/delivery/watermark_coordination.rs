@@ -33,6 +33,7 @@ impl StreamDomainCore {
         );
         let realm_spawned = {
             let store = self.stream_store.clone();
+            let durable_metrics = self.durable_metrics.clone();
             let realm_owned = realm.to_string();
             self.watermark_coordinators.realm.ensure_spawned(
                 StreamRealmScope {
@@ -45,6 +46,7 @@ impl StreamDomainCore {
                         family_id,
                         realm_owned.clone(),
                         store.clone(),
+                        durable_metrics.clone(),
                     )
                 },
             )
@@ -59,6 +61,7 @@ impl StreamDomainCore {
         );
         let area_spawned = {
             let store = self.stream_store.clone();
+            let durable_metrics = self.durable_metrics.clone();
             let realm_owned = realm.to_string();
             let area_owned = area.to_string();
             self.watermark_coordinators.area.ensure_spawned(
@@ -74,6 +77,7 @@ impl StreamDomainCore {
                         realm_owned.clone(),
                         area_owned.clone(),
                         store.clone(),
+                        durable_metrics.clone(),
                     )
                 },
             )

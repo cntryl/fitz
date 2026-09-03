@@ -1,4 +1,5 @@
 pub(super) use crate::dispatch::protocol::payload_codec::PayloadEncoder;
+pub(super) use crate::domains::stream::metrics::StreamDurableMetrics;
 pub(super) use crate::domains::stream::StreamMetrics;
 pub(super) use crate::domains::stream::{
     StreamActor, StreamClientFrame, StreamClientRequest, StreamClientResponseBody,
@@ -378,6 +379,7 @@ pub(super) struct StreamDomainCore {
     pub(super) admin_snapshot: AdminSnapshotState,
     pub(super) sync_write_mode: crate::domains::stream::protocol::StreamWriteMode,
     pub(super) metrics: Option<StreamMetrics>,
+    pub(super) durable_metrics: Arc<StreamDurableMetrics>,
     pub(super) active: Arc<AtomicBool>,
     /// Weak family-core registry used only to aggregate live/admin views.
     /// Mutable delivery state itself remains owned by each family core.

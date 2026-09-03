@@ -41,6 +41,15 @@ impl Runtime {
         }
     }
 
+    pub(crate) fn stream_durable_metrics_snapshot(
+        &self,
+    ) -> Option<crate::domains::stream::metrics::StreamDurableMetricsSnapshot> {
+        self.domains
+            .read()
+            .as_ref()
+            .map(|domains| domains.stream_durable_metrics_snapshot())
+    }
+
     #[must_use]
     pub fn kv_list_transactions(
         &self,
@@ -199,13 +208,6 @@ impl Runtime {
             .clone()
             .ok_or_else(|| "Stream domain is not initialized".to_string())?;
         domains.stream_admin_read_resource_records(request)
-    }
-
-    pub(crate) fn stream_list_realm_watermark_details(
-        &self,
-    ) -> Vec<crate::control::admin::StreamRealmWatermarkDetail> {
-        self.refresh_stream_admin_snapshot();
-        self.admin_read_model.stream_realm_watermarks()
     }
 
     pub(crate) fn stream_realm_watermark_detail(

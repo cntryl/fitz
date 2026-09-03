@@ -220,6 +220,12 @@ GET /metrics
 **Listener**: `FITZ_METRICS_BIND_ADDR:FITZ_METRICS_PORT`
 **Authentication**: None; keep this listener private to the scrape network.
 **Response**: Prometheus text format
+
+Scrapes read an in-process Stream metrics projection initialized during startup
+and advanced by successful commits and persisted watermark updates. They do not
+scan durable Stream inventory or enqueue admin work on a family actor, so a slow
+storage backend cannot turn observability polling into data-plane backpressure.
+
 ```
 # HELP fitz_connections_total Total number of active connections
 # TYPE fitz_connections_total gauge

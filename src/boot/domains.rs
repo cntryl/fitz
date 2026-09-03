@@ -261,6 +261,12 @@ impl DomainHandles {
         self.stream.refresh_admin_snapshot_if_dirty();
     }
 
+    pub(crate) fn stream_durable_metrics_snapshot(
+        &self,
+    ) -> crate::domains::stream::metrics::StreamDurableMetricsSnapshot {
+        self.stream.durable_metrics_snapshot()
+    }
+
     pub(crate) fn kv_active_transaction_count(&self) -> usize {
         self.kv.active_transaction_count()
     }
@@ -560,6 +566,7 @@ pub fn setup(
         &route_families,
         &metrics,
     )?;
+    stream_sink.initialize_admin_snapshot();
     register_domain_sink(DomainKind::Stream, router, stream_sink.clone());
 
     let rpc_sink = Arc::new(
