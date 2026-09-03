@@ -216,6 +216,91 @@ impl MailboxSink for AlwaysTimingOutSink {
     }
 }
 
+struct QueueReplyThenTimeoutSink {
+    router: Arc<crate::runtime::Router>,
+    session_id: u64,
+}
+
+impl MailboxSink for QueueReplyThenTimeoutSink {
+    fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        assert!(envelope.try_claim_reply(), "queue response claim");
+        let response = envelope
+            .try_reply_to(FrameContext::new(
+                self.session_id,
+                ChannelId::Pub,
+                crate::protocol::tlv::MessageType::new(200),
+                Bytes::from_static(&[0]),
+                RouteFamily::new(1),
+            ))
+            .expect("queue response envelope");
+        self.router.route(response).expect("route queue response");
+        Err(DeliveryError::Timeout)
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
+#[test]
+fn should_not_emit_a_second_queue_terminal_response_after_the_domain_replied() {
+    // Arrange
+    // A Queue command can finish at the same instant its mailbox reply wait
+    // expires. Its response and ingress' indeterminate timeout compete for one
+    // terminal-response slot; emitting both shifts the client's per-type FIFO
+    // and can make a later accepted enqueue look retryably rejected.
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let router = Arc::new(crate::runtime::Router::new());
+    let session_id = 6_500;
+    let client_frames = Arc::new(Mutex::new(Vec::<FrameContext>::new()));
+    router.register(
+        crate::runtime::routing::RouteAddress::new(
+            RouteFamily::new(1),
+            crate::runtime::routing::Route::new(format!("inbox://session/{session_id}")),
+        ),
+        Arc::new(CapturingInboxSink {
+            frames: client_frames.clone(),
+        }) as Arc<dyn MailboxSink>,
+    );
+    router.register_domain_pattern(
+        "queue",
+        Arc::new(QueueReplyThenTimeoutSink {
+            router: router.clone(),
+            session_id,
+        }),
+    );
+    let ingress = RuntimeIngress::new(false).with_router(router);
+    let (_, payload) = crate::benchkit::extract_single_tlv_field(
+        &crate::benchkit::build_queue_enqueue("queue://test/app/jobs", b"job"),
+    );
+
+    // Act
+    let decision = rt.block_on(async {
+        ingress
+            .on_open(make_session_info(session_id, TransportKind::Tcp))
+            .await
+            .unwrap();
+        ingress
+            .on_frame(
+                session_id,
+                ChannelId::Pub,
+                crate::protocol::tlv::MessageType::new(200),
+                payload,
+            )
+            .await
+    });
+
+    // Assert
+    assert_eq!(decision, IngressDecision::Accept);
+    let frames = client_frames.lock().unwrap();
+    assert_eq!(
+        frames.len(),
+        1,
+        "one request must produce exactly one terminal response"
+    );
+    assert_eq!(frames[0].payload.as_ref(), &[0]);
+}
+
 #[test]
 fn should_surface_sustained_high_lane_domain_mailbox_backpressure_for_each_domain() {
     // Arrange
