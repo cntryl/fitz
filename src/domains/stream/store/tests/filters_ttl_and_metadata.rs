@@ -24,9 +24,7 @@ fn should_compact_zero_ttl_fragments_without_positional_gaps() {
                 })
                 .expect("commit zero-TTL fragment");
         }
-        store
-            .run_maintenance(1)
-            .expect("compact zero-TTL fragment round");
+        drain_maintenance(&store, 1);
     }
 
     // Act
@@ -138,7 +136,7 @@ fn should_preserve_absolute_expiration_before_plus_after_compaction() {
         })
         .expect("read before TTL compaction")
         .0;
-    let maintenance = store.run_maintenance(1).expect("compact TTL fragments");
+    let maintenance = drain_maintenance(&store, 1);
     let after = store
         .read_resource(&ReadResourceParams {
             family: 1,

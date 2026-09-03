@@ -137,8 +137,13 @@ fn should_apply_cloud_throughput_defaults_when_memtable_is_auto() {
         "tests",
     )
     .memory_budget(MemoryBudget::Bytes(512 * 1024 * 1024));
-    let expected_memtable_bytes =
-        (512 * 1024 * 1024usize).saturating_sub((512 * 1024 * 1024usize) / 10) / 2;
+    let memory_budget_bytes = 512 * 1024 * 1024usize;
+    let transaction_pool_bytes = memory_budget_bytes / 10;
+    let compaction_pool_bytes = memory_budget_bytes / 10;
+    let expected_memtable_bytes = memory_budget_bytes
+        .saturating_sub(transaction_pool_bytes)
+        .saturating_sub(compaction_pool_bytes)
+        / 2;
 
     // Act
     let tuned = build_midge_open_options(open_options, &config).expect("build cloud options");

@@ -55,7 +55,7 @@ fn should_confirm_stream_family_cleanup_before_reporting_delivery() {
 }
 
 #[test]
-fn should_run_bounded_stream_maintenance_through_internal_actor_command() {
+fn should_yield_bounded_stream_maintenance_through_internal_actor_command() {
     // Arrange
     let context = setup_test_context();
     for offset in 0..9 {
@@ -100,7 +100,7 @@ fn should_run_bounded_stream_maintenance_through_internal_actor_command() {
 
     // Assert
     assert_eq!(records.len(), 9);
-    assert!(!context
+    assert!(context
         .sink
         .core
         .stream_store
