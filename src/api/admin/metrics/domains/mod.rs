@@ -17,3 +17,12 @@ pub(super) fn append_domain_metrics(output: &mut String, runtime: &Runtime) {
     stream::append_metrics(output, runtime);
     schedule::append_metrics(output, runtime);
 }
+
+#[cfg(test)]
+pub(in crate::api::admin::metrics) fn append_stream_metrics_with_collector(
+    output: &mut String,
+    runtime: &Runtime,
+    metrics: &crate::observability::metrics::MetricsCollector,
+) {
+    stream::append_metrics_with_collector(output, runtime, metrics);
+}
