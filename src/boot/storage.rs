@@ -447,7 +447,9 @@ fn build_midge_open_options(
     // Fitz's own domain actor-reply deadlines are far shorter and will always
     // fire first; that is only safe because a domain timeout is answered with
     // a retryable error frame instead of closing the session.
-    let open_options = open_options.runtime_response_timeout(STORAGE_RUNTIME_RESPONSE_TIMEOUT);
+    let open_options = open_options
+        .lease_ttl(config.storage_lease_ttl())
+        .runtime_response_timeout(STORAGE_RUNTIME_RESPONSE_TIMEOUT);
 
     open_options
         .build()

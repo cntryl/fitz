@@ -61,12 +61,13 @@ invariant rather than deriving behavior from logs. When Midge reports the lease
 unhealthy, Fitz withdraws `/targetz`, `/readyz`, and `/healthz` and requests
 fatal broker termination; the process does not attempt in-process reacquisition.
 
-The pinned Midge revision does not yet expose or independently enforce a
-monotonic lease-valid-until deadline while a provider renewal call is blocked;
-its cloud calls can outlast the 30-second lease TTL. It also treats a malformed
-cloud lease expiration as expired. Until Midge supplies a deadline watchdog and
-fail-closed expiration parsing, do not treat provider-backed cloud takeover as
-split-brain-safe under a stalled provider or corrupt lease object.
+Midge independently enforces a monotonic lease-valid-until deadline while a
+provider renewal is in flight and treats malformed cloud lease expiration as
+indeterminate rather than expired. `FITZ_STORAGE_LEASE_TTL_SECS` configures the
+deadline, defaults to 30 seconds, and cannot be set below 30 seconds. Midge
+renews at one third of that TTL. Longer values reduce provider coordination
+traffic but extend ungraceful takeover; graceful shutdown conditionally expires
+the current lease immediately.
 
 ---
 

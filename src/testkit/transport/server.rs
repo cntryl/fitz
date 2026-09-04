@@ -365,6 +365,8 @@ impl TestServer {
             } else {
                 crate::boot::runtime::StorageMemtableConfig::Auto
             },
+            storage_lease_ttl_seconds: 30,
+            storage_lease_ttl_error: None,
             queue_write_policy: crate::boot::runtime::QueueWritePolicy::Fast,
             queue_write_policy_source: crate::boot::runtime::QueueWritePolicySource::Explicit,
             queue_loss_window_ms: 100,

@@ -2,6 +2,71 @@ use super::*;
 
 #[test]
 #[serial]
+fn should_default_storage_lease_ttl_to_thirty_seconds() {
+    with_storage_env(&[], || {
+        // Arrange
+
+        // Act
+        let config = BootConfig::default();
+
+        // Assert
+        assert_eq!(config.storage_lease_ttl(), Duration::from_secs(30));
+    });
+}
+
+#[test]
+#[serial]
+fn should_read_storage_lease_ttl_from_environment() {
+    with_storage_env(&[("FITZ_STORAGE_LEASE_TTL_SECS", "59")], || {
+        // Arrange
+
+        // Act
+        let config = BootConfig::default().with_auth_config(crate::auth::AuthConfig::Disabled);
+
+        // Assert
+        assert_eq!(config.storage_lease_ttl(), Duration::from_secs(59));
+        assert!(config.validate().is_ok());
+    });
+}
+
+#[test]
+#[serial]
+fn should_reject_storage_lease_ttl_below_current_safety_floor() {
+    with_storage_env(&[("FITZ_STORAGE_LEASE_TTL_SECS", "29")], || {
+        // Arrange
+
+        // Act
+        let result = BootConfig::default().validate();
+
+        // Assert
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("FITZ_STORAGE_LEASE_TTL_SECS must be at least 30 seconds"));
+    });
+}
+
+#[test]
+#[serial]
+fn should_reject_non_numeric_storage_lease_ttl() {
+    with_storage_env(&[("FITZ_STORAGE_LEASE_TTL_SECS", "slow")], || {
+        // Arrange
+
+        // Act
+        let result = BootConfig::default().validate();
+
+        // Assert
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("FITZ_STORAGE_LEASE_TTL_SECS must be an unsigned integer second count"));
+    });
+}
+
+#[test]
+#[serial]
 fn should_reject_missing_required_cloud_fields_given_real_provider() {
     with_storage_env(
         &[

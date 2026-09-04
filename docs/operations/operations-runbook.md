@@ -79,11 +79,13 @@ withdraws `/targetz`, `/healthz`, and `/readyz` and terminates through the fatal
 path. Do not wait for a second signal and do not expect that process to reacquire
 the lease; verify that the orchestrator starts or promotes a healthy replacement.
 
-Provider-backed cloud failover has an upstream safety gate in the pinned Midge
-revision: renewal health has no independent monotonic deadline while provider
-I/O blocks, and malformed cloud lease expiration is treated as expired. Do not
-approve cloud takeover as split-brain-safe until Midge adds a pre-TTL watchdog
-and fail-closed expiration parsing.
+Provider-backed cloud renewal has an independent monotonic deadline in Midge,
+and malformed lease expiration fails closed as indeterminate. The storage
+writer lease TTL defaults to 30 seconds and is configured with
+`FITZ_STORAGE_LEASE_TTL_SECS`; Midge renews at one third of that value. A longer
+TTL reduces provider coordination requests but delays takeover after a crash or
+failed release. Successful graceful shutdown conditionally expires the lease
+immediately.
 
 ## Emergency Rollback
 

@@ -75,6 +75,15 @@ Expect Fitz to reach readiness after storage startup and writer-lease acquisitio
 
 Any other value is rejected at startup.
 
+## Storage Writer Lease
+
+`FITZ_STORAGE_LEASE_TTL_SECS` configures the embedded Midge primary
+storage-writer lease and defaults to `30`. Values below 30 seconds are rejected.
+Midge renews the provider-backed lease at one third of the configured TTL, so
+increasing the TTL reduces coordination requests while extending takeover time
+after a crash or failed release. A graceful shutdown conditionally expires the
+lease immediately; it does not wait for the TTL.
+
 Schedule uses this policy for server-selected durable writes. KV and Stream
 still honor client-selected buffered versus sync intent, translated to
 cloud-compatible commits: buffered intent uses asynchronous cloud durability,

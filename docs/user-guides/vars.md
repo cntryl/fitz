@@ -130,6 +130,7 @@ For the auth and browser-perimeter checklist, see
 | FITZ_STORAGE_PREFIX | Prefix string | Unset | Optional object key namespace prefix in cloud mode. |
 | FITZ_STORAGE_CACHE_PATH | Filesystem path | ./.fitz-cloud-cache | Local cache path for cloud-backed storage mode. |
 | FITZ_STORAGE_CLOUD_DURABILITY | background or strict | background | Cloud policy for broker-selected durable writes and client sync intent. `background` completes at Midge's local cloud commit barrier and uploads asynchronously; `strict` waits for provider acknowledgement. |
+| FITZ_STORAGE_LEASE_TTL_SECS | Integer seconds, at least 30 | 30 | TTL for the embedded Midge primary storage-writer lease. Midge renews at one third of this interval. Increasing it reduces provider lease traffic but extends takeover after an ungraceful failure; graceful shutdown explicitly releases the lease. |
 | FITZ_STORAGE_MEMTABLE_BYTES | Unsigned integer byte count | Auto | Optional explicit memtable size override for embedded engine. |
 | FITZ_SCHEDULE_PRELOAD_TIMEOUT_SECS | Positive integer second count | 120 | Maximum aggregate wait for required Schedule actor preload during startup. Expiry fails startup with an explicit timeout rather than leaving the broker wedged indefinitely. |
 | FITZ_QUEUE_WRITE_POLICY | fast, buffered, or strict | fast | Queue mutation write policy. `fast` skips WAL and flushes in the background; `buffered` uses local buffered WAL or cloud asynchronous durability; `strict` waits for local sync or cloud provider acknowledgement. |

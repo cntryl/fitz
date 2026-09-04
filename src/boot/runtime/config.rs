@@ -12,6 +12,7 @@ const DEFAULT_SQRZL_EMULATOR_BUCKET: &str = "fitz";
 const DEFAULT_METRICS_BIND_ADDR: &str = "127.0.0.1";
 const DEFAULT_METRICS_PORT: u16 = 9090;
 const ENV_STORAGE_MEMTABLE_BYTES: &str = "FITZ_STORAGE_MEMTABLE_BYTES";
+const ENV_STORAGE_LEASE_TTL_SECS: &str = "FITZ_STORAGE_LEASE_TTL_SECS";
 const ENV_QUEUE_WRITE_POLICY: &str = "FITZ_QUEUE_WRITE_POLICY";
 const ENV_QUEUE_LOSS_WINDOW_MS: &str = "FITZ_QUEUE_LOSS_WINDOW_MS";
 const ENV_KV_IDLE_TRANSACTION_TTL_SECS: &str = "FITZ_KV_IDLE_TRANSACTION_TTL_SECS";
@@ -19,6 +20,8 @@ const ENV_SCHEDULE_PRELOAD_TIMEOUT_SECS: &str = "FITZ_SCHEDULE_PRELOAD_TIMEOUT_S
 const ENV_DRAIN_GRACE_SECONDS: &str = "FITZ_DRAIN_GRACE_SECONDS";
 const ENV_DRAIN_CLOSE_REASON: &str = "FITZ_DRAIN_CLOSE_REASON";
 const DEFAULT_QUEUE_LOSS_WINDOW_MS: u64 = 100;
+const DEFAULT_STORAGE_LEASE_TTL_SECS: u64 = 30;
+const MIN_STORAGE_LEASE_TTL_SECS: u64 = 30;
 const DEFAULT_KV_IDLE_TRANSACTION_TTL_SECS: u64 = 300;
 const DEFAULT_DRAIN_GRACE_SECONDS: u64 = 25;
 const DEFAULT_DRAIN_CLOSE_REASON: &str = "broker draining for redeploy";
@@ -328,7 +331,7 @@ mod env;
 use env::{
     drain_close_reason_from_env, drain_grace_seconds_from_env, env_non_empty,
     kv_idle_transaction_ttl_seconds_from_env, queue_loss_window_ms_from_env, required_env,
-    schedule_preload_timeout_seconds_from_env,
+    schedule_preload_timeout_seconds_from_env, storage_lease_ttl_seconds_from_env,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -444,6 +447,15 @@ impl<'a> StorageConfig<'a> {
                 format!("{ENV_SCHEDULE_PRELOAD_TIMEOUT_SECS} must be greater than 0").into(),
             );
         }
+        if let Some(error) = &config.storage_lease_ttl_error {
+            return Err(error.clone().into());
+        }
+        if config.storage_lease_ttl_seconds < MIN_STORAGE_LEASE_TTL_SECS {
+            return Err(format!(
+                "{ENV_STORAGE_LEASE_TTL_SECS} must be at least {MIN_STORAGE_LEASE_TTL_SECS} seconds"
+            )
+            .into());
+        }
         config
             .storage_memtable
             .validate()
@@ -519,6 +531,9 @@ pub struct BootConfig {
     pub cloud_durability: CloudDurabilityMode,
     /// Optional explicit Midge memtable size in bytes.
     pub storage_memtable: StorageMemtableConfig,
+    /// TTL for the embedded Midge primary storage-writer lease.
+    pub storage_lease_ttl_seconds: u64,
+    pub(crate) storage_lease_ttl_error: Option<String>,
     /// Commit policy for queue durable mutations.
     pub queue_write_policy: QueueWritePolicy,
     /// Whether queue write policy was explicit or resolved through the default.
@@ -676,6 +691,8 @@ impl Default for BootConfig {
             kv_idle_transaction_ttl_seconds_from_env();
         let (schedule_preload_timeout_seconds, schedule_preload_timeout_error) =
             schedule_preload_timeout_seconds_from_env();
+        let (storage_lease_ttl_seconds, storage_lease_ttl_error) =
+            storage_lease_ttl_seconds_from_env();
         let (queue_write_policy, queue_write_policy_source) =
             QueueWritePolicy::from_env_with_source();
         let drain_close_reason = drain_close_reason_from_env();
@@ -704,6 +721,8 @@ impl Default for BootConfig {
             channel_capacity: 1000,
             cloud_durability: CloudDurabilityMode::from_env(),
             storage_memtable: StorageMemtableConfig::from_env(),
+            storage_lease_ttl_seconds,
+            storage_lease_ttl_error,
             queue_write_policy,
             queue_write_policy_source,
             queue_loss_window_ms,
@@ -887,6 +906,20 @@ impl BootConfig {
     #[must_use]
     pub fn storage_memtable_bytes(&self) -> Option<usize> {
         self.storage_memtable.bytes()
+    }
+
+    #[must_use]
+    /// Override the embedded Midge primary storage-writer lease TTL.
+    pub fn with_storage_lease_ttl_seconds(mut self, seconds: u64) -> Self {
+        self.storage_lease_ttl_seconds = seconds;
+        self.storage_lease_ttl_error = None;
+        self
+    }
+
+    #[must_use]
+    /// Return the configured embedded Midge primary storage-writer lease TTL.
+    pub fn storage_lease_ttl(&self) -> Duration {
+        Duration::from_secs(self.storage_lease_ttl_seconds)
     }
 
     /// Validate the full broker boot configuration.
