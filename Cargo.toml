@@ -35,7 +35,7 @@ ahash = "0.8"
 argon2 = "0.6"
 async-trait = "0.1"
 base64 = "0.23.1"
-brotli = "8"
+brotli = "9"
 bytes = "1.12"
 chrono = { version = "0.4", features = ["serde"] }
 cntryl-lexkey = { git = "https://github.com/cntryl/lexkey-rs", branch = "main" }
