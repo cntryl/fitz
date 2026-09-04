@@ -829,10 +829,10 @@ seconds as a baseline, not an architectural upper bound.
 After activation, the shutdown coordinator also monitors Midge writer-lease
 renewal health. When Midge reports the lease unhealthy, Fitz withdraws
 orchestration health and strict readiness and requests fatal termination without
-attempting in-process lease reacquisition. The pinned Midge revision still needs
-an independent monotonic pre-TTL watchdog for blocked cloud renewal and
-fail-closed parsing for malformed cloud lease expiration; Fitz cannot recreate
-those lease-internal guarantees from the exposed boolean.
+attempting in-process lease reacquisition. Midge independently enforces the
+monotonic lease-valid-until deadline during provider renewal and fails closed on
+malformed cloud lease expiration. Fitz configures that deadline through
+`FITZ_STORAGE_LEASE_TTL_SECS`; Midge renews at one third of the TTL.
 ### Configuration
 **Type:** `BootConfig`
 ```rust
