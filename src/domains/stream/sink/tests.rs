@@ -323,9 +323,10 @@ fn decode_stream_error_message(payload: &[u8]) -> Result<String, String> {
         return Ok(message);
     }
     let mut decoder = crate::dispatch::protocol::payload_codec::PayloadDecoder::new(payload);
-    if decoder.get_u8()? != 1 {
+    if decoder.get_u8()? != 2 {
         return Err("stream response is not an error".to_string());
     }
+    decoder.get_u32()?;
     decoder.get_string()
 }
 

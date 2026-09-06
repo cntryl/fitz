@@ -287,7 +287,17 @@ impl DomainFrameDispatcher<'_> {
         domain_code: u16,
         message: &'static str,
     ) -> Result<(), IngressDecision> {
-        let payload = Self::encode_domain_error_body(domain_code, message);
+        let payload = if (600..=608).contains(&msg_type.0) {
+            crate::protocol::stream_codec::encode_error_response_into(
+                &mut crate::protocol::payload_codec::PayloadEncoder::new(),
+                msg_type.0,
+                domain_code,
+                message,
+            )
+            .into()
+        } else {
+            Self::encode_domain_error_body(domain_code, message)
+        };
         let response_ctx = crate::protocol::frame_context::FrameContext::new(
             session_id,
             channel_id,

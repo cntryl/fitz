@@ -27,3 +27,14 @@ Use this checklist before approving a Fitz release.
 1. Engineering sign-off.
 2. Operations sign-off.
 3. Security sign-off for auth or policy changes.
+
+## Stream error envelope generation 2 release gate
+
+For issue #238, record the released .NET, TypeScript, Go, Python, and Rust SDK
+versions that decode status 2 before releasing the broker change. Verify legacy
+status-1 decoding, APPEND and COMMIT code `2001` over a real broker, unrelated
+wording with `2001`, misleading wording with another code, and backend `2012`.
+Requalify both linked Portia assertions using the exact broker and client
+artifacts, including original failure and pending-batch preservation through
+cleanup failures. Follow the client-first upgrade and broker-first rollback in
+[migration guidance](../operations/migration-guide.md).
