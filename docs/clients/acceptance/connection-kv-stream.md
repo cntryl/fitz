@@ -382,7 +382,7 @@ reject or surface the broker rejection for partial and cross-realm selectors.
 **When:** Client sends `Append(session_id, expected_offset=99999, payload="event2")`  
 **Then:**
 
-- Server returns error (status=1) with message indicating concurrency conflict (e.g. containing "conflict")
+- Server returns error (status=2) with numeric domain code 2001, independently of message wording
 - No new record is appended
 - Clients MUST send expected_offset on every Append; servers MUST enforce it
 

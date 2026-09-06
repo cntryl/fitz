@@ -406,7 +406,12 @@ fn should_not_close_session_when_a_domain_command_times_out() {
         );
         // Error body: [u8 flag][u32 code][string message].
         let body = &frames[0].payload;
-        assert_eq!(body[0], 1, "{} should send an error body", case.domain);
+        assert_eq!(
+            body[0],
+            if case.domain == "stream" { 2 } else { 1 },
+            "{} should send an error body",
+            case.domain
+        );
         let code = u32::from_be_bytes([body[1], body[2], body[3], body[4]]);
         // A timed-out command was already enqueued and may still run, so the
         // code must not be one `REQ-PROTO-012` classifies as retryable. Those
@@ -496,7 +501,12 @@ fn should_answer_sustained_mailbox_backpressure_without_killing_the_session() {
         // one `REQ-PROTO-012` classifies as retryable. A fatal code here makes
         // a compliant client give up on a request it could safely re-send.
         let body = &frames[0].payload;
-        assert_eq!(body[0], 1, "{} should send an error body", case.domain);
+        assert_eq!(
+            body[0],
+            if case.domain == "stream" { 2 } else { 1 },
+            "{} should send an error body",
+            case.domain
+        );
         let code = u32::from_be_bytes([body[1], body[2], body[3], body[4]]);
         assert!(
             DOCUMENTED_RETRYABLE_CODES.contains(&code),

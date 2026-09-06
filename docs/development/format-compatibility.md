@@ -2,6 +2,25 @@
 
 This page defines compatibility expectations for serialized data, protocol payloads, and storage formats.
 
+## Stream error envelope generation 2
+
+Stream BEGIN, APPEND, COMMIT, ROLLBACK, LAST, GET_METADATA, SUBSCRIBE, and
+UNSUBSCRIBE errors now use `[u8 2][u32 BE domain_code][u32 BE message_length][UTF-8 message]`.
+READ retains its coded status-1 envelope. Success and notification layouts and
+persisted data are unchanged by this error-envelope change.
+
+Deploy updated .NET, TypeScript, Go, Python, and Rust SDKs before the broker.
+Updated clients decode both generations; legacy non-READ status-1 errors have
+no structured code. Old SDKs cannot decode generation 2, so the broker upgrade
+must wait until all consumers have migrated. Roll back the broker first while
+keeping the dual-generation clients. No capability negotiation is performed.
+
+Concurrency conflicts carry `2001`; unclassified backend errors carry `2012`.
+Preserve unknown codes and original exceptions. Never classify message wording
+or automatically retry a failed append/commit. Applications own command retries.
+The release checklist must record exact broker and SDK versions and requalify
+Portia's stale-append and pending-batch assertions before release.
+
 ## Compatibility Rules
 
 1. Backward-incompatible wire changes require explicit release notes and migration guidance.

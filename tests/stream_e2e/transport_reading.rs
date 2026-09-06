@@ -192,7 +192,7 @@ where
         .send_and_receive(&build_stream_append(session_id, 0, b"client-2-event"), 2000)
         .await
         .expect("append stale stream write");
-    let error = parse_stream_error_message(&append_response);
+    let (code, _message) = parse_stream_error(&append_response);
 
     let read_response = client1
         .send_and_receive(&build_stream_read(route, 0), 2000)
@@ -200,7 +200,7 @@ where
         .expect("read committed stream history");
 
     // Assert
-    assert!(error.contains("concurrency conflict"));
+    assert_eq!(code, 2001);
     let read = parse_stream_read_response(&read_response);
     let bodies: Vec<Vec<u8>> = read.records.into_iter().map(|record| record.body).collect();
     assert_eq!(bodies, vec![b"client-1-event".to_vec()]);
@@ -228,10 +228,10 @@ where
         .send_and_receive(&build_stream_append(session_id, 2, b"gap"), 2000)
         .await
         .expect("append future-offset stream write");
-    let error = parse_stream_error_message(&append_response);
+    let (code, _message) = parse_stream_error(&append_response);
 
     // Assert
-    assert!(error.contains("concurrency conflict"));
+    assert_eq!(code, 2001);
 }
 
 pub(crate) async fn should_return_session_not_found_given_append_to_unknown_session<C>(

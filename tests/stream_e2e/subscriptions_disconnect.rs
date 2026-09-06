@@ -212,11 +212,12 @@ where
                 .await
                 .expect("invalid Stream subscription response");
             let (_message_type, status, data) = parse_stream_response(&response);
-            assert_eq!(status, 1, "invalid pattern must fail: {pattern}");
+            assert_eq!(status, 2, "invalid pattern must fail: {pattern}");
             let mut decoder = PayloadDecoder::new(&data[1..]);
+            assert_eq!(decoder.get_u32().expect("subscription error code"), 2010);
             let message = decoder
                 .get_string()
-                .expect("Stream subscription plain error envelope");
+                .expect("Stream subscription error envelope");
             assert!(!message.is_empty());
             assert!(decoder.is_complete());
         }
@@ -265,11 +266,12 @@ where
     );
     assert_eq!(parse_stream_response(&exact).1, 0);
     let (_, overflow_status, overflow_data) = parse_stream_response(&overflow);
-    assert_eq!(overflow_status, 1);
+    assert_eq!(overflow_status, 2);
     let mut decoder = PayloadDecoder::new(&overflow_data[1..]);
+    assert_eq!(decoder.get_u32().expect("subscription limit code"), 2011);
     let message = decoder
         .get_string()
-        .expect("Stream overflow plain error envelope");
+        .expect("Stream overflow error envelope");
     assert!(message.contains("subscription limit"));
     assert!(decoder.is_complete());
 }

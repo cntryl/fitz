@@ -53,19 +53,17 @@ pub(crate) fn parse_stream_ok_data(frame: &[u8]) -> Vec<u8> {
 }
 
 pub(crate) fn parse_stream_error_message(frame: &[u8]) -> String {
-    let (msg_type, status, payload) = parse_stream_response(frame);
-    assert_eq!(status, 1, "expected failing stream response");
+    parse_stream_error(frame).1
+}
 
-    if msg_type == 92 {
-        let (_code, message) = fitz::protocol::error_codes::decode_error_body(&payload)
-            .expect("stream READ error envelope");
-        message
-    } else {
-        let mut dec = PayloadDecoder::new(&payload[1..]);
-        let message = dec.get_string().expect("stream plain error envelope");
-        assert!(dec.is_complete(), "expected complete stream error payload");
-        message
-    }
+pub(crate) fn parse_stream_error(frame: &[u8]) -> (u32, String) {
+    let (msg_type, status, payload) = parse_stream_response(frame);
+    assert_eq!(status, if msg_type == 92 { 1 } else { 2 });
+    let mut dec = PayloadDecoder::new(&payload[1..]);
+    let code = dec.get_u32().expect("stream domain code");
+    let message = dec.get_string().expect("stream error message");
+    assert!(dec.is_complete(), "expected complete stream error payload");
+    (code, message)
 }
 
 pub(crate) fn event_records(items: &[StreamReadItem]) -> Vec<StreamRecord> {

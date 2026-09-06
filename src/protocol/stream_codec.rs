@@ -175,15 +175,12 @@ pub fn encode_response_into(
             }
         }
         StreamClientResponseBody::Error(e) => {
-            if message_type == 604 {
-                return crate::protocol::error_codes::encode_error_body_into(
-                    stream_error_code_for_message(e),
-                    e,
-                    enc,
-                );
-            }
-            enc.put_u8(1);
-            enc.put_string(e);
+            return encode_error_response_into(
+                enc,
+                message_type,
+                stream_error_code_for_message(e),
+                e,
+            );
         }
         StreamClientResponseBody::SubscriptionError(error) => {
             let code = match error {
@@ -194,18 +191,25 @@ pub fn encode_response_into(
                     crate::protocol::error_codes::stream::ERR_SUBSCRIPTION_LIMIT
                 }
             };
-            if message_type == 604 {
-                return crate::protocol::error_codes::encode_error_body_into(
-                    code,
-                    &error.to_string(),
-                    enc,
-                );
-            }
-            enc.put_u8(1);
-            enc.put_string(&error.to_string());
+            return encode_error_response_into(enc, message_type, code, &error.to_string());
         }
     }
 
+    enc.finish()
+}
+
+/// Encode the explicitly versioned Stream error envelope. READ retains its
+/// original status-1 coded envelope; other operations use status 2.
+pub fn encode_error_response_into(
+    enc: &mut PayloadEncoder,
+    message_type: u16,
+    code: u16,
+    message: &str,
+) -> Vec<u8> {
+    enc.clear();
+    enc.put_u8(if message_type == 604 { 1 } else { 2 });
+    enc.put_u32(u32::from(code));
+    enc.put_string(message);
     enc.finish()
 }
 
@@ -532,7 +536,7 @@ mod tests {
     }
 
     #[test]
-    fn should_encode_plain_stream_error_except_for_read() {
+    fn should_encode_versioned_stream_error_and_preserve_read_envelope() {
         // Arrange
         let response = StreamClientResponseBody::Error("session not found".to_string());
 
@@ -541,7 +545,7 @@ mod tests {
         let read = encode_response(604, &response);
 
         // Assert
-        assert_eq!(&begin[..5], &[1, 0, 0, 0, 17]);
+        assert_eq!(&begin[..5], &[2, 0, 0, 7, 211]);
         assert_eq!(
             &read[1..5],
             &u32::from(crate::protocol::error_codes::stream::ERR_SESSION_NOT_FOUND).to_be_bytes()

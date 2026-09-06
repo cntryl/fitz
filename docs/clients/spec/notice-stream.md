@@ -405,6 +405,18 @@ Stream is not a queue, a broker-managed consumer group system, an exactly-once c
 |  608 | UNSUBSCRIBE  | Client → Server            |
 |  609 | NOTIFY       | Server → Client (delivery) |
 
+#### Error envelope generation 2
+
+All Stream request errors except READ use `[u8 status=2][u32 BE domain_code][string message]`.
+READ retains `[u8 status=1][u32 BE domain_code][string message]`.
+Success and NOTIFY layouts are unchanged. Codes are stable; messages are diagnostic.
+Unclassified backend failures use `2012`, never an inferred concurrency conflict.
+
+Updated SDKs also accept legacy status-1 non-READ errors (`[string message]`),
+preserving the absence of a domain code. They MUST NOT infer codes from wording.
+Upgrade all five SDKs before the broker; old decoders cannot interpret status 2.
+See [migration guidance](../../operations/migration-guide.md).
+
 #### BEGIN Request
 
 ```
@@ -418,8 +430,9 @@ Response (status=0):
   [u64 BE] session_id
   [u32 BE] data_len
   [bytes]  data (broker-defined opaque bytes; clients MUST treat as opaque and MAY ignore)
-Response (status=1):
-  [u8]     1
+Response (status=2):
+  [u8]     2
+  [u32 BE] error_code
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -443,13 +456,14 @@ Response (status=0):
   [u8]     0
   [u32 BE] data_len
   [bytes]  data
-Response (status=1):
-  [u8]     1
+Response (status=2):
+  [u8]     2
+  [u32 BE] error_code
   [u32 BE] error_len
   [bytes]  error_msg
 ```
 
-**expected_offset (OCC):** Clients MUST send `expected_offset` on every APPEND. It is the client's view of the stream's next write offset for that route (0 for a new stream). Servers MUST enforce it: if `expected_offset` does not match the server's next offset for that route, the server MUST reject the append with status=1 and an error message (e.g. containing "conflict"). This provides optimistic concurrency control; clients that receive a conflict should re-read the stream and retry with the correct offset.
+**expected_offset (OCC):** Clients MUST send `expected_offset` on every APPEND. It is the client's view of the stream's next write offset for that route (0 for a new stream). Servers MUST enforce it: if `expected_offset` does not match the server's next offset for that route, the server MUST reject the append with status=2 and domain code `2001`. COMMIT MUST also return `2001` when a competing commit invalidates a staged batch. Clients MUST classify conflicts by code, independently of message wording. The application decides whether to reload and execute a new command; SDKs MUST NOT automatically retry APPEND or COMMIT.
 
 **Optional discriminator:** Clients MAY include an immutable discriminator string on APPEND. The broker stores it as a replay sidecar and uses it only for filtered reads. Clients that do not need filtered replay SHOULD omit it.
 
@@ -473,8 +487,9 @@ Response (status=0):
   [u8]     0
   [u32 BE] data_len
   [bytes]  data
-Response (status=1):
-  [u8]     1
+Response (status=2):
+  [u8]     2
+  [u32 BE] error_code
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -490,8 +505,9 @@ Response (status=1):
 [u64 BE]  session_id
 Response (status=0):
   [u8]     0
-Response (status=1):
-  [u8]     1
+Response (status=2):
+  [u8]     2
+  [u32 BE] error_code
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -759,12 +775,11 @@ class StreamSession:
 
 #### Error Codes (2xxx)
 
-Stream uses operation-specific error envelopes. `READ` errors are
-`[status=1][u32 error_code][string message]` and preserve the numeric 2xxx
-code. Every other Stream operation uses the plain
-`[status=1][string message]` envelope. Clients must select the decoder from the
-request message type; they must not consume the first four bytes of a
-non-`READ` message as an error code.
+Stream READ retains `[status=1][u32 BE error_code][string message]`.
+Every other Stream operation uses `[status=2][u32 BE error_code][string message]`.
+For legacy brokers only, non-READ status 1 means `[string message]` with no code.
+Select the decoder using both status and request message type; never infer a
+code from message wording.
 
 - 2001 = ERR_CONCURRENCY_CONFLICT (expected_offset mismatch)
 - 2002 = ERR_SESSION_ALREADY_ACTIVE
@@ -840,8 +855,9 @@ Unsubscribe from stream change notifications.
 [bytes]   route_pattern
 Response (status=0):
   [u8]     0
-Response (status=1):
-  [u8]     1
+Response (status=2):
+  [u8]     2
+  [u32 BE] error_code
   [u32 BE] error_len
   [bytes]  error_msg
 ```
