@@ -703,7 +703,7 @@ pub(crate) fn seed_committed_kv_values(
     let tx_id = match actor.handle(KvMessage::Begin {
         scope: scope.clone(),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered(),
+        write_options: cntryl_midge::WriteOptions::buffered().into(),
     }) {
         KvResponse::BeginOk { tx_id } => tx_id,
         other => panic!("Expected BeginOk response, found {other:?}"),
@@ -742,7 +742,7 @@ pub(crate) fn delete_committed_kv_range(
     let tx_id = match actor.handle(KvMessage::Begin {
         scope: scope.clone(),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered(),
+        write_options: cntryl_midge::WriteOptions::buffered().into(),
     }) {
         KvResponse::BeginOk { tx_id } => tx_id,
         other => panic!("Expected BeginOk response, found {other:?}"),

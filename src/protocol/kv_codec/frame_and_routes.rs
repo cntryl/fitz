@@ -367,8 +367,8 @@ fn parse_begin(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, S
 
     // Read durability (u8): 0=buffered, 1=sync (per `CLIENT_SPEC`)
     let write_options = match decoder.get_u8()? {
-        0 => cntryl_midge::WriteOptions::buffered(),
-        1 => cntryl_midge::WriteOptions::sync(),
+        0 => crate::domains::WritePolicy::Buffered,
+        1 => crate::domains::WritePolicy::Sync,
         value => return Err(format!("Invalid durability mode: {value}")),
     };
     ensure_complete(&decoder, "BEGIN")?;

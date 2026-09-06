@@ -27,10 +27,15 @@ fn delivery_error_to_send_error(target: RouteAddress, error: &DeliveryError) -> 
             target,
             occupancy: usize_to_f64_saturating(*current_len) / usize_to_f64_saturating(*capacity),
         },
-        DeliveryError::ActorStopped | DeliveryError::Timeout => SendError::ActorStopped { target },
-        DeliveryError::SinkPanicked
-        | DeliveryError::InvalidPayload { .. }
-        | DeliveryError::UnsupportedPayload => SendError::SinkPanicked { target },
+        DeliveryError::ActorStopped => SendError::ActorStopped { target },
+        DeliveryError::Timeout => SendError::Timeout { target },
+        DeliveryError::SinkPanicked => SendError::SinkPanicked { target },
+        DeliveryError::InvalidPayload { len, max } => SendError::InvalidPayload {
+            target,
+            len: *len,
+            max: *max,
+        },
+        DeliveryError::UnsupportedPayload => SendError::UnsupportedPayload { target },
     }
 }
 
@@ -537,6 +542,16 @@ pub enum SendError {
     ActorStopped { target: RouteAddress },
     /// Sink panicked while accepting the message
     SinkPanicked { target: RouteAddress },
+    /// The destination remained alive but did not reply before its deadline.
+    Timeout { target: RouteAddress },
+    /// The payload exceeds the destination's wire limit; retrying cannot fix it.
+    InvalidPayload {
+        target: RouteAddress,
+        len: usize,
+        max: usize,
+    },
+    /// The destination does not support this payload type.
+    UnsupportedPayload { target: RouteAddress },
     /// Route not registered
     RouteNotFound { target: RouteAddress },
 }
@@ -549,6 +564,9 @@ impl SendError {
             SendError::MailboxFull { target, .. }
             | SendError::ActorStopped { target }
             | SendError::SinkPanicked { target }
+            | SendError::Timeout { target }
+            | SendError::InvalidPayload { target, .. }
+            | SendError::UnsupportedPayload { target }
             | SendError::RouteNotFound { target } => target,
         }
     }
@@ -570,6 +588,16 @@ impl fmt::Display for SendError {
             }
             SendError::SinkPanicked { target } => {
                 write!(f, "Sink for {target} panicked during delivery")
+            }
+            SendError::Timeout { target } => write!(f, "Delivery to {target} timed out"),
+            SendError::InvalidPayload { target, len, max } => {
+                write!(
+                    f,
+                    "Response payload {len} bytes exceeds wire limit {max} for {target}"
+                )
+            }
+            SendError::UnsupportedPayload { target } => {
+                write!(f, "Unsupported envelope payload type for {target}")
             }
             SendError::RouteNotFound { target } => {
                 write!(f, "Route {target} not found")

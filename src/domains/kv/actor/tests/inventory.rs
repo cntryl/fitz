@@ -54,7 +54,7 @@ fn should_persist_inventory_estimate_after_commit_in_cloud_mode() {
     let KvResponse::BeginOk { tx_id } = actor.handle(KvMessage::Begin {
         scope: scope.clone(),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::cloud_async(),
+        write_options: cntryl_midge::WriteOptions::cloud_async().into(),
     }) else {
         panic!("transaction should begin");
     };
@@ -103,7 +103,7 @@ fn should_commit_disjoint_writes_without_inventory_conflict() {
         let KvResponse::BeginOk { tx_id } = actor.handle(KvMessage::Begin {
             scope: scope.clone(),
             mode: TxMode::ReadWrite,
-            write_options: cntryl_midge::WriteOptions::buffered(),
+            write_options: cntryl_midge::WriteOptions::buffered().into(),
         }) else {
             panic!("transaction should begin");
         };

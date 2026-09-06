@@ -76,7 +76,13 @@ pub trait MailboxSink: Send + Sync {
     /// - Mailbox receiver has been dropped (actor stopped)
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError>;
 
-    /// Attempt to deliver an envelope to the high-priority lane
+    /// Attempt delivery with a preference for the high-priority lane.
+    ///
+    /// Priority is optional: sinks with one lane use ordinary delivery by
+    /// default. Managed actor mailboxes override this method to provide their
+    /// separate bounded control lane. Callers requiring control-lane isolation
+    /// must use a sink that explicitly provides it; the trait alone does not
+    /// promise priority scheduling or reserved capacity.
     ///
     /// **Runtime-internal use only**. This method is used for messages the
     /// runtime or a domain sink explicitly marks as control-plane work, such as
@@ -86,8 +92,12 @@ pub trait MailboxSink: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Returns `DeliveryError::HighLaneFull` if the high-priority lane is full.
-    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError>;
+    /// Returns the underlying delivery failure. A separate control lane reports
+    /// `DeliveryError::HighLaneFull` when full; the default forwards ordinary
+    /// delivery errors, including `DeliveryError::MailboxFull`.
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
 }
 
 /// Errors that can occur during envelope delivery

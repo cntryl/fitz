@@ -4,6 +4,7 @@
 //! both call this single policy function.
 
 use super::state::KvDomainRuntime;
+use crate::domains::WritePolicy;
 
 impl KvDomainRuntime<'_> {
     pub(super) fn apply_write_options(
@@ -15,10 +16,8 @@ impl KvDomainRuntime<'_> {
                 scope,
                 mode,
                 write_options,
-            } if write_options.is_sync()
-                || write_options == cntryl_midge::WriteOptions::buffered() =>
-            {
-                let write_options = if write_options.is_sync() {
+            } if write_options == WritePolicy::Sync || write_options == WritePolicy::Buffered => {
+                let write_options = if write_options == WritePolicy::Sync {
                     self.core.sync_write_options
                 } else {
                     self.core.buffered_write_options
@@ -26,7 +25,7 @@ impl KvDomainRuntime<'_> {
                 crate::domains::kv::KvMessage::Begin {
                     scope,
                     mode,
-                    write_options,
+                    write_options: write_options.into(),
                 }
             }
             message => message,

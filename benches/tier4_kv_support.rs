@@ -111,7 +111,7 @@ fn direct_lifecycle(actor: &mut DirectKvActor, commit: bool, key: Bytes, value: 
     let begin = actor.actor.handle(KvMessage::Begin {
         scope: scope.clone(),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::sync(),
+        write_options: cntryl_midge::WriteOptions::sync().into(),
     });
     let KvResponse::BeginOk { tx_id } = begin else {
         panic!("KV begin failed: {begin:?}")

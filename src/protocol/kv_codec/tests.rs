@@ -225,8 +225,9 @@ fn should_parse_begin_with_sync_durability() {
     match result {
         Ok(KvMessage::Begin { write_options, .. }) => {
             // Verify that durability byte 1 maps to sync
-            assert!(
-                write_options.is_sync(),
+            assert_eq!(
+                write_options,
+                crate::domains::WritePolicy::Sync,
                 "Durability byte 1 should map to sync"
             );
         }
@@ -251,8 +252,9 @@ fn should_parse_begin_with_buffered_durability() {
     match result {
         Ok(KvMessage::Begin { write_options, .. }) => {
             // Verify that durability byte 0 maps to buffered
-            assert!(
-                !write_options.is_sync(),
+            assert_eq!(
+                write_options,
+                crate::domains::WritePolicy::Buffered,
                 "Durability byte 0 should map to buffered"
             );
         }

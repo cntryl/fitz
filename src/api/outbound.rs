@@ -115,10 +115,6 @@ impl MailboxSink for SessionOutboundSink {
         );
         Err(DeliveryError::UnsupportedPayload)
     }
-
-    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        self.deliver(envelope)
-    }
 }
 
 impl SessionOutboundSink {

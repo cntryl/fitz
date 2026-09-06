@@ -240,6 +240,7 @@ shard. The transport/router edge only enqueues work:
 - Shards drain ready families round-robin so one noisy family cannot monopolize
   a worker.
 #### Domain Handles
+See [runtime and storage boundaries](runtime-storage-boundaries.md) for delivery error contracts, optional mailbox priority, KV write policy, and Queue recovery ownership.
 `DomainHandles` owns the concrete domain sinks but keeps those fields private. Boot, background maintenance, metrics, and admin query code must use explicit handle or `Runtime::*` facade methods so concrete sink internals do not become a public mutable API.
 There is no active `runtime::Scheduler` API. The legacy scheduler module is
 test-only while managed domain actors are migrated to family-owned workers.

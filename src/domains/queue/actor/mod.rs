@@ -75,6 +75,7 @@ std::thread_local! {
 }
 
 pub(crate) mod recovery;
+mod recovery_store;
 pub(crate) mod state;
 pub(crate) mod storage;
 pub(crate) mod timers;

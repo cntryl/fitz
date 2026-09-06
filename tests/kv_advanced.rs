@@ -49,7 +49,7 @@ fn write_committed_value_for_family(
             "shared".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered(),
+        write_options: cntryl_midge::WriteOptions::buffered().into(),
     });
     let KvResponse::BeginOk { tx_id } = begin else {
         panic!("Begin failed");
@@ -79,7 +79,7 @@ fn read_committed_value_for_family(actor: &mut KvActor, family: RouteFamily) -> 
             "shared".to_string(),
         ),
         mode: TxMode::ReadOnly,
-        write_options: cntryl_midge::WriteOptions::buffered(),
+        write_options: cntryl_midge::WriteOptions::buffered().into(),
     });
     let KvResponse::BeginOk { tx_id } = begin else {
         panic!("Begin failed");
@@ -120,7 +120,7 @@ fn should_show_committed_value_before_restart() {
             "r".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::sync(),
+        write_options: cntryl_midge::WriteOptions::sync().into(),
     });
     let KvResponse::BeginOk { tx_id } = begin else {
         panic!("Begin failed");
@@ -147,7 +147,7 @@ fn should_show_committed_value_before_restart() {
             "r".to_string(),
         ),
         mode: TxMode::ReadOnly,
-        write_options: cntryl_midge::WriteOptions::buffered(),
+        write_options: cntryl_midge::WriteOptions::buffered().into(),
     });
     let KvResponse::BeginOk { tx_id: tx_read } = b_read else {
         panic!("Expected BeginOk");
@@ -190,7 +190,7 @@ fn should_commit_durable_kv_transaction() {
             "r".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::sync(),
+        write_options: cntryl_midge::WriteOptions::sync().into(),
     });
     let KvResponse::BeginOk { tx_id } = begin else {
         panic!("Begin failed");
@@ -228,7 +228,7 @@ fn should_restore_committed_kv_value_on_engine_restart() {
             "r".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::sync(),
+        write_options: cntryl_midge::WriteOptions::sync().into(),
     });
     let KvResponse::BeginOk { tx_id } = begin else {
         panic!("Begin failed");
@@ -263,7 +263,7 @@ fn should_restore_committed_kv_value_on_engine_restart() {
             "r".to_string(),
         ),
         mode: TxMode::ReadOnly,
-        write_options: cntryl_midge::WriteOptions::buffered(),
+        write_options: cntryl_midge::WriteOptions::buffered().into(),
     });
     let KvResponse::BeginOk { tx_id: tx2 } = b2 else {
         panic!("Expected BeginOk");
@@ -319,7 +319,7 @@ fn should_discard_uncommitted_kv_write_on_engine_restart() {
             "r".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::sync(),
+        write_options: cntryl_midge::WriteOptions::sync().into(),
     });
     let KvResponse::BeginOk { tx_id } = begin else {
         panic!("Begin failed");
@@ -346,7 +346,7 @@ fn should_discard_uncommitted_kv_write_on_engine_restart() {
             "r".to_string(),
         ),
         mode: TxMode::ReadOnly,
-        write_options: cntryl_midge::WriteOptions::buffered(),
+        write_options: cntryl_midge::WriteOptions::buffered().into(),
     });
     let KvResponse::BeginOk { tx_id: tx2 } = begin2 else {
         panic!("Expected BeginOk");
@@ -483,7 +483,7 @@ fn should_handle_high_throughput_batch_puts() {
                 "batch".to_string(),
             ),
             mode: TxMode::ReadWrite,
-            write_options: cntryl_midge::WriteOptions::buffered(),
+            write_options: cntryl_midge::WriteOptions::buffered().into(),
         });
         let KvResponse::BeginOk { tx_id } = begin else {
             panic!("Begin failed");
@@ -513,7 +513,7 @@ fn should_handle_high_throughput_batch_puts() {
             "batch".to_string(),
         ),
         mode: TxMode::ReadOnly,
-        write_options: cntryl_midge::WriteOptions::buffered(),
+        write_options: cntryl_midge::WriteOptions::buffered().into(),
     });
     let KvResponse::BeginOk { tx_id: tx } = b else {
         panic!("Begin failed");

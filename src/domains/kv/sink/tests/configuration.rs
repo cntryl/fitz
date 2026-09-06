@@ -124,7 +124,7 @@ fn should_map_sync_begin_to_cloud_strict_given_strict_cloud_sync_policy() {
             "users".to_string(),
         ),
         mode: crate::domains::kv::TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::sync(),
+        write_options: cntryl_midge::WriteOptions::sync().into(),
     };
 
     // Act
@@ -133,7 +133,7 @@ fn should_map_sync_begin_to_cloud_strict_given_strict_cloud_sync_policy() {
     // Assert
     match mapped {
         crate::domains::kv::KvMessage::Begin { write_options, .. } => {
-            assert!(write_options.is_cloud_strict());
+            assert_eq!(write_options, crate::domains::WritePolicy::CloudStrict);
         }
         _ => panic!("expected KV begin message"),
     }
@@ -157,7 +157,7 @@ fn should_map_buffered_begin_to_cloud_async_given_cloud_storage() {
             "users".to_string(),
         ),
         mode: crate::domains::kv::TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered(),
+        write_options: cntryl_midge::WriteOptions::buffered().into(),
     };
 
     // Act
@@ -166,7 +166,7 @@ fn should_map_buffered_begin_to_cloud_async_given_cloud_storage() {
     // Assert
     match mapped {
         crate::domains::kv::KvMessage::Begin { write_options, .. } => {
-            assert!(write_options.is_cloud_async());
+            assert_eq!(write_options, crate::domains::WritePolicy::CloudAsync);
         }
         _ => panic!("expected KV begin message"),
     }
@@ -188,7 +188,7 @@ fn should_derive_cloud_async_buffered_policy_given_strict_cloud_sync_builder() {
             "users".to_string(),
         ),
         mode: crate::domains::kv::TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered(),
+        write_options: cntryl_midge::WriteOptions::buffered().into(),
     };
 
     // Act
@@ -197,7 +197,7 @@ fn should_derive_cloud_async_buffered_policy_given_strict_cloud_sync_builder() {
     // Assert
     match mapped {
         crate::domains::kv::KvMessage::Begin { write_options, .. } => {
-            assert!(write_options.is_cloud_async());
+            assert_eq!(write_options, crate::domains::WritePolicy::CloudAsync);
         }
         _ => panic!("expected KV begin message"),
     }
@@ -219,7 +219,7 @@ fn should_derive_cloud_async_buffered_policy_given_background_cloud_sync_builder
             "users".to_string(),
         ),
         mode: crate::domains::kv::TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered(),
+        write_options: cntryl_midge::WriteOptions::buffered().into(),
     };
 
     // Act
@@ -228,7 +228,7 @@ fn should_derive_cloud_async_buffered_policy_given_background_cloud_sync_builder
     // Assert
     match mapped {
         crate::domains::kv::KvMessage::Begin { write_options, .. } => {
-            assert!(write_options.is_cloud_async());
+            assert_eq!(write_options, crate::domains::WritePolicy::CloudAsync);
         }
         _ => panic!("expected KV begin message"),
     }

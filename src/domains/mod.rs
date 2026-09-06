@@ -10,3 +10,6 @@ pub mod stream;
 pub(crate) mod subscription_state;
 
 pub(crate) const DOMAIN_ACTOR_MAILBOX_CAPACITY: usize = 16_384;
+
+mod write_policy;
+pub use write_policy::WritePolicy;
