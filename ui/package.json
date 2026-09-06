@@ -30,9 +30,9 @@
   "devDependencies": {
     "@askrjs/cli": "0.2.3",
     "@askrjs/vite": "0.2.2",
-    "@playwright/test": "^1.62.1",
+    "@playwright/test": "^1.63.0",
     "@types/node": "^26.4.1",
-    "autoprefixer": "^10.5.4",
+    "autoprefixer": "^10.5.5",
     "jsdom": "^30.0.1",
     "postcss": "^8.5.28",
     "typescript": "^7.0.2",
