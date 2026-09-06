@@ -43,7 +43,7 @@ fn begin(actor: &mut KvActor) -> u64 {
     let KvResponse::BeginOk { tx_id } = actor.handle(KvMessage::Begin {
         scope: scope(),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered(),
+        write_options: cntryl_midge::WriteOptions::buffered().into(),
     }) else {
         panic!("state model begin must succeed");
     };

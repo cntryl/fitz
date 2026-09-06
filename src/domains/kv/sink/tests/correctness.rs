@@ -120,7 +120,7 @@ fn should_roll_back_read_write_begin_when_response_cannot_be_delivered() {
         crate::domains::kv::KvMessage::Begin {
             scope: KvResourceScope::new(family, "acme", "app", "users"),
             mode: crate::domains::kv::TxMode::ReadWrite,
-            write_options: cntryl_midge::WriteOptions::buffered(),
+            write_options: cntryl_midge::WriteOptions::buffered().into(),
         },
     );
 
@@ -164,7 +164,7 @@ fn should_roll_back_read_only_begin_when_response_cannot_be_delivered() {
         crate::domains::kv::KvMessage::Begin {
             scope: KvResourceScope::new(family, "acme", "app", "users"),
             mode: crate::domains::kv::TxMode::ReadOnly,
-            write_options: cntryl_midge::WriteOptions::buffered(),
+            write_options: cntryl_midge::WriteOptions::buffered().into(),
         },
     );
 
@@ -456,7 +456,7 @@ fn should_reject_kv_request_when_source_and_destination_families_differ() {
                     "users".to_string(),
                 ),
                 mode: crate::domains::kv::TxMode::ReadWrite,
-                write_options: cntryl_midge::WriteOptions::best_effort(),
+                write_options: cntryl_midge::WriteOptions::best_effort().into(),
             },
         )),
     );
@@ -502,7 +502,7 @@ fn should_reject_kv_operation_when_decoded_family_differs_from_request() {
                     "users".to_string(),
                 ),
                 mode: crate::domains::kv::TxMode::ReadWrite,
-                write_options: cntryl_midge::WriteOptions::best_effort(),
+                write_options: cntryl_midge::WriteOptions::best_effort().into(),
             },
         )),
     );

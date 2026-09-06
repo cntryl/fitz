@@ -39,7 +39,7 @@ fn begin_transaction(
             resource,
         ),
         mode,
-        write_options: cntryl_midge::WriteOptions::buffered(),
+        write_options: cntryl_midge::WriteOptions::buffered().into(),
     });
 
     match response {

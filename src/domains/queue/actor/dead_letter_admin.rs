@@ -61,7 +61,7 @@ impl QueueActor {
         )
         .map_err(|e| format!("Failed to write queue ready index for message {id}: {e:?}"))?;
         txn.put(
-            self.index_meta_key.clone(),
+            self.recovery_store.index_meta_key.clone(),
             Self::encode_index_meta(
                 self.next_id_limit,
                 Self::usize_to_u64(self.persisted_ready_count.saturating_add(1)),
@@ -124,7 +124,7 @@ impl QueueActor {
         txn.delete(self.dlq_index_key(dead_lettered_at_ms, id))
             .map_err(|e| format!("Failed to delete queue DLQ index for message {id}: {e:?}"))?;
         txn.put(
-            self.index_meta_key.clone(),
+            self.recovery_store.index_meta_key.clone(),
             Self::encode_index_meta(
                 self.next_id_limit,
                 Self::usize_to_u64(self.persisted_ready_count),
@@ -212,7 +212,7 @@ impl QueueActor {
         }
 
         if let Err(error) = txn.put(
-            self.index_meta_key.clone(),
+            self.recovery_store.index_meta_key.clone(),
             Self::encode_index_meta(
                 self.next_id_limit,
                 Self::usize_to_u64(self.persisted_ready_count.saturating_add(1)),

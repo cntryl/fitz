@@ -6,6 +6,8 @@
 
 use std::sync::Arc;
 
+mod write_policy;
+
 #[derive(Clone)]
 pub(crate) struct FitzStorageEngine {
     inner: Arc<cntryl_midge::Engine>,

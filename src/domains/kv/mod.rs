@@ -4,7 +4,7 @@
 //! # Architecture
 //!
 //! The KV domain provides a thin, strict wrapper over Midge transactions.
-//! Committed reads and writes persist according to the `WriteOptions` selected
+//! Committed reads and writes persist according to the Fitz `WritePolicy` selected
 //! at `begin`. Open `tx_id` handles, uncommitted writes, and resource-lock
 //! coordination are live broker-local state only and disappear on disconnect or
 //! broker restart.
@@ -55,6 +55,7 @@ mod protocol;
 mod scan_wire_budget;
 pub mod sink;
 mod watch_registry;
+pub(crate) mod write_policy;
 
 pub use actor::KvActor;
 pub use protocol::{

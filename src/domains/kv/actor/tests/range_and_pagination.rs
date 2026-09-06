@@ -55,7 +55,7 @@ fn should_cap_scan_when_client_omits_limit() {
     let KvResponse::BeginOk { tx_id } = actor.handle(KvMessage::Begin {
         scope: scope.clone(),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered(),
+        write_options: cntryl_midge::WriteOptions::buffered().into(),
     }) else {
         panic!("transaction should begin");
     };

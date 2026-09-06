@@ -277,7 +277,7 @@ fn should_route_kv_cleanup_through_managed_actor() {
             "users".to_string(),
         ),
         mode: crate::domains::kv::TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered(),
+        write_options: cntryl_midge::WriteOptions::buffered().into(),
     });
     assert!(matches!(
         begin_response,
@@ -359,7 +359,7 @@ fn should_route_kv_admin_snapshot_sync_through_managed_actor() {
             "users".to_string(),
         ),
         mode: crate::domains::kv::TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered(),
+        write_options: cntryl_midge::WriteOptions::buffered().into(),
     });
     assert!(matches!(
         begin_response,
@@ -461,7 +461,7 @@ fn should_route_kv_sync_write_options_mapping_through_managed_actor() {
             "users".to_string(),
         ),
         mode: crate::domains::kv::TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::sync(),
+        write_options: cntryl_midge::WriteOptions::sync().into(),
     };
 
     // Act
@@ -472,7 +472,7 @@ fn should_route_kv_sync_write_options_mapping_through_managed_actor() {
     assert!(!sink.is_actor_running());
     match mapped {
         crate::domains::kv::KvMessage::Begin { write_options, .. } => {
-            assert!(!write_options.is_cloud_strict());
+            assert_ne!(write_options, crate::domains::WritePolicy::CloudStrict);
         }
         _ => panic!("expected KV begin message"),
     }

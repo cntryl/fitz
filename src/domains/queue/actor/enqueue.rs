@@ -364,14 +364,18 @@ impl QueueActor {
         staged_next_delayed_visibility: Option<u64>,
     ) -> Result<(), QueueResponse> {
         if let Some(limit) = reserved_limit {
-            txn.put(self.meta_key.clone(), limit.to_le_bytes().to_vec(), None)
-                .map_err(|error| QueueResponse::Error {
-                    message: format!("Failed to update queue meta: {error:?}"),
-                })?;
+            txn.put(
+                self.recovery_store.meta_key.clone(),
+                limit.to_le_bytes().to_vec(),
+                None,
+            )
+            .map_err(|error| QueueResponse::Error {
+                message: format!("Failed to update queue meta: {error:?}"),
+            })?;
         }
 
         txn.put(
-            self.index_meta_key.clone(),
+            self.recovery_store.index_meta_key.clone(),
             Self::encode_index_meta(
                 staged_next_id,
                 Self::usize_to_u64(staged_ready_count),

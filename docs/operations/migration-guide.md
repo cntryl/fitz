@@ -2,6 +2,31 @@
 
 This guide covers safe upgrades between Fitz releases.
 
+## Rust embedding API: write policies and delivery errors
+
+`KvMessage::Begin::write_options` now takes `fitz::domains::WritePolicy` so the
+domain message no longer exposes the storage engine's option type. Use a variant
+such as `WritePolicy::Buffered`, or add `.into()` to an existing Midge expression:
+
+```rust,ignore
+write_options: cntryl_midge::WriteOptions::buffered().into(),
+```
+
+Broker configuration methods such as `KvDomainSink::with_write_options` retain
+their Midge option parameters. KV wire flags and persisted data formats do not
+change; network SDK consumers need no migration for this refactor.
+
+Existing exhaustive matches on `SendError` remain compatible: its variants and
+legacy mappings are unchanged. Use `ActorRef::send_detailed` or the corresponding
+`Context::*_detailed` methods for lossless `RouteError` values. Their
+`DeliveryFailed(destination, cause)` preserves `DeliveryError::Timeout`,
+`InvalidPayload { len, max }`, and `UnsupportedPayload`. The original send
+methods retain their legacy stopped-actor/panic classifications for these cases.
+
+`MailboxSink::deliver_high_priority` remains required. Implementations with one
+lane explicitly forward to `deliver`; managed mailboxes explicitly use their
+separate control lane. No priority behavior changes implicitly.
+
 ## Upgrade Strategy
 
 1. Read [development/format-compatibility.md](../development/format-compatibility.md).

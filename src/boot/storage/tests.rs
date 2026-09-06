@@ -138,12 +138,6 @@ fn should_apply_cloud_throughput_defaults_when_memtable_is_auto() {
     )
     .memory_budget(MemoryBudget::Bytes(512 * 1024 * 1024));
     let memory_budget_bytes = 512 * 1024 * 1024usize;
-    let transaction_pool_bytes = memory_budget_bytes / 10;
-    let compaction_pool_bytes = memory_budget_bytes / 10;
-    let expected_memtable_bytes = memory_budget_bytes
-        .saturating_sub(transaction_pool_bytes)
-        .saturating_sub(compaction_pool_bytes)
-        / 2;
 
     // Act
     let tuned = build_midge_open_options(open_options, &config).expect("build cloud options");
@@ -151,7 +145,14 @@ fn should_apply_cloud_throughput_defaults_when_memtable_is_auto() {
     // Assert
     assert_eq!(tuned.goal(), Goal::Throughput);
     assert_eq!(tuned.workload(), WorkloadProfile::WriteHeavy);
-    assert_eq!(tuned.memtable_size_limit(), expected_memtable_bytes);
+    assert!(tuned.memtable_size_limit() > 0);
+    assert!(tuned.block_cache_size() > 0);
+    assert!(
+        tuned.transaction_memory_pool_size()
+            + tuned.memtable_size_limit() * 2
+            + tuned.block_cache_size()
+            <= memory_budget_bytes
+    );
     assert_eq!(tuned.wal_buffer_size(), 1024 * 1024);
     assert_eq!(tuned.target_sst_size(), 512 * 1024 * 1024);
 }

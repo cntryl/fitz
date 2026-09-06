@@ -18,7 +18,7 @@ impl QueueActor {
         shard: usize,
         start: u64,
     ) -> Vec<u8> {
-        Self::ready_range_key_with_prefix(&self.ready_index_prefix, shard, start)
+        Self::ready_range_key_with_prefix(&self.recovery_store.ready_index_prefix, shard, start)
     }
 
     pub(in crate::domains::queue::actor) fn parse_ready_range_key(
@@ -72,7 +72,11 @@ impl QueueActor {
         visible_at_ms: u64,
         id: MessageId,
     ) -> Vec<u8> {
-        Self::delayed_index_key_with_prefix(&self.delayed_index_prefix, visible_at_ms, id)
+        Self::delayed_index_key_with_prefix(
+            &self.recovery_store.delayed_index_prefix,
+            visible_at_ms,
+            id,
+        )
     }
 
     pub(in crate::domains::queue::actor) fn dlq_index_key(
@@ -80,8 +84,8 @@ impl QueueActor {
         dead_lettered_at_ms: u64,
         id: MessageId,
     ) -> Vec<u8> {
-        let mut key = Vec::with_capacity(self.dlq_index_prefix.len() + 16);
-        key.extend_from_slice(&self.dlq_index_prefix);
+        let mut key = Vec::with_capacity(self.recovery_store.dlq_index_prefix.len() + 16);
+        key.extend_from_slice(&self.recovery_store.dlq_index_prefix);
         key.extend_from_slice(&dead_lettered_at_ms.to_be_bytes());
         key.extend_from_slice(&id.as_u64().to_be_bytes());
         key

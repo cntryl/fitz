@@ -69,7 +69,7 @@ impl KvActor {
                 scope,
                 mode,
                 write_options,
-            } => self.handle_begin(scope, mode, write_options),
+            } => self.handle_begin(scope, mode, write_options.into()),
             KvMessage::Commit { tx_id, scope } => self.handle_commit(tx_id, &scope),
             KvMessage::Rollback { tx_id, scope } => self.handle_rollback(tx_id, &scope),
             KvMessage::Get { tx_id, scope, key } => self.handle_get(tx_id, &scope, &key),

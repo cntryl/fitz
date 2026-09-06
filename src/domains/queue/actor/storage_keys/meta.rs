@@ -31,6 +31,7 @@ impl QueueActor {
         out
     }
 
+    #[cfg(test)]
     pub(in crate::domains::queue::actor) fn index_meta_is_valid(bytes: &[u8]) -> bool {
         Self::decode_index_meta(bytes).is_ok()
     }
@@ -90,39 +91,5 @@ impl QueueActor {
 
     pub(in crate::domains::queue::actor) fn decode_next_id(bytes: Option<&[u8]>) -> u64 {
         bytes.and_then(Self::decode_meta).unwrap_or(1)
-    }
-
-    pub(in crate::domains::queue::actor) fn load_next_id_from_meta_key(&self) -> u64 {
-        let cf_id = self.queue_key.family.id();
-        let txn = match self
-            .store
-            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
-        {
-            Ok(txn) => txn,
-            Err(e) => {
-                tracing::warn!(
-                    queue = ?self.queue_key,
-                    route_family = self.queue_key.family.as_u64(),
-                    error = ?e,
-                    "Failed to begin queue meta recovery transaction; starting from 1"
-                );
-                return 1;
-            }
-        };
-
-        match txn.get(&self.meta_key) {
-            Ok(Some(bytes)) => Self::decode_next_id(Some(bytes.as_ref())),
-            Ok(None) => 1,
-            Err(e) if Self::is_missing_read_snapshot_error(&e) => 1,
-            Err(e) => {
-                tracing::warn!(
-                    queue = ?self.queue_key,
-                    route_family = self.queue_key.family.as_u64(),
-                    error = ?e,
-                    "Failed to recover queue next_id; starting from 1"
-                );
-                1
-            }
-        }
     }
 }

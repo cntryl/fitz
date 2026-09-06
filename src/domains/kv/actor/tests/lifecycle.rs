@@ -14,7 +14,7 @@ pub(super) fn should_begin_transaction_for_resource() {
             "table1".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered(),
+        write_options: cntryl_midge::WriteOptions::buffered().into(),
     });
 
     // Assert
@@ -33,7 +33,7 @@ pub(super) fn should_enforce_transaction_scope_to_single_resource() {
             "table1".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered(),
+        write_options: cntryl_midge::WriteOptions::buffered().into(),
     });
 
     let KvResponse::BeginOk { tx_id } = begin_response else {
@@ -69,7 +69,7 @@ pub(super) fn should_reject_kv_operation_given_route_family_mismatch_without_mut
             "table1".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered(),
+        write_options: cntryl_midge::WriteOptions::buffered().into(),
     });
     let KvResponse::BeginOk { tx_id } = begin_response else {
         panic!("Expected BeginOk");
@@ -139,7 +139,7 @@ pub(super) fn should_preserve_kv_scope_given_follow_up_put_on_same_transaction()
             "table1".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered(),
+        write_options: cntryl_midge::WriteOptions::buffered().into(),
     });
 
     let KvResponse::BeginOk { tx_id } = begin_response else {
@@ -187,7 +187,7 @@ pub(super) fn should_commit_empty_transaction() {
             "table1".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered(),
+        write_options: cntryl_midge::WriteOptions::buffered().into(),
     });
     let KvResponse::BeginOk { tx_id } = begin_response else {
         panic!("Expected BeginOk");
@@ -215,7 +215,7 @@ pub(super) fn should_rollback_transaction() {
             "table1".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered(),
+        write_options: cntryl_midge::WriteOptions::buffered().into(),
     });
     let KvResponse::BeginOk { tx_id } = begin_response else {
         panic!("Expected BeginOk");
@@ -266,7 +266,7 @@ pub(super) fn should_isolate_resources_in_same_family() {
             "table1".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered(),
+        write_options: cntryl_midge::WriteOptions::buffered().into(),
     });
     let KvResponse::BeginOk { tx_id } = begin_response else {
         panic!("Expected BeginOk");
@@ -312,7 +312,7 @@ pub(super) fn should_handle_key_scoping_correctly() {
             "table1".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered(),
+        write_options: cntryl_midge::WriteOptions::buffered().into(),
     });
     let KvResponse::BeginOk { tx_id: tx_id1 } = begin_response1 else {
         panic!("Expected BeginOk");
@@ -326,7 +326,7 @@ pub(super) fn should_handle_key_scoping_correctly() {
             "table2".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered(),
+        write_options: cntryl_midge::WriteOptions::buffered().into(),
     });
     let KvResponse::BeginOk { tx_id: tx_id2 } = begin_response2 else {
         panic!("Expected BeginOk");
@@ -394,7 +394,7 @@ pub(super) fn should_enforce_realm_isolation_for_kv() {
             "users".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered(),
+        write_options: cntryl_midge::WriteOptions::buffered().into(),
     });
     let KvResponse::BeginOk { tx_id: tx1 } = r1 else {
         panic!("Expected BeginOk for realm_a");
@@ -408,7 +408,7 @@ pub(super) fn should_enforce_realm_isolation_for_kv() {
             "users".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered(),
+        write_options: cntryl_midge::WriteOptions::buffered().into(),
     });
     let KvResponse::BeginOk { tx_id: tx2 } = r2 else {
         panic!("Expected BeginOk for realm_b");

@@ -1,13 +1,11 @@
+use super::recovery_store::{QueueRecoverySnapshot, QueueRecoveryStore};
 use super::{
     DelayedMessage, IndexRecoveryAttempt, MessageId, QueueActor, QueueState, RecoveryPath,
     QUEUE_IDLE_HORIZON,
 };
 use crate::observability as obs;
-use bytes::Bytes;
 use std::cmp::Reverse;
 use std::time::{Duration, Instant};
-
-type RecoveryScanEntries = Vec<(Vec<u8>, Vec<u8>)>;
 
 struct IndexScanStats {
     max_id: Option<u64>,
@@ -30,59 +28,50 @@ impl IndexScanStats {
 }
 
 impl QueueActor {
-    pub(super) fn try_recover_from_index(&mut self) -> IndexRecoveryAttempt {
+    fn try_recover_from_index(
+        &mut self,
+        store: &QueueRecoveryStore,
+        snapshot: &QueueRecoverySnapshot,
+    ) -> IndexRecoveryAttempt {
         let start = Instant::now();
-        let txn = match self.begin_index_recovery_tx() {
-            Ok(txn) => txn,
-            Err(error) => return error,
+        let meta_snapshot = match store.read_index(snapshot) {
+            Ok(index) => index,
+            Err(error) => {
+                self.index_meta_written = false;
+                match &error {
+                    IndexRecoveryAttempt::Missing { .. } => {
+                        Self::increment_counter(obs::METRIC_QUEUE_RECOVERY_INDEX_MISSING);
+                    }
+                    IndexRecoveryAttempt::Invalid { .. } => {
+                        Self::increment_counter(obs::METRIC_QUEUE_RECOVERY_INDEX_INVALID);
+                    }
+                    _ => {}
+                }
+                return error;
+            }
         };
-        let meta_snapshot = match self.load_index_meta_snapshot(&txn) {
-            Ok(snapshot) => snapshot,
-            Err(error) => return error,
-        };
-
         self.index_meta_written = true;
         self.reset_recovery_state();
-
-        let ready_query =
-            cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&self.ready_index_prefix));
-        let delayed_query =
-            cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&self.delayed_index_prefix));
-        let dlq_query =
-            cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&self.dlq_index_prefix));
-
-        let mut ready_iter = match txn.scan(&ready_query) {
-            Ok(iter) => iter,
-            Err(e) => {
+        let scan = || -> Result<_, String> {
+            Ok((
+                store.ready_ranges(snapshot)?,
+                store.delayed_entries(snapshot)?,
+                store.dead_letters(snapshot)?,
+            ))
+        };
+        let (mut ready, mut delayed, mut dlq) = match scan() {
+            Ok(rows) => rows,
+            Err(reason) => {
                 return IndexRecoveryAttempt::Error {
                     next_id: meta_snapshot.next_id,
-                    reason: format!("Failed to scan queue ready index: {e:?}"),
-                };
+                    reason,
+                }
             }
         };
-        let mut delayed_iter = match txn.scan(&delayed_query) {
-            Ok(iter) => iter,
-            Err(e) => {
-                return IndexRecoveryAttempt::Error {
-                    next_id: meta_snapshot.next_id,
-                    reason: format!("Failed to scan queue delayed index: {e:?}"),
-                };
-            }
-        };
-        let mut dlq_iter = match txn.scan(&dlq_query) {
-            Ok(iter) => iter,
-            Err(e) => {
-                return IndexRecoveryAttempt::Error {
-                    next_id: meta_snapshot.next_id,
-                    reason: format!("Failed to scan queue DLQ index: {e:?}"),
-                };
-            }
-        };
-
         let stats = match self.scan_index_entries(
-            &mut ready_iter,
-            &mut delayed_iter,
-            &mut dlq_iter,
+            &mut ready,
+            &mut delayed,
+            &mut dlq,
             meta_snapshot.next_id,
         ) {
             Ok(stats) => stats,
@@ -98,7 +87,7 @@ impl QueueActor {
             self.index_meta_written = false;
             Self::increment_counter(obs::METRIC_QUEUE_RECOVERY_INDEX_INVALID);
             return IndexRecoveryAttempt::Invalid {
-                next_id: self.load_next_id_from_meta_key(),
+                next_id: store.next_id(snapshot),
                 reason: format!(
                     "Queue index meta counters mismatch (meta ready={}, scanned ready={}, meta delayed={}, scanned delayed={})",
                     meta_snapshot.ready_count,
@@ -118,92 +107,20 @@ impl QueueActor {
     }
 
     pub(super) fn rewrite_index_from_memory(&mut self, next_id: u64) -> Result<(), String> {
-        let cf_id = self.queue_key.family.id();
-        let mut txn = self
-            .store
-            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
-            .map_err(|e| format!("Failed to begin queue index rebuild tx: {e:?}"))?;
-
-        let ready_query =
-            cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&self.ready_index_prefix));
-        let delayed_query =
-            cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&self.delayed_index_prefix));
-        let dlq_query =
-            cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&self.dlq_index_prefix));
-
-        let ready_iter = txn
-            .scan(&ready_query)
-            .map_err(|e| format!("Failed to scan ready index for rebuild: {e:?}"))?;
-        let delayed_iter = txn
-            .scan(&delayed_query)
-            .map_err(|e| format!("Failed to scan delayed index for rebuild: {e:?}"))?;
-        let dlq_iter = txn
-            .scan(&dlq_query)
-            .map_err(|e| format!("Failed to scan DLQ index for rebuild: {e:?}"))?;
-        let mut ready_keys = Vec::new();
-        let mut delayed_keys = Vec::new();
-        let mut dlq_keys = Vec::new();
-
-        for entry in ready_iter {
-            let (key, _) = entry
-                .map_err(|error| format!("Failed to scan ready index for rebuild: {error:?}"))?;
-            ready_keys.push(key);
-        }
-        for entry in delayed_iter {
-            let (key, _) = entry
-                .map_err(|error| format!("Failed to scan delayed index for rebuild: {error:?}"))?;
-            delayed_keys.push(key);
-        }
-        for entry in dlq_iter {
-            let (key, _) = entry
-                .map_err(|error| format!("Failed to scan DLQ index for rebuild: {error:?}"))?;
-            dlq_keys.push(key);
-        }
-
-        for key in ready_keys.into_iter().chain(delayed_keys).chain(dlq_keys) {
-            txn.delete(key.to_vec())
-                .map_err(|e| format!("Failed to delete stale queue index key: {e:?}"))?;
-        }
-
-        for (shard, ranges) in self.persisted_ready_shards.iter().enumerate() {
-            for range in ranges {
-                txn.put(
-                    self.ready_range_key(shard, range.next),
-                    Self::encode_ready_range_value(*range),
-                    None,
-                )
-                .map_err(|e| format!("Failed to write queue ready index: {e:?}"))?;
-            }
-        }
-
-        for (&id, &visible_at_ms) in &self.persisted_delayed {
-            txn.put(self.delayed_index_key(visible_at_ms, id), Vec::new(), None)
-                .map_err(|e| format!("Failed to write queue delayed index: {e:?}"))?;
-        }
-
-        for (&id, &dead_lettered_at_ms) in &self.persisted_dlq {
-            txn.put(
-                self.dlq_index_key(dead_lettered_at_ms, id),
-                Vec::new(),
-                None,
-            )
-            .map_err(|e| format!("Failed to write queue DLQ index: {e:?}"))?;
-        }
-
-        txn.put(
-            self.index_meta_key.clone(),
-            Self::encode_index_meta(
-                next_id,
-                self.persisted_ready_count as u64,
-                self.persisted_delayed.len() as u64,
-                self.min_persisted_delayed_visibility_ms(),
-            ),
-            None,
-        )
-        .map_err(|e| format!("Failed to write queue index meta: {e:?}"))?;
-
-        txn.commit(self.commit_write_options)
-            .map_err(|e| format!("Failed to commit queue index rebuild: {e:?}"))?;
+        self.recovery_store.replace_index(
+            &super::recovery_store::QueueIndexRebuild {
+                meta: super::IndexMetaSnapshot {
+                    next_id,
+                    ready_count: Self::usize_to_u64(self.persisted_ready_count),
+                    delayed_count: Self::usize_to_u64(self.persisted_delayed.len()),
+                    next_delayed_visibility_ms: self.min_persisted_delayed_visibility_ms(),
+                },
+                ready: &self.persisted_ready_shards,
+                delayed: &self.persisted_delayed,
+                dlq: &self.persisted_dlq,
+            },
+            self.commit_write_options,
+        )?;
         self.index_meta_written = true;
         Ok(())
     }
@@ -211,56 +128,29 @@ impl QueueActor {
     pub(super) fn recover_from_scan_and_rebuild_index(
         &mut self,
         fallback_next_id: u64,
+        store: &QueueRecoveryStore,
+        snapshot: &QueueRecoverySnapshot,
     ) -> Result<Option<u64>, String> {
         let start = Instant::now();
-        let txn = self
-            .store
-            .begin_tx(
-                self.queue_key.family.id(),
-                cntryl_midge::TransactionMode::ReadOnly,
-            )
-            .map_err(|e| format!("Failed to begin recovery scan tx: {e:?}"))?;
-
         self.reset_recovery_state();
-
-        let header_query =
-            cntryl_midge::Query::new().prefix(Bytes::copy_from_slice(&self.header_key_prefix));
-
-        let mut header_iter = match txn.scan(&header_query) {
-            Ok(iter) => iter,
-            Err(e) if Self::is_missing_read_snapshot_error(&e) => return Ok(None),
-            Err(e) => {
-                return Err(format!("Failed to scan queue headers for recovery: {e:?}"));
-            }
-        };
-
-        let header_entries = Self::collect_scan_entries(&mut header_iter)?;
-        if header_entries.is_empty() {
-            return Ok(None);
-        }
-
-        let recovered_count = header_entries.len();
-        let per_shard = recovered_count / Self::READY_SHARDS + 1;
-        for shard in &mut self.ready_shards {
-            shard.reserve(per_shard);
-        }
-        for shard in &mut self.persisted_ready_shards {
-            shard.reserve(per_shard);
-        }
-        self.delayed.reserve(recovered_count);
-
         let now_epoch_ms = self.clock.now_epoch_ms();
         let now_instant = self.clock.now_instant();
         let mut max_id = None::<u64>;
-        let mut recovered_ready_ids = Vec::with_capacity(recovered_count);
-
-        self.recover_header_entries(
-            &header_entries,
-            now_epoch_ms,
-            now_instant,
-            &mut recovered_ready_ids,
-            &mut max_id,
-        )?;
+        let mut recovered_ready_ids = Vec::new();
+        for entry in store.headers(snapshot)? {
+            let (id, record) = entry?;
+            self.recover_record(
+                id,
+                &record,
+                now_epoch_ms,
+                now_instant,
+                &mut recovered_ready_ids,
+                &mut max_id,
+            );
+        }
+        if max_id.is_none() {
+            return Ok(None);
+        }
         if self.delayed.is_empty() {
             self.next_delayed_deadline = now_instant + QUEUE_IDLE_HORIZON;
         }
@@ -283,14 +173,17 @@ impl QueueActor {
     }
 
     pub(super) fn recover_from_store(&mut self) -> Result<(), String> {
-        let (mut next_id, max_id) = match self.try_recover_from_index() {
+        let store = self.recovery_store.clone();
+        let snapshot = store.snapshot()?;
+        let (mut next_id, max_id) = match self.try_recover_from_index(&store, &snapshot) {
             IndexRecoveryAttempt::Hit { next_id, max_id } => {
                 self.recovery_path = RecoveryPath::IndexHit;
                 (next_id, max_id)
             }
             IndexRecoveryAttempt::Missing { next_id } => {
                 self.recovery_path = RecoveryPath::IndexMissingFallback;
-                let max_id = self.recover_from_scan_and_rebuild_index(next_id)?;
+                let max_id =
+                    self.recover_from_scan_and_rebuild_index(next_id, &store, &snapshot)?;
                 (next_id, max_id)
             }
             IndexRecoveryAttempt::Invalid { next_id, reason } => {
@@ -301,7 +194,8 @@ impl QueueActor {
                     "Queue index recovery found invalid state; falling back to full scan"
                 );
                 self.recovery_path = RecoveryPath::IndexInvalidFallback;
-                let max_id = self.recover_from_scan_and_rebuild_index(next_id)?;
+                let max_id =
+                    self.recover_from_scan_and_rebuild_index(next_id, &store, &snapshot)?;
                 (next_id, max_id)
             }
             IndexRecoveryAttempt::Error { next_id, reason } => {
@@ -312,7 +206,8 @@ impl QueueActor {
                     "Queue index recovery failed; falling back to full scan"
                 );
                 self.recovery_path = RecoveryPath::IndexErrorFallback;
-                let max_id = self.recover_from_scan_and_rebuild_index(next_id)?;
+                let max_id =
+                    self.recover_from_scan_and_rebuild_index(next_id, &store, &snapshot)?;
                 (next_id, max_id)
             }
         };
@@ -333,81 +228,11 @@ impl QueueActor {
         Ok(())
     }
 
-    fn begin_index_recovery_tx(
-        &mut self,
-    ) -> Result<cntryl_midge::Transaction, IndexRecoveryAttempt> {
-        self.store
-            .begin_tx(
-                self.queue_key.family.id(),
-                cntryl_midge::TransactionMode::ReadOnly,
-            )
-            .map_err(|e| {
-                self.index_meta_written = false;
-                IndexRecoveryAttempt::Error {
-                    next_id: 1,
-                    reason: format!("Failed to begin index recovery tx: {e:?}"),
-                }
-            })
-    }
-
-    fn load_index_meta_snapshot(
-        &mut self,
-        txn: &cntryl_midge::Transaction,
-    ) -> Result<super::IndexMetaSnapshot, IndexRecoveryAttempt> {
-        let index_meta = match txn.get(&self.index_meta_key) {
-            Ok(value) => value,
-            Err(e) if Self::is_missing_read_snapshot_error(&e) => {
-                self.index_meta_written = false;
-                Self::increment_counter(obs::METRIC_QUEUE_RECOVERY_INDEX_MISSING);
-                return Err(IndexRecoveryAttempt::Missing {
-                    next_id: self.load_next_id_from_meta_key(),
-                });
-            }
-            Err(e) => {
-                self.index_meta_written = false;
-                return Err(IndexRecoveryAttempt::Error {
-                    next_id: self.load_next_id_from_meta_key(),
-                    reason: format!("Failed to read queue index meta: {e:?}"),
-                });
-            }
-        };
-        let Some(index_meta) = index_meta else {
-            self.index_meta_written = false;
-            Self::increment_counter(obs::METRIC_QUEUE_RECOVERY_INDEX_MISSING);
-            return Err(IndexRecoveryAttempt::Missing {
-                next_id: self.load_next_id_from_meta_key(),
-            });
-        };
-
-        let meta_snapshot = match Self::decode_index_meta(&index_meta) {
-            Ok(snapshot) => snapshot,
-            Err(reason) => {
-                self.index_meta_written = false;
-                Self::increment_counter(obs::METRIC_QUEUE_RECOVERY_INDEX_INVALID);
-                return Err(IndexRecoveryAttempt::Invalid {
-                    next_id: self.load_next_id_from_meta_key(),
-                    reason,
-                });
-            }
-        };
-
-        if !Self::index_meta_is_valid(&index_meta) {
-            self.index_meta_written = false;
-            Self::increment_counter(obs::METRIC_QUEUE_RECOVERY_INDEX_INVALID);
-            return Err(IndexRecoveryAttempt::Invalid {
-                next_id: self.load_next_id_from_meta_key(),
-                reason: "Queue index meta is missing version or validity marker".to_string(),
-            });
-        }
-
-        Ok(meta_snapshot)
-    }
-
     fn scan_index_entries(
         &mut self,
-        ready_iter: &mut cntryl_midge::ScanIterator,
-        delayed_iter: &mut cntryl_midge::ScanIterator,
-        dlq_iter: &mut cntryl_midge::ScanIterator,
+        ready_iter: &mut impl Iterator<Item = Result<super::ReadyRange, String>>,
+        delayed_iter: &mut impl Iterator<Item = Result<(u64, MessageId), String>>,
+        dlq_iter: &mut impl Iterator<Item = Result<(u64, MessageId), String>>,
         next_id: u64,
     ) -> Result<IndexScanStats, IndexRecoveryAttempt> {
         let now_epoch_ms = self.clock.now_epoch_ms();
@@ -427,40 +252,12 @@ impl QueueActor {
 
     fn scan_ready_ranges(
         &mut self,
-        ready_iter: &mut cntryl_midge::ScanIterator,
+        ready_iter: &mut impl Iterator<Item = Result<super::ReadyRange, String>>,
         next_id: u64,
         stats: &mut IndexScanStats,
     ) -> Result<(), IndexRecoveryAttempt> {
         for entry in ready_iter.by_ref() {
-            let (key_bytes, value_bytes) = match entry {
-                Ok(row) => row,
-                Err(error) => {
-                    return Err(IndexRecoveryAttempt::Error {
-                        next_id,
-                        reason: format!("Failed to read queue ready index: {error:?}"),
-                    });
-                }
-            };
-            let Some((shard, start_id)) =
-                Self::parse_ready_range_key(&key_bytes, &self.ready_index_prefix)
-            else {
-                return Err(IndexRecoveryAttempt::Error {
-                    next_id,
-                    reason: "Malformed queue ready index key".to_string(),
-                });
-            };
-            let Some(range) = Self::decode_ready_range(start_id, &value_bytes) else {
-                return Err(IndexRecoveryAttempt::Error {
-                    next_id,
-                    reason: "Malformed queue ready index value".to_string(),
-                });
-            };
-            if shard != Self::ready_shard_index(range.next) {
-                return Err(IndexRecoveryAttempt::Error {
-                    next_id,
-                    reason: "Queue ready index shard does not match message ID".to_string(),
-                });
-            }
+            let range = entry.map_err(|reason| IndexRecoveryAttempt::Error { next_id, reason })?;
 
             self.push_persisted_ready_range(range);
             stats.scanned_ready_count += Self::usize_to_u64(Self::range_len(range));
@@ -476,30 +273,15 @@ impl QueueActor {
 
     fn scan_delayed_entries(
         &mut self,
-        delayed_iter: &mut cntryl_midge::ScanIterator,
+        delayed_iter: &mut impl Iterator<Item = Result<(u64, MessageId), String>>,
         next_id: u64,
         now_epoch_ms: u64,
         now_instant: Instant,
         stats: &mut IndexScanStats,
     ) -> Result<(), IndexRecoveryAttempt> {
         for entry in delayed_iter.by_ref() {
-            let (key_bytes, _value_bytes) = match entry {
-                Ok(row) => row,
-                Err(error) => {
-                    return Err(IndexRecoveryAttempt::Error {
-                        next_id,
-                        reason: format!("Failed to read queue delayed index: {error:?}"),
-                    });
-                }
-            };
-            let Some((visible_at_ms, id)) =
-                Self::parse_delayed_index_key(&key_bytes, &self.delayed_index_prefix)
-            else {
-                return Err(IndexRecoveryAttempt::Error {
-                    next_id,
-                    reason: "Malformed queue delayed index key".to_string(),
-                });
-            };
+            let (visible_at_ms, id) =
+                entry.map_err(|reason| IndexRecoveryAttempt::Error { next_id, reason })?;
 
             self.insert_persisted_delayed(id, visible_at_ms);
             stats.scanned_delayed_count += 1;
@@ -532,78 +314,19 @@ impl QueueActor {
 
     fn scan_dlq_entries(
         &mut self,
-        dlq_iter: &mut cntryl_midge::ScanIterator,
+        dlq_iter: &mut impl Iterator<Item = Result<(u64, MessageId), String>>,
         next_id: u64,
         stats: &mut IndexScanStats,
     ) -> Result<(), IndexRecoveryAttempt> {
         for entry in dlq_iter.by_ref() {
-            let (key_bytes, _value_bytes) = match entry {
-                Ok(row) => row,
-                Err(error) => {
-                    return Err(IndexRecoveryAttempt::Error {
-                        next_id,
-                        reason: format!("Failed to read queue DLQ index: {error:?}"),
-                    });
-                }
-            };
-            let Some((dead_lettered_at_ms, id)) =
-                Self::parse_dlq_index_key(&key_bytes, &self.dlq_index_prefix)
-            else {
-                return Err(IndexRecoveryAttempt::Error {
-                    next_id,
-                    reason: "Malformed queue DLQ index key".to_string(),
-                });
-            };
+            let (dead_lettered_at_ms, id) =
+                entry.map_err(|reason| IndexRecoveryAttempt::Error { next_id, reason })?;
 
             self.insert_persisted_dlq(id, dead_lettered_at_ms);
             stats.max_id = Some(
                 stats
                     .max_id
                     .map_or(id.as_u64(), |max_id| max_id.max(id.as_u64())),
-            );
-        }
-
-        Ok(())
-    }
-
-    fn collect_scan_entries(
-        iter: &mut cntryl_midge::ScanIterator,
-    ) -> Result<RecoveryScanEntries, String> {
-        let mut entries = Vec::new();
-        for entry in iter.by_ref() {
-            let (key, value) =
-                entry.map_err(|error| format!("Failed to read queue recovery scan: {error:?}"))?;
-            entries.push((key.to_vec(), value.to_vec()));
-        }
-        Ok(entries)
-    }
-
-    fn recover_header_entries(
-        &mut self,
-        entries: &RecoveryScanEntries,
-        now_epoch_ms: u64,
-        now_instant: Instant,
-        recovered_ready_ids: &mut Vec<MessageId>,
-        max_id: &mut Option<u64>,
-    ) -> Result<(), String> {
-        for (key_bytes, value_bytes) in entries {
-            let Some(id) = Self::parse_message_id_from_key(key_bytes, &self.header_key_prefix)
-            else {
-                return Err("Malformed authoritative queue header key".to_string());
-            };
-            let Ok(record) = Self::decode_record_header(value_bytes) else {
-                return Err(format!(
-                    "Malformed authoritative queue header record for message {id}"
-                ));
-            };
-
-            self.recover_record(
-                id,
-                &record,
-                now_epoch_ms,
-                now_instant,
-                recovered_ready_ids,
-                max_id,
             );
         }
 

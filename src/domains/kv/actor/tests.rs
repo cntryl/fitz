@@ -19,7 +19,7 @@ pub(super) fn begin_with_scope(actor: &mut KvActor, scope: KvResourceScope) -> u
     let response = actor.handle(KvMessage::Begin {
         scope,
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered(),
+        write_options: cntryl_midge::WriteOptions::buffered().into(),
     });
     let KvResponse::BeginOk { tx_id } = response else {
         panic!("expected transaction begin, got {response:?}");

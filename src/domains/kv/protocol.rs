@@ -5,10 +5,10 @@
 //! - Resource (table) isolation
 //! - Explicit `RouteFamily` → `ColumnFamily` mapping
 
+use crate::domains::WritePolicy;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
 use crate::runtime::ClientFrameMeta;
 use bytes::Bytes;
-use cntryl_midge::WriteOptions;
 use serde::{Deserialize, Serialize};
 
 /// Complete namespace and storage scope for one KV resource.
@@ -47,7 +47,7 @@ pub enum KvMessage {
     Begin {
         scope: KvResourceScope,
         mode: TxMode,
-        write_options: WriteOptions,
+        write_options: WritePolicy,
     },
 
     /// Commit a transaction by ID
