@@ -151,13 +151,11 @@ impl QueueActor {
         let now = Instant::now();
 
         let mut actor = Self {
-            meta_key: Self::meta_key(&queue_key),
-            index_meta_key: Self::index_meta_key(&queue_key),
-            header_key_prefix: Self::header_key_prefix(&queue_key),
+            recovery_store: Arc::new(super::recovery_store::QueueRecoveryStore::new(
+                store.clone(),
+                queue_key.clone(),
+            )),
             body_key_prefix: Self::body_key_prefix(&queue_key),
-            ready_index_prefix: Self::ready_index_prefix(&queue_key),
-            delayed_index_prefix: Self::delayed_index_prefix(&queue_key),
-            dlq_index_prefix: Self::dlq_index_prefix(&queue_key),
             queue_key,
             store,
             commit_write_options,

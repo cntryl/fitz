@@ -2,12 +2,16 @@
 //! Core actor abstractions and lifecycle management
 
 use crate::runtime::context::TimerManager;
+#[cfg(test)]
 use crate::runtime::envelope::Envelope;
+
 use crate::runtime::router::{DeliveryError, RouteError, Router};
 use crate::runtime::routing::RouteAddress;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+
+mod delivery;
 
 fn usize_to_f64_saturating(value: usize) -> f64 {
     f64::from(u32::try_from(value).unwrap_or(u32::MAX))
@@ -27,15 +31,10 @@ fn delivery_error_to_send_error(target: RouteAddress, error: &DeliveryError) -> 
             target,
             occupancy: usize_to_f64_saturating(*current_len) / usize_to_f64_saturating(*capacity),
         },
-        DeliveryError::ActorStopped => SendError::ActorStopped { target },
-        DeliveryError::Timeout => SendError::Timeout { target },
-        DeliveryError::SinkPanicked => SendError::SinkPanicked { target },
-        DeliveryError::InvalidPayload { len, max } => SendError::InvalidPayload {
-            target,
-            len: *len,
-            max: *max,
-        },
-        DeliveryError::UnsupportedPayload => SendError::UnsupportedPayload { target },
+        DeliveryError::ActorStopped | DeliveryError::Timeout => SendError::ActorStopped { target },
+        DeliveryError::SinkPanicked
+        | DeliveryError::InvalidPayload { .. }
+        | DeliveryError::UnsupportedPayload => SendError::SinkPanicked { target },
     }
 }
 
@@ -240,139 +239,6 @@ impl<A: Actor + ?Sized> Context<A> {
         self.router.resolve_sink(dest)
     }
 
-    /// Send a message to another actor
-    ///
-    /// This is the preferred way for actors to send messages. The context:
-    /// - Sets the source to this actor's route address
-    /// - Automatically tracks causation from the current message
-    /// - Inherits deadline from the current message if present
-    ///
-    /// # Semantics
-    ///
-    /// **CRITICAL**: This is a **synchronous best-effort** send with **no retries**.
-    /// If the destination mailbox is full, the send fails immediately with `MailboxFull`.
-    /// Callers must implement exponential backoff or use message buffering.
-    ///
-    /// **WARNING**: Sending to self during `receive()` can deadlock if the mailbox is full.
-    /// Consider using deferred sends or checking mailbox capacity first.
-    ///
-    /// # Errors
-    ///
-    /// Returns `SendError` when the route is unknown, the destination actor has
-    /// stopped, or backpressure prevents mailbox delivery.
-    pub fn send<M>(&self, dest: RouteAddress, msg: M) -> Result<(), SendError>
-    where
-        M: Send + Sync + 'static,
-    {
-        if self.current_metadata.is_none() {
-            return self
-                .router
-                .route(Envelope::from_route(self.address.clone(), dest, msg))
-                .map_err(route_error_to_send_error);
-        }
-
-        let mut envelope = Envelope::from_route(self.address.clone(), dest, msg);
-
-        // Set causation from current envelope metadata
-        if let Some(metadata) = &self.current_metadata {
-            envelope = envelope.with_causation(metadata.id);
-
-            // Inherit deadline if present
-            if let Some(deadline) = metadata.deadline {
-                envelope = envelope.with_deadline(deadline);
-            }
-        }
-
-        self.router
-            .route(envelope)
-            .map_err(route_error_to_send_error)
-    }
-
-    /// Send a message without attaching source, causation, or deadline metadata.
-    ///
-    /// This is intended for internal fire-and-forget fanout where the receiver
-    /// does not rely on reply routing or trace ancestry.
-    ///
-    /// # Errors
-    ///
-    /// Returns `SendError` when the route is unknown, the destination actor has
-    /// stopped, or backpressure prevents mailbox delivery.
-    pub fn send_untracked<M>(&self, dest: RouteAddress, msg: M) -> Result<(), SendError>
-    where
-        M: Send + Sync + 'static,
-    {
-        self.router
-            .route(Envelope::new(dest, msg))
-            .map_err(route_error_to_send_error)
-    }
-
-    /// Publish a domain event to the router.
-    ///
-    /// This is a convenience method for emitting `DomainPublishEvent`s.
-    /// The event is routed based on its route field to the appropriate domain sink,
-    /// which performs subscription matching and fanout internally.
-    ///
-    /// # Semantics
-    ///
-    /// Same as `send()`: synchronous best-effort with no retries.
-    /// The route in the event determines which domain sink receives it.
-    ///
-    /// # Errors
-    ///
-    /// Returns `SendError` when routing the event fails for the same reasons as
-    /// [`Self::send`].
-    pub fn publish_event(
-        &self,
-        event: crate::runtime::domain_event::DomainPublishEvent,
-    ) -> Result<(), SendError> {
-        let addr = RouteAddress::new(event.family_id, event.route.clone());
-        self.send(addr, event)
-    }
-
-    /// Reply to the sender of the current message
-    ///
-    /// This creates a reply envelope that:
-    /// - Is addressed to the original sender
-    /// - Has causation set to the current message ID
-    /// - Inherits the deadline from the current message
-    ///
-    /// # Returns
-    ///
-    /// Returns `Err(SendError::ActorNotFound)` if:
-    /// - There is no current envelope (called outside message processing)
-    /// - The current envelope has no source (external message)
-    ///
-    /// # Errors
-    ///
-    /// Returns `SendError` when no reply target is available or when routing the
-    /// reply fails.
-    pub fn reply<M>(&self, msg: M) -> Result<(), SendError>
-    where
-        M: Send + Sync + 'static,
-    {
-        let metadata = self
-            .current_metadata
-            .as_ref()
-            .ok_or(SendError::RouteNotFound {
-                target: self.address.clone(),
-            })?;
-
-        let source = metadata.source.as_ref().ok_or(SendError::RouteNotFound {
-            target: self.address.clone(),
-        })?;
-
-        let mut reply_envelope = Envelope::from_route(self.address.clone(), source.clone(), msg)
-            .with_causation(metadata.id);
-
-        if let Some(deadline) = metadata.deadline {
-            reply_envelope = reply_envelope.with_deadline(deadline);
-        }
-
-        self.router
-            .route(reply_envelope)
-            .map_err(route_error_to_send_error)
-    }
-
     /// Stop this actor
     ///
     /// INVARIANT: Stopping an actor immediately:
@@ -441,30 +307,6 @@ impl<M: Send + 'static> ActorRef<M> {
         }
     }
 
-    /// Send a message to this actor (non-blocking, may fail if mailbox is full)
-    ///
-    /// The message is wrapped in an Envelope and routed to the destination actor.
-    /// The source is not set (external message).
-    ///
-    /// # Semantics
-    ///
-    /// This is a **synchronous best-effort** send with **no retries**.
-    /// Returns detailed error information for adaptive backpressure.
-    ///
-    /// # Errors
-    ///
-    /// Returns `SendError` when the route is unknown, the actor has stopped,
-    /// or backpressure prevents mailbox delivery.
-    pub fn send(&self, msg: M) -> Result<(), SendError>
-    where
-        M: Send + Sync + 'static,
-    {
-        let envelope = Envelope::new(self.address.clone(), msg);
-        self.router
-            .route(envelope)
-            .map_err(route_error_to_send_error)
-    }
-
     /// Get the actor's route address
     #[must_use]
     pub fn address(&self) -> &RouteAddress {
@@ -531,6 +373,9 @@ impl fmt::Display for ActorError {
 
 impl std::error::Error for ActorError {}
 
+/// Legacy send failure categories, retained for source and behavior compatibility.
+/// Use the `send_detailed` methods to preserve the full [`RouteError`], including
+/// timeouts and payload rejections that this legacy enum cannot distinguish.
 #[derive(Debug, Clone)]
 pub enum SendError {
     /// Mailbox is full (backpressure) - includes occupancy for adaptive backoff
@@ -542,16 +387,6 @@ pub enum SendError {
     ActorStopped { target: RouteAddress },
     /// Sink panicked while accepting the message
     SinkPanicked { target: RouteAddress },
-    /// The destination remained alive but did not reply before its deadline.
-    Timeout { target: RouteAddress },
-    /// The payload exceeds the destination's wire limit; retrying cannot fix it.
-    InvalidPayload {
-        target: RouteAddress,
-        len: usize,
-        max: usize,
-    },
-    /// The destination does not support this payload type.
-    UnsupportedPayload { target: RouteAddress },
     /// Route not registered
     RouteNotFound { target: RouteAddress },
 }
@@ -564,9 +399,6 @@ impl SendError {
             SendError::MailboxFull { target, .. }
             | SendError::ActorStopped { target }
             | SendError::SinkPanicked { target }
-            | SendError::Timeout { target }
-            | SendError::InvalidPayload { target, .. }
-            | SendError::UnsupportedPayload { target }
             | SendError::RouteNotFound { target } => target,
         }
     }
@@ -588,16 +420,6 @@ impl fmt::Display for SendError {
             }
             SendError::SinkPanicked { target } => {
                 write!(f, "Sink for {target} panicked during delivery")
-            }
-            SendError::Timeout { target } => write!(f, "Delivery to {target} timed out"),
-            SendError::InvalidPayload { target, len, max } => {
-                write!(
-                    f,
-                    "Response payload {len} bytes exceeds wire limit {max} for {target}"
-                )
-            }
-            SendError::UnsupportedPayload { target } => {
-                write!(f, "Unsupported envelope payload type for {target}")
             }
             SendError::RouteNotFound { target } => {
                 write!(f, "Route {target} not found")

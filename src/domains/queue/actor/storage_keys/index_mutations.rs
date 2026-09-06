@@ -128,7 +128,7 @@ impl QueueActor {
         }
 
         txn.put(
-            self.index_meta_key.clone(),
+            self.recovery_store.index_meta_key.clone(),
             Self::encode_index_meta(
                 self.next_id_limit,
                 Self::usize_to_u64(plan.staged_ready_count),

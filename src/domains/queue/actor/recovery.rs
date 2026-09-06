@@ -1,3 +1,4 @@
+use super::recovery_store::{QueueRecoverySnapshot, QueueRecoveryStore};
 use super::{
     DelayedMessage, IndexRecoveryAttempt, MessageId, QueueActor, QueueState, RecoveryPath,
     QUEUE_IDLE_HORIZON,
@@ -27,10 +28,13 @@ impl IndexScanStats {
 }
 
 impl QueueActor {
-    pub(super) fn try_recover_from_index(&mut self) -> IndexRecoveryAttempt {
+    fn try_recover_from_index(
+        &mut self,
+        store: &QueueRecoveryStore,
+        snapshot: &QueueRecoverySnapshot,
+    ) -> IndexRecoveryAttempt {
         let start = Instant::now();
-        let store = self.recovery_store();
-        let index = match store.read_index() {
+        let meta_snapshot = match store.read_index(snapshot) {
             Ok(index) => index,
             Err(error) => {
                 self.index_meta_written = false;
@@ -46,10 +50,16 @@ impl QueueActor {
                 return error;
             }
         };
-        let meta_snapshot = index.meta;
         self.index_meta_written = true;
         self.reset_recovery_state();
-        let mut rows = match index.rows() {
+        let scan = || -> Result<_, String> {
+            Ok((
+                store.ready_ranges(snapshot)?,
+                store.delayed_entries(snapshot)?,
+                store.dead_letters(snapshot)?,
+            ))
+        };
+        let (mut ready, mut delayed, mut dlq) = match scan() {
             Ok(rows) => rows,
             Err(reason) => {
                 return IndexRecoveryAttempt::Error {
@@ -59,9 +69,9 @@ impl QueueActor {
             }
         };
         let stats = match self.scan_index_entries(
-            &mut rows.ready,
-            &mut rows.delayed,
-            &mut rows.dlq,
+            &mut ready,
+            &mut delayed,
+            &mut dlq,
             meta_snapshot.next_id,
         ) {
             Ok(stats) => stats,
@@ -77,7 +87,7 @@ impl QueueActor {
             self.index_meta_written = false;
             Self::increment_counter(obs::METRIC_QUEUE_RECOVERY_INDEX_INVALID);
             return IndexRecoveryAttempt::Invalid {
-                next_id: self.load_next_id_from_meta_key(),
+                next_id: store.next_id(snapshot),
                 reason: format!(
                     "Queue index meta counters mismatch (meta ready={}, scanned ready={}, meta delayed={}, scanned delayed={})",
                     meta_snapshot.ready_count,
@@ -97,7 +107,7 @@ impl QueueActor {
     }
 
     pub(super) fn rewrite_index_from_memory(&mut self, next_id: u64) -> Result<(), String> {
-        self.recovery_store().replace_index(
+        self.recovery_store.replace_index(
             &super::recovery_store::QueueIndexRebuild {
                 meta: super::IndexMetaSnapshot {
                     next_id,
@@ -118,37 +128,29 @@ impl QueueActor {
     pub(super) fn recover_from_scan_and_rebuild_index(
         &mut self,
         fallback_next_id: u64,
+        store: &QueueRecoveryStore,
+        snapshot: &QueueRecoverySnapshot,
     ) -> Result<Option<u64>, String> {
         let start = Instant::now();
-        let store = self.recovery_store();
         self.reset_recovery_state();
-        let header_entries = store.read_headers()?;
-        if header_entries.is_empty() {
-            return Ok(None);
-        }
-
-        let recovered_count = header_entries.len();
-        let per_shard = recovered_count / Self::READY_SHARDS + 1;
-        for shard in &mut self.ready_shards {
-            shard.reserve(per_shard);
-        }
-        for shard in &mut self.persisted_ready_shards {
-            shard.reserve(per_shard);
-        }
-        self.delayed.reserve(recovered_count);
-
         let now_epoch_ms = self.clock.now_epoch_ms();
         let now_instant = self.clock.now_instant();
         let mut max_id = None::<u64>;
-        let mut recovered_ready_ids = Vec::with_capacity(recovered_count);
-
-        self.recover_header_entries(
-            &header_entries,
-            now_epoch_ms,
-            now_instant,
-            &mut recovered_ready_ids,
-            &mut max_id,
-        );
+        let mut recovered_ready_ids = Vec::new();
+        for entry in store.headers(snapshot)? {
+            let (id, record) = entry?;
+            self.recover_record(
+                id,
+                &record,
+                now_epoch_ms,
+                now_instant,
+                &mut recovered_ready_ids,
+                &mut max_id,
+            );
+        }
+        if max_id.is_none() {
+            return Ok(None);
+        }
         if self.delayed.is_empty() {
             self.next_delayed_deadline = now_instant + QUEUE_IDLE_HORIZON;
         }
@@ -171,14 +173,17 @@ impl QueueActor {
     }
 
     pub(super) fn recover_from_store(&mut self) -> Result<(), String> {
-        let (mut next_id, max_id) = match self.try_recover_from_index() {
+        let store = self.recovery_store.clone();
+        let snapshot = store.snapshot()?;
+        let (mut next_id, max_id) = match self.try_recover_from_index(&store, &snapshot) {
             IndexRecoveryAttempt::Hit { next_id, max_id } => {
                 self.recovery_path = RecoveryPath::IndexHit;
                 (next_id, max_id)
             }
             IndexRecoveryAttempt::Missing { next_id } => {
                 self.recovery_path = RecoveryPath::IndexMissingFallback;
-                let max_id = self.recover_from_scan_and_rebuild_index(next_id)?;
+                let max_id =
+                    self.recover_from_scan_and_rebuild_index(next_id, &store, &snapshot)?;
                 (next_id, max_id)
             }
             IndexRecoveryAttempt::Invalid { next_id, reason } => {
@@ -189,7 +194,8 @@ impl QueueActor {
                     "Queue index recovery found invalid state; falling back to full scan"
                 );
                 self.recovery_path = RecoveryPath::IndexInvalidFallback;
-                let max_id = self.recover_from_scan_and_rebuild_index(next_id)?;
+                let max_id =
+                    self.recover_from_scan_and_rebuild_index(next_id, &store, &snapshot)?;
                 (next_id, max_id)
             }
             IndexRecoveryAttempt::Error { next_id, reason } => {
@@ -200,7 +206,8 @@ impl QueueActor {
                     "Queue index recovery failed; falling back to full scan"
                 );
                 self.recovery_path = RecoveryPath::IndexErrorFallback;
-                let max_id = self.recover_from_scan_and_rebuild_index(next_id)?;
+                let max_id =
+                    self.recover_from_scan_and_rebuild_index(next_id, &store, &snapshot)?;
                 (next_id, max_id)
             }
         };
@@ -219,10 +226,6 @@ impl QueueActor {
             self.recovery_path = RecoveryPath::Empty;
         }
         Ok(())
-    }
-
-    fn recovery_store(&self) -> super::recovery_store::QueueRecoveryStore {
-        super::recovery_store::QueueRecoveryStore::new(self.store.clone(), self.queue_key.clone())
     }
 
     fn scan_index_entries(
@@ -328,26 +331,6 @@ impl QueueActor {
         }
 
         Ok(())
-    }
-
-    fn recover_header_entries(
-        &mut self,
-        entries: &[(MessageId, super::QueueRecord)],
-        now_epoch_ms: u64,
-        now_instant: Instant,
-        recovered_ready_ids: &mut Vec<MessageId>,
-        max_id: &mut Option<u64>,
-    ) {
-        for (id, record) in entries {
-            self.recover_record(
-                *id,
-                record,
-                now_epoch_ms,
-                now_instant,
-                recovered_ready_ids,
-                max_id,
-            );
-        }
     }
 
     fn recover_record(

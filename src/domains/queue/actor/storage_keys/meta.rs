@@ -92,12 +92,4 @@ impl QueueActor {
     pub(in crate::domains::queue::actor) fn decode_next_id(bytes: Option<&[u8]>) -> u64 {
         bytes.and_then(Self::decode_meta).unwrap_or(1)
     }
-
-    pub(in crate::domains::queue::actor) fn load_next_id_from_meta_key(&self) -> u64 {
-        super::super::recovery_store::QueueRecoveryStore::new(
-            self.store.clone(),
-            self.queue_key.clone(),
-        )
-        .next_id()
-    }
 }

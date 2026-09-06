@@ -546,26 +546,11 @@ pub struct QueueActor {
     /// Queue identity
     queue_key: QueueKey,
 
-    /// Cached Midge metadata key for this queue.
-    meta_key: Vec<u8>,
-
-    /// Key for the durable recovery-index metadata row (counters + reserved id).
-    index_meta_key: Vec<u8>,
-
-    /// Cached Midge header-key prefix for this queue.
-    header_key_prefix: Vec<u8>,
+    /// Shared storage-key cache and recovery persistence boundary.
+    recovery_store: Arc<recovery_store::QueueRecoveryStore>,
 
     /// Cached Midge body-key prefix for this queue.
     body_key_prefix: Vec<u8>,
-
-    /// Cached Midge ready-index prefix for this queue.
-    ready_index_prefix: Vec<u8>,
-
-    /// Cached Midge delayed-index prefix for this queue.
-    delayed_index_prefix: Vec<u8>,
-
-    /// Cached Midge dead-letter index prefix for this queue.
-    dlq_index_prefix: Vec<u8>,
 
     /// Midge storage handle (for durable persistence)
     store: Arc<cntryl_midge::MidgeEngine>,

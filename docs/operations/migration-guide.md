@@ -16,15 +16,16 @@ Broker configuration methods such as `KvDomainSink::with_write_options` retain
 their Midge option parameters. KV wire flags and persisted data formats do not
 change; network SDK consumers need no migration for this refactor.
 
-Exhaustive Rust matches on `SendError` must handle the new `Timeout`,
-`InvalidPayload { target, len, max }`, and `UnsupportedPayload` variants. These
-replace misleading `ActorStopped` or `SinkPanicked` classifications for those
-failures. Treat an invalid payload as a message correction problem, not a
-transient saturation signal.
+Existing exhaustive matches on `SendError` remain compatible: its variants and
+legacy mappings are unchanged. Use `ActorRef::send_detailed` or the corresponding
+`Context::*_detailed` methods for lossless `RouteError` values. Their
+`DeliveryFailed(destination, cause)` preserves `DeliveryError::Timeout`,
+`InvalidPayload { len, max }`, and `UnsupportedPayload`. The original send
+methods retain their legacy stopped-actor/panic classifications for these cases.
 
-Existing `MailboxSink` implementations remain compatible. Implementations with
-one lane may omit `deliver_high_priority`; the default delegates to `deliver`.
-Managed mailboxes retain their explicit control-lane overrides.
+`MailboxSink::deliver_high_priority` remains required. Implementations with one
+lane explicitly forward to `deliver`; managed mailboxes explicitly use their
+separate control lane. No priority behavior changes implicitly.
 
 ## Upgrade Strategy
 

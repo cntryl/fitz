@@ -366,11 +366,7 @@ fn parse_begin(route_family: RouteFamily, payload: &[u8]) -> Result<KvMessage, S
     };
 
     // Read durability (u8): 0=buffered, 1=sync (per `CLIENT_SPEC`)
-    let write_options = match decoder.get_u8()? {
-        0 => crate::domains::WritePolicy::Buffered,
-        1 => crate::domains::WritePolicy::Sync,
-        value => return Err(format!("Invalid durability mode: {value}")),
-    };
+    let write_options = crate::domains::kv::write_policy::decode_wire_policy(decoder.get_u8()?)?;
     ensure_complete(&decoder, "BEGIN")?;
 
     Ok(KvMessage::Begin {

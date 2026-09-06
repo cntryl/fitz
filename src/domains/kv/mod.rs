@@ -55,6 +55,7 @@ mod protocol;
 mod scan_wire_budget;
 pub mod sink;
 mod watch_registry;
+pub(crate) mod write_policy;
 
 pub use actor::KvActor;
 pub use protocol::{

@@ -63,6 +63,16 @@ fn u128_to_u64_saturating(value: u128) -> u64 {
 /// - Handle backpressure appropriately (drop, block, or return error)
 /// - Be thread-safe (Send + Sync)
 /// - Fail fast rather than retry
+///
+/// Every implementation must explicitly decide how to handle priority delivery:
+///
+/// ```compile_fail
+/// use fitz::runtime::{DeliveryError, Envelope, MailboxSink};
+/// struct SingleLane;
+/// impl MailboxSink for SingleLane {
+///     fn deliver(&self, _: Envelope) -> Result<(), DeliveryError> { Ok(()) }
+/// }
+/// ```
 pub trait MailboxSink: Send + Sync {
     /// Attempt to deliver an envelope to this mailbox
     ///
@@ -78,8 +88,9 @@ pub trait MailboxSink: Send + Sync {
 
     /// Attempt delivery with a preference for the high-priority lane.
     ///
-    /// Priority is optional: sinks with one lane use ordinary delivery by
-    /// default. Managed actor mailboxes override this method to provide their
+    /// Implementations must explicitly choose their priority behavior. Sinks
+    /// with one lane may explicitly delegate to ordinary delivery. Managed
+    /// actor mailboxes implement this method using their
     /// separate bounded control lane. Callers requiring control-lane isolation
     /// must use a sink that explicitly provides it; the trait alone does not
     /// promise priority scheduling or reserved capacity.
@@ -93,11 +104,9 @@ pub trait MailboxSink: Send + Sync {
     /// # Errors
     ///
     /// Returns the underlying delivery failure. A separate control lane reports
-    /// `DeliveryError::HighLaneFull` when full; the default forwards ordinary
+    /// `DeliveryError::HighLaneFull` when full; single-lane sinks forward ordinary
     /// delivery errors, including `DeliveryError::MailboxFull`.
-    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        self.deliver(envelope)
-    }
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError>;
 }
 
 /// Errors that can occur during envelope delivery

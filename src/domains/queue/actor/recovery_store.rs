@@ -1,59 +1,26 @@
-//! Queue recovery persistence. Transactions, encoded rows, and index replacement
-//! stay here; the actor decides recovery fallback and reconstructs live state.
+//! Queue recovery persistence with cached keys and a single read snapshot.
 
 use super::{
     FastMap, IndexMetaSnapshot, IndexRecoveryAttempt, MessageId, QueueActor, QueueKey, QueueRecord,
     ReadyRange,
 };
 use bytes::Bytes;
-use cntryl_midge::{Engine, Query, ScanIterator, Transaction, TransactionMode, WriteOptions};
+use cntryl_midge::{Engine, Query, Transaction, TransactionMode, WriteOptions};
 use std::collections::VecDeque;
 use std::sync::Arc;
 
 pub(super) struct QueueRecoveryStore {
     engine: Arc<Engine>,
     key: QueueKey,
+    pub meta_key: Vec<u8>,
+    pub index_meta_key: Vec<u8>,
+    pub header_key_prefix: Bytes,
+    pub ready_index_prefix: Bytes,
+    pub delayed_index_prefix: Bytes,
+    pub dlq_index_prefix: Bytes,
 }
 
-pub(super) struct QueueRecoveryIndex {
-    pub meta: IndexMetaSnapshot,
-    key: QueueKey,
-    transaction: Transaction,
-}
-
-pub(super) struct QueueRecoveryRows<'a> {
-    pub ready: RecoveryRows<'a, ReadyRange>,
-    pub delayed: RecoveryRows<'a, (u64, MessageId)>,
-    pub dlq: RecoveryRows<'a, (u64, MessageId)>,
-}
-
-impl QueueRecoveryIndex {
-    pub(super) fn rows(&self) -> Result<QueueRecoveryRows<'_>, String> {
-        let ready = QueueRecoveryStore::rows(
-            &self.transaction,
-            QueueActor::ready_index_prefix(&self.key),
-            "ready index",
-            decode_ready,
-        )?;
-        let delayed = QueueRecoveryStore::rows(
-            &self.transaction,
-            QueueActor::delayed_index_prefix(&self.key),
-            "delayed index",
-            decode_delayed,
-        )?;
-        let dlq = QueueRecoveryStore::rows(
-            &self.transaction,
-            QueueActor::dlq_index_prefix(&self.key),
-            "DLQ index",
-            decode_dlq,
-        )?;
-        Ok(QueueRecoveryRows {
-            ready,
-            delayed,
-            dlq,
-        })
-    }
-}
+pub(super) struct QueueRecoverySnapshot(Transaction);
 
 pub(super) struct QueueIndexRebuild<'a> {
     pub meta: IndexMetaSnapshot,
@@ -62,113 +29,122 @@ pub(super) struct QueueIndexRebuild<'a> {
     pub dlq: &'a FastMap<MessageId, u64>,
 }
 
-type RowDecoder<T> = fn(&[u8], &[u8], &[u8]) -> Result<T, String>;
-
-pub(super) struct RecoveryRows<'a, T> {
-    scan: ScanIterator<'a>,
-    prefix: Vec<u8>,
-    label: &'static str,
-    decode: RowDecoder<T>,
-}
-
-impl<T> Iterator for RecoveryRows<'_, T> {
-    type Item = Result<T, String>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.scan.next().map(|row| {
-            let (key, value) =
-                row.map_err(|error| format!("Failed to read queue {}: {error:?}", self.label))?;
-            (self.decode)(&key, &value, &self.prefix)
-        })
-    }
-}
-
 impl QueueRecoveryStore {
     pub(super) fn new(engine: Arc<Engine>, key: QueueKey) -> Self {
-        Self { engine, key }
+        Self {
+            meta_key: QueueActor::meta_key(&key),
+            index_meta_key: QueueActor::index_meta_key(&key),
+            header_key_prefix: QueueActor::header_key_prefix(&key).into(),
+            ready_index_prefix: QueueActor::ready_index_prefix(&key).into(),
+            delayed_index_prefix: QueueActor::delayed_index_prefix(&key).into(),
+            dlq_index_prefix: QueueActor::dlq_index_prefix(&key).into(),
+            engine,
+            key,
+        }
     }
 
-    pub(super) fn read_index(&self) -> Result<QueueRecoveryIndex, IndexRecoveryAttempt> {
-        let transaction = self
-            .engine
+    pub(super) fn snapshot(&self) -> Result<QueueRecoverySnapshot, String> {
+        self.engine
             .begin_tx(self.key.family.id(), TransactionMode::ReadOnly)
-            .map_err(|error| IndexRecoveryAttempt::Error {
-                next_id: 1,
-                reason: format!("Failed to begin index recovery tx: {error:?}"),
-            })?;
-        let index_meta = match transaction.get(&QueueActor::index_meta_key(&self.key)) {
+            .map(QueueRecoverySnapshot)
+            .map_err(|error| format!("Failed to begin queue recovery snapshot: {error:?}"))
+    }
+
+    pub(super) fn read_index(
+        &self,
+        snapshot: &QueueRecoverySnapshot,
+    ) -> Result<IndexMetaSnapshot, IndexRecoveryAttempt> {
+        let index_meta = match snapshot.0.get(&self.index_meta_key) {
             Ok(Some(bytes)) => bytes,
             Ok(None) => {
                 return Err(IndexRecoveryAttempt::Missing {
-                    next_id: self.next_id(),
+                    next_id: self.next_id(snapshot),
                 })
             }
             Err(error) if QueueActor::is_missing_read_snapshot_error(&error) => {
                 return Err(IndexRecoveryAttempt::Missing {
-                    next_id: self.next_id(),
+                    next_id: self.next_id(snapshot),
                 });
             }
             Err(error) => {
                 return Err(IndexRecoveryAttempt::Error {
-                    next_id: self.next_id(),
+                    next_id: self.next_id(snapshot),
                     reason: format!("Failed to read queue index meta: {error:?}"),
                 })
             }
         };
-        let meta = QueueActor::decode_index_meta(&index_meta).map_err(|reason| {
-            IndexRecoveryAttempt::Invalid {
-                next_id: self.next_id(),
-                reason,
-            }
-        })?;
-        Ok(QueueRecoveryIndex {
-            meta,
-            key: self.key.clone(),
-            transaction,
+        QueueActor::decode_index_meta(&index_meta).map_err(|reason| IndexRecoveryAttempt::Invalid {
+            next_id: self.next_id(snapshot),
+            reason,
         })
     }
 
-    fn rows<'a, T>(
-        transaction: &'a Transaction,
-        prefix: Vec<u8>,
-        label: &'static str,
-        decode: RowDecoder<T>,
-    ) -> Result<RecoveryRows<'a, T>, String> {
-        let scan = transaction
-            .scan(&Query::new().prefix(Bytes::copy_from_slice(&prefix)))
-            .map_err(|error| format!("Failed to scan queue {label}: {error:?}"))?;
-        Ok(RecoveryRows {
-            scan,
-            prefix,
-            label,
-            decode,
-        })
+    pub(super) fn ready_ranges<'a>(
+        &'a self,
+        snapshot: &'a QueueRecoverySnapshot,
+    ) -> Result<impl Iterator<Item = Result<ReadyRange, String>> + 'a, String> {
+        let rows = snapshot
+            .0
+            .scan(&Query::new().prefix(self.ready_index_prefix.clone()))
+            .map_err(|error| format!("Failed to scan queue ready index: {error:?}"))?;
+        Ok(rows.map(|row| {
+            let (key, value) =
+                row.map_err(|error| format!("Failed to read queue ready index: {error:?}"))?;
+            decode_ready(&key, &value, &self.ready_index_prefix)
+        }))
     }
 
-    pub(super) fn read_headers(&self) -> Result<Vec<(MessageId, QueueRecord)>, String> {
-        let transaction = self
-            .engine
-            .begin_tx(self.key.family.id(), TransactionMode::ReadOnly)
-            .map_err(|error| format!("Failed to begin recovery scan tx: {error:?}"))?;
-        let prefix = QueueActor::header_key_prefix(&self.key);
-        let scan = match transaction.scan(&Query::new().prefix(Bytes::copy_from_slice(&prefix))) {
-            Ok(scan) => scan,
-            Err(error) if QueueActor::is_missing_read_snapshot_error(&error) => {
-                return Ok(Vec::new())
-            }
+    pub(super) fn delayed_entries<'a>(
+        &'a self,
+        snapshot: &'a QueueRecoverySnapshot,
+    ) -> Result<impl Iterator<Item = Result<(u64, MessageId), String>> + 'a, String> {
+        let rows = snapshot
+            .0
+            .scan(&Query::new().prefix(self.delayed_index_prefix.clone()))
+            .map_err(|error| format!("Failed to scan queue delayed index: {error:?}"))?;
+        Ok(rows.map(|row| {
+            let (key, value) =
+                row.map_err(|error| format!("Failed to read queue delayed index: {error:?}"))?;
+            decode_delayed(&key, &value, &self.delayed_index_prefix)
+        }))
+    }
+
+    pub(super) fn dead_letters<'a>(
+        &'a self,
+        snapshot: &'a QueueRecoverySnapshot,
+    ) -> Result<impl Iterator<Item = Result<(u64, MessageId), String>> + 'a, String> {
+        let rows = snapshot
+            .0
+            .scan(&Query::new().prefix(self.dlq_index_prefix.clone()))
+            .map_err(|error| format!("Failed to scan queue DLQ index: {error:?}"))?;
+        Ok(rows.map(|row| {
+            let (key, value) =
+                row.map_err(|error| format!("Failed to read queue DLQ index: {error:?}"))?;
+            decode_dlq(&key, &value, &self.dlq_index_prefix)
+        }))
+    }
+
+    pub(super) fn headers<'a>(
+        &'a self,
+        snapshot: &'a QueueRecoverySnapshot,
+    ) -> Result<impl Iterator<Item = Result<(MessageId, QueueRecord), String>> + 'a, String> {
+        let rows = match snapshot
+            .0
+            .scan(&Query::new().prefix(self.header_key_prefix.clone()))
+        {
+            Ok(rows) => Some(rows),
+            Err(error) if QueueActor::is_missing_read_snapshot_error(&error) => None,
             Err(error) => {
                 return Err(format!(
                     "Failed to scan queue headers for recovery: {error:?}"
                 ))
             }
         };
-        RecoveryRows {
-            scan,
-            prefix,
-            label: "recovery scan",
-            decode: decode_header,
-        }
-        .collect()
+        Ok(rows.into_iter().flatten().map(|row| {
+            let (key, value) =
+                row.map_err(|error| format!("Failed to read queue recovery scan: {error:?}"))?;
+            decode_header(&key, &value, &self.header_key_prefix)
+        }))
     }
 
     pub(super) fn replace_index(
@@ -180,18 +156,18 @@ impl QueueRecoveryStore {
             .engine
             .begin_tx(self.key.family.id(), TransactionMode::ReadWrite)
             .map_err(|error| format!("Failed to begin queue index rebuild tx: {error:?}"))?;
-        let ready_prefix = QueueActor::ready_index_prefix(&self.key);
-        let delayed_prefix = QueueActor::delayed_index_prefix(&self.key);
-        let dlq_prefix = QueueActor::dlq_index_prefix(&self.key);
+        let ready_prefix = &self.ready_index_prefix;
+        let delayed_prefix = &self.delayed_index_prefix;
+        let dlq_prefix = &self.dlq_index_prefix;
         // Read every old key before mutation; the replacement is one atomic commit.
         let mut stale_keys = Vec::new();
         for (prefix, label) in [
-            (&ready_prefix, "ready"),
-            (&delayed_prefix, "delayed"),
-            (&dlq_prefix, "DLQ"),
+            (ready_prefix, "ready"),
+            (delayed_prefix, "delayed"),
+            (dlq_prefix, "DLQ"),
         ] {
             let rows = transaction
-                .scan(&Query::new().prefix(Bytes::copy_from_slice(prefix)))
+                .scan(&Query::new().prefix(prefix.clone()))
                 .map_err(|error| format!("Failed to scan {label} index for rebuild: {error:?}"))?;
             for row in rows {
                 let (key, _) = row.map_err(|error| {
@@ -209,7 +185,7 @@ impl QueueRecoveryStore {
             for range in ranges {
                 transaction
                     .put(
-                        QueueActor::ready_range_key_with_prefix(&ready_prefix, shard, range.next),
+                        QueueActor::ready_range_key_with_prefix(ready_prefix, shard, range.next),
                         QueueActor::encode_ready_range_value(*range),
                         None,
                     )
@@ -217,8 +193,8 @@ impl QueueRecoveryStore {
             }
         }
         for (rows, prefix, label) in [
-            (state.delayed, &delayed_prefix, "delayed"),
-            (state.dlq, &dlq_prefix, "DLQ"),
+            (state.delayed, delayed_prefix, "delayed"),
+            (state.dlq, dlq_prefix, "DLQ"),
         ] {
             for (&id, &timestamp) in rows {
                 transaction
@@ -232,7 +208,7 @@ impl QueueRecoveryStore {
         }
         transaction
             .put(
-                QueueActor::index_meta_key(&self.key),
+                self.index_meta_key.clone(),
                 QueueActor::encode_index_meta(
                     state.meta.next_id,
                     state.meta.ready_count,
@@ -247,19 +223,10 @@ impl QueueRecoveryStore {
             .map_err(|error| format!("Failed to commit queue index rebuild: {error:?}"))
     }
 
-    pub(super) fn next_id(&self) -> u64 {
-        let transaction = match self
-            .engine
-            .begin_tx(self.key.family.id(), TransactionMode::ReadOnly)
-        {
-            Ok(transaction) => transaction,
-            Err(error) => {
-                tracing::warn!(queue = ?self.key, route_family = self.key.family.as_u64(), ?error,
-                    "Failed to begin queue meta recovery transaction; starting from 1");
-                return 1;
-            }
-        };
-        match transaction.get(&QueueActor::meta_key(&self.key)) {
+    pub(super) fn next_id(&self, snapshot: &QueueRecoverySnapshot) -> u64 {
+        // The reservation row, not potentially corrupt index metadata, owns the
+        // fallback ID floor. Read it from the same snapshot as the index/headers.
+        match snapshot.0.get(&self.meta_key) {
             Ok(Some(bytes)) => QueueActor::decode_next_id(Some(&bytes)),
             Ok(None) => 1,
             Err(error) if QueueActor::is_missing_read_snapshot_error(&error) => 1,

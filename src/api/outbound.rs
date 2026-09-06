@@ -115,6 +115,11 @@ impl MailboxSink for SessionOutboundSink {
         );
         Err(DeliveryError::UnsupportedPayload)
     }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        // Session transport has one lane; choose ordinary delivery explicitly.
+        self.deliver(envelope)
+    }
 }
 
 impl SessionOutboundSink {
