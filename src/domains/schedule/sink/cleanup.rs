@@ -6,7 +6,8 @@
 //! silently recreating a subscription for a session that is already gone and
 //! will never be cleaned up again.
 
-use super::model::{Envelope, ScheduleDomainRuntime, ScheduleDomainSink};
+use super::model::{ScheduleDomainCommand, ScheduleDomainRuntime, ScheduleDomainSink};
+use crate::runtime::Envelope;
 
 impl ScheduleDomainSink {
     /// Remove every Schedule subscription owned by one disconnected session.
@@ -21,9 +22,7 @@ impl ScheduleDomainSink {
     pub fn cleanup_session(&self, session_id: u64) -> Result<(), crate::runtime::DeliveryError> {
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         self.actor
-            .try_send_high_priority(super::model::ScheduleDomainCommand::CleanupSession(
-                session_id, reply_tx,
-            ))?;
+            .try_send_high_priority(ScheduleDomainCommand::CleanupSession(session_id, reply_tx))?;
         reply_rx
             .recv_timeout(std::time::Duration::from_secs(1))
             .map_err(crate::runtime::reply_wait::map_reply_wait_error)

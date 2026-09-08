@@ -1,31 +1,34 @@
 //! Tokio-owned background loops for synchronous domain maintenance.
 
-use crate::boot::domains::DomainHandles;
+use crate::boot::domain_interfaces::{DomainHealth, DomainMaintenance};
+use crate::boot::domains::BrokerDomains;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-pub fn start_domain_background_tasks(domains: &Arc<DomainHandles>) {
-    start_queue_runtime_sweep(Arc::downgrade(domains));
-    start_rpc_timeout_loop(Arc::downgrade(domains));
-    start_lease_timeout_loop(Arc::downgrade(domains));
-    start_schedule_tick_loop(Arc::downgrade(domains));
-    start_stream_maintenance_loop(Arc::downgrade(domains));
+pub fn start_domain_background_tasks(domains: &Arc<BrokerDomains>) {
+    let maintenance: Arc<dyn DomainMaintenance> = domains.clone();
+    start_queue_runtime_sweep(Arc::downgrade(&maintenance));
+    start_rpc_timeout_loop(Arc::downgrade(&maintenance));
+    start_lease_timeout_loop(Arc::downgrade(&maintenance));
+    start_schedule_tick_loop(Arc::downgrade(&maintenance));
+    start_stream_maintenance_loop(Arc::downgrade(&maintenance));
 }
 
 /// Fail closed when a production actor panics. A domain actor owns
 /// synchronous state that cannot be reconstructed transparently, so readiness
 /// is withdrawn and the broker enters its normal drain lifecycle.
-pub fn start_domain_health_monitor(runtime: crate::boot::Runtime, domains: Arc<DomainHandles>) {
+pub fn start_domain_health_monitor(runtime: crate::boot::Runtime, domains: Arc<BrokerDomains>) {
     let Ok(handle) = tokio::runtime::Handle::try_current() else {
         tracing::debug!("Domain health monitor not started: no Tokio runtime available");
         return;
     };
+    let health: Arc<dyn DomainHealth> = domains;
     handle.spawn(async move {
         loop {
             if runtime.is_shutting_down() {
                 break;
             }
-            if domains.has_permanently_failed_domain() {
+            if health.has_permanently_failed_domain() {
                 tracing::error!(
                     "A domain actor failed; withdrawing readiness and beginning broker drain"
                 );
@@ -38,7 +41,7 @@ pub fn start_domain_health_monitor(runtime: crate::boot::Runtime, domains: Arc<D
     });
 }
 
-fn start_queue_runtime_sweep(domains: Weak<DomainHandles>) {
+fn start_queue_runtime_sweep(domains: Weak<dyn DomainMaintenance>) {
     let Ok(handle) = tokio::runtime::Handle::try_current() else {
         tracing::debug!("Queue runtime sweep not started: no Tokio runtime available");
         return;
@@ -59,7 +62,7 @@ fn start_queue_runtime_sweep(domains: Weak<DomainHandles>) {
     });
 }
 
-fn start_rpc_timeout_loop(domains: Weak<DomainHandles>) {
+fn start_rpc_timeout_loop(domains: Weak<dyn DomainMaintenance>) {
     let Ok(handle) = tokio::runtime::Handle::try_current() else {
         tracing::debug!("RPC timeout loop not started: no Tokio runtime available");
         return;
@@ -87,7 +90,7 @@ fn start_rpc_timeout_loop(domains: Weak<DomainHandles>) {
     });
 }
 
-fn start_lease_timeout_loop(domains: Weak<DomainHandles>) {
+fn start_lease_timeout_loop(domains: Weak<dyn DomainMaintenance>) {
     let Ok(handle) = tokio::runtime::Handle::try_current() else {
         tracing::debug!("Lease timeout loop not started: no Tokio runtime available");
         return;
@@ -112,7 +115,7 @@ fn start_lease_timeout_loop(domains: Weak<DomainHandles>) {
     });
 }
 
-fn start_schedule_tick_loop(domains: Weak<DomainHandles>) {
+fn start_schedule_tick_loop(domains: Weak<dyn DomainMaintenance>) {
     let Ok(handle) = tokio::runtime::Handle::try_current() else {
         tracing::debug!("Schedule tick loop not started: no Tokio runtime available");
         return;
@@ -133,7 +136,7 @@ fn start_schedule_tick_loop(domains: Weak<DomainHandles>) {
     });
 }
 
-fn start_stream_maintenance_loop(domains: Weak<DomainHandles>) {
+fn start_stream_maintenance_loop(domains: Weak<dyn DomainMaintenance>) {
     let Ok(handle) = tokio::runtime::Handle::try_current() else {
         tracing::debug!("Stream maintenance loop not started: no Tokio runtime available");
         return;

@@ -41,7 +41,12 @@ pub(crate) struct IngressDomainDescriptor {
     build_request_envelope: RequestEnvelopeBuilder,
 }
 
-pub(crate) struct IngressDomainRegistry;
+/// API-edge policy lookup keyed by the canonical [`DomainKind`] inventory.
+///
+/// This type deliberately owns only transport concerns: authorization route
+/// extraction, ingress error codes, and request-envelope construction. Domain
+/// identity and protocol message ownership remain in the shared manifests.
+pub(crate) struct IngressDomainPolicy;
 
 impl IngressDomainDescriptor {
     #[cfg(test)]
@@ -69,7 +74,7 @@ impl IngressDomainDescriptor {
     }
 }
 
-impl IngressDomainRegistry {
+impl IngressDomainPolicy {
     #[cfg(test)]
     pub(super) fn all() -> &'static [IngressDomainDescriptor; 7] {
         &INGRESS_DOMAIN_DESCRIPTORS
@@ -243,7 +248,7 @@ mod tests {
     #[test]
     fn should_define_exactly_one_ingress_descriptor_for_every_domain_kind() {
         // Arrange
-        let descriptors = IngressDomainRegistry::all();
+        let descriptors = IngressDomainPolicy::all();
 
         // Act
         let descriptor_kinds = descriptors
@@ -269,7 +274,7 @@ mod tests {
 
         // Act
         let resolved =
-            domains.map(|domain| IngressDomainRegistry::descriptor_for_domain(domain).kind());
+            domains.map(|domain| IngressDomainPolicy::descriptor_for_domain(domain).kind());
 
         // Assert
         assert_eq!(resolved, domains);
@@ -281,14 +286,11 @@ mod tests {
         let names = DomainKind::ALL.map(DomainKind::as_str);
 
         // Act
-        let resolved = names.map(IngressDomainRegistry::domain_from_manifest_name);
+        let resolved = names.map(IngressDomainPolicy::domain_from_manifest_name);
 
         // Assert
         assert_eq!(resolved, DomainKind::ALL.map(Some));
-        assert_eq!(
-            IngressDomainRegistry::domain_from_manifest_name("nope"),
-            None
-        );
+        assert_eq!(IngressDomainPolicy::domain_from_manifest_name("nope"), None);
     }
 
     #[test]
@@ -361,7 +363,7 @@ mod tests {
         let actual = cases
             .iter()
             .map(|(msg_type, _)| {
-                IngressDomainRegistry::dispatch_spec_for_msg_type(
+                IngressDomainPolicy::dispatch_spec_for_msg_type(
                     crate::protocol::tlv::MessageType::new(*msg_type),
                 )
                 .expect("dispatch policy should resolve")
@@ -389,7 +391,7 @@ mod tests {
         let actual = cases
             .iter()
             .map(|msg_type| {
-                IngressDomainRegistry::dispatch_spec_for_msg_type(
+                IngressDomainPolicy::dispatch_spec_for_msg_type(
                     crate::protocol::tlv::MessageType::new(*msg_type),
                 )
                 .expect_err("message type should be rejected")
@@ -419,7 +421,7 @@ mod tests {
     #[test]
     fn should_build_prepared_lease_request_for_operation_frame() {
         // Arrange
-        let descriptor = IngressDomainRegistry::descriptor_for_domain(DispatchDomain::Lease);
+        let descriptor = IngressDomainPolicy::descriptor_for_domain(DispatchDomain::Lease);
         let payload = lease_acquire_payload("lease://acme/locks/resource", "owner");
 
         // Act
@@ -453,7 +455,7 @@ mod tests {
     #[test]
     fn should_reject_prepared_lease_acquire_owner_id_over_wire_safe_limit() {
         // Arrange
-        let descriptor = IngressDomainRegistry::descriptor_for_domain(DispatchDomain::Lease);
+        let descriptor = IngressDomainPolicy::descriptor_for_domain(DispatchDomain::Lease);
         let owner_id =
             "x".repeat(crate::domains::lease::protocol::LEASE_MAX_OWNER_ID_BYTES.saturating_add(1));
         let payload = lease_acquire_payload("lease://acme/locks/resource", &owner_id);
@@ -477,7 +479,7 @@ mod tests {
     #[test]
     fn should_keep_lease_subscription_on_public_request_path() {
         // Arrange
-        let descriptor = IngressDomainRegistry::descriptor_for_domain(DispatchDomain::Lease);
+        let descriptor = IngressDomainPolicy::descriptor_for_domain(DispatchDomain::Lease);
         let mut encoder = crate::protocol::payload_codec::PayloadEncoder::new();
         encoder.put_string("lease://acme/locks/resource");
 

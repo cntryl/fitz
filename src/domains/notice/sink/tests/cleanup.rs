@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn should_route_notice_session_cleanup_command_through_managed_actor() {
+fn should_route_notice_session_cleanup_command_through_family_runtime() {
     // Arrange
     let family = RouteFamily::new(1);
     let session_id = 7;

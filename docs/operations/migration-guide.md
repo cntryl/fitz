@@ -35,12 +35,17 @@ Broker configuration methods such as `KvDomainSink::with_write_options` retain
 their Midge option parameters. KV wire flags and persisted data formats do not
 change; network SDK consumers need no migration for this refactor.
 
-Existing exhaustive matches on `SendError` remain compatible: its variants and
-legacy mappings are unchanged. Use `ActorRef::send_detailed` or the corresponding
-`Context::*_detailed` methods for lossless `RouteError` values. Their
-`DeliveryFailed(destination, cause)` preserves `DeliveryError::Timeout`,
-`InvalidPayload { len, max }`, and `UnsupportedPayload`. The original send
-methods retain their legacy stopped-actor/panic classifications for these cases.
+`SendError` is intentionally source-breaking for exhaustive Rust matches. It now
+preserves `Timeout`, `InvalidPayload { len, max }`, and `UnsupportedPayload`
+instead of folding those outcomes into `ActorStopped` or `SinkPanicked`. Add
+explicit match arms for the new variants. `ActorRef::send_detailed` and the
+corresponding `Context::*_detailed` methods continue to expose the complete
+`RouteError::DeliveryFailed(destination, cause)` value.
+
+The boot-owned all-domain composition type is now named `BrokerDomains` rather
+than `DomainHandles`. It is implementation plumbing, not a stable application
+integration surface; embedded callers should depend on domain-specific ports or
+the `Runtime` facade.
 
 `MailboxSink::deliver_high_priority` remains required. Implementations with one
 lane explicitly forward to `deliver`; managed mailboxes explicitly use their
@@ -258,9 +263,9 @@ than the `notify` spelling used by the other domains.
 
 ## Stream Rust API Cleanup
 
-New construction code should call `StreamDomainSink::try_new` and handle
-`StreamSinkInitError`. `StreamDomainSink::new` remains as a compatibility
-wrapper and retains its historical panic-on-initialization behavior.
+Construction code must call `StreamDomainSink::try_new` and handle
+`StreamSinkInitError`. The historical panic-on-initialization
+`StreamDomainSink::new` compatibility wrapper was removed.
 
 The client-facing `StreamWriteMode` now contains only `Buffered` and `Sync`.
 Cloud provider acknowledgement remains a broker storage-policy choice for

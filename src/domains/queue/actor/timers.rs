@@ -133,7 +133,7 @@ impl QueueActor {
         id: MessageId,
         inflight: &Inflight,
     ) -> Option<cntryl_midge::Transaction> {
-        match self.store.begin_tx(
+        match self.persistence.engine.begin_tx(
             self.queue_key.family.id(),
             cntryl_midge::TransactionMode::ReadWrite,
         ) {
@@ -174,9 +174,11 @@ impl QueueActor {
         }
 
         let update_start = Instant::now();
-        if let Err(error) =
-            Self::commit_transaction(txn, self.commit_write_options, QueueCommit::Redelivery)
-        {
+        if let Err(error) = Self::commit_transaction(
+            txn,
+            self.persistence.write_options(),
+            QueueCommit::Redelivery,
+        ) {
             tracing::warn!(
                 queue = ?self.queue_key,
                 route_family = self.queue_key.family.as_u64(),

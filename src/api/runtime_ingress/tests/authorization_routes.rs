@@ -125,7 +125,7 @@ fn should_map_rpc_authorization_policies() {
     let unregister = auth_spec(301);
     let call = auth_spec(302);
     let response = auth_spec(303);
-    let ack = crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::dispatch_spec_for_msg_type(
+    let ack = crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::dispatch_spec_for_msg_type(
         MessageType::new(304),
     );
 

@@ -1,5 +1,23 @@
 use super::*;
 
+#[test]
+fn should_use_family_runtime_for_every_provisioned_family() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let families = [RouteFamily::new(1), RouteFamily::new(2)];
+
+    // Act
+    let sink = RpcDomainSink::new_with_families(
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+        &families,
+    );
+
+    // Assert
+    assert_eq!(sink.family_runtime.ingress().family_count(), families.len());
+    assert!(sink.family_runtime.is_running());
+}
+
 pub(super) fn assert_rpc_code_error(payload: &[u8], expected_code: u16, expected_message: &str) {
     let (code, message) =
         crate::dispatch::protocol::rpc_codec::decode_error_body(payload).expect("rpc code error");
@@ -248,7 +266,7 @@ pub(super) fn should_report_rpc_sink_inactive_immediately_after_stop() {
 }
 
 #[test]
-pub(super) fn should_reject_rpc_delivery_when_managed_actor_is_stopped() {
+pub(super) fn should_reject_rpc_delivery_when_family_runtime_is_stopped() {
     // Arrange
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
@@ -269,7 +287,7 @@ pub(super) fn should_reject_rpc_delivery_when_managed_actor_is_stopped() {
 }
 
 #[test]
-pub(super) fn should_route_rpc_live_count_queries_through_managed_actor() {
+pub(super) fn should_route_rpc_live_count_queries_through_family_runtime() {
     // Arrange
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
@@ -301,7 +319,7 @@ pub(super) fn should_route_rpc_live_count_queries_through_managed_actor() {
 }
 
 #[test]
-pub(super) fn should_route_rpc_session_cleanup_helper_through_managed_actor() {
+pub(super) fn should_route_rpc_session_cleanup_helper_through_family_runtime() {
     // Arrange
     let family = RouteFamily::new(1);
     let metrics = crate::observability::metrics::MetricsCollector::new();
@@ -338,7 +356,7 @@ pub(super) fn should_route_rpc_session_cleanup_helper_through_managed_actor() {
 }
 
 #[test]
-pub(super) fn should_route_rpc_worker_unsubscribe_helper_through_managed_actor() {
+pub(super) fn should_route_rpc_worker_unsubscribe_helper_through_family_runtime() {
     // Arrange
     let family = RouteFamily::new(1);
     let metrics = crate::observability::metrics::MetricsCollector::new();

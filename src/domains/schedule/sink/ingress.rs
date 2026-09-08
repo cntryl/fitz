@@ -1,9 +1,11 @@
 //! Envelope ingress: validate an inbound envelope, parse it into a Schedule
 //! request, and dispatch to the subscriptions/definitions/response layers.
 
-use super::model::{DeliveryError, Envelope, Ordering, ScheduleDomainRuntime};
+use super::model::ScheduleDomainRuntime;
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
+use crate::runtime::{DeliveryError, Envelope};
+use std::sync::atomic::Ordering;
 
 impl ScheduleDomainRuntime<'_> {
     pub(super) fn deliver_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {

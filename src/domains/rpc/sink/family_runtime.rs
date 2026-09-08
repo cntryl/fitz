@@ -1,7 +1,7 @@
 use super::state_model::{
     Arc, AtomicBool, AtomicU64, AtomicUsize, BTreeMap, DeliveryError, Duration, Instant, Mutex,
-    RouteFamily, Router, RpcDomainActor, RpcDomainCommand, RpcDomainCore, RpcDomainRuntime,
-    RpcDomainSink, RpcState, RPC_DEFAULT_REQUEST_TIMEOUT, RPC_DEFAULT_ROUTE_PENDING_CAPACITY,
+    RouteFamily, Router, RpcDomainCommand, RpcDomainCore, RpcDomainRuntime, RpcDomainSink,
+    RpcState, RPC_DEFAULT_REQUEST_TIMEOUT, RPC_DEFAULT_ROUTE_PENDING_CAPACITY,
     RPC_MIN_TIMEOUT_SWEEP_INTERVAL,
 };
 
@@ -10,7 +10,7 @@ impl RpcDomainSink {
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
     ) -> Self {
-        Self::new_inner(router, admin_read_model, None)
+        Self::new_inner(router, admin_read_model, vec![RouteFamily::new(1)])
     }
 
     pub(crate) fn new_with_families(
@@ -18,19 +18,15 @@ impl RpcDomainSink {
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
         provisioned_families: &[RouteFamily],
     ) -> Self {
-        Self::new_inner(
-            router,
-            admin_read_model,
-            Some(provisioned_families.to_vec()),
-        )
+        Self::new_inner(router, admin_read_model, provisioned_families.to_vec())
     }
 
     fn new_inner(
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
-        family_families: Option<Vec<RouteFamily>>,
+        family_families: Vec<RouteFamily>,
     ) -> Self {
-        let core = Arc::new(RpcDomainCore {
+        let mut core = Arc::new(RpcDomainCore {
             state: Mutex::new(RpcState::new()),
             cleaned_up_sessions: Mutex::new(crate::runtime::CleanedUpSessions::new(
                 crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
@@ -50,32 +46,15 @@ impl RpcDomainSink {
             family_cores: Arc::new(Mutex::new(BTreeMap::new())),
         });
         let active = Arc::new(AtomicBool::new(true));
-        let actor = Self::spawn_actor(core.clone(), active.clone());
-        let family_runtime = family_families
-            .as_deref()
-            .map(|families| Self::spawn_family_runtime(&core, active.clone(), families))
-            .transpose()
+        let family_runtime = Self::spawn_family_runtime(&core, active.clone(), &family_families)
             .expect("validated RPC family actor pool configuration");
+        core = Self::primary_family_core(&core, &family_families);
         Self {
             core,
             active,
-            actor,
             family_runtime,
             family_families,
         }
-    }
-
-    fn spawn_actor(
-        core: Arc<RpcDomainCore>,
-        active: Arc<AtomicBool>,
-    ) -> crate::runtime::ManagedActor<RpcDomainCommand> {
-        let router = core.router.clone();
-        crate::runtime::ManagedActor::spawn_fail_closed(
-            router,
-            RpcDomainActor::route_address(),
-            move || RpcDomainActor::new(core.clone(), active.clone()),
-            crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
-        )
     }
 
     fn spawn_family_runtime(
@@ -182,32 +161,40 @@ impl RpcDomainSink {
         family_core
     }
 
-    fn stop_family_runtime(&mut self) {
-        if let Some(runtime) = self.family_runtime.take() {
-            runtime.stop();
-        }
+    fn primary_family_core(
+        shared: &Arc<RpcDomainCore>,
+        families: &[RouteFamily],
+    ) -> Arc<RpcDomainCore> {
+        let primary = families
+            .first()
+            .expect("validated RPC family inventory is non-empty");
+        shared
+            .family_cores
+            .lock()
+            .get(&primary.id())
+            .and_then(std::sync::Weak::upgrade)
+            .expect("RPC primary family core was created with its runtime")
     }
 
     fn rebuild_actor(&mut self) {
-        self.actor.stop();
-        self.stop_family_runtime();
-        self.actor = Self::spawn_actor(self.core.clone(), self.active.clone());
-        self.family_runtime = self
-            .family_families
-            .as_deref()
-            .map(|families| Self::spawn_family_runtime(&self.core, self.active.clone(), families))
-            .transpose()
-            .expect("validated RPC family actor pool configuration");
+        self.family_runtime.stop();
+        self.family_runtime =
+            Self::spawn_family_runtime(&self.core, self.active.clone(), &self.family_families)
+                .expect("validated RPC family actor pool configuration");
+        self.core = Self::primary_family_core(&self.core, &self.family_families);
     }
 
     fn core_for_builder(&mut self) -> &mut RpcDomainCore {
-        self.stop_family_runtime();
+        self.family_runtime.stop();
+        if let Some(primary) = self.family_families.first() {
+            self.core.family_cores.lock().remove(&primary.id());
+        }
         Arc::get_mut(&mut self.core).expect("RPC sink builders must run before sharing the sink")
     }
 
     #[must_use]
     pub fn with_request_timeout(mut self, request_timeout: Duration) -> Self {
-        self.actor.stop();
+        self.family_runtime.stop();
         self.core_for_builder().request_timeout = if request_timeout.is_zero() {
             RPC_MIN_TIMEOUT_SWEEP_INTERVAL
         } else {
@@ -219,7 +206,7 @@ impl RpcDomainSink {
 
     #[must_use]
     pub fn with_route_pending_capacity(mut self, route_pending_capacity: usize) -> Self {
-        self.actor.stop();
+        self.family_runtime.stop();
         self.core_for_builder().route_pending_capacity = route_pending_capacity.max(1);
         self.rebuild_actor();
         self
@@ -230,7 +217,7 @@ impl RpcDomainSink {
         mut self,
         metrics: crate::observability::metrics::MetricsCollector,
     ) -> Self {
-        self.actor.stop();
+        self.family_runtime.stop();
         self.core_for_builder().metrics = Some(crate::domains::rpc::RpcMetrics::new(metrics));
         self.runtime().refresh_metrics_gauges();
         self.rebuild_actor();

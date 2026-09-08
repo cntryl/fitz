@@ -4,9 +4,10 @@
 //! Projection failure must never affect domain correctness.
 
 use super::model::{
-    now_epoch_ms, schedule_admin_snapshot_due, Ordering, ScheduleDomainRuntime, ScheduleLiveCounts,
+    now_epoch_ms, schedule_admin_snapshot_due, ScheduleDomainRuntime, ScheduleLiveCounts,
     EXECUTIONS_WINDOW_MS,
 };
+use std::sync::atomic::Ordering;
 
 impl ScheduleDomainRuntime<'_> {
     pub(super) fn subscription_count(&self) -> usize {

@@ -25,8 +25,7 @@ impl<A: Actor + ?Sized> Context<A> {
     /// # Errors
     ///
     /// Returns `SendError` when the route is unknown, the destination actor has
-    /// stopped, or backpressure prevents mailbox delivery. Legacy classification
-    /// folds timeouts into stopped actors and payload rejections into sink panics.
+    /// stopped, times out, rejects the payload, or encounters backpressure.
     pub fn send<M>(&self, dest: RouteAddress, msg: M) -> Result<(), SendError>
     where
         M: Send + Sync + 'static,
@@ -74,8 +73,7 @@ impl<A: Actor + ?Sized> Context<A> {
     /// # Errors
     ///
     /// Returns `SendError` when the route is unknown, the destination actor has
-    /// stopped, or backpressure prevents mailbox delivery. Legacy classification
-    /// folds timeouts into stopped actors and payload rejections into sink panics.
+    /// stopped, times out, rejects the payload, or encounters backpressure.
     pub fn send_untracked<M>(&self, dest: RouteAddress, msg: M) -> Result<(), SendError>
     where
         M: Send + Sync + 'static,

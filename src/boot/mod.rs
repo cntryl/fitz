@@ -9,6 +9,7 @@
 //!
 //! Each submodule is independently unit-testable.
 
+pub(crate) mod domain_interfaces;
 pub mod domains;
 pub mod observability;
 pub mod resource_limits;
@@ -200,7 +201,7 @@ fn register_domains_stage(
     store: &Arc<cntryl_midge::Engine>,
     runtime: &Runtime,
     config: &BootConfig,
-) -> BootStage<Arc<domains::DomainHandles>> {
+) -> BootStage<Arc<domains::BrokerDomains>> {
     let options = domains::DomainSetupOptions {
         route_families: config.route_families.clone(),
         schedule_write_options: config.schedule_write_options(),

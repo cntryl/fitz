@@ -8,7 +8,7 @@ use super::{
     NoticeDeliveryJob, NoticeDomainCommand, NoticeMetrics, NoticeRouteStats, NoticeRouteStatsKey,
     NoticeSubscription, RoutedSubscriptionSet,
 };
-use crate::runtime::{CleanedUpSessions, ManagedActor, Router};
+use crate::runtime::{CleanedUpSessions, Router};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64};
@@ -20,24 +20,26 @@ use std::sync::Arc;
 /// delivery and admin snapshots. State disappears on session cleanup or broker
 /// restart and is never durably recovered or replayed.
 pub(super) struct NoticeDomainCore {
-    /// Actor-owned single-writer state. The mutex supports immutable facade
-    /// methods; production mutation remains serialized by `NoticeDomainActor`.
+    /// Family-actor-owned single-writer state. The mutex supports immutable
+    /// facade observation; production mutation is serialized per family.
     pub(super) families: Mutex<
         HashMap<crate::runtime::routing::RouteFamily, RoutedSubscriptionSet<NoticeSubscription>>,
     >,
     /// Actor-owned single-writer route telemetry guarded for facade reads.
     pub(super) route_stats: Mutex<HashMap<NoticeRouteStatsKey, NoticeRouteStats>>,
-    pub(super) next_sub_id: AtomicU64,
+    pub(super) next_sub_id: Arc<AtomicU64>,
     pub(super) router: Arc<Router>,
     pub(super) admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
-    pub(super) admin_snapshot_dirty: AtomicBool,
+    pub(super) admin_snapshot_dirty: Arc<AtomicBool>,
     pub(super) metrics: Option<NoticeMetrics>,
-    pub(super) active: AtomicBool,
+    pub(super) active: Arc<AtomicBool>,
+    pub(super) family_cores:
+        Arc<Mutex<std::collections::BTreeMap<u32, std::sync::Weak<NoticeDomainCore>>>>,
     /// Sessions disconnect cleanup has already run for; guards against a
     /// stale queued request recreating a subscription. See `cleanup.rs`.
     pub(super) cleaned_up_sessions: Mutex<CleanedUpSessions>,
     /// One bounded, ordered delivery lane per route family prevents a blocked
-    /// subscriber from stalling unrelated families on the Notice actor.
+    /// subscriber from stalling unrelated Notice families.
     pub(super) delivery_workers: Mutex<
         HashMap<crate::runtime::routing::RouteFamily, crossbeam_channel::Sender<NoticeDeliveryJob>>,
     >,
@@ -45,5 +47,6 @@ pub(super) struct NoticeDomainCore {
 
 pub struct NoticeDomainSink {
     pub(super) core: Arc<NoticeDomainCore>,
-    pub(super) actor: ManagedActor<NoticeDomainCommand>,
+    pub(super) family_runtime: crate::runtime::FamilyActorPoolRuntime<NoticeDomainCommand>,
+    pub(super) family_families: Vec<crate::runtime::routing::RouteFamily>,
 }

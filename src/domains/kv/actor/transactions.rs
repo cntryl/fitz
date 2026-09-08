@@ -47,6 +47,7 @@ impl KvActor {
                         scoped_prefix,
                         column_family,
                         tx,
+                        mode,
                         write_options,
                         mutation_count: 0,
                         last_activity: Instant::now(),

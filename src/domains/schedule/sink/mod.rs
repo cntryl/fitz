@@ -16,7 +16,4 @@ pub(crate) use facade::DEFAULT_SCHEDULE_PRELOAD_TIMEOUT;
 pub use model::ScheduleDomainSink;
 
 #[cfg(test)]
-use model::*;
-
-#[cfg(test)]
 mod tests;

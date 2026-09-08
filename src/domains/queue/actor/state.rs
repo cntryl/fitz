@@ -300,8 +300,10 @@ impl QueueActor {
             return;
         }
 
-        self.record_cache_fifo
-            .retain(|id| self.records.contains_key(id));
+        let records = &self.state.records;
+        self.state
+            .record_cache_fifo
+            .retain(|id| records.contains_key(id));
     }
 
     pub(super) fn cache_body(&mut self, id: MessageId, body: Bytes) {
@@ -343,8 +345,10 @@ impl QueueActor {
             return;
         }
 
-        self.body_cache_fifo
-            .retain(|id| self.body_cache.contains_key(id));
+        let bodies = &self.state.body_cache;
+        self.state
+            .body_cache_fifo
+            .retain(|id| bodies.contains_key(id));
     }
 
     pub(super) fn pop_ready(&mut self) -> Option<MessageId> {

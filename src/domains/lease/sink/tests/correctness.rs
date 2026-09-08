@@ -1,5 +1,49 @@
 use super::*;
 
+#[test]
+fn should_keep_sibling_lease_family_usable_when_one_family_fails_closed() {
+    // Arrange
+    let failed_family = RouteFamily::new(1);
+    let healthy_family = RouteFamily::new(2);
+    let sink = new_correctness_lease_sink(Arc::new(Router::new()));
+
+    // Act
+    sink.panic_family_for_tests(failed_family);
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while sink.is_family_running(failed_family) && Instant::now() < deadline {
+        std::thread::yield_now();
+    }
+    let failed_result = sink.acquire_for_tests(family_acquire_request(failed_family, 7, "failed"));
+    let healthy_result =
+        sink.acquire_for_tests(family_acquire_request(healthy_family, 8, "healthy"));
+
+    // Assert
+    assert_eq!(failed_result, LeaseResponse::Timeout);
+    assert!(matches!(healthy_result, LeaseResponse::Acquired { .. }));
+    assert!(sink.is_family_running(healthy_family));
+}
+
+fn family_acquire_request(
+    family: RouteFamily,
+    session_id: u64,
+    resource: &str,
+) -> LeaseAcquireRequest {
+    LeaseAcquireRequest {
+        key: lease_key(family, &format!("lease://acme/locks/{resource}")),
+        owner_session_id: session_id,
+        owner_id: format!("{resource}-owner"),
+        ttl_secs: 30,
+        wait_seconds: 0,
+        reply_source: RouteAddress::new(
+            family,
+            Route::new(format!("inbox://session/{session_id}")),
+        ),
+        reply_destination: None,
+        channel: ClientChannel::Lease,
+        route_family: family,
+    }
+}
+
 fn lease_error_code(mailbox: &Mailbox, label: &str) -> u16 {
     let frame = receive_envelope(mailbox, label)
         .into_payload::<FrameContext>()
@@ -32,7 +76,7 @@ fn lease_acquire_request(ttl_secs: u64, wait_seconds: u32) -> LeaseAcquireReques
 }
 
 #[test]
-fn should_reject_oversized_ttl_without_stopping_actor() {
+fn should_reject_oversized_ttl_without_stopping_family_runtime() {
     // Arrange
     let sink = new_correctness_lease_sink(Arc::new(Router::new()));
 

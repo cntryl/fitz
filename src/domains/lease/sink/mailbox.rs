@@ -1,31 +1,39 @@
-//! Mailbox-lane routing and the domain actor's message loop.
+//! Mailbox-lane routing and the family runtime's command loop.
 
-use super::model::{LeaseDomainActor, LeaseDomainCommand, LeaseDomainSink, MailboxSink};
-use crate::runtime::{Actor, Context};
+use super::model::{LeaseDomainCommand, LeaseDomainRuntime, LeaseDomainSink, MailboxSink};
 use crate::runtime::{DeliveryError, Envelope};
 
 impl MailboxSink for LeaseDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            return self.cleanup_session(cleanup.session_id);
+            return self
+                .cleanup_family_session(*envelope.destination().family(), cleanup.session_id);
         }
-        self.actor.try_send(LeaseDomainCommand::Deliver(envelope))
+        let family = *envelope.destination().family();
+        self.enqueue(
+            family,
+            crate::runtime::FamilyActorLane::Normal,
+            LeaseDomainCommand::Deliver(envelope),
+        )
     }
 
     fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            return self.cleanup_session(cleanup.session_id);
+            return self
+                .cleanup_family_session(*envelope.destination().family(), cleanup.session_id);
         }
-        self.actor
-            .try_send_high_priority(LeaseDomainCommand::Deliver(envelope))
+        let family = *envelope.destination().family();
+        self.enqueue(
+            family,
+            crate::runtime::FamilyActorLane::Control,
+            LeaseDomainCommand::Deliver(envelope),
+        )
     }
 }
 
-impl Actor for LeaseDomainActor {
-    type Message = LeaseDomainCommand;
-
-    fn receive(&mut self, msg: Self::Message, _ctx: &mut Context<Self>) {
-        let runtime = self.state.runtime();
+impl LeaseDomainRuntime<'_> {
+    pub(super) fn receive(&self, msg: LeaseDomainCommand) {
+        let runtime = self;
         match msg {
             LeaseDomainCommand::Deliver(envelope) => {
                 if let Err(error) = runtime.deliver_envelope(&envelope) {

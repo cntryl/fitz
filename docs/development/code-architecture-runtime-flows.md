@@ -29,7 +29,7 @@ sequenceDiagram
     Boot->>Domains: construct all domain sinks
     Domains->>Router: register domain patterns
     Domains->>Domains: preload persisted schedule families
-    Domains-->>Boot: DomainHandles
+    Domains-->>Boot: BrokerDomains composition root
     Boot->>Runtime: attach domains and mark domains ready
     Boot->>Background: start domain background tasks
     Boot->>Runtime: mark startup complete

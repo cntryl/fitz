@@ -103,7 +103,7 @@ impl DomainFrameDispatcher<'_> {
     pub(super) fn domain_dispatch_for_msg_type(
         msg_type: crate::protocol::tlv::MessageType,
     ) -> Result<Option<DomainAuthorizationSpec>, &'static str> {
-        crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::dispatch_spec_for_msg_type(
+        crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::dispatch_spec_for_msg_type(
             msg_type,
         )
     }
@@ -115,21 +115,21 @@ impl DomainFrameDispatcher<'_> {
     }
 
     fn unauthorized_error_code(domain: DispatchDomain) -> u16 {
-        crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::descriptor_for_domain(
+        crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_domain(
             domain,
         )
         .unauthorized_error_code
     }
 
     fn backpressure_error_code(domain: DispatchDomain) -> u16 {
-        crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::descriptor_for_domain(
+        crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_domain(
             domain,
         )
         .backpressure_error_code
     }
 
     fn indeterminate_error_code(domain: DispatchDomain) -> u16 {
-        crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::descriptor_for_domain(
+        crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_domain(
             domain,
         )
         .indeterminate_error_code
@@ -601,7 +601,7 @@ impl DomainFrameDispatcher<'_> {
             self.cached_session_inbox_route(session_id),
         );
         let descriptor =
-            crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::descriptor_for_domain(
+            crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_domain(
                 domain,
             );
         (addr, source, descriptor)

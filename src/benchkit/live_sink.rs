@@ -1,7 +1,7 @@
 //! Live domain-sink benchmark helpers.
 //!
-//! These helpers let benchmarks drive the same `FrameContext -> Envelope -> Router ->
-//! DomainSink` path that the live server uses, without standing up TCP/WS transport.
+//! These helpers let benchmarks drive the same `FrameContext` -> `Envelope` -> `Router` ->
+//! domain-ingress sink path that the live server uses, without standing up TCP/WS transport.
 
 use super::{create_bench_store, create_local_bench_store, create_write_heavy_bench_store};
 #[cfg(any(test, feature = "benchkit"))]
@@ -262,7 +262,7 @@ pub fn route_frame_to_address(
     let family = *destination.family();
     let msg_type = MessageType::new(msg_type);
     if let Ok(Some(descriptor)) =
-        crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::descriptor_for_msg_type(
+        crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_msg_type(
             msg_type,
         )
     {

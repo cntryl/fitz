@@ -136,7 +136,11 @@ async fn should_cleanup_real_rpc_pending_request_on_close() {
 
     let router = Arc::new(crate::runtime::Router::new());
     let admin_read_model = AdminReadModel::new();
-    let rpc_sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model.clone()));
+    let rpc_sink = Arc::new(RpcDomainSink::new_with_families(
+        router.clone(),
+        admin_read_model.clone(),
+        &[family],
+    ));
     let caller_mailbox = Arc::new(Mailbox::new(8));
     let worker_mailbox = Arc::new(Mailbox::new(8));
 
@@ -226,9 +230,10 @@ async fn should_cleanup_real_lease_state_on_close() {
 
     let router = Arc::new(crate::runtime::Router::new());
     let admin_read_model = AdminReadModel::new();
-    let lease_sink = Arc::new(LeaseDomainSink::new(
+    let lease_sink = Arc::new(LeaseDomainSink::new_with_families(
         router.clone(),
         admin_read_model.clone(),
+        &[family],
     ));
     let subscriber_mailbox = Arc::new(Mailbox::new(8));
 
@@ -381,12 +386,15 @@ async fn should_cleanup_real_stream_session_and_subscription_on_close() {
     let store = crate::benchkit::create_bench_store();
     let router = Arc::new(crate::runtime::Router::new());
     let admin_read_model = AdminReadModel::new();
-    let stream_sink = Arc::new(StreamDomainSink::new(
-        store,
-        router.clone(),
-        admin_read_model.clone(),
-        crate::domains::stream::sink::StreamStorageWriteOptions::local(),
-    ));
+    let stream_sink = Arc::new(
+        StreamDomainSink::try_new(
+            store,
+            router.clone(),
+            admin_read_model.clone(),
+            crate::domains::stream::sink::StreamStorageWriteOptions::local(),
+        )
+        .expect("create Stream cleanup test sink"),
+    );
     let source_mailbox = Arc::new(Mailbox::new(8));
 
     router.register(source_address.clone(), source_mailbox.clone());

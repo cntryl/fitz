@@ -194,7 +194,7 @@ impl Runtime {
     /// read fails.
     pub fn stream_read_resource_records(
         &self,
-        request: AdminStreamReadRequest<'_>,
+        request: &AdminStreamReadRequest<'_>,
     ) -> Result<
         (
             Vec<crate::domains::stream::protocol::StreamReadItem>,

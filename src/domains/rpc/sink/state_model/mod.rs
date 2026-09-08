@@ -4,7 +4,7 @@ pub(super) type RpcDeliveryOutcome = (Option<RpcClientResponseBody>, Option<bool
 pub(super) use crate::dispatch::protocol::frame_context::FrameContext;
 pub(super) use crate::runtime::routing::{session_inbox_address, Route, RouteAddress, RouteFamily};
 pub(super) use crate::runtime::{
-    DeliveryError, Envelope, FamilyActorPoolRuntime, MailboxSink, ManagedActor, Router,
+    DeliveryError, Envelope, FamilyActorPoolRuntime, MailboxSink, Router,
 };
 pub(super) use chrono::{DateTime, Utc};
 pub(super) use parking_lot::Mutex;
@@ -57,9 +57,7 @@ pub(super) use requests::{
 };
 pub(super) use route_state::RpcRouteState;
 pub use sink::RpcDomainSink;
-pub(super) use sink::{
-    RpcDomainActor, RpcDomainCommand, RpcDomainCore, RpcDomainRuntime, RpcLiveCounts,
-};
+pub(super) use sink::{RpcDomainCommand, RpcDomainCore, RpcDomainRuntime, RpcLiveCounts};
 pub(super) use snapshot::rpc_admin_snapshot_due;
 #[cfg(test)]
 pub(super) use state::RpcDispatchState;

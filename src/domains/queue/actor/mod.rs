@@ -546,20 +546,15 @@ pub struct QueueActor {
     /// Queue identity
     queue_key: QueueKey,
 
-    /// Shared storage-key cache and recovery persistence boundary.
-    recovery_store: Arc<recovery_store::QueueRecoveryStore>,
+    /// Queue persistence adapter, including engine-specific policy conversion.
+    persistence: recovery_store::QueuePersistence,
 
-    /// Cached Midge body-key prefix for this queue.
-    body_key_prefix: Vec<u8>,
+    state: QueueActorState,
+}
 
-    /// Midge storage handle (for durable persistence)
-    store: Arc<cntryl_midge::MidgeEngine>,
-
-    /// Commit policy for queue mutations.
-    /// Durable stores use buffered commits; explicitly ephemeral stores can use
-    /// best-effort commits to avoid WAL work that cannot survive process exit.
-    commit_write_options: cntryl_midge::WriteOptions,
-
+/// Mutable queue mechanics, kept separate from identity and persistence dependencies.
+#[doc(hidden)]
+pub struct QueueActorState {
     /// Next message ID to allocate (monotonic counter)
     next_id: u64,
 
@@ -662,6 +657,20 @@ pub struct QueueActor {
     /// Cached next delayed message deadline (deferred delayed processing)
     /// Only process delayed messages if current time >= this deadline
     next_delayed_deadline: Instant,
+}
+
+impl std::ops::Deref for QueueActor {
+    type Target = QueueActorState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
+
+impl std::ops::DerefMut for QueueActor {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.state
+    }
 }
 
 mod admin_snapshot;

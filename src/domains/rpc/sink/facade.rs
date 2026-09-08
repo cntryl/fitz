@@ -1,31 +1,14 @@
 //! Public `RpcDomainSink` API and actor identity/lifecycle queries.
 
 use super::state_model::{
-    Arc, AtomicBool, Duration, Instant, Ordering, Route, RouteAddress, RpcDomainActor,
-    RpcDomainCommand, RpcDomainCore, RpcDomainRuntime, RpcDomainSink, RpcLiveCounts,
+    Duration, Instant, Ordering, RpcDomainCommand, RpcDomainRuntime, RpcDomainSink, RpcLiveCounts,
 };
 #[cfg(test)]
 use super::state_model::{
-    RpcPendingRequest, RpcQueuedRequest, RpcSessionCleanupResult, RpcWorker, RpcWorkerCleanupResult,
+    Route, RouteAddress, RpcPendingRequest, RpcQueuedRequest, RpcSessionCleanupResult, RpcWorker,
+    RpcWorkerCleanupResult,
 };
 use crate::runtime::routing::RouteFamily;
-
-impl RpcDomainActor {
-    pub(super) fn new(core: Arc<RpcDomainCore>, active: Arc<AtomicBool>) -> Self {
-        Self { core, active }
-    }
-
-    pub(super) fn route_address() -> RouteAddress {
-        RouteAddress::new(RouteFamily::new(0), Route::new("internal://domain/rpc"))
-    }
-
-    pub(super) fn runtime(&self) -> RpcDomainRuntime<'_> {
-        RpcDomainRuntime {
-            core: &self.core,
-            active: &self.active,
-        }
-    }
-}
 
 impl RpcDomainSink {
     pub(super) fn runtime(&self) -> RpcDomainRuntime<'_> {
@@ -36,16 +19,11 @@ impl RpcDomainSink {
     }
 
     fn control_targets(&self) -> Vec<Option<RouteFamily>> {
-        self.family_families.as_ref().map_or_else(
-            || vec![None],
-            |families| families.iter().copied().map(Some).collect(),
-        )
+        self.family_families.iter().copied().map(Some).collect()
     }
 
     fn primary_control_target(&self) -> Option<RouteFamily> {
-        self.family_families
-            .as_ref()
-            .and_then(|families| families.first().copied())
+        self.family_families.first().copied()
     }
 
     fn try_send_control(
@@ -53,24 +31,15 @@ impl RpcDomainSink {
         family: Option<RouteFamily>,
         command: RpcDomainCommand,
     ) -> Result<(), String> {
-        if let Some(runtime) = self.family_runtime.as_ref() {
-            let family = family.ok_or_else(|| "RPC family target is missing".to_string())?;
-            runtime
-                .try_enqueue(family, crate::runtime::FamilyActorLane::Control, command)
-                .map_err(|error| error.to_string())
-        } else {
-            self.actor
-                .try_send_high_priority(command)
-                .map_err(|error| error.to_string())
-        }
+        let family = family.ok_or_else(|| "RPC family target is missing".to_string())?;
+        self.family_runtime
+            .try_enqueue(family, crate::runtime::FamilyActorLane::Control, command)
+            .map_err(|error| error.to_string())
     }
 
     pub fn stop(&self) {
         self.active.store(false, Ordering::Relaxed);
-        if let Some(runtime) = self.family_runtime.as_ref() {
-            runtime.stop();
-        }
-        self.actor.stop();
+        self.family_runtime.stop();
     }
 
     pub(crate) fn is_active(&self) -> bool {
@@ -119,22 +88,14 @@ impl RpcDomainSink {
 
     #[cfg(test)]
     pub(super) fn is_actor_running(&self) -> bool {
-        self.actor.is_running()
-            && self
-                .family_runtime
-                .as_ref()
-                .is_none_or(crate::runtime::FamilyActorPoolRuntime::is_running)
+        self.family_runtime.is_running()
     }
 
     pub(crate) fn actor_health_snapshot(&self) -> crate::runtime::ManagedActorHealthSnapshot {
-        self.family_runtime.as_ref().map_or_else(
-            || self.actor.health_snapshot(),
-            crate::runtime::FamilyActorPoolRuntime::managed_actor_health_snapshot,
-        )
+        self.family_runtime.managed_actor_health_snapshot()
     }
 
-    /// Panic every provisioned family's handler (or the single actor in
-    /// non-sharded mode). Used by the opt-in failpoint and tests to
+    /// Panic every provisioned family's handler. Used by the opt-in failpoint and tests to
     /// drive the pool to full exhaustion; a single family's panic must never
     /// be conflated with domain-wide health, so covering every family here
     /// is required to actually observe pool-wide fail-closed behavior.
@@ -150,7 +111,7 @@ impl RpcDomainSink {
 
     #[cfg(test)]
     pub(super) fn stop_actor_for_tests(&self) {
-        self.actor.stop();
+        self.family_runtime.stop();
     }
 
     #[cfg(test)]
@@ -178,11 +139,20 @@ impl RpcDomainSink {
         correlation_id: uuid::Uuid,
         pending: RpcPendingRequest,
     ) {
-        self.core.state.lock().pending.track_pending_for_family(
+        let mut state = self.core.state.lock();
+        let previous_count = state.live_request_count();
+        let current_count = state.pending.track_pending_for_family(
             pending.dispatch_info.family,
             correlation_id,
             pending,
         );
+        drop(state);
+
+        if self.core.enforce_global_pending_count && current_count > previous_count {
+            self.core
+                .global_pending_count
+                .fetch_add(current_count - previous_count, Ordering::AcqRel);
+        }
     }
 
     #[cfg(test)]
@@ -276,12 +246,10 @@ impl RpcDomainSink {
     #[cfg(test)]
     pub(super) fn apply_session_cleanup(&self, session_id: u64) -> RpcSessionCleanupResult {
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
-        if let Err(error) =
-            self.actor
-                .try_send_high_priority(RpcDomainCommand::ApplySessionCleanupForTests(
-                    session_id, reply_tx,
-                ))
-        {
+        if let Err(error) = self.try_send_control(
+            self.primary_control_target(),
+            RpcDomainCommand::ApplySessionCleanupForTests(session_id, reply_tx),
+        ) {
             tracing::warn!(domain = "rpc", error = %error, "RPC session cleanup enqueue failed");
             return RpcSessionCleanupResult::default();
         }
@@ -298,14 +266,14 @@ impl RpcDomainSink {
         session_id: u64,
     ) -> RpcWorkerCleanupResult {
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
-        if let Err(error) =
-            self.actor
-                .try_send_high_priority(RpcDomainCommand::ApplyWorkerUnsubscribeForTests(
-                    worker_addr.clone(),
-                    session_id,
-                    reply_tx,
-                ))
-        {
+        if let Err(error) = self.try_send_control(
+            Some(*worker_addr.family()),
+            RpcDomainCommand::ApplyWorkerUnsubscribeForTests(
+                worker_addr.clone(),
+                session_id,
+                reply_tx,
+            ),
+        ) {
             tracing::warn!(domain = "rpc", error = %error, "RPC worker unsubscribe enqueue failed");
             return RpcWorkerCleanupResult::default();
         }

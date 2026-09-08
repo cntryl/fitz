@@ -988,9 +988,10 @@ async fn should_cleanup_real_notice_domain_subscription_on_close() {
 
     let router = Arc::new(crate::runtime::Router::new());
     let admin_read_model = AdminReadModel::new();
-    let notice_sink = Arc::new(NoticeDomainSink::new(
+    let notice_sink = Arc::new(NoticeDomainSink::new_with_families(
         router.clone(),
         admin_read_model.clone(),
+        &[family],
     ));
     let subscriber_mailbox = Arc::new(Mailbox::new(8));
 

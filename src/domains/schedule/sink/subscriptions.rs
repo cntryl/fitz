@@ -1,9 +1,8 @@
 //! Subscribe/unsubscribe message handling: mutation of the live subscription
 //! index in response to a client request.
 
-use super::model::{
-    Ordering, ScheduleDomainRuntime, ScheduleSubscription, ScheduleSubscriptionSet,
-};
+use super::model::{ScheduleDomainRuntime, ScheduleSubscription, ScheduleSubscriptionSet};
+use std::sync::atomic::Ordering;
 
 impl ScheduleDomainRuntime<'_> {
     pub(super) fn rollback_undeliverable_schedule_subscribe(

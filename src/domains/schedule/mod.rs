@@ -21,7 +21,6 @@ mod definition_validation;
 pub(crate) mod list_wire_budget;
 pub mod metrics;
 pub mod protocol;
-pub mod session;
 pub mod sink;
 pub mod store;
 
@@ -32,5 +31,4 @@ pub use protocol::{
     ScheduleCreateEntry, ScheduleDef, ScheduleDeliveryMode, ScheduleFailure,
     ScheduleFailureCategory, ScheduleListEntry, ScheduleMessage, ScheduleResponse,
 };
-pub use session::SessionActor;
 pub use store::ScheduleStore;

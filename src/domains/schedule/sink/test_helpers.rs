@@ -1,5 +1,6 @@
-use super::model::{Ordering, ScheduleDomainSink, ScheduleSubscriptionSet};
+use super::model::{ScheduleDomainSink, ScheduleSubscriptionSet};
 use crate::runtime::routing::RouteFamily;
+use std::sync::atomic::Ordering;
 
 impl ScheduleDomainSink {
     pub(super) fn write_options_are_cloud_strict_for_tests(&self) -> bool {

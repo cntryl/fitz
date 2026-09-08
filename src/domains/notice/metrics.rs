@@ -9,7 +9,8 @@ pub const METRIC_SUBSCRIPTIONS_GAUGE: &str = "fitz_notice_subscriptions_gauge";
 pub const METRIC_RESPONSE_DROPS_TOTAL: &str = "fitz_notice_response_drops_total";
 // Wire name kept as `delivery` rather than `notify` for dashboard compatibility.
 pub const METRIC_DELIVERY_DROPS_TOTAL: &str = "fitz_notice_delivery_drops_total";
-/// Accepted deliveries whose envelope failed inside the actor. The client was
+pub const METRIC_FAMILY_FAILED_CLOSED_TOTAL: &str = "fitz_notice_family_failed_closed_total";
+/// Accepted deliveries whose envelope failed inside the family actor. The client was
 /// already told the publish was accepted, so there is nobody to report to -
 /// but the failure must still be countable.
 pub const METRIC_ACCEPTED_DELIVERY_FAILURES_TOTAL: &str =

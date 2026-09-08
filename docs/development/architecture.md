@@ -239,9 +239,9 @@ shard. The transport/router edge only enqueues work:
   count is `available_parallelism` capped by the provisioned family count.
 - Shards drain ready families round-robin so one noisy family cannot monopolize
   a worker.
-#### Domain Handles
+#### Broker domain composition
 See [runtime and storage boundaries](runtime-storage-boundaries.md) for delivery error contracts, optional mailbox priority, KV write policy, and Queue recovery ownership.
-`DomainHandles` owns the concrete domain sinks but keeps those fields private. Boot, background maintenance, metrics, and admin query code must use explicit handle or `Runtime::*` facade methods so concrete sink internals do not become a public mutable API.
+`BrokerDomains` is the boot composition root for the concrete domain sinks and keeps those fields private. Background maintenance consumes the narrow `DomainMaintenance` port and health monitoring consumes `DomainHealth`; metrics and admin query code use explicit ports or `Runtime::*` facade methods so concrete sink internals do not become a mutable service-locator API.
 There is no active `runtime::Scheduler` API. The legacy scheduler module is
 test-only while managed domain actors are migrated to family-owned workers.
 #### Ingress
@@ -568,7 +568,7 @@ Current Notice behavior is intentionally ephemeral:
 - Admin path: admin reads use `Runtime::notice_list_subscriptions()` and `Runtime::notice_list_routes()` backed by the passive `AdminReadModel`.
 
 #### Stream
-- Actor owner: `StreamDomainSink` owns the shared `StreamDomainCore`; normal Stream delivery executes synchronously through that core, while `StreamDomainActor` remains the managed runtime actor for high-priority cleanup, live count queries, admin snapshot refresh, and committed watermark projection. `StreamActor`, `AreaActor`, and `RealmActor` remain focused state-machine models for resource, area, and realm sequencing.
+- Actor owner: `StreamDomainSink` owns a `FamilyActorPoolRuntime`; every provisioned route family creates its `StreamDomainCore` on the owning worker, and both client and control commands execute serially through that family. `StreamActor`, `AreaActor`, and `RealmActor` remain focused state-machine models for resource, area, and realm sequencing, while committed history and recovery remain store-authoritative.
 - Current runtime boundary: `StreamDomainSink` is the direct delivery adapter for client Stream frames, and `StreamDomainRuntime` executes against `StreamDomainCore` for actor-owned control and admin commands.
 - Persistence: committed records, metadata, and watermarks are durable; live append sessions and subscriptions are ephemeral.
 - Cleanup: disconnect aborts append sessions and drops live subscriptions without restoring them on reconnect.

@@ -20,7 +20,7 @@ fn seeded_queue() -> (QueueActor, Arc<QueueRecoveryStore>) {
         actor.handle_send(Bytes::from_static(b"first"), None),
         super::super::QueueResponse::Sent { .. }
     ));
-    let store = actor.recovery_store.clone();
+    let store = actor.persistence.recovery.clone();
     (actor, store)
 }
 
@@ -71,7 +71,7 @@ fn should_preserve_previous_index_when_replacement_commit_fails() {
     };
 
     // Act
-    let result = store.replace_index(&replacement, WriteOptions::cloud_strict());
+    let result = store.replace_index(&replacement, WritePolicy::CloudStrict);
 
     // Assert
     assert!(result.is_err(), "cloud policy must fail on local storage");

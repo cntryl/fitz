@@ -3,7 +3,7 @@ use super::{
     LIFECYCLE_DRAINING, LIFECYCLE_RUNNING, LIFECYCLE_SHUTTING_DOWN,
 };
 use crate::api::runtime_ingress::RuntimeIngress;
-use crate::boot::domains::DomainHandles;
+use crate::boot::domains::BrokerDomains;
 use crate::runtime::routing::RouteFamily;
 use crate::runtime::Router;
 use std::sync::atomic::Ordering;
@@ -126,7 +126,7 @@ impl Runtime {
             .and_then(|ingress| ingress.shard_for_family(family))
     }
 
-    pub fn attach_domains(&self, domains: Arc<DomainHandles>) {
+    pub fn attach_domains(&self, domains: Arc<BrokerDomains>) {
         *self.domains.write() = Some(domains);
     }
 
@@ -135,7 +135,7 @@ impl Runtime {
     /// # Panics
     ///
     /// Panics if domain handles have not been attached yet.
-    pub fn domains(&self) -> Arc<DomainHandles> {
+    pub fn domains(&self) -> Arc<BrokerDomains> {
         self.domains
             .read()
             .clone()
@@ -249,7 +249,7 @@ impl Runtime {
     }
 
     #[must_use]
-    pub fn detach_domains(&self) -> Option<Arc<DomainHandles>> {
+    pub fn detach_domains(&self) -> Option<Arc<BrokerDomains>> {
         self.domains.write().take()
     }
 

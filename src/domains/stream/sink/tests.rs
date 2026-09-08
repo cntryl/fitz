@@ -23,12 +23,19 @@ fn setup_test_context() -> TestContext {
     let family = RouteFamily::new(1);
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = Arc::new(StreamDomainSink::new(
-        crate::benchkit::create_bench_store(),
-        router.clone(),
-        admin_read_model.clone(),
-        StreamStorageWriteOptions::local(),
-    ));
+    let sink = Arc::new(
+        StreamDomainSink::new_with_storage_layout_and_families(
+            crate::storage::FitzStorageEngine::new(crate::testkit::create_test_engine_with_cfs(
+                vec![1, 2],
+            )),
+            router.clone(),
+            admin_read_model.clone(),
+            StreamStorageLayout::default(),
+            Some(&[family, RouteFamily::new(2)]),
+            StreamStorageWriteOptions::local(),
+        )
+        .expect("create Stream test sink"),
+    );
     router.register_domain_pattern("stream", sink.clone() as Arc<dyn MailboxSink>);
     let (source, inbox) = register_session_queue_sink(&router, family, TEST_CLIENT_SESSION_ID);
 

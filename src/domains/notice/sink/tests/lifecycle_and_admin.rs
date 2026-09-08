@@ -14,7 +14,7 @@ fn should_create_notice_domain_sink() {
 }
 
 #[test]
-fn should_reject_notice_delivery_when_managed_actor_is_stopped() {
+fn should_reject_notice_delivery_when_family_runtime_is_stopped() {
     // Arrange
     let family = RouteFamily::new(1);
     let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
@@ -47,7 +47,7 @@ fn should_reject_notice_delivery_when_managed_actor_is_stopped() {
 }
 
 #[test]
-fn should_route_notice_live_count_queries_through_managed_actor() {
+fn should_route_notice_live_count_queries_through_family_runtime() {
     // Arrange
     let family = RouteFamily::new(1);
     let notice_route = "notice://acme/events";
@@ -83,7 +83,7 @@ fn should_route_notice_live_count_queries_through_managed_actor() {
 }
 
 #[test]
-fn should_report_failed_notice_cleanup_when_managed_actor_is_stopped() {
+fn should_report_failed_notice_cleanup_when_family_runtime_is_stopped() {
     // Arrange
     let router = Arc::new(Router::new());
     let sink = NoticeDomainSink::new(
@@ -100,7 +100,38 @@ fn should_report_failed_notice_cleanup_when_managed_actor_is_stopped() {
 }
 
 #[test]
-fn should_report_timeout_when_notice_actor_is_alive_but_busy() {
+fn should_keep_sibling_notice_family_usable_when_one_family_fails_closed() {
+    // Arrange
+    let failed_family = RouteFamily::new(1);
+    let healthy_family = RouteFamily::new(2);
+    let sink = NoticeDomainSink::new(
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+
+    // Act
+    sink.panic_family_for_tests(failed_family);
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while sink.is_family_running(failed_family) && std::time::Instant::now() < deadline {
+        std::thread::yield_now();
+    }
+    let failed_result = sink.deliver(Envelope::new(
+        RouteAddress::new(failed_family, Route::new("notice://cleanup")),
+        crate::runtime::SessionCleanup { session_id: 7 },
+    ));
+    let healthy_result = sink.deliver(Envelope::new(
+        RouteAddress::new(healthy_family, Route::new("notice://cleanup")),
+        crate::runtime::SessionCleanup { session_id: 8 },
+    ));
+
+    // Assert
+    assert!(matches!(failed_result, Err(DeliveryError::ActorStopped)));
+    assert_eq!(healthy_result, Ok(()));
+    assert!(sink.is_family_running(healthy_family));
+}
+
+#[test]
+fn should_report_timeout_when_notice_family_is_alive_but_busy() {
     // Arrange
     let router = Arc::new(Router::new());
     let sink = NoticeDomainSink::new(
@@ -122,7 +153,7 @@ fn should_report_timeout_when_notice_actor_is_alive_but_busy() {
 }
 
 #[test]
-fn should_route_notice_admin_dirty_refresh_through_managed_actor() {
+fn should_route_notice_admin_dirty_refresh_through_family_runtime() {
     // Arrange
     let family = RouteFamily::new(1);
     let notice_route = "notice://acme/events";
@@ -189,6 +220,49 @@ fn should_include_notice_subscription_given_flexible_route_shape() {
     assert_notice_admin_subscriptions(&subscriptions, &[notice_route]);
     assert_notice_admin_routes(&notice_routes, &[notice_route]);
     assert_eq!(subscriptions[0].realm, "acme");
+}
+
+#[test]
+fn should_project_notice_admin_state_from_every_family() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = NoticeDomainSink::new(router.clone(), admin_read_model.clone());
+    let first_family = RouteFamily::new(1);
+    let second_family = RouteFamily::new(2);
+    let first_mailbox = Arc::new(Mailbox::new(8));
+    let second_mailbox = Arc::new(Mailbox::new(8));
+    let first_subscriber = RouteAddress::new(first_family, Route::new("inbox://session/7"));
+    let second_subscriber = RouteAddress::new(second_family, Route::new("inbox://session/8"));
+    router.register(first_subscriber.clone(), first_mailbox.clone());
+    router.register(second_subscriber.clone(), second_mailbox.clone());
+    subscribe_notice_pattern(
+        &sink,
+        &first_subscriber,
+        &RouteAddress::new(first_family, Route::new("notice://acme/inbound")),
+        7,
+        "notice://acme/events",
+        first_family,
+    );
+    let _first_response = decode_notice_response(&first_mailbox);
+    subscribe_notice_pattern(
+        &sink,
+        &second_subscriber,
+        &RouteAddress::new(second_family, Route::new("notice://other/inbound")),
+        8,
+        "notice://other/events",
+        second_family,
+    );
+    let _second_response = decode_notice_response(&second_mailbox);
+
+    // Act
+    refresh_notice_admin_snapshot(&sink);
+    let subscriptions = admin_read_model.notice_subscriptions(None, None);
+
+    // Assert
+    assert_eq!(subscriptions.len(), 2);
+    assert!(subscriptions.iter().any(|entry| entry.route_family == 1));
+    assert!(subscriptions.iter().any(|entry| entry.route_family == 2));
 }
 
 #[test]

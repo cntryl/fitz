@@ -80,7 +80,7 @@ pub(super) fn extract_auth_route_for_domain(
     payload: &[u8],
 ) -> Result<Option<Cow<'_, str>>, String> {
     let descriptor =
-        crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::descriptor_for_domain(
+        crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_domain(
             domain,
         );
     descriptor

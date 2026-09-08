@@ -109,8 +109,21 @@ impl LeaseDomainRuntime<'_> {
     }
 
     pub(in crate::domains::lease::sink) fn refresh_metrics_gauges(&self) {
-        let lease_count = self.lease_count();
-        let waiter_count = self.waiter_count();
+        let family_states: Vec<_> = self
+            .core
+            .family_states
+            .lock()
+            .values()
+            .filter_map(std::sync::Weak::upgrade)
+            .collect();
+        let lease_count = family_states
+            .iter()
+            .map(|state| state.runtime().lease_count())
+            .sum();
+        let waiter_count = family_states
+            .iter()
+            .map(|state| state.runtime().waiter_count())
+            .sum();
 
         if let Some(metrics) = &self.core.metrics {
             metrics.set_active_leases(lease_count);

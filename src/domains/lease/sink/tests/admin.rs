@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn should_read_admin_waiters_through_actor_command() {
+fn should_read_admin_waiters_through_family_command() {
     // Arrange
     let family = RouteFamily::new(1);
     let lease_route = "lease://acme/locks/admin-waiter";
@@ -49,7 +49,7 @@ fn should_read_admin_waiters_through_actor_command() {
 }
 
 #[test]
-fn should_read_lease_live_counts_through_actor_command() {
+fn should_read_lease_live_counts_through_family_commands() {
     // Arrange
     let family = RouteFamily::new(1);
     let session_id = 7;

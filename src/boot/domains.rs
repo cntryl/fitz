@@ -1,14 +1,9 @@
 //! Domain actor setup and registration
 
 use crate::boot::runtime::BootResult;
-use crate::runtime::{DeliveryError, DomainKind, Envelope, MailboxSink, Router};
-use std::sync::atomic::{AtomicBool, Ordering};
+use crate::runtime::{DomainKind, MailboxSink, Router};
 use std::sync::Arc;
 use std::sync::Arc as StdArc;
-
-use crate::runtime::routing::RouteFamily;
-#[cfg(test)]
-use crate::runtime::routing::{Route, RouteAddress};
 
 use crate::domains::kv::sink::KvDomainSink;
 use crate::domains::lease::sink::LeaseDomainSink;
@@ -17,49 +12,10 @@ use crate::domains::queue::sink::QueueDomainSink;
 use crate::domains::rpc::sink::RpcDomainSink;
 use crate::domains::schedule::sink::ScheduleDomainSink;
 use crate::domains::stream::sink::StreamDomainSink;
-
-/// Generic domain sink: Forwards envelopes to domain actors.
-pub struct DomainSink {
-    name: &'static str,
-    active: AtomicBool,
-}
-
-impl DomainSink {
-    #[must_use]
-    pub fn new(name: &'static str) -> Self {
-        Self {
-            name,
-            active: AtomicBool::new(true),
-        }
-    }
-
-    pub fn stop(&self) {
-        self.active.store(false, Ordering::Relaxed);
-    }
-}
-
-impl MailboxSink for DomainSink {
-    fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        if !self.active.load(Ordering::Relaxed) {
-            return Err(DeliveryError::ActorStopped);
-        }
-
-        tracing::debug!(
-            domain = self.name,
-            destination = ?envelope.destination(),
-            "Frame received by domain sink"
-        );
-
-        Ok(())
-    }
-
-    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        self.deliver(envelope)
-    }
-}
+use crate::runtime::routing::RouteFamily;
 
 #[derive(Clone)]
-pub struct DomainHandles {
+pub struct BrokerDomains {
     kv: Arc<KvDomainSink>,
     queue: Arc<QueueDomainSink>,
     notice: Arc<NoticeDomainSink>,
@@ -90,7 +46,7 @@ impl DomainHealthSnapshot {
     }
 }
 
-impl DomainHandles {
+impl BrokerDomains {
     #[must_use]
     pub fn new(
         kv: Arc<KvDomainSink>,
@@ -359,7 +315,7 @@ impl DomainHandles {
 
     pub(crate) fn stream_admin_read_resource_records(
         &self,
-        request: crate::domains::stream::sink::AdminStreamReadRequest<'_>,
+        request: &crate::domains::stream::sink::AdminStreamReadRequest<'_>,
     ) -> Result<
         (
             Vec<crate::domains::stream::protocol::StreamReadItem>,
@@ -527,7 +483,7 @@ pub fn setup(
     store: &StdArc<cntryl_midge::Engine>,
     admin_read_model: &Arc<crate::control::admin::read_model::AdminReadModel>,
     options: &DomainSetupOptions,
-) -> BootResult<Arc<DomainHandles>> {
+) -> BootResult<Arc<BrokerDomains>> {
     let metrics = (*crate::observability::metrics()).clone();
     let storage = crate::storage::FitzStorageEngine::new(store.clone());
     let route_families = provisioned_route_families(options);
@@ -553,8 +509,12 @@ pub fn setup(
     register_domain_sink(DomainKind::Queue, router, queue_sink.clone());
 
     let notice_sink = Arc::new(
-        NoticeDomainSink::new(router.clone(), admin_read_model.clone())
-            .with_metrics(metrics.clone()),
+        NoticeDomainSink::new_with_families(
+            router.clone(),
+            admin_read_model.clone(),
+            &route_families,
+        )
+        .with_metrics(metrics.clone()),
     );
     register_domain_sink(DomainKind::Notice, router, notice_sink.clone());
 
@@ -577,8 +537,12 @@ pub fn setup(
     register_domain_sink(DomainKind::Rpc, router, rpc_sink.clone());
 
     let lease_sink = Arc::new(
-        LeaseDomainSink::new(router.clone(), admin_read_model.clone())
-            .with_metrics(metrics.clone()),
+        LeaseDomainSink::new_with_families(
+            router.clone(),
+            admin_read_model.clone(),
+            &route_families,
+        )
+        .with_metrics(metrics.clone()),
     );
     register_domain_sink(DomainKind::Lease, router, lease_sink.clone());
 
@@ -596,7 +560,7 @@ pub fn setup(
         DomainKind::ALL.len()
     );
 
-    let handles = Arc::new(DomainHandles::new(
+    let handles = Arc::new(BrokerDomains::new(
         kv_sink,
         queue_sink,
         notice_sink,
@@ -621,6 +585,8 @@ where
 mod tests {
     use super::*;
     use crate::protocol::FrameContext;
+    use crate::runtime::routing::{Route, RouteAddress};
+    use crate::runtime::Envelope;
     use bytes::{BufMut, Bytes};
 
     fn usize_to_u32_saturating(value: usize) -> u32 {
@@ -717,7 +683,7 @@ mod tests {
             .unwrap_or_else(|| panic!("{label} frame"))
     }
 
-    fn wait_for_domain_failures(domains: &DomainHandles) {
+    fn wait_for_domain_failures(domains: &BrokerDomains) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
         while std::time::Instant::now() < deadline {
             if domains
@@ -734,7 +700,7 @@ mod tests {
         panic!("domain actors did not fail closed: {snapshots:?}");
     }
 
-    fn wait_for_named_domain_failure(domains: &DomainHandles, domain: &str) {
+    fn wait_for_named_domain_failure(domains: &BrokerDomains, domain: &str) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
         while std::time::Instant::now() < deadline {
             if domains
@@ -749,68 +715,6 @@ mod tests {
 
         let snapshots = domains.health_snapshots();
         panic!("{domain} actor did not fail closed: {snapshots:?}");
-    }
-
-    #[test]
-    fn should_create_domain_sinks() {
-        // Arrange
-        let kv_sink = DomainSink::new("kv");
-        let notice_sink = DomainSink::new("notice");
-
-        // Act
-        let kv_active = kv_sink.active.load(Ordering::Relaxed);
-        let notice_active = notice_sink.active.load(Ordering::Relaxed);
-        kv_sink.stop();
-        let kv_stopped = kv_sink.active.load(Ordering::Relaxed);
-
-        // Assert
-        assert!(kv_active);
-        assert!(notice_active);
-        assert!(!kv_stopped);
-    }
-
-    #[test]
-    fn should_handle_delivery_when_active() {
-        // Arrange
-        let sink = DomainSink::new("kv");
-        let address = RouteAddress::new(RouteFamily::new(1), Route::new("kv"));
-        let envelope = Envelope::new(address, vec![0u8; 10]);
-
-        // Act
-        let result = sink.deliver(envelope);
-
-        // Assert
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn should_reject_delivery_when_stopped() {
-        // Arrange
-        let sink = DomainSink::new("kv");
-        sink.stop();
-
-        let address = RouteAddress::new(RouteFamily::new(1), Route::new("kv"));
-        let envelope = Envelope::new(address, vec![0u8; 10]);
-
-        // Act
-        let result = sink.deliver(envelope);
-
-        // Assert
-        assert!(matches!(result, Err(DeliveryError::ActorStopped)));
-    }
-
-    #[test]
-    fn should_handle_high_priority_delivery() {
-        // Arrange
-        let sink = DomainSink::new("kv");
-        let address = RouteAddress::new(RouteFamily::new(1), Route::new("kv"));
-        let envelope = Envelope::new(address, vec![0u8; 10]);
-
-        // Act
-        let result = sink.deliver_high_priority(envelope);
-
-        // Assert
-        assert!(result.is_ok());
     }
 
     #[test]
@@ -890,15 +794,15 @@ mod tests {
         // Assert
         assert_eq!(snapshots.len(), DomainKind::ALL.len());
         assert!(snapshots.iter().all(|snapshot| !snapshot.actor_running));
-        // Non-sharded domains (kv/queue/notice/lease/schedule) panic exactly
-        // one actor. Family-sharded domains (rpc/stream) are provisioned
+        // Non-sharded domains (kv/queue/schedule) panic exactly one actor.
+        // Family-sharded domains (notice/rpc/lease/stream) are provisioned
         // with 7 route families here (`domain_setup_options`) and must be
         // panicked on *every* family to reach full exhaustion -- see
         // the panic failpoints on `RpcDomainSink`/`StreamDomainSink` --
         // so their panic_count legitimately lands at 7, not 1.
         for snapshot in &snapshots {
             let expected_panic_count = match snapshot.domain {
-                "rpc" | "stream" => 7,
+                "notice" | "rpc" | "lease" | "stream" => 7,
                 _ => 1,
             };
             assert_eq!(

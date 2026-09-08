@@ -12,7 +12,7 @@ use std::time::Instant;
 use crate::prelude::Actor;
 use crate::runtime::actor::Context;
 
-use super::protocol::{KvMessage, KvResourceScope, KvResponse};
+use super::protocol::{KvMessage, KvResourceScope, KvResponse, TxMode};
 
 mod error_mapping;
 mod introspection;
@@ -30,7 +30,7 @@ use key_layout::KV_KEY_SCOPE_MARKER;
 use scan::MAX_SCAN_ITEMS;
 
 #[cfg(test)]
-use super::protocol::{KvError, ScanQuery, TxMode};
+use super::protocol::{KvError, ScanQuery};
 #[cfg(test)]
 use bytes::Bytes;
 
@@ -40,6 +40,7 @@ struct ActiveKvTx {
     scoped_prefix: Vec<u8>,
     column_family: ColumnFamilyId,
     tx: cntryl_midge::Transaction,
+    mode: TxMode,
     write_options: cntryl_midge::WriteOptions,
     mutation_count: u64,
     last_activity: Instant,

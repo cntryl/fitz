@@ -141,7 +141,7 @@ impl QueueActor {
         // Commit with buffered mode for high throughput
         // The store will sync periodically, maintaining durability without per-operation cost
         let commit_start = Instant::now();
-        if let Err(e) = txn.commit(self.commit_write_options) {
+        if let Err(e) = txn.commit(self.persistence.write_options()) {
             return QueueResponse::Error {
                 message: format!("Failed to commit transaction: {e:?}"),
             };
@@ -226,7 +226,7 @@ impl QueueActor {
         }
 
         let commit_start = Instant::now();
-        if let Err(e) = txn.commit(self.commit_write_options) {
+        if let Err(e) = txn.commit(self.persistence.write_options()) {
             return QueueResponse::Error {
                 message: format!("Failed to commit transaction: {e:?}"),
             };
@@ -275,7 +275,8 @@ impl QueueActor {
     }
 
     fn begin_enqueue_tx(&self) -> Result<cntryl_midge::Transaction, QueueResponse> {
-        self.store
+        self.persistence
+            .engine
             .begin_tx(
                 self.queue_key.family.id(),
                 cntryl_midge::TransactionMode::ReadWrite,
@@ -365,7 +366,7 @@ impl QueueActor {
     ) -> Result<(), QueueResponse> {
         if let Some(limit) = reserved_limit {
             txn.put(
-                self.recovery_store.meta_key.clone(),
+                self.persistence.recovery.meta_key.clone(),
                 limit.to_le_bytes().to_vec(),
                 None,
             )
@@ -375,7 +376,7 @@ impl QueueActor {
         }
 
         txn.put(
-            self.recovery_store.index_meta_key.clone(),
+            self.persistence.recovery.index_meta_key.clone(),
             Self::encode_index_meta(
                 staged_next_id,
                 Self::usize_to_u64(staged_ready_count),

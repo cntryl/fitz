@@ -345,7 +345,7 @@ fn should_match_fallback_for_prepared_lease_extend() {
 }
 
 #[test]
-fn should_keep_lease_actor_responsive_after_wire_ttl_rejections() {
+fn should_keep_lease_family_responsive_after_wire_ttl_rejections() {
     // Arrange
     let frames = vec![
         (

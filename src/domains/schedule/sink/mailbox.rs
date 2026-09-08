@@ -1,10 +1,7 @@
 //! Mailbox-lane routing and the domain actor's message loop.
 
-use super::model::{
-    DeliveryError, Envelope, MailboxSink, ScheduleDomainActor, ScheduleDomainCommand,
-    ScheduleDomainSink,
-};
-use crate::runtime::{Actor, Context};
+use super::model::{ScheduleDomainActor, ScheduleDomainCommand, ScheduleDomainSink};
+use crate::runtime::{Actor, Context, DeliveryError, Envelope, MailboxSink};
 
 impl MailboxSink for ScheduleDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {

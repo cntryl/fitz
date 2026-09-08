@@ -9,7 +9,7 @@ pub(crate) use fitz::api::admin::{
 };
 pub(crate) use fitz::api::http::Body;
 pub(crate) use fitz::api::runtime_ingress::{Ingress, RuntimeIngress};
-pub(crate) use fitz::boot::domains::DomainHandles;
+pub(crate) use fitz::boot::domains::BrokerDomains;
 pub(crate) use fitz::boot::{BootConfig, Runtime};
 pub(crate) use fitz::domains::kv::sink::KvDomainSink;
 pub(crate) use fitz::domains::kv::{KvActor, KvMessage, KvResourceScope, KvResponse, TxMode};
@@ -176,7 +176,7 @@ pub(crate) fn queue_runtime_with_domains() -> (Arc<Runtime>, Arc<cntryl_midge::E
     let admin_read_model = runtime.admin_read_model();
     let store = fitz::testkit::create_test_engine_with_cfs(vec![1]);
 
-    let domains = Arc::new(DomainHandles::new(
+    let domains = Arc::new(BrokerDomains::new(
         Arc::new(KvDomainSink::new(
             store.clone(),
             router.clone(),
@@ -193,12 +193,15 @@ pub(crate) fn queue_runtime_with_domains() -> (Arc<Runtime>, Arc<cntryl_midge::E
             router.clone(),
             admin_read_model.clone(),
         )),
-        Arc::new(StreamDomainSink::new(
-            store.clone(),
-            router.clone(),
-            admin_read_model.clone(),
-            fitz::domains::stream::sink::StreamStorageWriteOptions::local(),
-        )),
+        Arc::new(
+            StreamDomainSink::try_new(
+                store.clone(),
+                router.clone(),
+                admin_read_model.clone(),
+                fitz::domains::stream::sink::StreamStorageWriteOptions::local(),
+            )
+            .expect("create Stream admin test sink"),
+        ),
         Arc::new(RpcDomainSink::new(router.clone(), admin_read_model.clone())),
         Arc::new(LeaseDomainSink::new(
             router.clone(),
@@ -232,7 +235,7 @@ pub(crate) fn schedule_runtime_with_domains() -> (
         admin_read_model.clone(),
     ));
 
-    let domains = Arc::new(DomainHandles::new(
+    let domains = Arc::new(BrokerDomains::new(
         Arc::new(KvDomainSink::new(
             store.clone(),
             runtime.router(),
@@ -249,12 +252,15 @@ pub(crate) fn schedule_runtime_with_domains() -> (
             runtime.router(),
             admin_read_model.clone(),
         )),
-        Arc::new(StreamDomainSink::new(
-            store.clone(),
-            runtime.router(),
-            admin_read_model.clone(),
-            fitz::domains::stream::sink::StreamStorageWriteOptions::local(),
-        )),
+        Arc::new(
+            StreamDomainSink::try_new(
+                store.clone(),
+                runtime.router(),
+                admin_read_model.clone(),
+                fitz::domains::stream::sink::StreamStorageWriteOptions::local(),
+            )
+            .expect("create Stream admin server sink"),
+        ),
         Arc::new(RpcDomainSink::new(
             runtime.router(),
             admin_read_model.clone(),

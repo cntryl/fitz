@@ -9,6 +9,34 @@ use cntryl_midge::{Engine, Query, Transaction, TransactionMode, WriteOptions};
 use std::collections::VecDeque;
 use std::sync::Arc;
 
+use crate::domains::WritePolicy;
+
+pub(super) struct QueuePersistence {
+    pub engine: Arc<Engine>,
+    pub recovery: Arc<QueueRecoveryStore>,
+    pub body_key_prefix: Vec<u8>,
+    write_policy: WritePolicy,
+}
+
+impl QueuePersistence {
+    pub(super) fn new(engine: Arc<Engine>, key: &QueueKey, write_policy: WritePolicy) -> Self {
+        Self {
+            recovery: Arc::new(QueueRecoveryStore::new(engine.clone(), key.clone())),
+            body_key_prefix: QueueActor::body_key_prefix(key),
+            engine,
+            write_policy,
+        }
+    }
+
+    pub(super) fn write_options(&self) -> WriteOptions {
+        self.write_policy.into()
+    }
+
+    pub(super) fn write_policy(&self) -> WritePolicy {
+        self.write_policy
+    }
+}
+
 pub(super) struct QueueRecoveryStore {
     engine: Arc<Engine>,
     key: QueueKey,
@@ -150,7 +178,7 @@ impl QueueRecoveryStore {
     pub(super) fn replace_index(
         &self,
         state: &QueueIndexRebuild<'_>,
-        write_options: WriteOptions,
+        write_policy: WritePolicy,
     ) -> Result<(), String> {
         let mut transaction = self
             .engine
@@ -219,7 +247,7 @@ impl QueueRecoveryStore {
             )
             .map_err(|error| format!("Failed to write queue index meta: {error:?}"))?;
         transaction
-            .commit(write_options)
+            .commit(write_policy.into())
             .map_err(|error| format!("Failed to commit queue index rebuild: {error:?}"))
     }
 

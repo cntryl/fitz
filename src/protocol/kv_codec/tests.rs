@@ -340,14 +340,28 @@ fn should_encode_subscribe_ok_response() {
 #[test]
 fn should_encode_read_only_write_with_canonical_error_code() {
     // Arrange
-    // Act
-    // Assert
     let response = KvResponse::Error {
-        error: KvError::BackendError("Cannot write in ReadOnly transaction".to_string()),
+        error: KvError::ReadOnlyWrite,
     };
 
+    // Act
     let encoded = encode_response(&response);
 
+    // Assert
     assert_eq!(encoded[0], 1);
     assert_eq!(u32::from_be_bytes(encoded[1..5].try_into().unwrap()), 1005);
+}
+
+#[test]
+fn should_not_infer_read_only_write_from_backend_message() {
+    // Arrange
+    let response = KvResponse::Error {
+        error: KvError::BackendError("read-only replica conflict".to_string()),
+    };
+
+    // Act
+    let encoded = encode_response(&response);
+
+    // Assert
+    assert_eq!(u32::from_be_bytes(encoded[1..5].try_into().unwrap()), 1009);
 }

@@ -1,8 +1,9 @@
 //! Response encoding and best-effort routing back to the requester.
 
-use super::model::{Envelope, ScheduleDomainRuntime};
+use super::model::ScheduleDomainRuntime;
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
+use crate::runtime::Envelope;
 
 impl ScheduleDomainRuntime<'_> {
     pub(super) fn route_schedule_response(

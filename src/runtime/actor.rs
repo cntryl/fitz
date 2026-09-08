@@ -31,10 +31,15 @@ fn delivery_error_to_send_error(target: RouteAddress, error: &DeliveryError) -> 
             target,
             occupancy: usize_to_f64_saturating(*current_len) / usize_to_f64_saturating(*capacity),
         },
-        DeliveryError::ActorStopped | DeliveryError::Timeout => SendError::ActorStopped { target },
-        DeliveryError::SinkPanicked
-        | DeliveryError::InvalidPayload { .. }
-        | DeliveryError::UnsupportedPayload => SendError::SinkPanicked { target },
+        DeliveryError::ActorStopped => SendError::ActorStopped { target },
+        DeliveryError::Timeout => SendError::Timeout { target },
+        DeliveryError::SinkPanicked => SendError::SinkPanicked { target },
+        DeliveryError::InvalidPayload { len, max } => SendError::InvalidPayload {
+            target,
+            len: *len,
+            max: *max,
+        },
+        DeliveryError::UnsupportedPayload => SendError::UnsupportedPayload { target },
     }
 }
 
@@ -373,9 +378,7 @@ impl fmt::Display for ActorError {
 
 impl std::error::Error for ActorError {}
 
-/// Legacy send failure categories, retained for source and behavior compatibility.
-/// Use the `send_detailed` methods to preserve the full [`RouteError`], including
-/// timeouts and payload rejections that this legacy enum cannot distinguish.
+/// Send failure categories for actor-facing APIs.
 #[derive(Debug, Clone)]
 pub enum SendError {
     /// Mailbox is full (backpressure) - includes occupancy for adaptive backoff
@@ -387,6 +390,16 @@ pub enum SendError {
     ActorStopped { target: RouteAddress },
     /// Sink panicked while accepting the message
     SinkPanicked { target: RouteAddress },
+    /// The destination stayed alive but did not reply before its deadline.
+    Timeout { target: RouteAddress },
+    /// The payload exceeds the destination wire limit.
+    InvalidPayload {
+        target: RouteAddress,
+        len: usize,
+        max: usize,
+    },
+    /// The destination does not support this payload type.
+    UnsupportedPayload { target: RouteAddress },
     /// Route not registered
     RouteNotFound { target: RouteAddress },
 }
@@ -399,6 +412,9 @@ impl SendError {
             SendError::MailboxFull { target, .. }
             | SendError::ActorStopped { target }
             | SendError::SinkPanicked { target }
+            | SendError::Timeout { target }
+            | SendError::InvalidPayload { target, .. }
+            | SendError::UnsupportedPayload { target }
             | SendError::RouteNotFound { target } => target,
         }
     }
@@ -420,6 +436,13 @@ impl fmt::Display for SendError {
             }
             SendError::SinkPanicked { target } => {
                 write!(f, "Sink for {target} panicked during delivery")
+            }
+            SendError::Timeout { target } => write!(f, "Delivery to {target} timed out"),
+            SendError::InvalidPayload { target, len, max } => {
+                write!(f, "Payload for {target} is {len} bytes; maximum is {max}")
+            }
+            SendError::UnsupportedPayload { target } => {
+                write!(f, "Sink for {target} does not support the payload type")
             }
             SendError::RouteNotFound { target } => {
                 write!(f, "Route {target} not found")

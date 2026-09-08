@@ -1,6 +1,6 @@
 use super::{
     Arc, AtomicBool, AtomicU64, AtomicUsize, BTreeMap, DeliveryError, Duration, Envelope,
-    FamilyActorPoolRuntime, Instant, ManagedActor, Mutex, Router, RpcState, Weak,
+    FamilyActorPoolRuntime, Instant, Mutex, Router, RpcState, Weak,
 };
 #[cfg(test)]
 use super::{RouteAddress, RpcSessionCleanupResult, RpcWorkerCleanupResult};
@@ -67,11 +67,6 @@ pub(in crate::domains::rpc::sink) struct RpcLiveCounts {
     pub(in crate::domains::rpc::sink) pending_requests: usize,
 }
 
-pub(in crate::domains::rpc::sink) struct RpcDomainActor {
-    pub(in crate::domains::rpc::sink) core: Arc<RpcDomainCore>,
-    pub(in crate::domains::rpc::sink) active: Arc<AtomicBool>,
-}
-
 pub(in crate::domains::rpc::sink) struct RpcDomainRuntime<'a> {
     pub(in crate::domains::rpc::sink) core: &'a RpcDomainCore,
     pub(in crate::domains::rpc::sink) active: &'a AtomicBool,
@@ -80,11 +75,8 @@ pub(in crate::domains::rpc::sink) struct RpcDomainRuntime<'a> {
 pub struct RpcDomainSink {
     pub(in crate::domains::rpc::sink) core: Arc<RpcDomainCore>,
     pub(in crate::domains::rpc::sink) active: Arc<AtomicBool>,
-    pub(in crate::domains::rpc::sink) actor: ManagedActor<RpcDomainCommand>,
-    pub(in crate::domains::rpc::sink) family_runtime:
-        Option<FamilyActorPoolRuntime<RpcDomainCommand>>,
-    pub(in crate::domains::rpc::sink) family_families:
-        Option<Vec<crate::runtime::routing::RouteFamily>>,
+    pub(in crate::domains::rpc::sink) family_runtime: FamilyActorPoolRuntime<RpcDomainCommand>,
+    pub(in crate::domains::rpc::sink) family_families: Vec<crate::runtime::routing::RouteFamily>,
 }
 
 impl std::ops::Deref for RpcDomainRuntime<'_> {

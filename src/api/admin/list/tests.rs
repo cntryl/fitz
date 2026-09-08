@@ -1,5 +1,5 @@
 use super::*;
-use crate::boot::domains::DomainHandles;
+use crate::boot::domains::BrokerDomains;
 use crate::boot::Runtime;
 use crate::control::admin::QueueInfoSnapshot;
 use crate::domains::kv::sink::KvDomainSink;
@@ -62,7 +62,7 @@ fn runtime_with_preloaded_schedule() -> Arc<Runtime> {
         )
         .expect("insert schedule");
 
-    let domains = Arc::new(DomainHandles::new(
+    let domains = Arc::new(BrokerDomains::new(
         Arc::new(KvDomainSink::new(
             store.clone(),
             router.clone(),
@@ -79,12 +79,15 @@ fn runtime_with_preloaded_schedule() -> Arc<Runtime> {
             router.clone(),
             admin_read_model.clone(),
         )),
-        Arc::new(StreamDomainSink::new(
-            store.clone(),
-            router.clone(),
-            admin_read_model.clone(),
-            crate::domains::stream::sink::StreamStorageWriteOptions::local(),
-        )),
+        Arc::new(
+            StreamDomainSink::try_new(
+                store.clone(),
+                router.clone(),
+                admin_read_model.clone(),
+                crate::domains::stream::sink::StreamStorageWriteOptions::local(),
+            )
+            .expect("create Stream list test sink"),
+        ),
         Arc::new(RpcDomainSink::new(router.clone(), admin_read_model.clone())),
         Arc::new(LeaseDomainSink::new(
             router.clone(),

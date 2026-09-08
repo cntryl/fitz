@@ -43,6 +43,9 @@ impl KvActor {
             Ok(tx) => tx,
             Err(error) => return error,
         };
+        if let Err(response) = Self::ensure_writable(active) {
+            return response;
+        }
 
         let scoped_key = Self::encode_scoped_key(&active.scoped_prefix, key);
         match active.tx.put(scoped_key, value.to_vec(), None) {
@@ -68,6 +71,9 @@ impl KvActor {
             Ok(tx) => tx,
             Err(error) => return error,
         };
+        if let Err(response) = Self::ensure_writable(active) {
+            return response;
+        }
 
         let scoped_key = Self::encode_scoped_key(&active.scoped_prefix, key);
         match active.tx.get(&scoped_key) {
@@ -102,6 +108,9 @@ impl KvActor {
             Ok(tx) => tx,
             Err(error) => return error,
         };
+        if let Err(response) = Self::ensure_writable(active) {
+            return response;
+        }
 
         let scoped_key = Self::encode_scoped_key(&active.scoped_prefix, key);
         match active.tx.delete(scoped_key) {
@@ -127,6 +136,9 @@ impl KvActor {
             Ok(tx) => tx,
             Err(error) => return error,
         };
+        if let Err(response) = Self::ensure_writable(active) {
+            return response;
+        }
         if start >= end {
             return KvResponse::Error {
                 error: KvError::InvalidRequest("start must be less than end".to_string()),

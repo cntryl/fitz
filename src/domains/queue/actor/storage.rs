@@ -54,7 +54,8 @@ impl QueueActor {
         let cf_id = self.queue_key.family.id();
         let header_key = self.cached_header_key(id);
         let txn = self
-            .store
+            .persistence
+            .engine
             .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("Failed to begin read tx for message {id}: {e:?}"))?;
 
@@ -69,7 +70,8 @@ impl QueueActor {
         let cf_id = self.queue_key.family.id();
         let body_key = self.cached_body_key(id);
         let txn = self
-            .store
+            .persistence
+            .engine
             .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("Failed to begin read tx for message body {id}: {e:?}"))?;
 
@@ -88,7 +90,8 @@ impl QueueActor {
         let header_key = self.cached_header_key(id);
         let body_key = self.cached_body_key(id);
         let txn = self
-            .store
+            .persistence
+            .engine
             .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
             .map_err(|e| format!("Failed to begin read tx for message {id}: {e:?}"))?;
 

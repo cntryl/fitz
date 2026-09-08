@@ -478,8 +478,15 @@ fn should_evict_least_recently_touched_snapshot_when_retained_item_budget_is_exc
     // budget is exceeded. Each scan uses its own family so the (also
     // test-shrunk) per-family candidate ceiling never interferes — this
     // test is about the cross-family retained-memory bound specifically.
-    let sink = new_list_test_sink();
     let scans_needed = crate::domains::lease::protocol::LEASE_LIST_MAX_RETAINED_ITEMS_TOTAL / 2 + 2;
+    let families: Vec<_> = (0..scans_needed)
+        .map(|scan| RouteFamily::new(u32::try_from(scan).expect("scan index fits u32") + 1))
+        .collect();
+    let sink = LeaseDomainSink::new_with_families(
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+        &families,
+    );
     let mut first_snapshot_id = None;
     for scan in 0..scans_needed {
         let family = RouteFamily::new(u32::try_from(scan).expect("scan index fits u32") + 1);

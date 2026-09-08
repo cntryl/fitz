@@ -2,9 +2,9 @@
 //! messages to the per-family `ScheduleActor`, and hydrating those actors
 //! from persisted storage at startup.
 
-use super::model::{
-    duration_millis, now_epoch_ms, Entry, HashMap, ScheduleDomainRuntime, EXECUTIONS_WINDOW_MS,
-};
+use super::model::{duration_millis, now_epoch_ms, ScheduleDomainRuntime, EXECUTIONS_WINDOW_MS};
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 
 impl ScheduleDomainRuntime<'_> {
     pub(super) fn apply_schedule_message(

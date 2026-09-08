@@ -3,14 +3,11 @@
 ## Delivery failures
 
 `ActorRef::send_detailed` and the `Context::*_detailed` sending methods return
-`RouteError` with the exact destination and delivery failure. A timeout does not
-establish that an actor stopped. A payload rejection does not establish that a
-sink panicked. Invalid-payload errors retain the actual size and wire limit.
-
-The existing `send`, `send_untracked`, `publish_event`, and `reply` methods retain
-the original four-variant `SendError` and its legacy classification for source
-and behavior compatibility. Callers that need to distinguish timeout, invalid
-payload, and unsupported payload must use the detailed methods.
+`RouteError` with the exact destination and delivery failure. The actor-facing
+`send`, `send_untracked`, `publish_event`, and `reply` methods preserve those
+same semantic categories in `SendError`: timeout, actor stop, sink panic,
+invalid payload, and unsupported payload are distinct. Invalid-payload errors
+retain the actual size and wire limit.
 
 `MailboxSink::deliver_high_priority` remains required. Every sink explicitly
 chooses its handling: managed actor mailboxes use their separate bounded control
@@ -49,7 +46,10 @@ header records. The live recovered state and ready-ID sorting still scale with
 the recovered queue; this is not a constant-memory recovery guarantee.
 
 `QueueActor` owns index-counter validation, fallback selection, live ready and
-delayed state reconstruction, and the recovered ID boundary. The store receives
+delayed state reconstruction, and the recovered ID boundary. `QueuePersistence`
+groups the concrete engine, cached persistence keys, recovery store, and
+Fitz-owned write policy; conversion to Midge write options occurs only there.
+The recovery store receives
 a borrowed index-rebuild description and commits stale-index deletion, new
 entries, and metadata together. A failed replacement commit does not publish a
 partially replaced index. Recovery assumes the existing single-owner queue

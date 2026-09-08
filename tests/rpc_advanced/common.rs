@@ -13,7 +13,7 @@ pub(crate) use fitz::benchkit::{
     create_bench_rpc_sink, create_bench_rpc_sink_with_route_pending_capacity,
     create_bench_rpc_sink_with_timeout, extract_single_tlv_field,
 };
-pub(crate) use fitz::boot::domains::DomainHandles;
+pub(crate) use fitz::boot::domains::BrokerDomains;
 pub(crate) use fitz::domains::kv::sink::KvDomainSink;
 pub(crate) use fitz::domains::lease::sink::LeaseDomainSink;
 pub(crate) use fitz::domains::notice::sink::NoticeDomainSink;
@@ -208,12 +208,12 @@ pub(crate) async fn wait_for_pending_requests_to_clear(sink: &RpcDomainSink) {
 pub(crate) fn domain_handles_with_rpc_sink(
     router: Arc<Router>,
     rpc: Arc<RpcDomainSink>,
-) -> Arc<DomainHandles> {
+) -> Arc<BrokerDomains> {
     let admin_runtime = fitz::boot::Runtime::new(router.clone());
     let admin_read_model = admin_runtime.admin_read_model();
     let store = fitz::testkit::create_test_engine_with_cfs(vec![1]);
 
-    Arc::new(DomainHandles::new(
+    Arc::new(BrokerDomains::new(
         Arc::new(KvDomainSink::new(
             store.clone(),
             router.clone(),
@@ -230,12 +230,15 @@ pub(crate) fn domain_handles_with_rpc_sink(
             router.clone(),
             admin_read_model.clone(),
         )),
-        Arc::new(StreamDomainSink::new(
-            store.clone(),
-            router.clone(),
-            admin_read_model.clone(),
-            fitz::domains::stream::sink::StreamStorageWriteOptions::local(),
-        )),
+        Arc::new(
+            StreamDomainSink::try_new(
+                store.clone(),
+                router.clone(),
+                admin_read_model.clone(),
+                fitz::domains::stream::sink::StreamStorageWriteOptions::local(),
+            )
+            .expect("create Stream RPC test sink"),
+        ),
         rpc,
         Arc::new(LeaseDomainSink::new(
             router.clone(),

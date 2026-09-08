@@ -9,9 +9,7 @@
 
 pub(super) use crate::domains::lease::LeaseMetrics;
 pub(super) use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
-pub(super) use crate::runtime::{
-    ClientChannel, DeliveryError, Envelope, MailboxSink, ManagedActor, Router,
-};
+pub(super) use crate::runtime::{ClientChannel, DeliveryError, Envelope, MailboxSink, Router};
 pub(super) use chrono::Utc;
 pub(super) use parking_lot::Mutex;
 pub(super) use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
@@ -94,6 +92,28 @@ pub(super) struct LeaseListSnapshot {
     pub(super) last_touched_at: Instant,
 }
 
+/// Broker-wide capacity coordinator for otherwise family-affine LIST work.
+///
+/// Family actors are the only callers that create, continue, or remove their
+/// snapshots. Keeping the bounded inventory here preserves the pre-existing
+/// global memory ceiling and least-recently-used eviction contract without
+/// sharing lease ownership, waiter, or subscription state between families.
+pub(super) struct LeaseListSnapshotCoordinator {
+    snapshots: Mutex<HashMap<u64, LeaseListSnapshot>>,
+}
+
+impl LeaseListSnapshotCoordinator {
+    pub(super) fn new() -> Self {
+        Self {
+            snapshots: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub(super) fn lock(&self) -> parking_lot::MutexGuard<'_, HashMap<u64, LeaseListSnapshot>> {
+        self.snapshots.lock()
+    }
+}
+
 pub(super) struct LeaseAcquireRequest {
     pub(super) key: crate::domains::lease::protocol::LeaseKey,
     pub(super) owner_session_id: u64,
@@ -142,26 +162,28 @@ pub(super) struct LeaseDomainCore {
     /// `cleanup.rs`.
     pub(super) cleaned_up_sessions: Mutex<crate::runtime::CleanedUpSessions>,
     /// Process-local fencing token counter; resets on broker restart.
-    pub(super) next_token: AtomicU64,
+    pub(super) next_token: Arc<AtomicU64>,
     pub(super) router: Arc<Router>,
     pub(super) families: Mutex<HashMap<u64, RoutedSubscriptionSet<LeaseSubscription>>>,
-    pub(super) next_sub_id: AtomicU64,
+    pub(super) next_sub_id: Arc<AtomicU64>,
     /// Process-local keyed derivation for public holder incarnations. Keeping
     /// the key beside the ephemeral Lease universe makes incarnations stable
     /// within one broker lifetime without exposing invertible session IDs.
-    pub(super) holder_incarnation_hasher: std::collections::hash_map::RandomState,
+    pub(super) holder_incarnation_hasher: Arc<std::collections::hash_map::RandomState>,
     /// Outstanding `LIST` snapshots awaiting continuation, keyed by opaque
     /// snapshot ID. Bounded to
     /// `crate::domains::lease::protocol::LEASE_LIST_MAX_SNAPSHOTS` entries.
-    pub(super) list_snapshots: Mutex<HashMap<u64, LeaseListSnapshot>>,
-    pub(super) next_list_snapshot_id: AtomicU64,
+    pub(super) list_snapshots: Arc<LeaseListSnapshotCoordinator>,
+    pub(super) next_list_snapshot_id: Arc<AtomicU64>,
     pub(super) admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
     pub(super) metrics: Option<LeaseMetrics>,
+    pub(super) family_states:
+        Arc<Mutex<std::collections::BTreeMap<u32, std::sync::Weak<LeaseDomainState>>>>,
 }
 
 pub(super) struct LeaseDomainState {
     pub(super) core: LeaseDomainCore,
-    pub(super) active: AtomicBool,
+    pub(super) active: Arc<AtomicBool>,
 }
 
 pub(super) struct LeaseDomainRuntime<'a> {
@@ -233,14 +255,11 @@ pub(super) enum LeaseDomainCommand {
     ),
 }
 
-pub(super) struct LeaseDomainActor {
-    pub(super) state: Arc<LeaseDomainState>,
-}
-
 /// Production mailbox adapter for Lease semantics.
 pub struct LeaseDomainSink {
     pub(super) state: Arc<LeaseDomainState>,
-    pub(super) actor: ManagedActor<LeaseDomainCommand>,
+    pub(super) family_runtime: crate::runtime::FamilyActorPoolRuntime<LeaseDomainCommand>,
+    pub(super) route_families: Vec<crate::runtime::routing::RouteFamily>,
 }
 
 pub(super) struct LeaseSubscription {

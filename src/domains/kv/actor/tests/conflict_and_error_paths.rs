@@ -254,6 +254,36 @@ fn should_delete_nonexistent_key_without_error() {
 }
 
 #[test]
+fn should_reject_mutation_in_read_only_transaction_with_typed_error() {
+    // Arrange
+    let mut actor = test_actor();
+    let scope = KvResourceScope::new(RouteFamily::new(1), "test", "kv", "table1");
+    let KvResponse::BeginOk { tx_id } = actor.handle(KvMessage::Begin {
+        scope: scope.clone(),
+        mode: TxMode::ReadOnly,
+        write_options: cntryl_midge::WriteOptions::buffered().into(),
+    }) else {
+        panic!("Expected BeginOk");
+    };
+
+    // Act
+    let response = actor.handle(KvMessage::Put {
+        tx_id,
+        scope,
+        key: Bytes::from_static(b"key"),
+        value: Bytes::from_static(b"value"),
+    });
+
+    // Assert
+    assert!(matches!(
+        response,
+        KvResponse::Error {
+            error: KvError::ReadOnlyWrite
+        }
+    ));
+}
+
+#[test]
 fn should_scan_empty_table_returns_empty_result() {
     // Arrange
     let mut actor = test_actor();
@@ -320,35 +350,21 @@ fn should_reject_begin_with_empty_realm() {
 }
 
 #[test]
-fn should_not_classify_ordinary_operation_text_as_backend_unavailable() {
+fn should_classify_midge_errors_by_variant_not_message_wording() {
     // Arrange
-    let messages = [
-        "transaction condition violated",
-        "operation exception",
-        "revision mismatch",
+    let errors = [
+        cntryl_midge::MidgeError::WriteConflict("disk unavailable".to_string()),
+        cntryl_midge::MidgeError::Internal("conflict; retry".to_string()),
+        cntryl_midge::MidgeError::Corruption("temporary I/O failure".to_string()),
     ];
 
     // Act
-    let classifications = messages.map(KvActor::classify_midge_message);
+    let classifications = errors.map(|error| KvActor::map_midge_error(&error));
 
     // Assert
-    assert!(classifications
-        .iter()
-        .all(|classification| matches!(classification, KvError::BackendError(_))));
-}
-
-#[test]
-fn should_classify_explicit_io_indicators_as_backend_unavailable() {
-    // Arrange
-    let messages = ["I/O failure", "disk full", "os error 28"];
-
-    // Act
-    let classifications = messages.map(KvActor::classify_midge_message);
-
-    // Assert
-    assert!(classifications
-        .iter()
-        .all(|classification| matches!(classification, KvError::BackendUnavailable(_))));
+    assert!(matches!(classifications[0], KvError::Conflict(_)));
+    assert!(matches!(classifications[1], KvError::BackendError(_)));
+    assert!(matches!(classifications[2], KvError::BackendError(_)));
 }
 
 #[test]

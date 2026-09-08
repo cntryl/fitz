@@ -33,8 +33,11 @@ impl LeaseDomainSink {
     pub(super) fn acquire_for_tests(&self, request: LeaseAcquireRequest) -> LeaseResponse {
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         if self
-            .actor
-            .try_send_high_priority(LeaseDomainCommand::ApplyAcquireForTests(request, reply_tx))
+            .enqueue(
+                request.route_family,
+                crate::runtime::FamilyActorLane::Control,
+                LeaseDomainCommand::ApplyAcquireForTests(request, reply_tx),
+            )
             .is_err()
         {
             return LeaseResponse::Timeout;
@@ -54,14 +57,17 @@ impl LeaseDomainSink {
     ) -> LeaseResponse {
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         if self
-            .actor
-            .try_send_high_priority(LeaseDomainCommand::ApplyExtendForTests(
-                key.clone(),
-                owner_id.to_string(),
-                fencing_token,
-                ttl_secs,
-                reply_tx,
-            ))
+            .enqueue(
+                key.family,
+                crate::runtime::FamilyActorLane::Control,
+                LeaseDomainCommand::ApplyExtendForTests(
+                    key.clone(),
+                    owner_id.to_string(),
+                    fencing_token,
+                    ttl_secs,
+                    reply_tx,
+                ),
+            )
             .is_err()
         {
             return LeaseResponse::Timeout;
@@ -75,11 +81,11 @@ impl LeaseDomainSink {
     pub(super) fn expire_lease_for_tests(&self, key: &LeaseKey) -> bool {
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         if self
-            .actor
-            .try_send_high_priority(LeaseDomainCommand::ExpireLeaseForTests(
-                key.clone(),
-                reply_tx,
-            ))
+            .enqueue(
+                key.family,
+                crate::runtime::FamilyActorLane::Control,
+                LeaseDomainCommand::ExpireLeaseForTests(key.clone(), reply_tx),
+            )
             .is_err()
         {
             return false;
@@ -93,11 +99,11 @@ impl LeaseDomainSink {
     pub(super) fn pending_waiter_count_for_tests(&self, key: &LeaseKey) -> usize {
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         if self
-            .actor
-            .try_send_high_priority(LeaseDomainCommand::ReadPendingWaiterCountForTests(
-                key.clone(),
-                reply_tx,
-            ))
+            .enqueue(
+                key.family,
+                crate::runtime::FamilyActorLane::Control,
+                LeaseDomainCommand::ReadPendingWaiterCountForTests(key.clone(), reply_tx),
+            )
             .is_err()
         {
             return 0;
@@ -117,10 +123,13 @@ impl LeaseDomainSink {
     ) -> LeaseResponse {
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         if self
-            .actor
-            .try_send_high_priority(LeaseDomainCommand::ApplyListForTests(
-                family_id, pattern, cursor, limit, session_id, reply_tx,
-            ))
+            .enqueue(
+                family_id,
+                crate::runtime::FamilyActorLane::Control,
+                LeaseDomainCommand::ApplyListForTests(
+                    family_id, pattern, cursor, limit, session_id, reply_tx,
+                ),
+            )
             .is_err()
         {
             return LeaseResponse::Timeout;

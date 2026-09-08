@@ -92,20 +92,37 @@ fn should_preserve_unsupported_payload_when_sending_through_actor_ref() {
 }
 
 #[test]
-fn should_preserve_exhaustive_legacy_send_error_matches() {
+fn should_preserve_timeout_in_primary_send_error() {
     // Arrange
     let actor = sender(DeliveryError::Timeout);
 
     // Act
-    let classification = match actor.send(1).unwrap_err() {
-        SendError::MailboxFull { .. } => "full",
-        SendError::ActorStopped { .. } => "stopped",
-        SendError::SinkPanicked { .. } => "panic",
-        SendError::RouteNotFound { .. } => "missing",
-    };
+    let error = actor.send(1).unwrap_err();
 
     // Assert
-    assert_eq!(classification, "stopped");
+    assert!(matches!(error, SendError::Timeout { .. }));
+}
+
+#[test]
+fn should_preserve_payload_rejection_in_primary_send_error() {
+    // Arrange
+    let actor = sender(DeliveryError::InvalidPayload {
+        len: 65_536,
+        max: 65_535,
+    });
+
+    // Act
+    let error = actor.send(1).unwrap_err();
+
+    // Assert
+    assert!(matches!(
+        error,
+        SendError::InvalidPayload {
+            len: 65_536,
+            max: 65_535,
+            ..
+        }
+    ));
 }
 
 struct TestActor;
