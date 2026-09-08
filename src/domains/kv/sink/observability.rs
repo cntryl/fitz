@@ -55,28 +55,23 @@ impl KvDomainRuntime<'_> {
         let actors: Vec<_> = self
             .core
             .actors
-            .lock()
             .iter()
-            .map(|(session_id, actor)| (*session_id, actor.clone()))
+            .map(|(session_id, actor)| (*session_id, actor.active_transaction_snapshots()))
             .collect();
         let transactions = actors
             .iter()
-            .flat_map(|(session_id, actor)| {
-                actor
-                    .lock()
-                    .active_transaction_snapshots()
-                    .into_iter()
-                    .map(|snapshot| {
-                        crate::control::admin::KvTransaction::snapshot(
-                            snapshot.scope.route_family.as_u64(),
-                            snapshot.tx_id,
-                            *session_id,
-                            &snapshot.scope.realm,
-                            &snapshot.scope.area,
-                            &snapshot.scope.resource,
-                            &started_at,
-                        )
-                    })
+            .flat_map(|(session_id, snapshots)| {
+                snapshots.iter().map(|snapshot| {
+                    crate::control::admin::KvTransaction::snapshot(
+                        snapshot.scope.route_family.as_u64(),
+                        snapshot.tx_id,
+                        *session_id,
+                        &snapshot.scope.realm,
+                        &snapshot.scope.area,
+                        &snapshot.scope.resource,
+                        &started_at,
+                    )
+                })
             })
             .collect();
         self.core.projection.mark_dirty();
@@ -107,7 +102,6 @@ impl KvDomainRuntime<'_> {
     pub(super) fn subscription_count(&self) -> usize {
         self.core
             .watch_registries
-            .lock()
             .values()
             .map(crate::domains::kv::watch_registry::KvWatchRegistry::subscription_count)
             .sum()

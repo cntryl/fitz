@@ -5,15 +5,12 @@ use super::model::ScheduleDomainRuntime;
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
 use crate::runtime::{DeliveryError, Envelope};
-use std::sync::atomic::Ordering;
 
 impl ScheduleDomainRuntime<'_> {
-    pub(super) fn deliver_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {
+    pub(super) fn deliver_envelope(&mut self, envelope: &Envelope) -> Result<(), DeliveryError> {
         if self.handle_cleanup_envelope(envelope) {
             return Ok(());
         }
-        self.ensure_active()?;
-
         if self.handle_domain_publish_envelope(envelope) {
             return Ok(());
         }
@@ -83,12 +80,11 @@ impl ScheduleDomainRuntime<'_> {
                 session_id,
                 ..
             } => {
+                debug_assert_eq!(*family_id, self.core.route_family);
                 let existed = self
                     .core
-                    .sub_families
-                    .lock()
-                    .get(family_id)
-                    .and_then(|state| state.find_existing_id(*session_id, route.as_str()))
+                    .subscriptions
+                    .find_existing_id(*session_id, route.as_str())
                     .is_some();
                 (!existed).then_some((*family_id, route.clone(), *session_id))
             }
@@ -123,16 +119,10 @@ impl ScheduleDomainRuntime<'_> {
         Ok(())
     }
 
-    fn ensure_active(&self) -> Result<(), DeliveryError> {
-        crate::runtime::ingress_support::ensure_actor_active(self.active)
-    }
-
-    fn handle_domain_publish_envelope(&self, envelope: &Envelope) -> bool {
+    fn handle_domain_publish_envelope(&mut self, envelope: &Envelope) -> bool {
         if let Some(event) = envelope.payload::<crate::runtime::DomainPublishEvent>() {
             if *envelope.destination().family() != event.family_id {
-                self.core
-                    .live_publish_failures
-                    .fetch_add(1, Ordering::Relaxed);
+                self.core.live_publish_failures = self.core.live_publish_failures.saturating_add(1);
                 return true;
             }
             self.handle_domain_publish(event);
@@ -164,7 +154,7 @@ impl ScheduleDomainRuntime<'_> {
         }
     }
 
-    fn record_request_start(&self) -> Option<std::time::Instant> {
+    fn record_request_start(&mut self) -> Option<std::time::Instant> {
         self.core
             .metrics
             .as_ref()
@@ -172,7 +162,7 @@ impl ScheduleDomainRuntime<'_> {
     }
 
     fn parse_request_message(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         message: Result<
@@ -198,7 +188,7 @@ impl ScheduleDomainRuntime<'_> {
     }
 
     pub(super) fn dispatch_schedule_message(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         request_started: Option<std::time::Instant>,
@@ -242,10 +232,12 @@ impl ScheduleDomainRuntime<'_> {
             _ => {}
         }
 
-        let mut actors = self.core.actors.lock();
-        let actor = match self.get_or_create_actor(&mut actors, route_family) {
+        debug_assert_eq!(route_family, self.core.route_family);
+        let mut family_actor = self.core.actor.take();
+        let actor = match self.get_or_create_actor(&mut family_actor) {
             Ok(actor) => actor,
             Err(error) => {
+                self.core.actor = family_actor;
                 let response = ScheduleResponse::Error(
                     crate::domains::schedule::ScheduleFailure::parse(error),
                 );
@@ -254,7 +246,9 @@ impl ScheduleDomainRuntime<'_> {
             }
         };
 
-        Some(self.apply_schedule_message(actor, schedule_msg))
+        let outcome = self.apply_schedule_message(actor, schedule_msg);
+        self.core.actor = family_actor;
+        Some(outcome)
     }
 
     fn request_from_envelope(

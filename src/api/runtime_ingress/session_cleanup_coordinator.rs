@@ -9,7 +9,7 @@ const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(10);
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(1);
 /// Give up on a cleanup ticket once it has been pending this long instead of
 /// retrying forever. A domain actor that has permanently failed (see
-/// `ManagedActor`'s fail-closed supervision) can never accept a cleanup
+/// a family actor's fail-closed supervision can never accept a cleanup
 /// command again, so retrying indefinitely would leave the pending-cleanup
 /// gauge and oldest-age metric growing without bound instead of surfacing a
 /// terminal failure an operator can act on.

@@ -549,12 +549,6 @@ pub struct QueueActor {
     /// Queue persistence adapter, including engine-specific policy conversion.
     persistence: recovery_store::QueuePersistence,
 
-    state: QueueActorState,
-}
-
-/// Mutable queue mechanics, kept separate from identity and persistence dependencies.
-#[doc(hidden)]
-pub struct QueueActorState {
     /// Next message ID to allocate (monotonic counter)
     next_id: u64,
 
@@ -657,20 +651,6 @@ pub struct QueueActorState {
     /// Cached next delayed message deadline (deferred delayed processing)
     /// Only process delayed messages if current time >= this deadline
     next_delayed_deadline: Instant,
-}
-
-impl std::ops::Deref for QueueActor {
-    type Target = QueueActorState;
-
-    fn deref(&self) -> &Self::Target {
-        &self.state
-    }
-}
-
-impl std::ops::DerefMut for QueueActor {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.state
-    }
 }
 
 mod admin_snapshot;

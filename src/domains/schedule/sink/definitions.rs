@@ -3,12 +3,10 @@
 //! from persisted storage at startup.
 
 use super::model::{duration_millis, now_epoch_ms, ScheduleDomainRuntime, EXECUTIONS_WINDOW_MS};
-use std::collections::hash_map::Entry;
-use std::collections::HashMap;
 
 impl ScheduleDomainRuntime<'_> {
     pub(super) fn apply_schedule_message(
-        &self,
+        &mut self,
         actor: &mut crate::domains::schedule::ScheduleActor,
         schedule_msg: crate::domains::schedule::ScheduleMessage,
     ) -> (crate::domains::schedule::ScheduleResponse, bool) {
@@ -161,72 +159,44 @@ impl ScheduleDomainRuntime<'_> {
     }
 
     pub(super) fn get_or_create_actor<'a>(
-        &'a self,
-        actors: &'a mut HashMap<
-            crate::runtime::routing::RouteFamily,
-            crate::domains::schedule::ScheduleActor,
-        >,
-        route_family: crate::runtime::routing::RouteFamily,
+        &self,
+        actor: &'a mut Option<crate::domains::schedule::ScheduleActor>,
     ) -> Result<&'a mut crate::domains::schedule::ScheduleActor, String> {
-        match actors.entry(route_family) {
-            Entry::Occupied(entry) => Ok(entry.into_mut()),
-            Entry::Vacant(entry) => {
-                let actor = crate::domains::schedule::ScheduleActor::try_new_with_storage(
-                    route_family,
+        if actor.is_none() {
+            *actor = Some(
+                crate::domains::schedule::ScheduleActor::try_new_with_storage(
+                    self.core.route_family,
                     self.core.store.clone(),
-                    self.core.write_options,
-                )?;
-                Ok(entry.insert(actor))
-            }
+                    self.core.write_policy,
+                )?,
+            );
         }
+        Ok(actor.as_mut().expect("Schedule actor was initialized"))
     }
 
     /// # Errors
     ///
     /// Returns an error when listing column families or preloading a persisted
     /// schedule actor fails.
-    pub(super) fn preload_persisted_families(&self) -> Result<(), String> {
+    pub(super) fn preload_persisted_families(&mut self) -> Result<(), String> {
         let started_at = std::time::Instant::now();
         let column_families = self
             .core
             .store
             .list_column_families()
             .map_err(|e| format!("list schedule column families failed: {e}"))?;
-        let persisted_family_count = column_families
+        let family = self.core.route_family;
+        let persisted = column_families
             .iter()
-            .filter(|column_family| column_family.id() != 0)
-            .count();
-        tracing::info!(
-            domain = "schedule",
-            persisted_family_count,
-            "Schedule preload discovered persisted families"
-        );
-
-        let mut actors = self.core.actors.lock();
-        let mut preloaded_family_count = 0_usize;
-        for column_family in column_families {
-            if column_family.id() == 0 {
-                continue;
-            }
-
-            let family = crate::runtime::routing::RouteFamily::new(column_family.id());
-            if actors.contains_key(&family) {
-                continue;
-            }
-
-            let actor = crate::domains::schedule::ScheduleActor::try_new_with_storage(
-                family,
-                self.core.store.clone(),
-                self.core.write_options,
-            )?;
-            actors.insert(family, actor);
-            preloaded_family_count = preloaded_family_count.saturating_add(1);
-            tracing::debug!(
-                domain = "schedule",
-                route_family = family.id(),
-                preloaded_family_count,
-                persisted_family_count,
-                "Schedule persisted family preloaded"
+            .any(|column_family| column_family.id() == family.id());
+        let actor = &mut self.core.actor;
+        if persisted && actor.is_none() {
+            *actor = Some(
+                crate::domains::schedule::ScheduleActor::try_new_with_storage(
+                    family,
+                    self.core.store.clone(),
+                    self.core.write_policy,
+                )?,
             );
         }
 
@@ -235,24 +205,20 @@ impl ScheduleDomainRuntime<'_> {
         // occurrences already acknowledged within the last 60 seconds.
         let now_ms = now_epoch_ms();
         let cutoff_ms = now_ms.saturating_sub(EXECUTIONS_WINDOW_MS);
-        let mut deque = self.core.recent_acknowledgement_ms.lock();
-        for actor in actors.values() {
+        let deque = &mut self.core.recent_acknowledgement_ms;
+        if let Some(actor) = actor.as_ref() {
             for ts in actor.last_fire_timestamps_since(cutoff_ms) {
                 deque.push_back(ts);
             }
         }
         deque.make_contiguous().sort_unstable();
-        drop(deque);
-
-        drop(actors);
-
         self.schedule_admin_snapshot(true);
         tracing::info!(
             domain = "schedule",
-            preloaded_family_count,
-            persisted_family_count,
+            route_family = family.id(),
+            persisted,
             elapsed_ms = duration_millis(started_at.elapsed()),
-            "Schedule actor projection preload completed"
+            "Schedule family projection preload completed"
         );
         Ok(())
     }

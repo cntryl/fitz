@@ -4,8 +4,8 @@ use super::model::{
     AdminSnapshotState, AdminStreamReadRequest, AdminStreamReadRequestOwned, Arc, AtomicBool,
     AtomicU64, BTreeMap, CleanedUpSessions, HashMap, Mutex, Ordering, RouteFamily, Router,
     StreamAdminReadCommand, StreamDomainCommand, StreamDomainCore, StreamDomainSink,
-    StreamDurableMetrics, StreamLiveCounts, StreamMetrics, StreamReadItem, StreamStorageLayout,
-    StreamStore, SubscriptionRegistry, WatermarkCoordinators,
+    StreamDurableMetrics, StreamFamilyState, StreamLiveCounts, StreamMetrics, StreamReadItem,
+    StreamStorageLayout, StreamStore, SubscriptionRegistry,
 };
 #[cfg(test)]
 use crate::runtime::routing::Route;
@@ -81,7 +81,10 @@ impl StreamDomainSink {
     ) -> Result<Self, String> {
         let stream_store = Arc::new(
             StreamStore::with_storage_layout(store.clone(), stream_storage_layout)
-                .with_write_options(write_options.sync_intent(), write_options.buffered_intent()),
+                .with_write_options(
+                    write_options.sync_intent().into(),
+                    write_options.buffered_intent().into(),
+                ),
         );
         stream_store.ensure_layout_activation_for_existing_families()?;
         stream_store.validate_persisted_state_for_existing_families()?;
@@ -89,7 +92,6 @@ impl StreamDomainSink {
         getrandom::fill(&mut cursor_integrity_key)
             .map_err(|error| format!("generate Stream cursor integrity key failed: {error}"))?;
 
-        let router_for_watermark_actors = router.clone();
         let core = Arc::new(StreamDomainCore {
             stream_store,
             store,
@@ -111,18 +113,6 @@ impl StreamDomainSink {
             durable_metrics: Arc::new(StreamDurableMetrics::default()),
             active: Arc::new(AtomicBool::new(true)),
             family_cores: Arc::new(Mutex::new(BTreeMap::new())),
-            watermark_coordinators: WatermarkCoordinators {
-                area: Arc::new(crate::runtime::KeyedActorPool::new(
-                    router_for_watermark_actors.clone(),
-                    crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
-                    crate::domains::stream::MAX_WATERMARK_COORDINATORS,
-                )),
-                realm: Arc::new(crate::runtime::KeyedActorPool::new(
-                    router_for_watermark_actors,
-                    crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
-                    crate::domains::stream::MAX_WATERMARK_COORDINATORS,
-                )),
-            },
         });
         let family_families =
             provisioned_families.map_or_else(|| vec![RouteFamily::new(1)], <[RouteFamily]>::to_vec);
@@ -143,30 +133,32 @@ impl StreamDomainSink {
             .map_err(|error| format!("create Stream family actor pool: {error}"))?;
         let core_for_factory = core.clone();
         Ok(
-            crate::runtime::FamilyActorPoolRuntime::spawn_with_family_failed_metric(
+            crate::runtime::FamilyActorPoolRuntime::spawn_with_family_failed_metric_and_idle(
                 pool,
                 core.active.clone(),
-                move |family| Self::family_core_for(&core_for_factory, family),
-                |core, family, _lane, command| match command {
+                move |family| {
+                    StreamFamilyState::new(Self::family_core_for(&core_for_factory, family))
+                },
+                |state, family, _lane, command| match command {
                     StreamDomainCommand::Deliver(envelope, reply) => {
                         let result = if *envelope.destination().family() == family {
-                            core.deliver_envelope(&envelope)
+                            state.deliver_envelope(&envelope)
                         } else {
                             Err(DeliveryError::ActorStopped)
                         };
                         let _ = reply.send(result);
                     }
                     StreamDomainCommand::ReadLiveCounts(reply) => {
-                        let _ = reply.send(core.live_counts());
+                        let _ = reply.send(state.core.live_counts());
                     }
                     StreamDomainCommand::ReadResourceRecords(command) => {
                         let request = command.request.as_borrowed();
                         let _ = command
                             .reply
-                            .send(core.admin_read_resource_records(request));
+                            .send(state.core.admin_read_resource_records(request));
                     }
                     StreamDomainCommand::RefreshAdminSnapshotIfDirty(reply) => {
-                        core.refresh_admin_snapshot_if_dirty();
+                        state.core.refresh_admin_snapshot_if_dirty();
                         let _ = reply.send(());
                     }
                     StreamDomainCommand::RunMaintenance {
@@ -174,7 +166,8 @@ impl StreamDomainSink {
                         reply,
                     } => {
                         if requested_family == family.as_u64() {
-                            core.run_maintenance_slice(requested_family);
+                            state.core.run_maintenance_slice(requested_family);
+                            state.service_watermark_timers();
                         }
                         if let Some(reply) = reply {
                             let _ = reply.send(());
@@ -182,7 +175,7 @@ impl StreamDomainSink {
                     }
                     #[cfg(test)]
                     StreamDomainCommand::SyncAdminSnapshot(reply) => {
-                        core.sync_admin_snapshot();
+                        state.core.sync_admin_snapshot();
                         let _ = reply.send(());
                     }
                     StreamDomainCommand::PanicForFailpoint => {
@@ -194,6 +187,7 @@ impl StreamDomainSink {
                         let _ = release.recv();
                     }
                 },
+                |state, _family| state.service_watermark_timers(),
                 crate::domains::stream::metrics::METRIC_FAMILY_FAILED_CLOSED_TOTAL,
             ),
         )
@@ -224,10 +218,6 @@ impl StreamDomainSink {
             durable_metrics: shared.durable_metrics.clone(),
             active: shared.active.clone(),
             family_cores: shared.family_cores.clone(),
-            watermark_coordinators: WatermarkCoordinators {
-                area: shared.watermark_coordinators.area.clone(),
-                realm: shared.watermark_coordinators.realm.clone(),
-            },
         });
         shared
             .family_cores
@@ -379,8 +369,8 @@ impl StreamDomainSink {
             .expect("receive test Stream maintenance reply");
     }
 
-    pub(crate) fn actor_health_snapshot(&self) -> crate::runtime::ManagedActorHealthSnapshot {
-        self.family_runtime.managed_actor_health_snapshot()
+    pub(crate) fn actor_health_snapshot(&self) -> crate::runtime::ActorHealthSnapshot {
+        self.family_runtime.actor_health_snapshot()
     }
 
     #[cfg(test)]

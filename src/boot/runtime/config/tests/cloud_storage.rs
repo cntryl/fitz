@@ -136,7 +136,7 @@ fn should_ignore_storage_path_given_cloud_cache_path() {
 
 #[test]
 #[serial]
-fn should_map_cloud_durability_to_write_options() {
+fn should_map_cloud_durability_to_write_policies() {
     with_storage_env(
         &[
             ("FITZ_STORAGE_MODE", "cloud"),
@@ -150,9 +150,18 @@ fn should_map_cloud_durability_to_write_options() {
             let config = BootConfig::new();
 
             // Assert
-            assert!(config.schedule_write_options().is_cloud_strict());
-            assert!(config.request_sync_write_options().is_cloud_strict());
-            assert!(config.request_buffered_write_options().is_cloud_async());
+            assert_eq!(
+                config.schedule_write_policy(),
+                crate::domains::WritePolicy::CloudStrict
+            );
+            assert_eq!(
+                config.request_sync_write_policy(),
+                crate::domains::WritePolicy::CloudStrict
+            );
+            assert_eq!(
+                config.request_buffered_write_policy(),
+                crate::domains::WritePolicy::CloudAsync
+            );
         },
     );
 }
@@ -176,9 +185,18 @@ fn should_accept_background_cloud_durability() {
             // Assert
             assert!(result.is_ok());
             assert_eq!(config.cloud_durability, CloudDurabilityMode::Background);
-            assert!(config.schedule_write_options().is_cloud_async());
-            assert!(config.request_sync_write_options().is_cloud_async());
-            assert!(config.request_buffered_write_options().is_cloud_async());
+            assert_eq!(
+                config.schedule_write_policy(),
+                crate::domains::WritePolicy::CloudAsync
+            );
+            assert_eq!(
+                config.request_sync_write_policy(),
+                crate::domains::WritePolicy::CloudAsync
+            );
+            assert_eq!(
+                config.request_buffered_write_policy(),
+                crate::domains::WritePolicy::CloudAsync
+            );
         },
     );
 }
@@ -200,7 +218,10 @@ fn should_map_queue_buffered_write_policy_to_cloud_async() {
 
             // Assert
             assert_eq!(config.queue_write_policy, QueueWritePolicy::Buffered);
-            assert!(config.queue_write_options().is_cloud_async());
+            assert_eq!(
+                config.queue_write_policy(),
+                crate::domains::WritePolicy::CloudAsync
+            );
         },
     );
 }
@@ -239,12 +260,11 @@ fn should_map_queue_strict_write_policy_to_local_sync() {
 
         // Act
         let config = BootConfig::new();
-        let write_options = config.queue_write_options();
+        let write_policy = config.queue_write_policy();
 
         // Assert
         assert_eq!(config.queue_write_policy, QueueWritePolicy::Strict);
-        assert!(write_options.is_sync());
-        assert!(!write_options.is_cloud_strict());
+        assert_eq!(write_policy, crate::domains::WritePolicy::Sync);
     });
 }
 
@@ -265,7 +285,10 @@ fn should_map_queue_strict_write_policy_to_cloud_strict() {
 
             // Assert
             assert_eq!(config.queue_write_policy, QueueWritePolicy::Strict);
-            assert!(config.queue_write_options().is_cloud_strict());
+            assert_eq!(
+                config.queue_write_policy(),
+                crate::domains::WritePolicy::CloudStrict
+            );
         },
     );
 }
@@ -345,14 +368,13 @@ fn should_reject_invalid_schedule_preload_timeout() {
 }
 
 #[test]
-fn should_keep_non_cloud_sync_write_options_local() {
+fn should_keep_non_cloud_sync_write_policy_local() {
     // Arrange
     let config = BootConfig::with_local_storage("/data/fitz");
 
     // Act
-    let write_options = config.request_sync_write_options();
+    let write_policy = config.request_sync_write_policy();
 
     // Assert
-    assert!(write_options.is_sync());
-    assert!(!write_options.is_cloud_strict());
+    assert_eq!(write_policy, crate::domains::WritePolicy::Sync);
 }

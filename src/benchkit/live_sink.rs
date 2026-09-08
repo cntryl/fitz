@@ -594,7 +594,7 @@ pub fn create_bench_queue_sink(router: Arc<Router>) -> Arc<QueueDomainSink> {
         create_bench_store(),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        cntryl_midge::WriteOptions::best_effort(),
+        crate::domains::WritePolicy::BestEffort,
         crate::utils::idempotency::default_dedup_store(),
     ))
 }
@@ -816,7 +816,7 @@ pub fn create_bench_rpc_sink_with_metrics(
 #[must_use]
 pub fn create_bench_schedule_sink(router: Arc<Router>) -> Arc<ScheduleDomainSink> {
     Arc::new(ScheduleDomainSink::new(
-        create_bench_store(),
+        crate::domains::schedule::ScheduleStore::new(create_bench_store()),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
     ))

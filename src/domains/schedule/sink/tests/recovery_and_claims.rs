@@ -12,7 +12,7 @@ fn should_ack_broadcast_given_no_subscribers() {
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
     let initial_sink = Arc::new(ScheduleDomainSink::new(
-        store.clone(),
+        crate::domains::schedule::ScheduleStore::new(store.clone()),
         router.clone(),
         admin_read_model.clone(),
     ));
@@ -56,7 +56,7 @@ fn should_retry_ack_without_republishing_given_same_broker_ack_persist_failure()
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
     let sink = Arc::new(ScheduleDomainSink::new(
-        store,
+        crate::domains::schedule::ScheduleStore::new(store),
         router.clone(),
         admin_read_model,
     ));
@@ -133,11 +133,15 @@ fn should_retain_pending_claim_when_it_is_older_than_the_former_cleanup_ttl() {
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = ScheduleDomainSink::new(store.clone(), router, admin_read_model);
+    let sink = ScheduleDomainSink::new(
+        crate::domains::schedule::ScheduleStore::new(store.clone()),
+        router,
+        admin_read_model,
+    );
     let mut actor = crate::domains::schedule::ScheduleActor::new_with_clock(
         family,
-        store,
-        cntryl_midge::WriteOptions::buffered(),
+        crate::domains::schedule::ScheduleStore::new(store),
+        crate::domains::WritePolicy::Buffered,
         clock.clone(),
     );
     let create_response = actor.handle(crate::domains::schedule::ScheduleMessage::Create {

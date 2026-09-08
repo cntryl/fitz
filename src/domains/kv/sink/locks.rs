@@ -1,9 +1,7 @@
 //! Live resource-lock identities and ownership coordination.
 
 use super::state::KvDomainRuntime;
-use crate::domains::kv::{KvActor, KvMessage};
-use parking_lot::Mutex;
-use std::sync::Arc;
+use crate::domains::kv::KvMessage;
 
 /// Identifies the in-memory write lock owner for a single resource scope.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -52,38 +50,32 @@ struct KvTransactionLock {
 }
 
 impl KvDomainRuntime<'_> {
-    pub(super) fn expire_idle_transactions_for_session(&self, session_id: u64) {
-        let actor = self.core.actors.lock().get(&session_id).cloned();
-        if let Some(actor) = actor {
-            self.remove_expired_transactions(session_id, &actor);
-        }
-    }
-
-    fn remove_expired_transactions(&self, session_id: u64, actor: &Arc<Mutex<KvActor>>) {
-        for tx_id in actor
-            .lock()
-            .expire_idle_transactions(self.core.idle_transaction_ttl)
-        {
+    pub(super) fn expire_idle_transactions_for_session(&mut self, session_id: u64) {
+        let expired = self
+            .core
+            .actors
+            .get_mut(&session_id)
+            .map(|actor| actor.expire_idle_transactions(self.core.idle_transaction_ttl));
+        for tx_id in expired.unwrap_or_default() {
             self.core
                 .resource_locks
-                .lock()
                 .retain(|_, owner| owner.session_id != session_id || owner.tx_id != tx_id);
             self.core.projection.remove_transaction(session_id, tx_id);
         }
     }
 
-    pub(super) fn expire_resource_lock_if_idle(&self, resource_key: &KvResourceLockKey) {
-        let owner = self.core.resource_locks.lock().get(resource_key).copied();
+    pub(super) fn expire_resource_lock_if_idle(&mut self, resource_key: &KvResourceLockKey) {
+        let owner = self.core.resource_locks.get(resource_key).copied();
         let Some(owner) =
             owner.filter(|owner| owner.last_activity.elapsed() >= self.core.idle_transaction_ttl)
         else {
             return;
         };
-        let actor = self.core.actors.lock().get(&owner.session_id).cloned();
+        let actor = self.core.actors.get_mut(&owner.session_id);
         if let Some(actor) = actor {
-            actor.lock().rollback_transaction(owner.tx_id);
+            actor.rollback_transaction(owner.tx_id);
         }
-        self.core.resource_locks.lock().remove(resource_key);
+        self.core.resource_locks.remove(resource_key);
         self.core
             .projection
             .remove_transaction(owner.session_id, owner.tx_id);
@@ -108,15 +100,18 @@ impl KvDomainRuntime<'_> {
     }
 
     pub(super) fn touch_resource_lock(
-        &self,
+        &mut self,
         session_id: u64,
         message: &crate::domains::kv::KvMessage,
     ) {
         let Some(transaction_lock) = Self::transaction_lock(message) else {
             return;
         };
-        let mut locks = self.core.resource_locks.lock();
-        if let Some(owner) = locks.get_mut(&transaction_lock.resource_key) {
+        if let Some(owner) = self
+            .core
+            .resource_locks
+            .get_mut(&transaction_lock.resource_key)
+        {
             if owner.session_id == session_id && owner.tx_id == transaction_lock.tx_id {
                 owner.last_activity = std::time::Instant::now();
             }
@@ -130,7 +125,6 @@ impl KvDomainRuntime<'_> {
     ) -> Option<u64> {
         self.core
             .resource_locks
-            .lock()
             .get(resource_key)
             .filter(|owner| owner.session_id != session_id)
             .map(|owner| owner.session_id)
@@ -146,7 +140,6 @@ impl KvDomainRuntime<'_> {
     ) -> bool {
         self.core
             .resource_locks
-            .lock()
             .get(resource_key)
             .is_some_and(|owner| owner.session_id == session_id)
     }
@@ -156,9 +149,10 @@ impl KvDomainRuntime<'_> {
         session_id: u64,
         tx_id: u64,
     ) -> Option<KvResourceLockKey> {
-        let actor = self.core.actors.lock().get(&session_id).cloned();
-        actor
-            .and_then(|actor| actor.lock().resource_scope_for_tx(tx_id))
+        self.core
+            .actors
+            .get(&session_id)
+            .and_then(|actor| actor.resource_scope_for_tx(tx_id))
             .map(|scope| KvResourceLockKey::from_scope(&scope))
     }
 }

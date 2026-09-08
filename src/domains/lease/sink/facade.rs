@@ -218,8 +218,8 @@ impl LeaseDomainSink {
         self.family_runtime.is_family_running(family)
     }
 
-    pub(crate) fn actor_health_snapshot(&self) -> crate::runtime::ManagedActorHealthSnapshot {
-        self.family_runtime.managed_actor_health_snapshot()
+    pub(crate) fn actor_health_snapshot(&self) -> crate::runtime::ActorHealthSnapshot {
+        self.family_runtime.actor_health_snapshot()
     }
 
     pub(crate) fn panic_actor_for_failpoint(&self) {

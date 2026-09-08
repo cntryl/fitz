@@ -1,21 +1,16 @@
-#[cfg(test)]
-pub(super) use crate::dispatch::protocol::frame_context::FrameContext;
-pub(super) use crate::domains::queue::{
-    projection::{QueueAdminProjection, QueueProjectionEntry, QueueProjectionState},
-    MessageId, QueueActorLiveCounts, QueueClientFrame, QueueClientRequest, QueueKey, QueueMetrics,
-    QueueNotification, QueueSubscriptionMessage,
+use crate::domains::queue::{
+    projection::QueueAdminProjection, MessageId, QueueActorLiveCounts, QueueKey, QueueMetrics,
 };
-pub(super) use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
-pub(super) use crate::observability as obs;
-pub(super) use crate::runtime::{DeliveryError, Envelope, MailboxSink, ManagedActor, Router};
-pub(super) use parking_lot::Mutex;
-pub(super) use std::collections::{HashMap, HashSet, VecDeque};
-pub(super) use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-pub(super) use std::sync::Arc;
-pub(super) use std::time::{Duration, Instant};
+use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
+use crate::runtime::{DeliveryError, Envelope, Router};
+use parking_lot::Mutex;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 pub(super) struct WarmQueueActor {
-    pub(super) actor: Arc<Mutex<crate::domains::queue::QueueActor>>,
+    pub(super) actor: crate::domains::queue::QueueActor,
     pub(super) last_used: Instant,
 }
 
@@ -58,7 +53,7 @@ pub(super) const QUEUE_ACTOR_IDLE_TTL: Duration = Duration::from_mins(5);
 pub(super) const QUEUE_IDLE_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 pub(super) const QUEUE_IDLE_SWEEP_BATCH_SIZE: usize = 64;
 pub(super) const QUEUE_DEDUP_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
-pub(super) use crate::domains::queue::actor::QUEUE_ACTOR_REPLY_TIMEOUT;
+use crate::domains::queue::actor::QUEUE_ACTOR_REPLY_TIMEOUT;
 
 /// Queue domain runtime core with per-queue `QueueActor` instances.
 ///
@@ -70,13 +65,14 @@ pub(super) use crate::domains::queue::actor::QUEUE_ACTOR_REPLY_TIMEOUT;
 /// - Tracks queue-local watch subscriptions for the current broker process
 /// - Exposes only warm in-memory queue/admin state for the current broker process
 pub(super) struct QueueDomainCore {
+    pub(super) route_family: crate::runtime::routing::RouteFamily,
     /// Measured delivery service time in microseconds, written by the actor
     /// and read by admission to size its window.
     pub(super) delivery_service_us: ServiceEstimateUs,
     /// Fitz storage facade over the current Midge engine.
     pub(super) store: crate::storage::FitzStorageEngine,
     /// Commit policy for queue persistence on this runtime.
-    pub(super) queue_write_options: cntryl_midge::WriteOptions,
+    pub(super) queue_write_policy: crate::domains::WritePolicy,
     /// Deduplication store shared by warm actors created through this sink.
     pub(super) dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     /// Per-queue actors keyed by `QueueKey`
@@ -101,9 +97,9 @@ pub(super) struct QueueDomainCore {
     pub(super) pending_reserves: Mutex<VecDeque<PendingQueueReserve>>,
     /// Router for routing response envelopes back
     pub(super) router: Arc<Router>,
-    pub(super) projection: QueueAdminProjection,
+    pub(super) projection: Arc<QueueAdminProjection>,
     pub(super) metrics: Option<QueueMetrics>,
-    pub(super) active: AtomicBool,
+    pub(super) active: Arc<AtomicBool>,
     pub(super) runtime_sweep_pending: AtomicBool,
     #[cfg(test)]
     pub(super) panic_next_runtime_sweep: AtomicBool,
@@ -156,24 +152,13 @@ pub(super) struct QueueDomainActor {
     pub(super) core: Arc<QueueDomainCore>,
 }
 
-pub(super) struct QueueDomainRuntime<'a> {
-    pub(super) core: &'a QueueDomainCore,
-}
-
-/// Queue domain sink with a managed actor mailbox in front of queue runtime state.
+/// Queue domain sink with bounded family-affine mailboxes in front of runtime state.
 pub struct QueueDomainSink {
-    pub(super) core: Arc<QueueDomainCore>,
-    pub(super) actor: ManagedActor<QueueDomainCommand>,
+    pub(super) cores: std::collections::BTreeMap<u32, Arc<QueueDomainCore>>,
+    pub(super) family_runtime: crate::runtime::FamilyActorPoolRuntime<QueueDomainCommand>,
+    pub(super) route_families: Vec<crate::runtime::routing::RouteFamily>,
     /// Client requests currently blocked on the actor's reply.
     pub(super) inflight_client_deliveries: Arc<std::sync::atomic::AtomicUsize>,
-}
-
-impl std::ops::Deref for QueueDomainRuntime<'_> {
-    type Target = QueueDomainCore;
-
-    fn deref(&self) -> &Self::Target {
-        self.core
-    }
 }
 
 /// Hard ceiling on concurrent client requests, whatever the measured service

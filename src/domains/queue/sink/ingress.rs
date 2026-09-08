@@ -1,13 +1,13 @@
 //! Envelope intake: cleanup/request extraction, frame parsing, and operation
 //! dispatch entry point.
 
+use super::model::{PendingQueueReserve, QueueDomainCore};
 #[cfg(test)]
-use super::model::FrameContext;
-use super::model::{
-    DeliveryError, Duration, Envelope, Instant, PendingQueueReserve, QueueClientFrame,
-    QueueClientRequest, QueueDomainCore,
-};
+use crate::dispatch::protocol::frame_context::FrameContext;
+use crate::domains::queue::{QueueClientFrame, QueueClientRequest};
 use crate::runtime::routing::RouteFamily;
+use crate::runtime::{DeliveryError, Envelope};
+use std::time::{Duration, Instant};
 
 impl QueueDomainCore {
     pub(super) fn deliver_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {

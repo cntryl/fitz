@@ -21,6 +21,7 @@
 //! This module is the core of Fitz and must remain pure and deterministic.
 
 pub mod actor;
+#[cfg(test)]
 mod actor_lifecycle;
 pub mod cf_validation;
 pub mod cleanup_guard;
@@ -31,16 +32,15 @@ pub mod domain_event;
 pub mod domain_manifest;
 pub mod envelope;
 pub mod family_actor_pool;
+pub mod health;
 pub(crate) mod ingress_support;
-pub mod keyed_actor_pool;
 pub mod mailbox;
-pub mod managed_actor;
 pub mod matcher;
 pub mod reply_wait;
 pub mod router;
 pub mod routing;
 /// Actor-spawning fixture used only by unit tests; production uses family
-/// actor pools and managed actors directly.
+/// actor pools directly.
 #[cfg(test)]
 pub(crate) mod scheduler;
 pub mod subscriptions;
@@ -57,15 +57,15 @@ pub use context::{Timer, TimerId, TimerManager};
 pub use domain_event::{DomainPublishEvent, SessionCleanup};
 pub use domain_manifest::{DomainDescriptor, DomainKind, DomainRegistry};
 pub use envelope::{Envelope, MessageId};
+pub(crate) use family_actor_pool::family_actor_enqueue_error_to_delivery_error;
 pub use family_actor_pool::{
     family_shard_affinity, shard_count_for_family_count, FamilyActorEnqueueError,
     FamilyActorIngress, FamilyActorLane, FamilyActorPool, FamilyActorPoolError,
     FamilyActorPoolRuntime, FamilyActorShard, FamilyActorWork, FAMILY_ACTOR_CONTROL_LANE_CAPACITY,
     FAMILY_ACTOR_NORMAL_LANE_CAPACITY,
 };
-pub use keyed_actor_pool::KeyedActorPool;
+pub use health::ActorHealthSnapshot;
 pub use mailbox::Mailbox;
-pub use managed_actor::{ManagedActor, ManagedActorHealthSnapshot};
 pub use matcher::{Pattern, PatternSegment};
 pub use router::{DeliveryError, MailboxSink, RouteError, Router};
 pub use subscriptions::{SubscriptionId, SubscriptionIndex};

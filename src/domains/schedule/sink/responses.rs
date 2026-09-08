@@ -7,7 +7,7 @@ use crate::runtime::Envelope;
 
 impl ScheduleDomainRuntime<'_> {
     pub(super) fn route_schedule_response(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         response: &crate::domains::schedule::ScheduleResponse,

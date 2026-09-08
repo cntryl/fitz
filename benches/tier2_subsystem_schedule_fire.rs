@@ -10,7 +10,7 @@ use fitz::benchkit::{
 };
 use fitz::domains::schedule::protocol::{validate_concrete_schedule_route, Clock};
 use fitz::domains::schedule::sink::ScheduleDomainSink;
-use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
+use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse, ScheduleStore};
 use fitz::protocol::frame::ChannelId;
 use fitz::protocol::payload_codec::PayloadEncoder;
 use fitz::runtime::routing::{Route, RouteFamily};
@@ -59,8 +59,8 @@ fn create_test_actor(clock: Arc<dyn Clock>) -> ScheduleActor {
     let store = create_bench_store_with_cfs([1, 2, 3, 4, 5]);
     ScheduleActor::new_with_clock(
         RouteFamily::new(1),
-        store,
-        cntryl_midge::WriteOptions::buffered(),
+        ScheduleStore::new(store),
+        fitz::domains::WritePolicy::Buffered,
         clock,
     )
 }

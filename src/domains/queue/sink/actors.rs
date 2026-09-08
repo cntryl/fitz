@@ -1,9 +1,11 @@
 //! Per-queue warm actor lifecycle: lookup, idle sweep, fast flush, dead-letter ops.
 
 use super::model::{
-    Arc, HashSet, Instant, Mutex, QueueDomainCore, WarmQueueActor, QUEUE_ACTOR_IDLE_TTL,
-    QUEUE_DEDUP_SWEEP_INTERVAL, QUEUE_IDLE_SWEEP_BATCH_SIZE, QUEUE_IDLE_SWEEP_INTERVAL,
+    QueueDomainCore, WarmQueueActor, QUEUE_ACTOR_IDLE_TTL, QUEUE_DEDUP_SWEEP_INTERVAL,
+    QUEUE_IDLE_SWEEP_BATCH_SIZE, QUEUE_IDLE_SWEEP_INTERVAL,
 };
+use std::collections::HashSet;
+use std::time::Instant;
 
 impl QueueDomainCore {
     pub(super) fn queue_key_for_route(
@@ -154,7 +156,8 @@ impl QueueDomainCore {
     }
 
     pub(super) fn fast_flush_enabled(&self) -> bool {
-        self.queue_write_options.is_best_effort() && self.fast_flush_interval.is_some()
+        self.queue_write_policy == crate::domains::WritePolicy::BestEffort
+            && self.fast_flush_interval.is_some()
     }
 
     pub(super) fn mark_fast_flush_dirty(&self, family_id: crate::runtime::routing::RouteFamily) {
@@ -167,7 +170,7 @@ impl QueueDomainCore {
         let Some(interval) = self.fast_flush_interval else {
             return;
         };
-        if !self.queue_write_options.is_best_effort() {
+        if self.queue_write_policy != crate::domains::WritePolicy::BestEffort {
             return;
         }
 
@@ -256,35 +259,37 @@ impl QueueDomainCore {
         }
     }
 
-    pub(super) fn get_or_create_actor(
+    pub(super) fn with_actor<R, F>(
         &self,
         key: &crate::domains::queue::QueueKey,
-    ) -> Result<(Arc<Mutex<crate::domains::queue::QueueActor>>, bool), String> {
+        operation: F,
+    ) -> Result<(R, bool), String>
+    where
+        F: FnOnce(&mut crate::domains::queue::QueueActor) -> R,
+    {
         use std::collections::hash_map::Entry;
 
         let now = Instant::now();
         match self.actors.lock().entry(key.clone()) {
             Entry::Occupied(mut entry) => {
                 entry.get_mut().last_used = now;
-                Ok((entry.get().actor.clone(), false))
+                Ok((operation(&mut entry.get_mut().actor), false))
             }
             Entry::Vacant(entry) => {
-                let actor = Arc::new(Mutex::new(
-                    crate::domains::queue::QueueActor::try_new_with_write_options(
-                        key.family,
-                        key.clone(),
-                        self.store.clone_inner(),
-                        None,
-                        self.dedup_store.clone(),
-                        self.queue_write_options,
-                    )?,
-                ));
-                entry.insert(WarmQueueActor {
-                    actor: actor.clone(),
+                let actor = crate::domains::queue::QueueActor::try_new_with_write_options(
+                    key.family,
+                    key.clone(),
+                    self.store.clone_inner(),
+                    None,
+                    self.dedup_store.clone(),
+                    self.queue_write_policy.into(),
+                )?;
+                let warm_actor = entry.insert(WarmQueueActor {
+                    actor,
                     last_used: now,
                 });
                 self.idle_sweep_keys.lock().push_back(key.clone());
-                Ok((actor, true))
+                Ok((operation(&mut warm_actor.actor), true))
             }
         }
     }
@@ -320,20 +325,16 @@ impl QueueDomainCore {
         };
 
         for key in sweep_keys {
-            let Some((actor_ref, last_used)) = self
-                .actors
-                .lock()
-                .get(&key)
-                .map(|warm_actor| (warm_actor.actor.clone(), warm_actor.last_used))
-            else {
+            let mut actors = self.actors.lock();
+            let Some(warm_actor) = actors.get_mut(&key) else {
                 continue;
             };
-            let mut actor = actor_ref.lock();
-            if actor.process_due_work() {
+            let last_used = warm_actor.last_used;
+            if warm_actor.actor.process_due_work() {
                 changed = true;
                 dirty_families.insert(key.family);
             }
-            let counts = actor.live_counts();
+            let counts = warm_actor.actor.live_counts();
 
             if let Some(notification) = self.record_ready_state(&key, counts) {
                 notifications.push((key.clone(), notification));
@@ -342,20 +343,14 @@ impl QueueDomainCore {
             let idle_for = now.saturating_duration_since(last_used);
             let should_keep =
                 idle_for < QUEUE_ACTOR_IDLE_TTL || counts.delayed > 0 || counts.inflight > 0;
-            drop(actor);
-
             if should_keep {
+                drop(actors);
                 self.idle_sweep_keys.lock().push_back(key);
                 continue;
             }
 
-            let removed = {
-                let mut actors = self.actors.lock();
-                let unchanged = actors.get(&key).is_some_and(|warm_actor| {
-                    warm_actor.last_used == last_used && Arc::ptr_eq(&warm_actor.actor, &actor_ref)
-                });
-                unchanged && actors.remove(&key).is_some()
-            };
+            let removed = actors.remove(&key).is_some();
+            drop(actors);
             if removed {
                 changed = true;
                 removed_keys.push(key.clone());
@@ -402,15 +397,13 @@ impl QueueDomainCore {
         key: &crate::domains::queue::QueueKey,
         id: crate::domains::queue::MessageId,
     ) -> Result<bool, String> {
-        let (actor_handle, created_actor) = self.get_or_create_actor(key)?;
-        let result = {
-            let mut actor = actor_handle.lock();
-            actor.replay_dead_letter(id)
-        };
+        let ((result, counts), created_actor) = self.with_actor(key, |actor| {
+            let result = actor.replay_dead_letter(id);
+            (result, actor.live_counts())
+        })?;
 
         if matches!(result, Ok(true)) {
             self.mark_fast_flush_dirty(key.family);
-            let counts = actor_handle.lock().live_counts();
             let notification = self.record_ready_state(key, counts);
             self.mark_admin_snapshot_dirty();
             if let Some(notification) = notification {
@@ -418,17 +411,11 @@ impl QueueDomainCore {
             }
         }
 
-        if created_actor {
-            let should_remove = {
-                let actor = actor_handle.lock();
-                actor.live_counts().total() == 0
-            };
-            if should_remove {
-                self.actors.lock().remove(key);
-                self.ready_states.lock().remove(key);
-                self.known_queue_keys.lock().remove(key);
-                self.mark_admin_snapshot_dirty();
-            }
+        if created_actor && counts.total() == 0 {
+            self.actors.lock().remove(key);
+            self.ready_states.lock().remove(key);
+            self.known_queue_keys.lock().remove(key);
+            self.mark_admin_snapshot_dirty();
         }
 
         result
@@ -444,28 +431,21 @@ impl QueueDomainCore {
         key: &crate::domains::queue::QueueKey,
         id: crate::domains::queue::MessageId,
     ) -> Result<bool, String> {
-        let (actor_handle, created_actor) = self.get_or_create_actor(key)?;
-        let result = {
-            let mut actor = actor_handle.lock();
-            actor.purge_dead_letter(id)
-        };
+        let ((result, counts), created_actor) = self.with_actor(key, |actor| {
+            let result = actor.purge_dead_letter(id);
+            (result, actor.live_counts())
+        })?;
 
         if matches!(result, Ok(true)) {
             self.mark_fast_flush_dirty(key.family);
             self.mark_admin_snapshot_dirty();
         }
 
-        if created_actor {
-            let should_remove = {
-                let actor = actor_handle.lock();
-                actor.live_counts().total() == 0
-            };
-            if should_remove {
-                self.actors.lock().remove(key);
-                self.ready_states.lock().remove(key);
-                self.known_queue_keys.lock().remove(key);
-                self.mark_admin_snapshot_dirty();
-            }
+        if created_actor && counts.total() == 0 {
+            self.actors.lock().remove(key);
+            self.ready_states.lock().remove(key);
+            self.known_queue_keys.lock().remove(key);
+            self.mark_admin_snapshot_dirty();
         }
 
         result

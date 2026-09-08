@@ -1,6 +1,6 @@
 //! Public admin façade and crate-internal storage-backed implementations.
 
-use super::state::KvDomainSink;
+use super::state::{KvDomainRuntime, KvDomainSink};
 use crate::runtime::routing::RouteFamily;
 
 mod inventory;
@@ -43,7 +43,8 @@ impl KvDomainSink {
         &self,
         family_id: u64,
     ) -> Result<Vec<crate::control::admin::KvResourceInventoryEntry>, String> {
-        self.state.runtime().admin_inventory_for_family(family_id)
+        let mut core = self.admin_core();
+        KvDomainRuntime { core: &mut core }.admin_inventory_for_family(family_id)
     }
 
     /// Build an admin inventory snapshot for the requested route family scope.
@@ -54,7 +55,8 @@ impl KvDomainSink {
         &self,
         family: Option<RouteFamily>,
     ) -> Result<Vec<crate::control::admin::KvResourceInventoryEntry>, String> {
-        self.state.runtime().admin_inventory(family)
+        let mut core = self.admin_core();
+        KvDomainRuntime { core: &mut core }.admin_inventory(family)
     }
 
     /// Read one admin inventory entry for a specific KV resource.
@@ -68,9 +70,13 @@ impl KvDomainSink {
         area: &str,
         resource: &str,
     ) -> Result<Option<crate::control::admin::KvResourceInventoryEntry>, String> {
-        self.state
-            .runtime()
-            .admin_inventory_resource(route_family, realm, area, resource)
+        let mut core = self.admin_core();
+        KvDomainRuntime { core: &mut core }.admin_inventory_resource(
+            route_family,
+            realm,
+            area,
+            resource,
+        )
     }
 
     /// Read one committed KV value directly from storage for admin inspection.
@@ -85,9 +91,14 @@ impl KvDomainSink {
         resource: &str,
         key: &[u8],
     ) -> Result<Option<Vec<u8>>, String> {
-        self.state
-            .runtime()
-            .admin_get_committed_value(route_family, realm, area, resource, key)
+        let mut core = self.admin_core();
+        KvDomainRuntime { core: &mut core }.admin_get_committed_value(
+            route_family,
+            realm,
+            area,
+            resource,
+            key,
+        )
     }
 
     /// Scan a committed KV prefix directly from storage for admin inspection.
@@ -103,7 +114,8 @@ impl KvDomainSink {
         key_prefix: &[u8],
         limit: usize,
     ) -> Result<AdminKvPrefixScanResult, String> {
-        self.state.runtime().admin_scan_committed_prefix(
+        let mut core = self.admin_core();
+        KvDomainRuntime { core: &mut core }.admin_scan_committed_prefix(
             route_family,
             realm,
             area,
@@ -121,6 +133,7 @@ impl KvDomainSink {
         &self,
         request: &AdminKvRowsRequest<'_>,
     ) -> Result<AdminKvRowsResult, String> {
-        self.state.runtime().admin_scan_committed_rows(request)
+        let mut core = self.admin_core();
+        KvDomainRuntime { core: &mut core }.admin_scan_committed_rows(request)
     }
 }

@@ -34,14 +34,16 @@ fn should_treat_a_response_to_a_closed_session_as_an_expected_drop() {
     );
 
     // Act
-    let result = sink.state.runtime().route_kv_response(
-        &request,
-        meta,
-        &crate::domains::kv::KvResponse::Error {
-            error: crate::domains::kv::KvError::BackendError("late response".to_string()),
-        },
-        Instant::now(),
-    );
+    let result = sink.run_on_family_for_tests(family, move |runtime| {
+        runtime.route_kv_response(
+            &request,
+            meta,
+            &crate::domains::kv::KvResponse::Error {
+                error: crate::domains::kv::KvError::BackendError("late response".to_string()),
+            },
+            Instant::now(),
+        )
+    });
 
     // Assert
     assert_eq!(result, Ok(()));
@@ -69,14 +71,16 @@ fn should_preserve_response_mailbox_backpressure_for_an_active_session() {
     );
 
     // Act
-    let result = sink.state.runtime().route_kv_response(
-        &request,
-        meta,
-        &crate::domains::kv::KvResponse::Error {
-            error: crate::domains::kv::KvError::BackendError("busy".to_string()),
-        },
-        Instant::now(),
-    );
+    let result = sink.run_on_family_for_tests(family, move |runtime| {
+        runtime.route_kv_response(
+            &request,
+            meta,
+            &crate::domains::kv::KvResponse::Error {
+                error: crate::domains::kv::KvError::BackendError("busy".to_string()),
+            },
+            Instant::now(),
+        )
+    });
 
     // Assert
     assert_eq!(
@@ -112,17 +116,19 @@ fn should_roll_back_read_write_begin_when_response_cannot_be_delivered() {
         crate::dispatch::protocol::kv::msg_type::BEGIN,
         family,
     );
-    let result = sink.state.runtime().handle_actor_operation_frame(
-        &request,
-        meta,
-        Instant::now(),
-        Instant::now(),
-        crate::domains::kv::KvMessage::Begin {
-            scope: KvResourceScope::new(family, "acme", "app", "users"),
-            mode: crate::domains::kv::TxMode::ReadWrite,
-            write_options: cntryl_midge::WriteOptions::buffered().into(),
-        },
-    );
+    let result = sink.run_on_family_for_tests(family, move |runtime| {
+        runtime.handle_actor_operation_frame(
+            &request,
+            meta,
+            Instant::now(),
+            Instant::now(),
+            crate::domains::kv::KvMessage::Begin {
+                scope: KvResourceScope::new(family, "acme", "app", "users"),
+                mode: crate::domains::kv::TxMode::ReadWrite,
+                write_options: cntryl_midge::WriteOptions::buffered().into(),
+            },
+        )
+    });
 
     // Assert
     assert!(matches!(
@@ -156,17 +162,19 @@ fn should_roll_back_read_only_begin_when_response_cannot_be_delivered() {
     );
 
     // Act
-    let result = sink.state.runtime().handle_actor_operation_frame(
-        &request,
-        meta,
-        Instant::now(),
-        Instant::now(),
-        crate::domains::kv::KvMessage::Begin {
-            scope: KvResourceScope::new(family, "acme", "app", "users"),
-            mode: crate::domains::kv::TxMode::ReadOnly,
-            write_options: cntryl_midge::WriteOptions::buffered().into(),
-        },
-    );
+    let result = sink.run_on_family_for_tests(family, move |runtime| {
+        runtime.handle_actor_operation_frame(
+            &request,
+            meta,
+            Instant::now(),
+            Instant::now(),
+            crate::domains::kv::KvMessage::Begin {
+                scope: KvResourceScope::new(family, "acme", "app", "users"),
+                mode: crate::domains::kv::TxMode::ReadOnly,
+                write_options: cntryl_midge::WriteOptions::buffered().into(),
+            },
+        )
+    });
 
     // Assert
     assert!(matches!(
@@ -256,37 +264,17 @@ fn should_read_admin_transaction_count_while_session_actor_is_busy() {
     ))
     .expect("begin transaction");
     let _ = receive_frame(&mailbox, "begin response");
-    let actor = sink
-        .state
-        .core
-        .actors
-        .lock()
-        .get(&session_id)
-        .expect("session actor")
-        .clone();
-    let (locked_tx, locked_rx) = std::sync::mpsc::channel();
-    let (release_tx, release_rx) = std::sync::mpsc::channel();
-    let holder = std::thread::spawn(move || {
-        let _guard = actor.lock();
-        locked_tx.send(()).expect("report held actor lock");
-        release_rx.recv().expect("wait to release actor lock");
-    });
-    locked_rx.recv().expect("wait for held actor lock");
+    let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);
+    let (release_tx, release_rx) = crossbeam_channel::bounded(1);
+    sink.block_actor_for_tests(entered_tx, release_rx);
+    entered_rx.recv().expect("family actor entered test block");
 
     // Act
-    let (count_tx, count_rx) = std::sync::mpsc::channel();
-    let reader = std::thread::spawn(move || {
-        count_tx
-            .send(sink.active_transaction_count())
-            .expect("report admin transaction count");
-    });
-    let count = count_rx.recv_timeout(Duration::from_millis(200));
+    let count = sink.active_transaction_count();
     release_tx.send(()).expect("release actor lock");
-    holder.join().expect("actor lock holder");
-    reader.join().expect("admin transaction reader");
 
     // Assert
-    assert_eq!(count.expect("admin read must not wait for actor lock"), 1);
+    assert_eq!(count, 1);
 }
 
 #[test]
@@ -344,13 +332,14 @@ fn should_expire_idle_read_write_transaction_before_competing_begin() {
 }
 
 #[test]
-fn should_begin_write_without_scanning_unrelated_session_actors() {
+fn should_process_second_family_while_first_family_is_blocked() {
     // Arrange
-    let family = RouteFamily::new(1);
+    let first_family = RouteFamily::new(1);
+    let second_family = RouteFamily::new(2);
     let first_route = "kv://acme/app/users";
     let second_route = "kv://acme/app/orders";
-    let first_address = RouteAddress::new(family, Route::new("inbox://session/7"));
-    let second_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let first_address = RouteAddress::new(first_family, Route::new("inbox://session/7"));
+    let second_address = RouteAddress::new(second_family, Route::new("inbox://session/8"));
     let first_mailbox = Arc::new(Mailbox::new(8));
     let second_mailbox = Arc::new(Mailbox::new(8));
     let router = Arc::new(Router::new());
@@ -359,46 +348,34 @@ fn should_begin_write_without_scanning_unrelated_session_actors() {
     let sink = new_correctness_sink(router);
     sink.deliver(Envelope::from_route(
         first_address,
-        RouteAddress::new(family, Route::new(first_route)),
+        RouteAddress::new(first_family, Route::new(first_route)),
         FrameContext::new(
             7,
             ChannelId::Sub,
             MessageType::new(100),
             encode_kv_begin(first_route, 1, 0),
-            family,
+            first_family,
         ),
     ))
     .expect("begin unrelated transaction");
     let _ = receive_frame(&first_mailbox, "unrelated begin response");
-    let actor = sink
-        .state
-        .core
-        .actors
-        .lock()
-        .get(&7)
-        .expect("unrelated actor")
-        .clone();
-    let (locked_tx, locked_rx) = std::sync::mpsc::channel();
-    let (release_tx, release_rx) = std::sync::mpsc::channel();
-    let holder = std::thread::spawn(move || {
-        let _guard = actor.lock();
-        locked_tx.send(()).expect("report actor lock");
-        release_rx.recv().expect("wait to release actor lock");
-    });
-    locked_rx.recv().expect("wait for actor lock");
+    let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);
+    let (release_tx, release_rx) = crossbeam_channel::bounded(1);
+    sink.block_actor_for_tests(entered_tx, release_rx);
+    entered_rx.recv().expect("first family entered test block");
 
     // Act
     let (result_tx, result_rx) = std::sync::mpsc::channel();
     let worker = std::thread::spawn(move || {
         sink.deliver(Envelope::from_route(
             second_address,
-            RouteAddress::new(family, Route::new(second_route)),
+            RouteAddress::new(second_family, Route::new(second_route)),
             FrameContext::new(
                 8,
                 ChannelId::Sub,
                 MessageType::new(100),
                 encode_kv_begin(second_route, 1, 0),
-                family,
+                second_family,
             ),
         ))
         .expect("deliver independent begin");
@@ -406,12 +383,11 @@ fn should_begin_write_without_scanning_unrelated_session_actors() {
         result_tx.send(status).expect("report competing begin");
     });
     let result = result_rx.recv_timeout(Duration::from_millis(200));
-    release_tx.send(()).expect("release unrelated actor");
-    holder.join().expect("actor lock holder");
+    release_tx.send(()).expect("release first family actor");
     worker.join().expect("begin worker");
 
     // Assert
-    assert_eq!(result.expect("begin must not scan unrelated actors"), 0);
+    assert_eq!(result.expect("second family must remain available"), 0);
 }
 
 #[test]

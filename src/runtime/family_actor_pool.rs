@@ -58,6 +58,24 @@ impl fmt::Display for FamilyActorEnqueueError {
 
 impl std::error::Error for FamilyActorEnqueueError {}
 
+pub(crate) fn family_actor_enqueue_error_to_delivery_error(
+    error: FamilyActorEnqueueError,
+) -> crate::runtime::DeliveryError {
+    match error {
+        FamilyActorEnqueueError::NormalLaneFull => crate::runtime::DeliveryError::MailboxFull {
+            capacity: FAMILY_ACTOR_NORMAL_LANE_CAPACITY,
+            current_len: FAMILY_ACTOR_NORMAL_LANE_CAPACITY,
+        },
+        FamilyActorEnqueueError::ControlLaneFull => crate::runtime::DeliveryError::HighLaneFull {
+            capacity: FAMILY_ACTOR_CONTROL_LANE_CAPACITY,
+            current_len: FAMILY_ACTOR_CONTROL_LANE_CAPACITY,
+        },
+        FamilyActorEnqueueError::UnknownFamily | FamilyActorEnqueueError::ActorStopped => {
+            crate::runtime::DeliveryError::ActorStopped
+        }
+    }
+}
+
 struct FamilyActorSender<M> {
     normal: Sender<M>,
     control: Sender<M>,
@@ -297,6 +315,89 @@ pub struct FamilyActorPoolRuntime<M: Send + 'static> {
     join_handles: parking_lot::Mutex<Vec<thread::JoinHandle<()>>>,
 }
 
+type FamilyIdleHandler<S> = dyn Fn(&mut S, RouteFamily) + Send + Sync;
+
+fn service_idle_family_states<S>(
+    states: &mut HashMap<u32, S>,
+    family_failed: &HashMap<u32, AtomicBool>,
+    pool_failed: &AtomicBool,
+    panic_count: &AtomicU64,
+    metric: Option<&'static str>,
+    handler: &FamilyIdleHandler<S>,
+) {
+    for (&family_id, state) in states {
+        if !family_failed
+            .get(&family_id)
+            .is_some_and(|flag| flag.load(Ordering::Acquire))
+        {
+            let family = RouteFamily::new(family_id);
+            if std::panic::catch_unwind(AssertUnwindSafe(|| handler(state, family))).is_err() {
+                record_family_handler_panic(
+                    family,
+                    family_failed,
+                    pool_failed,
+                    panic_count,
+                    metric,
+                );
+            }
+        }
+    }
+}
+
+fn create_family_states<M, S, F>(shard: &FamilyActorShard<M>, factory: &F) -> HashMap<u32, S>
+where
+    M: Send + 'static,
+    F: Fn(RouteFamily) -> S,
+{
+    shard
+        .families()
+        .into_iter()
+        .map(|family| (family.id(), factory(family)))
+        .collect()
+}
+
+fn await_family_state_initialization(initialized: &Receiver<()>) {
+    initialized
+        .recv()
+        .expect("family actor worker stopped during state initialization");
+}
+
+fn create_family_failure_flags<M: Send + 'static>(
+    ingress: &FamilyActorIngress<M>,
+) -> HashMap<u32, AtomicBool> {
+    ingress
+        .families()
+        .into_iter()
+        .map(|family| (family.id(), AtomicBool::new(false)))
+        .collect()
+}
+
+fn record_family_handler_panic(
+    family: RouteFamily,
+    family_failed: &HashMap<u32, AtomicBool>,
+    pool_failed: &AtomicBool,
+    panic_count: &AtomicU64,
+    metric: Option<&'static str>,
+) {
+    panic_count.fetch_add(1, Ordering::Relaxed);
+    if let Some(flag) = family_failed.get(&family.id()) {
+        flag.store(true, Ordering::Release);
+    }
+    if let Some(metric) = metric {
+        crate::observability::counter_inc(metric);
+    }
+    tracing::error!(
+        family = family.id(),
+        "family actor failed closed for this family after handler panic"
+    );
+    if family_failed
+        .values()
+        .all(|flag| flag.load(Ordering::Acquire))
+    {
+        pool_failed.store(true, Ordering::Release);
+    }
+}
+
 /// Health of a fail-closed family pool, which never attempts actor restarts.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FamilyActorPoolHealthSnapshot {
@@ -328,11 +429,11 @@ impl<M: Send + 'static> FamilyActorPoolRuntime<M> {
         handler: H,
     ) -> Self
     where
-        S: Send + 'static,
+        S: 'static,
         F: Fn(RouteFamily) -> S + Send + Sync + 'static,
         H: Fn(&mut S, RouteFamily, FamilyActorLane, M) + Send + Sync + 'static,
     {
-        Self::spawn_inner(pool, active, state_factory, handler, None)
+        Self::spawn_inner(pool, active, state_factory, handler, None, None)
     }
 
     /// Like [`Self::spawn`], but increments `family_failed_metric` once per
@@ -355,7 +456,7 @@ impl<M: Send + 'static> FamilyActorPoolRuntime<M> {
         family_failed_metric: &'static str,
     ) -> Self
     where
-        S: Send + 'static,
+        S: 'static,
         F: Fn(RouteFamily) -> S + Send + Sync + 'static,
         H: Fn(&mut S, RouteFamily, FamilyActorLane, M) + Send + Sync + 'static,
     {
@@ -365,6 +466,33 @@ impl<M: Send + 'static> FamilyActorPoolRuntime<M> {
             state_factory,
             handler,
             Some(family_failed_metric),
+            None,
+        )
+    }
+
+    #[must_use]
+    pub fn spawn_with_family_failed_metric_and_idle<S, F, H, I>(
+        pool: FamilyActorPool<M>,
+        active: Arc<AtomicBool>,
+        state_factory: F,
+        handler: H,
+        idle_handler: I,
+        family_failed_metric: &'static str,
+    ) -> Self
+    where
+        S: 'static,
+        F: Fn(RouteFamily) -> S + Send + Sync + 'static,
+        H: Fn(&mut S, RouteFamily, FamilyActorLane, M) + Send + Sync + 'static,
+        I: Fn(&mut S, RouteFamily) + Send + Sync + 'static,
+    {
+        let idle_handler: Arc<FamilyIdleHandler<S>> = Arc::new(idle_handler);
+        Self::spawn_inner(
+            pool,
+            active,
+            state_factory,
+            handler,
+            Some(family_failed_metric),
+            Some(&idle_handler),
         )
     }
 
@@ -374,23 +502,19 @@ impl<M: Send + 'static> FamilyActorPoolRuntime<M> {
         state_factory: F,
         handler: H,
         family_failed_metric: Option<&'static str>,
+        idle_handler: Option<&Arc<FamilyIdleHandler<S>>>,
     ) -> Self
     where
-        S: Send + 'static,
+        S: 'static,
         F: Fn(RouteFamily) -> S + Send + Sync + 'static,
         H: Fn(&mut S, RouteFamily, FamilyActorLane, M) + Send + Sync + 'static,
     {
+        let idle_handler = idle_handler.cloned();
         let ingress = pool.ingress();
         let running = Arc::new(AtomicBool::new(true));
         let failed = Arc::new(AtomicBool::new(false));
         let panic_count = Arc::new(AtomicU64::new(0));
-        let family_failed: Arc<HashMap<u32, AtomicBool>> = Arc::new(
-            ingress
-                .families()
-                .into_iter()
-                .map(|family| (family.id(), AtomicBool::new(false)))
-                .collect(),
-        );
+        let family_failed = Arc::new(create_family_failure_flags(&ingress));
         let state_factory = Arc::new(state_factory);
         let handler = Arc::new(handler);
         let mut join_handles = Vec::with_capacity(pool.shard_count());
@@ -399,11 +523,6 @@ impl<M: Send + 'static> FamilyActorPoolRuntime<M> {
             let Some(mut shard) = pool.take_shard(shard_index) else {
                 continue;
             };
-            let mut family_states = HashMap::with_capacity(shard.families().len());
-            for family in shard.families() {
-                family_states.insert(family.id(), state_factory(family));
-            }
-
             let worker_active = active.clone();
             let worker_running = running.clone();
             let worker_failed = failed.clone();
@@ -411,23 +530,37 @@ impl<M: Send + 'static> FamilyActorPoolRuntime<M> {
             let worker_family_failed = family_failed.clone();
             let worker_family_failed_metric = family_failed_metric;
             let worker_handler = handler.clone();
+            let worker_idle_handler = idle_handler.clone();
+            let worker_state_factory = state_factory.clone();
             let worker_ingress = ingress.clone();
+            let (initialized_tx, initialized_rx) = bounded(1);
             join_handles.push(thread::spawn(move || {
+                let mut family_states = create_family_states(&shard, worker_state_factory.as_ref());
+                let _ = initialized_tx.send(());
                 while worker_active.load(Ordering::Acquire)
                     && worker_running.load(Ordering::Acquire)
                     && !worker_failed.load(Ordering::Acquire)
                 {
                     let work = match shard.recv_timeout(Duration::from_millis(50)) {
                         Ok(work) => work,
-                        Err(RecvTimeoutError::Timeout) => continue,
+                        Err(RecvTimeoutError::Timeout) => {
+                            if let Some(idle_handler) = &worker_idle_handler {
+                                service_idle_family_states(
+                                    &mut family_states,
+                                    &worker_family_failed,
+                                    &worker_failed,
+                                    &worker_panic_count,
+                                    worker_family_failed_metric,
+                                    idle_handler.as_ref(),
+                                );
+                            }
+                            continue;
+                        }
                         Err(RecvTimeoutError::Disconnected) => break,
                     };
 
                     let Some(state) = family_states.get_mut(&work.family.id()) else {
-                        // Work for a family this shard was never constructed
-                        // with is a routing/config bug, not a per-family
-                        // runtime fault -- it should never happen under
-                        // correct routing, so it stays pool-fatal.
+                        // Unowned-family work is a pool-fatal routing/config bug.
                         worker_panic_count.fetch_add(1, Ordering::Relaxed);
                         worker_failed.store(true, Ordering::Release);
                         worker_active.store(false, Ordering::Release);
@@ -443,8 +576,7 @@ impl<M: Send + 'static> FamilyActorPoolRuntime<M> {
                         .get(&work.family.id())
                         .is_some_and(|flag| flag.load(Ordering::Acquire))
                     {
-                        // This family already failed closed after an earlier
-                        // handler panic. Drop the message without invoking
+                        // Drop messages for a previously failed family without invoking
                         // the handler again -- the reply sender embedded in
                         // `work.message` is dropped here, which callers
                         // observe as `ActorStopped` via `reply_wait`, not a
@@ -461,35 +593,18 @@ impl<M: Send + 'static> FamilyActorPoolRuntime<M> {
                     }))
                     .is_err()
                     {
-                        worker_panic_count.fetch_add(1, Ordering::Relaxed);
-                        if let Some(flag) = worker_family_failed.get(&work.family.id()) {
-                            flag.store(true, Ordering::Release);
-                        }
-                        if let Some(metric) = worker_family_failed_metric {
-                            crate::observability::counter_inc(metric);
-                        }
-                        tracing::error!(
-                            family = work.family.id(),
-                            "family actor failed closed for this family after handler panic"
+                        record_family_handler_panic(
+                            work.family,
+                            &worker_family_failed,
+                            &worker_failed,
+                            &worker_panic_count,
+                            worker_family_failed_metric,
                         );
-                        // Do not break and do not touch `running`/`active` here:
-                        // sibling families on this shard, and every other
-                        // shard, must keep making progress. `failed` is the
-                        // one exception -- if every provisioned family is now
-                        // failed closed, the pool has zero remaining capacity,
-                        // which is an honest pool-wide health fact (not a
-                        // blast-radius cascade from this one family), so
-                        // flip it to surface that aggregate exhaustion.
-                        if worker_family_failed
-                            .values()
-                            .all(|flag| flag.load(Ordering::Acquire))
-                        {
-                            worker_failed.store(true, Ordering::Release);
-                        }
                     }
                 }
                 worker_running.store(false, Ordering::Release);
             }));
+            await_family_state_initialization(&initialized_rx);
         }
 
         Self {
@@ -592,11 +707,9 @@ impl<M: Send + 'static> FamilyActorPoolRuntime<M> {
         }
     }
 
-    pub(crate) fn managed_actor_health_snapshot(
-        &self,
-    ) -> crate::runtime::ManagedActorHealthSnapshot {
+    pub(crate) fn actor_health_snapshot(&self) -> crate::runtime::ActorHealthSnapshot {
         let health = self.health_snapshot();
-        crate::runtime::ManagedActorHealthSnapshot {
+        crate::runtime::ActorHealthSnapshot {
             running: health.running,
             restart_count: 0,
             panic_count: health.panic_count,

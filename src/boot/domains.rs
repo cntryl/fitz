@@ -35,7 +35,7 @@ pub struct DomainHealthSnapshot {
 }
 
 impl DomainHealthSnapshot {
-    fn new(domain: DomainKind, actor: crate::runtime::ManagedActorHealthSnapshot) -> Self {
+    fn new(domain: DomainKind, actor: crate::runtime::ActorHealthSnapshot) -> Self {
         Self {
             domain: domain.as_str(),
             actor_running: actor.running,
@@ -410,11 +410,12 @@ impl BrokerDomains {
 
 pub struct DomainSetupOptions {
     pub route_families: Vec<u32>,
-    pub schedule_write_options: cntryl_midge::WriteOptions,
-    pub queue_write_options: cntryl_midge::WriteOptions,
+    pub schedule_write_policy: crate::domains::WritePolicy,
+    pub queue_write_policy: crate::domains::WritePolicy,
+    pub queue_recovery_write_policy: crate::domains::WritePolicy,
     pub queue_fast_flush_interval: Option<std::time::Duration>,
-    pub request_sync_write_options: cntryl_midge::WriteOptions,
-    pub request_buffered_write_options: cntryl_midge::WriteOptions,
+    pub request_sync_write_policy: crate::domains::WritePolicy,
+    pub request_buffered_write_policy: crate::domains::WritePolicy,
     pub rpc_request_timeout: Option<std::time::Duration>,
     pub stream_storage_layout: crate::domains::stream::StreamStorageLayout,
     pub kv_idle_transaction_ttl: std::time::Duration,
@@ -446,8 +447,8 @@ fn create_stream_sink(
             options.stream_storage_layout,
             Some(route_families),
             crate::domains::stream::sink::StreamStorageWriteOptions::new(
-                options.request_sync_write_options,
-                options.request_buffered_write_options,
+                options.request_sync_write_policy,
+                options.request_buffered_write_policy,
             ),
         )?
         .with_metrics(metrics.clone()),
@@ -462,13 +463,23 @@ fn create_kv_sink(
     metrics: &crate::observability::metrics::MetricsCollector,
 ) -> Arc<KvDomainSink> {
     Arc::new(
-        KvDomainSink::new(store.clone(), router.clone(), admin_read_model.clone())
-            .with_idle_transaction_ttl(options.kv_idle_transaction_ttl)
-            .with_write_options(
-                options.request_sync_write_options,
-                options.request_buffered_write_options,
-            )
-            .with_metrics(metrics.clone()),
+        KvDomainSink::new_with_families(
+            store.clone(),
+            router.clone(),
+            admin_read_model.clone(),
+            &options
+                .route_families
+                .iter()
+                .copied()
+                .map(RouteFamily::new)
+                .collect::<Vec<_>>(),
+        )
+        .with_idle_transaction_ttl(options.kv_idle_transaction_ttl)
+        .with_write_options(
+            options.request_sync_write_policy.into(),
+            options.request_buffered_write_policy.into(),
+        )
+        .with_metrics(metrics.clone()),
     )
 }
 
@@ -499,8 +510,8 @@ pub fn setup(
             storage.clone(),
             router.clone(),
             admin_read_model.clone(),
-            options.queue_write_options,
-            options.request_sync_write_options,
+            options.queue_write_policy,
+            options.queue_recovery_write_policy,
             crate::utils::idempotency::default_dedup_store(),
         )?
         .with_fast_flush_interval(options.queue_fast_flush_interval)
@@ -547,9 +558,14 @@ pub fn setup(
     register_domain_sink(DomainKind::Lease, router, lease_sink.clone());
 
     let schedule_sink = Arc::new(
-        ScheduleDomainSink::new_with_storage(storage, router.clone(), admin_read_model.clone())
-            .with_write_options(options.schedule_write_options)
-            .with_metrics(metrics.clone()),
+        ScheduleDomainSink::new_with_storage_and_families(
+            storage,
+            router.clone(),
+            admin_read_model.clone(),
+            &route_families,
+        )
+        .with_write_policy(options.schedule_write_policy)
+        .with_metrics(metrics.clone()),
     );
     register_domain_sink(DomainKind::Schedule, router, schedule_sink.clone());
     schedule_sink
@@ -596,11 +612,12 @@ mod tests {
     fn domain_setup_options() -> DomainSetupOptions {
         DomainSetupOptions {
             route_families: vec![1, 2, 3, 4, 5, 6, 7],
-            schedule_write_options: cntryl_midge::WriteOptions::best_effort(),
-            queue_write_options: cntryl_midge::WriteOptions::best_effort(),
+            schedule_write_policy: crate::domains::WritePolicy::BestEffort,
+            queue_write_policy: crate::domains::WritePolicy::BestEffort,
+            queue_recovery_write_policy: crate::domains::WritePolicy::Sync,
             queue_fast_flush_interval: Some(std::time::Duration::from_millis(100)),
-            request_sync_write_options: cntryl_midge::WriteOptions::sync(),
-            request_buffered_write_options: cntryl_midge::WriteOptions::buffered(),
+            request_sync_write_policy: crate::domains::WritePolicy::Sync,
+            request_buffered_write_policy: crate::domains::WritePolicy::Buffered,
             rpc_request_timeout: None,
             stream_storage_layout: crate::domains::stream::StreamStorageLayout::default(),
             kv_idle_transaction_ttl: std::time::Duration::from_mins(5),
@@ -610,15 +627,16 @@ mod tests {
     }
 
     fn cloud_domain_setup_options(
-        durable_write_options: cntryl_midge::WriteOptions,
+        durable_write_policy: crate::domains::WritePolicy,
     ) -> DomainSetupOptions {
         DomainSetupOptions {
             route_families: vec![1],
-            schedule_write_options: durable_write_options,
-            queue_write_options: durable_write_options,
+            schedule_write_policy: durable_write_policy,
+            queue_write_policy: durable_write_policy,
+            queue_recovery_write_policy: durable_write_policy,
             queue_fast_flush_interval: None,
-            request_sync_write_options: durable_write_options,
-            request_buffered_write_options: cntryl_midge::WriteOptions::cloud_async(),
+            request_sync_write_policy: durable_write_policy,
+            request_buffered_write_policy: crate::domains::WritePolicy::CloudAsync,
             rpc_request_timeout: None,
             stream_storage_layout: crate::domains::stream::StreamStorageLayout::default(),
             kv_idle_transaction_ttl: std::time::Duration::from_mins(5),
@@ -629,7 +647,7 @@ mod tests {
 
     fn assert_cloud_domain_bootstrap(
         prefix: &str,
-        durable_write_options: cntryl_midge::WriteOptions,
+        durable_write_policy: crate::domains::WritePolicy,
     ) {
         let tempdir = tempfile::TempDir::new().expect("create cloud simulation directory");
         let store = Arc::new(
@@ -653,7 +671,7 @@ mod tests {
             &router,
             &store,
             &admin_read_model,
-            &cloud_domain_setup_options(durable_write_options),
+            &cloud_domain_setup_options(durable_write_policy),
         );
 
         if let Err(error) = result {
@@ -733,21 +751,21 @@ mod tests {
     }
 
     #[test]
-    fn should_bootstrap_domains_with_background_cloud_write_options() {
+    fn should_bootstrap_domains_with_background_cloud_write_policy() {
         // Arrange
 
         // Act
-        assert_cloud_domain_bootstrap("background", cntryl_midge::WriteOptions::cloud_async());
+        assert_cloud_domain_bootstrap("background", crate::domains::WritePolicy::CloudAsync);
 
         // Assert
     }
 
     #[test]
-    fn should_bootstrap_domains_with_strict_cloud_write_options() {
+    fn should_bootstrap_domains_with_strict_cloud_write_policy() {
         // Arrange
 
         // Act
-        assert_cloud_domain_bootstrap("strict", cntryl_midge::WriteOptions::cloud_strict());
+        assert_cloud_domain_bootstrap("strict", crate::domains::WritePolicy::CloudStrict);
 
         // Assert
     }
@@ -794,16 +812,15 @@ mod tests {
         // Assert
         assert_eq!(snapshots.len(), DomainKind::ALL.len());
         assert!(snapshots.iter().all(|snapshot| !snapshot.actor_running));
-        // Non-sharded domains (kv/queue/schedule) panic exactly one actor.
-        // Family-sharded domains (notice/rpc/lease/stream) are provisioned
-        // with 7 route families here (`domain_setup_options`) and must be
+        // Family-sharded domains are provisioned with 7 route families here
+        // (`domain_setup_options`) and must be
         // panicked on *every* family to reach full exhaustion -- see
         // the panic failpoints on `RpcDomainSink`/`StreamDomainSink` --
         // so their panic_count legitimately lands at 7, not 1.
         for snapshot in &snapshots {
             let expected_panic_count = match snapshot.domain {
-                "notice" | "rpc" | "lease" | "stream" => 7,
-                _ => 1,
+                "kv" | "queue" | "notice" | "rpc" | "lease" | "schedule" | "stream" => 7,
+                _ => unreachable!("unknown domain in health inventory"),
             };
             assert_eq!(
                 snapshot.panic_count, expected_panic_count,

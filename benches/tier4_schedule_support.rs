@@ -9,7 +9,7 @@ use fitz::benchkit::{
     build_schedule_create, build_schedule_create_batch, create_local_bench_store,
     create_write_heavy_bench_store, shared_bench_runtime,
 };
-use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
+use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse, ScheduleStore};
 use fitz::protocol::error_codes::decode_error_body;
 use fitz::protocol::frame::ChannelId;
 use fitz::protocol::frame_context::FrameContext;
@@ -42,10 +42,10 @@ impl ScheduleWriteMode {
         }
     }
 
-    fn options(self) -> cntryl_midge::WriteOptions {
+    fn policy(self) -> fitz::domains::WritePolicy {
         match self {
-            Self::Sync => cntryl_midge::WriteOptions::sync(),
-            Self::Buffered => cntryl_midge::WriteOptions::buffered(),
+            Self::Sync => fitz::domains::WritePolicy::Sync,
+            Self::Buffered => fitz::domains::WritePolicy::Buffered,
         }
     }
 }
@@ -97,7 +97,11 @@ impl ScheduleActorFixture {
             }
         };
         Self {
-            actor: ScheduleActor::new(RouteFamily::new(1), store, write_mode.options()),
+            actor: ScheduleActor::new(
+                RouteFamily::new(1),
+                ScheduleStore::new(store),
+                write_mode.policy(),
+            ),
             _temp_dir: temp_dir,
         }
     }

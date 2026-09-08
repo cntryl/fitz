@@ -28,17 +28,19 @@ fn should_not_retain_kv_subscription_when_response_cannot_be_delivered() {
     );
 
     // Act
-    let result = sink.state.runtime().handle_subscription_frame(
-        &request,
-        meta,
-        Instant::now(),
-        crate::domains::kv::KvSubscriptionMessage::Subscribe {
-            family_id: family,
-            pattern: route,
-            session_id,
-            subscriber: source,
-        },
-    );
+    let result = sink.run_on_family_for_tests(family, move |runtime| {
+        runtime.handle_subscription_frame(
+            &request,
+            meta,
+            Instant::now(),
+            crate::domains::kv::KvSubscriptionMessage::Subscribe {
+                family_id: family,
+                pattern: route,
+                session_id,
+                subscriber: source,
+            },
+        )
+    });
 
     // Assert
     assert!(matches!(

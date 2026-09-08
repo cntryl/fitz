@@ -1,64 +1,69 @@
 //! Mailbox-lane routing and the domain actor's message loop.
 
-use super::model::{ScheduleDomainActor, ScheduleDomainCommand, ScheduleDomainSink};
-use crate::runtime::{Actor, Context, DeliveryError, Envelope, MailboxSink};
+use super::model::{ScheduleDomainCommand, ScheduleDomainRuntime, ScheduleDomainSink};
+use crate::runtime::{DeliveryError, Envelope, FamilyActorLane, MailboxSink};
 
 impl MailboxSink for ScheduleDomainSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
             return self.cleanup_session(cleanup.session_id);
         }
-        self.actor
-            .try_send(ScheduleDomainCommand::Deliver(envelope))
+        let family = *envelope.destination().family();
+        self.try_send(
+            family,
+            FamilyActorLane::Normal,
+            ScheduleDomainCommand::Deliver(envelope),
+        )
     }
 
     fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
             return self.cleanup_session(cleanup.session_id);
         }
-        self.actor
-            .try_send_high_priority(ScheduleDomainCommand::Deliver(envelope))
+        let family = *envelope.destination().family();
+        self.try_send(
+            family,
+            FamilyActorLane::Control,
+            ScheduleDomainCommand::Deliver(envelope),
+        )
     }
 }
 
-impl Actor for ScheduleDomainActor {
-    type Message = ScheduleDomainCommand;
-
-    fn receive(&mut self, msg: Self::Message, _ctx: &mut Context<Self>) {
-        let runtime = self.state.runtime();
+impl ScheduleDomainRuntime<'_> {
+    pub(super) fn receive(&mut self, msg: ScheduleDomainCommand) {
         match msg {
             ScheduleDomainCommand::Deliver(envelope) => {
-                if let Err(error) = runtime.deliver_envelope(&envelope) {
+                if let Err(error) = self.deliver_envelope(&envelope) {
                     tracing::warn!(domain = "schedule", error = %error, "Schedule actor delivery failed");
                 }
             }
             ScheduleDomainCommand::CleanupSession(session_id, reply) => {
-                runtime.core.cleaned_up_sessions.lock().mark(session_id);
-                runtime.unsubscribe_all(session_id);
+                self.core.cleaned_up_sessions.mark(session_id);
+                self.unsubscribe_all(session_id);
                 let _ = reply.send(());
             }
             ScheduleDomainCommand::ReadLiveCounts(reply) => {
-                let _ = reply.send(runtime.live_counts());
+                let _ = reply.send(self.live_counts());
             }
             ScheduleDomainCommand::ReadPendingClaims(route_family, reply) => {
-                let _ = reply.send(runtime.admin_pending_claims(route_family));
+                let _ = reply.send(self.admin_pending_claims(route_family));
             }
             ScheduleDomainCommand::RefreshAdminSnapshotIfDirty(reply) => {
-                runtime.refresh_admin_snapshot_if_dirty();
+                self.refresh_admin_snapshot_if_dirty();
                 let _ = reply.send(());
             }
             ScheduleDomainCommand::ScanDueSchedules => {
-                runtime.scan_due_schedules();
+                self.scan_due_schedules();
             }
             ScheduleDomainCommand::PreloadPersistedFamilies(reply) => {
-                let _ = reply.send(runtime.preload_persisted_families());
+                let _ = reply.send(self.preload_persisted_families());
             }
             ScheduleDomainCommand::BenchPublishEvent(event, reply) => {
-                runtime.bench_publish_event(&event);
+                self.bench_publish_event(&event);
                 let _ = reply.send(());
             }
             ScheduleDomainCommand::ForceDueScanForTests(ready_count, reply) => {
-                runtime.force_due_scan_for_tests(ready_count);
+                self.force_due_scan_for_tests(ready_count);
                 let _ = reply.send(());
             }
             ScheduleDomainCommand::PanicForFailpoint => {
@@ -68,6 +73,11 @@ impl Actor for ScheduleDomainActor {
             ScheduleDomainCommand::BlockForTests(entered, release) => {
                 let _ = entered.send(());
                 let _ = release.recv();
+            }
+            #[cfg(test)]
+            ScheduleDomainCommand::InspectForTests(inspect, reply) => {
+                inspect(self.core);
+                let _ = reply.send(());
             }
         }
     }

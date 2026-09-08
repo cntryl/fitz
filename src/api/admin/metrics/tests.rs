@@ -55,7 +55,7 @@ fn runtime_with_preloaded_schedule_metrics() -> Arc<Runtime> {
                 last_fire_ms,
                 executions_total: 4,
             },
-            cntryl_midge::WriteOptions::buffered(),
+            crate::domains::WritePolicy::Buffered,
         )
         .expect("insert schedule");
     schedule_store
@@ -73,7 +73,7 @@ fn runtime_with_preloaded_schedule_metrics() -> Arc<Runtime> {
                 last_fire_ms,
                 executions_total: 4,
             }],
-            cntryl_midge::WriteOptions::buffered(),
+            crate::domains::WritePolicy::Buffered,
         )
         .expect("claim due schedule");
 
@@ -87,7 +87,7 @@ fn runtime_with_preloaded_schedule_metrics() -> Arc<Runtime> {
             store.clone(),
             router.clone(),
             admin_read_model.clone(),
-            cntryl_midge::WriteOptions::buffered(),
+            crate::domains::WritePolicy::Buffered,
             crate::utils::idempotency::default_dedup_store(),
         )),
         Arc::new(NoticeDomainSink::new(
@@ -109,7 +109,7 @@ fn runtime_with_preloaded_schedule_metrics() -> Arc<Runtime> {
             admin_read_model.clone(),
         )),
         Arc::new(ScheduleDomainSink::new(
-            store,
+            crate::domains::schedule::ScheduleStore::new(store),
             router,
             admin_read_model.clone(),
         )),

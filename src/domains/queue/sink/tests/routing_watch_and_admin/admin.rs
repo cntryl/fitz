@@ -238,7 +238,7 @@ pub(super) fn should_cleanup_expired_queue_dedup_entries_during_runtime_sweep() 
         store,
         router,
         admin_read_model,
-        cntryl_midge::WriteOptions::best_effort(),
+        crate::domains::WritePolicy::BestEffort,
         dedup_store.clone(),
     );
     let dedup_key = crate::utils::idempotency::DedupKey {

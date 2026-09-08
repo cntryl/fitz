@@ -204,11 +204,12 @@ fn register_domains_stage(
 ) -> BootStage<Arc<domains::BrokerDomains>> {
     let options = domains::DomainSetupOptions {
         route_families: config.route_families.clone(),
-        schedule_write_options: config.schedule_write_options(),
-        queue_write_options: config.queue_write_options(),
+        schedule_write_policy: config.schedule_write_policy(),
+        queue_write_policy: config.queue_write_policy(),
+        queue_recovery_write_policy: config.request_sync_write_policy(),
         queue_fast_flush_interval: config.queue_fast_flush_interval(),
-        request_sync_write_options: config.request_sync_write_options(),
-        request_buffered_write_options: config.request_buffered_write_options(),
+        request_sync_write_policy: config.request_sync_write_policy(),
+        request_buffered_write_policy: config.request_buffered_write_policy(),
         rpc_request_timeout: None,
         stream_storage_layout: config.stream_storage_layout,
         kv_idle_transaction_ttl: Duration::from_secs(config.kv_idle_transaction_ttl_seconds),

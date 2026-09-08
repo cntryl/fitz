@@ -44,8 +44,8 @@ pub(super) fn should_create_fast_queue_sink_with_explicit_background_cloud_recov
         Arc::clone(&store),
         Arc::new(Router::new()),
         crate::control::admin::read_model::AdminReadModel::new(),
-        cntryl_midge::WriteOptions::best_effort(),
-        cntryl_midge::WriteOptions::cloud_async(),
+        crate::domains::WritePolicy::BestEffort,
+        crate::domains::WritePolicy::CloudAsync,
         crate::utils::idempotency::default_dedup_store(),
     );
 

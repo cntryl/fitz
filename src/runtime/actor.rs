@@ -219,6 +219,7 @@ impl<A: Actor + ?Sized> Context<A> {
     }
 
     /// Set the current envelope metadata being processed (internal use by scheduler)
+    #[cfg(test)]
     pub(crate) fn set_current_metadata(
         &mut self,
         metadata: crate::runtime::envelope::EnvelopeMetadata,

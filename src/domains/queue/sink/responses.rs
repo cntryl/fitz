@@ -1,8 +1,10 @@
 //! Response and recovery-error routing back to clients.
 
+use super::model::QueueDomainCore;
 #[cfg(test)]
-use super::model::FrameContext;
-use super::model::{Envelope, Instant, QueueDomainCore};
+use crate::dispatch::protocol::frame_context::FrameContext;
+use crate::runtime::Envelope;
+use std::time::Instant;
 
 impl QueueDomainCore {
     /// Count a response the actor produced but the transport could not carry.

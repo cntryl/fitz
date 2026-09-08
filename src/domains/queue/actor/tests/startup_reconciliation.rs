@@ -61,8 +61,8 @@ fn should_reconcile_missing_queue_body_for_fast_policy_during_preflight() {
     // Act
     QueueActor::prepare_persisted_state_for_existing_families(
         store.as_ref(),
-        cntryl_midge::WriteOptions::best_effort(),
-        cntryl_midge::WriteOptions::sync(),
+        cntryl_midge::WriteOptions::best_effort().into(),
+        cntryl_midge::WriteOptions::sync().into(),
     )
     .expect("fast queue preflight should reconcile a missing body");
 
@@ -86,8 +86,8 @@ fn should_reconcile_orphan_queue_body_for_fast_policy_during_preflight() {
     // Act
     QueueActor::prepare_persisted_state_for_existing_families(
         store.as_ref(),
-        cntryl_midge::WriteOptions::best_effort(),
-        cntryl_midge::WriteOptions::sync(),
+        cntryl_midge::WriteOptions::best_effort().into(),
+        cntryl_midge::WriteOptions::sync().into(),
     )
     .expect("fast queue preflight should reconcile an orphan body");
 
@@ -140,8 +140,8 @@ fn should_reconcile_orphan_queue_body_with_background_cloud_recovery() {
     // Act
     let result = QueueActor::prepare_persisted_state_for_existing_families(
         store.as_ref(),
-        cntryl_midge::WriteOptions::best_effort(),
-        cntryl_midge::WriteOptions::cloud_async(),
+        cntryl_midge::WriteOptions::best_effort().into(),
+        cntryl_midge::WriteOptions::cloud_async().into(),
     );
 
     // Assert
@@ -179,8 +179,8 @@ fn should_reject_partial_queue_rows_for_buffered_plus_strict_policies() {
         );
         QueueActor::prepare_persisted_state_for_existing_families(
             store.as_ref(),
-            policy,
-            cntryl_midge::WriteOptions::sync(),
+            policy.into(),
+            cntryl_midge::WriteOptions::sync().into(),
         )
         .expect_err("durable queue policies should reject a missing body")
     });
@@ -210,8 +210,8 @@ fn should_require_durable_write_policy_for_fast_queue_reconciliation() {
     // Act
     let result = QueueActor::prepare_persisted_state_for_existing_families(
         store.as_ref(),
-        cntryl_midge::WriteOptions::best_effort(),
-        cntryl_midge::WriteOptions::buffered(),
+        cntryl_midge::WriteOptions::best_effort().into(),
+        cntryl_midge::WriteOptions::buffered().into(),
     );
 
     // Assert
@@ -241,8 +241,8 @@ fn should_leave_complete_split_queue_records_untouched() {
     // Act
     QueueActor::prepare_persisted_state_for_existing_families(
         store.as_ref(),
-        cntryl_midge::WriteOptions::best_effort(),
-        cntryl_midge::WriteOptions::sync(),
+        cntryl_midge::WriteOptions::best_effort().into(),
+        cntryl_midge::WriteOptions::sync().into(),
     )
     .expect("complete queue records should pass fast preflight");
 
@@ -313,8 +313,8 @@ fn should_persist_fast_queue_reconciliation_across_restart() {
     );
     QueueActor::prepare_persisted_state_for_existing_families(
         &store,
-        cntryl_midge::WriteOptions::best_effort(),
-        cntryl_midge::WriteOptions::sync(),
+        cntryl_midge::WriteOptions::best_effort().into(),
+        cntryl_midge::WriteOptions::sync().into(),
     )
     .expect("reconcile fast queue state before restart");
     store

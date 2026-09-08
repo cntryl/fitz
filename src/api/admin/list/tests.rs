@@ -58,7 +58,7 @@ fn runtime_with_preloaded_schedule() -> Arc<Runtime> {
                 last_fire_ms: Some(now_ms.saturating_sub(1_000)),
                 executions_total: 7,
             },
-            cntryl_midge::WriteOptions::buffered(),
+            crate::domains::WritePolicy::Buffered,
         )
         .expect("insert schedule");
 
@@ -72,7 +72,7 @@ fn runtime_with_preloaded_schedule() -> Arc<Runtime> {
             store.clone(),
             router.clone(),
             admin_read_model.clone(),
-            cntryl_midge::WriteOptions::buffered(),
+            crate::domains::WritePolicy::Buffered,
             crate::utils::idempotency::default_dedup_store(),
         )),
         Arc::new(NoticeDomainSink::new(
@@ -94,7 +94,7 @@ fn runtime_with_preloaded_schedule() -> Arc<Runtime> {
             admin_read_model.clone(),
         )),
         Arc::new(ScheduleDomainSink::new(
-            store,
+            crate::domains::schedule::ScheduleStore::new(store),
             router,
             admin_read_model.clone(),
         )),

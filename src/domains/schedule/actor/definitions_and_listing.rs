@@ -1,10 +1,19 @@
-use super::model::{
-    parse_concrete_schedule_route, Arc, BinaryHeap, Bytes, CronSchedule, FastSet, FxBuildHasher,
-    Instant, PendingScheduleCreate, Reverse, ScheduleActor, ScheduleCreateEntry, ScheduleDef,
-    ScheduleDeliveryMode, ScheduleInsert, ScheduleListEntry,
+use super::model::{FastSet, PendingScheduleCreate, ScheduleActor};
+use crate::domains::schedule::metrics::{
     METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL, METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL,
     METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL,
 };
+use crate::domains::schedule::protocol::{
+    parse_concrete_schedule_route, CronSchedule, ScheduleCreateEntry, ScheduleDef,
+    ScheduleDeliveryMode, ScheduleListEntry,
+};
+use crate::domains::schedule::store::ScheduleInsert;
+use bytes::Bytes;
+use rustc_hash::FxBuildHasher;
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
+use std::sync::Arc;
+use std::time::Instant;
 
 impl ScheduleActor {
     /// # Errors
@@ -82,7 +91,7 @@ impl ScheduleActor {
                     last_fire_ms: previous_last_fire_ms,
                     executions_total: previous_executions_total,
                 },
-                self.write_options,
+                self.write_policy,
             )
         });
 
@@ -250,7 +259,7 @@ impl ScheduleActor {
 
         if let Err(error) = super::retry_persistence(|| {
             self.store
-                .insert_batch(self.family.as_u64(), &store_items, self.write_options)
+                .insert_batch(self.family.as_u64(), &store_items, self.write_policy)
         }) {
             Self::record_batch_persistence_failures(&pending);
             return Err(error);
@@ -316,7 +325,7 @@ impl ScheduleActor {
                 route,
                 existing.next_fire_ms,
                 &pending_fire_ms,
-                self.write_options,
+                self.write_policy,
             )
         }) {
             crate::observability::counter_inc(METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL);

@@ -397,19 +397,20 @@ impl TestServer {
         runtime.mark_storage_ready();
 
         // Step 3: Register domain actors
-        let schedule_write_options = boot_config.schedule_write_options();
-        let queue_write_options = boot_config.queue_write_options();
+        let schedule_write_policy = boot_config.schedule_write_policy();
+        let queue_write_policy = boot_config.queue_write_policy();
         let domains = crate::boot::domains::setup(
             &router,
             &store,
             &runtime.admin_read_model(),
             &crate::boot::domains::DomainSetupOptions {
                 route_families: boot_config.route_families.clone(),
-                schedule_write_options,
-                queue_write_options,
+                schedule_write_policy,
+                queue_write_policy,
+                queue_recovery_write_policy: boot_config.request_sync_write_policy(),
                 queue_fast_flush_interval: boot_config.queue_fast_flush_interval(),
-                request_sync_write_options: boot_config.request_sync_write_options(),
-                request_buffered_write_options: boot_config.request_buffered_write_options(),
+                request_sync_write_policy: boot_config.request_sync_write_policy(),
+                request_buffered_write_policy: boot_config.request_buffered_write_policy(),
                 rpc_request_timeout,
                 stream_storage_layout: boot_config.stream_storage_layout,
                 kv_idle_transaction_ttl: std::time::Duration::from_secs(

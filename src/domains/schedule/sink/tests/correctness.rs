@@ -2,7 +2,9 @@ use super::*;
 
 fn new_correctness_schedule_sink(router: Arc<Router>) -> ScheduleDomainSink {
     ScheduleDomainSink::new(
-        crate::testkit::create_test_engine_with_cfs(vec![1, 2]),
+        crate::domains::schedule::ScheduleStore::new(crate::testkit::create_test_engine_with_cfs(
+            vec![1, 2],
+        )),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
     )

@@ -10,7 +10,7 @@ mod tier2_stress;
 use cntryl_stress::{black_box, stress, stress_main, StressContext};
 use fitz::benchkit::create_bench_store_with_cfs;
 use fitz::domains::schedule::protocol::{validate_concrete_schedule_route, Clock};
-use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
+use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse, ScheduleStore};
 use fitz::runtime::routing::RouteFamily;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -53,8 +53,8 @@ fn create_test_actor(clock: Arc<dyn Clock>) -> ScheduleActor {
     let store = create_bench_store_with_cfs([1, 2, 3, 4, 5]);
     ScheduleActor::new_with_clock(
         RouteFamily::new(1),
-        store,
-        cntryl_midge::WriteOptions::buffered(),
+        ScheduleStore::new(store),
+        fitz::domains::WritePolicy::Buffered,
         clock,
     )
 }

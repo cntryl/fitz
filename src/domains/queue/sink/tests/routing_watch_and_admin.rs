@@ -124,7 +124,7 @@ pub(super) fn new_queue_domain_sink(
         store,
         router,
         admin_read_model,
-        queue_write_options,
+        queue_write_options.into(),
         crate::utils::idempotency::default_dedup_store(),
     )
 }

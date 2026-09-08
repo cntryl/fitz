@@ -1,6 +1,7 @@
 use super::{Instant, OperationOutcome, QueueDomainCore, QueueOpKind};
-use crate::domains::queue::sink::model::{PendingQueueReserve, VecDeque};
+use crate::domains::queue::sink::model::PendingQueueReserve;
 use crate::runtime::routing::RouteFamily;
+use std::collections::VecDeque;
 
 impl QueueDomainCore {
     fn pending_reserve_matches_route(

@@ -1,8 +1,10 @@
 use super::model::{
-    parse_concrete_schedule_route, ScheduleBatchInsert, ScheduleDefinitionData, ScheduleFireClaim,
-    ScheduleInsert, SchedulePendingFireClaimAck, SchedulePersistenceError, ScheduleStore,
-    WriteOptions, BODY_PREFIX, DEFINITION_PREFIX, DUE_PREFIX, PENDING_FIRE_PREFIX,
+    ScheduleBatchInsert, ScheduleDefinitionData, ScheduleFireClaim, ScheduleInsert,
+    SchedulePendingFireClaimAck, SchedulePersistenceError, ScheduleStore, BODY_PREFIX,
+    DEFINITION_PREFIX, DUE_PREFIX, PENDING_FIRE_PREFIX,
 };
+use crate::domains::schedule::protocol::parse_concrete_schedule_route;
+use crate::domains::WritePolicy;
 
 impl ScheduleStore {
     /// # Errors
@@ -13,7 +15,7 @@ impl ScheduleStore {
         &self,
         cf_id: u64,
         schedule: ScheduleInsert<'_>,
-        write_options: WriteOptions,
+        write_policy: WritePolicy,
     ) -> Result<Vec<u8>, SchedulePersistenceError> {
         let parsed = parse_concrete_schedule_route(schedule.route)?;
         let due_key = Self::encode_prefixed_timed_route_key_from_realm(
@@ -57,7 +59,7 @@ impl ScheduleStore {
         // The durable definition row is authoritative. Live actors use their in-memory
         // ready heap and `load_all()` rebuilds the due index on restart.
 
-        self.commit_or_inject(txn, write_options)?;
+        self.commit_or_inject(txn, write_policy)?;
         Ok(due_key)
     }
 
@@ -69,7 +71,7 @@ impl ScheduleStore {
         &self,
         cf_id: u64,
         items: &[ScheduleBatchInsert],
-        write_options: WriteOptions,
+        write_policy: WritePolicy,
     ) -> Result<(), SchedulePersistenceError> {
         if items.is_empty() {
             return Ok(());
@@ -109,7 +111,7 @@ impl ScheduleStore {
             }
         }
 
-        self.commit_or_inject(txn, write_options)
+        self.commit_or_inject(txn, write_policy)
     }
 
     /// # Errors
@@ -120,7 +122,7 @@ impl ScheduleStore {
         &self,
         cf_id: u64,
         items: &[ScheduleFireClaim<'_>],
-        write_options: WriteOptions,
+        write_policy: WritePolicy,
     ) -> Result<(), SchedulePersistenceError> {
         if items.is_empty() {
             return Ok(());
@@ -173,7 +175,7 @@ impl ScheduleStore {
             .map_err(|e| format!("put pending fire failed: {e:?}"))?;
         }
 
-        self.commit_or_inject(txn, write_options)
+        self.commit_or_inject(txn, write_policy)
     }
 
     /// # Errors
@@ -184,7 +186,7 @@ impl ScheduleStore {
         &self,
         cf_id: u64,
         items: &[SchedulePendingFireClaimAck<'_>],
-        write_options: WriteOptions,
+        write_policy: WritePolicy,
     ) -> Result<(), SchedulePersistenceError> {
         if items.is_empty() {
             return Ok(());
@@ -220,7 +222,7 @@ impl ScheduleStore {
             }
         }
 
-        self.commit_or_inject(txn, write_options)
+        self.commit_or_inject(txn, write_policy)
     }
 
     /// # Errors
@@ -232,17 +234,10 @@ impl ScheduleStore {
         cf_id: u64,
         route: &str,
         next_fire_ms: u64,
-        write_options: WriteOptions,
+        write_policy: WritePolicy,
     ) -> Result<(), SchedulePersistenceError> {
         let parsed = parse_concrete_schedule_route(route)?;
-        self.delete_current_with_realm(
-            cf_id,
-            &parsed.realm,
-            route,
-            next_fire_ms,
-            &[],
-            write_options,
-        )
+        self.delete_current_with_realm(cf_id, &parsed.realm, route, next_fire_ms, &[], write_policy)
     }
 
     pub(crate) fn delete_current_with_realm(
@@ -252,7 +247,7 @@ impl ScheduleStore {
         route: &str,
         next_fire_ms: u64,
         pending_fire_ms: &[u64],
-        write_options: WriteOptions,
+        write_policy: WritePolicy,
     ) -> Result<(), SchedulePersistenceError> {
         let cf_id_u32 = Self::u64_to_u32_saturating(cf_id)?;
         let mut txn = self
@@ -289,6 +284,6 @@ impl ScheduleStore {
             .map_err(|e| format!("delete schedule pending fire failed: {e:?}"))?;
         }
 
-        self.commit_or_inject(txn, write_options)
+        self.commit_or_inject(txn, write_policy)
     }
 }

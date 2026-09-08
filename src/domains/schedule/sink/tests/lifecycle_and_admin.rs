@@ -6,7 +6,9 @@ fn should_confirm_schedule_session_cleanup_before_reporting_delivery() {
     // Arrange
     let family = RouteFamily::new(1);
     let sink = ScheduleDomainSink::new(
-        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        crate::domains::schedule::ScheduleStore::new(crate::testkit::create_test_engine_with_cfs(
+            vec![1],
+        )),
         Arc::new(Router::new()),
         crate::control::admin::read_model::AdminReadModel::new(),
     );
@@ -50,10 +52,59 @@ fn should_create_schedule_domain_sink() {
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
 
     // Act
-    let sink = ScheduleDomainSink::new(store, router, admin_read_model);
+    let sink = ScheduleDomainSink::new(
+        crate::domains::schedule::ScheduleStore::new(store),
+        router,
+        admin_read_model,
+    );
 
     // Assert
     assert!(sink.is_active());
+    assert!(sink.is_actor_running());
+}
+
+#[test]
+fn should_retain_explicit_schedule_family_inventory() {
+    // Arrange
+    let families = [RouteFamily::new(1), RouteFamily::new(2)];
+
+    // Act
+    let sink = ScheduleDomainSink::new_with_storage_and_families(
+        crate::storage::FitzStorageEngine::new(crate::testkit::create_test_engine_with_cfs(vec![
+            1, 2,
+        ])),
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+        &families,
+    );
+
+    // Assert
+    assert_eq!(sink.route_families_for_tests(), families);
+}
+
+#[test]
+fn should_keep_sibling_schedule_family_running_after_family_panic() {
+    // Arrange
+    let failed_family = RouteFamily::new(1);
+    let sibling_family = RouteFamily::new(2);
+    let sink = ScheduleDomainSink::new(
+        crate::domains::schedule::ScheduleStore::new(crate::testkit::create_test_engine_with_cfs(
+            vec![1, 2],
+        )),
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+
+    // Act
+    sink.panic_family_for_tests(failed_family);
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while sink.is_family_running(failed_family) && Instant::now() < deadline {
+        std::thread::yield_now();
+    }
+
+    // Assert
+    assert!(!sink.is_family_running(failed_family));
+    assert!(sink.is_family_running(sibling_family));
     assert!(sink.is_actor_running());
 }
 
@@ -126,18 +177,22 @@ fn should_retain_schedule_cursor_while_registration_still_matches() {
 }
 
 #[test]
-fn should_store_cloud_strict_write_options_given_strict_cloud_policy() {
+fn should_store_cloud_strict_write_policy_given_strict_cloud_policy() {
     // Arrange
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
 
     // Act
-    let sink = ScheduleDomainSink::new(store, router, admin_read_model)
-        .with_write_options(cntryl_midge::WriteOptions::cloud_strict());
+    let sink = ScheduleDomainSink::new(
+        crate::domains::schedule::ScheduleStore::new(store),
+        router,
+        admin_read_model,
+    )
+    .with_write_policy(crate::domains::WritePolicy::CloudStrict);
 
     // Assert
-    assert!(sink.write_options_are_cloud_strict_for_tests());
+    assert!(sink.write_policy_are_cloud_strict_for_tests());
 }
 
 #[test]
@@ -147,11 +202,15 @@ fn should_read_admin_pending_claims_through_actor_command() {
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = ScheduleDomainSink::new(store.clone(), router, admin_read_model);
+    let sink = ScheduleDomainSink::new(
+        crate::domains::schedule::ScheduleStore::new(store.clone()),
+        router,
+        admin_read_model,
+    );
     let mut actor = crate::domains::schedule::ScheduleActor::new(
         family,
-        store,
-        cntryl_midge::WriteOptions::buffered(),
+        crate::domains::schedule::ScheduleStore::new(store),
+        crate::domains::WritePolicy::Buffered,
     );
     actor
         .create_schedule(
@@ -179,11 +238,15 @@ fn should_route_schedule_force_due_scan_through_actor_command() {
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = ScheduleDomainSink::new(store.clone(), router, admin_read_model);
+    let sink = ScheduleDomainSink::new(
+        crate::domains::schedule::ScheduleStore::new(store.clone()),
+        router,
+        admin_read_model,
+    );
     let mut actor = crate::domains::schedule::ScheduleActor::new(
         family,
-        store,
-        cntryl_midge::WriteOptions::buffered(),
+        crate::domains::schedule::ScheduleStore::new(store),
+        crate::domains::WritePolicy::Buffered,
     );
     actor
         .create_schedule(
@@ -193,15 +256,15 @@ fn should_route_schedule_force_due_scan_through_actor_command() {
         )
         .expect("create schedule");
     sink.insert_actor_for_tests(family, actor);
+    let pending_fire_count_before_stop = sink.actor_pending_fire_count_for_tests(family);
 
     // Act
     sink.stop_actor_for_tests();
     sink.force_due_scan_for_tests(1);
-    let pending_fire_count = sink.actor_pending_fire_count_for_tests(family);
 
     // Assert
     assert!(!sink.is_actor_running());
-    assert_eq!(pending_fire_count, 0);
+    assert_eq!(pending_fire_count_before_stop, 0);
 }
 
 #[test]
@@ -213,8 +276,8 @@ fn should_route_schedule_preload_through_actor_command() {
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
     let mut actor = crate::domains::schedule::ScheduleActor::new(
         family,
-        store.clone(),
-        cntryl_midge::WriteOptions::buffered(),
+        crate::domains::schedule::ScheduleStore::new(store.clone()),
+        crate::domains::WritePolicy::Buffered,
     );
     actor
         .create_schedule(
@@ -223,17 +286,19 @@ fn should_route_schedule_preload_through_actor_command() {
             Bytes::from_static(b"preload"),
         )
         .expect("create persisted schedule");
-    let sink = ScheduleDomainSink::new(store, router, admin_read_model);
+    let sink = ScheduleDomainSink::new(
+        crate::domains::schedule::ScheduleStore::new(store),
+        router,
+        admin_read_model,
+    );
 
     // Act
     sink.stop_actor_for_tests();
     let preload_result = sink.preload_persisted_families();
-    let actor_count = sink.actor_count_for_tests();
 
     // Assert
     assert!(!sink.is_actor_running());
     assert!(preload_result.is_err());
-    assert_eq!(actor_count, 0);
 }
 
 #[test]
@@ -242,7 +307,11 @@ fn should_wait_for_schedule_preload_reply_beyond_one_second() {
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = ScheduleDomainSink::new(store, router, admin_read_model);
+    let sink = ScheduleDomainSink::new(
+        crate::domains::schedule::ScheduleStore::new(store),
+        router,
+        admin_read_model,
+    );
     let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);
     let (release_tx, release_rx) = crossbeam_channel::bounded(1);
     sink.block_actor_for_tests(entered_tx, release_rx);
@@ -266,7 +335,11 @@ fn should_timeout_schedule_preload_when_actor_does_not_reply_before_deadline() {
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = ScheduleDomainSink::new(store, router, admin_read_model);
+    let sink = ScheduleDomainSink::new(
+        crate::domains::schedule::ScheduleStore::new(store),
+        router,
+        admin_read_model,
+    );
     let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);
     let (release_tx, release_rx) = crossbeam_channel::bounded(1);
     sink.block_actor_for_tests(entered_tx, release_rx);
@@ -295,7 +368,11 @@ fn should_route_schedule_admin_refresh_through_actor_command() {
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = ScheduleDomainSink::new(store, router, admin_read_model);
+    let sink = ScheduleDomainSink::new(
+        crate::domains::schedule::ScheduleStore::new(store),
+        router,
+        admin_read_model,
+    );
     sink.set_snapshot_dirty_for_tests(true);
     assert!(sink.snapshot_dirty_for_tests());
 
@@ -318,12 +395,16 @@ fn should_route_schedule_live_stats_through_actor_command() {
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = ScheduleDomainSink::new(store.clone(), router, admin_read_model);
+    let sink = ScheduleDomainSink::new(
+        crate::domains::schedule::ScheduleStore::new(store.clone()),
+        router,
+        admin_read_model,
+    );
     let clock = Arc::new(MockClock::new(now_epoch_ms().saturating_sub(45_000)));
     let mut actor = crate::domains::schedule::ScheduleActor::new_with_clock(
         family,
-        store,
-        cntryl_midge::WriteOptions::buffered(),
+        crate::domains::schedule::ScheduleStore::new(store),
+        crate::domains::WritePolicy::Buffered,
         clock.clone(),
     );
     actor

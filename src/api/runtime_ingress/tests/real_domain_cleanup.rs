@@ -317,7 +317,7 @@ async fn should_cleanup_real_schedule_subscription_on_close() {
     let router = Arc::new(crate::runtime::Router::new());
     let admin_read_model = AdminReadModel::new();
     let schedule_sink = Arc::new(ScheduleDomainSink::new(
-        store,
+        crate::domains::schedule::ScheduleStore::new(store),
         router.clone(),
         admin_read_model.clone(),
     ));

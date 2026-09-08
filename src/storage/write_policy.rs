@@ -15,7 +15,6 @@ impl From<WritePolicy> for WriteOptions {
     }
 }
 
-// Preserve construction with existing broker configuration and embedding APIs.
 impl From<WriteOptions> for WritePolicy {
     fn from(options: WriteOptions) -> Self {
         match options.policy() {

@@ -186,7 +186,7 @@ pub(crate) fn queue_runtime_with_domains() -> (Arc<Runtime>, Arc<cntryl_midge::E
             store.clone(),
             router.clone(),
             admin_read_model.clone(),
-            cntryl_midge::WriteOptions::buffered(),
+            fitz::domains::WritePolicy::Buffered,
             fitz::utils::idempotency::default_dedup_store(),
         )),
         Arc::new(NoticeDomainSink::new(
@@ -208,7 +208,7 @@ pub(crate) fn queue_runtime_with_domains() -> (Arc<Runtime>, Arc<cntryl_midge::E
             admin_read_model.clone(),
         )),
         Arc::new(ScheduleDomainSink::new(
-            store.clone(),
+            fitz::domains::schedule::ScheduleStore::new(store.clone()),
             router,
             admin_read_model.clone(),
         )),
@@ -230,7 +230,7 @@ pub(crate) fn schedule_runtime_with_domains() -> (
     let admin_read_model = runtime.admin_read_model();
     let store = fitz::testkit::create_test_engine_with_cfs(vec![1]);
     let schedule = Arc::new(ScheduleDomainSink::new(
-        store.clone(),
+        fitz::domains::schedule::ScheduleStore::new(store.clone()),
         router,
         admin_read_model.clone(),
     ));
@@ -245,7 +245,7 @@ pub(crate) fn schedule_runtime_with_domains() -> (
             store.clone(),
             runtime.router(),
             admin_read_model.clone(),
-            cntryl_midge::WriteOptions::buffered(),
+            fitz::domains::WritePolicy::Buffered,
             fitz::utils::idempotency::default_dedup_store(),
         )),
         Arc::new(NoticeDomainSink::new(
@@ -533,7 +533,7 @@ pub(crate) fn seed_pending_schedule_claim(store: Arc<cntryl_midge::Engine>) {
                 last_fire_ms,
                 executions_total: 4,
             },
-            cntryl_midge::WriteOptions::buffered(),
+            fitz::domains::WritePolicy::Buffered,
         )
         .expect("insert schedule");
     schedule_store
@@ -551,7 +551,7 @@ pub(crate) fn seed_pending_schedule_claim(store: Arc<cntryl_midge::Engine>) {
                 last_fire_ms,
                 executions_total: 4,
             }],
-            cntryl_midge::WriteOptions::buffered(),
+            fitz::domains::WritePolicy::Buffered,
         )
         .expect("claim schedule fire");
 }
@@ -577,7 +577,7 @@ pub(crate) fn seed_active_schedule_definition(store: Arc<cntryl_midge::Engine>) 
                 last_fire_ms,
                 executions_total: 7,
             },
-            cntryl_midge::WriteOptions::buffered(),
+            fitz::domains::WritePolicy::Buffered,
         )
         .expect("insert active schedule");
 }
@@ -709,7 +709,7 @@ pub(crate) fn seed_committed_kv_values(
     let tx_id = match actor.handle(KvMessage::Begin {
         scope: scope.clone(),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: fitz::domains::WritePolicy::Buffered,
     }) {
         KvResponse::BeginOk { tx_id } => tx_id,
         other => panic!("Expected BeginOk response, found {other:?}"),
@@ -748,7 +748,7 @@ pub(crate) fn delete_committed_kv_range(
     let tx_id = match actor.handle(KvMessage::Begin {
         scope: scope.clone(),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: fitz::domains::WritePolicy::Buffered,
     }) {
         KvResponse::BeginOk { tx_id } => tx_id,
         other => panic!("Expected BeginOk response, found {other:?}"),

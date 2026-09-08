@@ -91,8 +91,8 @@ impl RpcDomainSink {
         self.family_runtime.is_running()
     }
 
-    pub(crate) fn actor_health_snapshot(&self) -> crate::runtime::ManagedActorHealthSnapshot {
-        self.family_runtime.managed_actor_health_snapshot()
+    pub(crate) fn actor_health_snapshot(&self) -> crate::runtime::ActorHealthSnapshot {
+        self.family_runtime.actor_health_snapshot()
     }
 
     /// Panic every provisioned family's handler. Used by the opt-in failpoint and tests to

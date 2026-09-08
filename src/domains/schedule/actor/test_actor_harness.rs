@@ -1,6 +1,9 @@
 //! Test-only generic actor adapter for direct Schedule actor tests.
 
-use super::model::{Actor, Context, ScheduleActor, ScheduleMessage};
+use super::model::ScheduleActor;
+use crate::domains::schedule::protocol::ScheduleMessage;
+use crate::prelude::Actor;
+use crate::runtime::actor::Context;
 
 impl Actor for ScheduleActor {
     type Message = ScheduleMessage;

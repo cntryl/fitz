@@ -1,5 +1,10 @@
 use super::*;
+use crate::domains::schedule::protocol::{parse_concrete_schedule_route, ScheduleDeliveryMode};
+use crate::domains::WritePolicy;
 use crate::testkit::create_test_engine_with_cfs;
+use crate::utils::storage_key::{self, DomainKeyspace};
+use bytes::Bytes;
+use std::sync::Arc;
 
 fn make_store() -> (ScheduleStore, Arc<cntryl_midge::Engine>) {
     let db = create_test_engine_with_cfs(vec![1]);
@@ -24,7 +29,7 @@ fn put_raw(
         .map_err(|e| format!("begin_tx failed: {e:?}"))?;
     txn.put(key, value, None)
         .map_err(|e| format!("put failed: {e:?}"))?;
-    txn.commit(WriteOptions::buffered())
+    txn.commit(WritePolicy::Buffered.into())
         .map_err(|e| format!("commit failed: {e:?}"))
 }
 
@@ -96,7 +101,7 @@ fn should_persist_definition_without_due_index_for_inserted_schedule() {
                 last_fire_ms: None,
                 executions_total: 0,
             },
-            WriteOptions::buffered(),
+            WritePolicy::Buffered,
         )
         .expect("insert schedule");
 
@@ -161,7 +166,7 @@ fn should_rebuild_due_index_from_inserted_schedule_definitions_on_load() {
                 last_fire_ms: None,
                 executions_total: 0,
             },
-            WriteOptions::buffered(),
+            WritePolicy::Buffered,
         )
         .expect("insert schedule");
     assert!(
@@ -171,7 +176,7 @@ fn should_rebuild_due_index_from_inserted_schedule_definitions_on_load() {
 
     // Act
     let loaded = store
-        .load_all(1, WriteOptions::buffered())
+        .load_all(1, WritePolicy::Buffered)
         .expect("load schedules");
 
     // Assert
@@ -206,13 +211,13 @@ fn should_remove_definition_with_due_index_when_canceling_schedule() {
                 last_fire_ms: None,
                 executions_total: 0,
             },
-            WriteOptions::buffered(),
+            WritePolicy::Buffered,
         )
         .expect("insert schedule");
 
     // Act
     store
-        .delete_current(1, route, next_fire_ms, WriteOptions::buffered())
+        .delete_current(1, route, next_fire_ms, WritePolicy::Buffered)
         .expect("delete schedule");
 
     // Assert
@@ -253,7 +258,7 @@ fn should_persist_pending_fire_given_claimed_due_schedule() {
                 last_fire_ms: None,
                 executions_total: 0,
             },
-            WriteOptions::buffered(),
+            WritePolicy::Buffered,
         )
         .expect("insert schedule");
 
@@ -273,7 +278,7 @@ fn should_persist_pending_fire_given_claimed_due_schedule() {
                 last_fire_ms: None,
                 executions_total: 0,
             }],
-            WriteOptions::buffered(),
+            WritePolicy::Buffered,
         )
         .expect("claim due schedule");
     let pending = store
@@ -351,7 +356,7 @@ fn should_record_acknowledgement_state_given_acknowledged_claimed_due_schedule()
                 last_fire_ms: None,
                 executions_total: 0,
             },
-            WriteOptions::buffered(),
+            WritePolicy::Buffered,
         )
         .expect("insert schedule");
     store
@@ -369,7 +374,7 @@ fn should_record_acknowledgement_state_given_acknowledged_claimed_due_schedule()
                 last_fire_ms: None,
                 executions_total: 0,
             }],
-            WriteOptions::buffered(),
+            WritePolicy::Buffered,
         )
         .expect("claim due schedule");
 
@@ -388,14 +393,14 @@ fn should_record_acknowledgement_state_given_acknowledged_claimed_due_schedule()
                     executions_total: 1,
                 }),
             }],
-            WriteOptions::buffered(),
+            WritePolicy::Buffered,
         )
         .expect("ack pending fire claim");
     let pending = store
         .load_pending_fire_claims(1)
         .expect("load pending fire claims");
     let schedules = store
-        .load_all(1, WriteOptions::buffered())
+        .load_all(1, WritePolicy::Buffered)
         .expect("load schedules");
 
     // Assert
@@ -441,7 +446,7 @@ fn should_remove_pending_fire_without_recreating_definition_given_missing_schedu
                 last_fire_ms: None,
                 executions_total: 0,
             },
-            WriteOptions::buffered(),
+            WritePolicy::Buffered,
         )
         .expect("insert schedule");
     store
@@ -459,11 +464,11 @@ fn should_remove_pending_fire_without_recreating_definition_given_missing_schedu
                 last_fire_ms: None,
                 executions_total: 0,
             }],
-            WriteOptions::buffered(),
+            WritePolicy::Buffered,
         )
         .expect("claim due schedule");
     store
-        .delete_current(1, route, next_fire_ms, WriteOptions::buffered())
+        .delete_current(1, route, next_fire_ms, WritePolicy::Buffered)
         .expect("delete schedule definition");
 
     // Act
@@ -476,14 +481,14 @@ fn should_remove_pending_fire_without_recreating_definition_given_missing_schedu
                 acknowledged_at_ms,
                 definition: None,
             }],
-            WriteOptions::buffered(),
+            WritePolicy::Buffered,
         )
         .expect("ack pending fire claim");
     let pending = store
         .load_pending_fire_claims(1)
         .expect("load pending fire claims");
     let schedules = store
-        .load_all(1, WriteOptions::buffered())
+        .load_all(1, WritePolicy::Buffered)
         .expect("load schedules");
 
     // Assert
@@ -523,7 +528,7 @@ fn should_reject_malformed_persisted_schedule_definition_on_load() {
     .expect("write malformed definition");
 
     // Act
-    let result = store.load_all(1, WriteOptions::buffered());
+    let result = store.load_all(1, WritePolicy::Buffered);
 
     // Assert
     assert!(result
@@ -544,7 +549,7 @@ fn should_reject_missing_schedule_body_on_load() {
     .expect("write metadata without body");
 
     // Act
-    let result = store.load_all(1, WriteOptions::buffered());
+    let result = store.load_all(1, WritePolicy::Buffered);
 
     // Assert
     assert!(result

@@ -1,11 +1,11 @@
 //! Mailbox entry points: `MailboxSink`, the domain actor's `receive` loop, and
 //! the thin runtime-to-core delegation used by both.
 
-use super::model::{
-    DeliveryError, Envelope, Instant, MailboxSink, Ordering, QueueDomainActor, QueueDomainCommand,
-    QueueDomainRuntime, QueueDomainSink, QueueLiveCounts,
-};
-use crate::runtime::{Actor, Context};
+use super::model::{QueueDomainActor, QueueDomainCommand, QueueDomainSink};
+use crate::domains::queue::actor::QUEUE_ACTOR_REPLY_TIMEOUT;
+use crate::runtime::{DeliveryError, Envelope, MailboxSink};
+use std::sync::atomic::Ordering;
+use std::time::Instant;
 
 pub(super) struct RuntimeSweepPendingReset<'a>(pub(super) &'a std::sync::atomic::AtomicBool);
 
@@ -25,15 +25,12 @@ impl MailboxSink for QueueDomainSink {
     }
 }
 
-impl Actor for QueueDomainActor {
-    type Message = QueueDomainCommand;
-
-    fn receive(&mut self, msg: Self::Message, _ctx: &mut Context<Self>) {
-        let runtime = self.runtime();
+impl QueueDomainActor {
+    pub(super) fn receive_command(&mut self, msg: QueueDomainCommand) {
         match msg {
             QueueDomainCommand::Deliver(envelope, reply, admission) => {
                 let started_at = Instant::now();
-                let outcome = runtime.deliver_envelope(&envelope);
+                let outcome = self.core.deliver_envelope(&envelope);
                 super::model::record_service_sample(&self.core.delivery_service_us, started_at);
                 let _ = reply.send(outcome);
                 // Explicit: the slot is released here, once the work is
@@ -41,29 +38,29 @@ impl Actor for QueueDomainActor {
                 drop(admission);
             }
             QueueDomainCommand::RefreshAdminSnapshotIfDirty(reply) => {
-                runtime.refresh_admin_snapshot_if_dirty();
+                self.core.refresh_admin_snapshot_if_dirty();
                 let _ = reply.send(());
             }
             QueueDomainCommand::ReadLiveCounts(reply) => {
-                let _ = reply.send(runtime.live_counts());
+                let _ = reply.send(self.core.live_counts());
             }
             QueueDomainCommand::CleanupSession(session_id, reply) => {
-                runtime.cleanup_session(session_id);
+                self.core.cleanup_session(session_id);
                 let _ = reply.send(());
             }
             QueueDomainCommand::SweepRuntimeStateAt(now, Some(reply)) => {
-                runtime.sweep_runtime_state_at(now);
+                self.core.sweep_runtime_state_at(now);
                 let _ = reply.send(());
             }
             QueueDomainCommand::SweepRuntimeStateAt(now, None) => {
-                let _pending_reset = RuntimeSweepPendingReset(&runtime.runtime_sweep_pending);
-                runtime.sweep_runtime_state_at(now);
+                let _pending_reset = RuntimeSweepPendingReset(&self.core.runtime_sweep_pending);
+                self.core.sweep_runtime_state_at(now);
             }
             QueueDomainCommand::ReplayDeadLetter(key, id, reply) => {
-                let _ = reply.send(runtime.replay_dead_letter(&key, id));
+                let _ = reply.send(self.core.replay_dead_letter(&key, id));
             }
             QueueDomainCommand::PurgeDeadLetter(key, id, reply) => {
-                let _ = reply.send(runtime.purge_dead_letter(&key, id));
+                let _ = reply.send(self.core.purge_dead_letter(&key, id));
             }
             QueueDomainCommand::PanicForFailpoint => {
                 panic!("injected Queue domain actor panic");
@@ -78,6 +75,8 @@ impl QueueDomainSink {
         envelope: Envelope,
         high_priority: bool,
     ) -> Result<(), DeliveryError> {
+        let family = *envelope.destination().family();
+        let core = self.core(family);
         // Admit BEFORE enqueueing so surplus load is refused as never-enqueued
         // (retryable) rather than accepted then timed out. Control-plane work
         // bypasses the window - cleanup arrives on the normal lane yet must
@@ -91,60 +90,25 @@ impl QueueDomainSink {
         } else {
             Some(super::model::admit_client_delivery(
                 &self.inflight_client_deliveries,
-                &self.core.delivery_service_us,
-                self.actor.is_running(),
+                &core.delivery_service_us,
+                self.family_runtime
+                    .is_family_running(*envelope.destination().family()),
             )?)
         };
 
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
-        let command = QueueDomainCommand::Deliver(envelope, reply_tx, admission);
-        let enqueue_result = if high_priority {
-            self.actor.try_send_high_priority(command)
+        let lane = if high_priority {
+            crate::runtime::FamilyActorLane::Control
         } else {
-            self.actor.try_send(command)
+            crate::runtime::FamilyActorLane::Normal
         };
-        enqueue_result?;
+        let command = QueueDomainCommand::Deliver(envelope, reply_tx, admission);
+        self.family_runtime
+            .try_enqueue(family, lane, command)
+            .map_err(crate::runtime::family_actor_enqueue_error_to_delivery_error)?;
 
         reply_rx
-            .recv_timeout(super::model::QUEUE_ACTOR_REPLY_TIMEOUT)
+            .recv_timeout(QUEUE_ACTOR_REPLY_TIMEOUT)
             .unwrap_or_else(|error| Err(crate::runtime::reply_wait::map_reply_wait_error(error)))
-    }
-}
-
-impl QueueDomainRuntime<'_> {
-    pub(super) fn deliver_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {
-        self.core.deliver_envelope(envelope)
-    }
-
-    pub(super) fn refresh_admin_snapshot_if_dirty(&self) {
-        self.core.refresh_admin_snapshot_if_dirty();
-    }
-
-    pub(super) fn live_counts(&self) -> QueueLiveCounts {
-        self.core.live_counts()
-    }
-
-    pub(super) fn cleanup_session(&self, session_id: u64) {
-        self.core.cleanup_session(session_id);
-    }
-
-    pub(super) fn sweep_runtime_state_at(&self, now: Instant) {
-        self.core.sweep_runtime_state_at(now);
-    }
-
-    pub(super) fn replay_dead_letter(
-        &self,
-        key: &crate::domains::queue::QueueKey,
-        id: crate::domains::queue::MessageId,
-    ) -> Result<bool, String> {
-        self.core.replay_dead_letter(key, id)
-    }
-
-    pub(super) fn purge_dead_letter(
-        &self,
-        key: &crate::domains::queue::QueueKey,
-        id: crate::domains::queue::MessageId,
-    ) -> Result<bool, String> {
-        self.core.purge_dead_letter(key, id)
     }
 }

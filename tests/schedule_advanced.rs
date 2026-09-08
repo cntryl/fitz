@@ -25,8 +25,8 @@ fn make_schedule_actor() -> ScheduleActor {
     let store = create_test_engine_with_cfs(vec![1, 2, 3]);
     ScheduleActor::new(
         RouteFamily::new(1),
-        store,
-        cntryl_midge::WriteOptions::buffered(),
+        ScheduleStore::new(store),
+        fitz::domains::WritePolicy::Buffered,
     )
 }
 
@@ -97,8 +97,8 @@ fn make_schedule_actor_with_clock(clock: Arc<dyn Clock>) -> ScheduleActor {
     let store = create_test_engine_with_cfs(vec![1, 2, 3]);
     ScheduleActor::new_with_clock(
         RouteFamily::new(1),
-        store,
-        cntryl_midge::WriteOptions::buffered(),
+        ScheduleStore::new(store),
+        fitz::domains::WritePolicy::Buffered,
         clock,
     )
 }
@@ -109,8 +109,8 @@ fn make_schedule_actor_and_store_with_clock(
     let store = create_test_engine_with_cfs(vec![1, 2, 3]);
     let actor = ScheduleActor::new_with_clock(
         RouteFamily::new(1),
-        store.clone(),
-        cntryl_midge::WriteOptions::buffered(),
+        ScheduleStore::new(store.clone()),
+        fitz::domains::WritePolicy::Buffered,
         clock,
     );
     (store, actor)

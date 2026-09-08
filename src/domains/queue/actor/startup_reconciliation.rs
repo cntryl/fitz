@@ -29,10 +29,10 @@ impl QueueActor {
     /// Returns an error when persisted queue state cannot be validated or reconciled.
     pub(crate) fn prepare_persisted_state_for_existing_families(
         store: &cntryl_midge::Engine,
-        queue_write_options: cntryl_midge::WriteOptions,
-        recovery_write_options: cntryl_midge::WriteOptions,
+        queue_write_policy: crate::domains::WritePolicy,
+        recovery_write_policy: crate::domains::WritePolicy,
     ) -> Result<(), String> {
-        if !queue_write_options.is_best_effort() {
+        if queue_write_policy != crate::domains::WritePolicy::BestEffort {
             return Self::validate_persisted_state_for_existing_families(store);
         }
 
@@ -47,7 +47,7 @@ impl QueueActor {
             Self::reconcile_fast_persisted_state_for_family(
                 store,
                 family.id(),
-                recovery_write_options,
+                recovery_write_policy,
             )?;
         }
 
@@ -200,7 +200,7 @@ impl QueueActor {
     fn reconcile_fast_persisted_state_for_family(
         store: &cntryl_midge::Engine,
         family: u32,
-        recovery_write_options: cntryl_midge::WriteOptions,
+        recovery_write_policy: crate::domains::WritePolicy,
     ) -> Result<(), String> {
         let mut txn = store
             .begin_tx(family, cntryl_midge::TransactionMode::ReadWrite)
@@ -226,10 +226,12 @@ impl QueueActor {
         if incomplete_rows.is_empty() {
             return Ok(());
         }
-        if !recovery_write_options.is_sync()
-            && !recovery_write_options.is_cloud_async()
-            && !recovery_write_options.is_cloud_strict()
-        {
+        if !matches!(
+            recovery_write_policy,
+            crate::domains::WritePolicy::Sync
+                | crate::domains::WritePolicy::CloudAsync
+                | crate::domains::WritePolicy::CloudStrict
+        ) {
             return Err(format!(
                 "queue reconciliation failed: family={family} key_category=reconciliation error=durable recovery write policy required"
             ));
@@ -256,7 +258,7 @@ impl QueueActor {
             }
         }
 
-        txn.commit(recovery_write_options).map_err(|error| {
+        txn.commit(recovery_write_policy.into()).map_err(|error| {
             format!(
                 "queue reconciliation failed: family={family} key_category=commit error={error:?}"
             )

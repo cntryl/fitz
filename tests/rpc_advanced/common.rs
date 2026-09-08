@@ -223,7 +223,7 @@ pub(crate) fn domain_handles_with_rpc_sink(
             store.clone(),
             router.clone(),
             admin_read_model.clone(),
-            cntryl_midge::WriteOptions::buffered(),
+            fitz::domains::WritePolicy::Buffered,
             fitz::utils::idempotency::default_dedup_store(),
         )),
         Arc::new(NoticeDomainSink::new(
@@ -245,7 +245,7 @@ pub(crate) fn domain_handles_with_rpc_sink(
             admin_read_model.clone(),
         )),
         Arc::new(ScheduleDomainSink::new(
-            store,
+            fitz::domains::schedule::ScheduleStore::new(store),
             router,
             admin_read_model.clone(),
         )),

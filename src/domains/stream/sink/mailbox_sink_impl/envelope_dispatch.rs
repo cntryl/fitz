@@ -10,43 +10,45 @@ use super::{
 #[cfg(test)]
 use super::{Route, RouteAddress};
 
-impl StreamDomainCore {
+impl super::super::model::StreamFamilyState {
     pub(in crate::domains::stream::sink) fn deliver_envelope(
-        &self,
+        &mut self,
         envelope: &Envelope,
     ) -> Result<(), DeliveryError> {
-        if self.handle_cleanup_envelope(envelope) {
+        let core = self.core.clone();
+        let self_ = core.as_ref();
+        if self_.handle_cleanup_envelope(envelope) {
             return Ok(());
         }
-        self.ensure_active()?;
+        self_.ensure_active()?;
 
-        if self.handle_domain_publish_envelope(envelope) {
+        if self_.handle_domain_publish_envelope(envelope) {
             return Ok(());
         }
 
-        let Some(request) = Self::extract_request(envelope)? else {
+        let Some(request) = StreamDomainCore::extract_request(envelope)? else {
             return Ok(());
         };
         let meta = request.meta;
-        let request_started = self.record_request_start();
+        let request_started = self_.record_request_start();
 
         if meta.route_family != *envelope.destination().family()
             || envelope
                 .source()
                 .is_some_and(|source| *source.family() != meta.route_family)
         {
-            let response = Self::stream_error_response("route family mismatch");
+            let response = StreamDomainCore::stream_error_response("route family mismatch");
             let response_meta = envelope.source().map_or(meta, |source| {
                 let mut response_meta = meta;
                 response_meta.route_family = *source.family();
                 response_meta
             });
-            self.route_stream_response(envelope, response_meta, &response, request_started);
+            self_.route_stream_response(envelope, response_meta, &response, request_started);
             return Ok(());
         }
 
         let Some(parsed_frame) =
-            self.parse_request_frame(envelope, meta, request.frame, request_started)
+            self_.parse_request_frame(envelope, meta, request.frame, request_started)
         else {
             return Ok(());
         };
@@ -61,17 +63,17 @@ impl StreamDomainCore {
                         | crate::domains::stream::protocol::StreamMessage::Rollback { .. }
                 )
         );
-        if session_mutation && self.cleaned_up_sessions.lock().contains(meta.session_id) {
-            let response = Self::stream_error_response("session has been cleaned up");
-            self.route_stream_response(envelope, meta, &response, request_started);
+        if session_mutation && self_.cleaned_up_sessions.lock().contains(meta.session_id) {
+            let response = StreamDomainCore::stream_error_response("session has been cleaned up");
+            self_.route_stream_response(envelope, meta, &response, request_started);
             return Ok(());
         }
 
-        self.record_operation();
+        self_.record_operation();
 
         match parsed_frame {
             StreamClientFrame::Sub(sub_msg) => {
-                self.handle_subscription_frame(envelope, meta, request_started, sub_msg);
+                self_.handle_subscription_frame(envelope, meta, request_started, sub_msg);
                 Ok(())
             }
             StreamClientFrame::Op(stream_msg) => {
@@ -80,7 +82,9 @@ impl StreamDomainCore {
             }
         }
     }
+}
 
+impl StreamDomainCore {
     fn handle_cleanup_envelope(&self, envelope: &Envelope) -> bool {
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
             self.cleanup_session(cleanup.session_id);

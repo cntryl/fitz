@@ -423,8 +423,8 @@ async fn should_recover_schedule_definitions_before_accepting_schedule_traffic()
         .expect("init local storage");
     let mut actor = fitz::domains::schedule::ScheduleActor::new(
         fitz::runtime::routing::RouteFamily::new(1),
-        store.clone(),
-        cntryl_midge::WriteOptions::buffered(),
+        fitz::domains::schedule::ScheduleStore::new(store.clone()),
+        fitz::domains::WritePolicy::Buffered,
     );
     actor
         .create_schedule(

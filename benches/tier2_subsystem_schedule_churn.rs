@@ -7,7 +7,7 @@ mod tier2_stress;
 
 use cntryl_stress::{black_box, stress, stress_main, StressContext};
 use fitz::domains::schedule::protocol::validate_concrete_schedule_route;
-use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse};
+use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse, ScheduleStore};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
 use std::time::{Duration, Instant};
@@ -19,8 +19,8 @@ fn create_test_actor() -> ScheduleActor {
     let store = create_test_engine_with_cfs(vec![1, 2, 3, 4, 5]);
     ScheduleActor::new(
         RouteFamily::new(1),
-        store,
-        cntryl_midge::WriteOptions::buffered(),
+        ScheduleStore::new(store),
+        fitz::domains::WritePolicy::Buffered,
     )
 }
 

@@ -13,7 +13,4 @@ pub use facade::QueueCounts;
 pub use model::QueueDomainSink;
 
 #[cfg(test)]
-use model::*;
-
-#[cfg(test)]
 mod tests;

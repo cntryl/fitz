@@ -128,8 +128,8 @@ fn create_actor_case(fixtures: &ScheduleCreateFixtures) -> ActorCreateCase {
     ActorCreateCase {
         actor: ScheduleActor::new(
             RouteFamily::new(1),
-            create_bench_store(),
-            cntryl_midge::WriteOptions::buffered(),
+            ScheduleStore::new(create_bench_store()),
+            fitz::domains::WritePolicy::Buffered,
         ),
         routes: fixtures.routes[..CREATE_BATCH_SIZE].to_vec(),
         payloads: fixtures.payloads[..CREATE_BATCH_SIZE].to_vec(),
@@ -229,7 +229,7 @@ fn should_store_insert_unique_inmemory_32(ctx: &mut StressContext) {
                                     last_fire_ms: None,
                                     executions_total: 0,
                                 },
-                                cntryl_midge::WriteOptions::buffered(),
+                                fitz::domains::WritePolicy::Buffered,
                             )
                             .expect("schedule insert"),
                     );
@@ -270,7 +270,7 @@ fn should_store_insert_batch_unique_inmemory_32(ctx: &mut StressContext) {
         || {
             for (case, items) in cases.iter().zip(&items_by_case) {
                 case.store
-                    .insert_batch(1, items, cntryl_midge::WriteOptions::buffered())
+                    .insert_batch(1, items, fitz::domains::WritePolicy::Buffered)
                     .expect("schedule insert batch");
                 black_box(());
             }

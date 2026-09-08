@@ -5,6 +5,31 @@ fn family(id: u32) -> RouteFamily {
 }
 
 #[test]
+fn should_construct_non_send_family_state_on_owning_worker() {
+    // Arrange
+    let pool = FamilyActorPool::<crossbeam_channel::Sender<u64>>::new(&[family(1)]).expect("pool");
+    let active = Arc::new(AtomicBool::new(true));
+    let runtime = FamilyActorPoolRuntime::spawn(
+        pool,
+        active,
+        |_| std::rc::Rc::new(std::cell::Cell::new(40_u64)),
+        |state, _family, _lane, reply| {
+            state.set(state.get() + 2);
+            reply.send(state.get()).expect("state reply");
+        },
+    );
+    let (reply_tx, reply_rx) = bounded(1);
+
+    // Act
+    runtime
+        .try_enqueue(family(1), FamilyActorLane::Normal, reply_tx)
+        .expect("enqueue");
+
+    // Assert
+    assert_eq!(reply_rx.recv_timeout(Duration::from_secs(1)), Ok(42));
+}
+
+#[test]
 fn should_cap_shards_at_provisioned_family_count() {
     // Arrange
     let families = [family(1), family(2)];
@@ -481,9 +506,46 @@ fn should_keep_pool_running_given_one_of_several_families_panics() {
     assert_eq!(family_health.healthy_families, vec![family(2), family(3)]);
     assert!(family_health.degraded_families.is_empty());
     assert_eq!(family_health.failed_families, vec![family(1)]);
-    let health = runtime.managed_actor_health_snapshot();
+    let health = runtime.actor_health_snapshot();
     assert!(health.running);
     assert!(!health.restart_exhausted);
+}
+
+#[test]
+fn should_fail_only_panicking_family_closed_during_idle_work() {
+    // Arrange
+    let families = [family(1), family(2)];
+    let pool = FamilyActorPool::<u64>::new(&families).expect("pool");
+    let active = Arc::new(AtomicBool::new(true));
+    let (observed_tx, observed_rx) = bounded(1);
+    let runtime = FamilyActorPoolRuntime::spawn_with_family_failed_metric_and_idle(
+        pool,
+        active,
+        |_| (),
+        move |(), target_family, _lane, message| {
+            if target_family == family(2) {
+                observed_tx.send(message).expect("sibling observer");
+            }
+        },
+        |(), target_family| assert_ne!(target_family, family(1), "injected idle panic"),
+        "test.family_idle_failed",
+    );
+
+    // Act
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while runtime.is_family_running(family(1)) && std::time::Instant::now() < deadline {
+        thread::yield_now();
+    }
+    runtime
+        .try_enqueue(family(2), FamilyActorLane::Normal, 42)
+        .expect("healthy sibling enqueue");
+
+    // Assert
+    assert!(!runtime.is_family_running(family(1)));
+    assert!(runtime.is_family_running(family(2)));
+    assert!(runtime.is_running());
+    assert_eq!(runtime.health_snapshot().panic_count, 1);
+    assert_eq!(observed_rx.recv_timeout(Duration::from_secs(1)), Ok(42));
 }
 
 #[test]
@@ -519,7 +581,7 @@ fn should_fail_pool_closed_after_every_family_panics() {
     assert!(family_health.healthy_families.is_empty());
     assert!(family_health.degraded_families.is_empty());
     assert_eq!(family_health.failed_families, families);
-    let health = runtime.managed_actor_health_snapshot();
+    let health = runtime.actor_health_snapshot();
     assert!(!health.running);
     assert!(health.restart_exhausted);
 }

@@ -7,7 +7,8 @@
 //! of silently recreating a subscription or pending reserve for a session
 //! that is already gone and will never be cleaned up again.
 
-use super::model::{Instant, QueueDomainCore};
+use super::model::QueueDomainCore;
+use std::time::Instant;
 
 impl QueueDomainCore {
     pub(super) fn is_cleaned_up_session(&self, session_id: u64) -> bool {
@@ -29,10 +30,11 @@ impl QueueDomainCore {
         let mut notifications = Vec::new();
         let mut actors = self.actors.lock();
         for (key, warm_actor) in actors.iter_mut() {
-            let mut actor = warm_actor.actor.lock();
-            if actor.cleanup_session_inflight(session_id) > 0 {
+            if warm_actor.actor.cleanup_session_inflight(session_id) > 0 {
                 released_any = true;
-                if let Some(notification) = self.record_ready_state(key, actor.live_counts()) {
+                if let Some(notification) =
+                    self.record_ready_state(key, warm_actor.actor.live_counts())
+                {
                     notifications.push((key.clone(), notification));
                 }
             }

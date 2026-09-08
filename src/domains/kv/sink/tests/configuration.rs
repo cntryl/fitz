@@ -28,7 +28,9 @@ fn should_route_kv_counters_to_configured_collector() {
     let sink = KvDomainSink::new(store, router, admin_read_model).with_metrics(configured.clone());
 
     // Act
-    sink.state.runtime().counter_inc(TEST_COUNTER);
+    sink.run_on_family_for_tests(RouteFamily::new(1), |runtime| {
+        runtime.counter_inc(TEST_COUNTER);
+    });
 
     // Assert
     assert_eq!(configured.counter_get(TEST_COUNTER), 1);

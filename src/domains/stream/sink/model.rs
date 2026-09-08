@@ -8,9 +8,7 @@ pub(super) use crate::domains::stream::{
 };
 pub(super) use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
 pub(super) use crate::runtime::routing::{route_triplet, Route, RouteAddress, RouteFamily};
-pub(super) use crate::runtime::{
-    CleanedUpSessions, DeliveryError, Envelope, KeyedActorPool, MailboxSink, Router,
-};
+pub(super) use crate::runtime::{CleanedUpSessions, DeliveryError, Envelope, MailboxSink, Router};
 pub(super) use parking_lot::Mutex;
 pub(super) use std::collections::{BTreeMap, BTreeSet, HashMap};
 pub(super) use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -111,8 +109,8 @@ pub(super) struct StreamReadExecution<'a> {
 /// Storage-mode-compatible write options selected before Stream initialization.
 #[derive(Clone, Copy)]
 pub struct StreamStorageWriteOptions {
-    sync_intent: cntryl_midge::WriteOptions,
-    buffered_intent: cntryl_midge::WriteOptions,
+    sync_intent: crate::domains::WritePolicy,
+    buffered_intent: crate::domains::WritePolicy,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,8 +133,8 @@ impl std::error::Error for StreamSinkInitError {}
 impl StreamStorageWriteOptions {
     #[must_use]
     pub fn new(
-        sync_intent: cntryl_midge::WriteOptions,
-        buffered_intent: cntryl_midge::WriteOptions,
+        sync_intent: crate::domains::WritePolicy,
+        buffered_intent: crate::domains::WritePolicy,
     ) -> Self {
         Self {
             sync_intent,
@@ -147,32 +145,32 @@ impl StreamStorageWriteOptions {
     #[must_use]
     pub fn local() -> Self {
         Self::new(
-            cntryl_midge::WriteOptions::sync(),
-            cntryl_midge::WriteOptions::buffered(),
+            crate::domains::WritePolicy::Sync,
+            crate::domains::WritePolicy::Buffered,
         )
     }
 
     #[must_use]
     pub fn cloud_background() -> Self {
         Self::new(
-            cntryl_midge::WriteOptions::cloud_async(),
-            cntryl_midge::WriteOptions::cloud_async(),
+            crate::domains::WritePolicy::CloudAsync,
+            crate::domains::WritePolicy::CloudAsync,
         )
     }
 
     #[must_use]
     pub fn cloud_strict() -> Self {
         Self::new(
-            cntryl_midge::WriteOptions::cloud_strict(),
-            cntryl_midge::WriteOptions::cloud_async(),
+            crate::domains::WritePolicy::CloudStrict,
+            crate::domains::WritePolicy::CloudAsync,
         )
     }
 
-    pub(super) fn sync_intent(self) -> cntryl_midge::WriteOptions {
+    pub(super) fn sync_intent(self) -> crate::domains::WritePolicy {
         self.sync_intent
     }
 
-    pub(super) fn buffered_intent(self) -> cntryl_midge::WriteOptions {
+    pub(super) fn buffered_intent(self) -> crate::domains::WritePolicy {
         self.buffered_intent
     }
 }
@@ -239,6 +237,20 @@ pub(super) struct CommitNotification {
     pub(super) family: RouteFamily,
     pub(super) route: Route,
     pub(super) payload: bytes::Bytes,
+}
+
+pub(super) struct WatermarkCommit {
+    pub(super) family: RouteFamily,
+    pub(super) realm: String,
+    pub(super) area: String,
+    pub(super) batch: crate::domains::stream::protocol::BatchCommitted,
+}
+
+pub(super) struct StreamCommitOutcome {
+    pub(super) response: StreamClientResponseBody,
+    pub(super) notification: Option<(RouteFamily, Route, bytes::Bytes)>,
+    pub(super) admin_dirty: bool,
+    pub(super) watermark: Option<WatermarkCommit>,
 }
 
 pub(super) struct OperationOutcome {
@@ -343,18 +355,75 @@ impl AdminSnapshotState {
 }
 
 pub(super) struct WatermarkCoordinators {
-    pub(super) area: Arc<
-        KeyedActorPool<
-            StreamAreaScope,
-            crate::domains::stream::protocol::StreamCoordinationMessage,
-        >,
+    pub(super) area: HashMap<
+        StreamAreaScope,
+        (
+            crate::domains::stream::area_actor::AreaActor,
+            crate::runtime::actor::Context<crate::domains::stream::area_actor::AreaActor>,
+        ),
     >,
-    pub(super) realm: Arc<
-        KeyedActorPool<
-            StreamRealmScope,
-            crate::domains::stream::protocol::StreamCoordinationMessage,
-        >,
+    pub(super) realm: HashMap<
+        StreamRealmScope,
+        (
+            crate::domains::stream::realm_actor::RealmActor,
+            crate::runtime::actor::Context<crate::domains::stream::realm_actor::RealmActor>,
+        ),
     >,
+}
+
+impl WatermarkCoordinators {
+    pub(super) fn new() -> Self {
+        Self {
+            area: HashMap::new(),
+            realm: HashMap::new(),
+        }
+    }
+}
+
+pub(super) struct StreamFamilyState {
+    pub(super) core: Arc<StreamDomainCore>,
+    pub(super) watermark_coordinators: WatermarkCoordinators,
+    pub(super) watermark_router: Arc<Router>,
+    pub(super) watermark_events: Arc<Mutex<Vec<crate::runtime::DomainPublishEvent>>>,
+    pub(super) pending_watermark_commits: Vec<WatermarkCommit>,
+}
+
+struct WatermarkEventSink {
+    events: Arc<Mutex<Vec<crate::runtime::DomainPublishEvent>>>,
+}
+
+impl MailboxSink for WatermarkEventSink {
+    fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        let event = envelope
+            .payload::<crate::runtime::DomainPublishEvent>()
+            .ok_or(DeliveryError::ActorStopped)?;
+        self.events.lock().push(event.clone());
+        Ok(())
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
+impl StreamFamilyState {
+    pub(super) fn new(core: Arc<StreamDomainCore>) -> Self {
+        let watermark_router = Arc::new(Router::new());
+        let watermark_events = Arc::new(Mutex::new(Vec::new()));
+        watermark_router.register_domain_pattern(
+            "stream",
+            Arc::new(WatermarkEventSink {
+                events: watermark_events.clone(),
+            }),
+        );
+        Self {
+            core,
+            watermark_coordinators: WatermarkCoordinators::new(),
+            watermark_router,
+            watermark_events,
+            pending_watermark_commits: Vec::new(),
+        }
+    }
 }
 
 pub(super) struct StreamDomainCore {
@@ -375,7 +444,6 @@ pub(super) struct StreamDomainCore {
     /// Weak family-core registry used only to aggregate live/admin views.
     /// Mutable delivery state itself remains owned by each family core.
     pub(super) family_cores: Arc<Mutex<BTreeMap<u64, Weak<StreamDomainCore>>>>,
-    pub(super) watermark_coordinators: WatermarkCoordinators,
 }
 
 pub(super) enum StreamDomainCommand {

@@ -10,7 +10,7 @@ invalid payload, and unsupported payload are distinct. Invalid-payload errors
 retain the actual size and wire limit.
 
 `MailboxSink::deliver_high_priority` remains required. Every sink explicitly
-chooses its handling: managed actor mailboxes use their separate bounded control
+chooses its handling: family actor runtimes use their separate bounded control
 lane, while single-lane sinks such as session outbound transport explicitly
 forward to `deliver`. The trait provides no automatic priority fallback. Code
 requiring reserved control capacity must use an implementation that provides it.
@@ -24,10 +24,10 @@ explicit `BestEffort`, `CloudAsync`, and `CloudStrict` requests retain their
 meaning. No policy has a default. The wire inventory and configuration resolver
 live together in `domains/kv/write_policy.rs`; the codec and sink share them.
 
-Conversions to and from Midge `WriteOptions` live in `src/storage/write_policy.rs`.
-Existing engine-based construction and broker configuration methods continue
-accepting Midge options. The actor converts the resolved policy when creating
-its engine transaction state. Midge remains the concrete storage engine.
+Conversion to Midge `WriteOptions` lives in `src/storage/write_policy.rs`.
+Boot configuration and domain setup expose only Fitz policies. Domain stores
+convert the resolved policy when committing engine transactions. Midge remains
+the concrete storage engine behind those adapters.
 
 ## Queue recovery
 

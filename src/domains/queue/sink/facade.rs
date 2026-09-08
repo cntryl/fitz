@@ -1,12 +1,16 @@
 use super::model::{
-    AtomicBool, AtomicU64, Duration, HashMap, HashSet, Instant, Mutex, Ordering,
-    QueueAdminProjection, QueueDomainActor, QueueDomainCommand, QueueDomainCore,
-    QueueDomainRuntime, QueueDomainSink, QueueLiveCounts, QueueMetrics, Router,
-    QUEUE_ACTOR_REPLY_TIMEOUT,
+    QueueDomainActor, QueueDomainCommand, QueueDomainCore, QueueDomainSink, QueueLiveCounts,
 };
 #[cfg(test)]
 use super::model::{WarmQueueActor, QUEUE_ACTOR_IDLE_TTL};
-use std::{collections::VecDeque, sync::Arc};
+use crate::domains::queue::actor::QUEUE_ACTOR_REPLY_TIMEOUT;
+use crate::domains::queue::{projection::QueueAdminProjection, QueueMetrics};
+use crate::runtime::Router;
+use parking_lot::Mutex;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct QueueCounts {
@@ -21,17 +25,6 @@ impl QueueDomainActor {
     pub(super) fn new(core: Arc<QueueDomainCore>) -> Self {
         Self { core }
     }
-
-    pub(super) fn route_address() -> crate::runtime::routing::RouteAddress {
-        crate::runtime::routing::RouteAddress::new(
-            crate::runtime::routing::RouteFamily::new(0),
-            crate::runtime::routing::Route::new("internal://domain/queue"),
-        )
-    }
-
-    pub(super) fn runtime(&self) -> QueueDomainRuntime<'_> {
-        QueueDomainRuntime { core: &self.core }
-    }
 }
 
 impl QueueDomainSink {
@@ -39,8 +32,8 @@ impl QueueDomainSink {
     ///
     /// The recovery write policy is explicit because startup reconciliation can write before the
     /// sink starts handling queue traffic. Cloud-backed engines must receive a cloud-compatible
-    /// recovery policy such as [`cntryl_midge::WriteOptions::cloud_async`] or
-    /// [`cntryl_midge::WriteOptions::cloud_strict`].
+    /// recovery policy such as [`crate::domains::WritePolicy::CloudAsync`] or
+    /// [`crate::domains::WritePolicy::CloudStrict`].
     ///
     /// # Errors
     ///
@@ -49,16 +42,16 @@ impl QueueDomainSink {
         store: Arc<cntryl_midge::Engine>,
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
-        queue_write_options: cntryl_midge::WriteOptions,
-        recovery_write_options: cntryl_midge::WriteOptions,
+        queue_write_policy: crate::domains::WritePolicy,
+        recovery_write_policy: crate::domains::WritePolicy,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     ) -> Result<Self, String> {
         Self::try_new_with_storage(
             crate::storage::FitzStorageEngine::new(store),
             router,
             admin_read_model,
-            queue_write_options,
-            recovery_write_options,
+            queue_write_policy,
+            recovery_write_policy,
             dedup_store,
         )
     }
@@ -67,21 +60,21 @@ impl QueueDomainSink {
         store: crate::storage::FitzStorageEngine,
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
-        queue_write_options: cntryl_midge::WriteOptions,
-        recovery_write_options: cntryl_midge::WriteOptions,
+        queue_write_policy: crate::domains::WritePolicy,
+        recovery_write_policy: crate::domains::WritePolicy,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     ) -> Result<Self, String> {
         crate::domains::queue::QueueActor::prepare_persisted_state_for_existing_families(
             store.inner(),
-            queue_write_options,
-            recovery_write_options,
+            queue_write_policy,
+            recovery_write_policy,
         )?;
         let known_queue_keys = QueueDomainCore::inventory_existing_queue_keys(&store)?;
         Ok(Self::new_with_storage_and_inventory(
             store,
             router,
             admin_read_model,
-            queue_write_options,
+            queue_write_policy,
             dedup_store,
             known_queue_keys,
             None,
@@ -92,14 +85,14 @@ impl QueueDomainSink {
         store: Arc<cntryl_midge::Engine>,
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
-        queue_write_options: cntryl_midge::WriteOptions,
+        queue_write_policy: crate::domains::WritePolicy,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     ) -> Self {
         Self::new_with_storage(
             crate::storage::FitzStorageEngine::new(store),
             router,
             admin_read_model,
-            queue_write_options,
+            queue_write_policy,
             dedup_store,
         )
     }
@@ -108,7 +101,7 @@ impl QueueDomainSink {
         store: crate::storage::FitzStorageEngine,
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
-        queue_write_options: cntryl_midge::WriteOptions,
+        queue_write_policy: crate::domains::WritePolicy,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     ) -> Self {
         let (known_queue_keys, inventory_error) =
@@ -127,151 +120,238 @@ impl QueueDomainSink {
             store,
             router,
             admin_read_model,
-            queue_write_options,
+            queue_write_policy,
             dedup_store,
             known_queue_keys,
             inventory_error,
         )
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn new_with_storage_and_inventory(
         store: crate::storage::FitzStorageEngine,
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
-        queue_write_options: cntryl_midge::WriteOptions,
+        queue_write_policy: crate::domains::WritePolicy,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
         known_queue_keys: HashSet<crate::domains::queue::QueueKey>,
         inventory_error: Option<String>,
     ) -> Self {
-        let core = Arc::new(QueueDomainCore {
-            delivery_service_us: Arc::new(std::sync::atomic::AtomicU64::new(
-                super::model::assumed_service_us(),
-            )),
-            store,
-            queue_write_options,
-            dedup_store,
-            actors: Mutex::new(HashMap::new()),
-            idle_sweep_keys: Mutex::new(VecDeque::new()),
-            known_queue_keys: Mutex::new(known_queue_keys),
-            inventory_error: Mutex::new(inventory_error),
-            wildcard_reserve_sequence: AtomicU64::new(0),
-            families: Mutex::new(HashMap::new()),
-            cleaned_up_sessions: Mutex::new(crate::runtime::CleanedUpSessions::new(
-                crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
-            )),
-            next_sub_id: AtomicU64::new(1),
-            ready_states: Mutex::new(HashMap::new()),
-            pending_reserves: Mutex::new(VecDeque::default()),
-            router,
-            projection: QueueAdminProjection::new(admin_read_model),
-            metrics: None,
-            active: AtomicBool::new(true),
-            runtime_sweep_pending: AtomicBool::new(false),
-            #[cfg(test)]
-            panic_next_runtime_sweep: AtomicBool::new(false),
-            next_idle_sweep_at: Mutex::new(Instant::now()),
-            next_dedup_sweep_at: Mutex::new(Instant::now()),
-            dirty_fast_flush_families: Mutex::new(HashSet::new()),
-            fast_flush_interval: None,
-            next_fast_flush_at: Mutex::new(Instant::now()),
-        });
-        let actor = Self::spawn_actor(core.clone());
+        let route_families = store
+            .list_column_families()
+            .expect("Queue column families were inventoried during construction")
+            .into_iter()
+            .filter(|family| family.id() != 0)
+            .map(|family| crate::runtime::routing::RouteFamily::new(family.id()))
+            .collect::<Vec<_>>();
+        let active = Arc::new(AtomicBool::new(true));
+        let projection = Arc::new(QueueAdminProjection::new(admin_read_model));
+        let cores = route_families
+            .iter()
+            .map(|family| {
+                let family_keys = known_queue_keys
+                    .iter()
+                    .filter(|key| key.family == *family)
+                    .cloned()
+                    .collect();
+                let core = Arc::new(QueueDomainCore {
+                    route_family: *family,
+                    delivery_service_us: Arc::new(std::sync::atomic::AtomicU64::new(
+                        super::model::assumed_service_us(),
+                    )),
+                    store: store.clone(),
+                    queue_write_policy,
+                    dedup_store: dedup_store.clone(),
+                    actors: Mutex::new(HashMap::new()),
+                    idle_sweep_keys: Mutex::new(VecDeque::new()),
+                    known_queue_keys: Mutex::new(family_keys),
+                    inventory_error: Mutex::new(inventory_error.clone()),
+                    wildcard_reserve_sequence: AtomicU64::new(0),
+                    families: Mutex::new(HashMap::new()),
+                    cleaned_up_sessions: Mutex::new(crate::runtime::CleanedUpSessions::new(
+                        crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
+                    )),
+                    next_sub_id: AtomicU64::new(1),
+                    ready_states: Mutex::new(HashMap::new()),
+                    pending_reserves: Mutex::new(VecDeque::default()),
+                    router: router.clone(),
+                    projection: projection.clone(),
+                    metrics: None,
+                    active: active.clone(),
+                    runtime_sweep_pending: AtomicBool::new(false),
+                    #[cfg(test)]
+                    panic_next_runtime_sweep: AtomicBool::new(false),
+                    next_idle_sweep_at: Mutex::new(Instant::now()),
+                    next_dedup_sweep_at: Mutex::new(Instant::now()),
+                    dirty_fast_flush_families: Mutex::new(HashSet::new()),
+                    fast_flush_interval: None,
+                    next_fast_flush_at: Mutex::new(Instant::now()),
+                });
+                (family.id(), core)
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let family_runtime = Self::spawn_family_runtime(&cores, active, &route_families);
         Self {
-            core,
-            actor,
+            cores,
+            family_runtime,
+            route_families,
             inflight_client_deliveries: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 
-    fn spawn_actor(core: Arc<QueueDomainCore>) -> crate::runtime::ManagedActor<QueueDomainCommand> {
-        let router = core.router.clone();
-        crate::runtime::ManagedActor::spawn_fail_closed(
-            router,
-            QueueDomainActor::route_address(),
-            move || QueueDomainActor::new(core.clone()),
-            crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
+    fn spawn_family_runtime(
+        cores: &std::collections::BTreeMap<u32, Arc<QueueDomainCore>>,
+        active: Arc<AtomicBool>,
+        route_families: &[crate::runtime::routing::RouteFamily],
+    ) -> crate::runtime::FamilyActorPoolRuntime<QueueDomainCommand> {
+        let pool = crate::runtime::FamilyActorPool::new(route_families)
+            .expect("validated Queue family actor pool configuration");
+        let family_cores = cores.clone();
+        crate::runtime::FamilyActorPoolRuntime::spawn(
+            pool,
+            active,
+            move |family| {
+                QueueDomainActor::new(
+                    family_cores
+                        .get(&family.id())
+                        .expect("Queue family core exists")
+                        .clone(),
+                )
+            },
+            |actor, _, _, command| actor.receive_command(command),
         )
     }
 
     fn rebuild_actor(&mut self) {
-        self.actor.stop();
-        self.actor = Self::spawn_actor(self.core.clone());
+        self.family_runtime.stop();
+        let active = self
+            .cores
+            .first_key_value()
+            .expect("Queue has at least one family")
+            .1
+            .active
+            .clone();
+        self.family_runtime = Self::spawn_family_runtime(&self.cores, active, &self.route_families);
     }
 
-    fn core_for_builder(&mut self) -> &mut QueueDomainCore {
-        Arc::get_mut(&mut self.core).expect("Queue sink builders must run before sharing the sink")
+    pub(super) fn core(
+        &self,
+        family: crate::runtime::routing::RouteFamily,
+    ) -> &Arc<QueueDomainCore> {
+        self.cores
+            .get(&family.id())
+            .expect("Queue family is provisioned")
     }
 
     #[must_use]
+    /// Adds Queue metrics to every configured family runtime.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a family runtime retains its core after the runtime has stopped.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn with_metrics(
         mut self,
         collector: crate::observability::metrics::MetricsCollector,
     ) -> Self {
-        self.actor.stop();
-        self.core_for_builder().metrics = Some(QueueMetrics::new(collector));
-        self.core.refresh_metrics_gauges();
+        self.family_runtime.stop();
+        for core in self.cores.values_mut() {
+            let core =
+                Arc::get_mut(core).expect("Queue sink builders must run before sharing the sink");
+            core.metrics = Some(QueueMetrics::new(collector.clone()));
+            core.refresh_metrics_gauges();
+        }
         self.rebuild_actor();
         self
     }
 
     #[must_use]
+    /// Configures the fast-policy flush interval for every Queue family.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a family runtime retains its core after the runtime has stopped.
     pub fn with_fast_flush_interval(mut self, interval: Option<Duration>) -> Self {
-        self.actor.stop();
-        self.core_for_builder().fast_flush_interval = interval;
-        if let Some(interval) = interval {
-            *self.core.next_fast_flush_at.lock() = Instant::now() + interval;
+        self.family_runtime.stop();
+        for core in self.cores.values_mut() {
+            let core =
+                Arc::get_mut(core).expect("Queue sink builders must run before sharing the sink");
+            core.fast_flush_interval = interval;
+            if let Some(interval) = interval {
+                *core.next_fast_flush_at.lock() = Instant::now() + interval;
+            }
         }
         self.rebuild_actor();
         self
     }
 
     pub fn stop(&self) {
-        self.core.active.store(false, Ordering::Relaxed);
-        self.actor.stop();
+        if let Some(core) = self.cores.values().next() {
+            core.active.store(false, Ordering::Relaxed);
+        }
+        self.family_runtime.stop();
     }
 
     pub(crate) fn is_active(&self) -> bool {
-        self.core.active.load(Ordering::Relaxed)
+        self.cores
+            .values()
+            .next()
+            .is_some_and(|core| core.active.load(Ordering::Relaxed))
     }
 
-    pub(crate) fn actor_health_snapshot(&self) -> crate::runtime::ManagedActorHealthSnapshot {
-        self.actor.health_snapshot()
+    pub(crate) fn actor_health_snapshot(&self) -> crate::runtime::ActorHealthSnapshot {
+        self.family_runtime.actor_health_snapshot()
     }
 
     #[cfg(test)]
     pub(super) fn is_actor_running(&self) -> bool {
-        self.actor.is_running()
+        self.family_runtime.is_running()
     }
 
     #[cfg(test)]
     pub(super) fn set_inventory_error_for_tests(&self, error: impl Into<String>) {
-        *self.core.inventory_error.lock() = Some(error.into());
+        let error = error.into();
+        for core in self.cores.values() {
+            *core.inventory_error.lock() = Some(error.clone());
+        }
     }
 
     pub(crate) fn panic_actor_for_failpoint(&self) {
-        let _ = self
-            .actor
-            .try_send_high_priority(QueueDomainCommand::PanicForFailpoint);
+        for family in &self.route_families {
+            let _ = self.family_runtime.try_enqueue(
+                *family,
+                crate::runtime::FamilyActorLane::Control,
+                QueueDomainCommand::PanicForFailpoint,
+            );
+        }
     }
 
     #[cfg(test)]
     pub(super) fn stop_actor_for_tests(&self) {
-        self.actor.stop();
+        self.family_runtime.stop();
     }
 
     #[cfg(test)]
     pub(super) fn actor_count_for_tests(&self) -> usize {
-        self.core.actors.lock().len()
+        self.cores
+            .values()
+            .map(|core| core.actors.lock().len())
+            .sum()
     }
 
     #[cfg(test)]
     pub(super) fn actors_are_empty_for_tests(&self) -> bool {
-        self.core.actors.lock().is_empty()
+        self.cores
+            .values()
+            .all(|core| core.actors.lock().is_empty())
     }
 
     #[cfg(test)]
     pub(super) fn known_queue_count_for_tests(&self) -> usize {
-        self.core.known_queue_keys.lock().len()
+        self.cores
+            .values()
+            .map(|core| core.known_queue_keys.lock().len())
+            .sum()
     }
 
     #[cfg(test)]
@@ -279,7 +359,7 @@ impl QueueDomainSink {
         &self,
         key: &crate::domains::queue::QueueKey,
     ) -> bool {
-        self.core.known_queue_keys.lock().contains(key)
+        self.core(key.family).known_queue_keys.lock().contains(key)
     }
 
     #[cfg(test)]
@@ -288,15 +368,16 @@ impl QueueDomainSink {
         key: crate::domains::queue::QueueKey,
         actor: crate::domains::queue::QueueActor,
     ) {
-        self.core.known_queue_keys.lock().insert(key.clone());
-        self.core.actors.lock().insert(
+        let core = self.core(key.family);
+        core.known_queue_keys.lock().insert(key.clone());
+        core.actors.lock().insert(
             key.clone(),
             WarmQueueActor {
-                actor: Arc::new(Mutex::new(actor)),
+                actor,
                 last_used: Instant::now(),
             },
         );
-        self.core.idle_sweep_keys.lock().push_back(key);
+        core.idle_sweep_keys.lock().push_back(key);
     }
 
     #[cfg(test)]
@@ -310,9 +391,12 @@ impl QueueDomainSink {
             &crate::runtime::routing::Route::new(queue_route),
         )
         .expect("queue key");
-        let actors = self.core.actors.lock();
-        let actor = actors.get(&key).expect("warm queue actor").actor.lock();
-        actor.admin_snapshot()
+        let actors = self.core(family).actors.lock();
+        actors
+            .get(&key)
+            .expect("warm queue actor")
+            .actor
+            .admin_snapshot()
     }
 
     #[cfg(test)]
@@ -326,7 +410,7 @@ impl QueueDomainSink {
             &crate::runtime::routing::Route::new(queue_route),
         )
         .expect("queue key");
-        let mut actors = self.core.actors.lock();
+        let mut actors = self.core(family).actors.lock();
         let warm_actor = actors.get_mut(&key).expect("warm queue actor");
         warm_actor.last_used = Instant::now()
             .checked_sub(QUEUE_ACTOR_IDLE_TTL + Duration::from_secs(1))
@@ -335,56 +419,80 @@ impl QueueDomainSink {
 
     #[cfg(test)]
     pub(super) fn dirty_fast_flush_contains_family_for_tests(&self, family_id: u32) -> bool {
-        self.core
-            .dirty_fast_flush_families
-            .lock()
-            .contains(&family_id)
+        self.cores
+            .values()
+            .any(|core| core.dirty_fast_flush_families.lock().contains(&family_id))
     }
 
     #[cfg(test)]
     pub(super) fn dirty_fast_flush_is_empty_for_tests(&self) -> bool {
-        self.core.dirty_fast_flush_families.lock().is_empty()
+        self.cores
+            .values()
+            .all(|core| core.dirty_fast_flush_families.lock().is_empty())
     }
 
     #[cfg(test)]
     pub(super) fn clear_dirty_fast_flush_for_tests(&self) {
-        self.core.dirty_fast_flush_families.lock().clear();
+        for core in self.cores.values() {
+            core.dirty_fast_flush_families.lock().clear();
+        }
     }
 
     #[cfg(test)]
     pub(super) fn insert_dirty_fast_flush_family_for_tests(&self, family_id: u32) {
-        self.core.dirty_fast_flush_families.lock().insert(family_id);
+        self.cores
+            .values()
+            .next()
+            .expect("Queue has at least one family")
+            .dirty_fast_flush_families
+            .lock()
+            .insert(family_id);
     }
 
     #[cfg(test)]
     pub(super) fn watch_families_are_empty_for_tests(&self) -> bool {
-        self.core.families.lock().is_empty()
+        self.cores
+            .values()
+            .all(|core| core.families.lock().is_empty())
     }
 
     #[cfg(test)]
     pub(super) fn set_next_dedup_sweep_at_for_tests(&self, now: Instant) {
-        *self.core.next_dedup_sweep_at.lock() = now;
+        for core in self.cores.values() {
+            *core.next_dedup_sweep_at.lock() = now;
+        }
     }
 
     #[cfg(test)]
     pub(super) fn panic_next_runtime_sweep_for_tests(&self) {
-        self.core
+        self.cores
+            .values()
+            .next()
+            .expect("Queue family")
             .panic_next_runtime_sweep
             .store(true, Ordering::Release);
     }
 
     #[cfg(test)]
     pub(super) fn runtime_sweep_pending_for_tests(&self) -> bool {
-        self.core.runtime_sweep_pending.load(Ordering::Acquire)
+        self.cores
+            .values()
+            .any(|core| core.runtime_sweep_pending.load(Ordering::Acquire))
     }
 
     fn send_unit_actor_command(
         &self,
+        family: crate::runtime::routing::RouteFamily,
         operation: &'static str,
         build_command: impl FnOnce(crossbeam_channel::Sender<()>) -> QueueDomainCommand,
     ) -> Result<(), crate::runtime::DeliveryError> {
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
-        if let Err(error) = self.actor.try_send_high_priority(build_command(reply_tx)) {
+        if let Err(error) = self.family_runtime.try_enqueue(
+            family,
+            crate::runtime::FamilyActorLane::Control,
+            build_command(reply_tx),
+        ) {
+            let error = crate::runtime::family_actor_enqueue_error_to_delivery_error(error);
             tracing::warn!(domain = "queue", operation, error = %error, "Queue actor command enqueue failed");
             return Err(error);
         }
@@ -403,13 +511,18 @@ impl QueueDomainSink {
 
     fn send_bool_actor_command(
         &self,
+        family: crate::runtime::routing::RouteFamily,
         operation: &'static str,
         build_command: impl FnOnce(
             crossbeam_channel::Sender<Result<bool, String>>,
         ) -> QueueDomainCommand,
     ) -> Result<bool, String> {
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
-        if let Err(error) = self.actor.try_send_high_priority(build_command(reply_tx)) {
+        if let Err(error) = self.family_runtime.try_enqueue(
+            family,
+            crate::runtime::FamilyActorLane::Control,
+            build_command(reply_tx),
+        ) {
             tracing::warn!(domain = "queue", operation, error = %error, "Queue actor command enqueue failed");
             return Err(format!(
                 "Queue actor command enqueue failed for {operation}: {error}"
@@ -425,28 +538,39 @@ impl QueueDomainSink {
     pub fn refresh_admin_snapshot_if_dirty(&self) {
         // Best effort: the snapshot refreshes again on the next tick, so a
         // missed one is not worth surfacing.
-        let _ = self.send_unit_actor_command(
-            "refresh_admin_snapshot_if_dirty",
-            QueueDomainCommand::RefreshAdminSnapshotIfDirty,
-        );
+        for family in &self.route_families {
+            let _ = self.send_unit_actor_command(
+                *family,
+                "refresh_admin_snapshot_if_dirty",
+                QueueDomainCommand::RefreshAdminSnapshotIfDirty,
+            );
+        }
     }
 
     fn live_counts(&self) -> QueueLiveCounts {
-        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
-        if let Err(error) = self
-            .actor
-            .try_send_high_priority(QueueDomainCommand::ReadLiveCounts(reply_tx))
-        {
-            tracing::warn!(domain = "queue", error = %error, "Queue live-count query enqueue failed");
-            return QueueLiveCounts::default();
+        let mut total = QueueLiveCounts::default();
+        for family in &self.route_families {
+            let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+            if self
+                .family_runtime
+                .try_enqueue(
+                    *family,
+                    crate::runtime::FamilyActorLane::Control,
+                    QueueDomainCommand::ReadLiveCounts(reply_tx),
+                )
+                .is_err()
+            {
+                continue;
+            }
+            if let Ok(counts) = reply_rx.recv_timeout(QUEUE_ACTOR_REPLY_TIMEOUT) {
+                total.pending = total.pending.saturating_add(counts.pending);
+                total.ready = total.ready.saturating_add(counts.ready);
+                total.delayed = total.delayed.saturating_add(counts.delayed);
+                total.inflight = total.inflight.saturating_add(counts.inflight);
+                total.dead_letters = total.dead_letters.saturating_add(counts.dead_letters);
+            }
         }
-
-        reply_rx
-            .recv_timeout(QUEUE_ACTOR_REPLY_TIMEOUT)
-            .unwrap_or_else(|error| {
-                tracing::warn!(domain = "queue", error = %error, "Queue live-count query reply failed");
-                QueueLiveCounts::default()
-            })
+        total
     }
 
     pub fn counts(&self) -> QueueCounts {
@@ -472,9 +596,12 @@ impl QueueDomainSink {
     /// when the actor did not reply before its deadline.
     #[must_use = "a dropped cleanup failure is indistinguishable from a cleanup that succeeded"]
     pub fn cleanup_session(&self, session_id: u64) -> Result<(), crate::runtime::DeliveryError> {
-        self.send_unit_actor_command("cleanup_session", |reply| {
-            QueueDomainCommand::CleanupSession(session_id, reply)
-        })
+        for family in &self.route_families {
+            self.send_unit_actor_command(*family, "cleanup_session", |reply| {
+                QueueDomainCommand::CleanupSession(session_id, reply)
+            })?;
+        }
+        Ok(())
     }
 
     pub(crate) fn sweep_runtime_state(&self) {
@@ -483,28 +610,32 @@ impl QueueDomainSink {
 
     #[cfg(test)]
     pub(super) fn sweep_runtime_state_at(&self, now: Instant) {
-        let _ = self.send_unit_actor_command("sweep_runtime_state", |reply| {
-            QueueDomainCommand::SweepRuntimeStateAt(now, Some(reply))
-        });
+        for family in &self.route_families {
+            let _ = self.send_unit_actor_command(*family, "sweep_runtime_state", |reply| {
+                QueueDomainCommand::SweepRuntimeStateAt(now, Some(reply))
+            });
+        }
     }
 
     pub(super) fn request_runtime_sweep_at(&self, now: Instant) -> bool {
-        if self.core.runtime_sweep_pending.swap(true, Ordering::AcqRel) {
-            return false;
+        let mut enqueued = false;
+        for family in &self.route_families {
+            let core = self.core(*family);
+            if core.runtime_sweep_pending.swap(true, Ordering::AcqRel) {
+                continue;
+            }
+            if let Err(error) = self.family_runtime.try_enqueue(
+                *family,
+                crate::runtime::FamilyActorLane::Control,
+                QueueDomainCommand::SweepRuntimeStateAt(now, None),
+            ) {
+                core.runtime_sweep_pending.store(false, Ordering::Release);
+                tracing::warn!(domain = "queue", family = family.id(), operation = "sweep_runtime_state", error = %error, "Queue actor command enqueue failed");
+            } else {
+                enqueued = true;
+            }
         }
-
-        if let Err(error) = self
-            .actor
-            .try_send_high_priority(QueueDomainCommand::SweepRuntimeStateAt(now, None))
-        {
-            self.core
-                .runtime_sweep_pending
-                .store(false, Ordering::Release);
-            tracing::warn!(domain = "queue", operation = "sweep_runtime_state", error = %error, "Queue actor command enqueue failed");
-            return false;
-        }
-
-        true
+        enqueued
     }
 
     /// Replays a dead-lettered message back into its queue.
@@ -518,7 +649,7 @@ impl QueueDomainSink {
         key: &crate::domains::queue::QueueKey,
         id: crate::domains::queue::MessageId,
     ) -> Result<bool, String> {
-        self.send_bool_actor_command("replay_dead_letter", |reply| {
+        self.send_bool_actor_command(key.family, "replay_dead_letter", |reply| {
             QueueDomainCommand::ReplayDeadLetter(key.clone(), id, reply)
         })
     }
@@ -534,7 +665,7 @@ impl QueueDomainSink {
         key: &crate::domains::queue::QueueKey,
         id: crate::domains::queue::MessageId,
     ) -> Result<bool, String> {
-        self.send_bool_actor_command("purge_dead_letter", |reply| {
+        self.send_bool_actor_command(key.family, "purge_dead_letter", |reply| {
             QueueDomainCommand::PurgeDeadLetter(key.clone(), id, reply)
         })
     }

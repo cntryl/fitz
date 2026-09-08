@@ -6,7 +6,8 @@ use crate::control::admin::{
 };
 use crate::domains::queue::core::QueueKey;
 use chrono::{TimeZone, Utc};
-use std::sync::atomic::{AtomicBool, Ordering};
+use parking_lot::Mutex;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 /// Point-in-time warm-actor queue counts for admin diagnostics.
@@ -54,6 +55,7 @@ pub(crate) struct QueueProjectionEntry {
     pub dead_letters: Vec<QueueDeadLetterSnapshot>,
 }
 
+#[derive(Clone)]
 pub(crate) struct QueueProjectionState {
     queues: Vec<QueueInfo>,
     inflight: Vec<QueueInflight>,
@@ -117,6 +119,43 @@ impl QueueProjectionState {
             inflight,
             dead_letters,
         }
+    }
+
+    fn combine(states: impl Iterator<Item = Self>) -> Self {
+        let mut combined = Self {
+            queues: Vec::new(),
+            inflight: Vec::new(),
+            dead_letters: Vec::new(),
+        };
+        for state in states {
+            combined.queues.extend(state.queues);
+            combined.inflight.extend(state.inflight);
+            combined.dead_letters.extend(state.dead_letters);
+        }
+        combined.queues.sort_by(|left, right| {
+            (&left.realm, &left.area, &left.resource).cmp(&(
+                &right.realm,
+                &right.area,
+                &right.resource,
+            ))
+        });
+        combined.inflight.sort_by(|left, right| {
+            (&left.realm, &left.area, &left.resource, left.message_id).cmp(&(
+                &right.realm,
+                &right.area,
+                &right.resource,
+                right.message_id,
+            ))
+        });
+        combined.dead_letters.sort_by(|left, right| {
+            (&left.realm, &left.area, &left.resource, left.message_id).cmp(&(
+                &right.realm,
+                &right.area,
+                &right.resource,
+                right.message_id,
+            ))
+        });
+        combined
     }
 
     fn project_queue_info(entry: &QueueProjectionEntry) -> QueueInfo {
@@ -194,27 +233,37 @@ impl QueueProjectionState {
 
 pub(crate) struct QueueAdminProjection {
     read_model: Arc<AdminReadModel>,
-    dirty: AtomicBool,
+    family_states: Mutex<BTreeMap<u32, QueueProjectionState>>,
+    dirty_families: Mutex<HashSet<u32>>,
 }
 
 impl QueueAdminProjection {
     pub(crate) fn new(read_model: Arc<AdminReadModel>) -> Self {
         Self {
             read_model,
-            dirty: AtomicBool::new(false),
+            family_states: Mutex::new(BTreeMap::new()),
+            dirty_families: Mutex::new(HashSet::new()),
         }
     }
 
-    pub(crate) fn mark_dirty(&self) {
-        self.dirty.store(true, Ordering::Relaxed);
+    pub(crate) fn mark_dirty(&self, family: crate::runtime::routing::RouteFamily) {
+        self.dirty_families.lock().insert(family.id());
     }
 
-    pub(crate) fn refresh_if_dirty<F>(&self, build_state: F)
-    where
+    pub(crate) fn refresh_if_dirty<F>(
+        &self,
+        family: crate::runtime::routing::RouteFamily,
+        build_state: F,
+    ) where
         F: FnOnce() -> QueueProjectionState,
     {
-        if self.dirty.swap(false, Ordering::AcqRel) {
-            self.apply(build_state());
+        if self.dirty_families.lock().remove(&family.id()) {
+            let combined = {
+                let mut states = self.family_states.lock();
+                states.insert(family.id(), build_state());
+                QueueProjectionState::combine(states.values().cloned())
+            };
+            self.apply(combined);
         }
     }
 
@@ -304,10 +353,11 @@ mod tests {
         // Arrange
         let read_model = AdminReadModel::new();
         let projection = QueueAdminProjection::new(read_model.clone());
-        projection.mark_dirty();
+        let family = RouteFamily::new(7);
+        projection.mark_dirty(family);
 
         // Act
-        projection.refresh_if_dirty(|| {
+        projection.refresh_if_dirty(family, || {
             QueueProjectionState::from_entries(vec![projection_entry("acme", "jobs", "emails")])
         });
 
@@ -331,9 +381,10 @@ mod tests {
         // Arrange
         let read_model = AdminReadModel::new();
         let projection = QueueAdminProjection::new(read_model.clone());
+        let family = RouteFamily::new(7);
 
         // Act
-        projection.refresh_if_dirty(|| {
+        projection.refresh_if_dirty(family, || {
             QueueProjectionState::from_entries(vec![projection_entry("acme", "jobs", "emails")])
         });
 
@@ -341,5 +392,32 @@ mod tests {
         assert!(read_model.queues(None).is_empty());
         assert!(read_model.queue_inflight(None).is_empty());
         assert!(read_model.queue_dead_letters(None).is_empty());
+    }
+
+    #[test]
+    fn should_preserve_sibling_family_rows_when_one_family_refreshes() {
+        // Arrange
+        let read_model = AdminReadModel::new();
+        let projection = QueueAdminProjection::new(read_model.clone());
+        let first_family = RouteFamily::new(7);
+        let second_family = RouteFamily::new(8);
+        projection.mark_dirty(first_family);
+        projection.refresh_if_dirty(first_family, || {
+            QueueProjectionState::from_entries(vec![projection_entry("alpha", "jobs", "first")])
+        });
+        let mut second_entry = projection_entry("beta", "jobs", "second");
+        second_entry.key.family = second_family;
+        projection.mark_dirty(second_family);
+
+        // Act
+        projection.refresh_if_dirty(second_family, || {
+            QueueProjectionState::from_entries(vec![second_entry])
+        });
+
+        // Assert
+        let queues = read_model.queues(None);
+        assert_eq!(queues.len(), 2);
+        assert_eq!(queues[0].resource, "first");
+        assert_eq!(queues[1].resource, "second");
     }
 }

@@ -1,8 +1,14 @@
-use super::model::{
-    parse_concrete_schedule_route, Arc, BTreeMap, BinaryHeap, Clock, CronSchedule, FxBuildHasher,
-    HashMap, Instant, PendingClaim, PersistedSchedule, Reverse, RouteFamily, ScheduleActor,
-    ScheduleDef, ScheduleStore, SystemClock,
+use super::model::{PendingClaim, ScheduleActor};
+use crate::domains::schedule::protocol::{
+    parse_concrete_schedule_route, Clock, CronSchedule, ScheduleDef, SystemClock,
 };
+use crate::domains::schedule::store::{PersistedSchedule, ScheduleStore};
+use crate::runtime::routing::RouteFamily;
+use rustc_hash::FxBuildHasher;
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, BinaryHeap, HashMap};
+use std::sync::Arc;
+use std::time::Instant;
 
 impl ScheduleActor {
     pub(super) const READY_HEAP_REBUILD_SLACK: usize = 32;
@@ -12,22 +18,18 @@ impl ScheduleActor {
     /// Returns an error when schedule storage initialization or preload fails.
     pub fn try_new(
         family: RouteFamily,
-        db: Arc<cntryl_midge::Engine>,
-        write_options: cntryl_midge::WriteOptions,
+        store: ScheduleStore,
+        write_policy: crate::domains::WritePolicy,
     ) -> Result<Self, String> {
-        Self::try_new_with_storage(
-            family,
-            crate::storage::FitzStorageEngine::new(db),
-            write_options,
-        )
+        Self::try_new_with_clock(family, store, write_policy, Arc::new(SystemClock))
     }
 
     pub(crate) fn try_new_with_storage(
         family: RouteFamily,
         db: crate::storage::FitzStorageEngine,
-        write_options: cntryl_midge::WriteOptions,
+        write_policy: crate::domains::WritePolicy,
     ) -> Result<Self, String> {
-        Self::try_new_with_storage_clock(family, db, write_options, Arc::new(SystemClock))
+        Self::try_new(family, ScheduleStore::new_with_storage(db), write_policy)
     }
 
     /// # Errors
@@ -35,87 +37,57 @@ impl ScheduleActor {
     /// Returns an error when schedule storage initialization or preload fails.
     pub fn try_new_with_clock(
         family: RouteFamily,
-        db: Arc<cntryl_midge::Engine>,
-        write_options: cntryl_midge::WriteOptions,
-        clock: Arc<dyn Clock>,
-    ) -> Result<Self, String> {
-        Self::try_new_with_storage_clock(
-            family,
-            crate::storage::FitzStorageEngine::new(db),
-            write_options,
-            clock,
-        )
-    }
-
-    pub(crate) fn try_new_with_storage_clock(
-        family: RouteFamily,
-        db: crate::storage::FitzStorageEngine,
-        write_options: cntryl_midge::WriteOptions,
+        store: ScheduleStore,
+        write_policy: crate::domains::WritePolicy,
         clock: Arc<dyn Clock>,
     ) -> Result<Self, String> {
         let now = clock.now_instant();
-        Self::try_new_at_with_storage_clock(family, db, write_options, clock, now)
+        Self::try_new_at_with_clock(family, store, write_policy, clock, now)
     }
 
     /// # Panics
     ///
     /// Panics when schedule actor startup fails.
+    #[must_use]
     pub fn new(
         family: RouteFamily,
-        db: Arc<cntryl_midge::Engine>,
-        write_options: cntryl_midge::WriteOptions,
+        store: ScheduleStore,
+        write_policy: crate::domains::WritePolicy,
     ) -> Self {
-        Self::try_new(family, db, write_options).expect("schedule actor startup should succeed")
+        Self::try_new(family, store, write_policy).expect("schedule actor startup should succeed")
     }
 
     /// # Panics
     ///
     /// Panics when schedule actor startup fails.
+    #[must_use]
     pub fn new_with_clock(
         family: RouteFamily,
-        db: Arc<cntryl_midge::Engine>,
-        write_options: cntryl_midge::WriteOptions,
+        store: ScheduleStore,
+        write_policy: crate::domains::WritePolicy,
         clock: Arc<dyn Clock>,
     ) -> Self {
-        Self::try_new_with_clock(family, db, write_options, clock)
+        Self::try_new_with_clock(family, store, write_policy, clock)
             .expect("schedule actor startup should succeed")
     }
 
     #[cfg(test)]
     pub(super) fn try_new_at(
         family: RouteFamily,
-        db: Arc<cntryl_midge::Engine>,
-        write_options: cntryl_midge::WriteOptions,
+        store: ScheduleStore,
+        write_policy: crate::domains::WritePolicy,
         now: Instant,
     ) -> Result<Self, String> {
-        Self::try_new_at_with_clock(family, db, write_options, Arc::new(SystemClock), now)
+        Self::try_new_at_with_clock(family, store, write_policy, Arc::new(SystemClock), now)
     }
 
-    #[cfg(test)]
     pub(super) fn try_new_at_with_clock(
         family: RouteFamily,
-        db: Arc<cntryl_midge::Engine>,
-        write_options: cntryl_midge::WriteOptions,
+        store: ScheduleStore,
+        write_policy: crate::domains::WritePolicy,
         clock: Arc<dyn Clock>,
         now: Instant,
     ) -> Result<Self, String> {
-        Self::try_new_at_with_storage_clock(
-            family,
-            crate::storage::FitzStorageEngine::new(db),
-            write_options,
-            clock,
-            now,
-        )
-    }
-
-    pub(super) fn try_new_at_with_storage_clock(
-        family: RouteFamily,
-        db: crate::storage::FitzStorageEngine,
-        write_options: cntryl_midge::WriteOptions,
-        clock: Arc<dyn Clock>,
-        now: Instant,
-    ) -> Result<Self, String> {
-        let store = ScheduleStore::new_with_storage(db);
         let mut actor = Self {
             family,
             store,
@@ -123,7 +95,7 @@ impl ScheduleActor {
             cron_cache: HashMap::with_capacity_and_hasher(32, FxBuildHasher),
             list_entries: Vec::new(),
             list_cache: None,
-            write_options,
+            write_policy,
             last_scan_time: now,
             scan_dedup_window: super::SCAN_DEDUP_WINDOW,
             ready_heap: BinaryHeap::new(),
@@ -145,7 +117,7 @@ impl ScheduleActor {
         let now_ms = Self::instant_to_ms_at_with_clock(now, now, self.clock.as_ref());
         let entries = self
             .store
-            .load_all(self.family.as_u64(), self.write_options)?;
+            .load_all(self.family.as_u64(), self.write_policy)?;
         let normalization_batch = self.preload_persisted_schedules(entries, now, now_ms)?;
         self.persist_normalization_batch(&normalization_batch)?;
         self.preload_pending_fire_claims()?;
@@ -330,11 +302,8 @@ impl ScheduleActor {
 
         self.overdue_normalizations = normalization_batch.len() as u64;
         super::retry_persistence(|| {
-            self.store.insert_batch(
-                self.family.as_u64(),
-                normalization_batch,
-                self.write_options,
-            )
+            self.store
+                .insert_batch(self.family.as_u64(), normalization_batch, self.write_policy)
         })?;
         Ok(())
     }

@@ -1,10 +1,13 @@
+use super::model::ScheduleActor;
 #[cfg(test)]
-use super::model::SystemClock;
-use super::model::{
+use crate::domains::schedule::protocol::SystemClock;
+use crate::domains::schedule::protocol::{
     epoch_ms_to_instant_with_reference, instant_to_epoch_ms_with_reference,
-    parse_concrete_schedule_route, Clock, Duration, Instant, Reverse, ScheduleActor,
-    ScheduleFailure, ScheduleFailureCategory, ScheduleMessage, ScheduleResponse,
+    parse_concrete_schedule_route, Clock, ScheduleFailure, ScheduleFailureCategory,
+    ScheduleMessage, ScheduleResponse,
 };
+use std::cmp::Reverse;
+use std::time::{Duration, Instant};
 
 impl ScheduleActor {
     #[doc(hidden)]
@@ -49,7 +52,7 @@ impl ScheduleActor {
     #[doc(hidden)]
     pub fn bench_drain_storage(&self) -> Result<(), String> {
         self.store
-            .sync_family(self.family.as_u64(), self.write_options)
+            .sync_family(self.family.as_u64(), self.write_policy)
     }
 
     #[cfg(test)]

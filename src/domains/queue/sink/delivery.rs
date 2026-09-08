@@ -1,9 +1,13 @@
 //! Ready-notification fan-out and per-operation actor dispatch.
 
-use super::model::{
-    obs, Envelope, Instant, QueueDomainCore, QueueNotification, QueueReadyNotification,
-};
+use super::model::{QueueDomainCore, QueueReadyNotification};
+#[cfg(test)]
+use crate::dispatch::protocol::frame_context::FrameContext;
+use crate::domains::queue::QueueNotification;
+use crate::observability as obs;
 use crate::runtime::routing::RouteFamily;
+use crate::runtime::Envelope;
+use std::time::Instant;
 
 mod pending_reserves;
 mod wildcard_receive;
@@ -75,9 +79,11 @@ impl QueueDomainCore {
             let Some(warm_actor) = actors.get_mut(&key) else {
                 continue;
             };
-            let mut actor = warm_actor.actor.lock();
-            if actor.release_undelivered_reservation(session_id, id, token) {
-                let notification = self.record_ready_state(&key, actor.live_counts());
+            if warm_actor
+                .actor
+                .release_undelivered_reservation(session_id, id, token)
+            {
+                let notification = self.record_ready_state(&key, warm_actor.actor.live_counts());
                 released.push((key, notification));
             }
         }
@@ -124,7 +130,7 @@ impl QueueDomainCore {
                     inflight_messages: counts.inflight as u64,
                 },
             );
-            let notify_ctx = super::model::FrameContext::new(
+            let notify_ctx = FrameContext::new(
                 session_id,
                 crate::dispatch::protocol::frame::ChannelId::Sub,
                 crate::dispatch::protocol::tlv::MessageType::new(
@@ -212,7 +218,7 @@ impl QueueDomainCore {
             .iter()
             .filter(|(key, _)| key.family == family_id)
             .filter_map(|(key, warm_actor)| {
-                let counts = warm_actor.actor.lock().live_counts();
+                let counts = warm_actor.actor.live_counts();
                 let route = Self::queue_ready_route(key);
                 (counts.ready > 0 && pattern.matches(&route)).then_some((route, counts))
             })
@@ -489,36 +495,34 @@ impl QueueDomainCore {
         F: FnOnce(&mut crate::domains::queue::QueueActor) -> crate::domains::queue::QueueResponse,
     {
         let actor_lock_start = Instant::now();
-        let (actor_handle, _) = match self.get_or_create_actor(key) {
-            Ok(actor) => actor,
-            Err(message) => {
-                self.route_queue_recovery_error(
-                    request_context.envelope,
-                    request_context.meta,
-                    request_context.request_started,
-                    message,
-                );
-                return None;
-            }
-        };
-        self.observe_histogram_us(
-            obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY,
-            Self::u128_to_u64_saturating(actor_lock_start.elapsed().as_micros()),
-        );
-
-        let mut actor = actor_handle.lock();
-        let actor_exec_start = Instant::now();
-        actor.process_due_work();
-        let response = operation(&mut actor);
-        let counts = actor.live_counts();
+        let ((response, counts, actor_lock_us, actor_exec_us), _) =
+            match self.with_actor(key, |actor| {
+                let actor_lock_us =
+                    Self::u128_to_u64_saturating(actor_lock_start.elapsed().as_micros());
+                let actor_exec_start = Instant::now();
+                actor.process_due_work();
+                let response = operation(actor);
+                let actor_exec_us =
+                    Self::u128_to_u64_saturating(actor_exec_start.elapsed().as_micros());
+                (response, actor.live_counts(), actor_lock_us, actor_exec_us)
+            }) {
+                Ok(outcome) => outcome,
+                Err(message) => {
+                    self.route_queue_recovery_error(
+                        request_context.envelope,
+                        request_context.meta,
+                        request_context.request_started,
+                        message,
+                    );
+                    return None;
+                }
+            };
+        self.observe_histogram_us(obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY, actor_lock_us);
         if counts.total() > 0 {
             self.known_queue_keys.lock().insert(key.clone());
         }
         let notification = self.record_ready_state(key, counts);
-        self.observe_histogram_us(
-            obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY,
-            Self::u128_to_u64_saturating(actor_exec_start.elapsed().as_micros()),
-        );
+        self.observe_histogram_us(obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY, actor_exec_us);
 
         Some((response, notification.map(|event| (key.clone(), event))))
     }

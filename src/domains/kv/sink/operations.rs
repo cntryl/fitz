@@ -11,12 +11,10 @@ use crate::domains::kv::KvClientFrame;
 use crate::domains::kv::KvClientRequest;
 use crate::domains::kv::{KvError, KvResponse};
 use crate::runtime::Envelope;
-use parking_lot::Mutex;
-use std::sync::Arc;
 
 impl KvDomainRuntime<'_> {
     pub(super) fn dispatch_actor_operation(
-        &self,
+        &mut self,
         session_id: u64,
         meta: crate::runtime::ClientFrameMeta,
         kv_message: crate::domains::kv::KvMessage,
@@ -42,30 +40,24 @@ impl KvDomainRuntime<'_> {
         }
     }
 
-    pub(super) fn actor_for_session(&self, session_id: u64, context: &str) -> Arc<Mutex<KvActor>> {
-        self.core
-            .actors
-            .lock()
-            .entry(session_id)
-            .or_insert_with(|| {
-                tracing::trace!(
-                    domain = "kv",
-                    session_id = session_id,
-                    "Creating new KvActor instance ({context})"
-                );
-                Arc::new(Mutex::new(KvActor::new(self.core.store.clone())))
-            })
-            .clone()
+    pub(super) fn actor_for_session(&mut self, session_id: u64, context: &str) -> &mut KvActor {
+        self.core.actors.entry(session_id).or_insert_with(|| {
+            tracing::trace!(
+                domain = "kv",
+                session_id = session_id,
+                "Creating new KvActor instance ({context})"
+            );
+            KvActor::new(self.core.store.clone())
+        })
     }
 
     fn handle_regular_operation_frame(
-        &self,
+        &mut self,
         session_id: u64,
         message_type: u16,
         kv_message: crate::domains::kv::KvMessage,
     ) -> KvOperationOutcome {
         let actor = self.actor_for_session(session_id, "other operation");
-        let mut actor = actor.lock();
         tracing::trace!(
             domain = "kv",
             session_id = session_id,

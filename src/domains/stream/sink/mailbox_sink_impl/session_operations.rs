@@ -5,18 +5,19 @@ use super::{
     StreamActor, StreamClientResponseBody, StreamDiscriminator, StreamDomainCore,
     StreamReadExecution, StreamSessionOwner, StreamStoreError,
 };
-use crate::domains::stream::sink::model::OperationOutcome;
+use crate::domains::stream::sink::model::{OperationOutcome, StreamCommitOutcome, WatermarkCommit};
+use crate::domains::stream::StreamMessage;
 
-impl StreamDomainCore {
+impl super::super::model::StreamFamilyState {
     pub(super) fn handle_actor_operation_frame(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         request_started: Option<std::time::Instant>,
         stream_msg: crate::domains::stream::protocol::StreamMessage,
     ) {
-        use crate::domains::stream::protocol::StreamMessage;
-
+        let core = self.core.clone();
+        let self_ = core.as_ref();
         let message_family = match &stream_msg {
             StreamMessage::Begin { family_id, .. }
             | StreamMessage::Read { family_id, .. }
@@ -27,8 +28,8 @@ impl StreamDomainCore {
             | StreamMessage::Rollback { .. } => None,
         };
         if message_family.is_some_and(|family_id| family_id != meta.route_family) {
-            let response = Self::stream_error_response("route family mismatch");
-            self.route_stream_response(envelope, meta, &response, request_started);
+            let response = StreamDomainCore::stream_error_response("route family mismatch");
+            self_.route_stream_response(envelope, meta, &response, request_started);
             return;
         }
 
@@ -38,14 +39,14 @@ impl StreamDomainCore {
                 family_id,
                 route,
                 ingest_metadata,
-            } => self.handle_begin_operation(meta, family_id, &route, ingest_metadata),
+            } => self_.handle_begin_operation(meta, family_id, &route, ingest_metadata),
             StreamMessage::Append {
                 session_id,
                 expected_offset,
                 body,
                 metadata,
                 discriminator,
-            } => self.handle_append_operation(
+            } => self_.handle_append_operation(
                 meta,
                 session_id,
                 expected_offset,
@@ -57,7 +58,7 @@ impl StreamDomainCore {
                 self.handle_commit_operation(meta, session_id, mode)
             }
             StreamMessage::Rollback { session_id } => {
-                self.handle_rollback_operation(meta, session_id)
+                self_.handle_rollback_operation(meta, session_id)
             }
             StreamMessage::Read {
                 family_id,
@@ -68,7 +69,7 @@ impl StreamDomainCore {
                 filter,
                 cursor_fingerprint,
                 captured_watermark,
-            } => self.handle_read_operation(StreamReadExecution {
+            } => self_.handle_read_operation(StreamReadExecution {
                 family_id,
                 route: &route,
                 from_offset,
@@ -79,16 +80,16 @@ impl StreamDomainCore {
                 captured_watermark,
             }),
             StreamMessage::Last { family_id, route } => {
-                self.handle_last_operation(family_id, &route)
+                self_.handle_last_operation(family_id, &route)
             }
             StreamMessage::GetMetadata { family_id, route } => {
-                self.handle_metadata_operation(family_id, &route)
+                self_.handle_metadata_operation(family_id, &route)
             }
         })
         .into();
 
         if outcome.admin_dirty {
-            self.mark_admin_snapshot_dirty();
+            self_.mark_admin_snapshot_dirty();
         }
 
         if let Some(notification) = outcome.notification.as_ref() {
@@ -97,12 +98,32 @@ impl StreamDomainCore {
                 notification.route.clone(),
                 notification.payload.clone(),
             );
-            self.handle_domain_publish(&event);
+            self_.handle_domain_publish(&event);
         }
 
-        self.route_operation_response(envelope, meta, request_started, is_begin, &outcome);
+        self_.route_operation_response(envelope, meta, request_started, is_begin, &outcome);
     }
 
+    fn handle_commit_operation(
+        &mut self,
+        meta: crate::runtime::ClientFrameMeta,
+        session_id: u64,
+        mode: crate::domains::stream::protocol::StreamWriteMode,
+    ) -> (
+        StreamClientResponseBody,
+        Option<(RouteFamily, Route, bytes::Bytes)>,
+        bool,
+    ) {
+        let core = self.core.clone();
+        let outcome = core.handle_commit_operation(meta, session_id, mode);
+        if let Some(commit) = outcome.watermark {
+            self.enqueue_watermark_commit(commit);
+        }
+        (outcome.response, outcome.notification, outcome.admin_dirty)
+    }
+}
+
+impl StreamDomainCore {
     fn route_operation_response(
         &self,
         envelope: &Envelope,
@@ -289,11 +310,7 @@ impl StreamDomainCore {
         meta: crate::runtime::ClientFrameMeta,
         session_id: u64,
         mode: crate::domains::stream::protocol::StreamWriteMode,
-    ) -> (
-        StreamClientResponseBody,
-        Option<(RouteFamily, Route, bytes::Bytes)>,
-        bool,
-    ) {
+    ) -> StreamCommitOutcome {
         let mode = if mode == crate::domains::stream::protocol::StreamWriteMode::Sync {
             self.sync_write_mode
         } else {
@@ -301,11 +318,14 @@ impl StreamDomainCore {
         };
         let Some(owner) = self.session_owner_for(meta.session_id, meta.route_family, session_id)
         else {
-            return (
-                Self::stream_error_response(StreamStoreError::SessionNotFound.client_message()),
-                None,
-                false,
-            );
+            return StreamCommitOutcome {
+                response: Self::stream_error_response(
+                    StreamStoreError::SessionNotFound.client_message(),
+                ),
+                notification: None,
+                admin_dirty: false,
+                watermark: None,
+            };
         };
         let commit_result = {
             let mut actor = owner.actor.lock();
@@ -316,11 +336,11 @@ impl StreamDomainCore {
                 self.session_owners.lock().remove(&session_id);
                 self.counter_inc("fitz_stream_append_sessions_ended_total");
                 self.durable_metrics.record_events(commit.batch_size);
-                self.notify_area_batch_committed(
-                    owner.key.family,
-                    &owner.key.realm,
-                    &owner.key.area,
-                    &crate::domains::stream::protocol::BatchCommitted {
+                let watermark_commit = WatermarkCommit {
+                    family: owner.key.family,
+                    realm: owner.key.realm.clone(),
+                    area: owner.key.area.clone(),
+                    batch: crate::domains::stream::protocol::BatchCommitted {
                         first_area_offset: commit.first_area_offset,
                         last_area_offset: commit.last_area_offset,
                         first_realm_offset: commit.first_realm_offset,
@@ -328,20 +348,26 @@ impl StreamDomainCore {
                         first_global_offset: commit.first_global_offset,
                         last_global_offset: commit.last_global_offset,
                     },
-                );
+                };
                 let payload = Self::encode_stream_commit_notify_payload(&commit);
-                (
-                    StreamClientResponseBody::Ok {
+                StreamCommitOutcome {
+                    response: StreamClientResponseBody::Ok {
                         session_id: None,
                         data: vec![],
                     },
-                    Some((owner.key.family, owner.key.resource_route(), payload)),
-                    true,
-                )
+                    notification: Some((owner.key.family, owner.key.resource_route(), payload)),
+                    admin_dirty: true,
+                    watermark: Some(watermark_commit),
+                }
             }
             Err(error) => {
                 self.handle_visibility_advance(meta.route_family);
-                (Self::stream_error_response(error), None, false)
+                StreamCommitOutcome {
+                    response: Self::stream_error_response(error),
+                    notification: None,
+                    admin_dirty: false,
+                    watermark: None,
+                }
             }
         }
     }

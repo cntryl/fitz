@@ -1,10 +1,11 @@
 //! Admin snapshot and metrics upkeep for the queue domain core.
 
-use super::model::{QueueDomainCore, QueueLiveCounts, QueueProjectionEntry, QueueProjectionState};
+use super::model::{QueueDomainCore, QueueLiveCounts};
+use crate::domains::queue::projection::{QueueProjectionEntry, QueueProjectionState};
 
 impl QueueDomainCore {
     pub(super) fn mark_admin_snapshot_dirty(&self) {
-        self.projection.mark_dirty();
+        self.projection.mark_dirty(self.route_family);
         self.refresh_metrics_gauges();
     }
 
@@ -28,7 +29,7 @@ impl QueueDomainCore {
     pub(super) fn refresh_admin_snapshot_if_dirty(&self) {
         self.sweep_idle_actors();
         self.projection
-            .refresh_if_dirty(|| self.collect_projection_state());
+            .refresh_if_dirty(self.route_family, || self.collect_projection_state());
     }
 
     pub(super) fn collect_projection_state(&self) -> QueueProjectionState {
@@ -37,17 +38,16 @@ impl QueueDomainCore {
         let entries = actors
             .iter()
             .map(|(key, warm_actor)| {
-                let actor = warm_actor.actor.lock();
                 let ready_route = Self::queue_ready_route(key);
                 let subscriptions_active = families.get(&key.family.as_u64()).map_or(0, |state| {
                     state.for_each_matching_route(key.family, ready_route.as_str(), |_| {})
                 });
                 QueueProjectionEntry {
                     key: key.clone(),
-                    snapshot: actor.admin_snapshot(),
+                    snapshot: warm_actor.actor.admin_snapshot(),
                     subscriptions_active,
-                    inflight: actor.admin_inflight(),
-                    dead_letters: actor.admin_dead_letters(),
+                    inflight: warm_actor.actor.admin_inflight(),
+                    dead_letters: warm_actor.actor.admin_dead_letters(),
                 }
             })
             .collect();
@@ -60,7 +60,7 @@ impl QueueDomainCore {
         let mut counts = QueueLiveCounts::default();
 
         for warm_actor in actors.values() {
-            let actor_counts = warm_actor.actor.lock().live_counts();
+            let actor_counts = warm_actor.actor.live_counts();
             counts.ready = counts.ready.saturating_add(actor_counts.ready);
             counts.delayed = counts.delayed.saturating_add(actor_counts.delayed);
             counts.inflight = counts.inflight.saturating_add(actor_counts.inflight);
