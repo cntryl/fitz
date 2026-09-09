@@ -36,7 +36,14 @@ jobs:
         run: rustup update stable
 
       - name: Install lld linker
-        run: sudo apt-get update && sudo apt-get install -y lld
+        run: |
+          # The hosted image may have a stale Google Chrome index while its
+          # release metadata is being refreshed. It is unrelated to this job;
+          # remove only that optional source so Ubuntu package installation is
+          # deterministic.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update
+          sudo apt-get install -y lld
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
