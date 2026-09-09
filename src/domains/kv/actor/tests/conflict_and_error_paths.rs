@@ -13,7 +13,7 @@ fn should_handle_concurrent_puts_with_conflict_detection() {
             "concurrent".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: crate::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id: tx1 } = b1 else {
         panic!("Expected BeginOk");
@@ -27,7 +27,7 @@ fn should_handle_concurrent_puts_with_conflict_detection() {
             "concurrent".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: crate::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id: tx2 } = b2 else {
         panic!("Expected BeginOk");
@@ -80,7 +80,7 @@ fn should_handle_concurrent_puts_with_conflict_detection() {
             "concurrent".to_string(),
         ),
         mode: TxMode::ReadOnly,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: crate::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id: tx3 } = b3 else {
         panic!("Begin failed");
@@ -121,7 +121,7 @@ fn should_reject_operations_from_wrong_area() {
             "shared".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: crate::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id: tx1 } = r1 else {
         panic!("Expected BeginOk");
@@ -135,7 +135,7 @@ fn should_reject_operations_from_wrong_area() {
             "shared".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: crate::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id: tx2 } = r2 else {
         panic!("Expected BeginOk");
@@ -201,7 +201,7 @@ fn should_return_not_found_when_key_never_written() {
             "table1".to_string(),
         ),
         mode: TxMode::ReadOnly,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: crate::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id } = begin_response else {
         panic!("Expected BeginOk");
@@ -236,7 +236,7 @@ fn should_delete_nonexistent_key_without_error() {
             "table1".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: crate::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id } = begin_response else {
         panic!("Expected BeginOk");
@@ -261,7 +261,7 @@ fn should_reject_mutation_in_read_only_transaction_with_typed_error() {
     let KvResponse::BeginOk { tx_id } = actor.handle(KvMessage::Begin {
         scope: scope.clone(),
         mode: TxMode::ReadOnly,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: crate::domains::WritePolicy::Buffered,
     }) else {
         panic!("Expected BeginOk");
     };
@@ -295,7 +295,7 @@ fn should_scan_empty_table_returns_empty_result() {
             "empty_table".to_string(),
         ),
         mode: TxMode::ReadOnly,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: crate::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id } = begin_response else {
         panic!("Expected BeginOk");
@@ -337,7 +337,7 @@ fn should_reject_begin_with_empty_realm() {
             "table1".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: crate::domains::WritePolicy::Buffered,
     });
 
     // Assert
@@ -359,7 +359,7 @@ fn should_classify_midge_errors_by_variant_not_message_wording() {
     ];
 
     // Act
-    let classifications = errors.map(|error| KvActor::map_midge_error(&error));
+    let classifications = errors.map(|error| crate::domains::kv::store::KvStore::map_error(&error));
 
     // Assert
     assert!(matches!(classifications[0], KvError::Conflict(_)));
@@ -381,7 +381,7 @@ fn should_reject_begin_with_realm_containing_spaces() {
             "table1".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: crate::domains::WritePolicy::Buffered,
     });
 
     // Assert
@@ -405,7 +405,7 @@ fn should_reject_commit_on_already_committed_txid() {
             "table1".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: crate::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id } = begin_response else {
         panic!("Expected BeginOk");
@@ -442,7 +442,7 @@ fn should_reject_rollback_on_already_rolled_back_txid() {
             "table1".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: crate::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id } = begin_response else {
         panic!("Expected BeginOk");
@@ -479,7 +479,7 @@ fn should_reject_empty_resource_in_follow_up_scope() {
             "table1".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: crate::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id } = begin_response else {
         panic!("Expected BeginOk");
@@ -519,7 +519,7 @@ fn should_classify_storage_timeout_as_backend_unavailable() {
     );
 
     // Act
-    let classification = KvActor::map_midge_error(&error);
+    let classification = crate::domains::kv::store::KvStore::map_error(&error);
 
     // Assert
     assert!(

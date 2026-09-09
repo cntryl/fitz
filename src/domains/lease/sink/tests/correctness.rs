@@ -53,8 +53,8 @@ fn lease_error_code(mailbox: &Mailbox, label: &str) -> u16 {
         .0
 }
 
-fn new_correctness_lease_sink(router: Arc<Router>) -> LeaseDomainSink {
-    LeaseDomainSink::new(
+fn new_correctness_lease_sink(router: Arc<Router>) -> LeaseDomain {
+    LeaseDomain::new(
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
     )

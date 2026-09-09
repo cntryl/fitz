@@ -123,7 +123,7 @@ impl KvMessage {
 #[path = "tests/protocol.rs"]
 mod tests;
 
-/// KV watch messages handled by `KvDomainSink` before actor dispatch.
+/// KV watch messages handled by `KvDomain` before actor dispatch.
 #[derive(Debug, Clone)]
 pub enum KvSubscriptionMessage {
     Subscribe {

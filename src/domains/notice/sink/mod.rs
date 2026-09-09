@@ -26,32 +26,33 @@ mod subscriptions;
 mod test_channels;
 mod validation;
 
-use actor_runtime::{NoticeDomainCommand, NoticeDomainRuntime};
+use actor_runtime::{NoticeDomainCommand, NoticeFamilyRuntime};
 use delivery_worker::{notice_delivery_worker, NoticeDeliveryJob};
 use model::{
     notice_route_realm, NoticeDeliveryTarget, NoticeDeliveryTargets, NoticeMatchedRoutePatterns,
     NoticeRouteStats, NoticeRouteStatsKey, NoticeSubscription,
 };
-use state::NoticeDomainCore;
+use state::{NoticeDomainConfig, NoticeFamilyState};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 #[cfg(test)]
 use test_channels::test_client_channel_from_protocol;
 use validation::subscription_limit_error;
 
-pub use state::NoticeDomainSink;
+pub(crate) use state::NoticeDomain;
 
-impl NoticeDomainCore {
-    fn counter_add(&self, name: &str, amount: u64) {
-        if let Some(metrics) = &self.metrics {
+impl NoticeFamilyState {
+    fn counter_add(&mut self, name: &str, amount: u64) {
+        if let Some(metrics) = &mut self.metrics {
             metrics.counter_add(name, amount);
         } else {
             crate::observability::counter_add(name, amount);
         }
     }
 
-    pub(super) fn subscription_count(&self) -> usize {
-        let families = self.families.lock();
+    #[cfg(test)]
+    pub(super) fn subscription_count(&mut self) -> usize {
+        let families = &self.families;
         families
             .values()
             .map(RoutedSubscriptionSet::subscription_count)

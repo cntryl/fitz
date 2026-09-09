@@ -15,7 +15,7 @@ mod test_actor_commands;
 mod validation;
 mod waiter_tracking;
 
-pub use model::LeaseDomainSink;
+pub(crate) use model::LeaseDomain;
 
 #[cfg(test)]
 use model::*;

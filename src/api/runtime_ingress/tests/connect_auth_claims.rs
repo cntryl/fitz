@@ -282,7 +282,7 @@ fn should_set_permissions_on_connect_with_issuer_valid_signature() {
     let k_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&secret);
     let jwks =
         serde_json::json!({ "keys": [ { "kty": "oct", "kid": "", "k": k_b64 } ] }).to_string();
-    crate::auth::cache_jwks_from_json(jwks_url, &jwks).unwrap();
+    crate::api::jwks::cache_jwks_from_json(jwks_url, &jwks).unwrap();
 
     // Act
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -302,7 +302,7 @@ fn should_set_permissions_on_connect_with_issuer_valid_signature() {
     });
 
     // Assert: actor authorizes write
-    let actor_ref = ingress.session_actors.get(&80).unwrap();
+    let actor_ref = ingress.registry.session_actors.get(&80).unwrap();
     let actor = actor_ref.value();
     assert!(actor.authorize(
         &crate::runtime::routing::Route::new("notice://prod/orders/create"),
@@ -442,7 +442,7 @@ fn should_reject_connect_with_issuer_invalid_signature() {
     let k_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"supersecretkey");
     let jwks =
         serde_json::json!({ "keys": [ { "kty": "oct", "kid": "", "k": k_b64 } ] }).to_string();
-    crate::auth::cache_jwks_from_json(jwks_url, &jwks).unwrap();
+    crate::api::jwks::cache_jwks_from_json(jwks_url, &jwks).unwrap();
 
     // Act
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -475,8 +475,8 @@ fn should_create_session_actor_on_open() {
     });
 
     // Assert: Actor should exist but have no permissions
-    assert!(ingress.session_actors.contains_key(&60));
-    let actor_ref = ingress.session_actors.get(&60).unwrap();
+    assert!(ingress.registry.session_actors.contains_key(&60));
+    let actor_ref = ingress.registry.session_actors.get(&60).unwrap();
     let actor = actor_ref.value();
     assert!(!actor.authorize(
         &crate::runtime::routing::Route::new("notice://prod/orders/create"),
@@ -518,7 +518,7 @@ fn should_update_session_actor_on_connect() {
     });
 
     // Actor should now allow write on the route
-    let actor_ref = ingress.session_actors.get(&61).unwrap();
+    let actor_ref = ingress.registry.session_actors.get(&61).unwrap();
     let actor = actor_ref.value();
     assert!(actor.authorize(
         &crate::runtime::routing::Route::new("notice://prod/orders/create"),
@@ -706,7 +706,7 @@ async fn should_allow_anonymous_access_when_auth_not_required() {
     );
 
     // Verify session has full permissions
-    let session_actor = ingress.session_actors.get(&1).unwrap();
+    let session_actor = ingress.registry.session_actors.get(&1).unwrap();
     let perms = &session_actor.permissions;
     assert_eq!(ingress.get_session(1).unwrap().route_family.id(), 1);
 

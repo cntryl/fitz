@@ -8,9 +8,9 @@ use bytes::Bytes;
 use cntryl_stress::StressContext;
 use fitz::benchkit::{create_local_bench_store, create_write_heavy_bench_store};
 use fitz::domains::stream::protocol::{StreamFilterClause, StreamFilterSet, StreamWriteMode};
-use fitz::domains::stream::store::{BatchLimits, ReadResourceParams, StreamTTL};
-use fitz::domains::stream::{StreamActor, StreamStore};
 use fitz::runtime::routing::RouteFamily;
+use fitz::testkit::domain_internals::stream::{BatchLimits, ReadResourceParams, StreamTTL};
+use fitz::testkit::domain_internals::stream::{StreamActor, StreamStore};
 use std::sync::Arc;
 use std::time::Instant;
 

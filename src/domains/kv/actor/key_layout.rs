@@ -13,10 +13,8 @@ impl KvActor {
     ///
     /// # Errors
     /// Returns an error if the family would select the forbidden default column family.
-    pub(crate) fn resolve_column_family(
-        route_family: RouteFamily,
-    ) -> Result<cntryl_midge::ColumnFamilyId, String> {
-        crate::runtime::cf_validation::validate_route_family(route_family)?;
+    pub(crate) fn resolve_column_family(route_family: RouteFamily) -> Result<u32, String> {
+        crate::storage::cf_validation::validate_route_family(route_family)?;
         Ok(route_family.id())
     }
 
@@ -79,5 +77,25 @@ impl KvActor {
             String::from_utf8(area.to_vec()).ok()?,
             String::from_utf8(resource.to_vec()).ok()?,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::KvActor;
+
+    #[test]
+    fn should_match_golden_kv_storage_key_plus_value_bytes() {
+        // Arrange
+        const GOLDEN_KEY: &str = "61636d65006b7600016a6f6273007374617465006b6579";
+        const GOLDEN_VALUE: &str = "76616c7565";
+
+        // Act
+        let mut key = KvActor::realm_resource_prefix("acme", "jobs", "state");
+        key.extend_from_slice(b"key");
+
+        // Assert
+        assert_eq!(hex::encode(key), GOLDEN_KEY);
+        assert_eq!(hex::encode(b"value"), GOLDEN_VALUE);
     }
 }

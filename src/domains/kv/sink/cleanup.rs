@@ -1,9 +1,9 @@
 //! Disconnect cleanup and stale queued-session rejection state.
 
-use super::state::KvDomainRuntime;
+use super::state::KvFamilyRuntime;
 use crate::runtime::Envelope;
 
-impl KvDomainRuntime<'_> {
+impl KvFamilyRuntime<'_> {
     pub(super) fn handle_cleanup_envelope(&mut self, envelope: &Envelope) -> bool {
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
             self.cleanup_session(cleanup.session_id);

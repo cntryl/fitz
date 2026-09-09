@@ -12,7 +12,7 @@
 //! silently narrowing or restarting the read. See `LeaseListSnapshot` in
 //! `model.rs` for the full consistency contract.
 
-use super::model::{Instant, LeaseDomainRuntime, LeaseListSnapshot, Ordering};
+use super::model::{LeaseFamilyRuntime, LeaseListSnapshot};
 use crate::domains::lease::protocol::{
     LeaseKey, LeaseListCursor, LeaseListItem, LeaseResponse, LEASE_LIST_DEFAULT_PAGE_SIZE,
     LEASE_LIST_MAX_CANDIDATES_PER_SCAN, LEASE_LIST_MAX_PAGE_SIZE,
@@ -20,6 +20,8 @@ use crate::domains::lease::protocol::{
     LEASE_LIST_MAX_RETAINED_ITEMS_TOTAL, LEASE_LIST_MAX_SNAPSHOTS, LEASE_LIST_PAGE_BYTE_BUDGET,
 };
 use crate::runtime::routing::{Route, RouteFamily};
+use std::sync::atomic::Ordering;
+use std::time::Instant;
 
 fn usize_to_u32_saturating(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
@@ -61,9 +63,9 @@ fn family_lower_bound(family_id: RouteFamily) -> LeaseKey {
     }
 }
 
-impl LeaseDomainRuntime<'_> {
+impl LeaseFamilyRuntime<'_> {
     pub(super) fn handle_list(
-        &self,
+        &mut self,
         family_id: RouteFamily,
         pattern_route: &Route,
         cursor: Option<LeaseListCursor>,
@@ -83,7 +85,7 @@ impl LeaseDomainRuntime<'_> {
     }
 
     fn start_list_scan(
-        &self,
+        &mut self,
         family_id: RouteFamily,
         pattern_route: &Route,
         page_size: usize,
@@ -95,13 +97,13 @@ impl LeaseDomainRuntime<'_> {
         // must use the same keyed-lookup path QUERY does).
         if let Some(key) = LeaseKey::from_route(family_id, pattern_route) {
             let now = Instant::now();
+            let hasher = self.core.holder_incarnation_hasher.clone();
             let item = self
                 .core
                 .leases
-                .lock()
                 .get(&key)
                 .filter(|state| state.expiry > now)
-                .map(|state| self.to_list_item(&key, state, now));
+                .map(|state| Self::to_list_item(&hasher, &key, state, now));
             return LeaseResponse::ListPage {
                 items: item.into_iter().collect(),
                 next_cursor: None,
@@ -127,9 +129,10 @@ impl LeaseDomainRuntime<'_> {
         let upper = family_upper_bound(family_id);
         let mut items: Vec<LeaseListItem> = Vec::new();
         let mut captured_bytes = 0_usize;
+        let hasher = self.core.holder_incarnation_hasher.clone();
         {
             use std::ops::Bound::{Excluded, Included, Unbounded};
-            let leases = self.core.leases.lock();
+            let leases = &mut self.core.leases;
             let range = leases.range((Included(lower), upper.map_or(Unbounded, Excluded)));
             for (examined, (key, state)) in range.enumerate() {
                 if examined >= LEASE_LIST_MAX_CANDIDATES_PER_SCAN {
@@ -141,7 +144,7 @@ impl LeaseDomainRuntime<'_> {
                 // not-yet-swept expired entry is never reported as held,
                 // matching Query.
                 if state.expiry > now && pattern.matches_str(key.to_route().as_str()) {
-                    let item = self.to_list_item(key, state, now);
+                    let item = Self::to_list_item(&hasher, key, state, now);
                     captured_bytes = captured_bytes.saturating_add(encoded_item_bytes(&item));
                     // One page is returned immediately; only the remainder
                     // is retained. Cap materialization at that page plus the
@@ -174,7 +177,7 @@ impl LeaseDomainRuntime<'_> {
     }
 
     fn continue_list_scan(
-        &self,
+        &mut self,
         family_id: RouteFamily,
         pattern_route: &Route,
         cursor: LeaseListCursor,
@@ -237,7 +240,7 @@ impl LeaseDomainRuntime<'_> {
     /// materialized item set, then either finishes (no cursor, nothing
     /// retained) or stores the remainder as a snapshot for continuation.
     fn store_and_serve(
-        &self,
+        &mut self,
         family_id: RouteFamily,
         pattern_route: &str,
         mut items: Vec<LeaseListItem>,
@@ -377,7 +380,7 @@ impl LeaseDomainRuntime<'_> {
     }
 
     fn to_list_item(
-        &self,
+        hasher: &std::collections::hash_map::RandomState,
         key: &LeaseKey,
         state: &super::model::SinkLeaseState,
         now: Instant,
@@ -387,7 +390,7 @@ impl LeaseDomainRuntime<'_> {
             owner_id: crate::domains::lease::protocol::logical_owner_id(&state.owner_id)
                 .to_string(),
             holder_incarnation: crate::domains::lease::protocol::holder_incarnation(
-                &self.core.holder_incarnation_hasher,
+                hasher,
                 state.owner_session_id,
             ),
             acquired_at: state.acquired_at.clone(),
@@ -399,7 +402,7 @@ impl LeaseDomainRuntime<'_> {
     /// Removes every `LIST` snapshot owned by `session_id` (disconnect
     /// cleanup — issue #219 §8: an abandoned scan must not outlive the
     /// session that started it).
-    pub(super) fn remove_list_snapshots_for_session(&self, session_id: u64) {
+    pub(super) fn remove_list_snapshots_for_session(&mut self, session_id: u64) {
         self.core
             .list_snapshots
             .lock()
@@ -410,7 +413,7 @@ impl LeaseDomainRuntime<'_> {
     /// `LEASE_LIST_SNAPSHOT_IDLE_TTL_SECS`, as a backstop for a session that
     /// fetches one page and then never returns for the rest without ever
     /// disconnecting.
-    pub(super) fn sweep_idle_list_snapshots(&self) {
+    pub(super) fn sweep_idle_list_snapshots(&mut self) {
         let ttl = std::time::Duration::from_secs(
             crate::domains::lease::protocol::LEASE_LIST_SNAPSHOT_IDLE_TTL_SECS,
         );

@@ -144,7 +144,7 @@ fn decode_notice_response(mailbox: &Mailbox) -> NoticeResponsePayload {
 }
 
 fn subscribe_notice_pattern(
-    sink: &NoticeDomainSink,
+    sink: &NoticeDomain,
     subscriber_address: &RouteAddress,
     notice_address: &RouteAddress,
     session_id: u64,
@@ -166,7 +166,7 @@ fn subscribe_notice_pattern(
 }
 
 fn unsubscribe_notice_pattern(
-    sink: &NoticeDomainSink,
+    sink: &NoticeDomain,
     subscriber_address: &RouteAddress,
     notice_address: &RouteAddress,
     session_id: u64,
@@ -211,7 +211,7 @@ fn assert_notice_admin_routes(actual: &[NoticeRouteInfo], expected_routes: &[&st
     assert_eq!(actual_routes, expected_routes);
 }
 
-fn refresh_notice_admin_snapshot(sink: &NoticeDomainSink) {
+fn refresh_notice_admin_snapshot(sink: &NoticeDomain) {
     sink.refresh_admin_snapshot_if_dirty();
 }
 

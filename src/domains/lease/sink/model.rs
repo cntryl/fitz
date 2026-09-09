@@ -7,15 +7,14 @@
 // lease state immediately. Fencing tokens are process-local and must not be
 // interpreted as durable or cross-node identifiers.
 
-pub(super) use crate::domains::lease::LeaseMetrics;
-pub(super) use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
-pub(super) use crate::runtime::{ClientChannel, DeliveryError, Envelope, MailboxSink, Router};
-pub(super) use chrono::Utc;
-pub(super) use parking_lot::Mutex;
-pub(super) use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
-pub(super) use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-pub(super) use std::sync::Arc;
-pub(super) use std::time::{Duration, Instant};
+use crate::domains::lease::LeaseMetrics;
+use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
+use crate::runtime::{ClientChannel, Envelope, Router};
+use parking_lot::Mutex;
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 pub(super) const LEASE_MAX_WAIT_SECONDS: u32 = 30;
 pub(super) const LEASE_MAX_QUEUE_DEPTH: usize = 100;
@@ -144,27 +143,27 @@ pub(super) struct QueuedAcquireRequest {
 /// The state is intentionally single-broker and non-durable: disconnect cleanup
 /// releases session-owned state, restart clears ownership and waiters, and
 /// fencing tokens reset with the process.
-pub(super) struct LeaseDomainCore {
+pub(super) struct LeaseFamilyState {
     // All mutation is actor-serialized. Helpers that need multiple state locks
     // must acquire `pending_acquires` before `leases`; never invert that order.
     // A `BTreeMap`, not a `HashMap`: ordering primarily by `family` keeps
     // one family's leases in one contiguous range, which `LIST` relies on to
     // scan only the requesting family and to resume a bounded scan
     // deterministically across calls (see `LeaseListSnapshot`).
-    pub(super) leases: Mutex<BTreeMap<crate::domains::lease::protocol::LeaseKey, SinkLeaseState>>,
-    pub(super) session_leases:
-        Mutex<HashMap<u64, HashSet<crate::domains::lease::protocol::LeaseKey>>>,
+    pub(super) route_family: crate::runtime::routing::RouteFamily,
+    pub(super) leases: BTreeMap<crate::domains::lease::protocol::LeaseKey, SinkLeaseState>,
+    pub(super) session_leases: HashMap<u64, HashSet<crate::domains::lease::protocol::LeaseKey>>,
     pub(super) pending_acquires:
-        Mutex<HashMap<crate::domains::lease::protocol::LeaseKey, VecDeque<PendingAcquire>>>,
-    pub(super) session_waiters: Mutex<HashMap<u64, HashSet<PendingAcquireRef>>>,
+        HashMap<crate::domains::lease::protocol::LeaseKey, VecDeque<PendingAcquire>>,
+    pub(super) session_waiters: HashMap<u64, HashSet<PendingAcquireRef>>,
     /// Sessions disconnect cleanup has already run for; guards against a
     /// stale queued request recreating a lease/waiter/subscription. See
     /// `cleanup.rs`.
-    pub(super) cleaned_up_sessions: Mutex<crate::runtime::CleanedUpSessions>,
+    pub(super) cleaned_up_sessions: crate::runtime::CleanedUpSessions,
     /// Process-local fencing token counter; resets on broker restart.
     pub(super) next_token: Arc<AtomicU64>,
     pub(super) router: Arc<Router>,
-    pub(super) families: Mutex<HashMap<u64, RoutedSubscriptionSet<LeaseSubscription>>>,
+    pub(super) families: HashMap<u64, RoutedSubscriptionSet<LeaseSubscription>>,
     pub(super) next_sub_id: Arc<AtomicU64>,
     /// Process-local keyed derivation for public holder incarnations. Keeping
     /// the key beside the ephemeral Lease universe makes incarnations stable
@@ -177,24 +176,18 @@ pub(super) struct LeaseDomainCore {
     pub(super) next_list_snapshot_id: Arc<AtomicU64>,
     pub(super) admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
     pub(super) metrics: Option<LeaseMetrics>,
-    pub(super) family_states:
-        Arc<Mutex<std::collections::BTreeMap<u32, std::sync::Weak<LeaseDomainState>>>>,
 }
 
-pub(super) struct LeaseDomainState {
-    pub(super) core: LeaseDomainCore,
-    pub(super) active: Arc<AtomicBool>,
-}
-
-pub(super) struct LeaseDomainRuntime<'a> {
-    pub(super) core: &'a LeaseDomainCore,
+pub(super) struct LeaseFamilyRuntime<'a> {
+    pub(super) core: &'a mut LeaseFamilyState,
     pub(super) active: &'a AtomicBool,
 }
 
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub(super) struct LeaseLiveCounts {
     pub(super) leases: usize,
     pub(super) subscriptions: usize,
+    pub(super) waiters: usize,
 }
 
 pub(super) enum LeaseDomainCommand {
@@ -253,13 +246,33 @@ pub(super) enum LeaseDomainCommand {
         crossbeam_channel::Sender<()>,
         crossbeam_channel::Receiver<()>,
     ),
+    #[cfg(test)]
+    InspectForTests(
+        Box<dyn FnOnce(&mut LeaseFamilyState) + Send>,
+        crossbeam_channel::Sender<()>,
+    ),
+    #[cfg(test)]
+    SweepListSnapshotsForTests(crossbeam_channel::Sender<()>),
 }
 
 /// Production mailbox adapter for Lease semantics.
-pub struct LeaseDomainSink {
-    pub(super) state: Arc<LeaseDomainState>,
+pub(crate) struct LeaseDomain {
+    pub(super) config: LeaseDomainConfig,
+    pub(super) active: Arc<AtomicBool>,
     pub(super) family_runtime: crate::runtime::FamilyActorPoolRuntime<LeaseDomainCommand>,
     pub(super) route_families: Vec<crate::runtime::routing::RouteFamily>,
+}
+
+#[derive(Clone)]
+pub(super) struct LeaseDomainConfig {
+    pub(super) next_token: Arc<AtomicU64>,
+    pub(super) router: Arc<Router>,
+    pub(super) next_sub_id: Arc<AtomicU64>,
+    pub(super) holder_incarnation_hasher: Arc<std::collections::hash_map::RandomState>,
+    pub(super) list_snapshots: Arc<LeaseListSnapshotCoordinator>,
+    pub(super) next_list_snapshot_id: Arc<AtomicU64>,
+    pub(super) admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
+    pub(super) metrics: Option<LeaseMetrics>,
 }
 
 pub(super) struct LeaseSubscription {

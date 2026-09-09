@@ -2,8 +2,8 @@ use super::*;
 use crate::runtime::Mailbox;
 use bytes::Bytes;
 
-fn new_correctness_rpc_sink(router: Arc<Router>) -> RpcDomainSink {
-    RpcDomainSink::new(
+fn new_correctness_rpc_sink(router: Arc<Router>) -> RpcDomain {
+    RpcDomain::new(
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
     )

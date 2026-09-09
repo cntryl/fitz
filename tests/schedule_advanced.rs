@@ -9,9 +9,10 @@
 use bytes::Bytes;
 use chrono::TimeZone;
 use fitz::domains::schedule::protocol::{Clock, CronSchedule};
-use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleStore};
+use fitz::domains::schedule::ScheduleMessage;
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
+use fitz::testkit::domain_internals::schedule::{ScheduleActor, ScheduleStore};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 

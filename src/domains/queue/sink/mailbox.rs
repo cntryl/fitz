@@ -1,7 +1,7 @@
 //! Mailbox entry points: `MailboxSink`, the domain actor's `receive` loop, and
 //! the thin runtime-to-core delegation used by both.
 
-use super::model::{QueueDomainActor, QueueDomainCommand, QueueDomainSink};
+use super::model::{QueueDomain, QueueDomainCommand, QueueFamilyRuntime};
 use crate::domains::queue::actor::QUEUE_ACTOR_REPLY_TIMEOUT;
 use crate::runtime::{DeliveryError, Envelope, MailboxSink};
 use std::sync::atomic::Ordering;
@@ -15,7 +15,7 @@ impl Drop for RuntimeSweepPendingReset<'_> {
     }
 }
 
-impl MailboxSink for QueueDomainSink {
+impl MailboxSink for QueueDomain {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
         self.deliver_to_actor(envelope, false)
     }
@@ -25,7 +25,7 @@ impl MailboxSink for QueueDomainSink {
     }
 }
 
-impl QueueDomainActor {
+impl QueueFamilyRuntime {
     pub(super) fn receive_command(&mut self, msg: QueueDomainCommand) {
         match msg {
             QueueDomainCommand::Deliver(envelope, reply, admission) => {
@@ -44,6 +44,7 @@ impl QueueDomainActor {
             QueueDomainCommand::ReadLiveCounts(reply) => {
                 let _ = reply.send(self.core.live_counts());
             }
+            #[cfg(test)]
             QueueDomainCommand::CleanupSession(session_id, reply) => {
                 self.core.cleanup_session(session_id);
                 let _ = reply.send(());
@@ -53,7 +54,8 @@ impl QueueDomainActor {
                 let _ = reply.send(());
             }
             QueueDomainCommand::SweepRuntimeStateAt(now, None) => {
-                let _pending_reset = RuntimeSweepPendingReset(&self.core.runtime_sweep_pending);
+                let pending = self.core.runtime_sweep_pending.clone();
+                let _pending_reset = RuntimeSweepPendingReset(&pending);
                 self.core.sweep_runtime_state_at(now);
             }
             QueueDomainCommand::ReplayDeadLetter(key, id, reply) => {
@@ -65,18 +67,23 @@ impl QueueDomainActor {
             QueueDomainCommand::PanicForFailpoint => {
                 panic!("injected Queue domain actor panic");
             }
+            #[cfg(test)]
+            QueueDomainCommand::InspectForTests(inspect, reply) => {
+                inspect(&mut self.core);
+                let _ = reply.send(());
+            }
         }
     }
 }
 
-impl QueueDomainSink {
+impl QueueDomain {
     fn deliver_to_actor(
         &self,
         envelope: Envelope,
         high_priority: bool,
     ) -> Result<(), DeliveryError> {
         let family = *envelope.destination().family();
-        let core = self.core(family);
+        let service = &self.config.delivery_service_us[&family.id()];
         // Admit BEFORE enqueueing so surplus load is refused as never-enqueued
         // (retryable) rather than accepted then timed out. Control-plane work
         // bypasses the window - cleanup arrives on the normal lane yet must
@@ -90,7 +97,7 @@ impl QueueDomainSink {
         } else {
             Some(super::model::admit_client_delivery(
                 &self.inflight_client_deliveries,
-                &core.delivery_service_us,
+                service,
                 self.family_runtime
                     .is_family_running(*envelope.destination().family()),
             )?)

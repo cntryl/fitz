@@ -32,7 +32,7 @@
 
 pub mod metrics;
 pub mod protocol;
-pub mod sink;
+pub(crate) mod sink;
 
 pub use metrics::LeaseMetrics;
 pub use protocol::{

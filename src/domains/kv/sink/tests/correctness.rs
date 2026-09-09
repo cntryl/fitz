@@ -1,7 +1,7 @@
 use super::*;
 
-fn new_correctness_sink(router: Arc<Router>) -> KvDomainSink {
-    KvDomainSink::new(
+fn new_correctness_sink(router: Arc<Router>) -> KvDomain {
+    KvDomain::new(
         crate::testkit::create_test_engine_with_cfs(vec![1, 2]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
@@ -125,7 +125,7 @@ fn should_roll_back_read_write_begin_when_response_cannot_be_delivered() {
             crate::domains::kv::KvMessage::Begin {
                 scope: KvResourceScope::new(family, "acme", "app", "users"),
                 mode: crate::domains::kv::TxMode::ReadWrite,
-                write_options: cntryl_midge::WriteOptions::buffered().into(),
+                write_options: crate::domains::WritePolicy::Buffered,
             },
         )
     });
@@ -171,7 +171,7 @@ fn should_roll_back_read_only_begin_when_response_cannot_be_delivered() {
             crate::domains::kv::KvMessage::Begin {
                 scope: KvResourceScope::new(family, "acme", "app", "users"),
                 mode: crate::domains::kv::TxMode::ReadOnly,
-                write_options: cntryl_midge::WriteOptions::buffered().into(),
+                write_options: crate::domains::WritePolicy::Buffered,
             },
         )
     });
@@ -198,7 +198,7 @@ fn should_update_kv_admin_transaction_incrementally_given_lifecycle() {
     let router = Arc::new(Router::new());
     router.register(source_address.clone(), mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = KvDomainSink::new(store, router, admin_read_model.clone());
+    let sink = KvDomain::new(store, router, admin_read_model.clone());
 
     sink.deliver(Envelope::from_route(
         source_address.clone(),
@@ -290,7 +290,7 @@ fn should_expire_idle_read_write_transaction_before_competing_begin() {
     let router = Arc::new(Router::new());
     router.register(first_address.clone(), first_mailbox.clone());
     router.register(second_address.clone(), second_mailbox.clone());
-    let sink = KvDomainSink::new(
+    let sink = KvDomain::new(
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
@@ -432,7 +432,7 @@ fn should_reject_kv_request_when_source_and_destination_families_differ() {
                     "users".to_string(),
                 ),
                 mode: crate::domains::kv::TxMode::ReadWrite,
-                write_options: cntryl_midge::WriteOptions::best_effort().into(),
+                write_options: crate::domains::WritePolicy::BestEffort,
             },
         )),
     );
@@ -478,7 +478,7 @@ fn should_reject_kv_operation_when_decoded_family_differs_from_request() {
                     "users".to_string(),
                 ),
                 mode: crate::domains::kv::TxMode::ReadWrite,
-                write_options: cntryl_midge::WriteOptions::best_effort().into(),
+                write_options: crate::domains::WritePolicy::BestEffort,
             },
         )),
     );

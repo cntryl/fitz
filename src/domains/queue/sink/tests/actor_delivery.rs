@@ -59,7 +59,7 @@ fn queue_send_envelope(family: RouteFamily, queue_route: &str) -> Envelope {
 }
 
 fn queue_snapshot(
-    sink: &QueueDomainSink,
+    sink: &QueueDomain,
     family: RouteFamily,
     queue_route: &str,
 ) -> QueueAdminSnapshot {
@@ -118,7 +118,7 @@ fn should_release_reserved_message_when_receive_response_cannot_be_delivered() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        cntryl_midge::WriteOptions::buffered(),
+        crate::domains::WritePolicy::Buffered,
     );
     sink.deliver(queue_send_envelope(family, route))
         .expect("seed queue message");
@@ -170,7 +170,7 @@ fn should_wake_fifo_long_poll_reserve_when_matching_message_is_enqueued() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        cntryl_midge::WriteOptions::buffered(),
+        crate::domains::WritePolicy::Buffered,
     );
 
     sink.deliver(Envelope::from_route(
@@ -308,7 +308,7 @@ fn should_preserve_legacy_wire_shape_given_concrete_queue_reserve() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        cntryl_midge::WriteOptions::buffered(),
+        crate::domains::WritePolicy::Buffered,
     );
     sink.deliver(Envelope::from_route(
         sender_address,
@@ -370,7 +370,7 @@ fn should_retain_queue_identity_when_dead_letter_actor_is_evicted() {
         store,
         Arc::new(Router::new()),
         crate::control::admin::read_model::AdminReadModel::new(),
-        cntryl_midge::WriteOptions::buffered(),
+        crate::domains::WritePolicy::Buffered,
     );
     sink.install_actor_for_tests(key.clone(), actor);
 
@@ -395,9 +395,10 @@ fn should_route_queue_delivery_through_family_actor() {
         store,
         router,
         admin_read_model,
-        cntryl_midge::WriteOptions::best_effort(),
+        crate::domains::WritePolicy::BestEffort,
     );
     let envelope = queue_send_envelope(family, queue_route);
+    let actors_were_empty = sink.actors_are_empty_for_tests();
 
     // Act
     sink.stop_actor_for_tests();
@@ -406,7 +407,7 @@ fn should_route_queue_delivery_through_family_actor() {
     // Assert
     assert!(!sink.is_actor_running());
     assert!(matches!(result, Err(DeliveryError::ActorStopped)));
-    assert!(sink.actors_are_empty_for_tests());
+    assert!(actors_were_empty);
 }
 
 #[test]
@@ -426,7 +427,7 @@ fn should_reserve_concrete_items_given_wildcards_in_unknown_queue_segments() {
         store,
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        cntryl_midge::WriteOptions::buffered(),
+        crate::domains::WritePolicy::Buffered,
     );
     for (route, body) in [
         ("queue://acme/cats/cat", b"acme".as_slice()),
@@ -492,7 +493,7 @@ fn should_stop_wildcard_reserve_after_wire_budget_exhaustion() {
         None,
         crate::utils::idempotency::default_dedup_store(),
     );
-    let first_route = QueueDomainCore::queue_ready_route(&keys[0]);
+    let first_route = QueueFamilyState::queue_ready_route(&keys[0]);
     let first_body_bytes = crate::domains::queue::protocol::MAX_QUEUE_RESPONSE_PAYLOAD_BYTES
         - crate::domains::queue::protocol::RECEIVED_RESPONSE_HEADER_BYTES
         - crate::domains::queue::protocol::RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES
@@ -522,7 +523,7 @@ fn should_stop_wildcard_reserve_after_wire_budget_exhaustion() {
         store,
         Arc::new(Router::new()),
         crate::control::admin::read_model::AdminReadModel::new(),
-        cntryl_midge::WriteOptions::buffered(),
+        crate::domains::WritePolicy::Buffered,
     );
     for (key, actor) in keys.iter().cloned().zip([first, blocked, untouched]) {
         sink.install_actor_for_tests(key, actor);
@@ -531,17 +532,20 @@ fn should_stop_wildcard_reserve_after_wire_budget_exhaustion() {
         queue_snapshot(&sink, family, "queue://acme/jobs/c").messages_delayed,
         1
     );
-    sink.stop_actor_for_tests();
     clock.advance(Duration::from_secs(2));
 
     // Act
-    let response = sink.core(family).handle_wildcard_receive_for_tests(
-        family,
-        &crate::runtime::matcher::Pattern::new("queue://acme/jobs/*"),
-        8,
-        30,
-        Some(3),
-    );
+    let response = sink.inspect_family_for_tests(family, move |state| {
+        state.handle_wildcard_receive_for_tests(
+            family,
+            &crate::runtime::matcher::Pattern::new("queue://acme/jobs/*"),
+            8,
+            30,
+            Some(3),
+        )
+    });
+    let untouched_snapshot = queue_snapshot(&sink, family, "queue://acme/jobs/c");
+    sink.stop_actor_for_tests();
 
     // Assert
     let crate::domains::queue::QueueResponse::ReceivedRouted { messages } = response else {
@@ -549,7 +553,6 @@ fn should_stop_wildcard_reserve_after_wire_budget_exhaustion() {
     };
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].route, first_route);
-    let untouched_snapshot = queue_snapshot(&sink, family, "queue://acme/jobs/c");
     assert_eq!(untouched_snapshot.messages_delayed, 1);
     assert_eq!(untouched_snapshot.messages_ready, 0);
 }
@@ -567,7 +570,7 @@ fn should_surface_startup_inventory_failure_to_wildcard_reserve() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        cntryl_midge::WriteOptions::buffered(),
+        crate::domains::WritePolicy::Buffered,
     );
     sink.set_inventory_error_for_tests("inventory scan failed");
 
@@ -611,7 +614,7 @@ fn should_discover_durable_queue_routes_given_wildcard_reserve_after_sink_restar
         store.clone(),
         first_router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        cntryl_midge::WriteOptions::sync(),
+        crate::domains::WritePolicy::Sync,
     );
     first_sink
         .deliver(Envelope::from_route(
@@ -638,7 +641,7 @@ fn should_discover_durable_queue_routes_given_wildcard_reserve_after_sink_restar
         store,
         second_router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        cntryl_midge::WriteOptions::sync(),
+        crate::domains::WritePolicy::Sync,
     );
 
     // Act
@@ -681,7 +684,7 @@ fn should_reject_wildcard_reserve_above_maximum_batch_size() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        cntryl_midge::WriteOptions::buffered(),
+        crate::domains::WritePolicy::Buffered,
     );
     sink.deliver(Envelope::from_route(
         sender_address,

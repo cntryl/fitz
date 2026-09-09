@@ -14,7 +14,7 @@ fn should_not_retain_kv_subscription_when_response_cannot_be_delivered() {
     mailbox
         .deliver(Envelope::new(destination.clone(), Bytes::new()))
         .expect("fill response mailbox");
-    let sink = KvDomainSink::new(
+    let sink = KvDomain::new(
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
@@ -67,7 +67,7 @@ fn should_notify_kv_subscriber_given_committed_put() {
     router.register(watcher_address.clone(), watcher_mailbox.clone());
     router.register(writer_address.clone(), writer_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = KvDomainSink::new(store, router, admin_read_model);
+    let sink = KvDomain::new(store, router, admin_read_model);
 
     // Act
     sink.deliver(Envelope::from_route(
@@ -158,7 +158,7 @@ fn should_not_notify_kv_subscriber_given_empty_commit() {
     router.register(watcher_address.clone(), watcher_mailbox.clone());
     router.register(writer_address.clone(), writer_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = KvDomainSink::new(store, router, admin_read_model);
+    let sink = KvDomain::new(store, router, admin_read_model);
 
     sink.deliver(Envelope::from_route(
         watcher_address,
@@ -225,7 +225,7 @@ fn should_remove_kv_subscription_given_unsubscribe() {
     router.register(watcher_address.clone(), watcher_mailbox.clone());
     router.register(writer_address.clone(), writer_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = KvDomainSink::new(store, router, admin_read_model);
+    let sink = KvDomain::new(store, router, admin_read_model);
 
     sink.deliver(Envelope::from_route(
         watcher_address.clone(),

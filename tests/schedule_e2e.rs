@@ -418,12 +418,12 @@ async fn should_recover_schedule_definitions_before_accepting_schedule_traffic()
     let route = "schedule://test/jobs/restart/run";
 
     let boot_config = fitz::boot::runtime::BootConfig::with_local_storage(db_path.clone());
-    let store = fitz::boot::storage::init(&boot_config)
+    let store = fitz::testkit::init_storage(&boot_config)
         .await
         .expect("init local storage");
-    let mut actor = fitz::domains::schedule::ScheduleActor::new(
+    let mut actor = fitz::testkit::domain_internals::schedule::ScheduleActor::new(
         fitz::runtime::routing::RouteFamily::new(1),
-        fitz::domains::schedule::ScheduleStore::new(store.clone()),
+        fitz::testkit::domain_internals::schedule::ScheduleStore::new(store.clone()),
         fitz::domains::WritePolicy::Buffered,
     );
     actor

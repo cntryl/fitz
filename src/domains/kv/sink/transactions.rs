@@ -2,12 +2,12 @@
 
 use super::locks::{KvResourceLockKey, KvResourceLockOwner};
 use super::state::{
-    KvAdminTransactionUpdate, KvCommitNotification, KvDomainRuntime, KvOperationOutcome,
+    KvAdminTransactionUpdate, KvCommitNotification, KvFamilyRuntime, KvOperationOutcome,
 };
 use crate::domains::kv::{KvError, KvResponse};
 use crate::runtime::{DeliveryError, Envelope};
 
-impl KvDomainRuntime<'_> {
+impl KvFamilyRuntime<'_> {
     pub(super) fn handle_actor_operation_frame(
         &mut self,
         envelope: &Envelope,

@@ -1,7 +1,7 @@
 #![allow(deprecated)]
 //! RPC domain tier 3 system benchmarks using the live RPC domain sink.
 //!
-//! Measures the real in-proc path: requester frame -> `RpcDomainSink`
+//! Measures the real in-proc path: requester frame -> `RpcDomain`
 //! -> worker inbox delivery -> worker response frame -> requester inbox.
 
 #[path = "stress_config.rs"]

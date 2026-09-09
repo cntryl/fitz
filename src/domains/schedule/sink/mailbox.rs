@@ -1,9 +1,9 @@
 //! Mailbox-lane routing and the domain actor's message loop.
 
-use super::model::{ScheduleDomainCommand, ScheduleDomainRuntime, ScheduleDomainSink};
+use super::model::{ScheduleDomain, ScheduleDomainCommand, ScheduleDomainRuntime};
 use crate::runtime::{DeliveryError, Envelope, FamilyActorLane, MailboxSink};
 
-impl MailboxSink for ScheduleDomainSink {
+impl MailboxSink for ScheduleDomain {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
             return self.cleanup_session(cleanup.session_id);

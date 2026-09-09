@@ -6,15 +6,15 @@
 use super::*;
 use crate::domains::lease::protocol::{LeaseListCursor, LEASE_LIST_MAX_CANDIDATES_PER_SCAN};
 
-fn new_list_test_sink() -> LeaseDomainSink {
-    LeaseDomainSink::new(
+fn new_list_test_sink() -> LeaseDomain {
+    LeaseDomain::new(
         Arc::new(Router::new()),
         crate::control::admin::read_model::AdminReadModel::new(),
     )
 }
 
 fn acquire_immediate(
-    sink: &LeaseDomainSink,
+    sink: &LeaseDomain,
     family: RouteFamily,
     route: &str,
     owner_session_id: u64,
@@ -55,7 +55,7 @@ fn should_enforce_wildcard_lease_subscription_cap_per_session() {
     let mailbox = Arc::new(Mailbox::new(256));
     let router = Arc::new(Router::new());
     router.register(source.clone(), mailbox.clone());
-    let sink = LeaseDomainSink::new(
+    let sink = LeaseDomain::new(
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
     );
@@ -229,7 +229,7 @@ fn should_reject_wildcard_scan_exceeding_the_candidate_ceiling() {
         "unexpected message: {message}"
     );
     assert!(
-        LeaseDomainRuntime::lease_response_is_failure(&LeaseResponse::Error(message)),
+        LeaseFamilyRuntime::lease_response_is_failure(&LeaseResponse::Error(message)),
         "a bounded scan-too-large response must count as a failure for metrics"
     );
 }
@@ -267,7 +267,7 @@ fn should_reject_wildcard_scan_exceeding_the_snapshot_byte_ceiling() {
         message.contains("too much inventory"),
         "unexpected message: {message}"
     );
-    assert!(sink.state.core.list_snapshots.lock().is_empty());
+    assert!(sink.config.list_snapshots.lock().is_empty());
 }
 
 #[test]
@@ -303,10 +303,7 @@ fn should_take_an_atomic_snapshot_immune_to_concurrent_mutation_mid_scan() {
     // one that would also match, both before continuing the scan.
     let released_key = lease_key(family, "lease://acme/renderers/a");
     let scoped_owner = crate::domains::lease::protocol::session_scoped_owner_id(1, "owner");
-    let release_response =
-        sink.state
-            .runtime()
-            .handle_release(&released_key, &scoped_owner, tokens[&"a"]);
+    let release_response = sink.release_for_bench(&released_key, &scoped_owner, tokens[&"a"]);
     assert!(
         matches!(release_response, LeaseResponse::Released),
         "expected release to succeed, got {release_response:?}"
@@ -437,8 +434,7 @@ fn should_drain_served_items_from_retained_snapshot_memory() {
     // Assert: only the two not-yet-served items remain retained, not the
     // original three.
     assert_eq!(
-        sink.state
-            .core
+        sink.config
             .list_snapshots
             .lock()
             .get(&cursor.snapshot_id)
@@ -461,8 +457,7 @@ fn should_drain_served_items_from_retained_snapshot_memory() {
 
     // Assert: down to one retained item.
     assert_eq!(
-        sink.state
-            .core
+        sink.config
             .list_snapshots
             .lock()
             .get(&cursor.snapshot_id)
@@ -482,7 +477,7 @@ fn should_evict_least_recently_touched_snapshot_when_retained_item_budget_is_exc
     let families: Vec<_> = (0..scans_needed)
         .map(|scan| RouteFamily::new(u32::try_from(scan).expect("scan index fits u32") + 1))
         .collect();
-    let sink = LeaseDomainSink::new_with_families(
+    let sink = LeaseDomain::new_with_families(
         Arc::new(Router::new()),
         crate::control::admin::read_model::AdminReadModel::new(),
         &families,
@@ -519,8 +514,7 @@ fn should_evict_least_recently_touched_snapshot_when_retained_item_budget_is_exc
     // exceeds the global bound, and the oldest scan was evicted to make
     // room rather than growing past it.
     let total_retained: usize = sink
-        .state
-        .core
+        .config
         .list_snapshots
         .lock()
         .values()
@@ -532,8 +526,7 @@ fn should_evict_least_recently_touched_snapshot_when_retained_item_budget_is_exc
     );
     assert!(
         !sink
-            .state
-            .core
+            .config
             .list_snapshots
             .lock()
             .contains_key(&first_snapshot_id.expect("first scan issued a cursor")),
@@ -615,14 +608,14 @@ fn should_remove_lease_list_snapshot_on_session_cleanup() {
         panic!("expected a ListPage response, got {first:?}");
     };
     let cursor = next_cursor.expect("expected a continuation cursor");
-    assert_eq!(sink.state.core.list_snapshots.lock().len(), 1);
+    assert_eq!(sink.config.list_snapshots.lock().len(), 1);
 
     // Act: session 9 disconnects before finishing the scan.
     let _ = sink.cleanup_session(9);
 
     // Assert: the abandoned snapshot is gone, and the stale cursor no
     // longer resolves.
-    assert_eq!(sink.state.core.list_snapshots.lock().len(), 0);
+    assert_eq!(sink.config.list_snapshots.lock().len(), 0);
     let after_cleanup = sink.list_for_tests(
         family,
         Route::new("lease://acme/renderers/*"),
@@ -655,12 +648,12 @@ fn should_reclaim_idle_lease_list_snapshot_past_its_ttl() {
         1,
     );
     assert!(matches!(first, LeaseResponse::ListPage { .. }));
-    assert_eq!(sink.state.core.list_snapshots.lock().len(), 1);
+    assert_eq!(sink.config.list_snapshots.lock().len(), 1);
 
     // Back-date the snapshot's last-touched time past the idle TTL rather
     // than sleeping in a unit test.
     {
-        let mut snapshots = sink.state.core.list_snapshots.lock();
+        let mut snapshots = sink.config.list_snapshots.lock();
         for snapshot in snapshots.values_mut() {
             snapshot.last_touched_at = std::time::Instant::now()
                 .checked_sub(std::time::Duration::from_secs(
@@ -671,10 +664,10 @@ fn should_reclaim_idle_lease_list_snapshot_past_its_ttl() {
     }
 
     // Act
-    sink.state.runtime().sweep_idle_list_snapshots();
+    sink.sweep_list_snapshots_for_tests();
 
     // Assert
-    assert_eq!(sink.state.core.list_snapshots.lock().len(), 0);
+    assert_eq!(sink.config.list_snapshots.lock().len(), 0);
 }
 
 #[test]
@@ -682,10 +675,10 @@ fn should_classify_invalid_list_responses_as_failures() {
     // A LIST response the reviewer flagged as miscounted: malformed
     // patterns and stale cursors must count as failures for latency/SLO
     // metrics, the same as any other Lease error.
-    assert!(LeaseDomainRuntime::lease_response_is_failure(
+    assert!(LeaseFamilyRuntime::lease_response_is_failure(
         &LeaseResponse::InvalidListPattern("bad pattern".to_string())
     ));
-    assert!(LeaseDomainRuntime::lease_response_is_failure(
+    assert!(LeaseFamilyRuntime::lease_response_is_failure(
         &LeaseResponse::InvalidListCursor
     ));
 }

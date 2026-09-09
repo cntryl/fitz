@@ -24,14 +24,6 @@ impl ScheduleActor {
         Self::try_new_with_clock(family, store, write_policy, Arc::new(SystemClock))
     }
 
-    pub(crate) fn try_new_with_storage(
-        family: RouteFamily,
-        db: crate::storage::FitzStorageEngine,
-        write_policy: crate::domains::WritePolicy,
-    ) -> Result<Self, String> {
-        Self::try_new(family, ScheduleStore::new_with_storage(db), write_policy)
-    }
-
     /// # Errors
     ///
     /// Returns an error when schedule storage initialization or preload fails.

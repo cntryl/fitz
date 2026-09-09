@@ -1,13 +1,13 @@
 use super::*;
 pub(super) use crate::auth::Access;
 pub(super) use crate::control::admin::read_model::AdminReadModel;
-pub(super) use crate::domains::kv::sink::KvDomainSink;
-pub(super) use crate::domains::lease::sink::LeaseDomainSink;
-pub(super) use crate::domains::notice::sink::NoticeDomainSink;
-pub(super) use crate::domains::queue::sink::QueueDomainSink;
-pub(super) use crate::domains::rpc::sink::RpcDomainSink;
-pub(super) use crate::domains::schedule::sink::ScheduleDomainSink;
-pub(super) use crate::domains::stream::sink::StreamDomainSink;
+pub(super) use crate::domains::kv::sink::KvDomain;
+pub(super) use crate::domains::lease::sink::LeaseDomain;
+pub(super) use crate::domains::notice::sink::NoticeDomain;
+pub(super) use crate::domains::queue::sink::QueueDomain;
+pub(super) use crate::domains::rpc::sink::RpcDomain;
+pub(super) use crate::domains::schedule::sink::ScheduleDomain;
+pub(super) use crate::domains::stream::sink::StreamDomain;
 pub(super) use crate::protocol::frame::ChannelId;
 pub(super) use crate::protocol::payload_codec::PayloadEncoder;
 pub(super) use crate::protocol::tlv::MessageType;
@@ -141,7 +141,7 @@ pub(super) fn install_expired_session_actor(
         snapshot.clone(),
     );
     actor.authenticate(claims, snapshot);
-    ingress.session_actors.insert(session_id, actor);
+    ingress.registry.session_actors.insert(session_id, actor);
 }
 
 pub(super) fn auth_spec(msg_type: u16) -> DomainAuthorizationSpec {
@@ -256,7 +256,7 @@ pub(super) fn seed_runtime_jwks_cache() {
         })
         .to_string();
 
-        crate::auth::cache_jwks_from_json(TEST_AUTH_JWKS_URL, &jwks).unwrap();
+        crate::api::jwks::cache_jwks_from_json(TEST_AUTH_JWKS_URL, &jwks).unwrap();
     });
 }
 

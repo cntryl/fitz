@@ -1,8 +1,8 @@
-//! Managed-actor command protocol and synchronous public controls.
+//! Family command protocol and synchronous internal controls.
 
 #[cfg(test)]
 use super::locks::KvResourceLockKey;
-use super::state::KvDomainSink;
+use super::state::KvDomain;
 use std::time::Duration;
 
 pub(super) enum KvDomainCommand {
@@ -19,7 +19,7 @@ pub(super) enum KvDomainCommand {
         )>,
     ),
     #[cfg(test)]
-    /// Ask the mailbox actor to apply its configured BEGIN write policy.
+    /// Ask the family worker to apply its configured BEGIN write policy.
     ApplyWriteOptions(
         crate::domains::kv::KvMessage,
         crossbeam_channel::Sender<crate::domains::kv::KvMessage>,
@@ -32,12 +32,12 @@ pub(super) enum KvDomainCommand {
     ),
     #[cfg(test)]
     InspectForTests(
-        Box<dyn FnOnce(&mut super::state::KvDomainCore) + Send>,
+        Box<dyn FnOnce(&mut super::state::KvFamilyState) + Send>,
         crossbeam_channel::Sender<()>,
     ),
 }
 
-impl KvDomainSink {
+impl KvDomain {
     #[cfg(test)]
     pub(super) fn request_actor<T>(
         &self,
@@ -51,14 +51,14 @@ impl KvDomainSink {
             crate::runtime::FamilyActorLane::Control,
             build_command(reply_tx),
         ) {
-            tracing::warn!(domain = "kv", operation, error = %error, "KV actor command enqueue failed");
+            tracing::warn!(domain = "kv", operation, error = %error, "KV family command enqueue failed");
             return None;
         }
 
         match reply_rx.recv_timeout(Duration::from_secs(1)) {
             Ok(reply) => Some(reply),
             Err(error) => {
-                tracing::warn!(domain = "kv", operation, error = %error, "KV actor command reply failed");
+                tracing::warn!(domain = "kv", operation, error = %error, "KV family command reply failed");
                 None
             }
         }
@@ -100,13 +100,13 @@ impl KvDomainSink {
             crate::runtime::FamilyActorLane::Control,
             KvDomainCommand::BlockForTests(entered, release),
         )
-        .expect("enqueue KV actor test block");
+        .expect("enqueue KV family test block");
     }
 
     #[cfg(test)]
     pub(super) fn inspect_for_tests(
         &self,
-        inspect: impl FnOnce(&mut super::state::KvDomainCore) + Send + 'static,
+        inspect: impl FnOnce(&mut super::state::KvFamilyState) + Send + 'static,
     ) {
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         self.try_send(

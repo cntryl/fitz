@@ -1,6 +1,6 @@
-use super::{DeliveryError, Envelope, MailboxSink, NoticeDomainSink};
+use super::{DeliveryError, Envelope, MailboxSink, NoticeDomain};
 
-impl MailboxSink for NoticeDomainSink {
+impl MailboxSink for NoticeDomain {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
         self.deliver_to_family(envelope, false)
     }

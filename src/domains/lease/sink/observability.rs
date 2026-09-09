@@ -1,7 +1,9 @@
 //! Admin read-model projection and metrics glue.
 
-use super::model::{Instant, LeaseDomainRuntime, LeaseLiveCounts, SinkLeaseState, Utc};
+use super::model::{LeaseFamilyRuntime, LeaseLiveCounts, SinkLeaseState};
+use chrono::Utc;
 use std::collections::VecDeque;
+use std::time::Instant;
 
 #[derive(Clone, Copy)]
 pub(super) enum DeliveryDropKind {
@@ -18,9 +20,9 @@ impl DeliveryDropKind {
     }
 }
 
-impl LeaseDomainRuntime<'_> {
+impl LeaseFamilyRuntime<'_> {
     pub(super) fn record_dropped_delivery(
-        &self,
+        &mut self,
         kind: DeliveryDropKind,
         session_id: u64,
         route_family: crate::runtime::routing::RouteFamily,
@@ -87,7 +89,7 @@ impl LeaseDomainRuntime<'_> {
     }
 
     pub(in crate::domains::lease::sink) fn upsert_admin_lease(
-        &self,
+        &mut self,
         key: &crate::domains::lease::protocol::LeaseKey,
         state: &SinkLeaseState,
     ) {
@@ -97,7 +99,7 @@ impl LeaseDomainRuntime<'_> {
     }
 
     pub(in crate::domains::lease::sink) fn remove_admin_lease(
-        &self,
+        &mut self,
         key: &crate::domains::lease::protocol::LeaseKey,
     ) {
         self.core.admin_read_model.remove_lease(
@@ -108,24 +110,15 @@ impl LeaseDomainRuntime<'_> {
         );
     }
 
-    pub(in crate::domains::lease::sink) fn refresh_metrics_gauges(&self) {
-        let family_states: Vec<_> = self
+    pub(in crate::domains::lease::sink) fn refresh_metrics_gauges(&mut self) {
+        let own_counts = self.live_counts();
+        let lease_count = self.core.admin_read_model.lease_count();
+        let waiter_count = self
             .core
-            .family_states
-            .lock()
-            .values()
-            .filter_map(std::sync::Weak::upgrade)
-            .collect();
-        let lease_count = family_states
-            .iter()
-            .map(|state| state.runtime().lease_count())
-            .sum();
-        let waiter_count = family_states
-            .iter()
-            .map(|state| state.runtime().waiter_count())
-            .sum();
+            .admin_read_model
+            .set_lease_family_waiter_count(self.core.route_family.as_u64(), own_counts.waiters);
 
-        if let Some(metrics) = &self.core.metrics {
+        if let Some(metrics) = &mut self.core.metrics {
             metrics.set_active_leases(lease_count);
             metrics.set_waiter_depth(waiter_count);
         } else {
@@ -140,35 +133,31 @@ impl LeaseDomainRuntime<'_> {
         }
     }
 
-    pub(in crate::domains::lease::sink) fn counter_inc(&self, name: &str) {
-        if let Some(metrics) = &self.core.metrics {
+    pub(in crate::domains::lease::sink) fn counter_inc(&mut self, name: &str) {
+        if let Some(metrics) = &mut self.core.metrics {
             metrics.counter_inc(name);
         } else {
             crate::observability::counter_inc(name);
         }
     }
 
-    pub(in crate::domains::lease::sink) fn waiter_count(&self) -> usize {
-        self.core
-            .pending_acquires
-            .lock()
-            .values()
-            .map(VecDeque::len)
-            .sum()
+    pub(in crate::domains::lease::sink) fn waiter_count(&mut self) -> usize {
+        self.core.pending_acquires.values().map(VecDeque::len).sum()
     }
 
-    pub(in crate::domains::lease::sink) fn live_counts(&self) -> LeaseLiveCounts {
+    pub(in crate::domains::lease::sink) fn live_counts(&mut self) -> LeaseLiveCounts {
         LeaseLiveCounts {
             leases: self.lease_count(),
             subscriptions: self.subscription_count(),
+            waiters: self.waiter_count(),
         }
     }
 
-    pub fn admin_waiters(&self) -> Vec<crate::control::admin::LeaseWaiterInfo> {
+    pub fn admin_waiters(&mut self) -> Vec<crate::control::admin::LeaseWaiterInfo> {
         let now = Instant::now();
         let mut waiters = Vec::new();
 
-        for (key, queue) in self.core.pending_acquires.lock().iter() {
+        for (key, queue) in &self.core.pending_acquires {
             for waiter in queue {
                 let expires_at = Utc::now()
                     .checked_add_signed(chrono::TimeDelta::seconds(
@@ -217,12 +206,12 @@ impl LeaseDomainRuntime<'_> {
         )
     }
 
-    pub(super) fn lease_count(&self) -> usize {
-        self.core.leases.lock().len()
+    pub(super) fn lease_count(&mut self) -> usize {
+        self.core.leases.len()
     }
 
-    pub(super) fn subscription_count(&self) -> usize {
-        let families = self.core.families.lock();
+    pub(super) fn subscription_count(&mut self) -> usize {
+        let families = &mut self.core.families;
         families
             .values()
             .map(crate::domains::subscription_state::RoutedSubscriptionSet::subscription_count)

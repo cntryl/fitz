@@ -7,7 +7,7 @@ pub(super) fn should_accumulate_timeout_counters_given_rpc_timeout_sweep() {
     let metrics = crate::observability::metrics::MetricsCollector::new();
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = RpcDomainSink::new(router.clone(), admin_read_model)
+    let sink = RpcDomain::new(router.clone(), admin_read_model)
         .with_metrics(metrics.clone())
         .with_request_timeout(Duration::from_millis(10));
     let caller_one = session_inbox_address(family, 1);
@@ -71,7 +71,7 @@ pub(super) fn should_forward_timeout_error_given_expired_pending_request() {
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
     let sink = Arc::new(
-        RpcDomainSink::new(router.clone(), admin_read_model)
+        RpcDomain::new(router.clone(), admin_read_model)
             .with_request_timeout(Duration::from_millis(10)),
     );
     let family = RouteFamily::new(1);
@@ -131,7 +131,7 @@ pub(super) fn should_forward_timeout_error_given_expired_queued_request() {
     // Arrange
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model));
+    let sink = Arc::new(RpcDomain::new(router.clone(), admin_read_model));
     let family = RouteFamily::new(1);
     let route = Route::new("rpc://bench/system/resource/queued-timeout");
     let caller_inbox_addr = session_inbox_address(family, 7);
@@ -183,7 +183,7 @@ pub(super) fn should_drop_timeout_error_given_requester_cleanup_before_expiratio
     let metrics = crate::observability::metrics::MetricsCollector::new();
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
     let sink = Arc::new(
-        RpcDomainSink::new(router.clone(), admin_read_model)
+        RpcDomain::new(router.clone(), admin_read_model)
             .with_request_timeout(Duration::from_millis(10))
             .with_metrics(metrics.clone()),
     );
@@ -246,7 +246,7 @@ pub(super) fn should_reject_rpc_request_when_pending_capacity_reached() {
     // Arrange
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model));
+    let sink = Arc::new(RpcDomain::new(router.clone(), admin_read_model));
     let family = RouteFamily::new(1);
     let request_route = Route::new("rpc://bench/system/resource/operation");
     let source_addr = session_inbox_address(family, 1);

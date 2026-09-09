@@ -5,31 +5,181 @@ use super::{
     ReadyRange,
 };
 use bytes::Bytes;
-use cntryl_midge::{Engine, Query, Transaction, TransactionMode, WriteOptions};
+use cntryl_midge::Query;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
 use crate::domains::WritePolicy;
 
+#[derive(Clone)]
+pub struct QueueStore {
+    engine: Arc<cntryl_midge::Engine>,
+}
+
+pub(crate) struct QueueTransaction(cntryl_midge::Transaction);
+
+#[derive(Clone, Copy)]
+pub(crate) enum QueueTransactionMode {
+    ReadOnly,
+    ReadWrite,
+}
+
+#[derive(Debug)]
+pub(crate) struct QueueStoreError {
+    message: String,
+    missing_snapshot: bool,
+}
+
+impl std::fmt::Display for QueueStoreError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl QueueStoreError {
+    pub(super) fn is_missing_snapshot(&self) -> bool {
+        self.missing_snapshot
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn from_midge(error: cntryl_midge::MidgeError) -> Self {
+        let missing_snapshot = Self::is_missing_midge(&error);
+        Self {
+            message: error.to_string(),
+            missing_snapshot,
+        }
+    }
+
+    fn is_missing_midge(error: &cntryl_midge::MidgeError) -> bool {
+        matches!(
+            error,
+            cntryl_midge::MidgeError::InvalidArgument(message)
+                if message.contains("read snapshot not available")
+        )
+    }
+}
+
+impl QueueStore {
+    pub(crate) fn new(engine: Arc<cntryl_midge::Engine>) -> Self {
+        Self { engine }
+    }
+
+    pub(crate) fn begin(
+        &self,
+        family: u32,
+        mode: QueueTransactionMode,
+    ) -> Result<QueueTransaction, QueueStoreError> {
+        let mode = match mode {
+            QueueTransactionMode::ReadOnly => cntryl_midge::TransactionMode::ReadOnly,
+            QueueTransactionMode::ReadWrite => cntryl_midge::TransactionMode::ReadWrite,
+        };
+        self.engine
+            .begin_tx(family, mode)
+            .map(QueueTransaction)
+            .map_err(QueueStoreError::from_midge)
+    }
+
+    pub(crate) fn family_ids(&self) -> Result<Vec<u32>, QueueStoreError> {
+        self.engine
+            .list_column_families()
+            .map(|families| families.into_iter().map(|family| family.id()).collect())
+            .map_err(QueueStoreError::from_midge)
+    }
+
+    pub(crate) fn flush_family(&self, family_id: u32) -> Result<bool, QueueStoreError> {
+        let families = self
+            .engine
+            .list_column_families()
+            .map_err(QueueStoreError::from_midge)?;
+        let Some(family) = families.iter().find(|family| family.id() == family_id) else {
+            return Ok(false);
+        };
+        self.engine
+            .flush_cf(family)
+            .map(|()| true)
+            .map_err(QueueStoreError::from_midge)
+    }
+}
+
+impl From<Arc<cntryl_midge::Engine>> for QueueStore {
+    fn from(engine: Arc<cntryl_midge::Engine>) -> Self {
+        Self::new(engine)
+    }
+}
+
+impl From<crate::storage::FitzStorageEngine> for QueueStore {
+    fn from(engine: crate::storage::FitzStorageEngine) -> Self {
+        Self::new(engine.clone_inner())
+    }
+}
+
+impl QueueTransaction {
+    pub(super) fn get(&self, key: &[u8]) -> Result<Option<Bytes>, QueueStoreError> {
+        self.0.get(key).map_err(QueueStoreError::from_midge)
+    }
+
+    pub(super) fn put(
+        &mut self,
+        key: Vec<u8>,
+        value: Vec<u8>,
+        ttl: Option<u64>,
+    ) -> Result<(), QueueStoreError> {
+        self.0
+            .put(key, value, ttl)
+            .map_err(QueueStoreError::from_midge)
+    }
+
+    pub(super) fn delete(&mut self, key: Vec<u8>) -> Result<(), QueueStoreError> {
+        self.0.delete(key).map_err(QueueStoreError::from_midge)
+    }
+
+    pub(super) fn commit(self, policy: WritePolicy) -> Result<(), QueueStoreError> {
+        self.0
+            .commit(policy.into())
+            .map_err(QueueStoreError::from_midge)
+    }
+
+    pub(crate) fn scan_all(&self) -> Result<Vec<(Bytes, Bytes)>, QueueStoreError> {
+        self.0
+            .scan(&cntryl_midge::Query::new())
+            .map_err(QueueStoreError::from_midge)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(QueueStoreError::from_midge)
+    }
+
+    fn scan_prefix(&self, prefix: Bytes) -> Result<Vec<(Bytes, Bytes)>, QueueStoreError> {
+        self.0
+            .scan(&Query::new().prefix(prefix))
+            .map_err(QueueStoreError::from_midge)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(QueueStoreError::from_midge)
+    }
+}
+
 pub(super) struct QueuePersistence {
-    pub engine: Arc<Engine>,
+    pub store: QueueStore,
     pub recovery: Arc<QueueRecoveryStore>,
     pub body_key_prefix: Vec<u8>,
     write_policy: WritePolicy,
 }
 
 impl QueuePersistence {
-    pub(super) fn new(engine: Arc<Engine>, key: &QueueKey, write_policy: WritePolicy) -> Self {
+    pub(super) fn new(
+        engine: impl Into<QueueStore>,
+        key: &QueueKey,
+        write_policy: WritePolicy,
+    ) -> Self {
+        let store = engine.into();
         Self {
-            recovery: Arc::new(QueueRecoveryStore::new(engine.clone(), key.clone())),
+            recovery: Arc::new(QueueRecoveryStore::new(store.clone(), key.clone())),
             body_key_prefix: QueueActor::body_key_prefix(key),
-            engine,
+            store,
             write_policy,
         }
     }
 
-    pub(super) fn write_options(&self) -> WriteOptions {
-        self.write_policy.into()
+    pub(super) fn write_options(&self) -> WritePolicy {
+        self.write_policy
     }
 
     pub(super) fn write_policy(&self) -> WritePolicy {
@@ -38,7 +188,7 @@ impl QueuePersistence {
 }
 
 pub(super) struct QueueRecoveryStore {
-    engine: Arc<Engine>,
+    store: QueueStore,
     key: QueueKey,
     pub meta_key: Vec<u8>,
     pub index_meta_key: Vec<u8>,
@@ -48,7 +198,7 @@ pub(super) struct QueueRecoveryStore {
     pub dlq_index_prefix: Bytes,
 }
 
-pub(super) struct QueueRecoverySnapshot(Transaction);
+pub(super) struct QueueRecoverySnapshot(QueueTransaction);
 
 pub(super) struct QueueIndexRebuild<'a> {
     pub meta: IndexMetaSnapshot,
@@ -58,7 +208,7 @@ pub(super) struct QueueIndexRebuild<'a> {
 }
 
 impl QueueRecoveryStore {
-    pub(super) fn new(engine: Arc<Engine>, key: QueueKey) -> Self {
+    pub(super) fn new(store: QueueStore, key: QueueKey) -> Self {
         Self {
             meta_key: QueueActor::meta_key(&key),
             index_meta_key: QueueActor::index_meta_key(&key),
@@ -66,14 +216,14 @@ impl QueueRecoveryStore {
             ready_index_prefix: QueueActor::ready_index_prefix(&key).into(),
             delayed_index_prefix: QueueActor::delayed_index_prefix(&key).into(),
             dlq_index_prefix: QueueActor::dlq_index_prefix(&key).into(),
-            engine,
+            store,
             key,
         }
     }
 
     pub(super) fn snapshot(&self) -> Result<QueueRecoverySnapshot, String> {
-        self.engine
-            .begin_tx(self.key.family.id(), TransactionMode::ReadOnly)
+        self.store
+            .begin(self.key.family.id(), QueueTransactionMode::ReadOnly)
             .map(QueueRecoverySnapshot)
             .map_err(|error| format!("Failed to begin queue recovery snapshot: {error:?}"))
     }
@@ -89,7 +239,7 @@ impl QueueRecoveryStore {
                     next_id: self.next_id(snapshot),
                 })
             }
-            Err(error) if QueueActor::is_missing_read_snapshot_error(&error) => {
+            Err(error) if error.is_missing_snapshot() => {
                 return Err(IndexRecoveryAttempt::Missing {
                     next_id: self.next_id(snapshot),
                 });
@@ -113,13 +263,11 @@ impl QueueRecoveryStore {
     ) -> Result<impl Iterator<Item = Result<ReadyRange, String>> + 'a, String> {
         let rows = snapshot
             .0
-            .scan(&Query::new().prefix(self.ready_index_prefix.clone()))
+            .scan_prefix(self.ready_index_prefix.clone())
             .map_err(|error| format!("Failed to scan queue ready index: {error:?}"))?;
-        Ok(rows.map(|row| {
-            let (key, value) =
-                row.map_err(|error| format!("Failed to read queue ready index: {error:?}"))?;
-            decode_ready(&key, &value, &self.ready_index_prefix)
-        }))
+        Ok(rows
+            .into_iter()
+            .map(|(key, value)| decode_ready(&key, &value, &self.ready_index_prefix)))
     }
 
     pub(super) fn delayed_entries<'a>(
@@ -128,13 +276,11 @@ impl QueueRecoveryStore {
     ) -> Result<impl Iterator<Item = Result<(u64, MessageId), String>> + 'a, String> {
         let rows = snapshot
             .0
-            .scan(&Query::new().prefix(self.delayed_index_prefix.clone()))
+            .scan_prefix(self.delayed_index_prefix.clone())
             .map_err(|error| format!("Failed to scan queue delayed index: {error:?}"))?;
-        Ok(rows.map(|row| {
-            let (key, value) =
-                row.map_err(|error| format!("Failed to read queue delayed index: {error:?}"))?;
-            decode_delayed(&key, &value, &self.delayed_index_prefix)
-        }))
+        Ok(rows
+            .into_iter()
+            .map(|(key, value)| decode_delayed(&key, &value, &self.delayed_index_prefix)))
     }
 
     pub(super) fn dead_letters<'a>(
@@ -143,36 +289,30 @@ impl QueueRecoveryStore {
     ) -> Result<impl Iterator<Item = Result<(u64, MessageId), String>> + 'a, String> {
         let rows = snapshot
             .0
-            .scan(&Query::new().prefix(self.dlq_index_prefix.clone()))
+            .scan_prefix(self.dlq_index_prefix.clone())
             .map_err(|error| format!("Failed to scan queue DLQ index: {error:?}"))?;
-        Ok(rows.map(|row| {
-            let (key, value) =
-                row.map_err(|error| format!("Failed to read queue DLQ index: {error:?}"))?;
-            decode_dlq(&key, &value, &self.dlq_index_prefix)
-        }))
+        Ok(rows
+            .into_iter()
+            .map(|(key, value)| decode_dlq(&key, &value, &self.dlq_index_prefix)))
     }
 
     pub(super) fn headers<'a>(
         &'a self,
         snapshot: &'a QueueRecoverySnapshot,
     ) -> Result<impl Iterator<Item = Result<(MessageId, QueueRecord), String>> + 'a, String> {
-        let rows = match snapshot
-            .0
-            .scan(&Query::new().prefix(self.header_key_prefix.clone()))
-        {
+        let rows = match snapshot.0.scan_prefix(self.header_key_prefix.clone()) {
             Ok(rows) => Some(rows),
-            Err(error) if QueueActor::is_missing_read_snapshot_error(&error) => None,
+            Err(error) if error.is_missing_snapshot() => None,
             Err(error) => {
                 return Err(format!(
                     "Failed to scan queue headers for recovery: {error:?}"
                 ))
             }
         };
-        Ok(rows.into_iter().flatten().map(|row| {
-            let (key, value) =
-                row.map_err(|error| format!("Failed to read queue recovery scan: {error:?}"))?;
-            decode_header(&key, &value, &self.header_key_prefix)
-        }))
+        Ok(rows
+            .into_iter()
+            .flatten()
+            .map(|(key, value)| decode_header(&key, &value, &self.header_key_prefix)))
     }
 
     pub(super) fn replace_index(
@@ -181,8 +321,8 @@ impl QueueRecoveryStore {
         write_policy: WritePolicy,
     ) -> Result<(), String> {
         let mut transaction = self
-            .engine
-            .begin_tx(self.key.family.id(), TransactionMode::ReadWrite)
+            .store
+            .begin(self.key.family.id(), QueueTransactionMode::ReadWrite)
             .map_err(|error| format!("Failed to begin queue index rebuild tx: {error:?}"))?;
         let ready_prefix = &self.ready_index_prefix;
         let delayed_prefix = &self.delayed_index_prefix;
@@ -195,12 +335,9 @@ impl QueueRecoveryStore {
             (dlq_prefix, "DLQ"),
         ] {
             let rows = transaction
-                .scan(&Query::new().prefix(prefix.clone()))
+                .scan_prefix(prefix.clone())
                 .map_err(|error| format!("Failed to scan {label} index for rebuild: {error:?}"))?;
-            for row in rows {
-                let (key, _) = row.map_err(|error| {
-                    format!("Failed to scan {label} index for rebuild: {error:?}")
-                })?;
+            for (key, _) in rows {
                 stale_keys.push(key);
             }
         }
@@ -247,7 +384,7 @@ impl QueueRecoveryStore {
             )
             .map_err(|error| format!("Failed to write queue index meta: {error:?}"))?;
         transaction
-            .commit(write_policy.into())
+            .commit(write_policy)
             .map_err(|error| format!("Failed to commit queue index rebuild: {error:?}"))
     }
 
@@ -257,7 +394,7 @@ impl QueueRecoveryStore {
         match snapshot.0.get(&self.meta_key) {
             Ok(Some(bytes)) => QueueActor::decode_next_id(Some(&bytes)),
             Ok(None) => 1,
-            Err(error) if QueueActor::is_missing_read_snapshot_error(&error) => 1,
+            Err(error) if error.is_missing_snapshot() => 1,
             Err(error) => {
                 tracing::warn!(queue = ?self.key, route_family = self.key.family.as_u64(), ?error,
                     "Failed to recover queue next_id; starting from 1");

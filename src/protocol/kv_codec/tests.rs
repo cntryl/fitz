@@ -365,3 +365,43 @@ fn should_not_infer_read_only_write_from_backend_message() {
     // Assert
     assert_eq!(u32::from_be_bytes(encoded[1..5].try_into().unwrap()), 1009);
 }
+
+#[test]
+fn should_preserve_kv_request_response_notification_and_error_golden_bytes() {
+    // Arrange
+    let request = [
+        0, 0, 0, 15, b'k', b'v', b':', b'/', b'/', b'a', b'c', b'm', b'e', b'/', b'a', b'/', b'r',
+        b'e', b's', 1, 0,
+    ];
+
+    // Act
+    let parsed = parse_request(msg_type::BEGIN, RouteFamily::new(1), &request);
+    let response = encode_response(&KvResponse::SubscribeOk { subscription_id: 7 });
+    let notification = super::encode_notify(
+        7,
+        &crate::runtime::routing::Route::new("kv://acme/a/res"),
+        crate::domains::kv::KvNotification { mutation_count: 2 },
+    );
+    let error = encode_response(&KvResponse::Error {
+        error: KvError::ReadOnlyWrite,
+    });
+
+    // Assert
+    assert!(matches!(parsed, Ok(KvMessage::Begin { .. })));
+    assert_eq!(response, [0, 0, 0, 0, 0, 0, 0, 0, 7]);
+    assert_eq!(
+        notification,
+        [
+            0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 15, b'k', b'v', b':', b'/', b'/', b'a', b'c', b'm',
+            b'e', b'/', b'a', b'/', b'r', b'e', b's', 0, 0, 0, 0, 0, 0, 0, 2,
+        ]
+    );
+    assert_eq!(
+        error,
+        [
+            1, 0, 0, 3, 237, 0, 0, 0, 37, b'C', b'a', b'n', b'n', b'o', b't', b' ', b'w', b'r',
+            b'i', b't', b'e', b' ', b'i', b'n', b' ', b'r', b'e', b'a', b'd', b'-', b'o', b'n',
+            b'l', b'y', b' ', b't', b'r', b'a', b'n', b's', b'a', b'c', b't', b'i', b'o', b'n',
+        ]
+    );
+}

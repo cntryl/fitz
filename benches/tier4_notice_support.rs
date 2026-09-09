@@ -1,6 +1,7 @@
 #![allow(dead_code)] // Standalone Notice targets use focused subsets of this fixture API.
 
 use bytes::Bytes;
+use fitz::benchkit::BenchDomainHandle;
 use fitz::benchkit::{
     create_bench_notice_sink, parse_notice_delivery, register_session_queue_sink,
     route_frame_to_address, shared_bench_runtime, FrameQueueSink,
@@ -8,7 +9,6 @@ use fitz::benchkit::{
 use fitz::domains::notice::protocol::{
     NoticeClientRequest, NotificationMessage, PublishMessage, SubscribeMessage, UnsubscribeMessage,
 };
-use fitz::domains::notice::sink::NoticeDomainSink;
 use fitz::protocol::frame::ChannelId;
 use fitz::protocol::frame_context::FrameContext;
 use fitz::protocol::payload_codec::PayloadDecoder;
@@ -188,7 +188,7 @@ pub(crate) async fn complete_network_control_lifecycle(
 }
 
 pub(crate) struct InProcessNoticeFixture {
-    sink: Arc<NoticeDomainSink>,
+    sink: Arc<BenchDomainHandle>,
     router: Arc<Router>,
     family: RouteFamily,
     destination: RouteAddress,
@@ -308,7 +308,7 @@ impl InProcessNoticeFixture {
 }
 
 pub(crate) struct InProcessNoticeControlFixture {
-    sink: Arc<NoticeDomainSink>,
+    sink: Arc<BenchDomainHandle>,
     router: Arc<Router>,
     family: RouteFamily,
     destination: RouteAddress,

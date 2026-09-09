@@ -1,5 +1,6 @@
 use super::{authorize_owned_lease, LeaseAuthorization};
-use crate::domains::lease::sink::model::{Instant, SinkLeaseState};
+use crate::domains::lease::sink::model::SinkLeaseState;
+use std::time::Instant;
 
 fn state(owner_id: &str, fencing_token: u64, expiry: Instant) -> SinkLeaseState {
     SinkLeaseState {

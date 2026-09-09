@@ -1,14 +1,16 @@
+use super::state_model::RpcFamilyRuntime;
 #[cfg(test)]
 use super::state_model::RPC_MSG_TYPE_RESPONSE;
-use super::state_model::{Envelope, RpcClientRequest, RpcClientResponseBody, RpcDomainRuntime};
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
 #[cfg(not(test))]
 use crate::domains::rpc::{
     RpcClientForwardedResponse, RpcClientForwardedResponseBody, RpcClientResponse,
 };
+use crate::domains::rpc::{RpcClientRequest, RpcClientResponseBody};
+use crate::runtime::Envelope;
 
-impl RpcDomainRuntime<'_> {
+impl RpcFamilyRuntime<'_> {
     pub(super) fn request_from_envelope(envelope: &Envelope) -> Option<RpcClientRequest> {
         if let Some(request) = envelope.payload::<RpcClientRequest>() {
             return Some(request.clone());
@@ -42,7 +44,7 @@ impl RpcDomainRuntime<'_> {
     }
 
     pub(super) fn route_rpc_client_response(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         response: &RpcClientResponseBody,
@@ -68,7 +70,7 @@ impl RpcDomainRuntime<'_> {
         let response_ctx = RpcClientResponse::new(meta, response.clone());
 
         if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
-            if let Err(error) = self.router.route(response_envelope) {
+            if let Err(error) = self.core.router.route(response_envelope) {
                 Self::record_response_drop(meta.session_id, "response", &error);
                 return false;
             }
@@ -79,7 +81,7 @@ impl RpcDomainRuntime<'_> {
     }
 
     pub(super) fn route_rpc_terminal_error_response(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         correlation_id: uuid::Uuid,
@@ -127,7 +129,7 @@ impl RpcDomainRuntime<'_> {
         );
 
         if let Some(response_envelope) = envelope.try_reply_to(response_ctx) {
-            if let Err(error) = self.router.route(response_envelope) {
+            if let Err(error) = self.core.router.route(response_envelope) {
                 Self::record_response_drop(meta.session_id, "terminal_error", &error);
             }
         }

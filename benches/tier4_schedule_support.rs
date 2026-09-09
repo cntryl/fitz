@@ -9,7 +9,7 @@ use fitz::benchkit::{
     build_schedule_create, build_schedule_create_batch, create_local_bench_store,
     create_write_heavy_bench_store, shared_bench_runtime,
 };
-use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse, ScheduleStore};
+use fitz::domains::schedule::{ScheduleMessage, ScheduleResponse};
 use fitz::protocol::error_codes::decode_error_body;
 use fitz::protocol::frame::ChannelId;
 use fitz::protocol::frame_context::FrameContext;
@@ -18,6 +18,7 @@ use fitz::protocol::schedule_codec::{encode_response, parse_request as parse_sch
 use fitz::protocol::tlv::MessageType;
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use fitz::session::SessionId;
+use fitz::testkit::domain_internals::schedule::{ScheduleActor, ScheduleStore};
 use fitz::testkit::{TestClient, TestServer, TestWebSocketClient, TlvFrameBuilder, TlvFrameParser};
 use futures_util::future::join_all;
 use std::time::Instant;

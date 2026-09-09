@@ -4,17 +4,18 @@ use bytes::Bytes;
 mod tier2_stress;
 
 use cntryl_stress::{black_box, stress, stress_main, StressContext};
+use fitz::benchkit::BenchDomainHandle;
 use fitz::benchkit::{
     create_bench_schedule_sink, create_bench_store_with_cfs, register_session_counting_sink,
     route_frame, wait_for_counting_sinks_each_count, CountingSink,
 };
 use fitz::domains::schedule::protocol::{validate_concrete_schedule_route, Clock};
-use fitz::domains::schedule::sink::ScheduleDomainSink;
-use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse, ScheduleStore};
+use fitz::domains::schedule::{ScheduleMessage, ScheduleResponse};
 use fitz::protocol::frame::ChannelId;
 use fitz::protocol::payload_codec::PayloadEncoder;
 use fitz::runtime::routing::{Route, RouteFamily};
 use fitz::runtime::{DomainPublishEvent, Router};
+use fitz::testkit::domain_internals::schedule::{ScheduleActor, ScheduleStore};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -160,7 +161,7 @@ fn encode_schedule_subscribe(pattern: &str) -> Bytes {
 fn create_publish_case(
     subscriber_count: usize,
 ) -> (
-    Arc<ScheduleDomainSink>,
+    Arc<BenchDomainHandle>,
     DomainPublishEvent,
     Vec<Arc<CountingSink>>,
 ) {

@@ -348,7 +348,7 @@ fn should_keep_sibling_family_running_after_a_family_actor_panics() {
     // breaking for its thread-mates -- not just cross-shard isolation,
     // which two families alone could pass trivially on any multi-core
     // host. This mirrors production, where one
-    // `RpcDomainSink`/`StreamDomainSink` multiplexes every provisioned
+    // `RpcDomain`/`StreamDomain` multiplexes every provisioned
     // realm/route family onto one `FamilyActorPoolRuntime`
     // (see `src/boot/domains.rs`).
     let shard_count = shard_count_for_family_count(usize::MAX);
@@ -506,9 +506,8 @@ fn should_keep_pool_running_given_one_of_several_families_panics() {
     assert_eq!(family_health.healthy_families, vec![family(2), family(3)]);
     assert!(family_health.degraded_families.is_empty());
     assert_eq!(family_health.failed_families, vec![family(1)]);
-    let health = runtime.actor_health_snapshot();
-    assert!(health.running);
-    assert!(!health.restart_exhausted);
+    assert!(family_health.running);
+    assert!(!family_health.failed_closed);
 }
 
 #[test]
@@ -581,7 +580,6 @@ fn should_fail_pool_closed_after_every_family_panics() {
     assert!(family_health.healthy_families.is_empty());
     assert!(family_health.degraded_families.is_empty());
     assert_eq!(family_health.failed_families, families);
-    let health = runtime.actor_health_snapshot();
-    assert!(!health.running);
-    assert!(health.restart_exhausted);
+    assert!(!family_health.running);
+    assert!(family_health.failed_closed);
 }

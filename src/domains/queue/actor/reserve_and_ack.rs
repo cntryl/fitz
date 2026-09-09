@@ -299,10 +299,10 @@ impl QueueActor {
         let index_plan = self.plan_index_mutation_for_unavailable_message(id);
         let mut txn = self
             .persistence
-            .engine
-            .begin_tx(
+            .store
+            .begin(
                 self.queue_key.family.id(),
-                cntryl_midge::TransactionMode::ReadWrite,
+                super::recovery_store::QueueTransactionMode::ReadWrite,
             )
             .map_err(|error| format!("Failed to begin ready diversion for {id}: {error:?}"))?;
         txn.put(
@@ -687,9 +687,9 @@ impl QueueActor {
         let header_key = self.cached_header_key(id);
         let body_key = self.cached_body_key(id);
 
-        match self.persistence.engine.begin_tx(
+        match self.persistence.store.begin(
             self.queue_key.family.id(),
-            cntryl_midge::TransactionMode::ReadWrite,
+            super::recovery_store::QueueTransactionMode::ReadWrite,
         ) {
             Ok(mut txn) => {
                 if let Err(error) = Self::delete_record(&mut txn, header_key, body_key) {
@@ -727,10 +727,10 @@ impl QueueActor {
     fn commit_ack_batch_delete(&self, deletes: &[AckBatchDelete]) -> Result<(), String> {
         let mut txn = self
             .persistence
-            .engine
-            .begin_tx(
+            .store
+            .begin(
                 self.queue_key.family.id(),
-                cntryl_midge::TransactionMode::ReadWrite,
+                super::recovery_store::QueueTransactionMode::ReadWrite,
             )
             .map_err(|error| format!("Failed to begin queue ack batch tx: {error:?}"))?;
 

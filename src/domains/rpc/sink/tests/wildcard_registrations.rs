@@ -582,7 +582,7 @@ fn should_snapshot_unused_wildcard_registration_once() {
     // Arrange
     let router = Arc::new(Router::new());
     let admin = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = RpcDomainSink::new(router, admin.clone());
+    let sink = RpcDomain::new(router, admin.clone());
     sink.register_registration_for_tests(RpcWorker::with_stats(
         RouteAddress::new(RouteFamily::new(1), Route::new("rpc://bench/system/*/*")),
         session_inbox_address(RouteFamily::new(1), 10),
@@ -608,7 +608,7 @@ fn should_aggregate_wildcard_completion_statistics_across_routes() {
     let family = RouteFamily::new(1);
     let router = Arc::new(Router::new());
     let admin = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = RpcDomainSink::new(router, admin.clone());
+    let sink = RpcDomain::new(router, admin.clone());
     sink.register_registration_for_tests(RpcWorker::with_stats(
         RouteAddress::new(family, Route::new("rpc://bench/system/*/*")),
         session_inbox_address(family, 10),
@@ -619,8 +619,7 @@ fn should_aggregate_wildcard_completion_statistics_across_routes() {
     ));
 
     // Act
-    {
-        let mut state = sink.core.state.lock();
+    sink.inspect_primary_state_for_tests(move |state| {
         let first = state
             .claim_registration_for_tests(family, &Route::new("rpc://bench/system/orders/create"))
             .expect("first wildcard dispatch");
@@ -629,7 +628,7 @@ fn should_aggregate_wildcard_completion_statistics_across_routes() {
             .claim_registration_for_tests(family, &Route::new("rpc://bench/system/invoices/send"))
             .expect("second wildcard dispatch");
         state.release_registration_with_latency_for_tests(second.registration_id, 3_000);
-    }
+    });
     sink.sync_admin_snapshot();
     let workers = admin.rpc_workers(None);
 

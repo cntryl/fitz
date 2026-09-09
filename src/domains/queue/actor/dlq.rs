@@ -28,7 +28,7 @@ impl QueueActor {
         id: MessageId,
         inflight: &Inflight,
         record: &mut QueueRecord,
-        mut txn: cntryl_midge::Transaction,
+        mut txn: super::recovery_store::QueueTransaction,
         now_epoch_ms: u64,
     ) -> bool {
         let index_plan = self.plan_index_mutation_for_unavailable_message(id);
@@ -108,7 +108,7 @@ impl QueueActor {
         id: MessageId,
         inflight: &Inflight,
         record: &QueueRecord,
-        txn: &mut cntryl_midge::Transaction,
+        txn: &mut super::recovery_store::QueueTransaction,
     ) -> bool {
         let write_result = txn
             .put(

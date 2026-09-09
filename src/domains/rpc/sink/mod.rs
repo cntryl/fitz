@@ -11,7 +11,7 @@ mod response_forwarder;
 mod responses;
 mod state_model;
 
-pub use state_model::RpcDomainSink;
+pub(crate) use state_model::RpcDomain;
 
 #[cfg(test)]
 mod tests;

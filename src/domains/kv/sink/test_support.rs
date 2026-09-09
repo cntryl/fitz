@@ -2,13 +2,13 @@
 
 use super::commands::KvDomainCommand;
 use super::locks::KvResourceLockKey;
-use super::state::KvDomainSink;
+use super::state::KvDomain;
 
-impl KvDomainSink {
+impl KvDomain {
     pub(super) fn run_on_family_for_tests<T: Send + 'static>(
         &self,
         family: crate::runtime::routing::RouteFamily,
-        operation: impl FnOnce(&mut super::state::KvDomainRuntime<'_>) -> T + Send + 'static,
+        operation: impl FnOnce(&mut super::state::KvFamilyRuntime<'_>) -> T + Send + 'static,
     ) -> T {
         let (result_tx, result_rx) = crossbeam_channel::bounded(1);
         let (done_tx, done_rx) = crossbeam_channel::bounded(1);
@@ -17,7 +17,7 @@ impl KvDomainSink {
             crate::runtime::FamilyActorLane::Control,
             KvDomainCommand::InspectForTests(
                 Box::new(move |core| {
-                    let mut runtime = super::state::KvDomainRuntime { core };
+                    let mut runtime = super::state::KvFamilyRuntime { core };
                     let _ = result_tx.send(operation(&mut runtime));
                 }),
                 done_tx,

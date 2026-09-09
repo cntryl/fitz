@@ -2,11 +2,11 @@
 //!
 //! # Architecture
 //!
-//! - **`RpcDomainSink`** ([sink]): Production ingress path used by the live broker
+//! - **`RpcDomain`** ([sink]): Production ingress path used by the live broker
 //! - Workers register with routes and receive requests while declared credit is available
 //!
 //! Production request forwarding, terminal error delivery, and caller-disconnect
-//! handling live in `RpcDomainSink`.
+//! handling live in `RpcDomain`.
 //!
 //! # Semantics
 //!
@@ -55,7 +55,7 @@
 pub mod metrics;
 pub mod projection;
 pub mod protocol;
-pub mod sink;
+pub(crate) mod sink;
 
 pub use metrics::RpcMetrics;
 pub use protocol::{

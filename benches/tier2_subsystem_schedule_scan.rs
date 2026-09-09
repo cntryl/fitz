@@ -10,8 +10,9 @@ mod tier2_stress;
 use cntryl_stress::{black_box, stress, stress_main, StressContext};
 use fitz::benchkit::create_bench_store_with_cfs;
 use fitz::domains::schedule::protocol::{validate_concrete_schedule_route, Clock};
-use fitz::domains::schedule::{ScheduleActor, ScheduleMessage, ScheduleResponse, ScheduleStore};
+use fitz::domains::schedule::{ScheduleMessage, ScheduleResponse};
 use fitz::runtime::routing::RouteFamily;
+use fitz::testkit::domain_internals::schedule::{ScheduleActor, ScheduleStore};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 

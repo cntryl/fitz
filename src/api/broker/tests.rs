@@ -1,4 +1,5 @@
 use super::*;
+use crate::api::broker_shutdown as shutdown;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const BOOT_CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);

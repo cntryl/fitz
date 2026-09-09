@@ -1,10 +1,10 @@
 //! Direct committed-value inspection for the admin façade.
 
 use super::super::locks::KvResourceLockKey;
-use super::super::state::KvDomainRuntime;
+use super::super::state::KvFamilyRuntime;
 use crate::domains::kv::KvActor;
 
-impl KvDomainRuntime<'_> {
+impl KvFamilyRuntime<'_> {
     pub(super) fn admin_get_committed_value(
         &self,
         route_family: crate::runtime::routing::RouteFamily,
@@ -18,7 +18,7 @@ impl KvDomainRuntime<'_> {
         let tx = self
             .core
             .store
-            .begin_tx(column_family, cntryl_midge::TransactionMode::ReadOnly)
+            .begin(column_family, crate::domains::kv::TxMode::ReadOnly)
             .map_err(|error| error.to_string())?;
         let prefix = KvActor::realm_resource_prefix(realm, area, resource);
         let scoped_key = KvActor::encode_scoped_key(&prefix, key);

@@ -1,9 +1,9 @@
 //! Mailbox-lane routing and the family runtime's command loop.
 
-use super::model::{LeaseDomainCommand, LeaseDomainRuntime, LeaseDomainSink, MailboxSink};
-use crate::runtime::{DeliveryError, Envelope};
+use super::model::{LeaseDomain, LeaseDomainCommand, LeaseFamilyRuntime};
+use crate::runtime::{DeliveryError, Envelope, MailboxSink};
 
-impl MailboxSink for LeaseDomainSink {
+impl MailboxSink for LeaseDomain {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
             return self
@@ -31,8 +31,8 @@ impl MailboxSink for LeaseDomainSink {
     }
 }
 
-impl LeaseDomainRuntime<'_> {
-    pub(super) fn receive(&self, msg: LeaseDomainCommand) {
+impl LeaseFamilyRuntime<'_> {
+    pub(super) fn receive(&mut self, msg: LeaseDomainCommand) {
         let runtime = self;
         match msg {
             LeaseDomainCommand::Deliver(envelope) => {
@@ -82,7 +82,7 @@ impl LeaseDomainRuntime<'_> {
             }
             #[cfg(test)]
             LeaseDomainCommand::ExpireLeaseForTests(key, reply) => {
-                let expired = if let Some(lease) = runtime.core.leases.lock().get_mut(&key) {
+                let expired = if let Some(lease) = runtime.core.leases.get_mut(&key) {
                     lease.expiry = std::time::Instant::now()
                         .checked_sub(std::time::Duration::from_millis(1))
                         .expect("past instant");
@@ -115,6 +115,16 @@ impl LeaseDomainRuntime<'_> {
             LeaseDomainCommand::BlockForTests(entered, release) => {
                 let _ = entered.send(());
                 let _ = release.recv();
+            }
+            #[cfg(test)]
+            LeaseDomainCommand::InspectForTests(inspect, reply) => {
+                inspect(runtime.core);
+                let _ = reply.send(());
+            }
+            #[cfg(test)]
+            LeaseDomainCommand::SweepListSnapshotsForTests(reply) => {
+                runtime.sweep_idle_list_snapshots();
+                let _ = reply.send(());
             }
         }
     }

@@ -9,9 +9,10 @@ use fitz::benchkit::{
     build_kv_begin, build_kv_commit, build_kv_put, create_local_bench_store,
     create_write_heavy_bench_store, parse_kv_response, parse_kv_tx_id, shared_bench_runtime,
 };
-use fitz::domains::kv::{KvActor, KvMessage, KvResourceScope, KvResponse, TxMode};
+use fitz::domains::kv::{KvMessage, KvResourceScope, KvResponse, TxMode};
 use fitz::protocol::kv_codec::parse_request as parse_kv_request;
 use fitz::runtime::routing::RouteFamily;
+use fitz::testkit::domain_internals::kv::KvActor;
 use fitz::testkit::transport::TlvFrameParser;
 use fitz::testkit::{TestClient, TestServer, TestWebSocketClient};
 use futures_util::future::join_all;
@@ -111,7 +112,7 @@ fn direct_lifecycle(actor: &mut DirectKvActor, commit: bool, key: Bytes, value: 
     let begin = actor.actor.handle(KvMessage::Begin {
         scope: scope.clone(),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::sync().into(),
+        write_options: fitz::domains::WritePolicy::Sync,
     });
     let KvResponse::BeginOk { tx_id } = begin else {
         panic!("KV begin failed: {begin:?}")

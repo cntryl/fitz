@@ -1,6 +1,6 @@
 //! Live resource-lock identities and ownership coordination.
 
-use super::state::KvDomainRuntime;
+use super::state::KvFamilyRuntime;
 use crate::domains::kv::KvMessage;
 
 /// Identifies the in-memory write lock owner for a single resource scope.
@@ -49,7 +49,7 @@ struct KvTransactionLock {
     resource_key: KvResourceLockKey,
 }
 
-impl KvDomainRuntime<'_> {
+impl KvFamilyRuntime<'_> {
     pub(super) fn expire_idle_transactions_for_session(&mut self, session_id: u64) {
         let expired = self
             .core

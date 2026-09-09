@@ -1,4 +1,8 @@
 use super::*;
+use crate::api::authentication::{
+    permissions_from_jwt_using_jwks, permissions_from_verified_jwt, verified_jwt_with_claims_config,
+};
+use crate::api::jwks::cache_jwks_from_json_with_ttl;
 use base64::Engine;
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use serde_json::json;

@@ -4,11 +4,11 @@ use bytes::Bytes;
 mod tier2_stress;
 
 use cntryl_stress::{black_box, stress, stress_main, StressContext};
+use fitz::benchkit::BenchDomainHandle;
 use fitz::benchkit::{
     build_notice_subscribe, create_bench_notice_sink, extract_single_tlv_field,
     register_session_counting_sink, route_frame, wait_for_counting_sinks_each_count, CountingSink,
 };
-use fitz::domains::notice::sink::NoticeDomainSink;
 use fitz::protocol::frame::ChannelId;
 use fitz::runtime::domain_event::DomainPublishEvent;
 use fitz::runtime::envelope::Envelope;
@@ -30,7 +30,7 @@ const PUBLISH_CHUNK_SIZE: u64 = 64;
 const DELIVERY_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 struct NoticePublishCase {
-    sink: Arc<NoticeDomainSink>,
+    sink: Arc<BenchDomainHandle>,
     destination: RouteAddress,
     event: DomainPublishEvent,
     subscriber_sinks: Vec<Arc<CountingSink>>,

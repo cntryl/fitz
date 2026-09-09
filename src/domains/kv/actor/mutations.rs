@@ -26,9 +26,7 @@ impl KvActor {
                 found: false,
                 value: None,
             },
-            Err(error) => KvResponse::Error {
-                error: Self::map_midge_error(&error),
-            },
+            Err(error) => KvResponse::Error { error },
         }
     }
 
@@ -48,15 +46,13 @@ impl KvActor {
         }
 
         let scoped_key = Self::encode_scoped_key(&active.scoped_prefix, key);
-        match active.tx.put(scoped_key, value.to_vec(), None) {
+        match active.tx.put(scoped_key, value.to_vec()) {
             Ok(()) => {
                 active.mutation_count = active.mutation_count.saturating_add(1);
                 active.inventory_delta.mark_incomplete();
                 KvResponse::PutOk
             }
-            Err(error) => KvResponse::Error {
-                error: Self::map_midge_error(&error),
-            },
+            Err(error) => KvResponse::Error { error },
         }
     }
 
@@ -80,7 +76,7 @@ impl KvActor {
             Ok(Some(_)) => KvResponse::Error {
                 error: KvError::AlreadyExists,
             },
-            Ok(None) => match active.tx.put(scoped_key, value.to_vec(), None) {
+            Ok(None) => match active.tx.put(scoped_key, value.to_vec()) {
                 Ok(()) => {
                     active.mutation_count = active.mutation_count.saturating_add(1);
                     active
@@ -88,13 +84,9 @@ impl KvActor {
                         .record_insert(key, key.len() + value.len());
                     KvResponse::InsertOk
                 }
-                Err(error) => KvResponse::Error {
-                    error: Self::map_midge_error(&error),
-                },
+                Err(error) => KvResponse::Error { error },
             },
-            Err(error) => KvResponse::Error {
-                error: Self::map_midge_error(&error),
-            },
+            Err(error) => KvResponse::Error { error },
         }
     }
 
@@ -119,9 +111,7 @@ impl KvActor {
                 active.inventory_delta.mark_incomplete();
                 KvResponse::DeleteOk
             }
-            Err(error) => KvResponse::Error {
-                error: Self::map_midge_error(&error),
-            },
+            Err(error) => KvResponse::Error { error },
         }
     }
 
@@ -153,9 +143,7 @@ impl KvActor {
                 active.inventory_delta.mark_incomplete();
                 KvResponse::DeleteRangeOk
             }
-            Err(error) => KvResponse::Error {
-                error: Self::map_midge_error(&error),
-            },
+            Err(error) => KvResponse::Error { error },
         }
     }
 }

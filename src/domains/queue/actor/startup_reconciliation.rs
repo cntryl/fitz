@@ -28,27 +28,24 @@ impl QueueActor {
     ///
     /// Returns an error when persisted queue state cannot be validated or reconciled.
     pub(crate) fn prepare_persisted_state_for_existing_families(
-        store: &cntryl_midge::Engine,
+        store: impl Into<super::recovery_store::QueueStore>,
         queue_write_policy: crate::domains::WritePolicy,
         recovery_write_policy: crate::domains::WritePolicy,
     ) -> Result<(), String> {
+        let store = store.into();
         if queue_write_policy != crate::domains::WritePolicy::BestEffort {
             return Self::validate_persisted_state_for_existing_families(store);
         }
 
         let families = store
-            .list_column_families()
+            .family_ids()
             .map_err(|error| format!("list queue column families failed: {error}"))?;
 
         for family in families {
-            if family.id() == 0 {
+            if family == 0 {
                 continue;
             }
-            Self::reconcile_fast_persisted_state_for_family(
-                store,
-                family.id(),
-                recovery_write_policy,
-            )?;
+            Self::reconcile_fast_persisted_state_for_family(&store, family, recovery_write_policy)?;
         }
 
         Ok(())
@@ -57,29 +54,31 @@ impl QueueActor {
     /// # Errors
     ///
     /// Returns an error when any existing queue family contains invalid persisted state.
+    #[allow(private_bounds)]
     pub fn validate_persisted_state_for_existing_families(
-        store: &cntryl_midge::Engine,
+        store: impl Into<super::recovery_store::QueueStore>,
     ) -> Result<(), String> {
+        let store = store.into();
         let families = store
-            .list_column_families()
+            .family_ids()
             .map_err(|error| format!("list queue column families failed: {error}"))?;
 
         for family in families {
-            if family.id() == 0 {
+            if family == 0 {
                 continue;
             }
-            Self::validate_persisted_state_for_family(store, family.id())?;
+            Self::validate_persisted_state_for_family(&store, family)?;
         }
 
         Ok(())
     }
 
     pub(in crate::domains::queue::actor) fn validate_persisted_state_for_family(
-        store: &cntryl_midge::Engine,
+        store: &super::recovery_store::QueueStore,
         family: u32,
     ) -> Result<(), String> {
         let txn = store
-            .begin_tx(family, cntryl_midge::TransactionMode::ReadOnly)
+            .begin(family, super::recovery_store::QueueTransactionMode::ReadOnly)
             .map_err(|error| {
                 format!(
                     "queue reconciliation failed: family={family} key_category=transaction error={error:?}"
@@ -110,17 +109,15 @@ impl QueueActor {
     }
 
     fn scan_persisted_state_for_family(
-        txn: &cntryl_midge::Transaction,
+        txn: &super::recovery_store::QueueTransaction,
         family: u32,
     ) -> Result<QueueValidationScan, String> {
-        let iter = txn.scan(&cntryl_midge::Query::new()).map_err(|error| {
+        let iter = txn.scan_all().map_err(|error| {
             format!("queue validation failed: family={family} key_category=scan error={error:?}")
         })?;
         let mut scan = QueueValidationScan::default();
 
-        for (key, value) in iter.try_collect().map_err(|error| {
-            format!("queue validation failed: family={family} key_category=scan error={error:?}")
-        })? {
+        for (key, value) in iter {
             let Some(suffix) = storage_key::strip_domain_prefix(&key, DomainKeyspace::Queue) else {
                 continue;
             };
@@ -198,12 +195,12 @@ impl QueueActor {
     }
 
     fn reconcile_fast_persisted_state_for_family(
-        store: &cntryl_midge::Engine,
+        store: &super::recovery_store::QueueStore,
         family: u32,
         recovery_write_policy: crate::domains::WritePolicy,
     ) -> Result<(), String> {
         let mut txn = store
-            .begin_tx(family, cntryl_midge::TransactionMode::ReadWrite)
+            .begin(family, super::recovery_store::QueueTransactionMode::ReadWrite)
             .map_err(|error| {
                 format!(
                     "queue validation failed: family={family} key_category=transaction error={error:?}"
@@ -258,7 +255,7 @@ impl QueueActor {
             }
         }
 
-        txn.commit(recovery_write_policy.into()).map_err(|error| {
+        txn.commit(recovery_write_policy).map_err(|error| {
             format!(
                 "queue reconciliation failed: family={family} key_category=commit error={error:?}"
             )

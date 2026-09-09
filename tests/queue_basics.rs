@@ -1,11 +1,10 @@
 //! Executable Queue protocol contract tests.
 
 use bytes::Bytes;
-use fitz::domains::queue::{
-    Clock, QueueActor, QueueKey, QueueMessage, QueueResponse, ReservedMessage,
-};
+use fitz::domains::queue::{Clock, QueueKey, QueueMessage, QueueResponse, ReservedMessage};
 use fitz::protocol::{error_queue, queue_codec};
 use fitz::runtime::routing::RouteFamily;
+use fitz::testkit::domain_internals::queue::QueueActor;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 

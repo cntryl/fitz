@@ -5,12 +5,11 @@ pub(crate) use crate::fixtures::define_transport_tests;
 pub(crate) use crate::fixtures::transport::*;
 pub(crate) use bytes::{BufMut, Bytes};
 pub(crate) use fitz::domains::stream::protocol::StreamWriteMode;
-pub(crate) use fitz::domains::stream::store::StreamStore;
-pub(crate) use fitz::domains::stream::{
-    StreamActor, StreamReadItem, StreamRecord, StreamStorageLayout,
-};
+pub(crate) use fitz::domains::stream::{StreamReadItem, StreamRecord, StreamStorageLayout};
 pub(crate) use fitz::protocol::payload_codec::PayloadDecoder;
 pub(crate) use fitz::runtime::routing::RouteFamily;
+pub(crate) use fitz::testkit::domain_internals::stream::StreamActor;
+pub(crate) use fitz::testkit::domain_internals::stream::StreamStore;
 pub(crate) use fitz::testkit::TestServer;
 pub(crate) use std::sync::Arc;
 pub(crate) use tempfile::TempDir;
@@ -351,7 +350,7 @@ pub(crate) async fn open_local_stream_engine(
     db_path: String,
 ) -> Result<Arc<cntryl_midge::Engine>, Box<dyn std::error::Error>> {
     let boot_config = fitz::boot::runtime::BootConfig::with_local_storage(db_path);
-    fitz::boot::storage::init(&boot_config).await
+    fitz::testkit::init_storage(&boot_config).await
 }
 
 pub(crate) fn make_stream_actor(

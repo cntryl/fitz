@@ -1,4 +1,4 @@
-use super::NoticeDomainCore;
+use super::NoticeFamilyState;
 use crate::runtime::{DeliveryError, Envelope};
 
 pub(super) enum NoticeDomainCommand {
@@ -7,8 +7,11 @@ pub(super) enum NoticeDomainCommand {
         crossbeam_channel::Sender<Result<(), DeliveryError>>,
     ),
     DeliverAccepted(Envelope),
+    #[cfg(test)]
     ReadSubscriptionCount(crossbeam_channel::Sender<usize>),
-    RefreshAdminSnapshotIfDirty(crossbeam_channel::Sender<()>),
+    #[cfg(test)]
+    ReadStateCounts(crossbeam_channel::Sender<(usize, usize)>),
+    #[cfg(test)]
     UnsubscribeAllForSession(u64, crossbeam_channel::Sender<usize>),
     PanicForFailpoint,
     #[cfg(test)]
@@ -18,12 +21,12 @@ pub(super) enum NoticeDomainCommand {
     ),
 }
 
-pub(super) struct NoticeDomainRuntime<'a> {
-    pub(super) core: &'a NoticeDomainCore,
+pub(super) struct NoticeFamilyRuntime<'a> {
+    pub(super) core: &'a mut NoticeFamilyState,
 }
 
-impl NoticeDomainRuntime<'_> {
-    pub(super) fn receive(&self, msg: NoticeDomainCommand) {
+impl NoticeFamilyRuntime<'_> {
+    pub(super) fn receive(&mut self, msg: NoticeDomainCommand) {
         match msg {
             NoticeDomainCommand::Deliver(envelope, reply) => {
                 let _ = reply.send(self.deliver_envelope(&envelope));
@@ -44,13 +47,15 @@ impl NoticeDomainRuntime<'_> {
                     );
                 }
             }
+            #[cfg(test)]
             NoticeDomainCommand::ReadSubscriptionCount(reply) => {
                 let _ = reply.send(self.subscription_count());
             }
-            NoticeDomainCommand::RefreshAdminSnapshotIfDirty(reply) => {
-                self.refresh_admin_snapshot_if_dirty();
-                let _ = reply.send(());
+            #[cfg(test)]
+            NoticeDomainCommand::ReadStateCounts(reply) => {
+                let _ = reply.send((self.core.families.len(), self.core.route_stats.len()));
             }
+            #[cfg(test)]
             NoticeDomainCommand::UnsubscribeAllForSession(session_id, reply) => {
                 let _ = reply.send(self.unsubscribe_all_for_session(session_id));
             }
@@ -65,23 +70,21 @@ impl NoticeDomainRuntime<'_> {
         }
     }
 
-    fn deliver_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {
+    fn deliver_envelope(&mut self, envelope: &Envelope) -> Result<(), DeliveryError> {
         self.core.deliver_envelope(envelope)
     }
 
-    fn deliver_accepted_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {
+    fn deliver_accepted_envelope(&mut self, envelope: &Envelope) -> Result<(), DeliveryError> {
         self.core.deliver_accepted_envelope(envelope)
     }
 
-    fn subscription_count(&self) -> usize {
+    #[cfg(test)]
+    fn subscription_count(&mut self) -> usize {
         self.core.subscription_count()
     }
 
-    fn refresh_admin_snapshot_if_dirty(&self) {
-        self.core.refresh_admin_snapshot_if_dirty();
-    }
-
-    fn unsubscribe_all_for_session(&self, session_id: u64) -> usize {
+    #[cfg(test)]
+    fn unsubscribe_all_for_session(&mut self, session_id: u64) -> usize {
         self.core.unsubscribe_all_for_session(session_id)
     }
 }

@@ -1,7 +1,7 @@
 use super::model::{
-    DecodedDefinitionRow, ScheduleDefinitionData, ScheduleRows, ScheduleStore, BODY_PREFIX,
-    BODY_VALUE_VERSION_V2, DEFINITION_PREFIX, DEFINITION_VALUE_VERSION_V3, PENDING_FIRE_PREFIX,
-    PENDING_FIRE_VALUE_VERSION_V3,
+    DecodedDefinitionRow, ScheduleDefinitionData, SchedulePersistenceError, ScheduleRows,
+    ScheduleStore, BODY_PREFIX, BODY_VALUE_VERSION_V2, DEFINITION_PREFIX,
+    DEFINITION_VALUE_VERSION_V3, PENDING_FIRE_PREFIX, PENDING_FIRE_VALUE_VERSION_V3,
 };
 use crate::domains::schedule::protocol::{
     parse_concrete_schedule_route, ConcreteScheduleRoute, ScheduleDeliveryMode,
@@ -30,8 +30,18 @@ impl ScheduleStore {
         }
     }
 
-    pub(crate) fn into_storage(self) -> crate::storage::FitzStorageEngine {
+    pub(crate) fn has_family(
+        &self,
+        family: crate::runtime::routing::RouteFamily,
+    ) -> Result<bool, SchedulePersistenceError> {
         self.db
+            .list_column_families()
+            .map(|families| {
+                families
+                    .iter()
+                    .any(|candidate| candidate.id() == family.id())
+            })
+            .map_err(|error| SchedulePersistenceError::midge("list schedule families", error))
     }
 
     pub(super) fn schedule_key_suffix(key: &[u8]) -> &[u8] {

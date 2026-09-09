@@ -35,7 +35,7 @@
 //! # KV Watches
 //!
 //! Clients can watch KV resources for committed mutations:
-//! - `KvDomainSink` owns ephemeral watch state for the current broker process
+//! - `KvDomain` owns ephemeral watch state for the current broker process
 //! - Watches target `kv://{realm}/{area}/{resource}` and wildcard resource patterns
 //! - Notifications are emitted only after a transaction commits at least one mutating operation
 //! - Uncommitted writes, empty commits, disconnect cleanup, and broker restart do not replay notifications
@@ -47,22 +47,19 @@
 //! - Default column family (CF=0) is FORBIDDEN
 //! - All KV persistence MUST specify explicit CF via `RouteFamily`
 
-mod actor;
+pub(crate) mod actor;
 mod admin_projection;
 mod inventory;
 pub(crate) mod metrics;
 mod protocol;
 mod scan_wire_budget;
-pub mod sink;
+pub(crate) mod sink;
+mod store;
 mod watch_registry;
 pub(crate) mod write_policy;
 
-pub use actor::KvActor;
+pub(crate) use actor::KvActor;
 pub use protocol::{
     KvClientFrame, KvClientNotification, KvClientRequest, KvClientResponse, KvError, KvMessage,
     KvNotification, KvPair, KvResourceScope, KvResponse, KvSubscriptionMessage, ScanQuery, TxMode,
-};
-pub use sink::{
-    AdminKvCommittedPair, AdminKvPrefixScanResult, AdminKvRowsRequest, AdminKvRowsResult,
-    KvDomainSink,
 };

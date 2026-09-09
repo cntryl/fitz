@@ -4,7 +4,7 @@ use super::*;
 fn should_confirm_rpc_family_cleanup_before_reporting_delivery() {
     // Arrange
     let family = RouteFamily::new(1);
-    let sink = RpcDomainSink::new_with_families(
+    let sink = RpcDomain::new_with_families(
         Arc::new(Router::new()),
         crate::control::admin::read_model::AdminReadModel::new(),
         &[family],
@@ -121,7 +121,7 @@ fn should_forward_worker_disconnect_error_given_rpc_unsubscribe() {
     // Arrange
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model));
+    let sink = Arc::new(RpcDomain::new(router.clone(), admin_read_model));
     let family = RouteFamily::new(1);
     let request_route = Route::new("rpc://bench/system/resource/operation");
     let request_addr = RouteAddress::new(family, request_route.clone());
@@ -214,7 +214,7 @@ fn should_retain_other_worker_route_given_rpc_unsubscribe_on_same_session() {
     // Arrange
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model));
+    let sink = Arc::new(RpcDomain::new(router.clone(), admin_read_model));
     let family = RouteFamily::new(1);
     let removed_route = Route::new("rpc://bench/system/resource/operation");
     let retained_route = Route::new("rpc://bench/system/resource/other");
@@ -337,7 +337,7 @@ fn should_forward_worker_disconnect_error_given_rpc_session_cleanup() {
     // Arrange
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model));
+    let sink = Arc::new(RpcDomain::new(router.clone(), admin_read_model));
     let family = RouteFamily::new(1);
     let request_route = Route::new("rpc://bench/system/resource/operation");
     let request_addr = RouteAddress::new(family, request_route.clone());
@@ -411,7 +411,7 @@ fn should_reject_worker_response_when_correlation_missing_given_rpc_sink() {
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
     let sink = Arc::new(
-        RpcDomainSink::new(router.clone(), admin_read_model)
+        RpcDomain::new(router.clone(), admin_read_model)
             .with_request_timeout(Duration::from_millis(250)),
     );
     let family = RouteFamily::new(1);
@@ -500,7 +500,7 @@ fn should_reject_worker_response_from_non_owner_session_given_rpc_sink() {
     // Arrange
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model));
+    let sink = Arc::new(RpcDomain::new(router.clone(), admin_read_model));
     let family = RouteFamily::new(1);
     let request_route = Route::new("rpc://bench/system/resource/operation");
     let request_addr = RouteAddress::new(family, request_route.clone());
@@ -624,7 +624,7 @@ fn should_drop_late_worker_response_after_requester_cleanup_without_forward_erro
     // Arrange
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model));
+    let sink = Arc::new(RpcDomain::new(router.clone(), admin_read_model));
     let family = RouteFamily::new(1);
     let request_route = Route::new("rpc://bench/system/resource/operation");
     let request_addr = RouteAddress::new(family, request_route.clone());

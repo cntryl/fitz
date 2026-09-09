@@ -3,8 +3,9 @@
 
 use bytes::Bytes;
 use fitz::benchkit::create_local_bench_store;
-use fitz::domains::kv::{KvActor, KvMessage, KvResourceScope, KvResponse, TxMode};
+use fitz::domains::kv::{KvMessage, KvResourceScope, KvResponse, TxMode};
 use fitz::runtime::routing::RouteFamily;
+use fitz::testkit::domain_internals::kv::KvActor;
 use fitz::testkit::{create_test_engine_with_cfs, scaled_test_timeout};
 use std::sync::Arc;
 use std::time::Duration;
@@ -49,7 +50,7 @@ fn write_committed_value_for_family(
             "shared".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: fitz::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id } = begin else {
         panic!("Begin failed");
@@ -79,7 +80,7 @@ fn read_committed_value_for_family(actor: &mut KvActor, family: RouteFamily) -> 
             "shared".to_string(),
         ),
         mode: TxMode::ReadOnly,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: fitz::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id } = begin else {
         panic!("Begin failed");
@@ -120,7 +121,7 @@ fn should_show_committed_value_before_restart() {
             "r".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::sync().into(),
+        write_options: fitz::domains::WritePolicy::Sync,
     });
     let KvResponse::BeginOk { tx_id } = begin else {
         panic!("Begin failed");
@@ -147,7 +148,7 @@ fn should_show_committed_value_before_restart() {
             "r".to_string(),
         ),
         mode: TxMode::ReadOnly,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: fitz::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id: tx_read } = b_read else {
         panic!("Expected BeginOk");
@@ -190,7 +191,7 @@ fn should_commit_durable_kv_transaction() {
             "r".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::sync().into(),
+        write_options: fitz::domains::WritePolicy::Sync,
     });
     let KvResponse::BeginOk { tx_id } = begin else {
         panic!("Begin failed");
@@ -228,7 +229,7 @@ fn should_restore_committed_kv_value_on_engine_restart() {
             "r".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::sync().into(),
+        write_options: fitz::domains::WritePolicy::Sync,
     });
     let KvResponse::BeginOk { tx_id } = begin else {
         panic!("Begin failed");
@@ -263,7 +264,7 @@ fn should_restore_committed_kv_value_on_engine_restart() {
             "r".to_string(),
         ),
         mode: TxMode::ReadOnly,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: fitz::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id: tx2 } = b2 else {
         panic!("Expected BeginOk");
@@ -319,7 +320,7 @@ fn should_discard_uncommitted_kv_write_on_engine_restart() {
             "r".to_string(),
         ),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::sync().into(),
+        write_options: fitz::domains::WritePolicy::Sync,
     });
     let KvResponse::BeginOk { tx_id } = begin else {
         panic!("Begin failed");
@@ -346,7 +347,7 @@ fn should_discard_uncommitted_kv_write_on_engine_restart() {
             "r".to_string(),
         ),
         mode: TxMode::ReadOnly,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: fitz::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id: tx2 } = begin2 else {
         panic!("Expected BeginOk");
@@ -483,7 +484,7 @@ fn should_handle_high_throughput_batch_puts() {
                 "batch".to_string(),
             ),
             mode: TxMode::ReadWrite,
-            write_options: cntryl_midge::WriteOptions::buffered().into(),
+            write_options: fitz::domains::WritePolicy::Buffered,
         });
         let KvResponse::BeginOk { tx_id } = begin else {
             panic!("Begin failed");
@@ -513,7 +514,7 @@ fn should_handle_high_throughput_batch_puts() {
             "batch".to_string(),
         ),
         mode: TxMode::ReadOnly,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: fitz::domains::WritePolicy::Buffered,
     });
     let KvResponse::BeginOk { tx_id: tx } = b else {
         panic!("Begin failed");

@@ -30,7 +30,7 @@ fn u64_to_usize_saturating(value: u64) -> usize {
 impl Runtime {
     #[must_use]
     pub fn queue_messages_ready(&self) -> usize {
-        self.domains.read().as_ref().map_or_else(
+        self.domain_admins.read().as_ref().map_or_else(
             || {
                 self.admin_read_model
                     .queues(None)
@@ -38,13 +38,13 @@ impl Runtime {
                     .map(|queue| queue.messages_ready)
                     .sum()
             },
-            |domains| domains.queue_ready_message_count(),
+            DomainAdminPorts::queue_ready_message_count,
         )
     }
 
     #[must_use]
     pub fn queue_messages_delayed(&self) -> usize {
-        self.domains.read().as_ref().map_or_else(
+        self.domain_admins.read().as_ref().map_or_else(
             || {
                 self.admin_read_model
                     .queues(None)
@@ -52,15 +52,15 @@ impl Runtime {
                     .map(|queue| queue.messages_delayed)
                     .sum()
             },
-            |domains| domains.queue_delayed_message_count(),
+            DomainAdminPorts::queue_delayed_message_count,
         )
     }
 
     #[must_use]
     pub fn kv_transactions_active(&self) -> usize {
-        self.domains.read().as_ref().map_or_else(
+        self.domain_admins.read().as_ref().map_or_else(
             || self.admin_read_model.kv_transactions(None).len(),
-            |domains| domains.kv_active_transaction_count(),
+            DomainAdminPorts::kv_active_transaction_count,
         )
     }
 
@@ -111,7 +111,7 @@ impl Runtime {
 
     #[must_use]
     pub fn queue_messages_pending(&self) -> usize {
-        self.domains.read().as_ref().map_or_else(
+        self.domain_admins.read().as_ref().map_or_else(
             || {
                 self.admin_read_model
                     .queues(None)
@@ -119,13 +119,13 @@ impl Runtime {
                     .map(|queue| queue.messages_ready + queue.messages_delayed)
                     .sum()
             },
-            |domains| domains.queue_pending_message_count(),
+            DomainAdminPorts::queue_pending_message_count,
         )
     }
 
     #[must_use]
     pub fn queue_messages_dead_lettered(&self) -> usize {
-        self.domains.read().as_ref().map_or_else(
+        self.domain_admins.read().as_ref().map_or_else(
             || {
                 self.admin_read_model
                     .queues(None)
@@ -133,7 +133,7 @@ impl Runtime {
                     .map(|queue| queue.messages_dead_lettered)
                     .sum()
             },
-            |domains| domains.queue_dead_letter_count(),
+            DomainAdminPorts::queue_dead_letter_count,
         )
     }
 
@@ -199,9 +199,9 @@ impl Runtime {
 
     #[must_use]
     pub fn queue_inflight_active(&self) -> usize {
-        self.domains.read().as_ref().map_or_else(
+        self.domain_admins.read().as_ref().map_or_else(
             || self.admin_read_model.queue_inflight(None).len(),
-            |domains| domains.queue_active_inflight_count(),
+            DomainAdminPorts::queue_active_inflight_count,
         )
     }
 
@@ -259,17 +259,17 @@ impl Runtime {
 
     #[must_use]
     pub fn rpc_workers_registered(&self) -> usize {
-        self.domains.read().as_ref().map_or_else(
+        self.domain_admins.read().as_ref().map_or_else(
             || self.admin_read_model.rpc_workers(None).len(),
-            |domains| domains.rpc_worker_count(),
+            DomainAdminPorts::rpc_worker_count,
         )
     }
 
     #[must_use]
     pub fn rpc_requests_pending(&self) -> usize {
-        self.domains.read().as_ref().map_or_else(
+        self.domain_admins.read().as_ref().map_or_else(
             || self.rpc_pending_snapshot().len(),
-            |domains| domains.rpc_pending_request_count(),
+            DomainAdminPorts::rpc_pending_request_count,
         )
     }
 
@@ -307,23 +307,23 @@ impl Runtime {
 
     #[must_use]
     pub fn lease_active(&self) -> usize {
-        self.domains.read().as_ref().map_or_else(
+        self.domain_admins.read().as_ref().map_or_else(
             || self.admin_read_model.leases(None).len(),
-            |domains| domains.lease_count(),
+            DomainAdminPorts::lease_count,
         )
     }
 
     #[must_use]
     pub fn stream_active(&self) -> usize {
-        self.domains.read().as_ref().map_or_else(
+        self.domain_admins.read().as_ref().map_or_else(
             || self.admin_read_model.streams(None).len(),
-            |domains| domains.stream_count(),
+            DomainAdminPorts::stream_count,
         )
     }
 
     #[must_use]
     pub fn stream_append_sessions_active(&self) -> usize {
-        self.domains.read().as_ref().map_or_else(
+        self.domain_admins.read().as_ref().map_or_else(
             || {
                 self.admin_read_model
                     .streams(None)
@@ -331,7 +331,7 @@ impl Runtime {
                     .map(|stream| stream.sessions_active)
                     .sum()
             },
-            |domains| domains.stream_append_session_count(),
+            DomainAdminPorts::stream_append_session_count,
         )
     }
 
@@ -409,10 +409,10 @@ impl Runtime {
 
     #[must_use]
     pub fn stream_subscriptions_active(&self) -> usize {
-        self.domains
+        self.domain_admins
             .read()
             .as_ref()
-            .map_or(0, |domains| domains.stream_subscription_count())
+            .map_or(0, DomainAdminPorts::stream_subscription_count)
     }
 
     #[must_use]
@@ -646,42 +646,42 @@ impl Runtime {
 
     #[must_use]
     pub fn schedule_active(&self) -> usize {
-        self.domains.read().as_ref().map_or_else(
+        self.domain_admins.read().as_ref().map_or_else(
             || self.admin_read_model.schedules(None).len(),
-            |domains| domains.schedule_count(),
+            DomainAdminPorts::schedule_count,
         )
     }
 
     #[must_use]
     pub fn schedule_executions_per_minute(&self) -> f64 {
-        self.domains
+        self.domain_admins
             .read()
             .as_ref()
-            .map_or(0.0, |domains| domains.schedule_executions_per_minute())
+            .map_or(0.0, DomainAdminPorts::schedule_executions_per_minute)
     }
 
     #[must_use]
     pub fn schedule_subscriptions_active(&self) -> usize {
-        self.domains
+        self.domain_admins
             .read()
             .as_ref()
-            .map_or(0, |domains| domains.schedule_subscription_count())
+            .map_or(0, DomainAdminPorts::schedule_subscription_count)
     }
 
     #[must_use]
     pub fn schedule_pending_fire_claims(&self) -> usize {
-        self.domains
+        self.domain_admins
             .read()
             .as_ref()
-            .map_or(0, |domains| domains.schedule_pending_fire_count())
+            .map_or(0, DomainAdminPorts::schedule_pending_fire_count)
     }
 
     #[must_use]
     pub fn schedule_pending_ack_retries(&self) -> usize {
-        self.domains
+        self.domain_admins
             .read()
             .as_ref()
-            .map_or(0, |domains| domains.schedule_pending_ack_retry_count())
+            .map_or(0, DomainAdminPorts::schedule_pending_ack_retry_count)
     }
 
     #[must_use]
@@ -697,17 +697,17 @@ impl Runtime {
 
     #[must_use]
     pub fn schedule_oldest_pending_claim_age_seconds(&self) -> u64 {
-        self.domains.read().as_ref().map_or(0, |domains| {
+        self.domain_admins.read().as_ref().map_or(0, |domains| {
             domains.schedule_oldest_pending_claim_age_seconds()
         })
     }
 
     #[must_use]
     pub fn schedule_notify_failures(&self) -> u64 {
-        self.domains
+        self.domain_admins
             .read()
             .as_ref()
-            .map_or(0, |domains| domains.schedule_notify_failure_count())
+            .map_or(0, DomainAdminPorts::schedule_notify_failure_count)
     }
 
     #[must_use]
@@ -717,18 +717,18 @@ impl Runtime {
 
     #[must_use]
     pub fn schedule_ack_failures(&self) -> u64 {
-        self.domains
+        self.domain_admins
             .read()
             .as_ref()
-            .map_or(0, |domains| domains.schedule_ack_failure_count())
+            .map_or(0, DomainAdminPorts::schedule_ack_failure_count)
     }
 
     #[must_use]
     pub fn schedule_overdue_normalizations(&self) -> u64 {
-        self.domains
+        self.domain_admins
             .read()
             .as_ref()
-            .map_or(0, |domains| domains.schedule_overdue_normalization_count())
+            .map_or(0, DomainAdminPorts::schedule_overdue_normalization_count)
     }
 
     #[must_use]
@@ -746,3 +746,4 @@ impl Runtime {
         metric_counter(METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL)
     }
 }
+use crate::boot::domains::DomainAdminPorts;

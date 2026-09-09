@@ -2,9 +2,12 @@
 //! ownership mutation, and FIFO waiter queuing.
 
 use super::model::{
-    Duration, Instant, LeaseAcquireRequest, LeaseDomainRuntime, Ordering, PendingAcquire,
-    QueuedAcquireRequest, SinkLeaseState, Utc, LEASE_MAX_QUEUE_DEPTH, LEASE_MAX_WAIT_SECONDS,
+    LeaseAcquireRequest, LeaseFamilyRuntime, PendingAcquire, QueuedAcquireRequest, SinkLeaseState,
+    LEASE_MAX_QUEUE_DEPTH, LEASE_MAX_WAIT_SECONDS,
 };
+use chrono::Utc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 enum AcquireDecision {
     Respond(crate::domains::lease::protocol::LeaseResponse),
@@ -47,9 +50,9 @@ fn authorize_owned_lease(
     }
 }
 
-impl LeaseDomainRuntime<'_> {
+impl LeaseFamilyRuntime<'_> {
     pub(super) fn rollback_undeliverable_acquire(
-        &self,
+        &mut self,
         key: &crate::domains::lease::protocol::LeaseKey,
         session_id: u64,
         response: &crate::domains::lease::protocol::LeaseResponse,
@@ -59,7 +62,7 @@ impl LeaseDomainRuntime<'_> {
         match response {
             LeaseResponse::Acquired { fencing_token } => {
                 let removed = {
-                    let mut leases = self.core.leases.lock();
+                    let leases = &mut self.core.leases;
                     if leases.get(key).is_some_and(|state| {
                         state.owner_session_id == session_id
                             && state.fencing_token == *fencing_token
@@ -79,7 +82,7 @@ impl LeaseDomainRuntime<'_> {
             }
             LeaseResponse::Queued { fencing_token } => {
                 let removed = {
-                    let mut pending = self.core.pending_acquires.lock();
+                    let pending = &mut self.core.pending_acquires;
                     let mut removed = false;
                     let mut empty = false;
                     if let Some(waiters) = pending.get_mut(key) {
@@ -107,7 +110,7 @@ impl LeaseDomainRuntime<'_> {
     }
 
     fn apply_lease_effects(
-        &self,
+        &mut self,
         key: &crate::domains::lease::protocol::LeaseKey,
         now: Instant,
         effects: LeaseEffects,
@@ -127,9 +130,8 @@ impl LeaseDomainRuntime<'_> {
         }
     }
 
-    pub(super) fn next_fencing_token(&self) -> Option<u64> {
-        self.core
-            .next_token
+    pub(super) fn next_fencing_token(next_token: &AtomicU64) -> Option<u64> {
+        next_token
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
                 current.checked_add(1)
             })
@@ -137,7 +139,7 @@ impl LeaseDomainRuntime<'_> {
     }
 
     pub(super) fn handle_acquire(
-        &self,
+        &mut self,
         request: LeaseAcquireRequest,
     ) -> crate::domains::lease::protocol::LeaseResponse {
         use crate::domains::lease::protocol::LeaseResponse;
@@ -170,11 +172,11 @@ impl LeaseDomainRuntime<'_> {
 
         let mut acquired_state = None;
         let decision = {
-            let mut leases = self.core.leases.lock();
+            let leases = &mut self.core.leases;
 
             match leases.get(&key) {
                 None => {
-                    let Some(token) = self.next_fencing_token() else {
+                    let Some(token) = Self::next_fencing_token(&self.core.next_token) else {
                         return LeaseResponse::Error("fencing token space exhausted".to_string());
                     };
                     let state = SinkLeaseState {
@@ -240,12 +242,12 @@ impl LeaseDomainRuntime<'_> {
     }
 
     fn prepare_acquire_key(
-        &self,
+        &mut self,
         key: &crate::domains::lease::protocol::LeaseKey,
         now: Instant,
     ) -> bool {
         let (expired_state, lease_exists) = {
-            let mut leases = self.core.leases.lock();
+            let leases = &mut self.core.leases;
             match leases.get(key) {
                 Some(state) if state.expiry <= now => (leases.remove(key), false),
                 Some(_) => (None, true),
@@ -269,7 +271,7 @@ impl LeaseDomainRuntime<'_> {
     }
 
     fn queue_acquire_waiter(
-        &self,
+        &mut self,
         key: &crate::domains::lease::protocol::LeaseKey,
         request: QueuedAcquireRequest,
     ) -> crate::domains::lease::protocol::LeaseResponse {
@@ -292,7 +294,7 @@ impl LeaseDomainRuntime<'_> {
             return LeaseResponse::HeldByOther { current_owner };
         };
 
-        let mut pending_acquires = self.core.pending_acquires.lock();
+        let pending_acquires = &mut self.core.pending_acquires;
         if let Some(queue) = pending_acquires.get(key) {
             if let Some(existing) = queue.iter().find(|waiter| waiter.owner_id == owner_id) {
                 return LeaseResponse::AlreadyQueued {
@@ -307,7 +309,7 @@ impl LeaseDomainRuntime<'_> {
             }
         }
 
-        let Some(queued_token) = self.next_fencing_token() else {
+        let Some(queued_token) = Self::next_fencing_token(&self.core.next_token) else {
             return LeaseResponse::Error("fencing token space exhausted".to_string());
         };
         pending_acquires
@@ -324,7 +326,7 @@ impl LeaseDomainRuntime<'_> {
                 ttl_secs,
                 expires_at: now + Duration::from_secs(u64::from(wait_seconds)),
             });
-        drop(pending_acquires);
+        let _ = pending_acquires;
 
         self.track_session_waiter(owner_session_id, key, queued_token);
 
@@ -334,7 +336,7 @@ impl LeaseDomainRuntime<'_> {
     }
 
     pub(super) fn handle_extend(
-        &self,
+        &mut self,
         key: &crate::domains::lease::protocol::LeaseKey,
         owner_id: &str,
         fencing_token: u64,
@@ -351,7 +353,7 @@ impl LeaseDomainRuntime<'_> {
         let mut effects = LeaseEffects::default();
 
         let response = {
-            let mut leases = self.core.leases.lock();
+            let leases = &mut self.core.leases;
 
             match authorize_owned_lease(leases.get(key), owner_id, fencing_token, now) {
                 LeaseAuthorization::Missing | LeaseAuthorization::NotOwner => {
@@ -366,7 +368,7 @@ impl LeaseDomainRuntime<'_> {
                     LeaseResponse::Fenced { current_token }
                 }
                 LeaseAuthorization::Authorized => {
-                    let Some(new_token) = self.next_fencing_token() else {
+                    let Some(new_token) = Self::next_fencing_token(&self.core.next_token) else {
                         return LeaseResponse::Error("fencing token space exhausted".to_string());
                     };
                     if let Some(state) = leases.get_mut(key) {
@@ -389,7 +391,7 @@ impl LeaseDomainRuntime<'_> {
     }
 
     pub(super) fn handle_release(
-        &self,
+        &mut self,
         key: &crate::domains::lease::protocol::LeaseKey,
         owner_id: &str,
         fencing_token: u64,
@@ -400,7 +402,7 @@ impl LeaseDomainRuntime<'_> {
         let mut effects = LeaseEffects::default();
 
         let response = {
-            let mut leases = self.core.leases.lock();
+            let leases = &mut self.core.leases;
 
             match authorize_owned_lease(leases.get(key), owner_id, fencing_token, now) {
                 LeaseAuthorization::Missing => LeaseResponse::Released,
@@ -422,14 +424,14 @@ impl LeaseDomainRuntime<'_> {
     }
 
     pub(super) fn handle_query(
-        &self,
+        &mut self,
         key: &crate::domains::lease::protocol::LeaseKey,
     ) -> crate::domains::lease::protocol::LeaseResponse {
         use crate::domains::lease::protocol::LeaseResponse;
         use std::time::Instant;
 
         let now = Instant::now();
-        let leases = self.core.leases.lock();
+        let leases = &mut self.core.leases;
 
         match leases.get(key) {
             None => LeaseResponse::NotFound,

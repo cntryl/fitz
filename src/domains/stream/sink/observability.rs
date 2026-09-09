@@ -4,26 +4,27 @@
 //! Projection failure must never affect domain correctness.
 
 use super::model::{
-    u64_to_usize_saturating, AdminStreamReadRequest, Arc, BTreeMap, StreamAreaSnapshot,
-    StreamClientResponseBody, StreamDomainCore, StreamLiveCounts, StreamReadItem,
-    StreamRealmSnapshot,
+    u64_to_usize_saturating, AdminStreamReadRequest, StreamAreaSnapshot, StreamFamilyState,
+    StreamLiveCounts, StreamRealmSnapshot,
 };
+use crate::domains::stream::{StreamClientResponseBody, StreamReadItem};
+use std::collections::BTreeMap;
 
 type StreamAdminSnapshotMap =
     BTreeMap<(u64, String, String, String), crate::control::admin::StreamInfo>;
 type StreamRealmSnapshotMap = BTreeMap<String, StreamRealmSnapshot>;
 type StreamAreaSnapshotMap = BTreeMap<(String, String), StreamAreaSnapshot>;
 
-impl StreamDomainCore {
-    pub(in crate::domains::stream::sink) fn mark_admin_snapshot_dirty(&self) {
+impl StreamFamilyState {
+    pub(in crate::domains::stream::sink) fn mark_admin_snapshot_dirty(&mut self) {
         self.admin_snapshot.mark_dirty();
         self.refresh_metrics_gauges();
     }
 
-    pub(in crate::domains::stream::sink) fn refresh_metrics_gauges(&self) {
-        let counts = self.aggregate_live_counts();
+    pub(in crate::domains::stream::sink) fn refresh_metrics_gauges(&mut self) {
+        let counts = self.live_counts();
 
-        if let Some(metrics) = &self.metrics {
+        if let Some(metrics) = &mut self.metrics {
             metrics.set_stream_count(counts.streams);
             metrics.set_subscription_count(counts.subscriptions);
             metrics.set_append_session_count(counts.append_sessions);
@@ -40,16 +41,16 @@ impl StreamDomainCore {
         }
     }
 
-    pub(in crate::domains::stream::sink) fn counter_inc(&self, name: &str) {
-        if let Some(metrics) = &self.metrics {
+    pub(in crate::domains::stream::sink) fn counter_inc(&mut self, name: &str) {
+        if let Some(metrics) = &mut self.metrics {
             metrics.counter_inc(name);
         } else {
             crate::observability::counter_inc(name);
         }
     }
 
-    pub(in crate::domains::stream::sink) fn counter_add(&self, name: &str, amount: u64) {
-        if let Some(metrics) = &self.metrics {
+    pub(in crate::domains::stream::sink) fn counter_add(&mut self, name: &str, amount: u64) {
+        if let Some(metrics) = &mut self.metrics {
             metrics.counter_add(name, amount);
         } else {
             crate::observability::counter_add(name, amount);
@@ -65,7 +66,7 @@ impl StreamDomainCore {
         )
     }
 
-    pub(in crate::domains::stream::sink) fn refresh_admin_snapshot_if_dirty(&self) {
+    pub(in crate::domains::stream::sink) fn refresh_admin_snapshot_if_dirty(&mut self) {
         if self.admin_snapshot.take_dirty() {
             self.sync_admin_snapshot();
         }
@@ -76,7 +77,7 @@ impl StreamDomainCore {
     /// Returns an error if the requested route cannot be read or if the stream
     /// store rejects the read parameters.
     pub(in crate::domains::stream::sink) fn admin_read_resource_records(
-        &self,
+        &mut self,
         request: AdminStreamReadRequest<'_>,
     ) -> Result<
         (
@@ -107,7 +108,7 @@ impl StreamDomainCore {
             .read_resource_with_filter(&params, filter.as_ref())
     }
 
-    pub(in crate::domains::stream::sink) fn sync_admin_snapshot(&self) {
+    pub(in crate::domains::stream::sink) fn sync_admin_snapshot(&mut self) {
         if let Err(error) = self.try_sync_admin_snapshot() {
             self.admin_snapshot.mark_dirty();
             self.counter_inc(
@@ -121,12 +122,12 @@ impl StreamDomainCore {
         }
     }
 
-    fn try_sync_admin_snapshot(&self) -> Result<(), String> {
+    fn try_sync_admin_snapshot(&mut self) -> Result<(), String> {
         let (mut streams, realm_snapshots, area_snapshots, committed_events_total) =
             self.collect_committed_stream_snapshots()?;
         let stream_realm_watermarks = self.collect_stream_realm_watermarks(realm_snapshots)?;
         let stream_area_watermarks = self.collect_stream_area_watermarks(area_snapshots)?;
-        self.overlay_live_actor_snapshots(&mut streams);
+        self.overlay_live_actor_snapshots_from(&mut streams);
         self.publish_admin_snapshot(
             streams,
             stream_realm_watermarks,
@@ -137,7 +138,7 @@ impl StreamDomainCore {
     }
 
     fn collect_committed_stream_snapshots(
-        &self,
+        &mut self,
     ) -> Result<
         (
             StreamAdminSnapshotMap,
@@ -152,12 +153,8 @@ impl StreamDomainCore {
         let mut area_snapshots: StreamAreaSnapshotMap = BTreeMap::new();
         let mut committed_events_total = 0usize;
 
-        let families = self
-            .store
-            .list_column_families()
-            .map_err(|error| error.to_string())?;
-        for family in families {
-            let family_id = u64::from(family.id());
+        let families = self.stream_store.column_family_ids()?;
+        for family_id in families {
             let records = self.stream_store.list_resource_metadata(family_id)?;
             for crate::domains::stream::store::StreamAdminRecord {
                 realm,
@@ -208,7 +205,7 @@ impl StreamDomainCore {
     }
 
     fn collect_stream_realm_watermarks(
-        &self,
+        &mut self,
         realm_snapshots: StreamRealmSnapshotMap,
     ) -> Result<Vec<crate::control::admin::StreamRealmWatermarkDetail>, String> {
         realm_snapshots
@@ -239,7 +236,7 @@ impl StreamDomainCore {
     }
 
     fn collect_stream_area_watermarks(
-        &self,
+        &mut self,
         area_snapshots: StreamAreaSnapshotMap,
     ) -> Result<Vec<crate::control::admin::StreamAreaWatermarkDetail>, String> {
         area_snapshots
@@ -269,22 +266,8 @@ impl StreamDomainCore {
             .collect()
     }
 
-    fn overlay_live_actor_snapshots(&self, streams: &mut StreamAdminSnapshotMap) {
-        let family_cores = self.registered_family_cores();
-        if family_cores.is_empty() {
-            self.overlay_live_actor_snapshots_from(streams);
-            return;
-        }
-
-        for family_core in family_cores {
-            family_core.overlay_live_actor_snapshots_from(streams);
-        }
-    }
-
-    fn overlay_live_actor_snapshots_from(&self, streams: &mut StreamAdminSnapshotMap) {
-        let actors = self.actors.lock();
-        for (key, actor) in actors.iter() {
-            let actor = actor.lock();
+    fn overlay_live_actor_snapshots_from(&mut self, streams: &mut StreamAdminSnapshotMap) {
+        for (key, actor) in &mut self.actors {
             let last_offset = actor
                 .metadata()
                 .ok()
@@ -323,7 +306,7 @@ impl StreamDomainCore {
     }
 
     fn publish_admin_snapshot(
-        &self,
+        &mut self,
         streams: StreamAdminSnapshotMap,
         stream_realm_watermarks: Vec<crate::control::admin::StreamRealmWatermarkDetail>,
         stream_area_watermarks: Vec<crate::control::admin::StreamAreaWatermarkDetail>,
@@ -348,51 +331,18 @@ impl StreamDomainCore {
             .replace_stream_events_total(committed_events_total);
     }
 
-    pub(in crate::domains::stream::sink) fn live_counts(&self) -> StreamLiveCounts {
+    pub(in crate::domains::stream::sink) fn live_counts(&mut self) -> StreamLiveCounts {
         let subscriptions = self
             .subscriptions
             .families
-            .lock()
             .values()
             .map(crate::domains::subscription_state::RoutedSubscriptionSet::subscription_count)
             .sum();
 
         StreamLiveCounts {
-            streams: self.actors.lock().len(),
-            append_sessions: self.session_owners.lock().len(),
+            streams: self.actors.len(),
+            append_sessions: self.session_owners.len(),
             subscriptions,
         }
-    }
-
-    fn registered_family_cores(&self) -> Vec<Arc<StreamDomainCore>> {
-        let mut family_cores = self.family_cores.lock();
-        let mut live = Vec::with_capacity(family_cores.len());
-        family_cores.retain(|_, weak| {
-            if let Some(core) = weak.upgrade() {
-                live.push(core);
-                true
-            } else {
-                false
-            }
-        });
-        live
-    }
-
-    fn aggregate_live_counts(&self) -> StreamLiveCounts {
-        let family_cores = self.registered_family_cores();
-        if family_cores.is_empty() {
-            return self.live_counts();
-        }
-
-        family_cores
-            .into_iter()
-            .fold(StreamLiveCounts::default(), |mut total, family_core| {
-                let counts = family_core.live_counts();
-                total.streams = total.streams.saturating_add(counts.streams);
-                total.append_sessions =
-                    total.append_sessions.saturating_add(counts.append_sessions);
-                total.subscriptions = total.subscriptions.saturating_add(counts.subscriptions);
-                total
-            })
     }
 }

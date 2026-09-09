@@ -58,7 +58,7 @@ Layer 5: STORAGE (Persistent Backend)
 **Transport and runtime ingress are async edge code.** For each connection:
 1. Async task reads frames
 2. Parses frame bytes
-3. Calls `RuntimeIngress`, which owns async edge orchestration such as auth setup, cleanup retries, and bounded mailbox-backpressure waits
+3. Calls `RuntimeIngress`, whose owned session registry, authenticator, cleanup coordinator, and domain dispatcher isolate async edge orchestration such as auth setup, cleanup retries, and bounded mailbox-backpressure waits
 4. Dispatches into synchronous runtime/domain handlers
 5. Encodes response
 6. Writes frame back
@@ -223,9 +223,9 @@ Rebuilding state after reconnect must be fast and deterministic. Fitz must keep 
 **Responsibility:** Message routing, subscription indexing, actor scheduling.
 **Components:**
 #### Router
-Current routing uses exact-address dispatch plus domain-owned subscription indexes. The bullets below are conceptual only; for Notice, the authoritative live state is the broker-local in-memory index owned by `NoticeDomainActor` and `NoticeDomainCore`, which is cleared on disconnect or broker restart.
+Current routing uses exact-address dispatch plus domain-owned subscription indexes. The bullets below are conceptual only; for Notice, the authoritative live state is the broker-local in-memory index owned directly by each `NoticeFamilyState`, which is cleared on disconnect or broker restart.
 - **Subscriptions:** `{realm} → {area} → {resource} → [subscribers]`
-- **Pattern matching:** `NoticeDomainActor` matches wildcard subscriptions from its in-memory index
+- **Pattern matching:** `NoticeFamilyState` matches wildcard subscriptions from its in-memory index
 - **Fanout:** Single publish reaches all currently connected matching subscriptions
 - **Ordering:** Publish order is preserved per subscriber within the running broker process
 #### Actor Mailbox
@@ -241,9 +241,9 @@ shard. The transport/router edge only enqueues work:
   a worker.
 #### Broker domain composition
 See [runtime and storage boundaries](runtime-storage-boundaries.md) for delivery error contracts, optional mailbox priority, KV write policy, and Queue recovery ownership.
-`BrokerDomains` is the boot composition root for the concrete domain sinks and keeps those fields private. Background maintenance consumes the narrow `DomainMaintenance` port and health monitoring consumes `DomainHealth`; metrics and admin query code use explicit ports or `Runtime::*` facade methods so concrete sink internals do not become a mutable service-locator API.
+`BrokerDomains` is crate-private boot composition over the seven concrete domain endpoints. Boot extracts cloneable synchronous `MaintenanceJob` values for Queue, RPC, Lease, Schedule, and Stream before the API starts their edge-owned timers. Readiness consumes per-domain family-health snapshots and fails only when a domain has no usable family. Metrics and admin queries use narrow `Runtime::*` facades; concrete endpoints are not public integration surfaces.
 There is no active `runtime::Scheduler` API. The legacy scheduler module is
-test-only while managed domain actors are migrated to family-owned workers.
+test-only; every production domain runs on family-owned workers.
 #### Ingress
 API-edge session management:
 - Maintains per-connection session state
@@ -261,30 +261,30 @@ API-edge session management:
 
 Use [domain-boundaries-spec.md](domain-boundaries-spec.md) as the authoritative boundary contract when deciding whether behavior belongs in a domain at all. This architecture guide explains where domains live in the system; the boundary specification explains what each domain is allowed to own.
 
-**Pattern (Synchronous Actor Model):**
+**Pattern (Synchronous Family State):**
 ```rust
-pub struct DomainActor { /* state */ }
-pub enum DomainMessage {
+pub(crate) struct XFamilyState { /* ordinary mutable state */ }
+pub(crate) enum XCommand {
     Operation1 { fields... },
     Operation2 { fields... },
 }
-pub enum DomainResponse {
+pub(crate) enum XOutcome {
     Ok { result_fields... },
     Error(String),
 }
-impl DomainActor {
-    pub fn handle(&mut self, msg: DomainMessage) -> DomainResponse {
-        match msg {
-            DomainMessage::Operation1 { ... } => { /* sync logic */ },
-            DomainMessage::Operation2 { ... } => { /* sync logic */ },
+impl XFamilyState {
+    pub(crate) fn handle(&mut self, command: XCommand) -> XOutcome {
+        match command {
+            XCommand::Operation1 { ... } => { /* sync logic */ },
+            XCommand::Operation2 { ... } => { /* sync logic */ },
         }
     }
 }
 ```
 **Per-domain files:**
-- `src/domains/{domain}/mod.rs` - Actor, message/response enums
+- `src/domains/{domain}/sink/` - crate-private endpoint, commands, family state, outcomes, and admin port
 - `src/protocol/{domain}_codec.rs` - TLV encode/decode
-- `src/domains/{domain}/handlers.rs` - Business logic (transactions, leases, etc.)
+- `src/domains/{domain}/store/` - the sole durable-storage adapter when the domain is durable
 **Constraints:**
 - NEVER call `.await`
 - NEVER use tokio types (tokio::spawn, tokio::sync, etc.)
@@ -536,7 +536,7 @@ pub fn encode_response(response: &KvResponse) -> Vec<u8> {
 **Current files:** `src/domains/notice/sink.rs`, `src/domains/notice/mod.rs`
 
 Current Notice behavior is intentionally ephemeral:
-- `NoticeDomainSink` keeps subscription indexes entirely in memory for the current broker process
+- `NoticeDomain` keeps subscription indexes entirely in memory for the current broker process
 - Subscriptions are session-scoped and are removed on disconnect cleanup
 - Broker restart clears all Notice subscriptions; clients must re-subscribe
 - Admin views describe only current in-memory subscriptions and route counters
@@ -547,59 +547,59 @@ Current Notice behavior is intentionally ephemeral:
 - Domain actor ingress mailboxes are bounded burst buffers. Each family actor uses a 16,384-message normal lane by default plus a separately bounded control lane, and the async transport ingress edge briefly retries domain dispatch when the normal lane is temporarily full. Sustained saturation still returns explicit session backpressure instead of unbounded buffering or hidden delivery guarantees. Ingress metrics separate retry attempts, frames accepted after retry, exhausted retry budgets, and wait latency.
 
 #### KV
-- Actor owner: `KvDomainSink` is a thin mailbox adapter over a `FamilyActorPoolRuntime`; each provisioned family creates and serially owns its KV session state, locks, watches, cleanup guards, and admin projection updates.
+- Actor owner: `KvDomain` is a thin mailbox adapter over a `FamilyActorPoolRuntime`; each provisioned family creates and serially owns its KV session state, locks, watches, cleanup guards, and admin projection updates.
 - Persistence: committed values are durable according to the selected write policy; open transactions and watcher state are ephemeral.
-- Cleanup: disconnect cleanup is enqueued to the KV actor mailbox, which rolls back live transactions, releases session-owned locks, and drops subscriptions without implying transaction recovery.
+- Cleanup: disconnect cleanup is enqueued on the KV family control lane, which rolls back live transactions, releases session-owned locks, and drops subscriptions without implying transaction recovery.
 - `RouteFamily`/`realm`: committed rows stay partitioned by exact `RouteFamily`; `realm` remains an opaque route label and is never inferred from the family.
-- Admin path: live transaction views flow through the actor-maintained `AdminReadModel`, and live transaction counts use a command/reply read to `KvDomainActor`; committed value and inventory reads go through `Runtime::kv_*` query facades.
+- Admin path: passive transaction views flow through the family-published `AdminReadModel`; exact live counts and committed value/inventory reads use family-targeted command/reply queries behind the KV admin facade.
 
 #### Queue
-- Actor owner: `QueueDomainSink` is a thin mailbox adapter over a `FamilyActorPoolRuntime`; each family worker owns its `QueueDomainActor` and serializes delivery, cleanup, sweeps, admin mutations, watch state, and projections. `QueueActor` owns live reservation state, retry bookkeeping, and durable dead-letter mutations for one queue resource.
+- Actor owner: `QueueDomain` is a thin mailbox adapter over a `FamilyActorPoolRuntime`; each family worker directly owns one `QueueFamilyState`, serializing delivery, cleanup, sweeps, admin mutations, watch state, projections, reservation state, retry bookkeeping, and durable dead-letter transitions.
 - Persistence: durable backlog and dead-letter records live in storage; inflight reservations, watch subscriptions, and fast-flush state are ephemeral.
-- Cleanup: disconnect cleanup is enqueued to the Queue actor mailbox, which clears worker reservations and watch state without implying durable ownership continuity or hidden worker recovery.
+- Cleanup: disconnect cleanup is enqueued on the Queue family control lane, which clears worker reservations and watch state without implying durable ownership continuity or hidden worker recovery.
 - `RouteFamily`/`realm`: queue data is isolated by exact `RouteFamily`, while `realm` remains an application-defined namespace inside the queue route.
-- Admin path: live queue snapshots flow through `Runtime::queue_list_*` and the actor-maintained `AdminReadModel`; dead-letter replay and purge use explicit `Runtime::queue_*_dead_letter` command/reply messages through the actor mailbox.
+- Admin path: live queue snapshots flow through `Runtime::queue_list_*` and the family-published `AdminReadModel`; dead-letter replay and purge use explicit family-targeted commands behind the Queue admin facade.
 
 #### Notice
-- Actor owner: `NoticeDomainSink` dispatches through a `FamilyActorPoolRuntime`; each family worker owns its subscriptions, cleanup guards, route counters, fanout coordination, live counts, and admin snapshot updates. `NoticeRouteActor` remains a focused matching/fanout state-machine model.
+- Actor owner: `NoticeDomain` dispatches through a `FamilyActorPoolRuntime`; each family worker owns its subscriptions, cleanup guards, route counters, fanout coordination, live counts, and admin snapshot updates. `NoticeRouteActor` remains a focused matching/fanout state-machine model.
 - Persistence: Notice delivery, subscriptions, and counters are ephemeral only; there is no durable replay or broker-side subscriber recovery.
 - Cleanup: disconnect removes session subscriptions immediately, and broker restart starts from an empty Notice state.
 - `RouteFamily`/`realm`: fanout matches only within the exact `RouteFamily`; `realm` stays an opaque route segment used for filtering and admin presentation.
 - Admin path: admin reads use `Runtime::notice_list_subscriptions()` and `Runtime::notice_list_routes()` backed by the passive `AdminReadModel`.
 
 #### Stream
-- Actor owner: `StreamDomainSink` owns a `FamilyActorPoolRuntime`; every provisioned route family creates its `StreamDomainCore` on the owning worker, and both client and control commands execute serially through that family. `StreamActor`, `AreaActor`, and `RealmActor` remain focused state-machine models for resource, area, and realm sequencing, while committed history and recovery remain store-authoritative.
-- Current runtime boundary: `StreamDomainSink` is the direct delivery adapter for client Stream frames, and `StreamDomainRuntime` executes against `StreamDomainCore` for actor-owned control and admin commands.
+- Actor owner: `StreamDomain` owns a `FamilyActorPoolRuntime`; every provisioned route family creates its `StreamFamilyState` on the owning worker, and both client and control commands execute serially through that family. Resource, area, and realm sequencing state is held directly by that family while committed history and recovery remain `StreamStore` authoritative.
+- Current runtime boundary: `StreamDomain` is the crate-private delivery adapter for client Stream frames and family-targeted control/admin commands.
 - Persistence: committed records, metadata, and watermarks are durable; live append sessions and subscriptions are ephemeral.
 - Cleanup: disconnect aborts append sessions and drops live subscriptions without restoring them on reconnect.
 - `RouteFamily`/`realm`: committed history is partitioned by exact `RouteFamily`, while realm and area indexes stay explicit storage keys rather than family aliases.
 - Admin path: read-model projections and watermark views flow through `Runtime::stream_list_*`; committed record inspection uses `Runtime::stream_read_resource_records()`.
 
 #### RPC
-- Actor owner: `RpcDomainSink` dispatches normal and control work through a `FamilyActorPoolRuntime`; each family worker serializes registrations, pending calls, response assembly, timeout sweeps, cleanup, live counts, and admin snapshot updates.
-- Current runtime boundary: `RpcDomainRuntime` operates only on the state supplied to its owning family worker. Per-concrete-route dispatch and fairness state is removed once that route has no queued or pending call, even while a wildcard registration remains live. Broker-wide admission remains an explicit shared capacity component.
+- Actor owner: `RpcDomain` dispatches normal and control work through a `FamilyActorPoolRuntime`; each family worker serializes registrations, pending calls, response assembly, timeout sweeps, cleanup, live counts, and admin snapshot updates.
+- Current runtime boundary: RPC commands operate only on the `RpcFamilyState` supplied to the owning family worker. Per-concrete-route dispatch and fairness state is removed once that route has no queued or pending call, even while a wildcard registration remains live. Broker-wide admission remains an explicit shared capacity component.
 - Persistence: worker registrations, pending calls, and reply assembly are ephemeral; RPC does not provide restart-safe backlog durability.
 - Cleanup: disconnect unregisters workers, expires pending session state, and never restores inflight calls or subscriptions.
 - `RouteFamily`/`realm`: dispatch and replies stay within the exact `RouteFamily`; `realm` remains an application-defined route component for operation naming and filters.
 - Admin path: worker and pending-call views flow through `Runtime::rpc_list_workers()` and `Runtime::rpc_list_pending()` backed by the read model.
 
 #### Lease
-- Actor owner: `LeaseDomainSink` dispatches through a `FamilyActorPoolRuntime`; each family worker serializes delivery, cleanup, expiry sweeps, ownership, waiters, subscriptions, and fencing-token progression inside one running broker.
-- Current runtime boundary: `LeaseDomainRuntime` executes against the state created for its owning family. The shared list-snapshot coordinator bounds broker-wide observation memory without owning lease mechanics.
+- Actor owner: `LeaseDomain` dispatches through a `FamilyActorPoolRuntime`; each family worker serializes delivery, cleanup, expiry sweeps, ownership, waiters, subscriptions, and fencing-token progression inside one running broker.
+- Current runtime boundary: Lease commands execute against the `LeaseFamilyState` created for the owning family. The shared list-snapshot coordinator bounds broker-wide observation memory without owning lease mechanics.
 - Persistence: leases, waiters, and fencing tokens are ephemeral broker-local coordination state only; there is no durable lease history or restart recovery.
 - Cleanup: disconnect releases session-owned leases, clears waiters, and never implies cross-restart ownership continuity.
 - `RouteFamily`/`realm`: lease coordination is isolated by exact `RouteFamily`; `realm` stays an opaque application namespace carried by the route, not a family synonym.
-- Admin path: lease snapshots flow through `AdminReadModel`; live counts use command/reply reads to `LeaseDomainActor`, and waiter inspection uses `Runtime::lease_list_waiters()` to send a command/reply read through the actor.
+- Admin path: lease snapshots flow through `AdminReadModel`; exact live counts and waiter inspection use family-targeted command/reply reads behind the lease admin facade.
 
 #### Schedule
-- Actor owner: `ScheduleDomainSink` dispatches through a `FamilyActorPoolRuntime`; each family worker owns its `ScheduleActor` definitions projection, watches, pending acknowledgement retries, execution counters, cleanup state, due scans, and admin snapshot refresh.
-- Current runtime boundary: `ScheduleDomainRuntime` executes against the state created for its owning family, while durable claims remain authoritative in `ScheduleStore`.
+- Actor owner: `ScheduleDomain` dispatches through a `FamilyActorPoolRuntime`; each family worker owns its `ScheduleFamilyState` definitions projection, watches, pending acknowledgement retries, execution counters, cleanup state, due scans, and admin snapshot refresh.
+- Current runtime boundary: client and control commands execute against the state created for their owning family, while durable claims remain authoritative in `ScheduleStore`.
 - Current scaling ceiling: work within one route family is deliberately serialized. A priority due-scan performs synchronous claim and acknowledgement commits for that family, so strict cloud durability or degraded provider latency can delay Create, List, and Cancel traffic in the same family without blocking sibling families.
 - Persistence: schedule definitions, next-fire state, and pending claims are durable timing intent; subscriber watches and transient handoff coordination are ephemeral.
 - Cleanup: disconnect removes live watches but does not erase persisted schedule intent or imply replay of every missed interval after downtime.
 - Delivery boundary: `broadcast` attempts every matching live registration; `single` uses registration order and a per-concrete-route ephemeral round-robin cursor until one router handoff succeeds. A cursor is discarded when no live registration still matches its concrete route. Strict `*` and `**` registration patterns never cross RouteFamily boundaries. Zero accepted handoffs still acknowledge the pending claim and advance, because Schedule owns timing rather than durable consumer availability.
 - `RouteFamily`/`realm`: schedules stay partitioned by exact `RouteFamily`, while `realm` remains an application-defined route label that is never derived from the family.
-- Admin path: schedule projections flow through `Runtime::schedule_list_schedules()` after actor-owned snapshot refresh; live counters and pending claim inspection use command/reply reads to `ScheduleDomainActor`.
+- Admin path: schedule projections flow through the passive read model after family-owned snapshot publication; exact counters and pending-claim inspection use family-targeted command/reply reads behind the schedule admin facade.
 
 **Historical sketch (outdated shape, not the current implementation):**
 ```rust

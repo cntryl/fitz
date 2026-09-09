@@ -1,11 +1,11 @@
 //! KV metrics, latency, and admin-projection updates.
 
 use super::locks::KvResourceLockKey;
-use super::state::{KvAdminTransactionUpdate, KvDomainRuntime};
+use super::state::{KvAdminTransactionUpdate, KvFamilyRuntime};
 #[cfg(test)]
 use chrono::Utc;
 
-impl KvDomainRuntime<'_> {
+impl KvFamilyRuntime<'_> {
     pub(super) fn counter_inc(&self, name: &str) {
         if let Some(metrics) = &self.core.metrics {
             metrics.counter_inc(name);

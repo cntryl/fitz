@@ -10,10 +10,11 @@ use fitz::benchkit::{
     build_queue_complete, build_queue_dequeue, build_queue_enqueue, create_local_bench_store,
     create_write_heavy_bench_store, shared_bench_runtime,
 };
-use fitz::domains::queue::{QueueActor, QueueKey, QueueMessage, QueueResponse};
+use fitz::domains::queue::{QueueKey, QueueMessage, QueueResponse};
 use fitz::protocol::error_codes::decode_error_body;
 use fitz::protocol::queue_codec::parse_request as parse_queue_request;
 use fitz::runtime::routing::RouteFamily;
+use fitz::testkit::domain_internals::queue::QueueActor;
 use fitz::testkit::{TestClient, TestServer, TestWebSocketClient, TlvFrameParser};
 use futures_util::future::join_all;
 use std::time::Instant;
@@ -37,10 +38,10 @@ impl QueueWriteMode {
         }
     }
 
-    fn options(self) -> cntryl_midge::WriteOptions {
+    fn policy(self) -> fitz::domains::WritePolicy {
         match self {
-            Self::Sync => cntryl_midge::WriteOptions::sync(),
-            Self::Buffered => cntryl_midge::WriteOptions::buffered(),
+            Self::Sync => fitz::domains::WritePolicy::Sync,
+            Self::Buffered => fitz::domains::WritePolicy::Buffered,
         }
     }
 }
@@ -97,13 +98,13 @@ impl QueueActorFixture {
             area: "work".to_string(),
             resource: "main".to_string(),
         };
-        let actor = QueueActor::new_with_write_options(
+        let actor = QueueActor::new_with_write_policy(
             family,
             key,
             store,
             None,
             fitz::utils::idempotency::default_dedup_store(),
-            write_mode.options(),
+            write_mode.policy(),
         );
         Self {
             actor,

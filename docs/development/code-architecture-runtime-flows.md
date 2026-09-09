@@ -81,7 +81,7 @@ flowchart TB
     RETRY["retry pending cleanup tickets"]
     FAMILY["read session route_family"]
     CLEANUP["SessionCleanup { session_id }"]
-    ORDER["DomainRegistry::cleanup_order"]
+    ORDER["DomainKind::SESSION_CLEANUP_ORDER"]
     ROUTER["Router route cleanup envelope"]
     DOMAINS["domain cleanup handlers"]
     FAILURE["store PendingSessionCleanup"]

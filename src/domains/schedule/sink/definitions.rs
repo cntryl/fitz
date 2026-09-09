@@ -163,13 +163,11 @@ impl ScheduleDomainRuntime<'_> {
         actor: &'a mut Option<crate::domains::schedule::ScheduleActor>,
     ) -> Result<&'a mut crate::domains::schedule::ScheduleActor, String> {
         if actor.is_none() {
-            *actor = Some(
-                crate::domains::schedule::ScheduleActor::try_new_with_storage(
-                    self.core.route_family,
-                    self.core.store.clone(),
-                    self.core.write_policy,
-                )?,
-            );
+            *actor = Some(crate::domains::schedule::ScheduleActor::try_new(
+                self.core.route_family,
+                self.core.store.clone(),
+                self.core.write_policy,
+            )?);
         }
         Ok(actor.as_mut().expect("Schedule actor was initialized"))
     }
@@ -180,24 +178,19 @@ impl ScheduleDomainRuntime<'_> {
     /// schedule actor fails.
     pub(super) fn preload_persisted_families(&mut self) -> Result<(), String> {
         let started_at = std::time::Instant::now();
-        let column_families = self
+        let family = self.core.route_family;
+        let persisted = self
             .core
             .store
-            .list_column_families()
-            .map_err(|e| format!("list schedule column families failed: {e}"))?;
-        let family = self.core.route_family;
-        let persisted = column_families
-            .iter()
-            .any(|column_family| column_family.id() == family.id());
+            .has_family(family)
+            .map_err(|error| error.to_string())?;
         let actor = &mut self.core.actor;
         if persisted && actor.is_none() {
-            *actor = Some(
-                crate::domains::schedule::ScheduleActor::try_new_with_storage(
-                    family,
-                    self.core.store.clone(),
-                    self.core.write_policy,
-                )?,
-            );
+            *actor = Some(crate::domains::schedule::ScheduleActor::try_new(
+                family,
+                self.core.store.clone(),
+                self.core.write_policy,
+            )?);
         }
 
         // Seed the rolling-window acknowledgement counter from persisted

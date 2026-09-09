@@ -265,7 +265,7 @@ mod tests {
             release: release_rx,
             block_once: AtomicBool::new(true),
         });
-        for domain in crate::runtime::DomainRegistry::cleanup_order() {
+        for domain in &crate::runtime::DomainKind::SESSION_CLEANUP_ORDER {
             router.register_domain_pattern(domain.as_str(), blocking_sink.clone());
         }
         let ingress = Arc::new(

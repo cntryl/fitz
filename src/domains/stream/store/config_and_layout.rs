@@ -14,6 +14,47 @@ fn u64_to_u32_saturating(value: u64) -> u32 {
 }
 
 impl StreamStore {
+    pub(crate) fn column_family_ids(&self) -> Result<Vec<u64>, String> {
+        self.db
+            .list_column_families()
+            .map(|families| {
+                families
+                    .into_iter()
+                    .map(|family| u64::from(family.id()))
+                    .collect()
+            })
+            .map_err(|error| error.to_string())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn delete_compact_resource_page_for_tests(
+        &self,
+        family: u64,
+        realm: &str,
+        area: &str,
+        resource: &str,
+        page_start_offset: u64,
+    ) -> Result<(), String> {
+        let family = u32::try_from(family).map_err(|_| "invalid route family".to_string())?;
+        let mut transaction = self
+            .db
+            .begin_tx(family, cntryl_midge::TransactionMode::ReadWrite)
+            .map_err(|error| error.to_string())?;
+        transaction
+            .delete(
+                crate::domains::stream::storage::encode_compact_resource_page_key(
+                    realm,
+                    area,
+                    resource,
+                    page_start_offset,
+                ),
+            )
+            .map_err(|error| error.to_string())?;
+        transaction
+            .commit(cntryl_midge::WriteOptions::sync())
+            .map_err(|error| error.to_string())
+    }
+
     pub fn new(db: Arc<cntryl_midge::Engine>) -> Self {
         Self::new_with_storage(crate::storage::FitzStorageEngine::new(db))
     }
@@ -115,11 +156,14 @@ impl StreamStore {
             buffered_write_options: cntryl_midge::WriteOptions::buffered(),
             limits,
             layout,
+            #[cfg(test)]
             sessions: Arc::new(Mutex::new(HashMap::new())),
             ttl,
             clock: Arc::new(crate::runtime::clock::SystemClock),
+            #[cfg(test)]
             next_session_id: std::sync::atomic::AtomicU64::new(1),
             sequencing_guards: Arc::new(Mutex::new(HashMap::new())),
+            #[cfg(test)]
             realm_sequence_states: Arc::new(Mutex::new(HashMap::new())),
             resource_meta_states: Arc::new(Mutex::new(HashMap::new())),
             family_sequence_guards: Arc::new(Mutex::new(HashMap::new())),

@@ -118,13 +118,13 @@ pub(super) fn new_queue_domain_sink(
     store: Arc<cntryl_midge::Engine>,
     router: Arc<Router>,
     admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
-    queue_write_options: cntryl_midge::WriteOptions,
-) -> QueueDomainSink {
-    QueueDomainSink::new(
+    queue_write_policy: crate::domains::WritePolicy,
+) -> QueueDomain {
+    QueueDomain::new(
         store,
         router,
         admin_read_model,
-        queue_write_options.into(),
+        queue_write_policy,
         crate::utils::idempotency::default_dedup_store(),
     )
 }
@@ -207,7 +207,7 @@ struct QueueWatchHarness {
     watcher_mailbox: Arc<Mailbox>,
     sender_mailbox: Arc<Mailbox>,
     worker_mailbox: Arc<Mailbox>,
-    sink: QueueDomainSink,
+    sink: QueueDomain,
 }
 
 impl QueueWatchHarness {
@@ -230,7 +230,7 @@ impl QueueWatchHarness {
             store,
             router,
             admin_read_model,
-            cntryl_midge::WriteOptions::best_effort(),
+            crate::domains::WritePolicy::BestEffort,
         );
 
         Self {
@@ -348,7 +348,7 @@ impl QueueWatchHarness {
     }
 }
 
-pub(super) fn force_actor_idle(sink: &QueueDomainSink, queue_route: &str, family: RouteFamily) {
+pub(super) fn force_actor_idle(sink: &QueueDomain, queue_route: &str, family: RouteFamily) {
     sink.force_actor_idle_for_tests(family, queue_route);
 }
 

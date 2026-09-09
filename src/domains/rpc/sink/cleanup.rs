@@ -8,21 +8,23 @@
 
 use super::response_forwarder::RpcResponseForwarder;
 use super::state_model::{
-    Envelope, RouteAddress, RpcDomainRuntime, RpcPendingErrorDelivery, RpcSessionCleanupResult,
-    RpcWorkerCleanupResult, RPC_WORKER_NOT_FOUND_ERROR,
+    RpcFamilyRuntime, RpcPendingErrorDelivery, RpcSessionCleanupResult, RpcWorkerCleanupResult,
+    RPC_WORKER_NOT_FOUND_ERROR,
 };
+use crate::runtime::routing::RouteAddress;
+use crate::runtime::Envelope;
 
-impl RpcDomainRuntime<'_> {
-    pub(super) fn is_cleaned_up_session(&self, session_id: u64) -> bool {
-        self.cleaned_up_sessions.lock().contains(session_id)
+impl RpcFamilyRuntime<'_> {
+    pub(super) fn is_cleaned_up_session(&mut self, session_id: u64) -> bool {
+        self.core.cleaned_up_sessions.contains(session_id)
     }
 
-    pub(super) fn handle_cleanup_envelope(&self, envelope: &Envelope) -> bool {
+    pub(super) fn handle_cleanup_envelope(&mut self, envelope: &Envelope) -> bool {
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
             // Mark first so an older normal-lane request that cleanup jumped
             // over cannot recreate a worker registration or pending request
             // for this session below.
-            self.cleaned_up_sessions.lock().mark(cleanup.session_id);
+            self.core.cleaned_up_sessions.mark(cleanup.session_id);
             let cleanup_result = self.apply_session_cleanup(cleanup.session_id);
             self.forward_worker_disconnect_errors(cleanup_result.disconnect_deliveries);
             return true;
@@ -31,9 +33,9 @@ impl RpcDomainRuntime<'_> {
         false
     }
 
-    pub(super) fn apply_session_cleanup(&self, session_id: u64) -> RpcSessionCleanupResult {
+    pub(super) fn apply_session_cleanup(&mut self, session_id: u64) -> RpcSessionCleanupResult {
         let cleanup_result = {
-            let mut state = self.state.lock();
+            let state = &mut self.core.state;
             state.cleanup_session(session_id)
         };
 
@@ -79,12 +81,12 @@ impl RpcDomainRuntime<'_> {
     }
 
     pub(super) fn apply_worker_unsubscribe(
-        &self,
+        &mut self,
         worker_addr: &RouteAddress,
         session_id: u64,
     ) -> RpcWorkerCleanupResult {
         let cleanup_result = {
-            let mut state = self.state.lock();
+            let state = &mut self.core.state;
             state.unregister_registration(worker_addr, session_id)
         };
 
@@ -121,7 +123,7 @@ impl RpcDomainRuntime<'_> {
     }
 
     pub(super) fn forward_pending_error_deliveries(
-        &self,
+        &mut self,
         error_deliveries: Vec<RpcPendingErrorDelivery>,
         error_code: u16,
         error_message: &'static str,
@@ -137,7 +139,7 @@ impl RpcDomainRuntime<'_> {
             let response_envelope =
                 RpcResponseForwarder::terminal_error_envelope(delivery, error_code, error_message);
 
-            if let Err(error) = self.router.route(response_envelope) {
+            if let Err(error) = self.core.router.route(response_envelope) {
                 self.counter_inc(dropped_counter);
                 tracing::warn!(
                     domain = "rpc",
@@ -153,7 +155,7 @@ impl RpcDomainRuntime<'_> {
     }
 
     pub(super) fn forward_worker_disconnect_errors(
-        &self,
+        &mut self,
         disconnect_deliveries: Vec<RpcPendingErrorDelivery>,
     ) {
         self.forward_pending_error_deliveries(

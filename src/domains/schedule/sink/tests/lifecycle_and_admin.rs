@@ -5,7 +5,7 @@ use super::*;
 fn should_confirm_schedule_session_cleanup_before_reporting_delivery() {
     // Arrange
     let family = RouteFamily::new(1);
-    let sink = ScheduleDomainSink::new(
+    let sink = ScheduleDomain::new(
         crate::domains::schedule::ScheduleStore::new(crate::testkit::create_test_engine_with_cfs(
             vec![1],
         )),
@@ -52,7 +52,7 @@ fn should_create_schedule_domain_sink() {
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
 
     // Act
-    let sink = ScheduleDomainSink::new(
+    let sink = ScheduleDomain::new(
         crate::domains::schedule::ScheduleStore::new(store),
         router,
         admin_read_model,
@@ -69,10 +69,12 @@ fn should_retain_explicit_schedule_family_inventory() {
     let families = [RouteFamily::new(1), RouteFamily::new(2)];
 
     // Act
-    let sink = ScheduleDomainSink::new_with_storage_and_families(
-        crate::storage::FitzStorageEngine::new(crate::testkit::create_test_engine_with_cfs(vec![
-            1, 2,
-        ])),
+    let sink = ScheduleDomain::new_with_store_and_families(
+        crate::domains::schedule::ScheduleStore::new_with_storage(
+            crate::storage::FitzStorageEngine::new(crate::testkit::create_test_engine_with_cfs(
+                vec![1, 2],
+            )),
+        ),
         Arc::new(Router::new()),
         crate::control::admin::read_model::AdminReadModel::new(),
         &families,
@@ -87,7 +89,7 @@ fn should_keep_sibling_schedule_family_running_after_family_panic() {
     // Arrange
     let failed_family = RouteFamily::new(1);
     let sibling_family = RouteFamily::new(2);
-    let sink = ScheduleDomainSink::new(
+    let sink = ScheduleDomain::new(
         crate::domains::schedule::ScheduleStore::new(crate::testkit::create_test_engine_with_cfs(
             vec![1, 2],
         )),
@@ -184,7 +186,7 @@ fn should_store_cloud_strict_write_policy_given_strict_cloud_policy() {
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
 
     // Act
-    let sink = ScheduleDomainSink::new(
+    let sink = ScheduleDomain::new(
         crate::domains::schedule::ScheduleStore::new(store),
         router,
         admin_read_model,
@@ -202,7 +204,7 @@ fn should_read_admin_pending_claims_through_actor_command() {
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = ScheduleDomainSink::new(
+    let sink = ScheduleDomain::new(
         crate::domains::schedule::ScheduleStore::new(store.clone()),
         router,
         admin_read_model,
@@ -238,7 +240,7 @@ fn should_route_schedule_force_due_scan_through_actor_command() {
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = ScheduleDomainSink::new(
+    let sink = ScheduleDomain::new(
         crate::domains::schedule::ScheduleStore::new(store.clone()),
         router,
         admin_read_model,
@@ -286,7 +288,7 @@ fn should_route_schedule_preload_through_actor_command() {
             Bytes::from_static(b"preload"),
         )
         .expect("create persisted schedule");
-    let sink = ScheduleDomainSink::new(
+    let sink = ScheduleDomain::new(
         crate::domains::schedule::ScheduleStore::new(store),
         router,
         admin_read_model,
@@ -307,7 +309,7 @@ fn should_wait_for_schedule_preload_reply_beyond_one_second() {
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = ScheduleDomainSink::new(
+    let sink = ScheduleDomain::new(
         crate::domains::schedule::ScheduleStore::new(store),
         router,
         admin_read_model,
@@ -335,7 +337,7 @@ fn should_timeout_schedule_preload_when_actor_does_not_reply_before_deadline() {
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = ScheduleDomainSink::new(
+    let sink = ScheduleDomain::new(
         crate::domains::schedule::ScheduleStore::new(store),
         router,
         admin_read_model,
@@ -368,7 +370,7 @@ fn should_route_schedule_admin_refresh_through_actor_command() {
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = ScheduleDomainSink::new(
+    let sink = ScheduleDomain::new(
         crate::domains::schedule::ScheduleStore::new(store),
         router,
         admin_read_model,
@@ -379,11 +381,9 @@ fn should_route_schedule_admin_refresh_through_actor_command() {
     // Act
     sink.stop_actor_for_tests();
     sink.refresh_admin_snapshot_if_dirty();
-    let snapshot_dirty = sink.snapshot_dirty_for_tests();
 
     // Assert
     assert!(!sink.is_actor_running());
-    assert!(snapshot_dirty);
 }
 
 #[test]
@@ -395,7 +395,7 @@ fn should_route_schedule_live_stats_through_actor_command() {
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = ScheduleDomainSink::new(
+    let sink = ScheduleDomain::new(
         crate::domains::schedule::ScheduleStore::new(store.clone()),
         router,
         admin_read_model,

@@ -1,7 +1,6 @@
 use crate::domains::schedule::ScheduleMetrics;
 use crate::runtime::{Envelope, Router};
-use parking_lot::Mutex;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::Arc;
 use std::time::Instant;
@@ -143,9 +142,9 @@ impl ScheduleSubscriptionSet {
     }
 }
 
-pub(super) struct ScheduleDomainCore {
+pub(super) struct ScheduleFamilyState {
     pub(super) route_family: crate::runtime::routing::RouteFamily,
-    pub(super) store: crate::storage::FitzStorageEngine,
+    pub(super) store: crate::domains::schedule::ScheduleStore,
     pub(super) actor: Option<crate::domains::schedule::ScheduleActor>,
     pub(super) subscriptions: ScheduleSubscriptionSet,
     /// Sessions disconnect cleanup has already run for; guards against a
@@ -155,13 +154,12 @@ pub(super) struct ScheduleDomainCore {
     pub(super) router: Arc<Router>,
     #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
     pub(super) admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
-    pub(super) snapshot_dirty: Arc<AtomicBool>,
+    pub(super) snapshot_dirty: AtomicBool,
     #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
-    pub(super) snapshot_syncing: Arc<AtomicBool>,
+    pub(super) snapshot_syncing: AtomicBool,
     #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
-    pub(super) last_snapshot_elapsed_us: Arc<AtomicU64>,
-    pub(super) snapshot_epoch: Arc<Instant>,
-    pub(super) family_snapshots: Arc<Mutex<BTreeMap<u32, ScheduleFamilySnapshot>>>,
+    pub(super) last_snapshot_elapsed_us: AtomicU64,
+    pub(super) snapshot_epoch: Instant,
     /// Total number of live publish handoffs that failed to route.
     pub(super) live_publish_failures: u64,
     /// Total number of pending-fire acknowledgement persistence failures.
@@ -176,14 +174,10 @@ pub(super) struct ScheduleDomainCore {
     pub(super) metrics: Option<ScheduleMetrics>,
 }
 
-pub(super) struct ScheduleDomainState {
-    pub(super) core: ScheduleDomainCore,
-}
-
 /// Runtime body methods intentionally share names with their sink wrapper methods:
 /// the wrapper crosses the mailbox, while the runtime body performs the work.
 pub(super) struct ScheduleDomainRuntime<'a> {
-    pub(super) core: &'a mut ScheduleDomainCore,
+    pub(super) core: &'a mut ScheduleFamilyState,
 }
 
 #[derive(Default)]
@@ -197,12 +191,6 @@ pub(super) struct ScheduleLiveCounts {
     pub(super) pending_ack_retries: usize,
     pub(super) oldest_pending_claim_age_seconds: u64,
     pub(super) overdue_normalizations: u64,
-}
-
-#[derive(Default)]
-pub(super) struct ScheduleFamilySnapshot {
-    pub(super) schedules: Vec<crate::control::admin::ScheduleInfo>,
-    pub(super) pending_fires: usize,
 }
 
 impl ScheduleLiveCounts {
@@ -250,12 +238,12 @@ pub(super) enum ScheduleDomainCommand {
     ),
     #[cfg(test)]
     InspectForTests(
-        Box<dyn FnOnce(&mut ScheduleDomainCore) + Send>,
+        Box<dyn FnOnce(&mut ScheduleFamilyState) + Send>,
         crossbeam_channel::Sender<()>,
     ),
 }
 
-pub struct ScheduleDomainSink {
+pub(crate) struct ScheduleDomain {
     pub(super) family_runtime: crate::runtime::FamilyActorPoolRuntime<ScheduleDomainCommand>,
     pub(super) route_families: Vec<crate::runtime::routing::RouteFamily>,
     pub(super) active: Arc<AtomicBool>,
@@ -264,15 +252,10 @@ pub struct ScheduleDomainSink {
 
 #[derive(Clone)]
 pub(super) struct ScheduleDomainConfig {
-    pub(super) store: crate::storage::FitzStorageEngine,
+    pub(super) store: crate::domains::schedule::ScheduleStore,
     pub(super) router: Arc<Router>,
     pub(super) admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
     pub(super) next_sub_id: Arc<AtomicU64>,
-    pub(super) family_snapshots: Arc<Mutex<BTreeMap<u32, ScheduleFamilySnapshot>>>,
-    pub(super) snapshot_dirty: Arc<AtomicBool>,
-    pub(super) snapshot_syncing: Arc<AtomicBool>,
-    pub(super) last_snapshot_elapsed_us: Arc<AtomicU64>,
-    pub(super) snapshot_epoch: Arc<Instant>,
     pub(super) write_policy: crate::domains::WritePolicy,
     pub(super) metrics: Option<ScheduleMetrics>,
 }

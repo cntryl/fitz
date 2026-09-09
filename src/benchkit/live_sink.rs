@@ -6,12 +6,12 @@
 use super::{create_bench_store, create_local_bench_store, create_write_heavy_bench_store};
 #[cfg(any(test, feature = "benchkit"))]
 use crate::domains::lease::protocol::{LeaseKey, LeaseResponse};
-use crate::domains::lease::sink::LeaseDomainSink;
-use crate::domains::notice::sink::NoticeDomainSink;
-use crate::domains::queue::sink::QueueDomainSink;
-use crate::domains::rpc::sink::RpcDomainSink;
-use crate::domains::schedule::sink::ScheduleDomainSink;
-use crate::domains::stream::sink::StreamDomainSink;
+use crate::domains::lease::sink::LeaseDomain;
+use crate::domains::notice::sink::NoticeDomain;
+use crate::domains::queue::sink::QueueDomain;
+use crate::domains::rpc::sink::RpcDomain;
+use crate::domains::schedule::sink::ScheduleDomain;
+use crate::domains::stream::sink::StreamDomain;
 use crate::observability::metrics::MetricsCollector;
 use crate::protocol::frame::ChannelId;
 use crate::protocol::frame_context::FrameContext;
@@ -24,6 +24,135 @@ use parking_lot::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+type BenchAction = Arc<dyn Fn() + Send + Sync>;
+type BenchCount = Arc<dyn Fn() -> usize + Send + Sync>;
+type BenchPublish = Arc<dyn Fn(&crate::runtime::DomainPublishEvent) + Send + Sync>;
+
+/// Opaque benchmark handle for a production domain endpoint.
+///
+/// Keeping the endpoint behind `MailboxSink` lets benchmarks exercise the live
+/// synchronous boundary without making actor-owned domain types public API.
+pub struct BenchDomainHandle {
+    sink: Arc<dyn MailboxSink>,
+    stop: BenchAction,
+    publish_event: Option<BenchPublish>,
+    pending_count: Option<BenchCount>,
+    worker_count: Option<BenchCount>,
+    maintenance: Option<BenchAction>,
+}
+
+impl BenchDomainHandle {
+    fn new<T>(sink: Arc<T>) -> Self
+    where
+        T: MailboxSink + Send + Sync + 'static,
+        T: BenchStoppable,
+    {
+        let stop_sink = sink.clone();
+        Self {
+            sink,
+            stop: Arc::new(move || stop_sink.stop_for_bench()),
+            publish_event: None,
+            pending_count: None,
+            worker_count: None,
+            maintenance: None,
+        }
+    }
+
+    fn with_publish_event(
+        mut self,
+        publish_event: impl Fn(&crate::runtime::DomainPublishEvent) + Send + Sync + 'static,
+    ) -> Self {
+        self.publish_event = Some(Arc::new(publish_event));
+        self
+    }
+
+    pub fn stop(&self) {
+        (self.stop)();
+    }
+
+    /// Publish directly through Schedule's family state for its subsystem benchmark.
+    ///
+    /// # Panics
+    /// Panics when called for a non-Schedule handle.
+    pub fn bench_publish_event(&self, event: &crate::runtime::DomainPublishEvent) {
+        self.publish_event
+            .as_ref()
+            .expect("benchmark domain does not support direct publish")(event);
+    }
+
+    fn with_rpc_controls(mut self, rpc: Arc<RpcDomain>) -> Self {
+        let pending_rpc = rpc.clone();
+        let worker_rpc = rpc.clone();
+        self.pending_count = Some(Arc::new(move || pending_rpc.pending_request_count()));
+        self.worker_count = Some(Arc::new(move || worker_rpc.worker_count()));
+        self.maintenance = Some(Arc::new(move || rpc.expire_timed_out_requests()));
+        self
+    }
+
+    #[must_use]
+    /// Read RPC's pending count for its behavioral tests.
+    ///
+    /// # Panics
+    /// Panics when called for a non-RPC handle.
+    pub fn pending_request_count(&self) -> usize {
+        self.pending_count
+            .as_ref()
+            .expect("benchmark domain does not expose pending requests")()
+    }
+
+    #[must_use]
+    /// Read RPC's registered-worker count for its behavioral tests.
+    ///
+    /// # Panics
+    /// Panics when called for a non-RPC handle.
+    pub fn worker_count(&self) -> usize {
+        self.worker_count
+            .as_ref()
+            .expect("benchmark domain does not expose workers")()
+    }
+
+    /// Run the endpoint's bounded maintenance slice.
+    ///
+    /// # Panics
+    /// Panics when the handle has no exposed maintenance operation.
+    pub fn run_maintenance(&self) {
+        self.maintenance
+            .as_ref()
+            .expect("benchmark domain does not expose maintenance")();
+    }
+}
+
+trait BenchStoppable {
+    fn stop_for_bench(&self);
+}
+
+macro_rules! impl_bench_stoppable {
+    ($($domain:ty),+ $(,)?) => {
+        $(impl BenchStoppable for $domain {
+            fn stop_for_bench(&self) { self.stop(); }
+        })+
+    };
+}
+
+impl_bench_stoppable!(
+    NoticeDomain,
+    QueueDomain,
+    LeaseDomain,
+    StreamDomain,
+    RpcDomain,
+    ScheduleDomain
+);
+
+impl MailboxSink for BenchDomainHandle {
+    fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.sink.deliver(envelope)
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.sink.deliver_high_priority(envelope)
+    }
+}
 
 /// Queue-style sink that keeps delivered frame contexts until explicitly drained.
 #[derive(Default)]
@@ -581,27 +710,38 @@ fn protocol_channel_from_client(channel: crate::runtime::ClientChannel) -> Chann
 }
 
 #[must_use]
-pub fn create_bench_notice_sink(router: Arc<Router>) -> Arc<NoticeDomainSink> {
-    Arc::new(NoticeDomainSink::new(
+pub fn create_bench_notice_sink(router: Arc<Router>) -> Arc<BenchDomainHandle> {
+    let sink = Arc::new(NoticeDomain::new(
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-    ))
+    ));
+    Arc::new(BenchDomainHandle::new(sink))
 }
 
 #[must_use]
-pub fn create_bench_queue_sink(router: Arc<Router>) -> Arc<QueueDomainSink> {
-    Arc::new(QueueDomainSink::new(
+pub fn create_bench_queue_sink(router: Arc<Router>) -> Arc<BenchDomainHandle> {
+    let sink = Arc::new(QueueDomain::new(
         create_bench_store(),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
         crate::domains::WritePolicy::BestEffort,
         crate::utils::idempotency::default_dedup_store(),
-    ))
+    ));
+    Arc::new(BenchDomainHandle::new(sink))
 }
 
 #[must_use]
-pub fn create_bench_lease_sink(router: Arc<Router>) -> Arc<LeaseDomainSink> {
-    Arc::new(LeaseDomainSink::new(
+pub fn create_bench_lease_sink(router: Arc<Router>) -> Arc<BenchDomainHandle> {
+    let sink = Arc::new(LeaseDomain::new(
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+    ));
+    Arc::new(BenchDomainHandle::new(sink))
+}
+
+#[cfg(any(test, feature = "benchkit"))]
+fn create_raw_bench_lease_sink(router: Arc<Router>) -> Arc<LeaseDomain> {
+    Arc::new(LeaseDomain::new(
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
     ))
@@ -609,7 +749,7 @@ pub fn create_bench_lease_sink(router: Arc<Router>) -> Arc<LeaseDomainSink> {
 
 #[cfg(any(test, feature = "benchkit"))]
 pub struct DirectLeaseAcquireRelease {
-    sink: Arc<LeaseDomainSink>,
+    sink: Arc<LeaseDomain>,
     key: LeaseKey,
     route_family: RouteFamily,
     owner_session_id: u64,
@@ -633,7 +773,7 @@ impl DirectLeaseAcquireRelease {
         ttl_secs: u64,
     ) -> Self {
         let router = Arc::new(Router::new());
-        let sink = create_bench_lease_sink(router);
+        let sink = create_raw_bench_lease_sink(router);
         let route = Route::new(route);
         let key = LeaseKey::from_route(route_family, &route).expect("valid lease route");
 
@@ -686,14 +826,14 @@ fn scoped_lease_owner(session_id: u64, owner_id: &str) -> String {
 }
 
 #[must_use]
-pub fn create_bench_stream_sink(router: Arc<Router>) -> Arc<StreamDomainSink> {
+pub fn create_bench_stream_sink(router: Arc<Router>) -> Arc<BenchDomainHandle> {
     create_bench_stream_sink_with_layout(
         router,
         crate::domains::stream::StreamStorageLayout::default(),
     )
 }
 
-/// Create a benchmark `StreamDomainSink` backed by an isolated local-disk store.
+/// Create a benchmark `StreamDomain` backed by an isolated local-disk store.
 ///
 /// The returned temporary directory must stay alive for the lifetime of the sink.
 ///
@@ -703,10 +843,10 @@ pub fn create_bench_stream_sink(router: Arc<Router>) -> Arc<StreamDomainSink> {
 #[must_use]
 pub fn create_local_bench_stream_sink(
     router: Arc<Router>,
-) -> (Arc<StreamDomainSink>, tempfile::TempDir) {
+) -> (Arc<BenchDomainHandle>, tempfile::TempDir) {
     let (store, temp_dir) = create_local_bench_store();
     let sink = Arc::new(
-        StreamDomainSink::new_with_layout(
+        StreamDomain::new_with_layout(
             store,
             router,
             crate::control::admin::read_model::AdminReadModel::new(),
@@ -715,20 +855,20 @@ pub fn create_local_bench_stream_sink(
         )
         .expect("create local-disk bench Stream sink"),
     );
-    (sink, temp_dir)
+    (Arc::new(BenchDomainHandle::new(sink)), temp_dir)
 }
 
 #[must_use]
-/// Create a benchmark `StreamDomainSink` backed by a write-heavy bench store.
+/// Create a benchmark `StreamDomain` backed by a write-heavy bench store.
 ///
 /// # Panics
 ///
 /// Panics if the benchmark stream sink cannot be constructed.
-pub fn create_write_heavy_bench_stream_sink(router: Arc<Router>) -> Arc<StreamDomainSink> {
+pub fn create_write_heavy_bench_stream_sink(router: Arc<Router>) -> Arc<BenchDomainHandle> {
     // Panics are acceptable here because this is benchmark-only setup and the
     // caller cannot meaningfully recover from a sink construction failure.
-    Arc::new(
-        StreamDomainSink::new_with_layout(
+    let sink = Arc::new(
+        StreamDomain::new_with_layout(
             create_write_heavy_bench_store(),
             router,
             crate::control::admin::read_model::AdminReadModel::new(),
@@ -736,11 +876,12 @@ pub fn create_write_heavy_bench_stream_sink(router: Arc<Router>) -> Arc<StreamDo
             crate::domains::stream::sink::StreamStorageWriteOptions::local(),
         )
         .expect("create write-heavy bench stream sink"),
-    )
+    );
+    Arc::new(BenchDomainHandle::new(sink))
 }
 
 #[must_use]
-/// Create a benchmark `StreamDomainSink` with an explicit storage layout.
+/// Create a benchmark `StreamDomain` with an explicit storage layout.
 ///
 /// # Panics
 ///
@@ -748,11 +889,11 @@ pub fn create_write_heavy_bench_stream_sink(router: Arc<Router>) -> Arc<StreamDo
 pub fn create_bench_stream_sink_with_layout(
     router: Arc<Router>,
     stream_storage_layout: crate::domains::stream::StreamStorageLayout,
-) -> Arc<StreamDomainSink> {
+) -> Arc<BenchDomainHandle> {
     // Panics are acceptable here because this is benchmark-only setup and the
     // caller cannot meaningfully recover from a sink construction failure.
-    Arc::new(
-        StreamDomainSink::new_with_layout(
+    let sink = Arc::new(
+        StreamDomain::new_with_layout(
             create_bench_store(),
             router,
             crate::control::admin::read_model::AdminReadModel::new(),
@@ -760,64 +901,75 @@ pub fn create_bench_stream_sink_with_layout(
             crate::domains::stream::sink::StreamStorageWriteOptions::local(),
         )
         .expect("create bench stream sink"),
-    )
+    );
+    Arc::new(BenchDomainHandle::new(sink))
 }
 
 #[must_use]
-pub fn create_bench_rpc_sink(router: Arc<Router>) -> Arc<RpcDomainSink> {
-    Arc::new(RpcDomainSink::new(
+pub fn create_bench_rpc_sink(router: Arc<Router>) -> Arc<BenchDomainHandle> {
+    let sink = Arc::new(RpcDomain::new(
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-    ))
+    ));
+    Arc::new(BenchDomainHandle::new(sink.clone()).with_rpc_controls(sink))
 }
 
 #[must_use]
 pub fn create_bench_rpc_sink_with_timeout(
     router: Arc<Router>,
     request_timeout: Duration,
-) -> Arc<RpcDomainSink> {
-    Arc::new(
-        RpcDomainSink::new(
+) -> Arc<BenchDomainHandle> {
+    let sink = Arc::new(
+        RpcDomain::new(
             router,
             crate::control::admin::read_model::AdminReadModel::new(),
         )
         .with_request_timeout(request_timeout),
-    )
+    );
+    Arc::new(BenchDomainHandle::new(sink.clone()).with_rpc_controls(sink))
 }
 
 #[must_use]
 pub fn create_bench_rpc_sink_with_route_pending_capacity(
     router: Arc<Router>,
     route_pending_capacity: usize,
-) -> Arc<RpcDomainSink> {
-    Arc::new(
-        RpcDomainSink::new(
+) -> Arc<BenchDomainHandle> {
+    let sink = Arc::new(
+        RpcDomain::new(
             router,
             crate::control::admin::read_model::AdminReadModel::new(),
         )
         .with_route_pending_capacity(route_pending_capacity),
-    )
+    );
+    Arc::new(BenchDomainHandle::new(sink.clone()).with_rpc_controls(sink))
 }
 
 #[must_use]
 pub fn create_bench_rpc_sink_with_metrics(
     router: Arc<Router>,
     metrics: MetricsCollector,
-) -> Arc<RpcDomainSink> {
-    Arc::new(
-        RpcDomainSink::new(
+) -> Arc<BenchDomainHandle> {
+    let sink = Arc::new(
+        RpcDomain::new(
             router,
             crate::control::admin::read_model::AdminReadModel::new(),
         )
         .with_metrics(metrics),
-    )
+    );
+    Arc::new(BenchDomainHandle::new(sink.clone()).with_rpc_controls(sink))
 }
 
 #[must_use]
-pub fn create_bench_schedule_sink(router: Arc<Router>) -> Arc<ScheduleDomainSink> {
-    Arc::new(ScheduleDomainSink::new(
+pub fn create_bench_schedule_sink(router: Arc<Router>) -> Arc<BenchDomainHandle> {
+    let sink = Arc::new(ScheduleDomain::new(
         crate::domains::schedule::ScheduleStore::new(create_bench_store()),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-    ))
+    ));
+    let publish_sink = sink.clone();
+    Arc::new(
+        BenchDomainHandle::new(sink).with_publish_event(move |event| {
+            publish_sink.bench_publish_event(event);
+        }),
+    )
 }

@@ -9,11 +9,11 @@
 use bytes::Bytes;
 use fitz::domains::schedule::protocol::CronSchedule;
 use fitz::domains::schedule::{
-    ScheduleActor, ScheduleCreateEntry, ScheduleFailureCategory, ScheduleMessage, ScheduleResponse,
-    ScheduleStore,
+    ScheduleCreateEntry, ScheduleFailureCategory, ScheduleMessage, ScheduleResponse,
 };
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use fitz::testkit::create_test_engine_with_cfs;
+use fitz::testkit::domain_internals::schedule::{ScheduleActor, ScheduleStore};
 
 // ========== Helper ==========
 

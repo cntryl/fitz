@@ -1,14 +1,14 @@
 use super::*;
 use crate::boot::domains::BrokerDomains;
-use crate::domains::kv::sink::KvDomainSink;
-use crate::domains::lease::sink::LeaseDomainSink;
-use crate::domains::notice::sink::NoticeDomainSink;
-use crate::domains::queue::sink::QueueDomainSink;
-use crate::domains::rpc::sink::RpcDomainSink;
+use crate::domains::kv::sink::KvDomain;
+use crate::domains::lease::sink::LeaseDomain;
+use crate::domains::notice::sink::NoticeDomain;
+use crate::domains::queue::sink::QueueDomain;
+use crate::domains::rpc::sink::RpcDomain;
 use crate::domains::schedule::protocol::parse_concrete_schedule_route;
-use crate::domains::schedule::sink::ScheduleDomainSink;
+use crate::domains::schedule::sink::ScheduleDomain;
 use crate::domains::schedule::store::{ScheduleFireClaim, ScheduleInsert, ScheduleStore};
-use crate::domains::stream::sink::StreamDomainSink;
+use crate::domains::stream::sink::StreamDomain;
 use crate::runtime::Router;
 use bytes::Bytes;
 use std::collections::BTreeSet;
@@ -78,24 +78,21 @@ fn runtime_with_preloaded_schedule_metrics() -> Arc<Runtime> {
         .expect("claim due schedule");
 
     let domains = Arc::new(BrokerDomains::new(
-        Arc::new(KvDomainSink::new(
+        Arc::new(KvDomain::new(
             store.clone(),
             router.clone(),
             admin_read_model.clone(),
         )),
-        Arc::new(QueueDomainSink::new(
+        Arc::new(QueueDomain::new(
             store.clone(),
             router.clone(),
             admin_read_model.clone(),
             crate::domains::WritePolicy::Buffered,
             crate::utils::idempotency::default_dedup_store(),
         )),
-        Arc::new(NoticeDomainSink::new(
-            router.clone(),
-            admin_read_model.clone(),
-        )),
+        Arc::new(NoticeDomain::new(router.clone(), admin_read_model.clone())),
         Arc::new(
-            StreamDomainSink::try_new(
+            StreamDomain::try_new(
                 store.clone(),
                 router.clone(),
                 admin_read_model.clone(),
@@ -103,12 +100,9 @@ fn runtime_with_preloaded_schedule_metrics() -> Arc<Runtime> {
             )
             .expect("create Stream metrics test sink"),
         ),
-        Arc::new(RpcDomainSink::new(router.clone(), admin_read_model.clone())),
-        Arc::new(LeaseDomainSink::new(
-            router.clone(),
-            admin_read_model.clone(),
-        )),
-        Arc::new(ScheduleDomainSink::new(
+        Arc::new(RpcDomain::new(router.clone(), admin_read_model.clone())),
+        Arc::new(LeaseDomain::new(router.clone(), admin_read_model.clone())),
+        Arc::new(ScheduleDomain::new(
             crate::domains::schedule::ScheduleStore::new(store),
             router,
             admin_read_model.clone(),
@@ -116,6 +110,7 @@ fn runtime_with_preloaded_schedule_metrics() -> Arc<Runtime> {
     ));
 
     domains
+        .admin_ports()
         .preload_schedule_families()
         .expect("preload schedules");
     runtime.attach_domains(domains);

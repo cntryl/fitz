@@ -1,7 +1,7 @@
 //! Watch/unwatch subscription handling for queue domain frames.
 
 use super::delivery::QueueOpKind;
-use super::model::{QueueDomainCore, QueueSubscription};
+use super::model::{QueueFamilyState, QueueSubscription};
 use crate::domains::queue::QueueSubscriptionMessage;
 use crate::domains::subscription_state::RoutedSubscriptionSet;
 use crate::runtime::routing::RouteFamily;
@@ -21,9 +21,9 @@ type SubscriptionOutcome = (
     bool,
 );
 
-impl QueueDomainCore {
+impl QueueFamilyState {
     pub(super) fn handle_subscription_frame(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         request_started: Option<Instant>,
@@ -82,12 +82,12 @@ impl QueueDomainCore {
     }
 
     fn rollback_undeliverable_watch(
-        &self,
+        &mut self,
         family_id: RouteFamily,
         session_id: u64,
         subscription_id: u64,
     ) {
-        let mut families = self.families.lock();
+        let families = &mut self.families;
         let remove_family = families.get_mut(&family_id.as_u64()).is_some_and(|state| {
             state.remove_subscription_for_session(family_id, session_id, subscription_id);
             state.is_empty()
@@ -98,7 +98,7 @@ impl QueueDomainCore {
     }
 
     fn handle_watch_subscription(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         family_id: RouteFamily,
@@ -130,7 +130,7 @@ impl QueueDomainCore {
             }
         };
         let (subscription_id, state_changed) = {
-            let mut families = self.families.lock();
+            let families = &mut self.families;
             let state = families
                 .entry(family_id.as_u64())
                 .or_insert_with(RoutedSubscriptionSet::new);
@@ -189,7 +189,7 @@ impl QueueDomainCore {
     }
 
     fn handle_unwatch_subscription(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         family_id: RouteFamily,
@@ -217,7 +217,7 @@ impl QueueDomainCore {
             );
         }
 
-        let mut families = self.families.lock();
+        let families = &mut self.families;
         let remove_family = if let Some(state) = families.get_mut(&family_id.as_u64()) {
             state.remove_session_pattern(family_id, session_id, pattern.as_str());
             state.is_empty()

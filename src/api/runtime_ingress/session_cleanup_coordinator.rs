@@ -26,15 +26,27 @@ const MAX_CLEANUP_RETRY_WINDOW: Duration = Duration::from_millis(2_300);
 /// during independent disconnect storms.
 pub(super) const SESSION_CLEANUP_CONCURRENCY: usize = 32;
 
-pub(super) struct SessionCleanupCoordinator<'a> {
-    ingress: &'a RuntimeIngress,
+pub(super) struct SessionCleanupCoordinator {
+    pub(super) pending_session_cleanups:
+        std::sync::Arc<dashmap::DashMap<u64, PendingSessionCleanup>>,
+    pub(super) cleanup_wake: std::sync::Arc<tokio::sync::Notify>,
+    pub(super) cleanup_worker_started: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub(super) cleanup_shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub(super) cleanup_permits: std::sync::Arc<tokio::sync::Semaphore>,
+    pub(super) router: Option<std::sync::Arc<crate::runtime::Router>>,
 }
 
 impl RuntimeIngress {
-    pub(super) fn session_cleanup_coordinator(&self) -> SessionCleanupCoordinator<'_> {
-        SessionCleanupCoordinator { ingress: self }
+    pub(super) fn session_cleanup_coordinator(&self) -> &SessionCleanupCoordinator {
+        &self.cleanup
     }
 
+    pub(super) async fn drain_cleanup_tickets(&self) {
+        self.cleanup.drain_cleanup_tickets().await;
+    }
+}
+
+impl SessionCleanupCoordinator {
     fn ensure_cleanup_worker(&self) {
         let Some(router) = self.router.clone() else {
             return;
@@ -58,7 +70,7 @@ impl RuntimeIngress {
 
     /// Drain cleanup tickets during broker shutdown. The worker keeps retrying
     /// only the domains that have not accepted a cleanup yet.
-    pub(super) async fn drain_cleanup_tickets(&self) {
+    async fn drain_cleanup_tickets(&self) {
         self.ensure_cleanup_worker();
         self.cleanup_shutdown.store(true, Ordering::Release);
         self.cleanup_wake.notify_one();
@@ -75,9 +87,7 @@ impl RuntimeIngress {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
-}
 
-impl SessionCleanupCoordinator<'_> {
     pub(super) fn record_failure(
         &self,
         session_id: u64,
@@ -94,11 +104,11 @@ impl SessionCleanupCoordinator<'_> {
 
         if store_retry_ticket && !failed_domains.is_empty() {
             let failed_domains = failed_domains.to_vec();
-            if let Some(mut ticket) = self.ingress.pending_session_cleanups.get_mut(&session_id) {
+            if let Some(mut ticket) = self.pending_session_cleanups.get_mut(&session_id) {
                 ticket.route_family = route_family;
                 ticket.pending_domains = failed_domains;
             } else {
-                self.ingress.pending_session_cleanups.insert(
+                self.pending_session_cleanups.insert(
                     session_id,
                     PendingSessionCleanup {
                         route_family,
@@ -108,9 +118,9 @@ impl SessionCleanupCoordinator<'_> {
                     },
                 );
             }
-            self.ingress.ensure_cleanup_worker();
-            self.ingress.cleanup_wake.notify_one();
-            update_cleanup_gauges(&self.ingress.pending_session_cleanups);
+            self.ensure_cleanup_worker();
+            self.cleanup_wake.notify_one();
+            update_cleanup_gauges(&self.pending_session_cleanups);
         }
 
         tracing::warn!(
@@ -127,15 +137,15 @@ impl SessionCleanupCoordinator<'_> {
         session_id: u64,
         route_family: Option<crate::runtime::routing::RouteFamily>,
     ) {
-        let (Some(router), Some(route_family)) = (&self.ingress.router, route_family) else {
+        let (Some(router), Some(route_family)) = (&self.router, route_family) else {
             return;
         };
 
-        let Ok(_permit) = self.ingress.cleanup_permits.clone().acquire_owned().await else {
+        let Ok(_permit) = self.cleanup_permits.clone().acquire_owned().await else {
             self.record_failure(
                 session_id,
                 route_family,
-                crate::runtime::DomainRegistry::cleanup_order(),
+                &crate::runtime::DomainKind::SESSION_CLEANUP_ORDER,
                 true,
             );
             return;
@@ -162,7 +172,7 @@ impl SessionCleanupCoordinator<'_> {
                 self.record_failure(
                     session_id,
                     route_family,
-                    crate::runtime::DomainRegistry::cleanup_order(),
+                    &crate::runtime::DomainKind::SESSION_CLEANUP_ORDER,
                     true,
                 );
                 tracing::warn!(

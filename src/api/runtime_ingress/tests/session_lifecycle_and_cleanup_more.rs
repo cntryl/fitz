@@ -192,7 +192,7 @@ async fn should_not_retain_closed_session_ids_after_connection_churn() {
     // Assert
     assert_eq!(ingress.session_count(), 0);
     assert!(
-        ingress.closing_sessions.is_empty(),
+        ingress.registry.closing_sessions.is_empty(),
         "closed session ids must not accumulate after cleanup"
     );
 }
@@ -233,7 +233,7 @@ async fn should_record_cleanup_failures_when_on_close_cannot_reach_all_domains()
     assert!(ingress.get_session(session_id).is_none());
     assert!(ingress.get_session_actor(session_id).is_none());
     assert!(admin_read_model.sessions().is_empty());
-    assert!(ingress.pending_session_cleanups.contains_key(&session_id));
+    assert!(ingress.cleanup.pending_session_cleanups.contains_key(&session_id));
 }
 
 #[tokio::test]
@@ -257,14 +257,14 @@ async fn should_retry_pending_session_cleanup_without_later_traffic() {
 
     ingress.on_open(session).await.unwrap();
     ingress.on_close(session_id, CloseReason::ClientClose).await;
-    assert!(ingress.pending_session_cleanups.contains_key(&session_id));
+    assert!(ingress.cleanup.pending_session_cleanups.contains_key(&session_id));
 
     let queue_sink = Arc::new(CleanupTrackingSink::default());
     router.register_domain_pattern(DispatchDomain::Queue.as_str(), queue_sink.clone());
 
     // Act
     tokio::time::timeout(Duration::from_secs(1), async {
-        while ingress.pending_session_cleanups.contains_key(&session_id) {
+        while ingress.cleanup.pending_session_cleanups.contains_key(&session_id) {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
@@ -272,7 +272,7 @@ async fn should_retry_pending_session_cleanup_without_later_traffic() {
     .expect("cleanup worker should retry without later traffic");
 
     // Assert
-    assert!(!ingress.pending_session_cleanups.contains_key(&session_id));
+    assert!(!ingress.cleanup.pending_session_cleanups.contains_key(&session_id));
     assert_eq!(queue_sink.recorded_sessions(), vec![session_id]);
 }
 
@@ -301,14 +301,14 @@ async fn should_give_up_and_stop_retrying_session_cleanup_that_can_never_succeed
 
     ingress.on_open(session).await.unwrap();
     ingress.on_close(session_id, CloseReason::ClientClose).await;
-    assert!(ingress.pending_session_cleanups.contains_key(&session_id));
+    assert!(ingress.cleanup.pending_session_cleanups.contains_key(&session_id));
     let permanent_failures_before =
         collector.counter_get(obs::METRIC_SESSION_CLEANUP_PERMANENT_FAILURES);
 
     // Act: Queue's sink is intentionally never registered, so this ticket
     // can never succeed - the worker must eventually give up.
     tokio::time::timeout(Duration::from_secs(10), async {
-        while ingress.pending_session_cleanups.contains_key(&session_id) {
+        while ingress.cleanup.pending_session_cleanups.contains_key(&session_id) {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
@@ -316,7 +316,7 @@ async fn should_give_up_and_stop_retrying_session_cleanup_that_can_never_succeed
     .expect("cleanup worker should give up instead of retrying forever");
 
     // Assert
-    assert!(!ingress.pending_session_cleanups.contains_key(&session_id));
+    assert!(!ingress.cleanup.pending_session_cleanups.contains_key(&session_id));
     assert!(
         collector.counter_get(obs::METRIC_SESSION_CLEANUP_PERMANENT_FAILURES)
             > permanent_failures_before,
@@ -341,7 +341,7 @@ async fn should_cleanup_real_notice_domain_subscription_on_close() {
 
     let router = Arc::new(crate::runtime::Router::new());
     let admin_read_model = AdminReadModel::new();
-    let notice_sink = Arc::new(NoticeDomainSink::new_with_families(
+    let notice_sink = Arc::new(NoticeDomain::new_with_families(
         router.clone(),
         admin_read_model.clone(),
         &[family],
@@ -418,7 +418,7 @@ async fn should_cleanup_real_queue_inflight_on_close() {
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(crate::runtime::Router::new());
     let admin_read_model = AdminReadModel::new();
-    let queue_sink = Arc::new(QueueDomainSink::new(
+    let queue_sink = Arc::new(QueueDomain::new(
         store,
         router.clone(),
         admin_read_model.clone(),
@@ -583,6 +583,7 @@ async fn should_retry_stuck_cleanup_for_full_window_while_other_tickets_progress
         .on_close(stuck_session_id, CloseReason::ClientClose)
         .await;
     assert!(ingress
+        .cleanup
         .pending_session_cleanups
         .contains_key(&stuck_session_id));
 
@@ -606,6 +607,7 @@ async fn should_retry_stuck_cleanup_for_full_window_while_other_tickets_progress
     let started = std::time::Instant::now();
     tokio::time::timeout(Duration::from_secs(15), async {
         while ingress
+            .cleanup
             .pending_session_cleanups
             .contains_key(&stuck_session_id)
         {

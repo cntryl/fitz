@@ -121,7 +121,7 @@ fn assert_no_envelope(mailbox: &Mailbox) {
         .is_err());
 }
 
-fn wait_for_active_transaction_count(sink: &KvDomainSink, expected: usize) {
+fn wait_for_active_transaction_count(sink: &KvDomain, expected: usize) {
     let deadline = Instant::now() + Duration::from_secs(1);
     while Instant::now() < deadline {
         if sink.active_transaction_count() == expected {

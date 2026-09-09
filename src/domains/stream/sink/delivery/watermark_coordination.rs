@@ -1,10 +1,9 @@
-use super::super::model::{
-    Route, RouteFamily, StreamAreaScope, StreamFamilyState, StreamRealmScope,
-};
+use super::super::model::{StreamAreaScope, StreamFamilyRuntime, StreamRealmScope};
 use crate::domains::stream::metrics::METRIC_WATERMARK_COORDINATION_DROPS_TOTAL;
 use crate::prelude::Actor;
+use crate::runtime::routing::{Route, RouteFamily};
 
-impl StreamFamilyState {
+impl StreamFamilyRuntime {
     pub(in crate::domains::stream::sink) fn enqueue_watermark_commit(
         &mut self,
         commit: super::super::model::WatermarkCommit,
@@ -140,7 +139,7 @@ impl StreamFamilyState {
     }
 
     fn record_capacity_drop(
-        &self,
+        &mut self,
         family: RouteFamily,
         realm: &str,
         area: Option<&str>,
@@ -178,8 +177,7 @@ impl StreamFamilyState {
                 actor.on_timer(timer, context);
             }
         }
-        let events = std::mem::take(&mut *self.watermark_events.lock());
-        for event in events {
+        while let Ok(event) = self.watermark_events.try_recv() {
             self.core.handle_domain_publish(&event);
             let destination =
                 crate::runtime::routing::RouteAddress::new(event.family_id, event.route.clone());

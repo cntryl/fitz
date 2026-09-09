@@ -29,7 +29,7 @@ fn should_accept_notice_publish_without_waiting_for_subscriber_delivery() {
     let subscriber_mailbox = Arc::new(Mailbox::new(8));
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = NoticeDomainSink::new(router.clone(), admin_read_model);
+    let sink = NoticeDomain::new(router.clone(), admin_read_model);
     subscribe_notice_pattern(
         &sink,
         &subscriber_address,
@@ -101,7 +101,7 @@ fn should_keep_notice_family_responsive_while_delivery_worker_is_blocked() {
     let publisher_address = RouteAddress::new(family, Route::new("inbox://session/11"));
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = NoticeDomainSink::new(router.clone(), admin_read_model);
+    let sink = NoticeDomain::new(router.clone(), admin_read_model);
     let (entered_tx, entered_rx) = crossbeam_channel::unbounded();
     let (_release_tx, release_rx) = crossbeam_channel::bounded::<()>(1);
     for session_id in 1..=4 {
@@ -185,7 +185,7 @@ fn should_deliver_accepted_publish_after_disconnect_cleanup_overtakes_it() {
     let subscriber_mailbox = Arc::new(Mailbox::new(8));
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = NoticeDomainSink::new(router, admin_read_model);
+    let sink = NoticeDomain::new(router, admin_read_model);
     subscribe_notice_pattern(
         &sink,
         &subscriber_address,

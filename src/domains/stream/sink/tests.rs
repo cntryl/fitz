@@ -6,7 +6,13 @@ use crate::benchkit::{
     route_frame, FrameQueueSink,
 };
 use crate::dispatch::protocol::frame::ChannelId;
+use crate::dispatch::protocol::payload_codec::PayloadEncoder;
+use crate::domains::stream::StreamStorageLayout;
+use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+use crate::runtime::{DeliveryError, Envelope, MailboxSink, Router};
 use bytes::Bytes;
+use std::sync::Arc;
+use std::time::Duration;
 
 const TEST_CLIENT_SESSION_ID: u64 = 1;
 
@@ -15,7 +21,7 @@ struct TestContext {
     family: RouteFamily,
     source: RouteAddress,
     inbox: Arc<FrameQueueSink>,
-    sink: Arc<StreamDomainSink>,
+    sink: Arc<StreamDomain>,
     admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
 }
 
@@ -24,7 +30,7 @@ fn setup_test_context() -> TestContext {
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
     let sink = Arc::new(
-        StreamDomainSink::new_with_storage_layout_and_families(
+        StreamDomain::new_with_storage_layout_and_families(
             crate::storage::FitzStorageEngine::new(crate::testkit::create_test_engine_with_cfs(
                 vec![1, 2],
             )),

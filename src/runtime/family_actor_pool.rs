@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::Duration;
 
@@ -79,7 +79,7 @@ pub(crate) fn family_actor_enqueue_error_to_delivery_error(
 struct FamilyActorSender<M> {
     normal: Sender<M>,
     control: Sender<M>,
-    wake: Sender<()>,
+    worker: Arc<OnceLock<thread::Thread>>,
 }
 
 struct FamilyActorReceivers<M> {
@@ -91,7 +91,7 @@ struct FamilyActorReceivers<M> {
 /// The transport/router-facing half of a family actor pool.
 pub struct FamilyActorIngress<M> {
     senders: std::sync::Arc<BTreeMap<u32, FamilyActorSender<M>>>,
-    shard_wakes: Arc<Vec<Sender<()>>>,
+    shard_workers: Arc<Vec<Arc<OnceLock<thread::Thread>>>>,
     shard_count: usize,
 }
 
@@ -99,7 +99,7 @@ impl<M> Clone for FamilyActorIngress<M> {
     fn clone(&self) -> Self {
         Self {
             senders: self.senders.clone(),
-            shard_wakes: self.shard_wakes.clone(),
+            shard_workers: self.shard_workers.clone(),
             shard_count: self.shard_count,
         }
     }
@@ -132,10 +132,10 @@ impl<M: Send + 'static> FamilyActorIngress<M> {
             },
             TrySendError::Disconnected(_) => FamilyActorEnqueueError::ActorStopped,
         })?;
-        match sender.wake.try_send(()) {
-            Ok(()) | Err(TrySendError::Full(())) => Ok(()),
-            Err(TrySendError::Disconnected(())) => Err(FamilyActorEnqueueError::ActorStopped),
+        if let Some(worker) = sender.worker.get() {
+            worker.unpark();
         }
+        Ok(())
     }
 
     #[must_use]
@@ -162,8 +162,8 @@ impl<M: Send + 'static> FamilyActorIngress<M> {
     }
 
     fn wake_all(&self) {
-        for wake in self.shard_wakes.iter() {
-            let _ = wake.try_send(());
+        for worker in self.shard_workers.iter().filter_map(|worker| worker.get()) {
+            worker.unpark();
         }
     }
 }
@@ -200,12 +200,13 @@ impl<M: Send + 'static> FamilyActorPool<M> {
         }
 
         let shard_count = shard_count_for_family_count(families.len());
-        let shard_wakes = (0..shard_count).map(|_| bounded(1)).collect::<Vec<_>>();
+        let shard_workers = (0..shard_count)
+            .map(|_| Arc::new(OnceLock::new()))
+            .collect::<Vec<_>>();
         let mut sender_map = BTreeMap::new();
         let mut shard_receivers = (0..shard_count)
             .map(|_| Vec::new())
             .collect::<Vec<Vec<FamilyActorReceivers<M>>>>();
-
         for family in family_ids.values().copied() {
             let (normal, normal_receiver) = bounded(FAMILY_ACTOR_NORMAL_LANE_CAPACITY);
             let (control, control_receiver) = bounded(FAMILY_ACTOR_CONTROL_LANE_CAPACITY);
@@ -215,7 +216,7 @@ impl<M: Send + 'static> FamilyActorPool<M> {
                 FamilyActorSender {
                     normal,
                     control,
-                    wake: shard_wakes[shard].0.clone(),
+                    worker: shard_workers[shard].clone(),
                 },
             );
             shard_receivers[shard].push(FamilyActorReceivers {
@@ -227,14 +228,14 @@ impl<M: Send + 'static> FamilyActorPool<M> {
 
         let shards = shard_receivers
             .into_iter()
-            .zip(shard_wakes.iter())
-            .map(|(receivers, (_, wake))| Some(FamilyActorShard::new(receivers, wake.clone())))
+            .zip(shard_workers.iter())
+            .map(|(receivers, worker)| Some(FamilyActorShard::new(receivers, worker.clone())))
             .collect();
 
         Ok(Self {
             ingress: FamilyActorIngress {
                 senders: std::sync::Arc::new(sender_map),
-                shard_wakes: Arc::new(shard_wakes.into_iter().map(|(wake, _)| wake).collect()),
+                shard_workers: Arc::new(shard_workers),
                 shard_count,
             },
             shards,
@@ -280,7 +281,7 @@ impl std::error::Error for FamilyActorPoolError {}
 /// The worker-owned half of one shard.
 pub struct FamilyActorShard<M> {
     receivers: Vec<FamilyActorReceivers<M>>,
-    wake: Receiver<()>,
+    worker: Arc<OnceLock<thread::Thread>>,
     cursor: usize,
 }
 
@@ -707,16 +708,6 @@ impl<M: Send + 'static> FamilyActorPoolRuntime<M> {
         }
     }
 
-    pub(crate) fn actor_health_snapshot(&self) -> crate::runtime::ActorHealthSnapshot {
-        let health = self.health_snapshot();
-        crate::runtime::ActorHealthSnapshot {
-            running: health.running,
-            restart_count: 0,
-            panic_count: health.panic_count,
-            restart_exhausted: health.failed_closed,
-        }
-    }
-
     /// Fail the pool closed without waiting for a worker panic.
     pub fn fail_closed(&self) {
         self.failed.store(true, Ordering::Release);
@@ -745,10 +736,10 @@ impl<M: Send + 'static> Drop for FamilyActorPoolRuntime<M> {
 }
 
 impl<M: Send + 'static> FamilyActorShard<M> {
-    fn new(receivers: Vec<FamilyActorReceivers<M>>, wake: Receiver<()>) -> Self {
+    fn new(receivers: Vec<FamilyActorReceivers<M>>, worker: Arc<OnceLock<thread::Thread>>) -> Self {
         Self {
             receivers,
-            wake,
+            worker,
             cursor: 0,
         }
     }
@@ -803,13 +794,34 @@ impl<M: Send + 'static> FamilyActorShard<M> {
         &mut self,
         timeout: Duration,
     ) -> Result<FamilyActorWork<M>, RecvTimeoutError> {
+        let _ = self.worker.set(thread::current());
         if let Some(work) = self.try_next() {
             return Ok(work);
         }
         if self.receivers.is_empty() {
             return Err(RecvTimeoutError::Disconnected);
         }
-        self.wake.recv_timeout(timeout)?;
+        if self.receivers.len() == 1 {
+            let receiver = &self.receivers[0];
+            return crossbeam_channel::select_biased! {
+                recv(receiver.control) -> message => message
+                    .map(|message| FamilyActorWork {
+                        family: receiver.family,
+                        lane: FamilyActorLane::Control,
+                        message,
+                    })
+                    .map_err(|_| RecvTimeoutError::Disconnected),
+                recv(receiver.normal) -> message => message
+                    .map(|message| FamilyActorWork {
+                        family: receiver.family,
+                        lane: FamilyActorLane::Normal,
+                        message,
+                    })
+                    .map_err(|_| RecvTimeoutError::Disconnected),
+                default(timeout) => Err(RecvTimeoutError::Timeout),
+            };
+        }
+        thread::park_timeout(timeout);
         self.try_next().ok_or(RecvTimeoutError::Timeout)
     }
 }

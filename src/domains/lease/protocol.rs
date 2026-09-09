@@ -454,7 +454,7 @@ pub enum LeaseMessage {
     Tick,
 }
 
-/// Lease watch messages handled by `LeaseDomainSink` before family dispatch.
+/// Lease watch messages handled by `LeaseDomain` before family dispatch.
 #[derive(Debug, Clone)]
 pub enum LeaseSubscriptionMessage {
     /// Subscribe to lease change notifications for one exact route.

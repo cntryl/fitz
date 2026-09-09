@@ -202,7 +202,7 @@ pub fn get_decoding_key_from_cache(jwks_url: &str, kid: &str) -> Option<jsonwebt
 /// redirect or non-success response is returned, or when the body cannot be
 /// read or parsed into supported JWKS key material.
 async fn fetch_and_cache_jwks_unlocked(jwks_url: &str) -> Result<(), String> {
-    super::validate_jwks_url(jwks_url, super::allow_insecure_jwks_http())
+    crate::auth::validate_jwks_url(jwks_url, crate::auth::allow_insecure_jwks_http())
         .map_err(|error| format!("invalid JWKS URL: {error}"))?;
 
     let client = JWKS_HTTP_CLIENT

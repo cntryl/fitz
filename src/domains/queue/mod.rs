@@ -134,8 +134,8 @@
 //!
 //! Queue consumers can watch readiness routes instead of parking reserve requests:
 //! - `QueueActor` always returns immediately (never blocks)
-//! - `QueueDomainSink` is a thin mailbox adapter
-//! - `QueueDomainActor` is the managed production actor for delivery, cleanup, runtime sweeps,
+//! - `QueueDomain` is a thin mailbox adapter
+//! - Each worker-owned `QueueFamilyState` serializes delivery, cleanup, runtime sweeps,
 //!   live admin refresh, DLQ replay/purge commands, and broker-local watch state
 //! - Watches target exact or wildcard `queue://{realm}/{area}/{resource}` routes
 //! - Notifications signal availability and never carry queue message bodies
@@ -145,16 +145,16 @@
 //!
 //! Queue operations are dispatched via RPC or WebSocket messages.
 
-pub mod actor;
+pub(crate) mod actor;
 pub mod core;
 pub mod events;
 pub mod metrics;
 pub mod projection;
 pub mod protocol;
-pub mod sink;
+pub(crate) mod sink;
 
 pub use crate::runtime::clock::{Clock, SystemClock};
-pub use actor::QueueActor;
+pub(crate) use actor::QueueActor;
 pub(crate) use actor::QueueActorLiveCounts;
 pub use core::{MessageId, QueueKey, ReservedMessage, RoutedReservedMessage};
 pub use metrics::QueueMetrics;

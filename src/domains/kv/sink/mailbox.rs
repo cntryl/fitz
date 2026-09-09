@@ -1,10 +1,10 @@
 //! Mailbox boundary for the managed KV domain actor.
 
 use super::commands::KvDomainCommand;
-use super::state::{KvDomainRuntime, KvDomainSink};
+use super::state::{KvDomain, KvFamilyRuntime};
 use crate::runtime::{DeliveryError, Envelope, MailboxSink};
 
-impl MailboxSink for KvDomainSink {
+impl MailboxSink for KvDomain {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
             return self.cleanup_session(cleanup.session_id);
@@ -30,7 +30,7 @@ impl MailboxSink for KvDomainSink {
     }
 }
 
-impl KvDomainRuntime<'_> {
+impl KvFamilyRuntime<'_> {
     pub(super) fn receive(&mut self, msg: KvDomainCommand) {
         match msg {
             KvDomainCommand::Deliver(envelope) => {

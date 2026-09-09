@@ -11,16 +11,8 @@ pub(crate) use crate::fixtures::transport::{
 pub(crate) use bytes::Bytes;
 pub(crate) use fitz::benchkit::{
     create_bench_rpc_sink, create_bench_rpc_sink_with_route_pending_capacity,
-    create_bench_rpc_sink_with_timeout, extract_single_tlv_field,
+    create_bench_rpc_sink_with_timeout, extract_single_tlv_field, BenchDomainHandle,
 };
-pub(crate) use fitz::boot::domains::BrokerDomains;
-pub(crate) use fitz::domains::kv::sink::KvDomainSink;
-pub(crate) use fitz::domains::lease::sink::LeaseDomainSink;
-pub(crate) use fitz::domains::notice::sink::NoticeDomainSink;
-pub(crate) use fitz::domains::queue::sink::QueueDomainSink;
-pub(crate) use fitz::domains::rpc::sink::RpcDomainSink;
-pub(crate) use fitz::domains::schedule::sink::ScheduleDomainSink;
-pub(crate) use fitz::domains::stream::sink::StreamDomainSink;
 pub(crate) use fitz::protocol::frame::ChannelId;
 pub(crate) use fitz::protocol::tlv::MessageType;
 pub(crate) use fitz::protocol::FrameContext;
@@ -155,7 +147,7 @@ pub(crate) fn register_counting_sink(
 }
 
 pub(crate) fn deliver_rpc_frame(
-    sink: &RpcDomainSink,
+    sink: &dyn MailboxSink,
     source: RouteAddress,
     destination: RouteAddress,
     session_id: u64,
@@ -191,9 +183,10 @@ pub(crate) fn encode_captured_frame(frame: &FrameContext) -> Vec<u8> {
     builder.build()
 }
 
-pub(crate) async fn wait_for_pending_requests_to_clear(sink: &RpcDomainSink) {
+pub(crate) async fn wait_for_pending_requests_to_clear(sink: &BenchDomainHandle) {
     tokio::time::timeout(Duration::from_secs(1), async {
         loop {
+            sink.run_maintenance();
             if sink.pending_request_count() == 0 {
                 break;
             }
@@ -203,53 +196,6 @@ pub(crate) async fn wait_for_pending_requests_to_clear(sink: &RpcDomainSink) {
     })
     .await
     .expect("pending requests should clear");
-}
-
-pub(crate) fn domain_handles_with_rpc_sink(
-    router: Arc<Router>,
-    rpc: Arc<RpcDomainSink>,
-) -> Arc<BrokerDomains> {
-    let admin_runtime = fitz::boot::Runtime::new(router.clone());
-    let admin_read_model = admin_runtime.admin_read_model();
-    let store = fitz::testkit::create_test_engine_with_cfs(vec![1]);
-
-    Arc::new(BrokerDomains::new(
-        Arc::new(KvDomainSink::new(
-            store.clone(),
-            router.clone(),
-            admin_read_model.clone(),
-        )),
-        Arc::new(QueueDomainSink::new(
-            store.clone(),
-            router.clone(),
-            admin_read_model.clone(),
-            fitz::domains::WritePolicy::Buffered,
-            fitz::utils::idempotency::default_dedup_store(),
-        )),
-        Arc::new(NoticeDomainSink::new(
-            router.clone(),
-            admin_read_model.clone(),
-        )),
-        Arc::new(
-            StreamDomainSink::try_new(
-                store.clone(),
-                router.clone(),
-                admin_read_model.clone(),
-                fitz::domains::stream::sink::StreamStorageWriteOptions::local(),
-            )
-            .expect("create Stream RPC test sink"),
-        ),
-        rpc,
-        Arc::new(LeaseDomainSink::new(
-            router.clone(),
-            admin_read_model.clone(),
-        )),
-        Arc::new(ScheduleDomainSink::new(
-            fitz::domains::schedule::ScheduleStore::new(store),
-            router,
-            admin_read_model.clone(),
-        )),
-    ))
 }
 
 // ============================================================================

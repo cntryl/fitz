@@ -4,9 +4,7 @@
 //! Open transaction handles and uncommitted mutations are session-scoped,
 //! broker-local state and disappear on cleanup or restart.
 
-use cntryl_midge::{ColumnFamilyId, Engine as MidgeEngine};
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::Instant;
 
 use crate::prelude::Actor;
@@ -14,7 +12,6 @@ use crate::runtime::actor::Context;
 
 use super::protocol::{KvMessage, KvResourceScope, KvResponse, TxMode};
 
-mod error_mapping;
 mod introspection;
 mod inventory_delta;
 mod key_layout;
@@ -38,10 +35,10 @@ use bytes::Bytes;
 struct ActiveKvTx {
     scope: KvResourceScope,
     scoped_prefix: Vec<u8>,
-    column_family: ColumnFamilyId,
-    tx: cntryl_midge::Transaction,
+    column_family: u32,
+    tx: super::store::KvTransaction,
     mode: TxMode,
-    write_options: cntryl_midge::WriteOptions,
+    write_policy: crate::domains::WritePolicy,
     mutation_count: u64,
     last_activity: Instant,
     inventory_delta: KvInventoryDelta,
@@ -49,16 +46,17 @@ struct ActiveKvTx {
 
 /// Session-scoped KV transaction state.
 pub struct KvActor {
-    store: Arc<MidgeEngine>,
+    store: super::store::KvStore,
     transactions: HashMap<u64, ActiveKvTx>,
     next_tx_id: u64,
 }
 
 impl KvActor {
     #[must_use]
-    pub fn new(store: Arc<MidgeEngine>) -> Self {
+    #[allow(private_bounds)]
+    pub fn new(store: impl Into<super::store::KvStore>) -> Self {
         Self {
-            store,
+            store: store.into(),
             transactions: HashMap::new(),
             next_tx_id: 1,
         }
@@ -70,7 +68,7 @@ impl KvActor {
                 scope,
                 mode,
                 write_options,
-            } => self.handle_begin(scope, mode, write_options.into()),
+            } => self.handle_begin(scope, mode, write_options),
             KvMessage::Commit { tx_id, scope } => self.handle_commit(tx_id, &scope),
             KvMessage::Rollback { tx_id, scope } => self.handle_rollback(tx_id, &scope),
             KvMessage::Get { tx_id, scope, key } => self.handle_get(tx_id, &scope, &key),

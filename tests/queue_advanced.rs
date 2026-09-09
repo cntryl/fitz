@@ -10,9 +10,10 @@ use bytes::Bytes;
 
 use fitz::domains::queue::{
     protocol::{QueueKey, QueueResponse},
-    Clock, QueueActor,
+    Clock,
 };
 use fitz::runtime::routing::RouteFamily;
+use fitz::testkit::domain_internals::queue::QueueActor;
 use uuid::Uuid;
 
 const TEST_SESSION_ID: u64 = 1;

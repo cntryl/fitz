@@ -1,10 +1,10 @@
 use super::model::{
-    ScheduleDomainCommand, ScheduleDomainCore, ScheduleDomainSink, ScheduleSubscriptionSet,
+    ScheduleDomain, ScheduleDomainCommand, ScheduleFamilyState, ScheduleSubscriptionSet,
 };
 use crate::runtime::routing::RouteFamily;
 use std::sync::atomic::Ordering;
 
-impl ScheduleDomainSink {
+impl ScheduleDomain {
     pub(super) fn route_families_for_tests(&self) -> &[RouteFamily] {
         &self.route_families
     }
@@ -12,7 +12,7 @@ impl ScheduleDomainSink {
     fn inspect_family_for_tests(
         &self,
         family: RouteFamily,
-        inspect: impl FnOnce(&mut ScheduleDomainCore) + Send + 'static,
+        inspect: impl FnOnce(&mut ScheduleFamilyState) + Send + 'static,
     ) {
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         self.try_send(
@@ -29,7 +29,7 @@ impl ScheduleDomainSink {
     fn read_family_for_tests<T: Send + 'static>(
         &self,
         family: RouteFamily,
-        read: impl FnOnce(&mut ScheduleDomainCore) -> T + Send + 'static,
+        read: impl FnOnce(&mut ScheduleFamilyState) -> T + Send + 'static,
     ) -> T {
         let (value_tx, value_rx) = crossbeam_channel::bounded(1);
         self.inspect_family_for_tests(family, move |core| {
@@ -98,11 +98,17 @@ impl ScheduleDomainSink {
     }
 
     pub(super) fn set_snapshot_dirty_for_tests(&self, dirty: bool) {
-        self.config.snapshot_dirty.store(dirty, Ordering::Relaxed);
+        for family in &self.route_families {
+            self.inspect_family_for_tests(*family, move |core| {
+                core.snapshot_dirty.store(dirty, Ordering::Relaxed);
+            });
+        }
     }
 
     pub(super) fn snapshot_dirty_for_tests(&self) -> bool {
-        self.config.snapshot_dirty.load(Ordering::Relaxed)
+        self.read_family_for_tests(self.route_families[0], |core| {
+            core.snapshot_dirty.load(Ordering::Relaxed)
+        })
     }
 
     pub(super) fn insert_subscriptions_for_tests(

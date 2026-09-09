@@ -642,7 +642,7 @@ mod tests {
     }
 
     #[test]
-    fn should_encode_frozen_stream_response_plus_notification_vectors() {
+    fn should_encode_frozen_stream_response_notification_and_error_golden_vectors() {
         // Arrange
         // Act
         let success = encode_response(

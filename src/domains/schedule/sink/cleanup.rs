@@ -6,10 +6,10 @@
 //! silently recreating a subscription for a session that is already gone and
 //! will never be cleaned up again.
 
-use super::model::{ScheduleDomainCommand, ScheduleDomainRuntime, ScheduleDomainSink};
+use super::model::{ScheduleDomain, ScheduleDomainCommand, ScheduleDomainRuntime};
 use crate::runtime::Envelope;
 
-impl ScheduleDomainSink {
+impl ScheduleDomain {
     /// Remove every Schedule subscription owned by one disconnected session.
     ///
     /// This crosses the mailbox (high-priority lane); the work itself happens

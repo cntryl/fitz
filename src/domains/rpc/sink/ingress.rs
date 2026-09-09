@@ -2,13 +2,14 @@
 //! message, and dispatch to the registration/delivery/response layers.
 
 use super::state_model::{
-    DeliveryError, Envelope, Instant, RpcClientRequest, RpcClientResponseBody,
-    RpcDeliveryOutcome as DeliveryOutcome, RpcDomainRuntime, RPC_MSG_TYPE_REQUEST,
+    RpcDeliveryOutcome as DeliveryOutcome, RpcFamilyRuntime, RPC_MSG_TYPE_REQUEST,
 };
-use crate::domains::rpc::protocol::RpcMessage;
+use crate::domains::rpc::protocol::{RpcClientRequest, RpcClientResponseBody, RpcMessage};
+use crate::runtime::{DeliveryError, Envelope};
+use std::time::Instant;
 
-impl RpcDomainRuntime<'_> {
-    pub(super) fn deliver_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {
+impl RpcFamilyRuntime<'_> {
+    pub(super) fn deliver_envelope(&mut self, envelope: &Envelope) -> Result<(), DeliveryError> {
         if self.handle_cleanup_envelope(envelope) {
             return Ok(());
         }
@@ -69,8 +70,8 @@ impl RpcDomainRuntime<'_> {
         let registration = match &rpc_msg {
             RpcMessage::RegisterWorker { worker_addr, .. } => Some((
                 worker_addr.clone(),
-                self.state
-                    .lock()
+                self.core
+                    .state
                     .contains_registration(worker_addr, meta.session_id),
             )),
             _ => None,
@@ -100,7 +101,7 @@ impl RpcDomainRuntime<'_> {
     }
 
     fn handle_rpc_message(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: &crate::runtime::ClientFrameMeta,
         rpc_msg: RpcMessage,
@@ -118,7 +119,7 @@ impl RpcDomainRuntime<'_> {
         }
     }
 
-    fn ensure_active(&self) -> Result<(), DeliveryError> {
+    fn ensure_active(&mut self) -> Result<(), DeliveryError> {
         crate::runtime::ingress_support::ensure_actor_active(self.active)
     }
 
@@ -137,8 +138,9 @@ impl RpcDomainRuntime<'_> {
         })
     }
 
-    fn record_request_start(&self) -> Option<Instant> {
-        self.metrics
+    fn record_request_start(&mut self) -> Option<Instant> {
+        self.core
+            .metrics
             .as_ref()
             .map(crate::domains::rpc::RpcMetrics::record_request_start)
     }
@@ -153,7 +155,7 @@ impl RpcDomainRuntime<'_> {
     }
 
     fn parse_request_message(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         message: Result<
@@ -166,7 +168,8 @@ impl RpcDomainRuntime<'_> {
         match message {
             Ok(msg) => Some(msg),
             Err(e) => {
-                if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started)
+                if let (Some(metrics), Some(started_at)) =
+                    (self.core.metrics.as_ref(), request_started)
                 {
                     metrics.record_failure(started_at);
                 }
@@ -251,7 +254,7 @@ impl RpcDomainRuntime<'_> {
     }
 
     fn complete_request(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         response: Option<RpcClientResponseBody>,
@@ -266,7 +269,7 @@ impl RpcDomainRuntime<'_> {
         let response_delivered = response
             .is_none_or(|response| self.route_rpc_client_response(envelope, meta, &response));
 
-        if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
+        if let (Some(metrics), Some(started_at)) = (self.core.metrics.as_ref(), request_started) {
             if request_failed {
                 metrics.record_failure(started_at);
             } else {

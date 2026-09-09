@@ -1,7 +1,7 @@
 //! Actor lookup, operation dispatch, and request-envelope validation.
 
 use super::locks::KvResourceLockKey;
-use super::state::KvDomainRuntime;
+use super::state::KvFamilyRuntime;
 use super::state::{KvAdminTransactionUpdate, KvOperationOutcome};
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
@@ -12,7 +12,7 @@ use crate::domains::kv::KvClientRequest;
 use crate::domains::kv::{KvError, KvResponse};
 use crate::runtime::Envelope;
 
-impl KvDomainRuntime<'_> {
+impl KvFamilyRuntime<'_> {
     pub(super) fn dispatch_actor_operation(
         &mut self,
         session_id: u64,

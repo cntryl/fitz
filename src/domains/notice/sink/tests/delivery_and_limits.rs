@@ -121,8 +121,7 @@ fn should_not_retain_subscription_when_subscribe_response_cannot_be_delivered() 
         .expect("fill subscriber mailbox");
     let metrics = crate::observability::metrics::MetricsCollector::new();
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink =
-        NoticeDomainSink::new(router, admin_read_model.clone()).with_metrics(metrics.clone());
+    let sink = NoticeDomain::new(router, admin_read_model.clone()).with_metrics(metrics.clone());
 
     // Act
     subscribe_notice_pattern(
@@ -181,7 +180,7 @@ fn should_retain_other_notice_subscription_given_unsubscribe_on_same_session() {
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
     router.register(publisher_address.clone(), publisher_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = NoticeDomainSink::new(router, admin_read_model);
+    let sink = NoticeDomain::new(router, admin_read_model);
 
     sink.deliver(Envelope::from_route(
         subscriber_address.clone(),
@@ -297,7 +296,7 @@ fn should_retain_notice_admin_snapshot_entry_given_unsubscribe_of_sibling_patter
     let subscriber_mailbox = Arc::new(Mailbox::new(8));
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = NoticeDomainSink::new(router, admin_read_model.clone());
+    let sink = NoticeDomain::new(router, admin_read_model.clone());
 
     subscribe_notice_pattern(
         &sink,
@@ -359,7 +358,7 @@ fn should_increment_delivery_drop_counter_given_failing_subscriber_route() {
     let router = Arc::new(Router::new());
     let subscriber_mailbox = Arc::new(Mailbox::new(8));
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
-    let sink = NoticeDomainSink::new(
+    let sink = NoticeDomain::new(
         router.clone(),
         crate::control::admin::read_model::AdminReadModel::new(),
     );
@@ -422,7 +421,7 @@ fn should_retry_notice_delivery_when_outbound_mailbox_is_temporarily_full() {
     let router = Arc::new(Router::new());
     let subscriber_mailbox = Arc::new(Mailbox::new(8));
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
-    let sink = NoticeDomainSink::new(
+    let sink = NoticeDomain::new(
         router.clone(),
         crate::control::admin::read_model::AdminReadModel::new(),
     );
@@ -492,7 +491,7 @@ fn should_isolate_unrelated_family_when_notice_subscriber_blocks() {
     let healthy_mailbox = Arc::new(Mailbox::new(4));
     router.register(blocked_subscriber.clone(), blocked_mailbox.clone());
     router.register(healthy_subscriber.clone(), healthy_mailbox.clone());
-    let sink = Arc::new(NoticeDomainSink::new(
+    let sink = Arc::new(NoticeDomain::new(
         router.clone(),
         crate::control::admin::read_model::AdminReadModel::new(),
     ));
@@ -577,7 +576,7 @@ fn should_reject_wildcard_subscription_when_session_limit_is_exceeded() {
     let subscriber_mailbox = Arc::new(Mailbox::new(MAX_WILDCARD_REGISTRATIONS_PER_SESSION + 4));
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = NoticeDomainSink::new(router, admin_read_model.clone());
+    let sink = NoticeDomain::new(router, admin_read_model.clone());
 
     for pattern_index in 0..MAX_WILDCARD_REGISTRATIONS_PER_SESSION {
         let pattern = format!("notice://acme/app/{pattern_index}/*");
@@ -633,7 +632,7 @@ fn should_reject_exact_subscription_when_total_session_limit_is_exceeded() {
     let router = Arc::new(Router::new());
     let subscriber_mailbox = Arc::new(Mailbox::new(MAX_NOTICE_REGISTRATIONS_PER_SESSION + 4));
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
-    let sink = NoticeDomainSink::new(
+    let sink = NoticeDomain::new(
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
     );
@@ -685,7 +684,7 @@ fn should_return_existing_subscription_id_given_idempotent_wildcard_subscribe_at
     let router = Arc::new(Router::new());
     let subscriber_mailbox = Arc::new(Mailbox::new(MAX_WILDCARD_REGISTRATIONS_PER_SESSION + 5));
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
-    let sink = NoticeDomainSink::new(
+    let sink = NoticeDomain::new(
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
     );

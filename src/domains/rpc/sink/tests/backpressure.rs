@@ -10,7 +10,7 @@ fn should_not_evict_worker_given_unsupported_dispatch_payload() {
     // Arrange
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = RpcDomainSink::new(router.clone(), admin_read_model);
+    let sink = RpcDomain::new(router.clone(), admin_read_model);
     let family = RouteFamily::new(1);
     let route = Route::new("rpc://bench/system/resource/unsupported");
     let caller = session_inbox_address(family, 7);
@@ -84,7 +84,7 @@ fn exercise_detached_caller_queued_dispatch_backpressure(error: DeliveryError) {
     let router = Arc::new(Router::new());
     let metrics = crate::observability::metrics::MetricsCollector::new();
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = RpcDomainSink::new(router.clone(), admin_read_model).with_metrics(metrics.clone());
+    let sink = RpcDomain::new(router.clone(), admin_read_model).with_metrics(metrics.clone());
     let family = RouteFamily::new(1);
     let route = Route::new("rpc://bench/system/resource/queued-disconnect");
     let worker_inbox = session_inbox_address(family, 42);
@@ -115,13 +115,13 @@ fn exercise_detached_caller_queued_dispatch_backpressure(error: DeliveryError) {
             Instant::now() + Duration::from_secs(30),
         ),
     );
-    let dispatch = {
-        let mut state = sink.core.state.lock();
-        state.next_queued_dispatch(&route).expect("queued dispatch")
-    };
+    let dispatch = sink.inspect_primary_state_for_tests({
+        let route = route.clone();
+        move |state| state.next_queued_dispatch(&route).expect("queued dispatch")
+    });
     let cleanup = sink.apply_session_cleanup(7);
 
-    sink.runtime().forward_queued_dispatch(&dispatch);
+    sink.forward_queued_dispatch_for_tests(dispatch);
 
     assert_eq!(cleanup.detached_callers, 1);
     assert_eq!(sink.pending_request_count(), 0);
@@ -144,7 +144,7 @@ fn should_return_to_family_drain_loop_after_queued_dispatch_backpressure() {
     // Arrange
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = RpcDomainSink::new(router.clone(), admin_read_model);
+    let sink = RpcDomain::new(router.clone(), admin_read_model);
     let family = RouteFamily::new(1);
     let route = Route::new("rpc://bench/system/resource/queued-backpressure");
     let worker_inbox = session_inbox_address(family, 42);
@@ -182,13 +182,13 @@ fn should_return_to_family_drain_loop_after_queued_dispatch_backpressure() {
             ),
         );
     }
-    let dispatch = {
-        let mut state = sink.core.state.lock();
-        state.next_queued_dispatch(&route).expect("queued dispatch")
-    };
+    let dispatch = sink.inspect_primary_state_for_tests({
+        let route = route.clone();
+        move |state| state.next_queued_dispatch(&route).expect("queued dispatch")
+    });
 
     // Act
-    sink.runtime().forward_queued_dispatch(&dispatch);
+    sink.forward_queued_dispatch_for_tests(dispatch);
 
     // Assert
     assert_eq!(sink.queued_request_count_for_tests(), 1);

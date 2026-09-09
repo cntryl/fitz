@@ -196,9 +196,7 @@ async fn should_return_schedule_resource_rollup_fields() {
     // Arrange
     let (runtime, store, schedule) = schedule_runtime_with_domains();
     seed_pending_schedule_claim(store);
-    schedule
-        .preload_persisted_families()
-        .expect("preload schedules");
+    schedule.preload_schedules().expect("preload schedules");
     let cookie = login_cookie(runtime.clone()).await;
     let req = hyper::http::Request::builder()
         .method(Method::GET)
@@ -827,9 +825,7 @@ async fn should_return_schedule_stats_with_latency_pressure() {
     fitz::boot::observability::metrics().clear();
     let (runtime, store, schedule) = schedule_runtime_with_domains();
     seed_active_schedule_definition(store);
-    schedule
-        .preload_persisted_families()
-        .expect("preload schedules");
+    schedule.preload_schedules().expect("preload schedules");
     let metrics = fitz::boot::observability::metrics();
     let schedule_latency_before = metrics
         .histogram_get_buckets("fitz_schedule_latency_ms")
@@ -887,9 +883,7 @@ async fn should_return_schedule_stats_with_pending_claim_age() {
     // Arrange
     let (runtime, store, schedule) = schedule_runtime_with_domains();
     seed_pending_schedule_claim(store);
-    schedule
-        .preload_persisted_families()
-        .expect("preload schedules");
+    schedule.preload_schedules().expect("preload schedules");
     let metrics = fitz::boot::observability::metrics();
     let create_persistence_before =
         metrics.counter_get("fitz_schedule_create_persistence_failures_total");

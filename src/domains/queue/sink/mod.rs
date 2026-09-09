@@ -9,8 +9,7 @@ mod observability;
 mod responses;
 mod subscriptions;
 
-pub use facade::QueueCounts;
-pub use model::QueueDomainSink;
+pub(crate) use model::QueueDomain;
 
 #[cfg(test)]
 mod tests;

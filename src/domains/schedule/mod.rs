@@ -16,19 +16,19 @@
 //! downtime. Schedule does not replay historical occurrences, retain a durable
 //! delivery backlog, or provide execution guarantees.
 
-pub mod actor;
+pub(crate) mod actor;
 mod definition_validation;
 pub(crate) mod list_wire_budget;
 pub mod metrics;
 pub mod protocol;
-pub mod sink;
-pub mod store;
+pub(crate) mod sink;
+pub(crate) mod store;
 
-pub use actor::ScheduleActor;
+pub(crate) use actor::ScheduleActor;
 pub use metrics::ScheduleMetrics;
 pub use protocol::{
     CronSchedule, ScheduleClientNotification, ScheduleClientRequest, ScheduleClientResponse,
     ScheduleCreateEntry, ScheduleDef, ScheduleDeliveryMode, ScheduleFailure,
     ScheduleFailureCategory, ScheduleListEntry, ScheduleMessage, ScheduleResponse,
 };
-pub use store::ScheduleStore;
+pub(crate) use store::ScheduleStore;

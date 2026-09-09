@@ -1,6 +1,6 @@
 //! Ready-notification fan-out and per-operation actor dispatch.
 
-use super::model::{QueueDomainCore, QueueReadyNotification};
+use super::model::{QueueFamilyState, QueueReadyNotification};
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
 use crate::domains::queue::QueueNotification;
@@ -44,9 +44,9 @@ pub(in crate::domains::queue::sink) enum QueueOpKind {
     InflightExpired,
 }
 
-impl QueueDomainCore {
+impl QueueFamilyState {
     pub(super) fn rollback_undeliverable_receive(
-        &self,
+        &mut self,
         family_id: RouteFamily,
         requested_route: &crate::runtime::routing::Route,
         session_id: u64,
@@ -70,24 +70,28 @@ impl QueueDomainCore {
             _ => return,
         };
 
-        let mut released = Vec::new();
-        let mut actors = self.actors.lock();
+        let mut released_counts = Vec::new();
         for (route, id, token) in reservations {
             let Ok(key) = Self::queue_key_for_route(family_id, &route) else {
                 continue;
             };
-            let Some(warm_actor) = actors.get_mut(&key) else {
+            let Some(warm_actor) = self.actors.get_mut(&key) else {
                 continue;
             };
             if warm_actor
                 .actor
                 .release_undelivered_reservation(session_id, id, token)
             {
-                let notification = self.record_ready_state(&key, warm_actor.actor.live_counts());
-                released.push((key, notification));
+                released_counts.push((key, warm_actor.actor.live_counts()));
             }
         }
-        drop(actors);
+        let released = released_counts
+            .into_iter()
+            .map(|(key, counts)| {
+                let notification = self.record_ready_state(&key, counts);
+                (key, notification)
+            })
+            .collect::<Vec<_>>();
 
         if released.is_empty() {
             return;
@@ -112,7 +116,7 @@ impl QueueDomainCore {
     }
 
     pub(super) fn route_queue_notify_to_subscription(
-        &self,
+        &mut self,
         session_id: u64,
         subscription_id: u64,
         subscriber: &crate::runtime::routing::RouteAddress,
@@ -170,13 +174,13 @@ impl QueueDomainCore {
     }
 
     pub(super) fn route_queue_ready_notification(
-        &self,
+        &mut self,
         key: &crate::domains::queue::QueueKey,
         notification: QueueReadyNotification,
     ) {
         let route = Self::queue_ready_route(key);
         let targets = {
-            let families = self.families.lock();
+            let families = &self.families;
             let mut targets = Vec::new();
             if let Some(state) = families.get(&notification.family_id.as_u64()) {
                 state.for_each_matching_route(
@@ -206,14 +210,14 @@ impl QueueDomainCore {
     }
 
     pub(super) fn emit_current_ready_notifications_for_watch(
-        &self,
+        &mut self,
         family_id: crate::runtime::routing::RouteFamily,
         pattern: &crate::runtime::matcher::Pattern,
         session_id: u64,
         subscription_id: u64,
         subscriber: &crate::runtime::routing::RouteAddress,
     ) {
-        let actors = self.actors.lock();
+        let actors = &self.actors;
         let ready_snapshots: Vec<_> = actors
             .iter()
             .filter(|(key, _)| key.family == family_id)
@@ -223,7 +227,7 @@ impl QueueDomainCore {
                 (counts.ready > 0 && pattern.matches(&route)).then_some((route, counts))
             })
             .collect();
-        drop(actors);
+        let _ = actors;
 
         for (route, counts) in ready_snapshots {
             self.route_queue_notify_to_subscription(
@@ -237,7 +241,7 @@ impl QueueDomainCore {
     }
 
     pub(super) fn dispatch_actor_operation(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         request_started: Option<Instant>,
@@ -320,7 +324,7 @@ impl QueueDomainCore {
     }
 
     fn handle_enqueue_operation(
-        &self,
+        &mut self,
         family_id: RouteFamily,
         route: &crate::runtime::routing::Route,
         body: bytes::Bytes,
@@ -349,7 +353,7 @@ impl QueueDomainCore {
     }
 
     fn handle_receive_operation(
-        &self,
+        &mut self,
         family_id: RouteFamily,
         route: &crate::runtime::routing::Route,
         session_id: u64,
@@ -420,7 +424,7 @@ impl QueueDomainCore {
     }
 
     fn handle_extend_operation(
-        &self,
+        &mut self,
         family_id: RouteFamily,
         route: &crate::runtime::routing::Route,
         extend: ExtendOperation,
@@ -453,7 +457,7 @@ impl QueueDomainCore {
     }
 
     fn handle_ack_operation(
-        &self,
+        &mut self,
         family_id: RouteFamily,
         route: &crate::runtime::routing::Route,
         session_id: u64,
@@ -483,7 +487,7 @@ impl QueueDomainCore {
     }
 
     fn with_actor_for_operation<F>(
-        &self,
+        &mut self,
         key: &crate::domains::queue::QueueKey,
         request_context: OperationRequestContext<'_>,
         operation: F,
@@ -519,7 +523,7 @@ impl QueueDomainCore {
             };
         self.observe_histogram_us(obs::METRIC_QUEUE_ACTOR_LOCK_HOLD_LATENCY, actor_lock_us);
         if counts.total() > 0 {
-            self.known_queue_keys.lock().insert(key.clone());
+            self.known_queue_keys.insert(key.clone());
         }
         let notification = self.record_ready_state(key, counts);
         self.observe_histogram_us(obs::METRIC_QUEUE_ACTOR_EXECUTION_LATENCY, actor_exec_us);
@@ -542,7 +546,7 @@ impl QueueDomainCore {
     }
 
     pub(super) fn record_operation_metrics(
-        &self,
+        &mut self,
         request_started: Option<Instant>,
         response: &crate::domains::queue::QueueResponse,
         op_kind: QueueOpKind,

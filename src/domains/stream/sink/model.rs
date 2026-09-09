@@ -1,19 +1,13 @@
-pub(super) use crate::dispatch::protocol::payload_codec::PayloadEncoder;
-pub(super) use crate::domains::stream::metrics::StreamDurableMetrics;
-pub(super) use crate::domains::stream::StreamMetrics;
-pub(super) use crate::domains::stream::{
-    StreamActor, StreamClientFrame, StreamClientRequest, StreamClientResponseBody,
-    StreamFilteredReason, StreamMetadata, StreamReadItem, StreamRecord, StreamStorageLayout,
-    StreamStore,
-};
-pub(super) use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
-pub(super) use crate::runtime::routing::{route_triplet, Route, RouteAddress, RouteFamily};
-pub(super) use crate::runtime::{CleanedUpSessions, DeliveryError, Envelope, MailboxSink, Router};
-pub(super) use parking_lot::Mutex;
-pub(super) use std::collections::{BTreeMap, BTreeSet, HashMap};
-pub(super) use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-pub(super) use std::sync::{Arc, Weak};
-pub(super) use std::time::Duration;
+use crate::domains::stream::metrics::StreamDurableMetrics;
+use crate::domains::stream::StreamMetrics;
+use crate::domains::stream::{StreamActor, StreamClientResponseBody, StreamStore};
+use crate::domains::subscription_state::{RoutedSubscription, RoutedSubscriptionSet};
+use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+use crate::runtime::{CleanedUpSessions, DeliveryError, Envelope, MailboxSink, Router};
+use std::collections::{BTreeSet, HashMap};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 
 pub(super) fn u64_to_usize_saturating(value: u64) -> usize {
     usize::try_from(value).unwrap_or(usize::MAX)
@@ -151,6 +145,7 @@ impl StreamStorageWriteOptions {
     }
 
     #[must_use]
+    #[cfg(test)]
     pub fn cloud_background() -> Self {
         Self::new(
             crate::domains::WritePolicy::CloudAsync,
@@ -159,6 +154,7 @@ impl StreamStorageWriteOptions {
     }
 
     #[must_use]
+    #[cfg(test)]
     pub fn cloud_strict() -> Self {
         Self::new(
             crate::domains::WritePolicy::CloudStrict,
@@ -313,36 +309,38 @@ impl StreamResourceScope {
 pub(super) struct StreamSessionOwner {
     pub(super) key: StreamResourceScope,
     pub(super) owner_session_id: u64,
-    pub(super) actor: Arc<Mutex<StreamActor>>,
 }
 
 pub(super) struct SubscriptionRegistry {
-    pub(super) families: Mutex<HashMap<u64, RoutedSubscriptionSet<StreamSubscription>>>,
+    pub(super) families: HashMap<u64, RoutedSubscriptionSet<StreamSubscription>>,
     pub(super) next_id: Arc<AtomicU64>,
-    pub(super) pending: Mutex<Vec<PendingStreamNotification>>,
+    pub(super) pending: Vec<PendingStreamNotification>,
 }
 
 impl SubscriptionRegistry {
     pub(super) fn new(next_id: Arc<AtomicU64>) -> Self {
         Self {
-            families: Mutex::new(HashMap::new()),
+            families: HashMap::new(),
             next_id,
-            pending: Mutex::new(Vec::new()),
+            pending: Vec::new(),
         }
     }
 }
 
 pub(super) struct AdminSnapshotState {
     pub(super) read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
-    pub(super) dirty: Arc<AtomicBool>,
+    pub(super) dirty: AtomicBool,
 }
 
 impl AdminSnapshotState {
     pub(super) fn new(
         read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
-        dirty: Arc<AtomicBool>,
+        dirty: bool,
     ) -> Self {
-        Self { read_model, dirty }
+        Self {
+            read_model,
+            dirty: AtomicBool::new(dirty),
+        }
     }
 
     pub(super) fn mark_dirty(&self) {
@@ -380,16 +378,16 @@ impl WatermarkCoordinators {
     }
 }
 
-pub(super) struct StreamFamilyState {
-    pub(super) core: Arc<StreamDomainCore>,
+pub(super) struct StreamFamilyRuntime {
+    pub(super) core: StreamFamilyState,
     pub(super) watermark_coordinators: WatermarkCoordinators,
     pub(super) watermark_router: Arc<Router>,
-    pub(super) watermark_events: Arc<Mutex<Vec<crate::runtime::DomainPublishEvent>>>,
+    pub(super) watermark_events: crossbeam_channel::Receiver<crate::runtime::DomainPublishEvent>,
     pub(super) pending_watermark_commits: Vec<WatermarkCommit>,
 }
 
 struct WatermarkEventSink {
-    events: Arc<Mutex<Vec<crate::runtime::DomainPublishEvent>>>,
+    events: crossbeam_channel::Sender<crate::runtime::DomainPublishEvent>,
 }
 
 impl MailboxSink for WatermarkEventSink {
@@ -397,8 +395,9 @@ impl MailboxSink for WatermarkEventSink {
         let event = envelope
             .payload::<crate::runtime::DomainPublishEvent>()
             .ok_or(DeliveryError::ActorStopped)?;
-        self.events.lock().push(event.clone());
-        Ok(())
+        self.events
+            .send(event.clone())
+            .map_err(|_| DeliveryError::ActorStopped)
     }
 
     fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
@@ -406,14 +405,14 @@ impl MailboxSink for WatermarkEventSink {
     }
 }
 
-impl StreamFamilyState {
-    pub(super) fn new(core: Arc<StreamDomainCore>) -> Self {
+impl StreamFamilyRuntime {
+    pub(super) fn new(core: StreamFamilyState) -> Self {
         let watermark_router = Arc::new(Router::new());
-        let watermark_events = Arc::new(Mutex::new(Vec::new()));
+        let (watermark_event_sender, watermark_events) = crossbeam_channel::unbounded();
         watermark_router.register_domain_pattern(
             "stream",
             Arc::new(WatermarkEventSink {
-                events: watermark_events.clone(),
+                events: watermark_event_sender,
             }),
         );
         Self {
@@ -426,12 +425,11 @@ impl StreamFamilyState {
     }
 }
 
-pub(super) struct StreamDomainCore {
-    pub(super) store: crate::storage::FitzStorageEngine,
+pub(super) struct StreamFamilyState {
     pub(super) stream_store: Arc<StreamStore>,
-    pub(super) actors: Mutex<HashMap<StreamResourceScope, Arc<Mutex<StreamActor>>>>,
-    pub(super) session_owners: Mutex<HashMap<u64, StreamSessionOwner>>,
-    pub(super) cleaned_up_sessions: Mutex<CleanedUpSessions>,
+    pub(super) actors: HashMap<StreamResourceScope, StreamActor>,
+    pub(super) session_owners: HashMap<u64, StreamSessionOwner>,
+    pub(super) cleaned_up_sessions: CleanedUpSessions,
     pub(super) subscriptions: SubscriptionRegistry,
     pub(super) next_session_id: Arc<AtomicU64>,
     pub(super) cursor_integrity_key: Arc<[u8; 32]>,
@@ -441,9 +439,6 @@ pub(super) struct StreamDomainCore {
     pub(super) metrics: Option<StreamMetrics>,
     pub(super) durable_metrics: Arc<StreamDurableMetrics>,
     pub(super) active: Arc<AtomicBool>,
-    /// Weak family-core registry used only to aggregate live/admin views.
-    /// Mutable delivery state itself remains owned by each family core.
-    pub(super) family_cores: Arc<Mutex<BTreeMap<u64, Weak<StreamDomainCore>>>>,
 }
 
 pub(super) enum StreamDomainCommand {
@@ -466,6 +461,11 @@ pub(super) enum StreamDomainCommand {
         crossbeam_channel::Sender<()>,
         crossbeam_channel::Receiver<()>,
     ),
+    #[cfg(test)]
+    InspectForTests(
+        Box<dyn FnOnce(&mut StreamFamilyRuntime) + Send>,
+        crossbeam_channel::Sender<()>,
+    ),
 }
 
 #[derive(Default)]
@@ -475,10 +475,25 @@ pub(super) struct StreamLiveCounts {
     pub(super) subscriptions: usize,
 }
 
-pub struct StreamDomainSink {
-    pub(super) core: Arc<StreamDomainCore>,
+pub(crate) struct StreamDomain {
+    pub(super) config: StreamDomainConfig,
+    pub(super) active: Arc<AtomicBool>,
     pub(super) family_runtime: crate::runtime::FamilyActorPoolRuntime<StreamDomainCommand>,
     pub(super) family_families: Vec<RouteFamily>,
+}
+
+#[derive(Clone)]
+pub(super) struct StreamDomainConfig {
+    pub(super) stream_store: Arc<StreamStore>,
+    pub(super) next_session_id: Arc<AtomicU64>,
+    pub(super) next_subscription_id: Arc<AtomicU64>,
+    pub(super) cursor_integrity_key: Arc<[u8; 32]>,
+    pub(super) router: Arc<Router>,
+    pub(super) admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
+    pub(super) sync_write_mode: crate::domains::stream::protocol::StreamWriteMode,
+    pub(super) metrics: Option<StreamMetrics>,
+    pub(super) durable_metrics: Arc<StreamDurableMetrics>,
+    pub(super) active: Arc<AtomicBool>,
 }
 
 /// How long synchronous callers wait for a family actor's delivery outcome.

@@ -1,10 +1,10 @@
 //! Request delivery, lifecycle rejection, parsing, and dispatch selection.
 
-use super::state::KvDomainRuntime;
+use super::state::KvFamilyRuntime;
 use crate::domains::kv::{KvClientFrame, KvClientRequest};
 use crate::runtime::{DeliveryError, Envelope};
 
-impl KvDomainRuntime<'_> {
+impl KvFamilyRuntime<'_> {
     pub(super) fn deliver_envelope(&mut self, envelope: &Envelope) -> Result<(), DeliveryError> {
         if self.handle_cleanup_envelope(envelope) {
             return Ok(());

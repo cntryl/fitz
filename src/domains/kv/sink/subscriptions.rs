@@ -1,13 +1,13 @@
 //! KV watch registration, removal, matching, and notification routing.
 
 use super::locks::KvResourceLockKey;
-use super::state::KvDomainRuntime;
+use super::state::KvFamilyRuntime;
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
 use crate::domains::kv::{KvError, KvResponse};
 use crate::runtime::{DeliveryError, Envelope};
 
-impl KvDomainRuntime<'_> {
+impl KvFamilyRuntime<'_> {
     pub(super) fn handle_subscription_frame(
         &mut self,
         envelope: &Envelope,

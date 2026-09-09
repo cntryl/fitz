@@ -48,8 +48,11 @@ impl QueueActor {
         let cf_id = self.queue_key.family.id();
         let mut txn = self
             .persistence
-            .engine
-            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
+            .store
+            .begin(
+                cf_id,
+                super::recovery_store::QueueTransactionMode::ReadWrite,
+            )
             .map_err(|e| format!("Failed to begin replay tx for message {id}: {e:?}"))?;
 
         self.write_record_as_split(&mut txn, id, &record)?;
@@ -113,8 +116,11 @@ impl QueueActor {
         let cf_id = self.queue_key.family.id();
         let mut txn = self
             .persistence
-            .engine
-            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
+            .store
+            .begin(
+                cf_id,
+                super::recovery_store::QueueTransactionMode::ReadWrite,
+            )
             .map_err(|e| format!("Failed to begin purge tx for message {id}: {e:?}"))?;
 
         Self::delete_record(
@@ -170,11 +176,10 @@ impl QueueActor {
             self.min_persisted_delayed_visibility_ms()
         };
         let cf_id = self.queue_key.family.id();
-        let mut txn = match self
-            .persistence
-            .engine
-            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
-        {
+        let mut txn = match self.persistence.store.begin(
+            cf_id,
+            super::recovery_store::QueueTransactionMode::ReadWrite,
+        ) {
             Ok(txn) => txn,
             Err(error) => {
                 tracing::warn!(

@@ -32,6 +32,7 @@
 /// # Errors
 ///
 /// Returns an error if `cf_id` is 0 (the default column family)
+#[cfg(test)]
 pub fn validate_cf_not_default(cf_id: cntryl_midge::ColumnFamilyId) -> Result<(), String> {
     if cf_id == 0 {
         Err("Attempted to use default column family (CF=0). \
@@ -65,6 +66,7 @@ pub fn validate_route_family(family: crate::runtime::routing::RouteFamily) -> Re
 /// # Errors
 ///
 /// Returns an error if `family.id()` is 0
+#[cfg(test)]
 pub fn route_family_to_cf(
     family: crate::runtime::routing::RouteFamily,
 ) -> Result<cntryl_midge::ColumnFamilyId, String> {

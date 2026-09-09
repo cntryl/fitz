@@ -11,7 +11,7 @@ use super::*;
 fn should_confirm_stream_family_cleanup_before_reporting_delivery() {
     // Arrange
     let family = RouteFamily::new(1);
-    let sink = StreamDomainSink::new_with_storage_layout_and_families(
+    let sink = StreamDomain::new_with_storage_layout_and_families(
         crate::storage::FitzStorageEngine::new(crate::testkit::create_test_engine_with_cfs(vec![
             1,
         ])),
@@ -61,7 +61,7 @@ fn should_yield_bounded_stream_maintenance_through_internal_actor_command() {
     for offset in 0..9 {
         context
             .sink
-            .core
+            .config
             .stream_store
             .commit_records(crate::domains::stream::store::CommitRecordsParams {
                 family: context.family.as_u64(),
@@ -84,7 +84,7 @@ fn should_yield_bounded_stream_maintenance_through_internal_actor_command() {
     context.sink.run_maintenance_slice_for_tests(context.family);
     let records = context
         .sink
-        .core
+        .config
         .stream_store
         .read_resource(&crate::domains::stream::store::ReadResourceParams {
             family: context.family.as_u64(),
@@ -102,7 +102,7 @@ fn should_yield_bounded_stream_maintenance_through_internal_actor_command() {
     assert_eq!(records.len(), 9);
     assert!(context
         .sink
-        .core
+        .config
         .stream_store
         .has_pending_maintenance(context.family.as_u64()));
     assert!(context.sink.is_actor_running());
@@ -112,7 +112,7 @@ fn should_yield_bounded_stream_maintenance_through_internal_actor_command() {
 fn should_reject_stream_delivery_when_family_runtime_is_stopped() {
     // Arrange
     let router = Arc::new(Router::new());
-    let sink = StreamDomainSink::try_new(
+    let sink = StreamDomain::try_new(
         crate::benchkit::create_bench_store(),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
@@ -508,7 +508,7 @@ fn should_flush_pending_subscription_when_visibility_advances_without_publish() 
     inbox.clear();
     context
         .sink
-        .core
+        .config
         .stream_store
         .set_watermark(1, "bench", "events", 0)
         .expect("set held area watermark");
@@ -527,20 +527,26 @@ fn should_flush_pending_subscription_when_visibility_advances_without_publish() 
     );
 
     // Act
-    context.sink.core.handle_domain_publish(&commit);
+    let family = context.family;
+    context.sink.inspect_family_for_tests(family, move |state| {
+        state.core.handle_domain_publish(&commit);
+    });
     let before = inbox.count();
     context
         .sink
-        .core
+        .config
         .stream_store
         .set_watermark(1, "bench", "events", 1)
         .expect("advance area watermark");
-    context.sink.core.handle_visibility_advance(context.family);
+    let pending_is_empty = context.sink.inspect_family_for_tests(family, move |state| {
+        state.core.handle_visibility_advance(family);
+        state.core.subscriptions.pending.is_empty()
+    });
 
     // Assert
     assert_eq!(before, 0);
     assert_eq!(inbox.count(), 1);
-    assert!(context.sink.core.subscriptions.pending.lock().is_empty());
+    assert!(pending_is_empty);
 }
 
 #[test]
@@ -580,7 +586,7 @@ fn should_create_stream_sink_given_promotion_frontier_layout() {
     let router = Arc::new(Router::new());
 
     // Act
-    let sink = StreamDomainSink::new_with_layout(
+    let sink = StreamDomain::new_with_layout(
         crate::benchkit::create_bench_store(),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
@@ -618,7 +624,7 @@ fn should_create_stream_sink_with_background_cloud_policy_through_public_api() {
     let router = Arc::new(Router::new());
 
     // Act
-    let result = StreamDomainSink::new_with_layout(
+    let result = StreamDomain::new_with_layout(
         Arc::clone(&store),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
@@ -655,7 +661,7 @@ fn should_configure_strict_cloud_writes_before_stream_initialization() {
         .expect("create route-family column family");
 
     // Act
-    let result = StreamDomainSink::new_with_layout(
+    let result = StreamDomain::new_with_layout(
         Arc::clone(&store),
         Arc::new(Router::new()),
         crate::control::admin::read_model::AdminReadModel::new(),
@@ -675,7 +681,7 @@ fn should_keep_sync_commits_local_given_local_sync_policy() {
     let router = Arc::new(Router::new());
 
     // Act
-    let sink = StreamDomainSink::try_new(
+    let sink = StreamDomain::try_new(
         crate::benchkit::create_bench_store(),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),

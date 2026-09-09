@@ -678,6 +678,46 @@ mod tests {
     }
 
     #[test]
+    fn should_preserve_rpc_request_response_delivery_and_error_golden_bytes() {
+        // Arrange
+        let correlation_id =
+            Uuid::from_bytes([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+        let request = RpcRequest::new(
+            RouteFamily::new(1),
+            correlation_id,
+            Route::new("rpc://r/a/x"),
+            Bytes::from_static(b"hi"),
+        );
+
+        // Act
+        let mut encoder = PayloadEncoder::new();
+        let delivery = encode_request_into(&request, &mut encoder);
+        let parsed_route = extract_auth_route(302, &delivery).expect("parse golden RPC request");
+        let response = encode_response(&RpcClientResponseBody::Ok {
+            data: b"ok".to_vec(),
+        });
+        let error = encode_error_body(
+            crate::protocol::error_codes::rpc::ERR_WORKER_NOT_FOUND,
+            "gone",
+        );
+
+        // Assert
+        assert_eq!(parsed_route, Some("rpc://r/a/x"));
+        assert_eq!(
+            delivery,
+            [
+                0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0, 0, 0, 11, b'r', b'p',
+                b'c', b':', b'/', b'/', b'r', b'/', b'a', b'/', b'x', 0, 0, 0, 2, b'h', b'i',
+            ]
+        );
+        assert_eq!(response, [0, 0, 0, 0, 2, b'o', b'k']);
+        assert_eq!(
+            error,
+            [1, 0, 0, 23, 114, 0, 0, 0, 4, b'g', b'o', b'n', b'e']
+        );
+    }
+
+    #[test]
     fn should_reject_removed_ack_message_type() {
         // Arrange
         let frame = FrameContext::new(

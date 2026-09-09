@@ -1,49 +1,42 @@
 //! Sink construction, pre-registration configuration, and family lifecycle.
 
 use super::commands::KvDomainCommand;
-use super::state::{KvDomainConfig, KvDomainCore, KvDomainRuntime, KvDomainSink, KvDomainState};
+use super::state::{KvDomain, KvDomainConfig, KvFamilyRuntime, KvFamilyState};
 use crate::runtime::routing::RouteFamily;
 use crate::runtime::Router;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-impl KvDomainState {
+impl KvFamilyState {
     fn new(config: &KvDomainConfig) -> Self {
         Self {
-            core: KvDomainCore {
-                store: config.store.clone(),
-                actors: HashMap::new(),
-                resource_locks: HashMap::new(),
-                watch_registries: HashMap::new(),
-                cleaned_up_sessions: crate::runtime::CleanedUpSessions::new(
-                    crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
-                ),
-                router: config.router.clone(),
-                projection: config.projection.clone(),
-                metrics: config.metrics.clone(),
-                sync_write_options: config.sync_write_options,
-                buffered_write_options: config.buffered_write_options,
-                idle_transaction_ttl: config.idle_transaction_ttl,
-            },
-        }
-    }
-
-    pub(super) fn runtime(&mut self) -> KvDomainRuntime<'_> {
-        KvDomainRuntime {
-            core: &mut self.core,
+            store: config.store.clone(),
+            actors: HashMap::new(),
+            resource_locks: HashMap::new(),
+            watch_registries: HashMap::new(),
+            cleaned_up_sessions: crate::runtime::CleanedUpSessions::new(
+                crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
+            ),
+            router: config.router.clone(),
+            projection: config.projection.clone(),
+            metrics: config.metrics.clone(),
+            sync_write_policy: config.sync_write_policy,
+            buffered_write_policy: config.buffered_write_policy,
+            idle_transaction_ttl: config.idle_transaction_ttl,
         }
     }
 }
 
-impl KvDomainSink {
-    pub(super) fn admin_core(&self) -> KvDomainCore {
-        KvDomainState::new(&self.config).core
+impl KvDomain {
+    pub(super) fn admin_core(&self) -> KvFamilyState {
+        KvFamilyState::new(&self.config)
     }
 
     #[must_use]
+    #[allow(private_bounds)]
     pub fn new(
-        store: Arc<cntryl_midge::Engine>,
+        store: impl Into<crate::domains::kv::store::KvStore>,
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
     ) -> Self {
@@ -56,7 +49,7 @@ impl KvDomainSink {
     }
 
     pub(crate) fn new_with_families(
-        store: Arc<cntryl_midge::Engine>,
+        store: impl Into<crate::domains::kv::store::KvStore>,
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
         route_families: &[RouteFamily],
@@ -66,14 +59,14 @@ impl KvDomainSink {
             "KV route families must not be empty"
         );
         let config = KvDomainConfig {
-            store,
+            store: store.into(),
             router,
             projection: Arc::new(
                 crate::domains::kv::admin_projection::KvAdminProjection::new(admin_read_model),
             ),
             metrics: None,
-            sync_write_options: cntryl_midge::WriteOptions::sync(),
-            buffered_write_options: cntryl_midge::WriteOptions::buffered(),
+            sync_write_policy: crate::domains::WritePolicy::Sync,
+            buffered_write_policy: crate::domains::WritePolicy::Buffered,
             idle_transaction_ttl: std::time::Duration::from_mins(5),
         };
         let active = Arc::new(AtomicBool::new(true));
@@ -97,8 +90,8 @@ impl KvDomainSink {
         crate::runtime::FamilyActorPoolRuntime::spawn_with_family_failed_metric(
             pool,
             active,
-            move |_family| KvDomainState::new(&config),
-            |state, _, _, command| state.runtime().receive(command),
+            move |_family| KvFamilyState::new(&config),
+            |state, _, _, command| KvFamilyRuntime { core: state }.receive(command),
             crate::domains::kv::metrics::METRIC_FAMILY_FAILED_CLOSED_TOTAL,
         )
     }
@@ -125,23 +118,27 @@ impl KvDomainSink {
     }
 
     #[must_use]
-    pub fn with_sync_write_options(self, write_options: cntryl_midge::WriteOptions) -> Self {
-        let buffered = if write_options.is_cloud_async() || write_options.is_cloud_strict() {
-            cntryl_midge::WriteOptions::cloud_async()
+    #[cfg(test)]
+    pub fn with_sync_write_policy(self, write_policy: crate::domains::WritePolicy) -> Self {
+        let buffered = if matches!(
+            write_policy,
+            crate::domains::WritePolicy::CloudAsync | crate::domains::WritePolicy::CloudStrict
+        ) {
+            crate::domains::WritePolicy::CloudAsync
         } else {
-            cntryl_midge::WriteOptions::buffered()
+            crate::domains::WritePolicy::Buffered
         };
-        self.with_write_options(write_options, buffered)
+        self.with_write_policies(write_policy, buffered)
     }
 
     #[must_use]
-    pub fn with_write_options(
+    pub fn with_write_policies(
         mut self,
-        sync_write_options: cntryl_midge::WriteOptions,
-        buffered_write_options: cntryl_midge::WriteOptions,
+        sync_write_policy: crate::domains::WritePolicy,
+        buffered_write_policy: crate::domains::WritePolicy,
     ) -> Self {
-        self.config.sync_write_options = sync_write_options;
-        self.config.buffered_write_options = buffered_write_options;
+        self.config.sync_write_policy = sync_write_policy;
+        self.config.buffered_write_policy = buffered_write_policy;
         self.rebuild_family_runtime();
         self
     }
@@ -168,8 +165,10 @@ impl KvDomainSink {
         self.family_runtime.stop();
     }
 
-    pub(crate) fn actor_health_snapshot(&self) -> crate::runtime::ActorHealthSnapshot {
-        self.family_runtime.actor_health_snapshot()
+    pub(crate) fn family_health_snapshot(
+        &self,
+    ) -> crate::runtime::family_actor_pool::FamilyActorPoolHealthSnapshot {
+        self.family_runtime.health_snapshot()
     }
 
     #[cfg(test)]

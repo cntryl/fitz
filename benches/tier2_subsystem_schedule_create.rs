@@ -5,12 +5,14 @@ mod tier2_stress;
 
 use cntryl_stress::{black_box, stress, stress_main, StressContext};
 use fitz::benchkit::create_bench_store;
-use fitz::domains::schedule::actor::ScheduleActor;
 use fitz::domains::schedule::protocol::{
     validate_concrete_schedule_route, CronSchedule, ScheduleCreateEntry, ScheduleDeliveryMode,
 };
-use fitz::domains::schedule::store::{ScheduleBatchInsert, ScheduleInsert, ScheduleStore};
 use fitz::runtime::routing::RouteFamily;
+use fitz::testkit::domain_internals::schedule::ScheduleActor;
+use fitz::testkit::domain_internals::schedule::{
+    ScheduleBatchInsert, ScheduleInsert, ScheduleStore,
+};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const CREATE_BATCH_SIZE: usize = 32;

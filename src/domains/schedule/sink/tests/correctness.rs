@@ -1,7 +1,7 @@
 use super::*;
 
-fn new_correctness_schedule_sink(router: Arc<Router>) -> ScheduleDomainSink {
-    ScheduleDomainSink::new(
+fn new_correctness_schedule_sink(router: Arc<Router>) -> ScheduleDomain {
+    ScheduleDomain::new(
         crate::domains::schedule::ScheduleStore::new(crate::testkit::create_test_engine_with_cfs(
             vec![1, 2],
         )),

@@ -104,7 +104,7 @@ fn should_reject_out_of_order_worker_response_given_rpc_sink() {
     // Arrange
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model));
+    let sink = Arc::new(RpcDomain::new(router.clone(), admin_read_model));
     let family = RouteFamily::new(1);
     let request_route = Route::new("rpc://bench/system/resource/operation");
     let request_addr = RouteAddress::new(family, request_route.clone());
@@ -206,7 +206,7 @@ fn should_reject_duplicate_worker_response_chunk_given_rpc_sink() {
     // Arrange
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model));
+    let sink = Arc::new(RpcDomain::new(router.clone(), admin_read_model));
     let family = RouteFamily::new(1);
     let request_route = Route::new("rpc://bench/system/resource/operation");
     let request_addr = RouteAddress::new(family, request_route.clone());
@@ -357,7 +357,7 @@ impl MailboxSink for BackpressuredThenCapturingSink {
 
 /// Deliver one worker response chunk for `request`.
 fn deliver_test_rpc_chunk(
-    sink: &Arc<RpcDomainSink>,
+    sink: &Arc<RpcDomain>,
     request: &crate::domains::rpc::protocol::RpcRequest,
     family: RouteFamily,
     worker_source: &RouteAddress,
@@ -387,7 +387,7 @@ fn deliver_test_rpc_chunk(
 
 /// Build a well-formed RPC request, deliver it, and hand back the parsed form.
 fn deliver_test_rpc_request(
-    sink: &Arc<RpcDomainSink>,
+    sink: &Arc<RpcDomain>,
     family: RouteFamily,
     request_route: &Route,
     request_source: RouteAddress,
@@ -431,9 +431,8 @@ fn should_terminate_stream_when_a_response_chunk_cannot_be_delivered() {
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
     let metrics = crate::observability::metrics::MetricsCollector::new();
-    let sink = Arc::new(
-        RpcDomainSink::new(router.clone(), admin_read_model).with_metrics(metrics.clone()),
-    );
+    let sink =
+        Arc::new(RpcDomain::new(router.clone(), admin_read_model).with_metrics(metrics.clone()));
     let family = RouteFamily::new(1);
     let request_route = Route::new("rpc://bench/system/resource/stream");
     let request_addr = RouteAddress::new(family, request_route.clone());
@@ -546,7 +545,7 @@ fn should_terminate_immediately_on_the_first_undeliverable_terminal_chunk() {
     // pending until the caller-side timeout instead of failing promptly.
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model));
+    let sink = Arc::new(RpcDomain::new(router.clone(), admin_read_model));
     let family = RouteFamily::new(1);
     let request_route = Route::new("rpc://bench/system/resource/terminal-undeliverable");
     let request_source = session_inbox_address(family, 1);

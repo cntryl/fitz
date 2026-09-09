@@ -79,6 +79,21 @@ fn should_encode_schedule_definition_key_with_typed_segments() {
 }
 
 #[test]
+fn should_match_golden_schedule_storage_key_plus_value_bytes() {
+    // Arrange
+    const GOLDEN_KEY: &str = "61636d6500736300016a6f6273006261636b75700072756e";
+    const GOLDEN_VALUE: &str = "030000018bcfe5680000000000000000000000000000000007";
+
+    // Act
+    let key = ScheduleStore::encode_definition_key("schedule://acme/jobs/backup/run");
+    let value = ScheduleStore::encode_definition_metadata_value(1_700_000_000_000, None, 7);
+
+    // Assert
+    assert_eq!(hex::encode(key), GOLDEN_KEY);
+    assert_eq!(hex::encode(value), GOLDEN_VALUE);
+}
+
+#[test]
 fn should_persist_definition_without_due_index_for_inserted_schedule() {
     // Arrange
     let (store, db) = make_store();

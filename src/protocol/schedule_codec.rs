@@ -468,6 +468,41 @@ mod tests {
     }
 
     #[test]
+    fn should_preserve_schedule_request_response_notification_and_error_golden_bytes() {
+        // Arrange
+        let route = "schedule://r/a/x";
+        let request = [
+            0, 0, 0, 16, b's', b'c', b'h', b'e', b'd', b'u', b'l', b'e', b':', b'/', b'/', b'r',
+            b'/', b'a', b'/', b'x',
+        ];
+
+        // Act
+        let parsed_route =
+            super::extract_auth_route(701, &request).expect("parse golden schedule cancel request");
+        let response = encode_response(703, &ScheduleResponse::SubscribeOk { subscription_id: 7 });
+        let notification = encode_notify(7, route, b"hi");
+        let error = encode_response(
+            702,
+            &ScheduleResponse::Error(ScheduleFailure::new(
+                ScheduleFailureCategory::NotFound,
+                "gone",
+            )),
+        );
+
+        // Assert
+        assert_eq!(parsed_route, Some(route));
+        assert_eq!(response, [0, 1, 0, 0, 0, 0, 0, 0, 0, 7]);
+        assert_eq!(
+            notification,
+            [
+                0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 16, b's', b'c', b'h', b'e', b'd', b'u', b'l',
+                b'e', b':', b'/', b'/', b'r', b'/', b'a', b'/', b'x', 0, 0, 0, 2, b'h', b'i',
+            ]
+        );
+        assert_eq!(error, [1, 0, 0, 27, 89, 0, 0, 0, 4, b'g', b'o', b'n', b'e']);
+    }
+
+    #[test]
     fn should_extract_schedule_batch_auth_routes() {
         // Arrange
         let mut enc = PayloadEncoder::new();

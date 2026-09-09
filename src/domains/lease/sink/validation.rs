@@ -1,6 +1,7 @@
-use super::model::{Duration, Instant, LeaseDomainRuntime};
+use super::model::LeaseFamilyRuntime;
+use std::time::{Duration, Instant};
 
-impl LeaseDomainRuntime<'_> {
+impl LeaseFamilyRuntime<'_> {
     pub(super) fn lease_expiry(
         now: Instant,
         ttl_secs: u64,

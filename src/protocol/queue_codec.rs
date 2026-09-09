@@ -762,4 +762,53 @@ mod tests {
         assert_eq!(encoded[1], 1);
         assert_eq!(u64::from_be_bytes(encoded[2..10].try_into().unwrap()), 42);
     }
+
+    #[test]
+    fn should_preserve_queue_request_response_notification_and_error_golden_bytes() {
+        // Arrange
+        let route = "queue://r/a/x";
+        let request = [
+            0, 0, 0, 13, b'q', b'u', b'e', b'u', b'e', b':', b'/', b'/', b'r', b'/', b'a', b'/',
+            b'x', 0, 0, 0, 2, b'h', b'i', 0,
+        ];
+
+        // Act
+        let parsed_route =
+            extract_auth_route(msg_type::ENQUEUE, &request).expect("parse golden enqueue request");
+        let response = encode_response(
+            msg_type::ENQUEUE,
+            &QueueResponse::Sent {
+                id: MessageId::new(7),
+            },
+        );
+        let notification = encode_notify(
+            7,
+            &Route::new(route),
+            QueueNotification {
+                ready_messages: 1,
+                delayed_messages: 2,
+                inflight_messages: 3,
+            },
+        );
+        let error = encode_response(msg_type::ENQUEUE, &QueueResponse::QueueNotFound);
+
+        // Assert
+        assert_eq!(parsed_route, Some(route));
+        assert_eq!(response, [0, 0, 0, 0, 0, 0, 0, 0, 7]);
+        assert_eq!(
+            notification,
+            [
+                0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 13, b'q', b'u', b'e', b'u', b'e', b':', b'/',
+                b'/', b'r', b'/', b'a', b'/', b'x', 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2,
+                0, 0, 0, 0, 0, 0, 0, 3,
+            ]
+        );
+        assert_eq!(
+            error,
+            [
+                1, 0, 0, 15, 164, 0, 0, 0, 13, b'Q', b'u', b'e', b'u', b'e', b'N', b'o', b't',
+                b'F', b'o', b'u', b'n', b'd',
+            ]
+        );
+    }
 }

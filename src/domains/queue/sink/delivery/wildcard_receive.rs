@@ -1,4 +1,4 @@
-use super::{OperationOutcome, QueueDomainCore};
+use super::{OperationOutcome, QueueFamilyState};
 use crate::runtime::routing::RouteFamily;
 use std::sync::atomic::Ordering;
 
@@ -56,24 +56,21 @@ fn route_reserved_messages(
     )
 }
 
-impl QueueDomainCore {
+impl QueueFamilyState {
     const MAX_WILDCARD_RESERVE_MATCHES: usize = 4096;
 
-    fn wildcard_inventory_error(&self) -> Option<OperationOutcome> {
-        self.inventory_error
-            .lock()
-            .clone()
-            .map(|error| OperationOutcome {
-                response: crate::domains::queue::QueueResponse::Error {
-                    message: format!("Queue inventory unavailable: {error}"),
-                },
-                ready_notifications: Vec::new(),
-                mark_admin_snapshot_dirty: false,
-            })
+    fn wildcard_inventory_error(&mut self) -> Option<OperationOutcome> {
+        self.inventory_error.clone().map(|error| OperationOutcome {
+            response: crate::domains::queue::QueueResponse::Error {
+                message: format!("Queue inventory unavailable: {error}"),
+            },
+            ready_notifications: Vec::new(),
+            mark_admin_snapshot_dirty: false,
+        })
     }
 
     fn wildcard_reserve_preflight(
-        &self,
+        &mut self,
         family_id: RouteFamily,
         pattern: &crate::runtime::matcher::Pattern,
     ) -> Option<OperationOutcome> {
@@ -93,7 +90,7 @@ impl QueueDomainCore {
     }
 
     pub(super) fn handle_wildcard_receive(
-        &self,
+        &mut self,
         family_id: RouteFamily,
         pattern: &crate::runtime::matcher::Pattern,
         session_id: u64,
@@ -156,7 +153,7 @@ impl QueueDomainCore {
             };
             state_changed |= actor_outcome.changed;
             if actor_outcome.counts.total() > 0 {
-                self.known_queue_keys.lock().insert(key.clone());
+                self.known_queue_keys.insert(key.clone());
             }
             if let Some(notification) = self.record_ready_state(key, actor_outcome.counts) {
                 notifications.push((key.clone(), notification));
@@ -195,7 +192,7 @@ impl QueueDomainCore {
     }
 
     fn receive_from_wildcard_actor(
-        &self,
+        &mut self,
         key: &crate::domains::queue::QueueKey,
         session_id: u64,
         inflight_seconds: u64,
@@ -226,7 +223,7 @@ impl QueueDomainCore {
 
     #[cfg(test)]
     pub(in crate::domains::queue::sink) fn handle_wildcard_receive_for_tests(
-        &self,
+        &mut self,
         family_id: RouteFamily,
         pattern: &crate::runtime::matcher::Pattern,
         session_id: u64,

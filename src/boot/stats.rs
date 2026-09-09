@@ -133,8 +133,11 @@ pub struct Runtime {
     /// Live ingress handle for session visibility
     pub(crate) ingress: Arc<RwLock<Option<Arc<RuntimeIngress>>>>,
 
-    /// Domain sink handles for live admin stats
+    /// Domain lifecycle and health handle retained for shutdown and failpoints.
     pub(crate) domains: Arc<RwLock<Option<Arc<BrokerDomains>>>>,
+
+    /// Narrow, cloneable domain-specific admin ports.
+    pub(crate) domain_admins: Arc<RwLock<Option<crate::boot::domains::DomainAdminPorts>>>,
 
     /// Auth configuration used by admin/auth surfaces
     pub(crate) auth_config: Arc<RwLock<crate::auth::AuthConfig>>,

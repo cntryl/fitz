@@ -1,12 +1,14 @@
 //! Subscribe/unsubscribe message handling: mutation of the live subscription
 //! index in response to a client request.
 
-use super::model::{LeaseDomainRuntime, LeaseSubscription, Ordering, RoutedSubscriptionSet};
+use super::model::{LeaseFamilyRuntime, LeaseSubscription};
+use crate::domains::subscription_state::RoutedSubscriptionSet;
 use crate::runtime::Envelope;
+use std::sync::atomic::Ordering;
 
-impl LeaseDomainRuntime<'_> {
+impl LeaseFamilyRuntime<'_> {
     pub(super) fn handle_subscription_frame(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         request_started: Option<std::time::Instant>,
@@ -24,7 +26,6 @@ impl LeaseDomainRuntime<'_> {
                 let exists = self
                     .core
                     .families
-                    .lock()
                     .get(&family_id.as_u64())
                     .and_then(|state| state.find_existing_id(*session_id, route.as_str()))
                     .is_some();
@@ -76,12 +77,12 @@ impl LeaseDomainRuntime<'_> {
     }
 
     fn rollback_undeliverable_subscription(
-        &self,
+        &mut self,
         family_id: crate::runtime::routing::RouteFamily,
         session_id: u64,
         subscription_id: u64,
     ) {
-        let mut families = self.core.families.lock();
+        let families = &mut self.core.families;
         let remove_family = families.get_mut(&family_id.as_u64()).is_some_and(|state| {
             state.remove_subscription_for_session(family_id, session_id, subscription_id);
             state.is_empty()
@@ -89,12 +90,12 @@ impl LeaseDomainRuntime<'_> {
         if remove_family {
             families.remove(&family_id.as_u64());
         }
-        drop(families);
+        let _ = families;
         self.refresh_metrics_gauges();
     }
 
     fn handle_lease_subscribe(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         family_id: crate::runtime::routing::RouteFamily,
@@ -109,7 +110,7 @@ impl LeaseDomainRuntime<'_> {
                 Ok(compiled) => compiled,
                 Err(response) => return response,
             };
-            let mut families = self.core.families.lock();
+            let families = &mut self.core.families;
             let state = families
                 .entry(family_id.as_u64())
                 .or_insert_with(RoutedSubscriptionSet::new);
@@ -158,7 +159,7 @@ impl LeaseDomainRuntime<'_> {
     }
 
     fn handle_lease_unsubscribe(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         family_id: crate::runtime::routing::RouteFamily,
@@ -172,7 +173,7 @@ impl LeaseDomainRuntime<'_> {
             if let Err(response) = Self::compile_lease_subscription_route(route) {
                 return response;
             }
-            let mut families = self.core.families.lock();
+            let families = &mut self.core.families;
             let remove_family = if let Some(state) = families.get_mut(&family_id.as_u64()) {
                 state.remove_session_pattern(family_id, session_id, route.as_str());
                 state.is_empty()

@@ -3,15 +3,18 @@ use super::{
     encode_area_counter_key, encode_realm_counter_key, encode_resource_meta_key,
     family_to_storage_partition, usize_to_u64_saturating, AreaCounterValue, Bytes,
     CompactAreaPageValue, CompactResourcePageValue, CompressedCompactRealmPageValue,
-    DiscriminatorWriteRowsParams, Entry, EventPayload, RealmCounterValue, RealmSequenceState,
-    RealmSequenceStateHandle, ResourceMetaState, ResourceMetaStateHandle, ResourceMetaValue,
-    SequenceGuard, StreamFilterSet, StreamStore, WatermarkValue,
+    DiscriminatorWriteRowsParams, Entry, EventPayload, RealmCounterValue, ResourceMetaState,
+    ResourceMetaStateHandle, ResourceMetaValue, SequenceGuard, StreamFilterSet, StreamStore,
+    WatermarkValue,
 };
 use parking_lot::Mutex;
 use std::sync::Arc;
 
 #[cfg(test)]
-use super::{FAIL_NEXT_AREA_WATERMARK_GUARD_READ, FAIL_NEXT_REALM_WATERMARK_GUARD_READ};
+use super::{
+    RealmSequenceState, RealmSequenceStateHandle, FAIL_NEXT_AREA_WATERMARK_GUARD_READ,
+    FAIL_NEXT_REALM_WATERMARK_GUARD_READ,
+};
 
 #[derive(Clone, Copy)]
 enum WatermarkGuardScope {
@@ -72,6 +75,7 @@ impl StreamStore {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn realm_sequence_state(
         &self,
         family: u64,

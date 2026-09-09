@@ -25,12 +25,12 @@ impl Default for RuntimeIngress {
 #[async_trait::async_trait]
 impl Ingress for RuntimeIngress {
     async fn on_open(&self, session: SessionInfo) -> Result<u64, String> {
-        if !self.accepting_sessions.load(Ordering::Acquire) {
+        if !self.registry.accepting_sessions.load(Ordering::Acquire) {
             return Err("broker is shutting down".to_string());
         }
 
         let session_id = self.session_registry().open_session(session);
-        if !self.accepting_sessions.load(Ordering::Acquire) {
+        if !self.registry.accepting_sessions.load(Ordering::Acquire) {
             self.on_close(
                 session_id,
                 CloseReason::ServerClose("broker is shutting down".to_string()),
@@ -64,7 +64,7 @@ impl Ingress for RuntimeIngress {
             "Ingress on_frame: enter"
         );
 
-        let should_notify_handler = self.event_handler.is_some();
+        let should_notify_handler = self.registry.event_handler.is_some();
 
         let (route_family, notify_frame) = {
             match self
@@ -88,7 +88,7 @@ impl Ingress for RuntimeIngress {
                 session_id = session_id,
                 "Ingress: auth completed, notifying frame handler"
             );
-            if let Some(handler) = &self.event_handler {
+            if let Some(handler) = &self.registry.event_handler {
                 handler(SessionEvent::Frame(frame.clone()));
             }
             // We've performed auth as a side-effect (anonymous or JWT on any frame)
@@ -111,7 +111,7 @@ impl Ingress for RuntimeIngress {
                 return decision;
             }
 
-            if let Some(handler) = &self.event_handler {
+            if let Some(handler) = &self.registry.event_handler {
                 handler(SessionEvent::Frame(SessionFrame {
                     session_id,
                     channel_id,
@@ -157,11 +157,16 @@ impl Ingress for RuntimeIngress {
     }
 
     async fn on_close(&self, session_id: u64, reason: CloseReason) {
-        if self.closing_sessions.insert(session_id, ()).is_some() {
+        if self
+            .registry
+            .closing_sessions
+            .insert(session_id, ())
+            .is_some()
+        {
             return;
         }
         let _closing_guard = ClosingSessionGuard {
-            sessions: &self.closing_sessions,
+            sessions: &self.registry.closing_sessions,
             session_id,
         };
         if self.session_registry().session(session_id).is_none() {
@@ -183,7 +188,7 @@ impl Ingress for RuntimeIngress {
         self.session_registry().finalize_close(session_id);
 
         // Notify handler if present
-        if let Some(handler) = &self.event_handler {
+        if let Some(handler) = &self.registry.event_handler {
             handler(SessionEvent::Close(session_id, reason));
         }
     }

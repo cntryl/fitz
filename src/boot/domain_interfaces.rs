@@ -1,69 +1,48 @@
 //! Narrow operational views over boot-owned domain handles.
 
-use super::domains::{BrokerDomains, DomainHealthSnapshot};
-
-pub(crate) trait DomainHealth: Send + Sync {
-    fn health_snapshots(&self) -> Vec<DomainHealthSnapshot>;
-
-    fn has_permanently_failed_domain(&self) -> bool {
-        self.health_snapshots()
-            .iter()
-            .any(|snapshot| snapshot.restart_exhausted)
-    }
+#[derive(Clone)]
+pub(crate) struct MaintenanceJob {
+    name: &'static str,
+    start_immediately: bool,
+    interval: std::sync::Arc<dyn Fn() -> std::time::Duration + Send + Sync>,
+    active: std::sync::Arc<dyn Fn() -> bool + Send + Sync>,
+    run: std::sync::Arc<dyn Fn() + Send + Sync>,
 }
 
-pub(crate) trait DomainMaintenance: Send + Sync {
-    fn queue_is_active(&self) -> bool;
-    fn queue_sweep_runtime_state(&self);
-    fn rpc_is_active(&self) -> bool;
-    fn rpc_timeout_sweep_interval(&self) -> std::time::Duration;
-    fn rpc_expire_timed_out_requests(&self);
-    fn lease_is_active(&self) -> bool;
-    fn lease_sweep_expired_state(&self);
-    fn schedule_is_active(&self) -> bool;
-    fn schedule_scan_due_schedules(&self);
-    fn stream_is_active(&self) -> bool;
-    fn stream_run_maintenance_slice(&self);
-}
+impl MaintenanceJob {
+    pub(crate) fn new(
+        name: &'static str,
+        start_immediately: bool,
+        interval: impl Fn() -> std::time::Duration + Send + Sync + 'static,
+        active: impl Fn() -> bool + Send + Sync + 'static,
+        run: impl Fn() + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            name,
+            start_immediately,
+            interval: std::sync::Arc::new(interval),
+            active: std::sync::Arc::new(active),
+            run: std::sync::Arc::new(run),
+        }
+    }
 
-impl DomainHealth for BrokerDomains {
-    fn health_snapshots(&self) -> Vec<DomainHealthSnapshot> {
-        BrokerDomains::health_snapshots(self)
+    pub(crate) fn name(&self) -> &'static str {
+        self.name
     }
-}
 
-impl DomainMaintenance for BrokerDomains {
-    fn queue_is_active(&self) -> bool {
-        BrokerDomains::queue_is_active(self)
+    pub(crate) fn interval(&self) -> std::time::Duration {
+        (self.interval)()
     }
-    fn queue_sweep_runtime_state(&self) {
-        BrokerDomains::queue_sweep_runtime_state(self);
+
+    pub(crate) fn starts_immediately(&self) -> bool {
+        self.start_immediately
     }
-    fn rpc_is_active(&self) -> bool {
-        BrokerDomains::rpc_is_active(self)
+
+    pub(crate) fn is_active(&self) -> bool {
+        (self.active)()
     }
-    fn rpc_timeout_sweep_interval(&self) -> std::time::Duration {
-        BrokerDomains::rpc_timeout_sweep_interval(self)
-    }
-    fn rpc_expire_timed_out_requests(&self) {
-        BrokerDomains::rpc_expire_timed_out_requests(self);
-    }
-    fn lease_is_active(&self) -> bool {
-        BrokerDomains::lease_is_active(self)
-    }
-    fn lease_sweep_expired_state(&self) {
-        BrokerDomains::lease_sweep_expired_state(self);
-    }
-    fn schedule_is_active(&self) -> bool {
-        BrokerDomains::schedule_is_active(self)
-    }
-    fn schedule_scan_due_schedules(&self) {
-        BrokerDomains::schedule_scan_due_schedules(self);
-    }
-    fn stream_is_active(&self) -> bool {
-        BrokerDomains::stream_is_active(self)
-    }
-    fn stream_run_maintenance_slice(&self) {
-        BrokerDomains::stream_run_maintenance_slice(self);
+
+    pub(crate) fn run(&self) {
+        (self.run)();
     }
 }

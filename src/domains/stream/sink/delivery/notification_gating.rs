@@ -1,7 +1,8 @@
 use super::super::model::{
-    route_triplet, PendingStreamNotification, ReadyStreamNotification, StreamDomainCore,
+    PendingStreamNotification, ReadyStreamNotification, StreamFamilyState,
     StreamNotificationTarget, StreamVisibilityFrontier,
 };
+use crate::runtime::routing::route_triplet;
 
 const MAX_PENDING_NOTIFICATIONS: usize = 10_000;
 
@@ -16,7 +17,7 @@ struct VisibilityCache {
 #[derive(Clone, Copy)]
 struct InvalidVisibilityEvent;
 
-impl StreamDomainCore {
+impl StreamFamilyState {
     fn visibility_frontier(
         selector: &str,
         event: &crate::runtime::DomainPublishEvent,
@@ -63,7 +64,7 @@ impl StreamDomainCore {
     }
 
     fn frontier_is_visible(
-        &self,
+        &mut self,
         family: u64,
         frontier: &StreamVisibilityFrontier,
         cache: &mut VisibilityCache,
@@ -97,14 +98,11 @@ impl StreamDomainCore {
     }
 
     fn drain_visible_pending(
-        &self,
+        &mut self,
         family: u64,
         cache: &mut VisibilityCache,
     ) -> Vec<ReadyStreamNotification> {
-        let drained = {
-            let mut pending = self.subscriptions.pending.lock();
-            std::mem::take(&mut *pending)
-        };
+        let drained = std::mem::take(&mut self.subscriptions.pending);
         let mut ready = Vec::new();
         let mut retained = Vec::with_capacity(drained.len());
         for notification in drained {
@@ -121,7 +119,7 @@ impl StreamDomainCore {
                 retained.push(notification);
             }
         }
-        let mut pending = self.subscriptions.pending.lock();
+        let pending = &mut self.subscriptions.pending;
         let available = MAX_PENDING_NOTIFICATIONS.saturating_sub(retained.len());
         let dropped = pending.len().saturating_sub(available);
         let accepted = available.min(pending.len());
@@ -137,14 +135,14 @@ impl StreamDomainCore {
     }
 
     pub(super) fn collect_ready_notifications(
-        &self,
+        &mut self,
         event: &crate::runtime::DomainPublishEvent,
     ) -> Vec<ReadyStreamNotification> {
         let family = event.family_id.as_u64();
         let mut visibility_cache = VisibilityCache::default();
         let mut ready = self.drain_visible_pending(family, &mut visibility_cache);
         let matches = {
-            let families = self.subscriptions.families.lock();
+            let families = &self.subscriptions.families;
             let Some(state) = families.get(&family) else {
                 return ready;
             };
@@ -188,7 +186,7 @@ impl StreamDomainCore {
             }
         }
         if !newly_pending.is_empty() {
-            let mut pending = self.subscriptions.pending.lock();
+            let pending = &mut self.subscriptions.pending;
             let available = MAX_PENDING_NOTIFICATIONS.saturating_sub(pending.len());
             let accepted = available.min(newly_pending.len());
             pending.extend(newly_pending.drain(..accepted));
@@ -203,28 +201,27 @@ impl StreamDomainCore {
     }
 
     pub(super) fn collect_visible_pending_notifications(
-        &self,
+        &mut self,
         family: u64,
     ) -> Vec<ReadyStreamNotification> {
         self.drain_visible_pending(family, &mut VisibilityCache::default())
     }
 
     pub(in crate::domains::stream::sink) fn remove_pending_notifications_for_session(
-        &self,
+        &mut self,
         session_id: u64,
     ) {
         self.subscriptions
             .pending
-            .lock()
             .retain(|pending| pending.target.session_id != session_id);
     }
 
     pub(in crate::domains::stream::sink) fn remove_pending_notifications_for_pattern(
-        &self,
+        &mut self,
         session_id: u64,
         pattern: &str,
     ) {
-        self.subscriptions.pending.lock().retain(|pending| {
+        self.subscriptions.pending.retain(|pending| {
             pending.target.session_id != session_id || pending.pattern != pattern
         });
     }

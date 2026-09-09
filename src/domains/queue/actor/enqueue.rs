@@ -274,12 +274,12 @@ impl QueueActor {
         QueueResponse::SentBatch { ids: plan.ids }
     }
 
-    fn begin_enqueue_tx(&self) -> Result<cntryl_midge::Transaction, QueueResponse> {
+    fn begin_enqueue_tx(&self) -> Result<super::recovery_store::QueueTransaction, QueueResponse> {
         self.persistence
-            .engine
-            .begin_tx(
+            .store
+            .begin(
                 self.queue_key.family.id(),
-                cntryl_midge::TransactionMode::ReadWrite,
+                super::recovery_store::QueueTransactionMode::ReadWrite,
             )
             .map_err(|error| QueueResponse::Error {
                 message: format!("Failed to begin transaction: {error:?}"),
@@ -316,7 +316,7 @@ impl QueueActor {
 
     fn write_send_record(
         &self,
-        txn: &mut cntryl_midge::Transaction,
+        txn: &mut super::recovery_store::QueueTransaction,
         id: MessageId,
         body: &Bytes,
         record: &QueueRecord,
@@ -357,7 +357,7 @@ impl QueueActor {
 
     fn write_enqueue_meta(
         &self,
-        txn: &mut cntryl_midge::Transaction,
+        txn: &mut super::recovery_store::QueueTransaction,
         reserved_limit: Option<u64>,
         staged_next_id: u64,
         staged_ready_count: usize,
@@ -434,7 +434,7 @@ impl QueueActor {
 
     fn stage_batch_send(
         &self,
-        txn: &mut cntryl_midge::Transaction,
+        txn: &mut super::recovery_store::QueueTransaction,
         items: &[(Bytes, Option<u64>)],
         now_instant: Instant,
         now_epoch_ms: u64,

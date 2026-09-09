@@ -7,7 +7,9 @@ const SESSION_CLOSE_CONCURRENCY: usize = 32;
 
 impl RuntimeIngress {
     pub async fn close_all_sessions(&self, reason: CloseReason) {
-        self.accepting_sessions.store(false, Ordering::Release);
+        self.registry
+            .accepting_sessions
+            .store(false, Ordering::Release);
         let session_ids = self
             .session_registry()
             .active_sessions()

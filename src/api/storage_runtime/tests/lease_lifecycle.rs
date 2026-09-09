@@ -83,7 +83,7 @@ async fn should_cancel_local_disk_lease_retry_given_shutdown_request() {
 
     // Act
     shutdown_tx
-        .send(Some(crate::boot::shutdown::ShutdownSignal::Sigterm))
+        .send(Some(crate::api::broker_shutdown::ShutdownSignal::Sigterm))
         .expect("request shutdown");
     let outcome = tokio::time::timeout(Duration::from_secs(2), contender)
         .await
@@ -118,7 +118,7 @@ async fn should_wait_for_transient_engine_reference_before_storage_shutdown() {
     });
 
     // Act
-    crate::boot::storage::shutdown_store(store)
+    crate::api::storage_runtime::shutdown_store(store)
         .await
         .expect("shutdown should wait for transient reference");
     release_task.await.expect("release transient reference");
@@ -126,7 +126,7 @@ async fn should_wait_for_transient_engine_reference_before_storage_shutdown() {
 
     // Assert
     assert!(reopened.is_primary_lease_healthy());
-    crate::boot::storage::shutdown_store(reopened)
+    crate::api::storage_runtime::shutdown_store(reopened)
         .await
         .expect("shutdown reopened store");
 }

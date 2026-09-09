@@ -14,9 +14,10 @@ use stress_config::StressContextExt;
 
 use bytes::Bytes;
 use cntryl_stress::{stress, stress_main, StressContext};
-use fitz::domains::kv::{KvActor, KvMessage, KvResourceScope, KvResponse, TxMode};
+use fitz::domains::kv::{KvMessage, KvResourceScope, KvResponse, TxMode};
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_engine_with_cfs;
+use fitz::testkit::domain_internals::kv::KvActor;
 
 const TRIPLE_FAMILY_PUTS_PER_FAMILY: u64 = 25;
 
@@ -39,7 +40,7 @@ fn begin_transaction(
             resource,
         ),
         mode,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: fitz::domains::WritePolicy::Buffered,
     });
 
     match response {

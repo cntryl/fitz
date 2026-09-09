@@ -1,29 +1,32 @@
 //! Publish/notification fan-out: matching subscribers to a committed event,
 //! delivering to live subscribers, and notifying watermark coordinators.
 
+use super::model::StreamFamilyState;
 #[cfg(test)]
-use super::model::PayloadEncoder;
-use super::model::{Envelope, StreamDomainCore};
+use crate::dispatch::protocol::payload_codec::PayloadEncoder;
+use crate::runtime::Envelope;
 
 mod notification_gating;
 mod watermark_coordination;
 
-impl StreamDomainCore {
+impl StreamFamilyState {
     pub(in crate::domains::stream::sink) fn handle_domain_publish(
-        &self,
+        &mut self,
         event: &crate::runtime::DomainPublishEvent,
     ) {
-        self.route_ready_notifications(self.collect_ready_notifications(event));
+        let ready = self.collect_ready_notifications(event);
+        self.route_ready_notifications(ready);
     }
 
     pub(in crate::domains::stream::sink) fn handle_visibility_advance(
-        &self,
+        &mut self,
         family: crate::runtime::routing::RouteFamily,
     ) {
-        self.route_ready_notifications(self.collect_visible_pending_notifications(family.as_u64()));
+        let ready = self.collect_visible_pending_notifications(family.as_u64());
+        self.route_ready_notifications(ready);
     }
 
-    fn route_ready_notifications(&self, ready: Vec<super::model::ReadyStreamNotification>) {
+    fn route_ready_notifications(&mut self, ready: Vec<super::model::ReadyStreamNotification>) {
         #[cfg(test)]
         let mut payload_encoder = PayloadEncoder::with_capacity(256);
         for notification in ready {
@@ -55,7 +58,7 @@ impl StreamDomainCore {
 
     #[cfg(test)]
     pub(in crate::domains::stream::sink) fn route_commit_notify(
-        &self,
+        &mut self,
         session_id: u64,
         subscription_id: u64,
         subscriber: &crate::runtime::routing::RouteAddress,
@@ -85,7 +88,7 @@ impl StreamDomainCore {
 
     #[cfg(not(test))]
     pub(in crate::domains::stream::sink) fn route_commit_notify(
-        &self,
+        &mut self,
         session_id: u64,
         subscription_id: u64,
         subscriber: &crate::runtime::routing::RouteAddress,

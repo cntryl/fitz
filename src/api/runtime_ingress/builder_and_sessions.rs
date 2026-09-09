@@ -7,11 +7,26 @@ impl RuntimeIngress {
     /// Create a new ingress implementation
     #[must_use]
     pub fn new(auth_required: bool) -> Self {
-        Self {
+        let registry = super::session_registry::SessionRegistry {
             accepting_sessions: Arc::new(AtomicBool::new(true)),
             sessions: Arc::new(DashMap::new()),
             session_actors: Arc::new(DashMap::new()),
             session_inbox_routes: Arc::new(DashMap::new()),
+            closing_sessions: Arc::new(DashMap::new()),
+            event_handler: None,
+            admin_read_model: None,
+            auth_required,
+        };
+        let authenticator = super::session_authenticator::SessionAuthenticator {
+            registry: registry.clone(),
+            route_families: Arc::new(std::iter::once(1).collect()),
+            auth_required,
+            auth_config: None,
+            auth_claims_config: crate::auth::AuthClaimsConfig::default(),
+            route_family_resolver: crate::auth::RouteFamilyResolverConfig::default(),
+            connect_diagnostics_budget: Arc::default(),
+        };
+        let cleanup = super::session_cleanup_coordinator::SessionCleanupCoordinator {
             pending_session_cleanups: Arc::new(DashMap::new()),
             cleanup_wake: Arc::new(tokio::sync::Notify::new()),
             cleanup_worker_started: Arc::new(AtomicBool::new(false)),
@@ -19,16 +34,18 @@ impl RuntimeIngress {
             cleanup_permits: Arc::new(tokio::sync::Semaphore::new(
                 super::session_cleanup_coordinator::SESSION_CLEANUP_CONCURRENCY,
             )),
-            closing_sessions: Arc::new(DashMap::new()),
             router: None,
-            event_handler: None,
-            route_families: Arc::new(std::iter::once(1).collect()),
+        };
+        let dispatcher = super::domain_frame_dispatcher::DomainFrameDispatcher {
+            router: None,
+            registry: registry.clone(),
             auth_required,
-            admin_read_model: None,
-            auth_config: None,
-            auth_claims_config: crate::auth::AuthClaimsConfig::default(),
-            route_family_resolver: crate::auth::RouteFamilyResolverConfig::default(),
-            connect_diagnostics_budget: Arc::default(),
+        };
+        Self {
+            registry,
+            authenticator,
+            cleanup,
+            dispatcher,
         }
     }
 
@@ -40,14 +57,18 @@ impl RuntimeIngress {
     where
         F: Fn(SessionEvent) + Send + Sync + 'static,
     {
-        self.event_handler = Some(Arc::new(handler));
+        let handler = Arc::new(handler);
+        self.registry.event_handler = Some(handler.clone());
+        self.authenticator.registry.event_handler = Some(handler.clone());
+        self.dispatcher.registry.event_handler = Some(handler);
         self
     }
 
     /// Attach a router reference for dispatching frames directly from ingress
     #[must_use]
     pub fn with_router(mut self, router: Arc<crate::runtime::Router>) -> Self {
-        self.router = Some(router);
+        self.cleanup.router = Some(router.clone());
+        self.dispatcher.router = Some(router);
         self
     }
 
@@ -56,13 +77,15 @@ impl RuntimeIngress {
         mut self,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
     ) -> Self {
-        self.admin_read_model = Some(admin_read_model);
+        self.registry.admin_read_model = Some(admin_read_model.clone());
+        self.authenticator.registry.admin_read_model = Some(admin_read_model.clone());
+        self.dispatcher.registry.admin_read_model = Some(admin_read_model);
         self
     }
 
     #[must_use]
     pub fn with_auth_config(mut self, auth_config: crate::auth::AuthConfig) -> Self {
-        self.auth_config = Some(auth_config);
+        self.authenticator.auth_config = Some(auth_config);
         self
     }
 
@@ -71,7 +94,7 @@ impl RuntimeIngress {
         mut self,
         auth_claims_config: crate::auth::AuthClaimsConfig,
     ) -> Self {
-        self.auth_claims_config = auth_claims_config;
+        self.authenticator.auth_claims_config = auth_claims_config;
         self
     }
 
@@ -80,24 +103,25 @@ impl RuntimeIngress {
         mut self,
         route_family_resolver: crate::auth::RouteFamilyResolverConfig,
     ) -> Self {
-        self.route_family_resolver = route_family_resolver;
+        self.authenticator.route_family_resolver = route_family_resolver;
         self
     }
 
     #[cfg(test)]
     pub(super) fn with_route_family_map(mut self, mappings: &[(&str, u32)]) -> Self {
-        self.route_family_resolver = crate::auth::RouteFamilyResolverConfig::from_mappings(
-            crate::auth::DEFAULT_ROUTE_FAMILY_CLAIM,
-            mappings
-                .iter()
-                .map(|(identity, family)| (*identity, *family)),
-        );
+        self.authenticator.route_family_resolver =
+            crate::auth::RouteFamilyResolverConfig::from_mappings(
+                crate::auth::DEFAULT_ROUTE_FAMILY_CLAIM,
+                mappings
+                    .iter()
+                    .map(|(identity, family)| (*identity, *family)),
+            );
         self
     }
 
     #[must_use]
     pub fn with_route_families(mut self, route_families: &[u32]) -> Self {
-        self.route_families = Arc::new(route_families.iter().copied().collect());
+        self.authenticator.route_families = Arc::new(route_families.iter().copied().collect());
         self
     }
 

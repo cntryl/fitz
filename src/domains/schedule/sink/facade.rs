@@ -1,8 +1,8 @@
-//! Public `ScheduleDomainSink` API and actor lifecycle management.
+//! Public `ScheduleDomain` API and actor lifecycle management.
 
 use super::model::{
-    duration_millis, ScheduleDomainCommand, ScheduleDomainConfig, ScheduleDomainCore,
-    ScheduleDomainRuntime, ScheduleDomainSink, ScheduleDomainState, ScheduleLiveCounts,
+    duration_millis, ScheduleDomain, ScheduleDomainCommand, ScheduleDomainConfig,
+    ScheduleDomainRuntime, ScheduleFamilyState, ScheduleLiveCounts,
 };
 use crate::domains::schedule::ScheduleMetrics;
 use crate::runtime::routing::RouteFamily;
@@ -15,58 +15,49 @@ use std::time::Instant;
 pub(crate) const DEFAULT_SCHEDULE_PRELOAD_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(120);
 
-impl ScheduleDomainState {
+impl ScheduleFamilyState {
     fn new_family(config: &ScheduleDomainConfig, route_family: RouteFamily) -> Self {
         Self {
-            core: ScheduleDomainCore {
-                route_family,
-                store: config.store.clone(),
-                actor: None,
-                subscriptions: super::model::ScheduleSubscriptionSet::new(),
-                cleaned_up_sessions: crate::runtime::CleanedUpSessions::new(
-                    crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
-                ),
-                next_sub_id: config.next_sub_id.clone(),
-                router: config.router.clone(),
-                admin_read_model: config.admin_read_model.clone(),
-                snapshot_dirty: config.snapshot_dirty.clone(),
-                snapshot_syncing: config.snapshot_syncing.clone(),
-                last_snapshot_elapsed_us: config.last_snapshot_elapsed_us.clone(),
-                snapshot_epoch: config.snapshot_epoch.clone(),
-                family_snapshots: config.family_snapshots.clone(),
-                live_publish_failures: 0,
-                ack_failures: 0,
-                pending_ack_retries: HashMap::new(),
-                recent_acknowledgement_ms: VecDeque::new(),
-                write_policy: config.write_policy,
-                metrics: config.metrics.clone(),
-            },
-        }
-    }
-
-    pub(super) fn runtime(&mut self) -> ScheduleDomainRuntime<'_> {
-        ScheduleDomainRuntime {
-            core: &mut self.core,
+            route_family,
+            store: config.store.clone(),
+            actor: None,
+            subscriptions: super::model::ScheduleSubscriptionSet::new(),
+            cleaned_up_sessions: crate::runtime::CleanedUpSessions::new(
+                crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
+            ),
+            next_sub_id: config.next_sub_id.clone(),
+            router: config.router.clone(),
+            admin_read_model: config.admin_read_model.clone(),
+            snapshot_dirty: AtomicBool::new(false),
+            snapshot_syncing: AtomicBool::new(false),
+            last_snapshot_elapsed_us: AtomicU64::new(0),
+            snapshot_epoch: Instant::now(),
+            live_publish_failures: 0,
+            ack_failures: 0,
+            pending_ack_retries: HashMap::new(),
+            recent_acknowledgement_ms: VecDeque::new(),
+            write_policy: config.write_policy,
+            metrics: config.metrics.clone(),
         }
     }
 }
 
-impl ScheduleDomainSink {
+impl ScheduleDomain {
     pub fn new(
         store: crate::domains::schedule::ScheduleStore,
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
     ) -> Self {
-        Self::new_with_storage_and_families(
-            store.into_storage(),
+        Self::new_with_store_and_families(
+            store,
             router,
             admin_read_model,
             &[RouteFamily::new(1), RouteFamily::new(2)],
         )
     }
 
-    pub(crate) fn new_with_storage_and_families(
-        store: crate::storage::FitzStorageEngine,
+    pub(crate) fn new_with_store_and_families(
+        store: crate::domains::schedule::ScheduleStore,
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
         route_families: &[RouteFamily],
@@ -80,11 +71,6 @@ impl ScheduleDomainSink {
             router,
             admin_read_model,
             next_sub_id: Arc::new(AtomicU64::new(1)),
-            family_snapshots: Arc::new(parking_lot::Mutex::new(std::collections::BTreeMap::new())),
-            snapshot_dirty: Arc::new(AtomicBool::new(false)),
-            snapshot_syncing: Arc::new(AtomicBool::new(false)),
-            last_snapshot_elapsed_us: Arc::new(AtomicU64::new(0)),
-            snapshot_epoch: Arc::new(Instant::now()),
             write_policy: crate::domains::WritePolicy::Buffered,
             metrics: None,
         };
@@ -109,8 +95,8 @@ impl ScheduleDomainSink {
         crate::runtime::FamilyActorPoolRuntime::spawn_with_family_failed_metric(
             pool,
             active,
-            move |family| ScheduleDomainState::new_family(&config, family),
-            |state, _, _, command| state.runtime().receive(command),
+            move |family| ScheduleFamilyState::new_family(&config, family),
+            |state, _, _, command| ScheduleDomainRuntime { core: state }.receive(command),
             crate::domains::schedule::metrics::METRIC_FAMILY_FAILED_CLOSED_TOTAL,
         )
     }
@@ -180,8 +166,10 @@ impl ScheduleDomainSink {
         .expect("enqueue Schedule family panic");
     }
 
-    pub(crate) fn actor_health_snapshot(&self) -> crate::runtime::ActorHealthSnapshot {
-        self.family_runtime.actor_health_snapshot()
+    pub(crate) fn family_health_snapshot(
+        &self,
+    ) -> crate::runtime::family_actor_pool::FamilyActorPoolHealthSnapshot {
+        self.family_runtime.health_snapshot()
     }
 
     pub(crate) fn panic_actor_for_failpoint(&self) {
@@ -382,7 +370,7 @@ impl ScheduleDomainSink {
 }
 
 /// Narrow read-only surface used by metrics and administration code.
-impl ScheduleDomainSink {
+impl ScheduleDomain {
     pub fn subscription_count(&self) -> usize {
         self.live_counts().subscriptions
     }

@@ -4,7 +4,7 @@ use super::*;
 fn should_confirm_lease_session_cleanup_before_reporting_delivery() {
     // Arrange
     let family = RouteFamily::new(1);
-    let sink = LeaseDomainSink::new(
+    let sink = LeaseDomain::new(
         Arc::new(Router::new()),
         crate::control::admin::read_model::AdminReadModel::new(),
     );
@@ -46,9 +46,10 @@ use crate::dispatch::protocol::tlv::MessageType;
 use crate::domains::lease::protocol::{LeaseKey, LeaseResponse};
 use crate::runtime::mailbox::Mailbox;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
-use crate::runtime::ClientChannel;
+use crate::runtime::{ClientChannel, Envelope, MailboxSink, Router};
 use bytes::Bytes;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 mod admin;
 mod correctness;
@@ -123,7 +124,7 @@ fn assert_no_envelope(mailbox: &Mailbox) {
         .is_err());
 }
 
-fn wait_for_lease_count(sink: &LeaseDomainSink, expected: usize) {
+fn wait_for_lease_count(sink: &LeaseDomain, expected: usize) {
     let deadline = Instant::now() + Duration::from_secs(1);
     while Instant::now() < deadline {
         if sink.lease_count() == expected {
@@ -134,7 +135,7 @@ fn wait_for_lease_count(sink: &LeaseDomainSink, expected: usize) {
     assert_eq!(sink.lease_count(), expected);
 }
 
-fn wait_for_subscription_count(sink: &LeaseDomainSink, expected: usize) {
+fn wait_for_subscription_count(sink: &LeaseDomain, expected: usize) {
     let deadline = Instant::now() + Duration::from_secs(1);
     while Instant::now() < deadline {
         if sink.subscription_count() == expected {
@@ -173,7 +174,7 @@ fn lease_response_payloads(prepared: bool, frames: &[(u16, Bytes)]) -> Vec<Bytes
     let router = Arc::new(Router::new());
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = LeaseDomainSink::new(router, admin_read_model);
+    let sink = LeaseDomain::new(router, admin_read_model);
     let mut responses = Vec::new();
 
     for (msg_type, payload) in frames {
@@ -258,7 +259,7 @@ fn should_reresolve_reply_route_when_resolved_lease_sink_stops() {
     );
     let replacement = Arc::new(Mailbox::new(1));
     let metrics = crate::observability::metrics::MetricsCollector::new();
-    let sink = LeaseDomainSink::new(
+    let sink = LeaseDomain::new(
         router.clone(),
         crate::control::admin::read_model::AdminReadModel::new(),
     )
@@ -299,7 +300,7 @@ fn should_create_lease_domain_sink() {
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
 
     // Act
-    let sink = LeaseDomainSink::new(router, admin_read_model);
+    let sink = LeaseDomain::new(router, admin_read_model);
 
     // Assert
     assert!(sink.is_active_for_tests());
@@ -463,7 +464,7 @@ fn should_clear_session_state_given_session_cleanup() {
     let subscriber_mailbox = Arc::new(Mailbox::new(8));
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = LeaseDomainSink::new(router, admin_read_model.clone());
+    let sink = LeaseDomain::new(router, admin_read_model.clone());
 
     sink.deliver(Envelope::from_route(
         subscriber_address.clone(),
@@ -542,7 +543,7 @@ fn should_reject_stale_acquire_after_disconnect_cleanup_marks_session() {
     let subscriber_mailbox = Arc::new(Mailbox::new(8));
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = LeaseDomainSink::new(router, admin_read_model);
+    let sink = LeaseDomain::new(router, admin_read_model);
 
     // Act: cleanup for this session runs and completes before the stale
     // acquire below is processed - equivalent to what the high-priority
@@ -585,7 +586,7 @@ fn should_preserve_other_session_leases_given_session_cleanup() {
     router.register(session_7_address.clone(), Arc::new(Mailbox::new(1)));
     router.register(session_8_address.clone(), Arc::new(Mailbox::new(1)));
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = LeaseDomainSink::new(router, admin_read_model.clone());
+    let sink = LeaseDomain::new(router, admin_read_model.clone());
 
     sink.deliver(Envelope::from_route(
         session_7_address,
@@ -642,7 +643,7 @@ fn should_promote_waiter_given_extend_observes_expired_lease() {
     let waiter_mailbox = Arc::new(Mailbox::new(8));
     router.register(waiter_address.clone(), waiter_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = LeaseDomainSink::new(router, admin_read_model.clone());
+    let sink = LeaseDomain::new(router, admin_read_model.clone());
 
     let holder_response = sink.acquire_for_tests(LeaseAcquireRequest {
         key: key.clone(),
@@ -715,7 +716,7 @@ fn should_not_retain_lease_when_promoted_waiter_cannot_receive_grant() {
         .sender()
         .try_send(Envelope::new(waiter_address.clone(), 1_u8))
         .expect("fill waiter mailbox");
-    let sink = LeaseDomainSink::new(
+    let sink = LeaseDomain::new(
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
     );
@@ -775,7 +776,7 @@ fn should_promote_next_waiter_when_prior_waiter_cannot_receive_grant() {
         .sender()
         .try_send(Envelope::new(first_waiter_address.clone(), 1_u8))
         .expect("fill first waiter mailbox");
-    let sink = LeaseDomainSink::new(
+    let sink = LeaseDomain::new(
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
     );
@@ -838,7 +839,7 @@ fn should_not_retain_direct_lease_when_acquire_response_cannot_be_delivered() {
         .sender()
         .try_send(Envelope::new(client.clone(), 1_u8))
         .expect("fill client mailbox");
-    let sink = LeaseDomainSink::new(
+    let sink = LeaseDomain::new(
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
     );
@@ -877,7 +878,7 @@ fn should_not_retain_waiter_when_queued_response_cannot_be_delivered() {
         .sender()
         .try_send(Envelope::new(client.clone(), 1_u8))
         .expect("fill client mailbox");
-    let sink = LeaseDomainSink::new(
+    let sink = LeaseDomain::new(
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
     );

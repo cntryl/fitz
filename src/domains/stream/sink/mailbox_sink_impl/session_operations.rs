@@ -1,14 +1,14 @@
 //! Append-session and read frames: the operations that reach `StreamActor`.
 
 use super::{
-    Arc, Envelope, IngestMetadata, Mutex, Ordering, PayloadEncoder, Route, RouteFamily,
-    StreamActor, StreamClientResponseBody, StreamDiscriminator, StreamDomainCore,
-    StreamReadExecution, StreamSessionOwner, StreamStoreError,
+    Envelope, IngestMetadata, Ordering, PayloadEncoder, Route, RouteFamily,
+    StreamClientResponseBody, StreamDiscriminator, StreamFamilyState, StreamReadExecution,
+    StreamSessionOwner, StreamStoreError,
 };
 use crate::domains::stream::sink::model::{OperationOutcome, StreamCommitOutcome, WatermarkCommit};
 use crate::domains::stream::StreamMessage;
 
-impl super::super::model::StreamFamilyState {
+impl super::super::model::StreamFamilyRuntime {
     pub(super) fn handle_actor_operation_frame(
         &mut self,
         envelope: &Envelope,
@@ -16,8 +16,6 @@ impl super::super::model::StreamFamilyState {
         request_started: Option<std::time::Instant>,
         stream_msg: crate::domains::stream::protocol::StreamMessage,
     ) {
-        let core = self.core.clone();
-        let self_ = core.as_ref();
         let message_family = match &stream_msg {
             StreamMessage::Begin { family_id, .. }
             | StreamMessage::Read { family_id, .. }
@@ -28,8 +26,9 @@ impl super::super::model::StreamFamilyState {
             | StreamMessage::Rollback { .. } => None,
         };
         if message_family.is_some_and(|family_id| family_id != meta.route_family) {
-            let response = StreamDomainCore::stream_error_response("route family mismatch");
-            self_.route_stream_response(envelope, meta, &response, request_started);
+            let response = StreamFamilyState::stream_error_response("route family mismatch");
+            self.core
+                .route_stream_response(envelope, meta, &response, request_started);
             return;
         }
 
@@ -39,14 +38,16 @@ impl super::super::model::StreamFamilyState {
                 family_id,
                 route,
                 ingest_metadata,
-            } => self_.handle_begin_operation(meta, family_id, &route, ingest_metadata),
+            } => self
+                .core
+                .handle_begin_operation(meta, family_id, &route, ingest_metadata),
             StreamMessage::Append {
                 session_id,
                 expected_offset,
                 body,
                 metadata,
                 discriminator,
-            } => self_.handle_append_operation(
+            } => self.core.handle_append_operation(
                 meta,
                 session_id,
                 expected_offset,
@@ -58,7 +59,7 @@ impl super::super::model::StreamFamilyState {
                 self.handle_commit_operation(meta, session_id, mode)
             }
             StreamMessage::Rollback { session_id } => {
-                self_.handle_rollback_operation(meta, session_id)
+                self.core.handle_rollback_operation(meta, session_id)
             }
             StreamMessage::Read {
                 family_id,
@@ -69,7 +70,7 @@ impl super::super::model::StreamFamilyState {
                 filter,
                 cursor_fingerprint,
                 captured_watermark,
-            } => self_.handle_read_operation(StreamReadExecution {
+            } => self.core.handle_read_operation(StreamReadExecution {
                 family_id,
                 route: &route,
                 from_offset,
@@ -80,16 +81,16 @@ impl super::super::model::StreamFamilyState {
                 captured_watermark,
             }),
             StreamMessage::Last { family_id, route } => {
-                self_.handle_last_operation(family_id, &route)
+                self.core.handle_last_operation(family_id, &route)
             }
             StreamMessage::GetMetadata { family_id, route } => {
-                self_.handle_metadata_operation(family_id, &route)
+                self.core.handle_metadata_operation(family_id, &route)
             }
         })
         .into();
 
         if outcome.admin_dirty {
-            self_.mark_admin_snapshot_dirty();
+            self.core.mark_admin_snapshot_dirty();
         }
 
         if let Some(notification) = outcome.notification.as_ref() {
@@ -98,10 +99,11 @@ impl super::super::model::StreamFamilyState {
                 notification.route.clone(),
                 notification.payload.clone(),
             );
-            self_.handle_domain_publish(&event);
+            self.core.handle_domain_publish(&event);
         }
 
-        self_.route_operation_response(envelope, meta, request_started, is_begin, &outcome);
+        self.core
+            .route_operation_response(envelope, meta, request_started, is_begin, &outcome);
     }
 
     fn handle_commit_operation(
@@ -114,8 +116,7 @@ impl super::super::model::StreamFamilyState {
         Option<(RouteFamily, Route, bytes::Bytes)>,
         bool,
     ) {
-        let core = self.core.clone();
-        let outcome = core.handle_commit_operation(meta, session_id, mode);
+        let outcome = self.core.handle_commit_operation(meta, session_id, mode);
         if let Some(commit) = outcome.watermark {
             self.enqueue_watermark_commit(commit);
         }
@@ -123,9 +124,9 @@ impl super::super::model::StreamFamilyState {
     }
 }
 
-impl StreamDomainCore {
+impl StreamFamilyState {
     fn route_operation_response(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         request_started: Option<std::time::Instant>,
@@ -153,7 +154,7 @@ impl StreamDomainCore {
     }
 
     fn handle_begin_operation(
-        &self,
+        &mut self,
         meta: crate::runtime::ClientFrameMeta,
         family_id: crate::runtime::routing::RouteFamily,
         route: &Route,
@@ -187,18 +188,18 @@ impl StreamDomainCore {
 
                 match self.get_or_create_actor(&key) {
                     Ok(actor) => {
-                        match actor.lock().begin_append_session(
+                        let begin_result = actor.begin_append_session(
                             meta.session_id,
                             stream_session_id,
                             ingest_metadata,
-                        ) {
+                        );
+                        match begin_result {
                             Ok(session_id) => {
-                                self.session_owners.lock().insert(
+                                self.session_owners.insert(
                                     session_id,
                                     StreamSessionOwner {
                                         key,
                                         owner_session_id: meta.session_id,
-                                        actor: actor.clone(),
                                     },
                                 );
                                 self.counter_inc("fitz_stream_append_sessions_started_total");
@@ -227,13 +228,12 @@ impl StreamDomainCore {
     }
 
     fn session_owner_for(
-        &self,
+        &mut self,
         owner_session_id: u64,
         family_id: RouteFamily,
         stream_session_id: u64,
     ) -> Option<StreamSessionOwner> {
         self.session_owners
-            .lock()
             .get(&stream_session_id)
             .filter(|owner| {
                 owner.owner_session_id == owner_session_id && owner.key.family == family_id
@@ -241,23 +241,8 @@ impl StreamDomainCore {
             .cloned()
     }
 
-    fn session_actor_for(
-        &self,
-        owner_session_id: u64,
-        family_id: RouteFamily,
-        stream_session_id: u64,
-    ) -> Option<Arc<Mutex<StreamActor>>> {
-        self.session_owners
-            .lock()
-            .get(&stream_session_id)
-            .filter(|owner| {
-                owner.owner_session_id == owner_session_id && owner.key.family == family_id
-            })
-            .map(|owner| owner.actor.clone())
-    }
-
     fn handle_append_operation(
-        &self,
+        &mut self,
         meta: crate::runtime::ClientFrameMeta,
         session_id: u64,
         expected_offset: u64,
@@ -269,7 +254,7 @@ impl StreamDomainCore {
         Option<(RouteFamily, Route, bytes::Bytes)>,
         bool,
     ) {
-        let Some(actor) = self.session_actor_for(meta.session_id, meta.route_family, session_id)
+        let Some(owner) = self.session_owner_for(meta.session_id, meta.route_family, session_id)
         else {
             return (
                 Self::stream_error_response(StreamStoreError::SessionNotFound.client_message()),
@@ -277,17 +262,21 @@ impl StreamDomainCore {
                 false,
             );
         };
-        let append_result = {
-            let mut actor = actor.lock();
-            actor.append_to_session_with_discriminator_for_owner(
-                meta.session_id,
-                session_id,
-                expected_offset,
-                body,
-                metadata,
-                discriminator,
-            )
+        let Some(actor) = self.actors.get_mut(&owner.key) else {
+            return (
+                Self::stream_error_response(StreamStoreError::SessionNotFound.client_message()),
+                None,
+                false,
+            );
         };
+        let append_result = actor.append_to_session_with_discriminator_for_owner(
+            meta.session_id,
+            session_id,
+            expected_offset,
+            body,
+            metadata,
+            discriminator,
+        );
         match append_result {
             Ok(assigned_offset) => {
                 let mut encoder = PayloadEncoder::new();
@@ -306,7 +295,7 @@ impl StreamDomainCore {
     }
 
     fn handle_commit_operation(
-        &self,
+        &mut self,
         meta: crate::runtime::ClientFrameMeta,
         session_id: u64,
         mode: crate::domains::stream::protocol::StreamWriteMode,
@@ -328,12 +317,14 @@ impl StreamDomainCore {
             };
         };
         let commit_result = {
-            let mut actor = owner.actor.lock();
-            actor.commit_session_for_owner(meta.session_id, session_id, mode)
+            self.actors
+                .get_mut(&owner.key)
+                .expect("session owner references a live Stream actor")
+                .commit_session_for_owner(meta.session_id, session_id, mode)
         };
         match commit_result {
             Ok(commit) => {
-                self.session_owners.lock().remove(&session_id);
+                self.session_owners.remove(&session_id);
                 self.counter_inc("fitz_stream_append_sessions_ended_total");
                 self.durable_metrics.record_events(commit.batch_size);
                 let watermark_commit = WatermarkCommit {
@@ -373,7 +364,7 @@ impl StreamDomainCore {
     }
 
     fn handle_rollback_operation(
-        &self,
+        &mut self,
         meta: crate::runtime::ClientFrameMeta,
         session_id: u64,
     ) -> (
@@ -390,12 +381,14 @@ impl StreamDomainCore {
             );
         };
         let rollback_result = {
-            let mut actor = owner.actor.lock();
-            actor.rollback_session_for_owner(meta.session_id, session_id)
+            self.actors
+                .get_mut(&owner.key)
+                .expect("session owner references a live Stream actor")
+                .rollback_session_for_owner(meta.session_id, session_id)
         };
         match rollback_result {
             Ok(()) => {
-                self.session_owners.lock().remove(&session_id);
+                self.session_owners.remove(&session_id);
                 self.counter_inc("fitz_stream_append_sessions_ended_total");
                 self.handle_visibility_advance(meta.route_family);
                 (
@@ -432,7 +425,7 @@ impl StreamDomainCore {
     }
 
     fn handle_read_operation(
-        &self,
+        &mut self,
         request: StreamReadExecution<'_>,
     ) -> (
         StreamClientResponseBody,
@@ -443,7 +436,7 @@ impl StreamDomainCore {
     }
 
     fn handle_last_operation(
-        &self,
+        &mut self,
         family_id: crate::runtime::routing::RouteFamily,
         route: &Route,
     ) -> (
@@ -455,7 +448,7 @@ impl StreamDomainCore {
     }
 
     fn handle_metadata_operation(
-        &self,
+        &mut self,
         family_id: crate::runtime::routing::RouteFamily,
         route: &Route,
     ) -> (

@@ -1,12 +1,11 @@
 //! Storage-backed admin prefix and paginated row scans.
 
 use super::super::locks::KvResourceLockKey;
-use super::super::state::KvDomainRuntime;
+use super::super::state::KvFamilyRuntime;
 use super::{AdminKvCommittedPair, AdminKvPrefixScanResult, AdminKvRowsRequest, AdminKvRowsResult};
 use crate::domains::kv::KvActor;
-use bytes::Bytes;
 
-impl KvDomainRuntime<'_> {
+impl KvFamilyRuntime<'_> {
     pub(super) fn admin_scan_committed_prefix(
         &self,
         route_family: crate::runtime::routing::RouteFamily,
@@ -21,7 +20,7 @@ impl KvDomainRuntime<'_> {
         let tx = self
             .core
             .store
-            .begin_tx(column_family, cntryl_midge::TransactionMode::ReadOnly)
+            .begin(column_family, crate::domains::kv::TxMode::ReadOnly)
             .map_err(|error| error.to_string())?;
         let resource_prefix = KvActor::realm_resource_prefix(realm, area, resource);
         let scoped_prefix = KvActor::encode_scoped_key(&resource_prefix, key_prefix);
@@ -60,7 +59,7 @@ impl KvDomainRuntime<'_> {
         let tx = self
             .core
             .store
-            .begin_tx(column_family, cntryl_midge::TransactionMode::ReadOnly)
+            .begin(column_family, crate::domains::kv::TxMode::ReadOnly)
             .map_err(|error| error.to_string())?;
         let resource_prefix =
             KvActor::realm_resource_prefix(request.realm, request.area, request.resource);
@@ -106,21 +105,23 @@ impl KvDomainRuntime<'_> {
     }
 
     pub(super) fn scan_scoped_prefix(
-        tx: &cntryl_midge::Transaction,
+        tx: &crate::domains::kv::store::KvTransaction,
         resource_prefix: &[u8],
         scoped_prefix: &[u8],
         scoped_start: &[u8],
         limit: usize,
     ) -> Result<Vec<AdminKvCommittedPair>, String> {
-        let query = cntryl_midge::Query::new()
-            .prefix(Bytes::copy_from_slice(scoped_prefix))
-            .start_key(Bytes::copy_from_slice(scoped_start))
-            .end_key(Bytes::from(KvActor::prefix_range_end(scoped_prefix)))
-            .limit(limit);
-        let iterator = tx.scan(&query).map_err(|error| error.to_string())?;
+        let iterator = tx
+            .scan(
+                scoped_prefix,
+                scoped_start.to_vec(),
+                KvActor::prefix_range_end(scoped_prefix),
+                limit,
+                false,
+            )
+            .map_err(|error| error.to_string())?;
         let mut rows = Vec::new();
-        for entry in iterator {
-            let (scoped_key, value) = entry.map_err(|error| error.to_string())?;
+        for (scoped_key, value) in iterator {
             if let Some(user_key) = KvActor::strip_scoped_prefix(resource_prefix, &scoped_key) {
                 rows.push(AdminKvCommittedPair {
                     key: user_key,

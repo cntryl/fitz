@@ -1,9 +1,9 @@
-use super::{Instant, OperationOutcome, QueueDomainCore, QueueOpKind};
+use super::{Instant, OperationOutcome, QueueFamilyState, QueueOpKind};
 use crate::domains::queue::sink::model::PendingQueueReserve;
 use crate::runtime::routing::RouteFamily;
 use std::collections::VecDeque;
 
-impl QueueDomainCore {
+impl QueueFamilyState {
     fn pending_reserve_matches_route(
         message: &crate::domains::queue::protocol::QueueMessage,
         family: RouteFamily,
@@ -42,7 +42,7 @@ impl QueueDomainCore {
         }
     }
 
-    fn finish_pending_reserve(&self, pending: &PendingQueueReserve, outcome: OperationOutcome) {
+    fn finish_pending_reserve(&mut self, pending: &PendingQueueReserve, outcome: OperationOutcome) {
         if outcome.mark_admin_snapshot_dirty {
             self.mark_admin_snapshot_dirty();
             if let Some(family_id) = Self::queue_message_family(&pending.message) {
@@ -75,12 +75,12 @@ impl QueueDomainCore {
     }
 
     pub(in crate::domains::queue::sink) fn wake_pending_reserves_for_route(
-        &self,
+        &mut self,
         family: RouteFamily,
         concrete_route: &crate::runtime::routing::Route,
         now: Instant,
     ) {
-        let mut pending = std::mem::take(&mut *self.pending_reserves.lock());
+        let mut pending = std::mem::take(&mut self.pending_reserves);
         let mut still_waiting = VecDeque::new();
         while let Some(reserve) = pending.pop_front() {
             if reserve.deadline <= now {
@@ -118,11 +118,11 @@ impl QueueDomainCore {
                 self.finish_pending_reserve(&reserve, outcome);
             }
         }
-        self.pending_reserves.lock().append(&mut still_waiting);
+        self.pending_reserves.append(&mut still_waiting);
     }
 
-    pub(in crate::domains::queue::sink) fn expire_pending_reserves_at(&self, now: Instant) {
-        let mut pending = std::mem::take(&mut *self.pending_reserves.lock());
+    pub(in crate::domains::queue::sink) fn expire_pending_reserves_at(&mut self, now: Instant) {
+        let mut pending = std::mem::take(&mut self.pending_reserves);
         let mut still_waiting = VecDeque::new();
         while let Some(reserve) = pending.pop_front() {
             if reserve.deadline > now {
@@ -133,6 +133,6 @@ impl QueueDomainCore {
             self.route_queue_response(&reserve.envelope, reserve.meta, &response);
             self.record_operation_metrics(reserve.request_started, &response, QueueOpKind::Receive);
         }
-        self.pending_reserves.lock().append(&mut still_waiting);
+        self.pending_reserves.append(&mut still_waiting);
     }
 }

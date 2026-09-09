@@ -4,8 +4,8 @@
 //! Projection failure must never affect domain correctness.
 
 use super::model::{
-    now_epoch_ms, schedule_admin_snapshot_due, ScheduleDomainRuntime, ScheduleFamilySnapshot,
-    ScheduleLiveCounts, EXECUTIONS_WINDOW_MS,
+    now_epoch_ms, schedule_admin_snapshot_due, ScheduleDomainRuntime, ScheduleLiveCounts,
+    EXECUTIONS_WINDOW_MS,
 };
 use std::sync::atomic::Ordering;
 
@@ -98,26 +98,21 @@ impl ScheduleDomainRuntime<'_> {
     #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
     pub(super) fn sync_admin_snapshot(&mut self) {
         self.publish_family_snapshot();
-        let snapshot = self
-            .core
-            .family_snapshots
-            .lock()
-            .values()
-            .flat_map(|family| family.schedules.iter().cloned())
-            .collect();
-        self.core.admin_read_model.replace_schedules(snapshot);
         self.refresh_metrics_gauges();
     }
 
     pub(super) fn refresh_metrics_gauges(&mut self) {
+        let pending_fire_count = self.pending_fire_count();
         self.publish_family_snapshot();
         if let Some(metrics) = &self.core.metrics {
-            let snapshots = self.core.family_snapshots.lock();
-            let schedule_count = snapshots
-                .values()
-                .map(|family| family.schedules.len())
-                .sum();
-            let pending_fire_count = snapshots.values().map(|family| family.pending_fires).sum();
+            let schedule_count = self.core.admin_read_model.schedule_count();
+            let pending_fire_count = self
+                .core
+                .admin_read_model
+                .set_schedule_family_pending_fire_count(
+                    self.core.route_family.as_u64(),
+                    pending_fire_count,
+                );
             metrics.set_schedule_count(schedule_count);
             metrics.set_pending_fire_count(pending_fire_count);
         }
@@ -129,13 +124,12 @@ impl ScheduleDomainRuntime<'_> {
             crate::domains::schedule::ScheduleActor::admin_snapshot,
         );
         let pending_fires = self.pending_fire_count();
-        self.core.family_snapshots.lock().insert(
-            self.core.route_family.id(),
-            ScheduleFamilySnapshot {
-                schedules,
-                pending_fires,
-            },
-        );
+        self.core
+            .admin_read_model
+            .replace_schedule_family(self.core.route_family.as_u64(), schedules);
+        self.core
+            .admin_read_model
+            .set_schedule_family_pending_fire_count(self.core.route_family.as_u64(), pending_fires);
     }
 
     pub(super) fn schedule_response_is_failure(

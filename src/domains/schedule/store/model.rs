@@ -92,6 +92,7 @@ pub struct PersistedPendingFireClaim {
     pub fire_ms: u64,
 }
 
+#[derive(Clone)]
 pub struct ScheduleStore {
     pub(super) db: crate::storage::FitzStorageEngine,
     #[cfg(test)]

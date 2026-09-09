@@ -6,6 +6,7 @@
 
 use std::sync::Arc;
 
+pub(crate) mod cf_validation;
 mod write_policy;
 
 #[derive(Clone)]
@@ -38,13 +39,6 @@ impl FitzStorageEngine {
         mode: cntryl_midge::TransactionMode,
     ) -> cntryl_midge::MidgeResult<cntryl_midge::Transaction> {
         self.inner.begin_tx(family, mode)
-    }
-
-    pub(crate) fn flush_cf(
-        &self,
-        cf: &cntryl_midge::ColumnFamilyHandle,
-    ) -> cntryl_midge::MidgeResult<()> {
-        self.inner.flush_cf(cf)
     }
 }
 

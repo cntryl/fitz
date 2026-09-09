@@ -1,14 +1,17 @@
 //! Worker registration and unregistration message handling.
 
 use super::state_model::{
-    session_inbox_address, Envelope, RpcClientResponseBody, RpcDeliveryOutcome as DeliveryOutcome,
-    RpcDomainRuntime, RpcRequestState, RpcWorker, RpcWorkerRegistration,
+    RpcDeliveryOutcome as DeliveryOutcome, RpcFamilyRuntime, RpcRequestState, RpcWorker,
+    RpcWorkerRegistration,
 };
+use crate::domains::rpc::RpcClientResponseBody;
+use crate::runtime::routing::session_inbox_address;
+use crate::runtime::Envelope;
 
-impl RpcDomainRuntime<'_> {
+impl RpcFamilyRuntime<'_> {
     #[allow(clippy::needless_pass_by_value)]
     pub(super) fn handle_register_worker_message(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: &crate::runtime::ClientFrameMeta,
         worker_addr: crate::runtime::routing::RouteAddress,
@@ -18,7 +21,7 @@ impl RpcDomainRuntime<'_> {
             session_inbox_address(*envelope.destination().family(), meta.session_id)
         });
         {
-            let mut state = self.state.lock();
+            let state = &mut self.core.state;
             if matches!(
                 RpcRequestState::register(
                     &mut *state,
@@ -58,7 +61,7 @@ impl RpcDomainRuntime<'_> {
 
     #[allow(clippy::needless_pass_by_value)]
     pub(super) fn handle_unregister_worker_message(
-        &self,
+        &mut self,
         meta: &crate::runtime::ClientFrameMeta,
         worker_addr: crate::runtime::routing::RouteAddress,
     ) -> DeliveryOutcome {
