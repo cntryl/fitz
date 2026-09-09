@@ -32,17 +32,19 @@ impl DomainDispatchBackpressurePolicy {
     }
 }
 
-pub(super) struct DomainFrameDispatcher<'a> {
-    ingress: &'a RuntimeIngress,
+pub(super) struct DomainFrameDispatcher {
+    pub(super) router: Option<std::sync::Arc<crate::runtime::Router>>,
+    pub(super) registry: super::session_registry::SessionRegistry,
+    pub(super) auth_required: bool,
 }
 
 impl RuntimeIngress {
-    pub(super) fn domain_frame_dispatcher(&self) -> DomainFrameDispatcher<'_> {
-        DomainFrameDispatcher { ingress: self }
+    pub(super) fn domain_frame_dispatcher(&self) -> &DomainFrameDispatcher {
+        &self.dispatcher
     }
 }
 
-impl DomainFrameDispatcher<'_> {
+impl DomainFrameDispatcher {
     pub(super) fn dispatch_timeout_outcome() -> &'static str {
         "indeterminate"
     }
@@ -59,7 +61,7 @@ impl DomainFrameDispatcher<'_> {
         msg_type: crate::protocol::tlv::MessageType,
         payload: DomainDispatchPayload<'_>,
     ) -> Result<(), IngressDecision> {
-        let Some(router) = &self.ingress.router else {
+        let Some(router) = &self.router else {
             return Ok(());
         };
 
@@ -103,33 +105,31 @@ impl DomainFrameDispatcher<'_> {
     pub(super) fn domain_dispatch_for_msg_type(
         msg_type: crate::protocol::tlv::MessageType,
     ) -> Result<Option<DomainAuthorizationSpec>, &'static str> {
-        crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::dispatch_spec_for_msg_type(
+        crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::dispatch_spec_for_msg_type(
             msg_type,
         )
     }
 
     fn cached_session_inbox_route(&self, session_id: u64) -> crate::runtime::routing::Route {
-        self.ingress
-            .session_registry()
-            .cached_inbox_route(session_id)
+        self.registry.cached_inbox_route(session_id)
     }
 
     fn unauthorized_error_code(domain: DispatchDomain) -> u16 {
-        crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::descriptor_for_domain(
+        crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_domain(
             domain,
         )
         .unauthorized_error_code
     }
 
     fn backpressure_error_code(domain: DispatchDomain) -> u16 {
-        crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::descriptor_for_domain(
+        crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_domain(
             domain,
         )
         .backpressure_error_code
     }
 
     fn indeterminate_error_code(domain: DispatchDomain) -> u16 {
-        crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::descriptor_for_domain(
+        crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_domain(
             domain,
         )
         .indeterminate_error_code
@@ -354,7 +354,7 @@ impl DomainFrameDispatcher<'_> {
         access: crate::auth::Access,
         targets: &AuthorizationTargets<'_>,
     ) -> Result<(), AuthorizationFailure> {
-        let Some(actor_ref) = self.ingress.session_registry().session_actor(session_id) else {
+        let Some(actor_ref) = self.registry.session_actor(session_id) else {
             warn!(
                 session_id = session_id,
                 "Ingress: missing session actor for authorization"
@@ -601,7 +601,7 @@ impl DomainFrameDispatcher<'_> {
             self.cached_session_inbox_route(session_id),
         );
         let descriptor =
-            crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::descriptor_for_domain(
+            crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_domain(
                 domain,
             );
         (addr, source, descriptor)
@@ -757,7 +757,7 @@ impl DomainFrameDispatcher<'_> {
                     (DispatchDomain::Lease, 400..=403 | 407 | 408 | 410)
                 );
                 if lease_request_validation
-                    || (!self.ingress.auth_required
+                    || (!self.auth_required
                         && is_subscription_registration_message(
                             dispatch.domain,
                             dispatch.msg_type.as_u16(),

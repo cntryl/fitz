@@ -9,27 +9,25 @@ pub(crate) use fitz::api::admin::{
 };
 pub(crate) use fitz::api::http::Body;
 pub(crate) use fitz::api::runtime_ingress::{Ingress, RuntimeIngress};
-pub(crate) use fitz::boot::domains::DomainHandles;
 pub(crate) use fitz::boot::{BootConfig, Runtime};
-pub(crate) use fitz::domains::kv::sink::KvDomainSink;
-pub(crate) use fitz::domains::kv::{KvActor, KvMessage, KvResourceScope, KvResponse, TxMode};
-pub(crate) use fitz::domains::lease::sink::LeaseDomainSink;
-pub(crate) use fitz::domains::notice::sink::NoticeDomainSink;
-pub(crate) use fitz::domains::queue::sink::QueueDomainSink;
-pub(crate) use fitz::domains::queue::{QueueActor, QueueKey, QueueResponse};
-pub(crate) use fitz::domains::rpc::sink::RpcDomainSink;
+pub(crate) use fitz::domains::kv::{KvMessage, KvResourceScope, KvResponse, TxMode};
+pub(crate) use fitz::domains::queue::{QueueKey, QueueResponse};
 pub(crate) use fitz::domains::schedule::protocol::parse_concrete_schedule_route;
-pub(crate) use fitz::domains::schedule::sink::ScheduleDomainSink;
-pub(crate) use fitz::domains::schedule::store::{ScheduleFireClaim, ScheduleInsert, ScheduleStore};
 pub(crate) use fitz::domains::stream::protocol::StreamWriteMode;
-pub(crate) use fitz::domains::stream::sink::StreamDomainSink;
-pub(crate) use fitz::domains::stream::store::{CommitRecordsParams, EventPayload, StreamStore};
 pub(crate) use fitz::runtime::routing::RouteFamily;
 pub(crate) use fitz::runtime::Router;
 pub(crate) use fitz::session::{
     SessionInfo as RuntimeSessionInfo, SessionMetadata, SessionPermissions, TransportKind,
 };
 pub(crate) use fitz::testkit::body;
+pub(crate) use fitz::testkit::domain_internals::kv::KvActor;
+pub(crate) use fitz::testkit::domain_internals::queue::QueueActor;
+pub(crate) use fitz::testkit::domain_internals::schedule::{
+    ScheduleFireClaim, ScheduleInsert, ScheduleStore,
+};
+pub(crate) use fitz::testkit::domain_internals::stream::{
+    CommitRecordsParams, EventPayload, StreamStore,
+};
 pub(crate) use hyper::header::{COOKIE, SET_COOKIE};
 pub(crate) use hyper::{Method, StatusCode};
 pub(crate) use serial_test::serial;
@@ -171,47 +169,9 @@ pub(crate) fn mark_runtime_ready(runtime: &Runtime) {
 
 pub(crate) fn queue_runtime_with_domains() -> (Arc<Runtime>, Arc<cntryl_midge::Engine>) {
     configure_admin_auth();
-    let router = Arc::new(Router::new());
-    let runtime = Arc::new(Runtime::new(router.clone()));
-    let admin_read_model = runtime.admin_read_model();
-    let store = fitz::testkit::create_test_engine_with_cfs(vec![1]);
-
-    let domains = Arc::new(DomainHandles::new(
-        Arc::new(KvDomainSink::new(
-            store.clone(),
-            router.clone(),
-            admin_read_model.clone(),
-        )),
-        Arc::new(QueueDomainSink::new(
-            store.clone(),
-            router.clone(),
-            admin_read_model.clone(),
-            cntryl_midge::WriteOptions::buffered(),
-            fitz::utils::idempotency::default_dedup_store(),
-        )),
-        Arc::new(NoticeDomainSink::new(
-            router.clone(),
-            admin_read_model.clone(),
-        )),
-        Arc::new(StreamDomainSink::new(
-            store.clone(),
-            router.clone(),
-            admin_read_model.clone(),
-            fitz::domains::stream::sink::StreamStorageWriteOptions::local(),
-        )),
-        Arc::new(RpcDomainSink::new(router.clone(), admin_read_model.clone())),
-        Arc::new(LeaseDomainSink::new(
-            router.clone(),
-            admin_read_model.clone(),
-        )),
-        Arc::new(ScheduleDomainSink::new(
-            store.clone(),
-            router,
-            admin_read_model.clone(),
-        )),
-    ));
-
-    runtime.attach_domains(domains);
+    let fixture = fitz::testkit::create_domain_runtime_fixture();
+    let runtime = fixture.runtime();
+    let store = fixture.store();
     mark_runtime_ready(runtime.as_ref());
     (runtime, store)
 }
@@ -219,56 +179,14 @@ pub(crate) fn queue_runtime_with_domains() -> (Arc<Runtime>, Arc<cntryl_midge::E
 pub(crate) fn schedule_runtime_with_domains() -> (
     Arc<Runtime>,
     Arc<cntryl_midge::Engine>,
-    Arc<ScheduleDomainSink>,
+    fitz::testkit::DomainRuntimeFixture,
 ) {
     configure_admin_auth();
-    let router = Arc::new(Router::new());
-    let runtime = Arc::new(Runtime::new(router.clone()));
-    let admin_read_model = runtime.admin_read_model();
-    let store = fitz::testkit::create_test_engine_with_cfs(vec![1]);
-    let schedule = Arc::new(ScheduleDomainSink::new(
-        store.clone(),
-        router,
-        admin_read_model.clone(),
-    ));
-
-    let domains = Arc::new(DomainHandles::new(
-        Arc::new(KvDomainSink::new(
-            store.clone(),
-            runtime.router(),
-            admin_read_model.clone(),
-        )),
-        Arc::new(QueueDomainSink::new(
-            store.clone(),
-            runtime.router(),
-            admin_read_model.clone(),
-            cntryl_midge::WriteOptions::buffered(),
-            fitz::utils::idempotency::default_dedup_store(),
-        )),
-        Arc::new(NoticeDomainSink::new(
-            runtime.router(),
-            admin_read_model.clone(),
-        )),
-        Arc::new(StreamDomainSink::new(
-            store.clone(),
-            runtime.router(),
-            admin_read_model.clone(),
-            fitz::domains::stream::sink::StreamStorageWriteOptions::local(),
-        )),
-        Arc::new(RpcDomainSink::new(
-            runtime.router(),
-            admin_read_model.clone(),
-        )),
-        Arc::new(LeaseDomainSink::new(
-            runtime.router(),
-            admin_read_model.clone(),
-        )),
-        schedule.clone(),
-    ));
-
-    runtime.attach_domains(domains);
+    let fixture = fitz::testkit::create_domain_runtime_fixture();
+    let runtime = fixture.runtime();
+    let store = fixture.store();
     mark_runtime_ready(runtime.as_ref());
-    (runtime, store, schedule)
+    (runtime, store, fixture)
 }
 
 pub(crate) fn current_epoch_ms() -> u64 {
@@ -527,7 +445,7 @@ pub(crate) fn seed_pending_schedule_claim(store: Arc<cntryl_midge::Engine>) {
                 last_fire_ms,
                 executions_total: 4,
             },
-            cntryl_midge::WriteOptions::buffered(),
+            fitz::domains::WritePolicy::Buffered,
         )
         .expect("insert schedule");
     schedule_store
@@ -545,7 +463,7 @@ pub(crate) fn seed_pending_schedule_claim(store: Arc<cntryl_midge::Engine>) {
                 last_fire_ms,
                 executions_total: 4,
             }],
-            cntryl_midge::WriteOptions::buffered(),
+            fitz::domains::WritePolicy::Buffered,
         )
         .expect("claim schedule fire");
 }
@@ -571,7 +489,7 @@ pub(crate) fn seed_active_schedule_definition(store: Arc<cntryl_midge::Engine>) 
                 last_fire_ms,
                 executions_total: 7,
             },
-            cntryl_midge::WriteOptions::buffered(),
+            fitz::domains::WritePolicy::Buffered,
         )
         .expect("insert active schedule");
 }
@@ -703,7 +621,7 @@ pub(crate) fn seed_committed_kv_values(
     let tx_id = match actor.handle(KvMessage::Begin {
         scope: scope.clone(),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: fitz::domains::WritePolicy::Buffered,
     }) {
         KvResponse::BeginOk { tx_id } => tx_id,
         other => panic!("Expected BeginOk response, found {other:?}"),
@@ -742,7 +660,7 @@ pub(crate) fn delete_committed_kv_range(
     let tx_id = match actor.handle(KvMessage::Begin {
         scope: scope.clone(),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: fitz::domains::WritePolicy::Buffered,
     }) {
         KvResponse::BeginOk { tx_id } => tx_id,
         other => panic!("Expected BeginOk response, found {other:?}"),

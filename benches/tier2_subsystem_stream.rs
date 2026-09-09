@@ -4,12 +4,12 @@ use bytes::Bytes;
 mod tier2_stress;
 
 use cntryl_stress::{black_box, stress, stress_main, StressContext};
+use fitz::benchkit::BenchDomainHandle;
 use fitz::benchkit::{
     build_stream_subscribe, create_bench_stream_sink, drain_frame_queue_sinks_after_each_count,
     extract_single_tlv_field, register_session_counting_sink, register_session_queue_sink,
     route_frame, wait_for_counting_sinks_each_count, CountingSink, FrameQueueSink,
 };
-use fitz::domains::stream::sink::StreamDomainSink;
 use fitz::protocol::frame::ChannelId;
 use fitz::runtime::domain_event::DomainPublishEvent;
 use fitz::runtime::envelope::Envelope;
@@ -30,7 +30,7 @@ const SUBSCRIBE_DESTINATION: &str = "stream://realm/area/control/append";
 const COMMIT_NOTIFY_ROUTE: &str = "stream://realm/area/orders";
 
 struct PreparedStreamNotifyCase {
-    sink: Arc<StreamDomainSink>,
+    sink: Arc<BenchDomainHandle>,
     destination: RouteAddress,
     event: DomainPublishEvent,
     subscriber_sinks: Vec<Arc<CountingSink>>,

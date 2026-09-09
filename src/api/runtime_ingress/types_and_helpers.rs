@@ -14,10 +14,7 @@
 // - **API** (`api/tcp.rs`, `api/ws/mod.rs`) consumes this trait.
 // - **Other session helpers** remain in their respective modules.
 
-use super::{
-    warn, AtomicBool, Bytes, ChannelId, CloseReason, Cow, DashMap, DispatchDomain, SessionInfo,
-};
-use std::sync::Arc;
+use super::{warn, Bytes, ChannelId, CloseReason, Cow, DispatchDomain, SessionInfo};
 
 pub(super) fn dispatch_session_cleanup(
     router: &crate::runtime::Router,
@@ -28,7 +25,7 @@ pub(super) fn dispatch_session_cleanup(
         router,
         route_family,
         session_id,
-        crate::runtime::DomainRegistry::cleanup_order(),
+        &crate::runtime::DomainKind::SESSION_CLEANUP_ORDER,
     )
 }
 
@@ -80,7 +77,7 @@ pub(super) fn extract_auth_route_for_domain(
     payload: &[u8],
 ) -> Result<Option<Cow<'_, str>>, String> {
     let descriptor =
-        crate::api::runtime_ingress::domain_registry::IngressDomainRegistry::descriptor_for_domain(
+        crate::api::runtime_ingress::domain_registry::IngressDomainPolicy::descriptor_for_domain(
             domain,
         );
     descriptor
@@ -339,43 +336,8 @@ pub enum SessionEvent {
 /// frame events to event handlers. It's designed to be embedded in
 /// a runtime dispatcher or session manager.
 pub struct RuntimeIngress {
-    /// Admission barrier closed before shutdown snapshots active sessions.
-    pub(super) accepting_sessions: Arc<AtomicBool>,
-    pub(super) sessions: Arc<DashMap<u64, SessionInfo>>,
-    /// Per-session `SessionActor` instances for authorization checks
-    pub(super) session_actors: Arc<DashMap<u64, crate::session::actor::SessionActor>>,
-    /// Cached per-session inbox routes used as the source address for domain dispatch.
-    pub(super) session_inbox_routes: Arc<DashMap<u64, crate::runtime::routing::Route>>,
-    /// Best-effort retry tickets for session cleanups that failed initial delivery.
-    pub(super) pending_session_cleanups: Arc<DashMap<u64, PendingSessionCleanup>>,
-    /// Wakes the dedicated cleanup worker immediately when a ticket is added.
-    pub(super) cleanup_wake: Arc<tokio::sync::Notify>,
-    /// Ensures one cleanup worker services the pending ticket set.
-    pub(super) cleanup_worker_started: Arc<AtomicBool>,
-    /// Allows graceful shutdown to stop the worker after tickets drain.
-    pub(super) cleanup_shutdown: Arc<AtomicBool>,
-    /// Bounds synchronous domain cleanup waits across independent disconnects.
-    pub(super) cleanup_permits: Arc<tokio::sync::Semaphore>,
-    /// Idempotence barrier for session finalizers that are currently running.
-    pub(super) closing_sessions: Arc<DashMap<u64, ()>>,
-    /// Optional router for dispatching frames to domain sinks
-    pub(super) router: Option<Arc<crate::runtime::Router>>,
-    /// Optional callback for session events (for routing to handlers)
-    pub(super) event_handler: Option<Arc<dyn Fn(SessionEvent) + Send + Sync>>,
-    /// Route families provisioned at boot and accepted from verified JWT claims.
-    pub(super) route_families: Arc<std::collections::HashSet<u32>>,
-    /// Whether authentication is required (if false, JWT is ignored and full access granted)
-    pub(super) auth_required: bool,
-    /// Passive admin snapshot mirror for session lifecycle
-    pub(super) admin_read_model: Option<Arc<crate::control::admin::read_model::AdminReadModel>>,
-
-    /// Explicit auth configuration used for CONNECT verification when present.
-    pub(super) auth_config: Option<crate::auth::AuthConfig>,
-    /// Claim normalization behavior for CONNECT JWTs.
-    pub(super) auth_claims_config: crate::auth::AuthClaimsConfig,
-    /// Broker-local route-family resolver for verified identity claims.
-    pub(super) route_family_resolver: crate::auth::RouteFamilyResolverConfig,
-    /// Bounds ERROR-level diagnostics emitted for unauthenticated CONNECTs.
-    pub(super) connect_diagnostics_budget:
-        Arc<super::session_authenticator::ConnectDiagnosticsBudget>,
+    pub(super) registry: super::session_registry::SessionRegistry,
+    pub(super) authenticator: super::session_authenticator::SessionAuthenticator,
+    pub(super) cleanup: super::session_cleanup_coordinator::SessionCleanupCoordinator,
+    pub(super) dispatcher: super::domain_frame_dispatcher::DomainFrameDispatcher,
 }

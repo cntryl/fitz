@@ -1,30 +1,31 @@
 use super::*;
+use std::sync::Arc;
 
 #[test]
-fn should_map_inventory_write_options_to_matching_local_or_cloud_class() {
+fn should_map_inventory_write_policy_to_matching_local_or_cloud_class() {
     // Arrange
-    let local_options = [
-        cntryl_midge::WriteOptions::sync(),
-        cntryl_midge::WriteOptions::buffered(),
-        cntryl_midge::WriteOptions::best_effort(),
+    let local_policies = [
+        crate::domains::WritePolicy::Sync,
+        crate::domains::WritePolicy::Buffered,
+        crate::domains::WritePolicy::BestEffort,
     ];
-    let cloud_options = [
-        cntryl_midge::WriteOptions::cloud_async(),
-        cntryl_midge::WriteOptions::cloud_strict(),
+    let cloud_policies = [
+        crate::domains::WritePolicy::CloudAsync,
+        crate::domains::WritePolicy::CloudStrict,
     ];
 
     // Act
-    let local_inventory_options = local_options.map(KvActor::inventory_write_options);
-    let cloud_inventory_options = cloud_options.map(KvActor::inventory_write_options);
+    let local_inventory_policies = local_policies.map(KvActor::inventory_write_policy);
+    let cloud_inventory_policies = cloud_policies.map(KvActor::inventory_write_policy);
 
     // Assert
     assert_eq!(
-        local_inventory_options,
-        [cntryl_midge::WriteOptions::buffered(); 3]
+        local_inventory_policies,
+        [crate::domains::WritePolicy::Buffered; 3]
     );
     assert_eq!(
-        cloud_inventory_options,
-        [cntryl_midge::WriteOptions::cloud_async(); 2]
+        cloud_inventory_policies,
+        [crate::domains::WritePolicy::CloudAsync; 2]
     );
 }
 
@@ -54,7 +55,7 @@ fn should_persist_inventory_estimate_after_commit_in_cloud_mode() {
     let KvResponse::BeginOk { tx_id } = actor.handle(KvMessage::Begin {
         scope: scope.clone(),
         mode: TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::cloud_async().into(),
+        write_options: crate::domains::WritePolicy::CloudAsync,
     }) else {
         panic!("transaction should begin");
     };
@@ -103,7 +104,7 @@ fn should_commit_disjoint_writes_without_inventory_conflict() {
         let KvResponse::BeginOk { tx_id } = actor.handle(KvMessage::Begin {
             scope: scope.clone(),
             mode: TxMode::ReadWrite,
-            write_options: cntryl_midge::WriteOptions::buffered().into(),
+            write_options: crate::domains::WritePolicy::Buffered,
         }) else {
             panic!("transaction should begin");
         };
@@ -164,7 +165,7 @@ fn should_mark_inventory_incomplete_for_put_without_adding_a_hot_path_read() {
     // Assert
     assert!(matches!(response, KvResponse::CommitOk));
     let read_tx = store
-        .begin_tx(1, cntryl_midge::TransactionMode::ReadOnly)
+        .begin(1, TxMode::ReadOnly)
         .expect("begin inventory read transaction");
     let encoded = read_tx
         .get(&KvActor::inventory_metadata_key(

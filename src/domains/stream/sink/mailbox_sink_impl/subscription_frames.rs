@@ -2,13 +2,13 @@
 //! outright; these never reach `StreamActor`.
 
 use super::{
-    Envelope, Ordering, RoutedSubscriptionSet, StreamClientResponseBody, StreamDomainCore,
+    Envelope, Ordering, RoutedSubscriptionSet, StreamClientResponseBody, StreamFamilyState,
     StreamSubscription,
 };
 
-impl StreamDomainCore {
+impl StreamFamilyState {
     pub(super) fn handle_subscription_frame(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         request_started: Option<std::time::Instant>,
@@ -26,7 +26,6 @@ impl StreamDomainCore {
                 let existed = self
                     .subscriptions
                     .families
-                    .lock()
                     .get(&family_id.as_u64())
                     .and_then(|state| state.find_existing_id(session_id, pattern.as_str()))
                     .is_some();
@@ -65,7 +64,7 @@ impl StreamDomainCore {
     }
 
     fn rollback_undeliverable_stream_subscribe(
-        &self,
+        &mut self,
         family_id: crate::runtime::routing::RouteFamily,
         session_id: u64,
         response: &StreamClientResponseBody,
@@ -77,7 +76,7 @@ impl StreamDomainCore {
         else {
             return;
         };
-        let mut families = self.subscriptions.families.lock();
+        let families = &mut self.subscriptions.families;
         if let Some(state) = families.get_mut(&family_id.as_u64()) {
             state.remove_subscription_for_session(family_id, session_id, *subscription_id);
             if state.is_empty() {
@@ -87,7 +86,7 @@ impl StreamDomainCore {
     }
 
     fn handle_stream_subscribe(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         family_id: crate::runtime::routing::RouteFamily,
@@ -106,7 +105,7 @@ impl StreamDomainCore {
                 Ok(compiled) => compiled,
                 Err(response) => return response,
             };
-            let mut families = self.subscriptions.families.lock();
+            let families = &mut self.subscriptions.families;
             let state = families
                 .entry(family_id.as_u64())
                 .or_insert_with(RoutedSubscriptionSet::new);
@@ -151,7 +150,7 @@ impl StreamDomainCore {
     }
 
     fn handle_stream_unsubscribe(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         family_id: crate::runtime::routing::RouteFamily,
@@ -165,7 +164,7 @@ impl StreamDomainCore {
             if let Err(response) = Self::compile_stream_subscription_pattern(pattern) {
                 return response;
             }
-            let mut families = self.subscriptions.families.lock();
+            let families = &mut self.subscriptions.families;
             let remove_family = if let Some(state) = families.get_mut(&family_id.as_u64()) {
                 state.remove_session_pattern(family_id, session_id, pattern.as_str());
                 state.is_empty()
@@ -175,7 +174,7 @@ impl StreamDomainCore {
             if remove_family {
                 families.remove(&family_id.as_u64());
             }
-            drop(families);
+            let _ = families;
             self.remove_pending_notifications_for_pattern(session_id, pattern.as_str());
             StreamClientResponseBody::Ok {
                 session_id: None,

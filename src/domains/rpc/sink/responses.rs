@@ -1,16 +1,20 @@
 use super::response_forwarder::RpcResponseForwarder;
 use super::state_model::{
-    session_inbox_address, Envelope, Instant, RpcDeliveryOutcome as DeliveryOutcome,
-    RpcDomainRuntime, RpcPendingDispatchInfo, RpcPendingErrorDelivery,
-    RpcPendingResponseDisposition, RpcResponseState, RpcState, RPC_CORRELATION_NOT_FOUND_ERROR,
-    RPC_INVALID_SEQUENCE_ERROR, RPC_RESPONSE_UNDELIVERABLE_ERROR, RPC_WRONG_WORKER_ERROR,
+    RpcDeliveryOutcome as DeliveryOutcome, RpcFamilyRuntime, RpcPendingDispatchInfo,
+    RpcPendingErrorDelivery, RpcPendingResponseDisposition, RpcResponseState,
+    RPC_CORRELATION_NOT_FOUND_ERROR, RPC_INVALID_SEQUENCE_ERROR, RPC_RESPONSE_UNDELIVERABLE_ERROR,
+    RPC_WRONG_WORKER_ERROR,
 };
 use crate::domains::rpc::protocol::RpcResponse;
+use crate::runtime::routing::session_inbox_address;
+use crate::runtime::Envelope;
+use std::time::Instant;
 
+#[derive(Clone, Copy)]
 struct ResponseStateContext<'a> {
     envelope: &'a Envelope,
     meta: &'a crate::runtime::ClientFrameMeta,
-    state: parking_lot::MutexGuard<'a, RpcState>,
+    pending_len: usize,
     state_wait_us: u64,
     state_hold_start: Option<Instant>,
     pending_route_lookup_us: u64,
@@ -37,18 +41,18 @@ fn elapsed_micros_optional(start: Option<Instant>) -> u64 {
 /// forward instead.
 pub(in crate::domains::rpc::sink) const MAX_RESPONSE_DELIVERY_ATTEMPTS: u32 = 1;
 
-impl RpcDomainRuntime<'_> {
+impl RpcFamilyRuntime<'_> {
     pub(super) fn handle_response_message(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: &crate::runtime::ClientFrameMeta,
         resp: &RpcResponse,
     ) -> DeliveryOutcome {
         self.counter_inc("rpc_responses_total");
 
-        let metrics_enabled = self.metrics.is_some();
+        let metrics_enabled = self.core.metrics.is_some();
         let state_wait_start = metrics_enabled.then(Instant::now);
-        let mut state = self.state.lock();
+        let state = &mut self.core.state;
         let state_wait_us = elapsed_micros_optional(state_wait_start);
         let state_hold_start = metrics_enabled.then(Instant::now);
         let pending_route_lookup_start = metrics_enabled.then(Instant::now);
@@ -61,10 +65,12 @@ impl RpcDomainRuntime<'_> {
             resp.stream_end,
         );
         let pending_route_lookup_us = elapsed_micros_optional(pending_route_lookup_start);
+        let pending_len = RpcResponseState::live_count(state);
+        let _ = state;
         let context = ResponseStateContext {
             envelope,
             meta,
-            state,
+            pending_len,
             state_wait_us,
             state_hold_start,
             pending_route_lookup_us,
@@ -89,7 +95,7 @@ impl RpcDomainRuntime<'_> {
     }
 
     fn handle_wrong_response_worker(
-        &self,
+        &mut self,
         context: ResponseStateContext<'_>,
         resp: &RpcResponse,
         owner_worker_session_id: u64,
@@ -97,15 +103,12 @@ impl RpcDomainRuntime<'_> {
         let ResponseStateContext {
             envelope,
             meta,
-            state,
+            pending_len,
             state_wait_us,
             state_hold_start,
             pending_route_lookup_us,
         } = context;
         let state_hold_us = elapsed_micros_optional(state_hold_start);
-        let pending_len = RpcResponseState::live_count(&*state);
-        drop(state);
-
         self.histogram_observe_us("rpc_pending_route_lookup_us", pending_route_lookup_us);
         self.histogram_observe_us("rpc_response_state_wait_us", state_wait_us);
         self.histogram_observe_us("rpc_response_state_hold_us", state_hold_us);
@@ -138,7 +141,7 @@ impl RpcDomainRuntime<'_> {
     }
 
     fn handle_forwarded_response(
-        &self,
+        &mut self,
         context: ResponseStateContext<'_>,
         resp: &RpcResponse,
         caller_info: &RpcPendingDispatchInfo,
@@ -147,14 +150,12 @@ impl RpcDomainRuntime<'_> {
         let ResponseStateContext {
             envelope,
             meta,
-            state,
+            pending_len: _,
             state_wait_us,
             state_hold_start,
             pending_route_lookup_us,
         } = context;
         let state_hold_us = elapsed_micros_optional(state_hold_start);
-        drop(state);
-
         self.histogram_observe_us("rpc_pending_route_lookup_us", pending_route_lookup_us);
         self.histogram_observe_us("rpc_response_state_wait_us", state_wait_us);
         self.histogram_observe_us("rpc_response_state_hold_us", state_hold_us);
@@ -166,7 +167,7 @@ impl RpcDomainRuntime<'_> {
             return self.handle_undeliverable_response(envelope, meta, resp, caller_info);
         }
 
-        let mut state = self.core.state.lock();
+        let state = &mut self.core.state;
         let completed = RpcResponseState::commit_response_delivery(
             &mut *state,
             meta.route_family,
@@ -182,14 +183,14 @@ impl RpcDomainRuntime<'_> {
                 Some(completion_latency_us),
             );
             let live_request_count = RpcResponseState::live_count(&*state);
-            drop(state);
+            let _ = state;
             self.release_global_pending(1);
             self.histogram_observe_us("rpc_pending_route_remove_us", pending_route_lookup_us);
             self.histogram_observe_us("rpc_pending_untrack_us", pending_route_lookup_us);
             self.gauge_set("rpc_pending_requests", live_request_count as u64);
             state_changed = true;
         } else {
-            drop(state);
+            let _ = state;
         }
 
         tracing::debug!(
@@ -220,14 +221,14 @@ impl RpcDomainRuntime<'_> {
     /// see either way, while leaving the worker producing into a stream that
     /// no longer has a live listener.
     fn handle_undeliverable_response(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: &crate::runtime::ClientFrameMeta,
         resp: &RpcResponse,
         caller_info: &RpcPendingDispatchInfo,
     ) -> DeliveryOutcome {
         let failures = {
-            let mut state = self.core.state.lock();
+            let state = &mut self.core.state;
             RpcResponseState::record_delivery_failure(
                 &mut *state,
                 meta.route_family,
@@ -259,17 +260,17 @@ impl RpcDomainRuntime<'_> {
     /// stream, and every later chunk would arrive looking contiguous. Callers
     /// of this method must end the RPC rather than continue past a `false`.
     fn forward_response_to_requester(
-        &self,
+        &mut self,
         meta: &crate::runtime::ClientFrameMeta,
         resp: &RpcResponse,
         caller_info: &RpcPendingDispatchInfo,
     ) -> bool {
-        let metrics_enabled = self.metrics.is_some();
+        let metrics_enabled = self.core.metrics.is_some();
         let response_forward_start = metrics_enabled.then(Instant::now);
         let delivered = if let Some(forward_envelope) =
             RpcResponseForwarder::response_envelope(meta, resp, caller_info)
         {
-            if let Err(error) = self.router.route(forward_envelope) {
+            if let Err(error) = self.core.router.route(forward_envelope) {
                 self.counter_inc("rpc_response_forward_errors_total");
                 tracing::warn!(
                     domain = "rpc",
@@ -299,14 +300,14 @@ impl RpcDomainRuntime<'_> {
     /// so it sees a terminated stream instead of a sequence gap, and the
     /// worker so it stops producing into a stream that no longer exists.
     fn terminate_undeliverable_stream(
-        &self,
+        &mut self,
         meta: &crate::runtime::ClientFrameMeta,
         resp: &RpcResponse,
         caller_info: &RpcPendingDispatchInfo,
         worker_inbox_addr: crate::runtime::routing::RouteAddress,
     ) {
         {
-            let mut state = self.core.state.lock();
+            let state = &mut self.core.state;
             if RpcResponseState::abandon_pending(
                 &mut *state,
                 meta.route_family,
@@ -378,7 +379,7 @@ impl RpcDomainRuntime<'_> {
     }
 
     fn handle_invalid_response_sequence(
-        &self,
+        &mut self,
         context: ResponseStateContext<'_>,
         resp: &RpcResponse,
         caller_info: &RpcPendingDispatchInfo,
@@ -387,16 +388,18 @@ impl RpcDomainRuntime<'_> {
         let ResponseStateContext {
             envelope,
             meta,
-            mut state,
+            pending_len: _,
             state_wait_us,
             state_hold_start,
             pending_route_lookup_us,
         } = context;
-        RpcResponseState::release_dispatch(&mut *state, caller_info, None);
+        let live_request_count = {
+            let state = &mut self.core.state;
+            RpcResponseState::release_dispatch(state, caller_info, None);
+            RpcResponseState::live_count(state)
+        };
         self.release_global_pending(1);
-        let live_request_count = RpcResponseState::live_count(&*state);
         let state_hold_us = elapsed_micros_optional(state_hold_start);
-        drop(state);
 
         self.histogram_observe_us("rpc_pending_route_lookup_us", pending_route_lookup_us);
         self.histogram_observe_us("rpc_pending_route_remove_us", pending_route_lookup_us);
@@ -456,22 +459,19 @@ impl RpcDomainRuntime<'_> {
     }
 
     fn handle_missing_response_pending(
-        &self,
+        &mut self,
         context: ResponseStateContext<'_>,
         resp: &RpcResponse,
     ) -> DeliveryOutcome {
         let ResponseStateContext {
             envelope,
             meta,
-            state,
+            pending_len,
             state_wait_us,
             state_hold_start,
             pending_route_lookup_us,
         } = context;
         let state_hold_us = elapsed_micros_optional(state_hold_start);
-        let live_request_count = RpcResponseState::live_count(&*state);
-        drop(state);
-
         self.histogram_observe_us("rpc_pending_route_lookup_us", pending_route_lookup_us);
         self.histogram_observe_us("rpc_response_state_wait_us", state_wait_us);
         self.histogram_observe_us("rpc_response_state_hold_us", state_hold_us);
@@ -494,7 +494,7 @@ impl RpcDomainRuntime<'_> {
         tracing::warn!(
             domain = "rpc",
             correlation_id = %resp.correlation_id,
-            pending_len = live_request_count,
+            pending_len,
             "No pending request for response"
         );
         (None, None, true)

@@ -7,21 +7,21 @@ fn should_create_notice_domain_sink() {
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
 
     // Act
-    let sink = NoticeDomainSink::new(router, admin_read_model);
+    let sink = NoticeDomain::new(router, admin_read_model);
 
     // Assert
     assert!(sink.is_active());
 }
 
 #[test]
-fn should_reject_notice_delivery_when_managed_actor_is_stopped() {
+fn should_reject_notice_delivery_when_family_runtime_is_stopped() {
     // Arrange
     let family = RouteFamily::new(1);
     let subscriber_address = RouteAddress::new(family, Route::new("inbox://session/7"));
     let notice_address = RouteAddress::new(family, Route::new("notice://acme/inbound"));
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = NoticeDomainSink::new(router, admin_read_model);
+    let sink = NoticeDomain::new(router, admin_read_model);
 
     // Act
     sink.stop_actor_for_tests();
@@ -47,7 +47,7 @@ fn should_reject_notice_delivery_when_managed_actor_is_stopped() {
 }
 
 #[test]
-fn should_route_notice_live_count_queries_through_managed_actor() {
+fn should_route_notice_live_count_queries_through_family_runtime() {
     // Arrange
     let family = RouteFamily::new(1);
     let notice_route = "notice://acme/events";
@@ -57,7 +57,7 @@ fn should_route_notice_live_count_queries_through_managed_actor() {
     let subscriber_mailbox = Arc::new(Mailbox::new(8));
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = NoticeDomainSink::new(router, admin_read_model);
+    let sink = NoticeDomain::new(router, admin_read_model);
     subscribe_notice_pattern(
         &sink,
         &subscriber_address,
@@ -83,10 +83,10 @@ fn should_route_notice_live_count_queries_through_managed_actor() {
 }
 
 #[test]
-fn should_report_failed_notice_cleanup_when_managed_actor_is_stopped() {
+fn should_report_failed_notice_cleanup_when_family_runtime_is_stopped() {
     // Arrange
     let router = Arc::new(Router::new());
-    let sink = NoticeDomainSink::new(
+    let sink = NoticeDomain::new(
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
     );
@@ -100,10 +100,41 @@ fn should_report_failed_notice_cleanup_when_managed_actor_is_stopped() {
 }
 
 #[test]
-fn should_report_timeout_when_notice_actor_is_alive_but_busy() {
+fn should_keep_sibling_notice_family_usable_when_one_family_fails_closed() {
+    // Arrange
+    let failed_family = RouteFamily::new(1);
+    let healthy_family = RouteFamily::new(2);
+    let sink = NoticeDomain::new(
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+
+    // Act
+    sink.panic_family_for_tests(failed_family);
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while sink.is_family_running(failed_family) && std::time::Instant::now() < deadline {
+        std::thread::yield_now();
+    }
+    let failed_result = sink.deliver(Envelope::new(
+        RouteAddress::new(failed_family, Route::new("notice://cleanup")),
+        crate::runtime::SessionCleanup { session_id: 7 },
+    ));
+    let healthy_result = sink.deliver(Envelope::new(
+        RouteAddress::new(healthy_family, Route::new("notice://cleanup")),
+        crate::runtime::SessionCleanup { session_id: 8 },
+    ));
+
+    // Assert
+    assert!(matches!(failed_result, Err(DeliveryError::ActorStopped)));
+    assert_eq!(healthy_result, Ok(()));
+    assert!(sink.is_family_running(healthy_family));
+}
+
+#[test]
+fn should_report_timeout_when_notice_family_is_alive_but_busy() {
     // Arrange
     let router = Arc::new(Router::new());
-    let sink = NoticeDomainSink::new(
+    let sink = NoticeDomain::new(
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
     );
@@ -122,7 +153,7 @@ fn should_report_timeout_when_notice_actor_is_alive_but_busy() {
 }
 
 #[test]
-fn should_route_notice_admin_dirty_refresh_through_managed_actor() {
+fn should_refresh_notice_admin_from_passive_family_observation() {
     // Arrange
     let family = RouteFamily::new(1);
     let notice_route = "notice://acme/events";
@@ -132,7 +163,7 @@ fn should_route_notice_admin_dirty_refresh_through_managed_actor() {
     let subscriber_mailbox = Arc::new(Mailbox::new(8));
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = NoticeDomainSink::new(router, admin_read_model.clone());
+    let sink = NoticeDomain::new(router, admin_read_model.clone());
     subscribe_notice_pattern(
         &sink,
         &subscriber_address,
@@ -152,8 +183,8 @@ fn should_route_notice_admin_dirty_refresh_through_managed_actor() {
 
     // Assert
     assert!(!sink.is_actor_running());
-    assert!(subscriptions.is_empty());
-    assert!(notice_routes.is_empty());
+    assert_eq!(subscriptions.len(), 1);
+    assert_eq!(notice_routes.len(), 1);
 }
 
 #[test]
@@ -168,7 +199,7 @@ fn should_include_notice_subscription_given_flexible_route_shape() {
     let subscriber_mailbox = Arc::new(Mailbox::new(8));
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = NoticeDomainSink::new(router, admin_read_model.clone());
+    let sink = NoticeDomain::new(router, admin_read_model.clone());
 
     // Act
     subscribe_notice_pattern(
@@ -192,6 +223,49 @@ fn should_include_notice_subscription_given_flexible_route_shape() {
 }
 
 #[test]
+fn should_project_notice_admin_state_from_every_family() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = NoticeDomain::new(router.clone(), admin_read_model.clone());
+    let first_family = RouteFamily::new(1);
+    let second_family = RouteFamily::new(2);
+    let first_mailbox = Arc::new(Mailbox::new(8));
+    let second_mailbox = Arc::new(Mailbox::new(8));
+    let first_subscriber = RouteAddress::new(first_family, Route::new("inbox://session/7"));
+    let second_subscriber = RouteAddress::new(second_family, Route::new("inbox://session/8"));
+    router.register(first_subscriber.clone(), first_mailbox.clone());
+    router.register(second_subscriber.clone(), second_mailbox.clone());
+    subscribe_notice_pattern(
+        &sink,
+        &first_subscriber,
+        &RouteAddress::new(first_family, Route::new("notice://acme/inbound")),
+        7,
+        "notice://acme/events",
+        first_family,
+    );
+    let _first_response = decode_notice_response(&first_mailbox);
+    subscribe_notice_pattern(
+        &sink,
+        &second_subscriber,
+        &RouteAddress::new(second_family, Route::new("notice://other/inbound")),
+        8,
+        "notice://other/events",
+        second_family,
+    );
+    let _second_response = decode_notice_response(&second_mailbox);
+
+    // Act
+    refresh_notice_admin_snapshot(&sink);
+    let subscriptions = admin_read_model.notice_subscriptions(None, None);
+
+    // Assert
+    assert_eq!(subscriptions.len(), 2);
+    assert!(subscriptions.iter().any(|entry| entry.route_family == 1));
+    assert!(subscriptions.iter().any(|entry| entry.route_family == 2));
+}
+
+#[test]
 fn should_track_notice_publish_activity_given_matching_publish() {
     // Arrange
     let family = RouteFamily::new(1);
@@ -205,7 +279,7 @@ fn should_track_notice_publish_activity_given_matching_publish() {
     let subscriber_mailbox = Arc::new(Mailbox::new(8));
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = NoticeDomainSink::new(router, admin_read_model.clone());
+    let sink = NoticeDomain::new(router, admin_read_model.clone());
 
     subscribe_notice_pattern(
         &sink,
@@ -258,7 +332,7 @@ fn should_track_one_notice_publish_given_multiple_subscribers_on_same_pattern() 
     router.register(first_subscriber.clone(), first_mailbox.clone());
     router.register(second_subscriber.clone(), second_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = NoticeDomainSink::new(router, admin_read_model.clone());
+    let sink = NoticeDomain::new(router, admin_read_model.clone());
 
     subscribe_notice_pattern(
         &sink,
@@ -332,7 +406,7 @@ fn should_remove_notice_subscriptions_given_session_cleanup() {
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
     router.register(publisher_address.clone(), publisher_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = NoticeDomainSink::new(router, admin_read_model);
+    let sink = NoticeDomain::new(router, admin_read_model);
 
     sink.deliver(Envelope::from_route(
         subscriber_address.clone(),
@@ -391,7 +465,7 @@ fn should_clear_notice_admin_snapshot_given_session_cleanup_with_mixed_subscript
     let subscriber_mailbox = Arc::new(Mailbox::new(8));
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = NoticeDomainSink::new(router, admin_read_model.clone());
+    let sink = NoticeDomain::new(router, admin_read_model.clone());
 
     subscribe_notice_pattern(
         &sink,
@@ -450,7 +524,7 @@ fn should_prune_notice_route_stats_after_last_subscription_is_removed() {
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
     router.register(publisher_address.clone(), publisher_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = NoticeDomainSink::new(router, admin_read_model);
+    let sink = NoticeDomain::new(router, admin_read_model);
 
     subscribe_notice_pattern(
         &sink,

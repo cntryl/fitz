@@ -9,36 +9,37 @@
 
 use super::commands::KvDomainCommand;
 use super::locks::{KvResourceLockKey, KvResourceLockOwner};
-use crate::runtime::CleanedUpSessions;
-use crate::runtime::{ManagedActor, Router};
-use parking_lot::Mutex;
+use crate::runtime::{CleanedUpSessions, Router};
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-pub(super) struct KvDomainCore {
-    pub(super) store: Arc<cntryl_midge::Engine>,
-    pub(super) actors: Arc<Mutex<HashMap<u64, Arc<Mutex<crate::domains::kv::KvActor>>>>>,
-    pub(super) resource_locks: Mutex<HashMap<KvResourceLockKey, KvResourceLockOwner>>,
-    pub(super) watch_registries:
-        Mutex<HashMap<u64, crate::domains::kv::watch_registry::KvWatchRegistry>>,
-    pub(super) cleaned_up_sessions: Mutex<CleanedUpSessions>,
+pub(super) struct KvFamilyState {
+    pub(super) store: crate::domains::kv::store::KvStore,
+    pub(super) actors: HashMap<u64, crate::domains::kv::KvActor>,
+    pub(super) resource_locks: HashMap<KvResourceLockKey, KvResourceLockOwner>,
+    pub(super) watch_registries: HashMap<u64, crate::domains::kv::watch_registry::KvWatchRegistry>,
+    pub(super) cleaned_up_sessions: CleanedUpSessions,
     pub(super) router: Arc<Router>,
-    pub(super) projection: crate::domains::kv::admin_projection::KvAdminProjection,
+    pub(super) projection: Arc<crate::domains::kv::admin_projection::KvAdminProjection>,
     pub(super) metrics: Option<crate::domains::kv::metrics::KvMetrics>,
-    pub(super) sync_write_options: cntryl_midge::WriteOptions,
-    pub(super) buffered_write_options: cntryl_midge::WriteOptions,
+    pub(super) sync_write_policy: crate::domains::WritePolicy,
+    pub(super) buffered_write_policy: crate::domains::WritePolicy,
     pub(super) idle_transaction_ttl: std::time::Duration,
 }
 
-pub(super) struct KvDomainState {
-    pub(super) core: KvDomainCore,
-    pub(super) active: AtomicBool,
+pub(super) struct KvFamilyRuntime<'a> {
+    pub(super) core: &'a mut KvFamilyState,
 }
 
-pub(super) struct KvDomainRuntime<'a> {
-    pub(super) core: &'a KvDomainCore,
-    pub(super) active: &'a AtomicBool,
+#[derive(Clone)]
+pub(super) struct KvDomainConfig {
+    pub(super) store: crate::domains::kv::store::KvStore,
+    pub(super) router: Arc<Router>,
+    pub(super) projection: Arc<crate::domains::kv::admin_projection::KvAdminProjection>,
+    pub(super) metrics: Option<crate::domains::kv::metrics::KvMetrics>,
+    pub(super) sync_write_policy: crate::domains::WritePolicy,
+    pub(super) buffered_write_policy: crate::domains::WritePolicy,
+    pub(super) idle_transaction_ttl: std::time::Duration,
 }
 
 pub(super) enum KvAdminTransactionUpdate {
@@ -73,12 +74,9 @@ impl KvOperationOutcome {
     }
 }
 
-/// Managed mailbox adapter that serializes access to the KV domain runtime.
-pub(super) struct KvDomainMailboxActor {
-    pub(super) state: Arc<KvDomainState>,
-}
-
-pub struct KvDomainSink {
-    pub(super) state: Arc<KvDomainState>,
-    pub(super) actor: ManagedActor<KvDomainCommand>,
+pub(crate) struct KvDomain {
+    pub(super) family_runtime: crate::runtime::FamilyActorPoolRuntime<KvDomainCommand>,
+    pub(super) route_families: Vec<crate::runtime::routing::RouteFamily>,
+    pub(super) active: Arc<std::sync::atomic::AtomicBool>,
+    pub(super) config: KvDomainConfig,
 }

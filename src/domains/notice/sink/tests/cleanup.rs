@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn should_route_notice_session_cleanup_command_through_managed_actor() {
+fn should_route_notice_session_cleanup_command_through_family_runtime() {
     // Arrange
     let family = RouteFamily::new(1);
     let session_id = 7;
@@ -12,7 +12,7 @@ fn should_route_notice_session_cleanup_command_through_managed_actor() {
     let client_mailbox = Arc::new(Mailbox::new(8));
     router.register(client_address.clone(), client_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = NoticeDomainSink::new(router, admin_read_model);
+    let sink = NoticeDomain::new(router, admin_read_model);
     subscribe_notice_pattern(
         &sink,
         &client_address,
@@ -48,7 +48,7 @@ fn should_reject_stale_subscribe_after_disconnect_cleanup_marks_session() {
     let client_mailbox = Arc::new(Mailbox::new(8));
     router.register(client_address.clone(), client_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = NoticeDomainSink::new(router, admin_read_model);
+    let sink = NoticeDomain::new(router, admin_read_model);
     subscribe_notice_pattern(
         &sink,
         &client_address,
@@ -60,15 +60,13 @@ fn should_reject_stale_subscribe_after_disconnect_cleanup_marks_session() {
     let _ = decode_notice_response(&client_mailbox);
     assert_eq!(sink.subscription_count(), Ok(1));
 
-    // Act: run disconnect cleanup directly on the core, giving a
-    // deterministic ordering (cleanup completes, then the stale request
-    // below is processed) equivalent to what the high-priority mailbox lane
-    // guarantees a real disconnect races against a queued normal-lane
-    // request.
-    sink.core.handle_cleanup_envelope(&Envelope::new(
+    // Act: complete disconnect cleanup on the family control lane before the
+    // stale normal-lane request below is processed.
+    sink.enqueue_cleanup_for_tests(Envelope::new(
         RouteAddress::new(family, Route::new("notice://cleanup")),
         crate::runtime::SessionCleanup { session_id },
-    ));
+    ))
+    .expect("enqueue and complete Notice cleanup");
     assert_eq!(sink.subscription_count(), Ok(0));
 
     subscribe_notice_pattern(

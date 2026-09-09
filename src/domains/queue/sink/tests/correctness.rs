@@ -39,7 +39,7 @@ fn should_reject_queue_request_when_source_and_destination_families_differ() {
         crate::testkit::create_test_engine_with_cfs(vec![1, 2]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        cntryl_midge::WriteOptions::best_effort(),
+        crate::domains::WritePolicy::BestEffort,
     );
     let request = QueueClientRequest::new(
         ClientFrameMeta::new(7, ClientChannel::Pub, 200, destination_family),
@@ -73,7 +73,7 @@ fn should_reject_queue_operation_when_decoded_family_differs_from_request() {
         crate::testkit::create_test_engine_with_cfs(vec![1, 2]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        cntryl_midge::WriteOptions::best_effort(),
+        crate::domains::WritePolicy::BestEffort,
     );
     let request = QueueClientRequest::new(
         ClientFrameMeta::new(7, ClientChannel::Pub, 200, family),
@@ -106,7 +106,7 @@ fn should_reject_queue_watch_when_subscription_identity_does_not_match_request()
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        cntryl_midge::WriteOptions::best_effort(),
+        crate::domains::WritePolicy::BestEffort,
     );
     let request = QueueClientRequest::new(
         ClientFrameMeta::new(7, ClientChannel::Sub, 207, family),
@@ -144,7 +144,7 @@ fn should_not_retain_queue_watch_when_response_cannot_be_delivered() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        cntryl_midge::WriteOptions::best_effort(),
+        crate::domains::WritePolicy::BestEffort,
     );
     let request = QueueClientRequest::new(
         ClientFrameMeta::new(7, ClientChannel::Sub, 207, family),
@@ -177,7 +177,7 @@ fn should_reject_queue_watch_given_empty_pattern() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        cntryl_midge::WriteOptions::best_effort(),
+        crate::domains::WritePolicy::BestEffort,
     );
     let request = QueueClientRequest::new(
         ClientFrameMeta::new(7, ClientChannel::Sub, 207, family),
@@ -218,7 +218,7 @@ fn should_reject_queue_operation_given_wildcard_queue_route() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        cntryl_midge::WriteOptions::best_effort(),
+        crate::domains::WritePolicy::BestEffort,
     );
     let request = QueueClientRequest::new(
         ClientFrameMeta::new(7, ClientChannel::Pub, 200, family),

@@ -13,10 +13,7 @@ mod subscriptions;
 mod test_helpers;
 
 pub(crate) use facade::DEFAULT_SCHEDULE_PRELOAD_TIMEOUT;
-pub use model::ScheduleDomainSink;
-
-#[cfg(test)]
-use model::*;
+pub(crate) use model::ScheduleDomain;
 
 #[cfg(test)]
 mod tests;

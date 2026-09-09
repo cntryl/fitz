@@ -577,46 +577,52 @@ impl BootConfig {
     /// persistent local commit waits for local sync; cloud strict mode also
     /// waits for provider acknowledgement.
     #[must_use]
-    pub fn schedule_write_options(&self) -> cntryl_midge::WriteOptions {
+    pub fn schedule_write_policy(&self) -> crate::domains::WritePolicy {
         match (&self.storage_mode, &self.cloud_durability) {
-            (StorageMode::Memory, _) => cntryl_midge::WriteOptions::best_effort(),
-            (StorageMode::CloudBacked(_), durability) => cloud_durable_write_options(durability),
-            _ => cntryl_midge::WriteOptions::sync(),
+            (StorageMode::Memory, _) => crate::domains::WritePolicy::BestEffort,
+            (StorageMode::CloudBacked(_), CloudDurabilityMode::Strict) => {
+                crate::domains::WritePolicy::CloudStrict
+            }
+            (StorageMode::CloudBacked(_), _) => crate::domains::WritePolicy::CloudAsync,
+            _ => crate::domains::WritePolicy::Sync,
         }
     }
 
     #[must_use]
-    pub fn request_sync_write_options(&self) -> cntryl_midge::WriteOptions {
+    pub fn request_sync_write_policy(&self) -> crate::domains::WritePolicy {
         match (&self.storage_mode, &self.cloud_durability) {
-            (StorageMode::CloudBacked(_), durability) => cloud_durable_write_options(durability),
-            _ => cntryl_midge::WriteOptions::sync(),
+            (StorageMode::CloudBacked(_), CloudDurabilityMode::Strict) => {
+                crate::domains::WritePolicy::CloudStrict
+            }
+            (StorageMode::CloudBacked(_), _) => crate::domains::WritePolicy::CloudAsync,
+            _ => crate::domains::WritePolicy::Sync,
         }
     }
 
     #[must_use]
-    pub fn request_buffered_write_options(&self) -> cntryl_midge::WriteOptions {
+    pub fn request_buffered_write_policy(&self) -> crate::domains::WritePolicy {
         if matches!(self.storage_mode, StorageMode::CloudBacked(_)) {
-            cntryl_midge::WriteOptions::cloud_async()
+            crate::domains::WritePolicy::CloudAsync
         } else {
-            cntryl_midge::WriteOptions::buffered()
+            crate::domains::WritePolicy::Buffered
         }
     }
 
     #[must_use]
-    pub fn queue_write_options(&self) -> cntryl_midge::WriteOptions {
+    pub fn queue_write_policy(&self) -> crate::domains::WritePolicy {
         match (&self.storage_mode, &self.queue_write_policy) {
             (StorageMode::Memory, _) | (_, QueueWritePolicy::Fast) => {
-                cntryl_midge::WriteOptions::best_effort()
+                crate::domains::WritePolicy::BestEffort
             }
             (StorageMode::CloudBacked(_), QueueWritePolicy::Strict) => {
-                cloud_durable_write_options(&CloudDurabilityMode::Strict)
+                crate::domains::WritePolicy::CloudStrict
             }
             (StorageMode::CloudBacked(_), QueueWritePolicy::Buffered) => {
-                cloud_durable_write_options(&CloudDurabilityMode::Background)
+                crate::domains::WritePolicy::CloudAsync
             }
-            (_, QueueWritePolicy::Strict) => cntryl_midge::WriteOptions::sync(),
+            (_, QueueWritePolicy::Strict) => crate::domains::WritePolicy::Sync,
             (_, QueueWritePolicy::Buffered | QueueWritePolicy::Invalid { .. }) => {
-                cntryl_midge::WriteOptions::buffered()
+                crate::domains::WritePolicy::Buffered
             }
         }
     }
@@ -636,15 +642,6 @@ impl BootConfig {
     pub fn queue_write_policy_defaulted_fast(&self) -> bool {
         self.queue_write_policy_source.is_defaulted()
             && matches!(self.queue_write_policy, QueueWritePolicy::Fast)
-    }
-}
-
-fn cloud_durable_write_options(durability: &CloudDurabilityMode) -> cntryl_midge::WriteOptions {
-    match durability {
-        CloudDurabilityMode::Background | CloudDurabilityMode::Invalid { .. } => {
-            cntryl_midge::WriteOptions::cloud_async()
-        }
-        CloudDurabilityMode::Strict => cntryl_midge::WriteOptions::cloud_strict(),
     }
 }
 

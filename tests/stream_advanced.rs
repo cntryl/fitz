@@ -3,12 +3,12 @@
 
 use bytes::Bytes;
 use fitz::domains::stream::protocol::StreamWriteMode;
-use fitz::domains::stream::storage::{encode_offset_counter_key, OffsetCounterValue};
-use fitz::domains::stream::store::{
-    CommitRecordsParams, EventPayload, StreamAdminRecord, StreamStore,
-};
 use fitz::domains::stream::{StreamReadItem, StreamRecord};
 use fitz::testkit::create_test_engine_with_cfs;
+use fitz::testkit::domain_internals::stream::{encode_offset_counter_key, OffsetCounterValue};
+use fitz::testkit::domain_internals::stream::{
+    CommitRecordsParams, EventPayload, StreamAdminRecord, StreamStore,
+};
 
 fn commit_record(
     store: &StreamStore,

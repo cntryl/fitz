@@ -1,6 +1,6 @@
 //! Storage initialization
 
-use super::shutdown::ShutdownSignal;
+use super::broker_shutdown::ShutdownSignal;
 use crate::boot::runtime::{BootConfig, BootResult, CloudStorageConfig, StorageMode};
 use std::sync::Arc;
 use std::time::{Duration, Instant};

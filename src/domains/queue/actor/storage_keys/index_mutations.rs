@@ -2,10 +2,10 @@ use super::super::{MessageId, PersistedIndexMutationPlan, PersistedReadyMutation
 
 impl QueueActor {
     pub(in crate::domains::queue::actor) fn delete_record(
-        txn: &mut cntryl_midge::Transaction,
+        txn: &mut super::super::recovery_store::QueueTransaction,
         header_key: Vec<u8>,
         body_key: Vec<u8>,
-    ) -> cntryl_midge::MidgeResult<()> {
+    ) -> Result<(), super::super::recovery_store::QueueStoreError> {
         txn.delete(header_key).and_then(|()| txn.delete(body_key))
     }
 
@@ -57,7 +57,7 @@ impl QueueActor {
 
     pub(in crate::domains::queue::actor) fn write_persisted_ready_mutation(
         &self,
-        txn: &mut cntryl_midge::Transaction,
+        txn: &mut super::super::recovery_store::QueueTransaction,
         shard: usize,
         mutation: PersistedReadyMutation,
     ) -> Result<(), String> {
@@ -101,7 +101,7 @@ impl QueueActor {
 
     pub(in crate::domains::queue::actor) fn write_index_mutation_plan(
         &self,
-        txn: &mut cntryl_midge::Transaction,
+        txn: &mut super::super::recovery_store::QueueTransaction,
         id: MessageId,
         plan: PersistedIndexMutationPlan,
         dead_lettered_at_ms: Option<u64>,
@@ -128,7 +128,7 @@ impl QueueActor {
         }
 
         txn.put(
-            self.recovery_store.index_meta_key.clone(),
+            self.persistence.recovery.index_meta_key.clone(),
             Self::encode_index_meta(
                 self.next_id_limit,
                 Self::usize_to_u64(plan.staged_ready_count),

@@ -1,8 +1,11 @@
 use super::model::{
-    parse_concrete_schedule_route, BTreeMap, Bytes, PersistedPendingFireClaim, PersistedSchedule,
-    SchedulePersistenceError, ScheduleStore, WriteOptions, DEFINITION_PREFIX, DUE_INDEX_VALUE,
-    DUE_PREFIX, PENDING_FIRE_PREFIX,
+    PersistedPendingFireClaim, PersistedSchedule, SchedulePersistenceError, ScheduleStore,
+    DEFINITION_PREFIX, DUE_INDEX_VALUE, DUE_PREFIX, PENDING_FIRE_PREFIX,
 };
+use crate::domains::schedule::protocol::parse_concrete_schedule_route;
+use crate::domains::WritePolicy;
+use bytes::Bytes;
+use std::collections::BTreeMap;
 
 impl ScheduleStore {
     /// Load authoritative durable schedule definitions and rebuild the full due index.
@@ -15,7 +18,7 @@ impl ScheduleStore {
     pub fn load_all(
         &self,
         cf_id: u64,
-        write_options: WriteOptions,
+        write_policy: WritePolicy,
     ) -> Result<Vec<PersistedSchedule>, String> {
         let cf_id_u32 = Self::u64_to_u32_saturating(cf_id)?;
         let read_tx = self
@@ -45,7 +48,7 @@ impl ScheduleStore {
 
         Self::rewrite_due_index(&mut write_tx, due_rows, schedules.values())?;
 
-        self.commit_or_inject(write_tx, write_options)?;
+        self.commit_or_inject(write_tx, write_policy)?;
         Ok(schedules.into_values().collect())
     }
 
@@ -95,17 +98,13 @@ impl ScheduleStore {
     ///
     /// Returns an error when the family id is invalid, opening the family
     /// transaction fails, or committing with the caller-selected write options fails.
-    pub(crate) fn sync_family(
-        &self,
-        cf_id: u64,
-        write_options: WriteOptions,
-    ) -> Result<(), String> {
+    pub(crate) fn sync_family(&self, cf_id: u64, write_policy: WritePolicy) -> Result<(), String> {
         let cf_id_u32 = Self::u64_to_u32_saturating(cf_id)?;
         let txn = self
             .db
             .begin_tx(cf_id_u32, cntryl_midge::TransactionMode::ReadWrite)
             .map_err(|e| format!("begin schedule commit tx failed: {e:?}"))?;
-        txn.commit(write_options)
+        txn.commit(write_policy.into())
             .map_err(|e| format!("commit schedule column family failed: {e:?}"))
     }
 
@@ -117,7 +116,7 @@ impl ScheduleStore {
         &self,
         cf_id: u64,
         items: &[(u64, String)],
-        write_options: WriteOptions,
+        write_policy: WritePolicy,
     ) -> Result<(), String> {
         if items.is_empty() {
             return Ok(());
@@ -134,7 +133,7 @@ impl ScheduleStore {
                 .map_err(|e| format!("delete pending fire failed: {e:?}"))?;
         }
 
-        Ok(self.commit_or_inject(txn, write_options)?)
+        Ok(self.commit_or_inject(txn, write_policy)?)
     }
 
     pub(in crate::domains::schedule::store) fn u64_to_u32_saturating(
@@ -296,7 +295,7 @@ impl ScheduleStore {
     pub(in crate::domains::schedule::store) fn commit_or_inject(
         &self,
         txn: cntryl_midge::Transaction,
-        write_options: WriteOptions,
+        write_policy: WritePolicy,
     ) -> Result<(), SchedulePersistenceError> {
         if self
             .fail_next_commit
@@ -314,7 +313,7 @@ impl ScheduleStore {
             ));
         }
 
-        txn.commit(write_options)
+        txn.commit(write_policy.into())
             .map_err(|error| SchedulePersistenceError::midge("commit failed", error))
     }
 
@@ -325,9 +324,9 @@ impl ScheduleStore {
     pub(in crate::domains::schedule::store) fn commit_or_inject(
         &self,
         txn: cntryl_midge::Transaction,
-        write_options: WriteOptions,
+        write_policy: WritePolicy,
     ) -> Result<(), SchedulePersistenceError> {
-        txn.commit(write_options)
+        txn.commit(write_policy.into())
             .map_err(|error| SchedulePersistenceError::midge("commit failed", error))
     }
 }

@@ -1,11 +1,11 @@
 //! Response-envelope construction and routing.
 
-use super::state::KvDomainRuntime;
+use super::state::KvFamilyRuntime;
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
 use crate::runtime::{DeliveryError, Envelope};
 
-impl KvDomainRuntime<'_> {
+impl KvFamilyRuntime<'_> {
     pub(super) fn route_kv_response(
         &self,
         envelope: &Envelope,

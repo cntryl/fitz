@@ -1,10 +1,15 @@
 use super::model::{
-    parse_concrete_schedule_route, storage_key, Arc, Bytes, ConcreteScheduleRoute,
-    DecodedDefinitionRow, DomainKeyspace, Encoder, LexKey, ScheduleDefinitionData,
-    ScheduleDeliveryMode, ScheduleRows, ScheduleStore, BODY_PREFIX, BODY_VALUE_VERSION_V2,
-    DEFINITION_PREFIX, DEFINITION_VALUE_VERSION_V3, PENDING_FIRE_PREFIX,
-    PENDING_FIRE_VALUE_VERSION_V3,
+    DecodedDefinitionRow, ScheduleDefinitionData, SchedulePersistenceError, ScheduleRows,
+    ScheduleStore, BODY_PREFIX, BODY_VALUE_VERSION_V2, DEFINITION_PREFIX,
+    DEFINITION_VALUE_VERSION_V3, PENDING_FIRE_PREFIX, PENDING_FIRE_VALUE_VERSION_V3,
 };
+use crate::domains::schedule::protocol::{
+    parse_concrete_schedule_route, ConcreteScheduleRoute, ScheduleDeliveryMode,
+};
+use crate::utils::storage_key::{self, DomainKeyspace};
+use bytes::Bytes;
+use lexkey::{Encoder, LexKey};
+use std::sync::Arc;
 
 impl ScheduleStore {
     fn usize_to_u32_saturating(value: usize) -> u32 {
@@ -23,6 +28,20 @@ impl ScheduleStore {
             #[cfg(test)]
             stall_next_commit: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+
+    pub(crate) fn has_family(
+        &self,
+        family: crate::runtime::routing::RouteFamily,
+    ) -> Result<bool, SchedulePersistenceError> {
+        self.db
+            .list_column_families()
+            .map(|families| {
+                families
+                    .iter()
+                    .any(|candidate| candidate.id() == family.id())
+            })
+            .map_err(|error| SchedulePersistenceError::midge("list schedule families", error))
     }
 
     pub(super) fn schedule_key_suffix(key: &[u8]) -> &[u8] {

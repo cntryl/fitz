@@ -181,7 +181,10 @@ pub(super) fn should_create_default_boot_config() {
         config.schedule_preload_timeout(),
         crate::domains::schedule::sink::DEFAULT_SCHEDULE_PRELOAD_TIMEOUT
     );
-    assert!(config.queue_write_options().is_best_effort());
+    assert_eq!(
+        config.queue_write_policy(),
+        crate::domains::WritePolicy::BestEffort
+    );
     assert_eq!(config.drain_grace_seconds, DEFAULT_DRAIN_GRACE_SECONDS);
     assert_eq!(config.drain_close_reason, DEFAULT_DRAIN_CLOSE_REASON);
     assert!(!config.assume_external_tls());

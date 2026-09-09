@@ -1,47 +1,11 @@
 use super::state_model::{
-    rpc_admin_snapshot_due, rpc_timeout_sweep_interval, Arc, Duration, Instant, Mutex, Ordering,
-    RpcDomainCore, RpcDomainRuntime, RpcLiveCounts, RpcState, RPC_TIMEOUT_ERROR,
+    rpc_admin_snapshot_due, rpc_timeout_sweep_interval, RpcFamilyRuntime, RpcLiveCounts, RpcState,
+    RPC_TIMEOUT_ERROR,
 };
+use std::sync::atomic::Ordering;
+use std::time::{Duration, Instant};
 
-impl RpcDomainCore {
-    pub(super) fn registered_family_cores(&self) -> Vec<Arc<RpcDomainCore>> {
-        let mut family_cores = self.family_cores.lock();
-        let mut live = Vec::with_capacity(family_cores.len());
-        family_cores.retain(|_, weak| {
-            if let Some(core) = weak.upgrade() {
-                live.push(core);
-                true
-            } else {
-                false
-            }
-        });
-        live
-    }
-
-    pub(super) fn aggregate_live_counts(&self) -> RpcLiveCounts {
-        let family_cores = self.registered_family_cores();
-        if family_cores.is_empty() {
-            let state = self.state.lock();
-            return RpcLiveCounts {
-                workers: state.registration_count(),
-                pending_requests: state.live_request_count(),
-            };
-        }
-
-        family_cores
-            .into_iter()
-            .fold(RpcLiveCounts::default(), |mut total, family_core| {
-                let state = family_core.state.lock();
-                total.workers = total.workers.saturating_add(state.registration_count());
-                total.pending_requests = total
-                    .pending_requests
-                    .saturating_add(state.live_request_count());
-                total
-            })
-    }
-}
-
-impl RpcDomainRuntime<'_> {
+impl RpcFamilyRuntime<'_> {
     fn u64_to_usize_saturating(value: u64) -> usize {
         usize::try_from(value).unwrap_or(usize::MAX)
     }
@@ -50,23 +14,23 @@ impl RpcDomainRuntime<'_> {
         start.elapsed().as_micros().try_into().unwrap_or(u64::MAX)
     }
 
-    pub(super) fn release_global_pending(&self, count: usize) {
+    pub(super) fn release_global_pending(&mut self, count: usize) {
         if count == 0 {
             return;
         }
-        let _ = self.global_pending_count.fetch_update(
+        let _ = self.core.global_pending_count.fetch_update(
             Ordering::AcqRel,
             Ordering::Acquire,
             |current| Some(current.saturating_sub(count)),
         );
     }
 
-    pub(crate) fn timeout_sweep_interval(&self) -> Duration {
-        rpc_timeout_sweep_interval(self.request_timeout)
+    pub(crate) fn timeout_sweep_interval(&mut self) -> Duration {
+        rpc_timeout_sweep_interval(self.core.request_timeout)
     }
 
-    pub(super) fn live_counts(&self) -> RpcLiveCounts {
-        let state = self.state.lock();
+    pub(super) fn live_counts(&mut self) -> RpcLiveCounts {
+        let state = &self.core.state;
         let workers = state.registration_count();
         RpcLiveCounts {
             workers,
@@ -74,20 +38,20 @@ impl RpcDomainRuntime<'_> {
         }
     }
 
-    pub(super) fn counter_inc(&self, name: &str) {
-        if let Some(ref metrics) = self.metrics {
+    pub(super) fn counter_inc(&mut self, name: &str) {
+        if let Some(ref metrics) = self.core.metrics {
             metrics.counter_inc(name);
         }
     }
 
-    pub(super) fn counter_add(&self, name: &str, amount: u64) {
-        if let Some(ref metrics) = self.metrics {
+    pub(super) fn counter_add(&mut self, name: &str, amount: u64) {
+        if let Some(ref metrics) = self.core.metrics {
             metrics.counter_add(name, amount);
         }
     }
 
-    pub(super) fn gauge_set(&self, name: &str, value: u64) {
-        if let Some(ref metrics) = self.metrics {
+    pub(super) fn gauge_set(&mut self, name: &str, value: u64) {
+        if let Some(ref metrics) = self.core.metrics {
             metrics.gauge_set(name, value);
             if name == "rpc_pending_requests" {
                 metrics.set_pending_request_count(Self::u64_to_usize_saturating(value));
@@ -95,38 +59,42 @@ impl RpcDomainRuntime<'_> {
         }
     }
 
-    pub(super) fn histogram_observe_us(&self, name: &str, value_us: u64) {
-        if let Some(ref metrics) = self.metrics {
+    pub(super) fn histogram_observe_us(&mut self, name: &str, value_us: u64) {
+        if let Some(ref metrics) = self.core.metrics {
             metrics.histogram_observe_us(name, value_us);
         }
     }
 
-    pub(super) fn histogram_observe_elapsed_us(&self, name: &str, start: Instant) {
+    pub(super) fn histogram_observe_elapsed_us(&mut self, name: &str, start: Instant) {
         self.histogram_observe_us(name, Self::elapsed_us_saturating(start));
     }
 
-    pub(super) fn refresh_metrics_gauges(&self) {
-        if let Some(metrics) = &self.metrics {
-            let counts = self.core.aggregate_live_counts();
+    pub(super) fn refresh_metrics_gauges(&mut self) {
+        let counts = self.live_counts();
+        if let Some(metrics) = &self.core.metrics {
             metrics.set_worker_count(counts.workers);
             metrics.set_pending_request_count(counts.pending_requests);
         }
     }
 
-    pub(super) fn expire_timed_out_requests_inline_if_due(&self) {
-        let now_elapsed_us = Self::elapsed_us_saturating(self.snapshot_epoch);
+    pub(super) fn expire_timed_out_requests_inline_if_due(&mut self) {
+        let now_elapsed_us = Self::elapsed_us_saturating(self.core.snapshot_epoch);
         let interval_us = self
             .timeout_sweep_interval()
             .as_micros()
             .try_into()
             .unwrap_or(u64::MAX);
-        let last_elapsed_us = self.last_inline_timeout_elapsed_us.load(Ordering::Relaxed);
+        let last_elapsed_us = self
+            .core
+            .last_inline_timeout_elapsed_us
+            .load(Ordering::Relaxed);
 
         if now_elapsed_us.saturating_sub(last_elapsed_us) < interval_us {
             return;
         }
 
         if self
+            .core
             .last_inline_timeout_elapsed_us
             .compare_exchange(
                 last_elapsed_us,
@@ -140,9 +108,9 @@ impl RpcDomainRuntime<'_> {
         }
     }
 
-    pub(super) fn expire_timed_out_requests_at(&self, now: Instant) {
+    pub(super) fn expire_timed_out_requests_at(&mut self, now: Instant) {
         let timeout_result = {
-            let mut state = self.state.lock();
+            let state = &mut self.core.state;
             state.expire_timed_out(now)
         };
 
@@ -192,24 +160,21 @@ impl RpcDomainRuntime<'_> {
         );
     }
 
-    pub(super) fn pending_request_count(&self) -> usize {
-        self.live_counts().pending_requests
-    }
-
-    pub(super) fn refresh_admin_snapshot_if_dirty(&self) {
-        self.maybe_sync_admin_snapshot(false);
+    pub(super) fn refresh_admin_snapshot_if_dirty(&mut self) {
+        self.maybe_sync_admin_snapshot(true);
     }
 
     /// Mark the admin snapshot dirty. Forced calls refresh immediately; regular
     /// hot-path updates coalesce until an admin read or another forced refresh.
-    pub(super) fn schedule_admin_snapshot(&self, force: bool) {
+    pub(super) fn schedule_admin_snapshot(&mut self, force: bool) {
         if force {
-            self.snapshot_dirty.store(true, Ordering::Relaxed);
+            self.core.snapshot_dirty.store(true, Ordering::Relaxed);
             self.maybe_sync_admin_snapshot(true);
             return;
         }
 
         if self
+            .core
             .snapshot_dirty
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
             .is_err()
@@ -224,15 +189,15 @@ impl RpcDomainRuntime<'_> {
     ///
     /// Even forced snapshots are still point-in-time copies of the sink's current
     /// in-memory state, not linearizable reads of concurrent RPC activity.
-    pub(super) fn maybe_sync_admin_snapshot(&self, force: bool) {
+    pub(super) fn maybe_sync_admin_snapshot(&mut self, force: bool) {
         #[cfg(feature = "bench-no-snapshot")]
         if !force {
             return;
         }
 
-        let now_elapsed_us = Self::elapsed_us_saturating(self.snapshot_epoch);
-        let last_snapshot_elapsed_us = self.last_snapshot_elapsed_us.load(Ordering::Relaxed);
-        let snapshot_dirty = self.snapshot_dirty.load(Ordering::Relaxed);
+        let now_elapsed_us = Self::elapsed_us_saturating(self.core.snapshot_epoch);
+        let last_snapshot_elapsed_us = self.core.last_snapshot_elapsed_us.load(Ordering::Relaxed);
+        let snapshot_dirty = self.core.snapshot_dirty.load(Ordering::Relaxed);
 
         if !rpc_admin_snapshot_due(
             snapshot_dirty,
@@ -244,6 +209,7 @@ impl RpcDomainRuntime<'_> {
         }
 
         if self
+            .core
             .snapshot_syncing
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
             .is_err()
@@ -251,19 +217,19 @@ impl RpcDomainRuntime<'_> {
             return;
         }
 
-        if !self.snapshot_dirty.swap(false, Ordering::AcqRel) {
-            self.snapshot_syncing.store(false, Ordering::Release);
+        if !self.core.snapshot_dirty.swap(false, Ordering::AcqRel) {
+            self.core.snapshot_syncing.store(false, Ordering::Release);
             return;
         }
 
         let snapshot_start = Instant::now();
         self.sync_admin_snapshot();
         let snapshot_time_us = Self::elapsed_us_saturating(snapshot_start);
-        self.last_snapshot_elapsed_us.store(
-            Self::elapsed_us_saturating(self.snapshot_epoch),
+        self.core.last_snapshot_elapsed_us.store(
+            Self::elapsed_us_saturating(self.core.snapshot_epoch),
             Ordering::Relaxed,
         );
-        self.snapshot_syncing.store(false, Ordering::Release);
+        self.core.snapshot_syncing.store(false, Ordering::Release);
         self.histogram_observe_us("rpc_admin_snapshot_us", snapshot_time_us);
     }
 
@@ -274,39 +240,30 @@ impl RpcDomainRuntime<'_> {
     /// unsubscribe, timeout, or cleanup mutations by up to the current sync
     /// interval. It is an operational view, not a durable recovery log.
     #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
-    pub(super) fn sync_admin_snapshot(&self) {
+    pub(super) fn sync_admin_snapshot(&mut self) {
         let snapshot_now = Instant::now();
-        let family_cores = self.core.registered_family_cores();
         let mut workers = Vec::new();
         let mut pending = Vec::new();
-        if family_cores.is_empty() {
-            Self::append_admin_snapshot_for_state(
-                &self.state,
-                snapshot_now,
-                &mut workers,
-                &mut pending,
-            );
-        } else {
-            for family_core in family_cores {
-                Self::append_admin_snapshot_for_state(
-                    &family_core.state,
-                    snapshot_now,
-                    &mut workers,
-                    &mut pending,
-                );
-            }
-        }
-        self.admin_read_model.replace_rpc_workers(workers);
-        self.admin_read_model.replace_rpc_pending(pending);
+        Self::append_admin_snapshot_for_state(
+            &self.core.state,
+            snapshot_now,
+            &mut workers,
+            &mut pending,
+        );
+        self.core
+            .admin_read_model
+            .replace_rpc_family_workers(self.core.family.as_u64(), workers);
+        self.core
+            .admin_read_model
+            .replace_rpc_family_pending(self.core.family.as_u64(), pending);
     }
 
     fn append_admin_snapshot_for_state(
-        state: &Mutex<RpcState>,
+        state: &RpcState,
         snapshot_now: Instant,
         workers: &mut Vec<crate::control::admin::RpcWorker>,
         pending: &mut Vec<crate::control::admin::RpcPendingRequest>,
     ) {
-        let state = state.lock();
         workers.extend(state.registrations.values().filter_map(|worker| {
             let route = worker.addr.route().as_str();
             let realm = route.strip_prefix("rpc://")?.split('/').next()?;

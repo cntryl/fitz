@@ -1,11 +1,10 @@
 //! Resource/area/realm/global read execution, cursor integrity, and the
 //! per-family actor lookup reads are executed against.
 
-use super::model::{
-    route_triplet, Arc, Mutex, Route, RouteFamily, StreamActor, StreamDomainCore,
-    StreamReadExecution, StreamResourceScope, StreamStorageLayout,
-};
+use super::model::{StreamFamilyState, StreamReadExecution, StreamResourceScope};
 use crate::domains::stream::protocol::ReadResponse;
+use crate::domains::stream::StreamActor;
+use crate::runtime::routing::{route_triplet, Route, RouteFamily};
 
 mod read_finalization;
 mod wire_encoding;
@@ -20,8 +19,8 @@ enum ReadScope {
     Global,
 }
 
-impl StreamDomainCore {
-    pub(in crate::domains::stream::sink) fn run_maintenance_slice(&self, family: u64) {
+impl StreamFamilyState {
+    pub(in crate::domains::stream::sink) fn run_maintenance_slice(&mut self, family: u64) {
         if let Err(error) = self.stream_store.run_maintenance(family) {
             tracing::warn!(
                 domain = "stream",
@@ -33,7 +32,7 @@ impl StreamDomainCore {
     }
 
     fn cursor_integrity_token(
-        &self,
+        &mut self,
         selector_fingerprint: u64,
         captured_watermark: u64,
         next_offset: u64,
@@ -52,10 +51,6 @@ impl StreamDomainCore {
                 .try_into()
                 .expect("HMAC-SHA256 output is 32 bytes"),
         )
-    }
-
-    pub(in crate::domains::stream::sink) fn storage_layout(&self) -> StreamStorageLayout {
-        self.stream_store.storage_layout()
     }
 
     pub(in crate::domains::stream::sink) fn actor_key_for_route(
@@ -94,30 +89,28 @@ impl StreamDomainCore {
     }
 
     pub(in crate::domains::stream::sink) fn get_or_create_actor(
-        &self,
+        &mut self,
         key: &StreamResourceScope,
-    ) -> Result<Arc<Mutex<StreamActor>>, String> {
+    ) -> Result<&mut StreamActor, String> {
         use std::collections::hash_map::Entry;
 
-        let mut actors = self.actors.lock();
-        match actors.entry(key.clone()) {
-            Entry::Occupied(entry) => Ok(entry.get().clone()),
+        match self.actors.entry(key.clone()) {
+            Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
-                let actor = Arc::new(Mutex::new(StreamActor::new(
+                let actor = StreamActor::new(
                     key.family,
                     key.realm.clone(),
                     key.area.clone(),
                     key.resource.clone(),
                     self.stream_store.clone(),
-                )?));
-                entry.insert(actor.clone());
-                Ok(actor)
+                )?;
+                Ok(entry.insert(actor))
             }
         }
     }
 
     fn empty_global_read_cursor(
-        &self,
+        &mut self,
         request: &StreamReadExecution<'_>,
         selector_fingerprint: u64,
         captured_watermark: u64,
@@ -138,7 +131,7 @@ impl StreamDomainCore {
     }
 
     fn execute_read_plan(
-        &self,
+        &mut self,
         scope: ReadScope,
         route_realm: Option<&str>,
         route_area: Option<&str>,
@@ -189,7 +182,7 @@ impl StreamDomainCore {
             }
             ReadScope::Resource => {
                 let key = Self::actor_key_for_route(request.family_id, request.route)?;
-                let response = self.get_or_create_actor(&key)?.lock().read_with_filter(
+                let response = self.get_or_create_actor(&key)?.read_with_filter(
                     request.from_offset,
                     request.limit,
                     request.max_bytes,
@@ -213,7 +206,7 @@ impl StreamDomainCore {
     }
 
     fn finalize_read_response(
-        &self,
+        &mut self,
         request: &StreamReadExecution<'_>,
         selector_fingerprint: u64,
         captured_watermark: u64,
@@ -234,7 +227,7 @@ impl StreamDomainCore {
     }
 
     pub(in crate::domains::stream::sink) fn encode_read_response_data(
-        &self,
+        &mut self,
         request: StreamReadExecution<'_>,
     ) -> Result<Vec<u8>, String> {
         use crate::domains::stream::route_grammar::StreamRouteShape;
@@ -330,7 +323,7 @@ impl StreamDomainCore {
     }
 
     pub(in crate::domains::stream::sink) fn encode_last_response_data(
-        &self,
+        &mut self,
         family_id: RouteFamily,
         route: &Route,
     ) -> Result<Vec<u8>, String> {
@@ -342,7 +335,6 @@ impl StreamDomainCore {
         let key = Self::actor_key_for_route(family_id, route)?;
         let actor = self.get_or_create_actor(&key)?;
         let data = actor
-            .lock()
             .last()?
             .record
             .as_ref()
@@ -352,7 +344,7 @@ impl StreamDomainCore {
     }
 
     pub(in crate::domains::stream::sink) fn encode_metadata_response_data(
-        &self,
+        &mut self,
         family_id: RouteFamily,
         route: &Route,
     ) -> Result<Vec<u8>, String> {
@@ -363,7 +355,7 @@ impl StreamDomainCore {
         }
         let key = Self::actor_key_for_route(family_id, route)?;
         let actor = self.get_or_create_actor(&key)?;
-        let metadata = actor.lock().metadata()?.metadata;
+        let metadata = actor.metadata()?.metadata;
         Ok(Self::encode_stream_metadata_data(&metadata))
     }
 }

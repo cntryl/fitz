@@ -12,7 +12,7 @@ pub(super) const SCAN_DEDUP_WINDOW: std::time::Duration = std::time::Duration::f
 pub(super) const MAX_DUE_CLAIMS_PER_SCAN: usize = 32;
 
 fn retry_persistence<T>(
-    mut operation: impl FnMut() -> Result<T, model::SchedulePersistenceError>,
+    mut operation: impl FnMut() -> Result<T, crate::domains::schedule::store::SchedulePersistenceError>,
 ) -> Result<T, String> {
     const MAX_ATTEMPTS: usize = 4;
     let mut delay = std::time::Duration::from_millis(1);
@@ -32,9 +32,6 @@ fn retry_persistence<T>(
 }
 
 pub use model::ScheduleActor;
-
-#[cfg(test)]
-use model::*;
 
 #[cfg(test)]
 mod tests;

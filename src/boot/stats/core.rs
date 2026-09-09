@@ -3,7 +3,7 @@ use super::{
     LIFECYCLE_DRAINING, LIFECYCLE_RUNNING, LIFECYCLE_SHUTTING_DOWN,
 };
 use crate::api::runtime_ingress::RuntimeIngress;
-use crate::boot::domains::DomainHandles;
+use crate::boot::domains::BrokerDomains;
 use crate::runtime::routing::RouteFamily;
 use crate::runtime::Router;
 use std::sync::atomic::Ordering;
@@ -68,6 +68,7 @@ impl Runtime {
             admin_read_model,
             ingress: Arc::new(parking_lot::RwLock::new(None)),
             domains: Arc::new(parking_lot::RwLock::new(None)),
+            domain_admins: Arc::new(parking_lot::RwLock::new(None)),
             auth_config: Arc::new(parking_lot::RwLock::new(crate::auth::AuthConfig::Disabled)),
             assume_external_tls: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             admin_blocking_slots: Arc::new(std::sync::atomic::AtomicUsize::new(
@@ -126,20 +127,9 @@ impl Runtime {
             .and_then(|ingress| ingress.shard_for_family(family))
     }
 
-    pub fn attach_domains(&self, domains: Arc<DomainHandles>) {
+    pub(crate) fn attach_domains(&self, domains: Arc<BrokerDomains>) {
+        *self.domain_admins.write() = Some(domains.admin_ports());
         *self.domains.write() = Some(domains);
-    }
-
-    #[must_use]
-    ///
-    /// # Panics
-    ///
-    /// Panics if domain handles have not been attached yet.
-    pub fn domains(&self) -> Arc<DomainHandles> {
-        self.domains
-            .read()
-            .clone()
-            .expect("domain handles must be attached before health monitoring")
     }
 
     #[cfg(test)]
@@ -159,11 +149,12 @@ impl Runtime {
             &runtime.admin_read_model(),
             &crate::boot::domains::DomainSetupOptions {
                 route_families: vec![1, 2, 3, 4, 5, 6, 7],
-                schedule_write_options: cntryl_midge::WriteOptions::best_effort(),
-                queue_write_options: cntryl_midge::WriteOptions::best_effort(),
+                schedule_write_policy: crate::domains::WritePolicy::BestEffort,
+                queue_write_policy: crate::domains::WritePolicy::BestEffort,
+                queue_recovery_write_policy: crate::domains::WritePolicy::Sync,
                 queue_fast_flush_interval: Some(Duration::from_millis(100)),
-                request_sync_write_options: cntryl_midge::WriteOptions::sync(),
-                request_buffered_write_options: cntryl_midge::WriteOptions::buffered(),
+                request_sync_write_policy: crate::domains::WritePolicy::Sync,
+                request_buffered_write_policy: crate::domains::WritePolicy::Buffered,
                 rpc_request_timeout: None,
                 stream_storage_layout: crate::domains::stream::StreamStorageLayout::default(),
                 kv_idle_transaction_ttl: Duration::from_mins(5),
@@ -249,7 +240,8 @@ impl Runtime {
     }
 
     #[must_use]
-    pub fn detach_domains(&self) -> Option<Arc<DomainHandles>> {
+    pub(crate) fn detach_domains(&self) -> Option<Arc<BrokerDomains>> {
+        self.domain_admins.write().take();
         self.domains.write().take()
     }
 
@@ -325,14 +317,6 @@ impl Runtime {
     #[must_use]
     pub fn are_domains_ready(&self) -> bool {
         self.domains_ready.load(Ordering::SeqCst) == 1
-    }
-
-    #[must_use]
-    pub fn domain_health_snapshots(&self) -> Vec<crate::boot::domains::DomainHealthSnapshot> {
-        self.domains
-            .read()
-            .as_ref()
-            .map_or_else(Vec::new, |domains| domains.health_snapshots())
     }
 
     #[must_use]

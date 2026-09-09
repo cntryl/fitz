@@ -1,4 +1,5 @@
 use super::Runtime;
+use crate::boot::domains::DomainAdminPorts;
 use crate::domains::kv::sink::{AdminKvRowsRequest, AdminKvRowsResult};
 use crate::domains::queue::{MessageId, QueueKey};
 use crate::domains::stream::sink::AdminStreamReadRequest;
@@ -7,35 +8,35 @@ use chrono::{DateTime, Utc};
 
 impl Runtime {
     fn refresh_queue_admin_snapshot(&self) {
-        let domains = self.domains.read().clone();
+        let domains = self.domain_admins.read().clone();
         if let Some(domains) = domains {
             domains.refresh_queue_admin_snapshot();
         }
     }
 
     fn refresh_rpc_admin_snapshot(&self) {
-        let domains = self.domains.read().clone();
+        let domains = self.domain_admins.read().clone();
         if let Some(domains) = domains {
             domains.refresh_rpc_admin_snapshot();
         }
     }
 
     fn refresh_notice_admin_snapshot(&self) {
-        let domains = self.domains.read().clone();
+        let domains = self.domain_admins.read().clone();
         if let Some(domains) = domains {
             domains.refresh_notice_admin_snapshot();
         }
     }
 
     fn refresh_schedule_admin_snapshot(&self) {
-        let domains = self.domains.read().clone();
+        let domains = self.domain_admins.read().clone();
         if let Some(domains) = domains {
             domains.refresh_schedule_admin_snapshot();
         }
     }
 
     pub(crate) fn refresh_stream_admin_snapshot(&self) {
-        let domains = self.domains.read().clone();
+        let domains = self.domain_admins.read().clone();
         if let Some(domains) = domains {
             domains.refresh_stream_admin_snapshot();
         }
@@ -44,10 +45,10 @@ impl Runtime {
     pub(crate) fn stream_durable_metrics_snapshot(
         &self,
     ) -> Option<crate::domains::stream::metrics::StreamDurableMetricsSnapshot> {
-        self.domains
+        self.domain_admins
             .read()
             .as_ref()
-            .map(|domains| domains.stream_durable_metrics_snapshot())
+            .map(DomainAdminPorts::stream_durable_metrics_snapshot)
     }
 
     #[must_use]
@@ -73,7 +74,7 @@ impl Runtime {
         family: Option<u64>,
     ) -> Result<Vec<crate::control::admin::KvResourceInventoryEntry>, String> {
         let domains = self
-            .domains
+            .domain_admins
             .read()
             .clone()
             .ok_or_else(|| "KV domain is not initialized".to_string())?;
@@ -101,7 +102,7 @@ impl Runtime {
         resource: &str,
     ) -> Result<Option<crate::control::admin::KvResourceInventoryEntry>, String> {
         let domains = self
-            .domains
+            .domain_admins
             .read()
             .clone()
             .ok_or_else(|| "KV domain is not initialized".to_string())?;
@@ -129,7 +130,7 @@ impl Runtime {
         key: &[u8],
     ) -> Result<Option<Vec<u8>>, String> {
         let domains = self
-            .domains
+            .domain_admins
             .read()
             .clone()
             .ok_or_else(|| "KV domain is not initialized".to_string())?;
@@ -152,7 +153,7 @@ impl Runtime {
         limit: usize,
     ) -> Result<crate::domains::kv::sink::AdminKvPrefixScanResult, String> {
         let domains = self
-            .domains
+            .domain_admins
             .read()
             .clone()
             .ok_or_else(|| "KV domain is not initialized".to_string())?;
@@ -170,7 +171,7 @@ impl Runtime {
         request: &AdminKvRowsRequest<'_>,
     ) -> Result<AdminKvRowsResult, String> {
         let domains = self
-            .domains
+            .domain_admins
             .read()
             .clone()
             .ok_or_else(|| "KV domain is not initialized".to_string())?;
@@ -194,7 +195,7 @@ impl Runtime {
     /// read fails.
     pub fn stream_read_resource_records(
         &self,
-        request: AdminStreamReadRequest<'_>,
+        request: &AdminStreamReadRequest<'_>,
     ) -> Result<
         (
             Vec<crate::domains::stream::protocol::StreamReadItem>,
@@ -203,7 +204,7 @@ impl Runtime {
         String,
     > {
         let domains = self
-            .domains
+            .domain_admins
             .read()
             .clone()
             .ok_or_else(|| "Stream domain is not initialized".to_string())?;
@@ -314,7 +315,7 @@ impl Runtime {
         message_id: u64,
     ) -> Result<bool, String> {
         let domains = self
-            .domains
+            .domain_admins
             .read()
             .clone()
             .ok_or_else(|| "Queue domain is not initialized".to_string())?;
@@ -342,7 +343,7 @@ impl Runtime {
         message_id: u64,
     ) -> Result<bool, String> {
         let domains = self
-            .domains
+            .domain_admins
             .read()
             .clone()
             .ok_or_else(|| "Queue domain is not initialized".to_string())?;
@@ -381,10 +382,10 @@ impl Runtime {
 
     #[must_use]
     pub fn lease_list_waiters(&self) -> Vec<crate::control::admin::LeaseWaiterInfo> {
-        self.domains
+        self.domain_admins
             .read()
             .as_ref()
-            .map(|domains| domains.lease_admin_waiters())
+            .map(DomainAdminPorts::lease_admin_waiters)
             .unwrap_or_default()
     }
 
@@ -402,7 +403,7 @@ impl Runtime {
         &self,
         family: RouteFamily,
     ) -> Vec<crate::control::admin::SchedulePendingClaimInfo> {
-        self.domains
+        self.domain_admins
             .read()
             .as_ref()
             .map(|domains| domains.schedule_admin_pending_claims(family))

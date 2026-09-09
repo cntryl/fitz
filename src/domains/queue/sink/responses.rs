@@ -1,12 +1,14 @@
 //! Response and recovery-error routing back to clients.
 
+use super::model::QueueFamilyState;
 #[cfg(test)]
-use super::model::FrameContext;
-use super::model::{Envelope, Instant, QueueDomainCore};
+use crate::dispatch::protocol::frame_context::FrameContext;
+use crate::runtime::Envelope;
+use std::time::Instant;
 
-impl QueueDomainCore {
+impl QueueFamilyState {
     /// Count a response the actor produced but the transport could not carry.
-    fn record_response_route_failure(&self) {
+    fn record_response_route_failure(&mut self) {
         if let Some(metrics) = self.metrics.as_ref() {
             metrics
                 .counter_inc(crate::domains::queue::metrics::METRIC_RESPONSE_ROUTE_FAILURES_TOTAL);
@@ -14,7 +16,7 @@ impl QueueDomainCore {
     }
 
     pub(super) fn route_queue_response(
-        &self,
+        &mut self,
         request_envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         response: &crate::domains::queue::QueueResponse,
@@ -84,7 +86,7 @@ impl QueueDomainCore {
     }
 
     pub(super) fn route_queue_recovery_error(
-        &self,
+        &mut self,
         request_envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         request_started: Option<Instant>,

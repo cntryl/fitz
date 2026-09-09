@@ -1,10 +1,14 @@
 use super::{
     encode_family_writer_epoch_key, encode_global_counter_key, family_to_storage_partition,
-    AppendSession, CommitPromotionFrontierBatchParams, CommitRecordsParams, CommitResponse,
-    EventPayload, GlobalReservation, IngestMetadata, PendingGlobalReservation,
-    PromotionCommitFailure, ReadResourceParams, RealmCounterValue, ResourceMetaValue,
-    SequenceGuardKey, SessionId, StreamAdminRecord, StreamReadItem, StreamRecord, StreamStore,
-    StreamStoreError, StreamWriteMode, ERR_SESSION_ROUTE_FAMILY_MISMATCH,
+    CommitPromotionFrontierBatchParams, CommitRecordsParams, CommitResponse, GlobalReservation,
+    PendingGlobalReservation, PromotionCommitFailure, ReadResourceParams, RealmCounterValue,
+    ResourceMetaValue, SequenceGuardKey, StreamAdminRecord, StreamReadItem, StreamRecord,
+    StreamStore, StreamStoreError,
+};
+#[cfg(test)]
+use super::{
+    AppendSession, EventPayload, IngestMetadata, SessionId, StreamWriteMode,
+    ERR_SESSION_ROUTE_FAMILY_MISMATCH,
 };
 
 fn u64_to_u32_saturating(value: u64) -> u32 {
@@ -13,6 +17,7 @@ fn u64_to_u32_saturating(value: u64) -> u32 {
 
 const MAX_SCOPE_CONFLICT_RETRIES: usize = 8;
 
+#[cfg(test)]
 struct PreparedSessionReservation {
     key: (u64, String, String, String),
     reservation: GlobalReservation,
@@ -91,6 +96,7 @@ impl StreamStore {
         }
     }
 
+    #[cfg(test)]
     fn take_commit_session(
         &self,
         family: u64,
@@ -152,6 +158,7 @@ impl StreamStore {
         Ok(true)
     }
 
+    #[cfg(test)]
     fn prepare_session_reservation(
         &self,
         family: u64,
@@ -392,6 +399,7 @@ impl StreamStore {
     ///
     /// Returns an error only if future session allocation or initialization
     /// fails.
+    #[cfg(test)]
     pub fn begin_session(
         &self,
         family: u64,
@@ -430,6 +438,7 @@ impl StreamStore {
     ///
     /// Returns an error if the session is missing, the route family does not
     /// match, or the staged batch would exceed configured size limits.
+    #[cfg(test)]
     pub fn append_to_session(
         &self,
         family: u64,
@@ -499,6 +508,7 @@ impl StreamStore {
     /// Returns an error if the session is missing, the family or provided
     /// frontier does not match persisted state, layout activation fails, or the
     /// commit write path fails.
+    #[cfg(test)]
     pub fn commit_session(
         &self,
         family: u64,
@@ -600,6 +610,7 @@ impl StreamStore {
     /// # Errors
     ///
     /// Returns an error if the session does not exist.
+    #[cfg(test)]
     pub fn abort_session(&self, session_id: SessionId) -> Result<(), String> {
         let session = self
             .sessions
@@ -621,6 +632,7 @@ impl StreamStore {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn session_event_count(&self, session_id: SessionId) -> Option<usize> {
         self.sessions.lock().get(&session_id).map(|s| s.event_count)
     }

@@ -28,7 +28,7 @@ impl QueueActor {
         id: MessageId,
         inflight: &Inflight,
         record: &mut QueueRecord,
-        mut txn: cntryl_midge::Transaction,
+        mut txn: super::recovery_store::QueueTransaction,
         now_epoch_ms: u64,
     ) -> bool {
         let index_plan = self.plan_index_mutation_for_unavailable_message(id);
@@ -53,9 +53,11 @@ impl QueueActor {
         }
 
         let update_start = Instant::now();
-        if let Err(error) =
-            Self::commit_transaction(txn, self.commit_write_options, QueueCommit::Redelivery)
-        {
+        if let Err(error) = Self::commit_transaction(
+            txn,
+            self.persistence.write_options(),
+            QueueCommit::Redelivery,
+        ) {
             tracing::warn!(
                 queue = ?self.queue_key,
                 route_family = self.queue_key.family.as_u64(),
@@ -106,7 +108,7 @@ impl QueueActor {
         id: MessageId,
         inflight: &Inflight,
         record: &QueueRecord,
-        txn: &mut cntryl_midge::Transaction,
+        txn: &mut super::recovery_store::QueueTransaction,
     ) -> bool {
         let write_result = txn
             .put(

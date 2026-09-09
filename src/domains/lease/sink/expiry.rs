@@ -1,8 +1,10 @@
 //! TTL expiry: reaping timed-out waiters and expired leases, and advancing
 //! each key's FIFO wait queue once it becomes free.
 
-use super::model::{Instant, LeaseDomainRuntime, PendingAcquire, SinkLeaseState, Utc};
+use super::model::{LeaseFamilyRuntime, PendingAcquire, SinkLeaseState};
+use chrono::Utc;
 use std::collections::VecDeque;
+use std::time::Instant;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum WaiterProgress {
@@ -33,14 +35,14 @@ fn drain_expired_waiters(
     expired
 }
 
-impl LeaseDomainRuntime<'_> {
+impl LeaseFamilyRuntime<'_> {
     pub(in crate::domains::lease::sink) fn expire_timed_out_waiters_for_key(
-        &self,
+        &mut self,
         key: &crate::domains::lease::protocol::LeaseKey,
         now: Instant,
     ) -> usize {
         let expired_waiters = {
-            let mut pending_acquires = self.core.pending_acquires.lock();
+            let pending_acquires = &mut self.core.pending_acquires;
             let mut expired = Vec::new();
             let mut remove_queue = false;
 
@@ -71,27 +73,23 @@ impl LeaseDomainRuntime<'_> {
 
     /// Reads the queue depth while preserving FIFO order for the key.
     pub(in crate::domains::lease::sink) fn pending_waiter_count(
-        &self,
+        &mut self,
         key: &crate::domains::lease::protocol::LeaseKey,
     ) -> usize {
-        self.core
-            .pending_acquires
-            .lock()
-            .get(key)
-            .map_or(0, VecDeque::len)
+        self.core.pending_acquires.get(key).map_or(0, VecDeque::len)
     }
 
     /// Removes expired waiters and grants the oldest eligible waiter when the key is free.
     pub(super) fn advance_waiter_queue(
-        &self,
+        &mut self,
         key: &crate::domains::lease::protocol::LeaseKey,
         now: Instant,
     ) -> WaiterProgress {
         let expired_waiter_count = self.expire_timed_out_waiters_for_key(key, now);
 
         let granted_waiter = {
-            let mut pending_acquires = self.core.pending_acquires.lock();
-            let mut leases = self.core.leases.lock();
+            let pending_acquires = &mut self.core.pending_acquires;
+            let leases = &mut self.core.leases;
 
             if leases.contains_key(key) {
                 None
@@ -144,7 +142,7 @@ impl LeaseDomainRuntime<'_> {
                     },
                 );
                 if !delivered {
-                    self.core.leases.lock().remove(key);
+                    self.core.leases.remove(key);
                     self.untrack_session_lease(waiter.owner_session_id, key);
                     self.remove_admin_lease(key);
                     self.notify_lease_change(key);
@@ -177,11 +175,11 @@ impl LeaseDomainRuntime<'_> {
     }
 
     /// Reaps waiters before leases, then advances each newly available FIFO queue.
-    pub(crate) fn sweep_expired_state(&self) {
+    pub(crate) fn sweep_expired_state(&mut self) {
         let now = Instant::now();
 
         let expired_waiters = {
-            let mut pending_acquires = self.core.pending_acquires.lock();
+            let pending_acquires = &mut self.core.pending_acquires;
             let mut expired = Vec::new();
             let mut empty_keys = Vec::new();
 
@@ -213,7 +211,7 @@ impl LeaseDomainRuntime<'_> {
         }
 
         let expired_leases = {
-            let mut leases = self.core.leases.lock();
+            let leases = &mut self.core.leases;
             let expired_keys: Vec<_> = leases
                 .iter()
                 .filter(|(_, state)| state.expiry <= now)
@@ -240,7 +238,6 @@ impl LeaseDomainRuntime<'_> {
         let queued_keys = self
             .core
             .pending_acquires
-            .lock()
             .keys()
             .cloned()
             .collect::<Vec<_>>();

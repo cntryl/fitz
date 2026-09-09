@@ -7,11 +7,12 @@
 //! guard is what actually prevents a stale queued request from recreating
 //! state after cleanup; this file only owns the mutation itself.
 
-use super::model::{RouteFamily, StreamDomainCore};
+use super::model::StreamFamilyState;
+use crate::runtime::routing::RouteFamily;
 
-impl StreamDomainCore {
-    pub(in crate::domains::stream::sink) fn unsubscribe_all(&self, session_id: u64) {
-        let mut families = self.subscriptions.families.lock();
+impl StreamFamilyState {
+    pub(in crate::domains::stream::sink) fn unsubscribe_all(&mut self, session_id: u64) {
+        let families = &mut self.subscriptions.families;
         for (family_id, state) in families.iter_mut() {
             state.remove_session(
                 RouteFamily::try_from(*family_id)
@@ -20,27 +21,21 @@ impl StreamDomainCore {
             );
         }
         families.retain(|_, state| !state.is_empty());
-        drop(families);
+        let _ = families;
         self.remove_pending_notifications_for_session(session_id);
         self.refresh_metrics_gauges();
     }
 
-    pub(in crate::domains::stream::sink) fn cleanup_session(&self, session_id: u64) {
-        self.cleaned_up_sessions.lock().mark(session_id);
+    pub(in crate::domains::stream::sink) fn cleanup_session(&mut self, session_id: u64) {
+        self.cleaned_up_sessions.mark(session_id);
         self.unsubscribe_all(session_id);
 
-        let actors = self
-            .actors
-            .lock()
-            .iter()
-            .map(|(key, actor)| (key.family.as_u64(), actor.clone()))
-            .collect::<Vec<_>>();
         let mut removed_sessions = Vec::new();
         let mut advanced_families = std::collections::BTreeSet::new();
-        for (family_id, actor) in actors {
-            if let Some(stream_session_id) = actor.lock().cleanup_session(session_id) {
+        for (key, actor) in &mut self.actors {
+            if let Some(stream_session_id) = actor.cleanup_session(session_id) {
                 removed_sessions.push(stream_session_id);
-                advanced_families.insert(family_id);
+                advanced_families.insert(key.family.as_u64());
             }
         }
 
@@ -53,9 +48,8 @@ impl StreamDomainCore {
 
         if !removed_sessions.is_empty() {
             let removed_count = super::model::usize_to_u64_saturating(removed_sessions.len());
-            let mut session_owners = self.session_owners.lock();
             for stream_session_id in removed_sessions {
-                session_owners.remove(&stream_session_id);
+                self.session_owners.remove(&stream_session_id);
             }
             self.counter_add("fitz_stream_append_sessions_ended_total", removed_count);
             self.admin_snapshot.mark_dirty();

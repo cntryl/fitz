@@ -671,3 +671,40 @@ pub fn encode_notify_into(
     enc.put_bytes(&[]);
     enc.finish()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_preserve_lease_request_response_notification_and_error_golden_bytes() {
+        // Arrange
+        let route = "lease://r/a/x";
+        let request = [
+            0, 0, 0, 13, b'l', b'e', b'a', b's', b'e', b':', b'/', b'/', b'r', b'/', b'a', b'/',
+            b'x', 0, 0, 0, 1, b'o', 0, 0, 0, 0, 0, 0, 0, 9,
+        ];
+
+        // Act
+        let parsed_route =
+            extract_auth_route(msg_type::ACQUIRE, &request).expect("parse golden acquire request");
+        let response = encode_domain_response(&DomainLeaseResponse::Acquired { fencing_token: 7 });
+        let notification = encode_notify(7, route, &[]);
+        let error = encode_domain_response(&DomainLeaseResponse::NotHeld);
+
+        // Assert
+        assert_eq!(parsed_route, Some(route));
+        assert_eq!(response, [0, 0, 0, 0, 0, 0, 0, 0, 0, 7]);
+        assert_eq!(
+            notification,
+            [
+                0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 13, b'l', b'e', b'a', b's', b'e', b':', b'/',
+                b'/', b'r', b'/', b'a', b'/', b'x', 0, 0, 0, 0,
+            ]
+        );
+        assert_eq!(
+            error,
+            [1, 0, 0, 19, 140, 0, 0, 0, 7, b'N', b'o', b't', b'H', b'e', b'l', b'd',]
+        );
+    }
+}

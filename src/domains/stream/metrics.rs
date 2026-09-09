@@ -15,7 +15,7 @@ pub const METRIC_RESPONSE_DROPS_TOTAL: &str = "fitz_stream_response_drops_total"
 pub const METRIC_NOTIFY_DROPS_TOTAL: &str = "fitz_stream_notify_drops_total";
 /// Incremented once per route family whose handler panics and fails closed.
 /// Non-fatal and scoped to that family only (see
-/// `KeyedFamilyExecutor::is_family_running`) — this is the only
+/// `FamilyActorPoolRuntime::is_family_running`) — this is the only
 /// operator-visible signal for a permanently degraded realm, since a
 /// per-family failure deliberately does not flip domain-wide health/liveness.
 pub const METRIC_FAMILY_FAILED_CLOSED_TOTAL: &str = "fitz_stream_family_failed_closed_total";

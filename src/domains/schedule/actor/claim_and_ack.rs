@@ -1,26 +1,33 @@
-use super::model::{
-    info, warn, Arc, Bytes, FastMap, FxBuildHasher, HashMap, Instant, PendingClaim,
-    PendingScheduleFire, PersistedPendingFireClaim, Reverse, ScheduleAckDefinition, ScheduleActor,
-    ScheduleFireClaim, ScheduleListEntry, SchedulePendingFireClaimAck, SchedulePersistence,
-    SchedulePersistenceError,
+use super::model::{FastMap, PendingClaim, PendingScheduleFire, ScheduleActor};
+use crate::domains::schedule::protocol::ScheduleListEntry;
+use crate::domains::schedule::store::{
+    PersistedPendingFireClaim, ScheduleAckDefinition, ScheduleFireClaim,
+    SchedulePendingFireClaimAck, SchedulePersistence, SchedulePersistenceError,
 };
+use bytes::Bytes;
+use rustc_hash::FxBuildHasher;
+use std::cmp::Reverse;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Instant;
+use tracing::{info, warn};
 
 fn persist_claim_batch<P: SchedulePersistence>(
     persistence: &P,
     family_id: u64,
     claims: &[ScheduleFireClaim<'_>],
-    write_options: cntryl_midge::WriteOptions,
+    write_policy: crate::domains::WritePolicy,
 ) -> Result<(), SchedulePersistenceError> {
-    persistence.persist_claims(family_id, claims, write_options)
+    persistence.persist_claims(family_id, claims, write_policy)
 }
 
 fn acknowledge_claim_batch<P: SchedulePersistence>(
     persistence: &P,
     family_id: u64,
     claims: &[SchedulePendingFireClaimAck<'_>],
-    write_options: cntryl_midge::WriteOptions,
+    write_policy: crate::domains::WritePolicy,
 ) -> Result<(), SchedulePersistenceError> {
-    persistence.acknowledge_claims(family_id, claims, write_options)
+    persistence.acknowledge_claims(family_id, claims, write_policy)
 }
 
 /// One page of schedule definitions: entries, whether more remain, and the
@@ -312,7 +319,7 @@ impl ScheduleActor {
                 &self.store,
                 self.family.as_u64(),
                 &store_items,
-                self.write_options,
+                self.write_policy,
             )
         }) {
             warn!("Failed to persist schedule reschedule batch: {error}");
@@ -503,7 +510,7 @@ impl ScheduleActor {
                 &self.store,
                 self.family.as_u64(),
                 &store_items,
-                self.write_options,
+                self.write_policy,
             )
         })?;
 
@@ -568,7 +575,7 @@ mod tests {
             &self,
             _family_id: u64,
             _claims: &[ScheduleFireClaim<'_>],
-            _write_options: cntryl_midge::WriteOptions,
+            _write_policy: crate::domains::WritePolicy,
         ) -> Result<(), SchedulePersistenceError> {
             Err("claim failed".to_string().into())
         }
@@ -577,7 +584,7 @@ mod tests {
             &self,
             _family_id: u64,
             _claims: &[SchedulePendingFireClaimAck<'_>],
-            _write_options: cntryl_midge::WriteOptions,
+            _write_policy: crate::domains::WritePolicy,
         ) -> Result<(), SchedulePersistenceError> {
             Err("ack failed".to_string().into())
         }
@@ -594,7 +601,7 @@ mod tests {
             &persistence,
             1,
             &claims,
-            cntryl_midge::WriteOptions::buffered(),
+            crate::domains::WritePolicy::Buffered,
         );
 
         // Assert
@@ -609,8 +616,10 @@ mod tests {
         // Arrange
         let actor = ScheduleActor::new(
             RouteFamily::new(1),
-            crate::testkit::create_test_engine_with_cfs(vec![1]),
-            cntryl_midge::WriteOptions::buffered(),
+            crate::domains::schedule::ScheduleStore::new(
+                crate::testkit::create_test_engine_with_cfs(vec![1]),
+            ),
+            crate::domains::WritePolicy::Buffered,
         );
         let pending = [PendingScheduleFire {
             route: "schedule://acme/jobs/missing/run".to_string(),

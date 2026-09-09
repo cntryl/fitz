@@ -123,7 +123,7 @@ impl KvMessage {
 #[path = "tests/protocol.rs"]
 mod tests;
 
-/// KV watch messages handled by `KvDomainSink` before actor dispatch.
+/// KV watch messages handled by `KvDomain` before actor dispatch.
 #[derive(Debug, Clone)]
 pub enum KvSubscriptionMessage {
     Subscribe {
@@ -330,6 +330,9 @@ pub enum KvError {
     /// Key already exists (insert conflict)
     AlreadyExists,
 
+    /// A mutation was attempted in a read-only transaction.
+    ReadOnlyWrite,
+
     /// Transaction conflict or abort (retryable)
     Conflict(String),
 
@@ -369,6 +372,7 @@ impl std::fmt::Display for KvError {
             }
             KvError::NotFound => write!(f, "Key not found"),
             KvError::AlreadyExists => write!(f, "Key already exists"),
+            KvError::ReadOnlyWrite => write!(f, "Cannot write in read-only transaction"),
             KvError::Conflict(msg) => write!(f, "Transaction conflict: {msg}"),
             KvError::BackendUnavailable(msg) => write!(f, "Backend unavailable: {msg}"),
             KvError::BackendError(msg) => write!(f, "Backend error: {msg}"),

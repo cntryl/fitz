@@ -2,13 +2,13 @@
 //! index in response to a client request.
 
 use super::{
-    subscription_limit_error, Arc, NoticeDomainCore, NoticeSubscription, Ordering,
+    subscription_limit_error, Arc, NoticeFamilyState, NoticeSubscription, Ordering,
     RoutedSubscriptionSet,
 };
 
-impl NoticeDomainCore {
+impl NoticeFamilyState {
     pub(super) fn rollback_undeliverable_subscribe(
-        &self,
+        &mut self,
         family_id: crate::runtime::routing::RouteFamily,
         session_id: u64,
         response: &crate::domains::notice::NoticeResponse,
@@ -17,17 +17,19 @@ impl NoticeDomainCore {
         else {
             return false;
         };
-        let mut families = self.families.lock();
-        let removed = families.get_mut(&family_id).is_some_and(|state| {
-            state.remove_subscription_for_session(family_id, session_id, *subscription_id)
-        });
-        if families
-            .get(&family_id)
-            .is_some_and(RoutedSubscriptionSet::is_empty)
-        {
-            families.remove(&family_id);
-        }
-        drop(families);
+        let removed = {
+            let families = &mut self.families;
+            let removed = families.get_mut(&family_id).is_some_and(|state| {
+                state.remove_subscription_for_session(family_id, session_id, *subscription_id)
+            });
+            if families
+                .get(&family_id)
+                .is_some_and(RoutedSubscriptionSet::is_empty)
+            {
+                families.remove(&family_id);
+            }
+            removed
+        };
         if removed {
             self.mark_admin_snapshot_dirty();
         }
@@ -35,7 +37,7 @@ impl NoticeDomainCore {
     }
 
     pub(super) fn dispatch_notice_message(
-        &self,
+        &mut self,
         notice_msg: crate::domains::notice::protocol::NotificationMessage,
     ) -> (Option<crate::domains::notice::NoticeResponse>, bool) {
         use crate::domains::notice::protocol::NotificationMessage;
@@ -49,7 +51,7 @@ impl NoticeDomainCore {
             NotificationMessage::Subscribe(sub_msg) => self.handle_subscribe_message(&sub_msg),
             NotificationMessage::Unsubscribe(unsub_msg) => {
                 let family_id = unsub_msg.family_id;
-                let mut families = self.families.lock();
+                let families = &mut self.families;
                 let removed = if let Some(state) = families.get_mut(&family_id) {
                     let removed = state.remove_subscription_for_session(
                         unsub_msg.family_id,
@@ -83,7 +85,7 @@ impl NoticeDomainCore {
     }
 
     fn handle_subscribe_message(
-        &self,
+        &mut self,
         sub_msg: &crate::domains::notice::protocol::SubscribeMessage,
     ) -> (Option<crate::domains::notice::NoticeResponse>, bool) {
         if let Some(response) = self.try_reuse_existing(sub_msg) {
@@ -114,10 +116,10 @@ impl NoticeDomainCore {
     }
 
     fn try_reuse_existing(
-        &self,
+        &mut self,
         sub_msg: &crate::domains::notice::protocol::SubscribeMessage,
     ) -> Option<crate::domains::notice::NoticeResponse> {
-        let families = self.families.lock();
+        let families = &self.families;
         let id = families.get(&sub_msg.family_id).and_then(|state| {
             state.find_existing_id(sub_msg.session_id.0, sub_msg.pattern.as_str())
         })?;
@@ -134,13 +136,13 @@ impl NoticeDomainCore {
     }
 
     fn allocate_and_insert(
-        &self,
+        &mut self,
         sub_msg: &crate::domains::notice::protocol::SubscribeMessage,
         compiled: crate::runtime::matcher::Pattern,
     ) -> (crate::domains::notice::NoticeResponse, bool) {
         use crate::domains::notice::NoticeResponse;
 
-        let mut families = self.families.lock();
+        let families = &mut self.families;
         let session_subscription_count = families
             .values()
             .map(|state| state.subscription_count_for_session(sub_msg.session_id.0))

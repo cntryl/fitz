@@ -1,49 +1,59 @@
-//! Notice domain sink and core state definitions.
-//!
-//! Notice subscriptions are broker-local in-memory state only. They are
-//! session-scoped, cleaned up on disconnect, and are never replayed or
-//! restored after broker restart.
+//! Family-owned Notice state and immutable observation snapshots.
 
 use super::{
     NoticeDeliveryJob, NoticeDomainCommand, NoticeMetrics, NoticeRouteStats, NoticeRouteStatsKey,
     NoticeSubscription, RoutedSubscriptionSet,
 };
-use crate::runtime::{CleanedUpSessions, ManagedActor, Router};
-use parking_lot::Mutex;
+use crate::runtime::routing::RouteFamily;
+use crate::runtime::{CleanedUpSessions, Router};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::Arc;
 
-/// Live notice pub/sub state for the current broker process.
-///
-/// This core owns the authoritative in-memory subscription index used for
-/// delivery and admin snapshots. State disappears on session cleanup or broker
-/// restart and is never durably recovered or replayed.
-pub(super) struct NoticeDomainCore {
-    /// Actor-owned single-writer state. The mutex supports immutable facade
-    /// methods; production mutation remains serialized by `NoticeDomainActor`.
-    pub(super) families: Mutex<
-        HashMap<crate::runtime::routing::RouteFamily, RoutedSubscriptionSet<NoticeSubscription>>,
-    >,
-    /// Actor-owned single-writer route telemetry guarded for facade reads.
-    pub(super) route_stats: Mutex<HashMap<NoticeRouteStatsKey, NoticeRouteStats>>,
-    pub(super) next_sub_id: AtomicU64,
+#[derive(Clone)]
+pub(super) struct NoticeDomainConfig {
+    pub(super) next_sub_id: Arc<AtomicU64>,
     pub(super) router: Arc<Router>,
     pub(super) admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
-    pub(super) admin_snapshot_dirty: AtomicBool,
     pub(super) metrics: Option<NoticeMetrics>,
-    pub(super) active: AtomicBool,
-    /// Sessions disconnect cleanup has already run for; guards against a
-    /// stale queued request recreating a subscription. See `cleanup.rs`.
-    pub(super) cleaned_up_sessions: Mutex<CleanedUpSessions>,
-    /// One bounded, ordered delivery lane per route family prevents a blocked
-    /// subscriber from stalling unrelated families on the Notice actor.
-    pub(super) delivery_workers: Mutex<
-        HashMap<crate::runtime::routing::RouteFamily, crossbeam_channel::Sender<NoticeDeliveryJob>>,
-    >,
+    pub(super) active: Arc<AtomicBool>,
 }
 
-pub struct NoticeDomainSink {
-    pub(super) core: Arc<NoticeDomainCore>,
-    pub(super) actor: ManagedActor<NoticeDomainCommand>,
+/// Mutable Notice state owned exclusively by one family worker.
+pub(super) struct NoticeFamilyState {
+    pub(super) family: RouteFamily,
+    pub(super) families: HashMap<RouteFamily, RoutedSubscriptionSet<NoticeSubscription>>,
+    pub(super) route_stats: HashMap<NoticeRouteStatsKey, NoticeRouteStats>,
+    pub(super) next_sub_id: Arc<AtomicU64>,
+    pub(super) router: Arc<Router>,
+    pub(super) admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
+    pub(super) metrics: Option<NoticeMetrics>,
+    pub(super) active: Arc<AtomicBool>,
+    pub(super) cleaned_up_sessions: CleanedUpSessions,
+    pub(super) delivery_workers: HashMap<RouteFamily, crossbeam_channel::Sender<NoticeDeliveryJob>>,
+}
+
+impl NoticeFamilyState {
+    pub(super) fn new(family: RouteFamily, config: &NoticeDomainConfig) -> Self {
+        Self {
+            family,
+            families: HashMap::new(),
+            route_stats: HashMap::with_capacity(64),
+            next_sub_id: config.next_sub_id.clone(),
+            router: config.router.clone(),
+            admin_read_model: config.admin_read_model.clone(),
+            metrics: config.metrics.clone(),
+            active: config.active.clone(),
+            cleaned_up_sessions: CleanedUpSessions::new(
+                crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
+            ),
+            delivery_workers: HashMap::new(),
+        }
+    }
+}
+
+pub(crate) struct NoticeDomain {
+    pub(super) config: NoticeDomainConfig,
+    pub(super) family_runtime: crate::runtime::FamilyActorPoolRuntime<NoticeDomainCommand>,
+    pub(super) family_families: Vec<RouteFamily>,
 }

@@ -2,14 +2,14 @@
 
 use super::locks::{KvResourceLockKey, KvResourceLockOwner};
 use super::state::{
-    KvAdminTransactionUpdate, KvCommitNotification, KvDomainRuntime, KvOperationOutcome,
+    KvAdminTransactionUpdate, KvCommitNotification, KvFamilyRuntime, KvOperationOutcome,
 };
 use crate::domains::kv::{KvError, KvResponse};
 use crate::runtime::{DeliveryError, Envelope};
 
-impl KvDomainRuntime<'_> {
+impl KvFamilyRuntime<'_> {
     pub(super) fn handle_actor_operation_frame(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         request_started: std::time::Instant,
@@ -112,7 +112,7 @@ impl KvDomainRuntime<'_> {
     }
 
     fn rollback_undeliverable_begin(
-        &self,
+        &mut self,
         session_id: u64,
         route_family: crate::runtime::routing::RouteFamily,
         tx_id: u64,
@@ -136,7 +136,7 @@ impl KvDomainRuntime<'_> {
     }
 
     pub(super) fn handle_begin_read_write(
-        &self,
+        &mut self,
         session_id: u64,
         lock_key: &KvResourceLockKey,
         kv_message: crate::domains::kv::KvMessage,
@@ -169,7 +169,6 @@ impl KvDomainRuntime<'_> {
 
         let log_context = "BEGIN (ReadWrite, acquiring lock)";
         let actor = self.actor_for_session(session_id, "begin");
-        let mut actor = actor.lock();
         tracing::trace!(
             domain = "kv",
             session_id = session_id,
@@ -177,7 +176,7 @@ impl KvDomainRuntime<'_> {
         );
         let response = actor.handle(kv_message);
         if let KvResponse::BeginOk { tx_id } = response {
-            self.core.resource_locks.lock().insert(
+            self.core.resource_locks.insert(
                 lock_key.clone(),
                 KvResourceLockOwner {
                     session_id,
@@ -211,14 +210,13 @@ impl KvDomainRuntime<'_> {
     }
 
     pub(super) fn handle_commit_frame(
-        &self,
+        &mut self,
         session_id: u64,
         route_family: crate::runtime::routing::RouteFamily,
         tx_id: u64,
         kv_message: crate::domains::kv::KvMessage,
     ) -> KvOperationOutcome {
         let actor = self.actor_for_session(session_id, "commit");
-        let mut actor = actor.lock();
         tracing::trace!(
             domain = "kv",
             session_id = session_id,
@@ -245,7 +243,7 @@ impl KvDomainRuntime<'_> {
         let response = actor.handle(kv_message);
         let admin_update = if had_transaction && actor.resource_scope_for_tx(tx_id).is_none() {
             if let Some(lock_key) = &lock_key {
-                self.core.resource_locks.lock().remove(lock_key);
+                self.core.resource_locks.remove(lock_key);
             }
             KvAdminTransactionUpdate::Remove { session_id, tx_id }
         } else {
@@ -268,14 +266,13 @@ impl KvDomainRuntime<'_> {
     }
 
     pub(super) fn handle_rollback_frame(
-        &self,
+        &mut self,
         session_id: u64,
         route_family: crate::runtime::routing::RouteFamily,
         tx_id: u64,
         kv_message: crate::domains::kv::KvMessage,
     ) -> KvOperationOutcome {
         let actor = self.actor_for_session(session_id, "rollback");
-        let mut actor = actor.lock();
         tracing::trace!(
             domain = "kv",
             session_id = session_id,
@@ -301,7 +298,6 @@ impl KvDomainRuntime<'_> {
                 if let Some(scope) = &resource_scope {
                     self.core
                         .resource_locks
-                        .lock()
                         .remove(&KvResourceLockKey::from_scope(scope));
                 }
                 KvAdminTransactionUpdate::Remove { session_id, tx_id }

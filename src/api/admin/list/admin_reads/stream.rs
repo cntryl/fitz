@@ -45,7 +45,7 @@ pub fn stream_records_for_resource(
     limit: usize,
     discriminator: Option<&str>,
 ) -> Response {
-    match runtime.stream_read_resource_records(AdminStreamReadRequest {
+    match runtime.stream_read_resource_records(&AdminStreamReadRequest {
         family: RouteFamily::try_from(family)
             .expect("admin route family is validated at the HTTP boundary"),
         realm: path.realm,
@@ -112,7 +112,7 @@ pub(crate) fn stream_search(runtime: &Runtime, request: &StreamSearchRequest) ->
             area: &stream.area,
             resource: &stream.resource,
         };
-        let response = runtime.stream_read_resource_records(AdminStreamReadRequest {
+        let response = runtime.stream_read_resource_records(&AdminStreamReadRequest {
             family: RouteFamily::try_from(request.family)
                 .expect("admin route family is validated at the HTTP boundary"),
             realm: &stream.realm,

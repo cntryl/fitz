@@ -12,22 +12,10 @@
 //!
 //! ```no_run
 //! use fitz::testkit::create_test_engine_with_cfs;
-//! use fitz::runtime::routing::RouteFamily;
-//! use fitz::domains::queue::{QueueActor, QueueKey};
-//! use fitz::utils::idempotency::default_dedup_store;
 //!
 //! // ✅ CORRECT - Explicit CF configuration
 //! let engine = create_test_engine_with_cfs(vec![1, 2, 3]);
-//! let key = QueueKey {
-//!     family: RouteFamily::new(1),
-//!     realm: "realm".to_string(),
-//!     area: "area".to_string(),
-//!     resource: "resource".to_string(),
-//! };
-//! let actor = QueueActor::new(RouteFamily::new(1), key, engine, None, default_dedup_store());
-//!
-//! // ❌ FORBIDDEN - Will panic
-//! // let actor = QueueActor::new(RouteFamily::new(0), ...);
+//! assert_eq!(std::sync::Arc::strong_count(&engine), 1);
 //! ```
 //!
 //! # Why This Rule Exists

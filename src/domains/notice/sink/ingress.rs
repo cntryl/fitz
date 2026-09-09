@@ -3,29 +3,28 @@
 
 #[cfg(test)]
 use super::{test_client_channel_from_protocol, FrameContext};
-use super::{Envelope, NoticeDomainCore, NoticeMetrics};
+use super::{Envelope, NoticeFamilyState, NoticeMetrics};
 use crate::runtime::DeliveryError;
 use std::time::Instant;
 
-impl NoticeDomainCore {
-    pub(super) fn deliver_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {
+impl NoticeFamilyState {
+    pub(super) fn deliver_envelope(&mut self, envelope: &Envelope) -> Result<(), DeliveryError> {
         self.deliver_envelope_with_cleanup_check(envelope, true)
     }
 
     pub(super) fn deliver_accepted_envelope(
-        &self,
+        &mut self,
         envelope: &Envelope,
     ) -> Result<(), DeliveryError> {
         self.deliver_envelope_with_cleanup_check(envelope, false)
     }
 
     fn deliver_envelope_with_cleanup_check(
-        &self,
+        &mut self,
         envelope: &Envelope,
         reject_cleaned_up_session: bool,
     ) -> Result<(), DeliveryError> {
         if self.handle_cleanup_envelope(envelope) {
-            self.refresh_admin_snapshot_if_dirty();
             return Ok(());
         }
         self.ensure_active()?;
@@ -84,7 +83,7 @@ impl NoticeDomainCore {
                     &response,
                 )
             {
-                self.refresh_admin_snapshot_if_dirty();
+                self.mark_admin_snapshot_dirty();
             }
         } else if let (Some(metrics), Some(started_at)) = (self.metrics.as_ref(), request_started) {
             metrics.record_success(started_at);
@@ -93,11 +92,11 @@ impl NoticeDomainCore {
         Ok(())
     }
 
-    fn ensure_active(&self) -> Result<(), DeliveryError> {
+    fn ensure_active(&mut self) -> Result<(), DeliveryError> {
         crate::runtime::ingress_support::ensure_actor_active(&self.active)
     }
 
-    fn handle_domain_publish_envelope(&self, envelope: &Envelope) -> bool {
+    fn handle_domain_publish_envelope(&mut self, envelope: &Envelope) -> bool {
         if let Some(event) = envelope.payload::<crate::runtime::DomainPublishEvent>() {
             if *envelope.destination().family() != event.family_id {
                 self.counter_add("fitz_notice_publish_family_mismatch_total", 1);
@@ -132,7 +131,7 @@ impl NoticeDomainCore {
         }
     }
 
-    fn record_request_start(&self) -> Option<Instant> {
+    fn record_request_start(&mut self) -> Option<Instant> {
         self.metrics
             .as_ref()
             .map(NoticeMetrics::record_request_start)
@@ -148,7 +147,7 @@ impl NoticeDomainCore {
     }
 
     fn parse_notice_message(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         message: Result<crate::domains::notice::protocol::NotificationMessage, String>,

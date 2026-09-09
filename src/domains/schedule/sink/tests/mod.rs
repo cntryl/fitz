@@ -6,9 +6,10 @@ use crate::dispatch::protocol::tlv::MessageType;
 use crate::runtime::clock::Clock;
 use crate::runtime::mailbox::Mailbox;
 use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
+use crate::runtime::{Envelope, MailboxSink, Router};
 use bytes::Bytes;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 mod correctness;
 mod delivery_and_subscriptions;
@@ -92,7 +93,7 @@ fn assert_no_envelope(mailbox: &Mailbox) {
         .is_err());
 }
 
-fn wait_for_schedule_count(sink: &ScheduleDomainSink, expected: usize) {
+fn wait_for_schedule_count(sink: &ScheduleDomain, expected: usize) {
     let deadline = Instant::now() + Duration::from_secs(1);
     while Instant::now() < deadline {
         if sink.schedule_count() == expected {
@@ -103,7 +104,7 @@ fn wait_for_schedule_count(sink: &ScheduleDomainSink, expected: usize) {
     assert_eq!(sink.schedule_count(), expected);
 }
 
-fn wait_for_subscription_count(sink: &ScheduleDomainSink, expected: usize) {
+fn wait_for_subscription_count(sink: &ScheduleDomain, expected: usize) {
     let deadline = Instant::now() + Duration::from_secs(1);
     while Instant::now() < deadline {
         if sink.subscription_count() == expected {
@@ -114,7 +115,7 @@ fn wait_for_subscription_count(sink: &ScheduleDomainSink, expected: usize) {
     assert_eq!(sink.subscription_count(), expected);
 }
 
-fn wait_for_pending_fire_count(sink: &ScheduleDomainSink, expected: usize) {
+fn wait_for_pending_fire_count(sink: &ScheduleDomain, expected: usize) {
     let deadline = Instant::now() + Duration::from_secs(1);
     while Instant::now() < deadline {
         if sink.pending_fire_count() == expected {
@@ -125,7 +126,7 @@ fn wait_for_pending_fire_count(sink: &ScheduleDomainSink, expected: usize) {
     assert_eq!(sink.pending_fire_count(), expected);
 }
 
-fn wait_for_pending_ack_retry_count(sink: &ScheduleDomainSink, expected: usize) {
+fn wait_for_pending_ack_retry_count(sink: &ScheduleDomain, expected: usize) {
     let deadline = Instant::now() + Duration::from_secs(1);
     while Instant::now() < deadline {
         if sink.pending_ack_retry_count() == expected {
@@ -136,7 +137,7 @@ fn wait_for_pending_ack_retry_count(sink: &ScheduleDomainSink, expected: usize) 
     assert_eq!(sink.pending_ack_retry_count(), expected);
 }
 
-fn wait_for_notify_failure_count(sink: &ScheduleDomainSink, expected: u64) {
+fn wait_for_notify_failure_count(sink: &ScheduleDomain, expected: u64) {
     let deadline = Instant::now() + Duration::from_secs(1);
     while Instant::now() < deadline {
         if sink.notify_failure_count() == expected {
@@ -147,7 +148,7 @@ fn wait_for_notify_failure_count(sink: &ScheduleDomainSink, expected: u64) {
     assert_eq!(sink.notify_failure_count(), expected);
 }
 
-fn wait_for_ack_failure_count(sink: &ScheduleDomainSink, expected: u64) {
+fn wait_for_ack_failure_count(sink: &ScheduleDomain, expected: u64) {
     let deadline = Instant::now() + Duration::from_secs(1);
     while Instant::now() < deadline {
         if sink.ack_failure_count() == expected {

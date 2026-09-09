@@ -1,11 +1,9 @@
-pub(super) use crate::domains::schedule::ScheduleMetrics;
-pub(super) use crate::runtime::{DeliveryError, Envelope, MailboxSink, ManagedActor, Router};
-pub(super) use parking_lot::Mutex;
-pub(super) use std::collections::hash_map::Entry;
-pub(super) use std::collections::{HashMap, HashSet, VecDeque};
-pub(super) use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-pub(super) use std::sync::Arc;
-pub(super) use std::time::Instant;
+use crate::domains::schedule::ScheduleMetrics;
+use crate::runtime::{Envelope, Router};
+use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::Arc;
+use std::time::Instant;
 
 #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
 pub(super) const SCHEDULE_ADMIN_SNAPSHOT_INTERVAL_US: u64 = 250_000;
@@ -144,17 +142,15 @@ impl ScheduleSubscriptionSet {
     }
 }
 
-pub(super) struct ScheduleDomainCore {
-    pub(super) store: crate::storage::FitzStorageEngine,
-    pub(super) actors: Mutex<
-        HashMap<crate::runtime::routing::RouteFamily, crate::domains::schedule::ScheduleActor>,
-    >,
-    pub(super) sub_families:
-        Mutex<HashMap<crate::runtime::routing::RouteFamily, ScheduleSubscriptionSet>>,
+pub(super) struct ScheduleFamilyState {
+    pub(super) route_family: crate::runtime::routing::RouteFamily,
+    pub(super) store: crate::domains::schedule::ScheduleStore,
+    pub(super) actor: Option<crate::domains::schedule::ScheduleActor>,
+    pub(super) subscriptions: ScheduleSubscriptionSet,
     /// Sessions disconnect cleanup has already run for; guards against a
     /// stale queued request recreating a subscription. See `cleanup.rs`.
-    pub(super) cleaned_up_sessions: Mutex<crate::runtime::CleanedUpSessions>,
-    pub(super) next_sub_id: AtomicU64,
+    pub(super) cleaned_up_sessions: crate::runtime::CleanedUpSessions,
+    pub(super) next_sub_id: Arc<AtomicU64>,
     pub(super) router: Arc<Router>,
     #[cfg_attr(feature = "bench-no-snapshot", allow(dead_code))]
     pub(super) admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
@@ -165,29 +161,23 @@ pub(super) struct ScheduleDomainCore {
     pub(super) last_snapshot_elapsed_us: AtomicU64,
     pub(super) snapshot_epoch: Instant,
     /// Total number of live publish handoffs that failed to route.
-    pub(super) live_publish_failures: AtomicU64,
+    pub(super) live_publish_failures: u64,
     /// Total number of pending-fire acknowledgement persistence failures.
-    pub(super) ack_failures: AtomicU64,
+    pub(super) ack_failures: u64,
     /// Pending fire claims already handed off to the live publish path in this
     /// broker process but still waiting for durable acknowledgement retry.
-    pub(super) pending_ack_retries: Mutex<HashMap<u64, PendingFireStates>>,
+    pub(super) pending_ack_retries: HashMap<u64, PendingFireStates>,
     /// Rolling window of acknowledged handoff timestamps for executions-per-minute.
-    pub(super) recent_acknowledgement_ms: Mutex<VecDeque<u64>>,
+    pub(super) recent_acknowledgement_ms: VecDeque<u64>,
     /// Write options for schedule persistence.
-    pub(super) write_options: cntryl_midge::WriteOptions,
+    pub(super) write_policy: crate::domains::WritePolicy,
     pub(super) metrics: Option<ScheduleMetrics>,
-}
-
-pub(super) struct ScheduleDomainState {
-    pub(super) core: ScheduleDomainCore,
-    pub(super) active: AtomicBool,
 }
 
 /// Runtime body methods intentionally share names with their sink wrapper methods:
 /// the wrapper crosses the mailbox, while the runtime body performs the work.
 pub(super) struct ScheduleDomainRuntime<'a> {
-    pub(super) core: &'a ScheduleDomainCore,
-    pub(super) active: &'a AtomicBool,
+    pub(super) core: &'a mut ScheduleFamilyState,
 }
 
 #[derive(Default)]
@@ -201,6 +191,27 @@ pub(super) struct ScheduleLiveCounts {
     pub(super) pending_ack_retries: usize,
     pub(super) oldest_pending_claim_age_seconds: u64,
     pub(super) overdue_normalizations: u64,
+}
+
+impl ScheduleLiveCounts {
+    pub(super) fn merge(mut self, other: &Self) -> Self {
+        self.subscriptions = self.subscriptions.saturating_add(other.subscriptions);
+        self.schedules = self.schedules.saturating_add(other.schedules);
+        self.pending_fires = self.pending_fires.saturating_add(other.pending_fires);
+        self.executions_per_minute += other.executions_per_minute;
+        self.notify_failures = self.notify_failures.saturating_add(other.notify_failures);
+        self.ack_failures = self.ack_failures.saturating_add(other.ack_failures);
+        self.pending_ack_retries = self
+            .pending_ack_retries
+            .saturating_add(other.pending_ack_retries);
+        self.oldest_pending_claim_age_seconds = self
+            .oldest_pending_claim_age_seconds
+            .max(other.oldest_pending_claim_age_seconds);
+        self.overdue_normalizations = self
+            .overdue_normalizations
+            .saturating_add(other.overdue_normalizations);
+        self
+    }
 }
 
 pub(super) enum ScheduleDomainCommand {
@@ -225,13 +236,26 @@ pub(super) enum ScheduleDomainCommand {
         crossbeam_channel::Sender<()>,
         crossbeam_channel::Receiver<()>,
     ),
+    #[cfg(test)]
+    InspectForTests(
+        Box<dyn FnOnce(&mut ScheduleFamilyState) + Send>,
+        crossbeam_channel::Sender<()>,
+    ),
 }
 
-pub(super) struct ScheduleDomainActor {
-    pub(super) state: Arc<ScheduleDomainState>,
+pub(crate) struct ScheduleDomain {
+    pub(super) family_runtime: crate::runtime::FamilyActorPoolRuntime<ScheduleDomainCommand>,
+    pub(super) route_families: Vec<crate::runtime::routing::RouteFamily>,
+    pub(super) active: Arc<AtomicBool>,
+    pub(super) config: ScheduleDomainConfig,
 }
 
-pub struct ScheduleDomainSink {
-    pub(super) state: Arc<ScheduleDomainState>,
-    pub(super) actor: ManagedActor<ScheduleDomainCommand>,
+#[derive(Clone)]
+pub(super) struct ScheduleDomainConfig {
+    pub(super) store: crate::domains::schedule::ScheduleStore,
+    pub(super) router: Arc<Router>,
+    pub(super) admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
+    pub(super) next_sub_id: Arc<AtomicU64>,
+    pub(super) write_policy: crate::domains::WritePolicy,
+    pub(super) metrics: Option<ScheduleMetrics>,
 }

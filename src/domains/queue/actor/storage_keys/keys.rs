@@ -167,11 +167,11 @@ impl QueueActor {
 
     #[inline]
     pub(in crate::domains::queue::actor) fn cached_header_key(&self, id: MessageId) -> Vec<u8> {
-        Self::cached_id_key(&self.recovery_store.header_key_prefix, id)
+        Self::cached_id_key(&self.persistence.recovery.header_key_prefix, id)
     }
 
     #[inline]
     pub(in crate::domains::queue::actor) fn cached_body_key(&self, id: MessageId) -> Vec<u8> {
-        Self::cached_id_key(&self.body_key_prefix, id)
+        Self::cached_id_key(&self.persistence.body_key_prefix, id)
     }
 }

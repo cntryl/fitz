@@ -1,179 +1,193 @@
-//! Sink construction, pre-registration configuration, and actor lifecycle.
+//! Sink construction, pre-registration configuration, and family lifecycle.
 
-use super::state::{
-    KvDomainCore, KvDomainMailboxActor, KvDomainRuntime, KvDomainSink, KvDomainState,
-};
-use crate::runtime::routing::{Route, RouteAddress, RouteFamily};
-use crate::runtime::{ManagedActor, Router};
-use parking_lot::Mutex;
+use super::commands::KvDomainCommand;
+use super::state::{KvDomain, KvDomainConfig, KvFamilyRuntime, KvFamilyState};
+use crate::runtime::routing::RouteFamily;
+use crate::runtime::Router;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use super::commands::KvDomainCommand;
-
-impl KvDomainState {
-    #[must_use]
-    fn new(
-        store: Arc<cntryl_midge::Engine>,
-        router: Arc<Router>,
-        admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
-    ) -> Self {
+impl KvFamilyState {
+    fn new(config: &KvDomainConfig) -> Self {
         Self {
-            core: KvDomainCore {
-                store,
-                actors: Arc::new(Mutex::new(HashMap::new())),
-                resource_locks: Mutex::new(HashMap::new()),
-                watch_registries: Mutex::new(HashMap::new()),
-                cleaned_up_sessions: Mutex::new(crate::runtime::CleanedUpSessions::new(
-                    crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
-                )),
-                router,
-                projection: crate::domains::kv::admin_projection::KvAdminProjection::new(
-                    admin_read_model,
-                ),
-                metrics: None,
-                sync_write_options: cntryl_midge::WriteOptions::sync(),
-                buffered_write_options: cntryl_midge::WriteOptions::buffered(),
-                idle_transaction_ttl: std::time::Duration::from_mins(5),
-            },
-            active: AtomicBool::new(true),
-        }
-    }
-
-    pub(super) fn runtime(&self) -> KvDomainRuntime<'_> {
-        KvDomainRuntime {
-            core: &self.core,
-            active: &self.active,
+            store: config.store.clone(),
+            actors: HashMap::new(),
+            resource_locks: HashMap::new(),
+            watch_registries: HashMap::new(),
+            cleaned_up_sessions: crate::runtime::CleanedUpSessions::new(
+                crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
+            ),
+            router: config.router.clone(),
+            projection: config.projection.clone(),
+            metrics: config.metrics.clone(),
+            sync_write_policy: config.sync_write_policy,
+            buffered_write_policy: config.buffered_write_policy,
+            idle_transaction_ttl: config.idle_transaction_ttl,
         }
     }
 }
 
-impl KvDomainMailboxActor {
-    #[must_use]
-    pub(super) fn new(state: Arc<KvDomainState>) -> Self {
-        Self { state }
+impl KvDomain {
+    pub(super) fn admin_core(&self) -> KvFamilyState {
+        KvFamilyState::new(&self.config)
     }
 
-    pub(super) fn route_address() -> RouteAddress {
-        RouteAddress::new(RouteFamily::new(0), Route::new("internal://domain/kv"))
-    }
-}
-
-impl KvDomainSink {
     #[must_use]
+    #[allow(private_bounds)]
     pub fn new(
-        store: Arc<cntryl_midge::Engine>,
+        store: impl Into<crate::domains::kv::store::KvStore>,
         router: Arc<Router>,
         admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
     ) -> Self {
-        let state = Arc::new(KvDomainState::new(store, router, admin_read_model));
-        let actor = Self::spawn_actor(state.clone());
-        Self { state, actor }
-    }
-
-    fn spawn_actor(state: Arc<KvDomainState>) -> ManagedActor<KvDomainCommand> {
-        let router = state.core.router.clone();
-        crate::runtime::ManagedActor::spawn_fail_closed(
+        Self::new_with_families(
+            store,
             router,
-            KvDomainMailboxActor::route_address(),
-            move || KvDomainMailboxActor::new(state.clone()),
-            crate::domains::DOMAIN_ACTOR_MAILBOX_CAPACITY,
+            admin_read_model,
+            &[RouteFamily::new(1), RouteFamily::new(2)],
         )
     }
 
-    fn rebuild_actor(&mut self) {
-        self.actor.stop();
-        self.actor = Self::spawn_actor(self.state.clone());
-    }
-
-    fn state_for_builder(&mut self) -> &mut KvDomainState {
-        Arc::get_mut(&mut self.state).expect("KV sink builders must run before sharing the sink")
-    }
-
-    #[must_use]
-    /// Configure the sync policy before registering or sharing this sink.
-    ///
-    /// Like every consuming `with_*` method here, this updates private state
-    /// and rebuilds the sink's managed actor before returning the new value.
-    pub fn with_sync_write_options(self, write_options: cntryl_midge::WriteOptions) -> Self {
-        let buffered_write_options =
-            if write_options.is_cloud_async() || write_options.is_cloud_strict() {
-                cntryl_midge::WriteOptions::cloud_async()
-            } else {
-                cntryl_midge::WriteOptions::buffered()
-            };
-        self.with_write_options(write_options, buffered_write_options)
-    }
-
-    #[must_use]
-    /// Configure sync and buffered policies before registering or sharing this sink.
-    ///
-    /// This consuming method rebuilds the sink's private managed actor.
-    pub fn with_write_options(
-        mut self,
-        sync_write_options: cntryl_midge::WriteOptions,
-        buffered_write_options: cntryl_midge::WriteOptions,
+    pub(crate) fn new_with_families(
+        store: impl Into<crate::domains::kv::store::KvStore>,
+        router: Arc<Router>,
+        admin_read_model: Arc<crate::control::admin::read_model::AdminReadModel>,
+        route_families: &[RouteFamily],
     ) -> Self {
-        self.actor.stop();
-        let core = &mut self.state_for_builder().core;
-        core.sync_write_options = sync_write_options;
-        core.buffered_write_options = buffered_write_options;
-        self.rebuild_actor();
+        assert!(
+            !route_families.is_empty(),
+            "KV route families must not be empty"
+        );
+        let config = KvDomainConfig {
+            store: store.into(),
+            router,
+            projection: Arc::new(
+                crate::domains::kv::admin_projection::KvAdminProjection::new(admin_read_model),
+            ),
+            metrics: None,
+            sync_write_policy: crate::domains::WritePolicy::Sync,
+            buffered_write_policy: crate::domains::WritePolicy::Buffered,
+            idle_transaction_ttl: std::time::Duration::from_mins(5),
+        };
+        let active = Arc::new(AtomicBool::new(true));
+        let family_runtime =
+            Self::spawn_family_runtime(config.clone(), active.clone(), route_families);
+        Self {
+            family_runtime,
+            route_families: route_families.to_vec(),
+            active,
+            config,
+        }
+    }
+
+    fn spawn_family_runtime(
+        config: KvDomainConfig,
+        active: Arc<AtomicBool>,
+        route_families: &[RouteFamily],
+    ) -> crate::runtime::FamilyActorPoolRuntime<KvDomainCommand> {
+        let pool = crate::runtime::FamilyActorPool::new(route_families)
+            .expect("validated KV family actor pool configuration");
+        crate::runtime::FamilyActorPoolRuntime::spawn_with_family_failed_metric(
+            pool,
+            active,
+            move |_family| KvFamilyState::new(&config),
+            |state, _, _, command| KvFamilyRuntime { core: state }.receive(command),
+            crate::domains::kv::metrics::METRIC_FAMILY_FAILED_CLOSED_TOTAL,
+        )
+    }
+
+    fn rebuild_family_runtime(&mut self) {
+        self.family_runtime.stop();
+        self.active = Arc::new(AtomicBool::new(true));
+        self.family_runtime = Self::spawn_family_runtime(
+            self.config.clone(),
+            self.active.clone(),
+            &self.route_families,
+        );
+    }
+
+    pub(super) fn try_send(
+        &self,
+        family: RouteFamily,
+        lane: crate::runtime::FamilyActorLane,
+        command: KvDomainCommand,
+    ) -> Result<(), crate::runtime::DeliveryError> {
+        self.family_runtime
+            .try_enqueue(family, lane, command)
+            .map_err(crate::runtime::family_actor_enqueue_error_to_delivery_error)
+    }
+
+    #[must_use]
+    #[cfg(test)]
+    pub fn with_sync_write_policy(self, write_policy: crate::domains::WritePolicy) -> Self {
+        let buffered = if matches!(
+            write_policy,
+            crate::domains::WritePolicy::CloudAsync | crate::domains::WritePolicy::CloudStrict
+        ) {
+            crate::domains::WritePolicy::CloudAsync
+        } else {
+            crate::domains::WritePolicy::Buffered
+        };
+        self.with_write_policies(write_policy, buffered)
+    }
+
+    #[must_use]
+    pub fn with_write_policies(
+        mut self,
+        sync_write_policy: crate::domains::WritePolicy,
+        buffered_write_policy: crate::domains::WritePolicy,
+    ) -> Self {
+        self.config.sync_write_policy = sync_write_policy;
+        self.config.buffered_write_policy = buffered_write_policy;
+        self.rebuild_family_runtime();
         self
     }
 
     #[must_use]
-    /// Configure idle transaction expiry before registering or sharing this sink.
-    ///
-    /// This consuming method rebuilds the sink's private managed actor.
     pub fn with_idle_transaction_ttl(mut self, ttl: std::time::Duration) -> Self {
-        self.actor.stop();
-        self.state_for_builder().core.idle_transaction_ttl = ttl;
-        self.rebuild_actor();
+        self.config.idle_transaction_ttl = ttl;
+        self.rebuild_family_runtime();
         self
     }
 
     #[must_use]
-    /// Configure the KV metrics collector before registering or sharing this sink.
-    ///
-    /// This consuming method rebuilds the sink's private managed actor.
     pub fn with_metrics(
         mut self,
         collector: crate::observability::metrics::MetricsCollector,
     ) -> Self {
-        self.actor.stop();
-        let state = self.state_for_builder();
-        state.core.metrics = Some(crate::domains::kv::metrics::KvMetrics::new(collector));
-        state.runtime().refresh_metrics_gauges();
-        self.rebuild_actor();
+        self.config.metrics = Some(crate::domains::kv::metrics::KvMetrics::new(collector));
+        self.rebuild_family_runtime();
         self
     }
 
     pub fn stop(&self) {
-        self.state.active.store(false, Ordering::Relaxed);
-        self.actor.stop();
+        self.active.store(false, Ordering::Relaxed);
+        self.family_runtime.stop();
     }
 
-    pub(crate) fn actor_health_snapshot(&self) -> crate::runtime::ManagedActorHealthSnapshot {
-        self.actor.health_snapshot()
+    pub(crate) fn family_health_snapshot(
+        &self,
+    ) -> crate::runtime::family_actor_pool::FamilyActorPoolHealthSnapshot {
+        self.family_runtime.health_snapshot()
     }
 
     #[cfg(test)]
     pub(super) fn is_actor_running(&self) -> bool {
-        self.actor.is_running()
+        self.family_runtime.is_running()
     }
 
     #[cfg(test)]
-    /// Mark the mailbox actor permanently failed without delivering a panic.
     pub(crate) fn mark_actor_permanently_failed_for_tests(&self) {
-        self.actor.mark_permanently_failed_for_tests();
+        self.family_runtime.fail_closed();
     }
 
-    /// Trigger the mailbox actor's fail-closed panic path.
     pub(crate) fn panic_actor_for_failpoint(&self) {
-        let _ = self
-            .actor
-            .try_send_high_priority(KvDomainCommand::PanicForFailpoint);
+        for family in &self.route_families {
+            let _ = self.try_send(
+                *family,
+                crate::runtime::FamilyActorLane::Control,
+                KvDomainCommand::PanicForFailpoint,
+            );
+        }
     }
 }

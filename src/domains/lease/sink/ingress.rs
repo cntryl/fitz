@@ -1,10 +1,10 @@
 //! Envelope ingress: validate an inbound envelope, parse it into a Lease
 //! request, and dispatch to the subscriptions/acquire/response layers.
 
-use super::model::{DeliveryError, LeaseAcquireRequest, LeaseDomainRuntime};
+use super::model::{LeaseAcquireRequest, LeaseFamilyRuntime};
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
-use crate::runtime::Envelope;
+use crate::runtime::{DeliveryError, Envelope};
 
 pub(super) enum LeaseRequestView<'a> {
     Borrowed(&'a crate::domains::lease::LeaseClientRequest),
@@ -30,8 +30,8 @@ impl LeaseRequestView<'_> {
     }
 }
 
-impl LeaseDomainRuntime<'_> {
-    pub(super) fn deliver_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {
+impl LeaseFamilyRuntime<'_> {
+    pub(super) fn deliver_envelope(&mut self, envelope: &Envelope) -> Result<(), DeliveryError> {
         if self.handle_cleanup_envelope(envelope) {
             return Ok(());
         }
@@ -100,7 +100,7 @@ impl LeaseDomainRuntime<'_> {
     }
 
     fn handle_prepared_request(
-        &self,
+        &mut self,
         envelope: &Envelope,
         request: &crate::domains::lease::protocol::PreparedLeaseClientRequest,
     ) {
@@ -124,11 +124,11 @@ impl LeaseDomainRuntime<'_> {
         self.handle_prepared_operation_frame(envelope, meta, request_started, operation);
     }
 
-    fn ensure_active(&self) -> Result<(), DeliveryError> {
+    fn ensure_active(&mut self) -> Result<(), DeliveryError> {
         crate::runtime::ingress_support::ensure_actor_active(self.active)
     }
 
-    fn handle_domain_publish_envelope(&self, envelope: &Envelope) -> bool {
+    fn handle_domain_publish_envelope(&mut self, envelope: &Envelope) -> bool {
         if let Some(event) = envelope.payload::<crate::runtime::DomainPublishEvent>() {
             if *envelope.destination().family() != event.family_id {
                 crate::observability::counter_inc("fitz_lease_publish_family_mismatch_total");
@@ -161,7 +161,7 @@ impl LeaseDomainRuntime<'_> {
         }
     }
 
-    fn record_request_start(&self) -> Option<std::time::Instant> {
+    fn record_request_start(&mut self) -> Option<std::time::Instant> {
         self.core
             .metrics
             .as_ref()
@@ -169,7 +169,7 @@ impl LeaseDomainRuntime<'_> {
     }
 
     fn parse_request_frame<'a>(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         frame: &'a Result<crate::domains::lease::protocol::LeaseClientFrame, String>,
@@ -196,7 +196,7 @@ impl LeaseDomainRuntime<'_> {
     }
 
     fn parse_prepared_request_frame<'a>(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         frame: &'a Result<crate::domains::lease::protocol::PreparedLeaseOperation, String>,
@@ -223,7 +223,7 @@ impl LeaseDomainRuntime<'_> {
     }
 
     fn handle_actor_operation_frame(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         request_started: Option<std::time::Instant>,
@@ -280,7 +280,7 @@ impl LeaseDomainRuntime<'_> {
     }
 
     fn dispatch_actor_operation(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         lease_msg: &crate::domains::lease::protocol::LeaseMessage,
@@ -364,7 +364,7 @@ impl LeaseDomainRuntime<'_> {
     }
 
     fn handle_prepared_operation_frame(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         request_started: Option<std::time::Instant>,

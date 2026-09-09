@@ -1,16 +1,16 @@
 //! Envelope intake: cleanup/request extraction, frame parsing, and operation
 //! dispatch entry point.
 
+use super::model::{PendingQueueReserve, QueueFamilyState};
 #[cfg(test)]
-use super::model::FrameContext;
-use super::model::{
-    DeliveryError, Duration, Envelope, Instant, PendingQueueReserve, QueueClientFrame,
-    QueueClientRequest, QueueDomainCore,
-};
+use crate::dispatch::protocol::frame_context::FrameContext;
+use crate::domains::queue::{QueueClientFrame, QueueClientRequest};
 use crate::runtime::routing::RouteFamily;
+use crate::runtime::{DeliveryError, Envelope};
+use std::time::{Duration, Instant};
 
-impl QueueDomainCore {
-    pub(super) fn deliver_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {
+impl QueueFamilyState {
+    pub(super) fn deliver_envelope(&mut self, envelope: &Envelope) -> Result<(), DeliveryError> {
         if self.handle_cleanup_envelope(envelope) {
             return Ok(());
         }
@@ -86,8 +86,8 @@ impl QueueDomainCore {
         }
     }
 
-    fn handle_cleanup_envelope(&self, envelope: &Envelope) -> bool {
-        // `QueueDomainCore::cleanup_session` runs inline rather than through an
+    fn handle_cleanup_envelope(&mut self, envelope: &Envelope) -> bool {
+        // `QueueFamilyState::cleanup_session` runs inline rather than through an
         // actor command, so there is no reply deadline to surface here.
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
             // Mark first so an older normal-lane request that cleanup jumped
@@ -102,7 +102,7 @@ impl QueueDomainCore {
         false
     }
 
-    fn ensure_active(&self) -> Result<(), DeliveryError> {
+    fn ensure_active(&mut self) -> Result<(), DeliveryError> {
         crate::runtime::ingress_support::ensure_actor_active(&self.active)
     }
 
@@ -126,14 +126,14 @@ impl QueueDomainCore {
         Err(DeliveryError::ActorStopped)
     }
 
-    fn record_request_start(&self) -> Option<Instant> {
+    fn record_request_start(&mut self) -> Option<Instant> {
         self.metrics
             .as_ref()
             .map(crate::domains::queue::QueueMetrics::record_request_start)
     }
 
     fn parse_request_frame(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         frame: Result<QueueClientFrame, String>,
@@ -163,7 +163,7 @@ impl QueueDomainCore {
     }
 
     fn handle_actor_operation_frame(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         request_started: Option<Instant>,
@@ -229,7 +229,7 @@ impl QueueDomainCore {
                     let deadline = Instant::now()
                         .checked_add(Duration::from_secs(wait_seconds))
                         .unwrap_or_else(Instant::now);
-                    self.pending_reserves.lock().push_back(PendingQueueReserve {
+                    self.pending_reserves.push_back(PendingQueueReserve {
                         envelope: envelope.clone_for_deferred_reply(),
                         meta,
                         request_started,

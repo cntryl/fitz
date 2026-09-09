@@ -1,7 +1,7 @@
 //! Transaction lookup, activity tracking, and operation-scope validation.
 
 use super::{ActiveKvTx, KvActor};
-use crate::domains::kv::{KvError, KvResourceScope, KvResponse};
+use crate::domains::kv::{KvError, KvResourceScope, KvResponse, TxMode};
 use std::time::Instant;
 
 impl KvActor {
@@ -41,6 +41,15 @@ impl KvActor {
                     expected: format!("{}/{}", active.scope.area, active.scope.resource),
                     actual: format!("{}/{}", scope.area, scope.resource),
                 },
+            });
+        }
+        Ok(())
+    }
+
+    pub(super) fn ensure_writable(active: &ActiveKvTx) -> Result<(), KvResponse> {
+        if active.mode == TxMode::ReadOnly {
+            return Err(KvResponse::Error {
+                error: KvError::ReadOnlyWrite,
             });
         }
         Ok(())

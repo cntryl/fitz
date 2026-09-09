@@ -1,9 +1,10 @@
-use super::super::model::{
-    usize_to_u32_saturating, usize_to_u64_saturating, PayloadEncoder, StreamClientResponseBody,
-    StreamDomainCore, StreamFilteredReason, StreamMetadata, StreamReadItem, StreamRecord,
+use super::super::model::{usize_to_u32_saturating, usize_to_u64_saturating, StreamFamilyState};
+use crate::dispatch::protocol::payload_codec::PayloadEncoder;
+use crate::domains::stream::{
+    StreamClientResponseBody, StreamFilteredReason, StreamMetadata, StreamReadItem, StreamRecord,
 };
 
-impl StreamDomainCore {
+impl StreamFamilyState {
     pub(in crate::domains::stream::sink) fn encode_optional_bytes(
         encoder: &mut PayloadEncoder,
         value: Option<&bytes::Bytes>,

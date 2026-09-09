@@ -1,31 +1,39 @@
-//! Mailbox-lane routing and the domain actor's message loop.
+//! Mailbox-lane routing and the family runtime's command loop.
 
-use super::model::{LeaseDomainActor, LeaseDomainCommand, LeaseDomainSink, MailboxSink};
-use crate::runtime::{Actor, Context};
-use crate::runtime::{DeliveryError, Envelope};
+use super::model::{LeaseDomain, LeaseDomainCommand, LeaseFamilyRuntime};
+use crate::runtime::{DeliveryError, Envelope, MailboxSink};
 
-impl MailboxSink for LeaseDomainSink {
+impl MailboxSink for LeaseDomain {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            return self.cleanup_session(cleanup.session_id);
+            return self
+                .cleanup_family_session(*envelope.destination().family(), cleanup.session_id);
         }
-        self.actor.try_send(LeaseDomainCommand::Deliver(envelope))
+        let family = *envelope.destination().family();
+        self.enqueue(
+            family,
+            crate::runtime::FamilyActorLane::Normal,
+            LeaseDomainCommand::Deliver(envelope),
+        )
     }
 
     fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
-            return self.cleanup_session(cleanup.session_id);
+            return self
+                .cleanup_family_session(*envelope.destination().family(), cleanup.session_id);
         }
-        self.actor
-            .try_send_high_priority(LeaseDomainCommand::Deliver(envelope))
+        let family = *envelope.destination().family();
+        self.enqueue(
+            family,
+            crate::runtime::FamilyActorLane::Control,
+            LeaseDomainCommand::Deliver(envelope),
+        )
     }
 }
 
-impl Actor for LeaseDomainActor {
-    type Message = LeaseDomainCommand;
-
-    fn receive(&mut self, msg: Self::Message, _ctx: &mut Context<Self>) {
-        let runtime = self.state.runtime();
+impl LeaseFamilyRuntime<'_> {
+    pub(super) fn receive(&mut self, msg: LeaseDomainCommand) {
+        let runtime = self;
         match msg {
             LeaseDomainCommand::Deliver(envelope) => {
                 if let Err(error) = runtime.deliver_envelope(&envelope) {
@@ -74,7 +82,7 @@ impl Actor for LeaseDomainActor {
             }
             #[cfg(test)]
             LeaseDomainCommand::ExpireLeaseForTests(key, reply) => {
-                let expired = if let Some(lease) = runtime.core.leases.lock().get_mut(&key) {
+                let expired = if let Some(lease) = runtime.core.leases.get_mut(&key) {
                     lease.expiry = std::time::Instant::now()
                         .checked_sub(std::time::Duration::from_millis(1))
                         .expect("past instant");
@@ -107,6 +115,16 @@ impl Actor for LeaseDomainActor {
             LeaseDomainCommand::BlockForTests(entered, release) => {
                 let _ = entered.send(());
                 let _ = release.recv();
+            }
+            #[cfg(test)]
+            LeaseDomainCommand::InspectForTests(inspect, reply) => {
+                inspect(runtime.core);
+                let _ = reply.send(());
+            }
+            #[cfg(test)]
+            LeaseDomainCommand::SweepListSnapshotsForTests(reply) => {
+                runtime.sweep_idle_list_snapshots();
+                let _ = reply.send(());
             }
         }
     }

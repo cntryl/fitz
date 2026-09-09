@@ -2,10 +2,10 @@
 //!
 //! # Architecture
 //!
-//! - **`NoticeDomainSink`** (`src/domains/notice/sink.rs`): Production facade and broker-local state
+//! - **`NoticeDomain`** (`src/domains/notice/sink.rs`): Production facade and broker-local state
 //! - **Mailbox adapter** (`src/domains/notice/sink/mailbox_sink_impl.rs`): Actor ingress
 //! - **Domain dispatch** (`src/domains/notice/sink/domain_sink_impl.rs`): Validation and response routing
-//! - **`NoticeDomainActor`** (`src/domains/notice/sink/actor_runtime.rs`): Managed production actor that owns broker-local subscription state for the current process
+//! - **Notice family runtime** (`src/domains/notice/sink/actor_runtime.rs`): family-affine production actors that own broker-local subscription state for the current process
 //! - Subscriptions are session-scoped and cleaned up on disconnect
 //!
 //! # Semantics
@@ -25,7 +25,7 @@
 
 pub mod metrics;
 pub mod protocol;
-pub mod sink;
+pub(crate) mod sink;
 
 pub use metrics::NoticeMetrics;
 pub use protocol::{

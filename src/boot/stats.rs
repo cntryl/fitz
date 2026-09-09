@@ -1,7 +1,7 @@
 //! Runtime statistics and observability
 
 use crate::api::runtime_ingress::RuntimeIngress;
-use crate::boot::domains::DomainHandles;
+use crate::boot::domains::BrokerDomains;
 use crate::runtime::Router;
 use parking_lot::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize};
@@ -133,8 +133,11 @@ pub struct Runtime {
     /// Live ingress handle for session visibility
     pub(crate) ingress: Arc<RwLock<Option<Arc<RuntimeIngress>>>>,
 
-    /// Domain sink handles for live admin stats
-    pub(crate) domains: Arc<RwLock<Option<Arc<DomainHandles>>>>,
+    /// Domain lifecycle and health handle retained for shutdown and failpoints.
+    pub(crate) domains: Arc<RwLock<Option<Arc<BrokerDomains>>>>,
+
+    /// Narrow, cloneable domain-specific admin ports.
+    pub(crate) domain_admins: Arc<RwLock<Option<crate::boot::domains::DomainAdminPorts>>>,
 
     /// Auth configuration used by admin/auth surfaces
     pub(crate) auth_config: Arc<RwLock<crate::auth::AuthConfig>>,

@@ -325,6 +325,43 @@ mod tests {
     use super::*;
 
     #[test]
+    fn should_preserve_notice_request_response_notification_and_error_golden_bytes() {
+        // Arrange
+        let route = "notice://r/a/x";
+        let request = [
+            0, 0, 0, 14, b'n', b'o', b't', b'i', b'c', b'e', b':', b'/', b'/', b'r', b'/', b'a',
+            b'/', b'x', 0, 0, 0, 2, b'h', b'i',
+        ];
+
+        // Act
+        let parsed_route = extract_auth_route(500, &request).expect("parse golden publish");
+        let response = encode_response(&NoticeResponse::SubscribeOk { subscription_id: 7 });
+        let notification = encode_notify(7, &Route::new(route), b"hi");
+        let error = encode_response(&NoticeResponse::Error(
+            "backend route cache unavailable".to_string(),
+        ));
+
+        // Assert
+        assert_eq!(parsed_route, Some(route));
+        assert_eq!(response, [0, 1, 0, 0, 0, 0, 0, 0, 0, 7]);
+        assert_eq!(
+            notification,
+            [
+                0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 14, b'n', b'o', b't', b'i', b'c', b'e', b':',
+                b'/', b'/', b'r', b'/', b'a', b'/', b'x', 0, 0, 0, 2, b'h', b'i',
+            ]
+        );
+        assert_eq!(
+            error,
+            [
+                1, 0, 0, 11, 189, 0, 0, 0, 31, b'b', b'a', b'c', b'k', b'e', b'n', b'd', b' ',
+                b'r', b'o', b'u', b't', b'e', b' ', b'c', b'a', b'c', b'h', b'e', b' ', b'u', b'n',
+                b'a', b'v', b'a', b'i', b'l', b'a', b'b', b'l', b'e',
+            ]
+        );
+    }
+
+    #[test]
     fn should_not_classify_notice_backend_message_from_incidental_route_word() {
         // Arrange
         let response = NoticeResponse::Error("backend route cache unavailable".to_string());

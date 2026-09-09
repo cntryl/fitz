@@ -6,14 +6,15 @@
 //! silently recreating a lease/waiter/subscription for a session that is
 //! already gone and will never be cleaned up again.
 
-use super::model::{Instant, LeaseDomainRuntime};
+use super::model::LeaseFamilyRuntime;
+use std::time::Instant;
 
-impl LeaseDomainRuntime<'_> {
-    pub(super) fn is_cleaned_up_session(&self, session_id: u64) -> bool {
-        self.core.cleaned_up_sessions.lock().contains(session_id)
+impl LeaseFamilyRuntime<'_> {
+    pub(super) fn is_cleaned_up_session(&mut self, session_id: u64) -> bool {
+        self.core.cleaned_up_sessions.contains(session_id)
     }
 
-    pub(super) fn handle_cleanup_envelope(&self, envelope: &crate::runtime::Envelope) -> bool {
+    pub(super) fn handle_cleanup_envelope(&mut self, envelope: &crate::runtime::Envelope) -> bool {
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
             self.cleanup_session(cleanup.session_id);
             return true;
@@ -23,15 +24,14 @@ impl LeaseDomainRuntime<'_> {
     }
 
     /// Drops session waiters before ownership and grants released keys in FIFO order.
-    pub fn cleanup_session(&self, session_id: u64) {
+    pub fn cleanup_session(&mut self, session_id: u64) {
         // Mark first so an older normal-lane request that cleanup jumped over
         // cannot recreate a lease, waiter, or subscription for this session.
-        self.core.cleaned_up_sessions.lock().mark(session_id);
+        self.core.cleaned_up_sessions.mark(session_id);
         let now = Instant::now();
         let tracked_keys = self
             .core
             .session_leases
-            .lock()
             .remove(&session_id)
             .map(|keys| keys.into_iter().collect::<Vec<_>>())
             .unwrap_or_default();
@@ -39,7 +39,7 @@ impl LeaseDomainRuntime<'_> {
 
         let mut removed_keys = Vec::with_capacity(tracked_keys.len());
         if !tracked_keys.is_empty() {
-            let mut leases = self.core.leases.lock();
+            let leases = &mut self.core.leases;
             for key in tracked_keys {
                 if leases.remove(&key).is_some() {
                     removed_keys.push(key);
@@ -69,11 +69,13 @@ impl LeaseDomainRuntime<'_> {
     }
 
     /// Removes every queued waiter owned by the session before empty queues are dropped.
-    pub(in crate::domains::lease::sink) fn remove_session_waiters(&self, session_id: u64) -> usize {
+    pub(in crate::domains::lease::sink) fn remove_session_waiters(
+        &mut self,
+        session_id: u64,
+    ) -> usize {
         let waiter_refs = self
             .core
             .session_waiters
-            .lock()
             .remove(&session_id)
             .map(|waiters| waiters.into_iter().collect::<Vec<_>>())
             .unwrap_or_default();
@@ -83,7 +85,7 @@ impl LeaseDomainRuntime<'_> {
         }
 
         let mut removed = 0;
-        let mut pending_acquires = self.core.pending_acquires.lock();
+        let pending_acquires = &mut self.core.pending_acquires;
         let mut empty_keys = Vec::new();
         for waiter_ref in waiter_refs {
             if let Some(queue) = pending_acquires.get_mut(&waiter_ref.key) {
@@ -107,8 +109,8 @@ impl LeaseDomainRuntime<'_> {
         removed
     }
 
-    pub(super) fn unsubscribe_all(&self, session_id: u64) -> usize {
-        let mut families = self.core.families.lock();
+    pub(super) fn unsubscribe_all(&mut self, session_id: u64) -> usize {
+        let families = &mut self.core.families;
         let mut removed = 0;
         for (family_id, state) in families.iter_mut() {
             removed += state.remove_session(

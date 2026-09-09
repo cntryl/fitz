@@ -14,6 +14,7 @@ pub const METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL: &str =
 pub const METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL: &str =
     "fitz_schedule_cancel_persistence_failures_total";
 pub const METRIC_RESPONSE_DROPS_TOTAL: &str = "fitz_schedule_response_drops_total";
+pub const METRIC_FAMILY_FAILED_CLOSED_TOTAL: &str = "fitz_schedule_family_failed_closed_total";
 
 #[derive(Clone)]
 pub struct ScheduleMetrics {

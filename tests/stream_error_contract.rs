@@ -51,8 +51,8 @@ fn should_not_classify_infrastructure_failure_by_incidental_conflict_wording() {
 fn should_encode_real_store_commit_conflict_with_domain_code() {
     // Arrange
     use fitz::domains::stream::protocol::StreamWriteMode;
-    use fitz::domains::stream::StreamActor;
     use fitz::runtime::routing::RouteFamily;
+    use fitz::testkit::domain_internals::stream::StreamActor;
     use std::sync::Arc;
     let store = Arc::new(fitz::testkit::create_test_store());
     let make_actor = || {

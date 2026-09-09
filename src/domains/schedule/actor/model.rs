@@ -1,30 +1,15 @@
-pub(super) use crate::domains::schedule::metrics::{
-    METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL, METRIC_CREATE_PERSISTENCE_FAILURES_TOTAL,
-    METRIC_UPSERT_PERSISTENCE_FAILURES_TOTAL,
+use crate::domains::schedule::protocol::{
+    Clock, ConcreteScheduleRoute, CronSchedule, ScheduleDef, ScheduleDeliveryMode,
+    ScheduleListEntry,
 };
-pub(super) use crate::domains::schedule::protocol::{
-    epoch_ms_to_instant_with_reference, instant_to_epoch_ms_with_reference,
-    parse_concrete_schedule_route, Clock, ConcreteScheduleRoute, CronSchedule, ScheduleCreateEntry,
-    ScheduleDef, ScheduleDeliveryMode, ScheduleFailure, ScheduleFailureCategory, ScheduleListEntry,
-    ScheduleMessage, ScheduleResponse, SystemClock,
-};
-pub(super) use crate::domains::schedule::store::{
-    PersistedPendingFireClaim, PersistedSchedule, ScheduleAckDefinition, ScheduleFireClaim,
-    ScheduleInsert, SchedulePendingFireClaimAck, SchedulePersistence, SchedulePersistenceError,
-    ScheduleStore,
-};
-#[cfg(test)]
-pub(super) use crate::prelude::Actor;
-#[cfg(test)]
-pub(super) use crate::runtime::actor::Context;
-pub(super) use crate::runtime::routing::RouteFamily;
-pub(super) use bytes::Bytes;
-pub(super) use rustc_hash::FxBuildHasher;
-pub(super) use std::cmp::Reverse;
-pub(super) use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet};
-pub(super) use std::sync::Arc;
-pub(super) use std::time::{Duration, Instant};
-pub(super) use tracing::{info, warn};
+use crate::domains::schedule::store::ScheduleStore;
+use crate::runtime::routing::RouteFamily;
+use bytes::Bytes;
+use rustc_hash::FxBuildHasher;
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet};
+use std::sync::Arc;
+use std::time::Instant;
 
 pub(super) type FastMap<K, V> = HashMap<K, V, FxBuildHasher>;
 pub(super) type FastSet<K> = HashSet<K, FxBuildHasher>;
@@ -78,7 +63,7 @@ pub struct ScheduleActor {
     /// Cached full LIST snapshot reused by the common `offset=0, limit=0` path.
     pub(super) list_cache: Option<Arc<Vec<Arc<ScheduleListEntry>>>>,
     /// Write options for persistence.
-    pub(super) write_options: cntryl_midge::WriteOptions,
+    pub(super) write_policy: crate::domains::WritePolicy,
     /// Last scan time to deduplicate rapid scans.
     pub(super) last_scan_time: Instant,
     /// Minimum interval between scans (deduplication window).

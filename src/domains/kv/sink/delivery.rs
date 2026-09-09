@@ -1,16 +1,14 @@
 //! Request delivery, lifecycle rejection, parsing, and dispatch selection.
 
-use super::state::KvDomainRuntime;
+use super::state::KvFamilyRuntime;
 use crate::domains::kv::{KvClientFrame, KvClientRequest};
 use crate::runtime::{DeliveryError, Envelope};
-use std::sync::atomic::Ordering;
 
-impl KvDomainRuntime<'_> {
-    pub(super) fn deliver_envelope(&self, envelope: &Envelope) -> Result<(), DeliveryError> {
+impl KvFamilyRuntime<'_> {
+    pub(super) fn deliver_envelope(&mut self, envelope: &Envelope) -> Result<(), DeliveryError> {
         if self.handle_cleanup_envelope(envelope) {
             return Ok(());
         }
-        self.ensure_active()?;
         Self::log_delivery(envelope);
 
         let request = Self::extract_request(envelope)?;
@@ -57,14 +55,6 @@ impl KvDomainRuntime<'_> {
         }
     }
 
-    fn ensure_active(&self) -> Result<(), DeliveryError> {
-        if !self.active.load(Ordering::Relaxed) {
-            return Err(DeliveryError::ActorStopped);
-        }
-
-        Ok(())
-    }
-
     fn log_delivery(envelope: &Envelope) {
         tracing::debug!(
             domain = "kv",
@@ -99,7 +89,7 @@ impl KvDomainRuntime<'_> {
     }
 
     fn parse_request_frame(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         frame: Result<KvClientFrame, String>,

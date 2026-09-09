@@ -29,7 +29,7 @@ pub(super) fn init_test_runtime_jwks_cache() {
     AUTH_JWT_TEST_CACHE.call_once(|| {
         use base64::Engine;
 
-        let jwks_url = crate::auth::derive_jwks_url_from_issuer(TEST_ISSUER).unwrap();
+        let jwks_url = crate::api::jwks::derive_jwks_url_from_issuer(TEST_ISSUER).unwrap();
         let k_b64 =
             base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(TEST_RUNTIME_AUTH_SECRET);
         let jwks = serde_json::json!({
@@ -43,7 +43,7 @@ pub(super) fn init_test_runtime_jwks_cache() {
         })
         .to_string();
 
-        crate::auth::cache_jwks_from_json(&jwks_url, &jwks).unwrap();
+        crate::api::jwks::cache_jwks_from_json(&jwks_url, &jwks).unwrap();
     });
 }
 
@@ -338,7 +338,8 @@ impl TestServer {
                     vec![TEST_AUDIENCE.to_string()],
                     vec![crate::auth::JwksIssuerConfig {
                         issuer: TEST_ISSUER.to_string(),
-                        jwks_url: crate::auth::derive_jwks_url_from_issuer(TEST_ISSUER).unwrap(),
+                        jwks_url: crate::api::jwks::derive_jwks_url_from_issuer(TEST_ISSUER)
+                            .unwrap(),
                     }],
                 )
             } else {
@@ -386,7 +387,7 @@ impl TestServer {
         };
 
         // Step 1: Initialize storage
-        let store = crate::boot::storage::init(&boot_config).await?;
+        let store = crate::api::storage_runtime::init(&boot_config).await?;
 
         // Step 2: Initialize runtime
         let (router, ingress, ingress_config, runtime) = crate::boot::runtime::init(&boot_config)?;
@@ -397,19 +398,20 @@ impl TestServer {
         runtime.mark_storage_ready();
 
         // Step 3: Register domain actors
-        let schedule_write_options = boot_config.schedule_write_options();
-        let queue_write_options = boot_config.queue_write_options();
+        let schedule_write_policy = boot_config.schedule_write_policy();
+        let queue_write_policy = boot_config.queue_write_policy();
         let domains = crate::boot::domains::setup(
             &router,
             &store,
             &runtime.admin_read_model(),
             &crate::boot::domains::DomainSetupOptions {
                 route_families: boot_config.route_families.clone(),
-                schedule_write_options,
-                queue_write_options,
+                schedule_write_policy,
+                queue_write_policy,
+                queue_recovery_write_policy: boot_config.request_sync_write_policy(),
                 queue_fast_flush_interval: boot_config.queue_fast_flush_interval(),
-                request_sync_write_options: boot_config.request_sync_write_options(),
-                request_buffered_write_options: boot_config.request_buffered_write_options(),
+                request_sync_write_policy: boot_config.request_sync_write_policy(),
+                request_buffered_write_policy: boot_config.request_buffered_write_policy(),
                 rpc_request_timeout,
                 stream_storage_layout: boot_config.stream_storage_layout,
                 kv_idle_transaction_ttl: std::time::Duration::from_secs(

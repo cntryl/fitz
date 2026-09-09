@@ -7,39 +7,41 @@
 //! of silently recreating a subscription or pending reserve for a session
 //! that is already gone and will never be cleaned up again.
 
-use super::model::{Instant, QueueDomainCore};
+use super::model::QueueFamilyState;
+use std::time::Instant;
 
-impl QueueDomainCore {
-    pub(super) fn is_cleaned_up_session(&self, session_id: u64) -> bool {
-        self.cleaned_up_sessions.lock().contains(session_id)
+impl QueueFamilyState {
+    pub(super) fn is_cleaned_up_session(&mut self, session_id: u64) -> bool {
+        self.cleaned_up_sessions.contains(session_id)
     }
 
-    pub(super) fn mark_cleaned_up_session(&self, session_id: u64) {
-        self.cleaned_up_sessions.lock().mark(session_id);
+    pub(super) fn mark_cleaned_up_session(&mut self, session_id: u64) {
+        self.cleaned_up_sessions.mark(session_id);
     }
 
     /// Drop all live queue inflight entries owned by the disconnected session and return
     /// those accepted messages to the ready queue. Inflight ownership is
     /// broker-local runtime state only.
-    pub(in crate::domains::queue::sink) fn cleanup_session(&self, session_id: u64) {
+    pub(in crate::domains::queue::sink) fn cleanup_session(&mut self, session_id: u64) {
         self.pending_reserves
-            .lock()
             .retain(|pending| pending.meta.session_id != session_id);
         let mut released_any = false;
-        let mut notifications = Vec::new();
-        let mut actors = self.actors.lock();
-        for (key, warm_actor) in actors.iter_mut() {
-            let mut actor = warm_actor.actor.lock();
-            if actor.cleanup_session_inflight(session_id) > 0 {
+        let mut released_counts = Vec::new();
+        for (key, warm_actor) in &mut self.actors {
+            if warm_actor.actor.cleanup_session_inflight(session_id) > 0 {
                 released_any = true;
-                if let Some(notification) = self.record_ready_state(key, actor.live_counts()) {
-                    notifications.push((key.clone(), notification));
-                }
+                released_counts.push((key.clone(), warm_actor.actor.live_counts()));
             }
         }
-        drop(actors);
+        let notifications = released_counts
+            .into_iter()
+            .filter_map(|(key, counts)| {
+                self.record_ready_state(&key, counts)
+                    .map(|notification| (key, notification))
+            })
+            .collect::<Vec<_>>();
 
-        let mut families = self.families.lock();
+        let families = &mut self.families;
         for (family_id, state) in families.iter_mut() {
             state.remove_session(
                 crate::runtime::routing::RouteFamily::try_from(*family_id)
@@ -48,7 +50,7 @@ impl QueueDomainCore {
             );
         }
         families.retain(|_, state| !state.is_empty());
-        drop(families);
+        let _ = families;
 
         if released_any {
             self.mark_admin_snapshot_dirty();

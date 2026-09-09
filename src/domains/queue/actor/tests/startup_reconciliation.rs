@@ -60,16 +60,16 @@ fn should_reconcile_missing_queue_body_for_fast_policy_during_preflight() {
 
     // Act
     QueueActor::prepare_persisted_state_for_existing_families(
-        store.as_ref(),
-        cntryl_midge::WriteOptions::best_effort(),
-        cntryl_midge::WriteOptions::sync(),
+        store.clone(),
+        crate::domains::WritePolicy::BestEffort,
+        crate::domains::WritePolicy::Sync,
     )
     .expect("fast queue preflight should reconcile a missing body");
 
     // Assert
     assert!(read_queue_validation_row(store.as_ref(), &header_suffix).is_none());
     assert!(read_queue_validation_row(store.as_ref(), &index_meta_suffix).is_none());
-    QueueActor::validate_persisted_state_for_existing_families(store.as_ref())
+    QueueActor::validate_persisted_state_for_existing_families(store.clone())
         .expect("reconciled queue state should pass strict validation");
 }
 
@@ -85,16 +85,16 @@ fn should_reconcile_orphan_queue_body_for_fast_policy_during_preflight() {
 
     // Act
     QueueActor::prepare_persisted_state_for_existing_families(
-        store.as_ref(),
-        cntryl_midge::WriteOptions::best_effort(),
-        cntryl_midge::WriteOptions::sync(),
+        store.clone(),
+        crate::domains::WritePolicy::BestEffort,
+        crate::domains::WritePolicy::Sync,
     )
     .expect("fast queue preflight should reconcile an orphan body");
 
     // Assert
     assert!(read_queue_validation_row(store.as_ref(), &body_suffix).is_none());
     assert!(read_queue_validation_row(store.as_ref(), &ready_index_suffix).is_none());
-    QueueActor::validate_persisted_state_for_existing_families(store.as_ref())
+    QueueActor::validate_persisted_state_for_existing_families(store.clone())
         .expect("reconciled queue state should pass strict validation");
 }
 
@@ -139,9 +139,9 @@ fn should_reconcile_orphan_queue_body_with_background_cloud_recovery() {
 
     // Act
     let result = QueueActor::prepare_persisted_state_for_existing_families(
-        store.as_ref(),
-        cntryl_midge::WriteOptions::best_effort(),
-        cntryl_midge::WriteOptions::cloud_async(),
+        store.clone(),
+        crate::domains::WritePolicy::BestEffort,
+        crate::domains::WritePolicy::CloudAsync,
     );
 
     // Assert
@@ -158,9 +158,9 @@ fn should_reconcile_orphan_queue_body_with_background_cloud_recovery() {
 fn should_reject_partial_queue_rows_for_buffered_plus_strict_policies() {
     // Arrange
     let policies = [
-        cntryl_midge::WriteOptions::buffered(),
-        cntryl_midge::WriteOptions::sync(),
-        cntryl_midge::WriteOptions::cloud_strict(),
+        crate::domains::WritePolicy::Buffered,
+        crate::domains::WritePolicy::Sync,
+        crate::domains::WritePolicy::CloudStrict,
     ];
 
     // Act
@@ -178,9 +178,9 @@ fn should_reject_partial_queue_rows_for_buffered_plus_strict_policies() {
             )),
         );
         QueueActor::prepare_persisted_state_for_existing_families(
-            store.as_ref(),
+            store.clone(),
             policy,
-            cntryl_midge::WriteOptions::sync(),
+            crate::domains::WritePolicy::Sync,
         )
         .expect_err("durable queue policies should reject a missing body")
     });
@@ -209,9 +209,9 @@ fn should_require_durable_write_policy_for_fast_queue_reconciliation() {
 
     // Act
     let result = QueueActor::prepare_persisted_state_for_existing_families(
-        store.as_ref(),
-        cntryl_midge::WriteOptions::best_effort(),
-        cntryl_midge::WriteOptions::buffered(),
+        store.clone(),
+        crate::domains::WritePolicy::BestEffort,
+        crate::domains::WritePolicy::Buffered,
     );
 
     // Assert
@@ -240,9 +240,9 @@ fn should_leave_complete_split_queue_records_untouched() {
 
     // Act
     QueueActor::prepare_persisted_state_for_existing_families(
-        store.as_ref(),
-        cntryl_midge::WriteOptions::best_effort(),
-        cntryl_midge::WriteOptions::sync(),
+        store.clone(),
+        crate::domains::WritePolicy::BestEffort,
+        crate::domains::WritePolicy::Sync,
     )
     .expect("complete queue records should pass fast preflight");
 
@@ -277,7 +277,7 @@ fn should_preserve_queue_realm_isolation_given_split_record_recovery() {
     put_queue_validation_row_for_realm(store.as_ref(), "beta", &body_suffix, b"beta".to_vec());
 
     // Act
-    let result = QueueActor::validate_persisted_state_for_existing_families(store.as_ref());
+    let result = QueueActor::validate_persisted_state_for_existing_families(store.clone());
 
     // Assert
     assert!(result
@@ -289,7 +289,7 @@ fn should_preserve_queue_realm_isolation_given_split_record_recovery() {
 fn should_persist_fast_queue_reconciliation_across_restart() {
     // Arrange
     let temp_dir = tempfile::tempdir().expect("create queue recovery temp dir");
-    let mut store = cntryl_midge::Engine::open(
+    let store = cntryl_midge::Engine::open(
         cntryl_midge::OpenOptions::local(temp_dir.path())
             .build()
             .expect("build queue recovery store options"),
@@ -299,9 +299,10 @@ fn should_persist_fast_queue_reconciliation_across_restart() {
         .create_column_family("cf_1")
         .expect("create queue recovery column family");
     assert_eq!(family.id(), 1);
+    let store = Arc::new(store);
     let header_suffix = authoritative_queue_validation_suffix(QUEUE_KEY_FAMILY_HEADER, Some(1));
     put_queue_validation_row_for_realm(
-        &store,
+        store.as_ref(),
         "test",
         &header_suffix,
         QueueActor::encode_record_header(&QueueRecord::ready(
@@ -312,25 +313,27 @@ fn should_persist_fast_queue_reconciliation_across_restart() {
         )),
     );
     QueueActor::prepare_persisted_state_for_existing_families(
-        &store,
-        cntryl_midge::WriteOptions::best_effort(),
-        cntryl_midge::WriteOptions::sync(),
+        store.clone(),
+        crate::domains::WritePolicy::BestEffort,
+        crate::domains::WritePolicy::Sync,
     )
     .expect("reconcile fast queue state before restart");
-    store
-        .shutdown(std::time::Duration::from_secs(2))
-        .expect("shutdown queue recovery store");
+    crate::testkit::midge::shutdown_test_engine(store);
 
     // Act
-    let reopened = cntryl_midge::Engine::open(
-        cntryl_midge::OpenOptions::local(temp_dir.path())
-            .build()
-            .expect("build reopened queue recovery store options"),
-    )
-    .expect("reopen queue recovery store");
-    let result = QueueActor::validate_persisted_state_for_existing_families(&reopened);
+    let reopened = Arc::new(
+        cntryl_midge::Engine::open(
+            cntryl_midge::OpenOptions::local(temp_dir.path())
+                .build()
+                .expect("build reopened queue recovery store options"),
+        )
+        .expect("reopen queue recovery store"),
+    );
+    let result = QueueActor::validate_persisted_state_for_existing_families(reopened.clone());
 
     // Assert
     result.expect("durable reconciliation should survive restart");
-    assert!(read_queue_validation_row_for_realm(&reopened, "test", &header_suffix).is_none());
+    assert!(
+        read_queue_validation_row_for_realm(reopened.as_ref(), "test", &header_suffix).is_none()
+    );
 }

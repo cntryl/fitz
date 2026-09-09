@@ -132,10 +132,10 @@ impl QueueActor {
         &mut self,
         id: MessageId,
         inflight: &Inflight,
-    ) -> Option<cntryl_midge::Transaction> {
-        match self.store.begin_tx(
+    ) -> Option<super::recovery_store::QueueTransaction> {
+        match self.persistence.store.begin(
             self.queue_key.family.id(),
-            cntryl_midge::TransactionMode::ReadWrite,
+            super::recovery_store::QueueTransactionMode::ReadWrite,
         ) {
             Ok(txn) => Some(txn),
             Err(error) => {
@@ -157,7 +157,7 @@ impl QueueActor {
         id: MessageId,
         inflight: &Inflight,
         record: &QueueRecord,
-        mut txn: cntryl_midge::Transaction,
+        mut txn: super::recovery_store::QueueTransaction,
     ) -> bool {
         let write_result = self.persist_split_redelivery_attempt(id, record, &mut txn);
 
@@ -174,9 +174,11 @@ impl QueueActor {
         }
 
         let update_start = Instant::now();
-        if let Err(error) =
-            Self::commit_transaction(txn, self.commit_write_options, QueueCommit::Redelivery)
-        {
+        if let Err(error) = Self::commit_transaction(
+            txn,
+            self.persistence.write_options(),
+            QueueCommit::Redelivery,
+        ) {
             tracing::warn!(
                 queue = ?self.queue_key,
                 route_family = self.queue_key.family.as_u64(),
@@ -196,7 +198,7 @@ impl QueueActor {
         &self,
         id: MessageId,
         record: &QueueRecord,
-        txn: &mut cntryl_midge::Transaction,
+        txn: &mut super::recovery_store::QueueTransaction,
     ) -> Result<(), String> {
         let header_key = self.cached_header_key(id);
         match txn.get(&header_key) {

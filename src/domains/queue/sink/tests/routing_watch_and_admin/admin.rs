@@ -107,7 +107,7 @@ pub(super) fn should_register_queue_watch_given_watch_request() {
         store,
         router,
         admin_read_model,
-        cntryl_midge::WriteOptions::best_effort(),
+        crate::domains::WritePolicy::BestEffort,
     );
 
     // Act
@@ -156,7 +156,7 @@ pub(super) fn should_remove_queue_watch_given_unwatch_request() {
         store,
         router,
         admin_read_model,
-        cntryl_midge::WriteOptions::best_effort(),
+        crate::domains::WritePolicy::BestEffort,
     );
 
     sink.deliver(Envelope::from_route(
@@ -234,11 +234,11 @@ pub(super) fn should_cleanup_expired_queue_dedup_entries_during_runtime_sweep() 
     let dedup_store = Arc::new(crate::utils::idempotency::DedupStore::new(
         Duration::from_millis(1),
     ));
-    let sink = QueueDomainSink::new(
+    let sink = QueueDomain::new(
         store,
         router,
         admin_read_model,
-        cntryl_midge::WriteOptions::best_effort(),
+        crate::domains::WritePolicy::BestEffort,
         dedup_store.clone(),
     );
     let dedup_key = crate::utils::idempotency::DedupKey {
@@ -290,7 +290,7 @@ pub(super) fn should_refresh_queue_admin_snapshot_with_live_queue_state() {
         store,
         router,
         admin_read_model.clone(),
-        cntryl_midge::WriteOptions::buffered(),
+        crate::domains::WritePolicy::Buffered,
     );
 
     // Act

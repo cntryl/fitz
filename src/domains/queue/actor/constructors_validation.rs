@@ -5,6 +5,7 @@ use super::{
     RollingRateWindow, RouteFamily, SystemClock, VecDeque,
 };
 
+#[allow(private_bounds)]
 impl QueueActor {
     pub(in crate::domains::queue::actor) const READY_SHARDS: usize = 8;
     pub(in crate::domains::queue::actor) const ID_RESERVATION_BLOCK: u64 = 256;
@@ -22,17 +23,17 @@ impl QueueActor {
     pub fn new(
         family: RouteFamily,
         queue_key: QueueKey,
-        store: Arc<cntryl_midge::MidgeEngine>,
+        store: impl Into<super::recovery_store::QueueStore>,
         max_attempts: Option<u32>,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     ) -> Self {
-        Self::new_with_write_options(
+        Self::new_with_write_policy(
             family,
             queue_key,
             store,
             max_attempts,
             dedup_store,
-            cntryl_midge::WriteOptions::buffered(),
+            crate::domains::WritePolicy::Buffered,
         )
     }
 
@@ -41,21 +42,21 @@ impl QueueActor {
     /// # Panics
     ///
     /// Panics when persisted queue state cannot be recovered.
-    pub fn new_with_write_options(
+    pub fn new_with_write_policy(
         family: RouteFamily,
         queue_key: QueueKey,
-        store: Arc<cntryl_midge::MidgeEngine>,
+        store: impl Into<super::recovery_store::QueueStore>,
         max_attempts: Option<u32>,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
-        commit_write_options: cntryl_midge::WriteOptions,
+        commit_write_policy: crate::domains::WritePolicy,
     ) -> Self {
-        Self::try_new_with_write_options(
+        Self::try_new_with_write_policy(
             family,
             queue_key,
             store,
             max_attempts,
             dedup_store,
-            commit_write_options,
+            commit_write_policy,
         )
         .expect("recover queue actor from store")
     }
@@ -63,22 +64,22 @@ impl QueueActor {
     /// # Errors
     ///
     /// Returns an error when persisted queue state cannot be recovered.
-    pub fn try_new_with_write_options(
+    pub fn try_new_with_write_policy(
         family: RouteFamily,
         queue_key: QueueKey,
-        store: Arc<cntryl_midge::MidgeEngine>,
+        store: impl Into<super::recovery_store::QueueStore>,
         max_attempts: Option<u32>,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
-        commit_write_options: cntryl_midge::WriteOptions,
+        commit_write_policy: crate::domains::WritePolicy,
     ) -> Result<Self, String> {
-        Self::try_with_clock_and_write_options(
+        Self::try_with_clock_and_write_policy(
             family,
             queue_key,
             store,
             Box::new(SystemClock),
             max_attempts,
             dedup_store,
-            commit_write_options,
+            commit_write_policy,
         )
     }
 
@@ -86,19 +87,19 @@ impl QueueActor {
     pub fn with_clock(
         family: RouteFamily,
         queue_key: QueueKey,
-        store: Arc<cntryl_midge::MidgeEngine>,
+        store: impl Into<super::recovery_store::QueueStore>,
         clock: Box<dyn Clock>,
         max_attempts: Option<u32>,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
     ) -> Self {
-        Self::with_clock_and_write_options(
+        Self::with_clock_and_write_policy(
             family,
             queue_key,
             store,
             clock,
             max_attempts,
             dedup_store,
-            cntryl_midge::WriteOptions::buffered(),
+            crate::domains::WritePolicy::Buffered,
         )
     }
 
@@ -107,23 +108,23 @@ impl QueueActor {
     /// # Panics
     ///
     /// Panics when persisted queue state cannot be recovered.
-    pub fn with_clock_and_write_options(
+    pub fn with_clock_and_write_policy(
         family: RouteFamily,
         queue_key: QueueKey,
-        store: Arc<cntryl_midge::MidgeEngine>,
+        store: impl Into<super::recovery_store::QueueStore>,
         clock: Box<dyn Clock>,
         max_attempts: Option<u32>,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
-        commit_write_options: cntryl_midge::WriteOptions,
+        commit_write_policy: crate::domains::WritePolicy,
     ) -> Self {
-        Self::try_with_clock_and_write_options(
+        Self::try_with_clock_and_write_policy(
             family,
             queue_key,
             store,
             clock,
             max_attempts,
             dedup_store,
-            commit_write_options,
+            commit_write_policy,
         )
         .expect("recover queue actor from store")
     }
@@ -131,14 +132,14 @@ impl QueueActor {
     /// # Errors
     ///
     /// Returns an error when persisted queue state cannot be recovered.
-    pub fn try_with_clock_and_write_options(
+    pub fn try_with_clock_and_write_policy(
         family: RouteFamily,
         queue_key: QueueKey,
-        store: Arc<cntryl_midge::MidgeEngine>,
+        store: impl Into<super::recovery_store::QueueStore>,
         clock: Box<dyn Clock>,
         max_attempts: Option<u32>,
         dedup_store: Arc<crate::utils::idempotency::DedupStore>,
-        commit_write_options: cntryl_midge::WriteOptions,
+        commit_write_policy: crate::domains::WritePolicy,
     ) -> Result<Self, String> {
         if family != queue_key.family {
             return Err(format!(
@@ -151,14 +152,12 @@ impl QueueActor {
         let now = Instant::now();
 
         let mut actor = Self {
-            recovery_store: Arc::new(super::recovery_store::QueueRecoveryStore::new(
-                store.clone(),
-                queue_key.clone(),
-            )),
-            body_key_prefix: Self::body_key_prefix(&queue_key),
+            persistence: super::recovery_store::QueuePersistence::new(
+                store,
+                &queue_key,
+                commit_write_policy,
+            ),
             queue_key,
-            store,
-            commit_write_options,
             next_id: 1,
             next_ready_seq: 1,
             next_id_limit: 1,

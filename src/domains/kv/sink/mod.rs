@@ -17,11 +17,9 @@ mod test_support;
 mod transactions;
 mod write_policy;
 
-pub use admin::{
-    AdminKvCommittedPair, AdminKvPrefixScanResult, AdminKvRowsRequest, AdminKvRowsResult,
-};
+pub(crate) use admin::{AdminKvPrefixScanResult, AdminKvRowsRequest, AdminKvRowsResult};
 pub(super) use locks::KvResourceLockKey;
-pub use state::KvDomainSink;
+pub(crate) use state::KvDomain;
 
 #[cfg(test)]
 mod tests;

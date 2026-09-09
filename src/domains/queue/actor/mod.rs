@@ -75,7 +75,7 @@ std::thread_local! {
 }
 
 pub(crate) mod recovery;
-mod recovery_store;
+pub(crate) mod recovery_store;
 pub(crate) mod state;
 pub(crate) mod storage;
 pub(crate) mod timers;
@@ -546,19 +546,8 @@ pub struct QueueActor {
     /// Queue identity
     queue_key: QueueKey,
 
-    /// Shared storage-key cache and recovery persistence boundary.
-    recovery_store: Arc<recovery_store::QueueRecoveryStore>,
-
-    /// Cached Midge body-key prefix for this queue.
-    body_key_prefix: Vec<u8>,
-
-    /// Midge storage handle (for durable persistence)
-    store: Arc<cntryl_midge::MidgeEngine>,
-
-    /// Commit policy for queue mutations.
-    /// Durable stores use buffered commits; explicitly ephemeral stores can use
-    /// best-effort commits to avoid WAL work that cannot survive process exit.
-    commit_write_options: cntryl_midge::WriteOptions,
+    /// Queue persistence adapter, including engine-specific policy conversion.
+    persistence: recovery_store::QueuePersistence,
 
     /// Next message ID to allocate (monotonic counter)
     next_id: u64,

@@ -2,7 +2,6 @@ use super::model::{NoticeDeliveryTarget, NoticeDeliveryTargets};
 use crate::runtime::routing::{Route, RouteFamily};
 use crate::runtime::{DeliveryError, Envelope, RouteError, Router};
 use bytes::Bytes;
-use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -46,11 +45,10 @@ pub(super) fn spawn_notice_delivery_worker(
 }
 
 pub(super) fn notice_delivery_worker(
-    workers: &Mutex<HashMap<RouteFamily, crossbeam_channel::Sender<NoticeDeliveryJob>>>,
+    workers: &mut HashMap<RouteFamily, crossbeam_channel::Sender<NoticeDeliveryJob>>,
     router: &Arc<Router>,
     family: RouteFamily,
 ) -> Option<crossbeam_channel::Sender<NoticeDeliveryJob>> {
-    let mut workers = workers.lock();
     if let Some(worker) = workers.get(&family) {
         return Some(worker.clone());
     }

@@ -2,10 +2,10 @@
 
 use bytes::Bytes;
 use fitz::domains::stream::protocol::{StreamWriteMode, MAX_EVENT_SIZE};
-use fitz::domains::stream::store::{BatchLimits, StreamStore, StreamTTL};
-use fitz::domains::stream::StreamActor;
 use fitz::runtime::routing::RouteFamily;
 use fitz::testkit::create_test_db;
+use fitz::testkit::domain_internals::stream::StreamActor;
+use fitz::testkit::domain_internals::stream::{BatchLimits, StreamStore, StreamTTL};
 use std::sync::Arc;
 
 fn make_actor_with_store(

@@ -9,10 +9,11 @@
 use bytes::Bytes;
 use fitz::domains::schedule::protocol::CronSchedule;
 use fitz::domains::schedule::{
-    ScheduleActor, ScheduleCreateEntry, ScheduleFailureCategory, ScheduleMessage, ScheduleResponse,
+    ScheduleCreateEntry, ScheduleFailureCategory, ScheduleMessage, ScheduleResponse,
 };
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
 use fitz::testkit::create_test_engine_with_cfs;
+use fitz::testkit::domain_internals::schedule::{ScheduleActor, ScheduleStore};
 
 // ========== Helper ==========
 
@@ -20,8 +21,8 @@ fn make_schedule_actor() -> ScheduleActor {
     let store = create_test_engine_with_cfs(vec![1, 2, 3]);
     ScheduleActor::new(
         RouteFamily::new(1),
-        store,
-        cntryl_midge::WriteOptions::buffered(),
+        ScheduleStore::new(store),
+        fitz::domains::WritePolicy::Buffered,
     )
 }
 

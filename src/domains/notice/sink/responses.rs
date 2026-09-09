@@ -2,11 +2,11 @@
 
 #[cfg(test)]
 use super::FrameContext;
-use super::{Envelope, Instant, NoticeDomainCore};
+use super::{Envelope, Instant, NoticeFamilyState};
 
-impl NoticeDomainCore {
+impl NoticeFamilyState {
     pub(super) fn reject_with(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         reason: &str,
@@ -33,7 +33,7 @@ impl NoticeDomainCore {
     }
 
     pub(super) fn route_notice_response(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         response: &crate::domains::notice::NoticeResponse,

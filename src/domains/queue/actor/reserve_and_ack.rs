@@ -298,10 +298,11 @@ impl QueueActor {
 
         let index_plan = self.plan_index_mutation_for_unavailable_message(id);
         let mut txn = self
+            .persistence
             .store
-            .begin_tx(
+            .begin(
                 self.queue_key.family.id(),
-                cntryl_midge::TransactionMode::ReadWrite,
+                super::recovery_store::QueueTransactionMode::ReadWrite,
             )
             .map_err(|error| format!("Failed to begin ready diversion for {id}: {error:?}"))?;
         txn.put(
@@ -311,7 +312,7 @@ impl QueueActor {
         )
         .map_err(|error| format!("Failed to write diverted queue header for {id}: {error:?}"))?;
         self.write_index_mutation_plan(&mut txn, id, index_plan, Some(dead_lettered_at_ms))?;
-        txn.commit(self.commit_write_options)
+        txn.commit(self.persistence.write_options())
             .map_err(|error| format!("Failed to commit ready diversion for {id}: {error:?}"))?;
 
         let popped = self.pop_ready();
@@ -686,9 +687,9 @@ impl QueueActor {
         let header_key = self.cached_header_key(id);
         let body_key = self.cached_body_key(id);
 
-        match self.store.begin_tx(
+        match self.persistence.store.begin(
             self.queue_key.family.id(),
-            cntryl_midge::TransactionMode::ReadWrite,
+            super::recovery_store::QueueTransactionMode::ReadWrite,
         ) {
             Ok(mut txn) => {
                 if let Err(error) = Self::delete_record(&mut txn, header_key, body_key) {
@@ -703,17 +704,17 @@ impl QueueActor {
                 }
 
                 self.write_index_mutation_plan(&mut txn, id, index_plan, None)?;
-                Self::commit_transaction(txn, self.commit_write_options, QueueCommit::Ack)
+                Self::commit_transaction(txn, self.persistence.write_options(), QueueCommit::Ack)
                     .map_err(|error| {
-                        tracing::warn!(
-                            queue = ?self.queue_key,
-                            route_family = self.queue_key.family.as_u64(),
-                            message_id = id.as_u64(),
-                            error_reason = %error,
-                            "Failed to commit queue delete transaction"
-                        );
-                        format!("Failed to commit delete txn for message {id}: {error}")
-                    })?;
+                    tracing::warn!(
+                        queue = ?self.queue_key,
+                        route_family = self.queue_key.family.as_u64(),
+                        message_id = id.as_u64(),
+                        error_reason = %error,
+                        "Failed to commit queue delete transaction"
+                    );
+                    format!("Failed to commit delete txn for message {id}: {error}")
+                })?;
                 self.apply_index_mutation_plan(id, index_plan, None);
                 Ok(())
             }
@@ -725,10 +726,11 @@ impl QueueActor {
 
     fn commit_ack_batch_delete(&self, deletes: &[AckBatchDelete]) -> Result<(), String> {
         let mut txn = self
+            .persistence
             .store
-            .begin_tx(
+            .begin(
                 self.queue_key.family.id(),
-                cntryl_midge::TransactionMode::ReadWrite,
+                super::recovery_store::QueueTransactionMode::ReadWrite,
             )
             .map_err(|error| format!("Failed to begin queue ack batch tx: {error:?}"))?;
 
@@ -743,7 +745,7 @@ impl QueueActor {
             self.write_index_mutation_plan(&mut txn, delete.id, delete.index_plan, None)?;
         }
 
-        Self::commit_transaction(txn, self.commit_write_options, QueueCommit::Ack).map_err(
+        Self::commit_transaction(txn, self.persistence.write_options(), QueueCommit::Ack).map_err(
             |error| {
                 tracing::warn!(
                     queue = ?self.queue_key,
@@ -761,8 +763,8 @@ impl QueueActor {
         self.inflight.remove(&id);
         self.evict_cached_record(id);
         self.evict_cached_body(id);
-        self.complete_success_window
-            .record(self.clock.now_epoch_ms(), 1);
+        let now_epoch_ms = self.clock.now_epoch_ms();
+        self.complete_success_window.record(now_epoch_ms, 1);
 
         let response = QueueResponse::Acked;
         if let Some(bytes) = encode_cached_response(&response) {

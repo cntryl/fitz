@@ -1,14 +1,14 @@
 use super::*;
-use crate::boot::domains::DomainHandles;
-use crate::domains::kv::sink::KvDomainSink;
-use crate::domains::lease::sink::LeaseDomainSink;
-use crate::domains::notice::sink::NoticeDomainSink;
-use crate::domains::queue::sink::QueueDomainSink;
-use crate::domains::rpc::sink::RpcDomainSink;
+use crate::boot::domains::BrokerDomains;
+use crate::domains::kv::sink::KvDomain;
+use crate::domains::lease::sink::LeaseDomain;
+use crate::domains::notice::sink::NoticeDomain;
+use crate::domains::queue::sink::QueueDomain;
+use crate::domains::rpc::sink::RpcDomain;
 use crate::domains::schedule::protocol::parse_concrete_schedule_route;
-use crate::domains::schedule::sink::ScheduleDomainSink;
+use crate::domains::schedule::sink::ScheduleDomain;
 use crate::domains::schedule::store::{ScheduleFireClaim, ScheduleInsert, ScheduleStore};
-use crate::domains::stream::sink::StreamDomainSink;
+use crate::domains::stream::sink::StreamDomain;
 use crate::runtime::Router;
 use bytes::Bytes;
 use std::collections::BTreeSet;
@@ -55,7 +55,7 @@ fn runtime_with_preloaded_schedule_metrics() -> Arc<Runtime> {
                 last_fire_ms,
                 executions_total: 4,
             },
-            cntryl_midge::WriteOptions::buffered(),
+            crate::domains::WritePolicy::Buffered,
         )
         .expect("insert schedule");
     schedule_store
@@ -73,46 +73,44 @@ fn runtime_with_preloaded_schedule_metrics() -> Arc<Runtime> {
                 last_fire_ms,
                 executions_total: 4,
             }],
-            cntryl_midge::WriteOptions::buffered(),
+            crate::domains::WritePolicy::Buffered,
         )
         .expect("claim due schedule");
 
-    let domains = Arc::new(DomainHandles::new(
-        Arc::new(KvDomainSink::new(
+    let domains = Arc::new(BrokerDomains::new(
+        Arc::new(KvDomain::new(
             store.clone(),
             router.clone(),
             admin_read_model.clone(),
         )),
-        Arc::new(QueueDomainSink::new(
+        Arc::new(QueueDomain::new(
             store.clone(),
             router.clone(),
             admin_read_model.clone(),
-            cntryl_midge::WriteOptions::buffered(),
+            crate::domains::WritePolicy::Buffered,
             crate::utils::idempotency::default_dedup_store(),
         )),
-        Arc::new(NoticeDomainSink::new(
-            router.clone(),
-            admin_read_model.clone(),
-        )),
-        Arc::new(StreamDomainSink::new(
-            store.clone(),
-            router.clone(),
-            admin_read_model.clone(),
-            crate::domains::stream::sink::StreamStorageWriteOptions::local(),
-        )),
-        Arc::new(RpcDomainSink::new(router.clone(), admin_read_model.clone())),
-        Arc::new(LeaseDomainSink::new(
-            router.clone(),
-            admin_read_model.clone(),
-        )),
-        Arc::new(ScheduleDomainSink::new(
-            store,
+        Arc::new(NoticeDomain::new(router.clone(), admin_read_model.clone())),
+        Arc::new(
+            StreamDomain::try_new(
+                store.clone(),
+                router.clone(),
+                admin_read_model.clone(),
+                crate::domains::stream::sink::StreamStorageWriteOptions::local(),
+            )
+            .expect("create Stream metrics test sink"),
+        ),
+        Arc::new(RpcDomain::new(router.clone(), admin_read_model.clone())),
+        Arc::new(LeaseDomain::new(router.clone(), admin_read_model.clone())),
+        Arc::new(ScheduleDomain::new(
+            crate::domains::schedule::ScheduleStore::new(store),
             router,
             admin_read_model.clone(),
         )),
     ));
 
     domains
+        .admin_ports()
         .preload_schedule_families()
         .expect("preload schedules");
     runtime.attach_domains(domains);

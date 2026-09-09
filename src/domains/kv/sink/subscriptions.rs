@@ -1,15 +1,15 @@
 //! KV watch registration, removal, matching, and notification routing.
 
 use super::locks::KvResourceLockKey;
-use super::state::KvDomainRuntime;
+use super::state::KvFamilyRuntime;
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
 use crate::domains::kv::{KvError, KvResponse};
 use crate::runtime::{DeliveryError, Envelope};
 
-impl KvDomainRuntime<'_> {
+impl KvFamilyRuntime<'_> {
     pub(super) fn handle_subscription_frame(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         request_started: std::time::Instant,
@@ -25,7 +25,6 @@ impl KvDomainRuntime<'_> {
                 let exists = self
                     .core
                     .watch_registries
-                    .lock()
                     .get(&family_id.as_u64())
                     .and_then(|registry| {
                         registry.existing_subscription_id(*session_id, pattern.as_str())
@@ -71,12 +70,12 @@ impl KvDomainRuntime<'_> {
     }
 
     fn rollback_undeliverable_subscription(
-        &self,
+        &mut self,
         family_id: crate::runtime::routing::RouteFamily,
         session_id: u64,
         subscription_id: u64,
     ) {
-        let mut registries = self.core.watch_registries.lock();
+        let registries = &mut self.core.watch_registries;
         let remove_family = registries
             .get_mut(&family_id.as_u64())
             .is_some_and(|registry| {
@@ -86,12 +85,11 @@ impl KvDomainRuntime<'_> {
         if remove_family {
             registries.remove(&family_id.as_u64());
         }
-        drop(registries);
         self.refresh_metrics_gauges();
     }
 
     fn handle_kv_subscribe(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         family_id: crate::runtime::routing::RouteFamily,
@@ -105,7 +103,7 @@ impl KvDomainRuntime<'_> {
                 Err(response) => return response,
             };
             let subscription_id = {
-                let mut watch_registries = self.core.watch_registries.lock();
+                let watch_registries = &mut self.core.watch_registries;
                 let registry = watch_registries
                     .entry(family_id.as_u64())
                     .or_insert_with(|| {
@@ -127,7 +125,7 @@ impl KvDomainRuntime<'_> {
     }
 
     fn handle_kv_unsubscribe(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         family_id: crate::runtime::routing::RouteFamily,
@@ -139,7 +137,7 @@ impl KvDomainRuntime<'_> {
             if let Err(response) = Self::compile_kv_subscription_pattern(pattern) {
                 return response;
             }
-            let mut watch_registries = self.core.watch_registries.lock();
+            let watch_registries = &mut self.core.watch_registries;
             let remove_family =
                 if let Some(registry) = watch_registries.get_mut(&family_id.as_u64()) {
                     registry.unsubscribe(session_id, pattern.as_str());
@@ -224,7 +222,7 @@ impl KvDomainRuntime<'_> {
         mutation_count: u64,
     ) {
         let (route, watch_targets) = {
-            let watch_registries = self.core.watch_registries.lock();
+            let watch_registries = &self.core.watch_registries;
             let Some(registry) = watch_registries.get(&resource_key.family_id) else {
                 return;
             };

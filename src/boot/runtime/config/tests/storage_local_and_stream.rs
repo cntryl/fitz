@@ -81,11 +81,10 @@ fn should_use_local_sync_for_schedule_durability() {
     });
 
     // Act
-    let write_options = config.schedule_write_options();
+    let write_policy = config.schedule_write_policy();
 
     // Assert
-    assert!(write_options.is_sync());
-    assert!(!write_options.is_cloud_strict());
+    assert_eq!(write_policy, crate::domains::WritePolicy::Sync);
 }
 
 #[test]
@@ -94,11 +93,10 @@ fn should_keep_memory_schedule_mode_best_effort() {
     let config = BootConfig::new().with_storage_mode(StorageMode::Memory);
 
     // Act
-    let write_options = config.schedule_write_options();
+    let write_policy = config.schedule_write_policy();
 
     // Assert
-    assert!(!write_options.is_sync());
-    assert!(!write_options.is_cloud_strict());
+    assert_eq!(write_policy, crate::domains::WritePolicy::BestEffort);
 }
 
 #[test]

@@ -99,7 +99,7 @@ pub trait MailboxSink: Send + Sync {
     /// runtime or a domain sink explicitly marks as control-plane work, such as
     /// cleanup, live-count reads, admin snapshot refreshes, and test-only panic
     /// probes. Timer callbacks and supervision decisions are handled inside the
-    /// managed actor worker unless a concrete domain routes a message here.
+    /// family actor worker unless a concrete domain routes a message here.
     ///
     /// # Errors
     ///
@@ -258,6 +258,7 @@ impl RouteRegistry {
         self.sinks.remove(address);
     }
 
+    #[cfg(test)]
     fn unregister_sink(&self, address: &RouteAddress, sink: &Arc<dyn MailboxSink>) {
         self.sinks
             .remove_if(address, |_, current| Arc::ptr_eq(current, sink));
@@ -520,6 +521,7 @@ impl Router {
         self.registry.unregister(address);
     }
 
+    #[cfg(test)]
     pub(crate) fn unregister_sink(&self, address: &RouteAddress, sink: &Arc<dyn MailboxSink>) {
         self.registry.unregister_sink(address, sink);
     }
@@ -572,6 +574,19 @@ impl Router {
         };
         let _route_guard = route_span.as_ref().map(|span| span.enter());
 
+        Self::deliver_with_sink(dest, &sink, envelope, started_at)
+    }
+
+    /// Route only to an explicitly registered address, without domain
+    /// fallback. Internal family-owned publishers use this to avoid
+    /// synchronously re-entering their own domain sink.
+    pub(crate) fn route_exact(&self, envelope: Envelope) -> Result<(), RouteError> {
+        let dest = envelope.destination().clone();
+        let started_at = Self::route_match_started_at();
+        let sink = self
+            .registry
+            .get(&dest)
+            .ok_or_else(|| RouteError::RouteNotFound(dest.clone()))?;
         Self::deliver_with_sink(dest, &sink, envelope, started_at)
     }
 

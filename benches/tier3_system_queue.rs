@@ -11,10 +11,11 @@ use fitz::benchkit::{
     extract_single_tlv_field, register_session_counting_sink, register_session_queue_sink,
     route_frame, CountingSink, FrameQueueSink,
 };
-use fitz::domains::queue::{Clock, QueueActor, QueueKey, QueueResponse};
+use fitz::domains::queue::{Clock, QueueKey, QueueResponse};
 use fitz::protocol::frame::ChannelId;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{RouteAddress, RouteFamily};
+use fitz::testkit::domain_internals::queue::QueueActor;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -230,14 +231,14 @@ fn should_complete_capacity_mixed_workload(ctx: &mut StressContext) {
         resource: "queue".to_string(),
     };
     let store = create_write_heavy_bench_store();
-    let mut actor = QueueActor::with_clock_and_write_options(
+    let mut actor = QueueActor::with_clock_and_write_policy(
         RouteFamily::new(1),
         queue_key,
         store,
         Box::new(clock.clone()),
         Some(3),
         fitz::utils::idempotency::default_dedup_store(),
-        cntryl_midge::WriteOptions::best_effort(),
+        fitz::domains::WritePolicy::BestEffort,
     );
     let payload = Bytes::from_static(b"mixed workload message");
 

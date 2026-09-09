@@ -7,7 +7,7 @@
 //!   current broker process
 //! - **`StreamStore`** ([store]): durable authority for committed resource,
 //!   area, and realm ordering
-//! - **`StreamDomainSink`** ([sink]): enforces live session ownership before
+//! - **`StreamDomain`** ([sink]): enforces live session ownership before
 //!   forwarding append-session operations to the stream runtime
 //!
 //! # Ordering
@@ -37,20 +37,20 @@
 //! - `stream://acme/orders/*/read`
 //! - `stream://acme/*/*/read`
 
-pub mod actor;
+pub(crate) mod actor;
 pub mod constants;
 pub(crate) mod metrics;
 pub mod protocol;
 pub(crate) mod route_grammar;
-pub mod sink;
-pub mod storage;
-pub mod store;
+pub(crate) mod sink;
+pub(crate) mod storage;
+pub(crate) mod store;
 
 mod area_actor;
 mod realm_actor;
 mod watermark_notification;
 
-pub use actor::StreamActor;
+pub(crate) use actor::StreamActor;
 pub use constants::{
     INTERNAL_AREA_SEGMENT, INTERNAL_REALM_SEGMENT, MAX_POSTING_ENTRIES_EXAMINED,
     MAX_POSTING_FRAGMENTS_FETCHED, MAX_READ_ITEMS, MAX_WATERMARK_COORDINATORS, NOTICE_DEBOUNCE_MS,
@@ -62,4 +62,5 @@ pub use protocol::{
     StreamError, StreamFilterClause, StreamFilterSet, StreamFilteredReason, StreamMessage,
     StreamMetadata, StreamReadItem, StreamRecord, StreamSubscriptionFailure,
 };
-pub use store::{StreamMaintenanceResult, StreamStorageLayout, StreamStore};
+pub use store::StreamStorageLayout;
+pub(crate) use store::StreamStore;

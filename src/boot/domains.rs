@@ -1,105 +1,120 @@
 //! Domain actor setup and registration
 
 use crate::boot::runtime::BootResult;
-use crate::runtime::{DeliveryError, DomainKind, Envelope, MailboxSink, Router};
-use std::sync::atomic::{AtomicBool, Ordering};
+use crate::runtime::{DomainKind, MailboxSink, Router};
 use std::sync::Arc;
 use std::sync::Arc as StdArc;
 
+use crate::domains::kv::sink::KvDomain;
+use crate::domains::lease::sink::LeaseDomain;
+use crate::domains::notice::sink::NoticeDomain;
+use crate::domains::queue::sink::QueueDomain;
+use crate::domains::rpc::sink::RpcDomain;
+use crate::domains::schedule::sink::ScheduleDomain;
+use crate::domains::stream::sink::StreamDomain;
 use crate::runtime::routing::RouteFamily;
-#[cfg(test)]
-use crate::runtime::routing::{Route, RouteAddress};
-
-use crate::domains::kv::sink::KvDomainSink;
-use crate::domains::lease::sink::LeaseDomainSink;
-use crate::domains::notice::sink::NoticeDomainSink;
-use crate::domains::queue::sink::QueueDomainSink;
-use crate::domains::rpc::sink::RpcDomainSink;
-use crate::domains::schedule::sink::ScheduleDomainSink;
-use crate::domains::stream::sink::StreamDomainSink;
-
-/// Generic domain sink: Forwards envelopes to domain actors.
-pub struct DomainSink {
-    name: &'static str,
-    active: AtomicBool,
-}
-
-impl DomainSink {
-    #[must_use]
-    pub fn new(name: &'static str) -> Self {
-        Self {
-            name,
-            active: AtomicBool::new(true),
-        }
-    }
-
-    pub fn stop(&self) {
-        self.active.store(false, Ordering::Relaxed);
-    }
-}
-
-impl MailboxSink for DomainSink {
-    fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        if !self.active.load(Ordering::Relaxed) {
-            return Err(DeliveryError::ActorStopped);
-        }
-
-        tracing::debug!(
-            domain = self.name,
-            destination = ?envelope.destination(),
-            "Frame received by domain sink"
-        );
-
-        Ok(())
-    }
-
-    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        self.deliver(envelope)
-    }
-}
 
 #[derive(Clone)]
-pub struct DomainHandles {
-    kv: Arc<KvDomainSink>,
-    queue: Arc<QueueDomainSink>,
-    notice: Arc<NoticeDomainSink>,
-    stream: Arc<StreamDomainSink>,
-    rpc: Arc<RpcDomainSink>,
-    lease: Arc<LeaseDomainSink>,
-    schedule: Arc<ScheduleDomainSink>,
+pub(crate) struct BrokerDomains {
+    kv: Arc<KvDomain>,
+    queue: Arc<QueueDomain>,
+    notice: Arc<NoticeDomain>,
+    stream: Arc<StreamDomain>,
+    rpc: Arc<RpcDomain>,
+    lease: Arc<LeaseDomain>,
+    schedule: Arc<ScheduleDomain>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DomainHealthSnapshot {
-    pub domain: &'static str,
-    pub actor_running: bool,
-    pub restart_count: u64,
-    pub panic_count: u64,
-    pub restart_exhausted: bool,
+pub(crate) struct DomainHealthSnapshot {
+    pub(crate) domain: &'static str,
+    pub(crate) panic_count: u64,
+    pub(crate) healthy_families: Vec<RouteFamily>,
+    pub(crate) degraded_families: Vec<RouteFamily>,
+    pub(crate) failed_families: Vec<RouteFamily>,
 }
 
 impl DomainHealthSnapshot {
-    fn new(domain: DomainKind, actor: crate::runtime::ManagedActorHealthSnapshot) -> Self {
+    fn new(
+        domain: DomainKind,
+        health: crate::runtime::family_actor_pool::FamilyActorPoolHealthSnapshot,
+    ) -> Self {
         Self {
             domain: domain.as_str(),
-            actor_running: actor.running,
-            restart_count: actor.restart_count,
-            panic_count: actor.panic_count,
-            restart_exhausted: actor.restart_exhausted,
+            panic_count: health.panic_count,
+            healthy_families: health.healthy_families,
+            degraded_families: health.degraded_families,
+            failed_families: health.failed_families,
         }
+    }
+
+    #[must_use]
+    pub(crate) fn has_usable_family(&self) -> bool {
+        !self.healthy_families.is_empty()
     }
 }
 
-impl DomainHandles {
+impl BrokerDomains {
+    pub(crate) fn maintenance_jobs(&self) -> Vec<super::domain_interfaces::MaintenanceJob> {
+        let queue_active = self.queue.clone();
+        let queue_run = self.queue.clone();
+        let rpc_interval = self.rpc.clone();
+        let rpc_active = self.rpc.clone();
+        let rpc_run = self.rpc.clone();
+        let lease_active = self.lease.clone();
+        let lease_run = self.lease.clone();
+        let schedule_active = self.schedule.clone();
+        let schedule_run = self.schedule.clone();
+        let stream_active = self.stream.clone();
+        let stream_run = self.stream.clone();
+        vec![
+            super::domain_interfaces::MaintenanceJob::new(
+                "queue",
+                true,
+                || std::time::Duration::from_millis(50),
+                move || queue_active.is_active(),
+                move || queue_run.sweep_runtime_state(),
+            ),
+            super::domain_interfaces::MaintenanceJob::new(
+                "rpc",
+                false,
+                move || rpc_interval.timeout_sweep_interval(),
+                move || rpc_active.is_active(),
+                move || rpc_run.expire_timed_out_requests(),
+            ),
+            super::domain_interfaces::MaintenanceJob::new(
+                "lease",
+                true,
+                || std::time::Duration::from_millis(50),
+                move || lease_active.is_active(),
+                move || lease_run.sweep_expired_state(),
+            ),
+            super::domain_interfaces::MaintenanceJob::new(
+                "schedule",
+                true,
+                || std::time::Duration::from_millis(250),
+                move || schedule_active.is_active(),
+                move || schedule_run.scan_due_schedules(),
+            ),
+            super::domain_interfaces::MaintenanceJob::new(
+                "stream",
+                true,
+                || std::time::Duration::from_secs(1),
+                move || stream_active.is_active(),
+                move || stream_run.run_maintenance_slice(),
+            ),
+        ]
+    }
+
     #[must_use]
-    pub fn new(
-        kv: Arc<KvDomainSink>,
-        queue: Arc<QueueDomainSink>,
-        notice: Arc<NoticeDomainSink>,
-        stream: Arc<StreamDomainSink>,
-        rpc: Arc<RpcDomainSink>,
-        lease: Arc<LeaseDomainSink>,
-        schedule: Arc<ScheduleDomainSink>,
+    pub(crate) fn new(
+        kv: Arc<KvDomain>,
+        queue: Arc<QueueDomain>,
+        notice: Arc<NoticeDomain>,
+        stream: Arc<StreamDomain>,
+        rpc: Arc<RpcDomain>,
+        lease: Arc<LeaseDomain>,
+        schedule: Arc<ScheduleDomain>,
     ) -> Self {
         Self {
             kv,
@@ -112,7 +127,7 @@ impl DomainHandles {
         }
     }
 
-    pub fn stop(&self) {
+    pub(crate) fn stop(&self) {
         self.kv.stop();
         self.queue.stop();
         self.notice.stop();
@@ -123,23 +138,23 @@ impl DomainHandles {
     }
 
     #[must_use]
-    pub fn health_snapshots(&self) -> Vec<DomainHealthSnapshot> {
+    pub(crate) fn health_snapshots(&self) -> Vec<DomainHealthSnapshot> {
         vec![
-            DomainHealthSnapshot::new(DomainKind::Kv, self.kv.actor_health_snapshot()),
-            DomainHealthSnapshot::new(DomainKind::Queue, self.queue.actor_health_snapshot()),
-            DomainHealthSnapshot::new(DomainKind::Notice, self.notice.actor_health_snapshot()),
-            DomainHealthSnapshot::new(DomainKind::Stream, self.stream.actor_health_snapshot()),
-            DomainHealthSnapshot::new(DomainKind::Rpc, self.rpc.actor_health_snapshot()),
-            DomainHealthSnapshot::new(DomainKind::Lease, self.lease.actor_health_snapshot()),
-            DomainHealthSnapshot::new(DomainKind::Schedule, self.schedule.actor_health_snapshot()),
+            DomainHealthSnapshot::new(DomainKind::Kv, self.kv.family_health_snapshot()),
+            DomainHealthSnapshot::new(DomainKind::Queue, self.queue.family_health_snapshot()),
+            DomainHealthSnapshot::new(DomainKind::Notice, self.notice.family_health_snapshot()),
+            DomainHealthSnapshot::new(DomainKind::Stream, self.stream.family_health_snapshot()),
+            DomainHealthSnapshot::new(DomainKind::Rpc, self.rpc.family_health_snapshot()),
+            DomainHealthSnapshot::new(DomainKind::Lease, self.lease.family_health_snapshot()),
+            DomainHealthSnapshot::new(DomainKind::Schedule, self.schedule.family_health_snapshot()),
         ]
     }
 
     #[must_use]
-    pub fn has_permanently_failed_domain(&self) -> bool {
+    pub(crate) fn has_permanently_failed_domain(&self) -> bool {
         self.health_snapshots()
             .iter()
-            .any(|snapshot| snapshot.restart_exhausted)
+            .any(|snapshot| !snapshot.has_usable_family())
     }
 
     #[cfg(test)]
@@ -193,54 +208,43 @@ impl DomainHandles {
         self.rpc.panic_family_actor_for_failpoint(family);
     }
 
-    pub(crate) fn queue_is_active(&self) -> bool {
-        self.queue.is_active()
-    }
-
-    pub(crate) fn queue_sweep_runtime_state(&self) {
-        self.queue.sweep_runtime_state();
-    }
-
-    pub(crate) fn rpc_is_active(&self) -> bool {
-        self.rpc.is_active()
-    }
-
-    pub(crate) fn rpc_timeout_sweep_interval(&self) -> std::time::Duration {
-        self.rpc.timeout_sweep_interval()
-    }
-
-    pub(crate) fn rpc_expire_timed_out_requests(&self) {
-        self.rpc.expire_timed_out_requests();
-    }
-
-    pub(crate) fn lease_is_active(&self) -> bool {
-        self.lease.is_active()
-    }
-
-    pub(crate) fn lease_sweep_expired_state(&self) {
-        self.lease.sweep_expired_state();
-    }
-
-    pub(crate) fn schedule_is_active(&self) -> bool {
-        self.schedule.is_active()
-    }
-
-    pub(crate) fn schedule_scan_due_schedules(&self) {
-        self.schedule.scan_due_schedules();
-    }
-
-    pub(crate) fn stream_is_active(&self) -> bool {
-        self.stream.is_active()
-    }
-
-    pub(crate) fn stream_run_maintenance_slice(&self) {
-        self.stream.run_maintenance_slice();
-    }
-
     pub(crate) fn schedule_force_due_scan_for_tests(&self, ready_count: usize) {
         self.schedule.force_due_scan_for_tests(ready_count);
     }
 
+    pub(crate) fn admin_ports(&self) -> DomainAdminPorts {
+        DomainAdminPorts {
+            kv: self.kv.clone(),
+            queue: self.queue.clone(),
+            notice: self.notice.clone(),
+            stream: self.stream.clone(),
+            rpc: self.rpc.clone(),
+            lease: self.lease.clone(),
+            schedule: self.schedule.clone(),
+        }
+    }
+}
+
+pub(crate) type KvAdmin = Arc<KvDomain>;
+pub(crate) type QueueAdmin = Arc<QueueDomain>;
+pub(crate) type NoticeAdmin = Arc<NoticeDomain>;
+pub(crate) type StreamAdmin = Arc<StreamDomain>;
+pub(crate) type RpcAdmin = Arc<RpcDomain>;
+pub(crate) type LeaseAdmin = Arc<LeaseDomain>;
+pub(crate) type ScheduleAdmin = Arc<ScheduleDomain>;
+
+#[derive(Clone)]
+pub(crate) struct DomainAdminPorts {
+    kv: KvAdmin,
+    queue: QueueAdmin,
+    notice: NoticeAdmin,
+    stream: StreamAdmin,
+    rpc: RpcAdmin,
+    lease: LeaseAdmin,
+    schedule: ScheduleAdmin,
+}
+
+impl DomainAdminPorts {
     pub(crate) fn refresh_queue_admin_snapshot(&self) {
         self.queue.refresh_admin_snapshot_if_dirty();
     }
@@ -359,7 +363,7 @@ impl DomainHandles {
 
     pub(crate) fn stream_admin_read_resource_records(
         &self,
-        request: crate::domains::stream::sink::AdminStreamReadRequest<'_>,
+        request: &crate::domains::stream::sink::AdminStreamReadRequest<'_>,
     ) -> Result<
         (
             Vec<crate::domains::stream::protocol::StreamReadItem>,
@@ -441,28 +445,24 @@ impl DomainHandles {
         self.schedule.admin_pending_claims(family)
     }
 
-    /// Preload persisted schedule families through the schedule domain handle.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when persisted schedule state cannot be loaded into the
-    /// schedule actor projection.
-    pub fn preload_schedule_families(&self) -> Result<(), String> {
+    #[cfg(test)]
+    pub(crate) fn preload_schedule_families(&self) -> Result<(), String> {
         self.schedule.preload_persisted_families()
     }
 }
 
-pub struct DomainSetupOptions {
-    pub route_families: Vec<u32>,
-    pub schedule_write_options: cntryl_midge::WriteOptions,
-    pub queue_write_options: cntryl_midge::WriteOptions,
-    pub queue_fast_flush_interval: Option<std::time::Duration>,
-    pub request_sync_write_options: cntryl_midge::WriteOptions,
-    pub request_buffered_write_options: cntryl_midge::WriteOptions,
-    pub rpc_request_timeout: Option<std::time::Duration>,
-    pub stream_storage_layout: crate::domains::stream::StreamStorageLayout,
-    pub kv_idle_transaction_ttl: std::time::Duration,
-    pub schedule_preload_timeout: std::time::Duration,
+pub(crate) struct DomainSetupOptions {
+    pub(crate) route_families: Vec<u32>,
+    pub(crate) schedule_write_policy: crate::domains::WritePolicy,
+    pub(crate) queue_write_policy: crate::domains::WritePolicy,
+    pub(crate) queue_recovery_write_policy: crate::domains::WritePolicy,
+    pub(crate) queue_fast_flush_interval: Option<std::time::Duration>,
+    pub(crate) request_sync_write_policy: crate::domains::WritePolicy,
+    pub(crate) request_buffered_write_policy: crate::domains::WritePolicy,
+    pub(crate) rpc_request_timeout: Option<std::time::Duration>,
+    pub(crate) stream_storage_layout: crate::domains::stream::StreamStorageLayout,
+    pub(crate) kv_idle_transaction_ttl: std::time::Duration,
+    pub(crate) schedule_preload_timeout: std::time::Duration,
 }
 
 fn provisioned_route_families(options: &DomainSetupOptions) -> Vec<RouteFamily> {
@@ -481,17 +481,17 @@ fn create_stream_sink(
     options: &DomainSetupOptions,
     route_families: &[RouteFamily],
     metrics: &crate::observability::metrics::MetricsCollector,
-) -> BootResult<Arc<StreamDomainSink>> {
+) -> BootResult<Arc<StreamDomain>> {
     Ok(Arc::new(
-        StreamDomainSink::new_with_storage_layout_and_families(
+        StreamDomain::new_with_storage_layout_and_families(
             storage,
             router.clone(),
             admin_read_model.clone(),
             options.stream_storage_layout,
             Some(route_families),
             crate::domains::stream::sink::StreamStorageWriteOptions::new(
-                options.request_sync_write_options,
-                options.request_buffered_write_options,
+                options.request_sync_write_policy,
+                options.request_buffered_write_policy,
             ),
         )?
         .with_metrics(metrics.clone()),
@@ -504,15 +504,25 @@ fn create_kv_sink(
     admin_read_model: &Arc<crate::control::admin::read_model::AdminReadModel>,
     options: &DomainSetupOptions,
     metrics: &crate::observability::metrics::MetricsCollector,
-) -> Arc<KvDomainSink> {
+) -> Arc<KvDomain> {
     Arc::new(
-        KvDomainSink::new(store.clone(), router.clone(), admin_read_model.clone())
-            .with_idle_transaction_ttl(options.kv_idle_transaction_ttl)
-            .with_write_options(
-                options.request_sync_write_options,
-                options.request_buffered_write_options,
-            )
-            .with_metrics(metrics.clone()),
+        KvDomain::new_with_families(
+            store.clone(),
+            router.clone(),
+            admin_read_model.clone(),
+            &options
+                .route_families
+                .iter()
+                .copied()
+                .map(RouteFamily::new)
+                .collect::<Vec<_>>(),
+        )
+        .with_idle_transaction_ttl(options.kv_idle_transaction_ttl)
+        .with_write_policies(
+            options.request_sync_write_policy,
+            options.request_buffered_write_policy,
+        )
+        .with_metrics(metrics.clone()),
     )
 }
 
@@ -522,12 +532,12 @@ fn create_kv_sink(
 ///
 /// Returns an error when any domain sink initialization fails or when schedule
 /// preload cannot restore persisted schedule families.
-pub fn setup(
+pub(crate) fn setup(
     router: &StdArc<Router>,
     store: &StdArc<cntryl_midge::Engine>,
     admin_read_model: &Arc<crate::control::admin::read_model::AdminReadModel>,
     options: &DomainSetupOptions,
-) -> BootResult<Arc<DomainHandles>> {
+) -> BootResult<Arc<BrokerDomains>> {
     let metrics = (*crate::observability::metrics()).clone();
     let storage = crate::storage::FitzStorageEngine::new(store.clone());
     let route_families = provisioned_route_families(options);
@@ -539,12 +549,12 @@ pub fn setup(
     register_domain_sink(DomainKind::Kv, router, kv_sink.clone());
 
     let queue_sink = Arc::new(
-        QueueDomainSink::try_new_with_storage(
+        QueueDomain::try_new_with_storage(
             storage.clone(),
             router.clone(),
             admin_read_model.clone(),
-            options.queue_write_options,
-            options.request_sync_write_options,
+            options.queue_write_policy,
+            options.queue_recovery_write_policy,
             crate::utils::idempotency::default_dedup_store(),
         )?
         .with_fast_flush_interval(options.queue_fast_flush_interval)
@@ -553,7 +563,7 @@ pub fn setup(
     register_domain_sink(DomainKind::Queue, router, queue_sink.clone());
 
     let notice_sink = Arc::new(
-        NoticeDomainSink::new(router.clone(), admin_read_model.clone())
+        NoticeDomain::new_with_families(router.clone(), admin_read_model.clone(), &route_families)
             .with_metrics(metrics.clone()),
     );
     register_domain_sink(DomainKind::Notice, router, notice_sink.clone());
@@ -570,22 +580,27 @@ pub fn setup(
     register_domain_sink(DomainKind::Stream, router, stream_sink.clone());
 
     let rpc_sink = Arc::new(
-        RpcDomainSink::new_with_families(router.clone(), admin_read_model.clone(), &route_families)
+        RpcDomain::new_with_families(router.clone(), admin_read_model.clone(), &route_families)
             .with_request_timeout(rpc_request_timeout)
             .with_metrics(metrics.clone()),
     );
     register_domain_sink(DomainKind::Rpc, router, rpc_sink.clone());
 
     let lease_sink = Arc::new(
-        LeaseDomainSink::new(router.clone(), admin_read_model.clone())
+        LeaseDomain::new_with_families(router.clone(), admin_read_model.clone(), &route_families)
             .with_metrics(metrics.clone()),
     );
     register_domain_sink(DomainKind::Lease, router, lease_sink.clone());
 
     let schedule_sink = Arc::new(
-        ScheduleDomainSink::new_with_storage(storage, router.clone(), admin_read_model.clone())
-            .with_write_options(options.schedule_write_options)
-            .with_metrics(metrics.clone()),
+        ScheduleDomain::new_with_store_and_families(
+            crate::domains::schedule::ScheduleStore::new_with_storage(storage),
+            router.clone(),
+            admin_read_model.clone(),
+            &route_families,
+        )
+        .with_write_policy(options.schedule_write_policy)
+        .with_metrics(metrics.clone()),
     );
     register_domain_sink(DomainKind::Schedule, router, schedule_sink.clone());
     schedule_sink
@@ -596,7 +611,7 @@ pub fn setup(
         DomainKind::ALL.len()
     );
 
-    let handles = Arc::new(DomainHandles::new(
+    let handles = Arc::new(BrokerDomains::new(
         kv_sink,
         queue_sink,
         notice_sink,
@@ -621,6 +636,8 @@ where
 mod tests {
     use super::*;
     use crate::protocol::FrameContext;
+    use crate::runtime::routing::{Route, RouteAddress};
+    use crate::runtime::Envelope;
     use bytes::{BufMut, Bytes};
 
     fn usize_to_u32_saturating(value: usize) -> u32 {
@@ -630,11 +647,12 @@ mod tests {
     fn domain_setup_options() -> DomainSetupOptions {
         DomainSetupOptions {
             route_families: vec![1, 2, 3, 4, 5, 6, 7],
-            schedule_write_options: cntryl_midge::WriteOptions::best_effort(),
-            queue_write_options: cntryl_midge::WriteOptions::best_effort(),
+            schedule_write_policy: crate::domains::WritePolicy::BestEffort,
+            queue_write_policy: crate::domains::WritePolicy::BestEffort,
+            queue_recovery_write_policy: crate::domains::WritePolicy::Sync,
             queue_fast_flush_interval: Some(std::time::Duration::from_millis(100)),
-            request_sync_write_options: cntryl_midge::WriteOptions::sync(),
-            request_buffered_write_options: cntryl_midge::WriteOptions::buffered(),
+            request_sync_write_policy: crate::domains::WritePolicy::Sync,
+            request_buffered_write_policy: crate::domains::WritePolicy::Buffered,
             rpc_request_timeout: None,
             stream_storage_layout: crate::domains::stream::StreamStorageLayout::default(),
             kv_idle_transaction_ttl: std::time::Duration::from_mins(5),
@@ -644,15 +662,16 @@ mod tests {
     }
 
     fn cloud_domain_setup_options(
-        durable_write_options: cntryl_midge::WriteOptions,
+        durable_write_policy: crate::domains::WritePolicy,
     ) -> DomainSetupOptions {
         DomainSetupOptions {
             route_families: vec![1],
-            schedule_write_options: durable_write_options,
-            queue_write_options: durable_write_options,
+            schedule_write_policy: durable_write_policy,
+            queue_write_policy: durable_write_policy,
+            queue_recovery_write_policy: durable_write_policy,
             queue_fast_flush_interval: None,
-            request_sync_write_options: durable_write_options,
-            request_buffered_write_options: cntryl_midge::WriteOptions::cloud_async(),
+            request_sync_write_policy: durable_write_policy,
+            request_buffered_write_policy: crate::domains::WritePolicy::CloudAsync,
             rpc_request_timeout: None,
             stream_storage_layout: crate::domains::stream::StreamStorageLayout::default(),
             kv_idle_transaction_ttl: std::time::Duration::from_mins(5),
@@ -663,7 +682,7 @@ mod tests {
 
     fn assert_cloud_domain_bootstrap(
         prefix: &str,
-        durable_write_options: cntryl_midge::WriteOptions,
+        durable_write_policy: crate::domains::WritePolicy,
     ) {
         let tempdir = tempfile::TempDir::new().expect("create cloud simulation directory");
         let store = Arc::new(
@@ -678,23 +697,22 @@ mod tests {
             )
             .expect("open cloud-simulated engine"),
         );
-        crate::boot::storage::ensure_route_family(&store, RouteFamily::new(1))
+        crate::api::storage_runtime::ensure_route_family(&store, RouteFamily::new(1))
             .expect("provision route family");
         let router = Arc::new(Router::new());
         let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
 
-        let result = setup(
+        let domains = setup(
             &router,
             &store,
             &admin_read_model,
-            &cloud_domain_setup_options(durable_write_options),
-        );
+            &cloud_domain_setup_options(durable_write_policy),
+        )
+        .unwrap_or_else(|error| panic!("cloud domain bootstrap failed: {error}"));
 
-        if let Err(error) = result {
-            panic!("cloud domain bootstrap failed: {error}");
-        }
+        domains.stop();
         router.clear();
-        drop(result);
+        drop(domains);
         drop(router);
         crate::testkit::midge::shutdown_test_engine(store);
     }
@@ -717,13 +735,13 @@ mod tests {
             .unwrap_or_else(|| panic!("{label} frame"))
     }
 
-    fn wait_for_domain_failures(domains: &DomainHandles) {
+    fn wait_for_domain_failures(domains: &BrokerDomains) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
         while std::time::Instant::now() < deadline {
             if domains
                 .health_snapshots()
                 .iter()
-                .all(|snapshot| snapshot.restart_exhausted)
+                .all(|snapshot| !snapshot.has_usable_family())
             {
                 return;
             }
@@ -734,13 +752,13 @@ mod tests {
         panic!("domain actors did not fail closed: {snapshots:?}");
     }
 
-    fn wait_for_named_domain_failure(domains: &DomainHandles, domain: &str) {
+    fn wait_for_named_domain_failure(domains: &BrokerDomains, domain: &str) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
         while std::time::Instant::now() < deadline {
             if domains
                 .health_snapshots()
                 .iter()
-                .any(|snapshot| snapshot.domain == domain && snapshot.restart_exhausted)
+                .any(|snapshot| snapshot.domain == domain && !snapshot.has_usable_family())
             {
                 return;
             }
@@ -749,68 +767,6 @@ mod tests {
 
         let snapshots = domains.health_snapshots();
         panic!("{domain} actor did not fail closed: {snapshots:?}");
-    }
-
-    #[test]
-    fn should_create_domain_sinks() {
-        // Arrange
-        let kv_sink = DomainSink::new("kv");
-        let notice_sink = DomainSink::new("notice");
-
-        // Act
-        let kv_active = kv_sink.active.load(Ordering::Relaxed);
-        let notice_active = notice_sink.active.load(Ordering::Relaxed);
-        kv_sink.stop();
-        let kv_stopped = kv_sink.active.load(Ordering::Relaxed);
-
-        // Assert
-        assert!(kv_active);
-        assert!(notice_active);
-        assert!(!kv_stopped);
-    }
-
-    #[test]
-    fn should_handle_delivery_when_active() {
-        // Arrange
-        let sink = DomainSink::new("kv");
-        let address = RouteAddress::new(RouteFamily::new(1), Route::new("kv"));
-        let envelope = Envelope::new(address, vec![0u8; 10]);
-
-        // Act
-        let result = sink.deliver(envelope);
-
-        // Assert
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn should_reject_delivery_when_stopped() {
-        // Arrange
-        let sink = DomainSink::new("kv");
-        sink.stop();
-
-        let address = RouteAddress::new(RouteFamily::new(1), Route::new("kv"));
-        let envelope = Envelope::new(address, vec![0u8; 10]);
-
-        // Act
-        let result = sink.deliver(envelope);
-
-        // Assert
-        assert!(matches!(result, Err(DeliveryError::ActorStopped)));
-    }
-
-    #[test]
-    fn should_handle_high_priority_delivery() {
-        // Arrange
-        let sink = DomainSink::new("kv");
-        let address = RouteAddress::new(RouteFamily::new(1), Route::new("kv"));
-        let envelope = Envelope::new(address, vec![0u8; 10]);
-
-        // Act
-        let result = sink.deliver_high_priority(envelope);
-
-        // Assert
-        assert!(result.is_ok());
     }
 
     #[test]
@@ -829,21 +785,21 @@ mod tests {
     }
 
     #[test]
-    fn should_bootstrap_domains_with_background_cloud_write_options() {
+    fn should_bootstrap_domains_with_background_cloud_write_policy() {
         // Arrange
 
         // Act
-        assert_cloud_domain_bootstrap("background", cntryl_midge::WriteOptions::cloud_async());
+        assert_cloud_domain_bootstrap("background", crate::domains::WritePolicy::CloudAsync);
 
         // Assert
     }
 
     #[test]
-    fn should_bootstrap_domains_with_strict_cloud_write_options() {
+    fn should_bootstrap_domains_with_strict_cloud_write_policy() {
         // Arrange
 
         // Act
-        assert_cloud_domain_bootstrap("strict", cntryl_midge::WriteOptions::cloud_strict());
+        assert_cloud_domain_bootstrap("strict", crate::domains::WritePolicy::CloudStrict);
 
         // Assert
     }
@@ -889,17 +845,18 @@ mod tests {
 
         // Assert
         assert_eq!(snapshots.len(), DomainKind::ALL.len());
-        assert!(snapshots.iter().all(|snapshot| !snapshot.actor_running));
-        // Non-sharded domains (kv/queue/notice/lease/schedule) panic exactly
-        // one actor. Family-sharded domains (rpc/stream) are provisioned
-        // with 7 route families here (`domain_setup_options`) and must be
+        assert!(snapshots
+            .iter()
+            .all(|snapshot| snapshot.healthy_families.is_empty()));
+        // Family-sharded domains are provisioned with 7 route families here
+        // (`domain_setup_options`) and must be
         // panicked on *every* family to reach full exhaustion -- see
-        // the panic failpoints on `RpcDomainSink`/`StreamDomainSink` --
+        // the panic failpoints on `RpcDomain`/`StreamDomain` --
         // so their panic_count legitimately lands at 7, not 1.
         for snapshot in &snapshots {
             let expected_panic_count = match snapshot.domain {
-                "rpc" | "stream" => 7,
-                _ => 1,
+                "kv" | "queue" | "notice" | "rpc" | "lease" | "schedule" | "stream" => 7,
+                _ => unreachable!("unknown domain in health inventory"),
             };
             assert_eq!(
                 snapshot.panic_count, expected_panic_count,
@@ -907,13 +864,16 @@ mod tests {
                 snapshot.domain
             );
         }
-        assert!(snapshots.iter().all(|snapshot| snapshot.restart_exhausted));
-        assert_eq!(domains.kv_active_transaction_count(), 0);
-        assert_eq!(domains.queue_ready_message_count(), 0);
-        assert_eq!(domains.stream_count(), 0);
-        assert_eq!(domains.rpc_worker_count(), 0);
-        assert_eq!(domains.lease_count(), 0);
-        assert_eq!(domains.schedule_count(), 0);
+        assert!(snapshots
+            .iter()
+            .all(|snapshot| snapshot.failed_families.len() == 7));
+        let admins = domains.admin_ports();
+        assert_eq!(admins.kv_active_transaction_count(), 0);
+        assert_eq!(admins.queue_ready_message_count(), 0);
+        assert_eq!(admins.stream_count(), 0);
+        assert_eq!(admins.rpc_worker_count(), 0);
+        assert_eq!(admins.lease_count(), 0);
+        assert_eq!(admins.schedule_count(), 0);
     }
 
     #[test]
@@ -972,7 +932,7 @@ mod tests {
         assert!(domains
             .health_snapshots()
             .iter()
-            .any(|snapshot| snapshot.domain == "kv" && snapshot.restart_exhausted));
+            .any(|snapshot| snapshot.domain == "kv" && !snapshot.has_usable_family()));
         assert!(matches!(
             result,
             Err(crate::runtime::router::RouteError::DeliveryFailed(

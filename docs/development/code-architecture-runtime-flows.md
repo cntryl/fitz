@@ -29,7 +29,7 @@ sequenceDiagram
     Boot->>Domains: construct all domain sinks
     Domains->>Router: register domain patterns
     Domains->>Domains: preload persisted schedule families
-    Domains-->>Boot: DomainHandles
+    Domains-->>Boot: BrokerDomains composition root
     Boot->>Runtime: attach domains and mark domains ready
     Boot->>Background: start domain background tasks
     Boot->>Runtime: mark startup complete
@@ -81,7 +81,7 @@ flowchart TB
     RETRY["retry pending cleanup tickets"]
     FAMILY["read session route_family"]
     CLEANUP["SessionCleanup { session_id }"]
-    ORDER["DomainRegistry::cleanup_order"]
+    ORDER["DomainKind::SESSION_CLEANUP_ORDER"]
     ROUTER["Router route cleanup envelope"]
     DOMAINS["domain cleanup handlers"]
     FAILURE["store PendingSessionCleanup"]

@@ -1,7 +1,7 @@
 use super::*;
 
 struct QueueRequestContext<'a> {
-    sink: &'a QueueDomainSink,
+    sink: &'a QueueDomain,
     queue_address: RouteAddress,
     queue_route: &'a str,
     family: RouteFamily,
@@ -99,7 +99,7 @@ fn assert_success(frame: &FrameContext) {
 }
 
 fn deliver_send(
-    sink: &QueueDomainSink,
+    sink: &QueueDomain,
     sender_address: RouteAddress,
     queue_address: RouteAddress,
     session_id: u64,
@@ -121,7 +121,7 @@ fn deliver_send(
 }
 
 fn deliver_reserve(
-    sink: &QueueDomainSink,
+    sink: &QueueDomain,
     worker_address: RouteAddress,
     queue_address: RouteAddress,
     session_id: u64,
@@ -163,7 +163,7 @@ fn should_cleanup_queue_inflight_for_disconnected_session() {
         store,
         router,
         admin_read_model.clone(),
-        cntryl_midge::WriteOptions::buffered(),
+        crate::domains::WritePolicy::Buffered,
     );
 
     // Act
@@ -234,7 +234,7 @@ fn should_reject_stale_reserve_after_disconnect_cleanup_marks_session() {
         store,
         router,
         admin_read_model,
-        cntryl_midge::WriteOptions::buffered(),
+        crate::domains::WritePolicy::Buffered,
     );
 
     // Act: cleanup for this session runs and completes before the stale
@@ -296,7 +296,7 @@ fn should_reject_queue_inflight_followups_from_non_owner_session() {
         store,
         router,
         admin_read_model,
-        cntryl_midge::WriteOptions::buffered(),
+        crate::domains::WritePolicy::Buffered,
     );
     let request_ctx = QueueRequestContext {
         sink: &sink,
@@ -397,7 +397,7 @@ fn should_include_delayed_messages_in_queue_admin_snapshot() {
         store,
         router,
         admin_read_model.clone(),
-        cntryl_midge::WriteOptions::buffered(),
+        crate::domains::WritePolicy::Buffered,
     );
 
     // Act
@@ -450,7 +450,7 @@ fn should_evict_idle_queue_actor_without_losing_committed_state() {
         store,
         router,
         admin_read_model.clone(),
-        cntryl_midge::WriteOptions::buffered(),
+        crate::domains::WritePolicy::Buffered,
     );
 
     sink.deliver(Envelope::from_route(
@@ -519,7 +519,7 @@ fn should_bound_idle_actor_sweep_work_per_tick() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         Arc::new(Router::new()),
         crate::control::admin::read_model::AdminReadModel::new(),
-        cntryl_midge::WriteOptions::buffered(),
+        crate::domains::WritePolicy::Buffered,
     );
     let actor_count = QUEUE_IDLE_SWEEP_BATCH_SIZE + 5;
     for index in 0..actor_count {
@@ -528,26 +528,28 @@ fn should_bound_idle_actor_sweep_work_per_tick() {
             &Route::new(format!("queue://acme/jobs/bounded-{index}")),
         )
         .expect("queue key");
-        sink.core
-            .get_or_create_actor(&key)
-            .expect("create queue actor");
+        sink.inspect_family_for_tests(family, move |state| {
+            state.with_actor(&key, |_| ()).expect("create queue actor");
+        });
     }
     let now = Instant::now();
-    for warm_actor in sink.core.actors.lock().values_mut() {
-        warm_actor.last_used = now
-            .checked_sub(QUEUE_ACTOR_IDLE_TTL + Duration::from_secs(1))
-            .expect("idle deadline");
-    }
+    sink.inspect_family_for_tests(family, move |state| {
+        for warm_actor in state.actors.values_mut() {
+            warm_actor.last_used = now
+                .checked_sub(QUEUE_ACTOR_IDLE_TTL + Duration::from_secs(1))
+                .expect("idle deadline");
+        }
+    });
 
     // Act
-    sink.core.sweep_idle_actors_at(now);
+    sink.inspect_family_for_tests(family, move |state| state.sweep_idle_actors_at(now));
 
     // Assert
     assert_eq!(
         sink.actor_count_for_tests(),
         actor_count - QUEUE_IDLE_SWEEP_BATCH_SIZE
     );
-    sink.core.sweep_idle_actors_at(now);
+    sink.inspect_family_for_tests(family, move |state| state.sweep_idle_actors_at(now));
     assert!(sink.actors_are_empty_for_tests());
 }
 
@@ -568,7 +570,7 @@ fn should_prune_empty_queue_identity_when_actor_is_evicted() {
         crate::testkit::create_test_engine_with_cfs(vec![1]),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-        cntryl_midge::WriteOptions::buffered(),
+        crate::domains::WritePolicy::Buffered,
     );
     let request_context = QueueRequestContext {
         sink: &sink,
@@ -616,7 +618,7 @@ fn should_not_evict_idle_queue_actor_with_live_inflight() {
         store,
         router,
         admin_read_model,
-        cntryl_midge::WriteOptions::buffered(),
+        crate::domains::WritePolicy::Buffered,
     );
 
     sink.deliver(Envelope::from_route(
@@ -680,15 +682,13 @@ fn should_admit_session_cleanup_even_when_client_admission_is_exhausted() {
         store,
         Arc::new(Router::new()),
         admin_read_model,
-        cntryl_midge::WriteOptions::buffered(),
+        crate::domains::WritePolicy::Buffered,
     );
     let family = RouteFamily::new(1);
 
     // Hold every admission slot, as a stalled actor under load would.
     let window = crate::domains::queue::sink::model::queue_admission_window(
-        sink.core
-            .delivery_service_us
-            .load(std::sync::atomic::Ordering::Relaxed),
+        sink.config.delivery_service_us[&family.id()].load(std::sync::atomic::Ordering::Relaxed),
     );
     let held = (0..window)
         .map(|_| {

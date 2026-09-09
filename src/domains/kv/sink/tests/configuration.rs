@@ -8,7 +8,7 @@ fn should_create_kv_domain_sink() {
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
 
     // Act
-    let sink = KvDomainSink::new(store, router, admin_read_model);
+    let sink = KvDomain::new(store, router, admin_read_model);
 
     // Assert
     assert!(sink.is_active_for_tests());
@@ -25,10 +25,12 @@ fn should_route_kv_counters_to_configured_collector() {
     let configured = crate::observability::metrics::MetricsCollector::new();
     let global = crate::observability::metrics();
     let global_before = global.counter_get(TEST_COUNTER);
-    let sink = KvDomainSink::new(store, router, admin_read_model).with_metrics(configured.clone());
+    let sink = KvDomain::new(store, router, admin_read_model).with_metrics(configured.clone());
 
     // Act
-    sink.state.runtime().counter_inc(TEST_COUNTER);
+    sink.run_on_family_for_tests(RouteFamily::new(1), |runtime| {
+        runtime.counter_inc(TEST_COUNTER);
+    });
 
     // Assert
     assert_eq!(configured.counter_get(TEST_COUNTER), 1);
@@ -48,7 +50,7 @@ fn should_record_kv_latency_samples_by_operation_kind() {
     let router = Arc::new(Router::new());
     router.register(source_address.clone(), mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = KvDomainSink::new(store, router, admin_read_model);
+    let sink = KvDomain::new(store, router, admin_read_model);
 
     sink.deliver(Envelope::from_route(
         source_address.clone(),
@@ -114,8 +116,8 @@ fn should_map_sync_begin_to_cloud_strict_given_strict_cloud_sync_policy() {
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = KvDomainSink::new(store, router, admin_read_model)
-        .with_sync_write_options(cntryl_midge::WriteOptions::cloud_strict());
+    let sink = KvDomain::new(store, router, admin_read_model)
+        .with_sync_write_policy(crate::domains::WritePolicy::CloudStrict);
     let message = crate::domains::kv::KvMessage::Begin {
         scope: KvResourceScope::new(
             RouteFamily::new(1),
@@ -124,7 +126,7 @@ fn should_map_sync_begin_to_cloud_strict_given_strict_cloud_sync_policy() {
             "users".to_string(),
         ),
         mode: crate::domains::kv::TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::sync().into(),
+        write_options: crate::domains::WritePolicy::Sync,
     };
 
     // Act
@@ -145,9 +147,9 @@ fn should_map_buffered_begin_to_cloud_async_given_cloud_storage() {
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = KvDomainSink::new(store, router, admin_read_model).with_write_options(
-        cntryl_midge::WriteOptions::cloud_strict(),
-        cntryl_midge::WriteOptions::cloud_async(),
+    let sink = KvDomain::new(store, router, admin_read_model).with_write_policies(
+        crate::domains::WritePolicy::CloudStrict,
+        crate::domains::WritePolicy::CloudAsync,
     );
     let message = crate::domains::kv::KvMessage::Begin {
         scope: KvResourceScope::new(
@@ -157,7 +159,7 @@ fn should_map_buffered_begin_to_cloud_async_given_cloud_storage() {
             "users".to_string(),
         ),
         mode: crate::domains::kv::TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: crate::domains::WritePolicy::Buffered,
     };
 
     // Act
@@ -178,8 +180,8 @@ fn should_derive_cloud_async_buffered_policy_given_strict_cloud_sync_builder() {
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = KvDomainSink::new(store, router, admin_read_model)
-        .with_sync_write_options(cntryl_midge::WriteOptions::cloud_strict());
+    let sink = KvDomain::new(store, router, admin_read_model)
+        .with_sync_write_policy(crate::domains::WritePolicy::CloudStrict);
     let message = crate::domains::kv::KvMessage::Begin {
         scope: KvResourceScope::new(
             RouteFamily::new(1),
@@ -188,7 +190,7 @@ fn should_derive_cloud_async_buffered_policy_given_strict_cloud_sync_builder() {
             "users".to_string(),
         ),
         mode: crate::domains::kv::TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: crate::domains::WritePolicy::Buffered,
     };
 
     // Act
@@ -209,8 +211,8 @@ fn should_derive_cloud_async_buffered_policy_given_background_cloud_sync_builder
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = KvDomainSink::new(store, router, admin_read_model)
-        .with_sync_write_options(cntryl_midge::WriteOptions::cloud_async());
+    let sink = KvDomain::new(store, router, admin_read_model)
+        .with_sync_write_policy(crate::domains::WritePolicy::CloudAsync);
     let message = crate::domains::kv::KvMessage::Begin {
         scope: KvResourceScope::new(
             RouteFamily::new(1),
@@ -219,7 +221,7 @@ fn should_derive_cloud_async_buffered_policy_given_background_cloud_sync_builder
             "users".to_string(),
         ),
         mode: crate::domains::kv::TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: crate::domains::WritePolicy::Buffered,
     };
 
     // Act

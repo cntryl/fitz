@@ -141,26 +141,7 @@ impl DomainDescriptor {
     }
 }
 
-pub struct DomainRegistry;
-
-impl DomainRegistry {
-    #[must_use]
-    pub const fn all() -> &'static [DomainDescriptor; 7] {
-        &DOMAIN_DESCRIPTORS
-    }
-
-    #[must_use]
-    pub const fn cleanup_order() -> &'static [DomainKind; 7] {
-        &DomainKind::SESSION_CLEANUP_ORDER
-    }
-
-    #[must_use]
-    pub const fn descriptor(kind: DomainKind) -> &'static DomainDescriptor {
-        kind.descriptor()
-    }
-}
-
-pub const DOMAIN_DESCRIPTORS: [DomainDescriptor; 7] = [
+const DOMAIN_DESCRIPTORS: [DomainDescriptor; 7] = [
     DomainDescriptor {
         kind: DomainKind::Kv,
         scheme: "kv",
@@ -304,7 +285,7 @@ mod tests {
     #[test]
     fn should_define_exactly_one_descriptor_for_every_domain_kind() {
         // Arrange
-        let descriptors = DomainRegistry::all();
+        let descriptors = &DOMAIN_DESCRIPTORS;
 
         // Act
         let descriptor_kinds = descriptors
@@ -337,7 +318,7 @@ mod tests {
     #[test]
     fn should_keep_cleanup_order_covering_registered_domains() {
         // Arrange
-        let cleanup_order = DomainRegistry::cleanup_order();
+        let cleanup_order = &DomainKind::SESSION_CLEANUP_ORDER;
 
         // Act
         let cleanup_kinds = cleanup_order.iter().copied().collect::<HashSet<_>>();

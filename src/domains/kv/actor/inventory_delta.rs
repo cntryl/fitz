@@ -7,8 +7,7 @@
 
 use super::KvActor;
 use crate::domains::kv::inventory::encode_estimate;
-use crate::domains::kv::{KvError, KvResourceScope};
-use cntryl_midge::{ColumnFamilyId, Engine as MidgeEngine, TransactionMode};
+use crate::domains::kv::{KvError, KvResourceScope, TxMode};
 use std::collections::HashMap;
 
 #[derive(Default)]
@@ -34,36 +33,36 @@ impl KvInventoryDelta {
 }
 
 impl KvActor {
-    pub(super) fn inventory_write_options(
-        committed: cntryl_midge::WriteOptions,
-    ) -> cntryl_midge::WriteOptions {
+    pub(super) fn inventory_write_policy(
+        committed: crate::domains::WritePolicy,
+    ) -> crate::domains::WritePolicy {
         // Inventory estimates are best-effort admin bookkeeping, so we avoid
         // imposing stronger durability than required for user data writes.
-        if committed.is_cloud_async() || committed.is_cloud_strict() {
-            cntryl_midge::WriteOptions::cloud_async()
+        if matches!(
+            committed,
+            crate::domains::WritePolicy::CloudAsync | crate::domains::WritePolicy::CloudStrict
+        ) {
+            crate::domains::WritePolicy::CloudAsync
         } else {
-            cntryl_midge::WriteOptions::buffered()
+            crate::domains::WritePolicy::Buffered
         }
     }
 
     pub(super) fn apply_inventory_delta(
-        store: &MidgeEngine,
-        column_family: ColumnFamilyId,
+        store: &crate::domains::kv::store::KvStore,
+        column_family: u32,
         scope: &KvResourceScope,
         inventory_delta: &KvInventoryDelta,
-        write_options: cntryl_midge::WriteOptions,
+        write_policy: crate::domains::WritePolicy,
     ) -> Result<(), KvError> {
         if inventory_delta.is_empty() {
             return Ok(());
         }
 
         let key = Self::inventory_metadata_key(&scope.realm, &scope.area, &scope.resource);
-        let mut tx = store
-            .begin_tx(column_family, TransactionMode::ReadWrite)
-            .map_err(|error| Self::map_midge_error(&error))?;
+        let mut tx = store.begin(column_family, TxMode::ReadWrite)?;
         let mut estimate = tx
-            .get(&key)
-            .map_err(|error| Self::map_midge_error(&error))?
+            .get(&key)?
             .as_deref()
             .map(crate::domains::kv::inventory::decode_estimate)
             .transpose()
@@ -80,9 +79,7 @@ impl KvActor {
             estimate.estimate_complete = false;
         }
 
-        tx.put(key, encode_estimate(estimate), None)
-            .map_err(|error| Self::map_midge_error(&error))?;
-        tx.commit(write_options)
-            .map_err(|error| Self::map_midge_error(&error))
+        tx.put(key, encode_estimate(estimate))?;
+        tx.commit(write_policy)
     }
 }

@@ -3,11 +3,11 @@ use bytes::Bytes;
 mod tier2_stress;
 
 use cntryl_stress::{black_box, stress, stress_main, StressContext};
+use fitz::benchkit::BenchDomainHandle;
 use fitz::benchkit::{
     create_bench_lease_sink, register_session_counting_sink, route_frame,
     wait_for_counting_sinks_each_count, CountingSink,
 };
-use fitz::domains::lease::sink::LeaseDomainSink;
 use fitz::protocol::frame::ChannelId;
 use fitz::protocol::lease_codec::msg_type;
 use fitz::protocol::payload_codec::PayloadEncoder;
@@ -24,7 +24,7 @@ const EXACT_ROUTE_64_NOTIFY_REPEAT_COUNT: u64 = 131_072;
 const NOTIFY_CHUNK_SIZE: u64 = 512;
 
 struct PreparedLeaseNotifyCase {
-    sink: Arc<LeaseDomainSink>,
+    sink: Arc<BenchDomainHandle>,
     destination: RouteAddress,
     event: DomainPublishEvent,
     watcher_sinks: Vec<Arc<CountingSink>>,

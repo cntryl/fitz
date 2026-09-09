@@ -5,48 +5,50 @@
 use super::FrameContext;
 use super::{
     DeliveryError, Envelope, Ordering, StreamClientFrame, StreamClientRequest,
-    StreamClientResponseBody, StreamDomainCore, STREAM_OPERATIONS_TOTAL,
+    StreamClientResponseBody, StreamFamilyState, STREAM_OPERATIONS_TOTAL,
 };
 #[cfg(test)]
 use super::{Route, RouteAddress};
 
-impl StreamDomainCore {
+impl super::super::model::StreamFamilyRuntime {
     pub(in crate::domains::stream::sink) fn deliver_envelope(
-        &self,
+        &mut self,
         envelope: &Envelope,
     ) -> Result<(), DeliveryError> {
-        if self.handle_cleanup_envelope(envelope) {
+        if self.core.handle_cleanup_envelope(envelope) {
             return Ok(());
         }
-        self.ensure_active()?;
+        self.core.ensure_active()?;
 
-        if self.handle_domain_publish_envelope(envelope) {
+        if self.core.handle_domain_publish_envelope(envelope) {
             return Ok(());
         }
 
-        let Some(request) = Self::extract_request(envelope)? else {
+        let Some(request) = StreamFamilyState::extract_request(envelope)? else {
             return Ok(());
         };
         let meta = request.meta;
-        let request_started = self.record_request_start();
+        let request_started = self.core.record_request_start();
 
         if meta.route_family != *envelope.destination().family()
             || envelope
                 .source()
                 .is_some_and(|source| *source.family() != meta.route_family)
         {
-            let response = Self::stream_error_response("route family mismatch");
+            let response = StreamFamilyState::stream_error_response("route family mismatch");
             let response_meta = envelope.source().map_or(meta, |source| {
                 let mut response_meta = meta;
                 response_meta.route_family = *source.family();
                 response_meta
             });
-            self.route_stream_response(envelope, response_meta, &response, request_started);
+            self.core
+                .route_stream_response(envelope, response_meta, &response, request_started);
             return Ok(());
         }
 
         let Some(parsed_frame) =
-            self.parse_request_frame(envelope, meta, request.frame, request_started)
+            self.core
+                .parse_request_frame(envelope, meta, request.frame, request_started)
         else {
             return Ok(());
         };
@@ -61,17 +63,19 @@ impl StreamDomainCore {
                         | crate::domains::stream::protocol::StreamMessage::Rollback { .. }
                 )
         );
-        if session_mutation && self.cleaned_up_sessions.lock().contains(meta.session_id) {
-            let response = Self::stream_error_response("session has been cleaned up");
-            self.route_stream_response(envelope, meta, &response, request_started);
+        if session_mutation && self.core.cleaned_up_sessions.contains(meta.session_id) {
+            let response = StreamFamilyState::stream_error_response("session has been cleaned up");
+            self.core
+                .route_stream_response(envelope, meta, &response, request_started);
             return Ok(());
         }
 
-        self.record_operation();
+        self.core.record_operation();
 
         match parsed_frame {
             StreamClientFrame::Sub(sub_msg) => {
-                self.handle_subscription_frame(envelope, meta, request_started, sub_msg);
+                self.core
+                    .handle_subscription_frame(envelope, meta, request_started, sub_msg);
                 Ok(())
             }
             StreamClientFrame::Op(stream_msg) => {
@@ -80,8 +84,10 @@ impl StreamDomainCore {
             }
         }
     }
+}
 
-    fn handle_cleanup_envelope(&self, envelope: &Envelope) -> bool {
+impl StreamFamilyState {
+    fn handle_cleanup_envelope(&mut self, envelope: &Envelope) -> bool {
         if let Some(cleanup) = envelope.payload::<crate::runtime::SessionCleanup>() {
             self.cleanup_session(cleanup.session_id);
             return true;
@@ -90,7 +96,7 @@ impl StreamDomainCore {
         false
     }
 
-    fn ensure_active(&self) -> Result<(), DeliveryError> {
+    fn ensure_active(&mut self) -> Result<(), DeliveryError> {
         if !self.active.load(Ordering::Relaxed) {
             return Err(DeliveryError::ActorStopped);
         }
@@ -98,7 +104,7 @@ impl StreamDomainCore {
         Ok(())
     }
 
-    fn handle_domain_publish_envelope(&self, envelope: &Envelope) -> bool {
+    fn handle_domain_publish_envelope(&mut self, envelope: &Envelope) -> bool {
         if let Some(event) = envelope.payload::<crate::runtime::DomainPublishEvent>() {
             if *envelope.destination().family() != event.family_id {
                 crate::observability::counter_inc("fitz_stream_publish_family_mismatch_total");
@@ -117,14 +123,14 @@ impl StreamDomainCore {
         ))
     }
 
-    fn record_request_start(&self) -> Option<std::time::Instant> {
+    fn record_request_start(&mut self) -> Option<std::time::Instant> {
         self.metrics
             .as_ref()
             .map(crate::domains::stream::StreamMetrics::record_request_start)
     }
 
     fn parse_request_frame(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         frame: Result<StreamClientFrame, String>,
@@ -140,8 +146,8 @@ impl StreamDomainCore {
         }
     }
 
-    fn record_operation(&self) {
-        if let Some(metrics) = &self.metrics {
+    fn record_operation(&mut self) {
+        if let Some(metrics) = &mut self.metrics {
             metrics.counter_inc(STREAM_OPERATIONS_TOTAL);
         } else {
             crate::observability::counter_inc(STREAM_OPERATIONS_TOTAL);
@@ -185,7 +191,7 @@ impl StreamDomainCore {
     }
 
     pub(super) fn route_stream_response(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         response: &StreamClientResponseBody,

@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn should_read_admin_waiters_through_actor_command() {
+fn should_read_admin_waiters_through_family_command() {
     // Arrange
     let family = RouteFamily::new(1);
     let lease_route = "lease://acme/locks/admin-waiter";
@@ -11,7 +11,7 @@ fn should_read_admin_waiters_through_actor_command() {
     let waiter_address = RouteAddress::new(family, Route::new("inbox://session/8"));
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = LeaseDomainSink::new(router, admin_read_model);
+    let sink = LeaseDomain::new(router, admin_read_model);
     let holder_response = sink.acquire_for_tests(LeaseAcquireRequest {
         key: key.clone(),
         owner_session_id: 7,
@@ -37,19 +37,19 @@ fn should_read_admin_waiters_through_actor_command() {
     });
     assert!(matches!(waiter_response, LeaseResponse::Queued { .. }));
     assert_eq!(sink.admin_waiters().len(), 1);
+    let queued_waiter_count_before_stop = sink.pending_acquire_count_for_tests(&key);
 
     // Act
     sink.stop();
     let command_waiters_after_stop = sink.admin_waiters();
-    let queued_waiter_count_after_stop = sink.pending_acquire_count_for_tests(&key);
 
     // Assert
     assert!(command_waiters_after_stop.is_empty());
-    assert_eq!(queued_waiter_count_after_stop, 1);
+    assert_eq!(queued_waiter_count_before_stop, 1);
 }
 
 #[test]
-fn should_read_lease_live_counts_through_actor_command() {
+fn should_read_lease_live_counts_through_family_commands() {
     // Arrange
     let family = RouteFamily::new(1);
     let session_id = 7;
@@ -61,7 +61,7 @@ fn should_read_lease_live_counts_through_actor_command() {
     let router = Arc::new(Router::new());
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = LeaseDomainSink::new(router, admin_read_model);
+    let sink = LeaseDomain::new(router, admin_read_model);
     let holder_response = sink.acquire_for_tests(LeaseAcquireRequest {
         key,
         owner_session_id: session_id,
@@ -111,7 +111,7 @@ fn should_remove_admin_lease_given_release() {
     let subscriber_mailbox = Arc::new(Mailbox::new(8));
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = LeaseDomainSink::new(router, admin_read_model.clone());
+    let sink = LeaseDomain::new(router, admin_read_model.clone());
 
     sink.deliver(Envelope::from_route(
         subscriber_address.clone(),
@@ -175,7 +175,7 @@ fn should_track_admin_lease_renewals_given_extend() {
     let subscriber_mailbox = Arc::new(Mailbox::new(8));
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = LeaseDomainSink::new(router, admin_read_model.clone());
+    let sink = LeaseDomain::new(router, admin_read_model.clone());
 
     sink.deliver(Envelope::from_route(
         subscriber_address.clone(),

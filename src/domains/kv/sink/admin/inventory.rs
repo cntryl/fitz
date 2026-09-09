@@ -4,13 +4,13 @@
 //! actor-side update policy lives in `actor/inventory_delta.rs`.
 
 use super::super::locks::KvResourceLockKey;
-use super::super::state::KvDomainRuntime;
+use super::super::state::KvFamilyRuntime;
 use crate::domains::kv::inventory::{decode_estimate, encode_estimate, KvInventoryEstimate};
 use crate::domains::kv::KvActor;
 
 const ADMIN_INVENTORY_REFRESH_LIMIT: usize = 10_000;
 
-impl KvDomainRuntime<'_> {
+impl KvFamilyRuntime<'_> {
     /// Build an admin inventory snapshot for the requested route family scope.
     ///
     /// # Errors
@@ -25,10 +25,9 @@ impl KvDomainRuntime<'_> {
         } else {
             self.core
                 .store
-                .list_column_families()
+                .column_families()
                 .map_err(|error| error.to_string())?
                 .into_iter()
-                .map(|handle| handle.id())
                 .filter(|family_id| *family_id != 0)
                 .collect::<Vec<_>>()
         };
@@ -73,7 +72,7 @@ impl KvDomainRuntime<'_> {
         let tx = self
             .core
             .store
-            .begin_tx(column_family, cntryl_midge::TransactionMode::ReadOnly)
+            .begin(column_family, crate::domains::kv::TxMode::ReadOnly)
             .map_err(|error| error.to_string())?;
 
         let estimate = if let Some(value) = tx.get(&key).map_err(|error| error.to_string())? {
@@ -107,15 +106,12 @@ impl KvDomainRuntime<'_> {
         let tx = self
             .core
             .store
-            .begin_tx(column_family, cntryl_midge::TransactionMode::ReadOnly)
+            .begin(column_family, crate::domains::kv::TxMode::ReadOnly)
             .map_err(|error| error.to_string())?;
-        let mut iterator = tx
-            .scan(&cntryl_midge::Query::new())
-            .map_err(|error| error.to_string())?;
+        let iterator = tx.scan_all().map_err(|error| error.to_string())?;
         let mut discovered = Vec::new();
 
-        for entry in iterator.by_ref() {
-            let (key, value) = entry.map_err(|error| error.to_string())?;
+        for (key, value) in iterator {
             let Some((realm, area, resource)) = KvActor::parse_inventory_metadata_key(&key) else {
                 continue;
             };
@@ -123,7 +119,6 @@ impl KvDomainRuntime<'_> {
             discovered.push((realm, area, resource, estimate));
         }
 
-        drop(iterator);
         drop(tx);
 
         discovered
@@ -154,7 +149,7 @@ impl KvDomainRuntime<'_> {
         let read_tx = self
             .core
             .store
-            .begin_tx(column_family, cntryl_midge::TransactionMode::ReadOnly)
+            .begin(column_family, crate::domains::kv::TxMode::ReadOnly)
             .map_err(|error| error.to_string())?;
         let resource_prefix = KvActor::realm_resource_prefix(realm, area, resource);
         let mut rows = Self::scan_scoped_prefix(
@@ -186,17 +181,16 @@ impl KvDomainRuntime<'_> {
             let mut write_tx = self
                 .core
                 .store
-                .begin_tx(column_family, cntryl_midge::TransactionMode::ReadWrite)
+                .begin(column_family, crate::domains::kv::TxMode::ReadWrite)
                 .map_err(|error| error.to_string())?;
             write_tx
                 .put(
                     KvActor::inventory_metadata_key(realm, area, resource),
                     encode_estimate(estimate),
-                    None,
                 )
                 .map_err(|error| error.to_string())?;
             write_tx
-                .commit(self.core.sync_write_options)
+                .commit(self.core.sync_write_policy)
                 .map_err(|error| error.to_string())?;
         }
 

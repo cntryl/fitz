@@ -1,7 +1,7 @@
 use super::*;
 
-fn new_correctness_notice_sink(router: Arc<Router>) -> NoticeDomainSink {
-    NoticeDomainSink::new(
+fn new_correctness_notice_sink(router: Arc<Router>) -> NoticeDomain {
+    NoticeDomain::new(
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
     )

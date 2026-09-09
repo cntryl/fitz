@@ -137,8 +137,6 @@ async fn should_reject_late_worker_response_after_timeout_given_rpc_sink() {
     let caller_sink = register_capture_sink(&router, caller_addr.clone());
     let worker_sink = register_capture_sink(&router, worker_addr.clone());
 
-    let domains = domain_handles_with_rpc_sink(router.clone(), sink.clone());
-    fitz::api::background::start_domain_background_tasks(&domains);
     deliver_rpc_frame(
         sink.as_ref(),
         worker_addr.clone(),
@@ -221,7 +219,7 @@ async fn should_reject_late_worker_response_after_timeout_given_rpc_sink() {
         delivered_request.correlation_id
     );
 
-    domains.stop();
+    sink.stop();
 }
 
 // ============================================================================

@@ -18,14 +18,14 @@
 //! ```text
 //! // Inside a Stream actor after commit:
 //! let event = DomainPublishEvent::new(family, route, payload);
-//! ctx.publish_event(event);  // routes to StreamDomainSink
+//! ctx.publish_event(event);  // routes to StreamDomain
 //!
 //! // Inside a Schedule actor after fire:
 //! let own = DomainPublishEvent::new(family, schedule_route, payload);
-//! ctx.publish_event(own);    // routes to ScheduleDomainSink
+//! ctx.publish_event(own);    // routes to ScheduleDomain
 //!
 //! let exec = DomainPublishEvent::new(family, target_route, payload);
-//! ctx.publish_event(exec);   // routes to target domain sink (e.g. NoticeDomainSink)
+//! ctx.publish_event(exec);   // routes to target domain sink (e.g. NoticeDomain)
 //! ```
 
 use crate::runtime::routing::{Route, RouteFamily};

@@ -6,7 +6,7 @@ fn should_confirm_kv_session_cleanup_before_reporting_delivery() {
     let family = RouteFamily::new(1);
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
-    let sink = KvDomainSink::new(
+    let sink = KvDomain::new(
         store,
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
@@ -56,7 +56,7 @@ fn should_reject_queued_begin_after_cleanup_without_recreating_session_state() {
     let router = Arc::new(Router::new());
     router.register(source_address.clone(), mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = KvDomainSink::new(store, router, admin_read_model.clone());
+    let sink = KvDomain::new(store, router, admin_read_model.clone());
     let previously_queued_begin = Envelope::from_route(
         source_address,
         kv_address,
@@ -105,7 +105,7 @@ fn should_release_resource_lock_given_session_cleanup() {
     router.register(first_address.clone(), first_mailbox.clone());
     router.register(second_address.clone(), second_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = KvDomainSink::new(store, router, admin_read_model);
+    let sink = KvDomain::new(store, router, admin_read_model);
 
     sink.deliver(Envelope::from_route(
         first_address,
@@ -175,7 +175,7 @@ fn should_reject_conflicting_read_write_begin_given_active_transaction_in_other_
     router.register(first_address.clone(), first_mailbox.clone());
     router.register(second_address.clone(), second_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = KvDomainSink::new(store, router, admin_read_model);
+    let sink = KvDomain::new(store, router, admin_read_model);
 
     sink.deliver(Envelope::from_route(
         first_address,
@@ -227,7 +227,7 @@ fn should_rebuild_kv_admin_transactions_from_actor_state() {
     let router = Arc::new(Router::new());
     router.register(source_address.clone(), mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = KvDomainSink::new(store, router, admin_read_model.clone());
+    let sink = KvDomain::new(store, router, admin_read_model.clone());
 
     sink.deliver(Envelope::from_route(
         source_address,
@@ -260,14 +260,14 @@ fn should_rebuild_kv_admin_transactions_from_actor_state() {
 }
 
 #[test]
-fn should_route_kv_cleanup_through_managed_actor() {
+fn should_route_kv_cleanup_through_family_actor() {
     // Arrange
     let family = RouteFamily::new(1);
     let session_id = 7;
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = KvDomainSink::new(store.clone(), router, admin_read_model.clone());
+    let sink = KvDomain::new(store.clone(), router, admin_read_model.clone());
     let mut actor = crate::domains::kv::KvActor::new(store);
     let begin_response = actor.handle(crate::domains::kv::KvMessage::Begin {
         scope: KvResourceScope::new(
@@ -277,7 +277,7 @@ fn should_route_kv_cleanup_through_managed_actor() {
             "users".to_string(),
         ),
         mode: crate::domains::kv::TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: crate::domains::WritePolicy::Buffered,
     });
     assert!(matches!(
         begin_response,
@@ -304,7 +304,7 @@ fn should_route_kv_cleanup_through_managed_actor() {
 }
 
 #[test]
-fn should_route_kv_live_transaction_count_through_managed_actor() {
+fn should_keep_passive_kv_transaction_count_after_family_actor_stops() {
     // Arrange
     let family = RouteFamily::new(1);
     let session_id = 7;
@@ -316,7 +316,7 @@ fn should_route_kv_live_transaction_count_through_managed_actor() {
     let router = Arc::new(Router::new());
     router.register(source_address.clone(), mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = KvDomainSink::new(store, router, admin_read_model);
+    let sink = KvDomain::new(store, router, admin_read_model);
     sink.deliver(Envelope::from_route(
         source_address,
         kv_address,
@@ -338,18 +338,18 @@ fn should_route_kv_live_transaction_count_through_managed_actor() {
 
     // Assert
     assert!(!sink.is_actor_running());
-    assert_eq!(active_transaction_count, 0);
+    assert_eq!(active_transaction_count, 1);
 }
 
 #[test]
-fn should_route_kv_admin_snapshot_sync_through_managed_actor() {
+fn should_route_kv_admin_snapshot_sync_through_family_actor() {
     // Arrange
     let family = RouteFamily::new(1);
     let session_id = 7;
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = KvDomainSink::new(store.clone(), router, admin_read_model.clone());
+    let sink = KvDomain::new(store.clone(), router, admin_read_model.clone());
     let mut actor = crate::domains::kv::KvActor::new(store);
     let begin_response = actor.handle(crate::domains::kv::KvMessage::Begin {
         scope: KvResourceScope::new(
@@ -359,7 +359,7 @@ fn should_route_kv_admin_snapshot_sync_through_managed_actor() {
             "users".to_string(),
         ),
         mode: crate::domains::kv::TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::buffered().into(),
+        write_options: crate::domains::WritePolicy::Buffered,
     });
     assert!(matches!(
         begin_response,
@@ -378,7 +378,7 @@ fn should_route_kv_admin_snapshot_sync_through_managed_actor() {
 }
 
 #[test]
-fn should_route_kv_latency_snapshot_query_through_managed_actor() {
+fn should_route_kv_latency_snapshot_query_through_family_actor() {
     // Arrange
     let family = RouteFamily::new(1);
     let session_id = 7;
@@ -390,7 +390,7 @@ fn should_route_kv_latency_snapshot_query_through_managed_actor() {
     let router = Arc::new(Router::new());
     router.register(source_address.clone(), mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = KvDomainSink::new(store, router, admin_read_model);
+    let sink = KvDomain::new(store, router, admin_read_model);
     sink.deliver(Envelope::from_route(
         source_address.clone(),
         kv_address.clone(),
@@ -446,13 +446,13 @@ fn should_route_kv_latency_snapshot_query_through_managed_actor() {
 }
 
 #[test]
-fn should_route_kv_sync_write_options_mapping_through_managed_actor() {
+fn should_route_kv_sync_write_options_mapping_through_family_actor() {
     // Arrange
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = KvDomainSink::new(store, router, admin_read_model)
-        .with_sync_write_options(cntryl_midge::WriteOptions::cloud_strict());
+    let sink = KvDomain::new(store, router, admin_read_model)
+        .with_sync_write_policy(crate::domains::WritePolicy::CloudStrict);
     let message = crate::domains::kv::KvMessage::Begin {
         scope: KvResourceScope::new(
             RouteFamily::new(1),
@@ -461,7 +461,7 @@ fn should_route_kv_sync_write_options_mapping_through_managed_actor() {
             "users".to_string(),
         ),
         mode: crate::domains::kv::TxMode::ReadWrite,
-        write_options: cntryl_midge::WriteOptions::sync().into(),
+        write_options: crate::domains::WritePolicy::Sync,
     };
 
     // Act

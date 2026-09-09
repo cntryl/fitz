@@ -54,7 +54,7 @@ async fn malformed_authenticated_lease_observation(msg_type: u16) -> (IngressDec
     let family = RouteFamily::new(1);
     let session_id = 600 + u64::from(msg_type);
     let router = Arc::new(crate::runtime::Router::new());
-    let lease_sink = Arc::new(crate::domains::lease::sink::LeaseDomainSink::new(
+    let lease_sink = Arc::new(crate::domains::lease::sink::LeaseDomain::new(
         router.clone(),
         crate::control::admin::read_model::AdminReadModel::new(),
     ));
@@ -112,7 +112,7 @@ async fn malformed_authenticated_lease_operation(
     let family = RouteFamily::new(1);
     let session_id = 700 + u64::from(msg_type);
     let router = Arc::new(crate::runtime::Router::new());
-    let lease_sink = Arc::new(crate::domains::lease::sink::LeaseDomainSink::new(
+    let lease_sink = Arc::new(crate::domains::lease::sink::LeaseDomain::new(
         router.clone(),
         crate::control::admin::read_model::AdminReadModel::new(),
     ));

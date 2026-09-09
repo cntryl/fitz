@@ -1,97 +1,103 @@
-//! Admin read-model projection: when and how the Notice subscription index
-//! is mirrored into the admin snapshot.
-//!
-//! Projection failure must never affect domain correctness - it is a
-//! dirty-flagged, best-effort reflection of live subscription state, not a
-//! source of truth.
+//! Immutable family observations projected into the admin read model.
 
-use super::NoticeDomainCore;
+use super::{notice_route_realm, NoticeDomainConfig, NoticeFamilyState};
 use chrono::Utc;
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
 use std::time::Instant;
 
-impl NoticeDomainCore {
-    /// Rebuild the admin read model from the current in-memory subscription
-    /// state only.
-    fn sync_admin_snapshot(&self) {
-        let families = self.families.lock();
+impl NoticeFamilyState {
+    pub(super) fn mark_admin_snapshot_dirty(&mut self) {
+        self.publish_observation();
+    }
+
+    fn publish_observation(&mut self) {
         let now = Instant::now();
-        let created_at = Utc::now().to_rfc3339();
         let mut subscriptions = Vec::new();
-        let mut routes: HashMap<super::NoticeRouteStatsKey, usize> = HashMap::new();
-        for (route_family, state) in families.iter() {
+        let mut subscriber_counts = HashMap::new();
+        for (family, state) in &self.families {
             for subscription in state.values() {
                 let pattern = subscription.pattern.route().to_string();
-                if let Some(realm) = super::notice_route_realm(&pattern) {
-                    subscriptions.push(crate::control::admin::NoticeSubscription::snapshot(
-                        route_family.as_u64(),
+                if let Some(realm) = notice_route_realm(&pattern) {
+                    subscriptions.push((
+                        *family,
                         subscription.subscription_id,
                         subscription.session_id,
-                        realm,
+                        realm.to_owned(),
                         pattern.clone(),
-                        &created_at,
                     ));
-                    let subscribers = routes
-                        .entry((
-                            *route_family,
-                            std::sync::Arc::clone(&subscription.pattern_route),
-                        ))
-                        .or_insert(0);
-                    *subscribers = subscribers.saturating_add(1);
+                    *subscriber_counts
+                        .entry((*family, subscription.pattern_route.clone()))
+                        .or_insert(0_usize) += 1;
                 }
             }
         }
-        drop(families);
-        let mut route_stats = self.route_stats.lock();
-        route_stats.retain(|route, stats| {
-            let keep = routes.contains_key(route);
-            if keep {
-                stats.prune_recent_publishes(now);
-            }
-            keep
-        });
-        self.admin_read_model
-            .replace_notice_subscriptions(subscriptions);
-        self.admin_read_model.replace_notice_routes(
-            routes
+        self.route_stats
+            .retain(|route, _| subscriber_counts.contains_key(route));
+        let routes = subscriber_counts
+            .into_iter()
+            .map(|((family, route), subscribers)| {
+                let (publishes_total, publishes_per_minute) = self
+                    .route_stats
+                    .get_mut(&(family, route.clone()))
+                    .map_or((0, 0.0), |stats| {
+                        stats.prune_recent_publishes(now);
+                        (stats.publishes_total(), stats.publishes_per_minute(now))
+                    });
+                (
+                    family,
+                    route.to_string(),
+                    subscribers,
+                    publishes_total,
+                    publishes_per_minute,
+                )
+            })
+            .collect::<Vec<_>>();
+        let created_at = Utc::now().to_rfc3339();
+        let subscription_count = subscriptions.len();
+        self.admin_read_model.replace_notice_family_subscriptions(
+            self.family.as_u64(),
+            subscriptions
                 .into_iter()
-                .map(|((route_family, route), subscribers)| {
-                    let (publishes_total, publishes_per_minute) = route_stats
-                        .get_mut(&(route_family, std::sync::Arc::clone(&route)))
-                        .map_or((0, 0.0), |stats| {
-                            (stats.publishes_total(), stats.publishes_per_minute(now))
-                        });
-                    let mut entry = crate::control::admin::NoticeRouteInfo::snapshot(
-                        route_family.as_u64(),
-                        route.to_string(),
-                        subscribers,
-                    );
-                    entry.publishes_total = publishes_total;
-                    entry.publishes_per_minute = publishes_per_minute;
-                    entry
+                .map(|(family, subscription_id, session_id, realm, pattern)| {
+                    crate::control::admin::NoticeSubscription::snapshot(
+                        family.as_u64(),
+                        subscription_id,
+                        session_id,
+                        &realm,
+                        pattern,
+                        &created_at,
+                    )
                 })
                 .collect(),
         );
+        self.admin_read_model.replace_notice_family_routes(
+            self.family.as_u64(),
+            routes
+                .into_iter()
+                .map(
+                    |(family, route, subscribers, publishes_total, publishes_per_minute)| {
+                        let mut entry = crate::control::admin::NoticeRouteInfo::snapshot(
+                            family.as_u64(),
+                            route,
+                            subscribers,
+                        );
+                        entry.publishes_total = publishes_total;
+                        entry.publishes_per_minute = publishes_per_minute;
+                        entry
+                    },
+                )
+                .collect(),
+        );
         if let Some(metrics) = &self.metrics {
-            metrics.set_subscription_count(self.subscription_count());
+            let total = self.admin_read_model.notice_subscriptions(None, None).len();
+            debug_assert!(total >= subscription_count);
+            metrics.set_subscription_count(total);
         }
     }
+}
 
-    pub(super) fn mark_admin_snapshot_dirty(&self) {
-        self.admin_snapshot_dirty.store(true, Ordering::Relaxed);
-        self.refresh_metrics_gauges();
-    }
-
-    pub(super) fn refresh_metrics_gauges(&self) {
-        if let Some(metrics) = &self.metrics {
-            metrics.set_subscription_count(self.subscription_count());
-        }
-    }
-
-    pub(super) fn refresh_admin_snapshot_if_dirty(&self) {
-        if self.admin_snapshot_dirty.swap(false, Ordering::AcqRel) {
-            self.sync_admin_snapshot();
-        }
+impl NoticeDomainConfig {
+    pub(super) fn refresh_admin_snapshot_if_dirty() {
+        // Family workers publish immutable snapshots as part of each mutation.
     }
 }

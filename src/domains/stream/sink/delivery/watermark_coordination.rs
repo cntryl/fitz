@@ -1,151 +1,190 @@
-use super::super::model::{Envelope, Route, RouteFamily, StreamDomainCore};
+use super::super::model::{StreamAreaScope, StreamFamilyRuntime, StreamRealmScope};
 use crate::domains::stream::metrics::METRIC_WATERMARK_COORDINATION_DROPS_TOTAL;
-use crate::domains::stream::sink::model::{StreamAreaScope, StreamRealmScope};
+use crate::prelude::Actor;
+use crate::runtime::routing::{Route, RouteFamily};
 
-struct WatermarkDispatch<'a, K> {
-    address: crate::runtime::routing::RouteAddress,
-    spawned: bool,
-    family_id: RouteFamily,
-    realm: &'a str,
-    area: Option<&'a str>,
-    coordinator: &'static str,
-    commit: &'a crate::domains::stream::protocol::BatchCommitted,
-    key_type: std::marker::PhantomData<K>,
-}
+impl StreamFamilyRuntime {
+    pub(in crate::domains::stream::sink) fn enqueue_watermark_commit(
+        &mut self,
+        commit: super::super::model::WatermarkCommit,
+    ) {
+        if self.pending_watermark_commits.len() >= crate::runtime::FAMILY_ACTOR_NORMAL_LANE_CAPACITY
+        {
+            self.core
+                .counter_inc(METRIC_WATERMARK_COORDINATION_DROPS_TOTAL);
+            tracing::warn!(
+                domain = "stream",
+                route_family = commit.family.id(),
+                realm = commit.realm,
+                area = commit.area,
+                "Stream watermark coordination queue was full"
+            );
+            return;
+        }
+        self.pending_watermark_commits.push(commit);
+    }
 
-impl StreamDomainCore {
-    /// Notify the bounded area and realm coordinator pools after a durable
-    /// batch commit. Visibility comes from the atomically committed counters;
-    /// these actors persist advisory watermarks and emit ephemeral notices.
     pub(in crate::domains::stream::sink) fn notify_area_batch_committed(
-        &self,
-        family_id: RouteFamily,
+        &mut self,
+        family: RouteFamily,
         realm: &str,
         area: &str,
         commit: &crate::domains::stream::protocol::BatchCommitted,
     ) {
-        let realm_address = crate::runtime::routing::RouteAddress::new(
-            family_id,
-            Route::new(format!(
-                "stream://{realm}/{}",
-                crate::domains::stream::INTERNAL_REALM_SEGMENT
-            )),
-        );
-        let realm_spawned = {
-            let store = self.stream_store.clone();
-            let durable_metrics = self.durable_metrics.clone();
-            let realm_owned = realm.to_string();
-            self.watermark_coordinators.realm.ensure_spawned(
-                StreamRealmScope {
-                    family: family_id,
-                    realm: realm.to_string(),
-                },
-                realm_address.clone(),
-                move || {
-                    crate::domains::stream::realm_actor::RealmActor::new(
-                        family_id,
-                        realm_owned.clone(),
-                        store.clone(),
-                        durable_metrics.clone(),
-                    )
-                },
-            )
-        };
-
-        let area_address = crate::runtime::routing::RouteAddress::new(
-            family_id,
-            Route::new(format!(
-                "stream://{realm}/{area}/{}",
-                crate::domains::stream::INTERNAL_AREA_SEGMENT
-            )),
-        );
-        let area_spawned = {
-            let store = self.stream_store.clone();
-            let durable_metrics = self.durable_metrics.clone();
-            let realm_owned = realm.to_string();
-            let area_owned = area.to_string();
-            self.watermark_coordinators.area.ensure_spawned(
-                StreamAreaScope {
-                    family: family_id,
-                    realm: realm.to_string(),
-                    area: area.to_string(),
-                },
-                area_address.clone(),
-                move || {
-                    crate::domains::stream::area_actor::AreaActor::new(
-                        family_id,
-                        realm_owned.clone(),
-                        area_owned.clone(),
-                        store.clone(),
-                        durable_metrics.clone(),
-                    )
-                },
-            )
-        };
-
-        self.dispatch_watermark_commit(WatermarkDispatch::<(u64, String, String)> {
-            address: area_address,
-            spawned: area_spawned,
-            family_id,
-            realm,
-            area: Some(area),
-            coordinator: "area",
-            commit,
-            key_type: std::marker::PhantomData,
-        });
-        self.dispatch_watermark_commit(WatermarkDispatch::<(u64, String)> {
-            address: realm_address,
-            spawned: realm_spawned,
-            family_id,
-            realm,
-            area: None,
-            coordinator: "realm",
-            commit,
-            key_type: std::marker::PhantomData,
-        });
+        self.notify_area_coordinator(family, realm, area, commit);
+        self.notify_realm_coordinator(family, realm, commit);
     }
 
-    fn dispatch_watermark_commit<K>(&self, dispatch: WatermarkDispatch<'_, K>) {
-        let WatermarkDispatch {
-            address,
-            spawned,
-            family_id,
-            realm,
-            area,
-            coordinator,
-            commit,
-            key_type: _,
-        } = dispatch;
-        if !spawned {
-            self.counter_inc(METRIC_WATERMARK_COORDINATION_DROPS_TOTAL);
-            tracing::warn!(
-                domain = "stream",
-                route_family = family_id.id(),
-                realm,
-                area = area.unwrap_or(""),
-                coordinator,
-                "Stream watermark coordinator capacity was exhausted"
-            );
+    fn notify_area_coordinator(
+        &mut self,
+        family: RouteFamily,
+        realm: &str,
+        area: &str,
+        commit: &crate::domains::stream::protocol::BatchCommitted,
+    ) {
+        let scope = StreamAreaScope {
+            family,
+            realm: realm.to_owned(),
+            area: area.to_owned(),
+        };
+        if !self.watermark_coordinators.area.contains_key(&scope)
+            && self.watermark_coordinators.area.len()
+                >= crate::domains::stream::MAX_WATERMARK_COORDINATORS
+        {
+            self.record_capacity_drop(family, realm, Some(area), "area");
             return;
         }
-
-        let envelope = Envelope::new(
-            address,
+        let router = self.watermark_router.clone();
+        let store = self.core.stream_store.clone();
+        let metrics = self.core.durable_metrics.clone();
+        let coordinator = self
+            .watermark_coordinators
+            .area
+            .entry(scope)
+            .or_insert_with(|| {
+                let address = crate::runtime::routing::RouteAddress::new(
+                    family,
+                    Route::new(format!(
+                        "stream://{realm}/{area}/{}",
+                        crate::domains::stream::INTERNAL_AREA_SEGMENT
+                    )),
+                );
+                (
+                    crate::domains::stream::area_actor::AreaActor::new(
+                        family,
+                        realm.to_owned(),
+                        area.to_owned(),
+                        store,
+                        metrics,
+                    ),
+                    crate::runtime::actor::Context::new(address, router),
+                )
+            });
+        coordinator.0.receive(
             crate::domains::stream::protocol::StreamCoordinationMessage::BatchCommitted(
                 commit.clone(),
             ),
+            &mut coordinator.1,
         );
-        if let Err(error) = self.router.route_high_priority(envelope) {
-            self.counter_inc(METRIC_WATERMARK_COORDINATION_DROPS_TOTAL);
-            tracing::warn!(
-                domain = "stream",
-                route_family = family_id.id(),
-                realm,
-                area = area.unwrap_or(""),
-                coordinator,
-                error = ?error,
-                "Stream watermark coordination notice was not accepted"
+    }
+
+    fn notify_realm_coordinator(
+        &mut self,
+        family: RouteFamily,
+        realm: &str,
+        commit: &crate::domains::stream::protocol::BatchCommitted,
+    ) {
+        let scope = StreamRealmScope {
+            family,
+            realm: realm.to_owned(),
+        };
+        if !self.watermark_coordinators.realm.contains_key(&scope)
+            && self.watermark_coordinators.realm.len()
+                >= crate::domains::stream::MAX_WATERMARK_COORDINATORS
+        {
+            self.record_capacity_drop(family, realm, None, "realm");
+            return;
+        }
+        let router = self.watermark_router.clone();
+        let store = self.core.stream_store.clone();
+        let metrics = self.core.durable_metrics.clone();
+        let coordinator = self
+            .watermark_coordinators
+            .realm
+            .entry(scope)
+            .or_insert_with(|| {
+                let address = crate::runtime::routing::RouteAddress::new(
+                    family,
+                    Route::new(format!(
+                        "stream://{realm}/{}",
+                        crate::domains::stream::INTERNAL_REALM_SEGMENT
+                    )),
+                );
+                (
+                    crate::domains::stream::realm_actor::RealmActor::new(
+                        family,
+                        realm.to_owned(),
+                        store,
+                        metrics,
+                    ),
+                    crate::runtime::actor::Context::new(address, router),
+                )
+            });
+        coordinator.0.receive(
+            crate::domains::stream::protocol::StreamCoordinationMessage::BatchCommitted(
+                commit.clone(),
+            ),
+            &mut coordinator.1,
+        );
+    }
+
+    fn record_capacity_drop(
+        &mut self,
+        family: RouteFamily,
+        realm: &str,
+        area: Option<&str>,
+        coordinator: &'static str,
+    ) {
+        self.core
+            .counter_inc(METRIC_WATERMARK_COORDINATION_DROPS_TOTAL);
+        tracing::warn!(
+            domain = "stream",
+            route_family = family.id(),
+            realm,
+            area = area.unwrap_or(""),
+            coordinator,
+            "Stream watermark coordinator capacity was exhausted"
+        );
+    }
+
+    pub(in crate::domains::stream::sink) fn service_watermark_timers(&mut self) {
+        let commits = std::mem::take(&mut self.pending_watermark_commits);
+        for commit in commits {
+            self.notify_area_batch_committed(
+                commit.family,
+                &commit.realm,
+                &commit.area,
+                &commit.batch,
             );
+        }
+        for (actor, context) in self.watermark_coordinators.area.values_mut() {
+            for timer in context.timer_manager().fired_timers() {
+                actor.on_timer(timer, context);
+            }
+        }
+        for (actor, context) in self.watermark_coordinators.realm.values_mut() {
+            for timer in context.timer_manager().fired_timers() {
+                actor.on_timer(timer, context);
+            }
+        }
+        while let Ok(event) = self.watermark_events.try_recv() {
+            self.core.handle_domain_publish(&event);
+            let destination =
+                crate::runtime::routing::RouteAddress::new(event.family_id, event.route.clone());
+            let _ = self
+                .core
+                .router
+                .route_exact(crate::runtime::Envelope::new(destination, event));
         }
     }
 }

@@ -3,20 +3,20 @@
 
 use super::{
     notice_delivery_worker, NoticeDeliveryJob, NoticeDeliveryTarget, NoticeDeliveryTargets,
-    NoticeDomainCore, NoticeMatchedRoutePatterns,
+    NoticeFamilyState, NoticeMatchedRoutePatterns,
 };
 use std::sync::Arc;
 use std::time::Instant;
 
-impl NoticeDomainCore {
+impl NoticeFamilyState {
     fn enqueue_notice_event(
-        &self,
+        &mut self,
         targets: NoticeDeliveryTargets,
         route: &crate::runtime::routing::Route,
         payload: &bytes::Bytes,
     ) {
         let family = *targets[0].subscriber.family();
-        let worker = notice_delivery_worker(&self.delivery_workers, &self.router, family);
+        let worker = notice_delivery_worker(&mut self.delivery_workers, &self.router, family);
         let Some(worker) = worker else {
             crate::observability::counter_inc(
                 crate::domains::notice::metrics::METRIC_DELIVERY_DROPS_TOTAL,
@@ -32,7 +32,7 @@ impl NoticeDomainCore {
     }
 
     fn record_route_publishes(
-        &self,
+        &mut self,
         route_family: crate::runtime::routing::RouteFamily,
         routes: &[Arc<str>],
     ) {
@@ -41,7 +41,7 @@ impl NoticeDomainCore {
         }
 
         let now = Instant::now();
-        let mut route_stats = self.route_stats.lock();
+        let route_stats = &mut self.route_stats;
         for route in routes {
             route_stats
                 .entry((route_family, Arc::clone(route)))
@@ -51,11 +51,11 @@ impl NoticeDomainCore {
     }
 
     fn collect_matching_targets_for_route(
-        &self,
+        &mut self,
         family_id: crate::runtime::routing::RouteFamily,
         route: &str,
     ) -> NoticeDeliveryTargets {
-        let families = self.families.lock();
+        let families = &self.families;
         let Some(state) = families.get(&family_id) else {
             return NoticeDeliveryTargets::new();
         };
@@ -77,7 +77,7 @@ impl NoticeDomainCore {
     }
 
     pub(super) fn publish_route_payload(
-        &self,
+        &mut self,
         family_id: crate::runtime::routing::RouteFamily,
         route: &crate::runtime::routing::Route,
         payload: &bytes::Bytes,
@@ -91,11 +91,11 @@ impl NoticeDomainCore {
         self.mark_admin_snapshot_dirty();
     }
 
-    fn publish_event(&self, event: &crate::runtime::DomainPublishEvent) {
+    fn publish_event(&mut self, event: &crate::runtime::DomainPublishEvent) {
         self.publish_route_payload(event.family_id, &event.route, &event.payload);
     }
 
-    pub(super) fn handle_domain_publish(&self, event: &crate::runtime::DomainPublishEvent) {
+    pub(super) fn handle_domain_publish(&mut self, event: &crate::runtime::DomainPublishEvent) {
         self.publish_event(event);
     }
 }

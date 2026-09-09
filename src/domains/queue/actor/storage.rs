@@ -54,8 +54,9 @@ impl QueueActor {
         let cf_id = self.queue_key.family.id();
         let header_key = self.cached_header_key(id);
         let txn = self
+            .persistence
             .store
-            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
+            .begin(cf_id, super::recovery_store::QueueTransactionMode::ReadOnly)
             .map_err(|e| format!("Failed to begin read tx for message {id}: {e:?}"))?;
 
         match txn.get(&header_key) {
@@ -69,8 +70,9 @@ impl QueueActor {
         let cf_id = self.queue_key.family.id();
         let body_key = self.cached_body_key(id);
         let txn = self
+            .persistence
             .store
-            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
+            .begin(cf_id, super::recovery_store::QueueTransactionMode::ReadOnly)
             .map_err(|e| format!("Failed to begin read tx for message body {id}: {e:?}"))?;
 
         match txn.get(&body_key) {
@@ -88,8 +90,9 @@ impl QueueActor {
         let header_key = self.cached_header_key(id);
         let body_key = self.cached_body_key(id);
         let txn = self
+            .persistence
             .store
-            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadOnly)
+            .begin(cf_id, super::recovery_store::QueueTransactionMode::ReadOnly)
             .map_err(|e| format!("Failed to begin read tx for message {id}: {e:?}"))?;
 
         match txn.get(&header_key) {
@@ -146,10 +149,6 @@ impl QueueActor {
         crate::observability::counter_inc(metric_name);
     }
 
-    pub(super) fn is_missing_read_snapshot_error(error: &impl std::fmt::Debug) -> bool {
-        format!("{error:?}").contains("read snapshot not available")
-    }
-
     pub(super) fn hydrate_record_for_receive(
         &mut self,
         id: MessageId,
@@ -179,7 +178,7 @@ impl QueueActor {
 
     pub(super) fn write_record_as_split(
         &self,
-        txn: &mut cntryl_midge::Transaction,
+        txn: &mut super::recovery_store::QueueTransaction,
         id: MessageId,
         record: &QueueRecord,
     ) -> Result<(), String> {
@@ -223,8 +222,8 @@ impl QueueActor {
     }
 
     pub(super) fn commit_transaction(
-        txn: cntryl_midge::Transaction,
-        write_options: cntryl_midge::WriteOptions,
+        txn: super::recovery_store::QueueTransaction,
+        write_options: crate::domains::WritePolicy,
         commit: QueueCommit,
     ) -> Result<(), String> {
         #[cfg(test)]

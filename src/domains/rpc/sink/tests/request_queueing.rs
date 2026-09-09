@@ -6,7 +6,7 @@ fn should_reject_duplicate_live_correlation_given_rpc_sink() {
     // Arrange
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model));
+    let sink = Arc::new(RpcDomain::new(router.clone(), admin_read_model));
     let family = RouteFamily::new(1);
     let request_route = Route::new("rpc://bench/system/resource/operation");
     let request_addr = RouteAddress::new(family, request_route.clone());
@@ -114,7 +114,7 @@ fn should_queue_request_when_worker_is_busy_given_rpc_sink() {
     // Arrange
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model));
+    let sink = Arc::new(RpcDomain::new(router.clone(), admin_read_model));
     let family = RouteFamily::new(1);
     let request_route = Route::new("rpc://bench/system/resource/operation");
     let request_addr = RouteAddress::new(family, request_route.clone());
@@ -217,7 +217,7 @@ fn should_dispatch_queued_request_after_terminal_response_given_rpc_sink() {
     // Arrange
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model));
+    let sink = Arc::new(RpcDomain::new(router.clone(), admin_read_model));
     let family = RouteFamily::new(1);
     let request_route = Route::new("rpc://bench/system/resource/operation");
     let request_addr = RouteAddress::new(family, request_route.clone());
@@ -345,9 +345,8 @@ fn should_reject_request_when_route_queue_capacity_reached_given_rpc_sink() {
     // Arrange
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = Arc::new(
-        RpcDomainSink::new(router.clone(), admin_read_model).with_route_pending_capacity(1),
-    );
+    let sink =
+        Arc::new(RpcDomain::new(router.clone(), admin_read_model).with_route_pending_capacity(1));
     let family = RouteFamily::new(1);
     let request_route = Route::new("rpc://bench/system/resource/operation");
     let request_addr = RouteAddress::new(family, request_route.clone());
@@ -485,7 +484,7 @@ fn should_snapshot_queued_request_without_worker_session_id_given_rpc_admin_snap
     // Arrange
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = RpcDomainSink::new(router, admin_read_model.clone());
+    let sink = RpcDomain::new(router, admin_read_model.clone());
     let family = RouteFamily::new(1);
     let route = Route::new("rpc://prod/api/users/get");
     let correlation_id = uuid::Uuid::new_v4();
@@ -521,7 +520,7 @@ fn should_reject_request_when_worker_disconnects_before_dispatch_given_missing_w
     // Arrange
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model));
+    let sink = Arc::new(RpcDomain::new(router.clone(), admin_read_model));
     let family = RouteFamily::new(1);
     let request_route = Route::new("rpc://bench/system/resource/operation");
     let request_addr = RouteAddress::new(family, request_route.clone());
@@ -579,7 +578,7 @@ fn should_forward_response_to_original_request_source_given_noncanonical_inbox_r
     // Arrange
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model));
+    let sink = Arc::new(RpcDomain::new(router.clone(), admin_read_model));
     let family = RouteFamily::new(1);
     let request_route = Route::new("rpc://bench/system/resource/operation");
     let request_addr = RouteAddress::new(family, request_route.clone());

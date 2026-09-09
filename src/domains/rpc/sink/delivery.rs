@@ -7,17 +7,19 @@
 #[cfg(test)]
 use super::state_model::RPC_MSG_TYPE_REQUEST;
 use super::state_model::{
-    session_inbox_address, DeliveryError, Envelope, Instant, RpcDeliveryOutcome as DeliveryOutcome,
-    RpcDomainRuntime, RpcPendingErrorDelivery, RpcPendingRequest, RpcQueuedDispatch,
-    RpcRequestRejection, RpcRequestState, RpcWorkerDispatch, RPC_BACKPRESSURE_ERROR,
-    RPC_DUPLICATE_CORRELATION_ERROR, RPC_MAX_PENDING_REQUESTS, RPC_NO_WORKERS_ERROR,
-    RPC_WORKER_NOT_FOUND_ERROR,
+    RpcDeliveryOutcome as DeliveryOutcome, RpcFamilyRuntime, RpcPendingErrorDelivery,
+    RpcPendingRequest, RpcQueuedDispatch, RpcRequestRejection, RpcRequestState, RpcWorkerDispatch,
+    RPC_BACKPRESSURE_ERROR, RPC_DUPLICATE_CORRELATION_ERROR, RPC_MAX_PENDING_REQUESTS,
+    RPC_NO_WORKERS_ERROR, RPC_WORKER_NOT_FOUND_ERROR,
 };
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
 use crate::domains::rpc::protocol::RpcRequest;
 #[cfg(not(test))]
 use crate::domains::rpc::RpcWorkerRequestDelivery;
+use crate::runtime::routing::session_inbox_address;
+use crate::runtime::{DeliveryError, Envelope};
+use std::time::Instant;
 
 struct RejectionSpec {
     metric: &'static str,
@@ -57,9 +59,9 @@ const REJECTION_SPECS: [RejectionSpec; 4] = [
 pub(in crate::domains::rpc::sink) const RPC_BACKPRESSURE_REJECTS_METRIC: &str =
     "rpc_backpressure_rejects_total";
 
-impl RpcDomainRuntime<'_> {
+impl RpcFamilyRuntime<'_> {
     pub(super) fn handle_request_message(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: &crate::runtime::ClientFrameMeta,
         req: RpcRequest,
@@ -71,9 +73,12 @@ impl RpcDomainRuntime<'_> {
             .cloned()
             .unwrap_or_else(|| session_inbox_address(meta.route_family, meta.session_id));
 
-        let metrics_enabled = self.metrics.is_some();
+        let metrics_enabled = self.core.metrics.is_some();
         let state_wait_start = metrics_enabled.then(Instant::now);
-        let mut state = self.state.lock();
+        let request_timeout = self.core.request_timeout;
+        let route_pending_capacity = self.core.route_pending_capacity;
+        let global_pending_count = self.core.global_pending_count.clone();
+        let state = &mut self.core.state;
         let state_wait_us = state_wait_start.map_or(0, Self::elapsed_micros_u64);
         let state_hold_start = metrics_enabled.then(Instant::now);
         let dispatch = RpcRequestState::dispatch_or_queue(
@@ -81,14 +86,13 @@ impl RpcDomainRuntime<'_> {
             req,
             meta.session_id,
             caller_inbox_addr,
-            self.request_timeout,
-            self.route_pending_capacity,
+            request_timeout,
+            route_pending_capacity,
             RPC_MAX_PENDING_REQUESTS,
-            self.enforce_global_pending_count
-                .then_some(self.global_pending_count.as_ref()),
+            Some(global_pending_count.as_ref()),
         );
         let state_hold_us = state_hold_start.map_or(0, Self::elapsed_micros_u64);
-        drop(state);
+        let _ = state;
 
         self.observe_request_state_metrics(0, state_wait_us, state_hold_us, 0);
 
@@ -121,7 +125,7 @@ impl RpcDomainRuntime<'_> {
     }
 
     fn observe_request_state_metrics(
-        &self,
+        &mut self,
         route_registry_lookup_us: u64,
         state_wait_us: u64,
         state_hold_us: u64,
@@ -135,7 +139,7 @@ impl RpcDomainRuntime<'_> {
     }
 
     fn reject_with_spec(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: &crate::runtime::ClientFrameMeta,
         req: &RpcRequest,
@@ -160,7 +164,7 @@ impl RpcDomainRuntime<'_> {
     }
 
     fn accept_queued_request(
-        &self,
+        &mut self,
         route: &crate::runtime::routing::Route,
         family: crate::runtime::routing::RouteFamily,
         correlation_id: uuid::Uuid,
@@ -184,7 +188,7 @@ impl RpcDomainRuntime<'_> {
     }
 
     fn forward_immediate_request(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: &crate::runtime::ClientFrameMeta,
         req: RpcRequest,
@@ -196,7 +200,7 @@ impl RpcDomainRuntime<'_> {
         self.gauge_set("rpc_pending_requests", live_request_count as u64);
         self.schedule_admin_snapshot(false);
 
-        let metrics_enabled = self.metrics.is_some();
+        let metrics_enabled = self.core.metrics.is_some();
         let request_forward_start = metrics_enabled.then(Instant::now);
         let forward_result = self.forward_request_to_worker(&req, worker);
         if let Some(request_forward_start) = request_forward_start {
@@ -237,7 +241,7 @@ impl RpcDomainRuntime<'_> {
 
     #[allow(clippy::needless_pass_by_value)]
     fn handle_disconnected_worker_dispatch(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: &crate::runtime::ClientFrameMeta,
         req: RpcRequest,
@@ -272,7 +276,7 @@ impl RpcDomainRuntime<'_> {
 
     #[allow(clippy::needless_pass_by_value)]
     fn handle_backpressured_worker_dispatch(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: &crate::runtime::ClientFrameMeta,
         req: RpcRequest,
@@ -303,7 +307,7 @@ impl RpcDomainRuntime<'_> {
 
     #[allow(clippy::needless_pass_by_value)]
     fn handle_worker_contract_dispatch_failure(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: &crate::runtime::ClientFrameMeta,
         req: RpcRequest,
@@ -330,7 +334,7 @@ impl RpcDomainRuntime<'_> {
     }
 
     pub(super) fn reject_request_with_terminal_error(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         req: &RpcRequest,
@@ -346,7 +350,7 @@ impl RpcDomainRuntime<'_> {
     }
 
     pub(super) fn forward_request_to_worker(
-        &self,
+        &mut self,
         req: &crate::domains::rpc::protocol::RpcRequest,
         worker: &RpcWorkerDispatch,
     ) -> Result<(), crate::runtime::RouteError> {
@@ -374,16 +378,16 @@ impl RpcDomainRuntime<'_> {
             RpcWorkerRequestDelivery::new(worker.session_id, *worker.addr.family(), req.clone()),
         );
 
-        self.router.route(request_envelope)
+        self.core.router.route(request_envelope)
     }
 
     pub(super) fn dispatch_queued_requests_for_family(
-        &self,
+        &mut self,
         family: crate::runtime::routing::RouteFamily,
     ) {
         let mut snapshot_dirty = false;
         loop {
-            let next_dispatch = self.state.lock().next_ready_dispatch_for_family(family);
+            let next_dispatch = self.core.state.next_ready_dispatch_for_family(family);
             let Some(dispatch) = next_dispatch else {
                 break;
             };
@@ -395,7 +399,7 @@ impl RpcDomainRuntime<'_> {
         }
     }
 
-    pub(super) fn forward_queued_dispatch(&self, dispatch: &RpcQueuedDispatch) {
+    pub(super) fn forward_queued_dispatch(&mut self, dispatch: &RpcQueuedDispatch) {
         self.gauge_set("rpc_pending_requests", dispatch.live_request_count as u64);
 
         match self.forward_request_to_worker(&dispatch.request, &dispatch.registration) {
@@ -480,9 +484,9 @@ impl RpcDomainRuntime<'_> {
         }
     }
 
-    pub(super) fn dispatch_all_queued_requests(&self) {
+    pub(super) fn dispatch_all_queued_requests(&mut self) {
         let mut families: Vec<crate::runtime::routing::RouteFamily> = {
-            let state = self.state.lock();
+            let state = &self.core.state;
             state.routes.keys().map(|(family, _)| *family).collect()
         };
         families.sort_by_key(crate::runtime::routing::RouteFamily::id);
@@ -493,22 +497,20 @@ impl RpcDomainRuntime<'_> {
     }
 
     pub(super) fn remove_pending_request_for_family(
-        &self,
+        &mut self,
         family: crate::runtime::routing::RouteFamily,
         correlation_id: &uuid::Uuid,
     ) -> Option<(RpcPendingRequest, usize)> {
         let removed = {
-            let mut state = self.state.lock();
+            let state = &mut self.core.state;
             state.remove_pending_request_for_family(family, correlation_id)
         };
 
-        self.gauge_set(
-            "rpc_pending_requests",
-            removed.as_ref().map_or_else(
-                || self.pending_request_count() as u64,
-                |(_, pending_len)| *pending_len as u64,
-            ),
+        let pending_count = removed.as_ref().map_or_else(
+            || self.core.state.live_request_count(),
+            |(_, pending_len)| *pending_len,
         );
+        self.gauge_set("rpc_pending_requests", pending_count as u64);
         if removed.is_some() {
             self.release_global_pending(1);
         }

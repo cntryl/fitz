@@ -3,11 +3,13 @@
 
 use super::delivery_strategy::DeliveryStrategy;
 use super::model::{
-    Envelope, HashMap, HashSet, Ordering, PendingFireKey, PendingFireState, PendingFireStates,
-    ScheduleDomainRuntime, EXECUTIONS_WINDOW_MS,
+    PendingFireKey, PendingFireState, PendingFireStates, ScheduleDomainRuntime,
+    EXECUTIONS_WINDOW_MS,
 };
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
+use crate::runtime::Envelope;
+use std::collections::{HashMap, HashSet};
 
 type PendingAckRetryMap = HashMap<crate::runtime::routing::RouteFamily, Vec<PendingFireKey>>;
 
@@ -26,7 +28,7 @@ struct DueScanPlan {
 }
 
 impl ScheduleDomainRuntime<'_> {
-    pub(super) fn scan_due_schedules(&self) {
+    pub(super) fn scan_due_schedules(&mut self) {
         let DueScanPlan {
             live_publish_candidates,
             mut ack_retry_candidates,
@@ -43,10 +45,10 @@ impl ScheduleDomainRuntime<'_> {
         self.refresh_metrics_gauges();
     }
 
-    pub(super) fn force_due_scan_for_tests(&self, ready_count: usize) {
+    pub(super) fn force_due_scan_for_tests(&mut self, ready_count: usize) {
         {
-            let mut actors = self.core.actors.lock();
-            for actor in actors.values_mut() {
+            let actor = &mut self.core.actor;
+            if let Some(actor) = actor.as_mut() {
                 actor.bench_prepare_scan(ready_count);
             }
         }
@@ -55,22 +57,22 @@ impl ScheduleDomainRuntime<'_> {
         self.schedule_admin_snapshot(true);
     }
 
-    fn claim_due(&self) -> DueScanPlan {
+    fn claim_due(&mut self) -> DueScanPlan {
         let mut live_publish_candidates = Vec::new();
         let mut ack_retry_candidates = PendingAckRetryMap::new();
         let mut snapshot_dirty = false;
-        let mut actors = self.core.actors.lock();
-        let mut pending_ack_retries = self.core.pending_ack_retries.lock();
+        let actor = &mut self.core.actor;
+        let pending_ack_retries = &mut self.core.pending_ack_retries;
 
-        for (family, actor) in actors.iter_mut() {
+        if let Some(actor) = actor.as_mut() {
             if !actor.claim_due_fires().is_empty() {
                 snapshot_dirty = true;
             }
 
             Self::collect_family_pending_fires(
-                *family,
+                self.core.route_family,
                 actor,
-                &mut pending_ack_retries,
+                pending_ack_retries,
                 &mut live_publish_candidates,
                 &mut ack_retry_candidates,
             );
@@ -133,7 +135,7 @@ impl ScheduleDomainRuntime<'_> {
     }
 
     fn deliver_claims(
-        &self,
+        &mut self,
         live_publish_candidates: Vec<LivePublishCandidate>,
         ack_retry_candidates: &mut PendingAckRetryMap,
     ) -> bool {
@@ -143,9 +145,7 @@ impl ScheduleDomainRuntime<'_> {
             let accepted = self.handle_schedule_publish(family, &route, delivery_mode, &payload);
             had_live_handoffs |= accepted;
             if !accepted {
-                self.core
-                    .live_publish_failures
-                    .fetch_add(1, Ordering::Relaxed);
+                self.core.live_publish_failures = self.core.live_publish_failures.saturating_add(1);
             }
             ack_retry_candidates
                 .entry(family)
@@ -156,17 +156,20 @@ impl ScheduleDomainRuntime<'_> {
         had_live_handoffs
     }
 
-    fn acknowledge_delivered(&self, ack_retry_candidates: PendingAckRetryMap) -> bool {
+    fn acknowledge_delivered(&mut self, ack_retry_candidates: PendingAckRetryMap) -> bool {
         let mut acknowledged_handoffs = false;
 
         if ack_retry_candidates.is_empty() {
             return false;
         }
 
-        let mut actors = self.core.actors.lock();
-        let mut pending_ack_retries = self.core.pending_ack_retries.lock();
+        let mut actor = self.core.actor.take();
+        let mut pending_ack_retries = std::mem::take(&mut self.core.pending_ack_retries);
         for (family, ack_candidates) in ack_retry_candidates {
-            if let Some(actor) = actors.get_mut(&family) {
+            if family == self.core.route_family {
+                let Some(actor) = actor.as_mut() else {
+                    continue;
+                };
                 acknowledged_handoffs |= self.acknowledge_family_pending_fire_claims(
                     family,
                     actor,
@@ -175,12 +178,14 @@ impl ScheduleDomainRuntime<'_> {
                 );
             }
         }
+        self.core.actor = actor;
+        self.core.pending_ack_retries = pending_ack_retries;
 
         acknowledged_handoffs
     }
 
     fn acknowledge_family_pending_fire_claims(
-        &self,
+        &mut self,
         family: crate::runtime::routing::RouteFamily,
         actor: &mut crate::domains::schedule::ScheduleActor,
         ack_candidates: &[PendingFireKey],
@@ -205,7 +210,7 @@ impl ScheduleDomainRuntime<'_> {
                 false
             }
             Err(error) => {
-                self.core.ack_failures.fetch_add(1, Ordering::Relaxed);
+                self.core.ack_failures = self.core.ack_failures.saturating_add(1);
                 tracing::warn!(
                     route_family = family.as_u64(),
                     error = %error,
@@ -235,8 +240,8 @@ impl ScheduleDomainRuntime<'_> {
         }
     }
 
-    fn record_recent_acknowledgements(&self, acked: usize, acknowledged_at_ms: u64) {
-        let mut deque = self.core.recent_acknowledgement_ms.lock();
+    fn record_recent_acknowledgements(&mut self, acked: usize, acknowledged_at_ms: u64) {
+        let deque = &mut self.core.recent_acknowledgement_ms;
         let cutoff = acknowledged_at_ms.saturating_sub(EXECUTIONS_WINDOW_MS);
         while deque.front().copied().is_some_and(|t| t < cutoff) {
             deque.pop_front();
@@ -247,7 +252,7 @@ impl ScheduleDomainRuntime<'_> {
     }
 
     pub(super) fn route_live_notify(
-        &self,
+        router: &crate::runtime::Router,
         session_id: u64,
         subscription_id: u64,
         subscriber: &crate::runtime::routing::RouteAddress,
@@ -287,20 +292,22 @@ impl ScheduleDomainRuntime<'_> {
 
         // Subscriber notify routing is best-effort and must not redefine the
         // schedule domain's durable acknowledgement boundary.
-        self.core.router.route(notify_envelope).is_ok()
+        router.route(notify_envelope).is_ok()
     }
 
     pub(super) fn handle_schedule_publish(
-        &self,
+        &mut self,
         family: crate::runtime::routing::RouteFamily,
         route: &str,
         delivery_mode: crate::domains::schedule::ScheduleDeliveryMode,
         payload: &bytes::Bytes,
     ) -> bool {
-        let mut families = self.core.sub_families.lock();
-        let Some(state) = families.get_mut(&family) else {
+        debug_assert_eq!(family, self.core.route_family);
+        let router = self.core.router.clone();
+        let state = &mut self.core.subscriptions;
+        if state.is_empty() {
             return false;
-        };
+        }
         let mut subscription_ids = state.matching_ids(family, route);
         subscription_ids.sort_unstable();
         if subscription_ids.is_empty() {
@@ -319,7 +326,8 @@ impl ScheduleDomainRuntime<'_> {
             let Some(subscription) = state.subscriptions.get(*subscription_id) else {
                 continue;
             };
-            let accepted = self.route_live_notify(
+            let accepted = Self::route_live_notify(
+                &router,
                 subscription.session_id,
                 subscription.subscription_id,
                 &subscription.subscriber,
@@ -346,7 +354,7 @@ impl ScheduleDomainRuntime<'_> {
         any_accepted
     }
 
-    pub(super) fn handle_domain_publish(&self, event: &crate::runtime::DomainPublishEvent) {
+    pub(super) fn handle_domain_publish(&mut self, event: &crate::runtime::DomainPublishEvent) {
         self.handle_schedule_publish(
             event.family_id,
             event.route.as_str(),

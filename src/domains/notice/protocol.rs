@@ -51,7 +51,7 @@ impl PublishMessage {
 /// Subscribe to messages matching a pattern (may include wildcards `*` and `**`)
 ///
 /// Runtime ingress authorizes the complete concrete-route match set before the
-/// production `NoticeDomainActor` receives this message.
+/// production Notice family actor receives this message.
 #[derive(Debug, Clone)]
 pub struct SubscribeMessage {
     /// Route family for isolation
@@ -83,7 +83,7 @@ impl SubscribeMessage {
 
 /// Unsubscribe from a subscription
 ///
-/// Sent to the production `NoticeDomainActor` after ingress authorization.
+/// Sent to the production Notice family actor after ingress authorization.
 #[derive(Debug, Clone)]
 pub struct UnsubscribeMessage {
     /// Route family for isolation
@@ -107,7 +107,7 @@ impl UnsubscribeMessage {
 
 /// Unsubscribe all subscriptions for a session (called on disconnect)
 ///
-/// Runtime ingress sends this to the production `NoticeDomainActor` when the
+/// Runtime ingress sends this to the production Notice family actor when the
 /// ephemeral session terminates. Cleanup is best-effort.
 #[derive(Debug, Clone)]
 pub struct UnsubscribeAllMessage {

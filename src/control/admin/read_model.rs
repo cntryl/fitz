@@ -15,7 +15,6 @@ type ScheduleIdentity = (u64, String, String, String, String);
 type LeaseIdentity = (u64, String, String, String);
 type StreamRealmIdentity = String;
 type StreamAreaIdentity = (String, String);
-
 fn schedule_identity_key(
     route_family: u64,
     realm: &str,
@@ -136,7 +135,9 @@ pub struct AdminReadModel {
     rpc_workers: RwLock<Vec<RpcWorker>>,
     rpc_pending: RwLock<Vec<RpcPendingRequest>>,
     leases: RwLock<BTreeMap<LeaseIdentity, LeaseInfo>>,
+    lease_waiter_counts: RwLock<BTreeMap<u64, usize>>,
     schedules: RwLock<BTreeMap<ScheduleIdentity, ScheduleInfo>>,
+    schedule_pending_fire_counts: RwLock<BTreeMap<u64, usize>>,
     sessions: RwLock<HashMap<u64, SessionInfo>>,
 }
 
@@ -268,6 +269,16 @@ impl AdminReadModel {
         *self.notice_subscriptions.write() = subscriptions;
     }
 
+    pub(crate) fn replace_notice_family_subscriptions(
+        &self,
+        route_family: u64,
+        subscriptions: Vec<NoticeSubscription>,
+    ) {
+        let mut current = self.notice_subscriptions.write();
+        current.retain(|subscription| subscription.route_family != route_family);
+        current.extend(subscriptions);
+    }
+
     pub fn notice_subscriptions(
         &self,
         realm: Option<&str>,
@@ -281,6 +292,16 @@ impl AdminReadModel {
 
     pub fn replace_notice_routes(&self, routes: Vec<NoticeRouteInfo>) {
         *self.notice_routes.write() = routes;
+    }
+
+    pub(crate) fn replace_notice_family_routes(
+        &self,
+        route_family: u64,
+        routes: Vec<NoticeRouteInfo>,
+    ) {
+        let mut current = self.notice_routes.write();
+        current.retain(|route| route.route_family != route_family);
+        current.extend(routes);
     }
 
     pub fn notice_routes(&self, realm: Option<&str>) -> Vec<NoticeRouteInfo> {
@@ -321,6 +342,12 @@ impl AdminReadModel {
         *self.rpc_workers.write() = workers;
     }
 
+    pub(crate) fn replace_rpc_family_workers(&self, route_family: u64, workers: Vec<RpcWorker>) {
+        let mut current = self.rpc_workers.write();
+        current.retain(|worker| worker.route_family != route_family);
+        current.extend(workers);
+    }
+
     pub fn rpc_workers(&self, realm: Option<&str>) -> Vec<RpcWorker> {
         let workers = self.rpc_workers.read();
         collect_slice_matches(&workers, |item| matches_rpc_route_realm(realm, &item.route))
@@ -328,6 +355,16 @@ impl AdminReadModel {
 
     pub fn replace_rpc_pending(&self, requests: Vec<RpcPendingRequest>) {
         *self.rpc_pending.write() = requests;
+    }
+
+    pub(crate) fn replace_rpc_family_pending(
+        &self,
+        route_family: u64,
+        requests: Vec<RpcPendingRequest>,
+    ) {
+        let mut current = self.rpc_pending.write();
+        current.retain(|request| request.route_family != route_family);
+        current.extend(requests);
     }
 
     pub fn rpc_pending(&self, realm: Option<&str>) -> Vec<RpcPendingRequest> {
@@ -340,6 +377,16 @@ impl AdminReadModel {
             .into_iter()
             .map(|lease| (lease_identity_for(&lease), lease))
             .collect();
+    }
+
+    pub(crate) fn set_lease_family_waiter_count(&self, route_family: u64, count: usize) -> usize {
+        let mut counts = self.lease_waiter_counts.write();
+        counts.insert(route_family, count);
+        counts.values().sum()
+    }
+
+    pub(crate) fn lease_count(&self) -> usize {
+        self.leases.read().len()
     }
 
     pub fn upsert_lease(&self, lease: LeaseInfo) {
@@ -377,6 +424,30 @@ impl AdminReadModel {
             .into_iter()
             .map(|schedule| (schedule_identity_for(&schedule), schedule))
             .collect();
+    }
+
+    pub(crate) fn replace_schedule_family(&self, route_family: u64, schedules: Vec<ScheduleInfo>) {
+        let mut current = self.schedules.write();
+        current.retain(|identity, _| identity.0 != route_family);
+        current.extend(
+            schedules
+                .into_iter()
+                .map(|schedule| (schedule_identity_for(&schedule), schedule)),
+        );
+    }
+
+    pub(crate) fn schedule_count(&self) -> usize {
+        self.schedules.read().len()
+    }
+
+    pub(crate) fn set_schedule_family_pending_fire_count(
+        &self,
+        route_family: u64,
+        count: usize,
+    ) -> usize {
+        let mut counts = self.schedule_pending_fire_counts.write();
+        counts.insert(route_family, count);
+        counts.values().sum()
     }
 
     pub fn upsert_schedule(&self, schedule: ScheduleInfo) {

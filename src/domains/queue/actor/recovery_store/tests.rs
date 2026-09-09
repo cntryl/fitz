@@ -20,7 +20,7 @@ fn seeded_queue() -> (QueueActor, Arc<QueueRecoveryStore>) {
         actor.handle_send(Bytes::from_static(b"first"), None),
         super::super::QueueResponse::Sent { .. }
     ));
-    let store = actor.recovery_store.clone();
+    let store = actor.persistence.recovery.clone();
     (actor, store)
 }
 
@@ -71,7 +71,7 @@ fn should_preserve_previous_index_when_replacement_commit_fails() {
     };
 
     // Act
-    let result = store.replace_index(&replacement, WriteOptions::cloud_strict());
+    let result = store.replace_index(&replacement, WritePolicy::CloudStrict);
 
     // Assert
     assert!(result.is_err(), "cloud policy must fail on local storage");
@@ -101,8 +101,8 @@ fn should_read_reserved_id_from_recovery_snapshot_after_concurrent_commit() {
         .unwrap_or_else(|_| panic!("index metadata"))
         .next_id;
     let mut write = store
-        .engine
-        .begin_tx(store.key.family.id(), TransactionMode::ReadWrite)
+        .store
+        .begin(store.key.family.id(), QueueTransactionMode::ReadWrite)
         .expect("begin concurrent writer");
     write
         .put(
@@ -112,7 +112,7 @@ fn should_read_reserved_id_from_recovery_snapshot_after_concurrent_commit() {
         )
         .expect("advance ID reservation");
     write
-        .commit(WriteOptions::buffered())
+        .commit(WritePolicy::Buffered)
         .expect("commit reservation");
 
     // Act
@@ -129,8 +129,8 @@ fn should_use_authoritative_reservation_when_index_counters_are_invalid() {
     let original = store.snapshot().expect("read original snapshot");
     let reserved = store.next_id(&original);
     let mut write = store
-        .engine
-        .begin_tx(store.key.family.id(), TransactionMode::ReadWrite)
+        .store
+        .begin(store.key.family.id(), QueueTransactionMode::ReadWrite)
         .expect("begin corrupt index write");
     write
         .put(
@@ -140,7 +140,7 @@ fn should_use_authoritative_reservation_when_index_counters_are_invalid() {
         )
         .expect("write invalid counters and ID");
     write
-        .commit(WriteOptions::buffered())
+        .commit(WritePolicy::Buffered)
         .expect("commit corrupt index");
 
     // Act
@@ -156,8 +156,8 @@ fn should_decode_header_rows_only_as_consumed() {
     // Arrange
     let (_actor, store) = seeded_queue();
     let mut write = store
-        .engine
-        .begin_tx(store.key.family.id(), TransactionMode::ReadWrite)
+        .store
+        .begin(store.key.family.id(), QueueTransactionMode::ReadWrite)
         .expect("begin corrupt header write");
     write
         .put(
@@ -167,7 +167,7 @@ fn should_decode_header_rows_only_as_consumed() {
         )
         .expect("write malformed later header");
     write
-        .commit(WriteOptions::buffered())
+        .commit(WritePolicy::Buffered)
         .expect("commit malformed header");
     let snapshot = store.snapshot().expect("read snapshot");
 

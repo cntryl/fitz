@@ -291,7 +291,7 @@ pub(super) fn should_reject_malformed_authoritative_queue_rows_during_preflight(
             let store = create_test_engine_with_cfs(vec![1]);
             put_queue_validation_row(store.as_ref(), &suffix, value);
             (
-                QueueActor::validate_persisted_state_for_existing_families(store.as_ref())
+                QueueActor::validate_persisted_state_for_existing_families(store.clone())
                     .expect_err("malformed queue row should fail preflight"),
                 category,
             )
@@ -320,7 +320,7 @@ pub(super) fn should_fail_closed_given_incomplete_queue_record_under_buffered_po
     );
 
     // Act
-    let result = QueueActor::validate_persisted_state_for_existing_families(store.as_ref());
+    let result = QueueActor::validate_persisted_state_for_existing_families(store.clone());
 
     // Assert
     assert!(result
@@ -339,7 +339,7 @@ pub(super) fn should_reject_orphan_queue_body_during_preflight() {
     );
 
     // Act
-    let result = QueueActor::validate_persisted_state_for_existing_families(store.as_ref());
+    let result = QueueActor::validate_persisted_state_for_existing_families(store.clone());
 
     // Assert
     assert!(result
@@ -551,6 +551,32 @@ pub(super) fn should_not_wake_waiters_given_batch_send_only_delayed_messages() {
     assert!(!actor.take_needs_wake_waiters());
     assert_eq!(actor.ready_len(), 0);
     assert_eq!(actor.delayed.len(), 1);
+}
+
+#[test]
+fn should_match_golden_queue_storage_key_plus_value_bytes() {
+    // Arrange
+    const GOLDEN_KEY: &str = "61636d65007175006a6f6273006d61696e00030000000000000007";
+    const GOLDEN_VALUE: &str = concat!(
+        "020001000000000000000200000000000000000000000000000000000000",
+        "0300000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000"
+    );
+    let queue = QueueKey {
+        family: RouteFamily::new(1),
+        realm: "acme".to_string(),
+        area: "jobs".to_string(),
+        resource: "main".to_string(),
+    };
+    let record = QueueRecord::ready(Bytes::from_static(b"body"), 1, 2, 3);
+
+    // Act
+    let key = QueueActor::header_key(&queue, MessageId::new(7));
+    let value = QueueActor::encode_record_header(&record);
+
+    // Assert
+    assert_eq!(hex::encode(key), GOLDEN_KEY);
+    assert_eq!(hex::encode(value), GOLDEN_VALUE);
 }
 
 #[test]

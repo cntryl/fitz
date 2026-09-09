@@ -12,7 +12,7 @@ pub(super) fn should_create_queue_domain_sink() {
         store,
         router,
         admin_read_model,
-        cntryl_midge::WriteOptions::best_effort(),
+        crate::domains::WritePolicy::BestEffort,
     );
 
     // Assert
@@ -40,12 +40,12 @@ pub(super) fn should_create_fast_queue_sink_with_explicit_background_cloud_recov
         .expect("create route-family column family");
 
     // Act
-    let result = QueueDomainSink::try_new(
+    let result = QueueDomain::try_new(
         Arc::clone(&store),
         Arc::new(Router::new()),
         crate::control::admin::read_model::AdminReadModel::new(),
-        cntryl_midge::WriteOptions::best_effort(),
-        cntryl_midge::WriteOptions::cloud_async(),
+        crate::domains::WritePolicy::BestEffort,
+        crate::domains::WritePolicy::CloudAsync,
         crate::utils::idempotency::default_dedup_store(),
     );
 
@@ -70,7 +70,7 @@ pub(super) fn should_mark_fast_queue_family_dirty_given_successful_send() {
         store,
         router,
         admin_read_model,
-        cntryl_midge::WriteOptions::best_effort(),
+        crate::domains::WritePolicy::BestEffort,
     )
     .with_fast_flush_interval(Some(Duration::from_millis(100)));
 
@@ -109,7 +109,7 @@ pub(super) fn should_clear_dirty_fast_queue_family_after_flush_window() {
         store,
         router,
         admin_read_model,
-        cntryl_midge::WriteOptions::best_effort(),
+        crate::domains::WritePolicy::BestEffort,
     )
     .with_fast_flush_interval(Some(Duration::from_millis(100)));
 
@@ -145,7 +145,7 @@ pub(super) fn should_keep_dirty_fast_queue_family_when_flush_cannot_find_cf() {
         store,
         router,
         admin_read_model,
-        cntryl_midge::WriteOptions::best_effort(),
+        crate::domains::WritePolicy::BestEffort,
     )
     .with_fast_flush_interval(Some(Duration::from_millis(100)));
     sink.insert_dirty_fast_flush_family_for_tests(99);
@@ -173,7 +173,7 @@ pub(super) fn should_reject_send_given_malformed_queue_route() {
         store,
         router,
         admin_read_model.clone(),
-        cntryl_midge::WriteOptions::best_effort(),
+        crate::domains::WritePolicy::BestEffort,
     );
 
     // Act
@@ -225,7 +225,7 @@ pub(super) fn should_reject_receive_given_malformed_queue_route() {
         store,
         router,
         admin_read_model.clone(),
-        cntryl_midge::WriteOptions::best_effort(),
+        crate::domains::WritePolicy::BestEffort,
     );
 
     // Act
@@ -276,7 +276,7 @@ pub(super) fn should_reject_extend_given_malformed_queue_route() {
         store,
         router,
         admin_read_model.clone(),
-        cntryl_midge::WriteOptions::best_effort(),
+        crate::domains::WritePolicy::BestEffort,
     );
 
     // Act
@@ -327,7 +327,7 @@ pub(super) fn should_reject_ack_given_malformed_queue_route() {
         store,
         router,
         admin_read_model.clone(),
-        cntryl_midge::WriteOptions::best_effort(),
+        crate::domains::WritePolicy::BestEffort,
     );
 
     // Act
@@ -372,7 +372,7 @@ pub(super) fn should_notify_queue_watch_given_queue_send_when_queue_transitions_
         store.clone(),
         router.clone(),
         admin_read_model,
-        cntryl_midge::WriteOptions::best_effort(),
+        crate::domains::WritePolicy::BestEffort,
     ));
     let family = RouteFamily::new(1);
     let receiver_addr = RouteAddress::new(family, Route::new("inbox://session/1"));

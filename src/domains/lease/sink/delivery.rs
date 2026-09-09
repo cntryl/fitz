@@ -4,14 +4,14 @@
 use crate::dispatch::protocol::frame_context::FrameContext;
 use crate::runtime::Envelope;
 
-use super::model::LeaseDomainRuntime;
+use super::model::LeaseFamilyRuntime;
 
-impl LeaseDomainRuntime<'_> {
+impl LeaseFamilyRuntime<'_> {
     pub(in crate::domains::lease::sink) fn notify_lease_change(
-        &self,
+        &mut self,
         key: &crate::domains::lease::protocol::LeaseKey,
     ) {
-        if !self.core.families.lock().contains_key(&key.family.as_u64()) {
+        if !self.core.families.contains_key(&key.family.as_u64()) {
             return;
         }
 
@@ -25,12 +25,12 @@ impl LeaseDomainRuntime<'_> {
 
     /// Removes both the per-session references and their matching per-key queue entries.
     pub(in crate::domains::lease::sink) fn handle_domain_publish(
-        &self,
+        &mut self,
         event: &crate::runtime::DomainPublishEvent,
     ) {
         let family_id = event.family_id.as_u64();
         let targets = {
-            let families = self.core.families.lock();
+            let families = &mut self.core.families;
             let mut targets = Vec::new();
             if let Some(family_state) = families.get(&family_id) {
                 family_state.for_each_matching(event, |sub| {

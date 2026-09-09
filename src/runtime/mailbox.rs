@@ -64,6 +64,7 @@ impl Mailbox {
     }
 
     /// Get the high-priority receiver (runtime-internal use only)
+    #[cfg(test)]
     pub(crate) fn high_priority_receiver(&self) -> &Receiver<Envelope> {
         &self.high_receiver
     }

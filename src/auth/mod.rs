@@ -18,7 +18,6 @@
 mod claims;
 mod diagnostics;
 mod errors;
-mod jwks;
 mod realm;
 mod token;
 
@@ -29,10 +28,6 @@ pub use claims::{
 };
 pub use diagnostics::{jwt_failure_diagnostics, JwtClaimDiagnostics, JwtFailureDiagnostics};
 pub use errors::AuthError;
-pub use jwks::{
-    cache_jwks_from_json, cache_jwks_from_json_with_ttl, derive_jwks_url_from_issuer,
-    ensure_jwks_cached, fetch_and_cache_jwks, get_decoding_key_from_cache, is_jwks_stale,
-};
 pub use realm::{realm_matches, validate_realm_format, RealmError};
 pub use token::{verify_jwt_with_hmac_secret, verify_jwt_with_rsa_pem};
 
@@ -238,14 +233,14 @@ impl AuthConfig {
         }
     }
 
-    fn find_issuer(&self, issuer: &str) -> Option<&JwksIssuerConfig> {
+    pub(crate) fn find_issuer(&self, issuer: &str) -> Option<&JwksIssuerConfig> {
         match self {
             AuthConfig::Jwks(config) => config.issuers.iter().find(|entry| entry.issuer == issuer),
             _ => None,
         }
     }
 
-    fn audiences(&self) -> &[String] {
+    pub(crate) fn audiences(&self) -> &[String] {
         match self {
             AuthConfig::Disabled => &[],
             AuthConfig::Hmac(config) => &config.audiences,
@@ -254,7 +249,7 @@ impl AuthConfig {
     }
 }
 
-fn validate_jwks_url(raw: &str, allow_insecure_http: bool) -> Result<(), String> {
+pub(crate) fn validate_jwks_url(raw: &str, allow_insecure_http: bool) -> Result<(), String> {
     let url = url::Url::parse(raw).map_err(|error| error.to_string())?;
     if !allow_insecure_http && url.scheme() != "https" {
         return Err("must use https".to_string());
@@ -333,7 +328,7 @@ fn now_epoch_secs() -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
-fn allow_insecure_jwks_http() -> bool {
+pub(crate) fn allow_insecure_jwks_http() -> bool {
     std::env::var(ENV_ALLOW_INSECURE_JWKS_HTTP)
         .ok()
         .and_then(|value| value.parse::<bool>().ok())
@@ -347,7 +342,7 @@ pub struct VerifiedJwt {
     pub raw_claims: RawClaims,
 }
 
-fn verified_session_claims(
+pub(crate) fn verified_session_claims(
     raw_claims: RawClaims,
     allowlist: &[&str],
     audiences: &[String],
@@ -386,156 +381,6 @@ pub fn map_coarse_scope(s: &str) -> Option<&'static str> {
         "schedule.read" => Some("schedule://**#read"),
         "schedule.write" => Some("schedule://**#write"),
         _ => None,
-    }
-}
-
-/// Verify a JWT through JWKS and return session permissions plus normalized
-/// claims using the default claims configuration.
-///
-/// # Errors
-///
-/// Returns an error when JWKS retrieval, header parsing, signature
-/// verification, or claim normalization fails.
-pub async fn permissions_from_jwt_using_jwks(
-    compact: &str,
-    issuer: &JwksIssuerConfig,
-    audiences: &[String],
-) -> Result<
-    (
-        crate::session::permissions::SessionPermissions,
-        crate::auth::Claims,
-    ),
-    String,
-> {
-    let verified = verified_jwt_using_jwks_with_claims_config(
-        compact,
-        issuer,
-        audiences,
-        &AuthClaimsConfig::default(),
-    )
-    .await?;
-    Ok((verified.permissions, verified.claims))
-}
-
-/// Verify a JWT through JWKS and return session permissions plus normalized
-/// claims.
-///
-/// # Errors
-///
-/// Returns an error when JWKS retrieval, header parsing, signature
-/// verification, or claim normalization fails.
-pub async fn verified_jwt_using_jwks_with_claims_config(
-    compact: &str,
-    issuer: &JwksIssuerConfig,
-    audiences: &[String],
-    claims_config: &AuthClaimsConfig,
-) -> Result<VerifiedJwt, String> {
-    // Ensure jwks present or fetched
-    crate::auth::jwks::ensure_jwks_cached(&issuer.jwks_url)
-        .await
-        .map_err(|e| format!("failed to ensure jwks: {e}"))?;
-    // Parse header to get kid and alg
-    let header =
-        jsonwebtoken::decode_header(compact).map_err(|e| format!("invalid jwt header: {e}"))?;
-    let kid = header.kid.as_deref().unwrap_or("");
-
-    // Try to get decoding key from cache; if missing, fetch and cache, then retry
-    if jwks::get_decoding_key_from_cache(&issuer.jwks_url, kid).is_none() {
-        jwks::refresh_jwks_for_missing_kid(&issuer.jwks_url, kid)
-            .await
-            .map_err(|e| format!("failed to fetch jwks: {e}"))?;
-    }
-
-    let dk = jwks::get_decoding_key_from_cache(&issuer.jwks_url, kid)
-        .ok_or_else(|| "no matching key in jwks".to_string())?;
-
-    // Determine alg for validation
-    let alg = header.alg;
-    let mut validation = jsonwebtoken::Validation::new(alg);
-    validation.validate_aud = false;
-    validation.validate_exp = false;
-    validation.validate_nbf = false;
-
-    // Verify and extract claims as serde_json::Value
-    let token_data = jsonwebtoken::decode::<serde_json::Value>(compact, &dk, &validation)
-        .map_err(|e| format!("signature verification failed: {e}"))?;
-
-    let raw_claims: RawClaims =
-        serde_json::from_value(token_data.claims).map_err(|e| format!("json parse error: {e}"))?;
-
-    verified_session_claims(
-        raw_claims,
-        &[issuer.issuer.as_str()],
-        audiences,
-        claims_config,
-    )
-}
-
-/// Verify a JWT using the configured verification path.
-///
-/// Rules:
-/// - Tokens with `iss` must verify against issuer-derived JWKS.
-/// - Tokens without `iss` may be accepted only with explicit HMAC auth config.
-/// - There is no permissive no-verify fallback.
-///
-/// # Errors
-///
-/// Returns an error when the configured verification path fails or when claim
-/// normalization rejects the token.
-pub async fn permissions_from_verified_jwt(
-    compact: &str,
-    auth_config: &AuthConfig,
-) -> Result<
-    (
-        crate::session::permissions::SessionPermissions,
-        crate::auth::Claims,
-    ),
-    String,
-> {
-    let verified =
-        verified_jwt_with_claims_config(compact, auth_config, &AuthClaimsConfig::default()).await?;
-    Ok((verified.permissions, verified.claims))
-}
-
-/// Verify a JWT using the configured auth path and normalize session claims.
-///
-/// # Errors
-///
-/// Returns an error when the token cannot be parsed, the selected auth mode
-/// rejects the issuer or algorithm, signature verification fails, or claim
-/// normalization fails.
-pub async fn verified_jwt_with_claims_config(
-    compact: &str,
-    auth_config: &AuthConfig,
-    claims_config: &AuthClaimsConfig,
-) -> Result<VerifiedJwt, String> {
-    let raw_claims = parse_jwt_noverify(compact)?;
-
-    match auth_config {
-        AuthConfig::Disabled => Err("authentication is disabled".to_string()),
-        AuthConfig::Hmac(config) => {
-            if !raw_claims.iss.trim().is_empty() {
-                return Err("issuer-based tokens are not allowed in HMAC mode".to_string());
-            }
-
-            let claims_value =
-                token::verify_jwt_with_hmac_secret(compact, config.secret.as_bytes())?;
-            let verified_raw: RawClaims = serde_json::from_value(claims_value)
-                .map_err(|e| format!("json parse error: {e}"))?;
-            verified_session_claims(verified_raw, &[], auth_config.audiences(), claims_config)
-        }
-        AuthConfig::Jwks(_) => {
-            let issuer = auth_config
-                .find_issuer(&raw_claims.iss)
-                .ok_or_else(|| "issuer not allowed".to_string())?;
-            verified_jwt_using_jwks_with_claims_config(
-                compact,
-                issuer,
-                auth_config.audiences(),
-                claims_config,
-            )
-            .await
-        }
     }
 }
 

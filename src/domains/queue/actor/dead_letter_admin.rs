@@ -47,8 +47,12 @@ impl QueueActor {
 
         let cf_id = self.queue_key.family.id();
         let mut txn = self
+            .persistence
             .store
-            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
+            .begin(
+                cf_id,
+                super::recovery_store::QueueTransactionMode::ReadWrite,
+            )
             .map_err(|e| format!("Failed to begin replay tx for message {id}: {e:?}"))?;
 
         self.write_record_as_split(&mut txn, id, &record)?;
@@ -61,7 +65,7 @@ impl QueueActor {
         )
         .map_err(|e| format!("Failed to write queue ready index for message {id}: {e:?}"))?;
         txn.put(
-            self.recovery_store.index_meta_key.clone(),
+            self.persistence.recovery.index_meta_key.clone(),
             Self::encode_index_meta(
                 self.next_id_limit,
                 Self::usize_to_u64(self.persisted_ready_count.saturating_add(1)),
@@ -71,7 +75,7 @@ impl QueueActor {
             None,
         )
         .map_err(|e| format!("Failed to update queue index meta for message {id}: {e:?}"))?;
-        txn.commit(self.commit_write_options)
+        txn.commit(self.persistence.write_options())
             .map_err(|e| format!("Failed to commit replay tx for message {id}: {e:?}"))?;
 
         self.remove_persisted_dlq(id);
@@ -111,8 +115,12 @@ impl QueueActor {
             .unwrap_or(record.first_enqueued_at_ms);
         let cf_id = self.queue_key.family.id();
         let mut txn = self
+            .persistence
             .store
-            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
+            .begin(
+                cf_id,
+                super::recovery_store::QueueTransactionMode::ReadWrite,
+            )
             .map_err(|e| format!("Failed to begin purge tx for message {id}: {e:?}"))?;
 
         Self::delete_record(
@@ -124,7 +132,7 @@ impl QueueActor {
         txn.delete(self.dlq_index_key(dead_lettered_at_ms, id))
             .map_err(|e| format!("Failed to delete queue DLQ index for message {id}: {e:?}"))?;
         txn.put(
-            self.recovery_store.index_meta_key.clone(),
+            self.persistence.recovery.index_meta_key.clone(),
             Self::encode_index_meta(
                 self.next_id_limit,
                 Self::usize_to_u64(self.persisted_ready_count),
@@ -134,7 +142,7 @@ impl QueueActor {
             None,
         )
         .map_err(|e| format!("Failed to update queue index meta for message {id}: {e:?}"))?;
-        txn.commit(self.commit_write_options)
+        txn.commit(self.persistence.write_options())
             .map_err(|e| format!("Failed to commit purge tx for message {id}: {e:?}"))?;
 
         self.remove_persisted_dlq(id);
@@ -168,10 +176,10 @@ impl QueueActor {
             self.min_persisted_delayed_visibility_ms()
         };
         let cf_id = self.queue_key.family.id();
-        let mut txn = match self
-            .store
-            .begin_tx(cf_id, cntryl_midge::TransactionMode::ReadWrite)
-        {
+        let mut txn = match self.persistence.store.begin(
+            cf_id,
+            super::recovery_store::QueueTransactionMode::ReadWrite,
+        ) {
             Ok(txn) => txn,
             Err(error) => {
                 tracing::warn!(
@@ -212,7 +220,7 @@ impl QueueActor {
         }
 
         if let Err(error) = txn.put(
-            self.recovery_store.index_meta_key.clone(),
+            self.persistence.recovery.index_meta_key.clone(),
             Self::encode_index_meta(
                 self.next_id_limit,
                 Self::usize_to_u64(self.persisted_ready_count.saturating_add(1)),
@@ -231,7 +239,7 @@ impl QueueActor {
             return false;
         }
 
-        if let Err(error) = txn.commit(self.commit_write_options) {
+        if let Err(error) = txn.commit(self.persistence.write_options()) {
             tracing::warn!(
                 queue = ?self.queue_key,
                 route_family = self.queue_key.family.as_u64(),

@@ -107,7 +107,7 @@ impl QueueActor {
     }
 
     pub(super) fn rewrite_index_from_memory(&mut self, next_id: u64) -> Result<(), String> {
-        self.recovery_store.replace_index(
+        self.persistence.recovery.replace_index(
             &super::recovery_store::QueueIndexRebuild {
                 meta: super::IndexMetaSnapshot {
                     next_id,
@@ -119,7 +119,7 @@ impl QueueActor {
                 delayed: &self.persisted_delayed,
                 dlq: &self.persisted_dlq,
             },
-            self.commit_write_options,
+            self.persistence.write_policy(),
         )?;
         self.index_meta_written = true;
         Ok(())
@@ -173,7 +173,7 @@ impl QueueActor {
     }
 
     pub(super) fn recover_from_store(&mut self) -> Result<(), String> {
-        let store = self.recovery_store.clone();
+        let store = self.persistence.recovery.clone();
         let snapshot = store.snapshot()?;
         let (mut next_id, max_id) = match self.try_recover_from_index(&store, &snapshot) {
             IndexRecoveryAttempt::Hit { next_id, max_id } => {

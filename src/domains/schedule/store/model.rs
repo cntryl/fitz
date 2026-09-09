@@ -1,14 +1,8 @@
-pub(super) use bytes::Bytes;
-pub(super) use lexkey::{Encoder, LexKey};
-pub(super) use std::collections::BTreeMap;
-pub(super) use std::sync::Arc;
+use bytes::Bytes;
 
-pub(super) use cntryl_midge::WriteOptions;
+use crate::domains::WritePolicy;
 
-pub(super) use crate::domains::schedule::protocol::{
-    parse_concrete_schedule_route, ConcreteScheduleRoute, ScheduleDeliveryMode,
-};
-pub(super) use crate::utils::storage_key::{self, DomainKeyspace};
+use crate::domains::schedule::protocol::{ConcreteScheduleRoute, ScheduleDeliveryMode};
 
 pub(super) const DEFINITION_VALUE_VERSION_V3: u8 = 3;
 pub(super) const BODY_VALUE_VERSION_V2: u8 = 2;
@@ -98,12 +92,13 @@ pub struct PersistedPendingFireClaim {
     pub fire_ms: u64,
 }
 
+#[derive(Clone)]
 pub struct ScheduleStore {
     pub(super) db: crate::storage::FitzStorageEngine,
     #[cfg(test)]
-    pub(super) fail_next_commit: Arc<std::sync::atomic::AtomicBool>,
+    pub(super) fail_next_commit: std::sync::Arc<std::sync::atomic::AtomicBool>,
     #[cfg(test)]
-    pub(super) stall_next_commit: Arc<std::sync::atomic::AtomicBool>,
+    pub(super) stall_next_commit: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[derive(Debug)]
@@ -164,7 +159,7 @@ pub trait SchedulePersistence {
         &self,
         family_id: u64,
         claims: &[ScheduleFireClaim<'_>],
-        write_options: WriteOptions,
+        write_policy: WritePolicy,
     ) -> Result<(), SchedulePersistenceError>;
 
     /// # Errors
@@ -174,7 +169,7 @@ pub trait SchedulePersistence {
         &self,
         family_id: u64,
         claims: &[SchedulePendingFireClaimAck<'_>],
-        write_options: WriteOptions,
+        write_policy: WritePolicy,
     ) -> Result<(), SchedulePersistenceError>;
 }
 
@@ -183,18 +178,18 @@ impl SchedulePersistence for ScheduleStore {
         &self,
         family_id: u64,
         claims: &[ScheduleFireClaim<'_>],
-        write_options: WriteOptions,
+        write_policy: WritePolicy,
     ) -> Result<(), SchedulePersistenceError> {
-        self.claim_due_batch(family_id, claims, write_options)
+        self.claim_due_batch(family_id, claims, write_policy)
     }
 
     fn acknowledge_claims(
         &self,
         family_id: u64,
         claims: &[SchedulePendingFireClaimAck<'_>],
-        write_options: WriteOptions,
+        write_policy: WritePolicy,
     ) -> Result<(), SchedulePersistenceError> {
-        self.ack_pending_fire_claims(family_id, claims, write_options)
+        self.ack_pending_fire_claims(family_id, claims, write_policy)
     }
 }
 

@@ -19,14 +19,14 @@ fn should_reject_queue_actor_family_mismatch() {
     };
 
     // Act
-    let result = QueueActor::try_with_clock_and_write_options(
+    let result = QueueActor::try_with_clock_and_write_policy(
         RouteFamily::new(2),
         queue_key,
         store,
         Box::new(crate::runtime::clock::SystemClock),
         None,
         crate::utils::idempotency::default_dedup_store(),
-        cntryl_midge::WriteOptions::buffered(),
+        crate::domains::WritePolicy::Buffered,
     );
 
     // Assert
@@ -191,7 +191,7 @@ fn should_recover_ready_message_id_at_numeric_maximum_without_looping() {
     .expect("write index metadata");
     txn.put(ready_key, u64::MAX.to_le_bytes().to_vec(), None)
         .expect("write max ready range");
-    txn.commit(cntryl_midge::WriteOptions::buffered())
+    txn.commit(crate::domains::WritePolicy::Buffered.into())
         .expect("commit index transaction");
 
     // Act

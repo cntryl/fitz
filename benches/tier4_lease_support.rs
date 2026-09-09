@@ -5,12 +5,12 @@ use crate::tier4_support::{
 };
 use bytes::Bytes;
 use cntryl_stress::StressContext;
+use fitz::benchkit::BenchDomainHandle;
 use fitz::benchkit::{
     build_lease_acquire_immediate, build_lease_release, create_bench_lease_sink,
     extract_single_tlv_field, register_session_queue_sink, route_frame_to_address,
     shared_bench_runtime, DirectLeaseAcquireRelease, FrameQueueSink,
 };
-use fitz::domains::lease::sink::LeaseDomainSink;
 use fitz::protocol::frame::ChannelId;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{Route, RouteAddress, RouteFamily};
@@ -231,7 +231,7 @@ pub(crate) fn measure_direct(ctx: &mut StressContext, measurement: &'static str)
 
 struct EncodedFixture {
     router: Arc<Router>,
-    sink: Arc<LeaseDomainSink>,
+    sink: Arc<BenchDomainHandle>,
     source: RouteAddress,
     destination: RouteAddress,
     inbox: Arc<FrameQueueSink>,

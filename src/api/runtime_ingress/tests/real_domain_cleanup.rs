@@ -54,7 +54,7 @@ fn receive_frame(mailbox: &Mailbox, label: &str) -> FrameContext {
         .unwrap_or_else(|| panic!("{label} frame"))
 }
 
-fn wait_for_kv_active_transaction_count(kv_sink: &KvDomainSink, expected: usize) {
+fn wait_for_kv_active_transaction_count(kv_sink: &KvDomain, expected: usize) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
     while std::time::Instant::now() < deadline {
         if kv_sink.active_transaction_count() == expected {
@@ -65,7 +65,7 @@ fn wait_for_kv_active_transaction_count(kv_sink: &KvDomainSink, expected: usize)
     assert_eq!(kv_sink.active_transaction_count(), expected);
 }
 
-fn wait_for_lease_count(lease_sink: &LeaseDomainSink, expected: usize) {
+fn wait_for_lease_count(lease_sink: &LeaseDomain, expected: usize) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
     while std::time::Instant::now() < deadline {
         if lease_sink.lease_count() == expected {
@@ -76,7 +76,7 @@ fn wait_for_lease_count(lease_sink: &LeaseDomainSink, expected: usize) {
     assert_eq!(lease_sink.lease_count(), expected);
 }
 
-fn wait_for_lease_subscription_count(lease_sink: &LeaseDomainSink, expected: usize) {
+fn wait_for_lease_subscription_count(lease_sink: &LeaseDomain, expected: usize) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
     while std::time::Instant::now() < deadline {
         if lease_sink.subscription_count() == expected {
@@ -87,7 +87,7 @@ fn wait_for_lease_subscription_count(lease_sink: &LeaseDomainSink, expected: usi
     assert_eq!(lease_sink.subscription_count(), expected);
 }
 
-fn wait_for_schedule_count(schedule_sink: &ScheduleDomainSink, expected: usize) {
+fn wait_for_schedule_count(schedule_sink: &ScheduleDomain, expected: usize) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
     while std::time::Instant::now() < deadline {
         if schedule_sink.schedule_count() == expected {
@@ -98,7 +98,7 @@ fn wait_for_schedule_count(schedule_sink: &ScheduleDomainSink, expected: usize) 
     assert_eq!(schedule_sink.schedule_count(), expected);
 }
 
-fn wait_for_schedule_subscription_count(schedule_sink: &ScheduleDomainSink, expected: usize) {
+fn wait_for_schedule_subscription_count(schedule_sink: &ScheduleDomain, expected: usize) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
     while std::time::Instant::now() < deadline {
         if schedule_sink.subscription_count() == expected {
@@ -136,7 +136,11 @@ async fn should_cleanup_real_rpc_pending_request_on_close() {
 
     let router = Arc::new(crate::runtime::Router::new());
     let admin_read_model = AdminReadModel::new();
-    let rpc_sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model.clone()));
+    let rpc_sink = Arc::new(RpcDomain::new_with_families(
+        router.clone(),
+        admin_read_model.clone(),
+        &[family],
+    ));
     let caller_mailbox = Arc::new(Mailbox::new(8));
     let worker_mailbox = Arc::new(Mailbox::new(8));
 
@@ -226,9 +230,10 @@ async fn should_cleanup_real_lease_state_on_close() {
 
     let router = Arc::new(crate::runtime::Router::new());
     let admin_read_model = AdminReadModel::new();
-    let lease_sink = Arc::new(LeaseDomainSink::new(
+    let lease_sink = Arc::new(LeaseDomain::new_with_families(
         router.clone(),
         admin_read_model.clone(),
+        &[family],
     ));
     let subscriber_mailbox = Arc::new(Mailbox::new(8));
 
@@ -311,8 +316,8 @@ async fn should_cleanup_real_schedule_subscription_on_close() {
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(crate::runtime::Router::new());
     let admin_read_model = AdminReadModel::new();
-    let schedule_sink = Arc::new(ScheduleDomainSink::new(
-        store,
+    let schedule_sink = Arc::new(ScheduleDomain::new(
+        crate::domains::schedule::ScheduleStore::new(store),
         router.clone(),
         admin_read_model.clone(),
     ));
@@ -381,12 +386,15 @@ async fn should_cleanup_real_stream_session_and_subscription_on_close() {
     let store = crate::benchkit::create_bench_store();
     let router = Arc::new(crate::runtime::Router::new());
     let admin_read_model = AdminReadModel::new();
-    let stream_sink = Arc::new(StreamDomainSink::new(
-        store,
-        router.clone(),
-        admin_read_model.clone(),
-        crate::domains::stream::sink::StreamStorageWriteOptions::local(),
-    ));
+    let stream_sink = Arc::new(
+        StreamDomain::try_new(
+            store,
+            router.clone(),
+            admin_read_model.clone(),
+            crate::domains::stream::sink::StreamStorageWriteOptions::local(),
+        )
+        .expect("create Stream cleanup test sink"),
+    );
     let source_mailbox = Arc::new(Mailbox::new(8));
 
     router.register(source_address.clone(), source_mailbox.clone());
@@ -471,7 +479,7 @@ async fn should_cleanup_real_kv_transaction_on_close() {
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(crate::runtime::Router::new());
     let admin_read_model = AdminReadModel::new();
-    let kv_sink = Arc::new(KvDomainSink::new(
+    let kv_sink = Arc::new(KvDomain::new(
         store,
         router.clone(),
         admin_read_model.clone(),

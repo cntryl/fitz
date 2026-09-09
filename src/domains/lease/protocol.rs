@@ -35,7 +35,7 @@ pub(crate) const LEASE_LIST_MAX_SNAPSHOTS: usize = 256;
 /// (matching or not) while materializing its snapshot. A scan is a true
 /// point-in-time snapshot only if it is built from one atomic pass over the
 /// requesting family's current state, so this cannot be spread across
-/// multiple actor messages without letting concurrent
+/// multiple family-actor messages without letting concurrent
 /// acquire/release/expiry/renew activity add, remove, or change items the
 /// snapshot has already promised are fixed (issue #219 §2). A family whose
 /// candidate count exceeds this bound therefore fails the scan outright with
@@ -370,8 +370,8 @@ impl LeaseError {
 
 /// Lease domain messages
 ///
-/// All lease operations are handled synchronously by the actor and return
-/// responses through the actor messaging system.
+/// All lease operations are handled synchronously by the owning family actor
+/// and return responses through the domain command path.
 #[derive(Debug, Clone)]
 pub enum LeaseMessage {
     /// Acquire a lease
@@ -447,14 +447,14 @@ pub enum LeaseMessage {
 
     /// Periodic tick for runtime-driven expiration
     ///
-    /// The lease actor responds by proactively expiring old leases
+    /// The Lease family actor responds by proactively expiring old leases
     /// and checking if any waiting acquisitions can now be granted.
     /// This is sent periodically by the scheduler to ensure leases
     /// are expired even when not being actively accessed.
     Tick,
 }
 
-/// Lease watch messages handled by `LeaseDomainSink` before actor dispatch.
+/// Lease watch messages handled by `LeaseDomain` before family dispatch.
 #[derive(Debug, Clone)]
 pub enum LeaseSubscriptionMessage {
     /// Subscribe to lease change notifications for one exact route.
@@ -488,7 +488,7 @@ impl LeaseClientRequest {
     }
 }
 
-/// Crate-private lease request with hot-path fields resolved before actor dispatch.
+/// Crate-private lease request with hot-path fields resolved before family dispatch.
 #[derive(Debug, Clone)]
 pub(crate) struct PreparedLeaseClientRequest {
     pub(crate) meta: ClientFrameMeta,

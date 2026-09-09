@@ -29,7 +29,7 @@ fn should_accept_notice_publish_without_waiting_for_subscriber_delivery() {
     let subscriber_mailbox = Arc::new(Mailbox::new(8));
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = NoticeDomainSink::new(router.clone(), admin_read_model);
+    let sink = NoticeDomain::new(router.clone(), admin_read_model);
     subscribe_notice_pattern(
         &sink,
         &subscriber_address,
@@ -93,7 +93,7 @@ fn should_accept_notice_publish_without_waiting_for_subscriber_delivery() {
 }
 
 #[test]
-fn should_keep_notice_actor_responsive_while_delivery_worker_is_blocked() {
+fn should_keep_notice_family_responsive_while_delivery_worker_is_blocked() {
     // Arrange
     let family = RouteFamily::new(1);
     let notice_route = "notice://acme/app/events";
@@ -101,7 +101,7 @@ fn should_keep_notice_actor_responsive_while_delivery_worker_is_blocked() {
     let publisher_address = RouteAddress::new(family, Route::new("inbox://session/11"));
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = NoticeDomainSink::new(router.clone(), admin_read_model);
+    let sink = NoticeDomain::new(router.clone(), admin_read_model);
     let (entered_tx, entered_rx) = crossbeam_channel::unbounded();
     let (_release_tx, release_rx) = crossbeam_channel::bounded::<()>(1);
     for session_id in 1..=4 {
@@ -166,7 +166,7 @@ fn should_keep_notice_actor_responsive_while_delivery_worker_is_blocked() {
         assert_eq!(
             count_rx
                 .recv_timeout(Duration::from_millis(10))
-                .expect("Notice actor should remain responsive")
+                .expect("Notice family should remain responsive")
                 .expect("read Notice subscription count"),
             4
         );
@@ -185,7 +185,7 @@ fn should_deliver_accepted_publish_after_disconnect_cleanup_overtakes_it() {
     let subscriber_mailbox = Arc::new(Mailbox::new(8));
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = NoticeDomainSink::new(router, admin_read_model);
+    let sink = NoticeDomain::new(router, admin_read_model);
     subscribe_notice_pattern(
         &sink,
         &subscriber_address,
@@ -200,7 +200,7 @@ fn should_deliver_accepted_publish_after_disconnect_cleanup_overtakes_it() {
     sink.block_actor_for_tests(entered_tx, release_rx);
     entered_rx
         .recv_timeout(Duration::from_secs(1))
-        .expect("Notice actor should block");
+        .expect("Notice family should block");
     let request = crate::domains::notice::NoticeClientRequest::new(
         crate::runtime::ClientFrameMeta::new(11, crate::runtime::ClientChannel::Pub, 500, family),
         Ok(
@@ -221,17 +221,12 @@ fn should_deliver_accepted_publish_after_disconnect_cleanup_overtakes_it() {
         request,
     ))
     .expect("accept notice publish");
-    let cleanup = sink
-        .actor
-        .try_send_high_priority(NoticeDomainCommand::Deliver(
-            Envelope::new(
-                RouteAddress::new(family, Route::new("notice://cleanup")),
-                crate::runtime::SessionCleanup { session_id: 11 },
-            ),
-            crossbeam_channel::bounded(1).0,
-        ));
+    let cleanup = sink.enqueue_cleanup_for_tests(Envelope::new(
+        RouteAddress::new(family, Route::new("notice://cleanup")),
+        crate::runtime::SessionCleanup { session_id: 11 },
+    ));
     cleanup.expect("enqueue publisher cleanup");
-    release_tx.send(()).expect("release Notice actor");
+    release_tx.send(()).expect("release Notice family");
 
     // Assert
     let notification = subscriber_mailbox

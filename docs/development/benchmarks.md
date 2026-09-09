@@ -9,6 +9,9 @@ Fitz benchmarks use one framework: `cntryl-stress`. Tier 1 through Tier 4 write
 `cntryl-tools summarize-benchmarks` turns those artifacts into
 `target/bench_results.json` and `target/bench_summary.md`.
 
+The family-ownership migration's locked before/after results are recorded in
+the [SOLID remediation benchmark report](solid-remediation-benchmark-report.md).
+
 ## Philosophy
 
 Benchmarks measure real broker performance across routes, domains, and

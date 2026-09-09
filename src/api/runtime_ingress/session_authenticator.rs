@@ -4,13 +4,19 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::error;
 
-pub(super) struct SessionAuthenticator<'a> {
-    ingress: &'a RuntimeIngress,
+pub(super) struct SessionAuthenticator {
+    pub(super) registry: super::session_registry::SessionRegistry,
+    pub(super) route_families: Arc<std::collections::HashSet<u32>>,
+    pub(super) auth_required: bool,
+    pub(super) auth_config: Option<crate::auth::AuthConfig>,
+    pub(super) auth_claims_config: crate::auth::AuthClaimsConfig,
+    pub(super) route_family_resolver: crate::auth::RouteFamilyResolverConfig,
+    pub(super) connect_diagnostics_budget: Arc<ConnectDiagnosticsBudget>,
 }
 
 impl RuntimeIngress {
-    pub(super) fn session_authenticator(&self) -> SessionAuthenticator<'_> {
-        SessionAuthenticator { ingress: self }
+    pub(super) fn session_authenticator(&self) -> &SessionAuthenticator {
+        &self.authenticator
     }
 }
 
@@ -104,13 +110,13 @@ impl ConnectDiagnosticsBudget {
     }
 }
 
-impl SessionAuthenticator<'_> {
+impl SessionAuthenticator {
     fn log_connect_failure(&self, session_id: u64, compact: &str, stage: &str, error: &str) {
         const MAX_LOGGED_ERROR_CHARS: usize = 512;
 
         if let ConnectDiagnosticsGrant::Suppressed {
             suppressed_in_window,
-        } = self.ingress.connect_diagnostics_budget.acquire_now()
+        } = self.connect_diagnostics_budget.acquire_now()
         {
             // Terse and cheap: no token hashing, decoding, or claim parsing.
             warn!(
@@ -122,8 +128,7 @@ impl SessionAuthenticator<'_> {
             return;
         }
 
-        let diagnostics =
-            crate::auth::jwt_failure_diagnostics(compact, &self.ingress.auth_claims_config);
+        let diagnostics = crate::auth::jwt_failure_diagnostics(compact, &self.auth_claims_config);
         let mut error_characters = error.chars();
         let mut bounded_error = error_characters
             .by_ref()
@@ -159,8 +164,11 @@ impl SessionAuthenticator<'_> {
         payload: &Bytes,
         should_notify_handler: bool,
     ) -> Result<(crate::runtime::routing::RouteFamily, Option<SessionFrame>), IngressDecision> {
-        let needs_authentication = self.needs_authentication(session_id)?;
-        let verified_auth = if needs_authentication && self.ingress.auth_required {
+        // Anonymous sessions do not need the preliminary read used to decide
+        // whether JWT verification must run. The mutable lookup below still
+        // validates that the session exists and initializes it atomically.
+        let needs_authentication = self.auth_required && self.needs_authentication(session_id)?;
+        let verified_auth = if needs_authentication && self.auth_required {
             Some(
                 self.verify_connect_frame(session_id, channel_id, msg_type, payload)
                     .await?,
@@ -169,7 +177,7 @@ impl SessionAuthenticator<'_> {
             None
         };
 
-        let Some(mut entry) = self.ingress.sessions.get_mut(&session_id) else {
+        let Some(mut entry) = self.registry.sessions.get_mut(&session_id) else {
             warn!(
                 session_id = session_id,
                 "Ingress: frame for unknown session"
@@ -181,7 +189,7 @@ impl SessionAuthenticator<'_> {
 
         let mut notify_frame = None;
         if !entry.authenticated {
-            if self.ingress.auth_required {
+            if self.auth_required {
                 let Some((snapshot, claims, route_family)) = verified_auth else {
                     return Err(IngressDecision::Close(
                         "connect failed: session authentication state changed".to_string(),
@@ -211,7 +219,7 @@ impl SessionAuthenticator<'_> {
     }
 
     fn needs_authentication(&self, session_id: u64) -> Result<bool, IngressDecision> {
-        if let Some(entry) = self.ingress.sessions.get(&session_id) {
+        if let Some(entry) = self.registry.sessions.get(&session_id) {
             Ok(!entry.authenticated)
         } else {
             warn!(
@@ -257,15 +265,14 @@ impl SessionAuthenticator<'_> {
         );
 
         let auth_config = self
-            .ingress
             .auth_config
             .clone()
             .unwrap_or_else(|| crate::auth::AuthConfig::from_env(true));
 
-        match crate::auth::verified_jwt_with_claims_config(
+        match crate::api::authentication::verified_jwt_with_claims_config(
             &compact,
             &auth_config,
-            &self.ingress.auth_claims_config,
+            &self.auth_claims_config,
         )
         .await
         {
@@ -296,8 +303,8 @@ impl SessionAuthenticator<'_> {
         &self,
         raw_claims: &crate::auth::RawClaims,
     ) -> Result<crate::runtime::routing::RouteFamily, String> {
-        let route_family = self.ingress.route_family_resolver.resolve(raw_claims)?;
-        if !self.ingress.route_families.contains(&route_family) {
+        let route_family = self.route_family_resolver.resolve(raw_claims)?;
+        if !self.route_families.contains(&route_family) {
             return Err(format!(
                 "resolved route family {route_family} is not provisioned"
             ));
@@ -323,9 +330,9 @@ impl SessionAuthenticator<'_> {
             snapshot.clone(),
         );
         actor.authenticate(claims, snapshot);
-        self.ingress.session_actors.insert(session_id, actor);
+        self.registry.session_actors.insert(session_id, actor);
 
-        if let Some(admin_read_model) = &self.ingress.admin_read_model {
+        if let Some(admin_read_model) = &self.registry.admin_read_model {
             admin_read_model.record_session_update(entry);
         }
     }
@@ -336,7 +343,7 @@ impl SessionAuthenticator<'_> {
         entry.authenticated = true;
         entry.route_family = crate::runtime::routing::RouteFamily::new(1);
 
-        self.ingress.session_actors.insert(
+        self.registry.session_actors.insert(
             session_id,
             crate::session::actor::SessionActor::new(
                 crate::session::session::SessionId(session_id),

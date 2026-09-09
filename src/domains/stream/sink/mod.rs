@@ -6,12 +6,9 @@ mod model;
 mod observability;
 mod reads;
 
-pub use model::{
-    AdminStreamReadRequest, StreamDomainSink, StreamSinkInitError, StreamStorageWriteOptions,
+pub(crate) use model::{
+    AdminStreamReadRequest, StreamDomain, StreamSinkInitError, StreamStorageWriteOptions,
 };
-
-#[cfg(test)]
-use model::*;
 
 #[cfg(test)]
 mod tests;

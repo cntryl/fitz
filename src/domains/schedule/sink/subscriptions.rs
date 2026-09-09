@@ -1,29 +1,24 @@
 //! Subscribe/unsubscribe message handling: mutation of the live subscription
 //! index in response to a client request.
 
-use super::model::{
-    Ordering, ScheduleDomainRuntime, ScheduleSubscription, ScheduleSubscriptionSet,
-};
+use super::model::{ScheduleDomainRuntime, ScheduleSubscription};
+use std::sync::atomic::Ordering;
 
 impl ScheduleDomainRuntime<'_> {
     pub(super) fn rollback_undeliverable_schedule_subscribe(
-        &self,
+        &mut self,
         family_id: crate::runtime::routing::RouteFamily,
         route: &crate::runtime::routing::Route,
         session_id: u64,
     ) {
-        let mut families = self.core.sub_families.lock();
-        let remove_family = families.get_mut(&family_id).is_some_and(|state| {
-            state.remove_session_route(family_id, session_id, route.as_str());
-            state.is_empty()
-        });
-        if remove_family {
-            families.remove(&family_id);
-        }
+        debug_assert_eq!(family_id, self.core.route_family);
+        self.core
+            .subscriptions
+            .remove_session_route(family_id, session_id, route.as_str());
     }
 
     pub(super) fn apply_subscribe_message(
-        &self,
+        &mut self,
         family_id: crate::runtime::routing::RouteFamily,
         route: &crate::runtime::routing::Route,
         session_id: u64,
@@ -48,7 +43,7 @@ impl ScheduleDomainRuntime<'_> {
     }
 
     fn insert_schedule_subscription(
-        &self,
+        &mut self,
         family_id: crate::runtime::routing::RouteFamily,
         route: &crate::runtime::routing::Route,
         session_id: u64,
@@ -59,10 +54,8 @@ impl ScheduleDomainRuntime<'_> {
             ScheduleFailure, ScheduleFailureCategory, ScheduleResponse,
         };
 
-        let mut families = self.core.sub_families.lock();
-        let state = families
-            .entry(family_id)
-            .or_insert_with(ScheduleSubscriptionSet::new);
+        debug_assert_eq!(family_id, self.core.route_family);
+        let state = &mut self.core.subscriptions;
 
         let sub_id = if let Some(id) = state.find_existing_id(session_id, route.as_str()) {
             tracing::debug!(
@@ -91,10 +84,6 @@ impl ScheduleDomainRuntime<'_> {
                 Ordering::Relaxed,
                 |current| current.checked_add(1),
             ) else {
-                let state_empty = state.is_empty();
-                if state_empty {
-                    families.remove(&family_id);
-                }
                 return ScheduleResponse::Error(ScheduleFailure::new(
                     ScheduleFailureCategory::SubscriptionLimit,
                     "subscription ID space exhausted",
@@ -126,7 +115,7 @@ impl ScheduleDomainRuntime<'_> {
     }
 
     pub(super) fn apply_unsubscribe_message(
-        &self,
+        &mut self,
         family_id: crate::runtime::routing::RouteFamily,
         route: &crate::runtime::routing::Route,
         session_id: u64,
@@ -145,16 +134,10 @@ impl ScheduleDomainRuntime<'_> {
             ));
         }
 
-        let mut families = self.core.sub_families.lock();
-        let remove_family = if let Some(state) = families.get_mut(&family_id) {
-            state.remove_session_route(family_id, session_id, route.as_str());
-            state.is_empty()
-        } else {
-            false
-        };
-        if remove_family {
-            families.remove(&family_id);
-        }
+        debug_assert_eq!(family_id, self.core.route_family);
+        self.core
+            .subscriptions
+            .remove_session_route(family_id, session_id, route.as_str());
         ScheduleResponse::Ok
     }
 }

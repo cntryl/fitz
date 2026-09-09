@@ -45,6 +45,7 @@ pub struct EventPayload {
 }
 
 /// Active append session buffered until commit.
+#[cfg(test)]
 struct AppendSession {
     family: u64,
     realm: String,
@@ -59,10 +60,13 @@ struct AppendSession {
 pub type SessionId = u64;
 type SequenceGuardKey = (u64, String, String, String);
 type SequenceGuard = Arc<Mutex<()>>;
+#[cfg(test)]
 type RealmSequenceStateKey = (u64, String);
+#[cfg(test)]
 type RealmSequenceStateHandle = Arc<Mutex<RealmSequenceState>>;
 type ResourceMetaStateHandle = Arc<Mutex<ResourceMetaState>>;
 
+#[cfg(test)]
 const ERR_SESSION_ROUTE_FAMILY_MISMATCH: &str = "ERR_SESSION_ROUTE_FAMILY_MISMATCH";
 
 /// Hard ceiling on the bytes a single stream read response may accumulate.
@@ -212,6 +216,7 @@ impl StreamStoreError {
     }
 }
 
+#[cfg(test)]
 #[derive(Default)]
 struct RealmSequenceState {
     next_realm_offset: Option<u64>,
@@ -494,11 +499,14 @@ pub struct StreamStore {
     buffered_write_options: cntryl_midge::WriteOptions,
     limits: BatchLimits,
     layout: StreamStorageLayout,
+    #[cfg(test)]
     sessions: Arc<Mutex<HashMap<SessionId, AppendSession>>>,
     ttl: StreamTTL,
     clock: Arc<dyn crate::runtime::clock::Clock>,
+    #[cfg(test)]
     next_session_id: std::sync::atomic::AtomicU64,
     sequencing_guards: Arc<Mutex<HashMap<SequenceGuardKey, SequenceGuard>>>,
+    #[cfg(test)]
     realm_sequence_states: Arc<Mutex<HashMap<RealmSequenceStateKey, RealmSequenceStateHandle>>>,
     resource_meta_states: Arc<Mutex<HashMap<SequenceGuardKey, ResourceMetaStateHandle>>>,
     family_sequence_guards: Arc<Mutex<HashMap<u64, SequenceGuard>>>,
@@ -521,6 +529,38 @@ pub struct StreamStore {
     maintenance_failure_stage: std::sync::atomic::AtomicU8,
     #[cfg(test)]
     maintenance_full_scans: std::sync::atomic::AtomicUsize,
+}
+
+pub(crate) struct StreamDomainStorage {
+    engine: crate::storage::FitzStorageEngine,
+}
+
+impl StreamDomainStorage {
+    pub(crate) fn into_store(
+        self,
+        layout: StreamStorageLayout,
+        sync: crate::domains::WritePolicy,
+        buffered: crate::domains::WritePolicy,
+    ) -> Arc<StreamStore> {
+        Arc::new(
+            StreamStore::with_storage_layout(self.engine, layout)
+                .with_write_options(sync.into(), buffered.into()),
+        )
+    }
+}
+
+impl From<Arc<cntryl_midge::Engine>> for StreamDomainStorage {
+    fn from(engine: Arc<cntryl_midge::Engine>) -> Self {
+        Self {
+            engine: crate::storage::FitzStorageEngine::new(engine),
+        }
+    }
+}
+
+impl From<crate::storage::FitzStorageEngine> for StreamDomainStorage {
+    fn from(engine: crate::storage::FitzStorageEngine) -> Self {
+        Self { engine }
+    }
 }
 
 #[derive(Default)]

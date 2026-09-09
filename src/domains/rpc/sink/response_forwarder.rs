@@ -1,10 +1,11 @@
 #[cfg(test)]
 use super::state_model::RPC_MSG_TYPE_RESPONSE;
-use super::state_model::{Envelope, RpcPendingDispatchInfo, RpcPendingErrorDelivery};
+use super::state_model::{RpcPendingDispatchInfo, RpcPendingErrorDelivery};
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
 #[cfg(not(test))]
 use crate::domains::rpc::{RpcClientForwardedResponse, RpcClientForwardedResponseBody};
+use crate::runtime::Envelope;
 
 /// Builds requester-facing envelopes without owning dispatch or pending-state policy.
 pub(super) struct RpcResponseForwarder;

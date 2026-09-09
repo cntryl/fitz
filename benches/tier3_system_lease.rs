@@ -1,7 +1,7 @@
 //! Lease domain tier 3 system benchmarks using live domain sinks.
 //!
 //! Concurrent lease contention and route isolation measurement.
-//! Tests the same `FrameContext` -> `LeaseDomainSink` path used by the live server.
+//! Tests the same `FrameContext` -> `LeaseDomain` path used by the live server.
 //!
 //! Each test measures a single operation with all setup/teardown outside the measurement loop.
 //! Target: ops/sec via `record_completed(count)`

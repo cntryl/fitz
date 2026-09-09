@@ -40,17 +40,20 @@ fn request_from_session_to_address(
 fn should_fail_closed_after_stream_actor_panic() {
     // Arrange
     let router = Arc::new(Router::new());
-    let sink = StreamDomainSink::new(
+    let sink = StreamDomain::try_new(
         crate::benchkit::create_bench_store(),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
         StreamStorageWriteOptions::local(),
-    );
+    )
+    .expect("create Stream test sink");
     sink.panic_actor_for_failpoint();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
 
     // Act
-    while sink.actor_health_snapshot().running && std::time::Instant::now() < deadline {
+    while !sink.family_health_snapshot().healthy_families.is_empty()
+        && std::time::Instant::now() < deadline
+    {
         std::thread::yield_now();
     }
     let destination = RouteAddress::new(
@@ -58,12 +61,12 @@ fn should_fail_closed_after_stream_actor_panic() {
         Route::new("stream://bench/events/orders"),
     );
     let result = sink.deliver(Envelope::new(destination, 42_u64));
-    let health = sink.actor_health_snapshot();
+    let health = sink.family_health_snapshot();
 
     // Assert
-    assert!(!health.running);
+    assert!(health.healthy_families.is_empty());
     assert_eq!(health.panic_count, 1);
-    assert!(health.restart_exhausted);
+    assert_eq!(health.failed_families, vec![RouteFamily::new(1)]);
     assert!(matches!(result, Err(DeliveryError::ActorStopped)));
 }
 
@@ -81,12 +84,13 @@ fn should_not_retain_subscription_when_subscribe_response_cannot_be_delivered() 
         .sender()
         .try_send(Envelope::new(source.clone(), 1_u8))
         .expect("fill subscriber mailbox");
-    let sink = StreamDomainSink::new(
+    let sink = StreamDomain::try_new(
         crate::benchkit::create_bench_store(),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
         StreamStorageWriteOptions::local(),
-    );
+    )
+    .expect("create Stream test sink");
     let frame = build_stream_subscribe(route);
     let (message_type, payload) = extract_single_tlv_field(&frame);
 
@@ -122,12 +126,13 @@ fn should_not_retain_append_session_when_begin_response_cannot_be_delivered() {
         .sender()
         .try_send(Envelope::new(source.clone(), 1_u8))
         .expect("fill response mailbox");
-    let sink = StreamDomainSink::new(
+    let sink = StreamDomain::try_new(
         crate::benchkit::create_bench_store(),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
         StreamStorageWriteOptions::local(),
-    );
+    )
+    .expect("create Stream test sink");
     let frame = build_stream_begin(route);
     let (message_type, payload) = extract_single_tlv_field(&frame);
 
@@ -167,11 +172,15 @@ fn should_fail_closed_given_malformed_stream_commit_notification() {
     );
 
     // Act
-    context.sink.core.handle_domain_publish(&malformed);
+    let family = context.family;
+    let pending_is_empty = context.sink.inspect_family_for_tests(family, move |state| {
+        state.core.handle_domain_publish(&malformed);
+        state.core.subscriptions.pending.is_empty()
+    });
 
     // Assert
     assert_eq!(inbox.count(), 0);
-    assert!(context.sink.core.subscriptions.pending.lock().is_empty());
+    assert!(pending_is_empty);
 }
 
 #[test]

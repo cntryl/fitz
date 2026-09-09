@@ -13,11 +13,11 @@ use crate::tier4_support::{
 };
 use bytes::Bytes;
 use cntryl_stress::{stress, stress_main, StressContext};
+use fitz::benchkit::BenchDomainHandle;
 use fitz::benchkit::{
     build_rpc_subscribe_with_max_concurrent, create_bench_rpc_sink, extract_single_tlv_field,
     register_session_queue_sink, route_frame, shared_bench_runtime, FrameQueueSink,
 };
-use fitz::domains::rpc::sink::RpcDomainSink;
 use fitz::protocol::frame::ChannelId;
 use fitz::runtime::router::{MailboxSink, Router};
 use fitz::runtime::routing::{RouteAddress, RouteFamily};
@@ -70,7 +70,7 @@ struct InProcessExchange {
 }
 
 struct InProcessRpcFixture {
-    sink: Arc<RpcDomainSink>,
+    sink: Arc<BenchDomainHandle>,
     router: Arc<Router>,
     family: RouteFamily,
     requester_source: RouteAddress,

@@ -15,8 +15,10 @@ fn should_not_retain_subscription_when_subscribe_response_cannot_be_delivered() 
         .sender()
         .try_send(Envelope::new(subscriber_address.clone(), 1_u8))
         .expect("fill subscriber mailbox");
-    let sink = ScheduleDomainSink::new(
-        crate::testkit::create_test_engine_with_cfs(vec![1]),
+    let sink = ScheduleDomain::new(
+        crate::domains::schedule::ScheduleStore::new(crate::testkit::create_test_engine_with_cfs(
+            vec![1],
+        )),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
     );
@@ -48,7 +50,7 @@ struct UnsubscribeFixture {
     retained_address: RouteAddress,
     subscriber_address: RouteAddress,
     subscriber_mailbox: Arc<Mailbox>,
-    sink: ScheduleDomainSink,
+    sink: ScheduleDomain,
 }
 
 fn create_unsubscribe_fixture() -> UnsubscribeFixture {
@@ -64,7 +66,11 @@ fn create_unsubscribe_fixture() -> UnsubscribeFixture {
     let subscriber_mailbox = Arc::new(Mailbox::new(16));
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = ScheduleDomainSink::new(store, router, admin_read_model);
+    let sink = ScheduleDomain::new(
+        crate::domains::schedule::ScheduleStore::new(store),
+        router,
+        admin_read_model,
+    );
 
     UnsubscribeFixture {
         family,
@@ -173,8 +179,8 @@ fn should_publish_schedule_notify_to_subscribers_when_due() {
     let subscriber_mailbox = Arc::new(Mailbox::new(8));
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = Arc::new(ScheduleDomainSink::new(
-        store,
+    let sink = Arc::new(ScheduleDomain::new(
+        crate::domains::schedule::ScheduleStore::new(store),
         router.clone(),
         admin_read_model,
     ));
@@ -258,8 +264,8 @@ fn should_remove_schedule_subscriptions_given_session_cleanup() {
     let subscriber_mailbox = Arc::new(Mailbox::new(8));
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = Arc::new(ScheduleDomainSink::new(
-        store,
+    let sink = Arc::new(ScheduleDomain::new(
+        crate::domains::schedule::ScheduleStore::new(store),
         router.clone(),
         admin_read_model,
     ));
@@ -498,16 +504,16 @@ fn should_count_live_publish_failure_given_domain_routing_error() {
     let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = Arc::new(ScheduleDomainSink::new(
-        store.clone(),
+    let sink = Arc::new(ScheduleDomain::new(
+        crate::domains::schedule::ScheduleStore::new(store.clone()),
         router.clone(),
         admin_read_model,
     ));
 
     let mut actor = crate::domains::schedule::ScheduleActor::new(
         family,
-        store,
-        cntryl_midge::WriteOptions::buffered(),
+        crate::domains::schedule::ScheduleStore::new(store),
+        crate::domains::WritePolicy::Buffered,
     );
     actor
         .create_schedule(

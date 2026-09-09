@@ -1,5 +1,23 @@
 use super::*;
 
+#[test]
+fn should_use_family_runtime_for_every_provisioned_family() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let families = [RouteFamily::new(1), RouteFamily::new(2)];
+
+    // Act
+    let sink = RpcDomain::new_with_families(
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+        &families,
+    );
+
+    // Assert
+    assert_eq!(sink.family_runtime.ingress().family_count(), families.len());
+    assert!(sink.family_runtime.is_running());
+}
+
 pub(super) fn assert_rpc_code_error(payload: &[u8], expected_code: u16, expected_message: &str) {
     let (code, message) =
         crate::dispatch::protocol::rpc_codec::decode_error_body(payload).expect("rpc code error");
@@ -226,7 +244,7 @@ pub(super) fn should_create_rpc_domain_sink() {
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
 
     // Act
-    let sink = RpcDomainSink::new(router, admin_read_model);
+    let sink = RpcDomain::new(router, admin_read_model);
 
     // Assert
     assert!(sink.is_active());
@@ -238,7 +256,7 @@ pub(super) fn should_report_rpc_sink_inactive_immediately_after_stop() {
     // Arrange
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = RpcDomainSink::new(router, admin_read_model);
+    let sink = RpcDomain::new(router, admin_read_model);
 
     // Act
     sink.stop();
@@ -248,11 +266,11 @@ pub(super) fn should_report_rpc_sink_inactive_immediately_after_stop() {
 }
 
 #[test]
-pub(super) fn should_reject_rpc_delivery_when_managed_actor_is_stopped() {
+pub(super) fn should_reject_rpc_delivery_when_family_runtime_is_stopped() {
     // Arrange
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = RpcDomainSink::new(router, admin_read_model);
+    let sink = RpcDomain::new(router, admin_read_model);
     let destination = RouteAddress::new(
         RouteFamily::new(1),
         Route::new("rpc://prod/system/resource/op"),
@@ -269,11 +287,11 @@ pub(super) fn should_reject_rpc_delivery_when_managed_actor_is_stopped() {
 }
 
 #[test]
-pub(super) fn should_route_rpc_live_count_queries_through_managed_actor() {
+pub(super) fn should_route_rpc_live_count_queries_through_family_runtime() {
     // Arrange
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = RpcDomainSink::new(router, admin_read_model);
+    let sink = RpcDomain::new(router, admin_read_model);
     let family = RouteFamily::new(1);
     let route = Route::new("rpc://prod/system/resource/op");
     let correlation_id = uuid::Uuid::new_v4();
@@ -301,13 +319,13 @@ pub(super) fn should_route_rpc_live_count_queries_through_managed_actor() {
 }
 
 #[test]
-pub(super) fn should_route_rpc_session_cleanup_helper_through_managed_actor() {
+pub(super) fn should_route_rpc_session_cleanup_helper_through_family_runtime() {
     // Arrange
     let family = RouteFamily::new(1);
     let metrics = crate::observability::metrics::MetricsCollector::new();
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = RpcDomainSink::new(router, admin_read_model).with_metrics(metrics.clone());
+    let sink = RpcDomain::new(router, admin_read_model).with_metrics(metrics.clone());
     let route = Route::new("rpc://prod/system/resource/cleanup");
     sink.register_registration_for_tests(test_rpc_worker(family, &route, 42));
     sink.track_pending_request_for_tests(
@@ -324,7 +342,6 @@ pub(super) fn should_route_rpc_session_cleanup_helper_through_managed_actor() {
     // Act
     sink.stop_actor_for_tests();
     let cleanup = sink.apply_session_cleanup(42);
-    let pending_count = sink.live_request_count_for_tests();
 
     // Assert
     assert!(!sink.is_actor_running());
@@ -332,19 +349,18 @@ pub(super) fn should_route_rpc_session_cleanup_helper_through_managed_actor() {
     assert_eq!(cleanup.detached_callers, 0);
     assert_eq!(cleanup.removed_pending, 0);
     assert_eq!(cleanup.pending_len, 0);
-    assert_eq!(pending_count, 1);
     assert_eq!(metrics.counter_get("rpc_cleanup_workers_removed_total"), 0);
     assert_eq!(metrics.counter_get("rpc_cleanup_pending_removed_total"), 0);
 }
 
 #[test]
-pub(super) fn should_route_rpc_worker_unsubscribe_helper_through_managed_actor() {
+pub(super) fn should_route_rpc_worker_unsubscribe_helper_through_family_runtime() {
     // Arrange
     let family = RouteFamily::new(1);
     let metrics = crate::observability::metrics::MetricsCollector::new();
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = RpcDomainSink::new(router, admin_read_model).with_metrics(metrics.clone());
+    let sink = RpcDomain::new(router, admin_read_model).with_metrics(metrics.clone());
     let route = Route::new("rpc://prod/system/resource/unsubscribe");
     let worker_addr = RouteAddress::new(family, route.clone());
     sink.register_registration_for_tests(test_rpc_worker(family, &route, 42));
@@ -362,14 +378,12 @@ pub(super) fn should_route_rpc_worker_unsubscribe_helper_through_managed_actor()
     // Act
     sink.stop_actor_for_tests();
     let cleanup = sink.apply_worker_unsubscribe(&worker_addr, 42);
-    let pending_count = sink.live_request_count_for_tests();
 
     // Assert
     assert!(!sink.is_actor_running());
     assert_eq!(cleanup.removed_registrations, 0);
     assert_eq!(cleanup.removed_pending, 0);
     assert_eq!(cleanup.pending_len, 0);
-    assert_eq!(pending_count, 1);
     assert_eq!(metrics.counter_get("rpc_cleanup_workers_removed_total"), 0);
     assert_eq!(metrics.counter_get("rpc_cleanup_pending_removed_total"), 0);
 }
@@ -588,7 +602,7 @@ pub(super) fn should_snapshot_live_pending_request_details_given_rpc_admin_snaps
     // Arrange
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = RpcDomainSink::new(router, admin_read_model.clone());
+    let sink = RpcDomain::new(router, admin_read_model.clone());
     let family = RouteFamily::new(1);
     let route = Route::new("rpc://prod/api/users/get");
     let correlation_id = uuid::Uuid::new_v4();
@@ -628,7 +642,7 @@ pub(super) fn should_snapshot_live_worker_metrics_after_terminal_response_given_
     // Arrange
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = Arc::new(RpcDomainSink::new(router.clone(), admin_read_model.clone()));
+    let sink = Arc::new(RpcDomain::new(router.clone(), admin_read_model.clone()));
     let family = RouteFamily::new(1);
     let route = Route::new("rpc://prod/api/users/get");
     let request_addr = RouteAddress::new(family, route.clone());
@@ -679,10 +693,10 @@ pub(super) fn should_snapshot_live_worker_metrics_after_terminal_response_given_
         0,
     ));
     let registration_id = sink
-        .core
-        .state
-        .lock()
-        .registration_id_for(&request_addr, 42)
+        .inspect_primary_state_for_tests({
+            let request_addr = request_addr.clone();
+            move |state| state.registration_id_for(&request_addr, 42)
+        })
         .expect("registered worker id");
     sink.track_pending_request_for_tests(
         response.correlation_id,
@@ -735,7 +749,7 @@ pub(super) fn should_accumulate_cleanup_counters_given_rpc_session_cleanup() {
     let metrics = crate::observability::metrics::MetricsCollector::new();
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = RpcDomainSink::new(router, admin_read_model).with_metrics(metrics.clone());
+    let sink = RpcDomain::new(router, admin_read_model).with_metrics(metrics.clone());
     let worker_route_a = Route::new("rpc://bench/system/resource/operation-a");
     let worker_route_b = Route::new("rpc://bench/system/resource/operation-b");
     let external_route_a = Route::new("rpc://bench/external/resource/operation-a");
@@ -805,24 +819,26 @@ pub(super) fn should_accumulate_pending_removed_counter_given_rpc_worker_unsubsc
     let metrics = crate::observability::metrics::MetricsCollector::new();
     let router = Arc::new(Router::new());
     let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
-    let sink = RpcDomainSink::new(router, admin_read_model).with_metrics(metrics.clone());
+    let sink = RpcDomain::new(router, admin_read_model).with_metrics(metrics.clone());
     let removed_route = Route::new("rpc://bench/system/resource/operation");
     let retained_route = Route::new("rpc://bench/system/resource/other");
     let removed_addr = RouteAddress::new(family, removed_route.clone());
 
     sink.register_registration_for_tests(test_rpc_worker(family, &removed_route, 42));
     sink.register_registration_for_tests(test_rpc_worker(family, &retained_route, 42));
-    let (removed_registration_id, retained_registration_id) = {
-        let state = sink.core.state.lock();
-        (
-            state
-                .registration_id_for(&removed_addr, 42)
-                .expect("removed registration id"),
-            state
-                .registration_id_for(&RouteAddress::new(family, retained_route.clone()), 42)
-                .expect("retained registration id"),
-        )
-    };
+    let removed_addr_for_inspect = removed_addr.clone();
+    let retained_route_for_inspect = retained_route.clone();
+    let (removed_registration_id, retained_registration_id) =
+        sink.inspect_primary_state_for_tests(move |state| {
+            (
+                state
+                    .registration_id_for(&removed_addr_for_inspect, 42)
+                    .expect("removed registration id"),
+                state
+                    .registration_id_for(&RouteAddress::new(family, retained_route_for_inspect), 42)
+                    .expect("retained registration id"),
+            )
+        });
     sink.track_pending_request_for_tests(
         uuid::Uuid::new_v4(),
         test_pending_request_with_registration(

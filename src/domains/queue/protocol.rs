@@ -30,7 +30,7 @@
 //!
 //! Queue availability is surfaced through explicit watch notifications:
 //! - `QueueActor` always returns immediately (never blocks)
-//! - `QueueDomainSink` owns ephemeral watch state for the current broker process
+//! - `QueueDomain` owns ephemeral watch state for the current broker process
 //! - Watches target exact or wildcard `queue://{realm}/{area}/{resource}` routes
 //! - Notifications are readiness signals only; they never carry queue message bodies
 
@@ -145,7 +145,7 @@ pub enum QueueMessage {
     InflightExpired { id: MessageId },
 }
 
-/// Queue watch messages handled by `QueueDomainSink` before actor dispatch.
+/// Queue watch messages handled by `QueueDomain` before actor dispatch.
 #[derive(Debug, Clone)]
 pub enum QueueSubscriptionMessage {
     Watch {

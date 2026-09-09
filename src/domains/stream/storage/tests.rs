@@ -191,6 +191,26 @@ fn should_roundtrip_staging_value_with_metadata() {
 }
 
 #[test]
+fn should_match_golden_stream_storage_key_plus_value_bytes() {
+    // Arrange
+    const GOLDEN_KEY: &str = "050000000000000007000000000000000002";
+    const GOLDEN_VALUE: &str = "0400000004000000626f64796d657461";
+    let event = EventPayload {
+        body: Bytes::from_static(b"body"),
+        metadata: Some(Bytes::from_static(b"meta")),
+        discriminator: None,
+    };
+
+    // Act
+    let key = encode_staging_key(7, 2);
+    let value = encode_staging_value(&event);
+
+    // Assert
+    assert_eq!(hex::encode(key), GOLDEN_KEY);
+    assert_eq!(hex::encode(value), GOLDEN_VALUE);
+}
+
+#[test]
 fn should_roundtrip_staging_value_without_metadata() {
     // Arrange
     let event = EventPayload {

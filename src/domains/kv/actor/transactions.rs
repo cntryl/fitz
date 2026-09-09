@@ -3,7 +3,6 @@
 use super::{ActiveKvTx, KvActor, KvInventoryDelta};
 use crate::auth::validate_realm_format;
 use crate::domains::kv::{KvError, KvResourceScope, KvResponse, TxMode};
-use cntryl_midge::TransactionMode;
 use std::time::{Duration, Instant};
 
 impl KvActor {
@@ -11,7 +10,7 @@ impl KvActor {
         &mut self,
         scope: KvResourceScope,
         mode: TxMode,
-        write_options: cntryl_midge::WriteOptions,
+        write_policy: crate::domains::WritePolicy,
     ) -> KvResponse {
         if validate_realm_format(&scope.realm).is_err() {
             return KvResponse::Error {
@@ -24,17 +23,13 @@ impl KvActor {
                 error: KvError::InvalidRouteFamily,
             };
         };
-        let transaction_mode = match mode {
-            TxMode::ReadOnly => TransactionMode::ReadOnly,
-            TxMode::ReadWrite => TransactionMode::ReadWrite,
-        };
         let Some(next_tx_id) = self.next_tx_id.checked_add(1) else {
             return KvResponse::Error {
                 error: KvError::InvalidRequest("transaction ID space exhausted".to_string()),
             };
         };
 
-        match self.store.begin_tx(column_family, transaction_mode) {
+        match self.store.begin(column_family, mode) {
             Ok(tx) => {
                 let tx_id = self.next_tx_id;
                 self.next_tx_id = next_tx_id;
@@ -47,7 +42,8 @@ impl KvActor {
                         scoped_prefix,
                         column_family,
                         tx,
-                        write_options,
+                        mode,
+                        write_policy,
                         mutation_count: 0,
                         last_activity: Instant::now(),
                         inventory_delta: KvInventoryDelta::default(),
@@ -55,9 +51,7 @@ impl KvActor {
                 );
                 KvResponse::BeginOk { tx_id }
             }
-            Err(error) => KvResponse::Error {
-                error: Self::map_midge_error(&error),
-            },
+            Err(error) => KvResponse::Error { error },
         }
     }
 
@@ -79,15 +73,15 @@ impl KvActor {
         let inventory_scope = active.scope.clone();
         let inventory_column_family = active.column_family;
         let inventory_delta = std::mem::take(&mut active.inventory_delta);
-        let inventory_write_options = Self::inventory_write_options(active.write_options);
-        match active.tx.commit(active.write_options) {
+        let inventory_write_policy = Self::inventory_write_policy(active.write_policy);
+        match active.tx.commit(active.write_policy) {
             Ok(()) => {
                 if let Err(error) = Self::apply_inventory_delta(
                     &self.store,
                     inventory_column_family,
                     &inventory_scope,
                     &inventory_delta,
-                    inventory_write_options,
+                    inventory_write_policy,
                 ) {
                     tracing::warn!(
                         ?error,
@@ -98,9 +92,7 @@ impl KvActor {
                 }
                 KvResponse::CommitOk
             }
-            Err(error) => KvResponse::Error {
-                error: Self::map_midge_error(&error),
-            },
+            Err(error) => KvResponse::Error { error },
         }
     }
 

@@ -11,7 +11,7 @@ use super::*;
 fn should_confirm_stream_family_cleanup_before_reporting_delivery() {
     // Arrange
     let family = RouteFamily::new(1);
-    let sink = StreamDomainSink::new_with_storage_layout_and_families(
+    let sink = StreamDomain::new_with_storage_layout_and_families(
         crate::storage::FitzStorageEngine::new(crate::testkit::create_test_engine_with_cfs(vec![
             1,
         ])),
@@ -61,7 +61,7 @@ fn should_yield_bounded_stream_maintenance_through_internal_actor_command() {
     for offset in 0..9 {
         context
             .sink
-            .core
+            .config
             .stream_store
             .commit_records(crate::domains::stream::store::CommitRecordsParams {
                 family: context.family.as_u64(),
@@ -84,7 +84,7 @@ fn should_yield_bounded_stream_maintenance_through_internal_actor_command() {
     context.sink.run_maintenance_slice_for_tests(context.family);
     let records = context
         .sink
-        .core
+        .config
         .stream_store
         .read_resource(&crate::domains::stream::store::ReadResourceParams {
             family: context.family.as_u64(),
@@ -102,22 +102,23 @@ fn should_yield_bounded_stream_maintenance_through_internal_actor_command() {
     assert_eq!(records.len(), 9);
     assert!(context
         .sink
-        .core
+        .config
         .stream_store
         .has_pending_maintenance(context.family.as_u64()));
     assert!(context.sink.is_actor_running());
 }
 
 #[test]
-fn should_reject_stream_delivery_when_managed_actor_is_stopped() {
+fn should_reject_stream_delivery_when_family_runtime_is_stopped() {
     // Arrange
     let router = Arc::new(Router::new());
-    let sink = StreamDomainSink::new(
+    let sink = StreamDomain::try_new(
         crate::benchkit::create_bench_store(),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
         StreamStorageWriteOptions::local(),
-    );
+    )
+    .expect("create Stream test sink");
     let destination = RouteAddress::new(
         RouteFamily::new(1),
         Route::new("stream://bench/events/orders"),
@@ -134,7 +135,7 @@ fn should_reject_stream_delivery_when_managed_actor_is_stopped() {
 }
 
 #[test]
-fn should_route_stream_live_count_queries_through_managed_actor() {
+fn should_route_stream_live_count_queries_through_family_runtime() {
     // Arrange
     let context = setup_test_context();
     let route = "stream://bench/events/orders";
@@ -160,7 +161,7 @@ fn should_route_stream_live_count_queries_through_managed_actor() {
 }
 
 #[test]
-fn should_route_stream_admin_snapshot_sync_through_managed_actor() {
+fn should_route_stream_admin_snapshot_sync_through_family_runtime() {
     // Arrange
     let context = setup_test_context();
     seed_committed_stream_route(&context, "stream://bench/events/orders", 1, b"persisted");
@@ -178,7 +179,7 @@ fn should_route_stream_admin_snapshot_sync_through_managed_actor() {
 }
 
 #[test]
-fn should_route_stream_admin_dirty_refresh_through_managed_actor() {
+fn should_route_stream_admin_dirty_refresh_through_family_runtime() {
     // Arrange
     let context = setup_test_context();
     seed_committed_stream_route(&context, "stream://bench/events/orders", 1, b"persisted");
@@ -507,7 +508,7 @@ fn should_flush_pending_subscription_when_visibility_advances_without_publish() 
     inbox.clear();
     context
         .sink
-        .core
+        .config
         .stream_store
         .set_watermark(1, "bench", "events", 0)
         .expect("set held area watermark");
@@ -526,20 +527,26 @@ fn should_flush_pending_subscription_when_visibility_advances_without_publish() 
     );
 
     // Act
-    context.sink.core.handle_domain_publish(&commit);
+    let family = context.family;
+    context.sink.inspect_family_for_tests(family, move |state| {
+        state.core.handle_domain_publish(&commit);
+    });
     let before = inbox.count();
     context
         .sink
-        .core
+        .config
         .stream_store
         .set_watermark(1, "bench", "events", 1)
         .expect("advance area watermark");
-    context.sink.core.handle_visibility_advance(context.family);
+    let pending_is_empty = context.sink.inspect_family_for_tests(family, move |state| {
+        state.core.handle_visibility_advance(family);
+        state.core.subscriptions.pending.is_empty()
+    });
 
     // Assert
     assert_eq!(before, 0);
     assert_eq!(inbox.count(), 1);
-    assert!(context.sink.core.subscriptions.pending.lock().is_empty());
+    assert!(pending_is_empty);
 }
 
 #[test]
@@ -579,7 +586,7 @@ fn should_create_stream_sink_given_promotion_frontier_layout() {
     let router = Arc::new(Router::new());
 
     // Act
-    let sink = StreamDomainSink::new_with_layout(
+    let sink = StreamDomain::new_with_layout(
         crate::benchkit::create_bench_store(),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
@@ -617,7 +624,7 @@ fn should_create_stream_sink_with_background_cloud_policy_through_public_api() {
     let router = Arc::new(Router::new());
 
     // Act
-    let result = StreamDomainSink::new_with_layout(
+    let result = StreamDomain::new_with_layout(
         Arc::clone(&store),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
@@ -654,7 +661,7 @@ fn should_configure_strict_cloud_writes_before_stream_initialization() {
         .expect("create route-family column family");
 
     // Act
-    let result = StreamDomainSink::new_with_layout(
+    let result = StreamDomain::new_with_layout(
         Arc::clone(&store),
         Arc::new(Router::new()),
         crate::control::admin::read_model::AdminReadModel::new(),
@@ -674,12 +681,13 @@ fn should_keep_sync_commits_local_given_local_sync_policy() {
     let router = Arc::new(Router::new());
 
     // Act
-    let sink = StreamDomainSink::new(
+    let sink = StreamDomain::try_new(
         crate::benchkit::create_bench_store(),
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
         StreamStorageWriteOptions::local(),
-    );
+    )
+    .expect("create Stream test sink");
 
     // Assert
     assert_eq!(
@@ -937,88 +945,4 @@ fn should_encode_exact_resource_metadata_payload_given_empty_stream() {
     assert_eq!(metadata.ttl_seconds, None);
     assert_eq!(metadata.area_watermark, 0);
     assert_eq!(metadata.realm_watermark, 0);
-}
-
-#[test]
-fn should_reject_surplus_stream_load_instead_of_accepting_then_timing_out() {
-    // Arrange
-    // `deliver_to_actor` blocks its caller's thread on the actor's reply with
-    // no bound on how many callers can pile up concurrently unless admission
-    // refuses surplus load up front. Work admitted beyond what the deadline
-    // can serve would otherwise become an indeterminate outcome.
-    use crate::domains::stream::sink::model::{stream_admission_window, try_admit_stream_delivery};
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    let inflight = Arc::new(AtomicUsize::new(0));
-    let window = stream_admission_window(super::super::model::stream_assumed_service_us());
-
-    // Act
-    let held = (0..window)
-        .map(|_| try_admit_stream_delivery(&inflight, window).expect("slot within the limit"))
-        .collect::<Vec<_>>();
-    let refused = try_admit_stream_delivery(&inflight, window);
-
-    // Assert
-    assert!(
-        matches!(refused, Err(DeliveryError::MailboxFull { .. })),
-        "surplus must be refused as never-enqueued, got {refused:?}"
-    );
-    assert_eq!(inflight.load(Ordering::Acquire), window);
-
-    // Slots are released when the COMMAND is finished with, not when a caller
-    // stops waiting: a `recv_timeout` cancels nothing, so recycling on caller
-    // timeout would admit fresh work on top of still-pending mutations.
-    drop(held);
-    assert_eq!(inflight.load(Ordering::Acquire), 0);
-    assert!(try_admit_stream_delivery(&inflight, window).is_ok());
-}
-
-#[test]
-fn should_refuse_stream_client_delivery_once_admission_window_is_exhausted() {
-    // Arrange
-    // End-to-end through `StreamDomainSink::deliver`: holding every admission
-    // slot must make a plain (non-control-plane) delivery fail fast with
-    // `MailboxFull` rather than blocking on the actor's 1s reply wait.
-    let context = setup_test_context();
-    let window = crate::domains::stream::sink::model::stream_admission_window(
-        context
-            .sink
-            .core
-            .delivery_service_us
-            .load(std::sync::atomic::Ordering::Relaxed),
-    );
-    let held = (0..window)
-        .map(|_| {
-            crate::domains::stream::sink::model::try_admit_stream_delivery(
-                &context.sink.inflight_client_deliveries,
-                window,
-            )
-            .expect("slot")
-        })
-        .collect::<Vec<_>>();
-
-    // Act
-    let result = context.sink.deliver(Envelope::new(
-        RouteAddress::new(
-            context.family,
-            Route::new("stream://admission-under-pressure"),
-        ),
-        Bytes::from_static(b"probe"),
-    ));
-
-    // Assert
-    assert!(
-        matches!(result, Err(DeliveryError::MailboxFull { .. })),
-        "surplus client load must be refused as never-enqueued, got {result:?}"
-    );
-
-    // Slots release once held commands finish, restoring normal admission.
-    drop(held);
-    assert_eq!(
-        context
-            .sink
-            .inflight_client_deliveries
-            .load(std::sync::atomic::Ordering::Acquire),
-        0
-    );
 }

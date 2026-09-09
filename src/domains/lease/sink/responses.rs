@@ -1,14 +1,14 @@
 //! Response encoding and best-effort routing back to the requester or to a
 //! queued waiter.
 
-use super::model::LeaseDomainRuntime;
+use super::model::LeaseFamilyRuntime;
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
 use crate::runtime::Envelope;
 
-impl LeaseDomainRuntime<'_> {
+impl LeaseFamilyRuntime<'_> {
     pub(in crate::domains::lease::sink) fn send_waiter_response(
-        &self,
+        &mut self,
         waiter: &super::model::PendingAcquire,
         response: &crate::domains::lease::protocol::LeaseResponse,
     ) -> bool {
@@ -61,7 +61,7 @@ impl LeaseDomainRuntime<'_> {
     }
 
     pub(in crate::domains::lease::sink) fn route_lease_response(
-        &self,
+        &mut self,
         envelope: &Envelope,
         meta: crate::runtime::ClientFrameMeta,
         response: &crate::domains::lease::protocol::LeaseResponse,

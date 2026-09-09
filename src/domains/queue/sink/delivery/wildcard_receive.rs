@@ -1,4 +1,4 @@
-use super::{OperationOutcome, QueueDomainCore};
+use super::{OperationOutcome, QueueFamilyState};
 use crate::runtime::routing::RouteFamily;
 use std::sync::atomic::Ordering;
 
@@ -6,6 +6,13 @@ use crate::domains::queue::protocol::{
     MAX_QUEUE_RESPONSE_PAYLOAD_BYTES, RECEIVED_RESPONSE_HEADER_BYTES,
     RESERVED_MESSAGE_WIRE_OVERHEAD_BYTES, ROUTED_MESSAGE_WIRE_OVERHEAD_BYTES,
 };
+
+struct WildcardActorOutcome {
+    response: crate::domains::queue::QueueResponse,
+    wire_budget_exhausted: bool,
+    counts: crate::domains::queue::QueueActorLiveCounts,
+    changed: bool,
+}
 
 fn receive_with_route_wire_budget(
     actor: &mut crate::domains::queue::QueueActor,
@@ -49,24 +56,21 @@ fn route_reserved_messages(
     )
 }
 
-impl QueueDomainCore {
+impl QueueFamilyState {
     const MAX_WILDCARD_RESERVE_MATCHES: usize = 4096;
 
-    fn wildcard_inventory_error(&self) -> Option<OperationOutcome> {
-        self.inventory_error
-            .lock()
-            .clone()
-            .map(|error| OperationOutcome {
-                response: crate::domains::queue::QueueResponse::Error {
-                    message: format!("Queue inventory unavailable: {error}"),
-                },
-                ready_notifications: Vec::new(),
-                mark_admin_snapshot_dirty: false,
-            })
+    fn wildcard_inventory_error(&mut self) -> Option<OperationOutcome> {
+        self.inventory_error.clone().map(|error| OperationOutcome {
+            response: crate::domains::queue::QueueResponse::Error {
+                message: format!("Queue inventory unavailable: {error}"),
+            },
+            ready_notifications: Vec::new(),
+            mark_admin_snapshot_dirty: false,
+        })
     }
 
     fn wildcard_reserve_preflight(
-        &self,
+        &mut self,
         family_id: RouteFamily,
         pattern: &crate::runtime::matcher::Pattern,
     ) -> Option<OperationOutcome> {
@@ -86,7 +90,7 @@ impl QueueDomainCore {
     }
 
     pub(super) fn handle_wildcard_receive(
-        &self,
+        &mut self,
         family_id: RouteFamily,
         pattern: &crate::runtime::matcher::Pattern,
         session_id: u64,
@@ -121,8 +125,15 @@ impl QueueDomainCore {
             }
             let key = &keys[(start + offset) % keys.len()];
             let route = Self::queue_ready_route(key);
-            let (actor_handle, _) = match self.get_or_create_actor(key) {
-                Ok(actor) => actor,
+            let (actor_outcome, _) = match self.receive_from_wildcard_actor(
+                key,
+                session_id,
+                inflight_seconds,
+                limit - routed.len(),
+                &mut response_bytes_remaining,
+                &route,
+            ) {
+                Ok(outcome) => outcome,
                 Err(message) if routed.is_empty() => {
                     return OperationOutcome {
                         response: crate::domains::queue::QueueResponse::Error { message },
@@ -140,33 +151,17 @@ impl QueueDomainCore {
                     break;
                 }
             };
-            let (response, wire_budget_exhausted) = {
-                let mut actor = actor_handle.lock();
-                let counts_before = actor.live_counts();
-                state_changed |= actor.process_due_work();
-                let remaining = limit - routed.len();
-                let (response, wire_budget_exhausted) = receive_with_route_wire_budget(
-                    &mut actor,
-                    session_id,
-                    inflight_seconds,
-                    remaining,
-                    &mut response_bytes_remaining,
-                    &route,
-                );
-                let counts = actor.live_counts();
-                state_changed |= counts != counts_before;
-                if counts.total() > 0 {
-                    self.known_queue_keys.lock().insert(key.clone());
-                }
-                if let Some(notification) = self.record_ready_state(key, counts) {
-                    notifications.push((key.clone(), notification));
-                }
-                (response, wire_budget_exhausted)
-            };
-            match response {
+            state_changed |= actor_outcome.changed;
+            if actor_outcome.counts.total() > 0 {
+                self.known_queue_keys.insert(key.clone());
+            }
+            if let Some(notification) = self.record_ready_state(key, actor_outcome.counts) {
+                notifications.push((key.clone(), notification));
+            }
+            match actor_outcome.response {
                 crate::domains::queue::QueueResponse::Received { messages } => {
                     routed.extend(route_reserved_messages(route.clone(), messages));
-                    if wire_budget_exhausted {
+                    if actor_outcome.wire_budget_exhausted {
                         break;
                     }
                 }
@@ -196,9 +191,39 @@ impl QueueDomainCore {
         }
     }
 
+    fn receive_from_wildcard_actor(
+        &mut self,
+        key: &crate::domains::queue::QueueKey,
+        session_id: u64,
+        inflight_seconds: u64,
+        remaining: usize,
+        response_bytes_remaining: &mut usize,
+        route: &crate::runtime::routing::Route,
+    ) -> Result<(WildcardActorOutcome, bool), String> {
+        self.with_actor(key, |actor| {
+            let counts_before = actor.live_counts();
+            let changed = actor.process_due_work();
+            let (response, wire_budget_exhausted) = receive_with_route_wire_budget(
+                actor,
+                session_id,
+                inflight_seconds,
+                remaining,
+                response_bytes_remaining,
+                route,
+            );
+            let counts = actor.live_counts();
+            WildcardActorOutcome {
+                response,
+                wire_budget_exhausted,
+                counts,
+                changed: changed || counts != counts_before,
+            }
+        })
+    }
+
     #[cfg(test)]
     pub(in crate::domains::queue::sink) fn handle_wildcard_receive_for_tests(
-        &self,
+        &mut self,
         family_id: RouteFamily,
         pattern: &crate::runtime::matcher::Pattern,
         session_id: u64,

@@ -19,36 +19,32 @@ impl KvActor {
         };
 
         let prefix = active.scoped_prefix.clone();
-        let Some((midge_query, effective_limit)) = Self::build_scan_query(&prefix, query) else {
+        let Some((start_key, end_key, effective_limit)) = Self::scan_query(&prefix, query) else {
             return KvResponse::ScanResult {
                 items: Vec::new(),
                 has_more: false,
             };
         };
-        match active.tx.scan(&midge_query) {
+        match active.tx.scan(
+            &prefix,
+            start_key,
+            end_key,
+            effective_limit.saturating_add(1),
+            query.reverse,
+        ) {
             Ok(iterator) => Self::collect_scan_items(iterator, &prefix, effective_limit),
-            Err(error) => KvResponse::Error {
-                error: Self::map_midge_error(&error),
-            },
+            Err(error) => KvResponse::Error { error },
         }
     }
 
-    fn build_scan_query(prefix: &[u8], query: &ScanQuery) -> Option<(cntryl_midge::Query, usize)> {
+    fn scan_query(prefix: &[u8], query: &ScanQuery) -> Option<(Vec<u8>, Vec<u8>, usize)> {
         let (start_key, end_key) = Self::scan_bounds(prefix, query)?;
         let effective_limit = query
             .limit
             .filter(|&limit| limit > 0)
             .unwrap_or(MAX_SCAN_ITEMS)
             .min(MAX_SCAN_ITEMS);
-        let mut midge_query = cntryl_midge::Query::new()
-            .prefix(Bytes::copy_from_slice(prefix))
-            .start_key(Bytes::from(start_key))
-            .end_key(Bytes::from(end_key))
-            .limit(effective_limit.saturating_add(1));
-        if query.reverse {
-            midge_query = midge_query.reverse();
-        }
-        Some((midge_query, effective_limit))
+        Some((start_key, end_key, effective_limit))
     }
 
     fn truncated_key_for_error(key: &[u8]) -> String {
@@ -64,7 +60,7 @@ impl KvActor {
     }
 
     fn collect_scan_items(
-        iterator: cntryl_midge::ScanIterator<'_>,
+        iterator: Vec<(Bytes, Bytes)>,
         prefix: &[u8],
         effective_limit: usize,
     ) -> KvResponse {
@@ -73,15 +69,7 @@ impl KvActor {
         let mut used = 0usize;
         let mut has_more = false;
         let mut unresumable_boundary: Option<Bytes> = None;
-        for entry in iterator {
-            let (key, value) = match entry {
-                Ok(row) => row,
-                Err(error) => {
-                    return KvResponse::Error {
-                        error: Self::map_midge_error(&error),
-                    };
-                }
-            };
+        for (key, value) in iterator {
             let Some(user_key) = Self::strip_scoped_prefix(prefix, &key) else {
                 continue;
             };
