@@ -414,7 +414,9 @@ Clients MUST:
 2. **Require explicit `COMMIT` or `ROLLBACK`** (no auto-commit)
 3. **Surface transaction errors** (e.g., isolation conflicts)
 4. **NOT retry transactions automatically** (client chooses)
-5. **Support multiple concurrent transactions to different resources** (same domain, different actor instances)
+5. **Support multiple concurrent transactions to different resources** when
+   responses are frame-correlated; this does not relax ordering within one
+   transaction
 6. **NOT parallelize operations within ONE transaction** (single tx_id must be sequential)
 
 **Example (Rust-like pseudocode):**

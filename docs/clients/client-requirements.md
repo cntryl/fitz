@@ -287,7 +287,7 @@ Reconnect rebuild behavior is domain-specific:
 
 **REQ-CONC-009 (T2)** Requests MUST support true per-request multiplexing wherever an identifier distinguishes them: RPC `Call` invocations on different UUIDs, and — once the broker advertises `CAP_CORRELATION` — any number of same-message-type requests on different correlation identifiers. None of these may be serialized against each other.
 
-**REQ-CONC-011 (T0)** Absent `CAP_CORRELATION`, the client MUST keep at most one in-flight request per message type per connection. The broker does not answer same-type requests in receive order — a parked Queue `RESERVE` is answered after a later one that completed immediately — so matching uncorrelated responses by arrival order delivers a response to the wrong caller. This is a correctness requirement, not a throughput one.
+**REQ-CONC-010 (T0)** Absent `CAP_CORRELATION`, the client MUST keep at most one in-flight request per message type per connection. The broker does not answer same-type requests in receive order — a parked Queue `RESERVE` is answered after a later one that completed immediately — so matching uncorrelated responses by arrival order delivers a response to the wrong caller. This is a correctness requirement, not a throughput one.
 
 ---
 
@@ -526,7 +526,7 @@ Use this table to grade a specific client implementation. For each row, mark:
 | REQ-CONC-007 | T1 | Concurrency | Async handler max concurrency + timeout |
 | REQ-CONC-008 | T2 | Concurrency | Same-tx operations serialized or documented |
 | REQ-CONC-009 | T2 | Concurrency | Requests truly concurrent when identified |
-| REQ-CONC-011 | T0 | Concurrency | One in-flight per message type when uncorrelated |
+| REQ-CONC-010 | T0 | Concurrency | One in-flight per message type when uncorrelated |
 | REQ-ERR-001 | T0 | Errors | All server errors surfaced as non-nil error |
 | REQ-ERR-002 | T0 | Errors | Error carries numeric code + message |
 | REQ-ERR-003 | T0 | Errors | ctx cancellation propagated; pending op cleaned up |
