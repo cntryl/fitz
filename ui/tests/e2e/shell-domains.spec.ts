@@ -24,7 +24,6 @@ const rollupHeaders: Record<string, string[]> = {
   lease: ["Active", "Waiters", "Oldest"],
   notice: ["Subscriptions", "Publishes / min", "Delivered"],
   rpc: ["Workers", "Pending", "Slowest avg ms"],
-  schedule: ["Enabled", "Pending claims", "Next run"],
   stream: ["Committed", "Storage", "Append sessions"],
 };
 
