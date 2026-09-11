@@ -700,6 +700,44 @@ describe("shared UI polish contracts", () => {
     expect(root.querySelector('a[href="/admin/1/kv/default/ops/primary"]')).toBeTruthy();
   });
 
+  it("links operation-bearing inventory rows to their resource first", async () => {
+    for (const domain of ["notice", "schedule", "rpc"] as const) {
+      const root = await mount(() => (
+        <main>
+          <DomainResourceInventoryTable
+            domain={domain}
+            title="Resource inventory"
+            emptyDescription="No resources are visible."
+            inventory={{
+              realms: [
+                {
+                  realm: "default",
+                  areas: [
+                    {
+                      area: "ops",
+                      resources: ["primary"],
+                      resourceEntries: [
+                        {
+                          operation: "handoff",
+                          resource: "primary",
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            }}
+          />
+        </main>
+      ));
+
+      expect(root.querySelector(`a[href="/admin/1/${domain}/default/ops/primary"]`)).toBeTruthy();
+      expect(
+        root.querySelector(`a[href="/admin/1/${domain}/default/ops/primary/handoff"]`),
+      ).toBeNull();
+    }
+  });
+
   it("uses accessible icons instead of visible sort-state prose", async () => {
     const root = await mount(() => (
       <main>

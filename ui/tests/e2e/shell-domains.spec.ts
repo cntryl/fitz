@@ -24,7 +24,6 @@ const rollupHeaders: Record<string, string[]> = {
   lease: ["Active", "Waiters", "Oldest"],
   notice: ["Subscriptions", "Publishes / min", "Delivered"],
   rpc: ["Workers", "Pending", "Slowest avg ms"],
-  schedule: ["Enabled", "Pending claims", "Next run"],
   stream: ["Committed", "Storage", "Append sessions"],
 };
 
@@ -212,13 +211,16 @@ test("navigates schedule scope drill-down links to resource detail", async ({ pa
   await expect(page.getByRole("heading", { name: /Schedule inventory/ })).toBeVisible();
   await page.locator('a[href="/admin/1/schedule/default"]').click();
   await page.locator('a[href="/admin/1/schedule/default/default"]').click();
+  await expect(page.getByRole("columnheader", { name: "Pending claims" })).not.toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Next run" })).not.toBeVisible();
   await page.locator('a[href="/admin/1/schedule/default/default/primary"]').click();
   await expect(page).toHaveURL("/admin/1/schedule/default/default/primary");
   await expect(page.getByRole("heading", { level: 1, name: "primary" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Individual schedules" })).toBeVisible();
   const schedules = page.getByRole("list", { name: "Individual schedules" });
   await expect(schedules.getByRole("listitem")).toHaveCount(2);
-  await expect(schedules.getByText("1 pending handoff", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Schedule timing" })).not.toBeVisible();
+  await expect(page.getByRole("button", { name: "Run now" })).not.toBeVisible();
 
   await page.locator('a[href="/admin/1/schedule/default/default/primary/handoff"]').click();
   await expect(page).toHaveURL("/admin/1/schedule/default/default/primary/handoff");

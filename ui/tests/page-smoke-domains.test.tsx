@@ -423,6 +423,8 @@ describe("admin page smoke tests", () => {
     expect(areaRoot.textContent).toContain("Schedule area");
     expect(areaRoot.textContent).toContain("Resource inventory");
     expect(areaRoot.textContent).toContain("schedule://default/ops/primary");
+    expect(areaRoot.textContent).not.toContain("Pending claims");
+    expect(areaRoot.textContent).not.toContain("Next run");
     cleanupApp(areaRoot);
     document.body.innerHTML = "";
 
@@ -439,7 +441,10 @@ describe("admin page smoke tests", () => {
     ).toBe("primary");
     expect(resourceText).toContain("Individual schedules");
     expect(resourceText).toContain("schedule://default/ops/primary/handoff");
-    expect(resourceText).toContain("Schedule timing");
+    expect(resourceText).not.toContain("Schedule timing");
+    expect(resourceText).not.toContain("*/5 * * * *");
+    expect(resourceText).not.toContain("Pending handoffs");
+    expect(resourceText).not.toContain("Run now");
     expect(
       resourceRoot.querySelector('a[href="/admin/1/schedule/default/ops/primary/handoff"]'),
     ).toBeTruthy();
@@ -508,7 +513,7 @@ describe("admin page smoke tests", () => {
     cleanupApp(root);
   });
 
-  it("surfaces disabled schedules and pending handoffs with warning severity", async () => {
+  it("keeps operation schedule status off the resource page", async () => {
     mocks.queryStates.scheduleResource = queryState.fresh(
       {
         ...scheduleResource,
@@ -526,11 +531,9 @@ describe("admin page smoke tests", () => {
       "/admin/{family}/schedule/{realm}/{area}/{resource}",
       ScheduleResourcePage,
     );
-    const warningBadges = root.querySelectorAll('[data-slot="badge"][data-variant="warning"]');
-
-    expect(root.textContent).toContain("Disabled");
-    expect(root.textContent).toContain("1 pending handoff");
-    expect(warningBadges.length).toBeGreaterThanOrEqual(2);
+    expect(root.textContent).not.toContain("Disabled");
+    expect(root.textContent).not.toContain("pending handoff");
+    expect(root.textContent).not.toContain("Run now");
   });
 
   it("describes future, overdue, missing, and invalid schedule timestamps truthfully", async () => {
