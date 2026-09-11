@@ -16,18 +16,19 @@ impl NoticeFamilyState {
         payload: &bytes::Bytes,
     ) {
         let family = *targets[0].subscriber.family();
-        let worker = notice_delivery_worker(&mut self.delivery_workers, &self.router, family);
+        let worker = notice_delivery_worker(
+            &mut self.delivery_workers,
+            &self.router,
+            family,
+            self.metrics.as_ref(),
+        );
         let Some(worker) = worker else {
-            crate::observability::counter_inc(
-                crate::domains::notice::metrics::METRIC_DELIVERY_DROPS_TOTAL,
-            );
+            super::delivery_worker::record_delivery_drop(self.metrics.as_ref());
             return;
         };
         let job = NoticeDeliveryJob::new(targets, route.clone(), payload.clone());
         if worker.try_send(job).is_err() {
-            crate::observability::counter_inc(
-                crate::domains::notice::metrics::METRIC_DELIVERY_DROPS_TOTAL,
-            );
+            super::delivery_worker::record_delivery_drop(self.metrics.as_ref());
         }
     }
 

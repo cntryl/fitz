@@ -56,6 +56,10 @@ impl NoticeMetrics {
         self.metrics.counter_add(name, amount);
     }
 
+    pub fn record_delivery_drop(&self) {
+        self.metrics.counter_inc(METRIC_DELIVERY_DROPS_TOTAL);
+    }
+
     pub fn record_response_drop(&self) {
         self.metrics.counter_inc(METRIC_RESPONSE_DROPS_TOTAL);
     }

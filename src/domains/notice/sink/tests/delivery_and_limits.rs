@@ -24,7 +24,7 @@ fn should_retry_delivery_policy_with_payload_independent_envelope_builder() {
     );
 
     // Act
-    deliver_with_retry(&router, &subscriber, || {
+    deliver_with_retry(&router, &subscriber, None, || {
         Envelope::new(subscriber.clone(), ())
     });
 
@@ -153,7 +153,7 @@ fn should_contain_panicking_cached_notice_sink() {
 
     // Act
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        deliver_with_retry(&router, &subscriber, || {
+        deliver_with_retry(&router, &subscriber, None, || {
             Envelope::new(subscriber.clone(), ())
         });
     }));
@@ -358,10 +358,15 @@ fn should_increment_delivery_drop_counter_given_failing_subscriber_route() {
     let router = Arc::new(Router::new());
     let subscriber_mailbox = Arc::new(Mailbox::new(8));
     router.register(subscriber_address.clone(), subscriber_mailbox.clone());
+    // A collector owned by this test. The process-global one is shared with
+    // every other live Notice sink, including background delivery-worker
+    // threads, so an exact count on it is only ever accidentally right.
+    let collector = crate::observability::metrics::MetricsCollector::new();
     let sink = NoticeDomain::new(
         router.clone(),
         crate::control::admin::read_model::AdminReadModel::new(),
-    );
+    )
+    .with_metrics(collector.clone());
 
     subscribe_notice_pattern(
         &sink,
@@ -373,9 +378,6 @@ fn should_increment_delivery_drop_counter_given_failing_subscriber_route() {
     );
     let subscribe_response = decode_notice_response(&subscriber_mailbox);
     assert_eq!(subscribe_response.status, 0);
-
-    let before_drops =
-        crate::observability::metrics().counter_get("fitz_notice_delivery_drops_total");
 
     router.register(subscriber_address.clone(), Arc::new(FailingSink));
 
@@ -395,15 +397,14 @@ fn should_increment_delivery_drop_counter_given_failing_subscriber_route() {
 
     // Assert
     let deadline = Instant::now() + Duration::from_secs(1);
-    while crate::observability::metrics().counter_get("fitz_notice_delivery_drops_total")
-        < before_drops + 1
-        && Instant::now() < deadline
+    while collector.counter_get("fitz_notice_delivery_drops_total") < 1 && Instant::now() < deadline
     {
         std::thread::yield_now();
     }
     assert_eq!(
-        crate::observability::metrics().counter_get("fitz_notice_delivery_drops_total"),
-        before_drops + 1
+        collector.counter_get("fitz_notice_delivery_drops_total"),
+        1,
+        "exactly one delivery was dropped by this sink"
     );
     assert_eq!(sink.subscription_count(), Ok(1));
     assert!(subscriber_mailbox.receiver().try_recv().is_err());

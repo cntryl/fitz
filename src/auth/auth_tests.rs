@@ -9,6 +9,10 @@ use serde_json::json;
 use serial_test::serial;
 
 #[test]
+// `validate` reads FITZ_JWT_ALLOW_INSECURE_HTTP, which other tests set to
+// "true" while they run. `#[serial]` only excludes other serial tests, so this
+// one has to opt in too or it reads whatever the process env happens to hold.
+#[serial]
 fn should_reject_http_jwks_url() {
     // Arrange
     let config = AuthConfig::jwks(
