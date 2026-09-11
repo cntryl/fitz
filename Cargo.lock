@@ -294,7 +294,8 @@ checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
 [[package]]
 name = "cntryl-lexkey"
 version = "0.1.0"
-source = "git+https://github.com/cntryl/lexkey-rs?branch=main#51454df1b088b2c72e44061f403a8e19a336de3a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "89d0503dda9e01fe8fa81abb9132dd5c2dc611d0c3234f50a619f065759f7c61"
 dependencies = [
  "bytes",
  "hex",
@@ -304,7 +305,8 @@ dependencies = [
 [[package]]
 name = "cntryl-midge"
 version = "0.1.0"
-source = "git+https://github.com/cntryl/midge?branch=main#fbb30d180024bc1f91471d8527f6dc9c319c953c"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5745f5e905c6d4e76aeb593a793e1e81c9eea86347d5f53516caafd4a51671d"
 dependencies = [
  "arc-swap",
  "base64 0.23.1",
@@ -346,8 +348,9 @@ dependencies = [
 
 [[package]]
 name = "cntryl-stress"
-version = "0.3.0"
-source = "git+https://github.com/cntryl/stress?branch=main#7078e18fb05f2f96f5c6c18caa26c112e56fb025"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "61338fa3caeb07817598b9c7080ba4d94e9961352467226633c707581f545b07"
 dependencies = [
  "cntryl-stress-macros",
  "fs2",
@@ -358,8 +361,9 @@ dependencies = [
 
 [[package]]
 name = "cntryl-stress-macros"
-version = "0.3.0"
-source = "git+https://github.com/cntryl/stress?branch=main#7078e18fb05f2f96f5c6c18caa26c112e56fb025"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "45db4ab25f10324731c7bc3b511e042260ba0d5220079f3c7e5857817eb1cdc1"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -2475,7 +2479,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -3471,18 +3475,18 @@ checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[package]]
 name = "zstd"
-version = "0.13.3"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e91ee311a569c327171651566e07972200e76fcfe2242a4fa446149a3881c08a"
+checksum = "bf06bd8162af0734b344780deb55b42a2429ae430870d13fcc12f238e880fe6e"
 dependencies = [
  "zstd-safe",
 ]
 
 [[package]]
 name = "zstd-safe"
-version = "7.3.0"
+version = "8.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "64d80649ab6db9d9f6f9c80a40becd948eda4714a0a5ac8c4d157a32231c7882"
+checksum = "ae42c0555055784c70058d19ba8e275528e8a99a706684868ace5da4e716a4ab"
 dependencies = [
  "zstd-sys",
 ]
