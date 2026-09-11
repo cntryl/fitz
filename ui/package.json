@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "@askrjs/askr": "^0.2.4",
-    "@askrjs/fetch": "0.2.1",
+    "@askrjs/fetch": "0.3.0",
     "@askrjs/lucide": "0.2.1",
     "@askrjs/themes": "^0.2.5",
     "@askrjs/ui": "^0.2.4"
