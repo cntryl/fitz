@@ -234,6 +234,65 @@ fn should_read_admin_pending_claims_through_actor_command() {
 }
 
 #[test]
+fn should_skip_run_now_delivery_when_command_expires_while_queued() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let route = "schedule://acme/jobs/nightly/run";
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let sink = ScheduleDomain::new(
+        crate::domains::schedule::ScheduleStore::new(store.clone()),
+        Arc::new(Router::new()),
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+    let mut actor = crate::domains::schedule::ScheduleActor::new(
+        family,
+        crate::domains::schedule::ScheduleStore::new(store),
+        crate::domains::WritePolicy::Buffered,
+    );
+    actor
+        .create_schedule_with_mode(
+            route.to_string(),
+            "* * * * *".to_string(),
+            crate::domains::schedule::ScheduleDeliveryMode::Single,
+            Bytes::from_static(b"nightly"),
+        )
+        .expect("create schedule");
+    sink.insert_actor_for_tests(family, actor);
+    let mut subscriptions = ScheduleSubscriptionSet::new();
+    for subscription_id in [1, 2] {
+        subscriptions.insert(
+            family,
+            ScheduleSubscription {
+                pattern: crate::runtime::matcher::Pattern::new(route),
+                session_id: subscription_id,
+                subscription_id,
+                subscriber: RouteAddress::new(
+                    family,
+                    Route::new(format!("inbox://session/{subscription_id}")),
+                ),
+            },
+        );
+    }
+    subscriptions
+        .round_robin_cursors
+        .insert(route.to_string(), 0);
+    sink.insert_subscriptions_for_tests(family, subscriptions);
+    let (entered_tx, entered_rx) = crossbeam_channel::bounded(1);
+    let (release_tx, release_rx) = crossbeam_channel::bounded(1);
+    sink.block_actor_for_tests(entered_tx, release_rx);
+    entered_rx.recv().expect("Schedule actor should block");
+
+    // Act
+    let result = sink.run_now(family, route.to_string(), Duration::from_millis(10));
+    release_tx.send(()).expect("release Schedule actor");
+    let cursor = sink.round_robin_cursor_for_tests(family, route);
+
+    // Assert
+    assert!(result.is_err_and(|error| error.contains("timed out")));
+    assert_eq!(cursor, Some(0));
+}
+
+#[test]
 fn should_route_schedule_force_due_scan_through_actor_command() {
     // Arrange
     let family = RouteFamily::new(1);

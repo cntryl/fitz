@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
     getQueueResource: vi.fn(),
     getQueueStats: vi.fn(),
     getScheduleResource: vi.fn(),
+    runScheduleNow: vi.fn(),
     listScheduleExecutionObservations: vi.fn(),
     listScheduleAreas: vi.fn(),
     listQueueAreas: vi.fn(),
@@ -267,6 +268,20 @@ beforeEach(() => {
       limit: 10,
       observations: [],
       route_family: 7,
+    },
+  });
+  mocks.apiv1.runScheduleNow.mockResolvedValue({
+    ok: true,
+    status: 200,
+    data: {
+      accepted_handoffs: 1,
+      attempted_handoffs: 1,
+      delivery_mode: "single",
+      matched_subscriptions: 1,
+      outcome: "handoff_accepted",
+      route: "schedule://default/ops/reconcile/run",
+      route_family: 7,
+      triggered_at: "2026-05-21T13:00:00.000Z",
     },
   });
   mocks.apiv1.searchLeaseOwnership.mockResolvedValue({

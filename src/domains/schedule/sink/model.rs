@@ -193,6 +193,22 @@ pub(super) struct ScheduleLiveCounts {
     pub(super) overdue_normalizations: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScheduleRunNowOutcome {
+    HandoffAccepted,
+    NoLiveSubscriptions,
+    NoHandoffAccepted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ScheduleRunNowResult {
+    pub(crate) delivery_mode: crate::domains::schedule::ScheduleDeliveryMode,
+    pub(crate) matched_subscriptions: usize,
+    pub(crate) attempted_handoffs: usize,
+    pub(crate) accepted_handoffs: usize,
+    pub(crate) outcome: ScheduleRunNowOutcome,
+}
+
 impl ScheduleLiveCounts {
     pub(super) fn merge(mut self, other: &Self) -> Self {
         self.subscriptions = self.subscriptions.saturating_add(other.subscriptions);
@@ -230,6 +246,11 @@ pub(super) enum ScheduleDomainCommand {
         crossbeam_channel::Sender<()>,
     ),
     ForceDueScanForTests(usize, crossbeam_channel::Sender<()>),
+    RunNow(
+        String,
+        Instant,
+        crossbeam_channel::Sender<Result<Option<ScheduleRunNowResult>, String>>,
+    ),
     PanicForFailpoint,
     #[cfg(test)]
     BlockForTests(

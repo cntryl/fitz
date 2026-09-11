@@ -4,7 +4,7 @@
 use super::delivery_strategy::DeliveryStrategy;
 use super::model::{
     PendingFireKey, PendingFireState, PendingFireStates, ScheduleDomainRuntime,
-    EXECUTIONS_WINDOW_MS,
+    ScheduleRunNowOutcome, ScheduleRunNowResult, EXECUTIONS_WINDOW_MS,
 };
 #[cfg(test)]
 use crate::dispatch::protocol::frame_context::FrameContext;
@@ -302,16 +302,40 @@ impl ScheduleDomainRuntime<'_> {
         delivery_mode: crate::domains::schedule::ScheduleDeliveryMode,
         payload: &bytes::Bytes,
     ) -> bool {
+        self.handle_schedule_publish_with_counts(family, route, delivery_mode, payload)
+            .accepted_handoffs
+            > 0
+    }
+
+    fn handle_schedule_publish_with_counts(
+        &mut self,
+        family: crate::runtime::routing::RouteFamily,
+        route: &str,
+        delivery_mode: crate::domains::schedule::ScheduleDeliveryMode,
+        payload: &bytes::Bytes,
+    ) -> ScheduleRunNowResult {
         debug_assert_eq!(family, self.core.route_family);
         let router = self.core.router.clone();
         let state = &mut self.core.subscriptions;
         if state.is_empty() {
-            return false;
+            return ScheduleRunNowResult {
+                delivery_mode,
+                matched_subscriptions: 0,
+                attempted_handoffs: 0,
+                accepted_handoffs: 0,
+                outcome: ScheduleRunNowOutcome::NoLiveSubscriptions,
+            };
         }
         let mut subscription_ids = state.matching_ids(family, route);
         subscription_ids.sort_unstable();
         if subscription_ids.is_empty() {
-            return false;
+            return ScheduleRunNowResult {
+                delivery_mode,
+                matched_subscriptions: 0,
+                attempted_handoffs: 0,
+                accepted_handoffs: 0,
+                outcome: ScheduleRunNowOutcome::NoLiveSubscriptions,
+            };
         }
 
         let cursor = state
@@ -321,11 +345,13 @@ impl ScheduleDomainRuntime<'_> {
             .unwrap_or_else(|| super::delivery_strategy::initial_round_robin_cursor(route));
         let strategy =
             DeliveryStrategy::select_recipients(delivery_mode, &subscription_ids, cursor);
-        let mut any_accepted = false;
+        let mut accepted_handoffs = 0;
+        let mut attempted_handoffs = 0;
         for subscription_id in strategy.recipients() {
             let Some(subscription) = state.subscriptions.get(*subscription_id) else {
                 continue;
             };
+            attempted_handoffs += 1;
             let accepted = Self::route_live_notify(
                 &router,
                 subscription.session_id,
@@ -334,7 +360,7 @@ impl ScheduleDomainRuntime<'_> {
                 route,
                 payload,
             );
-            any_accepted |= accepted;
+            accepted_handoffs += usize::from(accepted);
             if accepted && strategy.stops_after_success() {
                 let index = subscription_ids
                     .iter()
@@ -343,7 +369,13 @@ impl ScheduleDomainRuntime<'_> {
                 state
                     .round_robin_cursors
                     .insert(route.to_string(), (index + 1) % subscription_ids.len());
-                return true;
+                return ScheduleRunNowResult {
+                    delivery_mode,
+                    matched_subscriptions: subscription_ids.len(),
+                    attempted_handoffs,
+                    accepted_handoffs,
+                    outcome: ScheduleRunNowOutcome::HandoffAccepted,
+                };
             }
         }
         if strategy.stops_after_success() {
@@ -351,7 +383,17 @@ impl ScheduleDomainRuntime<'_> {
                 .round_robin_cursors
                 .insert(route.to_string(), (cursor + 1) % subscription_ids.len());
         }
-        any_accepted
+        ScheduleRunNowResult {
+            delivery_mode,
+            matched_subscriptions: subscription_ids.len(),
+            attempted_handoffs,
+            accepted_handoffs,
+            outcome: if accepted_handoffs > 0 {
+                ScheduleRunNowOutcome::HandoffAccepted
+            } else {
+                ScheduleRunNowOutcome::NoHandoffAccepted
+            },
+        }
     }
 
     pub(super) fn handle_domain_publish(&mut self, event: &crate::runtime::DomainPublishEvent) {
@@ -361,5 +403,37 @@ impl ScheduleDomainRuntime<'_> {
             crate::domains::schedule::ScheduleDeliveryMode::Broadcast,
             &event.payload,
         );
+    }
+
+    #[allow(clippy::question_mark)]
+    pub(super) fn run_now(&mut self, route: &str) -> Option<ScheduleRunNowResult> {
+        let Some((delivery_mode, payload)) = self
+            .core
+            .actor
+            .as_ref()
+            .and_then(|actor| actor.run_now_definition(route))
+        else {
+            return None;
+        };
+        let result = self.handle_schedule_publish_with_counts(
+            self.core.route_family,
+            route,
+            delivery_mode,
+            &payload,
+        );
+        crate::observability::counter_inc(
+            crate::domains::schedule::metrics::METRIC_RUN_NOW_PROCESSED_TOTAL,
+        );
+        if result.accepted_handoffs > 0 {
+            crate::observability::counter_add(
+                crate::domains::schedule::metrics::METRIC_RUN_NOW_ACCEPTED_HANDOFFS_TOTAL,
+                u64::try_from(result.accepted_handoffs).unwrap_or(u64::MAX),
+            );
+        } else {
+            crate::observability::counter_inc(
+                crate::domains::schedule::metrics::METRIC_RUN_NOW_ZERO_ACCEPT_TOTAL,
+            );
+        }
+        Some(result)
     }
 }

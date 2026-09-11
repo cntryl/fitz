@@ -66,6 +66,16 @@ impl ScheduleDomainRuntime<'_> {
                 self.force_due_scan_for_tests(ready_count);
                 let _ = reply.send(());
             }
+            ScheduleDomainCommand::RunNow(route, deadline, reply) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = reply.send(Err(
+                        "schedule run-now command expired before execution; no handoff was attempted"
+                            .to_string(),
+                    ));
+                } else {
+                    let _ = reply.send(Ok(self.run_now(&route)));
+                }
+            }
             ScheduleDomainCommand::PanicForFailpoint => {
                 panic!("injected Schedule domain actor panic");
             }

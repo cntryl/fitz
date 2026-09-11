@@ -2052,6 +2052,35 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
+  /api/v1/{family}/schedule/realms/{realm}/areas/{area}/resources/{resource}/operations/{operation}/run:
+    post:
+      tags: [Schedule]
+      summary: Run a schedule now
+      operationId: runScheduleNow
+      description: Ephemeral best-effort admin handoff of the stored schedule payload to currently live matching subscriptions. Cron timing and durable counters are unchanged.
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/FamilyPath"
+        - $ref: "#/components/parameters/RealmPath"
+        - $ref: "#/components/parameters/AreaPath"
+        - $ref: "#/components/parameters/ResourcePath"
+        - name: operation
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Manual schedule handoff result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleRunNowResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /api/v1/{family}/notice/realms:
     get:
       parameters:
@@ -5572,6 +5601,19 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ScheduleExecutionObservation"
+
+    ScheduleRunNowResponse:
+      type: object
+      required: [route_family, route, delivery_mode, triggered_at, outcome, matched_subscriptions, attempted_handoffs, accepted_handoffs]
+      properties:
+        route_family: { type: integer, format: int64 }
+        route: { type: string }
+        delivery_mode: { type: string, enum: [broadcast, single] }
+        triggered_at: { type: string, format: date-time }
+        outcome: { type: string, enum: [handoff_accepted, no_live_subscriptions, no_handoff_accepted] }
+        matched_subscriptions: { type: integer }
+        attempted_handoffs: { type: integer }
+        accepted_handoffs: { type: integer }
 
     ScheduleMissedObservation:
       type: object
