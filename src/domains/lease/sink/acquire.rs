@@ -145,6 +145,7 @@ impl LeaseFamilyRuntime<'_> {
         use crate::domains::lease::protocol::LeaseResponse;
 
         let LeaseAcquireRequest {
+            correlation,
             key,
             owner_session_id,
             owner_id,
@@ -204,6 +205,7 @@ impl LeaseFamilyRuntime<'_> {
                     })
                 }
                 Some(state) => AcquireDecision::Queue(QueuedAcquireRequest {
+                    correlation,
                     current_owner: state.owner_id.clone(),
                     owner_session_id,
                     owner_id,
@@ -278,6 +280,7 @@ impl LeaseFamilyRuntime<'_> {
         use crate::domains::lease::protocol::LeaseResponse;
 
         let QueuedAcquireRequest {
+            correlation,
             current_owner,
             owner_session_id,
             owner_id,
@@ -316,6 +319,7 @@ impl LeaseFamilyRuntime<'_> {
             .entry(key.clone())
             .or_default()
             .push_back(PendingAcquire {
+                correlation,
                 owner_session_id,
                 owner_id,
                 reply_destination,

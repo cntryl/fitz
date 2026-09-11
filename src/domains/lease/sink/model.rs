@@ -32,6 +32,11 @@ pub(super) struct SinkLeaseState {
 
 #[derive(Clone)]
 pub(super) struct PendingAcquire {
+    /// Correlation from the ACQUIRE that queued this waiter. A grant can arrive
+    /// long after the request, so without it the client cannot tell which of
+    /// its outstanding acquires was satisfied - the reason every client keeps a
+    /// global lease-acquire gate today.
+    pub(super) correlation: Option<std::num::NonZeroU64>,
     pub(super) owner_session_id: u64,
     pub(super) owner_id: String,
     pub(super) reply_destination: crate::runtime::routing::RouteAddress,
@@ -123,9 +128,11 @@ pub(super) struct LeaseAcquireRequest {
     pub(super) reply_destination: Option<crate::runtime::routing::RouteAddress>,
     pub(super) channel: ClientChannel,
     pub(super) route_family: crate::runtime::routing::RouteFamily,
+    pub(super) correlation: Option<std::num::NonZeroU64>,
 }
 
 pub(super) struct QueuedAcquireRequest {
+    pub(super) correlation: Option<std::num::NonZeroU64>,
     pub(super) current_owner: String,
     pub(super) owner_session_id: u64,
     pub(super) owner_id: String,

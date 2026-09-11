@@ -442,6 +442,7 @@ mod tests {
             _channel_id: ChannelId,
             _msg_type: crate::protocol::tlv::MessageType,
             _message_payload: Bytes,
+            _correlation: Option<std::num::NonZeroU64>,
         ) -> IngressDecision {
             IngressDecision::Accept
         }

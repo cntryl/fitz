@@ -75,6 +75,8 @@ pub(crate) struct DomainEnvelopeBuildRequest {
     pub(crate) payload: Bytes,
     pub(crate) source: RouteAddress,
     pub(crate) destination: RouteAddress,
+    /// Correlation the client attached to this frame, if any.
+    pub(crate) correlation: Option<std::num::NonZeroU64>,
 }
 
 fn frame_context(request: &DomainEnvelopeBuildRequest) -> crate::protocol::FrameContext {
@@ -85,6 +87,7 @@ fn frame_context(request: &DomainEnvelopeBuildRequest) -> crate::protocol::Frame
         request.payload.clone(),
         request.route_family,
     )
+    .with_correlation(request.correlation)
 }
 
 fn client_channel(channel: ChannelId) -> ClientChannel {
@@ -105,6 +108,7 @@ fn client_frame_meta(request: &DomainEnvelopeBuildRequest) -> ClientFrameMeta {
         request.msg_type.as_u16(),
         request.route_family,
     )
+    .with_correlation(request.correlation)
 }
 
 /// Parse one manifest-selected client frame and adapt it to a domain command.
@@ -416,5 +420,59 @@ mod tests {
 
         // Assert
         assert_eq!(result, Err("unsupported message type"));
+    }
+
+    fn build_request(correlation: Option<std::num::NonZeroU64>) -> DomainEnvelopeBuildRequest {
+        let family = RouteFamily::new(1);
+        DomainEnvelopeBuildRequest {
+            session_id: 11,
+            channel_id: ChannelId::Pub,
+            route_family: family,
+            msg_type: MessageType::new(crate::protocol::kv::msg_type::BEGIN),
+            payload: Bytes::from_static(b"body"),
+            source: RouteAddress::new(
+                family,
+                crate::runtime::routing::Route::new("inbox://session/11"),
+            ),
+            destination: RouteAddress::new(
+                family,
+                crate::runtime::routing::Route::new("kv://acme/app/users"),
+            ),
+            correlation,
+        }
+    }
+
+    #[test]
+    fn should_carry_correlation_into_both_frame_metadata_shapes() {
+        // Arrange
+        // `dispatch` is the only production conversion point from the wire into
+        // domain metadata, so both shapes must pick the correlation up here or
+        // no domain can echo it back onto its response.
+        let correlation = std::num::NonZeroU64::new(4_242);
+        let request = build_request(correlation);
+
+        // Act
+        let context = frame_context(&request);
+        let meta = client_frame_meta(&request);
+
+        // Assert
+        assert_eq!(context.correlation, correlation);
+        assert_eq!(meta.correlation, correlation);
+    }
+
+    #[test]
+    fn should_leave_frame_metadata_uncorrelated_given_no_client_correlation() {
+        // Arrange
+        // The broker must never invent a correlation: emitting one the client
+        // did not send is what would break every client shipping today.
+        let request = build_request(None);
+
+        // Act
+        let context = frame_context(&request);
+        let meta = client_frame_meta(&request);
+
+        // Assert
+        assert!(context.correlation.is_none());
+        assert!(meta.correlation.is_none());
     }
 }

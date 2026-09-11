@@ -3,9 +3,12 @@
 ### MessageType Ranges
 
 **Control (0–99):**
-| Value | Name |
-|---:|---|
-| 1 | CONNECT |
+| Value | Name | Direction |
+|---:|---|---|
+| 1 | CONNECT | Client→Server |
+| 2 | CORRELATE | Client→Server |
+| 3 | CORRELATED | Server→Client |
+| 4 | SERVER_HELLO | Server→Client |
 **KV Domain (100–111):**
 | Value | Name |
 |---:|---|
@@ -305,9 +308,37 @@ These items are **not standardized** and may require broker-specific implementat
 - **RPC response:** Binary-safe; serialization app-dependent
 - **Lease tokens:** Opaque binary; do not parse or modify
 
-#### Version Negotiation (Future)
+#### Capability Negotiation
 
-No version negotiation in current protocol. If new verbs are added:
+The broker advertises its protocol version and capabilities with a
+`SERVER_HELLO` (4) frame, sent unsolicited once per session on `CONNECT`
+success. There is no client-sent probe, and clients MUST NOT invent one: an
+unknown client→server message type is fatal on a broker that predates it, so a
+probe would destroy the connection rather than be ignored.
+
+```
+MessageType: 4 (SERVER_HELLO)
+Value: [u16 BE protocol_version][u32 BE capability_bits]
+```
+
+| Bit | Name | Meaning |
+|---:|---|---|
+| 0 | `CAP_CORRELATION` | Broker accepts `CORRELATE` and echoes `CORRELATED` |
+
+Rules:
+
+1. Readers MUST ignore trailing bytes after the documented fields, so a later
+   version can append without consuming another message id.
+2. Clients MUST NOT block `connect()` on `SERVER_HELLO`. `CONNECT` is zero
+   round-trip and stays that way; requests issued before the advertisement
+   arrives are simply uncorrelated.
+3. **Absence means a legacy broker.** A client that never receives
+   `SERVER_HELLO` MUST behave exactly as before: no correlation, one in-flight
+   request per message type. There is no timeout and no fallback reconnect.
+4. Clients MUST ignore a `SERVER_HELLO` whose `protocol_version` they do not
+   recognise, and MUST ignore capability bits they do not implement.
+
+If new verbs are added:
 
 1. New verb codes use next available in range (e.g., 109 for KV)
 2. Old clients reject unknown verbs with ERR_UNKNOWN_VERB (domain error)

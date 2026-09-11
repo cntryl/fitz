@@ -4,6 +4,16 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::error;
 
+/// Outcome of running a frame through session authentication.
+pub(super) struct AuthenticatedFrame {
+    pub(super) route_family: crate::runtime::routing::RouteFamily,
+    pub(super) notify_frame: Option<SessionFrame>,
+    /// True only on the frame that established the session. Distinct from
+    /// `notify_frame`, which is populated only when an event handler is
+    /// registered - the capability announcement must not depend on that.
+    pub(super) session_established: bool,
+}
+
 pub(super) struct SessionAuthenticator {
     pub(super) registry: super::session_registry::SessionRegistry,
     pub(super) route_families: Arc<std::collections::HashSet<u32>>,
@@ -163,7 +173,7 @@ impl SessionAuthenticator {
         msg_type: crate::protocol::tlv::MessageType,
         payload: &Bytes,
         should_notify_handler: bool,
-    ) -> Result<(crate::runtime::routing::RouteFamily, Option<SessionFrame>), IngressDecision> {
+    ) -> Result<AuthenticatedFrame, IngressDecision> {
         // Anonymous sessions do not need the preliminary read used to decide
         // whether JWT verification must run. The mutable lookup below still
         // validates that the session exists and initializes it atomically.
@@ -188,6 +198,7 @@ impl SessionAuthenticator {
         };
 
         let mut notify_frame = None;
+        let session_established = !entry.authenticated;
         if !entry.authenticated {
             if self.auth_required {
                 let Some((snapshot, claims, route_family)) = verified_auth else {
@@ -215,7 +226,11 @@ impl SessionAuthenticator {
             }
         }
 
-        Ok((entry.route_family, notify_frame))
+        Ok(AuthenticatedFrame {
+            route_family: entry.route_family,
+            notify_frame,
+            session_established,
+        })
     }
 
     fn needs_authentication(&self, session_id: u64) -> Result<bool, IngressDecision> {

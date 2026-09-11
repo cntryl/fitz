@@ -6,13 +6,15 @@
 - WebSocket lifecycle (connect, reconnect, close)
 - JWT authentication (CONNECT frame)
 - Frame send/receive
-- Correlation ID tracking (for RPC)
+- Frame-correlation tracking for every request/response verb when the broker
+  advertises `CAP_CORRELATION`, plus RPC payload-correlation tracking
 - Subscription routing (Notice/RPC)
 
 **Key Features:**
 ```
 - Automatic reconnection with exponential backoff
-- Pending request tracking (Map<correlationId, Promise/Future>)
+- Pending request tracking by frame correlation when available, with a legacy
+  one-in-flight lane per message type when it is unavailable
 - Subscription routing (Map<subscriptionId, handler>)
 - Frame batching (optional optimization)
 ```

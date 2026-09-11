@@ -17,6 +17,7 @@ use crate::protocol::frame::ChannelId;
 use crate::protocol::tlv::MessageType;
 use crate::runtime::routing::RouteFamily;
 use bytes::Bytes;
+use std::num::NonZeroU64;
 
 /// Frame context: transport metadata for domain handlers.
 ///
@@ -36,10 +37,18 @@ pub struct FrameContext {
     pub payload: Bytes,
     /// `RouteFamily` assigned to this session.
     pub route_family: RouteFamily,
+    /// Client-generated identifier labelling this request, when the client
+    /// opted in. Zero is reserved as the absent value on the wire, so the
+    /// non-zero type carries that invariant instead of a runtime check.
+    pub correlation: Option<NonZeroU64>,
 }
 
 impl FrameContext {
     /// Create a new frame context from transport metadata.
+    ///
+    /// Uncorrelated by default: the wire form is opt-in per request, so the
+    /// overwhelming majority of call sites never name it. Use
+    /// [`Self::with_correlation`] to label one.
     pub fn new(
         session_id: u64,
         channel_id: ChannelId,
@@ -53,7 +62,15 @@ impl FrameContext {
             msg_type,
             payload,
             route_family,
+            correlation: None,
         }
+    }
+
+    /// Label this frame with the client-generated correlation it answers.
+    #[must_use]
+    pub fn with_correlation(mut self, correlation: Option<NonZeroU64>) -> Self {
+        self.correlation = correlation;
+        self
     }
 }
 
@@ -64,6 +81,7 @@ impl std::fmt::Debug for FrameContext {
             .field("channel_id", &self.channel_id)
             .field("msg_type", &self.msg_type)
             .field("route_family", &self.route_family)
+            .field("correlation", &self.correlation)
             .field("payload_len", &self.payload.len())
             .finish()
     }

@@ -569,6 +569,7 @@ async fn should_reject_non_connect_before_auth() {
             ChannelId::Pub,
             crate::protocol::tlv::MessageType::new(100),
             Bytes::from("payload"),
+            None,
         )
         .await;
 
@@ -588,6 +589,7 @@ async fn should_reject_control_non_connect_before_auth() {
             ChannelId::Control,
             crate::protocol::tlv::MessageType::new(2),
             Bytes::from("payload"),
+            None,
         )
         .await;
 
@@ -638,6 +640,7 @@ fn should_set_permissions_on_connect_with_valid_token() {
                 ChannelId::Control,
                 crate::protocol::tlv::MessageType::CONNECT,
                 Bytes::from(jwt.clone()),
+                None,
             )
             .await;
 
@@ -688,6 +691,7 @@ fn should_set_permissions_on_connect_for_auth0_shape() {
                     ChannelId::Control,
                     crate::protocol::tlv::MessageType::CONNECT,
                     Bytes::from(jwt),
+                    None
                 )
                 .await,
             IngressDecision::Accept
@@ -730,6 +734,7 @@ fn should_set_permissions_on_connect_for_entra_delegated_shape() {
                     ChannelId::Control,
                     crate::protocol::tlv::MessageType::CONNECT,
                     Bytes::from(jwt),
+                    None
                 )
                 .await,
             IngressDecision::Accept
@@ -772,6 +777,7 @@ fn should_set_permissions_on_connect_for_entra_app_only_shape() {
                     ChannelId::Control,
                     crate::protocol::tlv::MessageType::CONNECT,
                     Bytes::from(jwt),
+                    None
                 )
                 .await,
             IngressDecision::Accept
@@ -822,6 +828,7 @@ fn should_set_permissions_on_connect_for_cognito_shape() {
                     ChannelId::Control,
                     crate::protocol::tlv::MessageType::CONNECT,
                     Bytes::from(jwt),
+                    None
                 )
                 .await,
             IngressDecision::Accept
@@ -874,6 +881,7 @@ fn should_set_permissions_on_connect_for_okta_shape() {
                     ChannelId::Control,
                     crate::protocol::tlv::MessageType::CONNECT,
                     Bytes::from(jwt),
+                    None
                 )
                 .await,
             IngressDecision::Accept
@@ -928,6 +936,7 @@ fn should_assign_route_families_from_verified_claims() {
                     ChannelId::Control,
                     crate::protocol::tlv::MessageType::CONNECT,
                     Bytes::from(jwt_a),
+                    None
                 )
                 .await,
             IngressDecision::Accept
@@ -939,6 +948,7 @@ fn should_assign_route_families_from_verified_claims() {
                     ChannelId::Control,
                     crate::protocol::tlv::MessageType::CONNECT,
                     Bytes::from(jwt_b),
+                    None
                 )
                 .await,
             IngressDecision::Accept

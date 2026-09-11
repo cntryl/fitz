@@ -84,6 +84,7 @@ async fn malformed_authenticated_lease_observation(msg_type: u16) -> (IngressDec
             ChannelId::Lease,
             MessageType::new(msg_type),
             payload,
+            None,
         )
         .await;
     let response = tokio::time::timeout(std::time::Duration::from_secs(1), async {
@@ -133,6 +134,7 @@ async fn malformed_authenticated_lease_operation(
             ChannelId::Lease,
             MessageType::new(msg_type),
             payload,
+            None,
         )
         .await;
     let response = tokio::time::timeout(std::time::Duration::from_secs(1), async {
@@ -272,6 +274,7 @@ async fn should_authorize_lease_double_star_alias_against_equivalent_literal_sta
             ChannelId::Lease,
             MessageType::new(407),
             subscribe_payload,
+            None,
         )
         .await;
 
@@ -313,6 +316,7 @@ async fn should_still_deny_lease_double_star_alias_outside_a_narrower_grant_at_i
             ChannelId::Lease,
             MessageType::new(407),
             subscribe_payload,
+            None,
         )
         .await;
     let denied_frame = receive_frame(&inbox_mailbox, "lease unauthorized response");

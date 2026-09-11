@@ -50,7 +50,14 @@ Response (error):
 - Non-idempotent operations (PUT, PUBLISH, APPEND) must not be retried unless
   the client can deduplicate them.
 
-Some operations use correlation IDs (RPC):
+Fitz has two distinct live correlation mechanisms:
+
+- Frame-level `CORRELATE` / `CORRELATED` identifiers match any labelled client
+  request to the broker frame or frames that answer it.
+- RPC payload correlation IDs route one live call through caller, broker, and
+  worker and remain part of the RPC domain contract.
+
+For RPC payload correlation:
 
 - the client generates a 16-byte UUID;
 - the broker uses it to match live in-flight requests to responses; and

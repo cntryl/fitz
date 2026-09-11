@@ -22,6 +22,72 @@ Each record is:
 
 **TLV is NOT nested** - the entire domain payload is the TLV Value, pre-encoded.
 
+### Request Correlation
+
+A request may be labelled with a client-generated identifier so its response can
+be matched by that identifier rather than by arrival order. The label is a
+separate `CORRELATE` record, so no domain payload changes and an uncorrelated
+request costs nothing.
+
+```
+[0x02][0x00 0x08][u64 BE correlation]   <- CORRELATE, 11 bytes
+[MessageType][Length][Payload]          <- the request it labels
+```
+
+The broker answers with the mirror form:
+
+```
+[0x03][0x00 0x08][u64 BE correlation]   <- CORRELATED
+[MessageType][Length][Payload]          <- the response
+```
+
+**Client requirements**
+
+1. A `CORRELATE` record MUST immediately precede, **in the same transport
+   frame**, the record it labels. Both transports are message-bounded
+   (WebSocket natively; TCP via its `u32` BE outer length prefix), so this is
+   exact.
+2. The value is 8 bytes, big-endian. **Zero is reserved** and MUST NOT be sent.
+3. Identifiers MUST be unique among the requests a connection currently has in
+   flight. Reusing a live identifier yields undefined response routing; the
+   broker does not police it.
+4. Clients MUST NOT send `CORRELATE` before observing `SERVER_HELLO` with
+   `CAP_CORRELATION`.
+5. A client MUST parse multiple TLV records from one transport frame. A frame
+   parser that rejects trailing bytes after the first record cannot read a
+   correlated response.
+
+**Broker guarantees**
+
+1. The broker emits `CORRELATED` **if and only if** the request carried
+   `CORRELATE`, echoing the identifier unchanged. It never volunteers one.
+2. Every frame answering a correlated request carries it, including errors the
+   broker synthesizes itself (timeout, backpressure, unavailable) and responses
+   deferred arbitrarily long — a parked Queue `RESERVE`, or a contended Lease
+   `ACQUIRE` granted when the holder releases.
+3. **A correlation may receive more than one frame.** Most requests are answered
+   once, but a domain may define a multi-phase answer, and both phases carry the
+   same identifier. A contended Lease `ACQUIRE` is answered immediately with
+   `Queued` and again later with the grant. Clients MUST therefore treat a
+   correlated frame whose identifier is no longer pending as routable rather
+   than as garbage: fall through to the normal message-type path so the
+   registered handler receives it. Dropping it loses the deferred grant.
+   RPC does the same thing with its own UUID, terminated by `stream_end`.
+4. **Notifications are never correlated.** `NOTIFY` frames answer no request.
+   Clients MUST route by message type and subscription id first, and MUST NOT
+   treat "has a correlation record" as a response-vs-notification discriminator.
+5. RPC `REQUEST`(302)/`RESPONSE`(303) keep their existing 16-byte UUID and are
+   not additionally frame-correlated. That UUID is an end-to-end application
+   identifier surviving broker→worker→broker; the correlation here is a
+   connection-level transport identifier. Neither subsumes the other.
+
+**Errors.** Fitz has no skip-unknown-record rule and will not gain one — it
+would make record boundaries unverifiable. The broker closes the connection on a
+`CORRELATE` that is malformed, carries zero, labels another `CORRELATE`, or ends
+a transport frame with nothing after it. Closing is correct here and nowhere
+else: a misplaced label means the client's own request-to-response mapping is
+already ambiguous, so there is no caller left to answer.
+
 #### Message Structure
 
 ```
@@ -312,7 +378,11 @@ RPC responses include a `correlation_id` field (16-byte UUID) to match responses
 [0x4b 0x65 0x79...]       ("Key not found")
 ```
 
-**Rationale:** Standardized error format across all domains simplifies client error handling and ensures consistent debugging experience. Multiplexing is channel-based for different domains; RPC is the only domain with explicit per-request correlation IDs for true request/response matching.
+**Rationale:** Standardized error format across all domains simplifies client
+error handling and ensures consistent debugging experience. When the broker
+advertises `CAP_CORRELATION`, frame-level correlation provides per-request
+matching for every request/response verb. RPC additionally retains its own
+16-byte domain correlation identifier for end-to-end caller/worker routing.
 
 ### Frame Size Limits
 
@@ -367,7 +437,11 @@ DISCONNECTED --(open transport)--> CONNECTING --(CONNECT & accepted)--> AUTHENTI
 Notes:
 
 - Clients MUST handle transport failures and implement exponential backoff on reconnect.
-- **Multiplexing Support**: Clients MAY send multiple in-flight requests **on different channels** (domains). For example, a client can send a KV PUT while also sending a Notice PUBLISH—these go to different logical channels and are processed independently. However, within a single domain, clients SHOULD follow request/response sequencing unless the domain supports explicit correlation IDs (currently only RPC).
+- **Multiplexing Support**: Clients MAY send multiple in-flight requests with
+  different message types. When `CAP_CORRELATION` is advertised, clients MAY
+  also send multiple same-message-type requests by assigning each live request
+  a unique non-zero frame correlation. Without that capability, clients MUST
+  keep at most one request per message type in flight on a connection.
 
 ### 2. Send CONNECT Record (FIRST MESSAGE)
 
@@ -457,14 +531,15 @@ Clients MUST:
 
 After successful CONNECT, client may send domain-specific requests.
 
-**Channel-Based Multiplexing:**
+**Request Multiplexing:**
 
-- **Clients MAY send multiple in-flight requests on different channels (domains).** Each domain (KV, RPC, Notice, etc.) is routed to its own logical channel by the broker. This allows concurrent operations across different domains on the same connection.
-- **Within a single domain**: Follow request/response sequencing unless the domain explicitly supports per-request correlation IDs (currently only RPC). Sending multiple requests of the same type without waiting for responses is undefined behavior.
-- **RPC domain is special**: RPC REQUEST includes an explicit 16-byte UUID `correlation_id` that clients generate. This allows true request/response matching for multiple in-flight RPC requests.
+- **Different message types**: Multiple requests may be in flight because their response types distinguish them.
+- **Same message type with `CAP_CORRELATION`**: Multiple requests may be in flight when each has a unique non-zero frame correlation.
+- **Same message type without `CAP_CORRELATION`**: At most one request may be in flight per connection. Same-type response order is not guaranteed.
+- **RPC has two distinct identifiers**: RPC REQUEST retains its explicit 16-byte UUID for end-to-end caller/worker routing. Frame correlation matches that client operation to broker response frames and does not replace the RPC UUID.
 - **RPC registrations are session-scoped**: A worker reconnecting after disconnect or broker restart MUST send `Subscribe` again before it will receive new requests.
-- **Out-of-band messages**: Asynchronous deliveries (e.g., Notice NOTIFY, RPC RESPONSE streaming) arrive without correlation IDs to requests; clients MUST handle them separately.
-- **Order guarantees**: Responses are delivered in the order requests were sent (per domain/channel).
+- **Out-of-band messages**: Asynchronous notifications never carry frame correlation and clients MUST continue routing them by message type and subscription identifier.
+- **Order guarantees**: The broker does not guarantee response order, including between requests with the same message type.
 
 ### 5. Receive Responses
 

@@ -251,7 +251,22 @@ await Promise.all([kv_tx.commit(), queue_msg, notice_sub, rpc_call]);
 
 #### Level 2: Same-Domain, Different-Resource Parallelism ✅ PARALLEL
 
-Within a single domain, you can have multiple concurrent operations to **different resources**. Each resource has its own actor instance on the server, so they execute independently.
+Within a single domain, you can have multiple concurrent operations to **different resources**.
+
+**Why this is safe** — and it is not the reason you might assume. Resources do
+*not* each get their own scheduler on the server. The broker's unit of
+concurrency is the route family: one thread owns all state for its families, a
+connection is pinned to one family, and that thread processes the connection's
+work in the order it was enqueued. Two KV transactions to different tables on
+one connection are therefore serialized on a single thread, not run in parallel.
+
+Concurrent same-domain requests are safe because the broker never reorders work
+within a family, and — where the responses can still arrive out of order — because
+a correlated response identifies its own caller. Two places genuinely complete
+out of receive order: a Queue `RESERVE` that long-polls and parks while a later
+`RESERVE` is answered immediately, and RPC, whose completion order is the
+worker's. **Pipelining same-type requests without correlation is unsafe for
+exactly this reason** — see the two concurrency regimes below.
 
 **KV Example:**
 ```javascript
@@ -348,9 +363,31 @@ const event_leases = client.queueReserve("queue://prod/app/events", lease_secs=3
 await Promise.all([task_leases, event_leases]);  // ✅ Different queues, parallel OK
 ```
 
-### RPC Exception: True Per-Request Multiplexing
+### The Two Concurrency Regimes
 
-RPC is the **only domain with true per-request multiplexing via correlation IDs**. Multiple RPC requests can be in flight simultaneously on the same channel, and responses are matched by UUID.
+How many same-type requests a connection may have in flight depends on whether
+the broker advertised `CAP_CORRELATION` in its `SERVER_HELLO`.
+
+**Correlated** (advertised): any number, bounded only by the client's own
+in-flight limit. Each request carries a `CORRELATE` record and each response
+carries its identifier back, so arrival order is irrelevant.
+
+**Uncorrelated** (legacy broker, or before the advertisement arrives): **at most
+one in-flight request per message type per connection.** This is a MUST. A
+client that pipelines same-type requests and matches responses by arrival order
+will hand a response to the wrong caller — a parked Queue `RESERVE` alone is
+enough to reorder them.
+
+Both regimes permit unlimited concurrency across *different* message types and
+across domains.
+
+### RPC: Per-Request Multiplexing via UUID
+
+RPC `REQUEST`/`RESPONSE` carry their own 16-byte UUID and have always supported
+multiple in-flight requests on one channel, independent of frame correlation.
+That UUID is an end-to-end application identifier that survives the trip through
+a worker; frame correlation is a connection-level transport identifier. RPC
+keeps the UUID and is not additionally frame-correlated.
 
 RPC is also explicitly ephemeral. Worker registrations and pending requests are live in-memory state for the current broker process only. If a worker disconnects or the broker restarts, registrations disappear, in-flight requests are lost, and clients must re-register workers and retry any required work at the application layer.
 
@@ -386,11 +423,17 @@ async def safe_enqueue(client, route, payload):
 
 | Scenario | Status | Rule | Example |
 |----------|--------|------|---------|
-| **Different domains** | ✅ Parallel | Domains on independent channels | KV + Queue + Notice simultaneously |
-| **Same domain, different resources** | ✅ Parallel | Each resource has independent actor instance | 2 KV txs to different tables; 2 queue enqueues |
+| **Different domains** | ✅ Parallel | Different message types are never confusable | KV + Queue + Notice simultaneously |
+| **Same domain, different message types** | ✅ Parallel | Responses distinguishable by type alone | `ENQUEUE` + `RESERVE` together |
+| **Same message type, correlated** | ✅ Parallel | Each response carries its caller's id | 2 KV `GET`s; 2 queue `RESERVE`s |
+| **Same message type, uncorrelated** | ❌ One at a time | Arrival order is not receive order | Legacy broker, or before `SERVER_HELLO` |
 | **ONE transaction, multiple calls** | ❌ NOT parallel | Single tx_id MUST be sequential | `await tx.put(); await tx.commit();` |
 | **ONE queue, multiple operations** | ❌ NOT parallel | FIFO ordering must be preserved | Use `batch_size` parameter instead |
-| **RPC requests** | ✅ Parallel (correlation_id) | Per-request UUID correlation matching | Multiple RPC calls matched by UUID |
+| **RPC requests** | ✅ Parallel (UUID) | Per-request UUID correlation matching | Multiple RPC calls matched by UUID |
+
+Note the same-transaction and same-queue rows are unchanged by correlation.
+Those are *domain ordering* constraints, not response-matching ones; correlation
+does not make same-`tx_id` parallelism safe.
 
 ### Best Practice: When to Parallelize
 

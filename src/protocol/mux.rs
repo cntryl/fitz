@@ -26,15 +26,27 @@ pub struct ChannelMessage {
     pub channel: ChannelId,
     pub msg_type: MessageType,
     pub payload: Bytes,
+    /// Correlation from the `CORRELATE` record that immediately preceded this
+    /// one, if the client labelled the request.
+    pub correlation: Option<std::num::NonZeroU64>,
 }
 
 impl ChannelMessage {
+    /// Uncorrelated by default; see [`Self::with_correlation`].
     pub fn new(channel: ChannelId, msg_type: MessageType, payload: Bytes) -> Self {
         Self {
             channel,
             msg_type,
             payload,
+            correlation: None,
         }
+    }
+
+    /// Attach the correlation decoded from the preceding record.
+    #[must_use]
+    pub fn with_correlation(mut self, correlation: Option<std::num::NonZeroU64>) -> Self {
+        self.correlation = correlation;
+        self
     }
 }
 

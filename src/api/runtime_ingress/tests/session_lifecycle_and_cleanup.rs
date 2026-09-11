@@ -459,6 +459,7 @@ pub(super) fn should_process_frame() {
                 ChannelId::Control,
                 crate::protocol::tlv::MessageType::CONNECT,
                 Bytes::from(jwt),
+                None,
             )
             .await;
 
@@ -477,6 +478,7 @@ async fn should_reject_unknown_session() {
             ChannelId::Control,
             crate::protocol::tlv::MessageType::new(42),
             Bytes::from("test"),
+            None,
         )
         .await;
 
@@ -516,6 +518,7 @@ pub(super) fn should_call_event_handler() {
                 ChannelId::Control,
                 crate::protocol::tlv::MessageType::CONNECT,
                 Bytes::from(jwt),
+                None,
             )
             .await;
         ingress.on_close(3, CloseReason::ClientClose).await;

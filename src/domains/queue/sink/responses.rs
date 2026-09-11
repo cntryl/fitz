@@ -42,7 +42,8 @@ impl QueueFamilyState {
                 crate::dispatch::protocol::tlv::MessageType::new(meta.message_type),
                 bytes::Bytes::from(response_bytes),
                 meta.route_family,
-            );
+            )
+            .with_correlation(meta.correlation);
             delivered = if let Some(response_envelope) = request_envelope.try_reply_to(response_ctx)
             {
                 if let Err(error) = self.router.route(response_envelope) {

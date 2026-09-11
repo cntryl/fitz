@@ -181,6 +181,9 @@ pub(super) struct DomainDispatchRequest<'a> {
     pub(super) policy: AuthorizationPolicy,
     pub(super) msg_type: crate::protocol::tlv::MessageType,
     pub(super) payload: DomainDispatchPayload<'a>,
+    /// Correlation the client attached to this request, echoed onto every
+    /// frame answering it - including ingress-synthesized errors.
+    pub(super) correlation: Option<std::num::NonZeroU64>,
 }
 
 #[derive(Clone, Debug)]
@@ -284,13 +287,17 @@ pub trait Ingress: Send + Sync {
     /// Called when transport opens a new session
     async fn on_open(&self, session: SessionInfo) -> Result<u64, String>;
 
-    /// Called for every demultiplexed channel message
+    /// Called for every demultiplexed channel message.
+    ///
+    /// `correlation` is the client-generated identifier from the `CORRELATE`
+    /// record that preceded this one, when the client labelled the request.
     async fn on_frame(
         &self,
         session_id: u64,
         channel_id: ChannelId,
         msg_type: crate::protocol::tlv::MessageType,
         message_payload: Bytes,
+        correlation: Option<std::num::NonZeroU64>,
     ) -> IngressDecision;
 
     /// Get current session info for transports that need to observe auth-driven updates.

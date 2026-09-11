@@ -173,7 +173,8 @@ impl StreamFamilyState {
                 test_client_channel_from_protocol(frame_ctx.channel_id),
                 frame_ctx.msg_type.as_u16(),
                 frame_ctx.route_family,
-            );
+            )
+            .with_correlation(frame_ctx.correlation);
             let parsed = crate::dispatch::protocol::stream_codec::parse_request(
                 &frame_ctx,
                 &frame_ctx.payload,
@@ -197,6 +198,21 @@ impl StreamFamilyState {
         response: &StreamClientResponseBody,
         request_started: Option<std::time::Instant>,
     ) -> bool {
+        // One request gets exactly one terminal frame. Stream `deliver` blocks
+        // on the actor for `STREAM_ACTOR_REPLY_TIMEOUT`, so a stalled actor
+        // lets ingress answer the request as indeterminate while this response
+        // is still in flight. Without the claim both reach the wire, and a
+        // client matching responses positionally stays desynchronized for the
+        // life of the connection - not just for this request.
+        if envelope.source().is_none() || !envelope.try_claim_reply() {
+            tracing::debug!(
+                domain = "stream",
+                session = meta.session_id,
+                "Suppressed Stream response after another terminal response won"
+            );
+            return false;
+        }
+
         #[cfg(test)]
         let response_ctx = {
             let mut payload_encoder =
@@ -213,6 +229,7 @@ impl StreamFamilyState {
                 bytes::Bytes::from(response_bytes),
                 meta.route_family,
             )
+            .with_correlation(meta.correlation)
         };
 
         #[cfg(not(test))]

@@ -38,6 +38,7 @@ fn acquire_immediate(
         reply_destination: None,
         channel: ClientChannel::Lease,
         route_family: family,
+        correlation: None,
     };
     let response = sink.acquire_for_tests(request);
     let LeaseResponse::Acquired { fencing_token } = response else {

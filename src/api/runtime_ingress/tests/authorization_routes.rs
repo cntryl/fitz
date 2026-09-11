@@ -450,6 +450,7 @@ async fn should_return_notice_unauthorized_response_without_closing_session() {
             ChannelId::Sub,
             MessageType::new(501),
             encode_notice_subscribe("notice://prod/orders/**"),
+            None,
         )
         .await;
     let subscribe_frame = receive_frame(&domain_mailbox, "notice subscribe dispatch");
@@ -459,6 +460,7 @@ async fn should_return_notice_unauthorized_response_without_closing_session() {
             ChannelId::Pub,
             MessageType::new(500),
             encode_notice_publish("notice://prod/orders/create", b"hello"),
+            None,
         )
         .await;
     let unauthorized_frame = receive_frame(&inbox_mailbox, "notice unauthorized response");
@@ -519,11 +521,18 @@ async fn should_require_all_for_rpc_worker_registration_at_ingress() {
             ChannelId::Rpc,
             MessageType::new(300),
             register_payload.clone(),
+            None,
         )
         .await;
     let denied_frame = receive_frame(&write_inbox, "rpc unauthorized response");
     let allowed_decision = ingress
-        .on_frame(611, ChannelId::Rpc, MessageType::new(300), register_payload)
+        .on_frame(
+            611,
+            ChannelId::Rpc,
+            MessageType::new(300),
+            register_payload,
+            None,
+        )
         .await;
     let allowed_frame = receive_frame(&domain_mailbox, "rpc register dispatch");
 
@@ -569,6 +578,7 @@ async fn should_reject_rpc_registration_exceeding_permission_match_set_at_ingres
             ChannelId::Rpc,
             MessageType::new(300),
             register_payload,
+            None,
         )
         .await;
     let denied_frame = receive_frame(&inbox_mailbox, "rpc unauthorized response");
@@ -614,6 +624,7 @@ async fn should_close_auth_required_session_before_dispatch_given_unparseable_re
             ChannelId::Sub,
             MessageType::new(501),
             Bytes::from(payload),
+            None,
         )
         .await;
 
@@ -653,7 +664,13 @@ async fn should_return_terminal_rpc_response_for_unauthorized_call_at_ingress() 
 
     // Act
     let denied_decision = ingress
-        .on_frame(612, ChannelId::Rpc, MessageType::new(302), request_payload)
+        .on_frame(
+            612,
+            ChannelId::Rpc,
+            MessageType::new(302),
+            request_payload,
+            None,
+        )
         .await;
     let denied_frame = receive_frame(&caller_inbox, "rpc call unauthorized response");
     let response = parse_rpc_response_frame(&denied_frame);
@@ -703,6 +720,7 @@ async fn should_authorize_kv_begin_by_mode_while_keeping_tx_ops_session_owned_at
             ChannelId::Pub,
             MessageType::new(100),
             read_only_payload,
+            None,
         )
         .await;
     let read_only_frame = receive_frame(&domain_mailbox, "kv read-only begin dispatch");
@@ -715,6 +733,7 @@ async fn should_authorize_kv_begin_by_mode_while_keeping_tx_ops_session_owned_at
             ChannelId::Pub,
             MessageType::new(100),
             read_write_payload,
+            None,
         )
         .await;
     let denied_frame = receive_frame(&inbox_mailbox, "kv unauthorized response");
@@ -727,6 +746,7 @@ async fn should_authorize_kv_begin_by_mode_while_keeping_tx_ops_session_owned_at
             ChannelId::Pub,
             MessageType::new(104),
             put_payload,
+            None,
         )
         .await;
     let put_dispatch = receive_frame(&domain_mailbox, "kv put dispatch");
@@ -739,6 +759,7 @@ async fn should_authorize_kv_begin_by_mode_while_keeping_tx_ops_session_owned_at
             ChannelId::Pub,
             MessageType::new(101),
             commit_payload,
+            None,
         )
         .await;
     let commit_dispatch = receive_frame(&domain_mailbox, "kv commit dispatch");
@@ -751,6 +772,7 @@ async fn should_authorize_kv_begin_by_mode_while_keeping_tx_ops_session_owned_at
             ChannelId::Pub,
             MessageType::new(102),
             rollback_payload,
+            None,
         )
         .await;
     let rollback_dispatch = receive_frame(&domain_mailbox, "kv rollback dispatch");
@@ -803,6 +825,7 @@ async fn should_require_exact_kv_realm_area_and_resource_at_ingress() {
             ChannelId::Pub,
             MessageType::new(100),
             exact_payload,
+            None,
         )
         .await;
     let exact_dispatch = receive_frame(&domain_mailbox, "exact KV begin dispatch");
@@ -817,7 +840,13 @@ async fn should_require_exact_kv_realm_area_and_resource_at_ingress() {
         let begin = crate::benchkit::build_kv_begin(route, 1, 0);
         let (_, payload) = crate::benchkit::extract_single_tlv_field(&begin);
         let decision = ingress
-            .on_frame(session_id, ChannelId::Pub, MessageType::new(100), payload)
+            .on_frame(
+                session_id,
+                ChannelId::Pub,
+                MessageType::new(100),
+                payload,
+                None,
+            )
             .await;
         assert_eq!(decision, IngressDecision::Accept);
         let denial = receive_frame(&inbox_mailbox, "mismatched KV begin denial");
@@ -866,6 +895,7 @@ async fn should_deny_expired_session_owned_frame_without_closing_session() {
             ChannelId::Pub,
             MessageType::new(104),
             put_payload,
+            None,
         )
         .await;
     let denied_frame = receive_frame(&inbox_mailbox, "expired session-owned denial");

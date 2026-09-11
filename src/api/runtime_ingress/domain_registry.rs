@@ -233,6 +233,7 @@ mod tests {
                 family,
                 crate::runtime::routing::Route::new("lease://acme/locks/resource"),
             ),
+            correlation: None,
         }
     }
 

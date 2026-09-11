@@ -322,10 +322,14 @@ async fn should_give_up_and_stop_retrying_session_cleanup_that_can_never_succeed
             > permanent_failures_before,
         "expected a permanent-failure metric increment"
     );
-    assert_eq!(
-        collector.gauge_get(obs::METRIC_SESSION_CLEANUP_PENDING),
-        0,
-        "pending gauge should return to zero after giving up"
+    // The pending gauge is a process-global value that every live ingress
+    // overwrites with its own pending count, so an absolute assertion on it
+    // measures whatever other tests are doing. Assert the state the gauge is
+    // derived from instead: this ingress dropped the ticket rather than
+    // retrying it forever.
+    assert!(
+        ingress.cleanup.pending_session_cleanups.is_empty(),
+        "no cleanup should remain pending after giving up"
     );
 }
 

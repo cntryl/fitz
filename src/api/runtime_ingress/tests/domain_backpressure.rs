@@ -158,6 +158,7 @@ fn should_absorb_transient_domain_mailbox_backpressure_for_each_domain() {
                     case.channel_id,
                     crate::protocol::tlv::MessageType::new(case.msg_type),
                     case.payload,
+                    None,
                 )
                 .await
         });
@@ -216,24 +217,30 @@ impl MailboxSink for AlwaysTimingOutSink {
     }
 }
 
-struct QueueReplyThenTimeoutSink {
+/// Reproduces the race every domain that blocks on an actor reply can lose:
+/// the terminal response is routed at the same instant the mailbox reply wait
+/// expires, so the domain's response and ingress' indeterminate timeout both
+/// want the one terminal-response slot.
+struct ReplyThenTimeoutSink {
     router: Arc<crate::runtime::Router>,
     session_id: u64,
+    channel_id: ChannelId,
+    msg_type: u16,
 }
 
-impl MailboxSink for QueueReplyThenTimeoutSink {
+impl MailboxSink for ReplyThenTimeoutSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        assert!(envelope.try_claim_reply(), "queue response claim");
+        assert!(envelope.try_claim_reply(), "domain response claim");
         let response = envelope
             .try_reply_to(FrameContext::new(
                 self.session_id,
-                ChannelId::Pub,
-                crate::protocol::tlv::MessageType::new(200),
+                self.channel_id,
+                crate::protocol::tlv::MessageType::new(self.msg_type),
                 Bytes::from_static(&[0]),
                 RouteFamily::new(1),
             ))
-            .expect("queue response envelope");
-        self.router.route(response).expect("route queue response");
+            .expect("domain response envelope");
+        self.router.route(response).expect("route domain response");
         Err(DeliveryError::Timeout)
     }
 
@@ -243,62 +250,68 @@ impl MailboxSink for QueueReplyThenTimeoutSink {
 }
 
 #[test]
-fn should_not_emit_a_second_queue_terminal_response_after_the_domain_replied() {
+fn should_not_emit_a_second_terminal_response_after_the_domain_replied_for_each_domain() {
     // Arrange
-    // A Queue command can finish at the same instant its mailbox reply wait
+    // A domain command can finish at the same instant its mailbox reply wait
     // expires. Its response and ingress' indeterminate timeout compete for one
     // terminal-response slot; emitting both shifts the client's per-type FIFO
-    // and can make a later accepted enqueue look retryably rejected.
+    // and can make a later accepted request look retryably rejected. Queue,
+    // Stream and RPC all block on an actor reply and so can all lose this race
+    // - a client matching responses positionally never recovers from it.
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let router = Arc::new(crate::runtime::Router::new());
-    let session_id = 6_500;
-    let client_frames = Arc::new(Mutex::new(Vec::<FrameContext>::new()));
-    router.register(
-        crate::runtime::routing::RouteAddress::new(
-            RouteFamily::new(1),
-            crate::runtime::routing::Route::new(format!("inbox://session/{session_id}")),
-        ),
-        Arc::new(CapturingInboxSink {
-            frames: client_frames.clone(),
-        }) as Arc<dyn MailboxSink>,
-    );
-    router.register_domain_pattern(
-        "queue",
-        Arc::new(QueueReplyThenTimeoutSink {
-            router: router.clone(),
-            session_id,
-        }),
-    );
-    let ingress = RuntimeIngress::new(false).with_router(router);
-    let (_, payload) = crate::benchkit::extract_single_tlv_field(
-        &crate::benchkit::build_queue_enqueue("queue://test/app/jobs", b"job"),
-    );
 
-    // Act
-    let decision = rt.block_on(async {
-        ingress
-            .on_open(make_session_info(session_id, TransportKind::Tcp))
-            .await
-            .unwrap();
-        ingress
-            .on_frame(
+    for (index, case) in domain_ingress_cases().into_iter().enumerate() {
+        let router = Arc::new(crate::runtime::Router::new());
+        let session_id = 6_500 + u64::try_from(index).unwrap();
+        let client_frames = Arc::new(Mutex::new(Vec::<FrameContext>::new()));
+        router.register(
+            crate::runtime::routing::RouteAddress::new(
+                RouteFamily::new(1),
+                crate::runtime::routing::Route::new(format!("inbox://session/{session_id}")),
+            ),
+            Arc::new(CapturingInboxSink {
+                frames: client_frames.clone(),
+            }) as Arc<dyn MailboxSink>,
+        );
+        router.register_domain_pattern(
+            case.domain,
+            Arc::new(ReplyThenTimeoutSink {
+                router: router.clone(),
                 session_id,
-                ChannelId::Pub,
-                crate::protocol::tlv::MessageType::new(200),
-                payload,
-            )
-            .await
-    });
+                channel_id: case.channel_id,
+                msg_type: case.msg_type,
+            }),
+        );
+        let ingress = RuntimeIngress::new(false).with_router(router);
 
-    // Assert
-    assert_eq!(decision, IngressDecision::Accept);
-    let frames = client_frames.lock().unwrap();
-    assert_eq!(
-        frames.len(),
-        1,
-        "one request must produce exactly one terminal response"
-    );
-    assert_eq!(frames[0].payload.as_ref(), &[0]);
+        // Act
+        let decision = rt.block_on(async {
+            ingress
+                .on_open(make_session_info(session_id, TransportKind::Tcp))
+                .await
+                .unwrap();
+            ingress
+                .on_frame(
+                    session_id,
+                    case.channel_id,
+                    crate::protocol::tlv::MessageType::new(case.msg_type),
+                    case.payload.clone(),
+                    None,
+                )
+                .await
+        });
+
+        // Assert
+        assert_eq!(decision, IngressDecision::Accept, "domain {}", case.domain);
+        let frames = client_frames.lock().unwrap();
+        assert_eq!(
+            frames.len(),
+            1,
+            "one {} request must produce exactly one terminal response",
+            case.domain
+        );
+        assert_eq!(frames[0].payload.as_ref(), &[0], "domain {}", case.domain);
+    }
 }
 
 #[test]
@@ -331,6 +344,7 @@ fn should_surface_sustained_high_lane_domain_mailbox_backpressure_for_each_domai
                     case.channel_id,
                     crate::protocol::tlv::MessageType::new(case.msg_type),
                     case.payload,
+                    None,
                 )
                 .await
         });
@@ -387,6 +401,7 @@ fn should_not_close_session_when_a_domain_command_times_out() {
                     case.channel_id,
                     crate::protocol::tlv::MessageType::new(case.msg_type),
                     case.payload,
+                    None,
                 )
                 .await
         });
@@ -476,6 +491,7 @@ fn should_answer_sustained_mailbox_backpressure_without_killing_the_session() {
                     case.channel_id,
                     crate::protocol::tlv::MessageType::new(case.msg_type),
                     case.payload,
+                    None,
                 )
                 .await
         });
@@ -576,6 +592,7 @@ fn should_answer_terminal_delivery_failures_without_killing_the_session() {
                     case.channel_id,
                     crate::protocol::tlv::MessageType::new(case.msg_type),
                     case.payload,
+                    None,
                 )
                 .await
         });
@@ -629,6 +646,7 @@ fn should_answer_unroutable_domain_frame_without_killing_the_session() {
                 case.channel_id,
                 crate::protocol::tlv::MessageType::new(case.msg_type),
                 case.payload,
+                None,
             )
             .await
     });
@@ -636,4 +654,65 @@ fn should_answer_unroutable_domain_frame_without_killing_the_session() {
     // Assert
     assert_eq!(decision, IngressDecision::Accept);
     assert_eq!(client_frames.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn should_echo_correlation_on_ingress_synthesized_errors_for_each_domain() {
+    // Arrange
+    // Timeouts and backpressure rejections are answered by ingress, not by the
+    // domain, so they bypass the metadata the domain would have copied. They are
+    // also the frames a client is most likely to mismatch: if a synthesized
+    // error arrived uncorrelated while correlated requests were in flight, the
+    // caller waiting on that id would hang until its own timeout.
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let correlation = std::num::NonZeroU64::new(4_242);
+
+    for (index, case) in domain_ingress_cases().into_iter().enumerate() {
+        // RPC SUBMIT answers with a 303 carrying its own RPC UUID rather than a
+        // frame correlation, so it is covered by the RPC correlation tests.
+        if case.domain == "rpc" {
+            continue;
+        }
+        let router = Arc::new(crate::runtime::Router::new());
+        router.register_domain_pattern(case.domain, Arc::new(AlwaysTimingOutSink));
+        let session_id = 7_400 + u64::try_from(index).unwrap();
+        let client_frames = Arc::new(Mutex::new(Vec::<FrameContext>::new()));
+        router.register(
+            crate::runtime::routing::RouteAddress::new(
+                RouteFamily::new(1),
+                crate::runtime::routing::Route::new(format!("inbox://session/{session_id}")),
+            ),
+            Arc::new(CapturingInboxSink {
+                frames: client_frames.clone(),
+            }) as Arc<dyn MailboxSink>,
+        );
+        let ingress = RuntimeIngress::new(false).with_router(router);
+
+        // Act
+        let decision = rt.block_on(async {
+            ingress
+                .on_open(make_session_info(session_id, TransportKind::Tcp))
+                .await
+                .unwrap();
+            ingress
+                .on_frame(
+                    session_id,
+                    case.channel_id,
+                    crate::protocol::tlv::MessageType::new(case.msg_type),
+                    case.payload.clone(),
+                    correlation,
+                )
+                .await
+        });
+
+        // Assert
+        assert_eq!(decision, IngressDecision::Accept, "domain {}", case.domain);
+        let frames = client_frames.lock().unwrap();
+        assert_eq!(frames.len(), 1, "domain {}", case.domain);
+        assert_eq!(
+            frames[0].correlation, correlation,
+            "{} timeout error must answer the request that caused it",
+            case.domain
+        );
+    }
 }
