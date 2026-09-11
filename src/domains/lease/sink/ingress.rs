@@ -315,6 +315,7 @@ impl LeaseFamilyRuntime<'_> {
                         reply_destination: envelope.source().cloned(),
                         channel: meta.channel,
                         route_family: meta.route_family,
+                        correlation: meta.correlation,
                     }),
                     None => Self::error_response("invalid lease route"),
                 }
@@ -406,6 +407,7 @@ impl LeaseFamilyRuntime<'_> {
                         reply_destination: envelope.source().cloned(),
                         channel: meta.channel,
                         route_family: meta.route_family,
+                        correlation: meta.correlation,
                     })
                 }
             }
@@ -454,7 +456,8 @@ impl LeaseFamilyRuntime<'_> {
                 test_client_channel_from_protocol(frame_ctx.channel_id),
                 frame_ctx.msg_type.as_u16(),
                 frame_ctx.route_family,
-            );
+            )
+            .with_correlation(frame_ctx.correlation);
             let parsed = crate::dispatch::protocol::lease_codec::parse_frame(
                 &frame_ctx,
                 &frame_ctx.payload,

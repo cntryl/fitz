@@ -539,33 +539,43 @@ raise DomainError(error_msg)
 
 ### Synchronous Model (Per Domain)
 
-**Fitz uses channel-based multiplexing:**
+**Responses are matched by correlation identifier where one was sent, and by
+message type otherwise:**
 
-- Different domains (KV, RPC, Notice, etc.) run on independent logical channels
-- Within a single domain/channel: Client sends request and blocks waiting for response
-- **Across domains**: Multiple in-flight requests on different channels are allowed (e.g., KV PUT while Notice PUBLISH)
-- **Within same domain**: Sending multiple requests without waiting for responses is undefined behavior; the broker MAY close the connection
+- Different message types are never confusable, so any number may be in flight
+  across domains or within one domain.
+- **Same message type, correlated**: any number in flight. Each response carries
+  the `CORRELATE` identifier of the request it answers.
+- **Same message type, uncorrelated**: **at most one in flight per connection.**
+  The broker does not answer same-type requests in receive order — a parked
+  Queue `RESERVE` is answered after a later one that completed immediately — so
+  matching by arrival order delivers a response to the wrong caller.
 
-**Exception: RPC Domain**
-RPC REQUEST uses explicit 16-byte UUID `correlation_id` to match responses across multiple in-flight requests. Example:
+The broker does not close the connection for pipelining uncorrelated requests;
+it cannot detect it. The damage is silent misdelivery in the client, which is
+why the one-at-a-time rule is the client's to enforce.
+
+**Correlated (broker advertised `CAP_CORRELATION`):**
 
 ```python
-# RPC allows true multiplexing (multiple in-flight requests)
-future1 = client.rpc_request(..., correlation_id=uuid1)
-future2 = client.rpc_request(..., correlation_id=uuid2)
-# Both in-flight simultaneously; responses matched by correlation_id
-response1 = future1.wait()  # Matched by uuid1
-response2 = future2.wait()  # Matched by uuid2
+# Same message type, many in flight; each response carries its own id
+f1 = client.kv_get(route, b"a")
+f2 = client.kv_get(route, b"b")
+f3 = client.kv_get(route, b"c")
+a, b, c = f1.wait(), f2.wait(), f3.wait()   # matched by correlation, not order
 ```
 
-**Channel-Based Multiplexing (Typical):**
+**Uncorrelated (legacy broker):** the client holds one lane per message type, so
+the second `kv_get` above waits for the first to answer. Different types still
+proceed concurrently.
+
+**RPC** carries its own 16-byte UUID and multiplexes either way:
 
 ```python
-# KV, Notice, Queue, etc. are sequential within domain
-# But concurrent across domains
-kv_tx = client.kv_begin(route, mode, durability)  # Blocks on KV channel
-notice_sub = client.notice_subscribe(pattern)  # Queued on Notice channel (concurrent)
-# KV transaction continues on KV channel while Notice processes on Notice channel
+future1 = client.rpc_request(..., correlation_id=uuid1)
+future2 = client.rpc_request(..., correlation_id=uuid2)
+response1 = future1.wait()  # Matched by uuid1
+response2 = future2.wait()  # Matched by uuid2
 ```
 
 ### Multi-Response Operations

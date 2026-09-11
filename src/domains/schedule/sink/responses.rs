@@ -29,6 +29,7 @@ impl ScheduleDomainRuntime<'_> {
                 bytes::Bytes::from(response_bytes),
                 meta.route_family,
             )
+            .with_correlation(meta.correlation)
         };
 
         #[cfg(not(test))]

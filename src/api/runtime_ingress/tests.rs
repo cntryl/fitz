@@ -9,3 +9,4 @@ mod connect_auth_claims;
 mod domain_backpressure;
 mod payload_preservation;
 mod real_domain_cleanup;
+mod server_hello;

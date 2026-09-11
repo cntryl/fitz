@@ -22,6 +22,7 @@ fn should_read_admin_waiters_through_family_command() {
         reply_destination: Some(holder_address),
         channel: ClientChannel::Sub,
         route_family: family,
+        correlation: None,
     });
     assert!(matches!(holder_response, LeaseResponse::Acquired { .. }));
     let waiter_response = sink.acquire_for_tests(LeaseAcquireRequest {
@@ -34,6 +35,7 @@ fn should_read_admin_waiters_through_family_command() {
         reply_destination: Some(waiter_address),
         channel: ClientChannel::Sub,
         route_family: family,
+        correlation: None,
     });
     assert!(matches!(waiter_response, LeaseResponse::Queued { .. }));
     assert_eq!(sink.admin_waiters().len(), 1);
@@ -72,6 +74,7 @@ fn should_read_lease_live_counts_through_family_commands() {
         reply_destination: Some(subscriber_address.clone()),
         channel: ClientChannel::Sub,
         route_family: family,
+        correlation: None,
     });
     assert!(matches!(holder_response, LeaseResponse::Acquired { .. }));
     sink.deliver(Envelope::from_route(

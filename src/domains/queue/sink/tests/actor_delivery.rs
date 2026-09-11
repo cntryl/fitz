@@ -727,3 +727,109 @@ fn should_reject_wildcard_reserve_above_maximum_batch_size() {
 }
 
 include!("actor_delivery_more.rs");
+
+#[test]
+fn should_keep_each_correlation_when_a_parked_reserve_is_answered_after_a_later_one() {
+    // Arrange
+    // This is the misdelivery issue #244 describes. Two RESERVEs of the same
+    // message type on one connection: the first long-polls an empty route and
+    // parks, the second hits a populated route and is answered immediately, so
+    // the responses reach the wire in the opposite order to the requests. A
+    // client matching by arrival order hands the second response to the first
+    // caller; matching by correlation cannot.
+    let family = RouteFamily::new(1);
+    let empty_route = "queue://acme/jobs/empty";
+    let ready_route = "queue://acme/jobs/ready";
+    let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+    let producer_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let consumer_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let producer_mailbox = Arc::new(Mailbox::new(8));
+    let consumer_mailbox = Arc::new(Mailbox::new(8));
+    let router = Arc::new(Router::new());
+    router.register(producer_address.clone(), producer_mailbox.clone());
+    router.register(consumer_address.clone(), consumer_mailbox.clone());
+    let sink = new_queue_domain_sink(
+        crate::testkit::create_test_engine_with_cfs(vec![1]),
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+        crate::domains::WritePolicy::Buffered,
+    );
+    let parked_correlation = std::num::NonZeroU64::new(111);
+    let immediate_correlation = std::num::NonZeroU64::new(222);
+
+    sink.deliver(Envelope::from_route(
+        producer_address.clone(),
+        queue_address.clone(),
+        FrameContext::new(
+            7,
+            ChannelId::Pub,
+            MessageType::new(200),
+            encode_queue_send(ready_route, b"ready-work"),
+            family,
+        ),
+    ))
+    .expect("seed the populated route");
+    let _seed = receive_queue_frame(&producer_mailbox, "enqueue response");
+
+    // Act
+    sink.deliver(Envelope::from_route(
+        consumer_address.clone(),
+        queue_address.clone(),
+        FrameContext::new(
+            8,
+            ChannelId::Pub,
+            MessageType::new(202),
+            encode_queue_reserve_wait(empty_route, 30, 1, 5),
+            family,
+        )
+        .with_correlation(parked_correlation),
+    ))
+    .expect("long-poll reserve parks");
+    assert!(
+        consumer_mailbox.receiver().try_recv().is_err(),
+        "the long poll must park rather than answer"
+    );
+
+    sink.deliver(Envelope::from_route(
+        consumer_address,
+        queue_address.clone(),
+        FrameContext::new(
+            8,
+            ChannelId::Pub,
+            MessageType::new(202),
+            encode_queue_reserve(ready_route, 30, 1),
+            family,
+        )
+        .with_correlation(immediate_correlation),
+    ))
+    .expect("immediate reserve");
+    let immediate = receive_queue_frame(&consumer_mailbox, "immediate reserve response");
+
+    sink.deliver(Envelope::from_route(
+        producer_address,
+        queue_address,
+        FrameContext::new(
+            7,
+            ChannelId::Pub,
+            MessageType::new(200),
+            encode_queue_send(empty_route, b"late-work"),
+            family,
+        ),
+    ))
+    .expect("enqueue wakes the parked reserve");
+    let _enqueue = receive_queue_frame(&producer_mailbox, "enqueue response");
+    let parked = receive_queue_frame(&consumer_mailbox, "deferred reserve response");
+
+    // Assert
+    // Out of order on the wire, each still answering its own caller.
+    assert_eq!(
+        decode_concrete_reserve_response(&immediate),
+        vec![b"ready-work".to_vec()]
+    );
+    assert_eq!(immediate.correlation, immediate_correlation);
+    assert_eq!(
+        decode_concrete_reserve_response(&parked),
+        vec![b"late-work".to_vec()]
+    );
+    assert_eq!(parked.correlation, parked_correlation);
+}

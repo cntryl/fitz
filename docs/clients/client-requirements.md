@@ -116,6 +116,14 @@ The acceptance criteria in `client-acceptance-criteria.md` are the normative sou
 
 **REQ-PROTO-019 (T1)** Stream `Read` filter encoding MUST match the server's versioned `StreamFilterSet` codec exactly: optional filter bytes follow `max_bytes`, the filter payload begins with the fixed marker `[0, 0xF1]`, and clause tags/length prefixes MUST use big-endian lengths. The client MUST surface `ERR_STREAM_FILTER_UNSUPPORTED_VERSION` and `ERR_STREAM_FILTER_INVALID_PAYLOAD` as fatal request errors but MUST NOT treat them as transport failures.
 
+**REQ-PROTO-020 (T0)** The client MUST parse multiple TLV records from a single transport frame. A frame parser that rejects trailing bytes after the first record cannot read a correlated response and is non-conformant.
+
+**REQ-PROTO-021 (T1)** The client MUST handle `SERVER_HELLO` (4), MUST NOT block connection establishment waiting for it, and MUST treat its absence as "legacy broker, correlation unavailable" rather than as an error. Unknown protocol versions and unknown capability bits MUST be ignored, not rejected.
+
+**REQ-PROTO-022 (T1)** When the broker advertises `CAP_CORRELATION`, the client MUST label requests with a `CORRELATE` (2) record carrying a non-zero `u64` unique among its in-flight requests, MUST place it immediately before the request in the same transport frame, and MUST match responses by the `CORRELATED` (3) identifier rather than by arrival order. The client MUST NOT send `CORRELATE` before the advertisement arrives.
+
+**REQ-PROTO-023 (T0)** The client MUST NOT treat the presence of a correlation record as a response-vs-notification discriminator. `NOTIFY` frames are never correlated and MUST continue to be routed by message type and subscription id.
+
 ---
 
 ## 2. API Completeness
@@ -275,9 +283,11 @@ Reconnect rebuild behavior is domain-specific:
 
 ### T2 — Multiplexer Correctness
 
-**REQ-CONC-008 (T2)** Same-transaction KV operations MUST be serialized at the call site or at the multiplexer level. The concurrency spec allows Level 1 and Level 2 parallelism but forbids Level 3 (same tx_id) parallelism. The client SHOULD enforce or document this constraint.
+**REQ-CONC-008 (T2)** Same-transaction KV operations MUST be serialized at the call site or at the multiplexer level. This is a domain ordering constraint, not a response-matching one: correlation does NOT make same-`tx_id` parallelism safe, and this requirement is unchanged by it. The client SHOULD enforce or document the constraint.
 
-**REQ-CONC-009 (T2)** RPC calls MUST support true per-request multiplexing: multiple simultaneous `Call` invocations on different correlation IDs MUST all be in-flight concurrently without serialization.
+**REQ-CONC-009 (T2)** Requests MUST support true per-request multiplexing wherever an identifier distinguishes them: RPC `Call` invocations on different UUIDs, and — once the broker advertises `CAP_CORRELATION` — any number of same-message-type requests on different correlation identifiers. None of these may be serialized against each other.
+
+**REQ-CONC-011 (T0)** Absent `CAP_CORRELATION`, the client MUST keep at most one in-flight request per message type per connection. The broker does not answer same-type requests in receive order — a parked Queue `RESERVE` is answered after a later one that completed immediately — so matching uncorrelated responses by arrival order delivers a response to the wrong caller. This is a correctness requirement, not a throughput one.
 
 ---
 
@@ -515,7 +525,8 @@ Use this table to grade a specific client implementation. For each row, mark:
 | REQ-CONC-006 | T1 | Concurrency | All goroutines exit on Close() |
 | REQ-CONC-007 | T1 | Concurrency | Async handler max concurrency + timeout |
 | REQ-CONC-008 | T2 | Concurrency | Same-tx operations serialized or documented |
-| REQ-CONC-009 | T2 | Concurrency | RPC calls truly concurrent (by correlation ID) |
+| REQ-CONC-009 | T2 | Concurrency | Requests truly concurrent when identified |
+| REQ-CONC-011 | T0 | Concurrency | One in-flight per message type when uncorrelated |
 | REQ-ERR-001 | T0 | Errors | All server errors surfaced as non-nil error |
 | REQ-ERR-002 | T0 | Errors | Error carries numeric code + message |
 | REQ-ERR-003 | T0 | Errors | ctx cancellation propagated; pending op cleaned up |

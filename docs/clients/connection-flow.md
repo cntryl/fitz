@@ -72,12 +72,20 @@ Client requirements:
 
 ### Step 3: Observe Success or Failure
 
-Fitz uses silent success for `CONNECT`:
-
-- Success: the connection stays open and subsequent domain operations succeed.
+- Success: a broker that supports it sends `SERVER_HELLO` (message type 4)
+  announcing its protocol version and capabilities. The connection stays open
+  and subsequent domain operations succeed.
 - Failure: the broker closes the connection and may include a reason such as `connect failed: <reason>`.
 
-There is no explicit `CONNECT_OK` response frame to wait for.
+`SERVER_HELLO` is the closest thing to a `CONNECT_OK`, but clients **MUST NOT
+wait for it**. `CONNECT` stays zero round-trip: send domain requests
+immediately. A broker that predates the advertisement never sends one, and a
+client that never receives it simply operates uncorrelated — no timeout, no
+retry, no reconnect. Treating its absence as failure would break every legacy
+broker.
+
+See "Capability Negotiation" in `spec/registry-acceptance.md` for the payload
+and the capability bits.
 
 ### Step 4: Internal Broker Setup
 

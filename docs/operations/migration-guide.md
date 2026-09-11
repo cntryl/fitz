@@ -13,7 +13,27 @@ Deploy updated .NET, TypeScript, Go, Python, and Rust SDKs before the broker.
 Updated clients decode both generations; legacy non-READ status-1 errors have
 no structured code. Old SDKs cannot decode generation 2, so the broker upgrade
 must wait until all consumers have migrated. Roll back the broker first while
-keeping the dual-generation clients. No capability negotiation is performed.
+keeping the dual-generation clients. No capability negotiation was performed for
+this change.
+
+## Frame-level request correlation
+
+Adds control message types `CORRELATE` (2), `CORRELATED` (3), and
+`SERVER_HELLO` (4). No existing domain payload changes.
+
+**Deploy the broker first**, the opposite order to the error-envelope change
+above. The broker echoes a correlation only when the request carried one, so an
+un-upgraded SDK sees a byte-identical stream, and `SERVER_HELLO` is safely
+ignored by every shipping SDK. Roll SDKs afterwards in any order.
+
+Operationally this closes a live defect: before it, an SDK that pipelined
+requests of the same message type could receive another caller's response,
+because a long-polling Queue `RESERVE` is answered after a later `RESERVE` that
+completed immediately. Until an SDK is upgraded it must keep one in-flight
+request per message type.
+
+Broker rollback is safe at any point; correlated clients fall back to the
+one-at-a-time path on reconnect. No persisted data is affected.
 
 Concurrency conflicts carry `2001`; unclassified backend errors carry `2012`.
 Preserve unknown codes and original exceptions. Never classify message wording

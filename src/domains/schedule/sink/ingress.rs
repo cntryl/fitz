@@ -276,7 +276,8 @@ impl ScheduleDomainRuntime<'_> {
                 test_client_channel_from_protocol(frame_ctx.channel_id),
                 frame_ctx.msg_type.as_u16(),
                 frame_ctx.route_family,
-            );
+            )
+            .with_correlation(frame_ctx.correlation);
             let parsed = crate::dispatch::protocol::schedule_codec::parse_request(
                 &frame_ctx,
                 &frame_ctx.payload,

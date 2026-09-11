@@ -24,7 +24,8 @@ impl RpcFamilyRuntime<'_> {
                 test_client_channel_from_protocol(frame_ctx.channel_id),
                 frame_ctx.msg_type.as_u16(),
                 frame_ctx.route_family,
-            );
+            )
+            .with_correlation(frame_ctx.correlation);
             let parsed = crate::dispatch::protocol::rpc_codec::parse_request(
                 &frame_ctx,
                 &frame_ctx.payload,
@@ -49,6 +50,21 @@ impl RpcFamilyRuntime<'_> {
         meta: crate::runtime::ClientFrameMeta,
         response: &RpcClientResponseBody,
     ) -> bool {
+        // One request gets exactly one terminal frame on this path. RPC
+        // `deliver` blocks on the actor for its reply timeout, so a stalled
+        // actor lets ingress answer the request as indeterminate while this
+        // response is still in flight. Streamed worker responses are correlated
+        // by their own UUID and travel a different envelope, so they are
+        // unaffected by this claim.
+        if envelope.source().is_none() || !envelope.try_claim_reply() {
+            tracing::debug!(
+                domain = "rpc",
+                session = meta.session_id,
+                "Suppressed RPC response after another terminal response won"
+            );
+            return false;
+        }
+
         #[cfg(test)]
         let response_ctx = {
             let mut payload_encoder =
@@ -64,6 +80,7 @@ impl RpcFamilyRuntime<'_> {
                 bytes::Bytes::from(response_bytes),
                 meta.route_family,
             )
+            .with_correlation(meta.correlation)
         };
 
         #[cfg(not(test))]
@@ -115,6 +132,7 @@ impl RpcFamilyRuntime<'_> {
                 bytes::Bytes::from(response_bytes),
                 meta.route_family,
             )
+            .with_correlation(meta.correlation)
         };
 
         #[cfg(not(test))]

@@ -22,6 +22,72 @@ Each record is:
 
 **TLV is NOT nested** - the entire domain payload is the TLV Value, pre-encoded.
 
+### Request Correlation
+
+A request may be labelled with a client-generated identifier so its response can
+be matched by that identifier rather than by arrival order. The label is a
+separate `CORRELATE` record, so no domain payload changes and an uncorrelated
+request costs nothing.
+
+```
+[0x02][0x00 0x08][u64 BE correlation]   <- CORRELATE, 11 bytes
+[MessageType][Length][Payload]          <- the request it labels
+```
+
+The broker answers with the mirror form:
+
+```
+[0x03][0x00 0x08][u64 BE correlation]   <- CORRELATED
+[MessageType][Length][Payload]          <- the response
+```
+
+**Client requirements**
+
+1. A `CORRELATE` record MUST immediately precede, **in the same transport
+   frame**, the record it labels. Both transports are message-bounded
+   (WebSocket natively; TCP via its `u32` BE outer length prefix), so this is
+   exact.
+2. The value is 8 bytes, big-endian. **Zero is reserved** and MUST NOT be sent.
+3. Identifiers MUST be unique among the requests a connection currently has in
+   flight. Reusing a live identifier yields undefined response routing; the
+   broker does not police it.
+4. Clients MUST NOT send `CORRELATE` before observing `SERVER_HELLO` with
+   `CAP_CORRELATION`.
+5. A client MUST parse multiple TLV records from one transport frame. A frame
+   parser that rejects trailing bytes after the first record cannot read a
+   correlated response.
+
+**Broker guarantees**
+
+1. The broker emits `CORRELATED` **if and only if** the request carried
+   `CORRELATE`, echoing the identifier unchanged. It never volunteers one.
+2. Every frame answering a correlated request carries it, including errors the
+   broker synthesizes itself (timeout, backpressure, unavailable) and responses
+   deferred arbitrarily long — a parked Queue `RESERVE`, or a contended Lease
+   `ACQUIRE` granted when the holder releases.
+3. **A correlation may receive more than one frame.** Most requests are answered
+   once, but a domain may define a multi-phase answer, and both phases carry the
+   same identifier. A contended Lease `ACQUIRE` is answered immediately with
+   `Queued` and again later with the grant. Clients MUST therefore treat a
+   correlated frame whose identifier is no longer pending as routable rather
+   than as garbage: fall through to the normal message-type path so the
+   registered handler receives it. Dropping it loses the deferred grant.
+   RPC does the same thing with its own UUID, terminated by `stream_end`.
+4. **Notifications are never correlated.** `NOTIFY` frames answer no request.
+   Clients MUST route by message type and subscription id first, and MUST NOT
+   treat "has a correlation record" as a response-vs-notification discriminator.
+5. RPC `REQUEST`(302)/`RESPONSE`(303) keep their existing 16-byte UUID and are
+   not additionally frame-correlated. That UUID is an end-to-end application
+   identifier surviving broker→worker→broker; the correlation here is a
+   connection-level transport identifier. Neither subsumes the other.
+
+**Errors.** Fitz has no skip-unknown-record rule and will not gain one — it
+would make record boundaries unverifiable. The broker closes the connection on a
+`CORRELATE` that is malformed, carries zero, labels another `CORRELATE`, or ends
+a transport frame with nothing after it. Closing is correct here and nowhere
+else: a misplaced label means the client's own request-to-response mapping is
+already ambiguous, so there is no caller left to answer.
+
 #### Message Structure
 
 ```

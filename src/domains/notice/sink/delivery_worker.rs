@@ -29,6 +29,7 @@ impl NoticeDeliveryJob {
 pub(super) fn spawn_notice_delivery_worker(
     router: Arc<Router>,
     family: RouteFamily,
+    metrics: Option<crate::domains::notice::metrics::NoticeMetrics>,
 ) -> std::io::Result<crossbeam_channel::Sender<NoticeDeliveryJob>> {
     let (sender, receiver) =
         crossbeam_channel::bounded::<NoticeDeliveryJob>(NOTICE_DELIVERY_WORKER_CAPACITY);
@@ -37,7 +38,7 @@ pub(super) fn spawn_notice_delivery_worker(
         .spawn(move || {
             while let Ok(job) = receiver.recv() {
                 for target in &job.targets {
-                    deliver_notice(&router, target, &job.route, &job.payload);
+                    deliver_notice(&router, target, &job.route, &job.payload, metrics.as_ref());
                 }
             }
         })?;
@@ -48,12 +49,13 @@ pub(super) fn notice_delivery_worker(
     workers: &mut HashMap<RouteFamily, crossbeam_channel::Sender<NoticeDeliveryJob>>,
     router: &Arc<Router>,
     family: RouteFamily,
+    metrics: Option<&crate::domains::notice::metrics::NoticeMetrics>,
 ) -> Option<crossbeam_channel::Sender<NoticeDeliveryJob>> {
     if let Some(worker) = workers.get(&family) {
         return Some(worker.clone());
     }
 
-    match spawn_notice_delivery_worker(router.clone(), family) {
+    match spawn_notice_delivery_worker(router.clone(), family, metrics.cloned()) {
         Ok(worker) => {
             workers.insert(family, worker.clone());
             Some(worker)
@@ -70,8 +72,32 @@ pub(super) fn notice_delivery_worker(
     }
 }
 
-fn deliver_notice(router: &Router, target: &NoticeDeliveryTarget, route: &Route, payload: &Bytes) {
-    deliver_with_retry(router, &target.subscriber, || {
+/// Record a dropped delivery on the sink's own collector when one was injected,
+/// and on the process-global collector otherwise.
+///
+/// A sink given its own collector must see every one of its drops there. Writing
+/// only to the global collector made an injected collector silently incomplete,
+/// and made any assertion on the global count depend on what every other live
+/// Notice sink in the process happened to be doing.
+pub(super) fn record_delivery_drop(
+    metrics: Option<&crate::domains::notice::metrics::NoticeMetrics>,
+) {
+    match metrics {
+        Some(metrics) => metrics.record_delivery_drop(),
+        None => crate::observability::counter_inc(
+            crate::domains::notice::metrics::METRIC_DELIVERY_DROPS_TOTAL,
+        ),
+    }
+}
+
+fn deliver_notice(
+    router: &Router,
+    target: &NoticeDeliveryTarget,
+    route: &Route,
+    payload: &Bytes,
+    metrics: Option<&crate::domains::notice::metrics::NoticeMetrics>,
+) {
+    deliver_with_retry(router, &target.subscriber, metrics, || {
         build_notify_envelope(target, route, payload)
     });
 }
@@ -79,12 +105,14 @@ fn deliver_notice(router: &Router, target: &NoticeDeliveryTarget, route: &Route,
 pub(super) fn deliver_with_retry(
     router: &Router,
     subscriber: &crate::runtime::routing::RouteAddress,
+    metrics: Option<&crate::domains::notice::metrics::NoticeMetrics>,
     build_envelope: impl Fn() -> Envelope,
 ) {
     deliver_with_retry_for(
         router,
         subscriber,
         NOTICE_MAILBOX_RETRY_TIMEOUT,
+        metrics,
         build_envelope,
     );
 }
@@ -96,18 +124,21 @@ pub(super) fn deliver_with_retry_for_test(
     timeout: Duration,
     build_envelope: impl Fn() -> Envelope,
 ) {
-    deliver_with_retry_for(router, subscriber, timeout, build_envelope);
+    deliver_with_retry_for(router, subscriber, timeout, None, build_envelope);
 }
 
 fn deliver_with_retry_for(
     router: &Router,
     subscriber: &crate::runtime::routing::RouteAddress,
     timeout: Duration,
+    metrics: Option<&crate::domains::notice::metrics::NoticeMetrics>,
     build_envelope: impl Fn() -> Envelope,
 ) {
     let deadline = Instant::now() + timeout;
+    let mut attempts = 0_u32;
 
     loop {
+        attempts += 1;
         let envelope = build_envelope();
         let subscriber_sink = router.resolve_sink(subscriber);
         let result = if let Some(sink) = subscriber_sink.as_ref() {
@@ -118,15 +149,18 @@ fn deliver_with_retry_for(
 
         match result {
             Ok(()) => return,
+            // Always give a transient full mailbox one more attempt. The
+            // deadline bounds how long we keep trying, but a subscriber that
+            // was full for a microsecond should not lose its delivery just
+            // because this thread happened to be descheduled past the deadline
+            // between the two attempts.
             Err(RouteError::DeliveryFailed(_, DeliveryError::MailboxFull { .. }))
-                if Instant::now() < deadline =>
+                if attempts == 1 || Instant::now() < deadline =>
             {
                 std::thread::yield_now();
             }
             Err(_) => {
-                crate::observability::counter_inc(
-                    crate::domains::notice::metrics::METRIC_DELIVERY_DROPS_TOTAL,
-                );
+                record_delivery_drop(metrics);
                 return;
             }
         }

@@ -34,6 +34,17 @@ contract:
     - anonymous
     - valid_jwt
     - invalid_jwt
+  correlation_contract:
+    required: true
+    expectations:
+      - "client parses multiple TLV records from one transport frame"
+      - "client handles SERVER_HELLO and never blocks connect on it"
+      - "client treats a missing SERVER_HELLO as legacy, not as an error"
+      - "client labels requests with a unique non-zero u64 when correlation is available"
+      - "client matches responses by correlation identifier, not arrival order"
+      - "client holds one in-flight request per message type when correlation is unavailable"
+      - "client never treats correlation presence as a response-vs-notification test"
+
   reconnect_contract:
     required: true
     expectations:
@@ -56,6 +67,7 @@ result_schema:
     - verdict
     - evidence
     - latency_ms
+    - correlation_enabled
 
 scenarios:
   - id: "CS-001"
@@ -265,6 +277,75 @@ scenarios:
       - "observed_max_inflight"
       - "backpressure_or_queueing_event"
       - "post_close_active_work_count"
+
+  - id: "CS-019"
+    title: "concurrent same-message-type requests"
+    priority: "P0"
+    setup:
+      transport: ["websocket", "tcp"]
+      auth_mode: ["anonymous", "valid_jwt"]
+    expected:
+      - "two concurrent Queue RESERVEs of the same message type resolve to their own callers"
+      - "the first targets an empty queue with wait_seconds=5 and parks"
+      - "the second targets a non-empty queue with wait_seconds=0 and resolves first"
+      - "the first then resolves with its own queue's message, not the second's"
+    notes: >
+      Do not substitute KV GETs: those happen to complete in receive order, so a
+      client matching by arrival order passes by luck. The parked Queue RESERVE
+      is the case where the broker genuinely answers out of order.
+    required_evidence:
+      - "per-caller response payloads"
+      - "observed resolution order"
+
+  - id: "CS-020"
+    title: "capability advertisement and legacy fallback"
+    priority: "P0"
+    setup:
+      transport: ["websocket", "tcp"]
+      auth_mode: ["anonymous", "valid_jwt"]
+    expected:
+      - "against a broker that advertises CAP_CORRELATION, the client reports correlation enabled"
+      - "against a broker that does not, connect still succeeds and correlation reports disabled"
+      - "connect latency is unchanged in both cases; the client does not wait for the advertisement"
+      - "with correlation disabled the client holds at most one in-flight request per message type"
+    required_evidence:
+      - "reported capability state"
+      - "connect duration"
+
+  - id: "CS-021"
+    title: "correlation survives an ingress-synthesized error"
+    priority: "P1"
+    setup:
+      transport: ["websocket", "tcp"]
+      auth_mode: ["anonymous", "valid_jwt"]
+    expected:
+      - "a correlated request answered by a broker-generated error resolves that caller"
+      - "sibling correlated requests of the same message type complete normally"
+      - "no caller is left waiting for a response that already arrived"
+
+  - id: "CS-022"
+    title: "notifications are never correlated"
+    priority: "P1"
+    setup:
+      transport: ["websocket", "tcp"]
+      auth_mode: ["anonymous", "valid_jwt"]
+    expected:
+      - "a NOTIFY arriving amid in-flight correlated requests is not consumed by any of them"
+      - "the notification reaches its subscription handler"
+      - "the client does not use correlation presence to classify response vs notification"
+
+  - id: "CS-023"
+    title: "one request yields exactly one terminal frame"
+    priority: "P1"
+    setup:
+      transport: ["websocket", "tcp"]
+      auth_mode: ["anonymous", "valid_jwt"]
+    expected:
+      - "a request whose domain actor stalls past the dispatch deadline receives exactly one terminal frame"
+      - "the client does not observe both a synthesized error and a late real response"
+    notes: >
+      Requires broker-side fault injection; mirror in the broker integration
+      tests where injection is available.
 
 scoring:
   fail_on:

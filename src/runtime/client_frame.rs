@@ -6,6 +6,7 @@
 
 use crate::runtime::routing::RouteFamily;
 use bytes::Bytes;
+use std::num::NonZeroU64;
 
 /// Logical client channel carried with a routed client frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -25,9 +26,15 @@ pub struct ClientFrameMeta {
     pub channel: ClientChannel,
     pub message_type: u16,
     pub route_family: RouteFamily,
+    /// Client-generated identifier labelling the request this metadata belongs
+    /// to, when the client opted in. Copied onto the response by every domain,
+    /// including deferred replies such as a parked Queue reserve, so a response
+    /// stays attributable to its caller no matter how late it is emitted.
+    pub correlation: Option<NonZeroU64>,
 }
 
 impl ClientFrameMeta {
+    /// Uncorrelated by default; see [`Self::with_correlation`].
     #[must_use]
     pub fn new(
         session_id: u64,
@@ -40,7 +47,15 @@ impl ClientFrameMeta {
             channel,
             message_type,
             route_family,
+            correlation: None,
         }
+    }
+
+    /// Label this frame with the client-generated correlation it answers.
+    #[must_use]
+    pub fn with_correlation(mut self, correlation: Option<NonZeroU64>) -> Self {
+        self.correlation = correlation;
+        self
     }
 }
 

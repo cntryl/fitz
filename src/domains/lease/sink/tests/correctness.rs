@@ -41,6 +41,7 @@ fn family_acquire_request(
         reply_destination: None,
         channel: ClientChannel::Lease,
         route_family: family,
+        correlation: None,
     }
 }
 
@@ -72,6 +73,7 @@ fn lease_acquire_request(ttl_secs: u64, wait_seconds: u32) -> LeaseAcquireReques
         reply_destination: None,
         channel: ClientChannel::Lease,
         route_family: family,
+        correlation: None,
     }
 }
 

@@ -352,6 +352,7 @@ impl LeaseDomain {
             reply_destination: None,
             channel: crate::runtime::ClientChannel::Lease,
             route_family,
+            correlation: None,
         };
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
         if self

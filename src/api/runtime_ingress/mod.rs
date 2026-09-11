@@ -1,6 +1,7 @@
 mod auth_session_setup;
 mod builder_and_sessions;
 mod dispatch_policy;
+mod domain_error_answers;
 mod domain_frame_dispatcher;
 pub(crate) mod domain_registry;
 mod session_authenticator;

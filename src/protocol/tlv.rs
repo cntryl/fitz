@@ -20,6 +20,12 @@ impl MessageType {
     pub const MAX_SINGLE_BYTE: u16 = 0xFE;
 
     pub const CONNECT: MessageType = MessageType(1); // control connect message
+    /// Client-to-server record labelling the request record that follows it.
+    pub const CORRELATE: MessageType = MessageType(2);
+    /// Server-to-client record echoing a request's correlation onto its response.
+    pub const CORRELATED: MessageType = MessageType(3);
+    /// Server-to-client capability advertisement sent once on CONNECT success.
+    pub const SERVER_HELLO: MessageType = MessageType(4);
 
     #[inline]
     #[must_use]

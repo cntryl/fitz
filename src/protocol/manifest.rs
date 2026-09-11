@@ -88,6 +88,24 @@ pub const MESSAGE_MANIFEST: &[MessageManifestEntry] = &[
         ManifestAuthorization::None,
         ManifestDecoder::Control,
     ),
+    // Frame-level request correlation. CORRELATE labels the record that
+    // follows it and is absorbed by the session decoder before mux routing,
+    // so it never reaches a domain and never consumes a channel slot. It is
+    // listed here because the manifest - not a numeric range - is what makes
+    // a message id legal.
+    client(
+        2,
+        "control",
+        None,
+        ManifestAuthorization::None,
+        ManifestDecoder::Control,
+    ),
+    server(3, "control", None, ManifestDecoder::Control),
+    // Unsolicited capability advertisement, emitted once on CONNECT success.
+    // Clients that predate it drop unknown inbound message types, so sending
+    // it unconditionally is safe; a client that never sees it stays
+    // uncorrelated.
+    server(4, "control", None, ManifestDecoder::Control),
     client(
         100,
         "kv",
@@ -588,15 +606,31 @@ mod tests {
     #[test]
     fn should_reject_second_connect_given_authenticated_session() {
         // Arrange
+        // The invariant is that exactly one message id opens a session, not
+        // that CONNECT is the only client-to-server control message - frame
+        // correlation added a second one that carries no session semantics.
         // Act
-        // Assert
         let connects: Vec<_> = MESSAGE_MANIFEST
             .iter()
+            .filter(|entry| entry.message_id == MessageType::CONNECT.as_u16())
+            .collect();
+        let other_client_control: Vec<_> = MESSAGE_MANIFEST
+            .iter()
             .filter(|entry| {
-                entry.domain == "control" && entry.direction == ManifestDirection::ClientToServer
+                entry.domain == "control"
+                    && entry.direction == ManifestDirection::ClientToServer
+                    && entry.message_id != MessageType::CONNECT.as_u16()
             })
             .collect();
+
+        // Assert
         assert_eq!(connects.len(), 1);
+        assert!(
+            other_client_control
+                .iter()
+                .all(|entry| entry.message_id == MessageType::CORRELATE.as_u16()),
+            "only CONNECT and CORRELATE may be client-to-server control messages"
+        );
     }
 
     #[test]

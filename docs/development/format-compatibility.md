@@ -13,13 +13,37 @@ Deploy updated .NET, TypeScript, Go, Python, and Rust SDKs before the broker.
 Updated clients decode both generations; legacy non-READ status-1 errors have
 no structured code. Old SDKs cannot decode generation 2, so the broker upgrade
 must wait until all consumers have migrated. Roll back the broker first while
-keeping the dual-generation clients. No capability negotiation is performed.
+keeping the dual-generation clients. No capability negotiation was performed for
+this change; see "Frame-level request correlation" below for the negotiation
+mechanism introduced afterwards.
 
 Concurrency conflicts carry `2001`; unclassified backend errors carry `2012`.
 Preserve unknown codes and original exceptions. Never classify message wording
 or automatically retry a failed append/commit. Applications own command retries.
 The release checklist must record exact broker and SDK versions and requalify
 Portia's stale-append and pending-batch assertions before release.
+
+## Frame-level request correlation
+
+Adds control message types `CORRELATE` (2, client→server), `CORRELATED` (3,
+server→client), and `SERVER_HELLO` (4, server→client). No existing domain
+payload changes.
+
+**Deploy the broker first — the opposite of the stream error-envelope change
+above.** The broker emits `CORRELATED` if and only if the request carried
+`CORRELATE`, so a client that never sends one sees a byte-identical stream; a
+golden-trace test pins that. `SERVER_HELLO` is pushed unsolicited to every
+session, which is safe because all five SDKs drop inbound frames of unknown
+message type. Clients may then roll in any order, and a new client against an
+old broker never receives the advertisement and stays uncorrelated.
+
+Rolling the broker back is safe at any point: correlated clients stop receiving
+`SERVER_HELLO` on reconnect and fall back to one in-flight request per message
+type. No persisted data is affected.
+
+Unlike the generation-2 error envelope, this is not a clean break — both
+generations coexist indefinitely by design, because the uncorrelated path is
+also the legacy-broker path and clients keep it permanently.
 
 ## Compatibility Rules
 

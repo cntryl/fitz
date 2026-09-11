@@ -48,6 +48,7 @@ impl Ingress for RuntimeIngress {
         channel_id: ChannelId,
         msg_type: crate::protocol::tlv::MessageType,
         message_payload: Bytes,
+        correlation: Option<std::num::NonZeroU64>,
     ) -> IngressDecision {
         let _ingress_latency =
             crate::observability::ScopedHistogramUs::new(obs::METRIC_INGRESS_FRAME_TOTAL_LATENCY);
@@ -66,22 +67,30 @@ impl Ingress for RuntimeIngress {
 
         let should_notify_handler = self.registry.event_handler.is_some();
 
-        let (route_family, notify_frame) = {
-            match self
-                .session_authenticator()
-                .authenticate_frame(
-                    session_id,
-                    channel_id,
-                    msg_type,
-                    &message_payload,
-                    should_notify_handler,
-                )
-                .await
-            {
-                Ok(authenticated) => authenticated,
-                Err(decision) => return decision,
-            }
+        let authenticated = match self
+            .session_authenticator()
+            .authenticate_frame(
+                session_id,
+                channel_id,
+                msg_type,
+                &message_payload,
+                should_notify_handler,
+            )
+            .await
+        {
+            Ok(authenticated) => authenticated,
+            Err(decision) => return decision,
         };
+        let route_family = authenticated.route_family;
+        let notify_frame = authenticated.notify_frame;
+
+        // First frame on the session, before any domain response can be queued
+        // behind it on the single outbound channel, so the client always sees
+        // the capability advertisement ahead of any answer.
+        if authenticated.session_established {
+            self.domain_frame_dispatcher()
+                .announce_server_hello(session_id, route_family);
+        }
 
         if let Some(frame) = &notify_frame {
             debug!(
@@ -105,6 +114,7 @@ impl Ingress for RuntimeIngress {
                     route_family,
                     msg_type,
                     DomainDispatchPayload::Shared(&message_payload),
+                    correlation,
                 )
                 .await
             {
@@ -126,6 +136,7 @@ impl Ingress for RuntimeIngress {
                 route_family,
                 msg_type,
                 DomainDispatchPayload::Owned(message_payload),
+                correlation,
             )
             .await
         {

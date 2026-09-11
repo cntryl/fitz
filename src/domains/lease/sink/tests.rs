@@ -655,6 +655,7 @@ fn should_promote_waiter_given_extend_observes_expired_lease() {
         reply_destination: Some(holder_address),
         channel: ClientChannel::Sub,
         route_family: family,
+        correlation: None,
     });
     let LeaseResponse::Acquired {
         fencing_token: holder_token,
@@ -672,6 +673,7 @@ fn should_promote_waiter_given_extend_observes_expired_lease() {
         reply_destination: Some(waiter_address),
         channel: ClientChannel::Sub,
         route_family: family,
+        correlation: None,
     });
     let LeaseResponse::Queued {
         fencing_token: waiter_token,
@@ -730,6 +732,7 @@ fn should_not_retain_lease_when_promoted_waiter_cannot_receive_grant() {
         reply_destination: Some(holder_address),
         channel: ClientChannel::Sub,
         route_family: family,
+        correlation: None,
     });
     let LeaseResponse::Acquired { fencing_token } = holder else {
         panic!("expected holder acquire");
@@ -744,6 +747,7 @@ fn should_not_retain_lease_when_promoted_waiter_cannot_receive_grant() {
         reply_destination: Some(waiter_address),
         channel: ClientChannel::Sub,
         route_family: family,
+        correlation: None,
     });
     assert!(matches!(queued, LeaseResponse::Queued { .. }));
     assert!(sink.expire_lease_for_tests(&key));
@@ -790,6 +794,7 @@ fn should_promote_next_waiter_when_prior_waiter_cannot_receive_grant() {
         reply_destination: Some(holder_address),
         channel: ClientChannel::Sub,
         route_family: family,
+        correlation: None,
     });
     let LeaseResponse::Acquired { fencing_token } = holder else {
         panic!("expected holder acquire");
@@ -808,6 +813,7 @@ fn should_promote_next_waiter_when_prior_waiter_cannot_receive_grant() {
             reply_destination: Some(destination),
             channel: ClientChannel::Sub,
             route_family: family,
+            correlation: None,
         });
         assert!(matches!(queued, LeaseResponse::Queued { .. }));
     }
@@ -893,6 +899,7 @@ fn should_not_retain_waiter_when_queued_response_cannot_be_delivered() {
             reply_destination: None,
             channel: ClientChannel::Sub,
             route_family: family,
+            correlation: None,
         }),
         LeaseResponse::Acquired { .. }
     ));
@@ -915,4 +922,71 @@ fn should_not_retain_waiter_when_queued_response_cannot_be_delivered() {
     // Assert
     assert_eq!(sink.lease_count(), 1);
     assert_eq!(sink.pending_waiter_count_for_tests(&key), 0);
+}
+
+#[test]
+fn should_carry_the_acquirers_correlation_onto_a_deferred_lease_grant() {
+    // Arrange
+    // A contended ACQUIRE is answered twice: `Queued` immediately, then the
+    // grant whenever the holder releases. The grant answers the same request,
+    // so it must carry the same correlation - otherwise a client cannot tell
+    // which of several outstanding acquires was satisfied, which is exactly why
+    // every client serialises lease acquisition behind a global gate today.
+    let family = RouteFamily::new(1);
+    let session_id = 7;
+    let waiter_session_id = 8;
+    let lease_route = "lease://acme/locks/correlated-grant";
+    let key = lease_key(family, lease_route);
+    let lease_address = RouteAddress::new(family, Route::new(lease_route));
+    let holder_address = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let waiter_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let router = Arc::new(Router::new());
+    let waiter_mailbox = Arc::new(Mailbox::new(8));
+    router.register(waiter_address.clone(), waiter_mailbox.clone());
+    let admin_read_model = crate::control::admin::read_model::AdminReadModel::new();
+    let sink = LeaseDomain::new(router, admin_read_model);
+    let correlation = std::num::NonZeroU64::new(9_001);
+
+    let holder_response = sink.acquire_for_tests(LeaseAcquireRequest {
+        key: key.clone(),
+        owner_session_id: session_id,
+        owner_id: "owner1".to_string(),
+        ttl_secs: 30,
+        wait_seconds: 0,
+        reply_source: lease_address.clone(),
+        reply_destination: Some(holder_address),
+        channel: ClientChannel::Sub,
+        route_family: family,
+        correlation: None,
+    });
+    let LeaseResponse::Acquired {
+        fencing_token: holder_token,
+    } = holder_response
+    else {
+        panic!("expected holder acquire");
+    };
+    let waiter_response = sink.acquire_for_tests(LeaseAcquireRequest {
+        key: key.clone(),
+        owner_session_id: waiter_session_id,
+        owner_id: "owner2".to_string(),
+        ttl_secs: 30,
+        wait_seconds: 30,
+        reply_source: lease_address,
+        reply_destination: Some(waiter_address),
+        channel: ClientChannel::Sub,
+        route_family: family,
+        correlation,
+    });
+    assert!(matches!(waiter_response, LeaseResponse::Queued { .. }));
+
+    // Act
+    assert!(sink.expire_lease_for_tests(&key));
+    let _ = sink.extend_for_tests(&key, "owner1", holder_token, 30);
+    let waiter_delivery = receive_envelope(&waiter_mailbox, "waiter acquired response");
+
+    // Assert
+    let frame = waiter_delivery
+        .payload::<FrameContext>()
+        .expect("waiter grant frame");
+    assert_eq!(frame.correlation, correlation);
 }

@@ -23,6 +23,19 @@ use super::{
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use serde::{Deserialize, Serialize};
 
+/// True for a broker frame that answers no request.
+///
+/// `SERVER_HELLO` is pushed unsolicited on every new session. Real clients drop
+/// inbound frames whose message type they do not recognise, so a request/response
+/// helper must skip it rather than mistake it for the response it is waiting on.
+fn is_unsolicited_control_frame(frame: &[u8]) -> bool {
+    frame.first().copied()
+        == Some(
+            u8::try_from(crate::protocol::tlv::MessageType::SERVER_HELLO.as_u16())
+                .unwrap_or(u8::MAX),
+        )
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct JwtClaims {
     iss: String,
@@ -131,16 +144,21 @@ impl TestClient {
     pub async fn recv_frame_bytes_without_timeout(
         &mut self,
     ) -> Result<Bytes, Box<dyn std::error::Error>> {
-        // Read length prefix
-        let mut len_buf = [0u8; 4];
-        self.stream.read_exact(&mut len_buf).await?;
-        let len = usize::try_from(u32::from_be_bytes(len_buf))
-            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+        loop {
+            // Read length prefix
+            let mut len_buf = [0u8; 4];
+            self.stream.read_exact(&mut len_buf).await?;
+            let len = usize::try_from(u32::from_be_bytes(len_buf))
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
 
-        let mut frame = BytesMut::with_capacity(len);
-        frame.resize(len, 0);
-        self.stream.read_exact(&mut frame).await?;
-        Ok(frame.freeze())
+            let mut frame = BytesMut::with_capacity(len);
+            frame.resize(len, 0);
+            self.stream.read_exact(&mut frame).await?;
+            if is_unsolicited_control_frame(&frame) {
+                continue;
+            }
+            return Ok(frame.freeze());
+        }
     }
 
     /// Send a frame and wait for response
@@ -305,7 +323,12 @@ impl TestWebSocketClient {
             // Check if we have pending frames from previous recv() calls.
             while let Some(msg) = self.pending_frames.pop_front() {
                 match msg {
-                    Message::Binary(data) => return Ok(data),
+                    Message::Binary(data) => {
+                        if is_unsolicited_control_frame(&data) {
+                            continue;
+                        }
+                        return Ok(data);
+                    }
                     Message::Ping(_) | Message::Pong(_) | Message::Text(_) | Message::Frame(_) => {}
                     Message::Close(_) => return Err("WebSocket closed".into()),
                 }
@@ -313,7 +336,12 @@ impl TestWebSocketClient {
 
             match self.ws.next().await {
                 Some(Ok(msg)) => match msg {
-                    Message::Binary(data) => return Ok(data),
+                    Message::Binary(data) => {
+                        if is_unsolicited_control_frame(&data) {
+                            continue;
+                        }
+                        return Ok(data);
+                    }
                     Message::Ping(_) | Message::Pong(_) | Message::Text(_) | Message::Frame(_) => {}
                     Message::Close(_) => return Err("WebSocket closed".into()),
                 },

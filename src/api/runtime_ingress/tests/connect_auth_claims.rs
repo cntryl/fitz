@@ -41,6 +41,7 @@ fn should_reject_connect_with_unprovisioned_resolved_route_family() {
                 ChannelId::Control,
                 crate::protocol::tlv::MessageType::CONNECT,
                 Bytes::from(jwt),
+                None,
             )
             .await
     });
@@ -73,6 +74,7 @@ fn should_reject_connect_with_unmapped_identity_claim() {
                 ChannelId::Control,
                 crate::protocol::tlv::MessageType::CONNECT,
                 Bytes::from(jwt),
+                None,
             )
             .await
     });
@@ -119,6 +121,7 @@ fn should_preserve_resolved_route_families_when_sessions_reconnect_in_reverse_or
                     ChannelId::Control,
                     crate::protocol::tlv::MessageType::CONNECT,
                     Bytes::from(jwt_for("tenant-a")),
+                    None
                 )
                 .await,
             IngressDecision::Accept
@@ -130,6 +133,7 @@ fn should_preserve_resolved_route_families_when_sessions_reconnect_in_reverse_or
                     ChannelId::Control,
                     crate::protocol::tlv::MessageType::CONNECT,
                     Bytes::from(jwt_for("tenant-b")),
+                    None
                 )
                 .await,
             IngressDecision::Accept
@@ -150,6 +154,7 @@ fn should_preserve_resolved_route_families_when_sessions_reconnect_in_reverse_or
                     ChannelId::Control,
                     crate::protocol::tlv::MessageType::CONNECT,
                     Bytes::from(jwt_for("tenant-b")),
+                    None
                 )
                 .await,
             IngressDecision::Accept
@@ -161,6 +166,7 @@ fn should_preserve_resolved_route_families_when_sessions_reconnect_in_reverse_or
                     ChannelId::Control,
                     crate::protocol::tlv::MessageType::CONNECT,
                     Bytes::from(jwt_for("tenant-a")),
+                    None
                 )
                 .await,
             IngressDecision::Accept
@@ -200,6 +206,7 @@ fn should_reject_connect_with_malformed_permissions() {
                 ChannelId::Control,
                 crate::protocol::tlv::MessageType::CONNECT,
                 Bytes::from(jwt.clone()),
+                None,
             )
             .await;
 
@@ -232,6 +239,7 @@ fn should_reject_connect_when_issuer_cannot_derive_jwks() {
                 ChannelId::Control,
                 crate::protocol::tlv::MessageType::CONNECT,
                 Bytes::from(jwt),
+                None,
             )
             .await;
 
@@ -294,6 +302,7 @@ fn should_set_permissions_on_connect_with_issuer_valid_signature() {
                 ChannelId::Control,
                 crate::protocol::tlv::MessageType::CONNECT,
                 Bytes::from(jwt.clone()),
+                None,
             )
             .await;
 
@@ -372,6 +381,7 @@ async fn should_not_block_unrelated_sessions_while_jwks_fetch_is_pending() {
                 ChannelId::Control,
                 crate::protocol::tlv::MessageType::CONNECT,
                 Bytes::from(jwt),
+                None,
             )
             .await
     });
@@ -384,11 +394,15 @@ async fn should_not_block_unrelated_sessions_while_jwks_fetch_is_pending() {
     .expect("unrelated close should not wait for JWKS");
     let frame_decision = timeout(
         Duration::from_millis(100),
+        // Any ordinary domain frame on an unrelated session. Deliberately not a
+        // control-range id: those now carry handshake and correlation meaning,
+        // and this test is only about the JWKS fetch not blocking other work.
         ingress.on_frame(
             84,
-            ChannelId::Control,
-            crate::protocol::tlv::MessageType::new(2),
+            ChannelId::Pub,
+            crate::protocol::tlv::MessageType::new(crate::protocol::kv::msg_type::BEGIN),
             Bytes::new(),
+            None,
         ),
     )
     .await
@@ -454,6 +468,7 @@ fn should_reject_connect_with_issuer_invalid_signature() {
                 ChannelId::Control,
                 crate::protocol::tlv::MessageType::CONNECT,
                 Bytes::from(jwt.clone()),
+                None,
             )
             .await;
 
@@ -510,6 +525,7 @@ fn should_update_session_actor_on_connect() {
                 ChannelId::Control,
                 crate::protocol::tlv::MessageType::CONNECT,
                 Bytes::from(jwt.clone()),
+                None,
             )
             .await;
 
@@ -553,6 +569,7 @@ fn should_allow_stream_followup_after_begin_without_global_stream_write_permissi
                 ChannelId::Control,
                 crate::protocol::tlv::MessageType::CONNECT,
                 Bytes::from(jwt),
+                None,
             )
             .await;
         assert_eq!(connect_decision, IngressDecision::Accept);
@@ -566,6 +583,7 @@ fn should_allow_stream_followup_after_begin_without_global_stream_write_permissi
                 ChannelId::Pub,
                 crate::protocol::tlv::MessageType::new(begin_msg_type),
                 begin_payload,
+                None,
             )
             .await;
         assert_eq!(begin_decision, IngressDecision::Accept);
@@ -579,6 +597,7 @@ fn should_allow_stream_followup_after_begin_without_global_stream_write_permissi
                 ChannelId::Pub,
                 crate::protocol::tlv::MessageType::new(append_msg_type),
                 append_payload,
+                None,
             )
             .await;
         assert_eq!(append_decision, IngressDecision::Accept);
@@ -592,6 +611,7 @@ fn should_allow_stream_followup_after_begin_without_global_stream_write_permissi
                 ChannelId::Pub,
                 crate::protocol::tlv::MessageType::new(commit_msg_type),
                 commit_payload,
+                None,
             )
             .await;
         assert_eq!(commit_decision, IngressDecision::Accept);
@@ -646,6 +666,7 @@ fn should_surface_router_backpressure_in_ingress_decision() {
                 ChannelId::Pub,
                 crate::protocol::tlv::MessageType::new(100),
                 payload,
+                None,
             )
             .await;
 
@@ -696,6 +717,7 @@ async fn should_allow_anonymous_access_when_auth_not_required() {
             ChannelId::Control,
             crate::protocol::tlv::MessageType::CONNECT,
             Bytes::from(jwt),
+            None,
         )
         .await;
 

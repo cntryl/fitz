@@ -30,8 +30,12 @@ impl LeaseFamilyRuntime<'_> {
                 bytes::Bytes::from(response_bytes),
                 waiter.route_family,
             )
+            .with_correlation(waiter.correlation)
         };
 
+        // A granted waiter is answering the ACQUIRE that queued it, however much
+        // later it arrives, so it carries that request's correlation exactly as
+        // an uncontended grant would.
         #[cfg(not(test))]
         let response_ctx = crate::domains::lease::LeaseClientResponse::new(
             crate::runtime::ClientFrameMeta::new(
@@ -39,7 +43,8 @@ impl LeaseFamilyRuntime<'_> {
                 waiter.channel,
                 crate::dispatch::protocol::lease_codec::msg_type::ACQUIRE,
                 waiter.route_family,
-            ),
+            )
+            .with_correlation(waiter.correlation),
             response.clone(),
         );
 
@@ -78,6 +83,7 @@ impl LeaseFamilyRuntime<'_> {
                 bytes::Bytes::from(response_bytes),
                 meta.route_family,
             )
+            .with_correlation(meta.correlation)
         };
 
         #[cfg(not(test))]

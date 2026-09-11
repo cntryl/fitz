@@ -66,6 +66,7 @@ fn should_route_domain_frame_before_late_event_handler_plus_preserve_original_pa
                 ChannelId::Control,
                 MessageType::CONNECT,
                 Bytes::from(jwt),
+                None,
             )
             .await;
 
@@ -73,7 +74,13 @@ fn should_route_domain_frame_before_late_event_handler_plus_preserve_original_pa
         domain_delivered.store(false, Ordering::SeqCst);
 
         ingress
-            .on_frame(613, ChannelId::Sub, MessageType::new(501), payload.clone())
+            .on_frame(
+                613,
+                ChannelId::Sub,
+                MessageType::new(501),
+                payload.clone(),
+                None,
+            )
             .await
     });
 
