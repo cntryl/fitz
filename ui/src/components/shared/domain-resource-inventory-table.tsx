@@ -7,7 +7,11 @@ import DataTable, { type DataTableColumn } from "./data-table";
 import { QueryCompactEmptyState } from "./query-state";
 import type { ResourceInventoryResource } from "@/features/resource/resource-models";
 import { formatNumber } from "@/shared/format";
-import { domainScopeHref, formatFitzRoute, type DomainSegment } from "@/shared/navigation/domains";
+import {
+  domainResourceHref,
+  formatFitzRoute,
+  type DomainSegment,
+} from "@/shared/navigation/domains";
 
 export interface DomainResourceInventoryArea {
   area: string;
@@ -372,15 +376,16 @@ export default function DomainResourceInventoryTable({
     realm: decodeRouteParam(route.params.realm),
   };
   const rows = scopeDomainResourceInventoryRows(domainResourceInventoryRows(inventory), routeScope);
+  const resourceHref = (row: DomainResourceInventoryRow) => domainResourceHref(domain, row);
 
   return (
     <PureDomainResourceInventoryTable
       domain={domain}
       emptyDescription={emptyDescription}
       metricColumns={metricColumns}
-      onRowOpen={(row) => navigate(domainScopeHref(domain, row))}
+      onRowOpen={(row) => navigate(resourceHref(row))}
       onSearchChange={(value) => setRouteSearchQuery(routeSearchParam, value)}
-      rowHref={(row) => domainScopeHref(domain, row)}
+      rowHref={resourceHref}
       rows={rows}
       searchValue={searchQuery}
       title={title}

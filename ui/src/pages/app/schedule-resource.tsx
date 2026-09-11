@@ -1,21 +1,8 @@
-import { state } from "@askrjs/askr";
 import { For, Show } from "@askrjs/askr/control";
 import { currentRoute, Link } from "@askrjs/askr/router";
-import {
-  Badge,
-  Block,
-  Button,
-  Item,
-  ItemActions,
-  ItemContent,
-  ItemDescription,
-  ItemFooter,
-  ItemGroup,
-  ItemTitle,
-} from "@askrjs/themes/components";
+import { Block, Button, Item, ItemContent, ItemGroup, ItemTitle } from "@askrjs/themes/components";
 import DomainDataSection from "@/components/shared/domain-data-section";
 import DomainHeader from "@/components/shared/domain-header";
-import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
 import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
 import { queryFreshness, queryHeaderStatus } from "@/components/shared/query-header-status";
@@ -26,46 +13,15 @@ import {
   QueryRefreshingState,
 } from "@/components/shared/query-state";
 import { createScheduleResourceQuery } from "@/features/schedule/schedule-query";
-import { scheduleService } from "@/features/schedule/schedule-service";
-import ScheduleRunNowDialog from "@/features/schedule/schedule-run-now-dialog";
-import ScheduleRunNowResult from "@/features/schedule/schedule-run-now-result";
-import type { ScheduleRunNowResponse } from "@/adapters";
 import type { ScheduleResourceView } from "@/features/schedule/schedule-models";
-import {
-  decodeScheduleParam,
-  formatScheduleTimestamp,
-  scheduleTimingMetric,
-} from "@/features/schedule/schedule-format";
+import { decodeScheduleParam } from "@/features/schedule/schedule-format";
 import { formatCount, formatNumber } from "@/shared/format";
-import {
-  currentRouteFamilySegment,
-  domainResourceHref,
-  domainScopeHref,
-  formatFitzRoute,
-} from "@/shared/navigation/domains";
+import { domainResourceHref, domainScopeHref, formatFitzRoute } from "@/shared/navigation/domains";
 
 const RESOURCE_SCHEDULE_LIMIT = 50;
 
 interface ScheduleOperationRow {
-  cron: string | null;
-  deliveryMode: string | null;
-  executionsTotal: number;
-  lastRun: string | null;
-  nextRun: string | null;
   operation: string;
-  pendingHandoffs: number;
-  status: string | null;
-}
-
-function formatObservationStatus(value?: string | null) {
-  if (!value) return "Unknown";
-
-  const label = value.replace(/_/g, " ").trim();
-  return label.length > 0 ? `${label.charAt(0).toUpperCase()}${label.slice(1)}` : "Unknown";
-}
-
-function formatDeliveryMode(value?: string | null) {
-  return value ? `${formatObservationStatus(value)} delivery` : "Delivery mode unknown";
 }
 
 function parseOffset(value: string | null) {
@@ -83,14 +39,7 @@ function schedulePageHref(
 
 export function scheduleOperationRows(data: ScheduleResourceView): ScheduleOperationRow[] {
   return data.executionObservations.observations.map((observation) => ({
-    cron: observation.cron,
-    deliveryMode: observation.delivery_mode,
-    executionsTotal: observation.executions_total,
-    lastRun: observation.last_run,
-    nextRun: observation.next_run,
     operation: observation.operation,
-    pendingHandoffs: observation.pending_handoffs,
-    status: observation.status,
   }));
 }
 
@@ -99,8 +48,6 @@ function ScheduleOperationRows(props: {
   realm: string;
   resource: string;
   rows: ScheduleOperationRow[];
-  onRunNow: (operation: string) => void;
-  runNowPending: boolean;
 }) {
   return (
     <Show
@@ -143,46 +90,7 @@ function ScheduleOperationRows(props: {
                       {route}
                     </Link>
                   </ItemTitle>
-                  <ItemDescription>
-                    {formatDeliveryMode(row.deliveryMode)} · {formatObservationStatus(row.status)}
-                  </ItemDescription>
-                  <ItemFooter class="schedule-evidence-metadata">
-                    <dl>
-                      <div>
-                        <dt>Cron</dt>
-                        <dd>{row.cron ?? "unset"}</dd>
-                      </div>
-                      <div>
-                        <dt>Next run</dt>
-                        <dd>{formatScheduleTimestamp(row.nextRun)}</dd>
-                      </div>
-                      <div>
-                        <dt>Last handoff</dt>
-                        <dd>{formatScheduleTimestamp(row.lastRun)}</dd>
-                      </div>
-                      <div>
-                        <dt>Pending handoffs</dt>
-                        <dd>{formatNumber(row.pendingHandoffs)}</dd>
-                      </div>
-                      <div>
-                        <dt>Handoff count</dt>
-                        <dd>{formatNumber(row.executionsTotal)}</dd>
-                      </div>
-                    </dl>
-                  </ItemFooter>
                 </ItemContent>
-                <ItemActions>
-                  <Button
-                    type="button"
-                    onPress={() => props.onRunNow(row.operation)}
-                    disabled={props.runNowPending}
-                  >
-                    Run now
-                  </Button>
-                  <Badge variant={row.pendingHandoffs > 0 ? "warning" : "success"}>
-                    {formatCount(row.pendingHandoffs, "pending handoff")}
-                  </Badge>
-                </ItemActions>
               </Item>
             );
           }}
@@ -208,33 +116,6 @@ export default function ScheduleResourcePage() {
   const data = query.data;
   const scopeLabel = `${ref.realm} / ${ref.area} / ${ref.resource}`;
   const rows = data ? scheduleOperationRows(data) : [];
-  const pendingHandoffs = rows.reduce((sum, row) => sum + row.pendingHandoffs, 0);
-  const timingMetric = data ? scheduleTimingMetric(data.detail.next_run) : null;
-  const [runNowOperation, setRunNowOperation] = state<string | null>(null);
-  const [runNowPending, setRunNowPending] = state(false);
-  const [runNowError, setRunNowError] = state<unknown>(null);
-  const [runNowResult, setRunNowResult] = state<ScheduleRunNowResponse | null>(null);
-
-  async function runNow() {
-    const operation = runNowOperation();
-    if (!operation) return;
-    setRunNowPending(true);
-    setRunNowError(null);
-    try {
-      setRunNowResult(
-        await scheduleService.runScheduleNow({
-          ...ref,
-          operation,
-          routeFamily: currentRouteFamilySegment(),
-        }),
-      );
-      setRunNowOperation(null);
-    } catch (error) {
-      setRunNowError(error);
-    } finally {
-      setRunNowPending(false);
-    }
-  }
 
   return (
     <DomainPageFrame>
@@ -253,17 +134,10 @@ export default function ScheduleResourcePage() {
             query,
             {
               loading: "Loading schedules for this resource.",
-              ready: data
-                ? `${formatCount(rows.length, "visible individual schedule")}, ${formatCount(
-                    pendingHandoffs,
-                    "visible pending handoff",
-                  )}.`
-                : "",
-              unavailable: "Schedule evidence is unavailable for this resource.",
+              ready: data ? `${formatCount(rows.length, "visible operation")}.` : "",
+              unavailable: "Schedule operations are unavailable for this resource.",
             },
-            data?.detail.enabled === false
-              ? { label: "Disabled", tone: "warning" }
-              : { label: "Enabled", tone: "info" },
+            { label: "Operations", tone: "info" },
           )}
         />
         <OperatorScopeStrip
@@ -292,45 +166,12 @@ export default function ScheduleResourcePage() {
                 <QueryRefreshingState description="Refreshing schedules..." />
               </Show>
 
-              <DomainMetricTable
-                title="Schedule timing"
-                description="Persisted resource-level timing intent and broker-observed, non-authoritative handoff counters."
-                metrics={[
-                  { label: "Enabled", value: current.detail.enabled ? "yes" : "no" },
-                  { label: "Cron", value: current.detail.cron ?? "varies by schedule" },
-                  timingMetric ?? { label: "Next run", value: "No next run scheduled" },
-                  {
-                    label: "Broker observation counter",
-                    value: current.detail.executions_total,
-                    caption: "Non-authoritative; not downstream execution history",
-                  },
-                  { label: "Visible schedules", value: rows.length },
-                  { label: "Visible pending handoffs", value: pendingHandoffs },
-                ]}
-              />
-
               <DomainDataSection
                 id="schedule-operations"
                 title="Individual schedules"
                 description={`Showing ${formatCount(rows.length, "schedule")} from offset ${formatNumber(offset)}. Use the page controls to inspect the complete operation inventory.`}
-                actions={
-                  <Badge variant={pendingHandoffs > 0 ? "warning" : "success"}>
-                    {formatCount(pendingHandoffs, "pending handoff")}
-                  </Badge>
-                }
               >
-                <Block direction="column" gap="sm">
-                  <ScheduleOperationRows
-                    {...ref}
-                    rows={rows}
-                    onRunNow={(operation) => {
-                      setRunNowError(null);
-                      setRunNowOperation(operation);
-                    }}
-                    runNowPending={runNowPending()}
-                  />
-                  <ScheduleRunNowResult result={runNowResult()} />
-                </Block>
+                <ScheduleOperationRows {...ref} rows={rows} />
               </DomainDataSection>
 
               <Block as="nav" aria-label="Schedule pages" direction="row" gap="xs" wrap={true}>
@@ -353,36 +194,9 @@ export default function ScheduleResourcePage() {
                   </Button>
                 </Show>
               </Block>
-
-              <DomainMetricTable
-                title="Diagnostics"
-                description="Live broker diagnostics for this resource scope."
-                metrics={[
-                  { label: "Severity", value: current.detail.diagnostics.severity },
-                  { label: "Trend", value: current.detail.diagnostics.trend },
-                  { label: "Current stage", value: current.detail.diagnostics.current_stage },
-                  { label: "Failure count", value: current.detail.diagnostics.failure_count },
-                  { label: "Waiters", value: current.detail.diagnostics.waiter_count },
-                  { label: "Contention", value: current.detail.diagnostics.contention_count },
-                ]}
-              />
             </Block>
           )}
         </Show>
-        <ScheduleRunNowDialog
-          open={runNowOperation() != null}
-          actionPending={runNowPending()}
-          actionError={runNowError()}
-          routeLabel={
-            runNowOperation()
-              ? `schedule://${ref.realm}/${ref.area}/${ref.resource}/${runNowOperation()}`
-              : "this schedule"
-          }
-          onOpenChange={(open) => {
-            if (!runNowPending() && !open) setRunNowOperation(null);
-          }}
-          onRunAction={runNow}
-        />
       </Block>
     </DomainPageFrame>
   );
