@@ -445,6 +445,15 @@ impl DomainAdminPorts {
         self.schedule.admin_pending_claims(family)
     }
 
+    pub(crate) fn schedule_run_now(
+        &self,
+        family: crate::runtime::routing::RouteFamily,
+        route: String,
+        timeout: std::time::Duration,
+    ) -> Result<Option<crate::domains::schedule::sink::ScheduleRunNowResult>, String> {
+        self.schedule.run_now(family, route, timeout)
+    }
+
     #[cfg(test)]
     pub(crate) fn preload_schedule_families(&self) -> Result<(), String> {
         self.schedule.preload_persisted_families()

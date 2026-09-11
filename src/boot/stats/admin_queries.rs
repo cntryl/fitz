@@ -410,6 +410,19 @@ impl Runtime {
             .unwrap_or_default()
     }
 
+    pub(crate) fn schedule_run_now(
+        &self,
+        family: RouteFamily,
+        route: String,
+        timeout: std::time::Duration,
+    ) -> Result<Option<crate::domains::schedule::sink::ScheduleRunNowResult>, String> {
+        self.domain_admins
+            .read()
+            .as_ref()
+            .ok_or_else(|| "Schedule domain is not initialized".to_string())?
+            .schedule_run_now(family, route, timeout)
+    }
+
     #[must_use]
     pub fn list_sessions(&self) -> Vec<crate::control::admin::SessionInfo> {
         let Some(ingress) = self.ingress.read().clone() else {

@@ -313,6 +313,37 @@ impl ScheduleDomain {
             .unwrap_or_default()
     }
 
+    pub(crate) fn run_now(
+        &self,
+        family: RouteFamily,
+        route: String,
+        timeout: std::time::Duration,
+    ) -> Result<Option<super::model::ScheduleRunNowResult>, String> {
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+        let deadline = Instant::now()
+            .checked_add(timeout)
+            .unwrap_or_else(Instant::now);
+        self.try_send(
+            family,
+            crate::runtime::FamilyActorLane::Control,
+            ScheduleDomainCommand::RunNow(route, deadline, reply_tx),
+        )
+        .map_err(|error| format!("schedule run-now enqueue failed: {error}"))?;
+        reply_rx
+            .recv_timeout(timeout)
+            .map_err(|error| match error {
+                crossbeam_channel::RecvTimeoutError::Timeout => {
+                    format!(
+                        "schedule run-now reply timed out after {}ms",
+                        timeout.as_millis()
+                    )
+                }
+                crossbeam_channel::RecvTimeoutError::Disconnected => {
+                    "schedule run-now reply channel disconnected".to_string()
+                }
+            })?
+    }
+
     fn live_counts(&self) -> ScheduleLiveCounts {
         let mut replies = Vec::with_capacity(self.route_families.len());
         for family in &self.route_families {

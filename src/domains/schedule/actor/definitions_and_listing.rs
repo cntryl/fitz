@@ -16,6 +16,14 @@ use std::sync::Arc;
 use std::time::Instant;
 
 impl ScheduleActor {
+    pub(crate) fn run_now_definition(
+        &self,
+        route: &str,
+    ) -> Option<(ScheduleDeliveryMode, bytes::Bytes)> {
+        self.schedules
+            .get(route)
+            .map(|def| (def.delivery_mode, def.payload.clone()))
+    }
     /// # Errors
     ///
     /// Returns an error when the cron expression is invalid.

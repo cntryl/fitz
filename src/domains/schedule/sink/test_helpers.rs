@@ -119,6 +119,17 @@ impl ScheduleDomain {
         self.inspect_family_for_tests(family, move |core| core.subscriptions = subscriptions);
     }
 
+    pub(super) fn round_robin_cursor_for_tests(
+        &self,
+        family: RouteFamily,
+        route: &str,
+    ) -> Option<usize> {
+        let route = route.to_string();
+        self.read_family_for_tests(family, move |core| {
+            core.subscriptions.round_robin_cursors.get(&route).copied()
+        })
+    }
+
     pub(super) fn push_recent_acknowledgement_for_tests(&self, epoch_ms: u64) {
         self.inspect_family_for_tests(self.route_families[0], move |core| {
             core.recent_acknowledgement_ms.push_back(epoch_ms);

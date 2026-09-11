@@ -1,7 +1,9 @@
+import { state } from "@askrjs/askr";
 import { Show } from "@askrjs/askr/control";
 import { currentRoute } from "@askrjs/askr/router";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
 import {
+  Block,
   Card,
   CardContent,
   CardDescription,
@@ -9,7 +11,7 @@ import {
   CardTitle,
   Stack,
 } from "@askrjs/themes/components";
-import type { ScheduleMissedObservation } from "@/adapters";
+import type { ScheduleMissedObservation, ScheduleRunNowResponse } from "@/adapters";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
@@ -28,6 +30,10 @@ import {
   scheduleTimingMetric,
 } from "@/features/schedule/schedule-format";
 import { createScheduleOperationQuery } from "@/features/schedule/schedule-query";
+import { scheduleService } from "@/features/schedule/schedule-service";
+import ScheduleRunNowDialog from "@/features/schedule/schedule-run-now-dialog";
+import ScheduleRunNowResult from "@/features/schedule/schedule-run-now-result";
+import { currentRouteFamilySegment } from "@/shared/navigation/domains";
 import { formatDurationSeconds, formatTimestamp } from "@/shared/format";
 
 const RESOURCE_SCHEDULE_LIMIT = 100;
@@ -90,6 +96,28 @@ export default function ScheduleOperationPage() {
   const missedRows = data?.missedHandoffs.observations ?? [];
   const missedTruncated = missedRows.length >= RESOURCE_SCHEDULE_LIMIT;
   const timingMetric = scheduleTimingMetric(scheduleRow?.next_run);
+  const [runNowOpen, setRunNowOpen] = state(false);
+  const [runNowPending, setRunNowPending] = state(false);
+  const [runNowError, setRunNowError] = state<unknown>(null);
+  const [runNowResult, setRunNowResult] = state<ScheduleRunNowResponse | null>(null);
+
+  async function runNow() {
+    setRunNowPending(true);
+    setRunNowError(null);
+    try {
+      const result = await scheduleService.runScheduleNow({
+        ...ref,
+        operation,
+        routeFamily: currentRouteFamilySegment(),
+      });
+      setRunNowResult(result);
+      setRunNowOpen(false);
+    } catch (error) {
+      setRunNowError(error);
+    } finally {
+      setRunNowPending(false);
+    }
+  }
 
   return (
     <DomainPageFrame>
@@ -99,8 +127,14 @@ export default function ScheduleOperationPage() {
           title={operation}
           description={`Durable timing intent and schedule-owned handoff evidence for ${scopeLabel}.`}
           primaryAction={{
+            busy: runNowPending(),
+            disabled: runNowPending() || !scheduleRow,
+            label: runNowPending() ? "Running…" : "Run now",
+            onPress: () => setRunNowOpen(true),
+          }}
+          secondaryAction={{
             busy: query.refreshing,
-            disabled: query.refreshing,
+            disabled: query.refreshing || runNowPending(),
             label: "Refresh schedule",
             onPress: () => query.refresh(),
           }}
@@ -165,6 +199,10 @@ export default function ScheduleOperationPage() {
               ]}
             />
 
+            <Block direction="row" gap="sm">
+              <ScheduleRunNowResult result={runNowResult()} />
+            </Block>
+
             <Card padding="sm" variant="default">
               <CardHeader>
                 <CardTitle titleAs="h2">Pending and missed handoffs</CardTitle>
@@ -184,6 +222,16 @@ export default function ScheduleOperationPage() {
             </Card>
           </Stack>
         </Show>
+        <ScheduleRunNowDialog
+          open={runNowOpen()}
+          actionPending={runNowPending()}
+          actionError={runNowError()}
+          routeLabel={`schedule://${ref.realm}/${ref.area}/${ref.resource}/${operation}`}
+          onOpenChange={(open) => {
+            if (!runNowPending()) setRunNowOpen(open);
+          }}
+          onRunAction={runNow}
+        />
       </Stack>
     </DomainPageFrame>
   );

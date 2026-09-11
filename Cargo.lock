@@ -634,6 +634,7 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "parking_lot",
+ "percent-encoding",
  "proptest",
  "reqwest",
  "rustc-hash",

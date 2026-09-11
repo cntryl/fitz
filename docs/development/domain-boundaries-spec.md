@@ -111,6 +111,13 @@ is not a consumer acknowledgement. Session disconnects remove candidates,
 duplicate registrations from the same session for the same pattern are
 idempotent, and candidates in another `RouteFamily` never participate.
 
+An authenticated admin may explicitly trigger a schedule's stored payload
+through the `runScheduleNow` operation. This is an ephemeral, best-effort live
+handoff: it resolves the current definition inside the owning Schedule family
+actor, changes no cron timing or durable counters, creates no pending claim,
+and does not imply downstream job completion. A due occurrence may therefore
+run independently immediately afterward.
+
 These rules deliberately keep Schedule responsible only for *when* an
 occurrence becomes due. Waiting for a subscriber would turn temporary absence
 into a backlog and would require retry deadlines, cancellation and upsert rules,

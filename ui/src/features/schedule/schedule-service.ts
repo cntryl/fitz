@@ -1,5 +1,9 @@
 import { apiParams, apiParamsQuery, apiv1 } from "@/adapters";
-import type { ScheduleExecutionObservationList, ScheduleMissedObservationList } from "@/adapters";
+import type {
+  ScheduleExecutionObservationList,
+  ScheduleMissedObservationList,
+  ScheduleRunNowResponse,
+} from "@/adapters";
 import { unwrapResponse, type ServiceRequestOptions } from "@/shared/errors/api";
 import { apiRouteFamilySegment } from "@/shared/navigation/domains";
 import { mapScheduleOverview } from "./schedule-mappers";
@@ -201,6 +205,31 @@ async function searchMissedHandoffs(
 }
 
 export const scheduleService = {
+  async runScheduleNow(
+    request: Required<
+      Pick<
+        ScheduleExecutionObservationRequest,
+        "area" | "operation" | "realm" | "resource" | "routeFamily"
+      >
+    >,
+    options: ServiceRequestOptions = {},
+  ): Promise<ScheduleRunNowResponse> {
+    return unwrapResponse(
+      await apiv1.runScheduleNow(
+        apiParams(
+          {
+            area: request.area,
+            family: apiRouteFamilySegment(request.routeFamily),
+            operation: request.operation,
+            realm: request.realm,
+            resource: request.resource,
+          },
+          options,
+        ),
+      ),
+      "Unable to run schedule now",
+    );
+  },
   getScheduleOperation,
   getScheduleResource,
   getOverview,

@@ -491,6 +491,25 @@ export function search(url: URL) {
 }
 
 export function apiResponse(method: string, url: URL, requestBody?: unknown): MockResponse | null {
+  const runNowMatch = url.pathname.match(
+    /^\/api\/v1\/(\d+)\/schedule\/realms\/([^/]+)\/areas\/([^/]+)\/resources\/([^/]+)\/operations\/([^/]+)\/run$/,
+  );
+  if (method === "POST" && runNowMatch) {
+    const [, family, realm, area, resource, operation] = runNowMatch;
+    const outcome = url.searchParams.get("outcome") ?? "handoff_accepted";
+    const accepted = outcome === "handoff_accepted" ? 1 : 0;
+    const matched = outcome === "no_live_subscriptions" ? 0 : 2;
+    return json({
+      accepted_handoffs: accepted,
+      attempted_handoffs: accepted > 0 ? 1 : matched,
+      delivery_mode: "single",
+      matched_subscriptions: matched,
+      outcome,
+      route: `schedule://${decodeURIComponent(realm)}/${decodeURIComponent(area)}/${decodeURIComponent(resource)}/${decodeURIComponent(operation)}`,
+      route_family: Number(family),
+      triggered_at: new Date().toISOString(),
+    });
+  }
   if (method === "POST" && url.pathname === "/api/v1/runtime/drain") {
     return json({
       active_sessions: broker.sessions,

@@ -15,6 +15,10 @@ pub const METRIC_CANCEL_PERSISTENCE_FAILURES_TOTAL: &str =
     "fitz_schedule_cancel_persistence_failures_total";
 pub const METRIC_RESPONSE_DROPS_TOTAL: &str = "fitz_schedule_response_drops_total";
 pub const METRIC_FAMILY_FAILED_CLOSED_TOTAL: &str = "fitz_schedule_family_failed_closed_total";
+pub const METRIC_RUN_NOW_PROCESSED_TOTAL: &str = "fitz_schedule_run_now_processed_total";
+pub const METRIC_RUN_NOW_ACCEPTED_HANDOFFS_TOTAL: &str =
+    "fitz_schedule_run_now_accepted_handoffs_total";
+pub const METRIC_RUN_NOW_ZERO_ACCEPT_TOTAL: &str = "fitz_schedule_run_now_zero_accept_total";
 
 #[derive(Clone)]
 pub struct ScheduleMetrics {

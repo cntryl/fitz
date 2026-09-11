@@ -1,3 +1,4 @@
+import { state } from "@askrjs/askr";
 import { For, Show } from "@askrjs/askr/control";
 import { currentRoute, Link } from "@askrjs/askr/router";
 import {
@@ -25,6 +26,10 @@ import {
   QueryRefreshingState,
 } from "@/components/shared/query-state";
 import { createScheduleResourceQuery } from "@/features/schedule/schedule-query";
+import { scheduleService } from "@/features/schedule/schedule-service";
+import ScheduleRunNowDialog from "@/features/schedule/schedule-run-now-dialog";
+import ScheduleRunNowResult from "@/features/schedule/schedule-run-now-result";
+import type { ScheduleRunNowResponse } from "@/adapters";
 import type { ScheduleResourceView } from "@/features/schedule/schedule-models";
 import {
   decodeScheduleParam,
@@ -32,7 +37,12 @@ import {
   scheduleTimingMetric,
 } from "@/features/schedule/schedule-format";
 import { formatCount, formatNumber } from "@/shared/format";
-import { domainResourceHref, domainScopeHref, formatFitzRoute } from "@/shared/navigation/domains";
+import {
+  currentRouteFamilySegment,
+  domainResourceHref,
+  domainScopeHref,
+  formatFitzRoute,
+} from "@/shared/navigation/domains";
 
 const RESOURCE_SCHEDULE_LIMIT = 50;
 
@@ -89,6 +99,8 @@ function ScheduleOperationRows(props: {
   realm: string;
   resource: string;
   rows: ScheduleOperationRow[];
+  onRunNow: (operation: string) => void;
+  runNowPending: boolean;
 }) {
   return (
     <Show
@@ -160,6 +172,13 @@ function ScheduleOperationRows(props: {
                   </ItemFooter>
                 </ItemContent>
                 <ItemActions>
+                  <Button
+                    type="button"
+                    onPress={() => props.onRunNow(row.operation)}
+                    disabled={props.runNowPending}
+                  >
+                    Run now
+                  </Button>
                   <Badge variant={row.pendingHandoffs > 0 ? "warning" : "success"}>
                     {formatCount(row.pendingHandoffs, "pending handoff")}
                   </Badge>
@@ -191,6 +210,31 @@ export default function ScheduleResourcePage() {
   const rows = data ? scheduleOperationRows(data) : [];
   const pendingHandoffs = rows.reduce((sum, row) => sum + row.pendingHandoffs, 0);
   const timingMetric = data ? scheduleTimingMetric(data.detail.next_run) : null;
+  const [runNowOperation, setRunNowOperation] = state<string | null>(null);
+  const [runNowPending, setRunNowPending] = state(false);
+  const [runNowError, setRunNowError] = state<unknown>(null);
+  const [runNowResult, setRunNowResult] = state<ScheduleRunNowResponse | null>(null);
+
+  async function runNow() {
+    const operation = runNowOperation();
+    if (!operation) return;
+    setRunNowPending(true);
+    setRunNowError(null);
+    try {
+      setRunNowResult(
+        await scheduleService.runScheduleNow({
+          ...ref,
+          operation,
+          routeFamily: currentRouteFamilySegment(),
+        }),
+      );
+      setRunNowOperation(null);
+    } catch (error) {
+      setRunNowError(error);
+    } finally {
+      setRunNowPending(false);
+    }
+  }
 
   return (
     <DomainPageFrame>
@@ -275,7 +319,18 @@ export default function ScheduleResourcePage() {
                   </Badge>
                 }
               >
-                <ScheduleOperationRows {...ref} rows={rows} />
+                <Block direction="column" gap="sm">
+                  <ScheduleOperationRows
+                    {...ref}
+                    rows={rows}
+                    onRunNow={(operation) => {
+                      setRunNowError(null);
+                      setRunNowOperation(operation);
+                    }}
+                    runNowPending={runNowPending()}
+                  />
+                  <ScheduleRunNowResult result={runNowResult()} />
+                </Block>
               </DomainDataSection>
 
               <Block as="nav" aria-label="Schedule pages" direction="row" gap="xs" wrap={true}>
@@ -314,6 +369,20 @@ export default function ScheduleResourcePage() {
             </Block>
           )}
         </Show>
+        <ScheduleRunNowDialog
+          open={runNowOperation() != null}
+          actionPending={runNowPending()}
+          actionError={runNowError()}
+          routeLabel={
+            runNowOperation()
+              ? `schedule://${ref.realm}/${ref.area}/${ref.resource}/${runNowOperation()}`
+              : "this schedule"
+          }
+          onOpenChange={(open) => {
+            if (!runNowPending() && !open) setRunNowOperation(null);
+          }}
+          onRunAction={runNow}
+        />
       </Block>
     </DomainPageFrame>
   );

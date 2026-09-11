@@ -459,6 +459,7 @@ describe("admin page smoke tests", () => {
     expect(text).not.toContain("Next run");
     expect(text).toContain("Non-authoritative; not downstream execution history");
     expect(text).toContain("Pending and missed handoffs");
+    expect(text).toContain("Run now");
     expect(text).not.toContain("Is anyone listening?");
     expect(text).not.toContain("No live listeners visible");
     expect(text).not.toContain("Back to schedule area");
@@ -484,6 +485,27 @@ describe("admin page smoke tests", () => {
     expect(
       root.querySelector('nav[aria-label="Schedule pages"] a[href*="offset=50"]'),
     ).toBeTruthy();
+  });
+
+  it("opens the schedule run-now confirmation with ephemeral handoff copy", async () => {
+    const { default: ScheduleOperationPage } = await import("@/pages/app/schedule-operation");
+    const root = await mountRoute(
+      "/admin/1/schedule/default/ops/primary/handoff",
+      "/admin/{family}/schedule/{realm}/{area}/{resource}/{operation}",
+      ScheduleOperationPage,
+    );
+
+    const runNowButton = Array.from(root.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "Run now",
+    );
+    expect(runNowButton).toBeTruthy();
+    click(runNowButton as HTMLButtonElement);
+    const text = root.textContent ?? "";
+    expect(text).toContain("Run schedule now?");
+    expect(text).toContain("live matching subscriptions");
+    expect(text).toContain("cron and the next run remain unchanged");
+    expect(text).toContain("downstream job completion");
+    cleanupApp(root);
   });
 
   it("surfaces disabled schedules and pending handoffs with warning severity", async () => {

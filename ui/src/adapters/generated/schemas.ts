@@ -891,6 +891,17 @@ export type ScheduleResourceEntry = {
   "next_run": string | null;
 };
 
+export type ScheduleRunNowResponse = {
+  "route_family": number;
+  "route": string;
+  "delivery_mode": "broadcast" | "single";
+  "triggered_at": string;
+  "outcome": "handoff_accepted" | "no_live_subscriptions" | "no_handoff_accepted";
+  "matched_subscriptions": number;
+  "attempted_handoffs": number;
+  "accepted_handoffs": number;
+};
+
 export type ScheduleStats = {
   "schedules_active": number;
   "executions_per_minute": number;

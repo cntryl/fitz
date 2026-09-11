@@ -94,6 +94,28 @@ describe("service endpoint contracts", () => {
       ),
     );
   });
+
+  it("triggers a schedule now with the exact route-family path parameters", async () => {
+    const { scheduleService } = await import("@/features/schedule/schedule-service");
+
+    await scheduleService.runScheduleNow({
+      area: "ops",
+      operation: "ReconcileInvoice",
+      realm: "default",
+      resource: "reconcile",
+      routeFamily: 7,
+    });
+
+    expect(mocks.apiv1.runScheduleNow).toHaveBeenCalledWith(
+      params({
+        area: "ops",
+        family: "7",
+        operation: "ReconcileInvoice",
+        realm: "default",
+        resource: "reconcile",
+      }),
+    );
+  });
   it("loads schedule hierarchy and resource detail through schedule endpoints", async () => {
     const { scheduleService } = await import("@/features/schedule/schedule-service");
 
