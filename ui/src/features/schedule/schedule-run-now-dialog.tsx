@@ -27,10 +27,10 @@ export default function ScheduleRunNowDialog(props: ScheduleRunNowDialogProps) {
         <AlertDialogContent role="alertdialog">
           <AlertDialogTitle>Run schedule now?</AlertDialogTitle>
           <AlertDialogDescription>
-            Send the stored payload for {props.routeLabel} only to live matching subscriptions.
-            This is best-effort: cron and the next run remain unchanged, another scheduled
-            occurrence may happen shortly afterward, and broker handoff acceptance is not
-            downstream job completion.
+            Send the stored payload for {props.routeLabel} only to live matching subscriptions. This
+            is best-effort: cron and the next run remain unchanged, another scheduled occurrence may
+            happen shortly afterward, and broker handoff acceptance is not downstream job
+            completion.
           </AlertDialogDescription>
           {props.actionError ? (
             <Alert

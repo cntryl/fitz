@@ -81,17 +81,18 @@ export default function DomainHeader({
                 </Button>
               ) : null}
               {action ? (
-            <Button
-              variant={secondaryAction ? undefined : "outline"}
-              aria-label={action.label}
-              aria-busy={action.busy ? "true" : undefined}
-              disabled={action.disabled || action.busy}
-              title={action.label}
-              onPress={action.onPress}
-            >
-              {action.icon ?? (action.label.startsWith("Refresh") ? <RefreshCwIcon size={16} /> : null)}
-              <span>{action.label}</span>
-            </Button>
+                <Button
+                  variant={secondaryAction ? undefined : "outline"}
+                  aria-label={action.label}
+                  aria-busy={action.busy ? "true" : undefined}
+                  disabled={action.disabled || action.busy}
+                  title={action.label}
+                  onPress={action.onPress}
+                >
+                  {action.icon ??
+                    (action.label.startsWith("Refresh") ? <RefreshCwIcon size={16} /> : null)}
+                  <span>{action.label}</span>
+                </Button>
               ) : null}
             </Block>
           ) : undefined
