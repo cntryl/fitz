@@ -243,7 +243,7 @@ impl KvFamilyRuntime<'_> {
         let response = actor.handle(kv_message);
         let admin_update = if had_transaction && actor.resource_scope_for_tx(tx_id).is_none() {
             if let Some(lock_key) = &lock_key {
-                self.core.resource_locks.remove(lock_key);
+                self.release_resource_lock(lock_key, session_id, tx_id);
             }
             KvAdminTransactionUpdate::Remove { session_id, tx_id }
         } else {
@@ -296,9 +296,11 @@ impl KvFamilyRuntime<'_> {
         let admin_update =
             if resource_scope.is_some() && actor.resource_scope_for_tx(tx_id).is_none() {
                 if let Some(scope) = &resource_scope {
-                    self.core
-                        .resource_locks
-                        .remove(&KvResourceLockKey::from_scope(scope));
+                    self.release_resource_lock(
+                        &KvResourceLockKey::from_scope(scope),
+                        session_id,
+                        tx_id,
+                    );
                 }
                 KvAdminTransactionUpdate::Remove { session_id, tx_id }
             } else {

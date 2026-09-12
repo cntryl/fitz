@@ -64,6 +64,26 @@ impl KvFamilyRuntime<'_> {
         }
     }
 
+    /// Releases a resource lock only when this exact transaction owns it.
+    ///
+    /// Read-only transactions never take the lock, so finishing one must not
+    /// release a write lock another session holds on the same resource.
+    pub(super) fn release_resource_lock(
+        &mut self,
+        resource_key: &KvResourceLockKey,
+        session_id: u64,
+        tx_id: u64,
+    ) {
+        if self
+            .core
+            .resource_locks
+            .get(resource_key)
+            .is_some_and(|owner| owner.session_id == session_id && owner.tx_id == tx_id)
+        {
+            self.core.resource_locks.remove(resource_key);
+        }
+    }
+
     pub(super) fn expire_resource_lock_if_idle(&mut self, resource_key: &KvResourceLockKey) {
         let owner = self.core.resource_locks.get(resource_key).copied();
         let Some(owner) =
