@@ -1,28 +1,75 @@
-import { For, Show } from "@askrjs/askr/control";
+import { Show } from "@askrjs/askr/control";
 import { currentRoute, Link } from "@askrjs/askr/router";
-import { Block, Button, Item, ItemContent, ItemGroup, ItemTitle } from "@askrjs/themes/components";
-import DomainDataSection from "@/components/shared/domain-data-section";
+import { Block, Button } from "@askrjs/themes/components";
+import type { ScheduleExecutionObservation } from "@/adapters";
 import DomainHeader from "@/components/shared/domain-header";
+import DomainOperationTable, {
+  type DomainOperationMetricColumn,
+} from "@/components/shared/domain-operation-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
+import DomainSummaryStrip from "@/components/shared/domain-summary-strip";
 import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
 import { queryFreshness, queryHeaderStatus } from "@/components/shared/query-header-status";
 import {
-  QueryCompactEmptyState,
   QueryErrorState,
   QueryLoadingState,
   QueryRefreshingState,
 } from "@/components/shared/query-state";
 import { createScheduleResourceQuery } from "@/features/schedule/schedule-query";
-import type { ScheduleResourceView } from "@/features/schedule/schedule-models";
-import { decodeScheduleParam } from "@/features/schedule/schedule-format";
-import { formatCount, formatNumber } from "@/shared/format";
-import { domainResourceHref, domainScopeHref, formatFitzRoute } from "@/shared/navigation/domains";
+import {
+  decodeScheduleParam,
+  formatScheduleTimestamp,
+  scheduleTimingMetric,
+} from "@/features/schedule/schedule-format";
+import { formatCount, formatNumber, formatRelativeTime } from "@/shared/format";
+import { domainResourceHref } from "@/shared/navigation/domains";
 
 const RESOURCE_SCHEDULE_LIMIT = 50;
 
-interface ScheduleOperationRow {
-  operation: string;
-}
+/**
+ * Timestamps read as relative so schedules stay comparable at a glance; the exact
+ * value stays available on hover. Delivery mode is single-schedule detail and lives
+ * on the operation tier.
+ */
+const scheduleOperationColumns: readonly DomainOperationMetricColumn<ScheduleExecutionObservation>[] =
+  [
+    {
+      id: "status",
+      header: "Status",
+      width: "12%",
+      cell: (row) => row.status,
+    },
+    {
+      id: "cron",
+      header: "Cron",
+      width: "14%",
+      cell: (row) => row.cron || "unset",
+    },
+    {
+      id: "next-run",
+      header: "Next run",
+      width: "16%",
+      cell: (row) => formatRelativeTime(row.next_run),
+      sortValue: (row) => Date.parse(row.next_run),
+      title: (row) => formatScheduleTimestamp(row.next_run),
+    },
+    {
+      id: "last-handoff",
+      header: "Last handoff",
+      width: "16%",
+      cell: (row) => (row.last_run ? formatRelativeTime(row.last_run) : "--"),
+      sortValue: (row) => (row.last_run ? Date.parse(row.last_run) : null),
+      title: (row) => formatScheduleTimestamp(row.last_run),
+    },
+    {
+      id: "pending-handoffs",
+      header: "Pending",
+      width: "12%",
+      cell: (row) => formatNumber(row.pending_handoffs),
+      sortValue: (row) => row.pending_handoffs,
+      title: () => "Pending handoff claims awaiting acknowledgement",
+    },
+  ];
 
 function parseOffset(value: string | null) {
   const parsed = Number(value ?? 0);
@@ -35,69 +82,6 @@ function schedulePageHref(
 ) {
   const href = domainResourceHref("schedule", scope);
   return offset > 0 ? `${href}?offset=${offset}` : href;
-}
-
-export function scheduleOperationRows(data: ScheduleResourceView): ScheduleOperationRow[] {
-  return data.executionObservations.observations.map((observation) => ({
-    operation: observation.operation,
-  }));
-}
-
-function ScheduleOperationRows(props: {
-  area: string;
-  realm: string;
-  resource: string;
-  rows: ScheduleOperationRow[];
-}) {
-  return (
-    <Show
-      when={props.rows.length > 0}
-      fallback={
-        <QueryCompactEmptyState
-          title="No individual schedules"
-          description="No individual schedules are currently visible for this resource."
-        />
-      }
-    >
-      <ItemGroup
-        as="ul"
-        aria-label="Individual schedules"
-        class="domain-divided-list schedule-operation-list"
-      >
-        <For each={props.rows} by={(row) => row.operation}>
-          {(row) => {
-            const route = formatFitzRoute("schedule", {
-              area: props.area,
-              operation: row.operation,
-              realm: props.realm,
-              resource: props.resource,
-            });
-
-            return (
-              <Item as="li">
-                <ItemContent>
-                  <ItemTitle>
-                    <Link
-                      class="domain-link-cell schedule-operation-link"
-                      href={domainScopeHref("schedule", {
-                        area: props.area,
-                        operation: row.operation,
-                        realm: props.realm,
-                        resource: props.resource,
-                      })}
-                      title={route}
-                    >
-                      {route}
-                    </Link>
-                  </ItemTitle>
-                </ItemContent>
-              </Item>
-            );
-          }}
-        </For>
-      </ItemGroup>
-    </Show>
-  );
 }
 
 export default function ScheduleResourcePage() {
@@ -115,7 +99,9 @@ export default function ScheduleResourcePage() {
   });
   const data = query.data;
   const scopeLabel = `${ref.realm} / ${ref.area} / ${ref.resource}`;
-  const rows = data ? scheduleOperationRows(data) : [];
+  const rows = data?.executionObservations.observations ?? [];
+  const detail = data?.detail;
+  const pendingHandoffs = rows.reduce((sum, row) => sum + row.pending_handoffs, 0);
 
   return (
     <DomainPageFrame>
@@ -123,7 +109,7 @@ export default function ScheduleResourcePage() {
         <DomainHeader
           eyebrow="Schedule resource"
           title={ref.resource}
-          description={`Individual schedules registered for ${scopeLabel}.`}
+          description={`Durable timing intent and schedule-owned handoff evidence for ${scopeLabel}.`}
           primaryAction={{
             busy: query.refreshing,
             disabled: query.refreshing,
@@ -134,7 +120,12 @@ export default function ScheduleResourcePage() {
             query,
             {
               loading: "Loading schedules for this resource.",
-              ready: data ? `${formatCount(rows.length, "visible operation")}.` : "",
+              ready: data
+                ? `${formatCount(rows.length, "observed schedule")}, ${formatCount(
+                    pendingHandoffs,
+                    "pending handoff",
+                  )}.`
+                : "",
               unavailable: "Schedule operations are unavailable for this resource.",
             },
             { label: "Operations", tone: "info" },
@@ -166,13 +157,36 @@ export default function ScheduleResourcePage() {
                 <QueryRefreshingState description="Refreshing schedules..." />
               </Show>
 
-              <DomainDataSection
-                id="schedule-operations"
+              <Show when={detail}>
+                {(resourceDetail) => (
+                  <DomainSummaryStrip
+                    id="schedule-resource-detail"
+                    title="Durable timing intent"
+                    description="Persisted definition state for this resource. The broker observation counter is non-authoritative and is not downstream execution history."
+                    items={[
+                      { label: "Enabled", value: resourceDetail.enabled ? "Yes" : "No" },
+                      { label: "Cron", value: resourceDetail.cron ?? "unset" },
+                      scheduleTimingMetric(resourceDetail.next_run),
+                      {
+                        label: "Broker observation counter",
+                        value: resourceDetail.executions_total,
+                        caption: "Non-authoritative; not downstream execution history",
+                      },
+                      { label: "Pending handoffs", value: pendingHandoffs },
+                    ]}
+                  />
+                )}
+              </Show>
+
+              <DomainOperationTable<ScheduleExecutionObservation>
+                domain="schedule"
+                description={`Schedule-owned observations from persisted timing intent and acknowledged handoffs. Showing ${formatCount(rows.length, "schedule")} from offset ${formatNumber(offset)}; a schedule with no observation does not appear.`}
+                emptyDescription="No schedule observations are currently visible for this resource."
+                metricColumns={scheduleOperationColumns}
+                rows={rows}
+                scope={ref}
                 title="Individual schedules"
-                description={`Showing ${formatCount(rows.length, "schedule")} from offset ${formatNumber(offset)}. Use the page controls to inspect the complete operation inventory.`}
-              >
-                <ScheduleOperationRows {...ref} rows={rows} />
-              </DomainDataSection>
+              />
 
               <Block as="nav" aria-label="Schedule pages" direction="row" gap="xs" wrap={true}>
                 <Show when={offset > 0}>

@@ -345,9 +345,13 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("Publishes / min");
     expect(text).not.toContain("Latency");
     expect(text).not.toContain("--/N/A");
-    const operations = root.querySelector('ul[aria-label="Notice operations"]');
-    expect(operations?.querySelectorAll('[data-slot="item"]')).toHaveLength(1);
-    expect(root.querySelector("#notice-resource-operations [data-slot='table']")).toBeNull();
+    // The operation tier uses the same table contract as realm, area, and resource.
+    const operations = root.querySelector('[data-slot="table"][aria-label="Notice operations"]');
+    expect(operations?.querySelectorAll('[data-slot="table-row"][data-row-key]')).toHaveLength(1);
+    expect(
+      root.querySelector('a[href="/admin/1/notice/default/ops/primary/GetStatus"]'),
+    ).toBeTruthy();
+    expect(root.querySelector("#notice-operations-search")).toBeTruthy();
   });
   it("renders notice operation metrics and delivery evidence", async () => {
     const { default: NoticeOperationPage } = await import("@/pages/app/notice-operation");
@@ -423,8 +427,10 @@ describe("admin page smoke tests", () => {
     expect(areaRoot.textContent).toContain("Schedule area");
     expect(areaRoot.textContent).toContain("Resource inventory");
     expect(areaRoot.textContent).toContain("schedule://default/ops/primary");
-    expect(areaRoot.textContent).not.toContain("Pending claims");
-    expect(areaRoot.textContent).not.toContain("Next run");
+    // Schedule reports these per resource, so its inventory carries them like every
+    // other domain rather than rendering a bare route list.
+    expect(areaRoot.textContent).toContain("Pending claims");
+    expect(areaRoot.textContent).toContain("Next run");
     cleanupApp(areaRoot);
     document.body.innerHTML = "";
 
@@ -441,9 +447,12 @@ describe("admin page smoke tests", () => {
     ).toBe("primary");
     expect(resourceText).toContain("Individual schedules");
     expect(resourceText).toContain("schedule://default/ops/primary/handoff");
+    // The resource tier summarises its own durable intent and compares its schedules.
+    expect(resourceText).toContain("Durable timing intent");
+    expect(resourceText).toContain("Pending handoffs");
+    // Single-schedule detail and the run action stay on the operation tier.
     expect(resourceText).not.toContain("Schedule timing");
-    expect(resourceText).not.toContain("*/5 * * * *");
-    expect(resourceText).not.toContain("Pending handoffs");
+    expect(resourceText).not.toContain("Pending and missed handoffs");
     expect(resourceText).not.toContain("Run now");
     expect(
       resourceRoot.querySelector('a[href="/admin/1/schedule/default/ops/primary/handoff"]'),
@@ -725,14 +734,17 @@ describe("admin page smoke tests", () => {
     );
     text = root.textContent ?? "";
     expect(text).toContain("RPC resource");
+    // Column labels match the inventory tier so the same metric reads the same way
+    // on both sides of the drilldown.
     expect(text).toContain("Workers");
-    expect(text).toContain("Pending requests");
-    expect(text).toContain("Requests handled");
+    expect(text).toContain("Pending");
+    expect(text).toContain("Handled");
+    expect(text).toContain("Slowest avg ms");
     expect(text).toContain("in-memory pending request evidence");
     expect(text).toContain("GetStatus");
-    const operations = root.querySelector('ul[aria-label="RPC operations"]');
-    expect(operations?.querySelectorAll('[data-slot="item"]')).toHaveLength(1);
-    expect(root.querySelector("#rpc-resource-operations [data-slot='table']")).toBeNull();
+    const operations = root.querySelector('[data-slot="table"][aria-label="RPC operations"]');
+    expect(operations?.querySelectorAll('[data-slot="table-row"][data-row-key]')).toHaveLength(1);
+    expect(root.querySelector("#rpc-operations-search")).toBeTruthy();
 
     root = await mountRoute(
       "/admin/1/rpc/default/ops/primary/GetStatus",

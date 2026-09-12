@@ -1,17 +1,7 @@
 import { state } from "@askrjs/askr";
 import { task } from "@askrjs/askr/resources";
 import { navigate } from "@askrjs/askr/router";
-import {
-  Block,
-  Button,
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  Spinner,
-  Text,
-} from "@askrjs/themes/components";
+import { Block, Button, PageHeader, Spinner, Text } from "@askrjs/themes/components";
 import AuthBrand from "@/components/shared/auth-brand";
 import { createSignOutMutation } from "@/features/session/session-mutation";
 import { manageRoutePageContext } from "@/components/shared/domain-page-frame";
@@ -49,29 +39,26 @@ export default function Logout() {
       : "Clearing your Fitz Admin session.";
 
   return (
-    <Card variant="raised">
-      <CardHeader>
+    <Block direction="column" gap="xl">
+      <Block direction="column" gap="md">
         <AuthBrand />
-        <CardTitle titleAs="h1">{title}</CardTitle>
-        <CardDescription>{description}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <Block direction="column" align="start" gap="md" aria-live="polite" aria-atomic="true">
-          {currentPhase === "pending" ? <Spinner label="Signing out" /> : null}
+        <PageHeader title={title} description={description} />
+      </Block>
 
-          {currentPhase === "error" ? (
-            <Block direction="column" align="start" gap="md" role="alert">
-              <Text tone="danger" size="sm">
-                {errorMessage || "We could not clear your session."} Your session may still be
-                active.
-              </Text>
-              <Button variant="outline" onPress={() => void signOutAndRedirect()}>
-                Retry
-              </Button>
-            </Block>
-          ) : null}
-        </Block>
-      </CardContent>
-    </Card>
+      <Block direction="column" align="start" gap="md" aria-live="polite" aria-atomic="true">
+        {currentPhase === "pending" ? <Spinner label="Signing out" /> : null}
+
+        {currentPhase === "error" ? (
+          <Block direction="column" align="start" gap="md" role="alert">
+            <Text tone="danger" size="sm">
+              {errorMessage || "We could not clear your session."} Your session may still be active.
+            </Text>
+            <Button variant="outline" onPress={() => void signOutAndRedirect()}>
+              Retry
+            </Button>
+          </Block>
+        ) : null}
+      </Block>
+    </Block>
   );
 }

@@ -1,24 +1,43 @@
 .auth-page {
+  position: relative;
   box-sizing: border-box;
   display: flex;
   min-block-size: 100svh;
   inline-size: 100%;
   align-items: center;
   justify-content: center;
-  padding: 1.5rem;
+  padding: 1rem;
 }
 
+/* Positioned out of flow so the panel stays centred in the full viewport. */
+.auth-theme-toggle {
+  position: absolute;
+  inset-block-start: 1rem;
+  inset-inline-end: 1rem;
+}
+
+/* The auth panel owns its own framing so the sign-in and sign-out routes keep a
+   bordered surface without being Card components. Padding and radius match the
+   theme's card so the two read the same. */
 .auth-panel {
   display: flex;
   flex-direction: column;
   gap: var(--ak-space-4, 1rem);
   inline-size: 100%;
   max-inline-size: 24rem;
+  padding: var(--ak-space-2xl, 2.25rem);
+  border: 1px solid var(--ak-color-border);
+  border-radius: var(--ak-radius-xl, 12px);
 }
 
 @media (min-width: 48rem) {
   .auth-page {
-    padding: 2.5rem;
+    padding: 1.5rem;
+  }
+
+  .auth-theme-toggle {
+    inset-block-start: 1.5rem;
+    inset-inline-end: 1.5rem;
   }
 }
 

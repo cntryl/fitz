@@ -39,9 +39,7 @@ jobs:
         run: npm ci
 
       - name: Verify current Askr packages
-        run: |
-          npx --no-install askr upgrade
-          git diff --exit-code -- package.json package-lock.json
+        run: npm outdated '@askrjs/*'
 
       - name: Askr analyzer
         run: npx --no-install askr analyze

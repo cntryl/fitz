@@ -1,15 +1,17 @@
-import { For, Show } from "@askrjs/askr/control";
-import { currentRoute, Link } from "@askrjs/askr/router";
-import { Block, Item, ItemContent, ItemGroup, ItemTitle } from "@askrjs/themes/components";
-import DomainDataSection from "@/components/shared/domain-data-section";
+import { Show } from "@askrjs/askr/control";
+import { currentRoute } from "@askrjs/askr/router";
+import { Block } from "@askrjs/themes/components";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainInventoryPage from "@/components/shared/domain-inventory-page";
+import DomainOperationTable, {
+  type DomainOperationMetricColumn,
+} from "@/components/shared/domain-operation-table";
 import type { DomainResourceMetricColumn } from "@/components/shared/domain-resource-inventory-table";
 import DomainPageFrame from "@/components/shared/domain-page-frame";
+import DomainSummaryStrip from "@/components/shared/domain-summary-strip";
 import OperatorScopeStrip from "@/components/shared/operator-scope-strip";
 import { queryFreshness, queryHeaderStatus } from "@/components/shared/query-header-status";
 import {
-  QueryCompactEmptyState,
   QueryErrorState,
   QueryLoadingState,
   QueryRefreshingState,
@@ -18,10 +20,9 @@ import {
   createNoticeOverviewQuery,
   createNoticeResourceRowsQuery,
 } from "@/features/notice/notice-query";
-import type { NoticeResourceOperationRows } from "@/features/notice/notice-models";
+import type { NoticeResourceOperationRow } from "@/features/notice/notice-models";
 import { createResourceInventoryQuery } from "@/features/resource/resource-query";
 import { formatCount, formatNumber } from "@/shared/format";
-import { domainScopeHref, formatFitzRoute } from "@/shared/navigation/domains";
 import NoticeOperationPage from "./notice-operation";
 
 const noticeMetricColumns: readonly DomainResourceMetricColumn[] = [
@@ -149,59 +150,22 @@ function NoticeLandingPage() {
   );
 }
 
-function NoticeOperationList(props: { data: NoticeResourceOperationRows }) {
-  return (
-    <ItemGroup
-      as="ul"
-      aria-label="Notice operations"
-      class="domain-divided-list notice-operation-list"
-    >
-      <For each={props.data.operations} by={(row) => row.operation}>
-        {(row) => {
-          const route = row.operation.startsWith("notice://")
-            ? row.operation
-            : formatFitzRoute("notice", {
-                area: props.data.area,
-                operation: row.operation,
-                realm: props.data.realm,
-                resource: props.data.resource,
-              });
-
-          return (
-            <Item as="li">
-              <ItemContent>
-                <ItemTitle>
-                  <Link
-                    class="domain-link-cell notice-operation-link"
-                    href={domainScopeHref("notice", {
-                      area: props.data.area,
-                      realm: props.data.realm,
-                      resource: props.data.resource,
-                      operation: row.operation,
-                    })}
-                    title={route}
-                  >
-                    {route}
-                  </Link>
-                </ItemTitle>
-                <dl class="domain-operation-metrics">
-                  <div>
-                    <dt>Active subscribers</dt>
-                    <dd>{formatNumber(row.activeSubscribers)}</dd>
-                  </div>
-                  <div>
-                    <dt>Publishes / min</dt>
-                    <dd>{formatNumber(row.rollingMessageCount)}</dd>
-                  </div>
-                </dl>
-              </ItemContent>
-            </Item>
-          );
-        }}
-      </For>
-    </ItemGroup>
-  );
-}
+const noticeOperationColumns: readonly DomainOperationMetricColumn<NoticeResourceOperationRow>[] = [
+  {
+    id: "subscriptions",
+    header: "Subscriptions",
+    width: "16%",
+    cell: (row) => formatNumber(row.activeSubscribers),
+    sortValue: (row) => row.activeSubscribers,
+  },
+  {
+    id: "publishes",
+    header: "Publishes / min",
+    width: "16%",
+    cell: (row) => row.rollingMessageCount.toFixed(2),
+    sortValue: (row) => row.rollingMessageCount,
+  },
+];
 
 function NoticeResourcePage(props: { realm: string; area: string; resource: string }) {
   const route = currentRoute();
@@ -270,21 +234,24 @@ function NoticeResourcePage(props: { realm: string; area: string; resource: stri
               <QueryRefreshingState description="Refreshing operation summary..." />
             </Show>
 
-            <DomainDataSection
-              id="notice-resource-operations"
+            <DomainSummaryStrip
+              id="notice-resource-rollup"
+              class="domain-inventory-summary"
+              items={[
+                { label: "Operations", value: formatNumber(data?.operations.length ?? 0) },
+                { label: "Subscriptions", value: formatNumber(totalSubscribers) },
+                { label: "Publishes / min", value: totalMessages.toFixed(2) },
+              ]}
+            />
+            <DomainOperationTable<NoticeResourceOperationRow>
+              domain="notice"
+              description="Live operation routes with active subscribers and route publish rates. Only routes with a current subscription are observable."
+              emptyDescription="No matching notice operations are currently visible."
+              metricColumns={noticeOperationColumns}
+              rows={data?.operations ?? []}
+              scope={{ area: props.area, realm: props.realm, resource: props.resource }}
               title="Notice operations"
-              description="Live operation routes with active subscribers and route publish rates."
-            >
-              <Show
-                when={data && data.operations.length === 0}
-                fallback={data ? <NoticeOperationList data={data} /> : null}
-              >
-                <QueryCompactEmptyState
-                  title="No operations"
-                  description="No matching notice operations are currently visible."
-                />
-              </Show>
-            </DomainDataSection>
+            />
           </Block>
         </Show>
       </Block>

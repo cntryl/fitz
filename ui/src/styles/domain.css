@@ -222,14 +222,15 @@
   gap: var(--ak-space-3, 0.75rem);
 }
 
+/* Scope rollups vary in length by domain, so an orphan on the last row keeps its
+   column width instead of stretching across the strip. */
 .domain-summary-items {
-  display: flex;
-  flex-flow: row wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
   gap: var(--ak-space-3, 0.75rem);
 }
 
 .domain-summary-item {
-  flex: 1 1 13rem;
   gap: var(--ak-space-3, 0.75rem);
   padding-block: var(--ak-space-4, 1rem);
 }
@@ -240,32 +241,6 @@
 
 .domain-summary-item [data-slot="stat"] {
   gap: var(--ak-space-1, 0.25rem);
-}
-
-.domain-operation-metrics {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--ak-space-2, 0.5rem) var(--ak-space-5, 1.25rem);
-  margin: var(--ak-space-2, 0.5rem) 0 0;
-}
-
-.domain-operation-metrics > div {
-  display: grid;
-  grid-template-columns: auto auto;
-  gap: var(--ak-space-1, 0.25rem);
-  align-items: baseline;
-}
-
-.domain-operation-metrics dt {
-  color: var(--ak-color-text-muted, var(--ak-color-text, CanvasText));
-  font-size: var(--ak-font-size-sm, 0.875rem);
-}
-
-.domain-operation-metrics dd {
-  margin: 0;
-  font-family: var(--ak-font-family-mono, monospace);
-  font-size: var(--ak-font-size-sm, 0.875rem);
-  font-variant-numeric: tabular-nums;
 }
 
 .domain-divided-list {
@@ -904,8 +879,8 @@
     width: 100%;
   }
 
-  .domain-inventory-summary .domain-summary-item {
-    flex-basis: 100%;
+  .domain-inventory-summary .domain-summary-items {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .schedule-evidence-metadata dl {

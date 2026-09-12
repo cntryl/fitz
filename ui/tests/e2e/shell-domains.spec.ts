@@ -62,10 +62,13 @@ test("captures a domain inventory page", async ({ page }, testInfo) => {
   await expect(page.getByRole("heading", { name: /Queue inventory/ })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Realms" })).toBeVisible();
   await expect(page.getByRole("table", { name: "Realms" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "default" })).toHaveAttribute(
+  // Every drilldown tier names its rows with the fully-qualified Fitz route.
+  await expect(page.getByRole("link", { name: "queue://default" })).toHaveAttribute(
     "href",
     "/admin/1/queue/default",
   );
+  await expect(page.getByRole("columnheader", { name: "Areas" })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: /Dead-lettered/ })).toBeVisible();
   await page.screenshot({
     fullPage: true,
     path: testInfo.outputPath("queue-inventory.png"),
@@ -164,9 +167,10 @@ test("navigates notice scope drill-down links to operation detail", async ({ pag
   await page.locator('a[href="/admin/1/notice/default/default/primary"]').click();
   await expect(page).toHaveURL("/admin/1/notice/default/default/primary");
   await expect(page.getByRole("heading", { level: 1, name: "primary" })).toBeVisible();
-  const operations = page.getByRole("list", { name: "Notice operations" });
-  await expect(operations.getByRole("listitem")).toHaveCount(2);
-  await expect(page.locator("#notice-resource-operations table")).toHaveCount(0);
+  const operations = page.getByRole("table", { name: "Notice operations" });
+  await expect(operations).toBeVisible();
+  await expect(operations.getByRole("row")).toHaveCount(3);
+  await expect(page.getByRole("columnheader", { name: /Subscriptions/ })).toBeVisible();
   await page.locator('a[href="/admin/1/notice/default/default/primary/GetStatus"]').click();
   await expect(page).toHaveURL("/admin/1/notice/default/default/primary/GetStatus");
   await expect(page.getByRole("heading", { level: 1, name: "GetStatus" })).toBeVisible();
@@ -211,14 +215,21 @@ test("navigates schedule scope drill-down links to resource detail", async ({ pa
   await expect(page.getByRole("heading", { name: /Schedule inventory/ })).toBeVisible();
   await page.locator('a[href="/admin/1/schedule/default"]').click();
   await page.locator('a[href="/admin/1/schedule/default/default"]').click();
-  await expect(page.getByRole("columnheader", { name: "Pending claims" })).not.toBeVisible();
-  await expect(page.getByRole("columnheader", { name: "Next run" })).not.toBeVisible();
+  // Schedule reports these per resource, so its inventory carries them like every
+  // other domain rather than rendering a bare route list.
+  await expect(page.getByRole("columnheader", { name: /Pending claims/ })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: /Next run/ })).toBeVisible();
   await page.locator('a[href="/admin/1/schedule/default/default/primary"]').click();
   await expect(page).toHaveURL("/admin/1/schedule/default/default/primary");
   await expect(page.getByRole("heading", { level: 1, name: "primary" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Individual schedules" })).toBeVisible();
-  const schedules = page.getByRole("list", { name: "Individual schedules" });
-  await expect(schedules.getByRole("listitem")).toHaveCount(2);
+  const schedules = page.getByRole("table", { name: "Individual schedules" });
+  await expect(schedules).toBeVisible();
+  await expect(schedules.getByRole("row")).toHaveCount(3);
+  await expect(page.getByRole("columnheader", { name: /Next run/ })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: /Pending/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Durable timing intent" })).toBeVisible();
+  // Single-schedule detail and the run action stay on the operation tier.
   await expect(page.getByRole("heading", { name: "Schedule timing" })).not.toBeVisible();
   await expect(page.getByRole("button", { name: "Run now" })).not.toBeVisible();
 

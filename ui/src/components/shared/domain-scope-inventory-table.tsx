@@ -1,107 +1,82 @@
-import { For, Show } from "@askrjs/askr/control";
-import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@askrjs/ui";
+import { navigate } from "@askrjs/askr/router";
+import DomainDrilldownTable from "./domain-drilldown-table";
+import { areaRollupRows, realmRollupRows, type DomainScopeRow } from "./domain-inventory-rollup";
 import type {
-  DomainResourceInventoryArea,
-  DomainResourceInventoryRealm,
+  DomainResourceInventory,
+  DomainResourceInventoryRow,
+  DomainResourceMetricColumn,
 } from "./domain-resource-inventory-table";
-import { QueryCompactEmptyState } from "./query-state";
 import { formatNumber } from "@/shared/format";
-import { domainScopeHref, type DomainSegment } from "@/shared/navigation/domains";
+import { domainScopeHref, formatFitzRoute, type DomainSegment } from "@/shared/navigation/domains";
 
-interface DomainScopeInventoryTableProps {
-  areas?: readonly DomainResourceInventoryArea[];
+const ROLLUP_DESCRIPTION =
+  "Counts and rates are summed across the scope; latency, age, and next-run columns show the extreme value any one resource reported.";
+
+export interface DomainScopeInventoryTableProps {
   domain: DomainSegment;
   emptyDescription: string;
-  realms?: readonly DomainResourceInventoryRealm[];
+  metricColumns?: readonly DomainResourceMetricColumn[];
+  inventory?: DomainResourceInventory | null;
+  onSearchChange: (value: string) => void;
   realm?: string;
+  rows: readonly DomainResourceInventoryRow[];
+  searchValue: string;
 }
 
-function resourceCount(area: DomainResourceInventoryArea) {
-  return area.resourceEntries?.length || area.resources.length;
+function countColumn(
+  id: string,
+  header: string,
+  value: (row: DomainScopeRow) => number | undefined,
+): DomainResourceMetricColumn {
+  return {
+    id,
+    header,
+    width: "10%",
+    cell: (row) => formatNumber(value(row as DomainScopeRow) ?? 0),
+    sortValue: (row) => value(row as DomainScopeRow),
+  };
 }
 
 export default function DomainScopeInventoryTable({
-  areas = [],
   domain,
   emptyDescription,
-  realms = [],
+  metricColumns = [],
+  inventory,
+  onSearchChange,
   realm,
+  rows,
+  searchValue,
 }: DomainScopeInventoryTableProps) {
   const showingAreas = realm !== undefined;
-  const rows = showingAreas ? areas : realms;
-  const title = showingAreas ? "Areas" : "Realms";
+  const realmInventory = inventory?.realms.find((entry) => entry.realm === realm);
+  const scopeRows = showingAreas
+    ? areaRollupRows(rows, realmInventory?.areas, realm)
+    : realmRollupRows(rows, inventory?.realms);
+  const structuralColumns = showingAreas
+    ? [countColumn("resources", "Resources", (row) => row.resourceCount)]
+    : [
+        countColumn("areas", "Areas", (row) => row.areaCount),
+        countColumn("resources", "Resources", (row) => row.resourceCount),
+      ];
+  const scopeHref = (row: DomainScopeRow) =>
+    domainScopeHref(domain, { area: row.area, realm: row.realm });
 
   return (
-    <section class="domain-section domain-scope-inventory" aria-labelledby={`${domain}-inventory`}>
-      <div class="domain-section-header">
-        <div>
-          <h2 id={`${domain}-inventory`}>{title}</h2>
-          <p>Select {showingAreas ? "an area" : "a realm"} to continue the drilldown.</p>
-        </div>
-        <span role="status">{formatNumber(rows.length)} visible</span>
-      </div>
-
-      <Show
-        when={rows.length > 0}
-        fallback={<QueryCompactEmptyState description={emptyDescription} />}
-      >
-        <div class="domain-table-wrap">
-          <Table aria-label={title}>
-            <TableHead>
-              <TableRow>
-                <TableHeaderCell>{showingAreas ? "Area" : "Realm"}</TableHeaderCell>
-                {showingAreas ? null : <TableHeaderCell>Areas</TableHeaderCell>}
-                <TableHeaderCell>Resources</TableHeaderCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              <Show
-                when={showingAreas}
-                fallback={
-                  <For each={realms as DomainResourceInventoryRealm[]} by={(item) => item.realm}>
-                    {(item) => {
-                      const href = domainScopeHref(domain, { realm: item.realm });
-
-                      return (
-                        <TableRow>
-                          <TableCell>
-                            <a class="domain-link-cell" href={href}>
-                              {item.realm}
-                            </a>
-                          </TableCell>
-                          <TableCell>{formatNumber(item.areas.length)}</TableCell>
-                          <TableCell>
-                            {formatNumber(
-                              item.areas.reduce((total, area) => total + resourceCount(area), 0),
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    }}
-                  </For>
-                }
-              >
-                <For each={areas as DomainResourceInventoryArea[]} by={(area) => area.area}>
-                  {(area) => {
-                    const href = domainScopeHref(domain, { realm, area: area.area });
-
-                    return (
-                      <TableRow>
-                        <TableCell>
-                          <a class="domain-link-cell" href={href}>
-                            {area.area}
-                          </a>
-                        </TableCell>
-                        <TableCell>{formatNumber(resourceCount(area))}</TableCell>
-                      </TableRow>
-                    );
-                  }}
-                </For>
-              </Show>
-            </TableBody>
-          </Table>
-        </div>
-      </Show>
-    </section>
+    <DomainDrilldownTable<DomainScopeRow>
+      description={metricColumns.length > 0 ? ROLLUP_DESCRIPTION : undefined}
+      emptyDescription={emptyDescription}
+      id={`${domain}-inventory`}
+      metricColumns={[...structuralColumns, ...metricColumns]}
+      onRowOpen={(row) => navigate(scopeHref(row))}
+      onSearchChange={onSearchChange}
+      primaryHeader="Route"
+      primaryText={(row) => formatFitzRoute(domain, { area: row.area, realm: row.realm })}
+      rowHref={scopeHref}
+      rowKey={(row) => `${row.realm}:${row.area ?? ""}`}
+      rows={scopeRows}
+      searchLabel={showingAreas ? "Search areas" : "Search realms"}
+      searchValue={searchValue}
+      title={showingAreas ? "Areas" : "Realms"}
+    />
   );
 }

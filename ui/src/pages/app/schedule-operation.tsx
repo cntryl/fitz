@@ -9,7 +9,6 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-  Stack,
 } from "@askrjs/themes/components";
 import type { ScheduleMissedObservation, ScheduleRunNowResponse } from "@/adapters";
 import DomainHeader from "@/components/shared/domain-header";
@@ -121,7 +120,7 @@ export default function ScheduleOperationPage() {
 
   return (
     <DomainPageFrame>
-      <Stack gap="3">
+      <Block direction="column" gap="sm">
         <DomainHeader
           eyebrow="Schedule"
           title={operation}
@@ -173,7 +172,7 @@ export default function ScheduleOperationPage() {
         </Show>
 
         <Show when={data}>
-          <Stack gap="3">
+          <Block direction="column" gap="sm">
             <Show when={query.refreshing}>
               <QueryRefreshingState description="Refreshing schedule..." />
             </Show>
@@ -220,7 +219,7 @@ export default function ScheduleOperationPage() {
                 <MissedRows rows={missedRows} />
               </CardContent>
             </Card>
-          </Stack>
+          </Block>
         </Show>
         <ScheduleRunNowDialog
           open={runNowOpen()}
@@ -232,7 +231,7 @@ export default function ScheduleOperationPage() {
           }}
           onRunAction={runNow}
         />
-      </Stack>
+      </Block>
     </DomainPageFrame>
   );
 }

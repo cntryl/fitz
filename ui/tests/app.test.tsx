@@ -4,7 +4,6 @@ import App from "@/pages/app/_layout";
 import DomainHeader from "@/components/shared/domain-header";
 import DomainIndex from "@/components/shared/domain-index";
 import DomainMetricTable from "@/components/shared/domain-metric-table";
-import DomainRealmTable from "@/components/shared/domain-realm-table";
 import SessionTable from "@/components/shared/session-table";
 import QueueDeadLetterTable from "@/components/shared/queue-dead-letter-table";
 import Home from "@/pages/app/home";
@@ -108,8 +107,6 @@ describe("Admin UI", () => {
     expect(typeof DomainIndex).toBe("function");
     expect(DomainMetricTable).toBeDefined();
     expect(typeof DomainMetricTable).toBe("function");
-    expect(DomainRealmTable).toBeDefined();
-    expect(typeof DomainRealmTable).toBe("function");
     expect(Section).toBeDefined();
     expect(typeof Section).toBe("function");
     expect(Card).toBeDefined();
