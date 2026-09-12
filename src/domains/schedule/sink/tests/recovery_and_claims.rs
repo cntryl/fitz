@@ -40,6 +40,11 @@ fn should_ack_broadcast_given_no_subscribers() {
 
     // Assert
     assert_eq!(initial_sink.pending_ack_retry_count(), 0);
+    assert_eq!(
+        initial_sink.notify_failure_count(),
+        0,
+        "a fire with no matching subscriber attempts no handoff, so none failed"
+    );
 }
 
 #[test]
