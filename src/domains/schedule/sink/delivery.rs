@@ -145,15 +145,6 @@ impl ScheduleDomainRuntime<'_> {
             let handoffs =
                 self.handle_schedule_publish_with_counts(family, &route, delivery_mode, &payload);
             had_live_handoffs |= handoffs.accepted_handoffs > 0;
-            // Only handoffs the router rejected are failures. A fire with no
-            // matching live registration attempts none and is a normal outcome.
-            let rejected = handoffs
-                .attempted_handoffs
-                .saturating_sub(handoffs.accepted_handoffs);
-            self.core.live_publish_failures = self
-                .core
-                .live_publish_failures
-                .saturating_add(u64::try_from(rejected).unwrap_or(u64::MAX));
             ack_retry_candidates
                 .entry(family)
                 .or_default()
@@ -389,6 +380,9 @@ impl ScheduleDomainRuntime<'_> {
             state
                 .round_robin_cursors
                 .insert(route.to_string(), (cursor + 1) % subscription_ids.len());
+        }
+        if attempted_handoffs > 0 && accepted_handoffs == 0 {
+            self.core.live_publish_failures = self.core.live_publish_failures.saturating_add(1);
         }
         ScheduleRunNowResult {
             delivery_mode,

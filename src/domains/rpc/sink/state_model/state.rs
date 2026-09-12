@@ -2,16 +2,16 @@ use super::{
     BinaryHeap, ExpiringPendingRequest, FxBuildHasher, HashMap, HashSet, Instant,
     RegistrationTable, Route, RouteAddress, RouteFamily, RouteReadyQueue, RpcCorrelationKey,
     RpcFastMap, RpcPendingDispatchInfo, RpcPendingErrorDelivery, RpcPendingRequest,
-    RpcPendingRequestInit, RpcPendingTable, RpcPendingTimeoutResult, RpcQueuedDispatch,
-    RpcQueuedRequest, RpcRegistrationId, RpcRequestDispatch, RpcRequestRejection, RpcRouteState,
-    RpcSessionCleanupResult, RpcWorker, RpcWorkerCleanupResult, RpcWorkerDispatch, RpcWorkerKey,
+    RpcPendingTable, RpcPendingTimeoutResult, RpcQueuedRequest, RpcRegistrationId,
+    RpcRequestDispatch, RpcRequestRejection, RpcRouteState, RpcSessionCleanupResult, RpcWorker,
+    RpcWorkerCleanupResult, RpcWorkerDispatch, RpcWorkerKey,
 };
 
 /// Coordinates registration, route fairness, and pending-request collaborators.
 pub(in crate::domains::rpc::sink) struct RpcState {
     pub(in crate::domains::rpc::sink) routes: RpcFastMap<(RouteFamily, Route), RpcRouteState>,
     pub(in crate::domains::rpc::sink) registrations: RegistrationTable,
-    ready_routes: RouteReadyQueue,
+    pub(super) ready_routes: RouteReadyQueue,
     next_route_sequence: u64,
     pub(in crate::domains::rpc::sink) pending: RpcPendingTable,
     pub(in crate::domains::rpc::sink) queued: RpcFastMap<RpcCorrelationKey, RpcQueuedRequest>,
@@ -319,7 +319,7 @@ impl RpcState {
     }
 
     /// Claims one registration credit and advances fairness only after selection.
-    fn claim_registration(
+    pub(super) fn claim_registration(
         &mut self,
         family: RouteFamily,
         route: &Route,
@@ -364,7 +364,7 @@ impl RpcState {
         (!was_available && registration.is_available()).then_some(*registration.addr.family())
     }
 
-    fn mark_route_ready_if_eligible(&mut self, family: RouteFamily, route: &Route) {
+    pub(super) fn mark_route_ready_if_eligible(&mut self, family: RouteFamily, route: &Route) {
         let eligible = self
             .routes
             .get(&(family, route.clone()))
@@ -740,92 +740,6 @@ impl RpcState {
         self.mark_route_ready_if_eligible(family, &route);
         self.prune_route_if_unused(family, &route);
         Some(queued)
-    }
-
-    pub(in crate::domains::rpc::sink) fn next_ready_dispatch_for_family(
-        &mut self,
-        family: RouteFamily,
-    ) -> Option<RpcQueuedDispatch> {
-        // A queued route whose shared credit is exhausted keeps its place and
-        // its ready mark. Dropping it would let routes re-marked later in
-        // first-seen order take every freed credit and starve it.
-        let mut blocked_routes = Vec::new();
-        let dispatch = loop {
-            let Some(route) = self.ready_routes.pop(family) else {
-                break None;
-            };
-            let has_queued_requests = self
-                .routes
-                .get(&(family, route.clone()))
-                .is_some_and(RpcRouteState::has_queued_requests);
-            if !has_queued_requests {
-                if let Some(route_state) = self.routes.get_mut(&(family, route.clone())) {
-                    route_state.clear_ready();
-                }
-                continue;
-            }
-            if let Some(dispatch) = self.dispatch_queued_route(family, &route) {
-                break Some(dispatch);
-            }
-            blocked_routes.push(route);
-        };
-        for route in blocked_routes.into_iter().rev() {
-            self.ready_routes.push_front(family, route);
-        }
-        dispatch
-    }
-
-    /// Dispatches the oldest queued request on a ready route that has queued
-    /// work, or returns `None` when no matching registration has credit.
-    fn dispatch_queued_route(
-        &mut self,
-        family: RouteFamily,
-        route: &Route,
-    ) -> Option<RpcQueuedDispatch> {
-        let registration = self.claim_registration(family, route)?;
-        if let Some(route_state) = self.routes.get_mut(&(family, route.clone())) {
-            route_state.clear_ready();
-        }
-        let correlation_id = self
-            .routes
-            .get_mut(&(family, route.clone()))?
-            .pop_queued_request()
-            .expect("queued RPC correlation id for dispatch");
-        let queued = self
-            .queued
-            .remove(&RpcCorrelationKey {
-                family,
-                correlation_id,
-            })
-            .expect("queued RPC request for dispatch");
-        let RpcQueuedRequest {
-            request,
-            caller_session_id,
-            caller_inbox_addr,
-            submitted_at,
-            submitted_at_instant,
-            expires_at,
-        } = queued;
-        let pending = RpcPendingRequest::new(RpcPendingRequestInit {
-            route: request.route.clone(),
-            caller_session_id,
-            caller_inbox_addr,
-            registration_addr: registration.addr.clone(),
-            registration_session_id: registration.session_id,
-            registration_id: registration.registration_id,
-            submitted_at,
-            submitted_at_instant,
-            expires_at,
-        });
-        self.pending
-            .track_pending_for_family(family, correlation_id, pending);
-        self.mark_route_ready_if_eligible(family, route);
-
-        Some(RpcQueuedDispatch {
-            request,
-            registration,
-            live_request_count: self.live_request_count(),
-        })
     }
 
     pub(in crate::domains::rpc::sink) fn remove_pending_request_for_family(

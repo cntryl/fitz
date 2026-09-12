@@ -534,6 +534,15 @@ fn should_count_live_publish_failure_given_domain_routing_error() {
             subscriber: RouteAddress::new(family, Route::new("inbox://session/unregistered")),
         },
     );
+    subscriptions.insert(
+        family,
+        super::super::model::ScheduleSubscription {
+            pattern: crate::runtime::matcher::Pattern::new(schedule_route),
+            session_id: 8,
+            subscription_id: 2,
+            subscriber: RouteAddress::new(family, Route::new("inbox://session/also-unregistered")),
+        },
+    );
     sink.insert_subscriptions_for_tests(family, subscriptions);
 
     assert_eq!(sink.notify_failure_count(), 0, "no failures before scan");
@@ -553,4 +562,101 @@ fn should_count_live_publish_failure_given_domain_routing_error() {
         0,
         "ack failure counter must remain zero when the publish itself failed"
     );
+}
+
+#[test]
+fn should_not_count_rejected_single_candidate_when_a_later_candidate_accepts() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let schedule_route = "schedule://acme/jobs/nightly/run";
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let router = Arc::new(Router::new());
+    let live_address = RouteAddress::new(family, Route::new("inbox://session/live"));
+    let live_mailbox = Arc::new(Mailbox::new(8));
+    router.register(live_address.clone(), live_mailbox.clone());
+    let sink = ScheduleDomain::new(
+        crate::domains::schedule::ScheduleStore::new(store.clone()),
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+    let mut actor = crate::domains::schedule::ScheduleActor::new(
+        family,
+        crate::domains::schedule::ScheduleStore::new(store),
+        crate::domains::WritePolicy::Buffered,
+    );
+    actor
+        .create_schedule_with_mode(
+            schedule_route.to_string(),
+            "* * * * *".to_string(),
+            crate::domains::schedule::ScheduleDeliveryMode::Single,
+            Bytes::from_static(b"nightly"),
+        )
+        .expect("create single-delivery schedule");
+    actor.bench_prepare_scan(1);
+    sink.insert_actor_for_tests(family, actor);
+    let mut subscriptions = super::super::model::ScheduleSubscriptionSet::new();
+    for (subscription_id, session_id, subscriber) in [
+        (
+            1,
+            7,
+            RouteAddress::new(family, Route::new("inbox://session/stale")),
+        ),
+        (2, 8, live_address),
+    ] {
+        subscriptions.insert(
+            family,
+            super::super::model::ScheduleSubscription {
+                pattern: crate::runtime::matcher::Pattern::new(schedule_route),
+                session_id,
+                subscription_id,
+                subscriber,
+            },
+        );
+    }
+    sink.insert_subscriptions_for_tests(family, subscriptions);
+    sink.set_round_robin_cursor_for_tests(family, schedule_route, 0);
+
+    // Act
+    sink.scan_due_schedules();
+    let notification = receive_envelope(&live_mailbox, "accepted single-delivery handoff");
+
+    // Assert
+    assert!(notification.payload::<FrameContext>().is_some());
+    assert_eq!(sink.notify_failure_count(), 0);
+}
+
+#[test]
+fn should_count_failed_domain_publish_once_when_no_matching_handoff_accepts() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let schedule_route = "schedule://acme/jobs/orphan/run";
+    let router = Arc::new(Router::new());
+    let sink = ScheduleDomain::new(
+        crate::domains::schedule::ScheduleStore::new(crate::testkit::create_test_engine_with_cfs(
+            vec![1],
+        )),
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+    let mut subscriptions = super::super::model::ScheduleSubscriptionSet::new();
+    subscriptions.insert(
+        family,
+        super::super::model::ScheduleSubscription {
+            pattern: crate::runtime::matcher::Pattern::new(schedule_route),
+            session_id: 7,
+            subscription_id: 1,
+            subscriber: RouteAddress::new(family, Route::new("inbox://session/stale")),
+        },
+    );
+    sink.insert_subscriptions_for_tests(family, subscriptions);
+
+    // Act
+    sink.bench_publish_event(&crate::runtime::DomainPublishEvent::new(
+        family,
+        Route::new(schedule_route),
+        Bytes::from_static(b"orphan"),
+    ));
+
+    // Assert
+    assert_eq!(sink.notify_failure_count(), 1);
 }

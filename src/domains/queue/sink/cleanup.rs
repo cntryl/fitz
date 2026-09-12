@@ -57,9 +57,7 @@ impl QueueFamilyState {
         }
 
         for (key, notification) in notifications {
-            self.route_queue_ready_notification(&key, notification);
-            let route = Self::queue_ready_route(&key);
-            self.wake_pending_reserves_for_route(key.family, &route, Instant::now());
+            self.notify_queue_ready_and_wake_reserves(&key, Some(notification), Instant::now());
         }
 
         tracing::debug!(

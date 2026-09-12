@@ -43,6 +43,11 @@ impl NoticeFamilyState {
         // wait on the family actor times out. Losing that race means the client
         // was already answered; a second frame would desynchronise its pipeline.
         if envelope.source().is_none() || !envelope.try_claim_reply() {
+            tracing::debug!(
+                domain = "notice",
+                session = meta.session_id,
+                "Suppressed Notice response after another terminal response won"
+            );
             return false;
         }
 

@@ -64,6 +64,24 @@ fn should_select_registration_through_dispatch_state_seam() {
 }
 
 #[test]
+fn should_not_claim_registration_when_direct_route_dispatch_has_no_queued_request() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let route = Route::new("rpc://bench/system/orders/create");
+    let mut state = RpcState::new();
+    register(&mut state, family, route.as_str(), 41, 1);
+    state.ensure_route_state(&route);
+
+    // Act
+    let dispatch = state.next_queued_dispatch(&route);
+    let registration = state.claim_registration_for_tests(family, &route);
+
+    // Assert
+    assert!(dispatch.is_none());
+    assert_eq!(registration.map(|worker| worker.session_id), Some(41));
+}
+
+#[test]
 fn should_evict_idle_routes_behind_wildcard_registration() {
     // Arrange
     let family = RouteFamily::new(1);
