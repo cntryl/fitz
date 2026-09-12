@@ -293,6 +293,55 @@ fn should_rotate_ready_routes_under_sustained_wildcard_traffic() {
     assert_eq!(routes, [route_a, route_b, route_a, route_b]);
 }
 
+/// Drains every dispatchable queued request, as the family runtime does after
+/// credit is released.
+fn drain_ready(state: &mut RpcState, family: RouteFamily) -> Vec<RpcQueuedDispatch> {
+    std::iter::from_fn(|| state.next_ready_dispatch_for_family(family)).collect()
+}
+
+#[test]
+fn should_rotate_routes_sharing_wildcard_credit_when_ready_routes_are_fully_drained() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let mut state = RpcState::new();
+    register(&mut state, family, "rpc://bench/system/*/*", 10, 1);
+    let blocker_id = uuid::Uuid::new_v4();
+    request(
+        &mut state,
+        family,
+        "rpc://bench/system/control/block",
+        1,
+        blocker_id,
+        Duration::from_secs(30),
+    );
+    let route_a = "rpc://bench/system/orders/create";
+    let route_b = "rpc://bench/system/invoices/send";
+    for (caller, route) in [(2, route_a), (3, route_a), (4, route_b), (5, route_b)] {
+        request(
+            &mut state,
+            family,
+            route,
+            caller,
+            uuid::Uuid::new_v4(),
+            Duration::from_secs(30),
+        );
+    }
+
+    // Act
+    remove_pending(&mut state, family, blocker_id);
+    let mut routes = Vec::new();
+    for _ in 0..4 {
+        let dispatched = drain_ready(&mut state, family);
+        assert_eq!(dispatched.len(), 1, "one credit dispatches one request");
+        let dispatch = &dispatched[0];
+        routes.push(dispatch.request.route.as_str().to_string());
+        remove_pending(&mut state, family, dispatch.request.correlation_id);
+    }
+
+    // Assert
+    assert_eq!(routes, [route_a, route_b, route_a, route_b]);
+}
+
 #[test]
 fn should_wake_queued_route_when_new_registration_adds_credit() {
     // Arrange

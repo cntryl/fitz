@@ -120,3 +120,41 @@ fn should_reject_notice_publish_when_decoded_family_differs_from_request() {
     assert_eq!(response.error.as_deref(), Some("route family mismatch"));
     assert_eq!(sink.subscription_family_count(), 0);
 }
+
+#[test]
+fn should_not_answer_or_keep_subscription_when_ingress_already_claimed_the_reply() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let source = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let destination = RouteAddress::new(family, Route::new("notice://inbound"));
+    let mailbox = Arc::new(Mailbox::new(8));
+    let router = Arc::new(Router::new());
+    router.register(source.clone(), mailbox.clone());
+    let sink = new_correctness_notice_sink(router);
+    let envelope = Envelope::from_route(
+        source,
+        destination,
+        FrameContext::new(
+            7,
+            ChannelId::Sub,
+            MessageType::new(501),
+            encode_notice_subscribe("notice://acme/app/*"),
+            family,
+        ),
+    );
+    assert!(
+        envelope.reply_claim().try_claim(),
+        "ingress answers the timed-out dispatch first"
+    );
+
+    // Act
+    sink.deliver(envelope)
+        .expect("deliver notice subscribe after ingress timeout");
+
+    // Assert
+    assert!(
+        mailbox.receiver().try_recv().is_err(),
+        "a request may emit only one terminal response"
+    );
+    assert_eq!(sink.subscription_family_count(), 0);
+}

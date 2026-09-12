@@ -39,6 +39,13 @@ impl NoticeFamilyState {
         response: &crate::domains::notice::NoticeResponse,
         request_started: Option<Instant>,
     ) -> bool {
+        // Ingress claims this request's one terminal response when its bounded
+        // wait on the family actor times out. Losing that race means the client
+        // was already answered; a second frame would desynchronise its pipeline.
+        if envelope.source().is_none() || !envelope.try_claim_reply() {
+            return false;
+        }
+
         #[cfg(test)]
         let response_ctx = {
             let mut payload_encoder =

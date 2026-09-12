@@ -39,8 +39,8 @@ impl DomainFrameDispatcher {
     ) -> IngressDecision {
         obs::counter_inc(obs::METRIC_INGRESS_DOMAIN_DISPATCH_TIMEOUTS);
         // Every domain whose `deliver` can time out must be able to win this
-        // race, not just Queue. Queue, Stream and RPC all block on an actor
-        // reply, so all three can have a terminal response in flight when the
+        // race, not just Queue. Queue, Stream, RPC and Notice all block on an
+        // actor reply, so each can have a terminal response in flight when the
         // dispatch deadline expires. Domains that never block simply never
         // contend for the claim, so taking it here is a no-op for them.
         if !reply_claim.try_claim() {

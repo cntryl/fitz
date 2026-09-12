@@ -16,6 +16,10 @@ impl RouteReadyQueue {
         self.by_family.entry(family).or_default().push_back(route);
     }
 
+    pub(in crate::domains::rpc::sink) fn push_front(&mut self, family: RouteFamily, route: Route) {
+        self.by_family.entry(family).or_default().push_front(route);
+    }
+
     pub(in crate::domains::rpc::sink) fn clear(&mut self, family: RouteFamily) {
         if let Some(routes) = self.by_family.get_mut(&family) {
             routes.clear();

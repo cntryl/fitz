@@ -2,9 +2,7 @@
 all-features = true
 
 [advisories]
-ignore = [
-    { id = "RUSTSEC-2023-0071", reason = "Transitive through cntryl-midge cloud-gcp for GCS service-account signing; no patched rsa release exists. Remove when Midge migrates to a fixed signing backend." },
-]
+ignore = []
 
 [licenses]
 allow = [
@@ -51,8 +49,4 @@ multiple-versions = "allow"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = [
-    "https://github.com/cntryl/lexkey-rs",
-    "https://github.com/cntryl/midge",
-    "https://github.com/cntryl/stress",
-]
+allow-git = []

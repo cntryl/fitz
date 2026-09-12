@@ -524,6 +524,17 @@ fn should_count_live_publish_failure_given_domain_routing_error() {
         .expect("create schedule");
     actor.bench_prepare_scan(1);
     sink.insert_actor_for_tests(family, actor);
+    let mut subscriptions = super::super::model::ScheduleSubscriptionSet::new();
+    subscriptions.insert(
+        family,
+        super::super::model::ScheduleSubscription {
+            pattern: crate::runtime::matcher::Pattern::new(schedule_route),
+            session_id: 7,
+            subscription_id: 1,
+            subscriber: RouteAddress::new(family, Route::new("inbox://session/unregistered")),
+        },
+    );
+    sink.insert_subscriptions_for_tests(family, subscriptions);
 
     assert_eq!(sink.notify_failure_count(), 0, "no failures before scan");
 

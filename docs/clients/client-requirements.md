@@ -158,8 +158,9 @@ The acceptance criteria in `client-acceptance-criteria.md` are the normative sou
 
 **REQ-API-005A (T0)** Schedule Create and CreateBatch MUST require a delivery
 mode (`broadcast` or `single`), encode it as `0` or `1` after cron, and decode
-the mode returned for every List entry. Clients MUST surface error `7008` for
-unknown modes. This is a clean wire upgrade with no legacy CREATE encoding.
+the mode returned for every List entry. Clients MUST surface the broker's
+rejection of an unknown mode; CREATE errors carry no numeric code on the wire
+(see Error Envelopes in `docs/clients/spec/lease-schedule.md`).
 
 **REQ-API-006 (T0)** `Schedule.ListBySelector` (filtered listing by selector pattern) MUST be exposed.
 

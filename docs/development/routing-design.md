@@ -111,6 +111,11 @@ All domains follow these validation rules:
 - Wildcards occupy an entire segment. `user*`, `**suffix`, and
   `prefix*tail` are invalid.
 - Routes and patterns are limited to 4 KiB and 64 non-empty path segments.
+- Routes and patterns must not contain control characters (Unicode `Cc`,
+  including `0x00`). Domain storage keys join segments with a raw `0x00`
+  separator, so a segment carrying one would alias another resource's keys.
+  The broker rejects such a route with the operation's existing invalid-route
+  or invalid-pattern error; clients are not required to pre-validate.
 - Concrete operations reject every wildcard, except for the legacy Stream
   `LAST`/metadata wildcard no-op described in Section 8.
 - Matching never crosses a `RouteFamily` boundary.
