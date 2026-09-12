@@ -395,7 +395,10 @@ fn should_not_classify_renewals_alone_as_lease_churn() {
     assert_eq!(snapshot.current_stage, "contention");
     assert_eq!(diagnosis_label, DiagnosisLabel::Contention);
     assert_eq!(snapshot.severity, DiagnosticSeverity::Low);
-    assert_eq!(snapshot.likely_bottleneck.as_deref(), Some("lease ownership"));
+    assert_eq!(
+        snapshot.likely_bottleneck.as_deref(),
+        Some("lease ownership")
+    );
     assert_eq!(snapshot.trend, DiagnosticTrend::Steady);
     assert!(snapshot
         .explanation_hints
