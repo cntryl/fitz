@@ -15,7 +15,7 @@
 | Type | Name    | Semantics |
 | ---: | ------- | --- |
 |  400 | ACQUIRE | Request exclusive ownership with optional wait |
-|  401 | RENEW   | Extend lease expiration by issuing new token |
+|  401 | RENEW   | Extend lease expiration; fencing token is unchanged |
 |  402 | RELEASE | Relinquish lease, grant to next waiter |
 |  403 | QUERY   | Inspect current holder and waiter count |
 |  407 | SUBSCRIBE | Register a live watch on an exact route or a wildcard selector |
@@ -74,13 +74,14 @@
 
 **Design Notes:**
 - `fencing_token` MUST match current holder; mismatch returns `Fenced` error
-- Issues new token on successful renewal
+- The fencing token is unchanged on successful renewal — it identifies the
+  current ownership epoch and advances only on a new ACQUIRE, never on RENEW
 - Fails if lease expired or held by different owner
 
 **Response (status=0, success):**
 ```
 [u8]     0 (status)
-[u64 BE] new_fencing_token
+[u64 BE] fencing_token
 ```
 
 **Response (status=1, error):**
@@ -364,7 +365,7 @@ event log.
 | `AlreadyHeld { token }` | Already own this lease (idempotent) | No-op; renew/release as needed |
 | `Queued { token }` | Waiting for lease in FIFO queue | Watch for async `Acquired` message from server |
 | `AlreadyQueued { token }` | Already waiting for same lease | No-op; continue waiting |
-| `Renewed { token }` | Lease TTL extended with new token | Use new token for future renew/release |
+| `Renewed { token }` | Lease TTL extended; token unchanged | Continue using the same token for future renew/release |
 | `Released` | Lease released successfully | Lease available; next waiter (if any) receives async `Acquired` |
 | `Status { owner, token, ttl_secs, pending }` | Lease holder & queue info | Read-only; useful for debugging |
 | `ListPage { items, next_cursor }` | One page of matching held leases | Read-only; call again with `next_cursor` if present, else the scan is complete |
@@ -567,15 +568,14 @@ response = client.lease_renew(
 )
 
 if response.type == "Renewed":
-    new_token = response.token
-    # Continue work; use new_token for next renew/release
+    # Token is unchanged by renewal; keep using the same token.
     perform_more_work()
     
     # Later, renew again or release
     client.lease_release(
         route="lease://prod/app/counter",
         owner_id="client-1",
-        fencing_token=new_token
+        fencing_token=token
     )
 elif response.type == "Fenced":
     print(f"Token mismatch; lease no longer ours (held by {response.current_holder})")
@@ -591,10 +591,10 @@ elif response.type == "Fenced":
 **Fencing Against Zombies:**
 - RENEW and RELEASE require matching `fencing_token`
 - Prevents stale holder (expired but still executing) from affecting current holder
-- Token changes on each RENEW, ensuring linear ordering
+- Token is stable across RENEW; it changes only on a new ACQUIRE (a new ownership epoch)
 
 **Linearizability:**
-- Each token change represents a serialization point
+- Each token change represents a new ownership epoch, not a renewal of the current one
 - Holders with newer tokens always supersede older tokens
 - Safe for strong consistency coordination
 
@@ -629,7 +629,7 @@ elif response.type == "Fenced":
 - Prevents stale commands from affecting current holder or leaked state
 - Clients MUST treat as cookie (no prediction, caching, or reuse)
 - Generated fresh at ACQUIRE time
-- Changes on each successful RENEW
+- Stable across successful RENEW; unchanged for the life of the ownership epoch
 - Restart resets the token lineage; tokens are not durable or cluster-wide
 - Validated by server on RENEW/RELEASE; mismatch → `Fenced` error
 
