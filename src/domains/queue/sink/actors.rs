@@ -386,6 +386,8 @@ impl QueueFamilyState {
             if let Some(notification) = notification {
                 self.route_queue_ready_notification(key, notification);
             }
+            let route = Self::queue_ready_route(key);
+            self.wake_pending_reserves_for_route(key.family, &route, Instant::now());
         }
 
         if created_actor && counts.total() == 0 {
