@@ -746,30 +746,46 @@ impl RpcState {
         &mut self,
         family: RouteFamily,
     ) -> Option<RpcQueuedDispatch> {
-        loop {
-            let route = self.ready_routes.pop(family)?;
-            if let Some(route_state) = self.routes.get_mut(&(family, route.clone())) {
-                route_state.clear_ready();
+        // A queued route whose shared credit is exhausted keeps its place and
+        // its ready mark. Dropping it would let routes re-marked later in
+        // first-seen order take every freed credit and starve it.
+        let mut blocked_routes = Vec::new();
+        let dispatch = loop {
+            let Some(route) = self.ready_routes.pop(family) else {
+                break None;
+            };
+            let has_queued_requests = self
+                .routes
+                .get(&(family, route.clone()))
+                .is_some_and(RpcRouteState::has_queued_requests);
+            if !has_queued_requests {
+                if let Some(route_state) = self.routes.get_mut(&(family, route.clone())) {
+                    route_state.clear_ready();
+                }
+                continue;
             }
             if let Some(dispatch) = self.dispatch_queued_route(family, &route) {
-                return Some(dispatch);
+                break Some(dispatch);
             }
+            blocked_routes.push(route);
+        };
+        for route in blocked_routes.into_iter().rev() {
+            self.ready_routes.push_front(family, route);
         }
+        dispatch
     }
 
+    /// Dispatches the oldest queued request on a ready route that has queued
+    /// work, or returns `None` when no matching registration has credit.
     fn dispatch_queued_route(
         &mut self,
         family: RouteFamily,
         route: &Route,
     ) -> Option<RpcQueuedDispatch> {
-        if !self
-            .routes
-            .get(&(family, route.clone()))?
-            .has_queued_requests()
-        {
-            return None;
-        }
         let registration = self.claim_registration(family, route)?;
+        if let Some(route_state) = self.routes.get_mut(&(family, route.clone())) {
+            route_state.clear_ready();
+        }
         let correlation_id = self
             .routes
             .get_mut(&(family, route.clone()))?
