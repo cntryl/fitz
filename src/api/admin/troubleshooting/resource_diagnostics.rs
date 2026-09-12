@@ -190,14 +190,11 @@ pub(crate) fn lease_resource_diagnostics(
         return DiagnosticSnapshot::healthy();
     }
 
-    let churn_pressure = renewals_total > 0;
-    let severity = if churn_pressure {
-        if renewals_total > active_leases {
-            DiagnosticSeverity::Medium
-        } else {
-            DiagnosticSeverity::Low
-        }
-    } else if active_leases > 1 {
+    // Renewals alone are not ownership churn: a lease renewed by its
+    // existing holder keeps the same owner and fencing token. Multiple
+    // concurrently active leases under the same resource grouping is the
+    // only contention signal available here.
+    let severity = if active_leases > 1 {
         DiagnosticSeverity::Medium
     } else {
         DiagnosticSeverity::Low
@@ -205,17 +202,13 @@ pub(crate) fn lease_resource_diagnostics(
 
     DiagnosticSnapshot::with_stage(DiagnosticSnapshotInput {
         current_stage: DiagnosisLabel::Contention,
-        trend: if churn_pressure {
+        trend: if active_leases > 1 {
             DiagnosticTrend::Growing
         } else {
             DiagnosticTrend::Steady
         },
         severity,
-        likely_bottleneck: Some(if churn_pressure {
-            "lease ownership churn".to_string()
-        } else {
-            "lease ownership".to_string()
-        }),
+        likely_bottleneck: Some("lease ownership".to_string()),
         last_changed_at: None,
         last_success_at: None,
         last_failure_at: None,

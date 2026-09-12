@@ -131,6 +131,11 @@ impl LeaseFamilyRuntime<'_> {
                 self.untrack_session_waiter(waiter.owner_session_id, key, waiter.queued_token);
                 self.track_session_lease(waiter.owner_session_id, key);
                 self.upsert_admin_lease(key, &state);
+                // A queued waiter is only created behind an existing holder
+                // (see handle_acquire), so a grant here always transfers the
+                // lease to a genuinely different owner: that is ownership
+                // churn.
+                self.counter_inc("fitz_lease_ownership_churn_total");
                 // A queued waiter just became the live holder: notify fleet
                 // observers before attempting delivery to the waiter itself,
                 // matching the immediate-acquisition notify in acquire.rs.

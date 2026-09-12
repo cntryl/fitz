@@ -660,7 +660,7 @@ elif response.type == "Fenced":
 - acquire with `wait_seconds>0` returns `Queued`, later receives `Acquired` when available
 - acquire with short `wait_seconds` receives `Timeout` if unavailable
 - multiple waiters receive `Acquired` in FIFO order as lease released
-- renew with valid token extends TTL and issues new token
+- renew with valid token extends TTL and returns the unchanged fencing token
 - renew with invalid token fails with `Fenced`
 - release with valid token releases, grants next waiter
 - release with invalid token fails with `Fenced`

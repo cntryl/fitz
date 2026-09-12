@@ -461,7 +461,7 @@ pub fn parse_lease_token_response(data: &[u8]) -> Result<u64, String> {
 ///
 /// Wire format:
 /// - data[0]: status (0 = success)
-/// - `data[1..9]`: `new_fencing_token` (`u64` big-endian)
+/// - `data[1..9]`: `fencing_token` (`u64` big-endian; current, unchanged token)
 ///
 /// # Errors
 /// Returns an error when the payload is shorter than 9 bytes or status is non-zero.

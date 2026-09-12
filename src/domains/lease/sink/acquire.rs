@@ -375,15 +375,15 @@ impl LeaseFamilyRuntime<'_> {
                     // between "still the same owner, renewed" and "superseded by a
                     // new acquirer", which defeats the purpose of the fencing check
                     // for clients that fail closed on any token change.
-                    let current_token = leases
-                        .get(key)
-                        .map(|state| state.fencing_token)
-                        .unwrap_or(fencing_token);
-                    if let Some(state) = leases.get_mut(key) {
+                    let current_token = if let Some(state) = leases.get_mut(key) {
                         state.expiry = expiry;
                         state.renewals = state.renewals.saturating_add(1);
+                        let token = state.fencing_token;
                         effects.updated = Some(state.clone());
-                    }
+                        token
+                    } else {
+                        fencing_token
+                    };
                     LeaseResponse::Extended {
                         fencing_token: current_token,
                     }
