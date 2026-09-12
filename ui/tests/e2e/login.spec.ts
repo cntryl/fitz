@@ -16,23 +16,25 @@ test("should_center_the_credential_form_in_the_full_viewport", async ({ page }) 
     const styles = getComputedStyle(element);
     return { inlineEnd: styles.paddingRight, inlineStart: styles.paddingLeft };
   });
-  const cardBounds = await page.locator('[data-slot="card"]').boundingBox();
+  const panelBounds = await page.locator(".auth-panel").boundingBox();
 
   // Assert
   expect(viewport).not.toBeNull();
   expect(pageBounds).not.toBeNull();
-  expect(cardBounds).not.toBeNull();
-  if (!viewport || !pageBounds || !cardBounds) return;
+  expect(panelBounds).not.toBeNull();
+  if (!viewport || !pageBounds || !panelBounds) return;
 
-  expect(pagePadding).toEqual({ inlineEnd: "40px", inlineStart: "40px" });
+  expect(pagePadding).toEqual({ inlineEnd: "24px", inlineStart: "24px" });
   expect(pageBounds.width).toBeGreaterThanOrEqual(viewport.width - 1);
   expect(pageBounds.height).toBeGreaterThanOrEqual(viewport.height - 1);
-  expect(cardBounds.width).toBe(384);
-  expect(Math.abs(cardBounds.x + cardBounds.width / 2 - viewport.width / 2)).toBeLessThanOrEqual(1);
-  expect(Math.abs(cardBounds.y + cardBounds.height / 2 - viewport.height / 2)).toBeLessThanOrEqual(
+  expect(panelBounds.width).toBe(384);
+  expect(Math.abs(panelBounds.x + panelBounds.width / 2 - viewport.width / 2)).toBeLessThanOrEqual(
     1,
   );
-  await expect(page.locator('[data-slot="card"] img.fitz-brand-logo')).toBeVisible();
+  expect(
+    Math.abs(panelBounds.y + panelBounds.height / 2 - viewport.height / 2),
+  ).toBeLessThanOrEqual(1);
+  await expect(page.locator(".auth-panel img.fitz-brand-logo")).toBeVisible();
   await expect(page.locator("header, footer")).toHaveCount(0);
 });
 
@@ -50,13 +52,13 @@ test("should_preserve_mobile_padding_around_the_login_card", async ({ page }) =>
     const styles = getComputedStyle(element);
     return { inlineEnd: styles.paddingRight, inlineStart: styles.paddingLeft };
   });
-  const cardBounds = await page.locator('[data-slot="card"]').boundingBox();
+  const panelBounds = await page.locator(".auth-panel").boundingBox();
 
   // Assert
-  expect(pagePadding).toEqual({ inlineEnd: "24px", inlineStart: "24px" });
-  expect(cardBounds).not.toBeNull();
-  expect(cardBounds?.x).toBe(24);
-  expect(cardBounds?.width).toBe(312);
+  expect(pagePadding).toEqual({ inlineEnd: "16px", inlineStart: "16px" });
+  expect(panelBounds).not.toBeNull();
+  expect(panelBounds?.x).toBe(16);
+  expect(panelBounds?.width).toBe(328);
 });
 
 test("renders truthful open-access state when authentication is disabled", async ({ page }) => {
@@ -68,7 +70,7 @@ test("renders truthful open-access state when authentication is disabled", async
   await expect(page.getByLabel("Username")).toHaveCount(0);
   await expect(page.getByLabel("Password")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Continue to Fitz Admin" })).toBeVisible();
-  await expect(page.locator('[data-slot="card"] img.fitz-brand-logo')).toBeVisible();
+  await expect(page.locator(".auth-panel img.fitz-brand-logo")).toBeVisible();
   await expect(page).toHaveTitle("Sign in · Fitz Admin");
   await expect(page.locator("main#main-content")).toBeFocused();
   await expect(page.locator("header, footer")).toHaveCount(0);
@@ -82,19 +84,21 @@ test("should_show_logout_progress_while_the_session_is_cleared", async ({ page }
   const viewport = page.viewportSize();
 
   // Act
-  const cardBounds = await page.locator('[data-slot="card"]').boundingBox();
+  const panelBounds = await page.locator(".auth-panel").boundingBox();
 
   // Assert
   expect(viewport).not.toBeNull();
-  expect(cardBounds).not.toBeNull();
-  if (!viewport || !cardBounds) return;
+  expect(panelBounds).not.toBeNull();
+  if (!viewport || !panelBounds) return;
 
-  expect(cardBounds.width).toBe(384);
-  expect(Math.abs(cardBounds.x + cardBounds.width / 2 - viewport.width / 2)).toBeLessThanOrEqual(1);
-  expect(Math.abs(cardBounds.y + cardBounds.height / 2 - viewport.height / 2)).toBeLessThanOrEqual(
+  expect(panelBounds.width).toBe(384);
+  expect(Math.abs(panelBounds.x + panelBounds.width / 2 - viewport.width / 2)).toBeLessThanOrEqual(
     1,
   );
-  await expect(page.locator('[data-slot="card"] img.fitz-brand-logo')).toBeVisible();
+  expect(
+    Math.abs(panelBounds.y + panelBounds.height / 2 - viewport.height / 2),
+  ).toBeLessThanOrEqual(1);
+  await expect(page.locator(".auth-panel img.fitz-brand-logo")).toBeVisible();
   await expect(page.getByText("Fitz Admin", { exact: true })).toBeVisible();
   await expect(page.getByText("Clearing your Fitz Admin session.")).toBeVisible();
   await expect(page.locator("header, footer")).toHaveCount(0);

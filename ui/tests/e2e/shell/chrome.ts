@@ -269,9 +269,9 @@ export async function expectRouteChrome(page: Page, route: RouteScenario) {
   await expect(contextNav).toHaveCount(0);
   await expect(page.locator("header, footer")).toHaveCount(0);
   await expect(page.locator("main#main-content.auth-page")).toBeVisible();
-  await expect(page.locator('[data-slot="card"]')).toBeVisible();
+  await expect(page.locator(".auth-panel")).toBeVisible();
 
-  await expect(page.locator('[data-slot="card"] img.fitz-brand-logo')).toBeVisible();
+  await expect(page.locator(".auth-panel img.fitz-brand-logo")).toBeVisible();
 }
 
 export const sprint16Routes: RouteScenario[] = [

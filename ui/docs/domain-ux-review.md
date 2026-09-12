@@ -4,25 +4,46 @@
 
 This review covers the admin shell context and the seven Fitz domain surfaces: KV, Queue, Stream, Lease, Notice, RPC, and Schedule. The implementation changes are UI-local and use existing generated endpoints.
 
-## Shared Standard
+## The Drilldown Contract
 
-- Overview pages answer domain posture with a `DomainHeader`, status badge, refresh action, snapshot metrics, loading/error/empty states, and drill-down tables.
-- Realm and area pages answer which scopes exist and preserve realm, area, resource, and route-family separation.
-- Resource and operation pages answer what an operator should inspect next, using scoped evidence that the backend actually reports for that row.
-- Copy distinguishes durable state from ephemeral/live state and avoids implying replay, recovery, crash-safe ownership, exactly-once delivery, or durable downstream execution where Fitz does not provide it.
+Realm, area, resource, and operation are one ladder, and every rung looks and behaves the same:
+
+- **One table component.** `DomainDrilldownTable` renders the children of the current scope at every tier. `DomainScopeInventoryTable` (realms, areas), `DomainResourceInventoryTable` (resources), and `DomainOperationTable` (operations) are thin adapters over it, not separate designs.
+- **One interaction contract.** Every tier has row-click navigation, a route search box bound to the `routeSearch` query param, and sortable metric headers. A tier never silently drops an affordance the tier above it had.
+- **One row identity.** The primary column is always headed `Route` and always shows the fully-qualified Fitz route for that row (`notice://realm`, `notice://realm/area`, `notice://realm/area/resource`, `notice://realm/area/resource/operation`).
+- **One page shape.** Breadcrumbs, `DomainHeader`, `OperatorScopeStrip`, a summary strip for the current scope, then the table of children.
+
+## Rollup Versus Detail
+
+Each tier summarises its own scope and tabulates its children's values:
+
+- **Domain root** shows broker-wide domain stats from the overview query, and a realm table whose rows roll up their realms.
+- **Realm and area** show a summary strip rolled up from the resources in scope, using the same metric columns the table renders. The strip and the rows are computed from one aggregation, so they cannot disagree.
+- **Resource** shows its own detail (KV rows, stream records, queue backlog, schedule definition) plus a rollup strip over its operations where the domain has them.
+- **Operation** shows single-route evidence and actions (`Run now`, dead-letter replay/purge, delivery and call evidence). Detail that belongs to exactly one route stays here and is not duplicated upward.
+
+Aggregation rules live in `domain-inventory-rollup.ts`: counts, sizes, and rates are summed; latency and age columns show the worst value any one resource reported; `next_run` shows the earliest. A field stays absent from a rollup unless a child reported it, so a domain that reports no row metrics still renders no metric columns. Every scope table states the rule in its section description rather than implying a scope-wide measurement the broker does not make.
 
 ## Domain Findings And Fixes
 
 - KV: The overview and inventory center current authoritative state. KV rows retain their real record, storage, transaction, and latency fields.
-- Queue: The overview frames Queue as durable work backlog with ready, delayed, inflight, and dead-letter pressure. Inventory rows show each queue's own ready, delayed, in-flight, dead-lettered, and oldest-backlog values.
-- Stream: The overview emphasizes durable history and replay lag. Inventory rows show routes only because no row-level metrics are reported by the inventory endpoint.
-- Lease: The overview and resource pages make ephemeral ownership, TTL, waiters, and non-crash-safe continuity explicit. Inventory rows show routes only.
-- Notice: The overview calls out live ephemeral fanout and disconnect/restart loss. Inventory rows show routes only.
-- RPC: Overview and resource copy now consistently says pending requests, live workers, and in-memory evidence, avoiding durable queue language.
-- Schedule: Overview and resource pages already distinguish durable timing intent from downstream delivery. Pending fire claims now describe persisted timing claims awaiting live handoff.
+- Queue: The overview frames Queue as durable work backlog with ready, delayed, inflight, and dead-letter pressure. Inventory rows show each queue's own ready, delayed, in-flight, dead-lettered, and oldest-backlog values, and realm and area rows roll those same columns up.
+- Stream: The overview emphasizes durable history and replay lag. Inventory rows show committed events, storage, and append sessions.
+- Lease: The overview and resource pages make ephemeral ownership, TTL, waiters, and non-crash-safe continuity explicit. Inventory rows show active leases, waiters, and oldest lease age.
+- Notice: The overview calls out live ephemeral fanout and disconnect/restart loss. Inventory rows show subscriptions, publish rate, and delivered counts, and the operation tier shows the same two metrics per route under the same labels.
+- RPC: Overview and resource copy consistently says pending requests, live workers, and in-memory evidence, avoiding durable queue language. The operation tier reuses the inventory tier's `Workers` / `Pending` / `Slowest avg ms` labels for the same quantities.
+- Schedule: Overview and resource pages distinguish durable timing intent from downstream delivery. Inventory rows show enabled definitions, pending claims, and next run. The resource tier shows its persisted definition plus a table of its schedules with status, cron, next run, last handoff, and pending handoffs.
+
+## Copy Rules
+
+- Distinguish durable state from ephemeral/live state, and avoid implying replay, recovery, crash-safe ownership, exactly-once delivery, or durable downstream execution where Fitz does not provide it.
+- Only RPC exposes an operation inventory endpoint. Notice and Schedule derive their operation lists from observation evidence, so an idle route does not appear; both tiers say so rather than presenting the list as a registry.
+- Label the same quantity the same way at every tier, and format it the same way. A rate rendered as `12.34` in an inventory column is not rendered as `12` one tier down, and a duration rendered as `3d` is not rendered as `72h`.
 
 ## Remaining Follow-Up Risks
 
 - Some visual screenshots are generated by Playwright only during e2e runs; keep the domain overview template suite current when new domain routes are added.
 - Queue and Lease comparison/history panels depend on broker-observed evidence. If backend APIs add durable history later, the UI copy should be revisited in the same change.
 - Schedule can show broker-observed execution counters at the domain level; it must continue to label them non-authoritative and not downstream execution history.
+- `getResourceInventory` walks realms, then every area, then every resource on each domain page load. The drilldown now consumes that whole tree for rollups, but a large Route Family will still want a server-side rollup endpoint rather than a client-side fan-out.
+- The only search that spans the whole hierarchy still lives on the Diagnostics page; per-tier search filters the current scope only.

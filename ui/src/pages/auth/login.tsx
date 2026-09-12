@@ -1,19 +1,7 @@
 import { state } from "@askrjs/askr";
 import { task } from "@askrjs/askr/resources";
 import { currentRoute, navigate } from "@askrjs/askr/router";
-import {
-  Alert,
-  Block,
-  Button,
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  Field,
-  Input,
-  Label,
-} from "@askrjs/themes/components";
+import { Alert, Block, Button, Field, Input, Label, PageHeader } from "@askrjs/themes/components";
 import AuthBrand from "@/components/shared/auth-brand";
 import { createSignInMutation } from "@/features/session/session-mutation";
 import { createCurrentSessionQuery } from "@/features/session/session-query";
@@ -58,18 +46,20 @@ export default function Login() {
   }
 
   return (
-    <Card variant="raised">
-      <CardHeader>
+    <Block direction="column" gap="xl">
+      <Block direction="column" gap="md">
         <AuthBrand />
-        <CardTitle titleAs="h1">{openAccess ? "Open access" : "Sign in to Fitz Admin"}</CardTitle>
-        <CardDescription>
-          {openAccess
-            ? "Admin authentication is disabled for this Fitz instance."
-            : "Sign in as root with the configured root password."}
-        </CardDescription>
-      </CardHeader>
+        <PageHeader
+          title={openAccess ? "Open access" : "Sign in to Fitz Admin"}
+          description={
+            openAccess
+              ? "Admin authentication is disabled for this Fitz instance."
+              : "Sign in as root with the configured root password."
+          }
+        />
+      </Block>
 
-      <CardContent>
+      <div>
         {openAccess ? (
           <Alert
             variant="info"
@@ -131,7 +121,7 @@ export default function Login() {
             </div>
           </Block>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </Block>
   );
 }

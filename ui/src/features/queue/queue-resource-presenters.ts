@@ -3,22 +3,16 @@ import type {
   QueueResourceRef,
   QueueResourceTimelineEvent,
 } from "@/features/queue/queue-resource-models";
+import { formatDurationSeconds } from "@/shared/format";
 
 export type QueueStateTone = "info" | "success" | "warning" | "danger";
 
+/**
+ * Shared with the queue inventory tier so the same backlog age never reads as
+ * "3d" in the resource table and "72h" on the resource page.
+ */
 export function humanizeSeconds(seconds: number) {
-  if (seconds < 60) {
-    return `${seconds}s`;
-  }
-
-  const minutes = Math.floor(seconds / 60);
-
-  if (minutes < 60) {
-    return `${minutes}m`;
-  }
-
-  const hours = Math.floor(minutes / 60);
-  return `${hours}h`;
+  return formatDurationSeconds(seconds);
 }
 
 export function formatRate(value: number) {
