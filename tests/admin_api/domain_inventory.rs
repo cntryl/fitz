@@ -805,7 +805,7 @@ async fn should_return_lease_detail_with_age_and_diagnostics() {
     assert_eq!(payload["diagnostics"]["current_stage"], "contention");
     assert_eq!(
         payload["diagnostics"]["likely_bottleneck"],
-        "lease ownership churn"
+        "lease ownership"
     );
     assert!(payload["diagnostics"]["explanation_hints"]
         .as_array()
