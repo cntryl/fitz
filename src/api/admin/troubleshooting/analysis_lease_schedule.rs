@@ -188,7 +188,11 @@ fn build_lease_hotspot(
         .filter_map(|lease| parse_rfc3339(&lease.expires_at))
         .map(|expires| seconds_to_u64((expires - now).num_seconds().max(0)))
         .min();
-    let churn_pressure = renewals > 0;
+    // Renewals alone are not ownership churn: a lease renewed by its
+    // existing holder keeps the same owner and fencing token, so
+    // `renewals` cannot be used as a churn/pressure signal here. Multiple
+    // concurrently active leases in this grouping is the only contention
+    // signal available in this context.
     let (label, trend, severity, bottleneck) =
         if remaining_seconds.unwrap_or(0) <= 30 && active_leases > 0 {
             (
@@ -200,21 +204,17 @@ fn build_lease_hotspot(
         } else if active_leases > 0 {
             (
                 DiagnosisLabel::Contention,
-                if churn_pressure {
+                if active_leases > 1 {
                     DiagnosticTrend::Growing
                 } else {
                     DiagnosticTrend::Steady
                 },
-                if churn_pressure {
+                if active_leases > 1 {
                     DiagnosticSeverity::Medium
                 } else {
                     DiagnosticSeverity::Low
                 },
-                Some(if churn_pressure {
-                    "lease ownership churn".to_string()
-                } else {
-                    "lease ownership".to_string()
-                }),
+                Some("lease ownership".to_string()),
             )
         } else {
             (

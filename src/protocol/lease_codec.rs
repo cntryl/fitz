@@ -5,7 +5,8 @@
 //!
 //! Wire format follows `CLIENT_SPEC`: ACQUIRE success includes `response_type`
 //! (0=Acquired, 1=AlreadyHeld, 2=Queued, 3=AlreadyQueued) + `fencing_token`;
-//! EXTEND success is `new_fencing_token`; RELEASE success is status only;
+//! EXTEND success is `fencing_token` (the lease's current, unchanged token;
+//! renewal does not rotate it); RELEASE success is status only;
 //! QUERY success is `has_holder` + optional holder details.
 //!
 //! `route_family` is a server-internal concept supplied by the session layer
@@ -196,7 +197,7 @@ pub fn extract_auth_route(msg_type: u16, payload: &[u8]) -> Result<Option<&str>,
 /// Encode domain `LeaseResponse` to wire bytes (`CLIENT_SPEC`).
 ///
 /// - ACQUIRE success: status=0, `response_type` (0–3), `fencing_token`
-/// - EXTEND success: status=0, `new_fencing_token`
+/// - EXTEND success: status=0, `fencing_token` (current, unchanged token)
 /// - RELEASE success: status=0
 /// - QUERY success (free): status=0, `has_holder=0`, `pending_waiters=0`
 /// - QUERY success (held): status=0, `has_holder=1`, `owner_id`, `ttl_remaining_secs`, `pending_waiters`

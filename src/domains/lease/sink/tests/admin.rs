@@ -221,7 +221,21 @@ fn should_track_admin_lease_renewals_given_extend() {
         ),
     ))
     .expect("extend lease");
-    let _extend_ack = receive_envelope(&subscriber_mailbox, "extend ack envelope");
+    let extend_ack = receive_envelope(&subscriber_mailbox, "extend ack envelope");
+    let extend_frame_ctx = extend_ack
+        .payload::<FrameContext>()
+        .cloned()
+        .expect("frame context");
+    let renewed_fencing_token = u64::from_be_bytes([
+        extend_frame_ctx.payload[1],
+        extend_frame_ctx.payload[2],
+        extend_frame_ctx.payload[3],
+        extend_frame_ctx.payload[4],
+        extend_frame_ctx.payload[5],
+        extend_frame_ctx.payload[6],
+        extend_frame_ctx.payload[7],
+        extend_frame_ctx.payload[8],
+    ]);
     wait_for_lease_count(&sink, 1);
     wait_for_admin_lease_count(&admin_read_model, 1);
     let leases = admin_read_model.leases(None);
@@ -230,4 +244,8 @@ fn should_track_admin_lease_renewals_given_extend() {
     assert_eq!(sink.lease_count(), 1);
     assert_eq!(leases.len(), 1);
     assert_eq!(leases[0].renewals, 1);
+    assert_eq!(
+        renewed_fencing_token, fencing_token,
+        "RENEW must keep the fencing token stable"
+    );
 }

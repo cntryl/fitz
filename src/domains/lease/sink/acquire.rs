@@ -27,7 +27,6 @@ enum LeaseAuthorization {
 struct LeaseEffects {
     updated: Option<SinkLeaseState>,
     removed: Option<SinkLeaseState>,
-    record_ownership_churn: bool,
 }
 
 fn authorize_owned_lease(
@@ -116,9 +115,6 @@ impl LeaseFamilyRuntime<'_> {
         effects: LeaseEffects,
     ) {
         if let Some(state) = effects.updated.as_ref() {
-            if effects.record_ownership_churn {
-                self.counter_inc("fitz_lease_ownership_churn_total");
-            }
             self.upsert_admin_lease(key, state);
         }
         if let Some(state) = effects.removed {
@@ -372,18 +368,24 @@ impl LeaseFamilyRuntime<'_> {
                     LeaseResponse::Fenced { current_token }
                 }
                 LeaseAuthorization::Authorized => {
-                    let Some(new_token) = Self::next_fencing_token(&self.core.next_token) else {
-                        return LeaseResponse::Error("fencing token space exhausted".to_string());
-                    };
-                    if let Some(state) = leases.get_mut(key) {
+                    // Renewal proves continued ownership; it must not mint a new
+                    // fencing token. The token identifies who currently holds the
+                    // lease and should only advance on a new acquisition, not on
+                    // every renewal. Rotating it here made "token changed" ambiguous
+                    // between "still the same owner, renewed" and "superseded by a
+                    // new acquirer", which defeats the purpose of the fencing check
+                    // for clients that fail closed on any token change.
+                    let current_token = if let Some(state) = leases.get_mut(key) {
                         state.expiry = expiry;
-                        state.fencing_token = new_token;
                         state.renewals = state.renewals.saturating_add(1);
+                        let token = state.fencing_token;
                         effects.updated = Some(state.clone());
-                        effects.record_ownership_churn = true;
-                    }
+                        token
+                    } else {
+                        fencing_token
+                    };
                     LeaseResponse::Extended {
-                        fencing_token: new_token,
+                        fencing_token: current_token,
                     }
                 }
             }

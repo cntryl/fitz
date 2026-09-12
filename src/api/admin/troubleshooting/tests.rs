@@ -383,8 +383,9 @@ fn should_classify_lease_contention() {
 }
 
 #[test]
-fn should_classify_lease_churn() {
-    // Arrange
+fn should_not_classify_renewals_alone_as_lease_churn() {
+    // Arrange: a single lease with renewals is normal renewal activity, not
+    // ownership churn — renewal keeps the same owner and fencing token.
     let snapshot = lease_resource_diagnostics(1, Some(120), 3);
 
     // Act
@@ -393,12 +394,9 @@ fn should_classify_lease_churn() {
     // Assert
     assert_eq!(snapshot.current_stage, "contention");
     assert_eq!(diagnosis_label, DiagnosisLabel::Contention);
-    assert_eq!(snapshot.severity, DiagnosticSeverity::Medium);
-    assert_eq!(
-        snapshot.likely_bottleneck.as_deref(),
-        Some("lease ownership churn")
-    );
-    assert_eq!(snapshot.trend, DiagnosticTrend::Growing);
+    assert_eq!(snapshot.severity, DiagnosticSeverity::Low);
+    assert_eq!(snapshot.likely_bottleneck.as_deref(), Some("lease ownership"));
+    assert_eq!(snapshot.trend, DiagnosticTrend::Steady);
     assert!(snapshot
         .explanation_hints
         .iter()
@@ -406,8 +404,9 @@ fn should_classify_lease_churn() {
 }
 
 #[test]
-fn should_rank_lease_hotspot_as_churn_when_renewals_present() {
-    // Arrange
+fn should_not_rank_lease_hotspot_as_churn_when_only_renewals_present() {
+    // Arrange: one actively renewed lease is not ownership churn — churn is
+    // a transfer to a genuinely different owner, not renewal by the holder.
     let now = Utc::now();
     let leases = vec![LeaseInfo {
         route_family: 1,
@@ -429,13 +428,10 @@ fn should_rank_lease_hotspot_as_churn_when_renewals_present() {
     assert_eq!(analysis.diagnostics.snapshot.current_stage, "contention");
     assert_eq!(
         hotspot.hotspot.snapshot.likely_bottleneck.as_deref(),
-        Some("lease ownership churn")
+        Some("lease ownership")
     );
-    assert_eq!(hotspot.hotspot.snapshot.trend, DiagnosticTrend::Growing);
-    assert_eq!(
-        hotspot.hotspot.snapshot.severity,
-        DiagnosticSeverity::Medium
-    );
+    assert_eq!(hotspot.hotspot.snapshot.trend, DiagnosticTrend::Steady);
+    assert_eq!(hotspot.hotspot.snapshot.severity, DiagnosticSeverity::Low);
 }
 
 #[test]
