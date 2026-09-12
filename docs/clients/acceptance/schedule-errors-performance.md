@@ -17,7 +17,7 @@
 **When:** Client sends `Create(cron="invalid syntax")`  
 **Then:**
 
-- Server returns error code `7002` (Invalid Cron)
+- Server returns a status=1 error; CREATE errors are uncoded, so the message identifies the invalid cron
 - Job is NOT created
 
 ### AC-SCHEDULE-003: Job Execution Notification via SCHEDULE_SUBSCRIBE / SCHEDULE_NOTIFY
@@ -362,6 +362,11 @@ Error codes follow the format `XXYY` where:
 | 7008 | ERR_INVALID_DELIVERY_MODE | Delivery mode is not broadcast (0) or single (1) | No |
 | 7009 | ERR_UNAUTHORIZED | Permission denied for schedule operation | No |
 | 7010 | ERR_BACKEND_ERROR | Schedule backend unavailable or saturated; not a cron or payload parse failure | Yes, when the operation is safe to replay |
+
+On the wire, 7001–7008 appear only on LIST (702). CREATE, CANCEL, SUBSCRIBE,
+UNSUBSCRIBE, CREATE_BATCH, and LIST_V2 domain errors are uncoded; see Error
+Envelopes in `docs/clients/spec/lease-schedule.md`. 7009–7011 are raised by the
+broker before dispatch and are coded on every Schedule message type.
 
 ### Error Handling Guidelines
 
