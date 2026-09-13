@@ -1,5 +1,4 @@
 use super::*;
-
 #[test]
 fn should_confirm_lease_session_cleanup_before_reporting_delivery() {
     // Arrange
@@ -53,6 +52,7 @@ use std::time::{Duration, Instant};
 
 mod admin;
 mod correctness;
+mod fault_injection;
 mod list;
 
 fn encode_lease_acquire(route: &str, owner_id: &str, ttl_secs: u64) -> Bytes {

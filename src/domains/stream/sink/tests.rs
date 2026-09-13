@@ -429,6 +429,7 @@ fn stream_read_response(
 }
 
 mod correctness;
+mod fault_injection;
 mod global_reads;
 mod realm_reads;
 mod sink_dispatch;
