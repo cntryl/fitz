@@ -44,6 +44,12 @@ pub(super) struct KvResourceLockOwner {
     pub(super) last_activity: std::time::Instant,
 }
 
+impl KvResourceLockOwner {
+    const fn is_owned_by(self, session_id: u64, tx_id: u64) -> bool {
+        self.session_id == session_id && self.tx_id == tx_id
+    }
+}
+
 struct KvTransactionLock {
     tx_id: u64,
     resource_key: KvResourceLockKey,
@@ -59,8 +65,29 @@ impl KvFamilyRuntime<'_> {
         for tx_id in expired.unwrap_or_default() {
             self.core
                 .resource_locks
-                .retain(|_, owner| owner.session_id != session_id || owner.tx_id != tx_id);
+                .retain(|_, owner| !owner.is_owned_by(session_id, tx_id));
             self.core.projection.remove_transaction(session_id, tx_id);
+        }
+    }
+
+    /// Releases a resource lock only when this exact transaction owns it.
+    ///
+    /// Read-only transactions never take the lock, so finishing one must not
+    /// release a write lock another session holds on the same resource.
+    pub(super) fn release_resource_lock(
+        &mut self,
+        resource_key: &KvResourceLockKey,
+        session_id: u64,
+        tx_id: u64,
+    ) {
+        if self
+            .core
+            .resource_locks
+            .get(resource_key)
+            .copied()
+            .is_some_and(|owner| owner.is_owned_by(session_id, tx_id))
+        {
+            self.core.resource_locks.remove(resource_key);
         }
     }
 
@@ -112,7 +139,7 @@ impl KvFamilyRuntime<'_> {
             .resource_locks
             .get_mut(&transaction_lock.resource_key)
         {
-            if owner.session_id == session_id && owner.tx_id == transaction_lock.tx_id {
+            if owner.is_owned_by(session_id, transaction_lock.tx_id) {
                 owner.last_activity = std::time::Instant::now();
             }
         }

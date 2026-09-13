@@ -168,7 +168,7 @@ pub(crate) struct RouteQuad<'a> {
 }
 
 pub(crate) fn route_triplet(route: &str) -> Option<RouteTriplet<'_>> {
-    let mut segments = route_segments(route);
+    let mut segments = route_segments(route)?;
     Some(RouteTriplet {
         realm: segments.next()?,
         area: segments.next()?,
@@ -177,7 +177,7 @@ pub(crate) fn route_triplet(route: &str) -> Option<RouteTriplet<'_>> {
 }
 
 pub(crate) fn route_exact_triplet(route: &str) -> Option<RouteTriplet<'_>> {
-    let mut segments = route_segments(route);
+    let mut segments = route_segments(route)?;
     let triplet = RouteTriplet {
         realm: segments.next()?,
         area: segments.next()?,
@@ -190,7 +190,7 @@ pub(crate) fn route_exact_triplet(route: &str) -> Option<RouteTriplet<'_>> {
 }
 
 pub(crate) fn route_quad(route: &str) -> Option<RouteQuad<'_>> {
-    let mut segments = route_segments(route);
+    let mut segments = route_segments(route)?;
     Some(RouteQuad {
         realm: segments.next()?,
         area: segments.next()?,
@@ -200,7 +200,7 @@ pub(crate) fn route_quad(route: &str) -> Option<RouteQuad<'_>> {
 }
 
 pub(crate) fn route_exact_quad(route: &str) -> Option<RouteQuad<'_>> {
-    let mut segments = route_segments(route);
+    let mut segments = route_segments(route)?;
     let quad = RouteQuad {
         realm: segments.next()?,
         area: segments.next()?,
@@ -232,8 +232,11 @@ fn route_path(route: &str) -> &str {
     split_scheme(route).map_or(route, |(_, path)| path)
 }
 
-fn route_segments(route: &str) -> std::str::Split<'_, char> {
-    route_path(route).trim_start_matches('/').split('/')
+fn route_segments(route: &str) -> Option<std::str::Split<'_, char>> {
+    if crate::utils::route_shape::contains_control_character(route) {
+        return None;
+    }
+    Some(route_path(route).trim_start_matches('/').split('/'))
 }
 
 /// An opaque route family identifier
@@ -596,6 +599,32 @@ mod tests {
                 resource: "orders",
             })
         );
+    }
+
+    #[test]
+    fn should_reject_route_segments_containing_control_characters() {
+        // Arrange
+        let routes = [
+            "kv://acme/app/users\0k",
+            "kv://acme/ap\u{1}p/users",
+            "schedule://acme/jobs/nightly/ru\u{7f}n",
+            "stream://acme/app/orders\u{85}",
+        ];
+
+        // Act
+        let parsed = routes.map(|route| {
+            (
+                route_triplet(route).is_some(),
+                route_exact_triplet(route).is_some(),
+                route_quad(route).is_some(),
+                route_exact_quad(route).is_some(),
+            )
+        });
+
+        // Assert
+        for (route, parsed) in routes.iter().zip(parsed) {
+            assert_eq!(parsed, (false, false, false, false), "{route:?}");
+        }
     }
 
     #[test]

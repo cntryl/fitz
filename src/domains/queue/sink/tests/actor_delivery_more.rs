@@ -460,6 +460,58 @@ fn should_route_queue_dead_letter_replay_through_family_actor() {
 }
 
 #[test]
+fn should_wake_parked_long_poll_reserve_when_dead_letter_is_replayed() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let key = crate::domains::queue::QueueKey {
+        family,
+        realm: "acme".to_string(),
+        area: "jobs".to_string(),
+        resource: "emails".to_string(),
+    };
+    let msg_id = seed_dead_letter(store.clone(), &key);
+    let queue_address = RouteAddress::new(family, Route::new("queue://inbound"));
+    let consumer_address = RouteAddress::new(family, Route::new("inbox://session/8"));
+    let consumer_mailbox = Arc::new(Mailbox::new(8));
+    let router = Arc::new(Router::new());
+    router.register(consumer_address.clone(), consumer_mailbox.clone());
+    let sink = new_queue_domain_sink(
+        store,
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+        crate::domains::WritePolicy::Buffered,
+    );
+    sink.deliver(Envelope::from_route(
+        consumer_address,
+        queue_address,
+        FrameContext::new(
+            8,
+            ChannelId::Pub,
+            MessageType::new(202),
+            encode_queue_reserve_wait("queue://acme/jobs/emails", 30, 1, 30),
+            family,
+        ),
+    ))
+    .expect("queue long-poll reserve");
+    assert!(
+        consumer_mailbox.receiver().try_recv().is_err(),
+        "reserve parks while only a dead letter exists"
+    );
+
+    // Act
+    let replayed = sink.replay_dead_letter(&key, msg_id);
+
+    // Assert
+    assert_eq!(replayed, Ok(true));
+    let reserve = receive_queue_frame(&consumer_mailbox, "woken reserve response");
+    assert_eq!(
+        decode_concrete_reserve_response(&reserve),
+        vec![b"email".to_vec()]
+    );
+}
+
+#[test]
 fn should_route_queue_dead_letter_purge_through_family_actor() {
     // Arrange
     let family = RouteFamily::new(1);

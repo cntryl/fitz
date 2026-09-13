@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 mod configuration;
 mod correctness;
+mod fault_injection;
 mod lifecycle;
 mod subscriptions;
 

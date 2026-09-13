@@ -76,6 +76,7 @@ pub(crate) fn classify_stream_route_shape(route: &str) -> Result<StreamRouteShap
     // the same validation.
     const MAX_ROUTE_BYTES: usize = 512;
     if route.len() > MAX_ROUTE_BYTES
+        || crate::utils::route_shape::contains_control_character(route)
         || !route.starts_with("stream://")
         || route[9..].is_empty()
         || route[9..].starts_with('/')
@@ -241,6 +242,12 @@ mod tests {
     fn should_reject_missing_or_wrong_scheme() {
         assert!(classify_stream_route_shape("bench/events/orders").is_err());
         assert!(classify_stream_route_shape("other://bench/events/orders").is_err());
+    }
+
+    #[test]
+    fn should_reject_selectors_containing_control_characters() {
+        assert!(classify_stream_route_shape("stream://ac\0me/**").is_err());
+        assert!(classify_stream_route_shape("stream://acme/app/orders\u{1}").is_err());
     }
 
     #[test]

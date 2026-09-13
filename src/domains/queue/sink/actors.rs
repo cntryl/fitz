@@ -358,9 +358,7 @@ impl QueueFamilyState {
             self.mark_admin_snapshot_dirty();
         }
         for (key, notification) in notifications {
-            self.route_queue_ready_notification(&key, notification);
-            let route = Self::queue_ready_route(&key);
-            self.wake_pending_reserves_for_route(key.family, &route, now);
+            self.notify_queue_ready_and_wake_reserves(&key, Some(notification), now);
         }
     }
 
@@ -383,9 +381,7 @@ impl QueueFamilyState {
             self.mark_fast_flush_dirty(key.family);
             let notification = self.record_ready_state(key, counts);
             self.mark_admin_snapshot_dirty();
-            if let Some(notification) = notification {
-                self.route_queue_ready_notification(key, notification);
-            }
+            self.notify_queue_ready_and_wake_reserves(key, notification, Instant::now());
         }
 
         if created_actor && counts.total() == 0 {

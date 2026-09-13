@@ -1,5 +1,50 @@
 use super::*;
 
+#[derive(Clone, Default)]
+struct CapturedLogs {
+    bytes: Arc<std::sync::Mutex<Vec<u8>>>,
+}
+
+impl CapturedLogs {
+    fn contents(&self) -> String {
+        String::from_utf8(
+            self.bytes
+                .lock()
+                .expect("lock captured Notice logs")
+                .clone(),
+        )
+        .expect("captured Notice logs are UTF-8")
+    }
+}
+
+struct CapturedLogWriter {
+    bytes: Arc<std::sync::Mutex<Vec<u8>>>,
+}
+
+impl std::io::Write for CapturedLogWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.bytes
+            .lock()
+            .expect("lock captured Notice logs")
+            .extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedLogs {
+    type Writer = CapturedLogWriter;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        CapturedLogWriter {
+            bytes: self.bytes.clone(),
+        }
+    }
+}
+
 fn new_correctness_notice_sink(router: Arc<Router>) -> NoticeDomain {
     NoticeDomain::new(
         router,
@@ -119,4 +164,100 @@ fn should_reject_notice_publish_when_decoded_family_differs_from_request() {
     assert_eq!(response.status, 1);
     assert_eq!(response.error.as_deref(), Some("route family mismatch"));
     assert_eq!(sink.subscription_family_count(), 0);
+}
+
+#[test]
+fn should_not_answer_or_keep_subscription_when_ingress_already_claimed_the_reply() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let source = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let destination = RouteAddress::new(family, Route::new("notice://inbound"));
+    let mailbox = Arc::new(Mailbox::new(8));
+    let router = Arc::new(Router::new());
+    router.register(source.clone(), mailbox.clone());
+    let sink = new_correctness_notice_sink(router);
+    let envelope = Envelope::from_route(
+        source,
+        destination,
+        FrameContext::new(
+            7,
+            ChannelId::Sub,
+            MessageType::new(501),
+            encode_notice_subscribe("notice://acme/app/*"),
+            family,
+        ),
+    );
+    assert!(
+        envelope.reply_claim().try_claim(),
+        "ingress answers the timed-out dispatch first"
+    );
+
+    // Act
+    sink.deliver(envelope)
+        .expect("deliver notice subscribe after ingress timeout");
+
+    // Assert
+    assert!(
+        mailbox.receiver().try_recv().is_err(),
+        "a request may emit only one terminal response"
+    );
+    assert_eq!(sink.subscription_family_count(), 0);
+}
+
+#[test]
+fn should_log_suppressed_notice_response_when_another_terminal_response_won() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let source = RouteAddress::new(family, Route::new("inbox://session/7"));
+    let destination = RouteAddress::new(family, Route::new("notice://inbound"));
+    let router = Arc::new(Router::new());
+    let config = NoticeDomainConfig {
+        next_sub_id: Arc::new(std::sync::atomic::AtomicU64::new(1)),
+        router,
+        admin_read_model: crate::control::admin::read_model::AdminReadModel::new(),
+        metrics: None,
+        active: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+    };
+    let mut state = NoticeFamilyState::new(family, &config);
+    let envelope = Envelope::from_route(
+        source,
+        destination,
+        FrameContext::new(
+            7,
+            ChannelId::Sub,
+            MessageType::new(501),
+            encode_notice_subscribe("notice://acme/app/*"),
+            family,
+        ),
+    );
+    assert!(envelope.reply_claim().try_claim());
+    let logs = CapturedLogs::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .without_time()
+        .with_target(false)
+        .with_max_level(tracing::Level::DEBUG)
+        .with_writer(logs.clone())
+        .finish();
+
+    // Act
+    let delivered = tracing::subscriber::with_default(subscriber, || {
+        state.route_notice_response(
+            &envelope,
+            crate::runtime::ClientFrameMeta::new(
+                7,
+                crate::runtime::ClientChannel::Sub,
+                501,
+                family,
+            ),
+            &crate::domains::notice::NoticeResponse::SubscribeOk { subscription_id: 1 },
+            None,
+        )
+    });
+
+    // Assert
+    assert!(!delivered);
+    assert!(logs
+        .contents()
+        .contains("Suppressed Notice response after another terminal response won"));
 }

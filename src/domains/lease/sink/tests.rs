@@ -1,5 +1,4 @@
 use super::*;
-
 #[test]
 fn should_confirm_lease_session_cleanup_before_reporting_delivery() {
     // Arrange
@@ -53,6 +52,7 @@ use std::time::{Duration, Instant};
 
 mod admin;
 mod correctness;
+mod fault_injection;
 mod list;
 
 fn encode_lease_acquire(route: &str, owner_id: &str, ttl_secs: u64) -> Bytes {
@@ -780,10 +780,12 @@ fn should_promote_next_waiter_when_prior_waiter_cannot_receive_grant() {
         .sender()
         .try_send(Envelope::new(first_waiter_address.clone(), 1_u8))
         .expect("fill first waiter mailbox");
+    let metrics = crate::observability::metrics::MetricsCollector::new();
     let sink = LeaseDomain::new(
         router,
         crate::control::admin::read_model::AdminReadModel::new(),
-    );
+    )
+    .with_metrics(metrics.clone());
     let holder = sink.acquire_for_tests(LeaseAcquireRequest {
         key: key.clone(),
         owner_session_id: 7,
@@ -828,6 +830,11 @@ fn should_promote_next_waiter_when_prior_waiter_cannot_receive_grant() {
     assert!(grant.payload::<FrameContext>().is_some());
     assert!(sink.session_leases_contain_for_tests(9, &key));
     assert_eq!(sink.pending_waiter_count_for_tests(&key), 0);
+    assert_eq!(
+        metrics.counter_get("fitz_lease_ownership_churn_total"),
+        1,
+        "only the waiter that received its grant completed an ownership handoff"
+    );
 }
 
 #[test]

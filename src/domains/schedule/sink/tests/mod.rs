@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 mod correctness;
 mod delivery_and_subscriptions;
+mod fault_injection;
 mod lifecycle_and_admin;
 mod recovery_and_claims;
 

@@ -46,7 +46,7 @@ pub(super) fn append_metrics(output: &mut String, runtime: &Runtime) {
     output.push('\n');
 
     output.push_str(
-        "# HELP fitz_lease_ownership_churn_total Lease ownership churn events (new acquisitions of a previously held lease)\n",
+        "# HELP fitz_lease_ownership_churn_total Lease ownership handoffs from a departed holder to a queued waiter\n",
     );
     output.push_str("# TYPE fitz_lease_ownership_churn_total counter\n");
     let _ = writeln!(

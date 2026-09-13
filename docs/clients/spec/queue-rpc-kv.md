@@ -192,14 +192,18 @@ Server pushes a queue availability notification to a subscriber.
 [u64 BE]  subscription_id
 [u32 BE]  route_len
 [bytes]   route (exact resource route, not subscription pattern)
-[u32 BE]  payload_len
-[bytes]   payload (notification details)
+[u64 BE]  ready_messages
+[u64 BE]  delayed_messages
+[u64 BE]  inflight_messages
 ```
+
+The three counters are a point-in-time snapshot of the queue when it became
+ready. They are hints, not reservations; another consumer may reserve the
+work first.
 
 **Client Handling:**
 - Client looks up `subscription_id` in local subscription map
-- Invokes registered handler(s) with the notification data
-- Handler receives exact route and notification payload
+- Invokes registered handler(s) with the exact route and counters
 - Notifications indicate message availability (consumer should RESERVE)
 
 #### Usage Example

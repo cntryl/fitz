@@ -142,11 +142,9 @@ impl ScheduleDomainRuntime<'_> {
         let mut had_live_handoffs = false;
 
         for (family, fire_ms, route, delivery_mode, payload) in live_publish_candidates {
-            let accepted = self.handle_schedule_publish(family, &route, delivery_mode, &payload);
-            had_live_handoffs |= accepted;
-            if !accepted {
-                self.core.live_publish_failures = self.core.live_publish_failures.saturating_add(1);
-            }
+            let handoffs =
+                self.handle_schedule_publish_with_counts(family, &route, delivery_mode, &payload);
+            had_live_handoffs |= handoffs.accepted_handoffs > 0;
             ack_retry_candidates
                 .entry(family)
                 .or_default()
@@ -382,6 +380,9 @@ impl ScheduleDomainRuntime<'_> {
             state
                 .round_robin_cursors
                 .insert(route.to_string(), (cursor + 1) % subscription_ids.len());
+        }
+        if attempted_handoffs > 0 && accepted_handoffs == 0 {
+            self.core.live_publish_failures = self.core.live_publish_failures.saturating_add(1);
         }
         ScheduleRunNowResult {
             delivery_mode,

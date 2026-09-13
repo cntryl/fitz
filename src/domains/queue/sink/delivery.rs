@@ -98,11 +98,7 @@ impl QueueFamilyState {
         }
         self.mark_admin_snapshot_dirty();
         for (key, notification) in released {
-            if let Some(notification) = notification {
-                self.route_queue_ready_notification(&key, notification);
-            }
-            let route = Self::queue_ready_route(&key);
-            self.wake_pending_reserves_for_route(key.family, &route, Instant::now());
+            self.notify_queue_ready_and_wake_reserves(&key, notification, Instant::now());
         }
     }
 
@@ -207,6 +203,19 @@ impl QueueFamilyState {
                 notification.counts,
             );
         }
+    }
+
+    pub(super) fn notify_queue_ready_and_wake_reserves(
+        &mut self,
+        key: &crate::domains::queue::QueueKey,
+        notification: Option<QueueReadyNotification>,
+        now: Instant,
+    ) {
+        if let Some(notification) = notification {
+            self.route_queue_ready_notification(key, notification);
+        }
+        let route = Self::queue_ready_route(key);
+        self.wake_pending_reserves_for_route(key.family, &route, now);
     }
 
     pub(super) fn emit_current_ready_notifications_for_watch(

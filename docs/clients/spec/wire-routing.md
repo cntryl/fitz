@@ -678,6 +678,11 @@ authorization.
 | `realm` | string | `prod`, `tenant-123` | Opaque to client; case-sensitive |
 | `area` | string | `app`, `system` | Opaque to client; case-sensitive |
 | `resource` | string | `users`, `orders` | Opaque to client; may be omitted for admin operations |
+
+No route segment may contain a control character (Unicode `Cc`, including
+`0x00`). The broker rejects such a route with the operation's existing
+invalid-route or invalid-pattern error. Clients need not pre-validate this.
+
 **Route Examples:**
 
 ```

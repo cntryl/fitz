@@ -691,6 +691,27 @@ advertises 706 and 707 in its protocol manifest. They are additive extensions:
 clients MUST use LIST 702 for portable pagination and MUST NOT substitute the
 cursor-shaped LIST_V2 707 for canonical LIST.
 
+#### Error Envelopes
+
+Production clients depend on the exact error layouts below. Do not change
+either one inside an existing record; a new error field must travel in its own
+record so existing clients keep decoding unchanged.
+
+- Errors the Schedule domain itself returns for CREATE (700), CANCEL (701),
+  SUBSCRIBE (703), UNSUBSCRIBE (704), CREATE_BATCH (706), and LIST_V2 (707)
+  are uncoded: `[u8 1][u32 BE error_len][error_msg]`. On these operations an
+  invalid cron, an unknown delivery mode, an invalid subscription pattern, and
+  the wildcard subscription limit are distinguished only by `error_msg`.
+- Errors the Schedule domain returns for LIST (702) are coded:
+  `[u8 1][u32 BE error_code][u32 BE error_len][error_msg]`.
+- Errors the broker raises before the request reaches the Schedule domain are
+  coded on every Schedule message type: 7009 unauthorized, 7010 busy (never
+  accepted, safe to resend), and 7011 timeout or unavailable (outcome unknown).
+
+A client can tell the two status=1 layouts apart by length. The uncoded layout
+has a total length of `5 + error_len` read at offset 1; the coded layout has a
+total length of `9 + error_len` read at offset 5.
+
 #### CREATE Request
 
 **Wire Format:**
@@ -708,7 +729,6 @@ Response (success=0):
 
 Response (error=1):
   [u8]     1
-  [u32 BE] error_code
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -717,13 +737,13 @@ Response (error=1):
 - Route serves as the unique schedule identifier (upsert behavior)
 - Creating a schedule with an existing route updates that schedule
 - Payload is arbitrary binary data delivered to matching live registrations on notification
-- Delivery mode is required. Unknown values return error code 7008.
+- Delivery mode is required. Unknown values are rejected with an uncoded error.
 - `broadcast` attempts every connected matching registration. `single` fairly
   rotates one accepted live handoff across matching registrations for the
   concrete fired route.
 - Both modes are ephemeral downstream delivery. No match or all rejected
   handoffs still complete the occurrence without backlog or retry.
-- Invalid cron expression returns error code 7002
+- An invalid cron expression is rejected with an uncoded error
 
 #### CANCEL Request
 
@@ -737,7 +757,6 @@ Response (success=0):
 
 Response (error=1):
   [u8]     1
-  [u32 BE] error_code
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -981,7 +1000,6 @@ Response (status=0):
   [u64 BE] subscription_id
 Response (status=1):
   [u8]     1
-  [u32 BE] error_code
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -996,9 +1014,9 @@ Response (status=1):
 - Idempotent: re-subscribing to the same pattern returns the same `subscription_id`
 - Client is responsible for local multiplexing when multiple handlers share the same route
 - Wildcards must occupy complete segments. Patterns that cannot match a concrete
-  four-segment Schedule route return 7006.
-- A session may retain at most 128 wildcard Schedule registrations; overflow
-  returns 7007.
+  four-segment Schedule route are rejected with an uncoded error.
+- A session may retain at most 128 wildcard Schedule registrations; overflow is
+  rejected with an uncoded error.
 - Matching never crosses `RouteFamily` boundaries; overlapping registrations
   remain distinct.
 - When the schedule fires, the server sends SCHEDULE_NOTIFY (705) with
@@ -1015,7 +1033,6 @@ Response (status=0):
   [u8]     0
 Response (status=1):
   [u8]     1
-  [u32 BE] error_code
   [u32 BE] error_len
   [bytes]  error_msg
 ```

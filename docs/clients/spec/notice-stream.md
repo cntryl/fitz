@@ -21,13 +21,25 @@
 [bytes]   payload
 ```
 
-**No response frame.** PUBLISH is fire-and-forget. The broker accepts the frame and fans out to matching subscribers. The client MUST NOT wait for a response after sending PUBLISH.
+**No success frame.** PUBLISH is fire-and-forget. An accepted PUBLISH fans out to matching subscribers and produces no response. The client MUST NOT wait for a response after sending PUBLISH.
+
+A PUBLISH the broker rejects before fan-out is answered with a PUBLISH (500) error frame that uses the coded error envelope:
+
+```
+Response (status=1):
+  [u8]     1                    // status: error
+  [u32 BE] error_code           // 3001 invalid route, 3006 busy, 3009 unauthorized
+  [u32 BE] error_len
+  [bytes]  error_msg
+```
+
+On a broker that requires authentication, a PUBLISH payload that cannot be decoded closes the connection instead. Because an accepted PUBLISH has no reply, a 500 error frame cannot be matched to its PUBLISH by position. Clients MUST treat it as an asynchronous rejection, not as the answer to a later request.
 
 **Design Notes:**
 
 - No delivery confirmation (best-effort)
-- No error returned for invalid routes or missing subscribers
-- Client-side errors (e.g., connection closed, frame too large) are transport-level only
+- No error for missing subscribers; a PUBLISH with no match is still accepted
+- Transport errors (connection closed, frame too large) remain transport-level
 - This matches the Notice domain's non-durable, best-effort semantics
 
 #### SUBSCRIBE Request
@@ -41,6 +53,7 @@ Response (status=0):
   [u64 BE] subscription_id
 Response (status=1):
   [u8]     1                    // status: error
+  [u32 BE] error_code
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -68,6 +81,7 @@ Response (status=0):
   [u8]     0
 Response (status=1):
   [u8]     1
+  [u32 BE] error_code
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -86,6 +100,7 @@ Response (status=0):
   [u8]     0
 Response (status=1):
   [u8]     1
+  [u32 BE] error_code
   [u32 BE] error_len
   [bytes]  error_msg
 ```
@@ -129,7 +144,14 @@ Response (status=1):
 - Exact routes (no wildcards) also supported
 - Wildcard realms are valid (for example, `notice://*/orders/events`)
 - The scheme must be `notice://`, segments must be non-empty, and wildcards
-  must occupy whole segments; invalid patterns return 3002
+  must occupy whole segments. No subscription is created for an invalid
+  pattern. On a broker without authentication, an empty pattern, a wrong
+  scheme, or an empty segment returns 3002, while a partial-segment wildcard
+  (`ord*ers`), adjacent `**` segments, or a pattern over 4096 bytes or 64
+  segments returns 3005 with a message naming the violation. On a broker that
+  requires authentication, ingress validates the route first and may close the
+  connection or answer 3009 before the Notice domain sees the request. Clients
+  already depend on these codes, so they are not changed in place
 - A session may retain at most 128 wildcard registrations. Exact registrations
   do not count, and duplicate `(session, original registration string)` requests
   are idempotent and checked before the limit; overflow returns 3003
@@ -321,7 +343,7 @@ CLIENT → SERVER (second unsubscribe, last handler removed):
 
 #### Semantics
 
-- **Fire-and-Forget PUBLISH**: PUBLISH sends a frame with no response. No delivery confirmation, no error response. Transport errors (connection closed) are the only failure mode.
+- **Fire-and-Forget PUBLISH**: An accepted PUBLISH produces no response and no delivery confirmation. A PUBLISH rejected before fan-out receives a coded error frame (see PUBLISH Request).
 - **Client-Side Multiplexing**: Server tracks one subscription per `(session, pattern)`. Client tracks multiple handlers per `subscription_id`. Server sends one NOTIFY per pattern match; client demuxes to all local handlers.
 - **Idempotent SUBSCRIBE**: Duplicate SUBSCRIBE to same pattern returns same `subscription_id` (no duplicate server subscription created)
 - **Delivery**: Best-effort; under backpressure, notifications may be dropped

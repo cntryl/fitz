@@ -215,6 +215,64 @@ fn should_reject_conflicting_read_write_begin_given_active_transaction_in_other_
 }
 
 #[test]
+fn should_keep_write_lock_when_other_session_commits_read_only_transaction() {
+    // Arrange
+    let family = RouteFamily::new(1);
+    let kv_route = "kv://acme/app/users";
+    let kv_address = RouteAddress::new(family, Route::new(kv_route));
+    let store = crate::testkit::create_test_engine_with_cfs(vec![1]);
+    let router = Arc::new(Router::new());
+    let mailboxes = [7_u64, 8, 9].map(|session_id| {
+        let address =
+            RouteAddress::new(family, Route::new(format!("inbox://session/{session_id}")));
+        let mailbox = Arc::new(Mailbox::new(8));
+        router.register(address.clone(), mailbox.clone());
+        (session_id, address, mailbox)
+    });
+    let sink = KvDomain::new(
+        store,
+        router,
+        crate::control::admin::read_model::AdminReadModel::new(),
+    );
+    let send = |index: usize, message_type: u16, payload: Bytes| {
+        let (session_id, address, _) = &mailboxes[index];
+        sink.deliver(Envelope::from_route(
+            address.clone(),
+            kv_address.clone(),
+            FrameContext::new(
+                *session_id,
+                ChannelId::Sub,
+                MessageType::new(message_type),
+                payload,
+                family,
+            ),
+        ))
+        .expect("deliver KV frame");
+        receive_frame(&mailboxes[index].2, "KV response envelope")
+    };
+    let writer_begin = send(0, 100, encode_kv_begin(kv_route, 1, 0));
+    assert_eq!(writer_begin.payload[0], 0, "writer holds the resource lock");
+    let reader_begin = send(1, 100, encode_kv_begin(kv_route, 0, 0));
+    let reader_tx_id = decode_kv_begin_tx_id(&reader_begin.payload);
+
+    // Act
+    let reader_commit = send(
+        1,
+        crate::dispatch::protocol::kv::msg_type::COMMIT,
+        encode_kv_commit(reader_tx_id, kv_route),
+    );
+    let second_writer_begin = send(2, 100, encode_kv_begin(kv_route, 1, 0));
+
+    // Assert
+    assert_eq!(reader_commit.payload[0], 0, "read-only commit succeeds");
+    assert_eq!(
+        decode_error_code(&second_writer_begin.payload),
+        error_codes::kv::ERR_ISOLATION_CONFLICT,
+        "the first writer still holds the resource lock"
+    );
+}
+
+#[test]
 fn should_rebuild_kv_admin_transactions_from_actor_state() {
     // Arrange
     let family = RouteFamily::new(1);

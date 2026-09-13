@@ -139,7 +139,9 @@ fn notice_error_code_for_message(message: &str) -> u16 {
     use crate::protocol::error_codes::notice;
 
     match message {
-        "empty pattern" => notice::ERR_INVALID_PATTERN,
+        "empty pattern" | "route must not contain control characters" => {
+            notice::ERR_INVALID_PATTERN
+        }
         message
             if message.starts_with("subscription pattern ")
                 || message.starts_with("invalid subscription pattern:") =>
@@ -375,6 +377,24 @@ mod tests {
         assert_eq!(
             code,
             crate::protocol::error_codes::notice::ERR_BACKEND_ERROR
+        );
+    }
+
+    #[test]
+    fn should_classify_control_character_subscription_error_as_invalid_pattern() {
+        // Arrange
+        let response =
+            NoticeResponse::Error("route must not contain control characters".to_string());
+
+        // Act
+        let encoded = encode_response(&response);
+        let (code, _) = crate::protocol::error_codes::decode_error_body(&encoded)
+            .expect("decode Notice error body");
+
+        // Assert
+        assert_eq!(
+            code,
+            crate::protocol::error_codes::notice::ERR_INVALID_PATTERN
         );
     }
 }

@@ -1,3 +1,4 @@
+use super::super::RpcQueuedDispatch;
 use super::*;
 
 impl RpcState {
