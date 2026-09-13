@@ -32,6 +32,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      - name: Lint GitHub Actions workflows
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
       - name: Update Rust toolchain
         run: rustup update stable
 
@@ -66,29 +69,19 @@ jobs:
           cntryl-tools validate-benchmarks --config .cntryl/repository.toml
           cntryl-tools check-module-sizes --config .cntryl/repository.toml
 
-      - name: Cargo check
-        run: cargo check --locked
-
       - name: Cargo clippy pedantic
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -D clippy::pedantic
-
-      - name: Build tests
-        run: cargo test --no-run --locked --workspace
 
       - name: Run tests
         env:
           FITZ_TEST_TIMEOUT_MULTIPLIER: "10"
         run: cargo test --locked --workspace
 
-      - name: Stateful model tests (seed variation 1)
-        env:
-          PROPTEST_CASES: "256"
-        run: cargo test --locked --lib state_model
-
-      - name: Stateful model tests (seed variation 2)
-        env:
-          PROPTEST_CASES: "256"
-        run: cargo test --locked --lib state_model
+      - name: Stateful model tests
+        run: |
+          for seed in 1 2; do
+            PROPTEST_CASES=256 PROPTEST_RNG_SEED="${seed}" cargo test --locked --lib state_model
+          done
 
       - name: Parallel library tests
         env:

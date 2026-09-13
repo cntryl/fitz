@@ -31,9 +31,6 @@ jobs:
         with:
           shared-key: "bench"
 
-      - name: Build benchmarks
-        run: cargo bench --no-run --features benchkit
-
       - name: Benchmark tier 1
         run: cargo bench --bench 'tier1*' --quiet
 
