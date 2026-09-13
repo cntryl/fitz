@@ -28,6 +28,24 @@ Use this checklist before approving a Fitz release.
 2. Operations sign-off.
 3. Security sign-off for auth or policy changes.
 
+## Publish
+
+1. Dispatch the `Publish` workflow from `main` only. It uses `version.yml` to
+   calculate the release SemVer and refuses to continue if the corresponding
+   `v<semver>` repository tag already exists.
+2. Confirm the called `Containers` workflow published the multi-architecture
+   `ghcr.io/cntryl/fitz:<semver>` manifest. That tag is immutable: publishing
+   different image content under the same SemVer fails.
+3. Confirm the workflow created the annotated `v<semver>` repository tag only
+   after the container manifest succeeded. A failed container build does not
+   tag the source commit.
+4. For rollback, deploy the previous immutable SemVer image. Do not move or
+   replace an existing image or repository version tag.
+
+Use the standalone `Containers` workflow for branch and prerelease images. It
+calculates their versions through `version.yml` without creating repository
+release tags.
+
 ## Stream error envelope generation 2 release gate
 
 For issue #238, record the released .NET, TypeScript, Go, Python, and Rust SDK

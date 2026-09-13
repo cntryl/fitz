@@ -2,6 +2,23 @@ name: Containers
 
 on:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      semver:
+        description: SemVer to publish instead of calculating it in this workflow
+        required: false
+        type: string
+        default: ""
+      branch:
+        description: Source branch associated with the container build
+        required: false
+        type: string
+        default: ""
+      publish_semver:
+        description: Publish the supplied SemVer even when the source ref is not a matching Git tag
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: containers
@@ -13,11 +30,13 @@ env:
 
 jobs:
   version:
+    if: ${{ inputs.semver == '' }}
     uses: ./.github/workflows/version.yml
 
   build:
     name: Build ${{ matrix.platform }}
     needs: version
+    if: ${{ always() && (needs.version.result == 'success' || needs.version.result == 'skipped') }}
     strategy:
       fail-fast: false
       matrix:
@@ -81,6 +100,7 @@ jobs:
     needs:
       - version
       - build
+    if: ${{ always() && needs.build.result == 'success' && (needs.version.result == 'success' || needs.version.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -109,22 +129,33 @@ jobs:
         id: manifest
         working-directory: /tmp/digests
         env:
-          BRANCH: ${{ needs.version.outputs.branch }}
+          BRANCH: ${{ inputs.branch || needs.version.outputs.branch }}
+          PUBLISH_SEMVER: ${{ inputs.publish_semver }}
           REF_NAME: ${{ github.ref_name }}
           REF_TYPE: ${{ github.ref_type }}
-          SEMVER: ${{ needs.version.outputs.semver }}
+          SEMVER: ${{ inputs.semver || needs.version.outputs.semver }}
         run: |
           image="${REGISTRY}/${IMAGE_NAME}"
           tags=()
           semver_tag=""
           inspect_tag=""
 
+          if [[ -z "${BRANCH}" || -z "${SEMVER}" ]]; then
+            echo "Container publishing requires non-empty branch and SemVer values" >&2
+            exit 1
+          fi
+
+          if [[ "${PUBLISH_SEMVER}" == "true" && "${BRANCH}" != "main" ]]; then
+            echo "Explicit SemVer publishing is allowed only from main" >&2
+            exit 1
+          fi
+
           if [[ "${REF_TYPE}" == "branch" ]]; then
             tags+=(-t "${image}:${BRANCH}")
             inspect_tag="${BRANCH}"
           fi
 
-          if [[ "${SEMVER}" == *-* ]]; then
+          if [[ "${PUBLISH_SEMVER}" == "true" || "${SEMVER}" == *-* ]]; then
             semver_tag="${image}:${SEMVER}"
           elif [[ "${REF_TYPE}" == "tag" && "${REF_NAME#v}" == "${SEMVER}" ]]; then
             semver_tag="${image}:${SEMVER}"

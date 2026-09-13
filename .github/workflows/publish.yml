@@ -1,0 +1,99 @@
+name: Publish
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    name: Determine version
+    uses: ./.github/workflows/version.yml
+
+  preflight:
+    name: Validate release
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      SEMVER: ${{ needs.version.outputs.semver }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Require main and an unused version tag
+        run: |
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Publishing is allowed only from main; received ${GITHUB_REF}" >&2
+            exit 1
+          fi
+
+          if [[ -z "${SEMVER}" ]]; then
+            echo "GitVersion returned an empty SemVer" >&2
+            exit 1
+          fi
+
+          tag="v${SEMVER}"
+          existing="$(git ls-remote --tags origin "refs/tags/${tag}")"
+          if [[ -n "${existing}" ]]; then
+            echo "Refusing to publish existing repository tag ${tag}" >&2
+            exit 1
+          fi
+
+  containers:
+    name: Publish containers
+    needs:
+      - version
+      - preflight
+    uses: ./.github/workflows/containers.yml
+    with:
+      semver: ${{ needs.version.outputs.semver }}
+      branch: ${{ needs.version.outputs.branch }}
+      publish_semver: true
+    permissions:
+      contents: read
+      packages: write
+
+  tag:
+    name: Tag source
+    needs:
+      - version
+      - containers
+    if: ${{ needs.containers.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      SEMVER: ${{ needs.version.outputs.semver }}
+
+    steps:
+      - name: Checkout published source
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+
+      - name: Tag published source
+        run: |
+          tag="v${SEMVER}"
+          existing="$(git ls-remote --tags origin "refs/tags/${tag}")"
+          if [[ -n "${existing}" ]]; then
+            echo "Refusing to replace existing repository tag ${tag}" >&2
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag --annotate "${tag}" "${GITHUB_SHA}" --message "Release ${tag}"
+          git push origin "refs/tags/${tag}"
