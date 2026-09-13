@@ -6,10 +6,14 @@ on:
       - main
     paths:
       - .github/workflows/ci-frontend.yml
+      - Dockerfile
+      - public/openapi.yml
       - ui/**
   pull_request:
     paths:
       - .github/workflows/ci-frontend.yml
+      - Dockerfile
+      - public/openapi.yml
       - ui/**
   workflow_dispatch:
 

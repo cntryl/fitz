@@ -218,16 +218,12 @@ Tier 4 benchmark binaries silence Fitz observability by default; set
 `FITZ_BENCH_ALLOW_LOGS=true` only when you need transport or startup logs while
 debugging a benchmark harness issue.
 
-Run the release suite locally by using the release command list in
-[`.github/workflows/bench.yml`](../../.github/workflows/bench.yml), then
-summarize:
+Run the hosted suite locally by using the command list in
+[`.github/workflows/bench.yml`](../../.github/workflows/bench.yml), then summarize:
 
 ```bash
 cntryl-tools summarize-benchmarks --product-name Fitz --report-title "Fitz Benchmark Report"
 ```
-
-Run the deep suite locally with the deep command list in the same workflow. The
-deep suite is broader coverage and still uses the stress default profile.
 
 Do not use compile-only benchmark preflights. They compile every bench target
 without producing performance signal and hide which benchmark surface is under

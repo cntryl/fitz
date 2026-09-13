@@ -30,9 +30,9 @@ Use this checklist before approving a Fitz release.
 
 ## Publish
 
-1. Dispatch the `Publish` workflow from `main` only. It uses `version.yml` to
-   calculate the release SemVer and refuses to continue if the corresponding
-   `v<semver>` repository tag already exists.
+1. Dispatch the `Publish` workflow from `main` only. Its called `Containers`
+   workflow uses `version.yml` to calculate the release SemVer and refuses to
+   continue if the corresponding `v<semver>` repository tag already exists.
 2. Confirm the called `Containers` workflow published the multi-architecture
    `ghcr.io/cntryl/fitz:<semver>` manifest. That tag is immutable: publishing
    different image content under the same SemVer fails.
@@ -42,9 +42,8 @@ Use this checklist before approving a Fitz release.
 4. For rollback, deploy the previous immutable SemVer image. Do not move or
    replace an existing image or repository version tag.
 
-Use the standalone `Containers` workflow for branch and prerelease images. It
-calculates their versions through `version.yml` without creating repository
-release tags.
+Use the standalone `Containers` workflow for prerelease branch images. It
+publishes their GitVersion SemVer without creating repository release tags.
 
 ## Stream error envelope generation 2 release gate
 

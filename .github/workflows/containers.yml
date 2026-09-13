@@ -4,21 +4,15 @@ on:
   workflow_dispatch:
   workflow_call:
     inputs:
-      semver:
-        description: SemVer to publish instead of calculating it in this workflow
-        required: false
-        type: string
-        default: ""
-      branch:
-        description: Source branch associated with the container build
-        required: false
-        type: string
-        default: ""
-      publish_semver:
-        description: Publish the supplied SemVer even when the source ref is not a matching Git tag
+      release:
+        description: Publish a stable SemVer image from main
         required: false
         type: boolean
         default: false
+    outputs:
+      semver:
+        description: SemVer calculated for the workflow
+        value: ${{ jobs.version.outputs.semver }}
 
 concurrency:
   group: containers
@@ -30,13 +24,54 @@ env:
 
 jobs:
   version:
-    if: ${{ inputs.semver == '' }}
     uses: ./.github/workflows/version.yml
+
+  validate:
+    name: Validate publish request
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      RELEASE: ${{ inputs.release }}
+      SEMVER: ${{ needs.version.outputs.semver }}
+
+    steps:
+      - name: Require a version
+        run: |
+          if [[ -z "${SEMVER}" ]]; then
+            echo "GitVersion returned an empty SemVer" >&2
+            exit 1
+          fi
+
+          if [[ "${RELEASE}" != "true" && "${GITHUB_REF_TYPE}" != "branch" ]]; then
+            echo "Standalone container publishing requires a branch ref" >&2
+            exit 1
+          fi
+
+      - name: Checkout release source
+        if: ${{ inputs.release }}
+        uses: actions/checkout@v7
+
+      - name: Require main and an unused version tag
+        if: ${{ inputs.release }}
+        run: |
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Publishing is allowed only from main; received ${GITHUB_REF}" >&2
+            exit 1
+          fi
+
+          tag="v${SEMVER}"
+          existing="$(git ls-remote --tags origin "refs/tags/${tag}")"
+          if [[ -n "${existing}" ]]; then
+            echo "Refusing to publish existing repository tag ${tag}" >&2
+            exit 1
+          fi
 
   build:
     name: Build ${{ matrix.platform }}
-    needs: version
-    if: ${{ always() && (needs.version.result == 'success' || needs.version.result == 'skipped') }}
+    needs: validate
     strategy:
       fail-fast: false
       matrix:
@@ -100,7 +135,6 @@ jobs:
     needs:
       - version
       - build
-    if: ${{ always() && needs.build.result == 'success' && (needs.version.result == 'success' || needs.version.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -129,42 +163,24 @@ jobs:
         id: manifest
         working-directory: /tmp/digests
         env:
-          BRANCH: ${{ inputs.branch || needs.version.outputs.branch }}
-          PUBLISH_SEMVER: ${{ inputs.publish_semver }}
-          REF_NAME: ${{ github.ref_name }}
-          REF_TYPE: ${{ github.ref_type }}
-          SEMVER: ${{ inputs.semver || needs.version.outputs.semver }}
+          REF: ${{ github.ref }}
+          RELEASE: ${{ inputs.release }}
+          SEMVER: ${{ needs.version.outputs.semver }}
         run: |
           image="${REGISTRY}/${IMAGE_NAME}"
           tags=()
           semver_tag=""
           inspect_tag=""
 
-          if [[ -z "${BRANCH}" || -z "${SEMVER}" ]]; then
-            echo "Container publishing requires non-empty branch and SemVer values" >&2
-            exit 1
-          fi
-
-          if [[ "${PUBLISH_SEMVER}" == "true" && "${BRANCH}" != "main" ]]; then
-            echo "Explicit SemVer publishing is allowed only from main" >&2
-            exit 1
-          fi
-
-          if [[ "${REF_TYPE}" == "branch" ]]; then
-            tags+=(-t "${image}:${BRANCH}")
-            inspect_tag="${BRANCH}"
-          fi
-
-          if [[ "${PUBLISH_SEMVER}" == "true" || "${SEMVER}" == *-* ]]; then
-            semver_tag="${image}:${SEMVER}"
-          elif [[ "${REF_TYPE}" == "tag" && "${REF_NAME#v}" == "${SEMVER}" ]]; then
+          if [[ "${RELEASE}" == "true" || "${SEMVER}" == *-* ]]; then
             semver_tag="${image}:${SEMVER}"
           else
-            echo "Skipping stable SemVer alias ${SEMVER}; ${REF_NAME} is not a matching Git tag"
+            echo "Skipping stable SemVer alias ${SEMVER}; use the Publish workflow to release it"
           fi
 
-          if [[ "${BRANCH}" == "main" ]]; then
-            tags+=(-t "${image}:latest")
+          if [[ "${REF}" == "refs/heads/main" ]]; then
+            tags+=(-t "${image}:main" -t "${image}:latest")
+            inspect_tag="latest"
           fi
 
           sources=()
@@ -191,7 +207,7 @@ jobs:
           fi
 
           if [[ -z "${inspect_tag}" ]]; then
-            echo "No publishable container tag for ${REF_TYPE} ref ${REF_NAME}" >&2
+            echo "No publishable container tag for ${REF}" >&2
             exit 1
           fi
 
@@ -204,5 +220,6 @@ jobs:
           echo "inspect_tag=${inspect_tag}" >> "${GITHUB_OUTPUT}"
 
       - name: Inspect image
-        run: |
-          docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.manifest.outputs.inspect_tag }}
+        env:
+          INSPECT_TAG: ${{ steps.manifest.outputs.inspect_tag }}
+        run: docker buildx imagetools inspect "${REGISTRY}/${IMAGE_NAME}:${INSPECT_TAG}"
