@@ -41,9 +41,16 @@ jobs:
       - name: Tag published source
         run: |
           tag="v${SEMVER}"
-          existing="$(git ls-remote --tags origin "refs/tags/${tag}")"
+          existing="$(git ls-remote --tags origin "refs/tags/${tag}^{}" | awk 'NR == 1 { print $1 }')"
+          if [[ -z "${existing}" ]]; then
+            existing="$(git ls-remote --tags origin "refs/tags/${tag}" | awk 'NR == 1 { print $1 }')"
+          fi
           if [[ -n "${existing}" ]]; then
-            echo "Refusing to replace existing repository tag ${tag}" >&2
+            if [[ "${existing}" == "${GITHUB_SHA}" ]]; then
+              echo "Source tag ${tag} already points at ${GITHUB_SHA}"
+              exit 0
+            fi
+            echo "Refusing to replace existing repository tag ${tag} at ${existing}" >&2
             exit 1
           fi
 

@@ -30,16 +30,21 @@ Use this checklist before approving a Fitz release.
 
 ## Publish
 
-1. Dispatch the `Publish` workflow from `main` only. Its called `Containers`
-   workflow uses `version.yml` to calculate the release SemVer and refuses to
-   continue if the corresponding `v<semver>` repository tag already exists.
-2. Confirm the called `Containers` workflow published the multi-architecture
+1. Every push to `main` automatically runs `Containers` and updates the
+   moving `ghcr.io/cntryl/fitz:main` and `:latest` multi-architecture aliases.
+   A green run must report both `linux/amd64` and `linux/arm64` in its manifest.
+2. Dispatch the `Publish` workflow from `main` only for a stable release. Its
+   called `Containers` workflow uses `version.yml` to calculate the release
+   SemVer. Repeating the same publish for the same source SHA is idempotent:
+   the existing image and source tag are verified and reused. A conflicting
+   existing `v<semver>` tag still fails safely.
+3. Confirm the called `Containers` workflow published the multi-architecture
    `ghcr.io/cntryl/fitz:<semver>` manifest. That tag is immutable: publishing
    different image content under the same SemVer fails.
-3. Confirm the workflow created the annotated `v<semver>` repository tag only
+4. Confirm the workflow created the annotated `v<semver>` repository tag only
    after the container manifest succeeded. A failed container build does not
    tag the source commit.
-4. For rollback, deploy the previous immutable SemVer image. Do not move or
+5. For rollback, deploy the previous immutable SemVer image. Do not move or
    replace an existing image or repository version tag.
 
 Use the standalone `Containers` workflow for prerelease branch images. It
