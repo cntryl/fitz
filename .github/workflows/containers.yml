@@ -1,6 +1,11 @@
 name: Containers
 
 on:
+  # Keep the moving development images synchronized with protected main. Stable
+  # SemVer tags remain an explicit release operation below.
+  push:
+    branches:
+      - main
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -33,6 +38,8 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+    outputs:
+      reuse: ${{ steps.release-state.outputs.reuse }}
     env:
       RELEASE: ${{ inputs.release }}
       SEMVER: ${{ needs.version.outputs.semver }}
@@ -54,24 +61,40 @@ jobs:
         if: ${{ inputs.release }}
         uses: actions/checkout@v7
 
-      - name: Require main and an unused version tag
-        if: ${{ inputs.release }}
+      - name: Validate stable release state
+        id: release-state
         run: |
+          echo "reuse=false" >> "$GITHUB_OUTPUT"
+
+          if [[ "${RELEASE}" != "true" ]]; then
+            exit 0
+          fi
+
           if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
             echo "Publishing is allowed only from main; received ${GITHUB_REF}" >&2
             exit 1
           fi
 
           tag="v${SEMVER}"
-          existing="$(git ls-remote --tags origin "refs/tags/${tag}")"
-          if [[ -n "${existing}" ]]; then
-            echo "Refusing to publish existing repository tag ${tag}" >&2
+          existing="$(git ls-remote --tags origin "refs/tags/${tag}^{}" | awk 'NR == 1 { print $1 }')"
+          if [[ -z "${existing}" ]]; then
+            existing="$(git ls-remote --tags origin "refs/tags/${tag}" | awk 'NR == 1 { print $1 }')"
+          fi
+
+          if [[ -n "${existing}" && "${existing}" != "${GITHUB_SHA}" ]]; then
+            echo "Refusing to publish existing repository tag ${tag} at ${existing}; expected ${GITHUB_SHA}" >&2
             exit 1
+          fi
+
+          if [[ "${existing}" == "${GITHUB_SHA}" ]]; then
+            echo "Stable release ${tag} already points at ${GITHUB_SHA}; reusing its image"
+            echo "reuse=true" >> "$GITHUB_OUTPUT"
           fi
 
   build:
     name: Build ${{ matrix.platform }}
     needs: validate
+    if: ${{ needs.validate.outputs.reuse != 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -134,7 +157,9 @@ jobs:
     name: Merge multi-arch manifest
     needs:
       - version
+      - validate
       - build
+    if: ${{ always() && needs.validate.result == 'success' && (needs.validate.outputs.reuse == 'true' || needs.build.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -142,7 +167,11 @@ jobs:
       packages: write
 
     steps:
+      - name: Prepare digest workspace
+        run: mkdir -p /tmp/digests
+
       - name: Download digests
+        if: ${{ needs.validate.outputs.reuse != 'true' }}
         uses: actions/download-artifact@v8
         with:
           path: /tmp/digests
@@ -165,12 +194,20 @@ jobs:
         env:
           REF: ${{ github.ref }}
           RELEASE: ${{ inputs.release }}
+          REUSE: ${{ needs.validate.outputs.reuse }}
           SEMVER: ${{ needs.version.outputs.semver }}
         run: |
           image="${REGISTRY}/${IMAGE_NAME}"
           tags=()
           semver_tag=""
           inspect_tag=""
+
+          if [[ "${REUSE}" == "true" ]]; then
+            inspect_tag="${SEMVER}"
+            echo "Reusing the existing stable image ${image}:${SEMVER}"
+            echo "inspect_tag=${inspect_tag}" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
 
           if [[ "${RELEASE}" == "true" || "${SEMVER}" == *-* ]]; then
             semver_tag="${image}:${SEMVER}"
@@ -222,4 +259,11 @@ jobs:
       - name: Inspect image
         env:
           INSPECT_TAG: ${{ steps.manifest.outputs.inspect_tag }}
-        run: docker buildx imagetools inspect "${REGISTRY}/${IMAGE_NAME}:${INSPECT_TAG}"
+        run: |
+          image="${REGISTRY}/${IMAGE_NAME}:${INSPECT_TAG}"
+          docker buildx imagetools inspect "${image}"
+
+          # A successful manifest push is not enough: both published runtime
+          # architectures must be present before this workflow is green.
+          docker buildx imagetools inspect --raw "${image}" \
+            | jq -e '[.manifests[] | select(.platform.os == "linux" and (.platform.architecture == "amd64" or .platform.architecture == "arm64")) | .platform.architecture] | sort == ["amd64", "arm64"]'
