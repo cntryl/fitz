@@ -632,10 +632,16 @@ fn should_clear_failed_family_live_sessions_without_losing_committed_admin_row()
 }
 
 #[test]
-fn should_refresh_healthy_family_admin_snapshot_while_first_family_is_blocked() {
+fn should_refresh_distinct_shard_family_admin_snapshot_while_peer_is_blocked() {
     // Arrange
     let context = setup_test_context();
-    let second_family = context_for_family(&context, RouteFamily::new(2));
+    let second_family_id = RouteFamily::new(2);
+    let ingress = context.sink.family_runtime.ingress();
+    if ingress.shard_for_family(context.family) == ingress.shard_for_family(second_family_id) {
+        // One worker cannot process another family while blocked.
+        return;
+    }
+    let second_family = context_for_family(&context, second_family_id);
     seed_committed_stream_route(
         &second_family,
         "stream://bench/events/orders",
