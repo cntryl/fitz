@@ -5,6 +5,7 @@ mod fixtures;
 
 mod rpc_e2e {
     mod common;
+    mod admission_contract;
     mod request_failures;
     mod response_errors;
     mod restart;
