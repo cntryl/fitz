@@ -136,6 +136,36 @@ fn domain_ingress_cases() -> Vec<DomainIngressCase> {
     .collect()
 }
 
+fn synthesized_error_code(case: &DomainIngressCase, frame: &FrameContext) -> u32 {
+    if case.domain == "rpc" && case.msg_type == 302 {
+        assert_eq!(frame.msg_type, crate::protocol::tlv::MessageType::new(303));
+        assert!(frame.correlation.is_none());
+        let expected_id = crate::protocol::rpc_codec::extract_request_correlation_id(&case.payload)
+            .expect("RPC request UUID");
+        let mut decoder = crate::protocol::payload_codec::PayloadDecoder::new(&frame.payload);
+        let mut uuid_bytes = [0_u8; 16];
+        uuid_bytes[..8].copy_from_slice(&decoder.get_u64().expect("UUID high").to_be_bytes());
+        uuid_bytes[8..].copy_from_slice(&decoder.get_u64().expect("UUID low").to_be_bytes());
+        assert_eq!(uuid::Uuid::from_bytes(uuid_bytes), expected_id);
+        assert_eq!(decoder.get_u64().expect("sequence"), 0);
+        assert_eq!(decoder.get_u8().expect("stream_end"), 1);
+        let body = decoder.get_bytes().expect("RPC terminal body");
+        assert!(decoder.is_complete());
+        let (code, _) =
+            crate::protocol::rpc_codec::decode_error_body(&body).expect("RPC terminal error body");
+        return u32::from(code);
+    }
+
+    let body = &frame.payload;
+    assert_eq!(
+        body[0],
+        if case.domain == "stream" { 2 } else { 1 },
+        "{} should send an error body",
+        case.domain
+    );
+    u32::from_be_bytes([body[1], body[2], body[3], body[4]])
+}
+
 #[test]
 fn should_absorb_transient_domain_mailbox_backpressure_for_each_domain() {
     // Arrange
@@ -400,7 +430,7 @@ fn should_not_close_session_when_a_domain_command_times_out() {
                     session_id,
                     case.channel_id,
                     crate::protocol::tlv::MessageType::new(case.msg_type),
-                    case.payload,
+                    case.payload.clone(),
                     None,
                 )
                 .await
@@ -419,15 +449,7 @@ fn should_not_close_session_when_a_domain_command_times_out() {
             "{} should answer the one frame with an error, got {frames:?}",
             case.domain
         );
-        // Error body: [u8 flag][u32 code][string message].
-        let body = &frames[0].payload;
-        assert_eq!(
-            body[0],
-            if case.domain == "stream" { 2 } else { 1 },
-            "{} should send an error body",
-            case.domain
-        );
-        let code = u32::from_be_bytes([body[1], body[2], body[3], body[4]]);
+        let code = synthesized_error_code(&case, &frames[0]);
         // A timed-out command was already enqueued and may still run, so the
         // code must not be one `REQ-PROTO-012` classifies as retryable. Those
         // tell a compliant SDK the request was never accepted, and its
@@ -490,7 +512,7 @@ fn should_answer_sustained_mailbox_backpressure_without_killing_the_session() {
                     session_id,
                     case.channel_id,
                     crate::protocol::tlv::MessageType::new(case.msg_type),
-                    case.payload,
+                    case.payload.clone(),
                     None,
                 )
                 .await
@@ -516,14 +538,7 @@ fn should_answer_sustained_mailbox_backpressure_without_killing_the_session() {
         // message tells the client to retry with backoff - so the code must be
         // one `REQ-PROTO-012` classifies as retryable. A fatal code here makes
         // a compliant client give up on a request it could safely re-send.
-        let body = &frames[0].payload;
-        assert_eq!(
-            body[0],
-            if case.domain == "stream" { 2 } else { 1 },
-            "{} should send an error body",
-            case.domain
-        );
-        let code = u32::from_be_bytes([body[1], body[2], body[3], body[4]]);
+        let code = synthesized_error_code(&case, &frames[0]);
         assert!(
             DOCUMENTED_RETRYABLE_CODES.contains(&code),
             "{} rejected a never-enqueued request with fatal code {code}; a compliant \
