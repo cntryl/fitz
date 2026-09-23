@@ -231,13 +231,16 @@ impl QueueProjectionState {
     }
 }
 
+#[cfg(test)]
+type QueueBeforePublishHook = Arc<dyn Fn(u32) + Send + Sync>;
+
 pub(crate) struct QueueAdminProjection {
     read_model: Arc<AdminReadModel>,
     family_states: Mutex<BTreeMap<u32, QueueProjectionState>>,
     dirty_families: Mutex<HashSet<u32>>,
     publication: Mutex<()>,
     #[cfg(test)]
-    before_publish: Mutex<Option<Arc<dyn Fn(u32) + Send + Sync>>>,
+    before_publish: Mutex<Option<QueueBeforePublishHook>>,
 }
 
 impl QueueAdminProjection {
