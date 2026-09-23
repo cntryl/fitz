@@ -604,6 +604,14 @@ pub fn build_stream_commit(session_id: u64, mode: u8) -> Vec<u8> {
     builder.build()
 }
 
+/// Build STREAM ROLLBACK frame (`msg_type` 603).
+#[must_use]
+pub fn build_stream_rollback(session_id: u64) -> Vec<u8> {
+    let mut builder = TlvFrameBuilder::new();
+    builder.encode_field(603, &session_id.to_be_bytes());
+    builder.build()
+}
+
 /// Build STREAM READ frame (`msg_type` 604)
 #[must_use]
 pub fn build_stream_read(route: &str, start_offset: u64) -> Vec<u8> {

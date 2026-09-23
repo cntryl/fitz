@@ -225,6 +225,11 @@ name = "tier3_system_stream"
 harness = false
 path = "benches/tier3_system_stream.rs"
 
+[[bench]]
+name = "tier3_system_stream_admin"
+harness = false
+path = "benches/tier3_system_stream_admin.rs"
+
 # Tier 4: Integration characterization (every executable target is explicit)
 [[bench]]
 name = "tier4_kv_gate"

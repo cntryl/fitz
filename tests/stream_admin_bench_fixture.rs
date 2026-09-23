@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use fitz::benchkit::{
-    build_stream_append, build_stream_begin, build_stream_commit,
+    build_stream_append, build_stream_begin, build_stream_commit, build_stream_rollback,
     create_bench_stream_admin_sink, extract_single_tlv_field, parse_stream_session_id,
     register_session_queue_sink, route_frame, FrameQueueSink,
 };
@@ -48,7 +48,14 @@ fn should_project_commits_from_all_benchmark_families() {
     for family in families {
         let (source, inbox) = register_session_queue_sink(&router, family, 1);
         let route = "stream://bench/events/orders";
-        let begin = request(&router, family, &source, &inbox, route, build_stream_begin(route));
+        let begin = request(
+            &router,
+            family,
+            &source,
+            &inbox,
+            route,
+            build_stream_begin(route),
+        );
         let session_id = parse_stream_session_id(begin.as_ref()).expect("append session");
         let _ = request(
             &router,
@@ -74,4 +81,69 @@ fn should_project_commits_from_all_benchmark_families() {
 
     // Assert
     assert_eq!(counts, (2, 2));
+}
+
+#[test]
+fn should_redirty_fixed_stream_dataset_without_adding_events() {
+    // Arrange
+    let router = Arc::new(Router::new());
+    let family = RouteFamily::new(1);
+    let sink = create_bench_stream_admin_sink(Arc::clone(&router), &[family]);
+    router.register_domain_pattern("stream", sink.clone() as Arc<dyn MailboxSink>);
+    let (source, inbox) = register_session_queue_sink(&router, family, 1);
+    let route = "stream://bench/events/orders";
+    let begin = request(
+        &router,
+        family,
+        &source,
+        &inbox,
+        route,
+        build_stream_begin(route),
+    );
+    let session_id = parse_stream_session_id(begin.as_ref()).expect("append session");
+    let _ = request(
+        &router,
+        family,
+        &source,
+        &inbox,
+        route,
+        build_stream_append(session_id, 0, b"seed"),
+    );
+    let _ = request(
+        &router,
+        family,
+        &source,
+        &inbox,
+        route,
+        build_stream_commit(session_id, 1),
+    );
+    sink.refresh();
+
+    // Act
+    let begin = request(
+        &router,
+        family,
+        &source,
+        &inbox,
+        route,
+        build_stream_begin(route),
+    );
+    let session_id = parse_stream_session_id(begin.as_ref()).expect("append session");
+    sink.refresh();
+    let active = sink.sessions_active_total();
+    let rollback = request(
+        &router,
+        family,
+        &source,
+        &inbox,
+        route,
+        build_stream_rollback(session_id),
+    );
+    sink.refresh();
+
+    // Assert
+    assert_eq!(active, 1);
+    assert_eq!(rollback.first().copied(), Some(0));
+    assert_eq!(sink.sessions_active_total(), 0);
+    assert_eq!(sink.snapshot_counts(), (1, 1));
 }
