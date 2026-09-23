@@ -34,10 +34,9 @@ impl DomainDispatchBackpressurePolicy {
 
 /// Addressing for one ingress-synthesized error frame.
 ///
-/// Bundled rather than passed positionally because these paths already carried
-/// eight arguments, and correlation must reach every one of them: a synthesized
-/// error is exactly where a client is most likely to lose track of which
-/// request it answers.
+/// Bundled rather than passed positionally so every synthesized failure keeps
+/// its reply identity. RPC REQUEST uses its payload UUID, while other domains
+/// may use optional frame-level correlation.
 #[derive(Clone, Copy)]
 pub(super) struct DomainErrorFrame<'a> {
     pub(super) session_id: u64,
@@ -47,6 +46,8 @@ pub(super) struct DomainErrorFrame<'a> {
     pub(super) domain: DispatchDomain,
     pub(super) router: &'a crate::runtime::Router,
     pub(super) correlation: Option<std::num::NonZeroU64>,
+    /// Present only when an RPC REQUEST carries a complete 16-byte UUID.
+    pub(super) rpc_request_id: Option<uuid::Uuid>,
 }
 
 impl<'a> DomainErrorFrame<'a> {
@@ -59,6 +60,16 @@ impl<'a> DomainErrorFrame<'a> {
             domain: dispatch.domain,
             router: dispatch.router,
             correlation: dispatch.correlation,
+            rpc_request_id: if dispatch.domain == DispatchDomain::Rpc
+                && dispatch.msg_type.as_u16() == 302
+            {
+                crate::protocol::rpc_codec::extract_request_correlation_id(
+                    dispatch.payload.as_bytes(),
+                )
+                .ok()
+            } else {
+                None
+            },
         }
     }
 }
@@ -225,58 +236,12 @@ impl DomainFrameDispatcher {
         )
     }
 
-    fn send_rpc_submit_error_response(
-        &self,
-        dispatch: &DomainDispatchRequest<'_>,
-        request_payload: &[u8],
-        code: u16,
-        message: &'static str,
-    ) -> Result<(), IngressDecision> {
-        let correlation_id = crate::protocol::rpc_codec::extract_request_correlation_id(
-            request_payload,
-        )
-        .map_err(|error| {
-            IngressDecision::Close(format!(
-                "rpc submit error correlation extraction failed: {error}"
-            ))
-        })?;
-        let payload = Self::encode_rpc_terminal_error_payload(&correlation_id, code, message);
-        // Deliberately not frame-correlated. This answers a SUBMIT with a 303
-        // RESPONSE, which already carries the caller's 16-byte RPC UUID; that
-        // id, not the connection-level one, is what the caller matches on. A
-        // SUBMIT never receives a frame-correlated success either, so adding one
-        // only here would be inconsistent.
-        let response_ctx = crate::protocol::frame_context::FrameContext::new(
-            dispatch.session_id,
-            dispatch.channel_id,
-            crate::protocol::tlv::MessageType::new(303),
-            payload,
-            dispatch.route_family,
-        );
-        let source = crate::runtime::routing::RouteAddress::new(
-            dispatch.route_family,
-            dispatch.domain.inbound_route().clone(),
-        );
-        let destination = crate::runtime::routing::RouteAddress::new(
-            dispatch.route_family,
-            self.cached_session_inbox_route(dispatch.session_id),
-        );
-        let envelope =
-            crate::runtime::envelope::Envelope::from_route(source, destination, response_ctx);
-
-        dispatch.router.route(envelope).map_err(|error| {
-            Self::route_error_response_delivery_failure(dispatch.session_id, dispatch.domain, error)
-        })
-    }
-
     fn send_unauthorized_domain_response(
         &self,
         dispatch: &DomainDispatchRequest<'_>,
-        request_payload: &[u8],
     ) -> Result<(), IngressDecision> {
         self.send_domain_error_response(
             dispatch,
-            request_payload,
             Self::unauthorized_error_code(dispatch.domain),
             crate::protocol::error_codes::rpc::ERR_UNAUTHORIZED,
             "unauthorized: permission denied",
@@ -287,23 +252,17 @@ impl DomainFrameDispatcher {
     fn send_domain_error_response(
         &self,
         dispatch: &DomainDispatchRequest<'_>,
-        request_payload: &[u8],
         domain_code: u16,
         rpc_submit_code: u16,
         message: &'static str,
     ) -> Result<(), IngressDecision> {
-        if dispatch.domain == DispatchDomain::Rpc && dispatch.msg_type.as_u16() == 302 {
-            return self.send_rpc_submit_error_response(
-                dispatch,
-                request_payload,
-                rpc_submit_code,
-                message,
-            );
-        }
-
         self.send_domain_error_frame(
             DomainErrorFrame::for_dispatch(dispatch),
-            domain_code,
+            if dispatch.domain == DispatchDomain::Rpc && dispatch.msg_type.as_u16() == 302 {
+                rpc_submit_code
+            } else {
+                domain_code
+            },
             message,
         )
     }
@@ -369,26 +328,50 @@ impl DomainFrameDispatcher {
             domain,
             router,
             correlation,
+            rpc_request_id,
         } = frame;
-        let payload = if (600..=608).contains(&msg_type.0) {
-            crate::protocol::stream_codec::encode_error_response_into(
-                &mut crate::protocol::payload_codec::PayloadEncoder::new(),
-                msg_type.0,
-                domain_code,
-                message,
+        let (response_type, payload, frame_correlation) = if domain == DispatchDomain::Rpc
+            && msg_type.as_u16() == 302
+        {
+            let Some(request_id) = rpc_request_id else {
+                return Err(IngressDecision::Close(
+                    "rpc submit error correlation extraction failed: RPC request payload too short for correlation_id".to_string(),
+                ));
+            };
+            // REQUEST has no success ACK. All broker-synthesized failures use
+            // the RPC UUID in a terminal RESPONSE, never frame correlation.
+            (
+                crate::protocol::tlv::MessageType::new(303),
+                Self::encode_rpc_terminal_error_payload(&request_id, domain_code, message),
+                None,
             )
-            .into()
+        } else if (600..=608).contains(&msg_type.0) {
+            (
+                msg_type,
+                crate::protocol::stream_codec::encode_error_response_into(
+                    &mut crate::protocol::payload_codec::PayloadEncoder::new(),
+                    msg_type.0,
+                    domain_code,
+                    message,
+                )
+                .into(),
+                correlation,
+            )
         } else {
-            Self::encode_domain_error_body(domain_code, message)
+            (
+                msg_type,
+                Self::encode_domain_error_body(domain_code, message),
+                correlation,
+            )
         };
         let response_ctx = crate::protocol::frame_context::FrameContext::new(
             session_id,
             channel_id,
-            msg_type,
+            response_type,
             payload,
             route_family,
         )
-        .with_correlation(correlation);
+        .with_correlation(frame_correlation);
         let source = crate::runtime::routing::RouteAddress::new(
             route_family,
             domain.inbound_route().clone(),
@@ -563,6 +546,7 @@ impl DomainFrameDispatcher {
         &self,
         dispatch: DomainDispatchRequest<'_>,
     ) -> Result<(), IngressDecision> {
+        let error_frame = DomainErrorFrame::for_dispatch(&dispatch);
         let DomainDispatchRequest {
             router,
             session_id,
@@ -632,40 +616,23 @@ impl DomainFrameDispatcher {
                 }
                 Err(error) if Self::domain_dispatch_backpressured(&error) => {
                     return Err(self.answer_exhausted_backpressure(
-                        session_id,
-                        channel_id,
-                        msg_type,
-                        route_family,
-                        domain,
-                        router,
-                        correlation,
+                        error_frame,
                         retries,
                         backpressure_started_at,
                     ));
                 }
                 Err(error) if Self::domain_dispatch_timed_out(&error) => {
                     return Err(self.answer_indeterminate_dispatch(
-                        session_id,
-                        channel_id,
-                        msg_type,
-                        route_family,
-                        domain,
-                        router,
-                        correlation,
+                        error_frame,
                         &error,
                         &reply_claim,
                     ));
                 }
                 Err(error) => {
                     return Err(self.answer_unavailable_dispatch(
-                        session_id,
-                        channel_id,
-                        msg_type,
-                        route_family,
-                        domain,
-                        router,
-                        correlation,
+                        error_frame,
                         &error,
+                        &reply_claim,
                     ));
                 }
             }
@@ -699,9 +666,8 @@ impl DomainFrameDispatcher {
                     "Ingress: failed to derive route for authorization"
                 );
                 if dispatch.domain == DispatchDomain::Rpc && dispatch.msg_type.as_u16() == 302 {
-                    return self.send_rpc_submit_error_response(
-                        &dispatch,
-                        dispatch.payload.as_bytes(),
+                    return self.send_domain_error_frame(
+                        DomainErrorFrame::for_dispatch(&dispatch),
                         crate::protocol::error_codes::rpc::ERR_BACKEND_ERROR,
                         "RPC request parse failed",
                     );
@@ -752,7 +718,7 @@ impl DomainFrameDispatcher {
                     IngressDecision::Close("unauthorized: session actor missing".to_string())
                 }
                 AuthorizationFailure::PermissionDenied => self
-                    .send_unauthorized_domain_response(&dispatch, dispatch.payload.as_bytes())
+                    .send_unauthorized_domain_response(&dispatch)
                     .map_or_else(|decision| decision, |()| IngressDecision::Accept),
             });
         }

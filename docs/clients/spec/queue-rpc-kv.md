@@ -358,13 +358,36 @@ Response (status=1):
 [bytes]    route
 [u32 BE]   body_len
 [bytes]    body
-Immediate error response from broker (status=1):
-  [u8]     1
-  [u32 BE] error_len
-  [bytes]  error_msg
 ```
 
-**Design Note:** `correlation_id` is always exactly 16 bytes (UUID). No length prefix needed. Successful REQUEST submission produces no immediate broker success frame.
+`correlation_id` is always exactly 16 bytes (UUID), with no length prefix.
+Successful REQUEST submission produces **no immediate broker success frame**.
+Every deliverable broker admission or domain failure for a REQUEST with a
+readable UUID is one terminal
+RESPONSE (303), decoded with the RESPONSE layout below: the same UUID,
+`sequence=0`, `stream_end=1`, and a standard RPC error body
+`[u8 status=1][u32 BE code][u32 BE message_len][message UTF-8]` in its
+length-prefixed `body`. This applies before and after enqueue; a client must
+match the UUID, not the REQUEST message type or arrival order. The broker does
+not emit a `CORRELATED` frame-level record for RPC replies, even if the caller
+sent an optional `CORRELATE` record. RPC's UUID is its sole reply identity.
+
+| Failure stage | Frame and body | Outcome and retry rule |
+| --- | --- | --- |
+| Ingress permission denied | terminal 303, code 6009, `unauthorized: permission denied` | Not enqueued; authorization is fatal until permissions change. |
+| Ingress mailbox backpressure exhausted | terminal 303, code 6003, `domain at capacity: request was not accepted, retry with backoff` | Never enqueued; safe to retry deliberately with backoff. |
+| Enqueued dispatch reply timed out | terminal 303, code 6010, `domain timeout: request outcome unknown, do not blindly retry` | Domain may still execute; indeterminate. No blind retry. |
+| Domain unavailable at dispatch | terminal 303, code 6010, `domain unavailable: request could not be completed` | Actor may have partially applied the request; treat as indeterminate. |
+| Domain decoded the REQUEST but rejected it | terminal 303, domain-specific RPC code and message (for example 6004, `No workers registered for route`) | One terminal rejection; retry only if that code and the application operation permit it. |
+
+Malformed REQUEST payloads with a readable UUID can also receive terminal
+303/code 6010 (`RPC request parse failed`). Without all 16 UUID bytes, the
+broker cannot identify a terminal RPC reply and may close the session.
+If the caller session or inbox has already disappeared, the broker cannot
+deliver a terminal reply; the caller treats that connection loss as an
+indeterminate outcome, not as a retryable rejection.
+See [the compatibility and rollout plan](../rpc-request-failure-rollout.md)
+for the prior uncorrelated 302 ingress-error behavior and mixed-version handling.
 
 #### REQUEST Delivery (Server forwards to worker)
 

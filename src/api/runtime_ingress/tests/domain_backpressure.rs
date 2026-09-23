@@ -136,6 +136,36 @@ fn domain_ingress_cases() -> Vec<DomainIngressCase> {
     .collect()
 }
 
+fn synthesized_error_code(case: &DomainIngressCase, frame: &FrameContext) -> u32 {
+    if case.domain == "rpc" && case.msg_type == 302 {
+        assert_eq!(frame.msg_type, crate::protocol::tlv::MessageType::new(303));
+        assert!(frame.correlation.is_none());
+        let expected_id = crate::protocol::rpc_codec::extract_request_correlation_id(&case.payload)
+            .expect("RPC request UUID");
+        let mut decoder = crate::protocol::payload_codec::PayloadDecoder::new(&frame.payload);
+        let mut uuid_bytes = [0_u8; 16];
+        uuid_bytes[..8].copy_from_slice(&decoder.get_u64().expect("UUID high").to_be_bytes());
+        uuid_bytes[8..].copy_from_slice(&decoder.get_u64().expect("UUID low").to_be_bytes());
+        assert_eq!(uuid::Uuid::from_bytes(uuid_bytes), expected_id);
+        assert_eq!(decoder.get_u64().expect("sequence"), 0);
+        assert_eq!(decoder.get_u8().expect("stream_end"), 1);
+        let body = decoder.get_bytes().expect("RPC terminal body");
+        assert!(decoder.is_complete());
+        let (code, _) =
+            crate::protocol::rpc_codec::decode_error_body(&body).expect("RPC terminal error body");
+        return u32::from(code);
+    }
+
+    let body = &frame.payload;
+    assert_eq!(
+        body[0],
+        if case.domain == "stream" { 2 } else { 1 },
+        "{} should send an error body",
+        case.domain
+    );
+    u32::from_be_bytes([body[1], body[2], body[3], body[4]])
+}
+
 #[test]
 fn should_absorb_transient_domain_mailbox_backpressure_for_each_domain() {
     // Arrange
@@ -185,11 +215,9 @@ struct CapturingInboxSink {
 
 impl MailboxSink for CapturingInboxSink {
     fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
-        let frame = envelope
-            .payload::<FrameContext>()
-            .expect("client frame payload")
-            .clone();
-        self.frames.lock().unwrap().push(frame);
+        if let Some(frame) = envelope.payload::<FrameContext>() {
+            self.frames.lock().unwrap().push(frame.clone());
+        }
         Ok(())
     }
 
@@ -226,6 +254,109 @@ struct ReplyThenTimeoutSink {
     session_id: u64,
     channel_id: ChannelId,
     msg_type: u16,
+}
+
+struct RpcReplyThenUnavailableSink {
+    router: Arc<crate::runtime::Router>,
+    session_id: u64,
+    request_id: uuid::Uuid,
+}
+
+impl MailboxSink for RpcReplyThenUnavailableSink {
+    fn deliver(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        assert!(envelope.try_claim_reply(), "domain terminal response claim");
+        let mut response_encoder = crate::protocol::payload_codec::PayloadEncoder::new();
+        let mut error_encoder = crate::protocol::payload_codec::PayloadEncoder::new();
+        let payload = crate::protocol::rpc_codec::encode_terminal_error_response_message_into(
+            &self.request_id,
+            crate::protocol::error_codes::rpc::ERR_ROUTE_NOT_REGISTERED,
+            "No workers registered for route",
+            &mut response_encoder,
+            &mut error_encoder,
+        );
+        let response = envelope
+            .try_reply_to(FrameContext::new(
+                self.session_id,
+                ChannelId::Rpc,
+                crate::protocol::tlv::MessageType::new(303),
+                Bytes::from(payload),
+                RouteFamily::new(1),
+            ))
+            .expect("domain response envelope");
+        self.router.route(response).expect("route domain response");
+        Err(DeliveryError::ActorStopped)
+    }
+
+    fn deliver_high_priority(&self, envelope: Envelope) -> Result<(), DeliveryError> {
+        self.deliver(envelope)
+    }
+}
+
+#[test]
+fn should_suppress_unavailable_rpc_failure_after_domain_terminal_claim() {
+    // Arrange
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let case = domain_ingress_cases()
+        .into_iter()
+        .find(|case| case.domain == "rpc")
+        .expect("RPC request case");
+    let request_id = crate::protocol::rpc_codec::extract_request_correlation_id(&case.payload)
+        .expect("RPC request UUID");
+    let session_id = 6_700;
+    let router = Arc::new(crate::runtime::Router::new());
+    let client_frames = Arc::new(Mutex::new(Vec::<FrameContext>::new()));
+    router.register(
+        crate::runtime::routing::RouteAddress::new(
+            RouteFamily::new(1),
+            crate::runtime::routing::Route::new(format!("inbox://session/{session_id}")),
+        ),
+        Arc::new(CapturingInboxSink {
+            frames: client_frames.clone(),
+        }),
+    );
+    router.register_domain_pattern(
+        "rpc",
+        Arc::new(RpcReplyThenUnavailableSink {
+            router: router.clone(),
+            session_id,
+            request_id,
+        }),
+    );
+    let ingress = RuntimeIngress::new(false).with_router(router);
+
+    // Act
+    let decision = rt.block_on(async {
+        ingress
+            .on_open(make_session_info(session_id, TransportKind::Tcp))
+            .await
+            .expect("open session");
+        ingress
+            .on_frame(
+                session_id,
+                case.channel_id,
+                crate::protocol::tlv::MessageType::new(case.msg_type),
+                case.payload.clone(),
+                None,
+            )
+            .await
+    });
+
+    // Assert
+    assert_eq!(decision, IngressDecision::Accept);
+    let frames = client_frames.lock().unwrap();
+    assert_eq!(
+        frames.len(),
+        1,
+        "domain claim must suppress ingress duplicate"
+    );
+    assert_eq!(
+        frames[0].msg_type,
+        crate::protocol::tlv::MessageType::new(303)
+    );
+    assert_eq!(
+        synthesized_error_code(&case, &frames[0]),
+        u32::from(crate::protocol::error_codes::rpc::ERR_ROUTE_NOT_REGISTERED)
+    );
 }
 
 impl MailboxSink for ReplyThenTimeoutSink {
@@ -400,7 +531,7 @@ fn should_not_close_session_when_a_domain_command_times_out() {
                     session_id,
                     case.channel_id,
                     crate::protocol::tlv::MessageType::new(case.msg_type),
-                    case.payload,
+                    case.payload.clone(),
                     None,
                 )
                 .await
@@ -419,15 +550,7 @@ fn should_not_close_session_when_a_domain_command_times_out() {
             "{} should answer the one frame with an error, got {frames:?}",
             case.domain
         );
-        // Error body: [u8 flag][u32 code][string message].
-        let body = &frames[0].payload;
-        assert_eq!(
-            body[0],
-            if case.domain == "stream" { 2 } else { 1 },
-            "{} should send an error body",
-            case.domain
-        );
-        let code = u32::from_be_bytes([body[1], body[2], body[3], body[4]]);
+        let code = synthesized_error_code(&case, &frames[0]);
         // A timed-out command was already enqueued and may still run, so the
         // code must not be one `REQ-PROTO-012` classifies as retryable. Those
         // tell a compliant SDK the request was never accepted, and its
@@ -490,7 +613,7 @@ fn should_answer_sustained_mailbox_backpressure_without_killing_the_session() {
                     session_id,
                     case.channel_id,
                     crate::protocol::tlv::MessageType::new(case.msg_type),
-                    case.payload,
+                    case.payload.clone(),
                     None,
                 )
                 .await
@@ -516,14 +639,7 @@ fn should_answer_sustained_mailbox_backpressure_without_killing_the_session() {
         // message tells the client to retry with backoff - so the code must be
         // one `REQ-PROTO-012` classifies as retryable. A fatal code here makes
         // a compliant client give up on a request it could safely re-send.
-        let body = &frames[0].payload;
-        assert_eq!(
-            body[0],
-            if case.domain == "stream" { 2 } else { 1 },
-            "{} should send an error body",
-            case.domain
-        );
-        let code = u32::from_be_bytes([body[1], body[2], body[3], body[4]]);
+        let code = synthesized_error_code(&case, &frames[0]);
         assert!(
             DOCUMENTED_RETRYABLE_CODES.contains(&code),
             "{} rejected a never-enqueued request with fatal code {code}; a compliant \

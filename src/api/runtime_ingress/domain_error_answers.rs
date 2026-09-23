@@ -7,7 +7,7 @@
 //! until its own timeout for a response that already arrived.
 
 use super::domain_frame_dispatcher::{DomainErrorFrame, DomainFrameDispatcher};
-use super::{DispatchDomain, IngressDecision};
+use super::IngressDecision;
 use crate::observability as obs;
 use std::time::Instant;
 use tracing::{error, warn};
@@ -24,16 +24,9 @@ impl DomainFrameDispatcher {
     /// session would not make this at-most-once either - the command keeps
     /// running and the client reconnects and retries with the same uncertainty
     /// - it would only add collateral damage.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn answer_indeterminate_dispatch(
         &self,
-        session_id: u64,
-        channel_id: crate::protocol::frame::ChannelId,
-        msg_type: crate::protocol::tlv::MessageType,
-        route_family: crate::runtime::routing::RouteFamily,
-        domain: DispatchDomain,
-        router: &crate::runtime::Router,
-        correlation: Option<std::num::NonZeroU64>,
+        frame: DomainErrorFrame<'_>,
         error: &crate::runtime::router::RouteError,
         reply_claim: &crate::runtime::envelope::ReplyClaim,
     ) -> IngressDecision {
@@ -45,8 +38,8 @@ impl DomainFrameDispatcher {
         // contend for the claim, so taking it here is a no-op for them.
         if !reply_claim.try_claim() {
             warn!(
-                session_id = session_id,
-                domain = domain.as_str(),
+                session_id = frame.session_id,
+                domain = frame.domain.as_str(),
                 error = %error,
                 outcome = "domain-response-won",
                 "Ingress: domain dispatch timed out after its terminal response was claimed"
@@ -54,23 +47,15 @@ impl DomainFrameDispatcher {
             return IngressDecision::Accept;
         }
         warn!(
-            session_id = session_id,
-            domain = domain.as_str(),
+            session_id = frame.session_id,
+            domain = frame.domain.as_str(),
             error = %error,
             outcome = Self::dispatch_timeout_outcome(),
             "Ingress: domain dispatch timed out; answering with an indeterminate outcome"
         );
         self.send_domain_error_frame(
-            DomainErrorFrame {
-                session_id,
-                channel_id,
-                msg_type,
-                route_family,
-                domain,
-                router,
-                correlation,
-            },
-            Self::indeterminate_error_code(domain),
+            frame,
+            Self::indeterminate_error_code(frame.domain),
             "domain timeout: request outcome unknown, do not blindly retry",
         )
         .map_or_else(|decision| decision, |()| IngressDecision::Accept)
@@ -83,38 +68,23 @@ impl DomainFrameDispatcher {
     /// that: returning `IngressDecision::Backpressure` instead closes the
     /// connection at the transport, which turns a clean retryable rejection
     /// into an unknown outcome the caller dare not retry.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn answer_exhausted_backpressure(
         &self,
-        session_id: u64,
-        channel_id: crate::protocol::frame::ChannelId,
-        msg_type: crate::protocol::tlv::MessageType,
-        route_family: crate::runtime::routing::RouteFamily,
-        domain: DispatchDomain,
-        router: &crate::runtime::Router,
-        correlation: Option<std::num::NonZeroU64>,
+        frame: DomainErrorFrame<'_>,
         retries: u64,
         backpressure_started_at: Instant,
     ) -> IngressDecision {
         Self::record_backpressure_exhausted(backpressure_started_at);
         warn!(
-            session_id = session_id,
-            domain = domain.as_str(),
+            session_id = frame.session_id,
+            domain = frame.domain.as_str(),
             retries = retries,
             waited_us = Self::elapsed_micros_u64(backpressure_started_at),
             "Ingress: domain dispatch backpressure"
         );
         self.send_domain_error_frame(
-            DomainErrorFrame {
-                session_id,
-                channel_id,
-                msg_type,
-                route_family,
-                domain,
-                router,
-                correlation,
-            },
-            Self::backpressure_error_code(domain),
+            frame,
+            Self::backpressure_error_code(frame.domain),
             "domain at capacity: request was not accepted, retry with backoff",
         )
         .map_or_else(|decision| decision, |()| IngressDecision::Accept)
@@ -128,35 +98,34 @@ impl DomainFrameDispatcher {
     /// and every other domain's in-flight work on it. Reported with a
     /// non-retryable code, since the command may have partially applied (the
     /// actor died holding it) or can never succeed.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn answer_unavailable_dispatch(
         &self,
-        session_id: u64,
-        channel_id: crate::protocol::frame::ChannelId,
-        msg_type: crate::protocol::tlv::MessageType,
-        route_family: crate::runtime::routing::RouteFamily,
-        domain: DispatchDomain,
-        router: &crate::runtime::Router,
-        correlation: Option<std::num::NonZeroU64>,
+        frame: DomainErrorFrame<'_>,
         error: &crate::runtime::router::RouteError,
+        reply_claim: &crate::runtime::envelope::ReplyClaim,
     ) -> IngressDecision {
         error!(
-            session_id = session_id,
-            domain = domain.as_str(),
+            session_id = frame.session_id,
+            domain = frame.domain.as_str(),
             error = %error,
             "Ingress: router.route failed for domain dispatch"
         );
+        // A domain may have already claimed and routed its terminal response
+        // before its actor/sink fails. The non-timeout error is not evidence
+        // that no reply escaped; honor the same one-terminal claim as timeout.
+        if !reply_claim.try_claim() {
+            warn!(
+                session_id = frame.session_id,
+                domain = frame.domain.as_str(),
+                error = %error,
+                outcome = "domain-response-won",
+                "Ingress: domain dispatch failed after its terminal response was claimed"
+            );
+            return IngressDecision::Accept;
+        }
         self.send_domain_error_frame(
-            DomainErrorFrame {
-                session_id,
-                channel_id,
-                msg_type,
-                route_family,
-                domain,
-                router,
-                correlation,
-            },
-            Self::indeterminate_error_code(domain),
+            frame,
+            Self::indeterminate_error_code(frame.domain),
             "domain unavailable: request could not be completed",
         )
         .map_or_else(|decision| decision, |()| IngressDecision::Accept)
