@@ -1,4 +1,4 @@
-import type { DeadLetterMessage, QueueResourceRef, QueueStatus } from "./queue-models";
+import type { QueueResourceRef, QueueStatus } from "./queue-models";
 
 export interface QueueResourceComparisonScope {
   area: string;
@@ -95,13 +95,6 @@ export interface QueueInflightMessage {
   realm: string;
   resource: string;
   sessionId: string;
-}
-
-export interface QueueResourceOverview {
-  detail: QueueResourceDetail;
-  inflight: QueueInflightMessage[];
-  deadLetters: DeadLetterMessage[];
-  timeline: QueueResourceTimeline;
 }
 
 export type { QueueResourceRef };

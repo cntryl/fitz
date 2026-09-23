@@ -15,6 +15,8 @@ use bytes::Bytes;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod rpc_metrics;
+
 fn current_epoch_ms() -> u64 {
     u64::try_from(
         SystemTime::now()
@@ -547,6 +549,145 @@ fn should_include_pending_only_rpc_resource_with_missing_latency() {
     assert_eq!(
         collection.resources[0].slowest_worker_average_latency_ms,
         None
+    );
+}
+
+#[test]
+fn should_include_pending_only_rpc_resource_in_generic_inventory() {
+    // Arrange
+    let runtime = snapshot_runtime();
+    runtime
+        .admin_read_model()
+        .replace_rpc_pending(vec![RpcPendingRequest {
+            route_family: 1,
+            correlation_id: "request".to_string(),
+            route: "rpc://prod/jobs/reconcile/run".to_string(),
+            submitted_at: "2026-07-31T12:00:00Z".to_string(),
+            age_seconds: 1,
+            worker_session_id: None,
+        }]);
+
+    // Act
+    let resources = rpc_resources(&runtime, Some(1));
+
+    // Assert
+    assert_eq!(resources.len(), 1);
+    assert_eq!(resources[0].resource, "reconcile");
+}
+
+#[test]
+fn should_include_pending_only_rpc_operation_in_resource_inventory() {
+    // Arrange
+    let runtime = snapshot_runtime();
+    runtime
+        .admin_read_model()
+        .replace_rpc_pending(vec![RpcPendingRequest {
+            route_family: 1,
+            correlation_id: "request".to_string(),
+            route: "rpc://prod/jobs/reconcile/run".to_string(),
+            submitted_at: "2026-07-31T12:00:00Z".to_string(),
+            age_seconds: 1,
+            worker_session_id: None,
+        }]);
+    let path = ResourcePath {
+        realm: "prod",
+        area: "jobs",
+        resource: "reconcile",
+    };
+
+    // Act
+    let operations = rpc_operations(&runtime, &path, Some(1));
+
+    // Assert
+    assert_eq!(operations.operations.len(), 1);
+    assert_eq!(operations.operations[0].operation, "run");
+    assert_eq!(operations.workers_registered, 0);
+    assert_eq!(operations.requests_pending, 1);
+    assert_eq!(operations.operations[0].requests_pending, 1);
+}
+
+#[test]
+fn should_exclude_pending_rpc_operations_outside_requested_family() {
+    // Arrange
+    let runtime = snapshot_runtime();
+    runtime
+        .admin_read_model()
+        .replace_rpc_pending(vec![RpcPendingRequest {
+            route_family: 2,
+            correlation_id: "request".to_string(),
+            route: "rpc://prod/jobs/reconcile/run".to_string(),
+            submitted_at: "2026-07-31T12:00:00Z".to_string(),
+            age_seconds: 1,
+            worker_session_id: None,
+        }]);
+    let path = ResourcePath {
+        realm: "prod",
+        area: "jobs",
+        resource: "reconcile",
+    };
+
+    // Act
+    let operations = rpc_operations(&runtime, &path, Some(1));
+
+    // Assert
+    assert!(operations.operations.is_empty());
+}
+
+#[test]
+fn should_sum_handled_calls_from_live_rpc_workers_for_operation() {
+    // Arrange
+    let runtime = snapshot_runtime();
+    runtime.admin_read_model().replace_rpc_workers(vec![
+        RpcWorker {
+            route_family: 1,
+            session_id: "one".to_string(),
+            realm: "prod".to_string(),
+            route: "rpc://prod/jobs/reconcile/run".to_string(),
+            registered_at: "2026-07-31T12:00:00Z".to_string(),
+            requests_handled: 5,
+            average_latency_ms: 3.0,
+        },
+        RpcWorker {
+            route_family: 1,
+            session_id: "two".to_string(),
+            realm: "prod".to_string(),
+            route: "rpc://prod/jobs/reconcile/run".to_string(),
+            registered_at: "2026-07-31T12:00:00Z".to_string(),
+            requests_handled: 7,
+            average_latency_ms: 8.0,
+        },
+        RpcWorker {
+            route_family: 2,
+            session_id: "other-family".to_string(),
+            realm: "prod".to_string(),
+            route: "rpc://prod/jobs/reconcile/run".to_string(),
+            registered_at: "2026-07-31T12:00:00Z".to_string(),
+            requests_handled: 100,
+            average_latency_ms: 10.0,
+        },
+    ]);
+    let path = RpcOperationPath {
+        realm: "prod",
+        area: "jobs",
+        resource: "reconcile",
+        operation: "run",
+    };
+
+    // Act
+    let operations = rpc_operations(
+        &runtime,
+        &ResourcePath {
+            realm: path.realm,
+            area: path.area,
+            resource: path.resource,
+        },
+        Some(1),
+    );
+
+    // Assert
+    assert_eq!(
+        operations.operations[0].requests_handled_by_live_workers,
+        Some(12)
     );
 }
 

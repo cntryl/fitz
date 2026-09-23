@@ -375,11 +375,17 @@ export type OperationCollection = {
   "realm": string;
   "area": string;
   "resource": string;
+  "workers_registered": number;
+  "requests_pending": number;
   "operations": Array<OperationEntry>;
 };
 
 export type OperationEntry = {
   "operation": string;
+  "workers_registered": number;
+  "requests_pending": number;
+  "requests_handled_by_live_workers": number | null;
+  "slowest_worker_average_latency_ms": number | null;
 };
 
 export type QueueAgeBuckets = {
@@ -731,6 +737,7 @@ export type RpcOperationDetail = {
   "operation": string;
   "workers_registered": number;
   "requests_pending": number;
+  "requests_handled_by_live_workers": number | null;
   "slowest_worker_average_latency_ms": number;
   "worker_latency_buckets": RpcLatencyBuckets;
   "diagnostics": DiagnosticSnapshot;

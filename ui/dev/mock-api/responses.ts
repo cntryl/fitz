@@ -135,9 +135,26 @@ export function domainResponse(
   if (tail[0] === "operations" && tail.length === 1) {
     return json({
       area,
-      operations: [{ operation: "ReconcileInvoice" }, { operation: "RefreshProjection" }],
+      operations: [
+        {
+          operation: "ReconcileInvoice",
+          workers_registered: 1,
+          requests_pending: 3,
+          requests_handled_by_live_workers: 1480,
+          slowest_worker_average_latency_ms: 84.2,
+        },
+        {
+          operation: "RefreshProjection",
+          workers_registered: 0,
+          requests_pending: 1,
+          requests_handled_by_live_workers: 0,
+          slowest_worker_average_latency_ms: null,
+        },
+      ],
       realm,
       resource,
+      workers_registered: 1,
+      requests_pending: 4,
     });
   }
   if (tail[0] === "operations" && tail[2] === "workers")
@@ -324,6 +341,7 @@ export function rpcOperation(
     operation,
     realm,
     requests_pending: 4,
+    requests_handled_by_live_workers: 1480,
     resource,
     slowest_worker_average_latency_ms: 184.2,
     worker_latency_buckets: { over_100ms: 1, under_100ms: 3, under_25ms: 7, under_5ms: 12 },

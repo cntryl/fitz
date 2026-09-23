@@ -303,6 +303,8 @@ export const rpcResource = {
   ],
   realm: "default",
   resource: "primary",
+  totalPendingRequests: 1,
+  totalWorkers: 2,
 };
 
 export const rpcOperation = {
@@ -334,6 +336,7 @@ export const rpcOperation = {
     operation: "GetStatus",
     realm: "default",
     requests_pending: 1,
+    requests_handled_by_live_workers: 9,
     resource: "primary",
     slowest_worker_average_latency_ms: 12,
     worker_latency_buckets: {

@@ -15,7 +15,12 @@ import {
   createReplayQueueDeadLetterMutation,
 } from "@/features/queue/queue-actions";
 import type { DeadLetterMessage } from "@/features/queue/queue-models";
-import { createQueueResourceQuery } from "@/features/queue/queue-resource-query";
+import { createQueueDeadLettersQuery } from "@/features/queue/queue-query";
+import {
+  createQueueResourceInflightQuery,
+  createQueueResourceQuery,
+  createQueueResourceTimelineQuery,
+} from "@/features/queue/queue-resource-query";
 import type { QueueResourceRef } from "@/features/queue/queue-resource-models";
 import QueueDeadLetterDialog from "@/features/queue/queue-dead-letter-dialog";
 import {
@@ -30,6 +35,9 @@ export default function QueueResourcePage() {
   const { realm, area, resource } = currentRoute().params;
   const resourceRef: QueueResourceRef = { realm, area, resource };
   const resourceQuery = createQueueResourceQuery(resourceRef);
+  const inflightQuery = createQueueResourceInflightQuery(resourceRef);
+  const deadLettersQuery = createQueueDeadLettersQuery(resourceRef);
+  const timelineQuery = createQueueResourceTimelineQuery(resourceRef);
   const scopeLabel = formatQueueScope(resourceRef);
 
   const replayMutation = createReplayQueueDeadLetterMutation(resourceRef);
@@ -38,27 +46,47 @@ export default function QueueResourcePage() {
   const [actionKind, setActionKind] = state<"replay" | "purge" | null>(null);
   const [confirmMessage, setConfirmMessage] = state<DeadLetterMessage | null>(null);
   const [confirmKind, setConfirmKind] = state<"replay" | "purge" | null>(null);
-  const data = resourceQuery.data;
-  const resourceQueryError = resourceQuery.error as Error | null;
+  const detail = resourceQuery.data;
+  const refreshing =
+    resourceQuery.refreshing ||
+    inflightQuery.refreshing ||
+    deadLettersQuery.refreshing ||
+    timelineQuery.refreshing;
+  const partialError = Boolean(
+    resourceQuery.error || inflightQuery.error || deadLettersQuery.error || timelineQuery.error,
+  );
   const actionError = replayMutation.error ?? purgeMutation.error;
   const confirmationMessage = confirmMessage();
   const confirmationKind = confirmKind();
   const actionPending = actionKind() !== null;
-  const stateSummary = data ? describeQueueState(data.detail) : null;
+  const stateSummary = detail ? describeQueueState(detail) : null;
 
   const headerStatus = {
-    detail: stateSummary?.detail ?? "Inspecting queue state.",
-    label: resourceQuery.refreshing
+    detail: partialError
+      ? `${stateSummary?.detail ?? "Queue detail unavailable."} Some panels could not load; available data and actions remain usable.`
+      : (stateSummary?.detail ?? "Inspecting queue state."),
+    label: refreshing
       ? "Refreshing"
-      : resourceQuery.stale
-        ? "Stale"
-        : (stateSummary?.label ?? (data ? "Live" : "Loading")),
-    tone: resourceQuery.refreshing
+      : partialError
+        ? "Partial"
+        : resourceQuery.stale
+          ? "Stale"
+          : (stateSummary?.label ?? (detail ? "Live" : "Loading")),
+    tone: refreshing
       ? "info"
-      : resourceQuery.stale
+      : partialError || resourceQuery.stale
         ? "warning"
-        : (stateSummary?.tone ?? (data ? "success" : "info")),
+        : (stateSummary?.tone ?? (detail ? "success" : "info")),
   } as const;
+
+  function refreshAll() {
+    void Promise.allSettled([
+      resourceQuery.refresh(),
+      inflightQuery.refresh(),
+      deadLettersQuery.refresh(),
+      timelineQuery.refresh(),
+    ]);
+  }
 
   function openDeadLetterConfirmation(kind: "replay" | "purge", message: DeadLetterMessage) {
     setConfirmKind(kind);
@@ -94,15 +122,15 @@ export default function QueueResourcePage() {
           eyebrow="Queue resource"
           title={resourceRef.resource}
           description={
-            data
+            detail
               ? `Current durable backlog, live reservations, dead-letter actions, and broker-observed transitions for ${scopeLabel}.`
               : `${scopeLabel}`
           }
           primaryAction={{
-            busy: resourceQuery.refreshing,
-            disabled: resourceQuery.refreshing,
+            busy: refreshing,
+            disabled: refreshing,
             label: "Refresh queue",
-            onPress: () => resourceQuery.refresh(),
+            onPress: refreshAll,
           }}
           status={headerStatus}
         />
@@ -111,71 +139,119 @@ export default function QueueResourcePage() {
           area={resourceRef.area}
           resource={resourceRef.resource}
           freshness={
-            resourceQuery.refreshing
+            refreshing
               ? "Refreshing"
-              : resourceQuery.stale
-                ? "Stale"
-                : data
-                  ? "Live"
-                  : resourceQuery.loading
-                    ? "Loading"
-                    : resourceQueryError
-                      ? "Unavailable"
+              : partialError
+                ? "Partial"
+                : resourceQuery.stale
+                  ? "Stale"
+                  : detail
+                    ? "Live"
+                    : resourceQuery.loading
+                      ? "Loading"
                       : undefined
           }
         />
 
-        <Show when={resourceQuery.refreshing && data}>
-          <QueryRefreshingState description="Refreshing queue resource..." />
-        </Show>
+        <Block id="queue-detail-state" direction="column" gap="sm">
+          <Show when={resourceQuery.refreshing && detail}>
+            <QueryRefreshingState description="Refreshing queue resource detail..." />
+          </Show>
+          <Show when={resourceQuery.loading && !detail}>
+            <QueryLoadingState description="Loading queue resource detail..." />
+          </Show>
+          <Show when={resourceQuery.error}>
+            <QueryErrorState
+              title="Unable to load current values"
+              error={resourceQuery.error}
+              onRetry={() => resourceQuery.refresh()}
+            />
+          </Show>
+          <Show when={detail}>{(value) => <QueueResourceCurrentValuesPanel detail={value} />}</Show>
+        </Block>
 
-        <Show when={resourceQuery.loading && !data}>
-          <QueryLoadingState description="Loading queue resource..." />
-        </Show>
-
-        <Show when={resourceQueryError && !data}>
-          <QueryErrorState error={resourceQueryError} onRetry={() => resourceQuery.refresh()} />
-        </Show>
-
-        <Show when={resourceQueryError && data}>
-          <QueryErrorState error={resourceQueryError} onRetry={() => resourceQuery.refresh()} />
-        </Show>
-
-        <Show when={actionError}>
-          <QueryErrorState error={actionError} />
-        </Show>
-
-        <Show when={data}>
-          {(data) => (
-            <Block direction="column" gap="sm">
-              <QueueResourceCurrentValuesPanel detail={data.detail} />
+        <Block id="queue-dead-letters-state" direction="column" gap="sm">
+          <Show when={deadLettersQuery.refreshing && deadLettersQuery.data}>
+            <QueryRefreshingState description="Refreshing queue dead letters..." />
+          </Show>
+          <Show when={deadLettersQuery.loading && !deadLettersQuery.data}>
+            <QueryLoadingState description="Loading queue dead letters..." />
+          </Show>
+          <Show when={deadLettersQuery.error}>
+            <QueryErrorState
+              title="Unable to load dead letters"
+              error={deadLettersQuery.error}
+              onRetry={() => deadLettersQuery.refresh()}
+            />
+          </Show>
+          <Show when={actionError}>
+            <QueryErrorState error={actionError} />
+          </Show>
+          <Show when={deadLettersQuery.data}>
+            {(messages) => (
               <QueueResourceDeadLettersPanel
-                messages={data.deadLetters}
+                messages={messages}
                 onReplay={(message) => openDeadLetterConfirmation("replay", message)}
                 onPurge={(message) => openDeadLetterConfirmation("purge", message)}
                 pendingAction={actionKind()}
                 pendingMessageId={actionMessageId()}
               />
-              <QueueResourceInflightPanel messages={data.inflight} />
-              <QueueResourceTimelinePanel timeline={data.timeline} />
+            )}
+          </Show>
+        </Block>
 
-              <QueueDeadLetterDialog
-                actionError={actionError}
-                actionPending={actionPending}
-                confirmationKind={confirmationKind}
-                confirmationMessage={confirmationMessage}
-                onOpenChange={(open) => {
-                  if (!open && !actionPending) {
-                    setConfirmKind(null);
-                    setConfirmMessage(null);
-                  }
-                }}
-                onRunAction={(kind, message) => void runDeadLetterAction(kind, message)}
-                scopeLabel={scopeLabel}
-              />
-            </Block>
-          )}
-        </Show>
+        <Block id="queue-inflight-state" direction="column" gap="sm">
+          <Show when={inflightQuery.refreshing && inflightQuery.data}>
+            <QueryRefreshingState description="Refreshing queue inflight entries..." />
+          </Show>
+          <Show when={inflightQuery.loading && !inflightQuery.data}>
+            <QueryLoadingState description="Loading queue inflight entries..." />
+          </Show>
+          <Show when={inflightQuery.error}>
+            <QueryErrorState
+              title="Unable to load inflight entries"
+              error={inflightQuery.error}
+              onRetry={() => inflightQuery.refresh()}
+            />
+          </Show>
+          <Show when={inflightQuery.data}>
+            {(messages) => <QueueResourceInflightPanel messages={messages} />}
+          </Show>
+        </Block>
+
+        <Block id="queue-timeline-state" direction="column" gap="sm">
+          <Show when={timelineQuery.refreshing && timelineQuery.data}>
+            <QueryRefreshingState description="Refreshing queue timeline..." />
+          </Show>
+          <Show when={timelineQuery.loading && !timelineQuery.data}>
+            <QueryLoadingState description="Loading queue timeline..." />
+          </Show>
+          <Show when={timelineQuery.error}>
+            <QueryErrorState
+              title="Unable to load timeline"
+              error={timelineQuery.error}
+              onRetry={() => timelineQuery.refresh()}
+            />
+          </Show>
+          <Show when={timelineQuery.data}>
+            {(timeline) => <QueueResourceTimelinePanel timeline={timeline} />}
+          </Show>
+        </Block>
+
+        <QueueDeadLetterDialog
+          actionError={actionError}
+          actionPending={actionPending}
+          confirmationKind={confirmationKind}
+          confirmationMessage={confirmationMessage}
+          onOpenChange={(open) => {
+            if (!open && !actionPending) {
+              setConfirmKind(null);
+              setConfirmMessage(null);
+            }
+          }}
+          onRunAction={(kind, message) => void runDeadLetterAction(kind, message)}
+          scopeLabel={scopeLabel}
+        />
       </Block>
     </DomainPageFrame>
   );

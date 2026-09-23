@@ -42,11 +42,13 @@ export interface RpcResourceOperationRows {
     averageLatencyMs: number | null;
     operation: string;
     pendingRequests: number;
-    requestsHandled: number;
+    requestsHandled: number | null;
     workers: number;
   }>;
   realm: string;
   resource: string;
+  totalPendingRequests: number;
+  totalWorkers: number;
 }
 
 export interface RpcOperationView {

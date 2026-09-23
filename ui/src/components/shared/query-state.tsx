@@ -79,7 +79,7 @@ export function QueryErrorState({
               ? "The broker did not return this snapshot. Your session is still active; retry when the service is available."
               : formatUnknownError(error)
         }
-        actions={
+        action={
           onRetry ? (
             <Button variant="outline" onPress={onRetry}>
               {retryLabel}

@@ -1,12 +1,10 @@
 import type {
-  QueueDeadLetter,
   QueueInflight,
   QueueResourceDetail as QueueResourceDetailDto,
   ResourceComparison,
   ResourceTimeline,
   ResourceTimelineEvent,
 } from "@/adapters";
-import { mapQueueDeadLetter } from "./queue-mappers";
 import type {
   QueueResourceComparison,
   QueueResourceComparisonMetrics,
@@ -14,7 +12,6 @@ import type {
   QueueResourceComparisonSide,
   QueueInflightMessage,
   QueueResourceDetail,
-  QueueResourceOverview,
   QueueResourceTimeline as QueueResourceTimelineModel,
   QueueResourceTimelineEvent as QueueResourceTimelineEventModel,
 } from "./queue-resource-models";
@@ -128,19 +125,5 @@ export function mapQueueResourceComparison(dto: ResourceComparison): QueueResour
     left: mapQueueResourceComparisonSide(dto.left),
     right: mapQueueResourceComparisonSide(dto.right),
     summary: dto.summary,
-  };
-}
-
-export function mapQueueResourceOverview(
-  detail: QueueResourceDetailDto,
-  inflight: QueueInflight[],
-  deadLetters: QueueDeadLetter[],
-  timeline: ResourceTimeline,
-): QueueResourceOverview {
-  return {
-    detail: mapQueueResourceDetail(detail),
-    inflight: inflight.map(mapQueueInflight),
-    deadLetters: deadLetters.map(mapQueueDeadLetter),
-    timeline: mapQueueResourceTimeline(timeline),
   };
 }

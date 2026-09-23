@@ -740,7 +740,7 @@ describe("admin page smoke tests", () => {
     expect(text).toContain("Pending");
     expect(text).toContain("Handled");
     expect(text).toContain("Slowest avg ms");
-    expect(text).toContain("in-memory pending request evidence");
+    expect(text).toContain("Pending requests are in-memory state");
     expect(text).toContain("GetStatus");
     const operations = root.querySelector('[data-slot="table"][aria-label="RPC operations"]');
     expect(operations?.querySelectorAll('[data-slot="table-row"][data-row-key]')).toHaveLength(1);
@@ -763,6 +763,85 @@ describe("admin page smoke tests", () => {
     const calls = root.querySelector('ul[aria-label="Live call evidence"]');
     expect(calls?.querySelectorAll('[data-slot="item"]')).toHaveLength(1);
     expect(root.querySelector("#rpc-live-call-evidence [data-slot='table']")).toBeNull();
+  });
+  it("labels RPC handled counts as live-worker totals beside complete pending counts", async () => {
+    mocks.queryStates.rpcResource = queryState.fresh(
+      {
+        area: "ops",
+        operations: [
+          {
+            averageLatencyMs: 12,
+            operation: "GetStatus",
+            pendingRequests: 150,
+            requestsHandled: 12,
+            workers: 2,
+          },
+          {
+            averageLatencyMs: null,
+            operation: "PendingOnly",
+            pendingRequests: 1,
+            requestsHandled: 0,
+            workers: 0,
+          },
+        ],
+        realm: "default",
+        resource: "primary",
+        totalPendingRequests: 151,
+        totalWorkers: 2,
+      },
+      queryOptions(),
+    );
+
+    const { default: RpcResourcePage } = await import("@/pages/app/rpc-resource");
+    const root = await mountRoute(
+      "/admin/1/rpc/default/ops/primary",
+      "/admin/{family}/rpc/{realm}/{area}/{resource}",
+      RpcResourcePage,
+    );
+
+    expect(root.textContent).toContain("151");
+    expect(root.textContent).toContain("PendingOnly");
+    expect(root.textContent).toContain("Handled by live workers");
+  });
+  it("does not double count wildcard RPC workers or invent handled totals", async () => {
+    mocks.queryStates.rpcResource = queryState.fresh(
+      {
+        area: "ops",
+        operations: [
+          {
+            averageLatencyMs: null,
+            operation: "run",
+            pendingRequests: 1,
+            requestsHandled: null,
+            workers: 1,
+          },
+          {
+            averageLatencyMs: null,
+            operation: "wait",
+            pendingRequests: 1,
+            requestsHandled: null,
+            workers: 1,
+          },
+        ],
+        realm: "default",
+        resource: "primary",
+        totalPendingRequests: 2,
+        totalWorkers: 1,
+      },
+      queryOptions(),
+    );
+
+    const { default: RpcResourcePage } = await import("@/pages/app/rpc-resource");
+    const root = await mountRoute(
+      "/admin/1/rpc/default/ops/primary",
+      "/admin/{family}/rpc/{realm}/{area}/{resource}",
+      RpcResourcePage,
+    );
+
+    const summary = root.querySelector(".domain-summary-strip")?.textContent ?? "";
+    expect(summary).toContain("Workers1");
+    expect(summary).toContain("Pending2");
+    expect(summary).toMatch(/Handled by live workers \(exact\)--/);
   });
   it("renders the status-first dashboard sections", async () => {
     const { default: Home } = await import("@/pages/app/home");

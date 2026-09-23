@@ -254,7 +254,24 @@ export async function mockResourceDetailApis(
     if (segments.length === 10 && segments[9] === "operations" && domain === "rpc") {
       await route.fulfill({
         json: {
-          operations: [{ operation: "GetStatus" }, { operation: "SetState" }],
+          operations: [
+            {
+              operation: "GetStatus",
+              workers_registered: 2,
+              requests_pending: 1,
+              requests_handled_by_live_workers: 9,
+              slowest_worker_average_latency_ms: 12,
+            },
+            {
+              operation: "SetState",
+              workers_registered: 0,
+              requests_pending: 0,
+              requests_handled_by_live_workers: 0,
+              slowest_worker_average_latency_ms: null,
+            },
+          ],
+          workers_registered: 2,
+          requests_pending: 1,
         },
       });
       return;
@@ -268,6 +285,7 @@ export async function mockResourceDetailApis(
           operation: decodeURIComponent(segments[10] ?? "GetStatus"),
           realm: scope.realm,
           requests_pending: 1,
+          requests_handled_by_live_workers: 9,
           resource: scope.resource,
           slowest_worker_average_latency_ms: 12,
           worker_latency_buckets: {

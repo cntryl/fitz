@@ -6019,17 +6019,37 @@ components:
 
     OperationEntry:
       type: object
-      required: [operation]
+      description: Live RPC operation summary. Worker and pending counts are complete for this operation. Registration-level handled and latency values are null when wildcard workers prevent attribution to one operation.
+      required: [operation, workers_registered, requests_pending, requests_handled_by_live_workers, slowest_worker_average_latency_ms]
       properties:
         operation:
           type: string
+        workers_registered:
+          type: integer
+          description: All live worker registrations matching this operation, including wildcard registrations.
+        requests_pending:
+          type: integer
+          description: All live pending requests for this operation on the current broker process.
+        requests_handled_by_live_workers:
+          type: [integer, "null"]
+          format: int64
+          description: Complete handled-call counters from exact live registrations for this operation. Null when a matching wildcard registration makes per-operation attribution unavailable. Not a historical total.
+        slowest_worker_average_latency_ms:
+          type: [number, "null"]
+          description: Slowest average latency among exact live registrations that handled calls. Null when no measured exact worker exists or a matching wildcard registration makes per-operation attribution unavailable.
     OperationCollection:
       type: object
-      required: [realm, area, resource, operations]
+      required: [realm, area, resource, workers_registered, requests_pending, operations]
       properties:
         realm: { type: string }
         area: { type: string }
         resource: { type: string }
+        workers_registered:
+          type: integer
+          description: Distinct live worker registrations matching at least one listed operation for this resource.
+        requests_pending:
+          type: integer
+          description: All live pending requests for this resource on the current broker process.
         operations:
           type: array
           items:
@@ -6046,6 +6066,7 @@ components:
           operation,
           workers_registered,
           requests_pending,
+          requests_handled_by_live_workers,
           slowest_worker_average_latency_ms,
           worker_latency_buckets,
           diagnostics,
@@ -6061,6 +6082,10 @@ components:
         requests_pending:
           type: integer
           description: Live in-memory pending requests waiting for a worker on this broker process. Not durable across disconnect or restart.
+        requests_handled_by_live_workers:
+          type: [integer, "null"]
+          format: int64
+          description: Terminal requests handled by currently live registrations matching this operation. Null when wildcard workers prevent attributing their counters to this operation. Not a historical total.
         slowest_worker_average_latency_ms:
           type: number
           description: Slowest average latency observed among live workers for this exact RPC operation on the current broker process.

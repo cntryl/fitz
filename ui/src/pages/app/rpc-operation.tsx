@@ -39,7 +39,7 @@ function decodeParam(value: string | undefined) {
 
 function parseLimit(value: string | null) {
   const parsed = Number(value ?? 50);
-  return Number.isFinite(parsed) ? Math.max(1, Math.min(200, Math.floor(parsed))) : 50;
+  return Number.isFinite(parsed) ? Math.max(1, Math.min(100, Math.floor(parsed))) : 50;
 }
 
 function formatLatency(value: number | null | undefined) {
@@ -156,10 +156,14 @@ export default function RpcOperationPage() {
               </Show>
               <DomainSummaryStrip
                 title="RPC operation metrics"
-                description="Live worker capacity and pending requests. Latency buckets are current observations; the API does not report a reset window for handled-call counters."
+                description="Live worker capacity and pending requests. Handled counts cover exact live registrations only; -- means wildcard workers prevent per-operation attribution. Latency buckets are current observations, not historical totals. The API does not report a reset window for handled counters."
                 items={[
                   { label: "Workers", value: detail.workers_registered },
                   { label: "Pending requests", value: detail.requests_pending },
+                  {
+                    label: "Handled by live workers (exact)",
+                    value: detail.requests_handled_by_live_workers ?? "--",
+                  },
                   {
                     label: "Slowest average latency",
                     value: formatLatency(detail.slowest_worker_average_latency_ms),

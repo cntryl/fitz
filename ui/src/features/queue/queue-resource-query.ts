@@ -4,7 +4,8 @@ import { currentRouteFamilySegment } from "@/shared/navigation/domains";
 import type {
   QueueResourceComparison,
   QueueResourceComparisonSide,
-  QueueResourceOverview,
+  QueueInflightMessage,
+  QueueResourceDetail,
   QueueResourceRef,
   QueueResourceTimeline,
 } from "./queue-resource-models";
@@ -40,6 +41,20 @@ export function queueResourceTimelineQueryKey(
   );
 }
 
+export function queueResourceInflightQueryKey(
+  resourceRef: QueueResourceRef,
+  family = currentRouteFamilySegment(),
+) {
+  return queueResourceQueries.key(
+    "resource",
+    family,
+    resourceRef.realm,
+    resourceRef.area,
+    resourceRef.resource,
+    "inflight",
+  );
+}
+
 export function queueResourceComparisonQueryKey(
   resourceRef: QueueResourceRef,
   againstResourceRef: QueueResourceComparisonSide["scope"],
@@ -68,10 +83,16 @@ interface QueueResourceComparisonQueryInput extends QueueResourceQueryInput {
   againstResourceRef: QueueResourceComparisonSide["scope"];
 }
 
-const queueResourceQuery = defineQuery<QueueResourceQueryInput, QueueResourceOverview>({
+const queueResourceQuery = defineQuery<QueueResourceQueryInput, QueueResourceDetail>({
   key: ({ family, resourceRef }) => queueResourceQueryKey(resourceRef, family),
   fetch: ({ family, resourceRef, signal }) =>
     queueResourceService.getResource(resourceRef, { routeFamily: family, signal }),
+});
+
+const queueResourceInflightQuery = defineQuery<QueueResourceQueryInput, QueueInflightMessage[]>({
+  key: ({ family, resourceRef }) => queueResourceInflightQueryKey(resourceRef, family),
+  fetch: ({ family, resourceRef, signal }) =>
+    queueResourceService.getInflight(resourceRef, { routeFamily: family, signal }),
 });
 
 const queueResourceTimelineQuery = defineQuery<QueueResourceQueryInput, QueueResourceTimeline>({
@@ -101,6 +122,13 @@ const queueResourceComparisonQuery = defineQuery<
 
 export function createQueueResourceQuery(resourceRef: QueueResourceRef) {
   return createQuery(queueResourceQuery, { family: currentRouteFamilySegment(), resourceRef });
+}
+
+export function createQueueResourceInflightQuery(resourceRef: QueueResourceRef) {
+  return createQuery(queueResourceInflightQuery, {
+    family: currentRouteFamilySegment(),
+    resourceRef,
+  });
 }
 
 export function createQueueResourceTimelineQuery(resourceRef: QueueResourceRef) {
