@@ -16,9 +16,9 @@ fn request(
     source: &RouteAddress,
     inbox: &FrameQueueSink,
     route: &str,
-    frame: Vec<u8>,
+    frame: &[u8],
 ) -> Bytes {
-    let (msg_type, payload) = extract_single_tlv_field(&frame);
+    let (msg_type, payload) = extract_single_tlv_field(frame);
     route_frame(
         router,
         source,
@@ -54,7 +54,7 @@ fn should_project_commits_from_all_benchmark_families() {
             &source,
             &inbox,
             route,
-            build_stream_begin(route),
+            &build_stream_begin(route),
         );
         let session_id = parse_stream_session_id(begin.as_ref()).expect("append session");
         let _ = request(
@@ -63,7 +63,7 @@ fn should_project_commits_from_all_benchmark_families() {
             &source,
             &inbox,
             route,
-            build_stream_append(session_id, 0, b"seed"),
+            &build_stream_append(session_id, 0, b"seed"),
         );
         let _ = request(
             &router,
@@ -71,7 +71,7 @@ fn should_project_commits_from_all_benchmark_families() {
             &source,
             &inbox,
             route,
-            build_stream_commit(session_id, 1),
+            &build_stream_commit(session_id, 1),
         );
     }
 
@@ -98,7 +98,7 @@ fn should_redirty_fixed_stream_dataset_without_adding_events() {
         &source,
         &inbox,
         route,
-        build_stream_begin(route),
+        &build_stream_begin(route),
     );
     let session_id = parse_stream_session_id(begin.as_ref()).expect("append session");
     let _ = request(
@@ -107,7 +107,7 @@ fn should_redirty_fixed_stream_dataset_without_adding_events() {
         &source,
         &inbox,
         route,
-        build_stream_append(session_id, 0, b"seed"),
+        &build_stream_append(session_id, 0, b"seed"),
     );
     let _ = request(
         &router,
@@ -115,7 +115,7 @@ fn should_redirty_fixed_stream_dataset_without_adding_events() {
         &source,
         &inbox,
         route,
-        build_stream_commit(session_id, 1),
+        &build_stream_commit(session_id, 1),
     );
     sink.refresh();
 
@@ -126,7 +126,7 @@ fn should_redirty_fixed_stream_dataset_without_adding_events() {
         &source,
         &inbox,
         route,
-        build_stream_begin(route),
+        &build_stream_begin(route),
     );
     let session_id = parse_stream_session_id(begin.as_ref()).expect("append session");
     sink.refresh();
@@ -137,7 +137,7 @@ fn should_redirty_fixed_stream_dataset_without_adding_events() {
         &source,
         &inbox,
         route,
-        build_stream_rollback(session_id),
+        &build_stream_rollback(session_id),
     );
     sink.refresh();
 

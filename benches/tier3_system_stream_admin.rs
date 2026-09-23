@@ -61,13 +61,13 @@ struct FamilyClient {
 impl FamilyClient {
     fn commit_one(&mut self, router: &Router, route_index: usize) {
         let route = &self.routes[route_index];
-        let begin = request(self, router, route, build_stream_begin(route));
+        let begin = request(self, router, route, &build_stream_begin(route));
         let session_id = parse_stream_session_id(begin.as_ref()).expect("Stream append session");
         let append = request(
             self,
             router,
             route,
-            build_stream_append(session_id, self.next_offsets[route_index], b"projection"),
+            &build_stream_append(session_id, self.next_offsets[route_index], b"projection"),
         );
         assert_eq!(
             append.first().copied(),
@@ -78,7 +78,7 @@ impl FamilyClient {
             self,
             router,
             route,
-            build_stream_commit(session_id, SYNC_COMMIT_MODE),
+            &build_stream_commit(session_id, SYNC_COMMIT_MODE),
         );
         assert_eq!(
             commit.first().copied(),
@@ -92,7 +92,7 @@ impl FamilyClient {
         let route_index = self.next_dirty_route;
         let route = &self.routes[route_index];
         if let Some(session_id) = self.active_session_id.take() {
-            let rollback = request(self, router, route, build_stream_rollback(session_id));
+            let rollback = request(self, router, route, &build_stream_rollback(session_id));
             assert_eq!(
                 rollback.first().copied(),
                 Some(0),
@@ -100,15 +100,15 @@ impl FamilyClient {
             );
             self.next_dirty_route = (route_index + 1) % self.routes.len();
         } else {
-            let begin = request(self, router, route, build_stream_begin(route));
+            let begin = request(self, router, route, &build_stream_begin(route));
             self.active_session_id =
                 Some(parse_stream_session_id(begin.as_ref()).expect("Stream append session"));
         }
     }
 }
 
-fn request(client: &FamilyClient, router: &Router, route: &str, frame: Vec<u8>) -> Bytes {
-    let (msg_type, payload) = extract_single_tlv_field(&frame);
+fn request(client: &FamilyClient, router: &Router, route: &str, frame: &[u8]) -> Bytes {
+    let (msg_type, payload) = extract_single_tlv_field(frame);
     route_frame(
         router,
         &client.source,
@@ -144,7 +144,7 @@ fn setup(
         .into_iter()
         .map(|family| {
             let (source, inbox) = register_session_queue_sink(&router, family, SESSION_ID);
-            let routes = (0..resources_per_family)
+            let resource_routes = (0..resources_per_family)
                 .map(|resource| {
                     format!(
                         "stream://bench{}/area{}/resource{resource}",
@@ -158,7 +158,7 @@ fn setup(
                 source,
                 inbox,
                 next_offsets: vec![0; resources_per_family],
-                routes,
+                routes: resource_routes,
                 next_dirty_route: 0,
                 active_session_id: None,
             }
